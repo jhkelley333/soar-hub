@@ -89,6 +89,69 @@ async function getSessionUser(event) {
 }
 
 // ----------------------------------------------------------------------------
+// Status workflow + role-based approval
+// ----------------------------------------------------------------------------
+
+// Canonical status list, in dropdown order. Old values like "Open",
+// "Awaiting Approval", "Completed", "Cancelled" are not in this list — rows
+// already carrying those values still display, but new transitions must use
+// the canonical names.
+const STATUSES_ORDER = [
+  "Received",
+  "Pending Approval",
+  "Approved",
+  "Rejected - See Notes",
+  "Scheduled",
+  "In Progress",
+  "On Hold",
+  "Part on Order",
+  "New Equipment Ordered",
+  "Closed",
+];
+const STATUSES_VALID = new Set(STATUSES_ORDER);
+
+const APPROVER_ROLES = new Set(["rvp", "vp", "coo"]);
+
+// Status changes permitted by role (cascading — higher tiers inherit lower).
+function allowedStatusesForRole(role) {
+  if (role === "admin") return new Set(STATUSES_ORDER);
+  const hourly = ["Scheduled", "In Progress", "Closed"];
+  const gm = [...hourly, "On Hold", "Part on Order", "New Equipment Ordered"];
+  const approver = [...gm, "Approved", "Rejected - See Notes"];
+  if (role === "shift_manager") return new Set(hourly);
+  if (role === "gm" || role === "do" || role === "sdo") return new Set(gm);
+  if (APPROVER_ROLES.has(role)) return new Set(approver);
+  return new Set(); // payroll and any unrecognized role
+}
+
+function isApproverRole(role) {
+  return role === "admin" || APPROVER_ROLES.has(role);
+}
+
+// Parse the Smartsheet "Approval Level" dropdown text down to a tier code.
+//   "Regional VP < $1750"  → "rvp"
+//   "VP $1751 -$2500"      → "vp"
+//   "COO > $2500"          → "coo"
+function tierFromApprovalLevel(value) {
+  const v = String(value ?? "").trim();
+  if (v.startsWith("Regional VP")) return "rvp";
+  if (v.startsWith("VP")) return "vp";
+  if (v.startsWith("COO")) return "coo";
+  return null;
+}
+
+// Whether a given user role can approve a work order at this approval tier.
+// Cascading: COO approves all, VP approves rvp+vp, RVP approves rvp only.
+function canApproveRow(role, approvalLevel) {
+  const tier = tierFromApprovalLevel(approvalLevel);
+  if (!tier) return false;
+  if (role === "admin" || role === "coo") return true;
+  if (role === "vp") return tier === "rvp" || tier === "vp";
+  if (role === "rvp") return tier === "rvp";
+  return false;
+}
+
+// ----------------------------------------------------------------------------
 // Smartsheet
 // ----------------------------------------------------------------------------
 
@@ -117,12 +180,34 @@ function buildColumnMap(columns) {
   return byTitle;
 }
 
+function firstTruthy(values) {
+  for (const v of values) {
+    if (v != null && v !== "") return v;
+  }
+  return null;
+}
+
 function flattenRow(row, columns) {
   const out = { id: row.id, modifiedAt: row.modifiedAt, createdAt: row.createdAt };
   for (const col of columns) {
     const cell = row.cells?.find((c) => c.columnId === col.id);
     out[col.title] = cell?.displayValue ?? cell?.value ?? null;
   }
+  // Normalized fields (column-name fallbacks). Underscore-prefixed so they
+  // can never collide with a literal Smartsheet column title.
+  out._submittedDate =
+    firstTruthy([
+      out["Date Submitted"],
+      out["Created"],
+      out["Submit Date"],
+      out["Date Created"],
+      row.createdAt,
+    ]) || "";
+  out._approvalLevel =
+    firstTruthy([out["Approval Level"], out["Approval"]]) || "";
+  out._approvalNotes = firstTruthy([out["Approval Notes"]]) || "";
+  out._issueDescription =
+    firstTruthy([out["Issue Description"], out["Description"]]) || "";
   return out;
 }
 
@@ -174,7 +259,9 @@ async function createWorkOrder(user, input) {
   if (!user.canSeeAllStores && !user.storeNumbers.includes(storeNum)) {
     return { error: "store not in your scope", status: 403 };
   }
-  const cells = cellsFromInput(input, cols);
+  // New tickets always start in "Received" — never trust the client.
+  const cleaned = { ...input, Status: "Received" };
+  const cells = cellsFromInput(cleaned, cols);
   const res = await ssRequest("POST", `/sheets/${SHEET_ID}/rows`, [
     { toBottom: true, cells },
   ]);
@@ -185,9 +272,69 @@ async function createWorkOrder(user, input) {
 async function updateWorkOrder(user, rowId, input) {
   const existing = await getWorkOrder(user, rowId);
   if (!existing) return { error: "not found or not in scope", status: 404 };
+
   const sheet = await loadSheet();
   const cols = buildColumnMap(sheet.columns);
-  const cells = cellsFromInput(input, cols);
+
+  // Work on a sanitized copy so we can mutate before sending.
+  const cleaned = { ...input };
+
+  // ---- Status change validation ---------------------------------------------
+  if (cleaned.Status !== undefined) {
+    const newStatus = String(cleaned.Status).trim();
+    if (!STATUSES_VALID.has(newStatus)) {
+      return { error: `invalid status: ${newStatus}`, status: 400 };
+    }
+    const allowed = allowedStatusesForRole(user.role);
+    if (!allowed.has(newStatus)) {
+      return {
+        error: `your role (${user.role}) cannot set status to "${newStatus}"`,
+        status: 403,
+      };
+    }
+    // Approve / Reject require approver-of-this-tier and non-empty notes.
+    if (newStatus === "Approved" || newStatus === "Rejected - See Notes") {
+      const approvalLevel =
+        cleaned["Approval Level"] !== undefined
+          ? cleaned["Approval Level"]
+          : existing._approvalLevel;
+      if (!canApproveRow(user.role, approvalLevel)) {
+        return {
+          error: "your role cannot approve this approval tier",
+          status: 403,
+        };
+      }
+      const notesRaw =
+        cleaned["Approval Notes"] !== undefined
+          ? cleaned["Approval Notes"]
+          : existing._approvalNotes;
+      if (!String(notesRaw ?? "").trim()) {
+        return {
+          error:
+            "Approval Notes are required when changing status to Approved or Rejected - See Notes",
+          status: 400,
+        };
+      }
+    }
+  }
+
+  // ---- Auto-set Pending Approval when Approval Level fills in -------------
+  // Only if the caller didn't explicitly set Status in this update.
+  if (cleaned["Approval Level"] !== undefined && cleaned.Status === undefined) {
+    const before = String(existing._approvalLevel || "").trim();
+    const after = String(cleaned["Approval Level"] || "").trim();
+    if (before === "" && after !== "" && existing.Status === "Received") {
+      cleaned.Status = "Pending Approval";
+    }
+  }
+
+  // ---- Approval Notes editability -----------------------------------------
+  // Only approver roles (and admin) can write Approval Notes. Strip silently.
+  if (cleaned["Approval Notes"] !== undefined && !isApproverRole(user.role)) {
+    delete cleaned["Approval Notes"];
+  }
+
+  const cells = cellsFromInput(cleaned, cols);
   if (cells.length === 0) return existing;
   await ssRequest("PUT", `/sheets/${SHEET_ID}/rows`, [
     { id: Number(rowId), cells },
@@ -331,6 +478,11 @@ export const handler = async (event) => {
           canSeeAllStores: user.canSeeAllStores,
         },
         workOrders: await listWorkOrders(user),
+        meta: {
+          statusOrder: STATUSES_ORDER,
+          allowedStatusChanges: [...allowedStatusesForRole(user.role)],
+          isApprover: isApproverRole(user.role),
+        },
       });
     }
 
