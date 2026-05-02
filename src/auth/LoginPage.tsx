@@ -51,16 +51,16 @@ export function LoginPage() {
     <div className="flex min-h-full items-center justify-center bg-zinc-50 px-4 py-16">
       <div className="w-full max-w-sm">
         <div className="mb-10 flex items-center gap-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-md bg-zinc-900 text-sm font-semibold tracking-tight text-white">
+          <div className="flex h-9 w-9 items-center justify-center rounded-md bg-midnight text-sm font-semibold tracking-tight text-white">
             S
           </div>
           <div>
-            <div className="text-sm font-semibold tracking-tight text-zinc-900">SOAR Hub</div>
+            <div className="text-sm font-semibold tracking-tight text-midnight">SOAR Hub</div>
             <div className="text-xs text-zinc-500">Operations Platform</div>
           </div>
         </div>
 
-        <h1 className="text-2xl font-semibold tracking-tight text-zinc-900">Sign in</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-midnight">Sign in</h1>
         <p className="mt-1 text-sm text-zinc-500">
           {mode === "password" ? "Use your work email and password." : "We'll email you a sign-in link."}
         </p>
@@ -104,7 +104,7 @@ export function LoginPage() {
             </div>
           )}
 
-          <Button type="submit" disabled={submitting} className="w-full">
+          <Button type="submit" variant="danger" disabled={submitting} className="w-full">
             {submitting ? "Working..." : mode === "password" ? "Sign in" : "Send link"}
           </Button>
         </form>
@@ -116,7 +116,7 @@ export function LoginPage() {
             setError(null);
             setInfo(null);
           }}
-          className="mt-6 text-xs font-medium text-zinc-500 transition hover:text-zinc-900"
+          className="mt-6 text-xs font-medium text-zinc-500 transition hover:text-midnight"
         >
           {mode === "password" ? "Use a magic link instead" : "Use a password instead"}
         </button>
