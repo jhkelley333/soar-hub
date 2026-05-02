@@ -215,7 +215,7 @@ function DetailDrawer({ row, onClose }: { row: WorkOrder; onClose: () => void })
           {(upload.error as Error).message}
         </div>
       )}
-      {row["Quote URL"] && (
+       {Boolean(row["Quote URL"]) && (
         <div className="mt-4 text-sm">
           <span className="text-zinc-500">Quote URL: </span>
           <a
