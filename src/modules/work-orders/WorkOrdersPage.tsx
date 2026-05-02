@@ -32,6 +32,16 @@ export function WorkOrdersPage() {
       <PageHeader
         title="Work Orders"
         description="Facility issues, equipment repairs, vendor dispatches, and reference info."
+        actions={
+          <a
+            href="https://app.smartsheet.com/b/form/a2d7a96141784059801f6d81b90110e6"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-2 rounded-md bg-cherry px-4 py-2 text-sm font-medium text-white transition hover:bg-cherry-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-frost focus-visible:ring-offset-2"
+          >
+            📝 Submit Work Order
+          </a>
+        }
       />
 
       <div className="mb-6 border-b border-zinc-200">

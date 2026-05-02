@@ -28,16 +28,29 @@ export interface SessionUser {
 }
 
 // Smartsheet rows are flattened to { columnTitle: value } shape on the server.
+// Underscore-prefixed fields are normalized aliases that survive column-name
+// drift (Approval / Approval Level / etc.).
 export interface WorkOrder {
   id: number;
   createdAt?: string;
   modifiedAt?: string;
+  _submittedDate?: string;
+  _approvalLevel?: string;
+  _approvalNotes?: string;
+  _issueDescription?: string;
   [columnTitle: string]: unknown;
+}
+
+export interface WorkOrderMeta {
+  statusOrder: string[];
+  allowedStatusChanges: string[];
+  isApprover: boolean;
 }
 
 export interface WorkOrdersIndex {
   user: SessionUser;
   workOrders: WorkOrder[];
+  meta: WorkOrderMeta;
 }
 
 export interface Vendor {

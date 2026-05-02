@@ -9,19 +9,28 @@ import { Label } from "@/shared/ui/Label";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import {
   type WorkOrder,
-  createWorkOrder,
+  type WorkOrderMeta,
+  type SessionUser,
   listWorkOrders,
   updateWorkOrder,
   uploadAttachment,
 } from "../api";
 
+// ----------------------------------------------------------------------------
+// Status display
+// ----------------------------------------------------------------------------
+
 const STATUS_TONE: Record<string, "neutral" | "info" | "warning" | "success" | "danger"> = {
-  Open: "info",
+  Received: "info",
+  "Pending Approval": "warning",
+  Approved: "success",
+  "Rejected - See Notes": "danger",
+  Scheduled: "info",
   "In Progress": "warning",
-  "Awaiting Approval": "warning",
-  Completed: "success",
+  "On Hold": "warning",
+  "Part on Order": "warning",
+  "New Equipment Ordered": "warning",
   Closed: "neutral",
-  Cancelled: "danger",
 };
 
 function statusTone(status: unknown): "neutral" | "info" | "warning" | "success" | "danger" {
@@ -33,6 +42,48 @@ function display(value: unknown): string {
   return String(value);
 }
 
+function truncate(value: unknown, n = 80): string {
+  const s = display(value);
+  if (s === "—") return s;
+  return s.length > n ? s.slice(0, n - 1) + "…" : s;
+}
+
+function formatDate(value: unknown): string {
+  if (!value) return "—";
+  const d = new Date(String(value));
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleDateString();
+}
+
+// ----------------------------------------------------------------------------
+// Approval permissions (mirrors server-side rules in work-orders.js)
+// ----------------------------------------------------------------------------
+
+function tierFromApprovalLevel(value: string | undefined | null): "rvp" | "vp" | "coo" | null {
+  const v = String(value ?? "").trim();
+  if (v.startsWith("Regional VP")) return "rvp";
+  if (v.startsWith("VP")) return "vp";
+  if (v.startsWith("COO")) return "coo";
+  return null;
+}
+
+function canApproveRow(role: string, approvalLevel: string | undefined | null): boolean {
+  const tier = tierFromApprovalLevel(approvalLevel);
+  if (!tier) return false;
+  if (role === "admin" || role === "coo") return true;
+  if (role === "vp") return tier === "rvp" || tier === "vp";
+  if (role === "rvp") return tier === "rvp";
+  return false;
+}
+
+function canEditApprovalNotes(role: string): boolean {
+  return role === "admin" || role === "rvp" || role === "vp" || role === "coo";
+}
+
+// ----------------------------------------------------------------------------
+// List
+// ----------------------------------------------------------------------------
+
 export function ListTab() {
   const query = useQuery({
     queryKey: ["work-orders"],
@@ -40,7 +91,6 @@ export function ListTab() {
   });
 
   const [openId, setOpenId] = useState<number | null>(null);
-  const [creating, setCreating] = useState(false);
 
   if (query.isLoading) {
     return (
@@ -67,16 +117,13 @@ export function ListTab() {
 
   return (
     <>
-      <div className="mb-4 flex items-center justify-between">
-        <div className="text-sm text-zinc-500">
-          {rows.length} {rows.length === 1 ? "ticket" : "tickets"} in your scope
-          {data.user.canSeeAllStores
-            ? " (all stores)"
-            : data.user.storeNumbers.length > 0
-              ? ` across ${data.user.storeNumbers.length} ${data.user.storeNumbers.length === 1 ? "store" : "stores"}`
-              : ""}
-        </div>
-        <Button onClick={() => setCreating(true)}>New work order</Button>
+      <div className="mb-4 text-sm text-zinc-500">
+        {rows.length} {rows.length === 1 ? "ticket" : "tickets"} in your scope
+        {data.user.canSeeAllStores
+          ? " (all stores)"
+          : data.user.storeNumbers.length > 0
+            ? ` across ${data.user.storeNumbers.length} ${data.user.storeNumbers.length === 1 ? "store" : "stores"}`
+            : ""}
       </div>
 
       {rows.length === 0 ? (
@@ -86,54 +133,58 @@ export function ListTab() {
         />
       ) : (
         <Card>
-          <table className="w-full text-sm">
-            <thead className="border-b border-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500">
-              <tr>
-                <th className="px-5 py-3 font-medium">Store</th>
-                <th className="px-5 py-3 font-medium">Issue</th>
-                <th className="px-5 py-3 font-medium">Status</th>
-                <th className="px-5 py-3 font-medium">Vendor</th>
-                <th className="px-5 py-3 font-medium">Updated</th>
-                <th className="px-5 py-3" />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((row) => (
-                <tr key={row.id} className="border-b border-zinc-100 last:border-0">
-                  <td className="px-5 py-3 font-medium text-midnight tabular-nums">
-                    {display(row["Store Number"])}
-                  </td>
-                  <td className="px-5 py-3 text-zinc-700">{display(row["Issue"])}</td>
-                  <td className="px-5 py-3">
-                    <Badge tone={statusTone(row["Status"])}>{display(row["Status"])}</Badge>
-                  </td>
-                  <td className="px-5 py-3 text-zinc-600">{display(row["Vendor"])}</td>
-                  <td className="px-5 py-3 text-zinc-500 tabular-nums">
-                    {row.modifiedAt ? new Date(row.modifiedAt).toLocaleDateString() : "—"}
-                  </td>
-                  <td className="px-5 py-3 text-right">
-                    <Button variant="ghost" size="sm" onClick={() => setOpenId(row.id)}>
-                      Open
-                    </Button>
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="border-b border-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500">
+                <tr>
+                  <th className="px-5 py-3 font-medium">Store</th>
+                  <th className="px-5 py-3 font-medium">Issue</th>
+                  <th className="px-5 py-3 font-medium">Description</th>
+                  <th className="px-5 py-3 font-medium">Status</th>
+                  <th className="px-5 py-3 font-medium">Vendor</th>
+                  <th className="px-5 py-3 font-medium">Updated</th>
+                  <th className="px-5 py-3" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={row.id} className="border-b border-zinc-100 last:border-0">
+                    <td className="px-5 py-3 font-medium text-midnight tabular-nums">
+                      {display(row["Store Number"])}
+                    </td>
+                    <td className="px-5 py-3 text-zinc-700">{display(row["Issue"])}</td>
+                    <td
+                      className="px-5 py-3 text-zinc-500"
+                      title={display(row._issueDescription)}
+                    >
+                      {truncate(row._issueDescription, 60)}
+                    </td>
+                    <td className="px-5 py-3">
+                      <Badge tone={statusTone(row["Status"])}>{display(row["Status"])}</Badge>
+                    </td>
+                    <td className="px-5 py-3 text-zinc-600">{display(row["Vendor"])}</td>
+                    <td className="px-5 py-3 text-zinc-500 tabular-nums">
+                      {formatDate(row.modifiedAt)}
+                    </td>
+                    <td className="px-5 py-3 text-right">
+                      <Button variant="ghost" size="sm" onClick={() => setOpenId(row.id)}>
+                        Open
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </Card>
       )}
 
       {opened && (
         <DetailDrawer
           row={opened}
+          user={data.user}
+          meta={data.meta}
           onClose={() => setOpenId(null)}
-        />
-      )}
-
-      {creating && (
-        <CreateDrawer
-          onClose={() => setCreating(false)}
-          allowedStores={data.user.canSeeAllStores ? null : data.user.storeNumbers}
         />
       )}
     </>
@@ -144,11 +195,24 @@ export function ListTab() {
 // Detail / edit / upload drawer
 // ---------------------------------------------------------------------------
 
-function DetailDrawer({ row, onClose }: { row: WorkOrder; onClose: () => void }) {
+function DetailDrawer({
+  row,
+  user,
+  meta,
+  onClose,
+}: {
+  row: WorkOrder;
+  user: SessionUser;
+  meta: WorkOrderMeta;
+  onClose: () => void;
+}) {
   const qc = useQueryClient();
   const [status, setStatus] = useState(String(row["Status"] ?? ""));
   const [vendor, setVendor] = useState(String(row["Vendor"] ?? ""));
   const [notes, setNotes] = useState(String(row["Notes"] ?? ""));
+  const [approvalNotes, setApprovalNotes] = useState(
+    String(row._approvalNotes ?? "")
+  );
   const fileRef = useRef<HTMLInputElement>(null);
 
   const update = useMutation({
@@ -161,17 +225,43 @@ function DetailDrawer({ row, onClose }: { row: WorkOrder; onClose: () => void })
     onSuccess: () => qc.invalidateQueries({ queryKey: ["work-orders"] }),
   });
 
-  const editableFields = useMemo(
-    () => [
-      ["Status", status, setStatus],
-      ["Vendor", vendor, setVendor],
-      ["Notes", notes, setNotes],
-    ] as const,
-    [status, vendor, notes]
-  );
+  const approvalLevel = String(row._approvalLevel ?? "");
+  const approverForThisRow = canApproveRow(user.role, approvalLevel);
+  const notesEditable = canEditApprovalNotes(user.role);
+  const currentStatus = String(row["Status"] ?? "");
+  const alreadyDecided =
+    currentStatus === "Approved" || currentStatus === "Rejected - See Notes";
+
+  // Status options: union of statuses the user can change to plus the
+  // current value (so the dropdown doesn't drop the row's existing value
+  // even if the user can't transition to it).
+  const statusOptions = useMemo(() => {
+    const allowed = new Set<string>(meta.allowedStatusChanges);
+    if (currentStatus) allowed.add(currentStatus);
+    // Preserve canonical order
+    return meta.statusOrder.filter((s) => allowed.has(s));
+  }, [meta, currentStatus]);
 
   function save() {
-    update.mutate({ Status: status, Vendor: vendor, Notes: notes });
+    const payload: Record<string, unknown> = {
+      Status: status,
+      Vendor: vendor,
+      Notes: notes,
+    };
+    if (notesEditable) payload["Approval Notes"] = approvalNotes;
+    update.mutate(payload);
+  }
+
+  function decide(decision: "Approved" | "Rejected - See Notes") {
+    if (!approvalNotes.trim()) {
+      window.alert("Approval Notes are required to Approve or Reject.");
+      return;
+    }
+    update.mutate({
+      Status: decision,
+      "Approval Notes": approvalNotes,
+    });
+    setStatus(decision);
   }
 
   function pickFile() {
@@ -188,21 +278,86 @@ function DetailDrawer({ row, onClose }: { row: WorkOrder; onClose: () => void })
     <Drawer onClose={onClose} title={`Work order #${row.id}`}>
       <div className="grid grid-cols-2 gap-4">
         <Field label="Store" value={display(row["Store Number"])} />
+        <Field label="Submitted" value={formatDate(row._submittedDate)} />
         <Field label="Submitted by" value={display(row["Submitted By"])} />
+        <Field label="Priority" value={display(row["Priority"])} />
         <Field label="Issue" value={display(row["Issue"])} className="col-span-2" />
+        <ReadOnlyTextArea
+          label="Issue Description"
+          value={display(row._issueDescription)}
+          className="col-span-2"
+        />
+        <Field
+          label="Approval Level"
+          value={display(approvalLevel)}
+          className="col-span-2"
+        />
       </div>
 
       <div className="mt-6 space-y-4">
-        {editableFields.map(([label, value, setValue]) => (
-          <div key={label}>
-            <Label htmlFor={`f-${label}`}>{label}</Label>
-            <Input
-              id={`f-${label}`}
-              value={value}
-              onChange={(e) => setValue(e.target.value)}
-            />
-          </div>
-        ))}
+        <div>
+          <Label htmlFor="f-status">Status</Label>
+          <select
+            id="f-status"
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+            className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 transition outline-none focus:ring-2 focus:ring-accent"
+          >
+            {statusOptions.map((s) => (
+              <option key={s} value={s}>
+                {s}
+              </option>
+            ))}
+          </select>
+          {statusOptions.length === 1 && (
+            <p className="mt-1 text-xs text-zinc-500">
+              Your role can't change this ticket's status from the current value.
+            </p>
+          )}
+        </div>
+
+        <div>
+          <Label htmlFor="f-vendor">Vendor</Label>
+          <Input
+            id="f-vendor"
+            value={vendor}
+            onChange={(e) => setVendor(e.target.value)}
+          />
+        </div>
+
+        <div>
+          <Label htmlFor="f-notes">Notes</Label>
+          <textarea
+            id="f-notes"
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={3}
+            className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 transition outline-none focus:ring-2 focus:ring-accent"
+          />
+        </div>
+
+        <div>
+          <Label htmlFor="f-approval-notes">
+            Approval Notes
+            {!notesEditable && (
+              <span className="ml-2 text-xs font-normal text-zinc-500">
+                (read-only — approvers only)
+              </span>
+            )}
+          </Label>
+          <textarea
+            id="f-approval-notes"
+            value={approvalNotes}
+            onChange={(e) => setApprovalNotes(e.target.value)}
+            readOnly={!notesEditable}
+            rows={3}
+            className={
+              notesEditable
+                ? "block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 transition outline-none focus:ring-2 focus:ring-accent"
+                : "block w-full rounded-md border-0 bg-zinc-50 px-3 py-2 text-sm text-zinc-700 ring-1 ring-inset ring-zinc-200 outline-none"
+            }
+          />
+        </div>
       </div>
 
       {update.isError && (
@@ -215,7 +370,7 @@ function DetailDrawer({ row, onClose }: { row: WorkOrder; onClose: () => void })
           {(upload.error as Error).message}
         </div>
       )}
-       {Boolean(row["Quote URL"]) && (
+      {Boolean(row["Quote URL"]) && (
         <div className="mt-4 text-sm">
           <span className="text-zinc-500">Quote URL: </span>
           <a
@@ -226,6 +381,32 @@ function DetailDrawer({ row, onClose }: { row: WorkOrder; onClose: () => void })
           >
             {String(row["Quote URL"])}
           </a>
+        </div>
+      )}
+
+      {/* Approve / Reject — only for approver-of-this-tier and not yet decided */}
+      {approverForThisRow && !alreadyDecided && (
+        <div className="mt-6 rounded-md border border-zinc-200 bg-zinc-50 p-4">
+          <div className="text-sm font-medium text-midnight">Approval decision</div>
+          <p className="mt-0.5 text-xs text-zinc-500">
+            Tier: <span className="font-medium">{display(approvalLevel)}</span>.
+            Approval Notes are required.
+          </p>
+          <div className="mt-3 flex items-center gap-2">
+            <Button
+              onClick={() => decide("Approved")}
+              disabled={update.isPending}
+            >
+              Approve
+            </Button>
+            <Button
+              variant="danger"
+              onClick={() => decide("Rejected - See Notes")}
+              disabled={update.isPending}
+            >
+              Reject
+            </Button>
+          </div>
         </div>
       )}
 
@@ -250,120 +431,6 @@ function DetailDrawer({ row, onClose }: { row: WorkOrder; onClose: () => void })
             {update.isPending ? "Saving…" : "Save changes"}
           </Button>
         </div>
-      </div>
-    </Drawer>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Create drawer
-// ---------------------------------------------------------------------------
-
-function CreateDrawer({
-  onClose,
-  allowedStores,
-}: {
-  onClose: () => void;
-  allowedStores: string[] | null;
-}) {
-  const qc = useQueryClient();
-  const [storeNumber, setStoreNumber] = useState(allowedStores?.[0] ?? "");
-  const [issue, setIssue] = useState("");
-  const [vendor, setVendor] = useState("");
-  const [priority, setPriority] = useState("Normal");
-
-  const create = useMutation({
-    mutationFn: () =>
-      createWorkOrder({
-        "Store Number": storeNumber,
-        Issue: issue,
-        Vendor: vendor,
-        Priority: priority,
-        Status: "Open",
-      }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["work-orders"] });
-      onClose();
-    },
-  });
-
-  return (
-    <Drawer onClose={onClose} title="New work order">
-      <div className="space-y-4">
-        <div>
-          <Label htmlFor="c-store">Store number</Label>
-          {allowedStores ? (
-            <select
-              id="c-store"
-              value={storeNumber}
-              onChange={(e) => setStoreNumber(e.target.value)}
-              className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 transition outline-none focus:ring-2 focus:ring-accent"
-            >
-              {allowedStores.map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <Input
-              id="c-store"
-              value={storeNumber}
-              onChange={(e) => setStoreNumber(e.target.value)}
-              placeholder="e.g. 4421"
-            />
-          )}
-        </div>
-        <div>
-          <Label htmlFor="c-issue">Issue</Label>
-          <Input
-            id="c-issue"
-            value={issue}
-            onChange={(e) => setIssue(e.target.value)}
-            placeholder="What's broken?"
-          />
-        </div>
-        <div>
-          <Label htmlFor="c-vendor">Vendor</Label>
-          <Input
-            id="c-vendor"
-            value={vendor}
-            onChange={(e) => setVendor(e.target.value)}
-            placeholder="Optional"
-          />
-        </div>
-        <div>
-          <Label htmlFor="c-priority">Priority</Label>
-          <select
-            id="c-priority"
-            value={priority}
-            onChange={(e) => setPriority(e.target.value)}
-            className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 transition outline-none focus:ring-2 focus:ring-accent"
-          >
-            <option>Low</option>
-            <option>Normal</option>
-            <option>High</option>
-            <option>Urgent</option>
-          </select>
-        </div>
-      </div>
-
-      {create.isError && (
-        <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {(create.error as Error).message}
-        </div>
-      )}
-
-      <div className="mt-8 flex items-center justify-end gap-2">
-        <Button variant="ghost" onClick={onClose}>
-          Cancel
-        </Button>
-        <Button
-          onClick={() => create.mutate()}
-          disabled={create.isPending || !storeNumber || !issue}
-        >
-          {create.isPending ? "Submitting…" : "Submit work order"}
-        </Button>
       </div>
     </Drawer>
   );
@@ -430,6 +497,27 @@ function Field({
         {label}
       </div>
       <div className="mt-1 text-sm text-zinc-800">{value}</div>
+    </div>
+  );
+}
+
+function ReadOnlyTextArea({
+  label,
+  value,
+  className,
+}: {
+  label: string;
+  value: string;
+  className?: string;
+}) {
+  return (
+    <div className={className}>
+      <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+        {label}
+      </div>
+      <div className="mt-1 whitespace-pre-wrap rounded-md border border-zinc-100 bg-zinc-50 px-3 py-2 text-sm text-zinc-800">
+        {value}
+      </div>
     </div>
   );
 }
