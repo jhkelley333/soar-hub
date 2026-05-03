@@ -157,6 +157,25 @@ export function ListTab() {
   const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
+  // All hooks must run on every render (rules of hooks). Compute against safe
+  // defaults during loading/error states; the early-return JSX won't read these.
+  const allRows = query.data?.workOrders ?? [];
+
+  const storeOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of allRows) {
+      const s = String(r["Store Number"] ?? "").trim();
+      if (s) set.add(s);
+    }
+    return Array.from(set).sort();
+  }, [allRows]);
+
+  const filtered = useMemo(() => applyFilters(allRows, filters), [allRows, filters]);
+
+  // Stats are computed on the store-scoped (pre-filter-bar) list so users see
+  // the bigger picture even after narrowing.
+  const stats = useMemo(() => computeStats(allRows), [allRows]);
+
   if (query.isLoading) {
     return (
       <div className="space-y-3">
@@ -178,24 +197,6 @@ export function ListTab() {
   }
 
   const data = query.data!;
-  const allRows = data.workOrders;
-
-  // Derive unique store numbers from visible rows for the store selector.
-  const storeOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const r of allRows) {
-      const s = String(r["Store Number"] ?? "").trim();
-      if (s) set.add(s);
-    }
-    return Array.from(set).sort();
-  }, [allRows]);
-
-  // Apply filters.
-  const filtered = useMemo(() => applyFilters(allRows, filters), [allRows, filters]);
-
-  // Stats are computed on the store-scoped (pre-filter-bar) list so users see
-  // the bigger picture even after narrowing.
-  const stats = useMemo(() => computeStats(allRows), [allRows]);
 
   function setStatusFilter(status: string) {
     setFilters((f) => ({ ...f, status, openOnly: status === "All" ? f.openOnly : false }));
