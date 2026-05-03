@@ -77,11 +77,12 @@ begin
       or not exists (
         -- target's visible stores must be a subset of manager's visible
         -- stores. equivalently: there is no store the target can see that
-        -- the manager cannot.
+        -- the manager cannot. user_visible_stores() returns setof uuid,
+        -- so we compare the bare row value (no column name).
         select 1
-        from user_visible_stores(p.id) target_store
-        where target_store.id not in (
-          select id from user_visible_stores(manager_id)
+        from user_visible_stores(p.id) as target_store_id
+        where target_store_id not in (
+          select * from user_visible_stores(manager_id)
         )
       )
     )
