@@ -2,23 +2,18 @@ import { useState } from "react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { cn } from "@/lib/cn";
 import { ListTab } from "./tabs/ListTab";
-import { VendorsTab } from "./tabs/VendorsTab";
-import { VideosTab } from "./tabs/VideosTab";
 import { StaticTab } from "./tabs/StaticTab";
 import { SOLUGENIX, COKE, RF_TECH } from "./tabs/staticContent";
 
-type TabKey =
-  | "list"
-  | "vendors"
-  | "videos"
-  | "solugenix"
-  | "coke"
-  | "rftech";
+// Vendors and Videos tabs are temporarily hidden — they depend on a Google
+// service account that's still being configured. Re-enable by:
+//   1. importing VendorsTab + VideosTab from ./tabs/
+//   2. adding "vendors" / "videos" back to TabKey + TABS
+//   3. restoring the conditional render below
+type TabKey = "list" | "solugenix" | "coke" | "rftech";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "list", label: "Work orders" },
-  { key: "vendors", label: "Vendors" },
-  { key: "videos", label: "Videos" },
   { key: "solugenix", label: "Solugenix" },
   { key: "coke", label: "Coke" },
   { key: "rftech", label: "RF Tech" },
@@ -65,8 +60,6 @@ export function WorkOrdersPage() {
       </div>
 
       {tab === "list" && <ListTab />}
-      {tab === "vendors" && <VendorsTab />}
-      {tab === "videos" && <VideosTab />}
       {tab === "solugenix" && <StaticTab content={SOLUGENIX} />}
       {tab === "coke" && <StaticTab content={COKE} />}
       {tab === "rftech" && <StaticTab content={RF_TECH} />}

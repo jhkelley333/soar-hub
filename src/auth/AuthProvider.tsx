@@ -36,20 +36,55 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setScopes((scopesData as UserScope[]) ?? []);
   }
 
+  // Clear local auth state and any stale session in storage. Called when we
+  // detect the persisted session is no longer valid (e.g. JWT expired and
+  // refresh failed) — without this the app would hang in "Loading…" forever
+  // because getSession() returns the stale session but every subsequent API
+  // call 401s.
+  async function clearStaleSession() {
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // ignore — we just want the local state cleared
+    }
+    setSession(null);
+    setProfile(null);
+    setScopes([]);
+  }
+
   useEffect(() => {
     let cancelled = false;
 
-    supabase.auth.getSession().then(async ({ data: { session } }) => {
-      if (cancelled) return;
-      setSession(session);
-      if (session?.user) await loadProfile(session.user.id);
-      setLoading(false);
-    });
+    supabase.auth
+      .getSession()
+      .then(async ({ data: { session } }) => {
+        if (cancelled) return;
+        setSession(session);
+        if (session?.user) {
+          try {
+            await loadProfile(session.user.id);
+          } catch (e) {
+            console.warn("[auth] initial loadProfile failed; clearing stale session", e);
+            if (!cancelled) await clearStaleSession();
+          }
+        }
+      })
+      .catch((e) => {
+        console.warn("[auth] initial getSession failed", e);
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
 
     const { data: sub } = supabase.auth.onAuthStateChange(async (_event, next) => {
       setSession(next);
       if (next?.user) {
-        await loadProfile(next.user.id);
+        try {
+          await loadProfile(next.user.id);
+        } catch (e) {
+          console.warn("[auth] loadProfile after auth change failed; clearing stale session", e);
+          await clearStaleSession();
+        }
       } else {
         setProfile(null);
         setScopes([]);
@@ -69,7 +104,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       scopes,
       loading,
       signOut: async () => {
-        await supabase.auth.signOut();
+        // Clear React state immediately so ProtectedRoute redirects on the
+        // next render — don't wait for onAuthStateChange to bounce back.
+        setSession(null);
+        setProfile(null);
+        setScopes([]);
+        try {
+          await supabase.auth.signOut();
+        } catch (e) {
+          console.warn("[auth] signOut threw; local state already cleared", e);
+        }
       },
       refresh: async () => {
         if (session?.user) await loadProfile(session.user.id);
