@@ -8,9 +8,11 @@ import { useToast } from "@/shared/ui/Toaster";
 import { ROLE_LABELS, type UserRole } from "@/types/database";
 import { formatPhoneForDisplay, normalizePhone } from "@/lib/phone";
 import {
+  fetchHistory,
   fetchManageableRoles,
   fetchScopeOptions,
   updateUser,
+  type AuditEntry,
   type ManagedUser,
   type UpdateUserInput,
 } from "./api";
@@ -344,8 +346,137 @@ export function EditMemberModal({
               </p>
             )}
           </div>
+
+          <ActivitySection memberId={member.id} />
         </div>
       )}
     </Modal>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Activity (audit history)
+// ---------------------------------------------------------------------------
+
+function ActivitySection({ memberId }: { memberId: string }) {
+  const [open, setOpen] = useState(false);
+  const query = useQuery({
+    queryKey: ["team", "history", memberId],
+    queryFn: () => fetchHistory(memberId, 20),
+    enabled: open,
+  });
+
+  return (
+    <div className="border-t border-zinc-100 pt-4">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="text-xs font-medium uppercase tracking-wider text-zinc-500 transition hover:text-midnight"
+      >
+        {open ? "▾" : "▸"} Activity
+      </button>
+      {open && (
+        <div className="mt-3 space-y-2">
+          {query.isLoading && (
+            <div className="text-xs text-zinc-500">Loading…</div>
+          )}
+          {query.isError && (
+            <div className="text-xs text-red-600">
+              {(query.error as Error)?.message ?? "Couldn't load history."}
+            </div>
+          )}
+          {query.data && query.data.entries.length === 0 && (
+            <div className="text-xs text-zinc-500">No activity yet.</div>
+          )}
+          {query.data &&
+            query.data.entries.map((e) => (
+              <ActivityRow key={e.id} entry={e} />
+            ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ActivityRow({ entry }: { entry: AuditEntry }) {
+  const when = new Date(entry.created_at);
+  const whenStr = when.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const actor =
+    entry.actor.full_name?.trim() || entry.actor.email || "Someone";
+
+  return (
+    <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium text-midnight">
+          {actionLabel(entry.action)}
+        </span>
+        <span className="text-zinc-500">{whenStr}</span>
+      </div>
+      <div className="mt-0.5 text-zinc-600">by {actor}</div>
+      <DiffSummary entry={entry} />
+    </div>
+  );
+}
+
+function actionLabel(action: AuditEntry["action"]): string {
+  switch (action) {
+    case "create":
+      return "Created";
+    case "update":
+      return "Updated";
+    case "deactivate":
+      return "Deactivated";
+    case "reactivate":
+      return "Reactivated";
+  }
+}
+
+function DiffSummary({ entry }: { entry: AuditEntry }) {
+  if (entry.action === "create" && entry.after) {
+    const a = entry.after as Record<string, unknown>;
+    const bits: string[] = [];
+    if (a.role) bits.push(`role: ${a.role}`);
+    if (a.scope_type) bits.push(`scope: ${a.scope_type}`);
+    if (!bits.length) return null;
+    return <div className="mt-1 text-zinc-500">{bits.join(" · ")}</div>;
+  }
+  if (entry.action === "update" && entry.before && entry.after) {
+    const before = entry.before as Record<string, unknown>;
+    const after = entry.after as Record<string, unknown>;
+    const lines: string[] = [];
+    for (const key of Object.keys(after)) {
+      if (key === "scope") {
+        // scope is { scope_type, scope_id } before/after
+        const b = before[key] as { scope_type?: string } | null;
+        const aft = after[key] as { scope_type?: string } | null;
+        const bs = b ? b.scope_type ?? "—" : "—";
+        const as_ = aft ? aft.scope_type ?? "—" : "—";
+        lines.push(`scope: ${bs} → ${as_}`);
+        continue;
+      }
+      const bv = before[key];
+      const av = after[key];
+      lines.push(`${key}: ${formatVal(bv)} → ${formatVal(av)}`);
+    }
+    if (!lines.length) return null;
+    return (
+      <div className="mt-1 space-y-0.5 text-zinc-500">
+        {lines.map((l, i) => (
+          <div key={i}>{l}</div>
+        ))}
+      </div>
+    );
+  }
+  return null;
+}
+
+function formatVal(v: unknown): string {
+  if (v == null) return "—";
+  if (typeof v === "boolean") return v ? "true" : "false";
+  return String(v);
 }

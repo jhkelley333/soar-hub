@@ -219,6 +219,29 @@ function normalizePhone(raw) {
 }
 
 // ----------------------------------------------------------------------------
+// Audit log
+// ----------------------------------------------------------------------------
+//
+// Every successful write to profiles / user_scopes via this function gets a
+// matching team_changes row. before/after capture only the fields that
+// actually changed so the history view stays readable. We never throw if
+// logging fails — the user-facing action already succeeded; we just warn.
+
+async function logChange(supa, { actor_id, target_id, action, before, after }) {
+  try {
+    await supa.from("team_changes").insert({
+      actor_id,
+      target_id,
+      action,
+      before: before ?? null,
+      after: after ?? null,
+    });
+  } catch (e) {
+    console.warn("[team-mgmt] audit log insert failed", e);
+  }
+}
+
+// ----------------------------------------------------------------------------
 // scope-options — org tree the manager can see
 // ----------------------------------------------------------------------------
 
@@ -437,6 +460,22 @@ async function addUser(supa, manager, body) {
     };
   }
 
+  // ---- Audit log ----
+  await logChange(supa, {
+    actor_id: manager.id,
+    target_id: newUserId,
+    action: "create",
+    before: null,
+    after: {
+      email,
+      full_name,
+      phone: normalizedPhone,
+      role,
+      scope_type: expectedScope,
+      scope_id: expectedScope === "global" ? null : scope_id,
+    },
+  });
+
   return { ok: true, user_id: newUserId, email };
 }
 
@@ -567,6 +606,13 @@ async function updateUser(supa, manager, body) {
     };
   }
 
+  // Capture the previous scope before any changes — needed for audit diff
+  const { data: oldScopes } = await supa
+    .from("user_scopes")
+    .select("scope_type, scope_id")
+    .eq("user_id", target_id);
+  const oldScopeRow = oldScopes?.[0] ?? null;
+
   // Apply profile-row updates
   if (Object.keys(updates).length > 0) {
     const { error: profileErr } = await supa
@@ -606,7 +652,110 @@ async function updateUser(supa, manager, body) {
     }
   }
 
+  // ---- Audit: figure out which action this update best represents ----
+  const before = {};
+  const after = {};
+
+  if ("role" in updates) {
+    before.role = target.role;
+    after.role = updates.role;
+  }
+  if ("full_name" in updates) {
+    before.full_name = target.full_name ?? null;
+    after.full_name = updates.full_name;
+  }
+  if ("phone" in updates) {
+    before.phone = target.phone ?? null;
+    after.phone = updates.phone;
+  }
+  if (newScope) {
+    before.scope = oldScopeRow ?? null;
+    after.scope = newScope;
+  }
+
+  let auditAction = null;
+  if ("is_active" in updates) {
+    auditAction = updates.is_active ? "reactivate" : "deactivate";
+    before.is_active = target.is_active;
+    after.is_active = updates.is_active;
+  } else if (Object.keys(after).length > 0) {
+    auditAction = "update";
+  }
+
+  if (auditAction) {
+    await logChange(supa, {
+      actor_id: manager.id,
+      target_id,
+      action: auditAction,
+      before,
+      after,
+    });
+  }
+
   return { ok: true };
+}
+
+// ----------------------------------------------------------------------------
+// history — recent audit entries for a user (or any manageable user)
+// ----------------------------------------------------------------------------
+//
+// Admin: any target. Other manager roles: only targets in their
+// manageable_users set, or themselves (so anyone can see "what happened to
+// me"). Everyone else: 403.
+
+async function fetchHistory(supa, manager, query) {
+  const targetId = query?.user_id || null;
+  const limit = Math.min(parseInt(query?.limit || "20", 10) || 20, 100);
+
+  // Authorize the target
+  if (targetId) {
+    if (targetId !== manager.id && manager.role !== "admin") {
+      const { data: managed } = await supa.rpc("manageable_users", {
+        manager_id: manager.id,
+      });
+      const ok = (managed ?? []).some((m) => m.id === targetId);
+      if (!ok) return { error: "That user isn't in your scope.", status: 403 };
+    }
+  } else {
+    // No target → admin-only org-wide feed (rare)
+    if (manager.role !== "admin") {
+      return { error: "Specify user_id.", status: 400 };
+    }
+  }
+
+  let q = supa
+    .from("team_changes")
+    .select("id, actor_id, target_id, action, before, after, created_at")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (targetId) q = q.eq("target_id", targetId);
+
+  const { data: rows, error } = await q;
+  if (error) return { error: error.message, status: 500 };
+  if (!rows || rows.length === 0) return { entries: [] };
+
+  // Resolve actor names so the UI doesn't need a second query
+  const actorIds = [...new Set(rows.map((r) => r.actor_id))];
+  const { data: actors } = await supa
+    .from("profiles")
+    .select("id, full_name, email")
+    .in("id", actorIds);
+  const actorMap = Object.fromEntries((actors ?? []).map((a) => [a.id, a]));
+
+  return {
+    entries: rows.map((r) => ({
+      id: r.id,
+      action: r.action,
+      created_at: r.created_at,
+      actor: {
+        id: r.actor_id,
+        full_name: actorMap[r.actor_id]?.full_name ?? null,
+        email: actorMap[r.actor_id]?.email ?? null,
+      },
+      before: r.before,
+      after: r.after,
+    })),
+  };
 }
 
 // ----------------------------------------------------------------------------
@@ -650,6 +799,9 @@ export const handler = async (event) => {
       if (action === "manageable-roles") {
         // tiny helper for the UI's role dropdown
         return respond(200, { roles: manageableRoles(manager.role) });
+      }
+      if (action === "history") {
+        return unwrap(await fetchHistory(supa, manager, params));
       }
       return respond(400, { error: `unknown GET action: ${action}` });
     }

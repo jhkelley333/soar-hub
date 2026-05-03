@@ -150,3 +150,31 @@ export function updateUser(input: UpdateUserInput): Promise<{ ok: true }> {
     body: JSON.stringify(input),
   });
 }
+
+// ----------------------------------------------------------------------------
+// History (audit log)
+// ----------------------------------------------------------------------------
+
+export type AuditAction = "create" | "update" | "deactivate" | "reactivate";
+
+export interface AuditEntry {
+  id: string;
+  action: AuditAction;
+  created_at: string;
+  actor: {
+    id: string;
+    full_name: string | null;
+    email: string | null;
+  };
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+}
+
+export interface HistoryResponse {
+  entries: AuditEntry[];
+}
+
+export function fetchHistory(userId: string, limit = 20): Promise<HistoryResponse> {
+  const params = new URLSearchParams({ user_id: userId, limit: String(limit) });
+  return request<HistoryResponse>(`${FN}?action=history&${params.toString()}`);
+}
