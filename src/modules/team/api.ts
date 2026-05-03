@@ -84,9 +84,9 @@ export interface ScopeDistrict {
   id: string;
   name: string;
   code: string;
-  market_id: string;
+  area_id: string;
 }
-export interface ScopeMarket {
+export interface ScopeArea {
   id: string;
   name: string;
   code: string;
@@ -101,7 +101,7 @@ export interface ScopeRegion {
 export interface ScopeOptionsResponse {
   stores: ScopeStore[];
   districts: ScopeDistrict[];
-  markets: ScopeMarket[];
+  areas: ScopeArea[];
   regions: ScopeRegion[];
   canSetGlobal: boolean;
 }

@@ -95,14 +95,14 @@ async function listManaged(supa, manager) {
   const districtIds = (scopes ?? [])
     .filter((s) => s.scope_type === "district")
     .map((s) => s.scope_id);
-  const marketIds = (scopes ?? [])
-    .filter((s) => s.scope_type === "market")
+  const areaIds = (scopes ?? [])
+    .filter((s) => s.scope_type === "area")
     .map((s) => s.scope_id);
   const regionIds = (scopes ?? [])
     .filter((s) => s.scope_type === "region")
     .map((s) => s.scope_id);
 
-  const [{ data: stores }, { data: districts }, { data: markets }, { data: regions }] =
+  const [{ data: stores }, { data: districts }, { data: areas }, { data: regions }] =
     await Promise.all([
       storeIds.length
         ? supa.from("stores").select("id, number, name").in("id", storeIds)
@@ -110,8 +110,8 @@ async function listManaged(supa, manager) {
       districtIds.length
         ? supa.from("districts").select("id, name, code").in("id", districtIds)
         : Promise.resolve({ data: [] }),
-      marketIds.length
-        ? supa.from("markets").select("id, name, code").in("id", marketIds)
+      areaIds.length
+        ? supa.from("areas").select("id, name, code").in("id", areaIds)
         : Promise.resolve({ data: [] }),
       regionIds.length
         ? supa.from("regions").select("id, name, code").in("id", regionIds)
@@ -120,7 +120,7 @@ async function listManaged(supa, manager) {
 
   const storeMap = Object.fromEntries((stores ?? []).map((s) => [s.id, s]));
   const districtMap = Object.fromEntries((districts ?? []).map((d) => [d.id, d]));
-  const marketMap = Object.fromEntries((markets ?? []).map((m) => [m.id, m]));
+  const areaMap = Object.fromEntries((areas ?? []).map((a) => [a.id, a]));
   const regionMap = Object.fromEntries((regions ?? []).map((r) => [r.id, r]));
 
   function labelFor(scope) {
@@ -133,9 +133,9 @@ async function listManaged(supa, manager) {
       const d = districtMap[scope.scope_id];
       return d ? `District ${d.name}` : "District";
     }
-    if (scope.scope_type === "market") {
-      const m = marketMap[scope.scope_id];
-      return m ? `Market ${m.name}` : "Market";
+    if (scope.scope_type === "area") {
+      const a = areaMap[scope.scope_id];
+      return a ? `Area ${a.name}` : "Area";
     }
     if (scope.scope_type === "region") {
       const r = regionMap[scope.scope_id];
@@ -252,7 +252,7 @@ async function scopeOptions(supa, manager) {
   });
   const ids = (storeIds ?? []).map((s) => (typeof s === "string" ? s : s));
   if (ids.length === 0) {
-    return { stores: [], districts: [], markets: [], regions: [], canSetGlobal: manager.role === "admin" };
+    return { stores: [], districts: [], areas: [], regions: [], canSetGlobal: manager.role === "admin" };
   }
 
   const { data: stores } = await supa
@@ -266,21 +266,21 @@ async function scopeOptions(supa, manager) {
   const { data: districts } = districtIds.length
     ? await supa
         .from("districts")
-        .select("id, name, code, market_id")
+        .select("id, name, code, area_id")
         .in("id", districtIds)
         .order("name")
     : { data: [] };
 
-  const marketIds = [...new Set((districts ?? []).map((d) => d.market_id))];
-  const { data: markets } = marketIds.length
+  const areaIds = [...new Set((districts ?? []).map((d) => d.area_id))];
+  const { data: areas } = areaIds.length
     ? await supa
-        .from("markets")
+        .from("areas")
         .select("id, name, code, region_id")
-        .in("id", marketIds)
+        .in("id", areaIds)
         .order("name")
     : { data: [] };
 
-  const regionIds = [...new Set((markets ?? []).map((m) => m.region_id))];
+  const regionIds = [...new Set((areas ?? []).map((a) => a.region_id))];
   const { data: regions } = regionIds.length
     ? await supa
         .from("regions")
@@ -292,7 +292,7 @@ async function scopeOptions(supa, manager) {
   return {
     stores: stores ?? [],
     districts: districts ?? [],
-    markets: markets ?? [],
+    areas: areas ?? [],
     regions: regions ?? [],
     canSetGlobal: manager.role === "admin",
   };
@@ -308,11 +308,11 @@ async function resolveStoresForScope(supa, scopeType, scopeId) {
     const { data } = await supa.from("stores").select("id").eq("district_id", scopeId);
     return (data ?? []).map((s) => s.id);
   }
-  if (scopeType === "market") {
+  if (scopeType === "area") {
     const { data: districts } = await supa
       .from("districts")
       .select("id")
-      .eq("market_id", scopeId);
+      .eq("area_id", scopeId);
     const districtIds = (districts ?? []).map((d) => d.id);
     if (!districtIds.length) return [];
     const { data: stores } = await supa
@@ -322,16 +322,16 @@ async function resolveStoresForScope(supa, scopeType, scopeId) {
     return (stores ?? []).map((s) => s.id);
   }
   if (scopeType === "region") {
-    const { data: markets } = await supa
-      .from("markets")
+    const { data: areas } = await supa
+      .from("areas")
       .select("id")
       .eq("region_id", scopeId);
-    const marketIds = (markets ?? []).map((m) => m.id);
-    if (!marketIds.length) return [];
+    const areaIds = (areas ?? []).map((a) => a.id);
+    if (!areaIds.length) return [];
     const { data: districts } = await supa
       .from("districts")
       .select("id")
-      .in("market_id", marketIds);
+      .in("area_id", areaIds);
     const districtIds = (districts ?? []).map((d) => d.id);
     if (!districtIds.length) return [];
     const { data: stores } = await supa

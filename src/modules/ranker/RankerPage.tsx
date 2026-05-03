@@ -6,7 +6,7 @@ export function RankerPage() {
     <>
       <PageHeader
         title="Ranker"
-        description="Performance dashboards across stores, districts, and markets."
+        description="Performance dashboards across stores, districts, and areas."
       />
       <EmptyState
         title="Module under construction"

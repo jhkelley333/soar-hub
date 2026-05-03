@@ -15,7 +15,7 @@ export type UserRole =
   | "payroll"
   | "admin";
 
-export type ScopeType = "store" | "district" | "market" | "region" | "global";
+export type ScopeType = "store" | "district" | "area" | "region" | "global";
 
 export interface Profile {
   id: string;

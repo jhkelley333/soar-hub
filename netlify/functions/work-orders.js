@@ -34,7 +34,7 @@
 //     fallback), returns { url, path }.
 //
 // SUPABASE TABLES TOUCHED (read-only via service-role key)
-//   profiles, user_scopes (indirectly), stores/districts/markets/regions
+//   profiles, user_scopes (indirectly), stores/districts/areas/regions
 //   (indirectly via the user_visible_stores Postgres function). No work-
 //   order data lives in Supabase — Smartsheet is the source of truth.
 //
