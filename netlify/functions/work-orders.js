@@ -1,29 +1,65 @@
 // netlify/functions/work-orders.js
 //
-// Phase 2a Work Orders backend.
+// Phase 2a Work Orders backend — single Netlify Function brokering four
+// external systems behind a Supabase JWT auth bridge.
 //
-// Auth model: the frontend sends `Authorization: Bearer <supabase_access_token>`.
-// The server validates the JWT against Supabase using the service-role key,
-// looks up the user's role and visible stores via the `user_visible_stores`
-// Postgres function, and gates downstream calls on those scopes.
+// ─── DATA FLOW ──────────────────────────────────────────────────────────────
 //
-// External systems brokered here:
-//   - Smartsheet — work-order tickets (list / get / create / update). The
-//     "Store Number" column is matched 1:1 against `stores.number` rows
-//     returned by Supabase, with admin/payroll roles bypassing the filter.
-//   - Google Sheets — vendor list (read-only).
-//   - Google Drive — training videos (read-only).
-//   - Supabase Storage — attachment uploads. The resulting public URL is
-//     written back to the Smartsheet "Quote URL" column when present
-//     (falls back to "Notes").
+// SUBMISSION (today, one path)
+//   React "📝 Submit Work Order" button → opens Smartsheet form in a new tab
+//   → user fills form → Smartsheet creates the row directly. This function
+//   does NOT see the submission. Smartsheet's own automation fires alerts.
+//   (A POST createWorkOrder endpoint exists here for future use; no React
+//   caller invokes it as of this writing.)
 //
-// Required Netlify env vars (set in the Netlify dashboard):
+// LISTING / READING
+//   React → fetch /.netlify/functions/work-orders
+//          Authorization: Bearer <Supabase access token>
+//   → function validates JWT (supabase.auth.getUser), looks up role +
+//     visible stores via user_visible_stores RPC, fetches the entire sheet
+//     from Smartsheet, filters rows by user's store scope, normalizes cell
+//     values, returns JSON to the caller.
+//
+// UPDATING (status / approval / notes / vendor / etc.)
+//   React drawer → fetch PUT /.netlify/functions/work-orders?id=<row id>
+//   → function re-validates JWT, re-checks scope, runs server-side rules
+//     (status workflow, approval gating, required notes), translates input
+//     keys to actual sheet column ids, writes via Smartsheet PUT, returns
+//     the refreshed row.
+//
+// ATTACHMENTS
+//   React → POST /.netlify/functions/work-orders?action=upload (base64)
+//   → function decodes, uploads to Supabase Storage bucket, gets the public
+//     URL, writes URL into the Smartsheet "Quote URL" column (or "Notes"
+//     fallback), returns { url, path }.
+//
+// SUPABASE TABLES TOUCHED (read-only via service-role key)
+//   profiles, user_scopes (indirectly), stores/districts/markets/regions
+//   (indirectly via the user_visible_stores Postgres function). No work-
+//   order data lives in Supabase — Smartsheet is the source of truth.
+//
+// SUPABASE STORAGE (write)
+//   Bucket SUPABASE_BUCKET (default 'work-order-attachments'). Public read
+//   so the URL written into Smartsheet's "Quote URL" column resolves for
+//   any user.
+//
+// COLUMN-NAME ALIASES (Smartsheet column titles drift over time)
+//   _submittedDate     ← Date Submitted | Created | Submit Date | Date Created | rowCreatedAt
+//   _submittedBy       ← Submitted By | Submitted by | Submitter | Created By | Submitted By Email
+//   _approvalLevel     ← Approval Level | Approval
+//   _approvalNotes     ← Approval Notes | Approval Request Notes
+//   _issueDescription  ← Issue Description | Description
+//   On WRITE, "Approval Notes" input is auto-routed to whichever column
+//   actually exists on the sheet (Approval Notes OR Approval Request Notes).
+//
+// ─── REQUIRED NETLIFY ENV VARS ──────────────────────────────────────────────
 //   VITE_SUPABASE_URL              — also exposed to the browser; safe.
 //   SUPABASE_SERVICE_ROLE_KEY      — server-only.
 //   SMARTSHEET_TOKEN
 //   SMARTSHEET_SHEET_ID
-//   VENDOR_SHEET_ID                — Google Sheet ID.
-//   VIDEO_FOLDER_ID                — Google Drive folder ID.
+//   VENDOR_SHEET_ID                — Google Sheet ID for vendors tab.
+//   VIDEO_FOLDER_ID                — Google Drive folder ID for videos tab.
+//                                    (Legacy alias VIDEOS_FOLDER_ID also accepted.)
 //   GOOGLE_SERVICE_ACCOUNT_JSON    — full service-account JSON, stringified.
 //   SUPABASE_BUCKET                — optional, defaults to 'work-order-attachments'.
 
@@ -35,7 +71,8 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const SMARTSHEET_TOKEN = process.env.SMARTSHEET_TOKEN;
 const SHEET_ID = process.env.SMARTSHEET_SHEET_ID;
 const VENDOR_SHEET_ID = process.env.VENDOR_SHEET_ID;
-const VIDEO_FOLDER_ID = process.env.VIDEO_FOLDER_ID;
+const VIDEO_FOLDER_ID =
+  process.env.VIDEO_FOLDER_ID || process.env.VIDEOS_FOLDER_ID;
 const GOOGLE_CREDS = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
 const BUCKET = process.env.SUPABASE_BUCKET || "work-order-attachments";
 
@@ -203,9 +240,21 @@ function flattenRow(row, columns) {
       out["Date Created"],
       row.createdAt,
     ]) || "";
+  out._submittedBy =
+    firstTruthy([
+      out["Submitted By"],
+      out["Submitted by"], // lowercase 'b' — current sheet column name
+      out["Submitter"],
+      out["Created By"],
+      out["Submitted By Email"],
+    ]) || "";
   out._approvalLevel =
     firstTruthy([out["Approval Level"], out["Approval"]]) || "";
-  out._approvalNotes = firstTruthy([out["Approval Notes"]]) || "";
+  out._approvalNotes =
+    firstTruthy([
+      out["Approval Notes"],
+      out["Approval Request Notes"], // legacy column name
+    ]) || "";
   out._issueDescription =
     firstTruthy([out["Issue Description"], out["Description"]]) || "";
   return out;
@@ -242,10 +291,28 @@ async function getWorkOrder(user, rowId) {
   return flattenRow(row, sheet.columns);
 }
 
+// If a caller sends an input key whose column doesn't exist on the sheet but
+// a known alias does, route to the alias. Keeps callers blissfully unaware
+// of column-name drift in Smartsheet.
+const WRITE_ALIASES = {
+  "Approval Notes": ["Approval Notes", "Approval Request Notes"],
+  "Approval Request Notes": ["Approval Request Notes", "Approval Notes"],
+};
+
+function resolveWriteColumn(title, columnMap) {
+  if (columnMap[title]) return columnMap[title];
+  const aliases = WRITE_ALIASES[title];
+  if (!aliases) return null;
+  for (const a of aliases) {
+    if (columnMap[a]) return columnMap[a];
+  }
+  return null;
+}
+
 function cellsFromInput(input, columnMap) {
   const cells = [];
   for (const [title, value] of Object.entries(input)) {
-    const columnId = columnMap[title];
+    const columnId = resolveWriteColumn(title, columnMap);
     if (!columnId) continue;
     cells.push({ columnId, value });
   }

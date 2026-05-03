@@ -35,6 +35,7 @@ export interface WorkOrder {
   createdAt?: string;
   modifiedAt?: string;
   _submittedDate?: string;
+  _submittedBy?: string;
   _approvalLevel?: string;
   _approvalNotes?: string;
   _issueDescription?: string;

@@ -279,7 +279,7 @@ function DetailDrawer({
       <div className="grid grid-cols-2 gap-4">
         <Field label="Store" value={display(row["Store Number"])} />
         <Field label="Submitted" value={formatDate(row._submittedDate)} />
-        <Field label="Submitted by" value={display(row["Submitted By"])} />
+        <Field label="Submitted by" value={display(row._submittedBy)} />
         <Field label="Priority" value={display(row["Priority"])} />
         <Field label="Issue" value={display(row["Issue"])} className="col-span-2" />
         <ReadOnlyTextArea
