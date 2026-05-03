@@ -5,17 +5,17 @@ import { visibleNav } from "@/app/nav";
 import { ROLE_LABELS } from "@/types/database";
 import { cn } from "@/lib/cn";
 
-export function Sidebar() {
+export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { profile, signOut } = useAuth();
   const items = visibleNav(profile?.role);
 
   return (
-    <aside className="flex h-full w-60 flex-col border-r border-zinc-200 bg-white">
+    <aside className="flex h-full w-60 flex-col border-r border-zinc-200 bg-white shadow-xl lg:shadow-none">
       <div className="flex h-14 items-center gap-2.5 border-b border-zinc-100 px-5">
-        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-zinc-900 text-xs font-semibold text-white">
+        <div className="flex h-7 w-7 items-center justify-center rounded-md bg-midnight text-xs font-semibold text-white">
           S
         </div>
-        <div className="text-sm font-semibold tracking-tight text-zinc-900">SOAR Hub</div>
+        <div className="text-sm font-semibold tracking-tight text-midnight">SOAR Hub</div>
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 py-4">
@@ -25,12 +25,13 @@ export function Sidebar() {
               <NavLink
                 to={item.to}
                 end={item.to === "/"}
+                onClick={() => onNavigate?.()}
                 className={({ isActive }) =>
                   cn(
                     "flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium transition",
                     isActive
-                      ? "bg-zinc-900 text-white"
-                      : "text-zinc-600 hover:bg-zinc-50 hover:text-zinc-900"
+                      ? "bg-accent text-accent-fg"
+                      : "text-zinc-600 hover:bg-zinc-50 hover:text-midnight"
                   )
                 }
               >
@@ -53,7 +54,7 @@ export function Sidebar() {
         )}
         <button
           onClick={() => void signOut()}
-          className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium text-zinc-600 transition hover:bg-zinc-50 hover:text-zinc-900"
+          className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium text-zinc-600 transition hover:bg-zinc-50 hover:text-midnight"
         >
           <LogOut className="h-4 w-4" strokeWidth={1.75} />
           Sign out

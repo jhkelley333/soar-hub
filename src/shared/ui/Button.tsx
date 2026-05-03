@@ -11,13 +11,13 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const VARIANT: Record<Variant, string> = {
   primary:
-    "bg-zinc-900 text-white hover:bg-zinc-800 disabled:bg-zinc-300 disabled:text-zinc-500",
+    "bg-accent text-accent-fg hover:bg-accent-hover disabled:bg-zinc-300 disabled:text-zinc-500",
   secondary:
-    "bg-white text-zinc-900 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50 disabled:text-zinc-400",
+    "bg-white text-midnight ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50 disabled:text-zinc-400",
   ghost:
     "text-zinc-700 hover:bg-zinc-100 disabled:text-zinc-400",
   danger:
-    "bg-red-600 text-white hover:bg-red-500 disabled:bg-red-300",
+    "bg-cherry text-white hover:bg-cherry-hover disabled:bg-red-300",
 };
 
 const SIZE: Record<Size, string> = {
@@ -33,7 +33,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     <button
       ref={ref}
       className={cn(
-        "inline-flex items-center justify-center gap-2 rounded-md font-medium tracking-tight transition outline-none focus-visible:ring-2 focus-visible:ring-zinc-900 focus-visible:ring-offset-2 disabled:cursor-not-allowed",
+        "inline-flex items-center justify-center gap-2 rounded-md font-medium tracking-tight transition outline-none focus-visible:ring-2 focus-visible:ring-frost focus-visible:ring-offset-2 disabled:cursor-not-allowed",
         VARIANT[variant],
         SIZE[size],
         className

@@ -21,15 +21,20 @@
   --color-ink-muted: #52525b;
   --color-ink-subtle: #a1a1aa;
 
-  /* Single restrained accent — change once and the whole app rebrands */
-  --color-accent: #0a0a0a;
-  --color-accent-fg: #fafafa;
+  /* Sonic brand palette — change once and the whole app rebrands */
+  --color-accent: #008AD8;          /* Sky — primary actions, active nav */
+  --color-accent-hover: #1A99DD;    /* Sky tinted lighter for hover */
+  --color-accent-fg: #ffffff;
+  --color-frost: #74D2E7;           /* hover/focus accents, focus rings */
+  --color-midnight: #285780;        /* headings, structural ink, brand mark */
+  --color-cherry: #E40046;          /* destructive + sign-in CTA */
+  --color-cherry-hover: #C8003D;
 
-  /* Semantic — use sparingly */
+  /* Semantic — use sparingly. Danger maps to Cherry for brand consistency. */
   --color-success: #16a34a;
   --color-warning: #d97706;
-  --color-danger: #dc2626;
-  --color-info: #2563eb;
+  --color-danger: #E40046;
+  --color-info: #008AD8;
 }
 
 html, body, #root { height: 100%; }

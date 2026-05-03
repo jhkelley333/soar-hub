@@ -67,7 +67,7 @@ function Stat({
           </div>
           <Badge tone={tone}>Live</Badge>
         </div>
-        <div className="mt-3 text-3xl font-semibold tracking-tight text-zinc-900 tabular-nums">
+        <div className="mt-3 text-3xl font-semibold tracking-tight text-midnight tabular-nums">
           {value}
         </div>
       </CardBody>
