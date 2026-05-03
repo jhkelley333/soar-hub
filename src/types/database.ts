@@ -42,6 +42,7 @@ export interface Store {
   number: string;
   name: string;
   district_id: string;
+  phone: string | null;
   city: string | null;
   state: string | null;
   is_active: boolean;
