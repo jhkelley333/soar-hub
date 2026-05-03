@@ -11,6 +11,7 @@ import {
   fetchHistory,
   fetchManageableRoles,
   fetchScopeOptions,
+  sendPasswordReset,
   updateUser,
   type AuditEntry,
   type ManagedUser,
@@ -156,6 +157,14 @@ export function EditMemberModal({
     onError: (e: unknown) => setError((e as Error)?.message ?? "Reactivate failed."),
   });
 
+  const reset = useMutation({
+    mutationFn: (id: string) => sendPasswordReset(id),
+    onSuccess: (data) => {
+      toast.push(`Reset link sent to ${data.sent_to}.`, "success");
+    },
+    onError: (e: unknown) => setError((e as Error)?.message ?? "Send reset failed."),
+  });
+
   if (!member) return null;
 
   function submitEdits() {
@@ -214,7 +223,10 @@ export function EditMemberModal({
   const loading = rolesQuery.isLoading || scopeQuery.isLoading;
   const isAdmin = managerRole === "admin";
   const anyMutationPending =
-    update.isPending || deactivate.isPending || reactivate.isPending;
+    update.isPending ||
+    deactivate.isPending ||
+    reactivate.isPending ||
+    reset.isPending;
 
   return (
     <Modal
@@ -323,6 +335,22 @@ export function EditMemberModal({
           {error && (
             <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
               {error}
+            </div>
+          )}
+
+          {/* Send password reset — active users only */}
+          {member.is_active && (
+            <div className="border-t border-zinc-100 pt-4">
+              <Button
+                variant="secondary"
+                onClick={() => member && reset.mutate(member.id)}
+                disabled={anyMutationPending}
+              >
+                {reset.isPending ? "Sending…" : "Send password reset"}
+              </Button>
+              <p className="mt-1 text-xs text-zinc-500">
+                Emails them a link to set a new password.
+              </p>
             </div>
           )}
 
