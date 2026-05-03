@@ -129,3 +129,24 @@ export function addUser(input: AddUserInput): Promise<{ ok: true; user_id: strin
     { method: "POST", body: JSON.stringify(input) }
   );
 }
+
+// ----------------------------------------------------------------------------
+// Update user — partial. Fields not present are left alone.
+// ----------------------------------------------------------------------------
+
+export interface UpdateUserInput {
+  user_id: string;
+  full_name?: string | null;
+  phone?: string | null;
+  role?: UserRole;
+  scope_type?: "store" | "district" | "region" | "global";
+  scope_id?: string | null;
+  is_active?: boolean;
+}
+
+export function updateUser(input: UpdateUserInput): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`${FN}?action=update-user`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}

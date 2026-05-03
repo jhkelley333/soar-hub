@@ -13,6 +13,7 @@ import { formatPhoneForDisplay } from "@/lib/phone";
 import { cn } from "@/lib/cn";
 import { listTeam, type ManagedUser } from "./api";
 import { AddUserModal } from "./AddUserModal";
+import { EditMemberModal } from "./EditMemberModal";
 
 type RoleFilter = "all" | UserRole;
 
@@ -26,6 +27,7 @@ export function TeamPage() {
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
   const [includeInactive, setIncludeInactive] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [editing, setEditing] = useState<ManagedUser | null>(null);
 
   const allMembers = query.data?.members ?? [];
 
@@ -121,6 +123,12 @@ export function TeamPage() {
         }
       />
       <AddUserModal open={addOpen} onClose={() => setAddOpen(false)} />
+      <EditMemberModal
+        open={!!editing}
+        member={editing}
+        managerRole={data.user.role}
+        onClose={() => setEditing(null)}
+      />
 
       {/* Filter bar */}
       <div className="mb-4 flex flex-col gap-2 rounded-lg border border-zinc-200 bg-white p-3 sm:flex-row sm:items-center sm:gap-3">
@@ -177,7 +185,7 @@ export function TeamPage() {
       ) : (
         <div className="space-y-2">
           {filtered.map((m) => (
-            <MemberCard key={m.id} member={m} />
+            <MemberCard key={m.id} member={m} onEdit={() => setEditing(m)} />
           ))}
         </div>
       )}
@@ -189,7 +197,13 @@ export function TeamPage() {
 // Member card
 // ----------------------------------------------------------------------------
 
-function MemberCard({ member }: { member: ManagedUser }) {
+function MemberCard({
+  member,
+  onEdit,
+}: {
+  member: ManagedUser;
+  onEdit: () => void;
+}) {
   const toast = useToast();
 
   function copy(value: string, label: string) {
@@ -272,7 +286,7 @@ function MemberCard({ member }: { member: ManagedUser }) {
         </div>
 
         <div className="flex shrink-0 gap-2">
-          <Button variant="ghost" size="sm" disabled title="Coming next commit">
+          <Button variant="ghost" size="sm" onClick={onEdit}>
             Manage
           </Button>
         </div>

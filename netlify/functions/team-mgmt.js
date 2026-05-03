@@ -441,6 +441,175 @@ async function addUser(supa, manager, body) {
 }
 
 // ----------------------------------------------------------------------------
+// update-user — change role / scope / phone / active state
+// ----------------------------------------------------------------------------
+//
+// Single endpoint for all post-create edits. Fields are partial — send only
+// what you're changing. Server enforces:
+//   - target must be in manager's manageable_users() set
+//   - new role must be in manager's manageableRoles
+//   - scope must match the target role's expected scope_type AND be within
+//     the manager's reach (admin bypasses reach check)
+//   - is_active=true (reactivation) is admin-only
+//   - manager cannot edit themselves through this endpoint
+//
+// Scope is replaced wholesale (single-scope model). The current single-scope
+// row is deleted, the new one inserted. Multi-scope users get edited
+// directly in SQL until we expose multi-scope UI.
+
+async function updateUser(supa, manager, body) {
+  const target_id = body?.user_id;
+  if (!target_id) return { error: "user_id is required.", status: 400 };
+  if (target_id === manager.id) {
+    return {
+      error: "You can't change your own role from My Team. Ask an admin.",
+      status: 403,
+    };
+  }
+
+  // Confirm target is in manager's reach.
+  const { data: managed, error: rpcErr } = await supa.rpc("manageable_users", {
+    manager_id: manager.id,
+  });
+  if (rpcErr) return { error: rpcErr.message, status: 500 };
+  const target = (managed ?? []).find((m) => m.id === target_id);
+  if (!target) {
+    return { error: "That user isn't in your scope.", status: 403 };
+  }
+
+  // ---- Build the profile-table update piecewise ----
+  const updates = {};
+
+  // Role change
+  let effectiveRole = target.role;
+  if (body.role !== undefined && body.role !== target.role) {
+    const allowed = manageableRoles(manager.role);
+    if (!allowed.includes(body.role)) {
+      return {
+        error: `Your role can't change someone to "${body.role}".`,
+        status: 403,
+      };
+    }
+    updates.role = body.role;
+    effectiveRole = body.role;
+  }
+
+  // Phone change (null/empty = clear)
+  if (body.phone !== undefined) {
+    if (body.phone === null || String(body.phone).trim() === "") {
+      updates.phone = null;
+    } else {
+      const normalized = normalizePhone(body.phone);
+      if (!normalized) {
+        return { error: "Phone must be a 10-digit number.", status: 400 };
+      }
+      updates.phone = normalized;
+    }
+  }
+
+  // Full name change
+  if (body.full_name !== undefined) {
+    const trimmed = String(body.full_name).trim();
+    updates.full_name = trimmed || null;
+  }
+
+  // Active state
+  if (body.is_active !== undefined && body.is_active !== target.is_active) {
+    if (body.is_active === true && manager.role !== "admin") {
+      return {
+        error: "Only Admins can reactivate users.",
+        status: 403,
+      };
+    }
+    updates.is_active = body.is_active;
+  }
+
+  // ---- Scope change (full replacement) ----
+  let newScope = null;
+  if (body.scope_type !== undefined || body.scope_id !== undefined) {
+    const expectedScope = scopeForRole(effectiveRole);
+    const submittedScope = body.scope_type ?? expectedScope;
+    if (submittedScope !== expectedScope) {
+      return {
+        error: `Scope type "${submittedScope}" doesn't match the role "${effectiveRole}".`,
+        status: 400,
+      };
+    }
+    if (expectedScope !== "global" && !body.scope_id) {
+      return { error: "A scope must be selected.", status: 400 };
+    }
+    if (expectedScope === "global" && manager.role !== "admin") {
+      return {
+        error: "Only Admins can set users to global scope.",
+        status: 403,
+      };
+    }
+    if (manager.role !== "admin" && expectedScope !== "global") {
+      const { data: managerStoreIds } = await supa.rpc("user_visible_stores", {
+        uid: manager.id,
+      });
+      const set = new Set(managerStoreIds ?? []);
+      const targetStores = await resolveStoresForScope(
+        supa,
+        expectedScope,
+        body.scope_id
+      );
+      if (!targetStores.length) {
+        return { error: "That scope has no active stores.", status: 400 };
+      }
+      if (targetStores.some((id) => !set.has(id))) {
+        return { error: "That scope is outside your reach.", status: 403 };
+      }
+    }
+    newScope = {
+      scope_type: expectedScope,
+      scope_id: expectedScope === "global" ? null : body.scope_id,
+    };
+  }
+
+  // Apply profile-row updates
+  if (Object.keys(updates).length > 0) {
+    const { error: profileErr } = await supa
+      .from("profiles")
+      .update(updates)
+      .eq("id", target_id);
+    if (profileErr) {
+      return {
+        error: `Update failed: ${profileErr.message}`,
+        status: 500,
+      };
+    }
+  }
+
+  // Apply scope replacement if we received one
+  if (newScope) {
+    const { error: delErr } = await supa
+      .from("user_scopes")
+      .delete()
+      .eq("user_id", target_id);
+    if (delErr) {
+      return {
+        error: `Couldn't clear old scope: ${delErr.message}`,
+        status: 500,
+      };
+    }
+    const { error: insErr } = await supa.from("user_scopes").insert({
+      user_id: target_id,
+      scope_type: newScope.scope_type,
+      scope_id: newScope.scope_id,
+    });
+    if (insErr) {
+      return {
+        error: `Couldn't set new scope: ${insErr.message}`,
+        status: 500,
+      };
+    }
+  }
+
+  return { ok: true };
+}
+
+// ----------------------------------------------------------------------------
 // HTTP handler
 // ----------------------------------------------------------------------------
 
@@ -488,6 +657,7 @@ export const handler = async (event) => {
     if (event.httpMethod === "POST") {
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "add-user") return unwrap(await addUser(supa, manager, body));
+      if (action === "update-user") return unwrap(await updateUser(supa, manager, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
 
