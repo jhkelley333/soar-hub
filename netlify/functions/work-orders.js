@@ -72,7 +72,13 @@ const SMARTSHEET_TOKEN = process.env.SMARTSHEET_TOKEN;
 const SHEET_ID = process.env.SMARTSHEET_SHEET_ID;
 const VENDOR_SHEET_ID = process.env.VENDOR_SHEET_ID;
 const VIDEO_FOLDER_ID =
-  process.env.VIDEO_FOLDER_ID || process.env.VIDEOS_FOLDER_ID;
+  process.env.VIDEO_FOLDER_ID ||
+  process.env.VIDEOS_FOLDER_ID ||
+  // Default: shared training-videos folder. Override with the env var if you
+  // ever swap to a different folder. Service account must be Viewer on the
+  // folder regardless — Drive API doesn't honor "anyone with link" sharing
+  // for service-account callers the way the web UI does.
+  "1oeHi2gCuNlzdVaOUC5MCVf9Kh4eQAFlq";
 const GOOGLE_CREDS = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
 const BUCKET = process.env.SUPABASE_BUCKET || "work-order-attachments";
 
@@ -359,7 +365,9 @@ async function updateWorkOrder(user, rowId, input) {
         status: 403,
       };
     }
-    // Approve / Reject require approver-of-this-tier and non-empty notes.
+    // Approve / Reject require approver-of-this-tier. Approval Notes were
+    // written at request time by whoever submitted the approval — approvers
+    // don't add notes, they just decide.
     if (newStatus === "Approved" || newStatus === "Rejected - See Notes") {
       const approvalLevel =
         cleaned["Approval Level"] !== undefined
@@ -371,34 +379,51 @@ async function updateWorkOrder(user, rowId, input) {
           status: 403,
         };
       }
-      const notesRaw =
-        cleaned["Approval Notes"] !== undefined
-          ? cleaned["Approval Notes"]
-          : existing._approvalNotes;
-      if (!String(notesRaw ?? "").trim()) {
-        return {
-          error:
-            "Approval Notes are required when changing status to Approved or Rejected - See Notes",
-          status: 400,
-        };
+    }
+    // Closing a ticket requires Notes (≥3 chars), per legacy close-protection.
+    if (newStatus === "Closed") {
+      const notesNow =
+        cleaned["Notes"] !== undefined ? cleaned["Notes"] : existing["Notes"];
+      if (String(notesNow ?? "").trim().length < 3) {
+        return { error: "Notes are required before closing a ticket.", status: 400 };
       }
     }
   }
 
-  // ---- Auto-set Pending Approval when Approval Level fills in -------------
-  // Only if the caller didn't explicitly set Status in this update.
-  if (cleaned["Approval Level"] !== undefined && cleaned.Status === undefined) {
-    const before = String(existing._approvalLevel || "").trim();
-    const after = String(cleaned["Approval Level"] || "").trim();
-    if (before === "" && after !== "" && existing.Status === "Received") {
-      cleaned.Status = "Pending Approval";
+  // ---- Approval-request validation (any role can trigger) ------------------
+  // When a caller is filling in Approval Level for the first time, we treat
+  // that as "submitting an approval request" and require:
+  //   - Approval Notes (the requester's description)
+  //   - A Quote URL (uploaded via /action=upload before this call OR present)
+  // The status auto-bumps to "Pending Approval" so Smartsheet automation
+  // routes the alert.
+  const submittingApproval =
+    cleaned["Approval Level"] !== undefined &&
+    String(cleaned["Approval Level"] || "").trim() !== "" &&
+    String(existing._approvalLevel || "").trim() === "";
+  if (submittingApproval) {
+    const notesRaw =
+      cleaned["Approval Notes"] !== undefined
+        ? cleaned["Approval Notes"]
+        : existing._approvalNotes;
+    if (String(notesRaw ?? "").trim().length < 3) {
+      return {
+        error: "Approval Notes are required when submitting an approval request.",
+        status: 400,
+      };
     }
-  }
-
-  // ---- Approval Notes editability -----------------------------------------
-  // Only approver roles (and admin) can write Approval Notes. Strip silently.
-  if (cleaned["Approval Notes"] !== undefined && !isApproverRole(user.role)) {
-    delete cleaned["Approval Notes"];
+    const quoteUrl =
+      cleaned["Quote URL"] !== undefined
+        ? cleaned["Quote URL"]
+        : existing["Quote URL"];
+    if (!String(quoteUrl ?? "").trim()) {
+      return {
+        error: "A vendor quote attachment is required when submitting an approval request.",
+        status: 400,
+      };
+    }
+    // Auto-bump Status to Pending Approval if the caller didn't pick one.
+    if (cleaned.Status === undefined) cleaned.Status = "Pending Approval";
   }
 
   const cells = cellsFromInput(cleaned, cols);

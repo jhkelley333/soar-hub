@@ -5,12 +5,12 @@ import { visibleNav } from "@/app/nav";
 import { ROLE_LABELS } from "@/types/database";
 import { cn } from "@/lib/cn";
 
-export function Sidebar() {
+export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { profile, signOut } = useAuth();
   const items = visibleNav(profile?.role);
 
   return (
-    <aside className="flex h-full w-60 flex-col border-r border-zinc-200 bg-white">
+    <aside className="flex h-full w-60 flex-col border-r border-zinc-200 bg-white shadow-xl lg:shadow-none">
       <div className="flex h-14 items-center gap-2.5 border-b border-zinc-100 px-5">
         <div className="flex h-7 w-7 items-center justify-center rounded-md bg-midnight text-xs font-semibold text-white">
           S
@@ -25,6 +25,7 @@ export function Sidebar() {
               <NavLink
                 to={item.to}
                 end={item.to === "/"}
+                onClick={() => onNavigate?.()}
                 className={({ isActive }) =>
                   cn(
                     "flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-sm font-medium transition",

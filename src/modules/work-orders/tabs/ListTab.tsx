@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronDown, ChevronUp, Search } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Card } from "@/shared/ui/Card";
 import { Badge } from "@/shared/ui/Badge";
@@ -7,6 +8,8 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
 import { Skeleton } from "@/shared/ui/Skeleton";
+import { useToast } from "@/shared/ui/Toaster";
+import { cn } from "@/lib/cn";
 import {
   type WorkOrder,
   type WorkOrderMeta,
@@ -17,8 +20,17 @@ import {
 } from "../api";
 
 // ----------------------------------------------------------------------------
-// Status display
+// Constants
 // ----------------------------------------------------------------------------
+
+// Verbatim values from the Smartsheet "Approval Level" dropdown. The label is
+// what we show; the value is what we write. Match the Smartsheet column
+// configuration EXACTLY or the auto-routing won't fire.
+const APPROVAL_TIERS = [
+  { label: "Regional VP — under $1,750", value: "Regional VP < $1750" },
+  { label: "VP — $1,751 to $2,500", value: "VP $1751 -$2500" },
+  { label: "COO — over $2,500", value: "COO > $2500" },
+] as const;
 
 const STATUS_TONE: Record<string, "neutral" | "info" | "warning" | "success" | "danger"> = {
   Received: "info",
@@ -33,6 +45,14 @@ const STATUS_TONE: Record<string, "neutral" | "info" | "warning" | "success" | "
   Closed: "neutral",
 };
 
+// Roles that act as "Store" — limited status options + photo upload section.
+const STORE_ROLES = new Set(["shift_manager", "gm"]);
+const APPROVER_ROLES = new Set(["rvp", "vp", "coo", "admin"]);
+
+// ----------------------------------------------------------------------------
+// Helpers
+// ----------------------------------------------------------------------------
+
 function statusTone(status: unknown): "neutral" | "info" | "warning" | "success" | "danger" {
   return STATUS_TONE[String(status ?? "")] ?? "neutral";
 }
@@ -42,22 +62,56 @@ function display(value: unknown): string {
   return String(value);
 }
 
-function truncate(value: unknown, n = 80): string {
-  const s = display(value);
-  if (s === "—") return s;
-  return s.length > n ? s.slice(0, n - 1) + "…" : s;
-}
-
 function formatDate(value: unknown): string {
   if (!value) return "—";
-  const d = new Date(String(value));
-  if (Number.isNaN(d.getTime())) return String(value);
+  const d = parseDateLoose(value);
+  if (!d) return String(value);
   return d.toLocaleDateString();
 }
 
-// ----------------------------------------------------------------------------
-// Approval permissions (mirrors server-side rules in work-orders.js)
-// ----------------------------------------------------------------------------
+// Smartsheet sometimes returns "07/02/25 9:57 AM" style strings the native
+// Date constructor doesn't parse. Try a few fallbacks before giving up.
+function parseDateLoose(value: unknown): Date | null {
+  if (!value) return null;
+  const s = String(value).trim();
+  if (!s) return null;
+  let d = new Date(s);
+  if (!Number.isNaN(d.getTime())) return d;
+  const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?:\s*(AM|PM))?)?/i);
+  if (m) {
+    let yr = parseInt(m[3], 10);
+    if (yr < 100) yr += 2000;
+    let hr = m[4] ? parseInt(m[4], 10) : 0;
+    const mn = m[5] ? parseInt(m[5], 10) : 0;
+    if (m[6]) {
+      const pm = m[6].toUpperCase() === "PM";
+      if (pm && hr < 12) hr += 12;
+      if (!pm && hr === 12) hr = 0;
+    }
+    d = new Date(yr, parseInt(m[1], 10) - 1, parseInt(m[2], 10), hr, mn);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+  d = new Date(s.replace("T", " ").replace("Z", ""));
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+
+function daysOpen(row: WorkOrder): number | null {
+  const raw = row._submittedDate || row.createdAt || "";
+  const d = parseDateLoose(raw);
+  if (!d) return null;
+  return Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000));
+}
+
+function ageBucket(days: number | null): "neutral" | "success" | "warning" | "danger" {
+  if (days == null) return "neutral";
+  if (days <= 7) return "success";
+  if (days <= 14) return "warning";
+  return "danger";
+}
+
+function isClosed(row: WorkOrder): boolean {
+  return String(row["Status"] ?? "").toLowerCase() === "closed";
+}
 
 function tierFromApprovalLevel(value: string | undefined | null): "rvp" | "vp" | "coo" | null {
   const v = String(value ?? "").trim();
@@ -76,13 +130,23 @@ function canApproveRow(role: string, approvalLevel: string | undefined | null): 
   return false;
 }
 
-function canEditApprovalNotes(role: string): boolean {
-  return role === "admin" || role === "rvp" || role === "vp" || role === "coo";
-}
-
 // ----------------------------------------------------------------------------
 // List
 // ----------------------------------------------------------------------------
+
+interface Filters {
+  openOnly: boolean;
+  status: string; // "All" or a status value
+  search: string;
+  store: string; // "" = all visible stores
+}
+
+const DEFAULT_FILTERS: Filters = {
+  openOnly: false,
+  status: "All",
+  search: "",
+  store: "",
+};
 
 export function ListTab() {
   const query = useQuery({
@@ -90,14 +154,16 @@ export function ListTab() {
     queryFn: listWorkOrders,
   });
 
-  const [openId, setOpenId] = useState<number | null>(null);
+  const [filters, setFilters] = useState<Filters>(DEFAULT_FILTERS);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
 
   if (query.isLoading) {
     return (
       <div className="space-y-3">
-        <Skeleton className="h-12 w-full" />
-        <Skeleton className="h-12 w-full" />
-        <Skeleton className="h-12 w-full" />
+        <Skeleton className="h-20 w-full" />
+        <Skeleton className="h-16 w-full" />
+        <Skeleton className="h-16 w-full" />
+        <Skeleton className="h-16 w-full" />
       </div>
     );
   }
@@ -112,291 +178,595 @@ export function ListTab() {
   }
 
   const data = query.data!;
-  const rows = data.workOrders;
-  const opened = openId == null ? null : rows.find((r) => r.id === openId) ?? null;
+  const allRows = data.workOrders;
+
+  // Derive unique store numbers from visible rows for the store selector.
+  const storeOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const r of allRows) {
+      const s = String(r["Store Number"] ?? "").trim();
+      if (s) set.add(s);
+    }
+    return Array.from(set).sort();
+  }, [allRows]);
+
+  // Apply filters.
+  const filtered = useMemo(() => applyFilters(allRows, filters), [allRows, filters]);
+
+  // Stats are computed on the store-scoped (pre-filter-bar) list so users see
+  // the bigger picture even after narrowing.
+  const stats = useMemo(() => computeStats(allRows), [allRows]);
+
+  function setStatusFilter(status: string) {
+    setFilters((f) => ({ ...f, status, openOnly: status === "All" ? f.openOnly : false }));
+  }
 
   return (
     <>
-      <div className="mb-4 text-sm text-zinc-500">
-        {rows.length} {rows.length === 1 ? "ticket" : "tickets"} in your scope
-        {data.user.canSeeAllStores
-          ? " (all stores)"
-          : data.user.storeNumbers.length > 0
-            ? ` across ${data.user.storeNumbers.length} ${data.user.storeNumbers.length === 1 ? "store" : "stores"}`
-            : ""}
+      <StatsRow stats={stats} active={filters.status} onPick={setStatusFilter} />
+
+      <FilterBar
+        filters={filters}
+        onChange={setFilters}
+        storeOptions={storeOptions}
+        showStorePicker={!STORE_ROLES.has(data.user.role) && !data.user.canSeeAllStores}
+        canSeeAllStores={data.user.canSeeAllStores}
+      />
+
+      <div className="mt-4 mb-3 text-xs uppercase tracking-wider text-zinc-500">
+        {filtered.length} {filtered.length === 1 ? "ticket" : "tickets"}
       </div>
 
-      {rows.length === 0 ? (
+      {filtered.length === 0 ? (
         <EmptyState
-          title="No work orders yet"
-          description="When tickets are submitted from your stores they'll appear here."
+          title="No tickets match your filters"
+          description="Adjust the filters above or clear them to see everything in your scope."
         />
       ) : (
-        <Card>
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="border-b border-zinc-100 text-left text-xs uppercase tracking-wide text-zinc-500">
-                <tr>
-                  <th className="px-5 py-3 font-medium">Store</th>
-                  <th className="px-5 py-3 font-medium">Issue</th>
-                  <th className="px-5 py-3 font-medium">Description</th>
-                  <th className="px-5 py-3 font-medium">Status</th>
-                  <th className="px-5 py-3 font-medium">Vendor</th>
-                  <th className="px-5 py-3 font-medium">Updated</th>
-                  <th className="px-5 py-3" />
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((row) => (
-                  <tr key={row.id} className="border-b border-zinc-100 last:border-0">
-                    <td className="px-5 py-3 font-medium text-midnight tabular-nums">
-                      {display(row["Store Number"])}
-                    </td>
-                    <td className="px-5 py-3 text-zinc-700">{display(row["Issue"])}</td>
-                    <td
-                      className="px-5 py-3 text-zinc-500"
-                      title={display(row._issueDescription)}
-                    >
-                      {truncate(row._issueDescription, 60)}
-                    </td>
-                    <td className="px-5 py-3">
-                      <Badge tone={statusTone(row["Status"])}>{display(row["Status"])}</Badge>
-                    </td>
-                    <td className="px-5 py-3 text-zinc-600">{display(row["Vendor"])}</td>
-                    <td className="px-5 py-3 text-zinc-500 tabular-nums">
-                      {formatDate(row.modifiedAt)}
-                    </td>
-                    <td className="px-5 py-3 text-right">
-                      <Button variant="ghost" size="sm" onClick={() => setOpenId(row.id)}>
-                        Open
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
-
-      {opened && (
-        <DetailDrawer
-          row={opened}
-          user={data.user}
-          meta={data.meta}
-          onClose={() => setOpenId(null)}
-        />
+        <div className="space-y-3">
+          {filtered.map((row) => (
+            <TicketCard
+              key={row.id}
+              row={row}
+              expanded={expandedId === row.id}
+              onToggle={() => setExpandedId(expandedId === row.id ? null : row.id)}
+              user={data.user}
+              meta={data.meta}
+            />
+          ))}
+        </div>
       )}
     </>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Detail / edit / upload drawer
-// ---------------------------------------------------------------------------
+function applyFilters(rows: WorkOrder[], f: Filters): WorkOrder[] {
+  let list = rows;
+  if (f.store) list = list.filter((r) => String(r["Store Number"] ?? "").trim() === f.store);
+  if (f.openOnly) list = list.filter((r) => !isClosed(r));
+  if (f.status !== "All") list = list.filter((r) => String(r["Status"] ?? "") === f.status);
+  if (f.search.trim()) {
+    const q = f.search.trim().toLowerCase();
+    list = list.filter((r) =>
+      [
+        r["Issue"],
+        r._issueDescription,
+        r["Store Number"],
+        r["Vendor"],
+        r["Notes"],
+        r["Status"],
+        r._approvalLevel,
+        r._submittedBy,
+      ]
+        .map((v) => String(v ?? "").toLowerCase())
+        .some((s) => s.includes(q))
+    );
+  }
+  return list;
+}
 
-function DetailDrawer({
+interface Stats {
+  open: number;
+  onHold: number;
+  inProgress: number;
+  partOnOrder: number;
+  aged15: number;
+}
+
+function computeStats(rows: WorkOrder[]): Stats {
+  let open = 0,
+    onHold = 0,
+    inProgress = 0,
+    partOnOrder = 0,
+    aged15 = 0;
+  for (const r of rows) {
+    const closed = isClosed(r);
+    if (!closed) open++;
+    const status = String(r["Status"] ?? "").toLowerCase();
+    if (status === "on hold") onHold++;
+    else if (status === "in progress") inProgress++;
+    else if (status === "part on order") partOnOrder++;
+    if (!closed) {
+      const d = daysOpen(r);
+      if (d != null && d >= 15) aged15++;
+    }
+  }
+  return { open, onHold, inProgress, partOnOrder, aged15 };
+}
+
+// ----------------------------------------------------------------------------
+// Stats strip
+// ----------------------------------------------------------------------------
+
+function StatsRow({
+  stats,
+  active,
+  onPick,
+}: {
+  stats: Stats;
+  active: string;
+  onPick: (status: string) => void;
+}) {
+  const items: { key: string; label: string; value: number; alert?: boolean; filter: string }[] = [
+    { key: "open", label: "Open", value: stats.open, filter: "All" },
+    { key: "on-hold", label: "On Hold", value: stats.onHold, filter: "On Hold" },
+    { key: "in-progress", label: "In Progress", value: stats.inProgress, filter: "In Progress" },
+    { key: "part-on-order", label: "Part on Order", value: stats.partOnOrder, filter: "Part on Order" },
+    { key: "aged", label: "15+ days", value: stats.aged15, filter: "All", alert: stats.aged15 > 0 },
+  ];
+
+  return (
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-5">
+      {items.map((item) => {
+        const isActive = active === item.filter && item.filter !== "All";
+        return (
+          <button
+            key={item.key}
+            onClick={() => onPick(item.filter)}
+            className={cn(
+              "flex flex-col items-start rounded-lg border bg-white px-4 py-3 text-left transition",
+              isActive
+                ? "border-accent ring-2 ring-accent/30"
+                : "border-zinc-200 hover:border-frost",
+              item.alert && "border-red-300"
+            )}
+          >
+            <div
+              className={cn(
+                "text-2xl font-semibold tracking-tight tabular-nums",
+                item.alert ? "text-red-600" : "text-midnight"
+              )}
+            >
+              {item.value}
+            </div>
+            <div
+              className={cn(
+                "mt-0.5 text-[11px] font-medium uppercase tracking-wider",
+                item.alert ? "text-red-600" : "text-zinc-500"
+              )}
+            >
+              {item.label}
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Filter bar
+// ----------------------------------------------------------------------------
+
+function FilterBar({
+  filters,
+  onChange,
+  storeOptions,
+  showStorePicker,
+  canSeeAllStores,
+}: {
+  filters: Filters;
+  onChange: (f: Filters) => void;
+  storeOptions: string[];
+  showStorePicker: boolean;
+  canSeeAllStores: boolean;
+}) {
+  return (
+    <div className="mt-4 flex flex-col gap-2 rounded-lg border border-zinc-200 bg-white p-3 sm:flex-row sm:items-center sm:gap-3">
+      <label className="flex items-center gap-2 text-sm text-zinc-700">
+        <input
+          type="checkbox"
+          className="h-4 w-4 accent-accent"
+          checked={filters.openOnly}
+          onChange={(e) => onChange({ ...filters, openOnly: e.target.checked })}
+        />
+        Open only
+      </label>
+
+      <select
+        value={filters.status}
+        onChange={(e) => onChange({ ...filters, status: e.target.value })}
+        className="rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+      >
+        <option value="All">All statuses</option>
+        <option>Received</option>
+        <option>Pending Approval</option>
+        <option>Approved</option>
+        <option>Rejected - See Notes</option>
+        <option>Scheduled</option>
+        <option>In Progress</option>
+        <option>On Hold</option>
+        <option>Part on Order</option>
+        <option>New Equipment Ordered</option>
+        <option>Closed</option>
+      </select>
+
+      {(showStorePicker || canSeeAllStores) && storeOptions.length > 1 && (
+        <select
+          value={filters.store}
+          onChange={(e) => onChange({ ...filters, store: e.target.value })}
+          className="rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+        >
+          <option value="">All stores</option>
+          {storeOptions.map((s) => (
+            <option key={s} value={s}>
+              Store {s}
+            </option>
+          ))}
+        </select>
+      )}
+
+      <div className="relative flex-1 min-w-0">
+        <Search
+          className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400"
+          strokeWidth={1.75}
+        />
+        <input
+          type="search"
+          placeholder="Search title, vendor, notes, store…"
+          value={filters.search}
+          onChange={(e) => onChange({ ...filters, search: e.target.value })}
+          className="block w-full rounded-md border-0 bg-white pl-9 pr-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-accent"
+        />
+      </div>
+    </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Ticket card
+// ----------------------------------------------------------------------------
+
+function TicketCard({
+  row,
+  expanded,
+  onToggle,
+  user,
+  meta,
+}: {
+  row: WorkOrder;
+  expanded: boolean;
+  onToggle: () => void;
+  user: SessionUser;
+  meta: WorkOrderMeta;
+}) {
+  const days = daysOpen(row);
+  const closed = isClosed(row);
+  const aged = !closed && days != null && days >= 15;
+
+  const issueText =
+    String(row["Issue"] ?? "").trim() ||
+    String(row["Primary Column"] ?? "").trim() ||
+    "Work Order";
+  const status = String(row["Status"] ?? "Received");
+  const storeNum = String(row["Store Number"] ?? "—");
+  const vendor = String(row["Vendor"] ?? "");
+  const submittedDate = formatDate(row._submittedDate);
+  const approvalLevel = String(row._approvalLevel ?? "");
+
+  return (
+    <Card
+      className={cn(
+        "overflow-hidden transition",
+        aged && "border-l-4 border-l-red-500",
+        closed && "opacity-60"
+      )}
+    >
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-start justify-between gap-3 px-4 py-3 text-left transition hover:bg-zinc-50 sm:px-5 sm:py-4"
+        aria-expanded={expanded}
+      >
+        <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge tone={statusTone(status)}>{status}</Badge>
+            {approvalLevel && (
+              <Badge tone="warning" className="normal-case">
+                ⏳ {approvalLevel}
+              </Badge>
+            )}
+          </div>
+          <div className="text-sm font-semibold tracking-tight text-midnight sm:text-base">
+            {issueText}
+          </div>
+          <div className="text-xs text-zinc-500">
+            Store {storeNum}
+            {vendor ? ` · ${vendor}` : ""}
+            {submittedDate !== "—" ? ` · ${submittedDate}` : ""}
+          </div>
+        </div>
+        <div className="flex flex-shrink-0 flex-col items-end gap-1">
+          <Badge tone={ageBucket(days)} className="normal-case">
+            {days == null ? "—" : `${days}d`}
+          </Badge>
+          {expanded ? (
+            <ChevronUp className="h-4 w-4 text-zinc-400" strokeWidth={1.75} />
+          ) : (
+            <ChevronDown className="h-4 w-4 text-zinc-400" strokeWidth={1.75} />
+          )}
+        </div>
+      </button>
+
+      {expanded && <CardBody row={row} user={user} meta={meta} />}
+    </Card>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Card body — detail + edit + photo + approval
+// ----------------------------------------------------------------------------
+
+function CardBody({
   row,
   user,
   meta,
-  onClose,
 }: {
   row: WorkOrder;
   user: SessionUser;
   meta: WorkOrderMeta;
-  onClose: () => void;
 }) {
+  const toast = useToast();
   const qc = useQueryClient();
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const isStore = STORE_ROLES.has(user.role);
+  const isApprover = APPROVER_ROLES.has(user.role);
+
   const [status, setStatus] = useState(String(row["Status"] ?? ""));
   const [vendor, setVendor] = useState(String(row["Vendor"] ?? ""));
   const [notes, setNotes] = useState(String(row["Notes"] ?? ""));
-  const [approvalNotes, setApprovalNotes] = useState(
-    String(row._approvalNotes ?? "")
-  );
-  const fileRef = useRef<HTMLInputElement>(null);
+
+  // Approval-request state (only used when triggering)
+  const [showApprovalForm, setShowApprovalForm] = useState(false);
+  const [approvalTier, setApprovalTier] = useState("");
+  const [approvalNotes, setApprovalNotes] = useState("");
+  const [quoteFile, setQuoteFile] = useState<File | null>(null);
+
+  const approvalLevel = String(row._approvalLevel ?? "");
+  const hasApprovalRequest = approvalLevel !== "";
+  const currentStatus = String(row["Status"] ?? "");
+  const alreadyDecided =
+    currentStatus === "Approved" || currentStatus === "Rejected - See Notes";
+  const canDecide = isApprover && hasApprovalRequest && !alreadyDecided && canApproveRow(user.role, approvalLevel);
 
   const update = useMutation({
     mutationFn: (input: Record<string, unknown>) => updateWorkOrder(row.id, input),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["work-orders"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["work-orders"] });
+      toast.push("Saved.", "success");
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Save failed.", "error"),
   });
 
   const upload = useMutation({
     mutationFn: (file: File) => uploadAttachment(row.id, file),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["work-orders"] }),
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Upload failed.", "error"),
   });
 
-  const approvalLevel = String(row._approvalLevel ?? "");
-  const approverForThisRow = canApproveRow(user.role, approvalLevel);
-  const notesEditable = canEditApprovalNotes(user.role);
-  const currentStatus = String(row["Status"] ?? "");
-  const alreadyDecided =
-    currentStatus === "Approved" || currentStatus === "Rejected - See Notes";
-
-  // Status options: union of statuses the user can change to plus the
-  // current value (so the dropdown doesn't drop the row's existing value
-  // even if the user can't transition to it).
   const statusOptions = useMemo(() => {
     const allowed = new Set<string>(meta.allowedStatusChanges);
     if (currentStatus) allowed.add(currentStatus);
-    // Preserve canonical order
     return meta.statusOrder.filter((s) => allowed.has(s));
   }, [meta, currentStatus]);
 
-  function save() {
-    const payload: Record<string, unknown> = {
+  function saveTicket() {
+    if (status === "Closed" && notes.trim().length < 3) {
+      toast.push("Notes are required before closing a ticket.", "error");
+      return;
+    }
+    if (status === "Closed") {
+      if (!window.confirm("Mark this ticket as Closed?")) return;
+    }
+    update.mutate({
       Status: status,
       Vendor: vendor,
       Notes: notes,
-    };
-    if (notesEditable) payload["Approval Notes"] = approvalNotes;
-    update.mutate(payload);
+    });
+  }
+
+  async function pickPhoto() {
+    fileRef.current?.click();
+  }
+  function onPhoto(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    if (f.size > 10 * 1024 * 1024) {
+      toast.push("File must be under 10 MB.", "error");
+      return;
+    }
+    upload.mutate(f, {
+      onSuccess: () => {
+        toast.push("Photo uploaded.", "success");
+        qc.invalidateQueries({ queryKey: ["work-orders"] });
+      },
+    });
+  }
+
+  async function submitApproval() {
+    if (!approvalTier) {
+      toast.push("Choose an approval tier.", "error");
+      return;
+    }
+    if (approvalNotes.trim().length < 3) {
+      toast.push("Approval notes are required.", "error");
+      return;
+    }
+    if (!quoteFile) {
+      toast.push("Vendor quote attachment is required.", "error");
+      return;
+    }
+    try {
+      // 1. Upload quote first; the function writes the URL into Smartsheet's
+      //    "Quote URL" column as part of the upload, so by the time we issue
+      //    the update below the row already has a quote URL.
+      await upload.mutateAsync(quoteFile);
+      // 2. Send the approval-request fields. Server enforces required notes
+      //    + quote presence, and auto-bumps Status to "Pending Approval".
+      await update.mutateAsync({
+        "Approval Level": approvalTier,
+        "Approval Notes": approvalNotes,
+      });
+      toast.push("Approval request submitted.", "success");
+      setShowApprovalForm(false);
+    } catch {
+      // Errors already toasted by the mutation handlers.
+    }
   }
 
   function decide(decision: "Approved" | "Rejected - See Notes") {
-    if (!approvalNotes.trim()) {
-      window.alert("Approval Notes are required to Approve or Reject.");
-      return;
-    }
-    update.mutate({
-      Status: decision,
-      "Approval Notes": approvalNotes,
-    });
-    setStatus(decision);
-  }
-
-  function pickFile() {
-    fileRef.current?.click();
-  }
-
-  function onFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (f) upload.mutate(f);
-    e.target.value = "";
+    update.mutate({ Status: decision });
   }
 
   return (
-    <Drawer onClose={onClose} title={`Work order #${row.id}`}>
-      <div className="grid grid-cols-2 gap-4">
-        <Field label="Store" value={display(row["Store Number"])} />
-        <Field label="Submitted" value={formatDate(row._submittedDate)} />
-        <Field label="Submitted by" value={display(row._submittedBy)} />
-        <Field label="Priority" value={display(row["Priority"])} />
-        <Field label="Issue" value={display(row["Issue"])} className="col-span-2" />
-        <ReadOnlyTextArea
-          label="Issue Description"
+    <div className="border-t border-zinc-100 px-4 py-4 sm:px-5 sm:py-5">
+      {/* Detail grid */}
+      <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
+        <FieldRow label="Submitted by" value={display(row._submittedBy)} />
+        <FieldRow label="Submitted" value={formatDate(row._submittedDate)} />
+        <FieldRow label="Priority" value={display(row["Priority"])} />
+        <FieldRow label="Approval level" value={display(approvalLevel)} />
+        <FieldRow
+          label="Issue description"
           value={display(row._issueDescription)}
-          className="col-span-2"
+          fullWidth
         />
-        <Field
-          label="Approval Level"
-          value={display(approvalLevel)}
-          className="col-span-2"
-        />
-      </div>
+      </dl>
 
-      <div className="mt-6 space-y-4">
-        <div>
-          <Label htmlFor="f-status">Status</Label>
-          <select
-            id="f-status"
-            value={status}
-            onChange={(e) => setStatus(e.target.value)}
-            className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 transition outline-none focus:ring-2 focus:ring-accent"
-          >
-            {statusOptions.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
+      {/* Update Ticket */}
+      <Section title="Update ticket">
+        <div className="space-y-3">
+          {isStore && (
+            <div>
+              <Label htmlFor={`vendor-${row.id}`}>Vendor</Label>
+              <Input
+                id={`vendor-${row.id}`}
+                value={vendor}
+                onChange={(e) => setVendor(e.target.value)}
+                placeholder="Vendor handling this work"
+              />
+            </div>
+          )}
+          <div>
+            <Label htmlFor={`notes-${row.id}`}>Notes</Label>
+            <textarea
+              id={`notes-${row.id}`}
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 transition outline-none focus:ring-2 focus:ring-accent"
+              placeholder="Updates, parts ordered, ETA, etc."
+            />
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              className="rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent sm:flex-1"
+            >
+              {statusOptions.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            <Button onClick={saveTicket} disabled={update.isPending} size="md">
+              {update.isPending ? "Saving…" : "Save"}
+            </Button>
+          </div>
           {statusOptions.length === 1 && (
-            <p className="mt-1 text-xs text-zinc-500">
+            <p className="text-xs text-zinc-500">
               Your role can't change this ticket's status from the current value.
             </p>
           )}
         </div>
+      </Section>
 
-        <div>
-          <Label htmlFor="f-vendor">Vendor</Label>
-          <Input
-            id="f-vendor"
-            value={vendor}
-            onChange={(e) => setVendor(e.target.value)}
-          />
-        </div>
-
-        <div>
-          <Label htmlFor="f-notes">Notes</Label>
-          <textarea
-            id="f-notes"
-            value={notes}
-            onChange={(e) => setNotes(e.target.value)}
-            rows={3}
-            className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 transition outline-none focus:ring-2 focus:ring-accent"
-          />
-        </div>
-
-        <div>
-          <Label htmlFor="f-approval-notes">
-            Approval Notes
-            {!notesEditable && (
-              <span className="ml-2 text-xs font-normal text-zinc-500">
-                (read-only — approvers only)
-              </span>
-            )}
-          </Label>
-          <textarea
-            id="f-approval-notes"
-            value={approvalNotes}
-            onChange={(e) => setApprovalNotes(e.target.value)}
-            readOnly={!notesEditable}
-            rows={3}
-            className={
-              notesEditable
-                ? "block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 transition outline-none focus:ring-2 focus:ring-accent"
-                : "block w-full rounded-md border-0 bg-zinc-50 px-3 py-2 text-sm text-zinc-700 ring-1 ring-inset ring-zinc-200 outline-none"
-            }
-          />
-        </div>
-      </div>
-
-      {update.isError && (
-        <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {(update.error as Error).message}
-        </div>
+      {/* Photo upload (Store + GM) */}
+      {isStore && (
+        <Section title="Attach photo">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <input
+              ref={fileRef}
+              type="file"
+              accept="image/*,application/pdf"
+              capture="environment"
+              className="hidden"
+              onChange={onPhoto}
+            />
+            <Button
+              variant="secondary"
+              onClick={pickPhoto}
+              disabled={upload.isPending}
+            >
+              {upload.isPending ? "Uploading…" : "Choose file"}
+            </Button>
+            <span className="text-xs text-zinc-500">
+              Up to 10 MB · image or PDF
+            </span>
+          </div>
+        </Section>
       )}
-      {upload.isError && (
-        <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-          {(upload.error as Error).message}
-        </div>
-      )}
+
+      {/* Quote URL (existing attachment) */}
       {Boolean(row["Quote URL"]) && (
-        <div className="mt-4 text-sm">
-          <span className="text-zinc-500">Quote URL: </span>
+        <Section title="Attached quote">
           <a
             href={String(row["Quote URL"])}
             target="_blank"
             rel="noreferrer"
-            className="font-medium text-accent hover:underline"
+            className="text-sm font-medium text-accent hover:underline break-all"
           >
             {String(row["Quote URL"])}
           </a>
-        </div>
+        </Section>
       )}
 
-      {/* Approve / Reject — only for approver-of-this-tier and not yet decided */}
-      {approverForThisRow && !alreadyDecided && (
-        <div className="mt-6 rounded-md border border-zinc-200 bg-zinc-50 p-4">
-          <div className="text-sm font-medium text-midnight">Approval decision</div>
-          <p className="mt-0.5 text-xs text-zinc-500">
-            Tier: <span className="font-medium">{display(approvalLevel)}</span>.
-            Approval Notes are required.
-          </p>
-          <div className="mt-3 flex items-center gap-2">
-            <Button
-              onClick={() => decide("Approved")}
-              disabled={update.isPending}
-            >
+      {/* Existing approval status */}
+      {hasApprovalRequest && (
+        <Section title="Approval request">
+          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm">
+            <div className="font-medium text-amber-900">⏳ {approvalLevel}</div>
+            {row._approvalNotes && (
+              <div className="mt-1 text-amber-900 whitespace-pre-wrap">
+                {row._approvalNotes}
+              </div>
+            )}
+            {alreadyDecided && (
+              <div className="mt-2 text-xs font-medium text-amber-900">
+                Decision: {currentStatus}
+              </div>
+            )}
+          </div>
+        </Section>
+      )}
+
+      {/* Approver decision buttons */}
+      {canDecide && (
+        <Section title="Approver decision">
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Button onClick={() => decide("Approved")} disabled={update.isPending}>
               Approve
             </Button>
             <Button
@@ -407,117 +777,150 @@ function DetailDrawer({
               Reject
             </Button>
           </div>
-        </div>
+        </Section>
       )}
 
-      <div className="mt-8 flex items-center justify-between gap-3">
-        <div>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/*,application/pdf"
-            className="hidden"
-            onChange={onFile}
-          />
-          <Button variant="secondary" onClick={pickFile} disabled={upload.isPending}>
-            {upload.isPending ? "Uploading…" : "Upload photo / quote"}
-          </Button>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="ghost" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button onClick={save} disabled={update.isPending}>
-            {update.isPending ? "Saving…" : "Save changes"}
-          </Button>
-        </div>
-      </div>
-    </Drawer>
+      {/* Request approval (any role with edit access, only if not already requested) */}
+      {!hasApprovalRequest && currentStatus === "Received" && (
+        <Section title="Request approval">
+          {!showApprovalForm ? (
+            <Button variant="secondary" onClick={() => setShowApprovalForm(true)}>
+              Request approval
+            </Button>
+          ) : (
+            <div className="space-y-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+              <div>
+                <Label htmlFor={`tier-${row.id}`}>Approval tier *</Label>
+                <select
+                  id={`tier-${row.id}`}
+                  value={approvalTier}
+                  onChange={(e) => setApprovalTier(e.target.value)}
+                  className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+                >
+                  <option value="">— Select tier —</option>
+                  {APPROVAL_TIERS.map((t) => (
+                    <option key={t.value} value={t.value}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <Label htmlFor={`anotes-${row.id}`}>Approval notes *</Label>
+                <textarea
+                  id={`anotes-${row.id}`}
+                  value={approvalNotes}
+                  onChange={(e) => setApprovalNotes(e.target.value)}
+                  rows={3}
+                  className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+                  placeholder="Describe the work, vendor, cost, why it's needed…"
+                />
+              </div>
+              <QuotePicker file={quoteFile} onPick={setQuoteFile} />
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <Button
+                  onClick={submitApproval}
+                  disabled={update.isPending || upload.isPending}
+                >
+                  {update.isPending || upload.isPending
+                    ? "Submitting…"
+                    : "Submit approval request"}
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setShowApprovalForm(false);
+                    setApprovalTier("");
+                    setApprovalNotes("");
+                    setQuoteFile(null);
+                  }}
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+        </Section>
+      )}
+    </div>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function Drawer({
-  title,
-  onClose,
-  children,
+function QuotePicker({
+  file,
+  onPick,
 }: {
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
+  file: File | null;
+  onPick: (f: File | null) => void;
 }) {
-  useEffect(() => {
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
-    }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
+  const ref = useRef<HTMLInputElement>(null);
+  const toast = useToast();
   return (
-    <div className="fixed inset-0 z-50 flex">
-      <div
-        className="flex-1 bg-zinc-900/30"
-        onClick={onClose}
-        aria-hidden="true"
+    <div>
+      <Label>Vendor quote *</Label>
+      <input
+        ref={ref}
+        type="file"
+        accept="application/pdf,image/*"
+        className="hidden"
+        onChange={(e) => {
+          const f = e.target.files?.[0] ?? null;
+          e.target.value = "";
+          if (f && f.size > 10 * 1024 * 1024) {
+            toast.push("File must be under 10 MB.", "error");
+            return;
+          }
+          onPick(f);
+        }}
       />
-      <aside className="flex h-full w-full max-w-xl flex-col overflow-y-auto bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-zinc-100 px-6 py-4">
-          <h2 className="text-base font-semibold tracking-tight text-midnight">
-            {title}
-          </h2>
-          <button
-            onClick={onClose}
-            className="text-sm font-medium text-zinc-500 transition hover:text-midnight"
-          >
-            Close
-          </button>
-        </div>
-        <div className="flex-1 px-6 py-6">{children}</div>
-      </aside>
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+        <Button variant="secondary" onClick={() => ref.current?.click()} size="sm">
+          {file ? "Replace file" : "Choose file"}
+        </Button>
+        <span className="truncate text-xs text-zinc-600">
+          {file ? `${file.name} (${formatBytes(file.size)})` : "PDF or image, up to 10 MB"}
+        </span>
+      </div>
     </div>
   );
 }
 
-function Field({
+function formatBytes(n: number): string {
+  if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  return `${Math.max(1, Math.round(n / 1024))} KB`;
+}
+
+// ----------------------------------------------------------------------------
+// Tiny presentational helpers
+// ----------------------------------------------------------------------------
+
+function FieldRow({
   label,
   value,
-  className,
+  fullWidth,
 }: {
   label: string;
   value: string;
-  className?: string;
+  fullWidth?: boolean;
 }) {
   return (
-    <div className={className}>
-      <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+    <div className={fullWidth ? "sm:col-span-2" : undefined}>
+      <dt className="text-[11px] font-medium uppercase tracking-wider text-zinc-500">
         {label}
-      </div>
-      <div className="mt-1 text-sm text-zinc-800">{value}</div>
+      </dt>
+      <dd className="mt-0.5 whitespace-pre-wrap text-sm text-zinc-800">{value}</dd>
     </div>
   );
 }
 
-function ReadOnlyTextArea({
-  label,
-  value,
-  className,
-}: {
-  label: string;
-  value: string;
-  className?: string;
-}) {
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className={className}>
-      <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-        {label}
+    <div className="mt-5 border-t border-zinc-100 pt-4">
+      <div className="mb-2 text-[11px] font-medium uppercase tracking-wider text-zinc-500">
+        {title}
       </div>
-      <div className="mt-1 whitespace-pre-wrap rounded-md border border-zinc-100 bg-zinc-50 px-3 py-2 text-sm text-zinc-800">
-        {value}
-      </div>
+      {children}
     </div>
   );
 }
+
