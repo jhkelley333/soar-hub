@@ -68,3 +68,64 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export function listTeam(): Promise<TeamListResponse> {
   return request<TeamListResponse>(`${FN}?action=list`);
 }
+
+// ----------------------------------------------------------------------------
+// Add user
+// ----------------------------------------------------------------------------
+
+export interface ScopeStore {
+  id: string;
+  number: string;
+  name: string;
+  district_id: string;
+  is_active: boolean;
+}
+export interface ScopeDistrict {
+  id: string;
+  name: string;
+  code: string;
+  market_id: string;
+}
+export interface ScopeMarket {
+  id: string;
+  name: string;
+  code: string;
+  region_id: string;
+}
+export interface ScopeRegion {
+  id: string;
+  name: string;
+  code: string;
+}
+
+export interface ScopeOptionsResponse {
+  stores: ScopeStore[];
+  districts: ScopeDistrict[];
+  markets: ScopeMarket[];
+  regions: ScopeRegion[];
+  canSetGlobal: boolean;
+}
+
+export function fetchScopeOptions(): Promise<ScopeOptionsResponse> {
+  return request<ScopeOptionsResponse>(`${FN}?action=scope-options`);
+}
+
+export function fetchManageableRoles(): Promise<{ roles: UserRole[] }> {
+  return request<{ roles: UserRole[] }>(`${FN}?action=manageable-roles`);
+}
+
+export interface AddUserInput {
+  full_name?: string;
+  email: string;
+  phone?: string;
+  role: UserRole;
+  scope_type: "store" | "district" | "region" | "global";
+  scope_id: string | null; // null for global
+}
+
+export function addUser(input: AddUserInput): Promise<{ ok: true; user_id: string; email: string }> {
+  return request<{ ok: true; user_id: string; email: string }>(
+    `${FN}?action=add-user`,
+    { method: "POST", body: JSON.stringify(input) }
+  );
+}

@@ -1,16 +1,18 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Mail, Phone, Search } from "lucide-react";
+import { Mail, Phone, Search, Copy } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
 import { Badge } from "@/shared/ui/Badge";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { Button } from "@/shared/ui/Button";
+import { useToast } from "@/shared/ui/Toaster";
 import { ROLE_LABELS, type UserRole } from "@/types/database";
 import { formatPhoneForDisplay } from "@/lib/phone";
 import { cn } from "@/lib/cn";
 import { listTeam, type ManagedUser } from "./api";
+import { AddUserModal } from "./AddUserModal";
 
 type RoleFilter = "all" | UserRole;
 
@@ -23,6 +25,7 @@ export function TeamPage() {
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
   const [includeInactive, setIncludeInactive] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
 
   const allMembers = query.data?.members ?? [];
 
@@ -112,11 +115,12 @@ export function TeamPage() {
         title="My Team"
         description={`${data.members.filter((m) => m.is_active).length} active ${data.members.filter((m) => m.is_active).length === 1 ? "person" : "people"} in your scope.`}
         actions={
-          <Button variant="primary" disabled title="Coming next commit">
+          <Button variant="primary" onClick={() => setAddOpen(true)}>
             + Add user
           </Button>
         }
       />
+      <AddUserModal open={addOpen} onClose={() => setAddOpen(false)} />
 
       {/* Filter bar */}
       <div className="mb-4 flex flex-col gap-2 rounded-lg border border-zinc-200 bg-white p-3 sm:flex-row sm:items-center sm:gap-3">
@@ -186,6 +190,19 @@ export function TeamPage() {
 // ----------------------------------------------------------------------------
 
 function MemberCard({ member }: { member: ManagedUser }) {
+  const toast = useToast();
+
+  function copy(value: string, label: string) {
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(value).then(
+        () => toast.push(`${label} copied`, "success"),
+        () => toast.push(`Couldn't copy ${label.toLowerCase()}`, "error")
+      );
+    } else {
+      toast.push(`Couldn't copy ${label.toLowerCase()}`, "error");
+    }
+  }
+
   return (
     <Card
       className={cn(
@@ -207,22 +224,36 @@ function MemberCard({ member }: { member: ManagedUser }) {
 
           <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-zinc-600">
             {member.email && (
-              <a
-                href={`mailto:${member.email}`}
-                className="inline-flex items-center gap-1.5 hover:text-accent hover:underline"
+              <button
+                type="button"
+                onClick={() => copy(member.email, "Email")}
+                title="Copy email"
+                className="group inline-flex items-center gap-1.5 hover:text-accent"
               >
                 <Mail className="h-3.5 w-3.5" strokeWidth={1.75} />
                 <span className="truncate">{member.email}</span>
-              </a>
+                <Copy
+                  className="h-3 w-3 opacity-0 transition group-hover:opacity-60"
+                  strokeWidth={1.75}
+                />
+              </button>
             )}
             {member.phone && (
-              <a
-                href={`tel:${member.phone}`}
-                className="inline-flex items-center gap-1.5 hover:text-accent hover:underline"
+              <button
+                type="button"
+                onClick={() =>
+                  copy(formatPhoneForDisplay(member.phone), "Phone number")
+                }
+                title="Copy phone"
+                className="group inline-flex items-center gap-1.5 hover:text-accent"
               >
                 <Phone className="h-3.5 w-3.5" strokeWidth={1.75} />
                 <span>{formatPhoneForDisplay(member.phone)}</span>
-              </a>
+                <Copy
+                  className="h-3 w-3 opacity-0 transition group-hover:opacity-60"
+                  strokeWidth={1.75}
+                />
+              </button>
             )}
           </div>
 
