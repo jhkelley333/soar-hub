@@ -1,22 +1,59 @@
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { Navigate, useLocation } from "react-router-dom";
+import { Mail, Phone } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/auth/AuthProvider";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
+import { detectMode, normalizePhone } from "@/lib/phone";
 
 type Mode = "password" | "magic";
+
+// Resolve a phone-or-email identifier to the canonical email Supabase auth
+// expects. For email input we pass through; for phone we ping the public
+// auth-resolve function which looks up the matching profile by phone and
+// returns its email (or 404).
+async function resolveIdentifier(input: string): Promise<{ email: string } | { error: string }> {
+  const trimmed = input.trim();
+  if (!trimmed) return { error: "Enter your phone or email." };
+
+  if (detectMode(trimmed) === "email") {
+    return { email: trimmed };
+  }
+
+  const phone = normalizePhone(trimmed);
+  if (!phone) return { error: "That doesn't look like a 10-digit phone number." };
+
+  try {
+    const res = await fetch(
+      `/.netlify/functions/auth-resolve?phone=${encodeURIComponent(phone)}`
+    );
+    if (res.status === 404) {
+      return { error: "We couldn't find an account with that phone." };
+    }
+    if (!res.ok) {
+      return { error: "Sign-in is temporarily unavailable. Try again." };
+    }
+    const body = (await res.json()) as { email?: string; error?: string };
+    if (!body.email) return { error: body.error ?? "Lookup failed." };
+    return { email: body.email };
+  } catch {
+    return { error: "Network error. Try again." };
+  }
+}
 
 export function LoginPage() {
   const { session, loading } = useAuth();
   const location = useLocation();
   const [mode, setMode] = useState<Mode>("password");
-  const [email, setEmail] = useState("");
+  const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+
+  const detected = useMemo(() => detectMode(identifier), [identifier]);
 
   if (!loading && session) {
     const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? "/";
@@ -29,6 +66,10 @@ export function LoginPage() {
     setError(null);
     setInfo(null);
     try {
+      const resolved = await resolveIdentifier(identifier);
+      if ("error" in resolved) throw new Error(resolved.error);
+      const email = resolved.email;
+
       if (mode === "password") {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
@@ -47,16 +88,18 @@ export function LoginPage() {
     }
   }
 
+  // Show a phone or envelope icon next to the input as a confidence signal.
+  const Icon =
+    detected === "email" ? Mail : detected === "phone" ? Phone : null;
+
   return (
     <div className="relative flex min-h-full flex-col items-center justify-center overflow-hidden bg-accent px-4 py-12 text-white">
-      {/* Decorative blue depth — soft radial highlight behind the brand block */}
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_top,rgba(116,210,231,0.45),transparent_60%)]"
       />
 
       <div className="relative w-full max-w-md">
-        {/* Brand block above the card */}
         <div className="mb-8 flex flex-col items-center text-center">
           <CupPlaceholder />
           <div className="mt-4 text-xs font-semibold uppercase tracking-[0.25em] text-white/80">
@@ -70,29 +113,39 @@ export function LoginPage() {
           </p>
         </div>
 
-        {/* White sign-in card */}
         <div className="rounded-xl bg-white p-8 text-zinc-900 shadow-2xl ring-1 ring-black/5">
           <h2 className="text-xl font-semibold tracking-tight text-midnight">
             Sign in
           </h2>
           <p className="mt-1 text-sm text-zinc-500">
             {mode === "password"
-              ? "Use your work email and password."
+              ? "Use your phone or email and password."
               : "We'll email you a sign-in link."}
           </p>
 
           <form onSubmit={handleSubmit} className="mt-6 space-y-5">
             <div>
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                autoComplete="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@company.com"
-              />
+              <Label htmlFor="identifier">Phone number or email</Label>
+              <div className="relative">
+                <Input
+                  id="identifier"
+                  type="text"
+                  inputMode={detected === "email" ? "email" : "tel"}
+                  autoComplete="username"
+                  required
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
+                  placeholder="(555) 555-1234 or you@company.com"
+                  className={Icon ? "pr-9" : undefined}
+                />
+                {Icon && (
+                  <Icon
+                    aria-hidden="true"
+                    className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400"
+                    strokeWidth={1.75}
+                  />
+                )}
+              </div>
             </div>
 
             {mode === "password" && (
@@ -146,9 +199,6 @@ export function LoginPage() {
   );
 }
 
-// Inline SVG placeholder of a takeaway cup. Swap with a real Sonic asset
-// (PNG/SVG dropped into /public) when one is available — keep the same
-// dimensions and the rest of the layout will stay put.
 function CupPlaceholder() {
   return (
     <svg
@@ -159,33 +209,13 @@ function CupPlaceholder() {
       aria-label="Drink cup placeholder"
       className="drop-shadow-md"
     >
-      {/* Lid */}
-      <rect
-        x="8"
-        y="12"
-        width="48"
-        height="8"
-        rx="2"
-        fill="white"
-        opacity="0.95"
-      />
-      {/* Straw */}
-      <rect
-        x="36"
-        y="2"
-        width="6"
-        height="14"
-        rx="1.5"
-        fill="white"
-        opacity="0.8"
-      />
-      {/* Cup body */}
+      <rect x="8" y="12" width="48" height="8" rx="2" fill="white" opacity="0.95" />
+      <rect x="36" y="2" width="6" height="14" rx="1.5" fill="white" opacity="0.8" />
       <path
         d="M12 22 L52 22 L46 74 Q46 78 42 78 L22 78 Q18 78 18 74 Z"
         fill="white"
         opacity="0.95"
       />
-      {/* Subtle stripe band */}
       <path
         d="M14 38 L50 38 L48.6 50 L15.4 50 Z"
         fill="#E40046"
