@@ -696,6 +696,59 @@ async function updateUser(supa, manager, body) {
 }
 
 // ----------------------------------------------------------------------------
+// send-reset — manager triggers a password-reset email to a managed user
+// ----------------------------------------------------------------------------
+//
+// Same Supabase API as the self-serve "Forgot password?" link on the login
+// page — the only difference is who initiated it. Server-side scope check:
+// the target must be in the manager's manageable_users() set.
+//
+// We do NOT require the manager to have any "extra" privilege beyond the
+// existing Edit-member ones; if you can change someone's role you can also
+// poke a recovery email at them.
+
+async function sendReset(supa, manager, body) {
+  const target_id = body?.user_id;
+  if (!target_id) return { error: "user_id is required.", status: 400 };
+
+  // Fast path — the manager is themselves, allow it
+  if (target_id !== manager.id) {
+    const { data: managed } = await supa.rpc("manageable_users", {
+      manager_id: manager.id,
+    });
+    const ok = (managed ?? []).some((m) => m.id === target_id);
+    if (!ok) return { error: "That user isn't in your scope.", status: 403 };
+  }
+
+  // Look up the canonical email for the target.
+  const { data: target } = await supa
+    .from("profiles")
+    .select("email, is_active")
+    .eq("id", target_id)
+    .maybeSingle();
+  if (!target) return { error: "User not found.", status: 404 };
+  if (!target.is_active) {
+    return {
+      error: "That user is inactive. Reactivate before sending a reset.",
+      status: 400,
+    };
+  }
+
+  // Resolve the redirect URL the email should bounce to. URL is set by
+  // Netlify in production; fall back to whatever the request came from.
+  const redirectTo =
+    (process.env.URL || process.env.DEPLOY_URL || "").replace(/\/$/, "") +
+      "/reset-password" || undefined;
+
+  const { error } = await supa.auth.resetPasswordForEmail(target.email, {
+    redirectTo: redirectTo || undefined,
+  });
+  if (error) return { error: `Send failed: ${error.message}`, status: 500 };
+
+  return { ok: true, sent_to: target.email };
+}
+
+// ----------------------------------------------------------------------------
 // history — recent audit entries for a user (or any manageable user)
 // ----------------------------------------------------------------------------
 //
@@ -810,6 +863,7 @@ export const handler = async (event) => {
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "add-user") return unwrap(await addUser(supa, manager, body));
       if (action === "update-user") return unwrap(await updateUser(supa, manager, body));
+      if (action === "send-reset") return unwrap(await sendReset(supa, manager, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
 

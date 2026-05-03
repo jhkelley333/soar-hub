@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 import { AppShell } from "@/app/AppShell";
 import { ProtectedRoute } from "@/auth/ProtectedRoute";
 import { LoginPage } from "@/auth/LoginPage";
+import { ResetPasswordPage } from "@/auth/ResetPasswordPage";
 import { DashboardPage } from "@/modules/dashboard/DashboardPage";
 import { WorkOrdersPage } from "@/modules/work-orders/WorkOrdersPage";
 import { PafPage } from "@/modules/paf/PafPage";
@@ -11,6 +12,7 @@ import { RankerPage } from "@/modules/ranker/RankerPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
+  { path: "/reset-password", element: <ResetPasswordPage /> },
   {
     path: "/",
     element: (

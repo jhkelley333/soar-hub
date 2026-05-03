@@ -8,7 +8,7 @@ import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
 import { detectMode, normalizePhone } from "@/lib/phone";
 
-type Mode = "password" | "magic";
+type Mode = "password" | "magic" | "forgot";
 
 // Resolve a phone-or-email identifier to the canonical email Supabase auth
 // expects. For email input we pass through; for phone we ping the public
@@ -73,13 +73,22 @@ export function LoginPage() {
       if (mode === "password") {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-      } else {
+      } else if (mode === "magic") {
         const { error } = await supabase.auth.signInWithOtp({
           email,
           options: { emailRedirectTo: window.location.origin },
         });
         if (error) throw error;
         setInfo("Check your email for a sign-in link.");
+      } else {
+        // forgot
+        const { error } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: `${window.location.origin}/reset-password`,
+        });
+        if (error) throw error;
+        setInfo(
+          "If an account exists for that contact, a password reset link has been emailed."
+        );
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign-in failed.");
@@ -115,12 +124,13 @@ export function LoginPage() {
 
         <div className="rounded-xl bg-white p-8 text-zinc-900 shadow-2xl ring-1 ring-black/5">
           <h2 className="text-xl font-semibold tracking-tight text-midnight">
-            Sign in
+            {mode === "forgot" ? "Reset password" : "Sign in"}
           </h2>
           <p className="mt-1 text-sm text-zinc-500">
-            {mode === "password"
-              ? "Use your phone or email and password."
-              : "We'll email you a sign-in link."}
+            {mode === "password" && "Use your phone or email and password."}
+            {mode === "magic" && "We'll email you a sign-in link."}
+            {mode === "forgot" &&
+              "Enter your phone or email and we'll send a reset link."}
           </p>
 
           <form onSubmit={handleSubmit} className="mt-6 space-y-5">
@@ -174,21 +184,46 @@ export function LoginPage() {
             )}
 
             <Button type="submit" variant="danger" disabled={submitting} className="w-full">
-              {submitting ? "Working..." : mode === "password" ? "Sign in" : "Send link"}
+              {submitting && "Working…"}
+              {!submitting && mode === "password" && "Sign in"}
+              {!submitting && mode === "magic" && "Send link"}
+              {!submitting && mode === "forgot" && "Send reset link"}
             </Button>
           </form>
 
-          <button
-            type="button"
-            onClick={() => {
-              setMode((m) => (m === "password" ? "magic" : "password"));
-              setError(null);
-              setInfo(null);
-            }}
-            className="mt-6 text-xs font-medium text-zinc-500 transition hover:text-midnight"
-          >
-            {mode === "password" ? "Use a magic link instead" : "Use a password instead"}
-          </button>
+          <div className="mt-6 flex flex-col items-start gap-3 text-xs font-medium text-zinc-500">
+            {mode !== "forgot" && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("forgot");
+                  setError(null);
+                  setInfo(null);
+                  setPassword("");
+                }}
+                className="transition hover:text-midnight"
+              >
+                Forgot password?
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                if (mode === "forgot") {
+                  setMode("password");
+                } else {
+                  setMode((m) => (m === "password" ? "magic" : "password"));
+                }
+                setError(null);
+                setInfo(null);
+              }}
+              className="transition hover:text-midnight"
+            >
+              {mode === "password" && "Use a magic link instead"}
+              {mode === "magic" && "Use a password instead"}
+              {mode === "forgot" && "Back to sign in"}
+            </button>
+          </div>
         </div>
 
         <p className="mt-6 text-center text-xs text-white/70">

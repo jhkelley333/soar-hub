@@ -178,3 +178,14 @@ export function fetchHistory(userId: string, limit = 20): Promise<HistoryRespons
   const params = new URLSearchParams({ user_id: userId, limit: String(limit) });
   return request<HistoryResponse>(`${FN}?action=history&${params.toString()}`);
 }
+
+// ----------------------------------------------------------------------------
+// Send password reset (manager-initiated)
+// ----------------------------------------------------------------------------
+
+export function sendPasswordReset(userId: string): Promise<{ ok: true; sent_to: string }> {
+  return request<{ ok: true; sent_to: string }>(`${FN}?action=send-reset`, {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId }),
+  });
+}
