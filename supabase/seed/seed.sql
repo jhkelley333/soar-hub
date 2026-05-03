@@ -2,7 +2,7 @@
 -- SOAR Hub — Seed data
 -- Run AFTER 0001_init.sql against your Supabase project.
 -- =============================================================================
--- This seed creates one region with two markets, four districts, and eight
+-- This seed creates one region with two areas, four districts, and eight
 -- stores so you can verify RLS policies end to end.
 --
 -- USERS: do NOT seed users here. Create users via Supabase Auth (dashboard
@@ -11,18 +11,18 @@
 -- =============================================================================
 
 -- Wipe (idempotent during early dev — remove once you have real data).
-truncate user_scopes, profiles, stores, districts, markets, regions
+truncate user_scopes, profiles, stores, districts, areas, regions
   restart identity cascade;
 
 -- Org tree
 insert into regions (id, name, code) values
   ('11111111-1111-1111-1111-111111111111', 'South Region', 'SOUTH');
 
-insert into markets (id, name, code, region_id) values
-  ('22222222-2222-2222-2222-222222222221', 'Dallas Market',  'DAL', '11111111-1111-1111-1111-111111111111'),
-  ('22222222-2222-2222-2222-222222222222', 'Houston Market', 'HOU', '11111111-1111-1111-1111-111111111111');
+insert into areas (id, name, code, region_id) values
+  ('22222222-2222-2222-2222-222222222221', 'Dallas Area',  'DAL', '11111111-1111-1111-1111-111111111111'),
+  ('22222222-2222-2222-2222-222222222222', 'Houston Area', 'HOU', '11111111-1111-1111-1111-111111111111');
 
-insert into districts (id, name, code, market_id) values
+insert into districts (id, name, code, area_id) values
   ('33333333-3333-3333-3333-333333333331', 'Dallas North',  'DAL-N', '22222222-2222-2222-2222-222222222221'),
   ('33333333-3333-3333-3333-333333333332', 'Dallas South',  'DAL-S', '22222222-2222-2222-2222-222222222221'),
   ('33333333-3333-3333-3333-333333333333', 'Houston East',  'HOU-E', '22222222-2222-2222-2222-222222222222'),
@@ -62,7 +62,7 @@ insert into stores (number, name, district_id, city, state) values
 -- update profiles set role = 'sdo', full_name = 'Senior DO'
 --   where email = 'sdo@example.com';
 -- insert into user_scopes (user_id, scope_type, scope_id)
---   select id, 'market', '22222222-2222-2222-2222-222222222221'
+--   select id, 'area', '22222222-2222-2222-2222-222222222221'
 --   from profiles where email = 'sdo@example.com';
 --
 -- update profiles set role = 'do', full_name = 'District Operator'
