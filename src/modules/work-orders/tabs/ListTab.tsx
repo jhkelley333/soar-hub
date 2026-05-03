@@ -781,8 +781,10 @@ function CardBody({
         </Section>
       )}
 
-      {/* Request approval (any role with edit access, only if not already requested) */}
-      {!hasApprovalRequest && currentStatus === "Received" && (
+      {/* Request approval — any role with edit access, whenever no approval
+          has been submitted yet. Status doesn't gate this; Smartsheet form
+          submissions don't always land in "Received" exactly. */}
+      {!hasApprovalRequest && currentStatus !== "Closed" && (
         <Section title="Request approval">
           {!showApprovalForm ? (
             <Button variant="secondary" onClick={() => setShowApprovalForm(true)}>
