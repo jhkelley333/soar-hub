@@ -23,8 +23,8 @@ export const NAV: NavItem[] = [
   { to: "/work-orders", label: "Work Orders", icon: Wrench,          roles: null },
   { to: "/paf",         label: "PAF",         icon: FileSpreadsheet, roles: null },
   { to: "/resources",   label: "Resources",   icon: BookOpen,        roles: null },
-  { to: "/team",        label: "My Team",     icon: Users,           roles: null },
-  { to: "/ranker",      label: "Ranker",      icon: TrendingUp,      roles: ["do", "sdo", "rvp", "admin"] },
+  { to: "/team",        label: "My Team",     icon: Users,           roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  { to: "/ranker",      label: "Ranker",      icon: TrendingUp,      roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
 ];
 
 export function visibleNav(role: UserRole | undefined): NavItem[] {

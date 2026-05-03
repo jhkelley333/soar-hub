@@ -23,11 +23,18 @@ export const router = createBrowserRouter([
       { path: "work-orders", element: <WorkOrdersPage /> },
       { path: "paf", element: <PafPage /> },
       { path: "resources", element: <ResourcesPage /> },
-      { path: "team", element: <TeamPage /> },
+      {
+        path: "team",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <TeamPage />
+          </ProtectedRoute>
+        ),
+      },
       {
         path: "ranker",
         element: (
-          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "admin"]}>
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <RankerPage />
           </ProtectedRoute>
         ),
