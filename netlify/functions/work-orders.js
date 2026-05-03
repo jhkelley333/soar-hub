@@ -519,6 +519,45 @@ async function uploadAttachment(user, body) {
 }
 
 // ----------------------------------------------------------------------------
+// Env-var diagnostics (used by ?action=env-check)
+// ----------------------------------------------------------------------------
+
+function fingerprint(value) {
+  if (value == null) return { present: false };
+  const s = String(value);
+  return {
+    present: true,
+    length: s.length,
+    head: s.slice(0, 12),
+    tail: s.slice(-4),
+  };
+}
+
+function googleCredsHealth() {
+  if (!GOOGLE_CREDS) return { present: false };
+  try {
+    const obj = JSON.parse(GOOGLE_CREDS);
+    return {
+      present: true,
+      parses: true,
+      type: obj.type ?? null,
+      hasClientEmail: typeof obj.client_email === "string" && obj.client_email.length > 0,
+      hasPrivateKey: typeof obj.private_key === "string" && obj.private_key.length > 0,
+      privateKeyLooksOk:
+        typeof obj.private_key === "string" &&
+        obj.private_key.includes("BEGIN PRIVATE KEY") &&
+        obj.private_key.includes("END PRIVATE KEY"),
+    };
+  } catch (e) {
+    return {
+      present: true,
+      parses: false,
+      parseError: e instanceof Error ? e.message : String(e),
+    };
+  }
+}
+
+// ----------------------------------------------------------------------------
 // HTTP handler
 // ----------------------------------------------------------------------------
 
@@ -554,6 +593,26 @@ export const handler = async (event) => {
 
   try {
     if (event.httpMethod === "GET") {
+      // Diagnostic — returns sanitized env-var fingerprints. Lets us tell
+      // whether a deploy context is missing a value or has a malformed one
+      // without leaking secrets. Admin-only so we don't expose it broadly.
+      if (action === "env-check") {
+        if (user.role !== "admin") return respond(403, { error: "admin only" });
+        return respond(200, {
+          context: process.env.CONTEXT || "(unset)",
+          deployId: process.env.DEPLOY_ID || "(unset)",
+          vars: {
+            VITE_SUPABASE_URL: fingerprint(SUPABASE_URL),
+            SUPABASE_SERVICE_ROLE_KEY: fingerprint(SERVICE_KEY),
+            SMARTSHEET_TOKEN: fingerprint(SMARTSHEET_TOKEN),
+            SMARTSHEET_SHEET_ID: fingerprint(SHEET_ID),
+            VENDOR_SHEET_ID: fingerprint(VENDOR_SHEET_ID),
+            VIDEO_FOLDER_ID: fingerprint(VIDEO_FOLDER_ID),
+            GOOGLE_SERVICE_ACCOUNT_JSON: fingerprint(GOOGLE_CREDS),
+          },
+          googleCreds: googleCredsHealth(),
+        });
+      }
       if (action === "vendors") return respond(200, await listVendors());
       if (action === "videos") return respond(200, await listVideos());
       if (id) {
