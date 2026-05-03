@@ -1,0 +1,180 @@
+// src/modules/team/api.ts
+//
+// Typed wrappers around netlify/functions/team-mgmt. Mirrors the auth pattern
+// used by the work-orders module (see src/modules/work-orders/api.ts).
+
+import { supabase } from "@/lib/supabase";
+import type { UserRole, ScopeType } from "@/types/database";
+
+const FN = "/.netlify/functions/team-mgmt";
+
+export interface SessionManager {
+  id: string;
+  email: string;
+  full_name: string | null;
+  role: UserRole;
+  is_active: boolean;
+}
+
+export interface ScopeBadge {
+  scope_type: ScopeType;
+  scope_id: string | null;
+  label: string;
+}
+
+export interface ManagedUser {
+  id: string;
+  email: string;
+  phone: string | null;
+  full_name: string | null;
+  role: UserRole;
+  is_active: boolean;
+  scopes: ScopeBadge[];
+}
+
+export interface TeamListResponse {
+  user: SessionManager;
+  members: ManagedUser[];
+}
+
+async function authHeaders(): Promise<HeadersInit> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Not signed in");
+  return {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(path, {
+    ...init,
+    headers: { ...(await authHeaders()), ...(init.headers ?? {}) },
+  });
+  if (!res.ok) {
+    let message = `Request failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) message = body.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(message);
+  }
+  return res.json() as Promise<T>;
+}
+
+export function listTeam(): Promise<TeamListResponse> {
+  return request<TeamListResponse>(`${FN}?action=list`);
+}
+
+// ----------------------------------------------------------------------------
+// Add user
+// ----------------------------------------------------------------------------
+
+export interface ScopeStore {
+  id: string;
+  number: string;
+  name: string;
+  district_id: string;
+  is_active: boolean;
+}
+export interface ScopeDistrict {
+  id: string;
+  name: string;
+  code: string;
+  market_id: string;
+}
+export interface ScopeMarket {
+  id: string;
+  name: string;
+  code: string;
+  region_id: string;
+}
+export interface ScopeRegion {
+  id: string;
+  name: string;
+  code: string;
+}
+
+export interface ScopeOptionsResponse {
+  stores: ScopeStore[];
+  districts: ScopeDistrict[];
+  markets: ScopeMarket[];
+  regions: ScopeRegion[];
+  canSetGlobal: boolean;
+}
+
+export function fetchScopeOptions(): Promise<ScopeOptionsResponse> {
+  return request<ScopeOptionsResponse>(`${FN}?action=scope-options`);
+}
+
+export function fetchManageableRoles(): Promise<{ roles: UserRole[] }> {
+  return request<{ roles: UserRole[] }>(`${FN}?action=manageable-roles`);
+}
+
+export interface AddUserInput {
+  full_name?: string;
+  email: string;
+  phone?: string;
+  role: UserRole;
+  scope_type: "store" | "district" | "region" | "global";
+  scope_id: string | null; // null for global
+}
+
+export function addUser(input: AddUserInput): Promise<{ ok: true; user_id: string; email: string }> {
+  return request<{ ok: true; user_id: string; email: string }>(
+    `${FN}?action=add-user`,
+    { method: "POST", body: JSON.stringify(input) }
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Update user — partial. Fields not present are left alone.
+// ----------------------------------------------------------------------------
+
+export interface UpdateUserInput {
+  user_id: string;
+  full_name?: string | null;
+  phone?: string | null;
+  role?: UserRole;
+  scope_type?: "store" | "district" | "region" | "global";
+  scope_id?: string | null;
+  is_active?: boolean;
+}
+
+export function updateUser(input: UpdateUserInput): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`${FN}?action=update-user`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+// ----------------------------------------------------------------------------
+// History (audit log)
+// ----------------------------------------------------------------------------
+
+export type AuditAction = "create" | "update" | "deactivate" | "reactivate";
+
+export interface AuditEntry {
+  id: string;
+  action: AuditAction;
+  created_at: string;
+  actor: {
+    id: string;
+    full_name: string | null;
+    email: string | null;
+  };
+  before: Record<string, unknown> | null;
+  after: Record<string, unknown> | null;
+}
+
+export interface HistoryResponse {
+  entries: AuditEntry[];
+}
+
+export function fetchHistory(userId: string, limit = 20): Promise<HistoryResponse> {
+  const params = new URLSearchParams({ user_id: userId, limit: String(limit) });
+  return request<HistoryResponse>(`${FN}?action=history&${params.toString()}`);
+}

@@ -10,6 +10,8 @@ export type UserRole =
   | "do"
   | "sdo"
   | "rvp"
+  | "vp"
+  | "coo"
   | "payroll"
   | "admin";
 
@@ -18,6 +20,7 @@ export type ScopeType = "store" | "district" | "market" | "region" | "global";
 export interface Profile {
   id: string;
   email: string;
+  phone: string | null;
   full_name: string | null;
   role: UserRole;
   primary_store_id: string | null;
@@ -44,9 +47,10 @@ export interface Store {
   is_active: boolean;
 }
 
-// Numeric tier for UI-side comparisons. Mirrors role_level() in SQL.
-// Returns null for horizontal roles (payroll) so callers handle them
-// explicitly instead of getting a misleading comparison result.
+// Numeric tier for UI-side comparisons. Mirrors role_level() in SQL
+// (see migration 0002_add_vp_coo_roles.sql). Returns null for horizontal
+// roles (payroll) so callers handle them explicitly instead of getting a
+// misleading comparison result.
 export function roleLevel(role: UserRole): number | null {
   switch (role) {
     case "shift_manager": return 10;
@@ -54,6 +58,8 @@ export function roleLevel(role: UserRole): number | null {
     case "do":            return 30;
     case "sdo":           return 40;
     case "rvp":           return 50;
+    case "vp":            return 60;
+    case "coo":           return 70;
     case "admin":         return 100;
     case "payroll":       return null;
   }
@@ -65,6 +71,8 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   do: "District Operator",
   sdo: "Senior District Operator",
   rvp: "Regional VP",
+  vp: "VP",
+  coo: "COO",
   payroll: "Payroll",
   admin: "Admin",
 };
