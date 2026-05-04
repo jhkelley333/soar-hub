@@ -1,5 +1,7 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useBlocker } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Check } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -18,16 +20,65 @@ export function AccountPage() {
   const toast = useToast();
 
   const [fullName, setFullName] = useState("");
+  const [preferredName, setPreferredName] = useState("");
   const [phone, setPhone] = useState("");
   const [profileError, setProfileError] = useState<string | null>(null);
+  const [savedAt, setSavedAt] = useState<number | null>(null);
 
   // Hydrate the form when the profile loads (or changes).
   useEffect(() => {
     if (profile) {
       setFullName(profile.full_name ?? "");
+      setPreferredName(profile.preferred_name ?? "");
       setPhone(profile.phone ? formatPhoneForDisplay(profile.phone) : "");
     }
   }, [profile]);
+
+  // Track whether the form has unsaved changes by comparing the current
+  // input values to the canonical profile.
+  const dirty = useMemo(() => {
+    if (!profile) return false;
+    const phoneNormalized = phone.trim() === "" ? null : normalizePhone(phone);
+    return (
+      (fullName.trim() || null) !== (profile.full_name ?? null) ||
+      (preferredName.trim() || null) !== (profile.preferred_name ?? null) ||
+      phoneNormalized !== (profile.phone ?? null)
+    );
+  }, [profile, fullName, preferredName, phone]);
+
+  // 1. Browser tab close / hard refresh.
+  useEffect(() => {
+    if (!dirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
+
+  // 2. In-app navigation. useBlocker fires before the route changes;
+  // we ask the user to confirm via window.confirm so we don't have to
+  // ship a dedicated modal here.
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => {
+    return dirty && currentLocation.pathname !== nextLocation.pathname;
+  });
+  useEffect(() => {
+    if (blocker.state === "blocked") {
+      const ok = window.confirm(
+        "You have unsaved changes to your profile. Leave without saving?"
+      );
+      if (ok) blocker.proceed();
+      else blocker.reset();
+    }
+  }, [blocker]);
+
+  // Auto-clear the "Updated" badge after 4 seconds.
+  useEffect(() => {
+    if (savedAt === null) return;
+    const t = setTimeout(() => setSavedAt(null), 4000);
+    return () => clearTimeout(t);
+  }, [savedAt]);
 
   const saveProfile = useMutation({
     mutationFn: async () => {
@@ -41,6 +92,7 @@ export function AccountPage() {
         .from("profiles")
         .update({
           full_name: fullName.trim() || null,
+          preferred_name: preferredName.trim() || null,
           phone: normalizedPhone,
         })
         .eq("id", profile.id);
@@ -48,6 +100,7 @@ export function AccountPage() {
     },
     onSuccess: async () => {
       toast.push("Profile saved.", "success");
+      setSavedAt(Date.now());
       await refresh();
       qc.invalidateQueries({ queryKey: ["my-team"] });
     },
@@ -94,6 +147,18 @@ export function AccountPage() {
                 />
               </div>
               <div>
+                <Label htmlFor="acct-preferred">Preferred name</Label>
+                <Input
+                  id="acct-preferred"
+                  value={preferredName}
+                  onChange={(e) => setPreferredName(e.target.value)}
+                  placeholder={profile?.full_name?.split(" ")[0] ?? ""}
+                />
+                <p className="mt-1 text-xs text-zinc-500">
+                  Used in greetings and mentions. Leave blank to use your first name.
+                </p>
+              </div>
+              <div>
                 <Label htmlFor="acct-phone">Phone</Label>
                 <Input
                   id="acct-phone"
@@ -116,9 +181,20 @@ export function AccountPage() {
                     <Badge tone="info">Cross-org</Badge>
                   )}
                 </div>
-                <Button type="submit" disabled={saveProfile.isPending}>
-                  {saveProfile.isPending ? "Saving…" : "Save changes"}
-                </Button>
+                <div className="flex items-center gap-2">
+                  {savedAt !== null && (
+                    <Badge tone="success" className="inline-flex items-center gap-1">
+                      <Check className="h-3 w-3" strokeWidth={2.5} />
+                      Updated
+                    </Badge>
+                  )}
+                  <Button
+                    type="submit"
+                    disabled={saveProfile.isPending || !dirty}
+                  >
+                    {saveProfile.isPending ? "Saving…" : "Save changes"}
+                  </Button>
+                </div>
               </div>
               {profileError && (
                 <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -172,7 +248,6 @@ function PasswordCard() {
     }
     setSubmitting(true);
     try {
-      // Re-auth with the current password before allowing a change.
       const { error: signInErr } = await supabase.auth.signInWithPassword({
         email: profile.email,
         password: current,
