@@ -22,6 +22,7 @@ export interface Profile {
   email: string;
   phone: string | null;
   full_name: string | null;
+  preferred_name: string | null;
   role: UserRole;
   primary_store_id: string | null;
   is_active: boolean;
