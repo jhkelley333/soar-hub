@@ -11,10 +11,24 @@ if (!url || !anonKey) {
   );
 }
 
+// supabase-js defaults to navigator.locks for cross-tab session
+// synchronization. The lock is stored under
+// "lock:sb-<project>-auth-token" and survives a hard page unload / tab
+// crash / deploy. On the next page load the new client waits 5s for the
+// orphaned lock, logs a warning, and force-acquires — but during that
+// window getSession() hangs and AuthProvider gets stuck on "Loading…".
+//
+// For this SPA we don't need cross-tab session locking (sessions are
+// just rows in localStorage and are read fresh on each request), so we
+// pass a no-op lock that always proceeds. Kills the orphaned-lock
+// recovery message and the post-deploy hang.
+const noopLock = <R>(_name: string, _acquireTimeout: number, fn: () => Promise<R>) => fn();
+
 export const supabase = createClient(url, anonKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
+    lock: noopLock,
   },
 });
