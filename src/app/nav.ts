@@ -4,6 +4,7 @@ import {
   FileSpreadsheet,
   BookOpen,
   Users,
+  Network,
   TrendingUp,
   type LucideIcon,
 } from "lucide-react";
@@ -24,6 +25,7 @@ export const NAV: NavItem[] = [
   { to: "/paf",         label: "PAF",         icon: FileSpreadsheet, roles: null },
   { to: "/resources",   label: "Resources",   icon: BookOpen,        roles: null },
   { to: "/team",        label: "My Team",     icon: Users,           roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  { to: "/admin/org",   label: "Org Admin",   icon: Network,         roles: ["vp", "coo", "admin"] },
   { to: "/ranker",      label: "Ranker",      icon: TrendingUp,      roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
 ];
 
