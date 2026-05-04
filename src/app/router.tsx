@@ -8,6 +8,7 @@ import { WorkOrdersPage } from "@/modules/work-orders/WorkOrdersPage";
 import { PafPage } from "@/modules/paf/PafPage";
 import { ResourcesPage } from "@/modules/resources/ResourcesPage";
 import { TeamPage } from "@/modules/team/TeamPage";
+import { OrgPage } from "@/modules/admin/OrgPage";
 import { RankerPage } from "@/modules/ranker/RankerPage";
 
 export const router = createBrowserRouter([
@@ -30,6 +31,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <TeamPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/org",
+        element: (
+          <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
+            <OrgPage />
           </ProtectedRoute>
         ),
       },
