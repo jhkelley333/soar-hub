@@ -18,14 +18,9 @@ import { Label } from "@/shared/ui/Label";
  *   3. We listen for that event and show the "Set new password" form.
  *   4. Submitting calls supabase.auth.updateUser({ password }) which uses
  *      the temporary recovery session to update the user. After success
- *      we sign out (so they have to re-authenticate with the NEW password)
- *      and redirect to /login.
- *
- * Edge cases:
- *   - User lands here with no recovery token (e.g. typed the URL): we
- *     show a generic "Open the link from your email" message.
- *   - User lands here already signed in (session, but not from recovery):
- *     same generic message, plus a link back home.
+ *      we sign out locally (no server roundtrip — Supabase rotates the
+ *      session on password change so a server signOut can hang) and
+ *      redirect to /login.
  */
 export function ResetPasswordPage() {
   const navigate = useNavigate();
@@ -37,37 +32,20 @@ export function ResetPasswordPage() {
   const [done, setDone] = useState(false);
 
   useEffect(() => {
-    // If the URL hash already had recovery tokens by the time this mounts,
-    // detectSessionInUrl may have fired before we subscribed. Check the
-    // current session shape too.
-    let cancelled = false;
-    supabase.auth.getSession().then(({ data }) => {
-      if (cancelled) return;
-      // Heuristic: if we landed here from a recovery link the URL fragment
-      // contains "type=recovery". detectSessionInUrl strips it, so we
-      // mirror state with the auth listener below either way.
-      if (window.location.hash.includes("type=recovery") || data.session) {
-        // We may have a session from the recovery link — let the listener
-        // confirm via the PASSWORD_RECOVERY event. If listener doesn't fire
-        // (already-existing session), fall back to showing the form when
-        // the user came from /reset-password directly with intent.
-      }
-    });
-
     const { data: sub } = supabase.auth.onAuthStateChange((event) => {
       if (event === "PASSWORD_RECOVERY") {
         setRecoveryReady(true);
       }
     });
 
-    // If the URL had the recovery hash, force-show the form even if the
-    // event fired before we subscribed.
+    // If detectSessionInUrl already consumed the hash before we
+    // subscribed, fall back to the path heuristic — landing on
+    // /reset-password directly always shows the form.
     if (window.location.hash.includes("type=recovery")) {
       setRecoveryReady(true);
     }
 
     return () => {
-      cancelled = true;
       sub.subscription.unsubscribe();
     };
   }, []);
@@ -87,9 +65,11 @@ export function ResetPasswordPage() {
     try {
       const { error: updErr } = await supabase.auth.updateUser({ password });
       if (updErr) throw updErr;
-      // Sign out so they re-authenticate with the new password.
-      await supabase.auth.signOut();
+      // Flip to success UI immediately so the user sees confirmation.
       setDone(true);
+      // Local-only signOut — clears client state without a server call
+      // that could hang on the now-rotated session token.
+      supabase.auth.signOut({ scope: "local" }).catch(() => {});
       setTimeout(() => navigate("/login", { replace: true }), 1500);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Password update failed.");
