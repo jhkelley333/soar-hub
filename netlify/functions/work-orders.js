@@ -115,11 +115,27 @@ async function getSessionUser(event) {
     .single();
   if (!profile || !profile.is_active) return null;
 
-  const { data: stores } = await supa.rpc("user_visible_stores", { uid: authUser.id });
-  const storeNumbers = (stores ?? [])
-    .map((s) => s.number)
-    .filter(Boolean)
-    .map(String);
+  // user_visible_stores() returns setof uuid — flat list of UUID strings.
+  // Resolve those to store numbers via a follow-up query so we can match
+  // against the Smartsheet "Store Number" column. (Older code mapped the
+  // RPC rows directly to .number, which silently produced undefined for
+  // every row and emptied the visible-stores list for non-admin users.)
+  const { data: visibleIds } = await supa.rpc("user_visible_stores", {
+    uid: authUser.id,
+  });
+  const ids = (visibleIds ?? [])
+    .map((v) => (typeof v === "string" ? v : v?.user_visible_stores ?? null))
+    .filter(Boolean);
+  let storeNumbers = [];
+  if (ids.length > 0) {
+    const { data: storeRows } = await supa
+      .from("stores")
+      .select("number")
+      .in("id", ids);
+    storeNumbers = (storeRows ?? [])
+      .map((s) => String(s.number))
+      .filter(Boolean);
+  }
 
   return {
     id: profile.id,
