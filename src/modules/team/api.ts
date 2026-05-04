@@ -29,6 +29,9 @@ export interface ManagedUser {
   full_name: string | null;
   role: UserRole;
   is_active: boolean;
+  // ISO timestamp from auth.users.email_confirmed_at — null means the
+  // user hasn't accepted the invite / set a password yet.
+  email_confirmed_at: string | null;
   scopes: ScopeBadge[];
 }
 

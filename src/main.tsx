@@ -8,17 +8,19 @@ import { queryClient } from "@/lib/queryClient";
 import { ToastProvider } from "@/shared/ui/Toaster";
 import "@/styles/globals.css";
 
-// Defensive: Supabase recovery emails should redirect to /reset-password,
-// but if URL Configuration is misconfigured Supabase falls back to the
-// Site URL root and strands the user on the dashboard with a recovery
-// session. Detect "type=recovery" in the hash and bounce before React
-// mounts so the supabase-js detectSessionInUrl handler runs on the right
-// page. We preserve the hash exactly so tokens survive the bounce.
-if (
-  window.location.hash.includes("type=recovery") &&
-  window.location.pathname !== "/reset-password"
-) {
-  window.location.replace("/reset-password" + window.location.hash);
+// Defensive: Supabase auth emails (recovery + invite) should redirect to
+// purpose-built pages. If URL Configuration is misconfigured Supabase
+// falls back to the Site URL root and strands the user on the dashboard
+// with a temporary session and no setup UI. Detect the auth type in the
+// hash and bounce before React mounts so the supabase-js
+// detectSessionInUrl handler runs on the right page. We preserve the
+// hash exactly so tokens survive the bounce.
+const _hash = window.location.hash;
+const _path = window.location.pathname;
+if (_hash.includes("type=recovery") && _path !== "/reset-password") {
+  window.location.replace("/reset-password" + _hash);
+} else if (_hash.includes("type=invite") && _path !== "/accept-invite") {
+  window.location.replace("/accept-invite" + _hash);
 }
 
 const root = document.getElementById("root");
