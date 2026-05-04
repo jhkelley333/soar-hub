@@ -153,6 +153,33 @@ async function listManaged(supa, manager) {
     });
   }
 
+  // Pull email_confirmed_at for each member from auth.admin.listUsers so the
+  // UI can flag accounts that haven't activated yet (invite sent but link
+  // never clicked / password never set). admin.listUsers paginates at 50;
+  // 1000 covers anything realistic for our scale today.
+  const memberIdSet = new Set(members.map((m) => m.id));
+  const confirmedMap = {};
+  try {
+    let page = 1;
+    while (true) {
+      const { data: usersPage, error: usersErr } = await supa.auth.admin.listUsers({
+        page,
+        perPage: 200,
+      });
+      if (usersErr) break;
+      const users = usersPage?.users ?? [];
+      for (const u of users) {
+        if (memberIdSet.has(u.id)) {
+          confirmedMap[u.id] = u.email_confirmed_at ?? null;
+        }
+      }
+      if (users.length < 200 || page >= 5) break;
+      page += 1;
+    }
+  } catch (e) {
+    console.warn("[team-mgmt] failed to enrich with auth.users", e);
+  }
+
   const enriched = members.map((m) => ({
     id: m.id,
     email: m.email,
@@ -160,6 +187,7 @@ async function listManaged(supa, manager) {
     full_name: m.full_name,
     role: m.role,
     is_active: m.is_active,
+    email_confirmed_at: confirmedMap[m.id] ?? null,
     scopes: scopesByUser[m.id] ?? [],
   }));
 
@@ -406,9 +434,16 @@ async function addUser(supa, manager, body) {
   }
 
   // ---- Send invite. Supabase creates auth.users; trigger creates profiles ----
+  // redirectTo lands the user on /accept-invite where they're forced to
+  // pick a password before reaching the app. URL is set by Netlify in
+  // production; falls back to whatever sent the request.
+  const inviteRedirect =
+    (process.env.URL || process.env.DEPLOY_URL || "").replace(/\/$/, "") +
+    "/accept-invite";
   const { data: inviteData, error: inviteErr } =
     await supa.auth.admin.inviteUserByEmail(email, {
       data: full_name ? { full_name } : undefined,
+      redirectTo: inviteRedirect || undefined,
     });
   if (inviteErr) {
     if (

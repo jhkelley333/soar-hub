@@ -1,24 +1,71 @@
+import { useMemo } from "react";
+import { Link } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
+import { ArrowRight } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
 import { Badge } from "@/shared/ui/Badge";
 import { useAuth } from "@/auth/AuthProvider";
 import { ROLE_LABELS } from "@/types/database";
+import { listWorkOrders, type WorkOrder } from "@/modules/work-orders/api";
+
+// Anything in this set counts as "closed/done" for dashboard purposes.
+// Pulled from the canonical list in netlify/functions/work-orders.js.
+const TERMINAL_STATUSES = new Set(["Closed", "Completed", "Cancelled"]);
+
+function timeOfDayGreeting(d = new Date()): string {
+  const h = d.getHours();
+  if (h < 12) return "Good morning";
+  if (h < 17) return "Good afternoon";
+  return "Good evening";
+}
+
+function isOpen(wo: WorkOrder): boolean {
+  const status = String((wo as Record<string, unknown>)["Status"] ?? "").trim();
+  return status !== "" && !TERMINAL_STATUSES.has(status);
+}
 
 export function DashboardPage() {
   const { profile } = useAuth();
-  const greeting = profile?.full_name?.split(" ")[0] ?? "there";
+  const firstName = profile?.full_name?.split(" ")[0] ?? "there";
+  const greeting = `${timeOfDayGreeting()}, ${firstName}`;
+
+  const woQuery = useQuery({
+    queryKey: ["work-orders", "index"],
+    queryFn: listWorkOrders,
+    staleTime: 30_000,
+  });
+
+  const openCount = useMemo(() => {
+    return (woQuery.data?.workOrders ?? []).filter(isOpen).length;
+  }, [woQuery.data]);
+
+  const storesInScope = woQuery.data?.user.canSeeAllStores
+    ? "All"
+    : String(woQuery.data?.user.storeNumbers.length ?? 0);
 
   return (
     <>
       <PageHeader
-        title={`Good morning, ${greeting}`}
+        title={greeting}
         description="What needs your attention today."
       />
 
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <Stat label="Open Work Orders"   value="—" tone="warning" />
-        <Stat label="Pending PAFs"       value="—" tone="info"    />
-        <Stat label="Stores in Scope"    value="—" tone="neutral" />
+        <Stat
+          label="Open Work Orders"
+          value={
+            woQuery.isLoading
+              ? "…"
+              : woQuery.isError
+                ? "—"
+                : String(openCount)
+          }
+          tone="warning"
+          to="/work-orders"
+        />
+        <Stat label="Pending PAFs" value="—" tone="info" />
+        <Stat label="Stores in Scope" value={woQuery.isLoading ? "…" : storesInScope} tone="neutral" />
       </div>
 
       <div className="mt-8 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -53,24 +100,41 @@ function Stat({
   label,
   value,
   tone,
+  to,
 }: {
   label: string;
   value: string;
   tone: "neutral" | "warning" | "info";
+  to?: string;
 }) {
-  return (
-    <Card>
-      <CardBody>
-        <div className="flex items-center justify-between">
-          <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-            {label}
-          </div>
-          <Badge tone={tone}>Live</Badge>
+  const inner = (
+    <CardBody>
+      <div className="flex items-center justify-between">
+        <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">
+          {label}
         </div>
-        <div className="mt-3 text-3xl font-semibold tracking-tight text-midnight tabular-nums">
+        <Badge tone={tone}>Live</Badge>
+      </div>
+      <div className="mt-3 flex items-end justify-between">
+        <div className="text-3xl font-semibold tracking-tight text-midnight tabular-nums">
           {value}
         </div>
-      </CardBody>
-    </Card>
+        {to && (
+          <ArrowRight
+            className="h-4 w-4 text-zinc-400 transition group-hover:text-accent"
+            strokeWidth={2}
+          />
+        )}
+      </div>
+    </CardBody>
   );
+
+  if (to) {
+    return (
+      <Link to={to} className="group block">
+        <Card className="transition hover:ring-2 hover:ring-accent/40">{inner}</Card>
+      </Link>
+    );
+  }
+  return <Card>{inner}</Card>;
 }
