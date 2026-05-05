@@ -26,6 +26,14 @@ export interface Profile {
   role: UserRole;
   primary_store_id: string | null;
   is_active: boolean;
+  // Personal extras (migration 0013) — all optional.
+  profile_photo_url: string | null;
+  birthday: string | null;          // ISO date "YYYY-MM-DD"
+  shirt_size: string | null;
+  favorite_quote: string | null;
+  cfm_cert_number: string | null;
+  cfm_issued_at: string | null;     // ISO date
+  cfm_expires_at: string | null;    // ISO date — generated column (issued + 5y)
   created_at: string;
   updated_at: string;
 }
