@@ -9,6 +9,7 @@ import { WorkOrdersPage } from "@/modules/work-orders/WorkOrdersPage";
 import { PafPage } from "@/modules/paf/PafPage";
 import { ResourcesPage } from "@/modules/resources/ResourcesPage";
 import { TeamPage } from "@/modules/team/TeamPage";
+import { CfmExpiringPage } from "@/modules/team/CfmExpiringPage";
 import { OrgPage } from "@/modules/admin/OrgPage";
 import { BulkImportPage } from "@/modules/admin/BulkImportPage";
 import { RankerPage } from "@/modules/ranker/RankerPage";
@@ -46,6 +47,7 @@ export const router = createBrowserRouter([
           </ProtectedRoute>
         ),
       },
+      { path: "cfm-expiring", element: <CfmExpiringPage /> },
       {
         path: "admin/org",
         element: (

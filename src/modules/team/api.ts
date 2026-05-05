@@ -263,3 +263,45 @@ export function bulkImport(rows: BulkRowInput[]): Promise<BulkImportResponse> {
     body: JSON.stringify({ rows }),
   });
 }
+
+// ----------------------------------------------------------------------------
+// CFM expiring — self status + team list
+// ----------------------------------------------------------------------------
+
+export type CfmStatus = "valid" | "expiring" | "expired" | "none";
+
+export interface CfmSelfStatus {
+  has_cert: boolean;
+  cert_number: string | null;
+  issued_at: string | null;
+  expires_at: string | null;
+  days_left: number | null;
+  status: CfmStatus;
+}
+
+export interface CfmTeamMember {
+  id: string;
+  full_name: string | null;
+  email: string;
+  phone: string | null;
+  role: UserRole;
+  cfm_cert_number: string | null;
+  cfm_issued_at: string | null;
+  cfm_expires_at: string;
+  days_left: number;
+  status: "expiring" | "expired";
+}
+
+export interface CfmExpiringResponse {
+  self: CfmSelfStatus;
+  team: {
+    count_expiring: number;
+    count_expired: number;
+    list: CfmTeamMember[];
+  };
+  window_days: number;
+}
+
+export function fetchCfmExpiring(days = 60): Promise<CfmExpiringResponse> {
+  return request<CfmExpiringResponse>(`${FN}?action=cfm-expiring&days=${days}`);
+}
