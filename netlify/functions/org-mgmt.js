@@ -225,8 +225,315 @@ async function buildTree(supa) {
 }
 
 // ----------------------------------------------------------------------------
+// Write actions (admin only) — create / rename / move / toggle is_active
+// for regions, areas, districts, stores. Every successful write inserts an
+// org_changes row so we can answer "who renamed Frisco DFW 1 to DFW 1A?"
+// ----------------------------------------------------------------------------
+
+// target_kind enum values (from migration 0008/0009).
+// 'market' is preserved as a historical label — new writes use 'area'.
+const TARGET_KINDS = new Set(["region", "area", "district", "store"]);
+const ORG_ACTIONS = new Set(["create", "update", "move", "deactivate", "reactivate"]);
+
+const TABLE_FOR = {
+  region: "regions",
+  area: "areas",
+  district: "districts",
+  store: "stores",
+};
+
+// Which fields can the rename/edit endpoint actually change. Other
+// columns (created_at, etc.) are immutable through this API.
+const EDITABLE_FIELDS = {
+  region: ["code", "name", "is_active"],
+  area: ["code", "name", "is_active"],
+  district: ["code", "name", "is_active"],
+  store: ["number", "name", "phone", "address", "city", "state", "zip", "is_active"],
+};
+
+// Parent column for "move" — store moves to a new district, district to
+// a new area, area to a new region. Regions have no parent (move not
+// supported; if you need it, that's a one-off SQL).
+const PARENT_FIELD_FOR = {
+  store: "district_id",
+  district: "area_id",
+  area: "region_id",
+};
+
+async function logOrgChange(supa, { actor_id, target_kind, target_id, action, before, after }) {
+  try {
+    await supa.from("org_changes").insert({
+      actor_id,
+      target_kind,
+      target_id,
+      action,
+      before: before ?? null,
+      after: after ?? null,
+    });
+  } catch (e) {
+    console.warn("[org-mgmt] audit log insert failed", e);
+  }
+}
+
+// Compute the diff between a fresh-pull row and the requested updates.
+// Only includes keys whose value changed. Used so audit before/after only
+// carry what actually moved.
+function diffRows(beforeRow, updates) {
+  const before = {};
+  const after = {};
+  for (const k of Object.keys(updates)) {
+    const a = beforeRow?.[k] ?? null;
+    const b = updates[k] ?? null;
+    if (a !== b) {
+      before[k] = a;
+      after[k] = b;
+    }
+  }
+  return { before, after };
+}
+
+function requireAdmin(user) {
+  if (user.role !== "admin") {
+    return { error: "Admin only.", status: 403 };
+  }
+  return null;
+}
+
+// ---------- create ----------
+
+async function createOrgNode(supa, user, body) {
+  const adminCheck = requireAdmin(user);
+  if (adminCheck) return adminCheck;
+
+  const kind = String(body?.kind ?? "");
+  if (!TARGET_KINDS.has(kind)) {
+    return { error: `Unknown kind: ${kind}`, status: 400 };
+  }
+  const table = TABLE_FOR[kind];
+
+  // Build the insert payload, dropping unknown keys.
+  const allowed = EDITABLE_FIELDS[kind];
+  const insert = { is_active: true };
+  for (const k of allowed) {
+    if (body[k] !== undefined) insert[k] = body[k];
+  }
+  // Parent FK for non-region kinds.
+  if (kind !== "region") {
+    const fkField = PARENT_FIELD_FOR[kind];
+    const fkValue = body[fkField];
+    if (!fkValue) {
+      return { error: `${fkField} is required.`, status: 400 };
+    }
+    insert[fkField] = fkValue;
+  }
+
+  // Minimal required-field validation.
+  if (kind === "store") {
+    if (!insert.number) return { error: "Store number is required.", status: 400 };
+    if (!insert.name) return { error: "Store name is required.", status: 400 };
+  } else {
+    if (!insert.code) return { error: `${kind} code is required.`, status: 400 };
+    if (!insert.name) return { error: `${kind} name is required.`, status: 400 };
+  }
+
+  const { data: created, error } = await supa
+    .from(table)
+    .insert(insert)
+    .select("*")
+    .single();
+  if (error) return { error: error.message, status: 500 };
+
+  await logOrgChange(supa, {
+    actor_id: user.id,
+    target_kind: kind,
+    target_id: created.id,
+    action: "create",
+    before: null,
+    after: insert,
+  });
+
+  return { ok: true, node: created };
+}
+
+// ---------- update (rename / edit fields) ----------
+
+async function updateOrgNode(supa, user, body) {
+  const adminCheck = requireAdmin(user);
+  if (adminCheck) return adminCheck;
+
+  const kind = String(body?.kind ?? "");
+  if (!TARGET_KINDS.has(kind)) {
+    return { error: `Unknown kind: ${kind}`, status: 400 };
+  }
+  const id = body?.id;
+  if (!id) return { error: "id is required.", status: 400 };
+
+  const table = TABLE_FOR[kind];
+  const allowed = EDITABLE_FIELDS[kind];
+
+  const updates = {};
+  for (const k of allowed) {
+    if (body[k] !== undefined) updates[k] = body[k];
+  }
+  // Treat is_active separately so we can record deactivate/reactivate
+  // as their own audit actions.
+  let action = "update";
+  let isActiveChange = null;
+  if ("is_active" in updates) {
+    isActiveChange = updates.is_active;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return { error: "No fields to update.", status: 400 };
+  }
+
+  // Pull the before snapshot so audit captures the diff.
+  const { data: beforeRow, error: beforeErr } = await supa
+    .from(table)
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (beforeErr) return { error: beforeErr.message, status: 500 };
+  if (!beforeRow) return { error: "Not found.", status: 404 };
+
+  const { error: updErr } = await supa
+    .from(table)
+    .update(updates)
+    .eq("id", id);
+  if (updErr) return { error: updErr.message, status: 500 };
+
+  if (isActiveChange === true && beforeRow.is_active === false) {
+    action = "reactivate";
+  } else if (isActiveChange === false && beforeRow.is_active === true) {
+    action = "deactivate";
+  }
+
+  const { before, after } = diffRows(beforeRow, updates);
+  await logOrgChange(supa, {
+    actor_id: user.id,
+    target_kind: kind,
+    target_id: id,
+    action,
+    before,
+    after,
+  });
+
+  return { ok: true };
+}
+
+// ---------- move (parent reassignment) ----------
+
+async function moveOrgNode(supa, user, body) {
+  const adminCheck = requireAdmin(user);
+  if (adminCheck) return adminCheck;
+
+  const kind = String(body?.kind ?? "");
+  if (kind === "region") {
+    return { error: "Regions cannot be moved.", status: 400 };
+  }
+  if (!TARGET_KINDS.has(kind)) {
+    return { error: `Unknown kind: ${kind}`, status: 400 };
+  }
+  const id = body?.id;
+  const fkField = PARENT_FIELD_FOR[kind];
+  const newParentId = body?.[fkField];
+  if (!id) return { error: "id is required.", status: 400 };
+  if (!newParentId) return { error: `${fkField} is required.`, status: 400 };
+
+  const table = TABLE_FOR[kind];
+
+  const { data: beforeRow, error: beforeErr } = await supa
+    .from(table)
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (beforeErr) return { error: beforeErr.message, status: 500 };
+  if (!beforeRow) return { error: "Not found.", status: 404 };
+
+  if (beforeRow[fkField] === newParentId) {
+    return { ok: true }; // no-op
+  }
+
+  const { error: updErr } = await supa
+    .from(table)
+    .update({ [fkField]: newParentId })
+    .eq("id", id);
+  if (updErr) return { error: updErr.message, status: 500 };
+
+  await logOrgChange(supa, {
+    actor_id: user.id,
+    target_kind: kind,
+    target_id: id,
+    action: "move",
+    before: { [fkField]: beforeRow[fkField] },
+    after: { [fkField]: newParentId },
+  });
+
+  return { ok: true };
+}
+
+// ---------- history (admin-only audit feed) ----------
+
+async function fetchOrgHistory(supa, user, query) {
+  const adminCheck = requireAdmin(user);
+  if (adminCheck) return adminCheck;
+
+  const kind = query?.target_kind || null;
+  const targetId = query?.target_id || null;
+  const limit = Math.min(parseInt(query?.limit || "50", 10) || 50, 200);
+
+  let q = supa
+    .from("org_changes")
+    .select("id, actor_id, target_kind, target_id, action, before, after, created_at")
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (kind) q = q.eq("target_kind", kind);
+  if (targetId) q = q.eq("target_id", targetId);
+
+  const { data: rows, error } = await q;
+  if (error) return { error: error.message, status: 500 };
+  if (!rows || rows.length === 0) return { entries: [] };
+
+  const actorIds = [...new Set(rows.map((r) => r.actor_id))];
+  const { data: actors } = await supa
+    .from("profiles")
+    .select("id, full_name, email")
+    .in("id", actorIds);
+  const actorMap = Object.fromEntries((actors ?? []).map((a) => [a.id, a]));
+
+  return {
+    entries: rows.map((r) => ({
+      id: r.id,
+      target_kind: r.target_kind,
+      target_id: r.target_id,
+      action: r.action,
+      created_at: r.created_at,
+      actor: {
+        id: r.actor_id,
+        full_name: actorMap[r.actor_id]?.full_name ?? null,
+        email: actorMap[r.actor_id]?.email ?? null,
+      },
+      before: r.before,
+      after: r.after,
+    })),
+  };
+}
+
+// ----------------------------------------------------------------------------
 // HTTP handler
 // ----------------------------------------------------------------------------
+
+function unwrap(result) {
+  if (
+    result &&
+    typeof result === "object" &&
+    "status" in result &&
+    "error" in result
+  ) {
+    return respond(result.status, { error: result.error });
+  }
+  return respond(200, result);
+}
 
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
@@ -247,10 +554,21 @@ export const handler = async (event) => {
 
   try {
     const supa = admin();
-    if (event.httpMethod === "GET" && action === "tree") {
-      return respond(200, await buildTree(supa));
+    if (event.httpMethod === "GET") {
+      if (action === "tree") return respond(200, await buildTree(supa));
+      if (action === "history") {
+        return unwrap(await fetchOrgHistory(supa, user, params));
+      }
+      return respond(400, { error: `unknown GET action: ${action}` });
     }
-    return respond(400, { error: `unknown action: ${action}` });
+    if (event.httpMethod === "POST") {
+      const body = event.body ? JSON.parse(event.body) : {};
+      if (action === "create") return unwrap(await createOrgNode(supa, user, body));
+      if (action === "update") return unwrap(await updateOrgNode(supa, user, body));
+      if (action === "move") return unwrap(await moveOrgNode(supa, user, body));
+      return respond(400, { error: `unknown POST action: ${action}` });
+    }
+    return respond(405, { error: "method not allowed" });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });
   }
