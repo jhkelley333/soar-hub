@@ -7,6 +7,7 @@ import {
   Network,
   TrendingUp,
   UserCircle,
+  Settings,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -27,6 +28,7 @@ export const NAV: NavItem[] = [
   { to: "/resources",   label: "Resources",   icon: BookOpen,        roles: null },
   { to: "/team",        label: "My Team",     icon: Users,           roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/admin/org",   label: "Org Admin",   icon: Network,         roles: ["vp", "coo", "admin"] },
+  { to: "/admin/paf-config", label: "PAF Config", icon: Settings,    roles: ["payroll", "admin"] },
   { to: "/ranker",      label: "Ranker",      icon: TrendingUp,      roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/account",     label: "Account",     icon: UserCircle,      roles: null },
 ];

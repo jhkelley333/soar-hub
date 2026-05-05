@@ -13,6 +13,7 @@ import { CfmExpiringPage } from "@/modules/team/CfmExpiringPage";
 import { OrgPage } from "@/modules/admin/OrgPage";
 import { BulkImportPage } from "@/modules/admin/BulkImportPage";
 import { BulkOrgImportPage } from "@/modules/admin/BulkOrgImportPage";
+import { PafConfigPage } from "@/modules/admin/pafConfig/PafConfigPage";
 import { RankerPage } from "@/modules/ranker/RankerPage";
 import { AccountPage } from "@/modules/account/AccountPage";
 
@@ -70,6 +71,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <BulkOrgImportPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/paf-config",
+        element: (
+          <ProtectedRoute requireRoles={["payroll", "admin"]}>
+            <PafConfigPage />
           </ProtectedRoute>
         ),
       },
