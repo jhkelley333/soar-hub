@@ -18,7 +18,7 @@ import {
   type UpdateUserInput,
 } from "./api";
 
-type ScopeKind = "store" | "district" | "region" | "global";
+type ScopeKind = "store" | "district" | "area" | "region" | "global";
 
 function scopeKindForRole(role: UserRole): ScopeKind {
   switch (role) {
@@ -26,8 +26,9 @@ function scopeKindForRole(role: UserRole): ScopeKind {
     case "gm":
       return "store";
     case "do":
-    case "sdo":
       return "district";
+    case "sdo":
+      return "area";
     case "rvp":
       return "region";
     case "vp":
@@ -120,6 +121,12 @@ export function EditMemberModal({
         label: `${d.name}${d.code ? ` (${d.code})` : ""}`,
       }));
     }
+    if (scopeKind === "area") {
+      return scopeQuery.data.areas.map((a) => ({
+        value: a.id,
+        label: `${a.name}${a.code ? ` (${a.code})` : ""}`,
+      }));
+    }
     if (scopeKind === "region") {
       return scopeQuery.data.regions.map((r) => ({
         value: r.id,
@@ -172,13 +179,15 @@ export function EditMemberModal({
     setError(null);
 
     if (scopeKind !== "global" && !scopeId) {
-      setError(
+      const label =
         scopeKind === "store"
-          ? "Pick a store."
+          ? "store"
           : scopeKind === "district"
-            ? "Pick a district."
-            : "Pick a region."
-      );
+            ? "district"
+            : scopeKind === "area"
+              ? "area"
+              : "region";
+      setError(`Pick a ${label}.`);
       return;
     }
 
@@ -312,6 +321,7 @@ export function EditMemberModal({
                   <Label htmlFor="edit-scope">
                     {scopeKind === "store" && "Store"}
                     {scopeKind === "district" && "District"}
+                    {scopeKind === "area" && "Area"}
                     {scopeKind === "region" && "Region"}
                   </Label>
                   <select

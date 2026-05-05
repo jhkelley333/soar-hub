@@ -225,8 +225,11 @@ function scopeForRole(role) {
     case "gm":
       return "store";
     case "do":
-    case "sdo":
       return "district";
+    case "sdo":
+      // SDOs typically oversee a multi-district area; assigning them at
+      // area scope gives them visibility across all districts in that area.
+      return "area";
     case "rvp":
       return "region";
     case "vp":
