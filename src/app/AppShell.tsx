@@ -2,9 +2,13 @@ import { useState } from "react";
 import { Outlet } from "react-router-dom";
 import { Menu } from "lucide-react";
 import { Sidebar } from "@/app/Sidebar";
+import { useIdleLogout } from "@/auth/useIdleLogout";
 
 export function AppShell() {
   const [navOpen, setNavOpen] = useState(false);
+  // 2-hour idle auto-logout. Only active while a session exists (the
+  // hook bails internally otherwise).
+  useIdleLogout();
 
   return (
     <div className="flex h-full bg-zinc-50">

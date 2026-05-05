@@ -70,8 +70,8 @@ export function roleLevel(role: UserRole): number | null {
 export const ROLE_LABELS: Record<UserRole, string> = {
   shift_manager: "Shift Manager",
   gm: "General Manager",
-  do: "District Operator",
-  sdo: "Senior District Operator",
+  do: "Director of Operations",
+  sdo: "Senior Director of Operations",
   rvp: "Regional VP",
   vp: "VP",
   coo: "COO",
