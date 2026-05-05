@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Mail, Phone, Search, Copy } from "lucide-react";
+import { Download, Mail, Phone, Search, Copy } from "lucide-react";
+import { Link } from "react-router-dom";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
 import { Badge } from "@/shared/ui/Badge";
@@ -8,9 +9,11 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
+import { useAuth } from "@/auth/AuthProvider";
 import { ROLE_LABELS, type UserRole } from "@/types/database";
 import { formatPhoneForDisplay } from "@/lib/phone";
 import { cn } from "@/lib/cn";
+import { downloadCSV, toCSV } from "@/lib/csv";
 import { listTeam, type ManagedUser } from "./api";
 import { AddUserModal } from "./AddUserModal";
 import { EditMemberModal } from "./EditMemberModal";
@@ -18,6 +21,7 @@ import { EditMemberModal } from "./EditMemberModal";
 type RoleFilter = "all" | UserRole;
 
 export function TeamPage() {
+  const { profile } = useAuth();
   const query = useQuery({
     queryKey: ["my-team"],
     queryFn: listTeam,
@@ -30,6 +34,24 @@ export function TeamPage() {
   const [editing, setEditing] = useState<ManagedUser | null>(null);
 
   const allMembers = query.data?.members ?? [];
+
+  function exportCsv(members: ManagedUser[]) {
+    const headers = ["email", "full_name", "phone", "role", "scope_type", "scope_id_or_code"];
+    const rows = members.map((m) => {
+      const primaryScope = m.scopes[0];
+      return {
+        email: m.email,
+        full_name: m.full_name ?? "",
+        phone: m.phone ?? "",
+        role: m.role,
+        scope_type: primaryScope?.scope_type ?? "",
+        scope_id_or_code: primaryScope?.code ?? "",
+      };
+    });
+    const csv = toCSV(headers, rows);
+    const date = new Date().toISOString().slice(0, 10);
+    downloadCSV(`my-team-${date}.csv`, csv);
+  }
 
   const filtered = useMemo(() => {
     let list = allMembers;
@@ -117,9 +139,27 @@ export function TeamPage() {
         title="My Team"
         description={`${data.members.filter((m) => m.is_active).length} active ${data.members.filter((m) => m.is_active).length === 1 ? "person" : "people"} in your scope.`}
         actions={
-          <Button variant="primary" onClick={() => setAddOpen(true)}>
-            + Add user
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => exportCsv(filtered)}
+              disabled={filtered.length === 0}
+            >
+              <Download className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+              Download CSV
+            </Button>
+            {profile?.role === "admin" && (
+              <Link to="/admin/bulk-import">
+                <Button variant="ghost" size="sm">
+                  Bulk import…
+                </Button>
+              </Link>
+            )}
+            <Button variant="primary" onClick={() => setAddOpen(true)}>
+              + Add user
+            </Button>
+          </div>
         }
       />
       <AddUserModal open={addOpen} onClose={() => setAddOpen(false)} />

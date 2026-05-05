@@ -10,6 +10,7 @@ import { PafPage } from "@/modules/paf/PafPage";
 import { ResourcesPage } from "@/modules/resources/ResourcesPage";
 import { TeamPage } from "@/modules/team/TeamPage";
 import { OrgPage } from "@/modules/admin/OrgPage";
+import { BulkImportPage } from "@/modules/admin/BulkImportPage";
 import { RankerPage } from "@/modules/ranker/RankerPage";
 import { AccountPage } from "@/modules/account/AccountPage";
 
@@ -50,6 +51,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
             <OrgPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/bulk-import",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <BulkImportPage />
           </ProtectedRoute>
         ),
       },

@@ -144,12 +144,37 @@ async function listManaged(supa, manager) {
     return scope.scope_type;
   }
 
+  // Code that round-trips through the bulk-import CSV. For stores we use
+  // the store number; for district/area/region we use the .code column;
+  // global has no code.
+  function codeFor(scope) {
+    if (scope.scope_type === "global") return "";
+    if (scope.scope_type === "store") {
+      const s = storeMap[scope.scope_id];
+      return s ? String(s.number) : "";
+    }
+    if (scope.scope_type === "district") {
+      const d = districtMap[scope.scope_id];
+      return d?.code ?? "";
+    }
+    if (scope.scope_type === "area") {
+      const a = areaMap[scope.scope_id];
+      return a?.code ?? "";
+    }
+    if (scope.scope_type === "region") {
+      const r = regionMap[scope.scope_id];
+      return r?.code ?? "";
+    }
+    return "";
+  }
+
   const scopesByUser = {};
   for (const s of scopes ?? []) {
     (scopesByUser[s.user_id] ||= []).push({
       scope_type: s.scope_type,
       scope_id: s.scope_id,
       label: labelFor(s),
+      code: codeFor(s),
     });
   }
 
@@ -850,6 +875,237 @@ async function fetchHistory(supa, manager, query) {
 }
 
 // ----------------------------------------------------------------------------
+// Bulk import — preview + commit (admin only)
+// ----------------------------------------------------------------------------
+//
+// Two-step CSV import. The client parses the CSV, sends rows[] to
+// ?action=bulk-preview which validates each row server-side (org refs
+// resolved, role/scope alignment, phone shape, duplicate emails) and
+// returns annotated rows. The user reviews, then ?action=bulk-import
+// runs invites for valid rows only.
+
+const ALL_ROLES = ["shift_manager","gm","do","sdo","rvp","vp","coo","admin","payroll"];
+
+async function bulkValidate(supa, rows) {
+  // Pre-load org maps so we can resolve codes → ids in O(1).
+  const [
+    { data: stores },
+    { data: districts },
+    { data: areas },
+    { data: regions },
+  ] = await Promise.all([
+    supa.from("stores").select("id, number"),
+    supa.from("districts").select("id, code"),
+    supa.from("areas").select("id, code"),
+    supa.from("regions").select("id, code"),
+  ]);
+  const storeByNum  = Object.fromEntries((stores ?? []).map((s) => [String(s.number), s.id]));
+  const districtByCode = Object.fromEntries((districts ?? []).map((d) => [d.code, d.id]));
+  const areaByCode  = Object.fromEntries((areas ?? []).map((a) => [a.code, a.id]));
+  const regionByCode= Object.fromEntries((regions ?? []).map((r) => [r.code, r.id]));
+
+  // Pre-load existing emails so we can mark duplicates upfront.
+  const existingEmails = new Set();
+  try {
+    let page = 1;
+    while (true) {
+      const { data, error } = await supa.auth.admin.listUsers({ page, perPage: 200 });
+      if (error) break;
+      for (const u of data?.users ?? []) {
+        if (u.email) existingEmails.add(u.email.toLowerCase());
+      }
+      if ((data?.users ?? []).length < 200 || page >= 10) break;
+      page += 1;
+    }
+  } catch (e) {
+    console.warn("[team-mgmt] bulkValidate: listUsers failed", e);
+  }
+
+  const seenEmails = new Set();
+  return rows.map((row, i) => {
+    const errors = [];
+    const warnings = [];
+    const email = String(row.email ?? "").trim().toLowerCase();
+    const fullName = String(row.full_name ?? "").trim() || null;
+    const role = String(row.role ?? "").trim();
+    const scopeType = String(row.scope_type ?? "").trim();
+    const codeRaw = String(row.scope_id_or_code ?? "").trim();
+
+    if (!email || !email.includes("@")) errors.push("Invalid email.");
+    if (!ALL_ROLES.includes(role)) errors.push(`Invalid role "${role}".`);
+
+    const expectedScope = scopeForRole(role);
+    if (expectedScope && scopeType !== expectedScope) {
+      errors.push(`Role ${role} expects scope_type "${expectedScope}", got "${scopeType}".`);
+    }
+
+    let scopeId = null;
+    if (scopeType === "global") {
+      // ok
+    } else if (!codeRaw) {
+      errors.push(`scope_id_or_code required for scope_type "${scopeType}".`);
+    } else if (scopeType === "store") {
+      scopeId = storeByNum[codeRaw];
+      if (!scopeId) errors.push(`Store number "${codeRaw}" not found.`);
+    } else if (scopeType === "district") {
+      scopeId = districtByCode[codeRaw];
+      if (!scopeId) errors.push(`District code "${codeRaw}" not found.`);
+    } else if (scopeType === "area") {
+      scopeId = areaByCode[codeRaw];
+      if (!scopeId) errors.push(`Area code "${codeRaw}" not found.`);
+    } else if (scopeType === "region") {
+      scopeId = regionByCode[codeRaw];
+      if (!scopeId) errors.push(`Region code "${codeRaw}" not found.`);
+    } else if (!errors.length) {
+      errors.push(`Unknown scope_type "${scopeType}".`);
+    }
+
+    let phone = null;
+    if (row.phone) {
+      phone = normalizePhone(row.phone);
+      if (!phone) errors.push("Phone must be a 10-digit number.");
+    }
+
+    if (email) {
+      if (seenEmails.has(email)) errors.push("Duplicate email in this CSV.");
+      seenEmails.add(email);
+      if (existingEmails.has(email)) {
+        warnings.push("Email already in the system — will be skipped.");
+      }
+    }
+
+    return {
+      row: i + 1,
+      email,
+      full_name: fullName,
+      phone,
+      role,
+      scope_type: scopeType,
+      scope_id: scopeId,
+      scope_code: codeRaw,
+      errors,
+      warnings,
+      already_exists: existingEmails.has(email),
+    };
+  });
+}
+
+async function bulkPreview(supa, manager, body) {
+  if (manager.role !== "admin") {
+    return { error: "Bulk import is admin-only.", status: 403 };
+  }
+  const rows = body?.rows ?? [];
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return { error: "No rows to preview.", status: 400 };
+  }
+  if (rows.length > 500) {
+    return { error: "Bulk import is capped at 500 rows per upload.", status: 400 };
+  }
+  const annotated = await bulkValidate(supa, rows);
+  const summary = {
+    total: annotated.length,
+    valid: annotated.filter((r) => r.errors.length === 0 && !r.already_exists).length,
+    invalid: annotated.filter((r) => r.errors.length > 0).length,
+    skipped: annotated.filter((r) => r.errors.length === 0 && r.already_exists).length,
+  };
+  return { rows: annotated, summary };
+}
+
+async function bulkImport(supa, manager, body) {
+  if (manager.role !== "admin") {
+    return { error: "Bulk import is admin-only.", status: 403 };
+  }
+  const rows = body?.rows ?? [];
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return { error: "No rows to import.", status: 400 };
+  }
+  const annotated = await bulkValidate(supa, rows);
+  const inviteRedirect =
+    (process.env.URL || process.env.DEPLOY_URL || "").replace(/\/$/, "") +
+      "/accept-invite";
+
+  const results = [];
+  for (const r of annotated) {
+    if (r.errors.length > 0) {
+      results.push({ ...r, status: "error", message: r.errors.join("; ") });
+      continue;
+    }
+    if (r.already_exists) {
+      results.push({ ...r, status: "skipped", message: "already exists" });
+      continue;
+    }
+    try {
+      const { data: inviteData, error: inviteErr } =
+        await supa.auth.admin.inviteUserByEmail(r.email, {
+          data: r.full_name ? { full_name: r.full_name } : undefined,
+          redirectTo: inviteRedirect || undefined,
+        });
+      if (inviteErr) {
+        results.push({ ...r, status: "error", message: inviteErr.message });
+        continue;
+      }
+      const newUserId = inviteData?.user?.id;
+      if (!newUserId) {
+        results.push({ ...r, status: "error", message: "no user id returned" });
+        continue;
+      }
+
+      const { error: profileErr } = await supa
+        .from("profiles")
+        .update({
+          full_name: r.full_name,
+          phone: r.phone,
+          role: r.role,
+          is_active: true,
+        })
+        .eq("id", newUserId);
+      if (profileErr) {
+        await supa.auth.admin.deleteUser(newUserId).catch(() => {});
+        results.push({ ...r, status: "error", message: profileErr.message });
+        continue;
+      }
+
+      const { error: scopeErr } = await supa.from("user_scopes").insert({
+        user_id: newUserId,
+        scope_type: r.scope_type,
+        scope_id: r.scope_type === "global" ? null : r.scope_id,
+      });
+      if (scopeErr) {
+        await supa.auth.admin.deleteUser(newUserId).catch(() => {});
+        results.push({ ...r, status: "error", message: scopeErr.message });
+        continue;
+      }
+
+      await logChange(supa, {
+        actor_id: manager.id,
+        target_id: newUserId,
+        action: "create",
+        before: null,
+        after: {
+          email: r.email,
+          full_name: r.full_name,
+          phone: r.phone,
+          role: r.role,
+          scope_type: r.scope_type,
+          scope_id: r.scope_type === "global" ? null : r.scope_id,
+        },
+      });
+      results.push({ ...r, status: "invited", user_id: newUserId });
+    } catch (e) {
+      results.push({ ...r, status: "error", message: String(e?.message ?? e) });
+    }
+  }
+
+  const summary = {
+    total: results.length,
+    invited: results.filter((r) => r.status === "invited").length,
+    skipped: results.filter((r) => r.status === "skipped").length,
+    errors: results.filter((r) => r.status === "error").length,
+  };
+  return { results, summary };
+}
+
+// ----------------------------------------------------------------------------
 // HTTP handler
 // ----------------------------------------------------------------------------
 
@@ -902,6 +1158,8 @@ export const handler = async (event) => {
       if (action === "add-user") return unwrap(await addUser(supa, manager, body));
       if (action === "update-user") return unwrap(await updateUser(supa, manager, body));
       if (action === "send-reset") return unwrap(await sendReset(supa, manager, body));
+      if (action === "bulk-preview") return unwrap(await bulkPreview(supa, manager, body));
+      if (action === "bulk-import") return unwrap(await bulkImport(supa, manager, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
 

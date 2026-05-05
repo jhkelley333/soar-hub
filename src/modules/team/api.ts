@@ -20,6 +20,10 @@ export interface ScopeBadge {
   scope_type: ScopeType;
   scope_id: string | null;
   label: string;
+  // Stable code that round-trips through CSV import/export. Empty for
+  // global scope. Older list responses didn't include this; treat as
+  // optional.
+  code?: string;
 }
 
 export interface ManagedUser {
@@ -190,5 +194,72 @@ export function sendPasswordReset(userId: string): Promise<{ ok: true; sent_to: 
   return request<{ ok: true; sent_to: string }>(`${FN}?action=send-reset`, {
     method: "POST",
     body: JSON.stringify({ user_id: userId }),
+  });
+}
+
+// ----------------------------------------------------------------------------
+// Bulk import (admin only)
+// ----------------------------------------------------------------------------
+
+export interface BulkRowInput {
+  email: string;
+  full_name?: string;
+  phone?: string;
+  role: string;
+  scope_type: string;
+  scope_id_or_code?: string;
+}
+
+export interface BulkRowAnnotated {
+  row: number;
+  email: string;
+  full_name: string | null;
+  phone: string | null;
+  role: string;
+  scope_type: string;
+  scope_id: string | null;
+  scope_code: string;
+  errors: string[];
+  warnings: string[];
+  already_exists: boolean;
+}
+
+export interface BulkPreviewResponse {
+  rows: BulkRowAnnotated[];
+  summary: {
+    total: number;
+    valid: number;
+    invalid: number;
+    skipped: number;
+  };
+}
+
+export interface BulkImportResult extends BulkRowAnnotated {
+  status: "invited" | "skipped" | "error";
+  message?: string;
+  user_id?: string;
+}
+
+export interface BulkImportResponse {
+  results: BulkImportResult[];
+  summary: {
+    total: number;
+    invited: number;
+    skipped: number;
+    errors: number;
+  };
+}
+
+export function bulkPreview(rows: BulkRowInput[]): Promise<BulkPreviewResponse> {
+  return request<BulkPreviewResponse>(`${FN}?action=bulk-preview`, {
+    method: "POST",
+    body: JSON.stringify({ rows }),
+  });
+}
+
+export function bulkImport(rows: BulkRowInput[]): Promise<BulkImportResponse> {
+  return request<BulkImportResponse>(`${FN}?action=bulk-import`, {
+    method: "POST",
+    body: JSON.stringify({ rows }),
   });
 }
