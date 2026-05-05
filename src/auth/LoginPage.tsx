@@ -3,10 +3,31 @@ import { Navigate, useLocation } from "react-router-dom";
 import { Mail, Phone } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/auth/AuthProvider";
+import { visibleNav } from "@/app/nav";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
 import { detectMode, normalizePhone } from "@/lib/phone";
+import type { UserRole } from "@/types/database";
+
+// Always-allowed destinations regardless of role. Anything else has to
+// match a nav entry the user can actually see.
+const ALWAYS_ALLOWED = new Set(["/", "/account"]);
+
+// Validate the `from` path captured by ProtectedRoute before redirecting
+// to it post-login. After a deploy, a stale `from` (e.g. /paf when the
+// user is now a shift_manager) can land them on a page they can't see,
+// with an empty sidebar while profile is briefly null. Falling back to
+// "/" if the path isn't in the user's allowed nav avoids that.
+function safeRedirectTarget(from: string | null | undefined, role: UserRole): string {
+  if (!from) return "/";
+  if (ALWAYS_ALLOWED.has(from)) return from;
+  const allowed = visibleNav(role);
+  const ok = allowed.some(
+    (item) => from === item.to || from.startsWith(item.to + "/")
+  );
+  return ok ? from : "/";
+}
 
 type Mode = "password" | "magic" | "forgot";
 
@@ -44,7 +65,7 @@ async function resolveIdentifier(input: string): Promise<{ email: string } | { e
 }
 
 export function LoginPage() {
-  const { session, loading } = useAuth();
+  const { session, profile, loading } = useAuth();
   const location = useLocation();
   const [mode, setMode] = useState<Mode>("password");
   const [identifier, setIdentifier] = useState("");
@@ -55,9 +76,13 @@ export function LoginPage() {
 
   const detected = useMemo(() => detectMode(identifier), [identifier]);
 
-  if (!loading && session) {
-    const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname ?? "/";
-    return <Navigate to={from} replace />;
+  // Wait for BOTH session and profile before navigating away. Without
+  // profile the role-aware safeRedirectTarget can't validate, and the
+  // sidebar would render empty (visibleNav([]) returns nothing).
+  if (!loading && session && profile) {
+    const from = (location.state as { from?: { pathname?: string } } | null)?.from
+      ?.pathname;
+    return <Navigate to={safeRedirectTarget(from, profile.role)} replace />;
   }
 
   async function handleSubmit(e: FormEvent) {
