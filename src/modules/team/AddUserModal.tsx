@@ -14,7 +14,7 @@ import {
   type AddUserInput,
 } from "./api";
 
-type ScopeKind = "store" | "district" | "region" | "global";
+type ScopeKind = "store" | "district" | "area" | "region" | "global";
 
 function scopeKindForRole(role: UserRole): ScopeKind {
   switch (role) {
@@ -22,8 +22,9 @@ function scopeKindForRole(role: UserRole): ScopeKind {
     case "gm":
       return "store";
     case "do":
-    case "sdo":
       return "district";
+    case "sdo":
+      return "area";
     case "rvp":
       return "region";
     case "vp":
@@ -97,6 +98,12 @@ export function AddUserModal({
         label: `${d.name}${d.code ? ` (${d.code})` : ""}`,
       }));
     }
+    if (scopeKind === "area") {
+      return scopeQuery.data.areas.map((a) => ({
+        value: a.id,
+        label: `${a.name}${a.code ? ` (${a.code})` : ""}`,
+      }));
+    }
     if (scopeKind === "region") {
       return scopeQuery.data.regions.map((r) => ({
         value: r.id,
@@ -133,13 +140,15 @@ export function AddUserModal({
 
     const kind = scopeKindForRole(role);
     if (kind !== "global" && !scopeId) {
-      setError(
+      const label =
         kind === "store"
-          ? "Pick a store for this user."
+          ? "store"
           : kind === "district"
-            ? "Pick a district for this user."
-            : "Pick a region for this user."
-      );
+            ? "district"
+            : kind === "area"
+              ? "area"
+              : "region";
+      setError(`Pick a ${label} for this user.`);
       return;
     }
 
@@ -267,6 +276,7 @@ export function AddUserModal({
               <Label htmlFor="add-scope">
                 {scopeKind === "store" && "Store *"}
                 {scopeKind === "district" && "District *"}
+                {scopeKind === "area" && "Area *"}
                 {scopeKind === "region" && "Region *"}
               </Label>
               <select

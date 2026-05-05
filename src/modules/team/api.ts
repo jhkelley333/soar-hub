@@ -122,7 +122,7 @@ export interface AddUserInput {
   email: string;
   phone?: string;
   role: UserRole;
-  scope_type: "store" | "district" | "region" | "global";
+  scope_type: "store" | "district" | "area" | "region" | "global";
   scope_id: string | null; // null for global
 }
 
@@ -142,7 +142,7 @@ export interface UpdateUserInput {
   full_name?: string | null;
   phone?: string | null;
   role?: UserRole;
-  scope_type?: "store" | "district" | "region" | "global";
+  scope_type?: "store" | "district" | "area" | "region" | "global";
   scope_id?: string | null;
   is_active?: boolean;
 }
