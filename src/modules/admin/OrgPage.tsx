@@ -1,11 +1,19 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, MapPin, AlertCircle } from "lucide-react";
+import {
+  AlertCircle,
+  ChevronRight,
+  MapPin,
+  Pencil,
+  Plus,
+} from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
 import { Badge } from "@/shared/ui/Badge";
+import { Button } from "@/shared/ui/Button";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Skeleton } from "@/shared/ui/Skeleton";
+import { useAuth } from "@/auth/AuthProvider";
 import { ROLE_LABELS } from "@/types/database";
 import { formatPhoneForDisplay } from "@/lib/phone";
 import { cn } from "@/lib/cn";
@@ -17,22 +25,41 @@ import {
   type OrgRegion,
   type OrgStore,
 } from "./api";
+import {
+  AddOrgNodeModal,
+  EditOrgNodeModal,
+  type AddTarget,
+  type EditTarget,
+} from "./OrgNodeModals";
 
 type ExpandedSet = Set<string>;
 
 export function OrgPage() {
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === "admin";
+
   const query = useQuery({
     queryKey: ["org-tree"],
     queryFn: fetchOrgTree,
   });
 
-  // Track which nodes are expanded. Default: regions + areas open, districts closed.
-  // Key format: "kind:id" so collisions across kinds are impossible.
   const [expanded, setExpanded] = useState<ExpandedSet>(new Set());
   const [showInactive, setShowInactive] = useState(false);
   const [search, setSearch] = useState("");
 
-  // Derive default-expanded keys once data lands.
+  // Modal state
+  const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
+  const [addTarget, setAddTarget] = useState<AddTarget | null>(null);
+  const [addParentLabel, setAddParentLabel] = useState<string | undefined>();
+
+  function openEdit(target: EditTarget) {
+    setEditTarget(target);
+  }
+  function openAdd(target: AddTarget, parentLabel?: string) {
+    setAddTarget(target);
+    setAddParentLabel(parentLabel);
+  }
+
   const defaultsApplied = useMemo(() => {
     if (!query.data) return false;
     const def = new Set<string>();
@@ -72,18 +99,12 @@ export function OrgPage() {
     setExpanded(new Set());
   }
 
-  // Filter the tree client-side. We hide stores that don't match the search,
-  // then collapse upward — districts/areas/regions vanish only if every child
-  // also disappeared. is_active filter is inclusive: an inactive store still
-  // shows under its district unless showInactive is off.
   const filtered = useMemo(() => {
     if (!query.data) return null;
     const q = search.trim().toLowerCase();
     return filterTree(query.data.regions, q, showInactive);
   }, [query.data, search, showInactive]);
 
-  // Auto-expand matched nodes when the user types — otherwise the search
-  // result is buried inside collapsed parents.
   const effectiveExpanded = useMemo(() => {
     if (!search.trim() || !filtered) return expanded;
     const hits = new Set(expanded);
@@ -123,8 +144,6 @@ export function OrgPage() {
   }
 
   const data = query.data!;
-  // Reference defaultsApplied so it isn't flagged unused — the hook's job
-  // is the side-effect of seeding `expanded` on first load.
   void defaultsApplied;
 
   return (
@@ -147,7 +166,17 @@ export function OrgPage() {
           </span>
         }
         actions={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            {isAdmin && (
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => openAdd({ kind: "region" })}
+              >
+                <Plus className="mr-1 h-3.5 w-3.5" strokeWidth={2} />
+                Add Region
+              </Button>
+            )}
             <button
               type="button"
               onClick={expandAll}
@@ -166,7 +195,22 @@ export function OrgPage() {
         }
       />
 
-      {/* Filter bar */}
+      <EditOrgNodeModal
+        open={!!editTarget}
+        target={editTarget}
+        tree={data}
+        onClose={() => setEditTarget(null)}
+      />
+      <AddOrgNodeModal
+        open={!!addTarget}
+        target={addTarget}
+        parentLabel={addParentLabel}
+        onClose={() => {
+          setAddTarget(null);
+          setAddParentLabel(undefined);
+        }}
+      />
+
       <div className="mb-4 flex flex-col gap-2 rounded-lg border border-zinc-200 bg-white p-3 sm:flex-row sm:items-center sm:gap-3">
         <input
           type="search"
@@ -203,6 +247,9 @@ export function OrgPage() {
               region={r}
               expanded={effectiveExpanded}
               onToggle={toggle}
+              isAdmin={isAdmin}
+              onEdit={openEdit}
+              onAdd={openAdd}
             />
           ))}
         </div>
@@ -215,17 +262,27 @@ export function OrgPage() {
 // Tree rows
 // ----------------------------------------------------------------------------
 
+interface RowCallbacks {
+  isAdmin: boolean;
+  onEdit: (target: EditTarget) => void;
+  onAdd: (target: AddTarget, parentLabel?: string) => void;
+}
+
 function RegionRow({
   region,
   expanded,
   onToggle,
+  isAdmin,
+  onEdit,
+  onAdd,
 }: {
   region: OrgRegion;
   expanded: ExpandedSet;
   onToggle: (k: string) => void;
-}) {
+} & RowCallbacks) {
   const k = key("region", region.id);
   const isOpen = expanded.has(k);
+  const parentLabel = `${region.code} — ${region.name}`;
   return (
     <Card className="overflow-hidden p-0">
       <NodeHeader
@@ -237,6 +294,8 @@ function RegionRow({
         isOpen={isOpen}
         onToggle={() => onToggle(k)}
         kindLabel="Region"
+        isAdmin={isAdmin}
+        onEdit={() => onEdit({ kind: "region", node: region })}
       />
       {isOpen && (
         <div className="divide-y divide-zinc-100 border-t border-zinc-100 bg-zinc-50/30">
@@ -244,12 +303,29 @@ function RegionRow({
             <AreaRow
               key={a.id}
               area={a}
+              regionId={region.id}
               expanded={expanded}
               onToggle={onToggle}
+              isAdmin={isAdmin}
+              onEdit={onEdit}
+              onAdd={onAdd}
             />
           ))}
           {region.areas.length === 0 && (
             <div className="px-4 py-3 pl-12 text-xs text-zinc-500">No areas.</div>
+          )}
+          {isAdmin && (
+            <div className="px-4 py-2 pl-12">
+              <button
+                type="button"
+                onClick={() =>
+                  onAdd({ kind: "area", region_id: region.id }, parentLabel)
+                }
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-zinc-600 ring-1 ring-zinc-200 hover:text-midnight"
+              >
+                <Plus className="h-3 w-3" strokeWidth={2} /> Add Area
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -259,15 +335,21 @@ function RegionRow({
 
 function AreaRow({
   area,
+  regionId,
   expanded,
   onToggle,
+  isAdmin,
+  onEdit,
+  onAdd,
 }: {
   area: OrgArea;
+  regionId: string;
   expanded: ExpandedSet;
   onToggle: (k: string) => void;
-}) {
+} & RowCallbacks) {
   const k = key("area", area.id);
   const isOpen = expanded.has(k);
+  const parentLabel = `${area.code} — ${area.name}`;
   return (
     <div>
       <NodeHeader
@@ -279,6 +361,10 @@ function AreaRow({
         isOpen={isOpen}
         onToggle={() => onToggle(k)}
         kindLabel="Area"
+        isAdmin={isAdmin}
+        onEdit={() =>
+          onEdit({ kind: "area", node: area, region_id: regionId })
+        }
       />
       {isOpen && (
         <div className="divide-y divide-zinc-100 bg-white">
@@ -286,12 +372,29 @@ function AreaRow({
             <DistrictRow
               key={d.id}
               district={d}
+              areaId={area.id}
               expanded={expanded}
               onToggle={onToggle}
+              isAdmin={isAdmin}
+              onEdit={onEdit}
+              onAdd={onAdd}
             />
           ))}
           {area.districts.length === 0 && (
             <div className="px-4 py-2 pl-16 text-xs text-zinc-500">No districts.</div>
+          )}
+          {isAdmin && (
+            <div className="px-4 py-2 pl-16">
+              <button
+                type="button"
+                onClick={() =>
+                  onAdd({ kind: "district", area_id: area.id }, parentLabel)
+                }
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-zinc-600 ring-1 ring-zinc-200 hover:text-midnight"
+              >
+                <Plus className="h-3 w-3" strokeWidth={2} /> Add District
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -301,15 +404,21 @@ function AreaRow({
 
 function DistrictRow({
   district,
+  areaId,
   expanded,
   onToggle,
+  isAdmin,
+  onEdit,
+  onAdd,
 }: {
   district: OrgDistrict;
+  areaId: string;
   expanded: ExpandedSet;
   onToggle: (k: string) => void;
-}) {
+} & RowCallbacks) {
   const k = key("district", district.id);
   const isOpen = expanded.has(k);
+  const parentLabel = `${district.code} — ${district.name}`;
   return (
     <div>
       <NodeHeader
@@ -322,14 +431,37 @@ function DistrictRow({
         onToggle={() => onToggle(k)}
         kindLabel="District"
         countLabel={`${district.stores.length} ${district.stores.length === 1 ? "store" : "stores"}`}
+        isAdmin={isAdmin}
+        onEdit={() =>
+          onEdit({ kind: "district", node: district, area_id: areaId })
+        }
       />
       {isOpen && (
         <div className="divide-y divide-zinc-100 bg-zinc-50/30">
           {district.stores.map((s) => (
-            <StoreRow key={s.id} store={s} />
+            <StoreRow
+              key={s.id}
+              store={s}
+              districtId={district.id}
+              isAdmin={isAdmin}
+              onEdit={onEdit}
+            />
           ))}
           {district.stores.length === 0 && (
             <div className="px-4 py-2 pl-20 text-xs text-zinc-500">No stores.</div>
+          )}
+          {isAdmin && (
+            <div className="px-4 py-2 pl-20">
+              <button
+                type="button"
+                onClick={() =>
+                  onAdd({ kind: "store", district_id: district.id }, parentLabel)
+                }
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-zinc-600 ring-1 ring-zinc-200 hover:text-midnight"
+              >
+                <Plus className="h-3 w-3" strokeWidth={2} /> Add Store
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -337,29 +469,58 @@ function DistrictRow({
   );
 }
 
-function StoreRow({ store }: { store: OrgStore }) {
+function StoreRow({
+  store,
+  districtId,
+  isAdmin,
+  onEdit,
+}: {
+  store: OrgStore;
+  districtId: string;
+  isAdmin: boolean;
+  onEdit: (target: EditTarget) => void;
+}) {
   return (
-    <div className={cn("px-4 py-3 pl-20", !store.is_active && "opacity-60")}>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-semibold tracking-tight text-midnight">
-          #{store.number}
-        </span>
-        <span className="text-sm text-zinc-700">{store.name}</span>
-        {!store.is_active && <Badge tone="neutral">Inactive</Badge>}
-        {store.managers.length === 0 && <Badge tone="warning">Vacant</Badge>}
-      </div>
-      <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-600">
-        {(store.address || store.city) && (
-          <span className="inline-flex items-center gap-1">
-            <MapPin className="h-3 w-3" strokeWidth={1.75} />
-            {[store.address, store.city, store.state, store.zip]
-              .filter(Boolean)
-              .join(", ")}
+    <div
+      className={cn(
+        "group flex items-start gap-3 px-4 py-3 pl-20",
+        !store.is_active && "opacity-60"
+      )}
+    >
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-sm font-semibold tracking-tight text-midnight">
+            #{store.number}
           </span>
-        )}
-        {store.phone && <span>{formatPhoneForDisplay(store.phone)}</span>}
+          <span className="text-sm text-zinc-700">{store.name}</span>
+          {!store.is_active && <Badge tone="neutral">Inactive</Badge>}
+          {store.managers.length === 0 && <Badge tone="warning">Vacant</Badge>}
+        </div>
+        <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-600">
+          {(store.address || store.city) && (
+            <span className="inline-flex items-center gap-1">
+              <MapPin className="h-3 w-3" strokeWidth={1.75} />
+              {[store.address, store.city, store.state, store.zip]
+                .filter(Boolean)
+                .join(", ")}
+            </span>
+          )}
+          {store.phone && <span>{formatPhoneForDisplay(store.phone)}</span>}
+        </div>
+        <ManagerChips managers={store.managers} />
       </div>
-      <ManagerChips managers={store.managers} />
+      {isAdmin && (
+        <button
+          type="button"
+          onClick={() =>
+            onEdit({ kind: "store", node: store, district_id: districtId })
+          }
+          className="mt-1 shrink-0 rounded-md p-1 text-zinc-400 opacity-0 transition hover:bg-zinc-100 hover:text-midnight group-hover:opacity-100"
+          aria-label="Edit store"
+        >
+          <Pencil className="h-3.5 w-3.5" strokeWidth={1.75} />
+        </button>
+      )}
     </div>
   );
 }
@@ -374,6 +535,8 @@ function NodeHeader({
   onToggle,
   kindLabel,
   countLabel,
+  isAdmin,
+  onEdit,
 }: {
   depth: 0 | 1 | 2;
   code: string;
@@ -384,6 +547,8 @@ function NodeHeader({
   onToggle: () => void;
   kindLabel: string;
   countLabel?: string;
+  isAdmin: boolean;
+  onEdit: () => void;
 }) {
   const indent = ["pl-4", "pl-12", "pl-16"][depth];
   const sizing =
@@ -393,56 +558,73 @@ function NodeHeader({
         ? "py-2 text-sm font-medium"
         : "py-2 text-sm";
   return (
-    <button
-      type="button"
-      onClick={onToggle}
+    <div
       className={cn(
-        "flex w-full items-center gap-2 pr-4 text-left transition hover:bg-zinc-50",
-        indent,
+        "group flex w-full items-center gap-2 pr-3 transition hover:bg-zinc-50",
         sizing
       )}
     >
-      <ChevronRight
+      <button
+        type="button"
+        onClick={onToggle}
         className={cn(
-          "h-4 w-4 shrink-0 text-zinc-400 transition-transform",
-          isOpen && "rotate-90"
-        )}
-        strokeWidth={2}
-      />
-      <span
-        className={cn(
-          "shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wide text-zinc-600",
-          !isActive && "opacity-60"
+          "flex flex-1 items-center gap-2 text-left",
+          indent,
+          sizing
         )}
       >
-        {code}
-      </span>
-      <span className={cn("truncate text-midnight", !isActive && "opacity-60")}>
-        {title}
-      </span>
-      {!isActive && <Badge tone="neutral">Inactive</Badge>}
-      {managers.length === 0 && (
-        <span className="inline-flex items-center gap-1">
-          <AlertCircle className="h-3.5 w-3.5 text-amber-600" strokeWidth={2} />
-          <span className="text-xs font-medium text-amber-700">Vacant</span>
+        <ChevronRight
+          className={cn(
+            "h-4 w-4 shrink-0 text-zinc-400 transition-transform",
+            isOpen && "rotate-90"
+          )}
+          strokeWidth={2}
+        />
+        <span
+          className={cn(
+            "shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-mono uppercase tracking-wide text-zinc-600",
+            !isActive && "opacity-60"
+          )}
+        >
+          {code}
         </span>
-      )}
-      <div className="ml-auto flex items-center gap-2 text-xs text-zinc-500">
-        {countLabel && <span>{countLabel}</span>}
-        <span className="hidden sm:inline">{kindLabel}</span>
-        {managers.length > 0 && (
+        <span className={cn("truncate text-midnight", !isActive && "opacity-60")}>
+          {title}
+        </span>
+        {!isActive && <Badge tone="neutral">Inactive</Badge>}
+        {managers.length === 0 && (
           <span className="inline-flex items-center gap-1">
-            <span className="text-zinc-400">·</span>
-            <span className="font-medium text-zinc-700">
-              {managers[0].full_name?.trim() || managers[0].email}
-            </span>
-            {managers.length > 1 && (
-              <span className="text-zinc-400">+{managers.length - 1}</span>
-            )}
+            <AlertCircle className="h-3.5 w-3.5 text-amber-600" strokeWidth={2} />
+            <span className="text-xs font-medium text-amber-700">Vacant</span>
           </span>
         )}
-      </div>
-    </button>
+        <div className="ml-auto flex items-center gap-2 text-xs text-zinc-500">
+          {countLabel && <span>{countLabel}</span>}
+          <span className="hidden sm:inline">{kindLabel}</span>
+          {managers.length > 0 && (
+            <span className="inline-flex items-center gap-1">
+              <span className="text-zinc-400">·</span>
+              <span className="font-medium text-zinc-700">
+                {managers[0].full_name?.trim() || managers[0].email}
+              </span>
+              {managers.length > 1 && (
+                <span className="text-zinc-400">+{managers.length - 1}</span>
+              )}
+            </span>
+          )}
+        </div>
+      </button>
+      {isAdmin && (
+        <button
+          type="button"
+          onClick={onEdit}
+          className="shrink-0 rounded-md p-1 text-zinc-400 opacity-0 transition hover:bg-zinc-100 hover:text-midnight group-hover:opacity-100"
+          aria-label={`Edit ${kindLabel}`}
+        >
+          <Pencil className="h-3.5 w-3.5" strokeWidth={1.75} />
+        </button>
+      )}
+    </div>
   );
 }
 
