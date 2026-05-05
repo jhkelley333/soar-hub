@@ -1106,6 +1106,88 @@ async function bulkImport(supa, manager, body) {
 }
 
 // ----------------------------------------------------------------------------
+// CFM expiring — current user's own status + their team's expiring certs
+// ----------------------------------------------------------------------------
+//
+// Anyone signed in can call this. The "self" object always reflects the
+// caller; the "team" object is only populated for managers (gm and above).
+// Day windows: anything with cfm_expires_at <= today + N days counts as
+// "expiring within N", anything <= today counts as "expired".
+
+async function cfmExpiring(supa, manager, query) {
+  const days = Math.max(0, parseInt(query?.days ?? "60", 10) || 60);
+
+  // 1. Self status — pull the caller's CFM fields directly.
+  const { data: selfRow } = await supa
+    .from("profiles")
+    .select("cfm_cert_number, cfm_issued_at, cfm_expires_at")
+    .eq("id", manager.id)
+    .maybeSingle();
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  function classify(expiresAt, windowDays) {
+    if (!expiresAt) return null;
+    const exp = new Date(expiresAt);
+    const ms = exp.getTime() - today.getTime();
+    const daysLeft = Math.floor(ms / 86400000);
+    let status = "valid";
+    if (daysLeft < 0) status = "expired";
+    else if (daysLeft <= windowDays) status = "expiring";
+    return { days_left: daysLeft, status };
+  }
+
+  const self = {
+    has_cert: !!(selfRow?.cfm_cert_number || selfRow?.cfm_issued_at),
+    cert_number: selfRow?.cfm_cert_number ?? null,
+    issued_at: selfRow?.cfm_issued_at ?? null,
+    expires_at: selfRow?.cfm_expires_at ?? null,
+    ...(classify(selfRow?.cfm_expires_at, days) ?? { days_left: null, status: "none" }),
+  };
+
+  // 2. Team — gated to managers only. shift_manager / payroll get no list.
+  let team = { count_expiring: 0, count_expired: 0, list: [] };
+  const canManage = !["shift_manager", "payroll"].includes(manager.role);
+  if (canManage) {
+    const { data: managed, error: rpcErr } = await supa.rpc("manageable_users", {
+      manager_id: manager.id,
+    });
+    if (rpcErr) {
+      return { error: `manageable_users failed: ${rpcErr.message}`, status: 500 };
+    }
+    // Filter to people whose cert is expired or within the window.
+    const flagged = (managed ?? [])
+      .map((p) => {
+        const c = classify(p.cfm_expires_at, days);
+        return c ? { ...p, ...c } : null;
+      })
+      .filter((p) => p && (p.status === "expired" || p.status === "expiring"));
+
+    team = {
+      count_expiring: flagged.filter((p) => p.status === "expiring").length,
+      count_expired: flagged.filter((p) => p.status === "expired").length,
+      list: flagged
+        .sort((a, b) => a.days_left - b.days_left)
+        .map((p) => ({
+          id: p.id,
+          full_name: p.full_name,
+          email: p.email,
+          phone: p.phone,
+          role: p.role,
+          cfm_cert_number: p.cfm_cert_number,
+          cfm_issued_at: p.cfm_issued_at,
+          cfm_expires_at: p.cfm_expires_at,
+          days_left: p.days_left,
+          status: p.status,
+        })),
+    };
+  }
+
+  return { self, team, window_days: days };
+}
+
+// ----------------------------------------------------------------------------
 // HTTP handler
 // ----------------------------------------------------------------------------
 
@@ -1149,6 +1231,9 @@ export const handler = async (event) => {
       }
       if (action === "history") {
         return unwrap(await fetchHistory(supa, manager, params));
+      }
+      if (action === "cfm-expiring") {
+        return unwrap(await cfmExpiring(supa, manager, params));
       }
       return respond(400, { error: `unknown GET action: ${action}` });
     }

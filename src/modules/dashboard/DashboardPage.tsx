@@ -8,6 +8,7 @@ import { Badge } from "@/shared/ui/Badge";
 import { useAuth } from "@/auth/AuthProvider";
 import { ROLE_LABELS, type UserRole, type Store } from "@/types/database";
 import { listWorkOrders, type WorkOrder } from "@/modules/work-orders/api";
+import { fetchCfmExpiring } from "@/modules/team/api";
 import { supabase } from "@/lib/supabase";
 import { formatPhoneForDisplay } from "@/lib/phone";
 
@@ -66,6 +67,12 @@ export function DashboardPage() {
     staleTime: 30_000,
   });
 
+  const cfmQuery = useQuery({
+    queryKey: ["cfm-expiring", 60],
+    queryFn: () => fetchCfmExpiring(60),
+    staleTime: 60_000,
+  });
+
   const openCount = useMemo(() => {
     return (woQuery.data?.workOrders ?? []).filter(isOpen).length;
   }, [woQuery.data]);
@@ -73,6 +80,16 @@ export function DashboardPage() {
   const storesInScope = woQuery.data?.user.canSeeAllStores
     ? "All"
     : String(woQuery.data?.user.storeNumbers.length ?? 0);
+
+  const cfmTotal =
+    (cfmQuery.data?.team.count_expired ?? 0) +
+    (cfmQuery.data?.team.count_expiring ?? 0);
+  const cfmTone: "warning" | "danger" | "neutral" =
+    (cfmQuery.data?.team.count_expired ?? 0) > 0
+      ? "danger"
+      : cfmTotal > 0
+        ? "warning"
+        : "neutral";
 
   return (
     <>
@@ -94,7 +111,12 @@ export function DashboardPage() {
           tone="warning"
           to="/work-orders"
         />
-        <Stat label="Pending PAFs" value="—" tone="info" />
+        <Stat
+          label="CFMs Expiring (60d)"
+          value={cfmQuery.isLoading ? "…" : cfmQuery.isError ? "—" : String(cfmTotal)}
+          tone={cfmTone === "neutral" ? "info" : cfmTone}
+          to="/cfm-expiring"
+        />
         <Stat label="Stores in Scope" value={woQuery.isLoading ? "…" : storesInScope} tone="neutral" />
       </div>
 
@@ -214,7 +236,7 @@ function Stat({
 }: {
   label: string;
   value: string;
-  tone: "neutral" | "warning" | "info";
+  tone: "neutral" | "warning" | "info" | "danger";
   to?: string;
 }) {
   const inner = (
