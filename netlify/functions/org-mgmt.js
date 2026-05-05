@@ -520,6 +520,303 @@ async function fetchOrgHistory(supa, user, query) {
 }
 
 // ----------------------------------------------------------------------------
+// Bulk import (admin only) — preview + commit a flat CSV that mixes all
+// four org kinds in a single file. Existing rows (matched by code, or
+// by number for stores) are UPDATED; missing rows are INSERTED. Each
+// successful operation logs to org_changes with action 'create' or
+// 'update'. Insertion runs in dependency order (region → area →
+// district → store) so newly created parents are available before
+// their children.
+// ----------------------------------------------------------------------------
+
+const ORG_KINDS = ["region", "area", "district", "store"];
+
+function parseBoolish(v) {
+  const s = String(v ?? "").trim().toLowerCase();
+  if (s === "" || s === "true" || s === "t" || s === "1" || s === "yes" || s === "y") return true;
+  if (s === "false" || s === "f" || s === "0" || s === "no" || s === "n") return false;
+  return true;
+}
+
+async function orgBulkValidate(supa, rows) {
+  const [
+    { data: regions },
+    { data: areas },
+    { data: districts },
+    { data: stores },
+  ] = await Promise.all([
+    supa.from("regions").select("id, code, name, is_active"),
+    supa.from("areas").select("id, code, name, region_id, is_active"),
+    supa.from("districts").select("id, code, name, area_id, is_active"),
+    supa
+      .from("stores")
+      .select("id, number, name, district_id, phone, address, city, state, zip, is_active"),
+  ]);
+
+  const regionByCode = Object.fromEntries((regions ?? []).map((r) => [r.code, r]));
+  const areaByCode = Object.fromEntries((areas ?? []).map((a) => [a.code, a]));
+  const districtByCode = Object.fromEntries((districts ?? []).map((d) => [d.code, d]));
+  const storeByNum = Object.fromEntries((stores ?? []).map((s) => [String(s.number), s]));
+
+  // Track entities staged earlier in the same CSV so children rows can
+  // reference newly added parents (no UUID yet at validate-time, but we
+  // know it'll exist by the time import runs).
+  const stagedRegionCodes = new Set();
+  const stagedAreaCodes = new Set();
+  const stagedDistrictCodes = new Set();
+
+  return rows.map((row, i) => {
+    const errors = [];
+    const warnings = [];
+    const kind = String(row.kind ?? "").toLowerCase().trim();
+    const code = String(row.code ?? "").trim();
+    const name = String(row.name ?? "").trim();
+    const number = String(row.number ?? "").trim();
+    const parentCode = String(row.parent_code ?? "").trim();
+    const isActive = parseBoolish(row.is_active);
+
+    if (!ORG_KINDS.includes(kind)) {
+      errors.push(`Invalid kind "${kind}". Must be region/area/district/store.`);
+    }
+    if (!name) errors.push("name is required.");
+
+    let action = "create";
+    let existing = null;
+    let parentId = null;
+
+    if (kind === "region") {
+      if (!code) errors.push("code required for region.");
+      else {
+        existing = regionByCode[code];
+        if (existing) action = "update";
+        stagedRegionCodes.add(code);
+      }
+    } else if (kind === "area") {
+      if (!code) errors.push("code required for area.");
+      if (!parentCode) errors.push("parent_code (region code) required for area.");
+      else {
+        const parent = regionByCode[parentCode];
+        if (parent) parentId = parent.id;
+        else if (!stagedRegionCodes.has(parentCode)) {
+          errors.push(`Parent region "${parentCode}" not found.`);
+        }
+      }
+      if (code) {
+        existing = areaByCode[code];
+        if (existing) action = "update";
+        stagedAreaCodes.add(code);
+      }
+    } else if (kind === "district") {
+      if (!code) errors.push("code required for district.");
+      if (!parentCode) errors.push("parent_code (area code) required for district.");
+      else {
+        const parent = areaByCode[parentCode];
+        if (parent) parentId = parent.id;
+        else if (!stagedAreaCodes.has(parentCode)) {
+          errors.push(`Parent area "${parentCode}" not found.`);
+        }
+      }
+      if (code) {
+        existing = districtByCode[code];
+        if (existing) action = "update";
+        stagedDistrictCodes.add(code);
+      }
+    } else if (kind === "store") {
+      if (!number) errors.push("number required for store.");
+      if (!parentCode) errors.push("parent_code (district code) required for store.");
+      else {
+        const parent = districtByCode[parentCode];
+        if (parent) parentId = parent.id;
+        else if (!stagedDistrictCodes.has(parentCode)) {
+          errors.push(`Parent district "${parentCode}" not found.`);
+        }
+      }
+      if (number) {
+        existing = storeByNum[number];
+        if (existing) action = "update";
+      }
+    }
+
+    return {
+      row: i + 1,
+      kind,
+      code: code || null,
+      name,
+      number: number || null,
+      phone: String(row.phone ?? "").trim() || null,
+      address: String(row.address ?? "").trim() || null,
+      city: String(row.city ?? "").trim() || null,
+      state: String(row.state ?? "").trim() || null,
+      zip: String(row.zip ?? "").trim() || null,
+      parent_code: parentCode || null,
+      is_active: isActive,
+      action,
+      existing_id: existing?.id ?? null,
+      parent_id: parentId,
+      errors,
+      warnings,
+    };
+  });
+}
+
+async function orgBulkPreview(supa, user, body) {
+  if (user.role !== "admin") return { error: "Admin only.", status: 403 };
+  const rows = body?.rows ?? [];
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return { error: "No rows to preview.", status: 400 };
+  }
+  if (rows.length > 1000) {
+    return { error: "Bulk import is capped at 1000 rows per upload.", status: 400 };
+  }
+  const annotated = await orgBulkValidate(supa, rows);
+  const summary = {
+    total: annotated.length,
+    create: annotated.filter((r) => r.action === "create" && r.errors.length === 0).length,
+    update: annotated.filter((r) => r.action === "update" && r.errors.length === 0).length,
+    invalid: annotated.filter((r) => r.errors.length > 0).length,
+  };
+  return { rows: annotated, summary };
+}
+
+async function orgBulkImport(supa, user, body) {
+  if (user.role !== "admin") return { error: "Admin only.", status: 403 };
+  const rows = body?.rows ?? [];
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return { error: "No rows to import.", status: 400 };
+  }
+  const annotated = await orgBulkValidate(supa, rows);
+
+  // Sort by dependency order so a newly created parent is available
+  // before its children rows run.
+  const order = { region: 0, area: 1, district: 2, store: 3 };
+  const sorted = [...annotated].sort(
+    (a, b) => (order[a.kind] ?? 99) - (order[b.kind] ?? 99) || a.row - b.row
+  );
+
+  const newRegionByCode = {};
+  const newAreaByCode = {};
+  const newDistrictByCode = {};
+
+  const TABLE = {
+    region: "regions",
+    area: "areas",
+    district: "districts",
+    store: "stores",
+  };
+
+  const results = [];
+  for (const r of sorted) {
+    if (r.errors.length > 0) {
+      results.push({ ...r, status: "error", message: r.errors.join("; ") });
+      continue;
+    }
+
+    // Resolve parent_id at run-time (might have been created earlier in
+    // this same batch).
+    let parentId = r.parent_id;
+    if (r.kind !== "region" && !parentId && r.parent_code) {
+      const map =
+        r.kind === "area"
+          ? newRegionByCode
+          : r.kind === "district"
+            ? newAreaByCode
+            : newDistrictByCode;
+      parentId = map[r.parent_code] ?? null;
+    }
+    if (r.kind !== "region" && !parentId) {
+      results.push({
+        ...r,
+        status: "error",
+        message: `Parent ${r.parent_code} not found at import time.`,
+      });
+      continue;
+    }
+
+    try {
+      if (r.action === "update") {
+        const updates = { name: r.name, is_active: r.is_active };
+        if (r.kind === "store") {
+          updates.number = r.number;
+          updates.phone = r.phone;
+          updates.address = r.address;
+          updates.city = r.city;
+          updates.state = r.state;
+          updates.zip = r.zip;
+          if (parentId) updates.district_id = parentId;
+        } else {
+          updates.code = r.code;
+          if (r.kind === "area" && parentId) updates.region_id = parentId;
+          if (r.kind === "district" && parentId) updates.area_id = parentId;
+        }
+        const { error } = await supa
+          .from(TABLE[r.kind])
+          .update(updates)
+          .eq("id", r.existing_id);
+        if (error) {
+          results.push({ ...r, status: "error", message: error.message });
+          continue;
+        }
+        await logOrgChange(supa, {
+          actor_id: user.id,
+          target_kind: r.kind,
+          target_id: r.existing_id,
+          action: "update",
+          before: null,
+          after: updates,
+        });
+        results.push({ ...r, status: "updated", node_id: r.existing_id });
+      } else {
+        const insert = { name: r.name, is_active: r.is_active };
+        if (r.kind === "store") {
+          insert.number = r.number;
+          insert.phone = r.phone;
+          insert.address = r.address;
+          insert.city = r.city;
+          insert.state = r.state;
+          insert.zip = r.zip;
+          insert.district_id = parentId;
+        } else {
+          insert.code = r.code;
+          if (r.kind === "area") insert.region_id = parentId;
+          if (r.kind === "district") insert.area_id = parentId;
+        }
+        const { data: created, error } = await supa
+          .from(TABLE[r.kind])
+          .insert(insert)
+          .select("id")
+          .single();
+        if (error) {
+          results.push({ ...r, status: "error", message: error.message });
+          continue;
+        }
+        if (r.kind === "region" && r.code) newRegionByCode[r.code] = created.id;
+        if (r.kind === "area" && r.code) newAreaByCode[r.code] = created.id;
+        if (r.kind === "district" && r.code) newDistrictByCode[r.code] = created.id;
+        await logOrgChange(supa, {
+          actor_id: user.id,
+          target_kind: r.kind,
+          target_id: created.id,
+          action: "create",
+          before: null,
+          after: insert,
+        });
+        results.push({ ...r, status: "created", node_id: created.id });
+      }
+    } catch (e) {
+      results.push({ ...r, status: "error", message: String(e?.message ?? e) });
+    }
+  }
+
+  const summary = {
+    total: results.length,
+    created: results.filter((r) => r.status === "created").length,
+    updated: results.filter((r) => r.status === "updated").length,
+    errors: results.filter((r) => r.status === "error").length,
+  };
+  return { results, summary };
+}
+
+// ----------------------------------------------------------------------------
 // HTTP handler
 // ----------------------------------------------------------------------------
 
@@ -566,6 +863,8 @@ export const handler = async (event) => {
       if (action === "create") return unwrap(await createOrgNode(supa, user, body));
       if (action === "update") return unwrap(await updateOrgNode(supa, user, body));
       if (action === "move") return unwrap(await moveOrgNode(supa, user, body));
+      if (action === "bulk-preview") return unwrap(await orgBulkPreview(supa, user, body));
+      if (action === "bulk-import") return unwrap(await orgBulkImport(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
     return respond(405, { error: "method not allowed" });

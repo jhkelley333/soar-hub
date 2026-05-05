@@ -1,11 +1,14 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import {
   AlertCircle,
   ChevronRight,
+  Download,
   MapPin,
   Pencil,
   Plus,
+  Upload,
 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
@@ -15,6 +18,7 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { useAuth } from "@/auth/AuthProvider";
 import { ROLE_LABELS } from "@/types/database";
+import { downloadCSV, toCSV } from "@/lib/csv";
 import { formatPhoneForDisplay } from "@/lib/phone";
 import { cn } from "@/lib/cn";
 import {
@@ -24,6 +28,7 @@ import {
   type OrgManager,
   type OrgRegion,
   type OrgStore,
+  type OrgTreeResponse,
 } from "./api";
 import {
   AddOrgNodeModal,
@@ -33,6 +38,91 @@ import {
 } from "./OrgNodeModals";
 
 type ExpandedSet = Set<string>;
+
+const EXPORT_HEADERS = [
+  "kind",
+  "code",
+  "name",
+  "number",
+  "phone",
+  "address",
+  "city",
+  "state",
+  "zip",
+  "parent_code",
+  "is_active",
+];
+
+// Flatten the nested tree into a single CSV with a `kind` column, ordered
+// region → area → district → store so the file is import-ready (parents
+// before children). Inactive rows are still emitted; the importer will
+// pass through is_active=false on update.
+function exportTreeCsv(tree: OrgTreeResponse | null) {
+  if (!tree) return;
+  const rows: Record<string, unknown>[] = [];
+  for (const r of tree.regions) {
+    rows.push({
+      kind: "region",
+      code: r.code,
+      name: r.name,
+      number: "",
+      phone: "",
+      address: "",
+      city: "",
+      state: "",
+      zip: "",
+      parent_code: "",
+      is_active: r.is_active ? "true" : "false",
+    });
+    for (const a of r.areas) {
+      rows.push({
+        kind: "area",
+        code: a.code,
+        name: a.name,
+        number: "",
+        phone: "",
+        address: "",
+        city: "",
+        state: "",
+        zip: "",
+        parent_code: r.code,
+        is_active: a.is_active ? "true" : "false",
+      });
+      for (const d of a.districts) {
+        rows.push({
+          kind: "district",
+          code: d.code,
+          name: d.name,
+          number: "",
+          phone: "",
+          address: "",
+          city: "",
+          state: "",
+          zip: "",
+          parent_code: a.code,
+          is_active: d.is_active ? "true" : "false",
+        });
+        for (const s of d.stores) {
+          rows.push({
+            kind: "store",
+            code: "",
+            name: s.name,
+            number: s.number,
+            phone: s.phone ?? "",
+            address: s.address ?? "",
+            city: s.city ?? "",
+            state: s.state ?? "",
+            zip: s.zip ?? "",
+            parent_code: d.code,
+            is_active: s.is_active ? "true" : "false",
+          });
+        }
+      }
+    }
+  }
+  const date = new Date().toISOString().slice(0, 10);
+  downloadCSV(`org-tree-${date}.csv`, toCSV(EXPORT_HEADERS, rows));
+}
 
 export function OrgPage() {
   const { profile } = useAuth();
@@ -168,15 +258,32 @@ export function OrgPage() {
         actions={
           <div className="flex flex-wrap gap-2">
             {isAdmin && (
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => openAdd({ kind: "region" })}
-              >
-                <Plus className="mr-1 h-3.5 w-3.5" strokeWidth={2} />
-                Add Region
-              </Button>
+              <>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => openAdd({ kind: "region" })}
+                >
+                  <Plus className="mr-1 h-3.5 w-3.5" strokeWidth={2} />
+                  Add Region
+                </Button>
+                <Link to="/admin/bulk-org-import">
+                  <Button variant="ghost" size="sm">
+                    <Upload className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+                    Bulk import…
+                  </Button>
+                </Link>
+              </>
             )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => exportTreeCsv(data)}
+              disabled={!data || data.regions.length === 0}
+            >
+              <Download className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+              Download CSV
+            </Button>
             <button
               type="button"
               onClick={expandAll}

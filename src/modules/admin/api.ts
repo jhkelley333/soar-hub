@@ -227,3 +227,83 @@ export function fetchOrgHistory(opts: {
   if (opts.limit) params.set("limit", String(opts.limit));
   return request<OrgHistoryResponse>(`${FN}?${params.toString()}`);
 }
+
+// ----------------------------------------------------------------------------
+// Bulk org import (admin only)
+// ----------------------------------------------------------------------------
+
+export type OrgKind = "region" | "area" | "district" | "store";
+
+export interface OrgBulkRowInput {
+  kind: string;
+  code?: string;
+  name: string;
+  number?: string;
+  phone?: string;
+  address?: string;
+  city?: string;
+  state?: string;
+  zip?: string;
+  parent_code?: string;
+  is_active?: string;
+}
+
+export interface OrgBulkRowAnnotated {
+  row: number;
+  kind: string;
+  code: string | null;
+  name: string;
+  number: string | null;
+  phone: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  parent_code: string | null;
+  is_active: boolean;
+  action: "create" | "update";
+  existing_id: string | null;
+  parent_id: string | null;
+  errors: string[];
+  warnings: string[];
+}
+
+export interface OrgBulkPreviewResponse {
+  rows: OrgBulkRowAnnotated[];
+  summary: {
+    total: number;
+    create: number;
+    update: number;
+    invalid: number;
+  };
+}
+
+export interface OrgBulkImportResult extends OrgBulkRowAnnotated {
+  status: "created" | "updated" | "error";
+  message?: string;
+  node_id?: string;
+}
+
+export interface OrgBulkImportResponse {
+  results: OrgBulkImportResult[];
+  summary: {
+    total: number;
+    created: number;
+    updated: number;
+    errors: number;
+  };
+}
+
+export function orgBulkPreview(rows: OrgBulkRowInput[]): Promise<OrgBulkPreviewResponse> {
+  return request<OrgBulkPreviewResponse>(`${FN}?action=bulk-preview`, {
+    method: "POST",
+    body: JSON.stringify({ rows }),
+  });
+}
+
+export function orgBulkImport(rows: OrgBulkRowInput[]): Promise<OrgBulkImportResponse> {
+  return request<OrgBulkImportResponse>(`${FN}?action=bulk-import`, {
+    method: "POST",
+    body: JSON.stringify({ rows }),
+  });
+}

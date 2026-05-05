@@ -12,6 +12,7 @@ import { TeamPage } from "@/modules/team/TeamPage";
 import { CfmExpiringPage } from "@/modules/team/CfmExpiringPage";
 import { OrgPage } from "@/modules/admin/OrgPage";
 import { BulkImportPage } from "@/modules/admin/BulkImportPage";
+import { BulkOrgImportPage } from "@/modules/admin/BulkOrgImportPage";
 import { RankerPage } from "@/modules/ranker/RankerPage";
 import { AccountPage } from "@/modules/account/AccountPage";
 
@@ -61,6 +62,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <BulkImportPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/bulk-org-import",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <BulkOrgImportPage />
           </ProtectedRoute>
         ),
       },
