@@ -4,9 +4,11 @@ import { ProtectedRoute } from "@/auth/ProtectedRoute";
 import { LoginPage } from "@/auth/LoginPage";
 import { ResetPasswordPage } from "@/auth/ResetPasswordPage";
 import { AcceptInvitePage } from "@/auth/AcceptInvitePage";
+import { PafAcceptPage } from "@/auth/PafAcceptPage";
 import { DashboardPage } from "@/modules/dashboard/DashboardPage";
 import { WorkOrdersPage } from "@/modules/work-orders/WorkOrdersPage";
 import { PafPage } from "@/modules/paf/PafPage";
+import { PafQueuePage } from "@/modules/paf/PafQueuePage";
 import { ResourcesPage } from "@/modules/resources/ResourcesPage";
 import { TeamPage } from "@/modules/team/TeamPage";
 import { CfmExpiringPage } from "@/modules/team/CfmExpiringPage";
@@ -21,6 +23,7 @@ export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
   { path: "/reset-password", element: <ResetPasswordPage /> },
   { path: "/accept-invite", element: <AcceptInvitePage /> },
+  { path: "/paf/accept", element: <PafAcceptPage /> },
   {
     path: "/",
     element: (
@@ -34,8 +37,16 @@ export const router = createBrowserRouter([
       {
         path: "paf",
         element: (
-          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin", "payroll", "gm"]}>
             <PafPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "paf/queue",
+        element: (
+          <ProtectedRoute requireRoles={["payroll", "admin"]}>
+            <PafQueuePage />
           </ProtectedRoute>
         ),
       },
