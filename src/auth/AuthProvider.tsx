@@ -148,10 +148,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfile(null);
         setScopes([]);
         try {
-          await supabase.auth.signOut();
+          await Promise.race([supabase.auth.signOut(), timeout("signOut", 2000)]);
         } catch (e) {
           console.warn("[auth] signOut threw; local state already cleared", e);
         }
+        // supabase-js can leave the persisted token behind when its
+        // internal flow times out or the network call fails — and on
+        // the next pageload getSession() rehydrates it, so the user
+        // appears "still signed in" after explicitly signing out. Wipe
+        // the keys directly so coming back to the URL lands on login.
+        purgeSupabaseStorage();
       },
       refresh: async () => {
         if (session?.user) await loadProfile(session.user.id);
