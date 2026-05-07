@@ -49,12 +49,13 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const TOKEN_EXPIRY_HOURS = 72;
 
-// Roles that can submit. RVP/VP/COO included so they can submit bonuses
-// for direct reports; their bonus PAFs skip SDO and go straight to
-// Payroll.
-const SUBMIT_ROLES = new Set(["do", "gm", "sdo", "rvp", "vp", "coo", "admin"]);
-// Roles that can read PAFs at all
-const READ_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]);
+// Roles that can submit. GM is intentionally excluded — PAFs originate
+// at DO level and above. RVP/VP/COO included so they can submit
+// bonuses for direct reports; their bonus PAFs skip SDO and go
+// straight to Payroll.
+const SUBMIT_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
+// Roles that can read PAFs at all (also no GM).
+const READ_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]);
 // Roles that can process (reject / needs-approval / mark-processed)
 const PROCESS_ROLES = new Set(["payroll", "admin"]);
 // Org-wide read (sees everything)

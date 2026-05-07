@@ -37,7 +37,7 @@ export const router = createBrowserRouter([
       {
         path: "paf",
         element: (
-          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin", "payroll", "gm"]}>
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
             <PafPage />
           </ProtectedRoute>
         ),

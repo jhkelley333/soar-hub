@@ -1,51 +1,291 @@
 import type { PafRow } from "./types";
 import { formatUSD } from "./cost";
 
+// Render every category-relevant block. Fields gate on truthiness so a
+// PAF only shows the sections it actually carries.
 export function PafDetail({ paf }: { paf: PafRow }) {
+  const isHourly = paf.pay_basis === "hourly";
+
   return (
-    <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
-      <Field label="Store" value={`#${paf.drive_in}`} />
-      <Field label="Market / DO" value={paf.market_do ?? "—"} />
-      <Field label="Employee" value={paf.employee_name} />
-      <Field label="Last 4 SSN" value={paf.last4_ssn} mono />
-      <Field label="Category" value={paf.category} />
-      <Field label="Status" value={paf.status} />
-      <Field label="Submitted" value={paf.created_at.slice(0, 10)} />
-      <Field label="Pay Period End" value={paf.pay_period_end} />
-      {Number(paf.reg_pay_rate) > 0 && (
-        <>
-          <Field label="Reg Pay Rate" value={formatUSD(Number(paf.reg_pay_rate))} />
-          <Field label="Reg Hours" value={String(paf.reg_hours)} />
-        </>
+    <div className="space-y-4 text-sm">
+      <Section title="Submission">
+        <Grid>
+          <Field label="Store" value={`#${paf.drive_in}`} />
+          <Field label="Market / DO" value={paf.market_do ?? "—"} />
+          <Field label="Employee" value={paf.employee_name} />
+          <Field label="Last 4 SSN" value={paf.last4_ssn} mono />
+          <Field label="Category" value={paf.category} />
+          <Field label="Status" value={paf.status} />
+          <Field label="Submitted" value={paf.created_at.slice(0, 10)} />
+          <Field label="Pay Period End" value={paf.pay_period_end} />
+          {paf.pay_basis && (
+            <Field label="Pay Basis" value={isHourly ? "Hourly" : "Salary"} />
+          )}
+          {paf.job_position && <Field label="Job Position" value={paf.job_position} />}
+          {paf.approving_mgr && (
+            <Field label="Approving Manager" value={paf.approving_mgr} />
+          )}
+        </Grid>
+      </Section>
+
+      {(Number(paf.reg_pay_rate) > 0 ||
+        Number(paf.reg_hours) > 0 ||
+        Number(paf.ot_hours) > 0 ||
+        Number(paf.cc_tips) > 0 ||
+        Number(paf.declared_tips) > 0) && (
+        <Section title="Pay & Tips">
+          <Grid>
+            {Number(paf.reg_pay_rate) > 0 && (
+              <Field label="Reg Pay Rate" value={formatUSD(Number(paf.reg_pay_rate))} />
+            )}
+            {Number(paf.reg_hours) > 0 && (
+              <Field label="Reg Hours" value={String(paf.reg_hours)} />
+            )}
+            {Number(paf.ot_hours) > 0 && (
+              <Field label="OT Hours" value={String(paf.ot_hours)} />
+            )}
+            {Number(paf.cc_tips) > 0 && (
+              <Field label="CC Tips" value={formatUSD(Number(paf.cc_tips))} />
+            )}
+            {Number(paf.declared_tips) > 0 && (
+              <Field label="Declared Tips" value={formatUSD(Number(paf.declared_tips))} />
+            )}
+          </Grid>
+        </Section>
       )}
-      {Number(paf.ot_hours) > 0 && (
-        <Field label="OT Hours" value={String(paf.ot_hours)} />
+
+      {(Number(paf.pto_hours) > 0 || Number(paf.illness_hours) > 0) && (
+        <Section title="Leave">
+          <Grid>
+            {Number(paf.pto_hours) > 0 && (
+              <Field label="PTO Hours" value={String(paf.pto_hours)} />
+            )}
+            {Number(paf.illness_hours) > 0 && (
+              <Field label="Illness Hours" value={String(paf.illness_hours)} />
+            )}
+          </Grid>
+        </Section>
       )}
-      {Number(paf.cc_tips) > 0 && (
-        <Field label="CC Tips" value={formatUSD(Number(paf.cc_tips))} />
+
+      {(paf.original_store || paf.temp_new_store || paf.store_chrged_ot) && (
+        <Section title="Cross Store Work">
+          <Grid>
+            {paf.original_store && (
+              <Field label="Original Store" value={`#${paf.original_store}`} />
+            )}
+            {paf.temp_new_store && (
+              <Field label="Temp / New Store" value={`#${paf.temp_new_store}`} />
+            )}
+            {paf.store_chrged_ot && (
+              <Field label="Store Charged OT" value={`#${paf.store_chrged_ot}`} />
+            )}
+          </Grid>
+        </Section>
       )}
-      {Number(paf.declared_tips) > 0 && (
-        <Field label="Declared Tips" value={formatUSD(Number(paf.declared_tips))} />
+
+      {paf.category === "Transfer" &&
+        (paf.current_store ||
+          paf.new_store ||
+          paf.current_position ||
+          paf.new_position) && (
+          <Section title="Transfer">
+            <Grid>
+              {paf.current_store && (
+                <Field label="Original Store" value={`#${paf.current_store}`} />
+              )}
+              {paf.new_store && <Field label="New Store" value={`#${paf.new_store}`} />}
+              {paf.current_position && (
+                <Field label="Current Position" value={paf.current_position} />
+              )}
+              {paf.new_position && (
+                <Field label="New Position" value={paf.new_position} />
+              )}
+              {paf.current_pay_rate != null && (
+                <Field
+                  label="Current Pay Rate"
+                  value={formatUSD(Number(paf.current_pay_rate))}
+                />
+              )}
+              {paf.new_pay_rate != null && (
+                <Field
+                  label="New Pay Rate"
+                  value={formatUSD(Number(paf.new_pay_rate))}
+                />
+              )}
+            </Grid>
+          </Section>
+        )}
+
+      {paf.category === "Demotion" &&
+        (paf.from_role || paf.new_role || paf.location_change != null) && (
+          <Section title="Demotion">
+            <Grid>
+              {paf.from_role && <Field label="Current Role" value={paf.from_role} />}
+              {paf.new_role && <Field label="New Role" value={paf.new_role} />}
+              {paf.current_pay_rate != null && (
+                <Field
+                  label="Current Pay Rate"
+                  value={formatUSD(Number(paf.current_pay_rate))}
+                />
+              )}
+              {paf.new_pay_rate != null && (
+                <Field
+                  label="New Pay Rate"
+                  value={formatUSD(Number(paf.new_pay_rate))}
+                />
+              )}
+              {paf.location_change != null && (
+                <Field
+                  label="Location Change"
+                  value={paf.location_change ? "Yes" : "No"}
+                />
+              )}
+              {paf.new_location && (
+                <Field label="New Location" value={`#${paf.new_location}`} />
+              )}
+            </Grid>
+          </Section>
+        )}
+
+      {(paf.last_day_worked || paf.termed_in_tr) && (
+        <Section title="Termination">
+          <Grid>
+            {paf.last_day_worked && (
+              <Field label="Last Day Worked" value={paf.last_day_worked} />
+            )}
+            {paf.termed_in_tr && <Field label="Termed in TR" value={paf.termed_in_tr} />}
+            {/* Historical only — hidden in new submissions */}
+            {Number(paf.final_check_hrs) > 0 && (
+              <Field label="Final Check Hours (legacy)" value={String(paf.final_check_hrs)} />
+            )}
+            {paf.term_demotion && (
+              <Field label="Termination Type (legacy)" value={paf.term_demotion} />
+            )}
+          </Grid>
+        </Section>
       )}
-      {Number(paf.pto_hours) > 0 && (
-        <Field label="PTO Hours" value={String(paf.pto_hours)} />
+
+      {paf.bonus_type && (
+        <Section title={`Bonus — ${paf.bonus_type}`}>
+          <Grid>
+            {paf.bonus_type === "Spot Bonus" && (
+              <>
+                {Number(paf.spot_bonus_amt) > 0 && (
+                  <Field
+                    label="Bonus Amount"
+                    value={formatUSD(Number(paf.spot_bonus_amt))}
+                  />
+                )}
+                {paf.spot_bonus_reason && (
+                  <Field label="For What" value={paf.spot_bonus_reason} />
+                )}
+              </>
+            )}
+            {paf.bonus_type === "Training" && (
+              <>
+                {paf.training_bonus_amt != null && (
+                  <Field
+                    label="Training Bonus Amount"
+                    value={formatUSD(Number(paf.training_bonus_amt))}
+                  />
+                )}
+                {paf.trained_employee_name && (
+                  <Field label="Who Was Trained" value={paf.trained_employee_name} />
+                )}
+                {paf.trained_at_store && (
+                  <Field label="At Store" value={`#${paf.trained_at_store}`} />
+                )}
+                {paf.training_days != null && (
+                  <Field label="Days" value={String(paf.training_days)} />
+                )}
+              </>
+            )}
+            {paf.bonus_type === "Referral" && (
+              <>
+                {paf.referral_tier && (
+                  <Field label="Tier" value={paf.referral_tier} />
+                )}
+                {paf.referral_bonus_amt != null && (
+                  <Field
+                    label="Bonus Amount"
+                    value={formatUSD(Number(paf.referral_bonus_amt))}
+                  />
+                )}
+                {paf.referred_employee_name && (
+                  <Field
+                    label="Referred Employee"
+                    value={paf.referred_employee_name}
+                  />
+                )}
+                {paf.referral_start_date && (
+                  <Field label="Start Date" value={paf.referral_start_date} />
+                )}
+              </>
+            )}
+            {/* Legacy single-bonus row — populated only when bonus_type isn't
+                one of the consolidated three (i.e. historical Spot Bonus
+                rows submitted under the old form). */}
+            {paf.bonus_type !== "Spot Bonus" &&
+              paf.bonus_type !== "Training" &&
+              paf.bonus_type !== "Referral" &&
+              Number(paf.spot_bonus_amt) > 0 && (
+                <Field
+                  label="Bonus Amount (legacy)"
+                  value={formatUSD(Number(paf.spot_bonus_amt))}
+                />
+              )}
+          </Grid>
+        </Section>
       )}
-      {Number(paf.illness_hours) > 0 && (
-        <Field label="Illness Hours" value={String(paf.illness_hours)} />
+
+      {(paf.status === "Pending SDO Approval" ||
+        paf.sdo_decided_at ||
+        paf.sdo_decision) && (
+        <Section title="SDO Approval">
+          <Grid>
+            {paf.sdo_decision && (
+              <Field
+                label="Decision"
+                value={
+                  paf.sdo_decision === "approved"
+                    ? "Approved"
+                    : paf.sdo_decision === "rejected"
+                      ? "Rejected"
+                      : paf.sdo_decision
+                }
+              />
+            )}
+            {paf.sdo_decided_at && (
+              <Field label="Decided At" value={paf.sdo_decided_at.slice(0, 10)} />
+            )}
+            {paf.status === "Pending SDO Approval" && !paf.sdo_decided_at && (
+              <Field label="Status" value="Awaiting SDO action" />
+            )}
+          </Grid>
+          {paf.sdo_decision_note && (
+            <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                Note
+              </div>
+              <div className="mt-1 text-sm text-zinc-700 whitespace-pre-wrap">
+                {paf.sdo_decision_note}
+              </div>
+            </div>
+          )}
+        </Section>
       )}
-      {Number(paf.spot_bonus_amt) > 0 && (
-        <>
-          <Field label="Spot Bonus" value={formatUSD(Number(paf.spot_bonus_amt))} />
-          <Field label="Bonus Type" value={paf.bonus_type ?? "—"} />
-        </>
-      )}
-      <Field
-        label="Estimated Cost"
-        value={formatUSD(Number(paf.estimated_cost) || 0)}
-      />
+
+      <Section title="Cost">
+        <Grid>
+          <Field
+            label="Estimated Cost"
+            value={formatUSD(Number(paf.estimated_cost) || 0)}
+          />
+        </Grid>
+      </Section>
 
       {paf.rejection_reason && (
-        <div className="sm:col-span-2 rounded-md border border-red-200 bg-red-50 p-3">
+        <div className="rounded-md border border-red-200 bg-red-50 p-3">
           <div className="text-[10px] font-semibold uppercase tracking-wide text-red-700">
             Rejection reason
           </div>
@@ -53,14 +293,33 @@ export function PafDetail({ paf }: { paf: PafRow }) {
         </div>
       )}
       {paf.explanation && (
-        <div className="sm:col-span-2 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+        <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
           <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
             Explanation
           </div>
-          <div className="mt-1 text-sm text-zinc-700 whitespace-pre-wrap">{paf.explanation}</div>
+          <div className="mt-1 text-sm text-zinc-700 whitespace-pre-wrap">
+            {paf.explanation}
+          </div>
         </div>
       )}
     </div>
+  );
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-midnight">
+        {title}
+      </h4>
+      {children}
+    </div>
+  );
+}
+
+function Grid({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">{children}</div>
   );
 }
 
