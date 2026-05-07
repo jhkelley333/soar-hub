@@ -313,10 +313,31 @@ function validateConfig(cfg) {
     return "config_json.lists is required.";
   }
 
-  // No empty list values.
+  // No empty list values. referralTiers is an array of {label, amount}
+  // objects; everything else is a flat string array.
   for (const listKey of Object.keys(cfg.lists)) {
     const list = cfg.lists[listKey];
     if (!Array.isArray(list)) continue;
+    if (listKey === "referralTiers") {
+      const seenLabels = new Set();
+      for (const row of list) {
+        if (!row || typeof row !== "object") {
+          return `List "referralTiers" rows must be objects.`;
+        }
+        if (typeof row.label !== "string" || !row.label.trim()) {
+          return `List "referralTiers" row missing label.`;
+        }
+        if (typeof row.amount !== "number" || !isFinite(row.amount) || row.amount < 0) {
+          return `List "referralTiers" row "${row.label}" needs a non-negative amount.`;
+        }
+        const lower = row.label.trim().toLowerCase();
+        if (seenLabels.has(lower)) {
+          return `List "referralTiers" has duplicate "${row.label}".`;
+        }
+        seenLabels.add(lower);
+      }
+      continue;
+    }
     if (list.some((x) => typeof x !== "string")) {
       return `List "${listKey}" contains non-string values.`;
     }

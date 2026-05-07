@@ -4,31 +4,17 @@ import { Input } from "@/shared/ui/Input";
 import { LOCKED_FIELD_KEYS, COST_FIELD_KEYS } from "./defaults";
 import type { FieldConfig, PafFormConfig, SectionKey } from "./types";
 
-const SECTION_ORDER: SectionKey[] = [
-  "top",
-  "pay",
-  "tips",
-  "leave",
-  "illness",
-  "store",
-  "term",
-  "demotion",
-  "bonus",
-  "notes",
-];
-
-const SECTION_LABEL: Record<SectionKey, string> = {
+// "top" is implicit — never appears in draft.sections — and "notes" is
+// always last. Everything else comes from the live config.
+const SECTION_LABEL_FALLBACK: Record<string, string> = {
   top: "Top of form",
-  pay: "Position & Pay",
-  tips: "Tips",
-  leave: "PTO",
-  illness: "Illness",
-  store: "Store Routing",
-  term: "Termination / Final Check",
-  demotion: "Demotion",
-  bonus: "Bonus Details",
-  notes: "Notes",
 };
+
+function fieldSections(cfg: FieldConfig): SectionKey[] {
+  if (Array.isArray(cfg.sections) && cfg.sections.length) return cfg.sections;
+  if (cfg.section) return [cfg.section];
+  return ["top"];
+}
 
 export function FieldsEditor({
   draft,
@@ -37,15 +23,32 @@ export function FieldsEditor({
   draft: PafFormConfig;
   onChange: (next: PafFormConfig) => void;
 }) {
-  // Group fields by section so the table reads naturally.
+  // Group fields by their primary section (first entry in `sections`)
+  // so the table reads naturally. Shared fields appear once, under their
+  // first listed section.
   const grouped = useMemo(() => {
-    const out: Partial<Record<SectionKey, [string, FieldConfig][]>> = {};
+    const out: Record<SectionKey, [string, FieldConfig][]> = {};
     for (const [key, cfg] of Object.entries(draft.fields)) {
-      const sec = (cfg.section ?? "top") as SectionKey;
+      const sec = fieldSections(cfg)[0];
       (out[sec] ||= []).push([key, cfg]);
     }
     return out;
   }, [draft.fields]);
+
+  // Derive section order from the live config so newly-added sections
+  // ("transfer", "bonus_spot", etc.) appear without code changes here.
+  const sectionOrder = useMemo<SectionKey[]>(() => {
+    const fromCfg = [...draft.sections]
+      .sort((a, b) => a.order - b.order)
+      .map((s) => s.key);
+    return ["top", ...fromCfg.filter((k) => k !== "notes"), "notes"];
+  }, [draft.sections]);
+
+  const sectionLabel = useMemo<Record<string, string>>(() => {
+    const out: Record<string, string> = { ...SECTION_LABEL_FALLBACK };
+    for (const s of draft.sections) out[s.key] = s.title;
+    return out;
+  }, [draft.sections]);
 
   function patchField(key: string, patch: Partial<FieldConfig>) {
     const current = draft.fields[key];
@@ -66,11 +69,11 @@ export function FieldsEditor({
         calculation fields are listed under their section.
       </p>
 
-      {SECTION_ORDER.filter((s) => grouped[s] && grouped[s]!.length > 0).map(
+      {sectionOrder.filter((s) => grouped[s] && grouped[s]!.length > 0).map(
         (sec) => (
           <div key={sec}>
             <h3 className="mb-2 text-sm font-semibold tracking-tight text-midnight">
-              {SECTION_LABEL[sec]}
+              {sectionLabel[sec] ?? sec}
             </h3>
             <div className="overflow-x-auto rounded-md border border-zinc-200">
               <table className="w-full text-xs">

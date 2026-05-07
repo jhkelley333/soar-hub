@@ -17,19 +17,25 @@ export function calcPafCost(p: {
   declared_tips?: unknown;
   pto_hours?: unknown;
   illness_hours?: unknown;
-  final_check_hrs?: unknown;
   spot_bonus_amt?: unknown;
+  training_bonus_amt?: unknown;
+  referral_bonus_amt?: unknown;
+  pay_basis?: unknown;
 }): number {
   const r = num(p.reg_pay_rate);
+  const hourly = String(p.pay_basis ?? "").toLowerCase() === "hourly";
+  const bonusAmt =
+    num(p.spot_bonus_amt) +
+    num(p.training_bonus_amt) +
+    num(p.referral_bonus_amt);
   return (
     num(p.reg_hours) * r +
     num(p.ot_hours) * r * 1.5 +
     num(p.cc_tips) +
     num(p.declared_tips) +
-    num(p.pto_hours) * r +
-    num(p.illness_hours) * r +
-    num(p.final_check_hrs) * r +
-    num(p.spot_bonus_amt)
+    (hourly ? num(p.pto_hours) * r : 0) +
+    (hourly ? num(p.illness_hours) * r : 0) +
+    bonusAmt
   );
 }
 

@@ -8,12 +8,14 @@ import { Badge } from "@/shared/ui/Badge";
 import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
 import { ProcessActions } from "./ProcessActions";
+import { SdoActions } from "./SdoActions";
 import { PafDetail } from "./PafDetail";
 import type { PafRow, PafStatus } from "./types";
 import { formatUSD } from "./cost";
 
 const STATUS_TONE: Record<PafStatus, "neutral" | "warning" | "info" | "success" | "danger"> = {
   Pending: "warning",
+  "Pending SDO Approval": "warning",
   Approved: "info",
   Rejected: "danger",
   "Needs Approval": "warning",
@@ -26,7 +28,7 @@ export function PafTable({
   actions,
 }: {
   rows: PafRow[];
-  actions: "view" | "process";
+  actions: "view" | "process" | "sdo";
 }) {
   const [detail, setDetail] = useState<PafRow | null>(null);
 
@@ -76,6 +78,7 @@ export function PafTable({
                       Detail
                     </Button>
                     {actions === "process" && <ProcessActions paf={p} />}
+                    {actions === "sdo" && <SdoActions paf={p} />}
                   </div>
                 </td>
               </tr>

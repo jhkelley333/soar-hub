@@ -4,32 +4,45 @@ import { Label } from "@/shared/ui/Label";
 import { Badge } from "@/shared/ui/Badge";
 import type { FieldConfig, PafFormConfig, SectionKey } from "./types";
 
-// Read-only mirror of the bindCat() logic in Index.html. Kept here so the
-// preview shows the right sections per category. The real submit-side
-// version lives in the (future) PAF form code; this is purely visual.
+// Read-only mirror of the bindCat() logic used by PafForm. Kept here so
+// the preview shows the right sections per category. Doesn't branch on
+// bonus_type — the preview always shows all 3 bonus sub-sections so
+// admins can spot-check field placement.
 function visibleSections(category: string): Set<SectionKey> {
   const out = new Set<SectionKey>(["notes"]);
-  const c = category.toLowerCase();
+  const c = category.trim();
 
-  const isBonus =
-    c.includes("bonus") || c === "training" || c === "referral";
-  const isPTO = c === "pto";
-  const isIllness = c === "illness";
-  const isTerm = c === "termination" || c === "final check";
-  const isDemotion = c === "demotion";
-  const isStore = c === "cross store work" || c === "transfer";
-  const isTips =
-    c === "pos adjustment" || c === "backpay" || c === "other";
-
-  if (!isBonus && !isPTO && !isIllness && !isDemotion) out.add("pay");
-  if (isTips || isStore) out.add("tips");
-  if (isPTO) out.add("leave");
-  if (isIllness) out.add("illness");
-  if (isStore) out.add("store");
-  if (isTerm) out.add("term");
-  if (isDemotion) out.add("demotion");
-  if (isBonus) out.add("bonus");
+  if (c === "Bonus") {
+    out.add("bonus");
+    out.add("bonus_spot");
+    out.add("bonus_training");
+    out.add("bonus_referral");
+    return out;
+  }
+  if (c === "PTO") return (out.add("leave"), out);
+  if (c === "Illness") return (out.add("illness"), out);
+  if (c === "Demotion") return (out.add("demotion"), out);
+  if (c === "Transfer") return (out.add("transfer"), out);
+  if (c === "Termination") return (out.add("term"), out);
+  if (c === "Cross Store Work") {
+    out.add("tips");
+    out.add("store");
+    out.add("pay");
+    return out;
+  }
+  if (c === "POS Adjustment" || c === "Backpay") {
+    out.add("tips");
+    out.add("pay");
+    return out;
+  }
+  if (c) out.add("pay");
   return out;
+}
+
+function fieldSections(cfg: FieldConfig): SectionKey[] {
+  if (Array.isArray(cfg.sections) && cfg.sections.length) return cfg.sections;
+  if (cfg.section) return [cfg.section];
+  return ["top"];
 }
 
 export function PreviewForm({ draft }: { draft: PafFormConfig }) {
@@ -39,13 +52,15 @@ export function PreviewForm({ draft }: { draft: PafFormConfig }) {
 
   const visible = useMemo(() => visibleSections(category), [category]);
 
-  // Group fields by section.
+  // Group fields by section. Shared fields (e.g. current_pay_rate)
+  // appear under each of their sections — preview matches the real form.
   const fieldsBySection = useMemo(() => {
-    const out: Partial<Record<SectionKey, [string, FieldConfig][]>> = {};
+    const out: Record<SectionKey, [string, FieldConfig][]> = {};
     for (const [key, cfg] of Object.entries(draft.fields)) {
       if (!cfg.visible) continue;
-      const sec = (cfg.section ?? "top") as SectionKey;
-      (out[sec] ||= []).push([key, cfg]);
+      for (const sec of fieldSections(cfg)) {
+        (out[sec] ||= []).push([key, cfg]);
+      }
     }
     return out;
   }, [draft.fields]);

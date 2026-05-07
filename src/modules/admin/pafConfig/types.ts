@@ -6,17 +6,10 @@
 // netlify/functions/paf-config.js.
 
 export type FieldKey = string;
-export type SectionKey =
-  | "top"
-  | "pay"
-  | "tips"
-  | "leave"
-  | "illness"
-  | "store"
-  | "term"
-  | "demotion"
-  | "bonus"
-  | "notes";
+// Section keys are now open-ended strings to avoid churning this union
+// every time the form gains a section. Editors that key off the union
+// fall through to a generic case for unknown keys.
+export type SectionKey = string;
 
 export interface FieldConfig {
   label: string;
@@ -25,8 +18,10 @@ export interface FieldConfig {
   required: boolean;
   visible: boolean;
   locked: boolean;
-  /** Which section the field renders in. "top" = above all sections. */
-  section: SectionKey;
+  /** Legacy single-section assignment. Newer configs use `sections`. */
+  section?: SectionKey;
+  /** Sections this field renders under (B-2b+). */
+  sections?: SectionKey[];
 }
 
 export interface SectionConfig {
@@ -40,17 +35,26 @@ export type ListKey =
   | "categories"
   | "positions"
   | "bonusTypes"
+  | "payBases"
   | "statuses"
+  | "referralTiers"
   | "termTypes";
+
+export interface ReferralTier {
+  label: string;
+  amount: number;
+}
 
 export interface PafLists {
   categories: string[];
   positions: string[];
   bonusTypes: string[];
+  payBases?: string[];
   statuses: string[];
   /** Statuses that cannot be removed from `statuses` — only reordered. */
   lockedStatuses: string[];
-  termTypes: string[];
+  referralTiers?: ReferralTier[];
+  termTypes?: string[];
 }
 
 export interface EmailTemplate {
