@@ -490,7 +490,7 @@ function FieldRender({
     fieldKey === "job_position" ||
     fieldKey === "current_position" ||
     fieldKey === "new_position" ||
-    fieldKey === "current_role" ||
+    fieldKey === "from_role" ||
     fieldKey === "new_role"
   ) {
     return (

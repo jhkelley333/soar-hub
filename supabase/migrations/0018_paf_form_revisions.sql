@@ -16,7 +16,9 @@ alter table paf_submissions
   add column if not exists pay_basis text,
 
   -- Demotion (dedicated section, no longer entangled with Termination).
-  add column if not exists current_role text,
+  -- Note: "current_role" is a reserved keyword in Postgres (built-in
+  -- function returning the active DB role), so we use from_role.
+  add column if not exists from_role text,
   add column if not exists new_role text,
   add column if not exists current_pay_rate numeric(10,2),
   add column if not exists new_pay_rate numeric(10,2),

@@ -428,8 +428,9 @@ async function submitPaf(supa, user, body) {
     current_position: sanitizeText(body?.current_position, 100) || null,
     new_position: sanitizeText(body?.new_position, 100) || null,
 
-    // Demotion (current/new pay rate also used by Transfer)
-    current_role: sanitizeText(body?.current_role, 100) || null,
+    // Demotion (current/new pay rate also used by Transfer). "current_role"
+    // is a Postgres reserved keyword; column renamed to from_role.
+    from_role: sanitizeText(body?.from_role, 100) || null,
     new_role: sanitizeText(body?.new_role, 100) || null,
     current_pay_rate: body?.current_pay_rate === "" || body?.current_pay_rate == null ? null : num(body?.current_pay_rate),
     new_pay_rate: body?.new_pay_rate === "" || body?.new_pay_rate == null ? null : num(body?.new_pay_rate),

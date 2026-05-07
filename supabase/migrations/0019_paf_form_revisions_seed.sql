@@ -85,7 +85,7 @@ select
       'term_demotion',   jsonb_build_object('label','Termination / Demotion','placeholder','','helpText','','required',false,'visible',false,'locked',false,'sections',jsonb_build_array('term')),
 
       -- Demotion (dedicated)
-      'current_role',    jsonb_build_object('label','Current Role','placeholder','Select...','helpText','','required',true,'visible',true,'locked',false,'sections',jsonb_build_array('demotion')),
+      'from_role',       jsonb_build_object('label','Current Role','placeholder','Select...','helpText','','required',true,'visible',true,'locked',false,'sections',jsonb_build_array('demotion')),
       'new_role',        jsonb_build_object('label','New Role','placeholder','Select...','helpText','','required',true,'visible',true,'locked',false,'sections',jsonb_build_array('demotion')),
       'current_pay_rate',jsonb_build_object('label','Current Pay Rate','placeholder','$0.00','helpText','','required',true,'visible',true,'locked',false,'sections',jsonb_build_array('demotion','transfer')),
       'new_pay_rate',    jsonb_build_object('label','New Pay Rate','placeholder','$0.00','helpText','','required',true,'visible',true,'locked',false,'sections',jsonb_build_array('demotion','transfer')),
