@@ -31,6 +31,21 @@ function safeRedirectTarget(from: string | null | undefined, role: UserRole): st
 
 type Mode = "password" | "magic" | "forgot";
 
+// Hard ceiling on auth network calls. supabase-js can rarely deadlock
+// on a request that never resolves; without this the sign-in button
+// stays "Working…" forever. 10s is generous on bad networks but
+// short enough that users get a real error instead of a frozen UI.
+const SIGN_IN_TIMEOUT_MS = 10_000;
+
+function withTimeout<T>(p: Promise<T>, label: string, ms: number): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label} timed out — try again.`)), ms)
+    ),
+  ]);
+}
+
 // Resolve a phone-or-email identifier to the canonical email Supabase auth
 // expects. For email input we pass through; for phone we ping the public
 // auth-resolve function which looks up the matching profile by phone and
@@ -96,20 +111,32 @@ export function LoginPage() {
       const email = resolved.email;
 
       if (mode === "password") {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        const { error } = await withTimeout(
+          supabase.auth.signInWithPassword({ email, password }),
+          "Sign-in",
+          SIGN_IN_TIMEOUT_MS
+        );
         if (error) throw error;
       } else if (mode === "magic") {
-        const { error } = await supabase.auth.signInWithOtp({
-          email,
-          options: { emailRedirectTo: window.location.origin },
-        });
+        const { error } = await withTimeout(
+          supabase.auth.signInWithOtp({
+            email,
+            options: { emailRedirectTo: window.location.origin },
+          }),
+          "Magic link",
+          SIGN_IN_TIMEOUT_MS
+        );
         if (error) throw error;
         setInfo("Check your email for a sign-in link.");
       } else {
         // forgot
-        const { error } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: `${window.location.origin}/reset-password`,
-        });
+        const { error } = await withTimeout(
+          supabase.auth.resetPasswordForEmail(email, {
+            redirectTo: `${window.location.origin}/reset-password`,
+          }),
+          "Reset request",
+          SIGN_IN_TIMEOUT_MS
+        );
         if (error) throw error;
         setInfo(
           "If an account exists for that contact, a password reset link has been emailed."

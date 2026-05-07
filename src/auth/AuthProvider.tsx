@@ -118,10 +118,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setSession(next);
       if (next?.user) {
         try {
-          await loadProfile(next.user.id);
+          // Bound the post-auth profile load — a hung Supabase query
+          // here used to leave LoginPage stuck on "Working…" forever
+          // because the session was set but profile never arrived.
+          await Promise.race([
+            loadProfile(next.user.id),
+            timeout<void>("loadProfile (auth change)", AUTH_BOOT_TIMEOUT_MS),
+          ]);
         } catch (e) {
-          console.warn("[auth] loadProfile after auth change failed; clearing stale session", e);
-          await clearStaleSession();
+          // The session itself is valid (we just got it from supabase-
+          // js); only the profile fetch failed. Wiping the session
+          // would silently bounce the user back to the login screen
+          // with no explanation. Surface the error and leave the
+          // session intact so they can retry / refresh / contact
+          // support.
+          console.warn("[auth] post-auth-change loadProfile failed; keeping session, clearing profile", e);
+          setProfile(null);
+          setScopes([]);
         }
       } else {
         setProfile(null);
