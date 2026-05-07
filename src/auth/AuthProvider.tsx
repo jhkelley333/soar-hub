@@ -21,6 +21,41 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
 
+// Hard ceiling on initial auth resolution. If getSession() or loadProfile
+// hasn't returned in this many ms we wipe persisted Supabase tokens and
+// drop the user on the login screen rather than hanging on "Loading…".
+// Tuned long enough to forgive bad LTE on cold loads, short enough that
+// users don't sit staring at a spinner.
+const AUTH_BOOT_TIMEOUT_MS = 8000;
+
+function timeout<T>(label: string, ms: number): Promise<T> {
+  return new Promise((_, reject) => {
+    setTimeout(() => reject(new Error(`[auth] ${label} timed out after ${ms}ms`)), ms);
+  });
+}
+
+// Best-effort wipe of any persisted Supabase auth state (`sb-*-auth-token`
+// keys in localStorage + sessionStorage). After a backend change or token
+// rotation the persisted refresh token can be permanently rejected — and
+// the supabase-js client will silently retry forever. Wiping forces a
+// clean login on the next render.
+function purgeSupabaseStorage() {
+  for (const store of [window.localStorage, window.sessionStorage]) {
+    try {
+      const doomed: string[] = [];
+      for (let i = 0; i < store.length; i++) {
+        const key = store.key(i);
+        if (key && key.startsWith("sb-") && key.endsWith("-auth-token")) {
+          doomed.push(key);
+        }
+      }
+      for (const key of doomed) store.removeItem(key);
+    } catch {
+      // storage may be disabled (private mode, quota); nothing to do.
+    }
+  }
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<Profile | null>(null);
@@ -43,10 +78,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // call 401s.
   async function clearStaleSession() {
     try {
-      await supabase.auth.signOut();
+      await Promise.race([supabase.auth.signOut(), timeout("signOut", 2000)]);
     } catch {
       // ignore — we just want the local state cleared
     }
+    purgeSupabaseStorage();
     setSession(null);
     setProfile(null);
     setScopes([]);
@@ -55,26 +91,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
 
-    supabase.auth
-      .getSession()
-      .then(async ({ data: { session } }) => {
+    (async () => {
+      try {
+        const { data: { session: initial } } = await Promise.race([
+          supabase.auth.getSession(),
+          timeout<{ data: { session: Session | null } }>("getSession", AUTH_BOOT_TIMEOUT_MS),
+        ]);
         if (cancelled) return;
-        setSession(session);
-        if (session?.user) {
-          try {
-            await loadProfile(session.user.id);
-          } catch (e) {
-            console.warn("[auth] initial loadProfile failed; clearing stale session", e);
-            if (!cancelled) await clearStaleSession();
-          }
+        setSession(initial);
+        if (initial?.user) {
+          await Promise.race([
+            loadProfile(initial.user.id),
+            timeout<void>("loadProfile", AUTH_BOOT_TIMEOUT_MS),
+          ]);
         }
-      })
-      .catch((e) => {
-        console.warn("[auth] initial getSession failed", e);
-      })
-      .finally(() => {
+      } catch (e) {
+        if (cancelled) return;
+        console.warn("[auth] boot failed; purging persisted session and falling through to login", e);
+        await clearStaleSession();
+      } finally {
         if (!cancelled) setLoading(false);
-      });
+      }
+    })();
 
     const { data: sub } = supabase.auth.onAuthStateChange(async (_event, next) => {
       setSession(next);
