@@ -25,7 +25,9 @@ export function PafPage() {
     queryFn: listPafs,
   });
 
-  const canSubmit = ["do", "gm", "sdo", "admin"].includes(profile?.role ?? "");
+  const canSubmit = ["do", "sdo", "rvp", "vp", "coo", "admin"].includes(
+    profile?.role ?? ""
+  );
   const canProcess = profile?.role === "payroll" || profile?.role === "admin";
 
   if (query.isLoading) {
