@@ -129,6 +129,125 @@ function respond(statusCode, payload) {
 }
 
 // ----------------------------------------------------------------------------
+// Email delivery via Resend HTTP API. Best-effort: failures here never
+// fail the user-facing action, only log a warning. Templates come from
+// the active form_config row and are rendered with simple {{VAR}}
+// substitution.
+// ----------------------------------------------------------------------------
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "paf@mysoarhub.com";
+const RESEND_FROM_NAME = process.env.RESEND_FROM_NAME || "SOAR PAF";
+const RESEND_REPLY_TO = process.env.RESEND_REPLY_TO || null;
+
+function appBaseUrl() {
+  return (process.env.URL || process.env.DEPLOY_URL || "").replace(/\/$/, "");
+}
+
+function renderTemplate(template, vars) {
+  const merged = { LINK: `${appBaseUrl()}/paf`, ...vars };
+  function render(s) {
+    return Object.keys(merged).reduce(
+      (acc, k) => acc.replace(new RegExp(`\\{\\{${k}\\}\\}`, "g"), String(merged[k] ?? "")),
+      String(s ?? "")
+    );
+  }
+  return { subject: render(template.subject), body: render(template.body) };
+}
+
+async function sendEmailViaResend({ to, subject, text }) {
+  if (!RESEND_API_KEY) {
+    console.warn("[paf] RESEND_API_KEY not set; skipping send", { to, subject });
+    return { skipped: true };
+  }
+  if (!to) {
+    console.warn("[paf] sendEmailViaResend called with no recipient", { subject });
+    return { skipped: true };
+  }
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`,
+        to: Array.isArray(to) ? to : [to],
+        subject,
+        text,
+        ...(RESEND_REPLY_TO ? { reply_to: RESEND_REPLY_TO } : {}),
+      }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      console.warn("[paf] Resend send failed", res.status, detail);
+      return { ok: false, status: res.status };
+    }
+    const json = await res.json().catch(() => ({}));
+    return { ok: true, id: json?.id };
+  } catch (e) {
+    console.warn("[paf] Resend send threw", e);
+    return { ok: false, error: e?.message };
+  }
+}
+
+// Convenience: pull the named template from the active config and send.
+async function sendPafEmail(supa, { templateKey, to, vars }) {
+  if (!to) return { skipped: true };
+  try {
+    const cfg = await getActiveConfig(supa);
+    if (cfg.error) return { skipped: true, error: cfg.error };
+    const template = cfg.config_json?.emailTemplates?.[templateKey];
+    if (!template?.subject || !template?.body) {
+      console.warn(`[paf] template "${templateKey}" missing in active config`);
+      return { skipped: true };
+    }
+    const rendered = renderTemplate(template, vars || {});
+    return await sendEmailViaResend({
+      to,
+      subject: rendered.subject,
+      text: rendered.body,
+    });
+  } catch (e) {
+    console.warn("[paf] sendPafEmail threw", e);
+    return { ok: false, error: e?.message };
+  }
+}
+
+// Returns the email addresses of every active payroll user. Used for
+// notifications that go to "the payroll team" rather than a specific
+// person (e.g. PAF_SUBMITTED, APPROVAL_CONFIRMED).
+async function payrollEmails(supa) {
+  const { data } = await supa
+    .from("profiles")
+    .select("email")
+    .eq("role", "payroll")
+    .eq("is_active", true);
+  return (data ?? []).map((p) => p.email).filter(Boolean);
+}
+
+// Look up an email by profile id (for SDO approval emails to a specific
+// approver). Returns { email, name } or null.
+async function profileById(supa, id) {
+  if (!id) return null;
+  const { data } = await supa
+    .from("profiles")
+    .select("email, full_name, preferred_name")
+    .eq("id", id)
+    .maybeSingle();
+  if (!data) return null;
+  return {
+    email: data.email,
+    name: data.preferred_name || data.full_name || data.email,
+  };
+}
+
+function fmtMoney(n) {
+  const v = Number(n) || 0;
+  return v.toLocaleString("en-US", { style: "currency", currency: "USD" });
+}
+
+// ----------------------------------------------------------------------------
 // Cost calculation — locked formula (App Script calcCost). Mirrored on the
 // client for live preview but the server result is authoritative.
 // ----------------------------------------------------------------------------
@@ -492,6 +611,37 @@ async function submitPaf(supa, user, body) {
     },
   });
 
+  // Email notifications (best-effort; don't fail the submit on send error).
+  const submitterDisplay =
+    user.preferred_name || user.full_name || user.email;
+  if (insertRow.status === "Pending SDO Approval") {
+    const approver = await profileById(supa, insertRow.sdo_approver_id);
+    await sendPafEmail(supa, {
+      templateKey: "BONUS_SDO_APPROVAL_REQUEST",
+      to: approver?.email,
+      vars: {
+        EMPLOYEE: employeeName,
+        STORE: driveIn,
+        BONUS_TYPE: insertRow.bonus_type ?? "",
+        AMOUNT: fmtMoney(insertRow.estimated_cost),
+        DO: submitterDisplay,
+      },
+    });
+  } else {
+    const recipients = await payrollEmails(supa);
+    await sendPafEmail(supa, {
+      templateKey: "PAF_SUBMITTED",
+      to: recipients,
+      vars: {
+        EMPLOYEE: employeeName,
+        STORE: driveIn,
+        DO: submitterDisplay,
+        CATEGORY: category,
+        AMOUNT: fmtMoney(insertRow.estimated_cost),
+      },
+    });
+  }
+
   return { ok: true, id: created.id, status: insertRow.status };
 }
 
@@ -509,7 +659,7 @@ async function rejectPaf(supa, user, body) {
 
   const { data: existing, error: fetchErr } = await supa
     .from("paf_submissions")
-    .select("id, status, employee_name, drive_in")
+    .select("id, status, employee_name, drive_in, submitter_email")
     .eq("id", id)
     .maybeSingle();
   if (fetchErr) return { error: fetchErr.message, status: 500 };
@@ -536,6 +686,17 @@ async function rejectPaf(supa, user, body) {
     action: "reject",
     detail: { reason },
   });
+
+  await sendPafEmail(supa, {
+    templateKey: "PAF_REJECTED",
+    to: existing.submitter_email,
+    vars: {
+      EMPLOYEE: existing.employee_name,
+      STORE: existing.drive_in,
+      REASON: reason,
+    },
+  });
+
   return { ok: true };
 }
 
@@ -580,12 +741,8 @@ async function needsApprovalPaf(supa, user, body) {
     .eq("id", id);
   if (error) return { error: error.message, status: 500 };
 
-  // Approval link the external user gets in their email. Email send
-  // happens in PR B-2; for now we just return the link in the response
-  // so the UI can show it and Payroll can copy/paste manually.
-  const base =
-    (process.env.URL || process.env.DEPLOY_URL || "").replace(/\/$/, "") || "";
-  const approvalLink = `${base}/paf/accept?token=${token}`;
+  // Approval link the external user gets in their email.
+  const approvalLink = `${appBaseUrl()}/paf/accept?token=${token}`;
 
   await logAudit(supa, {
     paf_id: id,
@@ -593,6 +750,24 @@ async function needsApprovalPaf(supa, user, body) {
     actor_email: user.email,
     action: "needs-approval",
     detail: { approval_email: approvalEmail, expires_at: expiresAt.toISOString() },
+  });
+
+  // Pull employee + store for the template.
+  const { data: row } = await supa
+    .from("paf_submissions")
+    .select("employee_name, drive_in")
+    .eq("id", id)
+    .maybeSingle();
+
+  await sendPafEmail(supa, {
+    templateKey: "NEEDS_APPROVAL",
+    to: approvalEmail,
+    vars: {
+      EMPLOYEE: row?.employee_name ?? "",
+      STORE: row?.drive_in ?? "",
+      NOTES: notes ?? "",
+      LINK: approvalLink,
+    },
   });
 
   return { ok: true, approval_link: approvalLink, expires_at: expiresAt.toISOString() };
@@ -643,6 +818,17 @@ async function tokenApprove(supa, body) {
     },
   });
 
+  // Notify Payroll that the external approver clicked through.
+  const recipients = await payrollEmails(supa);
+  await sendPafEmail(supa, {
+    templateKey: "APPROVAL_CONFIRMED",
+    to: recipients,
+    vars: {
+      EMPLOYEE: existing.employee_name,
+      STORE: existing.drive_in,
+    },
+  });
+
   return {
     ok: true,
     employee_name: existing.employee_name,
@@ -683,7 +869,7 @@ async function sdoApprovePaf(supa, user, body) {
 
   const { data: existing, error: fetchErr } = await supa
     .from("paf_submissions")
-    .select("id, status, sdo_approver_id, employee_name, drive_in, bonus_type")
+    .select("id, status, sdo_approver_id, employee_name, drive_in, bonus_type, submitter_email")
     .eq("id", id)
     .maybeSingle();
   if (fetchErr) return { error: fetchErr.message, status: 500 };
@@ -719,6 +905,30 @@ async function sdoApprovePaf(supa, user, body) {
       note,
     },
   });
+
+  const approver = user.preferred_name || user.full_name || user.email;
+  await sendPafEmail(supa, {
+    templateKey: "BONUS_SDO_APPROVED",
+    to: existing.submitter_email,
+    vars: {
+      EMPLOYEE: existing.employee_name,
+      STORE: existing.drive_in,
+      APPROVER: approver,
+    },
+  });
+  // Also let Payroll know a bonus has landed in their queue.
+  const payroll = await payrollEmails(supa);
+  await sendPafEmail(supa, {
+    templateKey: "PAF_SUBMITTED",
+    to: payroll,
+    vars: {
+      EMPLOYEE: existing.employee_name,
+      STORE: existing.drive_in,
+      DO: approver,
+      CATEGORY: "Bonus",
+      AMOUNT: "—",
+    },
+  });
   return { ok: true };
 }
 
@@ -733,7 +943,7 @@ async function sdoRejectPaf(supa, user, body) {
 
   const { data: existing, error: fetchErr } = await supa
     .from("paf_submissions")
-    .select("id, status, sdo_approver_id, employee_name, drive_in, bonus_type")
+    .select("id, status, sdo_approver_id, employee_name, drive_in, bonus_type, submitter_email")
     .eq("id", id)
     .maybeSingle();
   if (fetchErr) return { error: fetchErr.message, status: 500 };
@@ -770,6 +980,18 @@ async function sdoRejectPaf(supa, user, body) {
       reason,
     },
   });
+
+  const approver = user.preferred_name || user.full_name || user.email;
+  await sendPafEmail(supa, {
+    templateKey: "BONUS_SDO_REJECTED",
+    to: existing.submitter_email,
+    vars: {
+      EMPLOYEE: existing.employee_name,
+      STORE: existing.drive_in,
+      APPROVER: approver,
+      REASON: reason,
+    },
+  });
   return { ok: true };
 }
 
@@ -785,7 +1007,7 @@ async function markProcessed(supa, user, body) {
 
   const { data: existing, error: fetchErr } = await supa
     .from("paf_submissions")
-    .select("id, status")
+    .select("id, status, employee_name, drive_in, submitter_email, estimated_cost")
     .eq("id", id)
     .maybeSingle();
   if (fetchErr) return { error: fetchErr.message, status: 500 };
@@ -813,6 +1035,17 @@ async function markProcessed(supa, user, body) {
     action: "mark-processed",
     detail: null,
   });
+
+  await sendPafEmail(supa, {
+    templateKey: "PAF_PROCESSED",
+    to: existing.submitter_email,
+    vars: {
+      EMPLOYEE: existing.employee_name,
+      STORE: existing.drive_in,
+      AMOUNT: fmtMoney(existing.estimated_cost),
+    },
+  });
+
   return { ok: true };
 }
 
