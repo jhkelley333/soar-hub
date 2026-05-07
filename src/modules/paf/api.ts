@@ -82,10 +82,30 @@ export type PafSubmitInput = Partial<
   explanation: string;
 };
 
-export function submitPaf(input: PafSubmitInput): Promise<{ ok: true; id: string }> {
-  return request<{ ok: true; id: string }>(`${FN}?action=submit`, {
+export function submitPaf(
+  input: PafSubmitInput
+): Promise<{ ok: true; id: string; status: string }> {
+  return request<{ ok: true; id: string; status: string }>(`${FN}?action=submit`, {
     method: "POST",
     body: JSON.stringify(input),
+  });
+}
+
+export function listSdoQueue(): Promise<{ pafs: PafRow[] }> {
+  return request<{ pafs: PafRow[] }>(`${FN}?action=list-sdo-queue`);
+}
+
+export function sdoApprovePaf(id: string, note?: string): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`${FN}?action=sdo-approve`, {
+    method: "POST",
+    body: JSON.stringify({ id, note }),
+  });
+}
+
+export function sdoRejectPaf(id: string, reason: string): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`${FN}?action=sdo-reject`, {
+    method: "POST",
+    body: JSON.stringify({ id, reason }),
   });
 }
 

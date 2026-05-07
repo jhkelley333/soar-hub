@@ -49,18 +49,23 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const TOKEN_EXPIRY_HOURS = 72;
 
-// Roles that can submit (matches App Script requireRole(['DO','GM','SDO','Admin']))
-const SUBMIT_ROLES = new Set(["do", "gm", "sdo", "admin"]);
+// Roles that can submit. RVP/VP/COO included so they can submit bonuses
+// for direct reports; their bonus PAFs skip SDO and go straight to
+// Payroll.
+const SUBMIT_ROLES = new Set(["do", "gm", "sdo", "rvp", "vp", "coo", "admin"]);
 // Roles that can read PAFs at all
 const READ_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]);
 // Roles that can process (reject / needs-approval / mark-processed)
 const PROCESS_ROLES = new Set(["payroll", "admin"]);
 // Org-wide read (sees everything)
 const ORG_WIDE_READ = new Set(["payroll", "admin", "vp", "coo"]);
+// Roles whose own bonus submissions skip SDO and go straight to Payroll.
+const BONUS_BYPASS_ROLES = new Set(["rvp", "vp", "coo", "admin"]);
 
 // Allowed status values (mirrors form_config.lists.statuses).
 const STATUSES = new Set([
   "Pending",
+  "Pending SDO Approval",
   "Approved",
   "Rejected",
   "Needs Approval",
@@ -130,17 +135,25 @@ function num(v) {
   const n = parseFloat(String(v ?? "").replace(/[^0-9.\-]/g, ""));
   return Number.isFinite(n) ? Math.max(0, n) : 0;
 }
+// Cost calculation. Reg/OT hours always multiply by reg_pay_rate;
+// PTO + Illness only count when pay_basis is hourly (salary employees
+// don't accrue an hourly rate that maps to those hours). Bonus amount
+// is whichever flavor of bonus this PAF carries.
 function calcPafCost(p) {
   const r = num(p.reg_pay_rate);
+  const hourly = String(p.pay_basis ?? "").toLowerCase() === "hourly";
+  const bonusAmt =
+    num(p.spot_bonus_amt) +
+    num(p.training_bonus_amt) +
+    num(p.referral_bonus_amt);
   return (
     num(p.reg_hours) * r +
     num(p.ot_hours) * r * 1.5 +
     num(p.cc_tips) +
     num(p.declared_tips) +
-    num(p.pto_hours) * r +
-    num(p.illness_hours) * r +
-    num(p.final_check_hrs) * r +
-    num(p.spot_bonus_amt)
+    (hourly ? num(p.pto_hours) * r : 0) +
+    (hourly ? num(p.illness_hours) * r : 0) +
+    bonusAmt
   );
 }
 
@@ -156,6 +169,77 @@ function sanitizeDateInput(v) {
   const s = String(v).trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
   return s;
+}
+
+// ----------------------------------------------------------------------------
+// Resolve the SDO/RVP who should approve a bonus PAF. Returns a profile
+// id or null if none can be matched (caller's responsibility to fall
+// back to admin or an "unassigned" status).
+//
+// Routing:
+//   - non-SDO submitter -> SDO assigned to the store's area
+//   - SDO submitter     -> RVP assigned to the store's region
+//   - RVP+ submitter    -> not invoked (caller skips SDO entirely)
+//
+// "Assigned to" = a row in user_scopes with scope_type matching the
+// org level and scope_id matching the store's area_id / region_id.
+// ----------------------------------------------------------------------------
+async function resolveBonusApprover(supa, driveIn, submitterRole) {
+  const targetRole = submitterRole === "sdo" ? "rvp" : "sdo";
+  const scopeType = submitterRole === "sdo" ? "region" : "area";
+
+  const { data: storeRow } = await supa
+    .from("stores")
+    .select("id, district_id")
+    .eq("number", driveIn)
+    .maybeSingle();
+  if (!storeRow?.district_id) return null;
+
+  const { data: districtRow } = await supa
+    .from("districts")
+    .select("id, area_id")
+    .eq("id", storeRow.district_id)
+    .maybeSingle();
+  if (!districtRow?.area_id) return null;
+
+  let scopeId = districtRow.area_id;
+  if (scopeType === "region") {
+    const { data: areaRow } = await supa
+      .from("areas")
+      .select("id, region_id")
+      .eq("id", districtRow.area_id)
+      .maybeSingle();
+    if (!areaRow?.region_id) return null;
+    scopeId = areaRow.region_id;
+  }
+
+  const { data: candidates } = await supa
+    .from("profiles")
+    .select("id")
+    .eq("role", targetRole)
+    .eq("is_active", true);
+  const candidateIds = (candidates ?? []).map((p) => p.id);
+  if (!candidateIds.length) return null;
+
+  const { data: scoped } = await supa
+    .from("user_scopes")
+    .select("user_id")
+    .eq("scope_type", scopeType)
+    .eq("scope_id", scopeId)
+    .in("user_id", candidateIds)
+    .limit(1);
+  return scoped?.[0]?.user_id ?? null;
+}
+
+async function resolveAdminFallback(supa) {
+  const { data } = await supa
+    .from("profiles")
+    .select("id")
+    .eq("role", "admin")
+    .eq("is_active", true)
+    .limit(1)
+    .maybeSingle();
+  return data?.id ?? null;
 }
 
 // ----------------------------------------------------------------------------
@@ -287,6 +371,25 @@ async function submitPaf(supa, user, body) {
   const cfg = await getActiveConfig(supa);
   if (cfg.error) return cfg;
 
+  const payBasisRaw = String(body?.pay_basis ?? "").toLowerCase();
+  const payBasis = payBasisRaw === "hourly" || payBasisRaw === "salary" ? payBasisRaw : null;
+
+  const locChangeRaw = String(body?.location_change ?? "").toLowerCase();
+  const locationChange =
+    locChangeRaw === "yes" || locChangeRaw === "true"
+      ? true
+      : locChangeRaw === "no" || locChangeRaw === "false"
+        ? false
+        : null;
+
+  const trainingDaysRaw = body?.training_days;
+  const trainingDays =
+    trainingDaysRaw === "" || trainingDaysRaw == null
+      ? null
+      : Number.isFinite(parseInt(trainingDaysRaw, 10))
+        ? Math.max(0, parseInt(trainingDaysRaw, 10))
+        : null;
+
   const insertRow = {
     config_version: cfg.config_version,
     submitter_id: user.id,
@@ -300,6 +403,7 @@ async function submitPaf(supa, user, body) {
     last4_ssn: ssn,
     category,
     explanation,
+    pay_basis: payBasis,
 
     job_position: sanitizeText(body?.job_position, 100) || null,
     approving_mgr: sanitizeText(body?.approving_mgr, 200) || null,
@@ -313,22 +417,56 @@ async function submitPaf(supa, user, body) {
     pto_hours: num(body?.pto_hours),
     illness_hours: num(body?.illness_hours),
 
+    // Cross Store Work routing
     original_store: sanitizeText(body?.original_store, 20) || null,
     temp_new_store: sanitizeText(body?.temp_new_store, 20) || null,
     store_chrged_ot: sanitizeText(body?.store_chrged_ot, 20) || null,
+
+    // Transfer
     current_store: sanitizeText(body?.current_store, 20) || null,
     new_store: sanitizeText(body?.new_store, 20) || null,
+    current_position: sanitizeText(body?.current_position, 100) || null,
+    new_position: sanitizeText(body?.new_position, 100) || null,
 
+    // Demotion (current/new pay rate also used by Transfer)
+    current_role: sanitizeText(body?.current_role, 100) || null,
+    new_role: sanitizeText(body?.new_role, 100) || null,
+    current_pay_rate: body?.current_pay_rate === "" || body?.current_pay_rate == null ? null : num(body?.current_pay_rate),
+    new_pay_rate: body?.new_pay_rate === "" || body?.new_pay_rate == null ? null : num(body?.new_pay_rate),
+    location_change: locationChange,
+    new_location: sanitizeText(body?.new_location, 50) || null,
+
+    // Termination — final_check_hrs + term_demotion intentionally not collected
     last_day_worked: sanitizeDateInput(body?.last_day_worked),
-    term_demotion: sanitizeText(body?.term_demotion, 50) || null,
-    final_check_hrs: num(body?.final_check_hrs),
     termed_in_tr: sanitizeText(body?.termed_in_tr, 10) || null,
 
-    spot_bonus_amt: num(body?.spot_bonus_amt),
+    // Bonus (sub-fields branch on bonus_type)
     bonus_type: sanitizeText(body?.bonus_type, 100) || null,
+    spot_bonus_amt: num(body?.spot_bonus_amt),
+    spot_bonus_reason: sanitizeText(body?.spot_bonus_reason, 1000) || null,
+    training_bonus_amt: body?.training_bonus_amt === "" || body?.training_bonus_amt == null ? null : num(body?.training_bonus_amt),
+    trained_employee_name: sanitizeText(body?.trained_employee_name, 200) || null,
+    trained_at_store: sanitizeText(body?.trained_at_store, 20) || null,
+    training_days: trainingDays,
+    referral_bonus_amt: body?.referral_bonus_amt === "" || body?.referral_bonus_amt == null ? null : num(body?.referral_bonus_amt),
+    referral_tier: sanitizeText(body?.referral_tier, 100) || null,
+    referred_employee_name: sanitizeText(body?.referred_employee_name, 200) || null,
+    referral_start_date: sanitizeDateInput(body?.referral_start_date),
 
     status: "Pending",
   };
+
+  // Bonus routing — non-bypass submitters land in "Pending SDO Approval"
+  // with sdo_approver_id set; bypass roles + non-bonus categories go
+  // straight to "Pending" (Payroll queue).
+  const isBonus = category === "Bonus";
+  if (isBonus && !BONUS_BYPASS_ROLES.has(user.role)) {
+    let approverId = await resolveBonusApprover(supa, driveIn, user.role);
+    if (!approverId) approverId = await resolveAdminFallback(supa);
+    insertRow.status = "Pending SDO Approval";
+    insertRow.sdo_approver_id = approverId; // may still be null; SDO widget filters by id-match
+  }
+
   insertRow.estimated_cost = calcPafCost(insertRow);
 
   const { data: created, error } = await supa
@@ -343,10 +481,16 @@ async function submitPaf(supa, user, body) {
     actor_id: user.id,
     actor_email: user.email,
     action: "submit",
-    detail: { drive_in: driveIn, employee_name: employeeName, category },
+    detail: {
+      drive_in: driveIn,
+      employee_name: employeeName,
+      category,
+      routed_to_sdo: insertRow.status === "Pending SDO Approval",
+      sdo_approver_id: insertRow.sdo_approver_id ?? null,
+    },
   });
 
-  return { ok: true, id: created.id };
+  return { ok: true, id: created.id, status: insertRow.status };
 }
 
 // ----------------------------------------------------------------------------
@@ -505,6 +649,129 @@ async function tokenApprove(supa, body) {
 }
 
 // ----------------------------------------------------------------------------
+// list-sdo-queue — PAFs awaiting the caller's SDO/RVP approval. Admins see
+// every Pending SDO Approval row regardless of approver assignment so they
+// can unstick PAFs whose approver is missing.
+// ----------------------------------------------------------------------------
+async function listSdoQueue(supa, user) {
+  const isAdmin = user.role === "admin";
+  if (!isAdmin && !["sdo", "rvp", "vp", "coo"].includes(user.role)) {
+    return { error: "not authorized", status: 403 };
+  }
+  let q = supa
+    .from("paf_submissions")
+    .select("*")
+    .eq("status", "Pending SDO Approval")
+    .eq("archived", false)
+    .order("created_at", { ascending: false });
+  if (!isAdmin) q = q.eq("sdo_approver_id", user.id);
+  const { data, error } = await q.limit(200);
+  if (error) return { error: error.message, status: 500 };
+  return { pafs: data ?? [] };
+}
+
+// ----------------------------------------------------------------------------
+// sdo-approve — caller (the assigned SDO/RVP, or admin) approves a bonus
+// PAF. Flips status to Pending so it moves into the Payroll queue.
+// ----------------------------------------------------------------------------
+async function sdoApprovePaf(supa, user, body) {
+  const id = body?.id;
+  const note = sanitizeText(body?.note, 2000) || null;
+  if (!id) return { error: "id is required.", status: 400 };
+
+  const { data: existing, error: fetchErr } = await supa
+    .from("paf_submissions")
+    .select("id, status, sdo_approver_id, employee_name, drive_in, bonus_type")
+    .eq("id", id)
+    .maybeSingle();
+  if (fetchErr) return { error: fetchErr.message, status: 500 };
+  if (!existing) return { error: "PAF not found.", status: 404 };
+  if (existing.status !== "Pending SDO Approval") {
+    return { error: `PAF is not awaiting SDO approval (status: ${existing.status}).`, status: 400 };
+  }
+  if (user.role !== "admin" && existing.sdo_approver_id !== user.id) {
+    return { error: "You are not the assigned approver for this PAF.", status: 403 };
+  }
+
+  const now = new Date().toISOString();
+  const { error } = await supa
+    .from("paf_submissions")
+    .update({
+      status: "Pending",
+      sdo_decided_at: now,
+      sdo_decision: "approved",
+      sdo_decision_note: note,
+    })
+    .eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+
+  await logAudit(supa, {
+    paf_id: id,
+    actor_id: user.id,
+    actor_email: user.email,
+    action: "sdo-approved",
+    detail: {
+      employee_name: existing.employee_name,
+      drive_in: existing.drive_in,
+      bonus_type: existing.bonus_type,
+      note,
+    },
+  });
+  return { ok: true };
+}
+
+// ----------------------------------------------------------------------------
+// sdo-reject — terminal rejection by the assigned SDO/RVP (or admin).
+// ----------------------------------------------------------------------------
+async function sdoRejectPaf(supa, user, body) {
+  const id = body?.id;
+  const reason = sanitizeText(body?.reason, 2000);
+  if (!id) return { error: "id is required.", status: 400 };
+  if (!reason) return { error: "reason is required.", status: 400 };
+
+  const { data: existing, error: fetchErr } = await supa
+    .from("paf_submissions")
+    .select("id, status, sdo_approver_id, employee_name, drive_in, bonus_type")
+    .eq("id", id)
+    .maybeSingle();
+  if (fetchErr) return { error: fetchErr.message, status: 500 };
+  if (!existing) return { error: "PAF not found.", status: 404 };
+  if (existing.status !== "Pending SDO Approval") {
+    return { error: `PAF is not awaiting SDO approval (status: ${existing.status}).`, status: 400 };
+  }
+  if (user.role !== "admin" && existing.sdo_approver_id !== user.id) {
+    return { error: "You are not the assigned approver for this PAF.", status: 403 };
+  }
+
+  const now = new Date().toISOString();
+  const { error } = await supa
+    .from("paf_submissions")
+    .update({
+      status: "Rejected",
+      rejection_reason: reason,
+      sdo_decided_at: now,
+      sdo_decision: "rejected",
+      sdo_decision_note: reason,
+    })
+    .eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+
+  await logAudit(supa, {
+    paf_id: id,
+    actor_id: user.id,
+    actor_email: user.email,
+    action: "sdo-rejected",
+    detail: {
+      employee_name: existing.employee_name,
+      drive_in: existing.drive_in,
+      bonus_type: existing.bonus_type,
+      reason,
+    },
+  });
+  return { ok: true };
+}
+
+// ----------------------------------------------------------------------------
 // mark-processed — payroll/admin
 // ----------------------------------------------------------------------------
 async function markProcessed(supa, user, body) {
@@ -599,6 +866,7 @@ export const handler = async (event) => {
 
     if (event.httpMethod === "GET") {
       if (action === "list") return unwrap(await listPafs(supa, user));
+      if (action === "list-sdo-queue") return unwrap(await listSdoQueue(supa, user));
       if (action === "config") return unwrap(await getActiveConfig(supa));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
@@ -608,6 +876,8 @@ export const handler = async (event) => {
       if (action === "reject") return unwrap(await rejectPaf(supa, user, body));
       if (action === "needs-approval") return unwrap(await needsApprovalPaf(supa, user, body));
       if (action === "mark-processed") return unwrap(await markProcessed(supa, user, body));
+      if (action === "sdo-approve") return unwrap(await sdoApprovePaf(supa, user, body));
+      if (action === "sdo-reject") return unwrap(await sdoRejectPaf(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
     return respond(405, { error: "method not allowed" });

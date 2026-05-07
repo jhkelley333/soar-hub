@@ -20,10 +20,18 @@ import { GripVertical, Lock, Plus, X } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { LIST_LABELS } from "./defaults";
-import type { ListKey, PafFormConfig, PafLists } from "./types";
+import type { ListKey, PafFormConfig, PafLists, ReferralTier } from "./types";
 import { cn } from "@/lib/cn";
 
-const TABS: ListKey[] = ["categories", "positions", "bonusTypes", "statuses", "termTypes"];
+const TABS: ListKey[] = [
+  "categories",
+  "positions",
+  "bonusTypes",
+  "payBases",
+  "referralTiers",
+  "statuses",
+  "termTypes",
+];
 
 export function ListsEditor({
   draft,
@@ -33,16 +41,8 @@ export function ListsEditor({
   onChange: (next: PafFormConfig) => void;
 }) {
   const [active, setActive] = useState<ListKey>("categories");
-  const list = (draft.lists[active] ?? []) as string[];
-  const lockedSet = useMemo(
-    () =>
-      active === "statuses"
-        ? new Set(draft.lists.lockedStatuses ?? [])
-        : new Set<string>(),
-    [active, draft.lists.lockedStatuses]
-  );
 
-  function setList(next: string[]) {
+  function setList(next: PafLists[ListKey]) {
     onChange({
       ...draft,
       lists: { ...draft.lists, [active]: next } as PafLists,
@@ -51,7 +51,6 @@ export function ListsEditor({
 
   return (
     <div>
-      {/* Sub-tabs for the 5 list kinds */}
       <div className="mb-4 flex flex-wrap gap-2">
         {TABS.map((t) => (
           <button
@@ -65,21 +64,58 @@ export function ListsEditor({
                 : "bg-zinc-100 text-zinc-600 hover:text-midnight"
             )}
           >
-            {LIST_LABELS[t]}
+            {LIST_LABELS[t] ?? t}
           </button>
         ))}
       </div>
 
+      {active === "referralTiers" ? (
+        <ReferralTierEditor
+          tiers={(draft.lists.referralTiers ?? []) as ReferralTier[]}
+          onChange={(next) => setList(next)}
+        />
+      ) : (
+        <StringListEditor
+          listKey={active}
+          list={(draft.lists[active] ?? []) as string[]}
+          lockedStatuses={draft.lists.lockedStatuses ?? []}
+          onChange={(next) => setList(next)}
+        />
+      )}
+    </div>
+  );
+}
+
+function StringListEditor({
+  listKey,
+  list,
+  lockedStatuses,
+  onChange,
+}: {
+  listKey: ListKey;
+  list: string[];
+  lockedStatuses: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const lockedSet = useMemo(
+    () =>
+      listKey === "statuses" ? new Set(lockedStatuses) : new Set<string>(),
+    [listKey, lockedStatuses]
+  );
+
+  return (
+    <>
       <p className="mb-3 text-xs text-zinc-500">
-        Drag items to reorder. {active === "statuses" && (
+        Drag items to reorder.
+        {listKey === "statuses" && (
           <span>
-            Locked statuses ({Array.from(lockedSet).join(", ")}) cannot be
+            {" "}Locked statuses ({Array.from(lockedSet).join(", ")}) cannot be
             removed; they can be reordered.
           </span>
         )}
       </p>
 
-      <SortableList items={list} lockedSet={lockedSet} onChange={setList} />
+      <SortableList items={list} lockedSet={lockedSet} onChange={onChange} />
 
       <AddRow
         onAdd={(value) => {
@@ -92,10 +128,110 @@ export function ListsEditor({
           ) {
             return;
           }
-          setList([...list, trimmed]);
+          onChange([...list, trimmed]);
         }}
       />
-    </div>
+    </>
+  );
+}
+
+// Object-row editor used only for the referralTiers list. Each row is
+// {label, amount}. No dnd-kit reorder for now — order doesn't carry
+// any semantic weight here, the form auto-fills the amount on selection.
+function ReferralTierEditor({
+  tiers,
+  onChange,
+}: {
+  tiers: ReferralTier[];
+  onChange: (next: ReferralTier[]) => void;
+}) {
+  const [label, setLabel] = useState("");
+  const [amount, setAmount] = useState("");
+
+  function add() {
+    const lbl = label.trim();
+    const amt = Number(amount);
+    if (!lbl || !Number.isFinite(amt) || amt < 0) return;
+    if (tiers.some((t) => t.label.toLowerCase() === lbl.toLowerCase())) return;
+    onChange([...tiers, { label: lbl, amount: amt }]);
+    setLabel("");
+    setAmount("");
+  }
+
+  return (
+    <>
+      <p className="mb-3 text-xs text-zinc-500">
+        Tiers auto-fill the bonus amount when selected on the form. Submitter
+        can still override.
+      </p>
+
+      {tiers.length === 0 ? (
+        <div className="rounded-md border border-dashed border-zinc-200 px-4 py-6 text-center text-sm text-zinc-500">
+          No tiers yet — add one below.
+        </div>
+      ) : (
+        <ul className="space-y-1.5">
+          {tiers.map((t) => (
+            <li
+              key={t.label}
+              className="flex items-center gap-2 rounded-md border border-zinc-200 bg-white px-2 py-2"
+            >
+              <span className="flex-1 text-sm text-zinc-800">{t.label}</span>
+              <span className="text-sm tabular-nums text-zinc-700">
+                ${t.amount.toFixed(2)}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!window.confirm(`Remove "${t.label}"?`)) return;
+                  onChange(tiers.filter((x) => x.label !== t.label));
+                }}
+                className="rounded p-1 text-zinc-400 hover:bg-red-50 hover:text-red-600"
+                aria-label={`Remove ${t.label}`}
+              >
+                <X className="h-3.5 w-3.5" strokeWidth={1.75} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-[2fr_1fr_auto]">
+        <Input
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder="Tier label (e.g. Crew Member)"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add();
+            }
+          }}
+        />
+        <Input
+          value={amount}
+          onChange={(e) => setAmount(e.target.value)}
+          type="number"
+          step="0.01"
+          placeholder="Amount"
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              add();
+            }
+          }}
+        />
+        <Button
+          type="button"
+          size="sm"
+          onClick={add}
+          disabled={!label.trim() || !amount}
+        >
+          <Plus className="mr-1 h-3.5 w-3.5" strokeWidth={2} />
+          Add
+        </Button>
+      </div>
+    </>
   );
 }
 

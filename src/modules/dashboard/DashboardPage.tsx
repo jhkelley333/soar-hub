@@ -9,8 +9,12 @@ import { useAuth } from "@/auth/AuthProvider";
 import { ROLE_LABELS, type UserRole, type Store } from "@/types/database";
 import { listWorkOrders, type WorkOrder } from "@/modules/work-orders/api";
 import { fetchCfmExpiring } from "@/modules/team/api";
+import { listSdoQueue } from "@/modules/paf/api";
+import { PafTable } from "@/modules/paf/PafTable";
 import { supabase } from "@/lib/supabase";
 import { formatPhoneForDisplay } from "@/lib/phone";
+
+const SDO_REVIEW_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
 
 // Anything in this set counts as "closed/done" for dashboard purposes.
 // Pulled from the canonical list in netlify/functions/work-orders.js.
@@ -132,7 +136,51 @@ export function DashboardPage() {
 
         <PrimaryStoreCard />
       </div>
+
+      {profile && SDO_REVIEW_ROLES.has(profile.role) && <SdoQueueWidget />}
     </>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// SDO bonus approval widget — visible to sdo/rvp/vp/coo/admin. Only renders
+// the table when there's at least one bonus awaiting the caller's action;
+// otherwise shows a quiet "inbox zero" line so the dashboard doesn't grow
+// indefinitely.
+// ----------------------------------------------------------------------------
+function SdoQueueWidget() {
+  const query = useQuery({
+    queryKey: ["paf-sdo-queue"],
+    queryFn: listSdoQueue,
+    staleTime: 30_000,
+  });
+
+  const rows = query.data?.pafs ?? [];
+
+  return (
+    <div className="mt-6">
+      <Card>
+        <CardHeader
+          title="Take Action — Bonus PAFs"
+          description="Bonuses awaiting your approval before Payroll."
+        />
+        <CardBody>
+          {query.isLoading ? (
+            <div className="text-sm text-zinc-500">Loading…</div>
+          ) : query.isError ? (
+            <div className="text-sm text-red-700">
+              {(query.error as Error)?.message ?? "Couldn't load queue."}
+            </div>
+          ) : rows.length === 0 ? (
+            <div className="text-sm text-zinc-500">
+              No bonus PAFs awaiting your approval.
+            </div>
+          ) : (
+            <PafTable rows={rows} actions="sdo" />
+          )}
+        </CardBody>
+      </Card>
+    </div>
   );
 }
 

@@ -10,34 +10,40 @@
 // (b) the UI is the only place that needs them, and (c) a backend round-
 // trip just to get this constant data would be wasteful.
 
+// Snake_case keys (post-0017 / B-2b). The set covers every field the
+// form code special-cases or requires in cost calc.
 export const LOCKED_FIELD_KEYS = new Set([
-  "payPeriodEnd",
-  "driveIn",
-  "employeeName",
-  "last4SSN",
+  "pay_period_end",
+  "drive_in",
+  "employee_name",
+  "last4_ssn",
   "category",
+  "pay_basis",
+  "reg_pay_rate",
+  "reg_hours",
+  "ot_hours",
+  "cc_tips",
+  "declared_tips",
+  "pto_hours",
+  "illness_hours",
+  "spot_bonus_amt",
+  "training_bonus_amt",
+  "referral_bonus_amt",
+  "bonus_type",
   "explanation",
-  "regPayRate",
-  "regHours",
-  "otHours",
-  "ccTips",
-  "declaredTips",
-  "ptoHours",
-  "illnessHours",
-  "finalCheckHrs",
-  "spotBonusAmt",
 ]);
 
 export const COST_FIELD_KEYS = new Set([
-  "regPayRate",
-  "regHours",
-  "otHours",
-  "ccTips",
-  "declaredTips",
-  "ptoHours",
-  "illnessHours",
-  "finalCheckHrs",
-  "spotBonusAmt",
+  "reg_pay_rate",
+  "reg_hours",
+  "ot_hours",
+  "cc_tips",
+  "declared_tips",
+  "pto_hours",
+  "illness_hours",
+  "spot_bonus_amt",
+  "training_bonus_amt",
+  "referral_bonus_amt",
 ]);
 
 export const EMAIL_TEMPLATE_KEYS = [
@@ -46,6 +52,9 @@ export const EMAIL_TEMPLATE_KEYS = [
   "NEEDS_APPROVAL",
   "PAF_PROCESSED",
   "APPROVAL_CONFIRMED",
+  "BONUS_SDO_APPROVAL_REQUEST",
+  "BONUS_SDO_APPROVED",
+  "BONUS_SDO_REJECTED",
 ] as const;
 
 export const TEMPLATE_VARIABLES: Record<
@@ -57,12 +66,17 @@ export const TEMPLATE_VARIABLES: Record<
   NEEDS_APPROVAL: ["EMPLOYEE", "STORE", "NOTES", "LINK"],
   PAF_PROCESSED: ["EMPLOYEE", "STORE", "AMOUNT", "LINK"],
   APPROVAL_CONFIRMED: ["EMPLOYEE", "STORE", "LINK"],
+  BONUS_SDO_APPROVAL_REQUEST: ["EMPLOYEE", "STORE", "BONUS_TYPE", "AMOUNT", "DO", "LINK"],
+  BONUS_SDO_APPROVED: ["EMPLOYEE", "STORE", "APPROVER", "LINK"],
+  BONUS_SDO_REJECTED: ["EMPLOYEE", "STORE", "APPROVER", "REASON", "LINK"],
 };
 
 export const LIST_LABELS: Record<string, string> = {
   categories: "Categories",
   positions: "Job Positions",
   bonusTypes: "Bonus Types",
+  payBases: "Pay Bases",
   statuses: "Statuses",
+  referralTiers: "Referral Tiers",
   termTypes: "Termination Types",
 };

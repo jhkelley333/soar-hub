@@ -6,11 +6,14 @@
 
 export type PafStatus =
   | "Pending"
+  | "Pending SDO Approval"
   | "Approved"
   | "Rejected"
   | "Needs Approval"
   | "Needs Info"
   | "Processed";
+
+export type PayBasis = "hourly" | "salary" | null;
 
 export interface PafRow {
   id: string;
@@ -26,6 +29,7 @@ export interface PafRow {
   last4_ssn: string;
   category: string;
   explanation: string;
+  pay_basis: PayBasis;
 
   job_position: string | null;
   approving_mgr: string | null;
@@ -39,19 +43,44 @@ export interface PafRow {
   pto_hours: number | string;
   illness_hours: number | string;
 
+  // Cross Store Work
   original_store: string | null;
   temp_new_store: string | null;
   store_chrged_ot: string | null;
+
+  // Transfer
   current_store: string | null;
   new_store: string | null;
+  current_position: string | null;
+  new_position: string | null;
 
+  // Demotion (current/new pay rate also used by Transfer)
+  current_role: string | null;
+  new_role: string | null;
+  current_pay_rate: number | string | null;
+  new_pay_rate: number | string | null;
+  location_change: boolean | null;
+  new_location: string | null;
+
+  // Termination — final_check_hrs + term_demotion kept on the row for
+  // historical PAFs; new submissions write null.
   last_day_worked: string | null;
   term_demotion: string | null;
   final_check_hrs: number | string;
   termed_in_tr: string | null;
 
-  spot_bonus_amt: number | string;
+  // Bonus
   bonus_type: string | null;
+  spot_bonus_amt: number | string;
+  spot_bonus_reason: string | null;
+  training_bonus_amt: number | string | null;
+  trained_employee_name: string | null;
+  trained_at_store: string | null;
+  training_days: number | null;
+  referral_bonus_amt: number | string | null;
+  referral_tier: string | null;
+  referred_employee_name: string | null;
+  referral_start_date: string | null;
 
   status: PafStatus;
   estimated_cost: number | string;
@@ -68,6 +97,12 @@ export interface PafRow {
   approved_by_email: string | null;
   payroll_processed_at: string | null;
   payroll_processed_by: string | null;
+
+  // SDO bonus approval workflow
+  sdo_approver_id: string | null;
+  sdo_decided_at: string | null;
+  sdo_decision: "approved" | "rejected" | null;
+  sdo_decision_note: string | null;
 
   archived: boolean;
   archived_at: string | null;
@@ -88,6 +123,9 @@ export interface PafListResponse {
 
 // Mirrors paf_form config_json.fields field config — but only the bits
 // the form needs at submit time. Full type lives in pafConfig/types.ts.
+//
+// Section assignment uses the `sections` array (B-2b+); the legacy
+// `section` string is still readable for older config versions.
 export interface PafFieldDisplay {
   label: string;
   placeholder: string;
@@ -95,7 +133,13 @@ export interface PafFieldDisplay {
   required: boolean;
   visible: boolean;
   locked: boolean;
-  section: string;
+  section?: string;
+  sections?: string[];
+}
+
+export interface ReferralTier {
+  label: string;
+  amount: number;
 }
 
 export interface PafConfigDoc {
@@ -106,9 +150,11 @@ export interface PafConfigDoc {
     categories: string[];
     positions: string[];
     bonusTypes: string[];
+    payBases?: string[];
+    referralTiers?: ReferralTier[];
     statuses: string[];
     lockedStatuses: string[];
-    termTypes: string[];
+    termTypes?: string[];
   };
   emailTemplates: Record<string, { subject: string; body: string }>;
 }
