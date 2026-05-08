@@ -11,6 +11,8 @@ import { listWorkOrders, type WorkOrder } from "@/modules/work-orders/api";
 import { fetchCfmExpiring } from "@/modules/team/api";
 import { listSdoQueue } from "@/modules/paf/api";
 import { PafTable } from "@/modules/paf/PafTable";
+import { BirthdayWidget } from "@/modules/my-stores/BirthdayWidget";
+import { BirthdayCelebration } from "@/modules/my-stores/BirthdayCelebration";
 import { supabase } from "@/lib/supabase";
 import { formatPhoneForDisplay } from "@/lib/phone";
 
@@ -145,7 +147,13 @@ export function DashboardPage() {
         <PrimaryStoreCard />
       </div>
 
+      <div className="mt-6">
+        <BirthdayWidget />
+      </div>
+
       {profile && SDO_REVIEW_ROLES.has(profile.role) && <SdoQueueWidget />}
+
+      <BirthdayCelebration />
     </>
   );
 }

@@ -29,6 +29,10 @@ export interface Profile {
   // Personal extras (migration 0013) — all optional.
   profile_photo_url: string | null;
   birthday: string | null;          // ISO date "YYYY-MM-DD"
+  // Migration 0023 — opt-out for the dashboard birthday widget. Defaults
+  // to true. Only GMs get a UI toggle; everyone else is forced to true
+  // in app code (DO/SDO/RVP/Payroll/Admin don't get to hide).
+  show_birthday: boolean;
   shirt_size: string | null;
   favorite_quote: string | null;
   cfm_cert_number: string | null;

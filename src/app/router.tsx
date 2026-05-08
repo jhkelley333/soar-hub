@@ -17,6 +17,7 @@ import { BulkImportPage } from "@/modules/admin/BulkImportPage";
 import { BulkOrgImportPage } from "@/modules/admin/BulkOrgImportPage";
 import { PafConfigPage } from "@/modules/admin/pafConfig/PafConfigPage";
 import { RankerPage } from "@/modules/ranker/RankerPage";
+import { MyStoresPage } from "@/modules/my-stores/MyStoresPage";
 import { AccountPage } from "@/modules/account/AccountPage";
 
 export const router = createBrowserRouter([
@@ -52,6 +53,7 @@ export const router = createBrowserRouter([
       },
       { path: "resources", element: <ResourcesPage /> },
       { path: "account", element: <AccountPage /> },
+      { path: "my-stores", element: <MyStoresPage /> },
       {
         path: "team",
         element: (
