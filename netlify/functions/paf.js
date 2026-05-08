@@ -159,7 +159,9 @@ async function sendEmailViaResend({ to, subject, text }) {
     console.warn("[paf] RESEND_API_KEY not set; skipping send", { to, subject });
     return { skipped: true };
   }
-  if (!to) {
+  // Guard against empty arrays / null — Resend 422s on missing `to`.
+  const recipients = Array.isArray(to) ? to.filter(Boolean) : to ? [to] : [];
+  if (!recipients.length) {
     console.warn("[paf] sendEmailViaResend called with no recipient", { subject });
     return { skipped: true };
   }
@@ -172,7 +174,7 @@ async function sendEmailViaResend({ to, subject, text }) {
       },
       body: JSON.stringify({
         from: `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`,
-        to: Array.isArray(to) ? to : [to],
+        to: recipients,
         subject,
         text,
         ...(RESEND_REPLY_TO ? { reply_to: RESEND_REPLY_TO } : {}),
@@ -193,7 +195,8 @@ async function sendEmailViaResend({ to, subject, text }) {
 
 // Convenience: pull the named template from the active config and send.
 async function sendPafEmail(supa, { templateKey, to, vars }) {
-  if (!to) return { skipped: true };
+  const recipients = Array.isArray(to) ? to.filter(Boolean) : to ? [to] : [];
+  if (!recipients.length) return { skipped: true };
   try {
     const cfg = await getActiveConfig(supa);
     if (cfg.error) return { skipped: true, error: cfg.error };
@@ -204,7 +207,7 @@ async function sendPafEmail(supa, { templateKey, to, vars }) {
     }
     const rendered = renderTemplate(template, vars || {});
     return await sendEmailViaResend({
-      to,
+      to: recipients,
       subject: rendered.subject,
       text: rendered.body,
     });
