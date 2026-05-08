@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
+import { Check, Clock } from "lucide-react";
 import { fetchPafAudit } from "./api";
 import type { PafAuditEntry, PafRow } from "./types";
 import { formatUSD } from "./cost";
+import { cn } from "@/lib/cn";
 
 // Maps audit log action codes (kept short for storage) to human labels.
 const AUDIT_LABEL: Record<string, string> = {
@@ -32,9 +34,18 @@ export function PafDetail({ paf }: { paf: PafRow }) {
 
   return (
     <div className="space-y-4 text-sm">
+      <ApprovalStepper paf={paf} />
+
       <Section title="Submission">
         <Grid>
-          <Field label="Store" value={`#${paf.drive_in}`} />
+          <Field
+            label="Store"
+            value={
+              paf.store_name
+                ? `#${paf.drive_in} — ${paf.store_name}`
+                : `#${paf.drive_in}`
+            }
+          />
           <Field label="Market / DO" value={paf.market_do ?? "—"} />
           <Field label="Employee" value={paf.employee_name} />
           <Field label="Last 4 SSN" value={paf.last4_ssn} mono />
@@ -367,6 +378,168 @@ function Field({
         {value}
       </div>
     </div>
+  );
+}
+
+// Horizontal stepper that visualizes where a PAF sits in its workflow.
+// The set of visible steps depends on category — bonus PAFs include the
+// SDO step; everything else goes Submitter -> Payroll -> Processed.
+type StepState = "done" | "current" | "upcoming" | "rejected" | "skipped";
+interface Step {
+  key: string;
+  label: string;
+  state: StepState;
+  hint?: string;
+}
+
+function buildSteps(paf: PafRow): Step[] {
+  const status = paf.status;
+  const rejected =
+    status === "Rejected" ||
+    paf.sdo_decision === "rejected";
+  const isBonusFlow = paf.category === "Bonus" && !!paf.sdo_approver_id;
+
+  const submitted: Step = {
+    key: "submit",
+    label: "Submitted",
+    state: "done",
+    hint: paf.created_at.slice(0, 10),
+  };
+
+  const sdo: Step | null = isBonusFlow
+    ? {
+        key: "sdo",
+        label: "SDO Review",
+        state:
+          paf.sdo_decision === "approved"
+            ? "done"
+            : paf.sdo_decision === "rejected"
+              ? "rejected"
+              : status === "Pending SDO Approval"
+                ? "current"
+                : "upcoming",
+        hint:
+          paf.sdo_decision === "approved"
+            ? "Approved"
+            : paf.sdo_decision === "rejected"
+              ? "Rejected"
+              : status === "Pending SDO Approval"
+                ? "Awaiting SDO"
+                : undefined,
+      }
+    : null;
+
+  const payroll: Step = {
+    key: "payroll",
+    label: "Payroll",
+    state:
+      status === "Processed"
+        ? "done"
+        : rejected
+          ? "skipped"
+          : status === "Pending" ||
+              status === "Approved" ||
+              status === "Needs Approval"
+            ? "current"
+            : sdo && sdo.state !== "done" && sdo.state !== "rejected"
+              ? "upcoming"
+              : "current",
+    hint:
+      status === "Approved"
+        ? "Approved by external"
+        : status === "Needs Approval"
+          ? "Awaiting external approval"
+          : undefined,
+  };
+
+  const processed: Step = {
+    key: "processed",
+    label: rejected ? "Rejected" : "Processed",
+    state: rejected
+      ? "rejected"
+      : status === "Processed"
+        ? "done"
+        : "upcoming",
+    hint:
+      status === "Processed" && paf.payroll_processed_at
+        ? paf.payroll_processed_at.slice(0, 10)
+        : undefined,
+  };
+
+  return [submitted, ...(sdo ? [sdo] : []), payroll, processed];
+}
+
+function ApprovalStepper({ paf }: { paf: PafRow }) {
+  const steps = buildSteps(paf);
+  return (
+    <ol className="flex items-start gap-1.5 overflow-x-auto rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2.5">
+      {steps.map((s, i) => (
+        <StepNode key={s.key} step={s} isLast={i === steps.length - 1} />
+      ))}
+    </ol>
+  );
+}
+
+function StepNode({ step, isLast }: { step: Step; isLast: boolean }) {
+  const dotClass = (() => {
+    switch (step.state) {
+      case "done":
+        return "bg-emerald-500 text-white";
+      case "current":
+        return "bg-amber-500 text-white";
+      case "rejected":
+        return "bg-red-600 text-white";
+      case "skipped":
+        return "bg-zinc-300 text-zinc-600";
+      default:
+        return "bg-white text-zinc-400 ring-1 ring-zinc-200";
+    }
+  })();
+
+  const labelClass = (() => {
+    switch (step.state) {
+      case "done":
+        return "text-emerald-800";
+      case "current":
+        return "text-amber-800 font-medium";
+      case "rejected":
+        return "text-red-700 font-medium";
+      case "skipped":
+        return "text-zinc-400 line-through";
+      default:
+        return "text-zinc-500";
+    }
+  })();
+
+  const Icon = step.state === "done" ? Check : Clock;
+  const showIcon = step.state === "done" || step.state === "current";
+
+  return (
+    <li className="flex min-w-0 flex-1 items-start gap-1.5">
+      <div className="flex flex-col items-center">
+        <span
+          className={cn(
+            "flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold",
+            dotClass
+          )}
+        >
+          {showIcon ? <Icon className="h-3 w-3" strokeWidth={2.5} /> : null}
+          {step.state === "rejected" ? "✕" : null}
+        </span>
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className={cn("text-xs", labelClass)}>{step.label}</div>
+        {step.hint && (
+          <div className="truncate text-[10px] text-zinc-500">{step.hint}</div>
+        )}
+      </div>
+      {!isLast && (
+        <span
+          className="mt-2 hidden h-px flex-1 bg-zinc-200 sm:block"
+          aria-hidden="true"
+        />
+      )}
+    </li>
   );
 }
 

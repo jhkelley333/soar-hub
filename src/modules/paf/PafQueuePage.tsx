@@ -5,9 +5,9 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ChevronLeft, Download } from "lucide-react";
+import { CalendarClock, ChevronLeft, Download } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
-import { Card } from "@/shared/ui/Card";
+import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -20,7 +20,20 @@ import {
   type QueueFilterState,
 } from "./QueueFilters";
 import { downloadPafsCsv } from "./csv";
-import type { PafStatus } from "./types";
+import type { PafRow, PafStatus } from "./types";
+
+// Today's YYYY-MM-DD in local time (used to split current vs upcoming).
+function todayISO(): string {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.toISOString().slice(0, 10);
+}
+
+function isUpcoming(p: PafRow, today: string): boolean {
+  if (!p.pay_period_end) return false;
+  if (p.status === "Processed" || p.status === "Rejected") return false;
+  return p.pay_period_end > today;
+}
 
 const TERMINAL: PafStatus[] = ["Processed", "Rejected"];
 const QUEUE_CHIPS: (PafStatus | "ALL")[] = [
@@ -49,15 +62,31 @@ export function PafQueuePage() {
   });
 
   const allRows = query.data?.pafs ?? [];
+  const today = todayISO();
+
+  // Split: rows whose pay_period_end is in the future vs. current/past.
+  // Upcoming rows render in their own card above the main queue so
+  // Payroll has visibility into PAFs that are coming but not yet
+  // actionable for this period (e.g. a DO submitted PTO for next
+  // Sunday's check). Main queue excludes them to avoid double display.
+  const { upcomingRows, currentRows } = useMemo(() => {
+    const up: PafRow[] = [];
+    const cur: PafRow[] = [];
+    for (const r of allRows) {
+      if (isUpcoming(r, today)) up.push(r);
+      else cur.push(r);
+    }
+    return { upcomingRows: up, currentRows: cur };
+  }, [allRows, today]);
 
   // Hide terminal rows from the chip-counts when terminal toggle is off
   // so the visible totals match what Payroll actually sees.
   const visibleSource = useMemo(
     () =>
       includeTerminal
-        ? allRows
-        : allRows.filter((p) => !TERMINAL.includes(p.status)),
-    [allRows, includeTerminal]
+        ? currentRows
+        : currentRows.filter((p) => !TERMINAL.includes(p.status)),
+    [currentRows, includeTerminal]
   );
 
   const counts = useMemo(() => statusCounts(visibleSource), [visibleSource]);
@@ -125,6 +154,26 @@ export function PafQueuePage() {
           </div>
         }
       />
+
+      {upcomingRows.length > 0 && (
+        <Card className="mb-4 border-amber-200 ring-amber-100">
+          <CardHeader
+            title={
+              <span className="inline-flex items-center gap-1.5">
+                <CalendarClock className="h-3.5 w-3.5 text-amber-600" strokeWidth={2} />
+                Upcoming PAFs
+                <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-amber-800">
+                  {upcomingRows.length}
+                </span>
+              </span>
+            }
+            description="Pay period end is in the future. Visible for awareness; act when their period arrives."
+          />
+          <CardBody className="!pt-0">
+            <PafTable rows={upcomingRows} actions="process" />
+          </CardBody>
+        </Card>
+      )}
 
       <Card>
         <div className="p-3">
