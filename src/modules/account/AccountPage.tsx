@@ -38,6 +38,8 @@ export function AccountPage() {
   const [preferredName, setPreferredName] = useState("");
   const [phone, setPhone] = useState("");
   const [birthday, setBirthday] = useState("");
+  // Only GMs see + can change this; everyone else is force-true.
+  const [showBirthday, setShowBirthday] = useState(true);
   const [shirtSize, setShirtSize] = useState("");
   const [favoriteQuote, setFavoriteQuote] = useState("");
   const [profileError, setProfileError] = useState<string | null>(null);
@@ -50,6 +52,7 @@ export function AccountPage() {
       setPreferredName(profile.preferred_name ?? "");
       setPhone(profile.phone ? formatPhoneForDisplay(profile.phone) : "");
       setBirthday(profile.birthday ?? "");
+      setShowBirthday(profile.show_birthday ?? true);
       setShirtSize(profile.shirt_size ?? "");
       setFavoriteQuote(profile.favorite_quote ?? "");
     }
@@ -63,10 +66,11 @@ export function AccountPage() {
       (preferredName.trim() || null) !== (profile.preferred_name ?? null) ||
       phoneNormalized !== (profile.phone ?? null) ||
       (birthday || null) !== (profile.birthday ?? null) ||
+      showBirthday !== (profile.show_birthday ?? true) ||
       (shirtSize || null) !== (profile.shirt_size ?? null) ||
       (favoriteQuote.trim() || null) !== (profile.favorite_quote ?? null)
     );
-  }, [profile, fullName, preferredName, phone, birthday, shirtSize, favoriteQuote]);
+  }, [profile, fullName, preferredName, phone, birthday, showBirthday, shirtSize, favoriteQuote]);
 
   // Tab-close guard.
   useEffect(() => {
@@ -114,6 +118,9 @@ export function AccountPage() {
           preferred_name: preferredName.trim() || null,
           phone: normalizedPhone,
           birthday: birthday || null,
+          // Force-true for non-GM roles regardless of state — only GMs
+          // can opt out via the toggle below.
+          show_birthday: profile.role === "gm" ? showBirthday : true,
           shirt_size: shirtSize || null,
           favorite_quote: favoriteQuote.trim() || null,
         })
@@ -198,6 +205,17 @@ export function AccountPage() {
                     value={birthday}
                     onChange={(e) => setBirthday(e.target.value)}
                   />
+                  {profile?.role === "gm" && birthday && (
+                    <label className="mt-2 flex items-center gap-2 text-xs text-zinc-600">
+                      <input
+                        type="checkbox"
+                        checked={showBirthday}
+                        onChange={(e) => setShowBirthday(e.target.checked)}
+                        className="h-3.5 w-3.5 accent-accent"
+                      />
+                      Show my birthday on the team dashboard
+                    </label>
+                  )}
                 </div>
                 <div>
                   <Label htmlFor="acct-shirt">Shirt size</Label>
