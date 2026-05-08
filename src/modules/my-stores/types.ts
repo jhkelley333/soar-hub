@@ -25,6 +25,13 @@ export interface MyStoreNode {
   address: string | null;
   district_id: string | null;
   is_active: boolean;
+  plate_iq_email: string | null;
+  soar_company_name: string | null;
+  food_vendor_name: string | null;
+  food_vendor_contact_name: string | null;
+  food_vendor_contact_phone: string | null;
+  food_vendor_contact_email: string | null;
+  food_vendor_account_number: string | null;
   team_members: MyStoreTeamMember[];
 }
 
@@ -64,6 +71,7 @@ export interface LeadershipPerson {
 }
 
 export interface StoreLeadership {
+  gm: LeadershipPerson | null;
   do: LeadershipPerson | null;
   sdo: LeadershipPerson | null;
   rvp: LeadershipPerson | null;

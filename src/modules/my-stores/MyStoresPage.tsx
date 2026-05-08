@@ -252,6 +252,18 @@ export function MyStoresPage() {
             <StoreDetail
               store={activeStore.store}
               leadership={(leadership[activeStore.store.id] ?? null) as StoreLeadership | null}
+              onBack={
+                profile?.role === "gm" &&
+                profile?.primary_store_id === activeStore.store.id
+                  ? undefined
+                  : () =>
+                      setView({
+                        kind: "stores",
+                        region: activeStore.region,
+                        area: activeStore.area,
+                        district: activeStore.district,
+                      })
+              }
               onMemberClick={(m) => setActiveMember(m)}
             />
           )}
