@@ -437,6 +437,7 @@ function FieldGrid({
           value={state[k] ?? ""}
           onChange={(v) => onChange(k, v)}
           lists={cfg.lists}
+          myStores={myStores}
         />
       ))}
     </div>
@@ -654,8 +655,15 @@ function FieldRender({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={cfg.placeholder}
+          readOnly={readOnly}
+          className={readOnly ? "bg-zinc-50 text-zinc-500" : undefined}
         />
         {cfg.helpText && <p className="mt-0.5 text-[11px] text-zinc-500">{cfg.helpText}</p>}
+        {readOnly && fieldKey === "referral_bonus_amt" && (
+          <p className="mt-0.5 text-[11px] text-zinc-500">
+            Locked by selected tier.
+          </p>
+        )}
       </div>
     );
   }
