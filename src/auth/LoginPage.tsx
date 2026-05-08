@@ -3,7 +3,7 @@ import { Navigate, useLocation } from "react-router-dom";
 import { Mail, Phone } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/auth/AuthProvider";
-import { visibleNav } from "@/app/nav";
+import { defaultLandingPath, visibleNav } from "@/app/nav";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
@@ -18,15 +18,22 @@ const ALWAYS_ALLOWED = new Set(["/", "/account"]);
 // to it post-login. After a deploy, a stale `from` (e.g. /paf when the
 // user is now a shift_manager) can land them on a page they can't see,
 // with an empty sidebar while profile is briefly null. Falling back to
-// "/" if the path isn't in the user's allowed nav avoids that.
+// the role's default landing path if the captured `from` isn't in the
+// user's allowed nav avoids that.
 function safeRedirectTarget(from: string | null | undefined, role: UserRole): string {
-  if (!from) return "/";
-  if (ALWAYS_ALLOWED.has(from)) return from;
+  const fallback = defaultLandingPath(role);
+  if (!from) return fallback;
+  if (ALWAYS_ALLOWED.has(from)) {
+    // Even "/" should fall through to the role default if the role
+    // can't actually use the dashboard (payroll).
+    if (from === "/" && role === "payroll") return fallback;
+    return from;
+  }
   const allowed = visibleNav(role);
   const ok = allowed.some(
     (item) => from === item.to || from.startsWith(item.to + "/")
   );
-  return ok ? from : "/";
+  return ok ? from : fallback;
 }
 
 type Mode = "password" | "magic" | "forgot";

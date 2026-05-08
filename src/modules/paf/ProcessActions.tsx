@@ -3,6 +3,7 @@
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Check, MailQuestion, X } from "lucide-react";
 import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
@@ -75,19 +76,21 @@ export function ProcessActions({ paf }: { paf: PafRow }) {
         <>
           <Button
             type="button"
-            variant="ghost"
+            variant="danger"
             size="sm"
             onClick={() => setMode("reject")}
-            className="text-red-700"
           >
+            <X className="h-3.5 w-3.5" strokeWidth={2.25} />
             Reject
           </Button>
           <Button
             type="button"
-            variant="ghost"
+            variant="secondary"
             size="sm"
             onClick={() => setMode("needs")}
+            className="ring-amber-300 text-amber-800 hover:bg-amber-50"
           >
+            <MailQuestion className="h-3.5 w-3.5" strokeWidth={2} />
             Needs approval
           </Button>
           <Button
@@ -96,6 +99,7 @@ export function ProcessActions({ paf }: { paf: PafRow }) {
             size="sm"
             onClick={() => setMode("process")}
           >
+            <Check className="h-3.5 w-3.5" strokeWidth={2.25} />
             Mark processed
           </Button>
         </>
