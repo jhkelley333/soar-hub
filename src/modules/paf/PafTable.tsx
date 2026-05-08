@@ -183,9 +183,27 @@ export function PafTable({
         onClose={() => setDetail(null)}
         title={detail ? `PAF — ${detail.employee_name}` : ""}
         footer={
-          <Button variant="ghost" onClick={() => setDetail(null)}>
-            Close
-          </Button>
+          <div className="flex flex-1 flex-wrap items-center justify-between gap-2">
+            <Button variant="ghost" onClick={() => setDetail(null)}>
+              Close
+            </Button>
+            {detail && actions === "process" && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <ProcessActions
+                  paf={detail}
+                  onComplete={() => setDetail(null)}
+                />
+              </div>
+            )}
+            {detail && actions === "sdo" && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <SdoActions
+                  paf={detail}
+                  onComplete={() => setDetail(null)}
+                />
+              </div>
+            )}
+          </div>
         }
       >
         {detail && <PafDetail paf={detail} />}
