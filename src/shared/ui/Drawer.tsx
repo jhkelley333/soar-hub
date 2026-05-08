@@ -1,0 +1,87 @@
+import { useEffect, type ReactNode } from "react";
+import { X } from "lucide-react";
+
+/**
+ * Right-side slide-out drawer. Replaces a centered modal when you want
+ * to keep the page (e.g. a queue table) visible while reading detail.
+ *
+ * - ESC closes
+ * - Backdrop click closes
+ * - Body scroll locks while open
+ * - On mobile (sm breakpoint) the drawer fills the screen
+ */
+export function Drawer({
+  open,
+  onClose,
+  title,
+  children,
+  footer,
+  width = "w-full sm:max-w-xl",
+}: {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  children: ReactNode;
+  footer?: ReactNode;
+  width?: string;
+}) {
+  useEffect(() => {
+    if (!open) return;
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    const original = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      document.body.style.overflow = original;
+    };
+  }, [open, onClose]);
+
+  return (
+    <div
+      className={`fixed inset-0 z-50 ${open ? "" : "pointer-events-none"}`}
+      aria-hidden={open ? "false" : "true"}
+    >
+      <div
+        className={`absolute inset-0 bg-zinc-900/40 transition-opacity ${
+          open ? "opacity-100" : "opacity-0"
+        }`}
+        onClick={onClose}
+        aria-hidden="true"
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="drawer-title"
+        className={`absolute right-0 top-0 flex h-full ${width} flex-col bg-white shadow-2xl ring-1 ring-black/5 transition-transform duration-200 ${
+          open ? "translate-x-0" : "translate-x-full"
+        }`}
+      >
+        <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-3">
+          <h2
+            id="drawer-title"
+            className="text-base font-semibold tracking-tight text-midnight"
+          >
+            {title}
+          </h2>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-midnight"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" strokeWidth={2} />
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        {footer && (
+          <div className="flex justify-end gap-2 border-t border-zinc-100 bg-zinc-50 px-5 py-3">
+            {footer}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}

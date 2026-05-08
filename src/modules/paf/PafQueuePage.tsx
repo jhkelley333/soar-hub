@@ -5,7 +5,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ChevronLeft } from "lucide-react";
+import { ChevronLeft, Download } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -19,6 +19,7 @@ import {
   statusCounts,
   type QueueFilterState,
 } from "./QueueFilters";
+import { downloadPafsCsv } from "./csv";
 import type { PafStatus } from "./types";
 
 const TERMINAL: PafStatus[] = ["Processed", "Rejected"];
@@ -103,6 +104,15 @@ export function PafQueuePage() {
                 All PAFs
               </Button>
             </Link>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => downloadPafsCsv(filtered, "paf-queue")}
+              disabled={filtered.length === 0}
+            >
+              <Download className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+              Export CSV
+            </Button>
             <label className="flex items-center gap-2 rounded-md bg-white px-3 py-1.5 text-xs text-zinc-700 ring-1 ring-zinc-200">
               <input
                 type="checkbox"
