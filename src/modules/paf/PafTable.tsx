@@ -6,7 +6,7 @@ import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown, Eye } from "lucide-react";
 import { Badge } from "@/shared/ui/Badge";
 import { Button } from "@/shared/ui/Button";
-import { Modal } from "@/shared/ui/Modal";
+import { Drawer } from "@/shared/ui/Drawer";
 import { ProcessActions } from "./ProcessActions";
 import { SdoActions } from "./SdoActions";
 import { PafDetail } from "./PafDetail";
@@ -178,7 +178,7 @@ export function PafTable({
         </table>
       </div>
 
-      <Modal
+      <Drawer
         open={!!detail}
         onClose={() => setDetail(null)}
         title={detail ? `PAF — ${detail.employee_name}` : ""}
@@ -189,7 +189,7 @@ export function PafTable({
         }
       >
         {detail && <PafDetail paf={detail} />}
-      </Modal>
+      </Drawer>
     </>
   );
 }

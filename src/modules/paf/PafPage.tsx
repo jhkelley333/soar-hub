@@ -5,7 +5,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Download, Plus } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -21,6 +21,7 @@ import {
   statusCounts,
   type QueueFilterState,
 } from "./QueueFilters";
+import { downloadPafsCsv } from "./csv";
 
 export function PafPage() {
   const { profile } = useAuth();
@@ -83,6 +84,17 @@ export function PafPage() {
                   Payroll queue
                 </Button>
               </Link>
+            )}
+            {view === "list" && data.pafs.length > 0 && (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => downloadPafsCsv(filtered, "paf-history")}
+                disabled={filtered.length === 0}
+              >
+                <Download className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+                Export CSV
+              </Button>
             )}
             {canSubmit && view === "list" && (
               <Button onClick={() => setView("submit")}>

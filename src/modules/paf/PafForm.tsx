@@ -270,7 +270,7 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-4">
+    <form onSubmit={handleSubmit} className="space-y-4 pb-24 sm:pb-4">
       {/* Top-of-form fields */}
       <FormSection title="New Payroll Adjustment" intent="hero">
         <FieldGrid
@@ -313,31 +313,59 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
         />
       </FormSection>
 
-      {/* Live cost + submit */}
-      <Card>
-        <CardBody>
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <div className="text-xs uppercase tracking-wide text-zinc-500">
-                Estimated cost
+      {/* Cost + submit. Inline on desktop; sticky bottom bar on mobile so
+          the user never has to scroll to find Submit on a long form. */}
+      <div className="hidden sm:block">
+        <Card>
+          <CardBody>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <div className="text-xs uppercase tracking-wide text-zinc-500">
+                  Estimated cost
+                </div>
+                <div className="text-2xl font-semibold tracking-tight text-midnight tabular-nums">
+                  {formatUSD(liveCost)}
+                </div>
               </div>
-              <div className="text-2xl font-semibold tracking-tight text-midnight tabular-nums">
-                {formatUSD(liveCost)}
+              <div className="flex items-center gap-2">
+                {error && (
+                  <Badge tone="danger" className="max-w-xs whitespace-normal">
+                    {error}
+                  </Badge>
+                )}
+                <Button type="submit" disabled={submit.isPending}>
+                  {submit.isPending ? "Submitting…" : "Submit PAF"}
+                </Button>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              {error && (
-                <Badge tone="danger" className="max-w-xs whitespace-normal">
-                  {error}
-                </Badge>
-              )}
-              <Button type="submit" disabled={submit.isPending}>
-                {submit.isPending ? "Submitting…" : "Submit PAF"}
-              </Button>
+          </CardBody>
+        </Card>
+      </div>
+
+      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200 bg-white px-4 py-3 shadow-[0_-4px_8px_-4px_rgba(0,0,0,0.08)] sm:hidden">
+        {error && (
+          <div className="mb-2 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-xs text-red-700">
+            {error}
+          </div>
+        )}
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <div className="text-[10px] uppercase tracking-wide text-zinc-500">
+              Estimated
+            </div>
+            <div className="text-lg font-semibold tracking-tight text-midnight tabular-nums">
+              {formatUSD(liveCost)}
             </div>
           </div>
-        </CardBody>
-      </Card>
+          <Button
+            type="submit"
+            disabled={submit.isPending}
+            className="h-11 px-5 text-sm"
+          >
+            {submit.isPending ? "Submitting…" : "Submit PAF"}
+          </Button>
+        </div>
+      </div>
     </form>
   );
 }
@@ -388,7 +416,7 @@ function FieldGrid({
   }
 
   return (
-    <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
       {fields.map(([k, f]) => (
         <FieldRender
           key={k}
@@ -583,7 +611,7 @@ function FieldRender({
     fieldKey === "spot_bonus_reason"
   ) {
     return (
-      <div className="sm:col-span-3">
+      <div className="sm:col-span-2 lg:col-span-3">
         {label}
         <textarea
           id={id}
