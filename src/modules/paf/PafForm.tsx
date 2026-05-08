@@ -11,9 +11,9 @@ import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
 import { Badge } from "@/shared/ui/Badge";
 import { useToast } from "@/shared/ui/Toaster";
-import { fetchPafConfig, submitPaf, type PafSubmitInput } from "./api";
+import { fetchMyStores, fetchPafConfig, submitPaf, type PafSubmitInput } from "./api";
 import { calcPafCost, formatUSD } from "./cost";
-import type { PafConfigDoc, PafFieldDisplay, ReferralTier } from "./types";
+import type { MyStore, PafConfigDoc, PafFieldDisplay, ReferralTier } from "./types";
 
 // Mirror of bindCat() — locked logic. Returns the set of section keys
 // visible for the current form state. Branches on category and
@@ -107,6 +107,13 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
     queryFn: fetchPafConfig,
     staleTime: 60_000,
   });
+
+  const storesQuery = useQuery({
+    queryKey: ["paf-my-stores"],
+    queryFn: fetchMyStores,
+    staleTime: 5 * 60_000,
+  });
+  const myStores = storesQuery.data?.stores ?? [];
 
   const [state, setState] = useState<FormState>({});
   const [error, setError] = useState<string | null>(null);
@@ -280,6 +287,7 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
           state={state}
           onChange={patch}
           cfg={cfg}
+          myStores={myStores}
         />
       </FormSection>
 
@@ -295,6 +303,7 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
               state={state}
               onChange={patch}
               cfg={cfg}
+              myStores={myStores}
             />
           </FormSection>
         ))}
@@ -310,6 +319,7 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
           state={state}
           onChange={patch}
           cfg={cfg}
+          myStores={myStores}
         />
       </FormSection>
 
@@ -405,11 +415,13 @@ function FieldGrid({
   state,
   onChange,
   cfg,
+  myStores,
 }: {
   fields: [string, PafFieldDisplay][];
   state: FormState;
   onChange: (key: string, value: string) => void;
   cfg: PafConfigDoc;
+  myStores: MyStore[];
 }) {
   if (!fields.length) {
     return <div className="text-xs text-zinc-400">(no fields)</div>;
@@ -425,6 +437,7 @@ function FieldGrid({
           value={state[k] ?? ""}
           onChange={(v) => onChange(k, v)}
           lists={cfg.lists}
+          myStores={myStores}
         />
       ))}
     </div>
@@ -459,12 +472,16 @@ function FieldRender({
   value,
   onChange,
   lists,
+  readOnly,
+  myStores,
 }: {
   fieldKey: string;
   cfg: PafFieldDisplay;
   value: string;
   onChange: (v: string) => void;
   lists: PafConfigDoc["lists"];
+  readOnly?: boolean;
+  myStores: MyStore[];
 }) {
   const id = `paf-${fieldKey}`;
   const label = (
@@ -473,6 +490,46 @@ function FieldRender({
       {cfg.required && <span className="ml-0.5 text-red-600">*</span>}
     </Label>
   );
+
+  // Drive-In #: dropdown of stores the user has scope to. Falls back to a
+  // text input if the store list is empty (admin without stores in DB,
+  // or a fetch failure — server still validates the value on submit).
+  if (fieldKey === "drive_in") {
+    if (!myStores.length) {
+      return (
+        <div>
+          {label}
+          <Input
+            id={id}
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            placeholder={cfg.placeholder}
+          />
+          {cfg.helpText && <p className="mt-0.5 text-[11px] text-zinc-500">{cfg.helpText}</p>}
+        </div>
+      );
+    }
+    return (
+      <div>
+        {label}
+        <select
+          id={id}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+        >
+          <option value="">{cfg.placeholder || "Select..."}</option>
+          {myStores.map((s) => (
+            <option key={s.id} value={String(s.number)}>
+              #{s.number}
+              {s.name ? ` — ${s.name}` : ""}
+            </option>
+          ))}
+        </select>
+        {cfg.helpText && <p className="mt-0.5 text-[11px] text-zinc-500">{cfg.helpText}</p>}
+      </div>
+    );
+  }
 
   // Dropdown special-cases driven by which list the field reads from.
   if (fieldKey === "category") {
@@ -598,8 +655,15 @@ function FieldRender({
           value={value}
           onChange={(e) => onChange(e.target.value)}
           placeholder={cfg.placeholder}
+          readOnly={readOnly}
+          className={readOnly ? "bg-zinc-50 text-zinc-500" : undefined}
         />
         {cfg.helpText && <p className="mt-0.5 text-[11px] text-zinc-500">{cfg.helpText}</p>}
+        {readOnly && fieldKey === "referral_bonus_amt" && (
+          <p className="mt-0.5 text-[11px] text-zinc-500">
+            Locked by selected tier.
+          </p>
+        )}
       </div>
     );
   }

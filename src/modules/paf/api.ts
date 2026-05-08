@@ -2,6 +2,7 @@
 
 import { supabase } from "@/lib/supabase";
 import type {
+  MyStore,
   PafAuditEntry,
   PafConfigResponse,
   PafListResponse,
@@ -54,6 +55,10 @@ export function fetchPafAudit(id: string): Promise<{ entries: PafAuditEntry[] }>
   return request<{ entries: PafAuditEntry[] }>(
     `${FN}?action=audit-log&id=${encodeURIComponent(id)}`
   );
+}
+
+export function fetchMyStores(): Promise<{ stores: MyStore[] }> {
+  return request<{ stores: MyStore[] }>(`${FN}?action=my-stores`);
 }
 
 export type PafSubmitInput = Partial<

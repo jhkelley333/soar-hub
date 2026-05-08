@@ -24,6 +24,8 @@ export interface PafRow {
 
   pay_period_end: string;
   drive_in: string;
+  /** Store name joined from `stores.name` for display only. Server-side. */
+  store_name?: string | null;
   market_do: string | null;
   employee_name: string;
   last4_ssn: string;
@@ -170,4 +172,12 @@ export interface PafAuditEntry {
   detail: Record<string, unknown> | null;
   actor_email: string | null;
   created_at: string;
+}
+
+export interface MyStore {
+  id: string;
+  number: string;
+  name: string | null;
+  district_id: string | null;
+  is_active: boolean;
 }

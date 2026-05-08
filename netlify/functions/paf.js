@@ -366,6 +366,46 @@ async function resolveAdminFallback(supa) {
 }
 
 // ----------------------------------------------------------------------------
+// Resolve caller's visible store rows (full records, not just numbers).
+// Used by the my-stores action and (indirectly) by listMyStores below.
+// ----------------------------------------------------------------------------
+async function resolveVisibleStoreRows(supa, userId) {
+  const { data: visibleIds } = await supa.rpc("user_visible_stores", { uid: userId });
+  const ids = (visibleIds ?? [])
+    .map((v) => (typeof v === "string" ? v : v?.user_visible_stores ?? null))
+    .filter(Boolean);
+  if (!ids.length) return [];
+  const { data } = await supa
+    .from("stores")
+    .select("id, number, name, district_id, is_active")
+    .in("id", ids)
+    .eq("is_active", true)
+    .order("number");
+  return data ?? [];
+}
+
+// ----------------------------------------------------------------------------
+// my-stores — list of stores the caller is allowed to submit PAFs for.
+// Used by the form's drive_in dropdown.
+// ----------------------------------------------------------------------------
+async function listMyStores(supa, user) {
+  // Admin sees everything to match the submit fallback in submitPaf.
+  if (user.role === "admin") {
+    const { data } = await supa
+      .from("stores")
+      .select("id, number, name, district_id, is_active")
+      .eq("is_active", true)
+      .order("number");
+    return { stores: data ?? [] };
+  }
+  if (!SUBMIT_ROLES.has(user.role) && !READ_ROLES.has(user.role)) {
+    return { stores: [] };
+  }
+  const rows = await resolveVisibleStoreRows(supa, user.id);
+  return { stores: rows };
+}
+
+// ----------------------------------------------------------------------------
 // Resolve caller's visible store-numbers (the store table's `number` column).
 // Reuses the existing user_visible_stores RPC + a stores lookup, exactly
 // like work-orders.js does.
@@ -411,11 +451,29 @@ async function listPafs(supa, user) {
   const { data, error } = await q.limit(500);
   if (error) return { error: error.message, status: 500 };
 
+  // Build a drive_in -> store_name lookup so the UI can render store
+  // names in the table + detail drawer without a separate request per
+  // row. One indexed query covers every distinct drive_in we returned.
+  const distinctDriveIns = Array.from(
+    new Set((data ?? []).map((r) => r.drive_in).filter(Boolean))
+  );
+  const storeNameMap = new Map();
+  if (distinctDriveIns.length) {
+    const { data: storeRows } = await supa
+      .from("stores")
+      .select("number, name")
+      .in("number", distinctDriveIns);
+    for (const s of storeRows ?? []) {
+      storeNameMap.set(String(s.number), s.name);
+    }
+  }
+
   // Mask SSN for non-payroll/admin viewers.
   const showSSN = user.role === "payroll" || user.role === "admin";
   const rows = (data ?? []).map((r) => ({
     ...r,
     last4_ssn: showSSN ? r.last4_ssn : "****",
+    store_name: storeNameMap.get(String(r.drive_in)) ?? null,
   }));
 
   return {
@@ -894,7 +952,28 @@ async function listSdoQueue(supa, user) {
   if (!isAdmin) q = q.eq("sdo_approver_id", user.id);
   const { data, error } = await q.limit(200);
   if (error) return { error: error.message, status: 500 };
-  return { pafs: data ?? [] };
+  const rows = data ?? [];
+  // Enrich with store_name for the dashboard widget. Same pattern as
+  // listPafs — one indexed query keyed by drive_in.
+  const distinctDriveIns = Array.from(
+    new Set(rows.map((r) => r.drive_in).filter(Boolean))
+  );
+  const storeNameMap = new Map();
+  if (distinctDriveIns.length) {
+    const { data: storeRows } = await supa
+      .from("stores")
+      .select("number, name")
+      .in("number", distinctDriveIns);
+    for (const s of storeRows ?? []) {
+      storeNameMap.set(String(s.number), s.name);
+    }
+  }
+  return {
+    pafs: rows.map((r) => ({
+      ...r,
+      store_name: storeNameMap.get(String(r.drive_in)) ?? null,
+    })),
+  };
 }
 
 // ----------------------------------------------------------------------------
@@ -1143,6 +1222,7 @@ export const handler = async (event) => {
       if (action === "list-sdo-queue") return unwrap(await listSdoQueue(supa, user));
       if (action === "config") return unwrap(await getActiveConfig(supa));
       if (action === "audit-log") return unwrap(await listAuditLog(supa, user, params));
+      if (action === "my-stores") return unwrap(await listMyStores(supa, user));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {
