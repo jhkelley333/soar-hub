@@ -18,7 +18,14 @@ import type { PafRow } from "./types";
 
 type Mode = null | "reject" | "needs" | "process";
 
-export function ProcessActions({ paf }: { paf: PafRow }) {
+export function ProcessActions({
+  paf,
+  onComplete,
+}: {
+  paf: PafRow;
+  /** Called after a successful action (e.g. to close a parent drawer). */
+  onComplete?: () => void;
+}) {
   const [mode, setMode] = useState<Mode>(null);
   const qc = useQueryClient();
   const toast = useToast();
@@ -34,6 +41,7 @@ export function ProcessActions({ paf }: { paf: PafRow }) {
       toast.push("PAF rejected.", "success");
       qc.invalidateQueries({ queryKey: ["paf-list"] });
       close();
+      onComplete?.();
     },
     onError: (e: unknown) =>
       toast.push(e instanceof Error ? e.message : "Reject failed.", "error"),
@@ -55,6 +63,7 @@ export function ProcessActions({ paf }: { paf: PafRow }) {
       toast.push("PAF marked processed.", "success");
       qc.invalidateQueries({ queryKey: ["paf-list"] });
       close();
+      onComplete?.();
     },
     onError: (e: unknown) =>
       toast.push(e instanceof Error ? e.message : "Failed.", "error"),

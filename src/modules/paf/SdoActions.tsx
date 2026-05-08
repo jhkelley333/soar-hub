@@ -12,7 +12,14 @@ import type { PafRow } from "./types";
 
 type Mode = null | "approve" | "reject";
 
-export function SdoActions({ paf }: { paf: PafRow }) {
+export function SdoActions({
+  paf,
+  onComplete,
+}: {
+  paf: PafRow;
+  /** Called after a successful action (e.g. to close a parent drawer). */
+  onComplete?: () => void;
+}) {
   const [mode, setMode] = useState<Mode>(null);
   const [note, setNote] = useState("");
   const [reason, setReason] = useState("");
@@ -26,6 +33,7 @@ export function SdoActions({ paf }: { paf: PafRow }) {
       qc.invalidateQueries({ queryKey: ["paf-list"] });
       qc.invalidateQueries({ queryKey: ["paf-sdo-queue"] });
       close();
+      onComplete?.();
     },
     onError: (e: unknown) =>
       toast.push(e instanceof Error ? e.message : "Approve failed.", "error"),
@@ -38,6 +46,7 @@ export function SdoActions({ paf }: { paf: PafRow }) {
       qc.invalidateQueries({ queryKey: ["paf-list"] });
       qc.invalidateQueries({ queryKey: ["paf-sdo-queue"] });
       close();
+      onComplete?.();
     },
     onError: (e: unknown) =>
       toast.push(e instanceof Error ? e.message : "Reject failed.", "error"),
