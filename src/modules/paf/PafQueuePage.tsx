@@ -1,5 +1,6 @@
-// /paf/queue — Payroll-only processing queue. Hides Approved/Rejected/
-// Processed by default; toggle to show terminal states.
+// /paf/queue — Payroll-only processing queue. Status filter chips +
+// employee/SSN search above the table; default view hides terminal
+// states so Payroll's eyes go to the actionable rows.
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -12,8 +13,33 @@ import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { listPafs } from "./api";
 import { PafTable } from "./PafTable";
+import {
+  applyFilters,
+  QueueFilters,
+  statusCounts,
+  type QueueFilterState,
+} from "./QueueFilters";
+import type { PafStatus } from "./types";
+
+const TERMINAL: PafStatus[] = ["Processed", "Rejected"];
+const QUEUE_CHIPS: (PafStatus | "ALL")[] = [
+  "ALL",
+  "Pending",
+  "Pending SDO Approval",
+  "Needs Approval",
+  "Approved",
+];
+const QUEUE_CHIPS_WITH_TERMINAL: (PafStatus | "ALL")[] = [
+  ...QUEUE_CHIPS,
+  "Processed",
+  "Rejected",
+];
 
 export function PafQueuePage() {
+  const [filters, setFilters] = useState<QueueFilterState>({
+    status: "Pending",
+    query: "",
+  });
   const [includeTerminal, setIncludeTerminal] = useState(false);
 
   const query = useQuery({
@@ -21,12 +47,23 @@ export function PafQueuePage() {
     queryFn: listPafs,
   });
 
-  const filtered = useMemo(() => {
-    const all = query.data?.pafs ?? [];
-    return includeTerminal
-      ? all
-      : all.filter((p) => p.status !== "Processed" && p.status !== "Rejected");
-  }, [query.data, includeTerminal]);
+  const allRows = query.data?.pafs ?? [];
+
+  // Hide terminal rows from the chip-counts when terminal toggle is off
+  // so the visible totals match what Payroll actually sees.
+  const visibleSource = useMemo(
+    () =>
+      includeTerminal
+        ? allRows
+        : allRows.filter((p) => !TERMINAL.includes(p.status)),
+    [allRows, includeTerminal]
+  );
+
+  const counts = useMemo(() => statusCounts(visibleSource), [visibleSource]);
+  const filtered = useMemo(
+    () => applyFilters(visibleSource, filters),
+    [visibleSource, filters]
+  );
 
   if (query.isLoading) {
     return (
@@ -49,7 +86,7 @@ export function PafQueuePage() {
     );
   }
 
-  const pending = (query.data.pafs ?? []).filter(
+  const pending = allRows.filter(
     (p) => p.status !== "Processed" && p.status !== "Rejected"
   ).length;
 
@@ -80,12 +117,22 @@ export function PafQueuePage() {
       />
 
       <Card>
+        <div className="p-3">
+          <QueueFilters
+            state={filters}
+            onChange={setFilters}
+            counts={counts}
+            available={
+              includeTerminal ? QUEUE_CHIPS_WITH_TERMINAL : QUEUE_CHIPS
+            }
+          />
+        </div>
         {filtered.length === 0 ? (
           <EmptyState
             title="Inbox zero"
             description={
-              includeTerminal
-                ? "No PAFs match."
+              filters.query || filters.status !== "ALL"
+                ? "No PAFs match the current filter."
                 : "Nothing in the queue right now."
             }
           />

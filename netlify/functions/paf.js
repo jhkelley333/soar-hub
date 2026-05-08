@@ -840,6 +840,42 @@ async function tokenApprove(supa, body) {
 }
 
 // ----------------------------------------------------------------------------
+// audit-log — recent state-change rows for one PAF. Visible to the
+// submitter, anyone with org-wide read (payroll/admin/vp/coo), and any
+// scoped manager whose visible-store set covers the PAF's drive_in.
+// ----------------------------------------------------------------------------
+async function listAuditLog(supa, user, query) {
+  const id = query?.id;
+  if (!id) return { error: "id is required.", status: 400 };
+  if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+
+  const { data: paf, error: pafErr } = await supa
+    .from("paf_submissions")
+    .select("id, submitter_id, drive_in")
+    .eq("id", id)
+    .maybeSingle();
+  if (pafErr) return { error: pafErr.message, status: 500 };
+  if (!paf) return { error: "PAF not found.", status: 404 };
+
+  // Scope check (mirrors listPafs).
+  if (!ORG_WIDE_READ.has(user.role) && paf.submitter_id !== user.id) {
+    const numbers = await resolveVisibleStoreNumbers(supa, user.id);
+    if (!numbers.includes(paf.drive_in)) {
+      return { error: "out of scope", status: 403 };
+    }
+  }
+
+  const { data, error } = await supa
+    .from("paf_audit_log")
+    .select("id, action, detail, actor_email, created_at")
+    .eq("paf_id", id)
+    .order("created_at", { ascending: true })
+    .limit(50);
+  if (error) return { error: error.message, status: 500 };
+  return { entries: data ?? [] };
+}
+
+// ----------------------------------------------------------------------------
 // list-sdo-queue — PAFs awaiting the caller's SDO/RVP approval. Admins see
 // every Pending SDO Approval row regardless of approver assignment so they
 // can unstick PAFs whose approver is missing.
@@ -1106,6 +1142,7 @@ export const handler = async (event) => {
       if (action === "list") return unwrap(await listPafs(supa, user));
       if (action === "list-sdo-queue") return unwrap(await listSdoQueue(supa, user));
       if (action === "config") return unwrap(await getActiveConfig(supa));
+      if (action === "audit-log") return unwrap(await listAuditLog(supa, user, params));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {

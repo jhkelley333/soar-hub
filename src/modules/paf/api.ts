@@ -2,6 +2,7 @@
 
 import { supabase } from "@/lib/supabase";
 import type {
+  PafAuditEntry,
   PafConfigResponse,
   PafListResponse,
   PafRow,
@@ -47,6 +48,12 @@ export function listPafs(): Promise<PafListResponse> {
 
 export function fetchPafConfig(): Promise<PafConfigResponse> {
   return request<PafConfigResponse>(`${FN}?action=config`);
+}
+
+export function fetchPafAudit(id: string): Promise<{ entries: PafAuditEntry[] }> {
+  return request<{ entries: PafAuditEntry[] }>(
+    `${FN}?action=audit-log&id=${encodeURIComponent(id)}`
+  );
 }
 
 export type PafSubmitInput = Partial<
