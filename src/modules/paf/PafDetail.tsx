@@ -1,5 +1,29 @@
-import type { PafRow } from "./types";
+import { useQuery } from "@tanstack/react-query";
+import { fetchPafAudit } from "./api";
+import type { PafAuditEntry, PafRow } from "./types";
 import { formatUSD } from "./cost";
+
+// Maps audit log action codes (kept short for storage) to human labels.
+const AUDIT_LABEL: Record<string, string> = {
+  submit: "Submitted",
+  reject: "Rejected by Payroll",
+  "needs-approval": "Sent for external approval",
+  "token-approved": "Approval link clicked",
+  "mark-processed": "Marked Processed",
+  "sdo-approved": "Approved by SDO",
+  "sdo-rejected": "Rejected by SDO",
+};
+
+function formatAuditTime(iso: string): string {
+  // Compact format: "May 7, 5:38 PM" — ADP-style, easy to scan.
+  const d = new Date(iso);
+  const date = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  const time = d.toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  return `${date}, ${time}`;
+}
 
 // Render every category-relevant block. Fields gate on truthiness so a
 // PAF only shows the sections it actually carries.
@@ -284,6 +308,8 @@ export function PafDetail({ paf }: { paf: PafRow }) {
         </Grid>
       </Section>
 
+      <AuditTimeline pafId={paf.id} />
+
       {paf.rejection_reason && (
         <div className="rounded-md border border-red-200 bg-red-50 p-3">
           <div className="text-[10px] font-semibold uppercase tracking-wide text-red-700">
@@ -342,4 +368,90 @@ function Field({
       </div>
     </div>
   );
+}
+
+// Reads paf_audit_log for the open PAF and renders a vertical timeline.
+// Lazy: only fires the request when the modal mounts.
+function AuditTimeline({ pafId }: { pafId: string }) {
+  const query = useQuery({
+    queryKey: ["paf-audit", pafId],
+    queryFn: () => fetchPafAudit(pafId),
+    staleTime: 30_000,
+  });
+
+  if (query.isLoading) {
+    return (
+      <Section title="History">
+        <div className="text-xs text-zinc-500">Loading…</div>
+      </Section>
+    );
+  }
+  if (query.isError) {
+    return (
+      <Section title="History">
+        <div className="text-xs text-red-700">
+          {(query.error as Error)?.message ?? "Couldn't load history."}
+        </div>
+      </Section>
+    );
+  }
+  const entries = query.data?.entries ?? [];
+  if (entries.length === 0) {
+    return null;
+  }
+
+  return (
+    <Section title="History">
+      <ol className="relative ml-1 space-y-3 border-l border-zinc-200 pl-4 text-xs">
+        {entries.map((e) => (
+          <AuditRow key={e.id} entry={e} />
+        ))}
+      </ol>
+    </Section>
+  );
+}
+
+function AuditRow({ entry }: { entry: PafAuditEntry }) {
+  const label = AUDIT_LABEL[entry.action] ?? entry.action;
+  const detailNote =
+    entry.detail && typeof entry.detail === "object"
+      ? renderAuditDetail(entry.action, entry.detail)
+      : null;
+
+  return (
+    <li className="relative">
+      <span
+        className="absolute -left-[19px] top-1.5 h-2 w-2 rounded-full bg-accent ring-2 ring-white"
+        aria-hidden="true"
+      />
+      <div className="flex flex-wrap items-baseline gap-x-2">
+        <span className="font-medium text-midnight">{label}</span>
+        <span className="text-zinc-400">{formatAuditTime(entry.created_at)}</span>
+      </div>
+      {entry.actor_email && (
+        <div className="mt-0.5 text-zinc-500">{entry.actor_email}</div>
+      )}
+      {detailNote && <div className="mt-0.5 text-zinc-600">{detailNote}</div>}
+    </li>
+  );
+}
+
+function renderAuditDetail(
+  action: string,
+  detail: Record<string, unknown>
+): string | null {
+  if (action === "reject" || action === "sdo-rejected") {
+    const reason = detail.reason ?? detail.note;
+    return reason ? `Reason: ${String(reason)}` : null;
+  }
+  if (action === "sdo-approved" && detail.note) {
+    return `Note: ${String(detail.note)}`;
+  }
+  if (action === "needs-approval" && detail.approval_email) {
+    return `To: ${String(detail.approval_email)}`;
+  }
+  if (action === "submit" && detail.routed_to_sdo) {
+    return "Routed to SDO for bonus approval";
+  }
+  return null;
 }

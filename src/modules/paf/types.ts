@@ -163,3 +163,11 @@ export interface PafConfigResponse {
   config_version: number;
   config_json: PafConfigDoc;
 }
+
+export interface PafAuditEntry {
+  id: string;
+  action: string;
+  detail: Record<string, unknown> | null;
+  actor_email: string | null;
+  created_at: string;
+}

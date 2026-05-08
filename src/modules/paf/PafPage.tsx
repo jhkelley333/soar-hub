@@ -1,8 +1,8 @@
 // /paf — submit form + history list. Visible to anyone with a PAF
 // reading role; the submit form only renders for submitter roles
-// (DO/GM/SDO/Admin).
+// (DO/SDO/RVP/VP/COO/admin).
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
@@ -15,10 +15,20 @@ import { useAuth } from "@/auth/AuthProvider";
 import { listPafs } from "./api";
 import { PafForm } from "./PafForm";
 import { PafTable } from "./PafTable";
+import {
+  applyFilters,
+  QueueFilters,
+  statusCounts,
+  type QueueFilterState,
+} from "./QueueFilters";
 
 export function PafPage() {
   const { profile } = useAuth();
   const [view, setView] = useState<"list" | "submit">("list");
+  const [filters, setFilters] = useState<QueueFilterState>({
+    status: "ALL",
+    query: "",
+  });
 
   const query = useQuery({
     queryKey: ["paf-list"],
@@ -29,6 +39,13 @@ export function PafPage() {
     profile?.role ?? ""
   );
   const canProcess = profile?.role === "payroll" || profile?.role === "admin";
+
+  const allRows = query.data?.pafs ?? [];
+  const counts = useMemo(() => statusCounts(allRows), [allRows]);
+  const filtered = useMemo(
+    () => applyFilters(allRows, filters),
+    [allRows, filters]
+  );
 
   if (query.isLoading) {
     return (
@@ -98,7 +115,23 @@ export function PafPage() {
               }
             />
           ) : (
-            <PafTable rows={data.pafs} actions="view" />
+            <>
+              <div className="p-3">
+                <QueueFilters
+                  state={filters}
+                  onChange={setFilters}
+                  counts={counts}
+                />
+              </div>
+              {filtered.length === 0 ? (
+                <EmptyState
+                  title="No PAFs match"
+                  description="Try a different filter or clear the search."
+                />
+              ) : (
+                <PafTable rows={filtered} actions="view" />
+              )}
+            </>
           )}
         </Card>
       )}
