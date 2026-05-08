@@ -59,6 +59,13 @@ export interface Store {
   city: string | null;
   state: string | null;
   is_active: boolean;
+  plate_iq_email: string | null;
+  soar_company_name: string | null;
+  food_vendor_name: string | null;
+  food_vendor_contact_name: string | null;
+  food_vendor_contact_phone: string | null;
+  food_vendor_contact_email: string | null;
+  food_vendor_account_number: string | null;
 }
 
 // Numeric tier for UI-side comparisons. Mirrors role_level() in SQL

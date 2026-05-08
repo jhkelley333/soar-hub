@@ -166,7 +166,12 @@ async function getMyTree(supa, user) {
     await Promise.all([
       supa
         .from("stores")
-        .select("id, number, name, city, state, phone, address, district_id, is_active")
+        .select(
+          "id, number, name, city, state, phone, address, district_id, is_active, " +
+            "plate_iq_email, soar_company_name, food_vendor_name, " +
+            "food_vendor_contact_name, food_vendor_contact_phone, " +
+            "food_vendor_contact_email, food_vendor_account_number"
+        )
         .in("id", visibleStoreIds)
         .order("number"),
       supa.from("districts").select("id, code, name, area_id, is_active"),
@@ -234,6 +239,16 @@ async function getMyTree(supa, user) {
     return row ? profileById.get(row.user_id) : null;
   }
 
+  // GM per store: pulled from the team-members fetch above, since GMs
+  // are stored as profiles with role='gm' + primary_store_id pointing
+  // at the store.
+  const gmByStore = new Map();
+  for (const m of members ?? []) {
+    if (m.role === "gm" && m.primary_store_id) {
+      gmByStore.set(m.primary_store_id, m);
+    }
+  }
+
   // Build the leadership map keyed by store id.
   const leadership = {};
   const districtById = new Map(districts.map((d) => [d.id, d]));
@@ -243,6 +258,7 @@ async function getMyTree(supa, user) {
     const area = district ? areaById.get(district.area_id) : null;
     const regionId = area?.region_id ?? null;
     leadership[s.id] = {
+      gm: gmByStore.get(s.id) ?? null,
       do: findManager("do", "district", district?.id),
       sdo: findManager("sdo", "area", area?.id),
       rvp: findManager("rvp", "region", regionId),

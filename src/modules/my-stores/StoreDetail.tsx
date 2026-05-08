@@ -2,9 +2,10 @@
 // team members card listing GMs / Shift Managers assigned to this
 // store. Each row in the team list opens the MemberProfileDrawer.
 
-import { Mail, MapPin, Phone } from "lucide-react";
+import { ArrowLeft, Mail, MapPin, Phone } from "lucide-react";
 import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
 import { Badge } from "@/shared/ui/Badge";
+import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
 import { ROLE_LABELS, type UserRole } from "@/types/database";
 import { formatPhoneForDisplay } from "@/lib/phone";
@@ -29,14 +30,23 @@ function formatBirthdayShort(iso: string | null): string | null {
 export function StoreDetail({
   store,
   leadership,
+  onBack,
   onMemberClick,
 }: {
   store: MyStoreNode;
   leadership: StoreLeadership | null;
+  onBack?: () => void;
   onMemberClick: (m: MyStoreTeamMember) => void;
 }) {
   return (
     <div className="space-y-4">
+      {onBack && (
+        <Button variant="ghost" size="sm" onClick={onBack} className="-ml-2">
+          <ArrowLeft className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+          Back
+        </Button>
+      )}
+
       {/* Header card */}
       <Card>
         <CardBody>
@@ -70,7 +80,8 @@ export function StoreDetail({
         <CardHeader title="Leadership" description="The chain of command for this store." />
         <CardBody>
           {leadership ? (
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              <LeadershipSlot label="General Manager" person={leadership.gm} />
               <LeadershipSlot label="Director of Operations" person={leadership.do} />
               <LeadershipSlot label="Sr. Director of Operations" person={leadership.sdo} />
               <LeadershipSlot label="Regional VP" person={leadership.rvp} />
@@ -80,6 +91,10 @@ export function StoreDetail({
           )}
         </CardBody>
       </Card>
+
+      {/* Operations & vendor card */}
+      <OperationsCard store={store} />
+
 
       {/* Team Members card */}
       <Card>
@@ -127,6 +142,126 @@ export function StoreDetail({
         )}
       </Card>
     </div>
+  );
+}
+
+function OperationsCard({ store }: { store: MyStoreNode }) {
+  const toast = useToast();
+  const fields: { label: string; value: string | null; copy?: boolean; href?: string }[] = [
+    { label: "Plate IQ Email", value: store.plate_iq_email, copy: true },
+    { label: "Soar Company", value: store.soar_company_name },
+  ];
+  const vendor: { label: string; value: string | null; copy?: boolean; href?: string }[] = [
+    { label: "Vendor", value: store.food_vendor_name },
+    { label: "Contact", value: store.food_vendor_contact_name },
+    {
+      label: "Phone",
+      value: store.food_vendor_contact_phone,
+      href: store.food_vendor_contact_phone
+        ? `tel:${store.food_vendor_contact_phone.replace(/[^0-9+]/g, "")}`
+        : undefined,
+    },
+    { label: "Email", value: store.food_vendor_contact_email, copy: true },
+    { label: "Account #", value: store.food_vendor_account_number, copy: true },
+  ];
+
+  const hasOps = fields.some((f) => f.value);
+  const hasVendor = vendor.some((f) => f.value);
+  if (!hasOps && !hasVendor) {
+    return (
+      <Card>
+        <CardHeader
+          title="Operations & vendor"
+          description="Plate IQ, Soar company, food vendor contact."
+        />
+        <CardBody>
+          <div className="text-sm text-zinc-500">
+            No operations or vendor data on file for this store yet.
+          </div>
+        </CardBody>
+      </Card>
+    );
+  }
+
+  function copy(value: string, label: string) {
+    navigator.clipboard?.writeText(value).then(
+      () => toast.push(`${label} copied.`, "success"),
+      () => toast.push(`Couldn't copy ${label.toLowerCase()}.`, "error")
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title="Operations & vendor"
+        description="Plate IQ, Soar company, food vendor contact."
+      />
+      <CardBody className="space-y-4">
+        {hasOps && (
+          <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {fields.map((f) =>
+              f.value ? (
+                <div key={f.label}>
+                  <dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                    {f.label}
+                  </dt>
+                  <dd className="mt-0.5 flex items-center gap-2 text-sm text-midnight">
+                    <span className="break-all">{f.value}</span>
+                    {f.copy && (
+                      <button
+                        type="button"
+                        onClick={() => copy(f.value!, f.label)}
+                        className="inline-flex items-center gap-1 rounded-md bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-600 transition hover:bg-zinc-200 hover:text-midnight"
+                      >
+                        <Mail className="h-3 w-3" strokeWidth={1.75} />
+                        Copy
+                      </button>
+                    )}
+                  </dd>
+                </div>
+              ) : null
+            )}
+          </dl>
+        )}
+        {hasVendor && (
+          <div>
+            <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Food vendor
+            </div>
+            <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {vendor.map((f) =>
+                f.value ? (
+                  <div key={f.label}>
+                    <dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                      {f.label}
+                    </dt>
+                    <dd className="mt-0.5 flex items-center gap-2 text-sm text-midnight">
+                      {f.href ? (
+                        <a href={f.href} className="text-accent hover:underline">
+                          {f.value}
+                        </a>
+                      ) : (
+                        <span className="break-all">{f.value}</span>
+                      )}
+                      {f.copy && (
+                        <button
+                          type="button"
+                          onClick={() => copy(f.value!, f.label)}
+                          className="inline-flex items-center gap-1 rounded-md bg-zinc-100 px-1.5 py-0.5 text-[10px] text-zinc-600 transition hover:bg-zinc-200 hover:text-midnight"
+                        >
+                          <Mail className="h-3 w-3" strokeWidth={1.75} />
+                          Copy
+                        </button>
+                      )}
+                    </dd>
+                  </div>
+                ) : null
+              )}
+            </dl>
+          </div>
+        )}
+      </CardBody>
+    </Card>
   );
 }
 
