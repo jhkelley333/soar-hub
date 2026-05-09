@@ -64,3 +64,32 @@ export function updateStoreVendor(
     body: JSON.stringify({ store_id: storeId, ...fields }),
   });
 }
+
+export interface StoreVendorAuditEntry {
+  id: string;
+  store_id: string;
+  field: keyof VendorEditableFields;
+  old_value: string | null;
+  new_value: string | null;
+  created_at: string;
+  actor: {
+    id: string | null;
+    name: string | null;
+    role: string | null;
+  };
+  actor_email: string | null;
+}
+
+export interface StoreVendorAuditResponse {
+  entries: StoreVendorAuditEntry[];
+}
+
+export function fetchStoreVendorAudit(
+  storeId: string,
+  limit = 50
+): Promise<StoreVendorAuditResponse> {
+  const params = new URLSearchParams({ store_id: storeId, limit: String(limit) });
+  return request<StoreVendorAuditResponse>(
+    `${FN}?action=store-vendor-audit&${params.toString()}`
+  );
+}
