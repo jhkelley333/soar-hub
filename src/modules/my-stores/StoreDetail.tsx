@@ -2,13 +2,20 @@
 // team members card listing GMs / Shift Managers assigned to this
 // store. Each row in the team list opens the MemberProfileDrawer.
 
-import { ArrowLeft, Mail, MapPin, Phone } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, Mail, MapPin, Pencil, Phone } from "lucide-react";
 import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
 import { Badge } from "@/shared/ui/Badge";
 import { Button } from "@/shared/ui/Button";
+import { Drawer } from "@/shared/ui/Drawer";
+import { Input } from "@/shared/ui/Input";
+import { Label } from "@/shared/ui/Label";
 import { useToast } from "@/shared/ui/Toaster";
+import { useAuth } from "@/auth/AuthProvider";
 import { ROLE_LABELS, type UserRole } from "@/types/database";
 import { formatPhoneForDisplay } from "@/lib/phone";
+import { updateStoreVendor, type VendorEditableFields } from "./api";
 import type {
   LeadershipPerson,
   MyStoreNode,
@@ -145,8 +152,20 @@ export function StoreDetail({
   );
 }
 
+const ORG_WIDE_ROLES = new Set<UserRole>(["payroll", "admin", "vp", "coo"]);
+const SCOPE_ROLES = new Set<UserRole>(["do", "sdo", "rvp"]);
+
 function OperationsCard({ store }: { store: MyStoreNode }) {
   const toast = useToast();
+  const { profile } = useAuth();
+  const [editing, setEditing] = useState(false);
+
+  const canEditVendor = !!profile && (
+    ORG_WIDE_ROLES.has(profile.role) ||
+    SCOPE_ROLES.has(profile.role) ||
+    (profile.role === "gm" && profile.primary_store_id === store.id)
+  );
+
   const fields: { label: string; value: string | null; copy?: boolean; href?: string }[] = [
     { label: "Plate IQ Email", value: store.plate_iq_email, copy: true },
     { label: "Soar Company", value: store.soar_company_name },
@@ -167,21 +186,6 @@ function OperationsCard({ store }: { store: MyStoreNode }) {
 
   const hasOps = fields.some((f) => f.value);
   const hasVendor = vendor.some((f) => f.value);
-  if (!hasOps && !hasVendor) {
-    return (
-      <Card>
-        <CardHeader
-          title="Operations & vendor"
-          description="Plate IQ, Soar company, food vendor contact."
-        />
-        <CardBody>
-          <div className="text-sm text-zinc-500">
-            No operations or vendor data on file for this store yet.
-          </div>
-        </CardBody>
-      </Card>
-    );
-  }
 
   function copy(value: string, label: string) {
     navigator.clipboard?.writeText(value).then(
@@ -190,11 +194,46 @@ function OperationsCard({ store }: { store: MyStoreNode }) {
     );
   }
 
+  const editAction = canEditVendor ? (
+    <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>
+      <Pencil className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+      Edit vendor
+    </Button>
+  ) : null;
+
+  if (!hasOps && !hasVendor) {
+    return (
+      <>
+        <Card>
+          <CardHeader
+            title="Operations & vendor"
+            description="Plate IQ, Soar company, food vendor contact."
+            actions={editAction}
+          />
+          <CardBody>
+            <div className="text-sm text-zinc-500">
+              No operations or vendor data on file for this store yet.
+            </div>
+          </CardBody>
+        </Card>
+        {canEditVendor && (
+          <VendorEditDrawer
+            open={editing}
+            onClose={() => setEditing(false)}
+            store={store}
+          />
+        )}
+      </>
+    );
+  }
+
   return (
+    <>
     <Card>
       <CardHeader
         title="Operations & vendor"
         description="Plate IQ, Soar company, food vendor contact."
+        actions={editAction}
       />
       <CardBody className="space-y-4">
         {hasOps && (
@@ -262,6 +301,142 @@ function OperationsCard({ store }: { store: MyStoreNode }) {
         )}
       </CardBody>
     </Card>
+    {canEditVendor && (
+      <VendorEditDrawer
+        open={editing}
+        onClose={() => setEditing(false)}
+        store={store}
+      />
+    )}
+    </>
+  );
+}
+
+function VendorEditDrawer({
+  open,
+  onClose,
+  store,
+}: {
+  open: boolean;
+  onClose: () => void;
+  store: MyStoreNode;
+}) {
+  const qc = useQueryClient();
+  const toast = useToast();
+
+  const [form, setForm] = useState<Record<keyof VendorEditableFields, string>>({
+    food_vendor_name: store.food_vendor_name ?? "",
+    food_vendor_contact_name: store.food_vendor_contact_name ?? "",
+    food_vendor_contact_phone: store.food_vendor_contact_phone ?? "",
+    food_vendor_contact_email: store.food_vendor_contact_email ?? "",
+    food_vendor_account_number: store.food_vendor_account_number ?? "",
+  });
+
+  // Reset form whenever the drawer is reopened or the store changes,
+  // so stale typed-but-not-saved input doesn't carry over.
+  useEffect(() => {
+    if (!open) return;
+    setForm({
+      food_vendor_name: store.food_vendor_name ?? "",
+      food_vendor_contact_name: store.food_vendor_contact_name ?? "",
+      food_vendor_contact_phone: store.food_vendor_contact_phone ?? "",
+      food_vendor_contact_email: store.food_vendor_contact_email ?? "",
+      food_vendor_account_number: store.food_vendor_account_number ?? "",
+    });
+  }, [open, store.id, store.food_vendor_name, store.food_vendor_contact_name, store.food_vendor_contact_phone, store.food_vendor_contact_email, store.food_vendor_account_number]);
+
+  const mut = useMutation({
+    mutationFn: () => updateStoreVendor(store.id, form),
+    onSuccess: (data) => {
+      toast.push(
+        data.changed > 0 ? "Vendor info saved." : "No changes to save.",
+        "success"
+      );
+      qc.invalidateQueries({ queryKey: ["my-stores-tree"] });
+      onClose();
+    },
+    onError: (e: unknown) =>
+      toast.push(e instanceof Error ? e.message : "Save failed.", "error"),
+  });
+
+  function set<K extends keyof VendorEditableFields>(key: K, value: string) {
+    setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      title={`Edit vendor — Store #${store.number}`}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={mut.isPending}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => mut.mutate()}
+            disabled={mut.isPending}
+          >
+            {mut.isPending ? "Saving…" : "Save"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-4">
+        <p className="text-xs text-zinc-500">
+          Plate IQ Email and Soar Company are admin-only and not editable here.
+        </p>
+        <div>
+          <Label htmlFor="vf-name">Vendor</Label>
+          <Input
+            id="vf-name"
+            value={form.food_vendor_name}
+            onChange={(e) => set("food_vendor_name", e.target.value)}
+            placeholder="Sysco, US Foods, etc."
+          />
+        </div>
+        <div>
+          <Label htmlFor="vf-contact">Contact name</Label>
+          <Input
+            id="vf-contact"
+            value={form.food_vendor_contact_name}
+            onChange={(e) => set("food_vendor_contact_name", e.target.value)}
+          />
+        </div>
+        <div>
+          <Label htmlFor="vf-phone">Contact phone</Label>
+          <Input
+            id="vf-phone"
+            type="tel"
+            inputMode="tel"
+            value={form.food_vendor_contact_phone}
+            onChange={(e) => set("food_vendor_contact_phone", e.target.value)}
+            placeholder="(555) 123-4567 ext 99"
+          />
+        </div>
+        <div>
+          <Label htmlFor="vf-email">Contact email</Label>
+          <Input
+            id="vf-email"
+            type="email"
+            inputMode="email"
+            autoComplete="off"
+            autoCapitalize="off"
+            value={form.food_vendor_contact_email}
+            onChange={(e) => set("food_vendor_contact_email", e.target.value)}
+          />
+        </div>
+        <div>
+          <Label htmlFor="vf-acct">Account #</Label>
+          <Input
+            id="vf-acct"
+            value={form.food_vendor_account_number}
+            onChange={(e) => set("food_vendor_account_number", e.target.value)}
+          />
+        </div>
+      </div>
+    </Drawer>
   );
 }
 

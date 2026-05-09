@@ -199,8 +199,16 @@ export function LoginPage() {
                 <Input
                   id="identifier"
                   type="text"
-                  inputMode={detected === "email" ? "email" : "tel"}
+                  inputMode={
+                    detected === "email"
+                      ? "email"
+                      : detected === "phone"
+                        ? "tel"
+                        : "text"
+                  }
                   autoComplete="username"
+                  autoCapitalize="off"
+                  spellCheck={false}
                   required
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
