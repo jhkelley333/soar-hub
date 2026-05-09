@@ -521,6 +521,67 @@ async function updateStoreVendor(supa, user, body) {
 }
 
 // ----------------------------------------------------------------------------
+// store-vendor-audit (GET)
+// ----------------------------------------------------------------------------
+//
+// Admin-only audit log for vendor-info changes on a store. Returns the
+// most recent N rows from store_vendor_audit, enriched with the actor's
+// name so the UI doesn't need a second roundtrip.
+
+async function getStoreVendorAudit(supa, user, query) {
+  if (user.role !== "admin") {
+    return { error: "forbidden", status: 403 };
+  }
+  const storeId = String(query?.store_id || "").trim();
+  if (!storeId) return { error: "store_id required.", status: 400 };
+  const limit = Math.min(Math.max(parseInt(query?.limit, 10) || 50, 1), 200);
+
+  const { data: rows, error } = await supa
+    .from("store_vendor_audit")
+    .select("id, store_id, actor_id, actor_email, field, old_value, new_value, created_at")
+    .eq("store_id", storeId)
+    .order("created_at", { ascending: false })
+    .limit(limit);
+  if (error) return { error: error.message, status: 500 };
+
+  const actorIds = Array.from(
+    new Set((rows ?? []).map((r) => r.actor_id).filter(Boolean))
+  );
+  let actorById = {};
+  if (actorIds.length) {
+    const { data: actors } = await supa
+      .from("profiles")
+      .select("id, full_name, preferred_name, role")
+      .in("id", actorIds);
+    actorById = Object.fromEntries(
+      (actors ?? []).map((a) => [
+        a.id,
+        {
+          id: a.id,
+          name: a.preferred_name || a.full_name || null,
+          role: a.role,
+        },
+      ])
+    );
+  }
+
+  return {
+    entries: (rows ?? []).map((r) => ({
+      id: r.id,
+      store_id: r.store_id,
+      field: r.field,
+      old_value: r.old_value,
+      new_value: r.new_value,
+      created_at: r.created_at,
+      actor: r.actor_id
+        ? actorById[r.actor_id] ?? { id: r.actor_id, name: null, role: null }
+        : { id: null, name: null, role: null },
+      actor_email: r.actor_email,
+    })),
+  };
+}
+
+// ----------------------------------------------------------------------------
 // HTTP handler
 // ----------------------------------------------------------------------------
 function unwrap(result) {
@@ -554,6 +615,8 @@ export const handler = async (event) => {
     if (event.httpMethod === "GET") {
       if (action === "my-tree") return unwrap(await getMyTree(supa, user));
       if (action === "birthdays") return unwrap(await getBirthdays(supa, user, params));
+      if (action === "store-vendor-audit")
+        return unwrap(await getStoreVendorAudit(supa, user, params));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {

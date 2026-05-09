@@ -3,8 +3,8 @@
 // store. Each row in the team list opens the MemberProfileDrawer.
 
 import { useEffect, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Mail, MapPin, Pencil, Phone } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, ClipboardList, Mail, MapPin, Pencil, Phone } from "lucide-react";
 import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
 import { Badge } from "@/shared/ui/Badge";
 import { Button } from "@/shared/ui/Button";
@@ -15,7 +15,12 @@ import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { ROLE_LABELS, type UserRole } from "@/types/database";
 import { formatPhoneForDisplay } from "@/lib/phone";
-import { updateStoreVendor, type VendorEditableFields } from "./api";
+import {
+  fetchStoreVendorAudit,
+  updateStoreVendor,
+  type StoreVendorAuditEntry,
+  type VendorEditableFields,
+} from "./api";
 import type {
   LeadershipPerson,
   MyStoreNode,
@@ -159,12 +164,14 @@ function OperationsCard({ store }: { store: MyStoreNode }) {
   const toast = useToast();
   const { profile } = useAuth();
   const [editing, setEditing] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
 
   const canEditVendor = !!profile && (
     ORG_WIDE_ROLES.has(profile.role) ||
     SCOPE_ROLES.has(profile.role) ||
     (profile.role === "gm" && profile.primary_store_id === store.id)
   );
+  const canViewHistory = profile?.role === "admin";
 
   const fields: { label: string; value: string | null; copy?: boolean; href?: string }[] = [
     { label: "Plate IQ Email", value: store.plate_iq_email, copy: true },
@@ -194,11 +201,21 @@ function OperationsCard({ store }: { store: MyStoreNode }) {
     );
   }
 
-  const editAction = canEditVendor ? (
-    <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>
-      <Pencil className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
-      Edit vendor
-    </Button>
+  const editAction = (canEditVendor || canViewHistory) ? (
+    <div className="flex gap-1">
+      {canViewHistory && (
+        <Button variant="ghost" size="sm" onClick={() => setHistoryOpen(true)}>
+          <ClipboardList className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+          History
+        </Button>
+      )}
+      {canEditVendor && (
+        <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>
+          <Pencil className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+          Edit vendor
+        </Button>
+      )}
+    </div>
   ) : null;
 
   if (!hasOps && !hasVendor) {
@@ -220,6 +237,13 @@ function OperationsCard({ store }: { store: MyStoreNode }) {
           <VendorEditDrawer
             open={editing}
             onClose={() => setEditing(false)}
+            store={store}
+          />
+        )}
+        {canViewHistory && (
+          <VendorHistoryDrawer
+            open={historyOpen}
+            onClose={() => setHistoryOpen(false)}
             store={store}
           />
         )}
@@ -437,6 +461,109 @@ function VendorEditDrawer({
         </div>
       </div>
     </Drawer>
+  );
+}
+
+function VendorHistoryDrawer({
+  open,
+  onClose,
+  store,
+}: {
+  open: boolean;
+  onClose: () => void;
+  store: MyStoreNode;
+}) {
+  const query = useQuery({
+    queryKey: ["store-vendor-audit", store.id],
+    queryFn: () => fetchStoreVendorAudit(store.id, 100),
+    enabled: open,
+    staleTime: 30_000,
+  });
+
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      title={`Vendor history — Store #${store.number}`}
+    >
+      {query.isLoading && (
+        <div className="text-sm text-zinc-500">Loading…</div>
+      )}
+      {query.isError && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {(query.error as Error)?.message ?? "Couldn't load history."}
+        </div>
+      )}
+      {query.data && query.data.entries.length === 0 && (
+        <div className="text-sm text-zinc-500">
+          No vendor edits recorded for this store yet.
+        </div>
+      )}
+      {query.data && query.data.entries.length > 0 && (
+        <ul className="space-y-3">
+          {query.data.entries.map((e) => (
+            <VendorAuditRow key={e.id} entry={e} />
+          ))}
+        </ul>
+      )}
+    </Drawer>
+  );
+}
+
+const VENDOR_FIELD_LABELS: Record<string, string> = {
+  food_vendor_name: "Vendor",
+  food_vendor_contact_name: "Contact name",
+  food_vendor_contact_phone: "Contact phone",
+  food_vendor_contact_email: "Contact email",
+  food_vendor_account_number: "Account #",
+};
+
+function VendorAuditRow({ entry }: { entry: StoreVendorAuditEntry }) {
+  const when = new Date(entry.created_at);
+  const whenStr = when.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+  const actor =
+    entry.actor.name || entry.actor_email || "Unknown user";
+  return (
+    <li className="rounded-md border border-zinc-200 bg-white px-3 py-2 text-xs">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="font-semibold text-midnight">
+          {VENDOR_FIELD_LABELS[entry.field] ?? entry.field}
+        </span>
+        <span className="text-zinc-500">{whenStr}</span>
+      </div>
+      <div className="mt-1 text-zinc-600">
+        by <span className="font-medium text-midnight">{actor}</span>
+        {entry.actor.role && (
+          <span className="ml-1 text-zinc-400">
+            ({ROLE_LABELS[entry.actor.role as UserRole] ?? entry.actor.role})
+          </span>
+        )}
+      </div>
+      <div className="mt-1.5 grid grid-cols-1 gap-1 sm:grid-cols-2">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+            Before
+          </div>
+          <div className="break-all text-zinc-700">
+            {entry.old_value ?? <span className="italic text-zinc-400">empty</span>}
+          </div>
+        </div>
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+            After
+          </div>
+          <div className="break-all text-zinc-700">
+            {entry.new_value ?? <span className="italic text-zinc-400">empty</span>}
+          </div>
+        </div>
+      </div>
+    </li>
   );
 }
 
