@@ -166,10 +166,14 @@ function OperationsCard({ store }: { store: MyStoreNode }) {
   const [editing, setEditing] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
 
+  // GMs/DOs/SDOs/RVPs can edit any store inside their visible scope.
+  // We don't gate the GM on profile.primary_store_id because some GMs
+  // are scoped via user_scopes without primary_store_id populated, and
+  // the my-tree response is already pre-filtered to their visible set.
   const canEditVendor = !!profile && (
     ORG_WIDE_ROLES.has(profile.role) ||
     SCOPE_ROLES.has(profile.role) ||
-    (profile.role === "gm" && profile.primary_store_id === store.id)
+    profile.role === "gm"
   );
   const canViewHistory = profile?.role === "admin";
 

@@ -445,10 +445,11 @@ const VENDOR_EDITABLE_FIELDS = [
 
 async function callerCanEditStoreVendor(supa, user, storeId) {
   if (ORG_WIDE.has(user.role)) return true;
-  if (user.role === "gm") {
-    return user.primary_store_id === storeId;
-  }
-  if (["do", "sdo", "rvp"].includes(user.role)) {
+  // GMs and DO/SDO/RVPs can edit any store inside their visible scope.
+  // Don't gate the GM on profile.primary_store_id specifically — some
+  // GMs have it unset on their profile but are correctly scoped via
+  // user_scopes. Visibility is the source of truth.
+  if (["gm", "do", "sdo", "rvp"].includes(user.role)) {
     const visible = await callerVisibleStoreIds(supa, user);
     return visible.includes(storeId);
   }

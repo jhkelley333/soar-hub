@@ -57,16 +57,27 @@ export function MyStoresPage() {
     staleTime: 5 * 60_000,
   });
 
-  // Auto-skip levels per role: GM lands on their store; DO on their
-  // store list (single district); SDO on their district list; RVP on
-  // their area list. Anyone with multi-region reach sees the regions
-  // grid as the starting view.
+  // Auto-skip levels per role / scope: anyone whose visible tree
+  // contains exactly one store lands directly on that store's detail
+  // (covers GMs whether or not primary_store_id is populated, plus
+  // DOs/SDOs/RVPs whose scope happens to be a single store). Otherwise
+  // skip to the deepest level that's still a single child so the user
+  // doesn't click through pointless intermediate grids.
   useEffect(() => {
     if (!treeQuery.data || !profile) return;
     const regions = treeQuery.data.regions;
     if (!regions.length) return;
     const role = profile.role;
 
+    const allStores = regions.flatMap((r) =>
+      r.areas.flatMap((a) => a.districts.flatMap((d) => d.stores))
+    );
+    if (allStores.length === 1) {
+      setView({ kind: "store", storeId: allStores[0].id });
+      return;
+    }
+    // Belt-and-suspenders: a GM with primary_store_id set should still
+    // land on it even if the tree somehow includes other stores.
     if (role === "gm" && profile.primary_store_id) {
       setView({ kind: "store", storeId: profile.primary_store_id });
       return;
@@ -253,8 +264,11 @@ export function MyStoresPage() {
               store={activeStore.store}
               leadership={(leadership[activeStore.store.id] ?? null) as StoreLeadership | null}
               onBack={
-                profile?.role === "gm" &&
-                profile?.primary_store_id === activeStore.store.id
+                // No back button when this is the user's only visible
+                // store (GMs with or without primary_store_id, plus any
+                // single-store-scope user). Otherwise let them pop back
+                // to the district's stores grid.
+                allStoresFlat.length <= 1
                   ? undefined
                   : () =>
                       setView({
