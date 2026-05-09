@@ -39,10 +39,27 @@ export function Drawer({
     };
   }, [open, onClose]);
 
+  // Browsers warn (and screen readers misbehave) when an element with
+  // aria-hidden still owns focus. When the drawer closes — typically as
+  // the result of clicking a button inside it — blur the descendant so
+  // it doesn't get trapped behind aria-hidden on the wrapper.
+  useEffect(() => {
+    if (open) return;
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && active !== document.body) {
+      active.blur();
+    }
+  }, [open]);
+
   return (
     <div
       className={`fixed inset-0 z-50 ${open ? "" : "pointer-events-none"}`}
-      aria-hidden={open ? "false" : "true"}
+      // Use the `inert` attribute when closed instead of aria-hidden:
+      // inert prevents focus + interaction AND hides from assistive
+      // tech, without the focus-trapped warning aria-hidden produces.
+      // Cast through unknown because TS DOM lib types lag behind the
+      // standard on this attribute.
+      {...({ inert: open ? undefined : "" } as Record<string, unknown>)}
     >
       <div
         className={`absolute inset-0 bg-zinc-900/40 transition-opacity ${
