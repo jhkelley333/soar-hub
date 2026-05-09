@@ -422,6 +422,105 @@ async function getBirthdays(supa, user, query) {
 }
 
 // ----------------------------------------------------------------------------
+// update-store-vendor (POST)
+// ----------------------------------------------------------------------------
+//
+// Whitelisted update of the 5 food-vendor fields on a store, with
+// per-field audit rows. Plate IQ Email + Soar Company are intentionally
+// NOT writable from this endpoint — they're admin / SQL only.
+//
+// Authorization:
+//   - org-wide roles (admin/payroll/vp/coo): any store
+//   - do/sdo/rvp: any store inside their visible scope
+//   - gm: only the store matching their primary_store_id
+//   - everyone else: 403
+
+const VENDOR_EDITABLE_FIELDS = [
+  "food_vendor_name",
+  "food_vendor_contact_name",
+  "food_vendor_contact_phone",
+  "food_vendor_contact_email",
+  "food_vendor_account_number",
+];
+
+async function callerCanEditStoreVendor(supa, user, storeId) {
+  if (ORG_WIDE.has(user.role)) return true;
+  if (user.role === "gm") {
+    return user.primary_store_id === storeId;
+  }
+  if (["do", "sdo", "rvp"].includes(user.role)) {
+    const visible = await callerVisibleStoreIds(supa, user);
+    return visible.includes(storeId);
+  }
+  return false;
+}
+
+async function updateStoreVendor(supa, user, body) {
+  const storeId = String(body?.store_id || "").trim();
+  if (!storeId) return { error: "store_id required.", status: 400 };
+
+  const allowed = await callerCanEditStoreVendor(supa, user, storeId);
+  if (!allowed) return { error: "forbidden", status: 403 };
+
+  // Whitelist + normalize. Empty / whitespace-only string -> null so
+  // queries like `where food_vendor_name is null` behave predictably.
+  const updates = {};
+  for (const f of VENDOR_EDITABLE_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(body, f)) continue;
+    const raw = body[f];
+    if (raw === null) {
+      updates[f] = null;
+    } else if (typeof raw === "string") {
+      const trimmed = raw.trim();
+      updates[f] = trimmed === "" ? null : trimmed;
+    } else {
+      return { error: `${f} must be a string or null.`, status: 400 };
+    }
+  }
+  if (Object.keys(updates).length === 0) {
+    return { error: "no updatable fields provided.", status: 400 };
+  }
+
+  const selectCols = "id, " + VENDOR_EDITABLE_FIELDS.join(", ");
+  const { data: before, error: readErr } = await supa
+    .from("stores")
+    .select(selectCols)
+    .eq("id", storeId)
+    .single();
+  if (readErr || !before) return { error: "store not found.", status: 404 };
+
+  const { data: after, error: upErr } = await supa
+    .from("stores")
+    .update(updates)
+    .eq("id", storeId)
+    .select(selectCols)
+    .single();
+  if (upErr) return { error: upErr.message || "update failed.", status: 500 };
+
+  // One audit row per field that actually changed.
+  const auditRows = [];
+  for (const f of Object.keys(updates)) {
+    const oldVal = before[f] ?? null;
+    const newVal = updates[f];
+    if (oldVal !== newVal) {
+      auditRows.push({
+        store_id: storeId,
+        actor_id: user.id,
+        actor_email: user.email,
+        field: f,
+        old_value: oldVal,
+        new_value: newVal,
+      });
+    }
+  }
+  if (auditRows.length) {
+    await supa.from("store_vendor_audit").insert(auditRows);
+  }
+
+  return { store: after, changed: auditRows.length };
+}
+
+// ----------------------------------------------------------------------------
 // HTTP handler
 // ----------------------------------------------------------------------------
 function unwrap(result) {
@@ -456,6 +555,18 @@ export const handler = async (event) => {
       if (action === "my-tree") return unwrap(await getMyTree(supa, user));
       if (action === "birthdays") return unwrap(await getBirthdays(supa, user, params));
       return respond(400, { error: `unknown GET action: ${action}` });
+    }
+    if (event.httpMethod === "POST") {
+      let body = {};
+      try {
+        body = event.body ? JSON.parse(event.body) : {};
+      } catch {
+        return respond(400, { error: "invalid JSON body" });
+      }
+      if (action === "update-store-vendor") {
+        return unwrap(await updateStoreVendor(supa, user, body));
+      }
+      return respond(400, { error: `unknown POST action: ${action}` });
     }
     return respond(405, { error: "method not allowed" });
   } catch (e) {

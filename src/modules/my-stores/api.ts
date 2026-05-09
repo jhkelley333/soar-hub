@@ -12,9 +12,13 @@ async function authHeaders(): Promise<HeadersInit> {
   return { Authorization: `Bearer ${token}` };
 }
 
-async function request<T>(path: string): Promise<T> {
-  const headers = await authHeaders();
-  const res = await fetch(path, { headers });
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = {
+    ...(await authHeaders()),
+    ...(init.body ? { "Content-Type": "application/json" } : {}),
+    ...(init.headers ?? {}),
+  };
+  const res = await fetch(path, { ...init, headers });
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
     try {
@@ -36,4 +40,27 @@ export function fetchBirthdays(start: string, end: string): Promise<{ entries: B
   return request<{ entries: BirthdayEntry[] }>(
     `${FN}?action=birthdays&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`
   );
+}
+
+export interface VendorEditableFields {
+  food_vendor_name: string | null;
+  food_vendor_contact_name: string | null;
+  food_vendor_contact_phone: string | null;
+  food_vendor_contact_email: string | null;
+  food_vendor_account_number: string | null;
+}
+
+export interface UpdateStoreVendorResponse {
+  store: { id: string } & VendorEditableFields;
+  changed: number;
+}
+
+export function updateStoreVendor(
+  storeId: string,
+  fields: Partial<VendorEditableFields>
+): Promise<UpdateStoreVendorResponse> {
+  return request<UpdateStoreVendorResponse>(`${FN}?action=update-store-vendor`, {
+    method: "POST",
+    body: JSON.stringify({ store_id: storeId, ...fields }),
+  });
 }
