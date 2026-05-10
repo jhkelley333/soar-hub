@@ -9,8 +9,9 @@
 //   React "📝 Submit Work Order" button → opens Smartsheet form in a new tab
 //   → user fills form → Smartsheet creates the row directly. This function
 //   does NOT see the submission. Smartsheet's own automation fires alerts.
-//   (A POST createWorkOrder endpoint exists here for future use; no React
-//   caller invokes it as of this writing.)
+//   A previous POST createWorkOrder endpoint was removed in the security
+//   audit — it had no React caller and was reachable by every signed-in
+//   user. Re-add it (with a role gate) when a UI actually needs it.
 //
 // LISTING / READING
 //   React → fetch /.netlify/functions/work-orders
@@ -341,23 +342,6 @@ function cellsFromInput(input, columnMap) {
   return cells;
 }
 
-async function createWorkOrder(user, input) {
-  const sheet = await loadSheet();
-  const cols = buildColumnMap(sheet.columns);
-  const storeNum = String(input["Store Number"] ?? "").trim();
-  if (!user.canSeeAllStores && !user.storeNumbers.includes(storeNum)) {
-    return { error: "store not in your scope", status: 403 };
-  }
-  // New tickets always start in "Received" — never trust the client.
-  const cleaned = { ...input, Status: "Received" };
-  const cells = cellsFromInput(cleaned, cols);
-  const res = await ssRequest("POST", `/sheets/${SHEET_ID}/rows`, [
-    { toBottom: true, cells },
-  ]);
-  const newRow = res.result?.[0];
-  return newRow ? flattenRow(newRow, sheet.columns) : { ok: true };
-}
-
 async function updateWorkOrder(user, rowId, input) {
   const existing = await getWorkOrder(user, rowId);
   if (!existing) return { error: "not found or not in scope", status: 404 };
@@ -656,7 +640,10 @@ export const handler = async (event) => {
     if (event.httpMethod === "POST") {
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "upload") return unwrap(await uploadAttachment(user, body));
-      return unwrap(await createWorkOrder(user, body));
+      // createWorkOrder used to live here; removed in the security
+      // audit (no React caller, reachable by every signed-in user).
+      // Add a role-gated handler back when a UI needs it.
+      return respond(400, { error: `unknown POST action: ${action}` });
     }
 
     if (event.httpMethod === "PUT" || event.httpMethod === "PATCH") {

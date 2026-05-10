@@ -30,7 +30,7 @@ export const NAV: NavItem[] = [
   { to: "/",            label: "Dashboard",   icon: LayoutDashboard, roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/work-orders", label: "Work Orders", icon: Wrench,          roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/paf",         label: "PAF",         icon: FileSpreadsheet, roles: ["do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
-  { to: "/resources",   label: "Resources",   icon: BookOpen,        roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  { to: "/resources",   label: "Resources",   icon: BookOpen,        roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/team",        label: "My Team",     icon: Users,           roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/my-stores",   label: "My Stores",   icon: Building2,       roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
   { to: "/admin/org",   label: "Org Admin",   icon: Network,         roles: ["vp", "coo", "admin"] },
