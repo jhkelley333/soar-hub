@@ -609,6 +609,135 @@ async function updateStoreVendor(supa, user, body) {
 }
 
 // ----------------------------------------------------------------------------
+// update-store-attributes (POST)
+// ----------------------------------------------------------------------------
+//
+// Edit programs / drive-thru / stall data / third-party delivery from
+// the My Stores → store detail gear icon. Available to anyone with
+// store visibility above GM: admin, payroll, vp, coo (org-wide) and
+// any do/sdo/rvp whose visible scope includes the store. GMs are NOT
+// granted this path — they have vendor edit only.
+//
+// Plate IQ Email + Soar Company Name + store contact (email/phone/
+// address) are intentionally NOT in this whitelist. Those stay
+// admin-only via /admin/org.
+
+const ATTRIBUTE_EDITABLE_FIELDS = [
+  "has_apple_pay", "has_order_ahead", "has_outdoor_seating",
+  "has_drive_thru", "has_clearance_bar",
+  "drive_thru_lanes", "drive_thru_type",
+  "public_restroom_count",
+  "patio_pop_menu_count", "patio_pop_stall_numbers",
+  "order_ahead_stall_count", "order_ahead_stall_numbers",
+  "stall_pop_menu_count",
+  "has_trailer_stall", "trailer_stall_number",
+  "third_party_delivery",
+];
+
+const ATTRIBUTE_BOOL_FIELDS = new Set([
+  "has_apple_pay", "has_order_ahead", "has_outdoor_seating",
+  "has_drive_thru", "has_clearance_bar", "has_trailer_stall",
+]);
+const ATTRIBUTE_COUNT_FIELDS = new Set([
+  "public_restroom_count", "patio_pop_menu_count",
+  "order_ahead_stall_count", "stall_pop_menu_count",
+]);
+const ATTRIBUTE_TEXT_FIELDS = new Set([
+  "patio_pop_stall_numbers", "order_ahead_stall_numbers", "trailer_stall_number",
+]);
+
+async function callerCanEditStoreAttributes(supa, user, storeId) {
+  if (ORG_WIDE.has(user.role)) return true;
+  if (["do", "sdo", "rvp"].includes(user.role)) {
+    const visible = await callerVisibleStoreIds(supa, user);
+    return visible.includes(storeId);
+  }
+  // GMs and shift_managers do NOT get attribute edit access. GMs have
+  // vendor edit; shift_managers have read-only My Stores.
+  return false;
+}
+
+async function updateStoreAttributes(supa, user, body) {
+  const storeId = String(body?.store_id || "").trim();
+  if (!storeId) return { error: "store_id required.", status: 400 };
+
+  const allowed = await callerCanEditStoreAttributes(supa, user, storeId);
+  if (!allowed) return { error: "forbidden", status: 403 };
+
+  const updates = {};
+  for (const f of ATTRIBUTE_EDITABLE_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(body, f)) continue;
+    const raw = body[f];
+
+    if (ATTRIBUTE_BOOL_FIELDS.has(f)) {
+      if (typeof raw !== "boolean") {
+        return { error: `${f} must be a boolean.`, status: 400 };
+      }
+      updates[f] = raw;
+    } else if (ATTRIBUTE_COUNT_FIELDS.has(f)) {
+      const n = typeof raw === "number" ? raw : parseInt(String(raw), 10);
+      if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0 || n > 9999) {
+        return { error: `${f} must be a non-negative integer (<=9999).`, status: 400 };
+      }
+      updates[f] = n;
+    } else if (f === "drive_thru_lanes") {
+      if (raw === null) updates[f] = null;
+      else if (raw === 1 || raw === 2) updates[f] = raw;
+      else return { error: "drive_thru_lanes must be 1, 2, or null.", status: 400 };
+    } else if (f === "drive_thru_type") {
+      if (raw === null) updates[f] = null;
+      else if (raw === "single_pole_two_menus" || raw === "split_housing") {
+        updates[f] = raw;
+      } else {
+        return {
+          error: "drive_thru_type must be single_pole_two_menus, split_housing, or null.",
+          status: 400,
+        };
+      }
+    } else if (f === "third_party_delivery") {
+      if (!Array.isArray(raw)) {
+        return { error: "third_party_delivery must be an array.", status: 400 };
+      }
+      for (const item of raw) {
+        if (typeof item !== "string" || item.length > 50) {
+          return {
+            error: "third_party_delivery entries must be strings (max 50 chars).",
+            status: 400,
+          };
+        }
+      }
+      updates[f] = raw;
+    } else if (ATTRIBUTE_TEXT_FIELDS.has(f)) {
+      if (raw === null || (typeof raw === "string" && raw.trim() === "")) {
+        updates[f] = null;
+      } else if (typeof raw === "string") {
+        if (raw.length > 200) {
+          return { error: `${f} too long (max 200).`, status: 400 };
+        }
+        updates[f] = raw.trim();
+      } else {
+        return { error: `${f} must be a string or null.`, status: 400 };
+      }
+    }
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return { error: "no updatable fields provided.", status: 400 };
+  }
+
+  const selectCols = "id, " + ATTRIBUTE_EDITABLE_FIELDS.join(", ");
+  const { data: after, error: upErr } = await supa
+    .from("stores")
+    .update(updates)
+    .eq("id", storeId)
+    .select(selectCols)
+    .single();
+  if (upErr) return { error: upErr.message || "update failed.", status: 500 };
+
+  return { store: after, changed: Object.keys(updates).length };
+}
+
+// ----------------------------------------------------------------------------
 // store-vendor-audit (GET)
 // ----------------------------------------------------------------------------
 //
@@ -716,6 +845,9 @@ export const handler = async (event) => {
       }
       if (action === "update-store-vendor") {
         return unwrap(await updateStoreVendor(supa, user, body));
+      }
+      if (action === "update-store-attributes") {
+        return unwrap(await updateStoreAttributes(supa, user, body));
       }
       return respond(400, { error: `unknown POST action: ${action}` });
     }
