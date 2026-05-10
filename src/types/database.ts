@@ -50,12 +50,15 @@ export interface UserScope {
   created_at: string;
 }
 
+export type DriveThruType = "single_pole_two_menus" | "split_housing";
+
 export interface Store {
   id: string;
   number: string;
   name: string;
   district_id: string;
   phone: string | null;
+  email: string | null;
   city: string | null;
   state: string | null;
   is_active: boolean;
@@ -66,6 +69,25 @@ export interface Store {
   food_vendor_contact_phone: string | null;
   food_vendor_contact_email: string | null;
   food_vendor_account_number: string | null;
+  // Active programs
+  has_apple_pay: boolean;
+  has_order_ahead: boolean;
+  has_outdoor_seating: boolean;
+  has_drive_thru: boolean;
+  has_clearance_bar: boolean;
+  drive_thru_lanes: number | null;
+  drive_thru_type: DriveThruType | null;
+  public_restroom_count: number;
+  // Stall data
+  patio_pop_menu_count: number;
+  patio_pop_stall_numbers: string | null;
+  order_ahead_stall_count: number;
+  order_ahead_stall_numbers: string | null;
+  stall_pop_menu_count: number;
+  has_trailer_stall: boolean;
+  trailer_stall_number: string | null;
+  // Third-party delivery (provider keys: doordash | ubereats | grubhub | ezcater | postmates | …)
+  third_party_delivery: string[];
 }
 
 // Numeric tier for UI-side comparisons. Mirrors role_level() in SQL

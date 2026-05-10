@@ -16,80 +16,108 @@ import {
   type OrgBulkRowInput,
 } from "./api";
 
+// Bulk import semantics (post-0028 hardening):
+//   • Empty / missing column = "don't update this field" (partial update)
+//   • Literal value `NULL` (case-insensitive) = "explicitly clear to null"
+//   • Booleans accept true/false/yes/no/1/0
+//   • drive_thru_lanes: 1 or 2
+//   • drive_thru_type: single_pole_two_menus | split_housing
+//   • third_party_delivery: comma-list of provider keys, e.g.
+//     "doordash,ubereats,grubhub"
 const TEMPLATE_HEADERS = [
   "kind",
   "code",
   "name",
   "number",
   "phone",
+  "email",
   "address",
   "city",
   "state",
   "zip",
   "plate_iq_email",
   "soar_company_name",
+  "has_apple_pay",
+  "has_order_ahead",
+  "has_outdoor_seating",
+  "has_drive_thru",
+  "has_clearance_bar",
+  "drive_thru_lanes",
+  "drive_thru_type",
+  "public_restroom_count",
+  "patio_pop_menu_count",
+  "patio_pop_stall_numbers",
+  "order_ahead_stall_count",
+  "order_ahead_stall_numbers",
+  "stall_pop_menu_count",
+  "has_trailer_stall",
+  "trailer_stall_number",
+  "third_party_delivery",
   "parent_code",
   "is_active",
 ];
 
-const TEMPLATE_ROWS = [
+// Build a template row factory so we don't repeat 30 empty fields four
+// times below.
+function emptyTemplateRow(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const h of TEMPLATE_HEADERS) out[h] = "";
+  return out;
+}
+
+const TEMPLATE_ROWS: Record<string, string>[] = [
   {
+    ...emptyTemplateRow(),
     kind: "region",
     code: "R5",
     name: "Mountain West",
-    number: "",
-    phone: "",
-    address: "",
-    city: "",
-    state: "",
-    zip: "",
-    plate_iq_email: "",
-    soar_company_name: "",
-    parent_code: "",
     is_active: "true",
   },
   {
+    ...emptyTemplateRow(),
     kind: "area",
     code: "Area 12",
     name: "Denver Metro",
-    number: "",
-    phone: "",
-    address: "",
-    city: "",
-    state: "",
-    zip: "",
-    plate_iq_email: "",
-    soar_company_name: "",
     parent_code: "R5",
     is_active: "true",
   },
   {
+    ...emptyTemplateRow(),
     kind: "district",
     code: "D125",
     name: "Denver North",
-    number: "",
-    phone: "",
-    address: "",
-    city: "",
-    state: "",
-    zip: "",
-    plate_iq_email: "",
-    soar_company_name: "",
     parent_code: "Area 12",
     is_active: "true",
   },
   {
+    ...emptyTemplateRow(),
     kind: "store",
-    code: "",
     name: "Sample Store",
     number: "9999",
     phone: "5551234567",
+    email: "store9999@soarqsr.com",
     address: "100 Sample St",
     city: "Denver",
     state: "CO",
     zip: "80202",
     plate_iq_email: "plateiq+9999@example.com",
     soar_company_name: "Soar Holdings LLC",
+    has_apple_pay: "true",
+    has_order_ahead: "true",
+    has_outdoor_seating: "false",
+    has_drive_thru: "true",
+    has_clearance_bar: "true",
+    drive_thru_lanes: "2",
+    drive_thru_type: "split_housing",
+    public_restroom_count: "1",
+    patio_pop_menu_count: "4",
+    patio_pop_stall_numbers: "1,2,3,4",
+    order_ahead_stall_count: "2",
+    order_ahead_stall_numbers: "5,6",
+    stall_pop_menu_count: "8",
+    has_trailer_stall: "false",
+    trailer_stall_number: "",
+    third_party_delivery: "doordash,ubereats,grubhub",
     parent_code: "D125",
     is_active: "true",
   },
@@ -159,30 +187,37 @@ export function BulkOrgImportPage() {
       setParsed(null);
       return;
     }
-    const required = ["kind", "name", "parent_code"];
-    const missing = required.filter((h) => !(h in rows[0]));
-    if (missing.length > 0) {
+    // Required headers, partial-update friendly: just `kind` plus an
+    // identifier (`code` for non-stores or `number` for stores). All
+    // other columns are optional — empty cells skip on update, the
+    // literal "NULL" clears.
+    const headers = Object.keys(rows[0]);
+    if (!headers.includes("kind")) {
       setParseError(
-        `Missing required columns: ${missing.join(", ")}. Download the template if unsure.`
+        "Missing required column: kind. Download the template if unsure."
       );
       setParsed(null);
       return;
     }
-    const normalized: OrgBulkRowInput[] = rows.map((r) => ({
-      kind: r.kind,
-      code: r.code,
-      name: r.name,
-      number: r.number,
-      phone: r.phone,
-      address: r.address,
-      city: r.city,
-      state: r.state,
-      zip: r.zip,
-      plate_iq_email: r.plate_iq_email,
-      soar_company_name: r.soar_company_name,
-      parent_code: r.parent_code,
-      is_active: r.is_active,
-    }));
+    if (!headers.includes("code") && !headers.includes("number")) {
+      setParseError(
+        "Missing required column: include code (regions/areas/districts) or number (stores). Download the template if unsure."
+      );
+      setParsed(null);
+      return;
+    }
+    // Pass every recognized header through. The backend's bulkCell()
+    // helpers handle missing keys + "NULL" sentinel + type coercion.
+    const PASS_THROUGH = TEMPLATE_HEADERS;
+    const normalized: OrgBulkRowInput[] = rows.map((r) => {
+      const row: Record<string, string> = {};
+      for (const k of PASS_THROUGH) {
+        if (r[k as keyof typeof r] !== undefined) {
+          row[k] = r[k as keyof typeof r] as string;
+        }
+      }
+      return row as unknown as OrgBulkRowInput;
+    });
     setParsed(normalized);
     previewMut.mutate(normalized);
   }
@@ -259,7 +294,7 @@ export function BulkOrgImportPage() {
                 onChange={(e) => setRawText(e.target.value)}
                 rows={6}
                 className="mt-1 block w-full rounded-md border-0 bg-white px-3 py-2 font-mono text-xs text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
-                placeholder="kind,code,name,number,phone,address,city,state,zip,plate_iq_email,soar_company_name,parent_code,is_active"
+                placeholder="See template — empty cells skip; literal NULL clears."
               />
               <div className="mt-2 flex justify-end">
                 <Button

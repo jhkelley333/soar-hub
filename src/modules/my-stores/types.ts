@@ -15,6 +15,8 @@ export interface MyStoreTeamMember {
   profile_photo_url: string | null;
 }
 
+export type DriveThruType = "single_pole_two_menus" | "split_housing";
+
 export interface MyStoreNode {
   id: string;
   number: string;
@@ -22,6 +24,7 @@ export interface MyStoreNode {
   city: string | null;
   state: string | null;
   phone: string | null;
+  email: string | null;
   address: string | null;
   district_id: string | null;
   is_active: boolean;
@@ -32,6 +35,24 @@ export interface MyStoreNode {
   food_vendor_contact_phone: string | null;
   food_vendor_contact_email: string | null;
   food_vendor_account_number: string | null;
+  // Active programs
+  has_apple_pay: boolean;
+  has_order_ahead: boolean;
+  has_outdoor_seating: boolean;
+  has_drive_thru: boolean;
+  has_clearance_bar: boolean;
+  drive_thru_lanes: number | null;
+  drive_thru_type: DriveThruType | null;
+  public_restroom_count: number;
+  // Stall data
+  patio_pop_menu_count: number;
+  patio_pop_stall_numbers: string | null;
+  order_ahead_stall_count: number;
+  order_ahead_stall_numbers: string | null;
+  stall_pop_menu_count: number;
+  has_trailer_stall: boolean;
+  trailer_stall_number: string | null;
+  third_party_delivery: string[];
   team_members: MyStoreTeamMember[];
 }
 

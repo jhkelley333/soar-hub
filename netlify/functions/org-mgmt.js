@@ -105,7 +105,13 @@ async function buildTree(supa) {
     supa
       .from("stores")
       .select(
-        "id, number, name, phone, address, city, state, zip, district_id, is_active"
+        "id, number, name, phone, email, address, city, state, zip, district_id, is_active, " +
+        "plate_iq_email, soar_company_name, " +
+        "has_apple_pay, has_order_ahead, has_outdoor_seating, has_drive_thru, has_clearance_bar, " +
+        "drive_thru_lanes, drive_thru_type, public_restroom_count, " +
+        "patio_pop_menu_count, patio_pop_stall_numbers, " +
+        "order_ahead_stall_count, order_ahead_stall_numbers, stall_pop_menu_count, " +
+        "has_trailer_stall, trailer_stall_number, third_party_delivery"
       )
       .order("number"),
     supa
@@ -151,11 +157,30 @@ async function buildTree(supa) {
       number: s.number,
       name: s.name,
       phone: s.phone,
+      email: s.email,
       address: s.address,
       city: s.city,
       state: s.state,
       zip: s.zip,
       is_active: s.is_active,
+      plate_iq_email: s.plate_iq_email,
+      soar_company_name: s.soar_company_name,
+      has_apple_pay: s.has_apple_pay,
+      has_order_ahead: s.has_order_ahead,
+      has_outdoor_seating: s.has_outdoor_seating,
+      has_drive_thru: s.has_drive_thru,
+      has_clearance_bar: s.has_clearance_bar,
+      drive_thru_lanes: s.drive_thru_lanes,
+      drive_thru_type: s.drive_thru_type,
+      public_restroom_count: s.public_restroom_count,
+      patio_pop_menu_count: s.patio_pop_menu_count,
+      patio_pop_stall_numbers: s.patio_pop_stall_numbers,
+      order_ahead_stall_count: s.order_ahead_stall_count,
+      order_ahead_stall_numbers: s.order_ahead_stall_numbers,
+      stall_pop_menu_count: s.stall_pop_menu_count,
+      has_trailer_stall: s.has_trailer_stall,
+      trailer_stall_number: s.trailer_stall_number,
+      third_party_delivery: s.third_party_delivery ?? [],
       managers: lookup("store", s.id),
     });
   }
@@ -248,7 +273,21 @@ const EDITABLE_FIELDS = {
   region: ["code", "name", "is_active"],
   area: ["code", "name", "is_active"],
   district: ["code", "name", "is_active"],
-  store: ["number", "name", "phone", "address", "city", "state", "zip", "is_active"],
+  store: [
+    "number", "name",
+    "phone", "email", "address", "city", "state", "zip",
+    "is_active",
+    "plate_iq_email", "soar_company_name",
+    "has_apple_pay", "has_order_ahead", "has_outdoor_seating",
+    "has_drive_thru", "has_clearance_bar",
+    "drive_thru_lanes", "drive_thru_type",
+    "public_restroom_count",
+    "patio_pop_menu_count", "patio_pop_stall_numbers",
+    "order_ahead_stall_count", "order_ahead_stall_numbers",
+    "stall_pop_menu_count",
+    "has_trailer_stall", "trailer_stall_number",
+    "third_party_delivery",
+  ],
 };
 
 // Per-field validators. Run after the EDITABLE_FIELDS allowlist filter
@@ -257,15 +296,41 @@ const EDITABLE_FIELDS = {
 // strings on nullable fields coerce to null so `where ... is null`
 // queries behave predictably; empty on required fields fails.
 const FIELD_RULES = {
-  code:    { type: "string", maxLen: 50,  trim: true, required: true },
-  name:    { type: "string", maxLen: 200, trim: true, required: true },
-  number:  { type: "string", maxLen: 20,  trim: true, required: true },
+  code:    { type: "string",  maxLen: 50,  trim: true, required: true },
+  name:    { type: "string",  maxLen: 200, trim: true, required: true },
+  number:  { type: "string",  maxLen: 20,  trim: true, required: true },
   phone:   { type: "phone10", nullable: true },
-  address: { type: "string", maxLen: 200, trim: true, nullable: true },
-  city:    { type: "string", maxLen: 100, trim: true, nullable: true },
-  state:   { type: "string", maxLen: 50,  trim: true, nullable: true },
-  zip:     { type: "string", maxLen: 20,  trim: true, nullable: true },
+  email:   { type: "string",  maxLen: 200, trim: true, nullable: true },
+  address: { type: "string",  maxLen: 200, trim: true, nullable: true },
+  city:    { type: "string",  maxLen: 100, trim: true, nullable: true },
+  state:   { type: "string",  maxLen: 50,  trim: true, nullable: true },
+  zip:     { type: "string",  maxLen: 20,  trim: true, nullable: true },
   is_active: { type: "boolean" },
+  // Operations / vendor (admin-only, edited via Org admin or bulk import):
+  plate_iq_email:    { type: "string", maxLen: 200, trim: true, nullable: true },
+  soar_company_name: { type: "string", maxLen: 200, trim: true, nullable: true },
+  // Active programs (booleans):
+  has_apple_pay:        { type: "boolean" },
+  has_order_ahead:      { type: "boolean" },
+  has_outdoor_seating:  { type: "boolean" },
+  has_drive_thru:       { type: "boolean" },
+  has_clearance_bar:    { type: "boolean" },
+  // Drive-thru detail:
+  drive_thru_lanes: { type: "intEnum", values: [1, 2], nullable: true },
+  drive_thru_type:  { type: "stringEnum", values: ["single_pole_two_menus", "split_housing"], nullable: true },
+  // Counts:
+  public_restroom_count:   { type: "int", min: 0, max: 99 },
+  patio_pop_menu_count:    { type: "int", min: 0, max: 999 },
+  order_ahead_stall_count: { type: "int", min: 0, max: 999 },
+  stall_pop_menu_count:    { type: "int", min: 0, max: 999 },
+  // Stall numbers (free-text comma lists):
+  patio_pop_stall_numbers:   { type: "string", maxLen: 200, trim: true, nullable: true },
+  order_ahead_stall_numbers: { type: "string", maxLen: 200, trim: true, nullable: true },
+  // Trailer stall:
+  has_trailer_stall:    { type: "boolean" },
+  trailer_stall_number: { type: "string", maxLen: 50, trim: true, nullable: true },
+  // Third-party delivery: JSON array of provider keys.
+  third_party_delivery: { type: "stringArray", maxLen: 50 },
 };
 
 function validateField(key, raw) {
@@ -275,14 +340,21 @@ function validateField(key, raw) {
   // null / empty-string handling first.
   if (raw === null || (typeof raw === "string" && raw.trim() === "")) {
     if (rule.required) return { error: `"${key}" is required.` };
+    if (rule.type === "boolean") return { value: false };
+    if (rule.type === "int") return { value: 0 };
+    if (rule.type === "stringArray") return { value: [] };
     return { value: null };
   }
 
   if (rule.type === "boolean") {
-    if (typeof raw !== "boolean") {
-      return { error: `"${key}" must be true or false.` };
+    // Accept literal booleans and the same string set parseBoolish handles.
+    if (typeof raw === "boolean") return { value: raw };
+    if (typeof raw === "string") {
+      const s = raw.trim().toLowerCase();
+      if (["true", "t", "yes", "y", "1"].includes(s)) return { value: true };
+      if (["false", "f", "no", "n", "0"].includes(s)) return { value: false };
     }
-    return { value: raw };
+    return { error: `"${key}" must be true or false.` };
   }
 
   if (rule.type === "phone10") {
@@ -305,6 +377,58 @@ function validateField(key, raw) {
       return { error: `"${key}" is too long (max ${rule.maxLen} chars).` };
     }
     return { value: v };
+  }
+
+  if (rule.type === "stringEnum") {
+    if (typeof raw !== "string") return { error: `"${key}" must be a string.` };
+    const v = raw.trim();
+    if (!rule.values.includes(v)) {
+      return { error: `"${key}" must be one of: ${rule.values.join(", ")}.` };
+    }
+    return { value: v };
+  }
+
+  if (rule.type === "int") {
+    const n = typeof raw === "number" ? raw : parseInt(String(raw).trim(), 10);
+    if (!Number.isFinite(n) || !Number.isInteger(n)) {
+      return { error: `"${key}" must be an integer.` };
+    }
+    if (rule.min !== undefined && n < rule.min) {
+      return { error: `"${key}" must be >= ${rule.min}.` };
+    }
+    if (rule.max !== undefined && n > rule.max) {
+      return { error: `"${key}" must be <= ${rule.max}.` };
+    }
+    return { value: n };
+  }
+
+  if (rule.type === "intEnum") {
+    const n = typeof raw === "number" ? raw : parseInt(String(raw).trim(), 10);
+    if (!rule.values.includes(n)) {
+      return { error: `"${key}" must be one of: ${rule.values.join(", ")}.` };
+    }
+    return { value: n };
+  }
+
+  if (rule.type === "stringArray") {
+    // Accept either a JS array or a comma-separated string (for CSV).
+    let arr;
+    if (Array.isArray(raw)) {
+      arr = raw;
+    } else if (typeof raw === "string") {
+      arr = raw.split(",").map((s) => s.trim()).filter(Boolean);
+    } else {
+      return { error: `"${key}" must be an array or comma-separated string.` };
+    }
+    for (const item of arr) {
+      if (typeof item !== "string") {
+        return { error: `"${key}" entries must be strings.` };
+      }
+      if (rule.maxLen && item.length > rule.maxLen) {
+        return { error: `"${key}" entry is too long (max ${rule.maxLen}).` };
+      }
+    }
+    return { value: arr };
   }
 
   return { error: `Unknown validator type for "${key}".` };
@@ -642,6 +766,54 @@ function parseBoolish(v) {
   return true;
 }
 
+// Bulk-import cells use SKIP-IF-EMPTY semantics — a column missing
+// from the CSV (or present with an empty value) is treated as
+// "don't change this field". To explicitly clear a value, use the
+// literal string "NULL" (case-insensitive) in the cell.
+//
+// Returns:
+//   undefined — the cell was not present, or was empty; skip on update.
+//   null      — explicit clear ("NULL"); will set the column to null.
+//   string    — the trimmed value.
+function bulkCell(row, key) {
+  if (!(key in row)) return undefined;
+  const v = row[key];
+  if (v === null || v === undefined) return undefined;
+  const s = String(v).trim();
+  if (s === "") return undefined;
+  if (s.toLowerCase() === "null") return null;
+  return s;
+}
+
+// Boolean cell with SKIP-IF-EMPTY semantics. Accepts the same string
+// set parseBoolish does for non-empty values.
+function bulkBoolCell(row, key) {
+  const raw = bulkCell(row, key);
+  if (raw === undefined) return undefined;
+  if (raw === null) return null;
+  const s = String(raw).toLowerCase();
+  if (["true", "t", "yes", "y", "1"].includes(s)) return true;
+  if (["false", "f", "no", "n", "0"].includes(s)) return false;
+  return undefined; // unrecognized → treat as skip rather than poison the row
+}
+
+// Integer cell with SKIP-IF-EMPTY semantics.
+function bulkIntCell(row, key) {
+  const raw = bulkCell(row, key);
+  if (raw === undefined) return undefined;
+  if (raw === null) return null;
+  const n = parseInt(String(raw), 10);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+// JSON-array cell from a comma-separated string. SKIP-IF-EMPTY.
+function bulkArrayCell(row, key) {
+  const raw = bulkCell(row, key);
+  if (raw === undefined) return undefined;
+  if (raw === null) return [];
+  return String(raw).split(",").map((s) => s.trim()).filter(Boolean);
+}
+
 async function orgBulkValidate(supa, rows) {
   const [
     { data: regions },
@@ -673,16 +845,17 @@ async function orgBulkValidate(supa, rows) {
     const errors = [];
     const warnings = [];
     const kind = String(row.kind ?? "").toLowerCase().trim();
+    // The structural fields (code/name/number/parent_code) are NOT
+    // optional in the same way attribute fields are. They identify
+    // the row, so we read them eagerly and validate.
     const code = String(row.code ?? "").trim();
     const name = String(row.name ?? "").trim();
     const number = String(row.number ?? "").trim();
     const parentCode = String(row.parent_code ?? "").trim();
-    const isActive = parseBoolish(row.is_active);
 
     if (!ORG_KINDS.includes(kind)) {
       errors.push(`Invalid kind "${kind}". Must be region/area/district/store.`);
     }
-    if (!name) errors.push("name is required.");
 
     let action = "create";
     let existing = null;
@@ -741,26 +914,51 @@ async function orgBulkValidate(supa, rows) {
       }
     }
 
+    // Name is required for create. On update, an empty/missing name
+    // means "don't touch the name" (partial-update semantics).
+    if (action === "create" && !name) {
+      errors.push("name is required for new rows.");
+    }
+
     return {
       row: i + 1,
       kind,
+      // Identifiers — null when missing.
       code: code || null,
-      name,
+      name: name || null,
       number: number || null,
-      phone: String(row.phone ?? "").trim() || null,
-      address: String(row.address ?? "").trim() || null,
-      city: String(row.city ?? "").trim() || null,
-      state: String(row.state ?? "").trim() || null,
-      zip: String(row.zip ?? "").trim() || null,
-      // Operations / vendor data — only meaningful on store rows; columns
-      // are read universally so a CSV that includes them on region/area/
-      // district rows just ignores them at write time. Food vendor info
-      // is intentionally NOT in the bulk schema (it's GM-editable in the
-      // app and changes more often than admin bulk uploads).
-      plate_iq_email: String(row.plate_iq_email ?? "").trim() || null,
-      soar_company_name: String(row.soar_company_name ?? "").trim() || null,
       parent_code: parentCode || null,
-      is_active: isActive,
+      // Editable fields — undefined means "skip / don't update". null
+      // means "set to null". On create we coalesce undefined → safe
+      // defaults at write time (see orgBulkImport).
+      phone:                     bulkCell(row, "phone"),
+      email:                     bulkCell(row, "email"),
+      address:                   bulkCell(row, "address"),
+      city:                      bulkCell(row, "city"),
+      state:                     bulkCell(row, "state"),
+      zip:                       bulkCell(row, "zip"),
+      plate_iq_email:            bulkCell(row, "plate_iq_email"),
+      soar_company_name:         bulkCell(row, "soar_company_name"),
+      has_apple_pay:             bulkBoolCell(row, "has_apple_pay"),
+      has_order_ahead:           bulkBoolCell(row, "has_order_ahead"),
+      has_outdoor_seating:       bulkBoolCell(row, "has_outdoor_seating"),
+      has_drive_thru:            bulkBoolCell(row, "has_drive_thru"),
+      has_clearance_bar:         bulkBoolCell(row, "has_clearance_bar"),
+      drive_thru_lanes:          bulkIntCell(row, "drive_thru_lanes"),
+      drive_thru_type:           bulkCell(row, "drive_thru_type"),
+      public_restroom_count:     bulkIntCell(row, "public_restroom_count"),
+      patio_pop_menu_count:      bulkIntCell(row, "patio_pop_menu_count"),
+      patio_pop_stall_numbers:   bulkCell(row, "patio_pop_stall_numbers"),
+      order_ahead_stall_count:   bulkIntCell(row, "order_ahead_stall_count"),
+      order_ahead_stall_numbers: bulkCell(row, "order_ahead_stall_numbers"),
+      stall_pop_menu_count:      bulkIntCell(row, "stall_pop_menu_count"),
+      has_trailer_stall:         bulkBoolCell(row, "has_trailer_stall"),
+      trailer_stall_number:      bulkCell(row, "trailer_stall_number"),
+      third_party_delivery:      bulkArrayCell(row, "third_party_delivery"),
+      // is_active — same SKIP-IF-EMPTY semantics. Existing CSVs with
+      // empty is_active used to silently set true; that was wrong on
+      // updates and is now skipped instead.
+      is_active:                 bulkBoolCell(row, "is_active"),
       action,
       existing_id: existing?.id ?? null,
       parent_id: parentId,
@@ -843,23 +1041,50 @@ async function orgBulkImport(supa, user, body) {
       continue;
     }
 
+    // Helper: copy any defined keys from `r` onto `target`. Undefined
+    // values mean "the CSV said to skip this column", so we leave the
+    // existing DB value alone on update (or fall back to column
+    // defaults on insert). nulls flow through — they're explicit
+    // clears from the literal "NULL" CSV cell.
+    function pickDefined(target, keys) {
+      for (const k of keys) {
+        if (r[k] !== undefined) target[k] = r[k];
+      }
+    }
+
+    const STORE_FIELDS = [
+      "phone", "email", "address", "city", "state", "zip",
+      "plate_iq_email", "soar_company_name",
+      "has_apple_pay", "has_order_ahead", "has_outdoor_seating",
+      "has_drive_thru", "has_clearance_bar",
+      "drive_thru_lanes", "drive_thru_type",
+      "public_restroom_count",
+      "patio_pop_menu_count", "patio_pop_stall_numbers",
+      "order_ahead_stall_count", "order_ahead_stall_numbers",
+      "stall_pop_menu_count",
+      "has_trailer_stall", "trailer_stall_number",
+      "third_party_delivery",
+    ];
+
     try {
       if (r.action === "update") {
-        const updates = { name: r.name, is_active: r.is_active };
+        const updates = {};
+        if (r.name) updates.name = r.name;
+        if (r.is_active !== undefined && r.is_active !== null) {
+          updates.is_active = r.is_active;
+        }
         if (r.kind === "store") {
-          updates.number = r.number;
-          updates.phone = r.phone;
-          updates.address = r.address;
-          updates.city = r.city;
-          updates.state = r.state;
-          updates.zip = r.zip;
-          updates.plate_iq_email = r.plate_iq_email;
-          updates.soar_company_name = r.soar_company_name;
+          if (r.number) updates.number = r.number;
+          pickDefined(updates, STORE_FIELDS);
           if (parentId) updates.district_id = parentId;
         } else {
-          updates.code = r.code;
+          if (r.code) updates.code = r.code;
           if (r.kind === "area" && parentId) updates.region_id = parentId;
           if (r.kind === "district" && parentId) updates.area_id = parentId;
+        }
+        if (Object.keys(updates).length === 0) {
+          results.push({ ...r, status: "updated", node_id: r.existing_id, message: "No changes." });
+          continue;
         }
         const { error } = await supa
           .from(TABLE[r.kind])
@@ -879,16 +1104,15 @@ async function orgBulkImport(supa, user, body) {
         });
         results.push({ ...r, status: "updated", node_id: r.existing_id });
       } else {
-        const insert = { name: r.name, is_active: r.is_active };
+        // Create — required fields always present (validated above).
+        const insert = { name: r.name };
+        // is_active defaults to true at column level if not explicitly set.
+        if (r.is_active !== undefined && r.is_active !== null) {
+          insert.is_active = r.is_active;
+        }
         if (r.kind === "store") {
           insert.number = r.number;
-          insert.phone = r.phone;
-          insert.address = r.address;
-          insert.city = r.city;
-          insert.state = r.state;
-          insert.zip = r.zip;
-          insert.plate_iq_email = r.plate_iq_email;
-          insert.soar_company_name = r.soar_company_name;
+          pickDefined(insert, STORE_FIELDS);
           insert.district_id = parentId;
         } else {
           insert.code = r.code;

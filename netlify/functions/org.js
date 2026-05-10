@@ -198,10 +198,15 @@ async function getMyTree(supa, user) {
       supa
         .from("stores")
         .select(
-          "id, number, name, city, state, phone, address, district_id, is_active, " +
+          "id, number, name, city, state, phone, email, address, district_id, is_active, " +
             "plate_iq_email, soar_company_name, food_vendor_name, " +
             "food_vendor_contact_name, food_vendor_contact_phone, " +
-            "food_vendor_contact_email, food_vendor_account_number"
+            "food_vendor_contact_email, food_vendor_account_number, " +
+            "has_apple_pay, has_order_ahead, has_outdoor_seating, " +
+            "has_drive_thru, has_clearance_bar, drive_thru_lanes, drive_thru_type, " +
+            "public_restroom_count, patio_pop_menu_count, patio_pop_stall_numbers, " +
+            "order_ahead_stall_count, order_ahead_stall_numbers, stall_pop_menu_count, " +
+            "has_trailer_stall, trailer_stall_number, third_party_delivery"
         )
         .in("id", visibleStoreIds)
         .order("number"),
