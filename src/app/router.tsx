@@ -51,7 +51,14 @@ export const router = createBrowserRouter([
           </ProtectedRoute>
         ),
       },
-      { path: "resources", element: <ResourcesPage /> },
+      {
+        path: "resources",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <ResourcesPage />
+          </ProtectedRoute>
+        ),
+      },
       { path: "account", element: <AccountPage /> },
       { path: "my-stores", element: <MyStoresPage /> },
       {
