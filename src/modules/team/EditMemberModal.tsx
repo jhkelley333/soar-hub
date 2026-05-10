@@ -69,6 +69,8 @@ export function EditMemberModal({
   const [phone, setPhone] = useState("");
   const [role, setRole] = useState<UserRole>("shift_manager");
   const [scopeId, setScopeId] = useState<string>("");
+  const [startDate, setStartDate] = useState("");
+  const [gmAssignedDate, setGmAssignedDate] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   // Hydrate the form whenever the modal opens for a (different) member.
@@ -79,6 +81,8 @@ export function EditMemberModal({
       setRole(member.role);
       // Take the first scope as the source of truth (single-scope model)
       setScopeId(member.scopes[0]?.scope_id ?? "");
+      setStartDate(member.start_date ?? "");
+      setGmAssignedDate(member.gm_assigned_date ?? "");
       setError(null);
     }
   }, [open, member]);
@@ -209,6 +213,8 @@ export function EditMemberModal({
       role,
       scope_type: scopeKind,
       scope_id: scopeKind === "global" ? null : scopeId,
+      start_date: startDate.trim() === "" ? null : startDate,
+      gm_assigned_date: gmAssignedDate.trim() === "" ? null : gmAssignedDate,
     });
   }
 
@@ -339,6 +345,35 @@ export function EditMemberModal({
                   </select>
                 </div>
               )}
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <Label htmlFor="edit-start-date">Start date</Label>
+                  <Input
+                    id="edit-start-date"
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                  />
+                  <p className="mt-1 text-[11px] text-zinc-500">
+                    When they joined SOAR. Empty to clear.
+                  </p>
+                </div>
+                {role === "gm" && (
+                  <div>
+                    <Label htmlFor="edit-gm-assigned">GM assigned date</Label>
+                    <Input
+                      id="edit-gm-assigned"
+                      type="date"
+                      value={gmAssignedDate}
+                      onChange={(e) => setGmAssignedDate(e.target.value)}
+                    />
+                    <p className="mt-1 text-[11px] text-zinc-500">
+                      When they took over their current store.
+                    </p>
+                  </div>
+                )}
+              </div>
             </>
           )}
 

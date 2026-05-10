@@ -237,6 +237,57 @@ async function listManaged(supa, manager) {
     scopes: scopesByUser[m.id] ?? [],
   }));
 
+  // Pull the rest of the per-profile fields the My Team UI surfaces:
+  // preferred name, avatar, birthday + show_birthday, shirt size, CFM
+  // cert info, leadership-managed start dates, and primary store id so
+  // the GM-assigned-date can be hung off the right store on the UI.
+  const { data: extras } = await supa
+    .from("profiles")
+    .select(
+      "id, preferred_name, profile_photo_url, birthday, show_birthday, " +
+        "shirt_size, favorite_quote, cfm_cert_number, cfm_issued_at, " +
+        "cfm_expires_at, start_date, gm_assigned_date, primary_store_id"
+    )
+    .in("id", members.map((m) => m.id));
+  const extrasById = Object.fromEntries((extras ?? []).map((e) => [e.id, e]));
+
+  // Resolve primary store number/name once so the UI doesn't need a
+  // second query to label the GM's home store.
+  const primaryStoreIds = Array.from(
+    new Set(
+      (extras ?? [])
+        .map((e) => e.primary_store_id)
+        .filter(Boolean)
+    )
+  );
+  let primaryStoreById = {};
+  if (primaryStoreIds.length) {
+    const { data: ps } = await supa
+      .from("stores")
+      .select("id, number, name")
+      .in("id", primaryStoreIds);
+    primaryStoreById = Object.fromEntries((ps ?? []).map((s) => [s.id, s]));
+  }
+
+  for (const row of enriched) {
+    const e = extrasById[row.id] ?? {};
+    row.preferred_name = e.preferred_name ?? null;
+    row.profile_photo_url = e.profile_photo_url ?? null;
+    row.birthday = e.birthday ?? null;
+    row.show_birthday = e.show_birthday !== false;
+    row.shirt_size = e.shirt_size ?? null;
+    row.favorite_quote = e.favorite_quote ?? null;
+    row.cfm_cert_number = e.cfm_cert_number ?? null;
+    row.cfm_issued_at = e.cfm_issued_at ?? null;
+    row.cfm_expires_at = e.cfm_expires_at ?? null;
+    row.start_date = e.start_date ?? null;
+    row.gm_assigned_date = e.gm_assigned_date ?? null;
+    row.primary_store_id = e.primary_store_id ?? null;
+    const ps = e.primary_store_id ? primaryStoreById[e.primary_store_id] : null;
+    row.primary_store_number = ps?.number ?? null;
+    row.primary_store_name = ps?.name ?? null;
+  }
+
   return { user: manager, members: enriched };
 }
 
@@ -638,6 +689,23 @@ async function updateUser(supa, manager, body) {
   if (body.full_name !== undefined) {
     const trimmed = String(body.full_name).trim();
     updates.full_name = trimmed || null;
+  }
+
+  // Start date / GM-assigned date — leadership-managed HR fields. Empty
+  // string clears to null; otherwise must look like YYYY-MM-DD so a
+  // bad client can't poison the column with garbage that breaks date
+  // arithmetic on read.
+  for (const f of ["start_date", "gm_assigned_date"]) {
+    if (body[f] !== undefined) {
+      const raw = body[f];
+      if (raw === null || (typeof raw === "string" && raw.trim() === "")) {
+        updates[f] = null;
+      } else if (typeof raw === "string" && /^\d{4}-\d{2}-\d{2}$/.test(raw.trim())) {
+        updates[f] = raw.trim();
+      } else {
+        return { error: `${f} must be YYYY-MM-DD or empty.`, status: 400 };
+      }
+    }
   }
 
   // Active state
