@@ -752,6 +752,13 @@ async function orgBulkValidate(supa, rows) {
       city: String(row.city ?? "").trim() || null,
       state: String(row.state ?? "").trim() || null,
       zip: String(row.zip ?? "").trim() || null,
+      // Operations / vendor data — only meaningful on store rows; columns
+      // are read universally so a CSV that includes them on region/area/
+      // district rows just ignores them at write time. Food vendor info
+      // is intentionally NOT in the bulk schema (it's GM-editable in the
+      // app and changes more often than admin bulk uploads).
+      plate_iq_email: String(row.plate_iq_email ?? "").trim() || null,
+      soar_company_name: String(row.soar_company_name ?? "").trim() || null,
       parent_code: parentCode || null,
       is_active: isActive,
       action,
@@ -846,6 +853,8 @@ async function orgBulkImport(supa, user, body) {
           updates.city = r.city;
           updates.state = r.state;
           updates.zip = r.zip;
+          updates.plate_iq_email = r.plate_iq_email;
+          updates.soar_company_name = r.soar_company_name;
           if (parentId) updates.district_id = parentId;
         } else {
           updates.code = r.code;
@@ -878,6 +887,8 @@ async function orgBulkImport(supa, user, body) {
           insert.city = r.city;
           insert.state = r.state;
           insert.zip = r.zip;
+          insert.plate_iq_email = r.plate_iq_email;
+          insert.soar_company_name = r.soar_company_name;
           insert.district_id = parentId;
         } else {
           insert.code = r.code;

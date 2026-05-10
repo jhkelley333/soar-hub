@@ -26,6 +26,8 @@ const TEMPLATE_HEADERS = [
   "city",
   "state",
   "zip",
+  "plate_iq_email",
+  "soar_company_name",
   "parent_code",
   "is_active",
 ];
@@ -41,6 +43,8 @@ const TEMPLATE_ROWS = [
     city: "",
     state: "",
     zip: "",
+    plate_iq_email: "",
+    soar_company_name: "",
     parent_code: "",
     is_active: "true",
   },
@@ -54,6 +58,8 @@ const TEMPLATE_ROWS = [
     city: "",
     state: "",
     zip: "",
+    plate_iq_email: "",
+    soar_company_name: "",
     parent_code: "R5",
     is_active: "true",
   },
@@ -67,6 +73,8 @@ const TEMPLATE_ROWS = [
     city: "",
     state: "",
     zip: "",
+    plate_iq_email: "",
+    soar_company_name: "",
     parent_code: "Area 12",
     is_active: "true",
   },
@@ -80,6 +88,8 @@ const TEMPLATE_ROWS = [
     city: "Denver",
     state: "CO",
     zip: "80202",
+    plate_iq_email: "plateiq+9999@example.com",
+    soar_company_name: "Soar Holdings LLC",
     parent_code: "D125",
     is_active: "true",
   },
@@ -168,6 +178,8 @@ export function BulkOrgImportPage() {
       city: r.city,
       state: r.state,
       zip: r.zip,
+      plate_iq_email: r.plate_iq_email,
+      soar_company_name: r.soar_company_name,
       parent_code: r.parent_code,
       is_active: r.is_active,
     }));
@@ -247,7 +259,7 @@ export function BulkOrgImportPage() {
                 onChange={(e) => setRawText(e.target.value)}
                 rows={6}
                 className="mt-1 block w-full rounded-md border-0 bg-white px-3 py-2 font-mono text-xs text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
-                placeholder="kind,code,name,number,phone,address,city,state,zip,parent_code,is_active"
+                placeholder="kind,code,name,number,phone,address,city,state,zip,plate_iq_email,soar_company_name,parent_code,is_active"
               />
               <div className="mt-2 flex justify-end">
                 <Button
