@@ -1,1 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="6" fill="#0a0a0a"/><path d="M9 22V10h6.5a3.5 3.5 0 010 7H12v5H9zm3-7.5h3a1 1 0 100-2h-3v2zm10 7.5l-2.5-5h-1.5v5h-3V10h6.5a3.5 3.5 0 011.4 6.7l2.6 5.3H22z" fill="#fafafa"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- Midnight rounded tile so the white cup reads on light browser tabs -->
+  <rect width="32" height="32" rx="6" fill="#0B0E14"/>
+  <!-- Straw, top-right of the lid -->
+  <rect x="19" y="3" width="2.5" height="6" rx="0.6" fill="#ffffff" opacity="0.85"/>
+  <!-- Lid -->
+  <rect x="6" y="8" width="20" height="3.5" rx="0.8" fill="#ffffff"/>
+  <!-- Cup body trapezoid -->
+  <path d="M8 11.5 L24 11.5 L21.5 28 Q21.5 29.5 20 29.5 L12 29.5 Q10.5 29.5 10.5 28 Z" fill="#ffffff"/>
+  <!-- Accent stripe -->
+  <path d="M9.2 18.5 L22.8 18.5 L22.2 22.5 L9.8 22.5 Z" fill="#E40046"/>
+</svg>
