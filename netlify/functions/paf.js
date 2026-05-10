@@ -74,6 +74,22 @@ const STATUSES = new Set([
   "Processed",
 ]);
 
+// Source statuses that are safe to flip to "Processed". Pending SDO
+// Approval and Needs Approval are deliberately excluded — those still
+// need their respective sign-off step. Rejected and Processed are
+// terminal (already-handled) and excluded for idempotency.
+const PROCESSABLE_STATUSES = new Set(["Pending", "Approved", "Needs Info"]);
+
+// Source statuses from which a PAF can be rejected. Processed is
+// terminal so we can't undo payroll; Rejected is a no-op (idempotency).
+const REJECTABLE_STATUSES = new Set([
+  "Pending",
+  "Pending SDO Approval",
+  "Approved",
+  "Needs Approval",
+  "Needs Info",
+]);
+
 // Light in-process cache for the form config so list/submit don't hit
 // the DB every call. Same TTL as paf-config.js.
 const CACHE_TTL_MS = 60 * 1000;
@@ -725,8 +741,11 @@ async function rejectPaf(supa, user, body) {
     .maybeSingle();
   if (fetchErr) return { error: fetchErr.message, status: 500 };
   if (!existing) return { error: "PAF not found.", status: 404 };
-  if (existing.status === "Processed") {
-    return { error: "PAF is already Processed; cannot reject.", status: 400 };
+  if (!REJECTABLE_STATUSES.has(existing.status)) {
+    return {
+      error: `Cannot reject a PAF in status "${existing.status}".`,
+      status: 400,
+    };
   }
 
   const { error } = await supa
@@ -837,9 +856,22 @@ async function needsApprovalPaf(supa, user, body) {
 // ----------------------------------------------------------------------------
 // token-approve — public; valid token + not expired -> Approved
 // ----------------------------------------------------------------------------
+//
+// SECURITY: the clicker is anonymous (this is a public endpoint reached
+// via the email link), so we DO NOT trust any email submitted in the
+// body. The only field that can name "the approver of record" is the
+// approving_email that Payroll/Admin set when issuing the token. A
+// forwarded link can therefore approve the PAF, but cannot impersonate
+// a different identity in the audit log or notification email.
+//
+// Concurrency: two clicks of the same link race. We make the update
+// conditional on (id, action_token) so only the first attempt that
+// still sees the original token wins; the second sees zero rows
+// updated and returns 409. Without this both updates would succeed,
+// the audit log would record two token-approved rows, and the second
+// approved_at would silently overwrite the first.
 async function tokenApprove(supa, body) {
   const token = sanitizeText(body?.token, 200);
-  const clickerEmail = sanitizeText(body?.email, 200).toLowerCase() || null;
   if (!token) return { error: "token is required.", status: 400 };
 
   const { data: existing, error: fetchErr } = await supa
@@ -856,22 +888,27 @@ async function tokenApprove(supa, body) {
     return { error: "PAF is no longer awaiting approval.", status: 400 };
   }
 
-  const { error } = await supa
+  const { data: updated, error } = await supa
     .from("paf_submissions")
     .update({
       status: "Approved",
       approved_at: new Date().toISOString(),
-      approved_by_email: clickerEmail || existing.approving_email,
+      approved_by_email: existing.approving_email,
       action_token: null,
       token_expires_at: null,
     })
-    .eq("id", existing.id);
+    .eq("id", existing.id)
+    .eq("action_token", token)
+    .select("id");
   if (error) return { error: error.message, status: 500 };
+  if (!updated || updated.length === 0) {
+    return { error: "Already approved or expired.", status: 409 };
+  }
 
   await logAudit(supa, {
     paf_id: existing.id,
     actor_id: null,
-    actor_email: clickerEmail || existing.approving_email,
+    actor_email: existing.approving_email,
     action: "token-approved",
     detail: {
       employee_name: existing.employee_name,
@@ -1130,8 +1167,15 @@ async function markProcessed(supa, user, body) {
     .maybeSingle();
   if (fetchErr) return { error: fetchErr.message, status: 500 };
   if (!existing) return { error: "PAF not found.", status: 404 };
-  if (existing.status === "Rejected") {
-    return { error: "Cannot process a rejected PAF.", status: 400 };
+  // Explicit allowlist of source statuses. Pending / Approved / Needs
+  // Info are the safe inputs to "Processed". Pending SDO Approval and
+  // Needs Approval are NOT — flipping them straight to Processed
+  // bypasses the SDO sign-off or external approver respectively.
+  if (!PROCESSABLE_STATUSES.has(existing.status)) {
+    return {
+      error: `Cannot process a PAF in status "${existing.status}". Must be Pending, Approved, or Needs Info.`,
+      status: 400,
+    };
   }
 
   const { error } = await supa
@@ -1170,11 +1214,17 @@ async function markProcessed(supa, user, body) {
 // ----------------------------------------------------------------------------
 // Audit log (best-effort — failures don't break the user-facing action).
 // ----------------------------------------------------------------------------
+//
+// Note the error-handling shape: supabase-js returns PostgREST errors
+// in the result object, it does NOT throw, so a try/catch around an
+// insert will never see schema/RLS failures and would silently drop
+// audit rows. Always destructure { error } and warn explicitly.
 async function logAudit(supa, entry) {
   try {
-    await supa.from("paf_audit_log").insert(entry);
+    const { error } = await supa.from("paf_audit_log").insert(entry);
+    if (error) console.warn("[paf] audit log insert failed", error);
   } catch (e) {
-    console.warn("[paf] audit log insert failed", e);
+    console.warn("[paf] audit log insert threw", e);
   }
 }
 

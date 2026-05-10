@@ -285,15 +285,19 @@ function normalizePhone(raw) {
 
 async function logChange(supa, { actor_id, target_id, action, before, after }) {
   try {
-    await supa.from("team_changes").insert({
+    // supabase-js returns PostgREST errors in the result object — it
+    // does NOT throw — so we have to destructure { error }. A bare
+    // try/catch around the insert silently drops failed audit rows.
+    const { error } = await supa.from("team_changes").insert({
       actor_id,
       target_id,
       action,
       before: before ?? null,
       after: after ?? null,
     });
+    if (error) console.warn("[team-mgmt] audit log insert failed", error);
   } catch (e) {
-    console.warn("[team-mgmt] audit log insert failed", e);
+    console.warn("[team-mgmt] audit log insert threw", e);
   }
 }
 

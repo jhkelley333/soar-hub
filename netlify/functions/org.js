@@ -77,6 +77,13 @@ async function callerVisibleStoreIds(supa, user) {
 // Pull every active profile that has a primary_store in the visible set,
 // plus every DO/SDO/RVP whose scope covers any of those stores. Returns
 // a deduped array of full profile rows.
+//
+// IMPORTANT: this expands upward from the caller's visible stores to
+// the parent district / area / region scope rows, which means a DO
+// scoped to one district sees the RVP of the entire region. That's
+// the intended behavior for the leadership card on store detail (the
+// chain of command upward), but it MUST NOT be used for the birthday
+// widget — see callerStoreLevelProfiles below.
 async function callerVisibleProfiles(supa, user, visibleStoreIds) {
   if (!visibleStoreIds.length && !ORG_WIDE.has(user.role)) return [];
 
@@ -151,6 +158,30 @@ async function callerVisibleProfiles(supa, user, visibleStoreIds) {
   const byId = new Map();
   for (const p of [...(storeFolks ?? []), ...scopedProfiles]) byId.set(p.id, p);
   return Array.from(byId.values());
+}
+
+// Store-level profiles only — used by the birthday widget so that a
+// caller scoped to a district doesn't see the birthday of the RVP of
+// their parent region (callerVisibleProfiles intentionally expands
+// upward; this one does not). Org-wide roles still see everyone.
+async function callerStoreLevelProfiles(supa, user, visibleStoreIds) {
+  const baseSelect =
+    "id, email, phone, full_name, preferred_name, role, primary_store_id, is_active, birthday, show_birthday, profile_photo_url";
+
+  if (ORG_WIDE.has(user.role)) {
+    const { data } = await supa
+      .from("profiles")
+      .select(baseSelect)
+      .eq("is_active", true);
+    return data ?? [];
+  }
+  if (!visibleStoreIds.length) return [];
+  const { data } = await supa
+    .from("profiles")
+    .select(baseSelect)
+    .in("primary_store_id", visibleStoreIds)
+    .eq("is_active", true);
+  return data ?? [];
 }
 
 // ----------------------------------------------------------------------------
@@ -314,7 +345,12 @@ async function getBirthdays(supa, user, query) {
   }
 
   const visibleStoreIds = await callerVisibleStoreIds(supa, user);
-  const profiles = await callerVisibleProfiles(supa, user, visibleStoreIds);
+  // Use the store-level-only profile helper, NOT callerVisibleProfiles.
+  // The latter expands upward from visibleStoreIds to district/area/
+  // region user_scopes rows, which would leak the birthday/photo of
+  // higher-level managers (e.g. the RVP of the parent region) to a
+  // DO who is only scoped to a single district.
+  const profiles = await callerStoreLevelProfiles(supa, user, visibleStoreIds);
 
   // Build store -> region lookup so each entry can carry region_id for
   // grouping by RVP on the client. One bulk query.
@@ -445,13 +481,20 @@ const VENDOR_EDITABLE_FIELDS = [
 
 async function callerCanEditStoreVendor(supa, user, storeId) {
   if (ORG_WIDE.has(user.role)) return true;
-  // GMs and DO/SDO/RVPs can edit any store inside their visible scope.
-  // Don't gate the GM on profile.primary_store_id specifically — some
-  // GMs have it unset on their profile but are correctly scoped via
-  // user_scopes. Visibility is the source of truth.
-  if (["gm", "do", "sdo", "rvp"].includes(user.role)) {
+  if (["do", "sdo", "rvp"].includes(user.role)) {
     const visible = await callerVisibleStoreIds(supa, user);
     return visible.includes(storeId);
+  }
+  if (user.role === "gm") {
+    // Standard path: profile.primary_store_id matches the target store.
+    if (user.primary_store_id === storeId) return true;
+    // Fallback for GMs whose profile.primary_store_id isn't populated
+    // but who are correctly scoped via user_scopes to exactly one
+    // store. Defensive: a GM with a misconfigured district/area scope
+    // would have multiple stores in their visible set, and we do NOT
+    // want them to gain district-wide edit rights through this branch.
+    const visible = await callerVisibleStoreIds(supa, user);
+    return visible.length === 1 && visible[0] === storeId;
   }
   return false;
 }
@@ -515,7 +558,17 @@ async function updateStoreVendor(supa, user, body) {
     }
   }
   if (auditRows.length) {
-    await supa.from("store_vendor_audit").insert(auditRows);
+    // supabase-js returns PostgREST errors in the result object — it
+    // does NOT throw — so we have to destructure { error }. Without
+    // this check a missing store_vendor_audit table (or RLS misfire)
+    // would silently drop the audit trail while the store update
+    // succeeds.
+    const { error: auditErr } = await supa
+      .from("store_vendor_audit")
+      .insert(auditRows);
+    if (auditErr) {
+      console.warn("[org] store_vendor_audit insert failed", auditErr);
+    }
   }
 
   return { store: after, changed: auditRows.length };

@@ -23,6 +23,10 @@ const ALWAYS_ALLOWED = new Set(["/", "/account"]);
 function safeRedirectTarget(from: string | null | undefined, role: UserRole): string {
   const fallback = defaultLandingPath(role);
   if (!from) return fallback;
+  // Reject anything that isn't an in-app same-origin path. "//evil.com"
+  // is a protocol-relative URL the browser would resolve off-origin;
+  // requiring a single leading slash keeps redirects local.
+  if (!from.startsWith("/") || from.startsWith("//")) return fallback;
   if (ALWAYS_ALLOWED.has(from)) {
     // Even "/" should fall through to the role default if the role
     // can't actually use the dashboard (payroll).
