@@ -1,10 +1,15 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
+
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**
  * A simple centered modal with a darkened backdrop. ESC closes; clicking the
  * backdrop closes; the close button in the header closes. Body scroll is
- * locked while open. Sized for forms (max-w-lg by default).
+ * locked while open. Tab cycles within the dialog (focus trap). On open,
+ * focus moves to the first focusable element; on close, focus returns to
+ * the trigger. Sized for forms (max-w-lg by default).
  */
 export function Modal({
   open,
@@ -21,17 +26,57 @@ export function Modal({
   footer?: ReactNode;
   maxWidth?: string;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (!open) return;
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+
+    const raf = requestAnimationFrame(() => {
+      const focusables = dialogRef.current?.querySelectorAll<HTMLElement>(
+        FOCUSABLE_SELECTOR
+      );
+      focusables?.[0]?.focus();
+    });
+
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const nodes = dialogRef.current?.querySelectorAll<HTMLElement>(
+        FOCUSABLE_SELECTOR
+      );
+      if (!nodes || nodes.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = nodes[0];
+      const last = nodes[nodes.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey) {
+        if (active === first || !dialogRef.current?.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (active === last || !dialogRef.current?.contains(active)) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     }
     window.addEventListener("keydown", onKey);
     const original = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
+      cancelAnimationFrame(raf);
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = original;
+      if (previouslyFocused && document.body.contains(previouslyFocused)) {
+        previouslyFocused.focus();
+      }
     };
   }, [open, onClose]);
 
@@ -45,6 +90,7 @@ export function Modal({
         aria-hidden="true"
       />
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
