@@ -244,6 +244,11 @@ export interface OrgBulkRowInput {
   city?: string;
   state?: string;
   zip?: string;
+  // Store-only ops fields. Food vendor is intentionally NOT here —
+  // it's GM-editable in the app and bulk admin uploads shouldn't
+  // overwrite GM-set values.
+  plate_iq_email?: string;
+  soar_company_name?: string;
   parent_code?: string;
   is_active?: string;
 }
@@ -259,6 +264,8 @@ export interface OrgBulkRowAnnotated {
   city: string | null;
   state: string | null;
   zip: string | null;
+  plate_iq_email: string | null;
+  soar_company_name: string | null;
   parent_code: string | null;
   is_active: boolean;
   action: "create" | "update";
