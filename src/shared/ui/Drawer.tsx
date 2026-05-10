@@ -1,5 +1,10 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { X } from "lucide-react";
+
+// Selector for elements that can receive keyboard focus. Used by the
+// Tab-key trap to know what's reachable inside the dialog.
+const FOCUSABLE_SELECTOR =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 /**
  * Right-side slide-out drawer. Replaces a centered modal when you want
@@ -8,6 +13,9 @@ import { X } from "lucide-react";
  * - ESC closes
  * - Backdrop click closes
  * - Body scroll locks while open
+ * - Tab cycles within the dialog (focus trap)
+ * - On open, focus moves to the first focusable element inside
+ * - On close, focus returns to the element that opened the drawer
  * - On mobile (sm breakpoint) the drawer fills the screen
  */
 export function Drawer({
@@ -25,17 +33,65 @@ export function Drawer({
   footer?: ReactNode;
   width?: string;
 }) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (!open) return;
+    // Capture the trigger so we can restore focus on close.
+    const previouslyFocused = document.activeElement as HTMLElement | null;
+
+    // Move focus into the dialog so screen readers + keyboard users
+    // start inside it. requestAnimationFrame waits one paint for the
+    // dialog to be in the DOM and visible.
+    const raf = requestAnimationFrame(() => {
+      const focusables = dialogRef.current?.querySelectorAll<HTMLElement>(
+        FOCUSABLE_SELECTOR
+      );
+      focusables?.[0]?.focus();
+    });
+
     function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab") return;
+      const nodes = dialogRef.current?.querySelectorAll<HTMLElement>(
+        FOCUSABLE_SELECTOR
+      );
+      if (!nodes || nodes.length === 0) {
+        // Nothing focusable in the dialog — keep focus from escaping.
+        e.preventDefault();
+        return;
+      }
+      const first = nodes[0];
+      const last = nodes[nodes.length - 1];
+      const active = document.activeElement;
+      if (e.shiftKey) {
+        if (active === first || !dialogRef.current?.contains(active)) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (active === last || !dialogRef.current?.contains(active)) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     }
     window.addEventListener("keydown", onKey);
     const original = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
+      cancelAnimationFrame(raf);
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = original;
+      // Restore focus to the trigger on close so keyboard users don't
+      // get teleported back to <body>. Skip if the trigger is gone
+      // (rare — mostly happens during route changes).
+      if (previouslyFocused && document.body.contains(previouslyFocused)) {
+        previouslyFocused.focus();
+      }
     };
   }, [open, onClose]);
 
@@ -69,6 +125,7 @@ export function Drawer({
         aria-hidden="true"
       />
       <div
+        ref={dialogRef}
         role="dialog"
         aria-modal="true"
         aria-labelledby="drawer-title"

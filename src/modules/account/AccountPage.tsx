@@ -450,8 +450,17 @@ function CertifiedFoodManagerCard() {
   }, [profile]);
 
   // Probe whether a stored cert file exists (lists the user's folder).
+  // Re-fires on profile load and after each successful save (savedAt
+  // becomes a number). Skips the savedAt → null transition that fires
+  // 4 seconds later as part of the success-banner cleanup; that
+  // transition was triggering a redundant storage list every save.
+  const probedSavedAtRef = useRef<number | null>(null);
   useEffect(() => {
     if (!profile) return;
+    const isCleanupTransition =
+      probedSavedAtRef.current !== null && savedAt === null;
+    probedSavedAtRef.current = savedAt;
+    if (isCleanupTransition) return;
     let cancelled = false;
     supabase.storage
       .from(CFM_BUCKET)

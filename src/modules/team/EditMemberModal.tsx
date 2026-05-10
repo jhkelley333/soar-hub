@@ -69,6 +69,15 @@ export function EditMemberModal({
   const [phone, setPhone] = useState("");
   const [role, setRole] = useState<UserRole>("shift_manager");
   const [scopeId, setScopeId] = useState<string>("");
+  // Pinned snapshot of the scope the member had when the modal opened.
+  // Used by the role-change effect to restore the original choice on
+  // revert. We snapshot here so that subsequent re-renders that mint
+  // a new `member` reference can't clobber the user's mid-edit
+  // selection (the previous code depended on `member` directly and
+  // re-fired the reset on every parent re-render).
+  const [originalScopeId, setOriginalScopeId] = useState<string>("");
+  const [startDate, setStartDate] = useState("");
+  const [gmAssignedDate, setGmAssignedDate] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   // Hydrate the form whenever the modal opens for a (different) member.
@@ -78,21 +87,29 @@ export function EditMemberModal({
       setPhone(member.phone ? formatPhoneForDisplay(member.phone) : "");
       setRole(member.role);
       // Take the first scope as the source of truth (single-scope model)
-      setScopeId(member.scopes[0]?.scope_id ?? "");
+      const orig = member.scopes[0]?.scope_id ?? "";
+      setScopeId(orig);
+      setOriginalScopeId(orig);
+      setStartDate(member.start_date ?? "");
+      setGmAssignedDate(member.gm_assigned_date ?? "");
       setError(null);
     }
   }, [open, member]);
 
-  // When role changes from the original, reset scope so it must be re-picked.
+  // When role changes from the original, reset scope so it must be
+  // re-picked. When role reverts to the original, restore the
+  // originally-selected scope. Depends only on role + the captured
+  // originals — NOT on `member`, so a parent re-render that produces
+  // a new member reference can't blow away the user's edit.
   const originalRole = member?.role ?? null;
   useEffect(() => {
-    if (originalRole && role !== originalRole) {
+    if (!originalRole) return;
+    if (role !== originalRole) {
       setScopeId("");
-    } else if (originalRole && role === originalRole) {
-      // Restore original scope when reverted
-      setScopeId(member?.scopes[0]?.scope_id ?? "");
+    } else {
+      setScopeId(originalScopeId);
     }
-  }, [role, originalRole, member]);
+  }, [role, originalRole, originalScopeId]);
 
   const allowedRoles = rolesQuery.data?.roles ?? [];
   // Make sure the target's CURRENT role is selectable too — managers can keep
@@ -209,6 +226,8 @@ export function EditMemberModal({
       role,
       scope_type: scopeKind,
       scope_id: scopeKind === "global" ? null : scopeId,
+      start_date: startDate.trim() === "" ? null : startDate,
+      gm_assigned_date: gmAssignedDate.trim() === "" ? null : gmAssignedDate,
     });
   }
 
@@ -339,6 +358,35 @@ export function EditMemberModal({
                   </select>
                 </div>
               )}
+
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <div>
+                  <Label htmlFor="edit-start-date">Start date</Label>
+                  <Input
+                    id="edit-start-date"
+                    type="date"
+                    value={startDate}
+                    onChange={(e) => setStartDate(e.target.value)}
+                  />
+                  <p className="mt-1 text-[11px] text-zinc-500">
+                    When they joined SOAR. Empty to clear.
+                  </p>
+                </div>
+                {role === "gm" && (
+                  <div>
+                    <Label htmlFor="edit-gm-assigned">GM assigned date</Label>
+                    <Input
+                      id="edit-gm-assigned"
+                      type="date"
+                      value={gmAssignedDate}
+                      onChange={(e) => setGmAssignedDate(e.target.value)}
+                    />
+                    <p className="mt-1 text-[11px] text-zinc-500">
+                      When they took over their current store.
+                    </p>
+                  </div>
+                )}
+              </div>
             </>
           )}
 

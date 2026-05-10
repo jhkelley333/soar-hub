@@ -3,7 +3,7 @@
 // bindCat() logic locked in code. Cost preview computed live with
 // the same formula the server uses on submit.
 
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -118,12 +118,20 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
   const [state, setState] = useState<FormState>({});
   const [error, setError] = useState<string | null>(null);
 
-  // Hydrate empty state once config arrives.
+  // Hydrate state once when config first arrives. The previous
+  // implementation gated on `Object.keys(state).length === 0` and
+  // included `state` in deps — fragile because (a) the moment a
+  // config field has a non-empty default, the gate is true forever
+  // and the effect never fires; (b) including `state` in deps trips
+  // strict-mode infinite-render detection if initialState ever
+  // returns {}. A ref guard runs the hydration exactly once per
+  // mount, regardless of state shape.
+  const hydratedRef = useRef(false);
   useEffect(() => {
-    if (cfgQuery.data && Object.keys(state).length === 0) {
-      setState(initialState(cfgQuery.data.config_json));
-    }
-  }, [cfgQuery.data, state]);
+    if (!cfgQuery.data || hydratedRef.current) return;
+    hydratedRef.current = true;
+    setState(initialState(cfgQuery.data.config_json));
+  }, [cfgQuery.data]);
 
   const cfg = cfgQuery.data?.config_json;
 

@@ -16,8 +16,10 @@ import { isToday, thisWeekRange } from "./dateRange";
 
 const SESSION_FLAG = "soar.birthdayCelebrated";
 
-function fireConfetti() {
-  // Two-burst spread from low-left and low-right for a natural arc.
+// Fires the burst sequence. Returns a cleanup that cancels the
+// trailing 400ms shot if the user navigates away mid-celebration —
+// without it confetti would still fire on the next page.
+function fireConfetti(): () => void {
   const defaults = {
     spread: 70,
     startVelocity: 45,
@@ -28,9 +30,10 @@ function fireConfetti() {
   const colors = ["#E40046", "#74D2E7", "#0B0E14", "#FFD166"];
   confetti({ ...defaults, particleCount: 80, origin: { x: 0.2, y: 0.85 }, colors });
   confetti({ ...defaults, particleCount: 80, origin: { x: 0.8, y: 0.85 }, colors });
-  setTimeout(() => {
+  const t = setTimeout(() => {
     confetti({ ...defaults, particleCount: 60, origin: { x: 0.5, y: 0.7 }, colors });
   }, 400);
+  return () => clearTimeout(t);
 }
 
 export function BirthdayCelebration() {
@@ -54,7 +57,17 @@ export function BirthdayCelebration() {
     sessionStorage.setItem(SESSION_FLAG, "1");
     setOpen(true);
     // Slight delay so the modal mount + confetti play together cleanly.
-    setTimeout(fireConfetti, 150);
+    // Both timeouts (the 150ms launcher + the 400ms trailing shot
+    // inside fireConfetti) get cleaned up on unmount so a fast
+    // navigation doesn't leave confetti firing on the next page.
+    let cancelInner: (() => void) | null = null;
+    const startTimer = setTimeout(() => {
+      cancelInner = fireConfetti();
+    }, 150);
+    return () => {
+      clearTimeout(startTimer);
+      if (cancelInner) cancelInner();
+    };
   }, [isMyBirthday, profile]);
 
   if (!isMyBirthday || !profile) return null;

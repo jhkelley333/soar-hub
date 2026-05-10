@@ -37,6 +37,23 @@ export interface ManagedUser {
   // user hasn't accepted the invite / set a password yet.
   email_confirmed_at: string | null;
   scopes: ScopeBadge[];
+  // Extended profile fields from Account Settings, surfaced read-only
+  // to leadership viewing this team member's card.
+  preferred_name: string | null;
+  profile_photo_url: string | null;
+  birthday: string | null;
+  show_birthday: boolean;
+  shirt_size: string | null;
+  favorite_quote: string | null;
+  cfm_cert_number: string | null;
+  cfm_issued_at: string | null;
+  cfm_expires_at: string | null;
+  // Leadership-managed HR fields.
+  start_date: string | null;
+  gm_assigned_date: string | null;
+  primary_store_id: string | null;
+  primary_store_number: string | null;
+  primary_store_name: string | null;
 }
 
 export interface TeamListResponse {
@@ -149,6 +166,9 @@ export interface UpdateUserInput {
   scope_type?: "store" | "district" | "area" | "region" | "global";
   scope_id?: string | null;
   is_active?: boolean;
+  // YYYY-MM-DD or null/"" to clear.
+  start_date?: string | null;
+  gm_assigned_date?: string | null;
 }
 
 export function updateUser(input: UpdateUserInput): Promise<{ ok: true }> {

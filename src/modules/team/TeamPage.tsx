@@ -257,6 +257,19 @@ function MemberCard({
     }
   }
 
+  const cfmExpiry = member.cfm_expires_at ? new Date(member.cfm_expires_at) : null;
+  const cfmDaysToExpiry = cfmExpiry
+    ? Math.floor((cfmExpiry.getTime() - Date.now()) / 86_400_000)
+    : null;
+  const cfmTone: "neutral" | "warning" | "danger" =
+    cfmDaysToExpiry == null
+      ? "neutral"
+      : cfmDaysToExpiry < 0
+        ? "danger"
+        : cfmDaysToExpiry < 60
+          ? "warning"
+          : "neutral";
+
   return (
     <Card
       className={cn(
@@ -265,11 +278,30 @@ function MemberCard({
       )}
     >
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 flex-1 gap-3">
+          {member.profile_photo_url ? (
+            <img
+              src={member.profile_photo_url}
+              alt=""
+              className="h-10 w-10 shrink-0 rounded-full object-cover ring-1 ring-zinc-200"
+            />
+          ) : (
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-zinc-100 text-xs font-semibold uppercase text-zinc-500">
+              {(member.preferred_name || member.full_name || member.email)
+                .trim()
+                .slice(0, 2)}
+            </div>
+          )}
+          <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-semibold tracking-tight text-midnight sm:text-base">
               {member.full_name?.trim() || member.email}
             </span>
+            {member.preferred_name && member.preferred_name !== member.full_name && (
+              <span className="text-xs italic text-zinc-500">
+                "{member.preferred_name}"
+              </span>
+            )}
             <Badge tone={roleTone(member.role)}>
               {ROLE_LABELS[member.role] ?? member.role}
             </Badge>
@@ -314,6 +346,58 @@ function MemberCard({
             )}
           </div>
 
+          {/* HR + personal details */}
+          <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs text-zinc-500">
+            {member.start_date && (
+              <span>
+                <span className="text-zinc-400">Started:</span>{" "}
+                <span className="text-zinc-700">{formatDateShort(member.start_date)}</span>
+              </span>
+            )}
+            {member.role === "gm" && member.gm_assigned_date && (
+              <span>
+                <span className="text-zinc-400">GM since:</span>{" "}
+                <span className="text-zinc-700">{formatDateShort(member.gm_assigned_date)}</span>
+                {member.primary_store_number && (
+                  <span className="text-zinc-400">
+                    {" "}@ #{member.primary_store_number}
+                  </span>
+                )}
+              </span>
+            )}
+            {member.show_birthday !== false && member.birthday && (
+              <span>
+                <span className="text-zinc-400">🎂</span>{" "}
+                <span className="text-zinc-700">{formatBirthdayShort(member.birthday)}</span>
+              </span>
+            )}
+            {member.shirt_size && (
+              <span>
+                <span className="text-zinc-400">Shirt:</span>{" "}
+                <span className="text-zinc-700">{member.shirt_size}</span>
+              </span>
+            )}
+            {member.cfm_cert_number && (
+              <span className="inline-flex items-center gap-1">
+                <span className="text-zinc-400">CFM:</span>
+                <span className="text-zinc-700">{member.cfm_cert_number}</span>
+                {cfmExpiry && (
+                  <Badge tone={cfmTone}>
+                    {cfmDaysToExpiry! < 0
+                      ? "Expired"
+                      : `Expires ${formatDateShort(member.cfm_expires_at!)}`}
+                  </Badge>
+                )}
+              </span>
+            )}
+          </div>
+
+          {member.favorite_quote && (
+            <div className="mt-1 truncate text-xs italic text-zinc-500">
+              "{member.favorite_quote}"
+            </div>
+          )}
+
           {member.scopes.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {member.scopes.map((s, i) => (
@@ -326,6 +410,7 @@ function MemberCard({
               ))}
             </div>
           )}
+          </div>
         </div>
 
         <div className="flex shrink-0 gap-2">
@@ -336,6 +421,20 @@ function MemberCard({
       </div>
     </Card>
   );
+}
+
+function formatDateShort(iso: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}/.test(iso)) return iso;
+  const [y, m, d] = iso.slice(0, 10).split("-");
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${months[parseInt(m, 10) - 1]} ${parseInt(d, 10)}, ${y}`;
+}
+
+function formatBirthdayShort(iso: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}/.test(iso)) return iso;
+  const [, m, d] = iso.slice(0, 10).split("-");
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  return `${months[parseInt(m, 10) - 1]} ${parseInt(d, 10)}`;
 }
 
 function roleTone(
