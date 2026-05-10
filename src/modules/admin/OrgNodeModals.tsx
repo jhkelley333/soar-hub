@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
@@ -12,6 +12,7 @@ import {
   moveOrgNode,
   updateOrgNode,
   type CreateOrgNodeInput,
+  type DriveThruType,
   type OrgArea,
   type OrgDistrict,
   type OrgRegion,
@@ -20,6 +21,21 @@ import {
   type OrgTreeResponse,
   type UpdateOrgNodeInput,
 } from "./api";
+
+// Hardcoded for Phase 1. Phase 2 will move this to an admin-managed
+// config table so new providers can be added without a code change.
+const THIRD_PARTY_PROVIDERS: { key: string; label: string }[] = [
+  { key: "doordash", label: "DoorDash" },
+  { key: "ubereats", label: "Uber Eats" },
+  { key: "grubhub", label: "Grubhub" },
+  { key: "ezcater", label: "EzCater" },
+  { key: "postmates", label: "Postmates" },
+];
+
+const DRIVE_THRU_TYPES: { key: DriveThruType; label: string }[] = [
+  { key: "single_pole_two_menus", label: "Single pole, two menus" },
+  { key: "split_housing", label: "Split housing" },
+];
 
 type AnyOrgNode = OrgRegion | OrgArea | OrgDistrict | OrgStore;
 
@@ -66,11 +82,34 @@ export function EditOrgNodeModal({
   const [name, setName] = useState("");
   const [number, setNumber] = useState("");
   const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
   const [address, setAddress] = useState("");
   const [city, setCity] = useState("");
   const [state, setState] = useState("");
   const [zip, setZip] = useState("");
   const [parentId, setParentId] = useState("");
+  // Operations / vendor (admin-only)
+  const [plateIqEmail, setPlateIqEmail] = useState("");
+  const [soarCompanyName, setSoarCompanyName] = useState("");
+  // Active programs
+  const [hasApplePay, setHasApplePay] = useState(false);
+  const [hasOrderAhead, setHasOrderAhead] = useState(false);
+  const [hasOutdoorSeating, setHasOutdoorSeating] = useState(false);
+  const [hasDriveThru, setHasDriveThru] = useState(false);
+  const [hasClearanceBar, setHasClearanceBar] = useState(false);
+  const [driveThruLanes, setDriveThruLanes] = useState<string>(""); // "" | "1" | "2"
+  const [driveThruType, setDriveThruType] = useState<string>("");
+  const [publicRestroomCount, setPublicRestroomCount] = useState<string>("0");
+  // Stall data
+  const [patioPopMenuCount, setPatioPopMenuCount] = useState<string>("0");
+  const [patioPopStallNumbers, setPatioPopStallNumbers] = useState("");
+  const [orderAheadStallCount, setOrderAheadStallCount] = useState<string>("0");
+  const [orderAheadStallNumbers, setOrderAheadStallNumbers] = useState("");
+  const [stallPopMenuCount, setStallPopMenuCount] = useState<string>("0");
+  const [hasTrailerStall, setHasTrailerStall] = useState(false);
+  const [trailerStallNumber, setTrailerStallNumber] = useState("");
+  // Third-party delivery
+  const [thirdPartyDelivery, setThirdPartyDelivery] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   // Hydrate fields from the target whenever the modal opens for a (new) node.
@@ -78,18 +117,39 @@ export function EditOrgNodeModal({
     if (!open || !target) return;
     setError(null);
     if (target.kind === "store") {
+      const s = target.node;
       setCode("");
-      setName(target.node.name ?? "");
-      setNumber(target.node.number ?? "");
-      setPhone(target.node.phone ? formatPhoneForDisplay(target.node.phone) : "");
-      setAddress(target.node.address ?? "");
-      setCity(target.node.city ?? "");
-      setState(target.node.state ?? "");
-      setZip(target.node.zip ?? "");
+      setName(s.name ?? "");
+      setNumber(s.number ?? "");
+      setPhone(s.phone ? formatPhoneForDisplay(s.phone) : "");
+      setEmail(s.email ?? "");
+      setAddress(s.address ?? "");
+      setCity(s.city ?? "");
+      setState(s.state ?? "");
+      setZip(s.zip ?? "");
       setParentId(target.district_id);
+      setPlateIqEmail(s.plate_iq_email ?? "");
+      setSoarCompanyName(s.soar_company_name ?? "");
+      setHasApplePay(!!s.has_apple_pay);
+      setHasOrderAhead(!!s.has_order_ahead);
+      setHasOutdoorSeating(!!s.has_outdoor_seating);
+      setHasDriveThru(!!s.has_drive_thru);
+      setHasClearanceBar(!!s.has_clearance_bar);
+      setDriveThruLanes(s.drive_thru_lanes != null ? String(s.drive_thru_lanes) : "");
+      setDriveThruType(s.drive_thru_type ?? "");
+      setPublicRestroomCount(String(s.public_restroom_count ?? 0));
+      setPatioPopMenuCount(String(s.patio_pop_menu_count ?? 0));
+      setPatioPopStallNumbers(s.patio_pop_stall_numbers ?? "");
+      setOrderAheadStallCount(String(s.order_ahead_stall_count ?? 0));
+      setOrderAheadStallNumbers(s.order_ahead_stall_numbers ?? "");
+      setStallPopMenuCount(String(s.stall_pop_menu_count ?? 0));
+      setHasTrailerStall(!!s.has_trailer_stall);
+      setTrailerStallNumber(s.trailer_stall_number ?? "");
+      setThirdPartyDelivery(Array.isArray(s.third_party_delivery) ? s.third_party_delivery : []);
     } else {
       setNumber("");
       setPhone("");
+      setEmail("");
       setAddress("");
       setCity("");
       setState("");
@@ -173,10 +233,29 @@ export function EditOrgNodeModal({
         }
       }
       updates.phone = normalizedPhone;
+      updates.email = email.trim() || null;
       updates.address = address.trim() || null;
       updates.city = city.trim() || null;
       updates.state = state.trim() || null;
       updates.zip = zip.trim() || null;
+      updates.plate_iq_email = plateIqEmail.trim() || null;
+      updates.soar_company_name = soarCompanyName.trim() || null;
+      updates.has_apple_pay = hasApplePay;
+      updates.has_order_ahead = hasOrderAhead;
+      updates.has_outdoor_seating = hasOutdoorSeating;
+      updates.has_drive_thru = hasDriveThru;
+      updates.has_clearance_bar = hasClearanceBar;
+      updates.drive_thru_lanes = driveThruLanes ? parseInt(driveThruLanes, 10) : null;
+      updates.drive_thru_type = (driveThruType || null) as DriveThruType | null;
+      updates.public_restroom_count = parseInt(publicRestroomCount || "0", 10) || 0;
+      updates.patio_pop_menu_count = parseInt(patioPopMenuCount || "0", 10) || 0;
+      updates.patio_pop_stall_numbers = patioPopStallNumbers.trim() || null;
+      updates.order_ahead_stall_count = parseInt(orderAheadStallCount || "0", 10) || 0;
+      updates.order_ahead_stall_numbers = orderAheadStallNumbers.trim() || null;
+      updates.stall_pop_menu_count = parseInt(stallPopMenuCount || "0", 10) || 0;
+      updates.has_trailer_stall = hasTrailerStall;
+      updates.trailer_stall_number = trailerStallNumber.trim() || null;
+      updates.third_party_delivery = thirdPartyDelivery;
     } else {
       updates.code = code.trim();
       updates.name = name.trim();
@@ -234,6 +313,7 @@ export function EditOrgNodeModal({
       open={open}
       onClose={onClose}
       title={`Edit ${KIND_LABEL[target.kind]}`}
+      maxWidth={target.kind === "store" ? "max-w-3xl" : "max-w-lg"}
       footer={
         <>
           <Button variant="ghost" onClick={onClose}>
@@ -275,14 +355,28 @@ export function EditOrgNodeModal({
                 />
               </div>
             </div>
-            <div>
-              <Label htmlFor="org-store-name">Store name</Label>
-              <Input
-                id="org-store-name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                disabled={!isAdmin}
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="org-store-name">Store name</Label>
+                <Input
+                  id="org-store-name"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  disabled={!isAdmin}
+                />
+              </div>
+              <div>
+                <Label htmlFor="org-store-email">Store email</Label>
+                <Input
+                  id="org-store-email"
+                  type="email"
+                  inputMode="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  disabled={!isAdmin}
+                  autoCapitalize="off"
+                />
+              </div>
             </div>
             <div>
               <Label htmlFor="org-store-address">Address</Label>
@@ -321,6 +415,214 @@ export function EditOrgNodeModal({
                   disabled={!isAdmin}
                 />
               </div>
+            </div>
+
+            {/* Operations & vendor (admin-only) */}
+            <SectionHeader>Operations &amp; vendor</SectionHeader>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="org-plate-iq">Plate IQ Email</Label>
+                <Input
+                  id="org-plate-iq"
+                  type="email"
+                  inputMode="email"
+                  autoCapitalize="off"
+                  value={plateIqEmail}
+                  onChange={(e) => setPlateIqEmail(e.target.value)}
+                  disabled={!isAdmin}
+                />
+              </div>
+              <div>
+                <Label htmlFor="org-soar-co">Soar Company Name</Label>
+                <Input
+                  id="org-soar-co"
+                  value={soarCompanyName}
+                  onChange={(e) => setSoarCompanyName(e.target.value)}
+                  disabled={!isAdmin}
+                />
+              </div>
+            </div>
+
+            {/* Active programs */}
+            <SectionHeader>Active programs</SectionHeader>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+              <Toggle
+                label="Apple Pay"
+                checked={hasApplePay}
+                onChange={setHasApplePay}
+                disabled={!isAdmin}
+              />
+              <Toggle
+                label="Order Ahead"
+                checked={hasOrderAhead}
+                onChange={setHasOrderAhead}
+                disabled={!isAdmin}
+              />
+              <Toggle
+                label="Outdoor seating"
+                checked={hasOutdoorSeating}
+                onChange={setHasOutdoorSeating}
+                disabled={!isAdmin}
+              />
+              <Toggle
+                label="Drive-thru"
+                checked={hasDriveThru}
+                onChange={setHasDriveThru}
+                disabled={!isAdmin}
+              />
+            </div>
+
+            {hasDriveThru && (
+              <div className="grid grid-cols-3 gap-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2">
+                <div>
+                  <Label htmlFor="org-dt-lanes">Drive-thru lanes</Label>
+                  <select
+                    id="org-dt-lanes"
+                    value={driveThruLanes}
+                    onChange={(e) => setDriveThruLanes(e.target.value)}
+                    disabled={!isAdmin}
+                    className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-60"
+                  >
+                    <option value="">—</option>
+                    <option value="1">Single (1 lane)</option>
+                    <option value="2">Double (2 lanes)</option>
+                  </select>
+                </div>
+                <div>
+                  <Label htmlFor="org-dt-type">Drive-thru type</Label>
+                  <select
+                    id="org-dt-type"
+                    value={driveThruType}
+                    onChange={(e) => setDriveThruType(e.target.value)}
+                    disabled={!isAdmin}
+                    className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-60"
+                  >
+                    <option value="">—</option>
+                    {DRIVE_THRU_TYPES.map((t) => (
+                      <option key={t.key} value={t.key}>{t.label}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex items-end">
+                  <Toggle
+                    label="Clearance bar"
+                    checked={hasClearanceBar}
+                    onChange={setHasClearanceBar}
+                    disabled={!isAdmin}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="org-restrooms">Public restrooms</Label>
+                <Input
+                  id="org-restrooms"
+                  type="number"
+                  min={0}
+                  max={99}
+                  value={publicRestroomCount}
+                  onChange={(e) => setPublicRestroomCount(e.target.value)}
+                  disabled={!isAdmin}
+                />
+              </div>
+            </div>
+
+            {/* Stall data */}
+            <SectionHeader>Stall data</SectionHeader>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="org-patio-pop-count"># Patio POP menus</Label>
+                <Input
+                  id="org-patio-pop-count"
+                  type="number"
+                  min={0}
+                  value={patioPopMenuCount}
+                  onChange={(e) => setPatioPopMenuCount(e.target.value)}
+                  disabled={!isAdmin}
+                />
+              </div>
+              <div>
+                <Label htmlFor="org-patio-pop-stalls">Patio POP stall #s</Label>
+                <Input
+                  id="org-patio-pop-stalls"
+                  value={patioPopStallNumbers}
+                  onChange={(e) => setPatioPopStallNumbers(e.target.value)}
+                  disabled={!isAdmin}
+                  placeholder="e.g. 1,2,3,4"
+                />
+              </div>
+              <div>
+                <Label htmlFor="org-oa-count"># Order Ahead stalls</Label>
+                <Input
+                  id="org-oa-count"
+                  type="number"
+                  min={0}
+                  value={orderAheadStallCount}
+                  onChange={(e) => setOrderAheadStallCount(e.target.value)}
+                  disabled={!isAdmin}
+                />
+              </div>
+              <div>
+                <Label htmlFor="org-oa-stalls">Order Ahead stall #s</Label>
+                <Input
+                  id="org-oa-stalls"
+                  value={orderAheadStallNumbers}
+                  onChange={(e) => setOrderAheadStallNumbers(e.target.value)}
+                  disabled={!isAdmin}
+                  placeholder="e.g. 5,6"
+                />
+              </div>
+              <div>
+                <Label htmlFor="org-stall-pop-count"># Stall POP menus</Label>
+                <Input
+                  id="org-stall-pop-count"
+                  type="number"
+                  min={0}
+                  value={stallPopMenuCount}
+                  onChange={(e) => setStallPopMenuCount(e.target.value)}
+                  disabled={!isAdmin}
+                />
+              </div>
+              <div className="flex items-end">
+                <Toggle
+                  label="Trailer stall"
+                  checked={hasTrailerStall}
+                  onChange={setHasTrailerStall}
+                  disabled={!isAdmin}
+                />
+              </div>
+            </div>
+            {hasTrailerStall && (
+              <div>
+                <Label htmlFor="org-trailer-num">Trailer stall #</Label>
+                <Input
+                  id="org-trailer-num"
+                  value={trailerStallNumber}
+                  onChange={(e) => setTrailerStallNumber(e.target.value)}
+                  disabled={!isAdmin}
+                  placeholder="e.g. 12"
+                />
+              </div>
+            )}
+
+            {/* Third-party delivery */}
+            <SectionHeader>Third-party delivery</SectionHeader>
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+              {THIRD_PARTY_PROVIDERS.map((p) => (
+                <Toggle
+                  key={p.key}
+                  label={p.label}
+                  checked={thirdPartyDelivery.includes(p.key)}
+                  onChange={(next) => {
+                    setThirdPartyDelivery((cur) =>
+                      next ? [...cur, p.key] : cur.filter((k) => k !== p.key)
+                    );
+                  }}
+                  disabled={!isAdmin}
+                />
+              ))}
             </div>
           </>
         ) : (
@@ -642,6 +944,39 @@ export function AddOrgNodeModal({
         )}
       </form>
     </Modal>
+  );
+}
+
+function SectionHeader({ children }: { children: ReactNode }) {
+  return (
+    <div className="border-t border-zinc-100 pt-3 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+      {children}
+    </div>
+  );
+}
+
+function Toggle({
+  label,
+  checked,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  disabled?: boolean;
+}) {
+  return (
+    <label className="flex items-center gap-2 text-sm text-zinc-800">
+      <input
+        type="checkbox"
+        className="h-4 w-4 accent-accent disabled:opacity-50"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        disabled={disabled}
+      />
+      {label}
+    </label>
   );
 }
 

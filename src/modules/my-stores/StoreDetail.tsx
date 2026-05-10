@@ -107,6 +107,8 @@ export function StoreDetail({
       {/* Operations & vendor card */}
       <OperationsCard store={store} />
 
+      {/* Store attributes (read-only here; editable from Org admin) */}
+      <StoreAttributesCard store={store} />
 
       {/* Team Members card */}
       <Card>
@@ -568,6 +570,145 @@ function VendorAuditRow({ entry }: { entry: StoreVendorAuditEntry }) {
         </div>
       </div>
     </li>
+  );
+}
+
+// Display labels for the boolean attribute keys, kept in render order.
+const PROGRAM_LABELS: { key: keyof MyStoreNode; label: string }[] = [
+  { key: "has_apple_pay",       label: "Apple Pay" },
+  { key: "has_order_ahead",     label: "Order Ahead" },
+  { key: "has_outdoor_seating", label: "Outdoor seating" },
+  { key: "has_drive_thru",      label: "Drive-thru" },
+  { key: "has_clearance_bar",   label: "Drive-thru clearance bar" },
+];
+
+const THIRD_PARTY_LABELS: Record<string, string> = {
+  doordash: "DoorDash",
+  ubereats: "Uber Eats",
+  grubhub: "Grubhub",
+  ezcater: "EzCater",
+  postmates: "Postmates",
+};
+
+const DRIVE_THRU_TYPE_LABELS: Record<string, string> = {
+  single_pole_two_menus: "Single pole, two menus",
+  split_housing: "Split housing",
+};
+
+function StoreAttributesCard({ store }: { store: MyStoreNode }) {
+  const enabledPrograms = PROGRAM_LABELS.filter((p) => store[p.key] === true);
+  const providers = store.third_party_delivery ?? [];
+
+  // Hide the card if NOTHING is set — keeps newly-onboarded stores
+  // from showing a sea of empty rows.
+  const hasAnyAttributes =
+    enabledPrograms.length > 0 ||
+    providers.length > 0 ||
+    store.public_restroom_count > 0 ||
+    store.patio_pop_menu_count > 0 ||
+    store.order_ahead_stall_count > 0 ||
+    store.stall_pop_menu_count > 0 ||
+    store.has_trailer_stall ||
+    !!store.drive_thru_type ||
+    !!store.drive_thru_lanes;
+
+  if (!hasAnyAttributes) return null;
+
+  return (
+    <Card>
+      <CardHeader
+        title="Store attributes"
+        description="Programs, drive-thru, restrooms, stall data."
+      />
+      <CardBody className="space-y-4">
+        {/* Active programs */}
+        {(enabledPrograms.length > 0 || store.drive_thru_lanes) && (
+          <div>
+            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+              Active programs
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {enabledPrograms.map((p) => (
+                <Badge key={p.key as string} tone="success">{p.label}</Badge>
+              ))}
+              {store.has_drive_thru && store.drive_thru_lanes && (
+                <Badge tone="info">
+                  {store.drive_thru_lanes === 2 ? "Double" : "Single"} lane
+                </Badge>
+              )}
+              {store.has_drive_thru && store.drive_thru_type && (
+                <Badge tone="info">
+                  {DRIVE_THRU_TYPE_LABELS[store.drive_thru_type] ?? store.drive_thru_type}
+                </Badge>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Third-party delivery */}
+        {providers.length > 0 && (
+          <div>
+            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+              Third-party delivery
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {providers.map((p) => (
+                <Badge key={p} tone="neutral">
+                  {THIRD_PARTY_LABELS[p] ?? p}
+                </Badge>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Counts grid */}
+        <dl className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {store.public_restroom_count > 0 && (
+            <Stat label="Public restrooms" value={String(store.public_restroom_count)} />
+          )}
+          {store.patio_pop_menu_count > 0 && (
+            <Stat label="Patio POP menus" value={String(store.patio_pop_menu_count)} />
+          )}
+          {store.order_ahead_stall_count > 0 && (
+            <Stat label="Order Ahead stalls" value={String(store.order_ahead_stall_count)} />
+          )}
+          {store.stall_pop_menu_count > 0 && (
+            <Stat label="Stall POP menus" value={String(store.stall_pop_menu_count)} />
+          )}
+        </dl>
+
+        {/* Stall numbers (free-text lists) */}
+        {(store.patio_pop_stall_numbers ||
+          store.order_ahead_stall_numbers ||
+          store.has_trailer_stall) && (
+          <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            {store.patio_pop_stall_numbers && (
+              <Stat label="Patio POP stall #s" value={store.patio_pop_stall_numbers} />
+            )}
+            {store.order_ahead_stall_numbers && (
+              <Stat label="Order Ahead stall #s" value={store.order_ahead_stall_numbers} />
+            )}
+            {store.has_trailer_stall && (
+              <Stat
+                label="Trailer stall"
+                value={store.trailer_stall_number || "Yes"}
+              />
+            )}
+          </dl>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+        {label}
+      </dt>
+      <dd className="mt-0.5 text-sm text-midnight">{value}</dd>
+    </div>
   );
 }
 
