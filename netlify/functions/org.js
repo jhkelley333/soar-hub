@@ -263,11 +263,17 @@ async function getMyTree(supa, user) {
 
   function findManager(role, scopeType, scopeId) {
     if (!scopeId) return null;
-    const row = (scopeRows ?? []).find(
+    const matches = (scopeRows ?? []).filter(
       (s) => s.scope_type === scopeType && s.scope_id === scopeId
         && profileById.get(s.user_id)?.role === role
     );
-    return row ? profileById.get(row.user_id) : null;
+    if (matches.length === 0) return null;
+    // Stable order: when more than one user has the same role + scope
+    // (rare but possible during a transition), pick the lowest user_id
+    // so the leadership card resolves to the SAME person across calls
+    // instead of flipping based on database row order.
+    matches.sort((a, b) => a.user_id.localeCompare(b.user_id));
+    return profileById.get(matches[0].user_id);
   }
 
   // GM per store: pulled from the team-members fetch above, since GMs
@@ -337,11 +343,34 @@ function birthdayInWindow(iso, startISO, endISO) {
   return md >= sm || md <= em;
 }
 
+// Upper bound on the birthday window. The widget is the only consumer
+// today and asks for "this week + next week" (~14 days). birthdayInWindow
+// compares MM-DD only, so a multi-month range trivially matches every
+// birthday — putting an explicit cap here prevents an accidental or
+// abusive client from exfiltrating the entire org's birthday list in
+// one request.
+const MAX_BIRTHDAY_WINDOW_DAYS = 60;
+
 async function getBirthdays(supa, user, query) {
   const start = String(query?.start || "").trim();
   const end = String(query?.end || "").trim();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
     return { error: "start and end must be YYYY-MM-DD.", status: 400 };
+  }
+  const startMs = Date.parse(start + "T00:00:00Z");
+  const endMs = Date.parse(end + "T00:00:00Z");
+  if (Number.isNaN(startMs) || Number.isNaN(endMs)) {
+    return { error: "Invalid date.", status: 400 };
+  }
+  if (endMs < startMs) {
+    return { error: "end must be on or after start.", status: 400 };
+  }
+  const windowDays = Math.floor((endMs - startMs) / 86_400_000);
+  if (windowDays > MAX_BIRTHDAY_WINDOW_DAYS) {
+    return {
+      error: `Date range too large (max ${MAX_BIRTHDAY_WINDOW_DAYS} days).`,
+      status: 400,
+    };
   }
 
   const visibleStoreIds = await callerVisibleStoreIds(supa, user);

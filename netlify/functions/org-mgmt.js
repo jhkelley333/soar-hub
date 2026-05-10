@@ -251,6 +251,65 @@ const EDITABLE_FIELDS = {
   store: ["number", "name", "phone", "address", "city", "state", "zip", "is_active"],
 };
 
+// Per-field validators. Run after the EDITABLE_FIELDS allowlist filter
+// — guarantees no unrelated body keys reach this layer. Each rule
+// returns either { value: <coerced> } or { error: "..." }. Empty
+// strings on nullable fields coerce to null so `where ... is null`
+// queries behave predictably; empty on required fields fails.
+const FIELD_RULES = {
+  code:    { type: "string", maxLen: 50,  trim: true, required: true },
+  name:    { type: "string", maxLen: 200, trim: true, required: true },
+  number:  { type: "string", maxLen: 20,  trim: true, required: true },
+  phone:   { type: "phone10", nullable: true },
+  address: { type: "string", maxLen: 200, trim: true, nullable: true },
+  city:    { type: "string", maxLen: 100, trim: true, nullable: true },
+  state:   { type: "string", maxLen: 50,  trim: true, nullable: true },
+  zip:     { type: "string", maxLen: 20,  trim: true, nullable: true },
+  is_active: { type: "boolean" },
+};
+
+function validateField(key, raw) {
+  const rule = FIELD_RULES[key];
+  if (!rule) return { error: `Field "${key}" is not validated.` };
+
+  // null / empty-string handling first.
+  if (raw === null || (typeof raw === "string" && raw.trim() === "")) {
+    if (rule.required) return { error: `"${key}" is required.` };
+    return { value: null };
+  }
+
+  if (rule.type === "boolean") {
+    if (typeof raw !== "boolean") {
+      return { error: `"${key}" must be true or false.` };
+    }
+    return { value: raw };
+  }
+
+  if (rule.type === "phone10") {
+    const digits = String(raw).replace(/\D/g, "");
+    const trimmed = digits.length === 11 && digits.startsWith("1")
+      ? digits.slice(1)
+      : digits;
+    if (trimmed.length !== 10) {
+      return { error: `"${key}" must be a 10-digit phone number.` };
+    }
+    return { value: trimmed };
+  }
+
+  if (rule.type === "string") {
+    if (typeof raw !== "string") {
+      return { error: `"${key}" must be a string.` };
+    }
+    const v = rule.trim ? raw.trim() : raw;
+    if (rule.maxLen && v.length > rule.maxLen) {
+      return { error: `"${key}" is too long (max ${rule.maxLen} chars).` };
+    }
+    return { value: v };
+  }
+
+  return { error: `Unknown validator type for "${key}".` };
+}
+
 // Parent column for "move" — store moves to a new district, district to
 // a new area, area to a new region. Regions have no parent (move not
 // supported; if you need it, that's a one-off SQL).
@@ -258,6 +317,16 @@ const PARENT_FIELD_FOR = {
   store: "district_id",
   district: "area_id",
   area: "region_id",
+};
+
+// Parent kind / table — used to verify the new parent on a move
+// actually exists and is the correct kind. Without this, an admin (or
+// a compromised admin token) could orphan a node under a UUID that
+// points to nothing or to a wrong-kind row.
+const PARENT_TABLE_FOR = {
+  store: "districts",
+  district: "areas",
+  area: "regions",
 };
 
 async function logOrgChange(supa, { actor_id, target_kind, target_id, action, before, after }) {
@@ -315,19 +384,31 @@ async function createOrgNode(supa, user, body) {
   }
   const table = TABLE_FOR[kind];
 
-  // Build the insert payload, dropping unknown keys.
+  // Build the insert payload, dropping unknown keys + validating values.
   const allowed = EDITABLE_FIELDS[kind];
   const insert = { is_active: true };
   for (const k of allowed) {
-    if (body[k] !== undefined) insert[k] = body[k];
+    if (body[k] === undefined) continue;
+    const result = validateField(k, body[k]);
+    if (result.error) return { error: result.error, status: 400 };
+    insert[k] = result.value;
   }
-  // Parent FK for non-region kinds.
+  // Parent FK for non-region kinds. Verify the parent exists AND is
+  // the correct kind so an admin can't orphan a node under a stale or
+  // wrong-kind UUID.
   if (kind !== "region") {
     const fkField = PARENT_FIELD_FOR[kind];
     const fkValue = body[fkField];
-    if (!fkValue) {
+    if (!fkValue || typeof fkValue !== "string") {
       return { error: `${fkField} is required.`, status: 400 };
     }
+    const parentTable = PARENT_TABLE_FOR[kind];
+    const { count, error: parentErr } = await supa
+      .from(parentTable)
+      .select("id", { head: true, count: "exact" })
+      .eq("id", fkValue);
+    if (parentErr) return { error: parentErr.message, status: 500 };
+    if (!count) return { error: `${fkField} ${fkValue} does not exist.`, status: 400 };
     insert[fkField] = fkValue;
   }
 
@@ -377,7 +458,10 @@ async function updateOrgNode(supa, user, body) {
 
   const updates = {};
   for (const k of allowed) {
-    if (body[k] !== undefined) updates[k] = body[k];
+    if (body[k] === undefined) continue;
+    const result = validateField(k, body[k]);
+    if (result.error) return { error: result.error, status: 400 };
+    updates[k] = result.value;
   }
   // Treat is_active separately so we can record deactivate/reactivate
   // as their own audit actions.
@@ -442,7 +526,9 @@ async function moveOrgNode(supa, user, body) {
   const fkField = PARENT_FIELD_FOR[kind];
   const newParentId = body?.[fkField];
   if (!id) return { error: "id is required.", status: 400 };
-  if (!newParentId) return { error: `${fkField} is required.`, status: 400 };
+  if (!newParentId || typeof newParentId !== "string") {
+    return { error: `${fkField} is required.`, status: 400 };
+  }
 
   const table = TABLE_FOR[kind];
 
@@ -456,6 +542,20 @@ async function moveOrgNode(supa, user, body) {
 
   if (beforeRow[fkField] === newParentId) {
     return { ok: true }; // no-op
+  }
+
+  // Verify the new parent exists AND is the right kind. Postgres has
+  // an FK constraint that would also reject a non-existent UUID, but
+  // (a) the error surface is uglier, and (b) this catches stale
+  // client state earlier with a clearer message.
+  const parentTable = PARENT_TABLE_FOR[kind];
+  const { count: parentCount, error: parentErr } = await supa
+    .from(parentTable)
+    .select("id", { head: true, count: "exact" })
+    .eq("id", newParentId);
+  if (parentErr) return { error: parentErr.message, status: 500 };
+  if (!parentCount) {
+    return { error: `${fkField} ${newParentId} does not exist.`, status: 400 };
   }
 
   const { error: updErr } = await supa

@@ -28,6 +28,14 @@ import { createClient } from "@supabase/supabase-js";
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+// supabase.auth.admin.listUsers is page-based. We bound the loop to
+// MAX_AUTH_PAGES * AUTH_USERS_PER_PAGE total users; past that the loop
+// exits and we log a warning so we know to raise the cap before the
+// silent-truncation symptoms (members showing as never-confirmed,
+// bulk import re-inviting existing users) start hitting in production.
+const AUTH_USERS_PER_PAGE = 200;
+const MAX_AUTH_PAGES = 50; // -> 10000 users before truncation
+
 function admin() {
   if (!SUPABASE_URL || !SERVICE_KEY) {
     throw new Error("team-mgmt env vars not configured");
@@ -180,16 +188,18 @@ async function listManaged(supa, manager) {
 
   // Pull email_confirmed_at for each member from auth.admin.listUsers so the
   // UI can flag accounts that haven't activated yet (invite sent but link
-  // never clicked / password never set). admin.listUsers paginates at 50;
-  // 1000 covers anything realistic for our scale today.
+  // never clicked / password never set). Cap at MAX_AUTH_PAGES * 200
+  // users; warn loudly when the loop exits at the cap so we can raise
+  // it before users past the cap silently show as "never confirmed".
   const memberIdSet = new Set(members.map((m) => m.id));
   const confirmedMap = {};
   try {
     let page = 1;
+    let truncated = false;
     while (true) {
       const { data: usersPage, error: usersErr } = await supa.auth.admin.listUsers({
         page,
-        perPage: 200,
+        perPage: AUTH_USERS_PER_PAGE,
       });
       if (usersErr) break;
       const users = usersPage?.users ?? [];
@@ -198,8 +208,19 @@ async function listManaged(supa, manager) {
           confirmedMap[u.id] = u.email_confirmed_at ?? null;
         }
       }
-      if (users.length < 200 || page >= 5) break;
+      if (users.length < AUTH_USERS_PER_PAGE) break;
+      if (page >= MAX_AUTH_PAGES) {
+        truncated = true;
+        break;
+      }
       page += 1;
+    }
+    if (truncated) {
+      console.warn(
+        `[team-mgmt] auth.admin.listUsers truncated at ${MAX_AUTH_PAGES} pages ` +
+          `(~${MAX_AUTH_PAGES * AUTH_USERS_PER_PAGE} users); members past the cap may ` +
+          `incorrectly show as never-confirmed. Raise MAX_AUTH_PAGES.`
+      );
     }
   } catch (e) {
     console.warn("[team-mgmt] failed to enrich with auth.users", e);
@@ -908,18 +929,35 @@ async function bulkValidate(supa, rows) {
   const areaByCode  = Object.fromEntries((areas ?? []).map((a) => [a.code, a.id]));
   const regionByCode= Object.fromEntries((regions ?? []).map((r) => [r.code, r.id]));
 
-  // Pre-load existing emails so we can mark duplicates upfront.
+  // Pre-load existing emails so we can mark duplicates upfront. Cap
+  // at MAX_AUTH_PAGES * AUTH_USERS_PER_PAGE; warn if truncated so a
+  // bulk import doesn't silently re-invite users that already exist.
   const existingEmails = new Set();
   try {
     let page = 1;
+    let truncated = false;
     while (true) {
-      const { data, error } = await supa.auth.admin.listUsers({ page, perPage: 200 });
+      const { data, error } = await supa.auth.admin.listUsers({
+        page,
+        perPage: AUTH_USERS_PER_PAGE,
+      });
       if (error) break;
       for (const u of data?.users ?? []) {
         if (u.email) existingEmails.add(u.email.toLowerCase());
       }
-      if ((data?.users ?? []).length < 200 || page >= 10) break;
+      if ((data?.users ?? []).length < AUTH_USERS_PER_PAGE) break;
+      if (page >= MAX_AUTH_PAGES) {
+        truncated = true;
+        break;
+      }
       page += 1;
+    }
+    if (truncated) {
+      console.warn(
+        `[team-mgmt] bulkValidate: listUsers truncated at ${MAX_AUTH_PAGES} pages ` +
+          `(~${MAX_AUTH_PAGES * AUTH_USERS_PER_PAGE} users); duplicate detection may miss ` +
+          `users past the cap and re-invite them. Raise MAX_AUTH_PAGES.`
+      );
     }
   } catch (e) {
     console.warn("[team-mgmt] bulkValidate: listUsers failed", e);
