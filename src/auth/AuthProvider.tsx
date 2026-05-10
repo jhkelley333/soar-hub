@@ -3,6 +3,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -62,11 +63,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [scopes, setScopes] = useState<UserScope[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // Monotonically increasing token tracking the "current" auth context.
+  // Every time we kick off a loadProfile we capture the current value;
+  // if anything that invalidates the in-flight load happens before it
+  // resolves (a sign-out, a different user signing in, an explicit
+  // refresh, a stale-session purge), we bump the counter and the
+  // resolving call sees its captured generation no longer matches and
+  // bails before clobbering state with stale data.
+  //
+  // Without this, signing out → signing in as user B can briefly
+  // render user A's profile because the boot path's loadProfile(A)
+  // resolves AFTER onAuthStateChange has fired for user B.
+  const generationRef = useRef(0);
+
   async function loadProfile(userId: string) {
+    const gen = ++generationRef.current;
     const [{ data: profileData }, { data: scopesData }] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
       supabase.from("user_scopes").select("*").eq("user_id", userId),
     ]);
+    if (gen !== generationRef.current) return; // superseded — bail
     setProfile((profileData as Profile) ?? null);
     setScopes((scopesData as UserScope[]) ?? []);
   }
@@ -83,6 +99,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // ignore — we just want the local state cleared
     }
     purgeSupabaseStorage();
+    // Bump the generation so any in-flight loadProfile resolves to a
+    // no-op rather than re-populating the cleared profile.
+    generationRef.current++;
     setSession(null);
     setProfile(null);
     setScopes([]);
@@ -137,6 +156,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setScopes([]);
         }
       } else {
+        // Sign-out (or session expired). Bump the generation so any
+        // in-flight loadProfile bails before re-populating profile.
+        generationRef.current++;
         setProfile(null);
         setScopes([]);
       }
@@ -157,6 +179,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signOut: async () => {
         // Clear React state immediately so ProtectedRoute redirects on the
         // next render — don't wait for onAuthStateChange to bounce back.
+        // Bump the generation so any in-flight loadProfile bails out
+        // instead of re-populating after we just cleared.
+        generationRef.current++;
         setSession(null);
         setProfile(null);
         setScopes([]);
