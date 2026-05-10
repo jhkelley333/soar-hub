@@ -93,3 +93,43 @@ export function fetchStoreVendorAudit(
     `${FN}?action=store-vendor-audit&${params.toString()}`
   );
 }
+
+// Store attributes — programs / drive-thru / restrooms / stall data /
+// third-party delivery. Accessible from My Stores → store detail to
+// admin / payroll / vp / coo / do / sdo / rvp.
+export interface StoreAttributesEditableFields {
+  has_apple_pay: boolean;
+  has_order_ahead: boolean;
+  has_outdoor_seating: boolean;
+  has_drive_thru: boolean;
+  has_clearance_bar: boolean;
+  drive_thru_lanes: number | null;
+  drive_thru_type: string | null;
+  public_restroom_count: number;
+  patio_pop_menu_count: number;
+  patio_pop_stall_numbers: string | null;
+  order_ahead_stall_count: number;
+  order_ahead_stall_numbers: string | null;
+  stall_pop_menu_count: number;
+  has_trailer_stall: boolean;
+  trailer_stall_number: string | null;
+  third_party_delivery: string[];
+}
+
+export interface UpdateStoreAttributesResponse {
+  store: { id: string } & StoreAttributesEditableFields;
+  changed: number;
+}
+
+export function updateStoreAttributes(
+  storeId: string,
+  fields: Partial<StoreAttributesEditableFields>
+): Promise<UpdateStoreAttributesResponse> {
+  return request<UpdateStoreAttributesResponse>(
+    `${FN}?action=update-store-attributes`,
+    {
+      method: "POST",
+      body: JSON.stringify({ store_id: storeId, ...fields }),
+    }
+  );
+}

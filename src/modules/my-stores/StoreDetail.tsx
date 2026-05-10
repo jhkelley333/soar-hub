@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ClipboardList, Mail, MapPin, Pencil, Phone } from "lucide-react";
+import { ArrowLeft, ClipboardList, Mail, MapPin, Pencil, Phone, Settings } from "lucide-react";
 import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
 import { Badge } from "@/shared/ui/Badge";
 import { Button } from "@/shared/ui/Button";
@@ -17,7 +17,9 @@ import { ROLE_LABELS, type UserRole } from "@/types/database";
 import { formatPhoneForDisplay } from "@/lib/phone";
 import {
   fetchStoreVendorAudit,
+  updateStoreAttributes,
   updateStoreVendor,
+  type StoreAttributesEditableFields,
   type StoreVendorAuditEntry,
   type VendorEditableFields,
 } from "./api";
@@ -39,6 +41,10 @@ function formatBirthdayShort(iso: string | null): string | null {
   return `${months[m - 1]} ${parseInt(dd, 10)}`;
 }
 
+const ATTRIBUTE_EDITOR_ROLES = new Set<UserRole>([
+  "admin", "payroll", "vp", "coo", "do", "sdo", "rvp",
+]);
+
 export function StoreDetail({
   store,
   leadership,
@@ -50,14 +56,34 @@ export function StoreDetail({
   onBack?: () => void;
   onMemberClick: (m: MyStoreTeamMember) => void;
 }) {
+  const { profile } = useAuth();
+  const canEditAttributes = !!profile && ATTRIBUTE_EDITOR_ROLES.has(profile.role);
+  const [attributesOpen, setAttributesOpen] = useState(false);
+
   return (
     <div className="space-y-4">
-      {onBack && (
-        <Button variant="ghost" size="sm" onClick={onBack} className="-ml-2">
-          <ArrowLeft className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
-          Back
-        </Button>
-      )}
+      <div className="flex items-center justify-between gap-2">
+        {onBack ? (
+          <Button variant="ghost" size="sm" onClick={onBack} className="-ml-2">
+            <ArrowLeft className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+            Back
+          </Button>
+        ) : (
+          <span />
+        )}
+        {canEditAttributes && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setAttributesOpen(true)}
+            aria-label="Manage store attributes"
+            title="Manage store attributes"
+          >
+            <Settings className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+            Manage attributes
+          </Button>
+        )}
+      </div>
 
       {/* Header card */}
       <Card>
@@ -155,6 +181,14 @@ export function StoreDetail({
           </ul>
         )}
       </Card>
+
+      {canEditAttributes && (
+        <AttributesEditDrawer
+          open={attributesOpen}
+          onClose={() => setAttributesOpen(false)}
+          store={store}
+        />
+      )}
     </div>
   );
 }
@@ -709,6 +743,299 @@ function Stat({ label, value }: { label: string; value: string }) {
       </dt>
       <dd className="mt-0.5 text-sm text-midnight">{value}</dd>
     </div>
+  );
+}
+
+const ATTR_THIRD_PARTY_PROVIDERS: { key: string; label: string }[] = [
+  { key: "doordash", label: "DoorDash" },
+  { key: "ubereats", label: "Uber Eats" },
+  { key: "grubhub", label: "Grubhub" },
+  { key: "ezcater", label: "EzCater" },
+  { key: "postmates", label: "Postmates" },
+];
+
+const ATTR_DRIVE_THRU_TYPES: { key: string; label: string }[] = [
+  { key: "single_pole_two_menus", label: "Single pole, two menus" },
+  { key: "split_housing", label: "Split housing" },
+];
+
+function AttributesEditDrawer({
+  open,
+  onClose,
+  store,
+}: {
+  open: boolean;
+  onClose: () => void;
+  store: MyStoreNode;
+}) {
+  const qc = useQueryClient();
+  const toast = useToast();
+
+  const [hasApplePay, setHasApplePay] = useState(false);
+  const [hasOrderAhead, setHasOrderAhead] = useState(false);
+  const [hasOutdoorSeating, setHasOutdoorSeating] = useState(false);
+  const [hasDriveThru, setHasDriveThru] = useState(false);
+  const [hasClearanceBar, setHasClearanceBar] = useState(false);
+  const [driveThruLanes, setDriveThruLanes] = useState<string>("");
+  const [driveThruType, setDriveThruType] = useState<string>("");
+  const [publicRestroomCount, setPublicRestroomCount] = useState<string>("0");
+  const [patioPopMenuCount, setPatioPopMenuCount] = useState<string>("0");
+  const [patioPopStallNumbers, setPatioPopStallNumbers] = useState("");
+  const [orderAheadStallCount, setOrderAheadStallCount] = useState<string>("0");
+  const [orderAheadStallNumbers, setOrderAheadStallNumbers] = useState("");
+  const [stallPopMenuCount, setStallPopMenuCount] = useState<string>("0");
+  const [hasTrailerStall, setHasTrailerStall] = useState(false);
+  const [trailerStallNumber, setTrailerStallNumber] = useState("");
+  const [thirdPartyDelivery, setThirdPartyDelivery] = useState<string[]>([]);
+
+  // Hydrate from the store whenever the drawer opens or the store changes.
+  useEffect(() => {
+    if (!open) return;
+    setHasApplePay(!!store.has_apple_pay);
+    setHasOrderAhead(!!store.has_order_ahead);
+    setHasOutdoorSeating(!!store.has_outdoor_seating);
+    setHasDriveThru(!!store.has_drive_thru);
+    setHasClearanceBar(!!store.has_clearance_bar);
+    setDriveThruLanes(store.drive_thru_lanes != null ? String(store.drive_thru_lanes) : "");
+    setDriveThruType(store.drive_thru_type ?? "");
+    setPublicRestroomCount(String(store.public_restroom_count ?? 0));
+    setPatioPopMenuCount(String(store.patio_pop_menu_count ?? 0));
+    setPatioPopStallNumbers(store.patio_pop_stall_numbers ?? "");
+    setOrderAheadStallCount(String(store.order_ahead_stall_count ?? 0));
+    setOrderAheadStallNumbers(store.order_ahead_stall_numbers ?? "");
+    setStallPopMenuCount(String(store.stall_pop_menu_count ?? 0));
+    setHasTrailerStall(!!store.has_trailer_stall);
+    setTrailerStallNumber(store.trailer_stall_number ?? "");
+    setThirdPartyDelivery(Array.isArray(store.third_party_delivery) ? store.third_party_delivery : []);
+  }, [open, store]);
+
+  const mut = useMutation({
+    mutationFn: () => {
+      const fields: Partial<StoreAttributesEditableFields> = {
+        has_apple_pay: hasApplePay,
+        has_order_ahead: hasOrderAhead,
+        has_outdoor_seating: hasOutdoorSeating,
+        has_drive_thru: hasDriveThru,
+        has_clearance_bar: hasClearanceBar,
+        drive_thru_lanes: driveThruLanes ? parseInt(driveThruLanes, 10) : null,
+        drive_thru_type: driveThruType || null,
+        public_restroom_count: parseInt(publicRestroomCount || "0", 10) || 0,
+        patio_pop_menu_count: parseInt(patioPopMenuCount || "0", 10) || 0,
+        patio_pop_stall_numbers: patioPopStallNumbers.trim() || null,
+        order_ahead_stall_count: parseInt(orderAheadStallCount || "0", 10) || 0,
+        order_ahead_stall_numbers: orderAheadStallNumbers.trim() || null,
+        stall_pop_menu_count: parseInt(stallPopMenuCount || "0", 10) || 0,
+        has_trailer_stall: hasTrailerStall,
+        trailer_stall_number: trailerStallNumber.trim() || null,
+        third_party_delivery: thirdPartyDelivery,
+      };
+      return updateStoreAttributes(store.id, fields);
+    },
+    onSuccess: () => {
+      toast.push("Store attributes saved.", "success");
+      qc.invalidateQueries({ queryKey: ["my-stores-tree"] });
+      onClose();
+    },
+    onError: (e: unknown) =>
+      toast.push(e instanceof Error ? e.message : "Save failed.", "error"),
+  });
+
+  return (
+    <Drawer
+      open={open}
+      onClose={onClose}
+      title={`Store attributes — Store #${store.number}`}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} disabled={mut.isPending}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            onClick={() => mut.mutate()}
+            disabled={mut.isPending}
+          >
+            {mut.isPending ? "Saving…" : "Save"}
+          </Button>
+        </>
+      }
+    >
+      <div className="space-y-5">
+        {/* Active programs */}
+        <div>
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+            Active programs
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2">
+            <AttrToggle label="Apple Pay" checked={hasApplePay} onChange={setHasApplePay} />
+            <AttrToggle label="Order Ahead" checked={hasOrderAhead} onChange={setHasOrderAhead} />
+            <AttrToggle label="Outdoor seating" checked={hasOutdoorSeating} onChange={setHasOutdoorSeating} />
+            <AttrToggle label="Drive-thru" checked={hasDriveThru} onChange={setHasDriveThru} />
+          </div>
+        </div>
+
+        {hasDriveThru && (
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label htmlFor="attr-dt-lanes">Drive-thru lanes</Label>
+                <select
+                  id="attr-dt-lanes"
+                  value={driveThruLanes}
+                  onChange={(e) => setDriveThruLanes(e.target.value)}
+                  className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+                >
+                  <option value="">—</option>
+                  <option value="1">Single (1 lane)</option>
+                  <option value="2">Double (2 lanes)</option>
+                </select>
+              </div>
+              <div>
+                <Label htmlFor="attr-dt-type">Drive-thru type</Label>
+                <select
+                  id="attr-dt-type"
+                  value={driveThruType}
+                  onChange={(e) => setDriveThruType(e.target.value)}
+                  className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+                >
+                  <option value="">—</option>
+                  {ATTR_DRIVE_THRU_TYPES.map((t) => (
+                    <option key={t.key} value={t.key}>{t.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <AttrToggle label="Clearance bar" checked={hasClearanceBar} onChange={setHasClearanceBar} />
+          </div>
+        )}
+
+        <div>
+          <Label htmlFor="attr-restrooms">Public restrooms</Label>
+          <Input
+            id="attr-restrooms"
+            type="number"
+            min={0}
+            max={99}
+            value={publicRestroomCount}
+            onChange={(e) => setPublicRestroomCount(e.target.value)}
+          />
+        </div>
+
+        {/* Stall data */}
+        <div>
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+            Stall data
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <Label htmlFor="attr-patio-pop"># Patio POP menus</Label>
+              <Input
+                id="attr-patio-pop"
+                type="number"
+                min={0}
+                value={patioPopMenuCount}
+                onChange={(e) => setPatioPopMenuCount(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="attr-patio-pop-stalls">Patio POP stall #s</Label>
+              <Input
+                id="attr-patio-pop-stalls"
+                value={patioPopStallNumbers}
+                onChange={(e) => setPatioPopStallNumbers(e.target.value)}
+                placeholder="e.g. 1,2,3,4"
+              />
+            </div>
+            <div>
+              <Label htmlFor="attr-oa-count"># Order Ahead stalls</Label>
+              <Input
+                id="attr-oa-count"
+                type="number"
+                min={0}
+                value={orderAheadStallCount}
+                onChange={(e) => setOrderAheadStallCount(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label htmlFor="attr-oa-stalls">Order Ahead stall #s</Label>
+              <Input
+                id="attr-oa-stalls"
+                value={orderAheadStallNumbers}
+                onChange={(e) => setOrderAheadStallNumbers(e.target.value)}
+                placeholder="e.g. 5,6"
+              />
+            </div>
+            <div>
+              <Label htmlFor="attr-stall-pop"># Stall POP menus</Label>
+              <Input
+                id="attr-stall-pop"
+                type="number"
+                min={0}
+                value={stallPopMenuCount}
+                onChange={(e) => setStallPopMenuCount(e.target.value)}
+              />
+            </div>
+            <div className="flex items-end">
+              <AttrToggle label="Trailer stall" checked={hasTrailerStall} onChange={setHasTrailerStall} />
+            </div>
+          </div>
+          {hasTrailerStall && (
+            <div className="mt-3">
+              <Label htmlFor="attr-trailer-num">Trailer stall #</Label>
+              <Input
+                id="attr-trailer-num"
+                value={trailerStallNumber}
+                onChange={(e) => setTrailerStallNumber(e.target.value)}
+                placeholder="e.g. 12"
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Third-party delivery */}
+        <div>
+          <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+            Third-party delivery
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-2 sm:grid-cols-3">
+            {ATTR_THIRD_PARTY_PROVIDERS.map((p) => (
+              <AttrToggle
+                key={p.key}
+                label={p.label}
+                checked={thirdPartyDelivery.includes(p.key)}
+                onChange={(next) => {
+                  setThirdPartyDelivery((cur) =>
+                    next ? [...cur, p.key] : cur.filter((k) => k !== p.key)
+                  );
+                }}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+    </Drawer>
+  );
+}
+
+function AttrToggle({
+  label,
+  checked,
+  onChange,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <label className="flex items-center gap-2 text-sm text-zinc-800">
+      <input
+        type="checkbox"
+        className="h-4 w-4 accent-accent"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+      />
+      {label}
+    </label>
   );
 }
 
