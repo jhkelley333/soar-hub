@@ -262,7 +262,10 @@ const PARENT_FIELD_FOR = {
 
 async function logOrgChange(supa, { actor_id, target_kind, target_id, action, before, after }) {
   try {
-    await supa.from("org_changes").insert({
+    // supabase-js returns PostgREST errors in the result object — it
+    // does NOT throw — so we have to destructure { error }. A bare
+    // try/catch around the insert silently drops failed audit rows.
+    const { error } = await supa.from("org_changes").insert({
       actor_id,
       target_kind,
       target_id,
@@ -270,8 +273,9 @@ async function logOrgChange(supa, { actor_id, target_kind, target_id, action, be
       before: before ?? null,
       after: after ?? null,
     });
+    if (error) console.warn("[org-mgmt] audit log insert failed", error);
   } catch (e) {
-    console.warn("[org-mgmt] audit log insert failed", e);
+    console.warn("[org-mgmt] audit log insert threw", e);
   }
 }
 
