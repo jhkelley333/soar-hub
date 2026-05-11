@@ -210,3 +210,18 @@ export interface EscalationChain {
   do: EscalationProfile | null;
   sdo_or_rvp: EscalationProfile | null;
 }
+
+// Resolved context the escalation-chain endpoint returns alongside the
+// chain — used by the drawer to show what scope was looked up and to
+// surface scope names in the empty-slot fallback message.
+export interface EscalationContext {
+  store_id: string | null;
+  store_number: string | null;
+  store_name: string | null;
+  district_id: string | null;
+  district_name: string | null;
+  area_id: string | null;
+  area_name: string | null;
+  region_id: string | null;
+  region_name: string | null;
+}
