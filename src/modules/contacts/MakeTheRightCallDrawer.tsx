@@ -33,23 +33,47 @@ export function MakeTheRightCallDrawer({
     staleTime: 5 * 60_000,
   });
 
-  // Locate the caller's primary store in the tree, plus its district /
-  // area / region for the context header.
+  // Locate the caller's store in the tree. Prefer primary_store_id;
+  // fall back to "the only store in your visible tree" — this mirrors
+  // MyStoresPage's auto-jump for GMs without primary_store_id populated,
+  // so we never claim "not assigned" when the org chart clearly shows
+  // exactly one store the user can see.
   const located = useMemo(() => {
-    if (!profile?.primary_store_id || !query.data) return null;
+    if (!query.data) return null;
+    const all: {
+      region: typeof query.data.regions[number];
+      area: typeof query.data.regions[number]["areas"][number];
+      district: typeof query.data.regions[number]["areas"][number]["districts"][number];
+      store: MyStoreNode;
+    }[] = [];
     for (const region of query.data.regions) {
       for (const area of region.areas) {
         for (const district of area.districts) {
           for (const store of district.stores) {
-            if (store.id === profile.primary_store_id) {
-              return { region, area, district, store };
-            }
+            all.push({ region, area, district, store });
           }
         }
       }
     }
+    if (profile?.primary_store_id) {
+      const hit = all.find((x) => x.store.id === profile.primary_store_id);
+      if (hit) return hit;
+    }
+    if (all.length === 1) return all[0];
     return null;
   }, [profile?.primary_store_id, query.data]);
+
+  // Multi-store users (DO/SDO/RVP/admin) shouldn't be using MTC anyway —
+  // they ARE the escalation chain. Show a friendlier message instead of
+  // "your account isn't assigned to a store" which is misleading for
+  // those roles.
+  const multiStoreCaller = !!query.data && !located && (
+    query.data.regions.some((r) =>
+      r.areas.some((a) =>
+        a.districts.some((d) => d.stores.length > 0)
+      )
+    )
+  );
 
   const leadership = located
     ? query.data?.leadership?.[located.store.id] ?? null
@@ -79,17 +103,19 @@ export function MakeTheRightCallDrawer({
             {(query.error as Error)?.message}
           </div>
         )}
-        {query.data && !profile?.primary_store_id && (
-          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            Your account isn't assigned to a store yet, so we can't show
-            your manager chain. Ask your admin to set your primary store.
+        {query.data && !located && multiStoreCaller && (
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-700">
+            Make the Right Call is for store-level employees escalating
+            up the chain. Your account oversees multiple stores, so you
+            already sit in the chain — there's nothing above this to
+            auto-route to.
           </div>
         )}
-        {query.data && profile?.primary_store_id && !located && (
+        {query.data && !located && !multiStoreCaller && (
           <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
-            Your assigned store isn't in your visible org tree — this
-            usually means a scope-chain gap. Ask your admin to verify your
-            primary store is correctly linked.
+            Your account isn't linked to any store in the org tree. Ask
+            your admin to set your primary store or assign you to a
+            store-level scope.
           </div>
         )}
         {located && (
