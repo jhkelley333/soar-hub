@@ -5,7 +5,9 @@
 
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Headphones, Pin, PinOff, Plus, Search, X } from "lucide-react";
+import { Download, PhoneOutgoing, Pin, PinOff, Plus, Search, X } from "lucide-react";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -46,6 +48,52 @@ const TIER_TONE: Record<Tier, "info" | "warning" | "neutral" | "success"> = {
 };
 
 const EDITOR_ROLES = new Set(["admin", "payroll", "vp", "coo", "do", "sdo", "rvp", "gm"]);
+
+// Generate a PDF of the currently-visible contact rows. Includes the
+// caller's POS auto-filter context so the export reflects what they saw
+// on screen, not the full unfiltered set.
+function downloadContactsAsPDF(
+  contacts: Contact[],
+  userPos: string | null,
+) {
+  const doc = new jsPDF({ unit: "pt", format: "letter" });
+  const ts = new Date().toLocaleString();
+  doc.setFontSize(14);
+  doc.text("SOAR Contacts", 40, 50);
+  doc.setFontSize(9);
+  doc.setTextColor(120);
+  const subtitle = userPos
+    ? `Filtered for ${userPos === "infor" ? "Infor" : "Micros"} POS \u00b7 Exported ${ts}`
+    : `Exported ${ts}`;
+  doc.text(subtitle, 40, 66);
+  doc.setTextColor(0);
+
+  autoTable(doc, {
+    head: [["Category", "Name", "Phone / Ext", "Email", "Tier", "Notes"]],
+    body: contacts.map((c) => [
+      c.category ?? "",
+      c.display_name,
+      [c.phone ?? "", c.extension ? `ext ${c.extension}` : ""].filter(Boolean).join("  "),
+      c.email ?? "",
+      TIER_LABEL[c.tier],
+      c.notes ?? "",
+    ]),
+    startY: 80,
+    styles: { fontSize: 8, cellPadding: 4, valign: "top" },
+    headStyles: { fillColor: [30, 41, 59] },
+    columnStyles: {
+      0: { cellWidth: 80 },
+      1: { cellWidth: 110 },
+      2: { cellWidth: 100 },
+      3: { cellWidth: 110 },
+      4: { cellWidth: 50 },
+      5: { cellWidth: "auto" },
+    },
+  });
+
+  const today = new Date().toISOString().slice(0, 10);
+  doc.save(`soar-contacts-${today}.pdf`);
+}
 
 export function ContactsPage() {
   const { profile } = useAuth();
@@ -153,8 +201,18 @@ export function ContactsPage() {
         actions={
           <div className="flex flex-wrap gap-2">
             <Button variant="danger" onClick={() => setCallDrawerOpen(true)}>
-              <Headphones className="mr-1.5 h-3.5 w-3.5" strokeWidth={1.75} />
+              <PhoneOutgoing className="mr-1.5 h-3.5 w-3.5" strokeWidth={1.75} />
               Make the Right Call
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => downloadContactsAsPDF(filtered, userPos)}
+              disabled={filtered.length === 0}
+              title="Download the currently visible contacts as a PDF"
+            >
+              <Download className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+              Download PDF
             </Button>
             {canCreate && (
               <Button variant="ghost" size="sm" onClick={() => setEditing("new")}>
