@@ -6,12 +6,12 @@
 
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronDown, Mail, MessageSquare, Phone, ShieldAlert } from "lucide-react";
+import { ChevronDown, Mail, MapPin, MessageSquare, Phone, ShieldAlert } from "lucide-react";
 import { Drawer } from "@/shared/ui/Drawer";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { formatPhoneForDisplay } from "@/lib/phone";
 import { ROLE_LABELS } from "@/types/database";
-import type { EscalationProfile } from "@/types/database";
+import type { EscalationContext, EscalationProfile } from "@/types/database";
 import { fetchEscalationChain } from "./api";
 
 export function MakeTheRightCallDrawer({
@@ -53,15 +53,49 @@ export function MakeTheRightCallDrawer({
           </div>
         )}
         {query.data && (
-          <div className="space-y-3">
-            <Step n={1} title="Your General Manager" person={query.data.chain.gm} />
-            <Step n={2} title="Director of Operations" person={query.data.chain.do} />
-            <Step
-              n={3}
-              title="Senior Director or Regional VP"
-              person={query.data.chain.sdo_or_rvp}
-            />
-          </div>
+          <>
+            {query.data.missing === "primary_store_id" ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                Your account isn't assigned to a store yet, so we can't show
+                your manager chain. Ask your admin to set your primary store.
+              </div>
+            ) : (
+              <ContextHeader context={query.data.context} />
+            )}
+            <div className="space-y-3">
+              <Step
+                n={1}
+                title="Your General Manager"
+                person={query.data.chain.gm}
+                missingScopeLabel={
+                  query.data.context.store_number
+                    ? `Store #${query.data.context.store_number}`
+                    : null
+                }
+              />
+              <Step
+                n={2}
+                title="Director of Operations"
+                person={query.data.chain.do}
+                missingScopeLabel={
+                  query.data.context.district_name ??
+                  query.data.context.area_name ??
+                  query.data.context.region_name ??
+                  null
+                }
+              />
+              <Step
+                n={3}
+                title="Senior Director or Regional VP"
+                person={query.data.chain.sdo_or_rvp}
+                missingScopeLabel={
+                  query.data.context.area_name ??
+                  query.data.context.region_name ??
+                  null
+                }
+              />
+            </div>
+          </>
         )}
 
         {/* When to use this — collapsible */}
@@ -117,10 +151,12 @@ function Step({
   n,
   title,
   person,
+  missingScopeLabel,
 }: {
   n: number;
   title: string;
   person: EscalationProfile | null;
+  missingScopeLabel: string | null;
 }) {
   return (
     <div className="rounded-md border border-zinc-200 bg-white p-3">
@@ -136,11 +172,32 @@ function Step({
             <PersonCard person={person} />
           ) : (
             <p className="mt-1 text-sm text-zinc-500">
-              No one assigned for your store at this level yet — contact your
-              admin so they can fill in the gap.
+              {missingScopeLabel
+                ? `No one with this role is assigned with scope over ${missingScopeLabel}. Ask your admin to add an assignment.`
+                : "Your store isn't linked to this level of the org tree yet — contact your admin to set up the scope chain."}
             </p>
           )}
         </div>
+      </div>
+    </div>
+  );
+}
+
+function ContextHeader({ context }: { context: EscalationContext }) {
+  const parts: string[] = [];
+  if (context.store_number) {
+    parts.push(`Store #${context.store_number}${context.store_name ? ` — ${context.store_name}` : ""}`);
+  }
+  if (context.district_name) parts.push(`District ${context.district_name}`);
+  if (context.area_name)     parts.push(`Area ${context.area_name}`);
+  if (context.region_name)   parts.push(`Region ${context.region_name}`);
+  if (parts.length === 0) return null;
+  return (
+    <div className="flex items-start gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
+      <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-zinc-400" strokeWidth={1.75} />
+      <div>
+        <div className="font-semibold text-midnight">Your scope</div>
+        <div className="mt-0.5 text-zinc-600">{parts.join(" → ")}</div>
       </div>
     </div>
   );

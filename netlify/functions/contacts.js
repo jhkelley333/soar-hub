@@ -381,22 +381,67 @@ async function pinContact(supa, user, body, { pin }) {
 // user_scopes is set at), SDO or RVP who covers the user's area or
 // region. Walks up the scope hierarchy at each level so we find the
 // right person regardless of where their scope was assigned.
+//
+// The response also includes the resolved `context` (store number +
+// district/area/region names) so the UI can show "Your store: #1234 —
+// District ABC" and, for empty slots, name the scope that was searched
+// ("No DO assigned with scope over District ABC").
 async function escalationChain(supa, user) {
+  const emptyContext = {
+    store_id: user.primary_store_id ?? null,
+    store_number: null,
+    store_name: null,
+    district_id: null,
+    district_name: null,
+    area_id: null,
+    area_name: null,
+    region_id: null,
+    region_name: null,
+  };
+
   if (!user.primary_store_id) {
-    return { chain: { gm: null, do: null, sdo_or_rvp: null }, missing: "primary_store_id" };
+    return {
+      chain: { gm: null, do: null, sdo_or_rvp: null },
+      context: emptyContext,
+      missing: "primary_store_id",
+    };
   }
 
   // Resolve the user's store → district → area → region chain.
   const { data: store } = await supa
-    .from("stores").select("id, district_id").eq("id", user.primary_store_id).maybeSingle();
-  if (!store) return { chain: { gm: null, do: null, sdo_or_rvp: null }, missing: "store" };
+    .from("stores")
+    .select("id, number, name, district_id")
+    .eq("id", user.primary_store_id)
+    .maybeSingle();
+  if (!store) {
+    return {
+      chain: { gm: null, do: null, sdo_or_rvp: null },
+      context: emptyContext,
+      missing: "store",
+    };
+  }
   const { data: district } = store.district_id
-    ? await supa.from("districts").select("id, area_id").eq("id", store.district_id).maybeSingle()
+    ? await supa.from("districts").select("id, name, area_id").eq("id", store.district_id).maybeSingle()
     : { data: null };
   const { data: area } = district?.area_id
-    ? await supa.from("areas").select("id, region_id").eq("id", district.area_id).maybeSingle()
+    ? await supa.from("areas").select("id, name, region_id").eq("id", district.area_id).maybeSingle()
     : { data: null };
-  const regionId = area?.region_id ?? null;
+  const { data: region } = area?.region_id
+    ? await supa.from("regions").select("id, name").eq("id", area.region_id).maybeSingle()
+    : { data: null };
+  const regionId = region?.id ?? area?.region_id ?? null;
+
+  const context = {
+    store_id: store.id,
+    store_number: store.number,
+    store_name: store.name,
+    district_id: district?.id ?? null,
+    district_name: district?.name ?? null,
+    area_id: area?.id ?? null,
+    area_name: area?.name ?? null,
+    region_id: regionId,
+    region_name: region?.name ?? null,
+  };
 
   const profileFields = "id, email, full_name, preferred_name, phone, role, profile_photo_url";
 
@@ -466,7 +511,7 @@ async function escalationChain(supa, user) {
     { scope_type: "region", scope_id: regionId },
   ]);
 
-  return { chain: { gm, do: districtOps, sdo_or_rvp: sdoOrRvp } };
+  return { chain: { gm, do: districtOps, sdo_or_rvp: sdoOrRvp }, context };
 }
 
 // Scope options for the contact-edit form. Returns the regions /

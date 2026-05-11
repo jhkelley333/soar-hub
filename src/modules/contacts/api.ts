@@ -5,6 +5,7 @@ import type {
   Contact,
   ContactKind,
   EscalationChain,
+  EscalationContext,
   PosFilter,
   Tier,
   Vendor,
@@ -137,7 +138,11 @@ export function unpinContact(id: string): Promise<{ ok: true; pinned: string[] }
   });
 }
 
-export function fetchEscalationChain(): Promise<{ chain: EscalationChain; missing?: string }> {
+export function fetchEscalationChain(): Promise<{
+  chain: EscalationChain;
+  context: EscalationContext;
+  missing?: string;
+}> {
   return request(`${CONTACTS_FN}?action=escalation-chain`);
 }
 
