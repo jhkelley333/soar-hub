@@ -193,35 +193,3 @@ export interface Contact {
   created_at: string;
   updated_at: string;
 }
-
-// Profile fields surfaced in escalation-chain responses (Make the Right Call).
-export interface EscalationProfile {
-  id: string;
-  email: string;
-  full_name: string | null;
-  preferred_name: string | null;
-  phone: string | null;
-  role: UserRole;
-  profile_photo_url: string | null;
-}
-
-export interface EscalationChain {
-  gm: EscalationProfile | null;
-  do: EscalationProfile | null;
-  sdo_or_rvp: EscalationProfile | null;
-}
-
-// Resolved context the escalation-chain endpoint returns alongside the
-// chain — used by the drawer to show what scope was looked up and to
-// surface scope names in the empty-slot fallback message.
-export interface EscalationContext {
-  store_id: string | null;
-  store_number: string | null;
-  store_name: string | null;
-  district_id: string | null;
-  district_name: string | null;
-  area_id: string | null;
-  area_name: string | null;
-  region_id: string | null;
-  region_name: string | null;
-}
