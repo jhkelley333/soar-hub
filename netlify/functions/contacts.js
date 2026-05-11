@@ -8,8 +8,6 @@
 //
 //   GET  ?action=list                 — contacts visible to caller
 //   GET  ?action=get&id=...           — single contact
-//   GET  ?action=escalation-chain     — caller's GM / DO / SDO-or-RVP
-//                                        (for Make the Right Call drawer)
 //
 //   POST ?action=create               — create a new contact
 //   POST ?action=update               — partial update
@@ -374,9 +372,17 @@ async function hideContact(supa, user, body, { hide }) {
   return { ok: true };
 }
 
-async function pinContact(supa, user, body, { pin }) {
+async function pinContact(supa, userSupa, user, body, { pin }) {
   const id = String(body?.id || "").trim();
   if (!id) return { error: "id required.", status: 400 };
+  // Only pin contacts the caller can actually see. RLS via userSupa
+  // returns null for hidden rows — treat that as 404 so phantom IDs
+  // can't pile up in pinned_contact_ids.
+  if (pin) {
+    const { data: visible } = await userSupa
+      .from("contacts").select("id").eq("id", id).maybeSingle();
+    if (!visible) return { error: "Not found.", status: 404 };
+  }
   const current = new Set(user.pinned_contact_ids ?? []);
   if (pin) current.add(id);
   else current.delete(id);
@@ -386,168 +392,6 @@ async function pinContact(supa, user, body, { pin }) {
     .eq("id", user.id);
   if (error) return { error: error.message, status: 500 };
   return { ok: true, pinned: Array.from(current) };
-}
-
-// Make the Right Call escalation chain: GM at user's store, DO who
-// covers the user's district / area / region (whichever level their
-// user_scopes is set at), SDO or RVP who covers the user's area or
-// region. Walks up the scope hierarchy at each level so we find the
-// right person regardless of where their scope was assigned.
-//
-// The response also includes the resolved `context` (store number +
-// district/area/region names) so the UI can show "Your store: #1234 —
-// District ABC" and, for empty slots, name the scope that was searched
-// ("No DO assigned with scope over District ABC").
-async function escalationChain(supa, user) {
-  const emptyContext = {
-    store_id: user.primary_store_id ?? null,
-    store_number: null,
-    store_name: null,
-    district_id: null,
-    district_name: null,
-    area_id: null,
-    area_name: null,
-    region_id: null,
-    region_name: null,
-  };
-
-  if (!user.primary_store_id) {
-    return {
-      chain: { gm: null, do: null, sdo_or_rvp: null },
-      context: emptyContext,
-      missing: "primary_store_id",
-    };
-  }
-
-  // Resolve the user's store → district → area → region chain.
-  const { data: store } = await supa
-    .from("stores")
-    .select("id, number, name, district_id")
-    .eq("id", user.primary_store_id)
-    .maybeSingle();
-  if (!store) {
-    return {
-      chain: { gm: null, do: null, sdo_or_rvp: null },
-      context: emptyContext,
-      missing: "store",
-    };
-  }
-  const { data: district } = store.district_id
-    ? await supa.from("districts").select("id, name, area_id").eq("id", store.district_id).maybeSingle()
-    : { data: null };
-  const { data: area } = district?.area_id
-    ? await supa.from("areas").select("id, name, region_id").eq("id", district.area_id).maybeSingle()
-    : { data: null };
-  const { data: region } = area?.region_id
-    ? await supa.from("regions").select("id, name").eq("id", area.region_id).maybeSingle()
-    : { data: null };
-  const regionId = region?.id ?? area?.region_id ?? null;
-
-  const context = {
-    store_id: store.id,
-    store_number: store.number,
-    store_name: store.name,
-    district_id: district?.id ?? null,
-    district_name: district?.name ?? null,
-    area_id: area?.id ?? null,
-    area_name: area?.name ?? null,
-    region_id: regionId,
-    region_name: region?.name ?? null,
-  };
-
-  const profileFields = "id, email, full_name, preferred_name, phone, role, profile_photo_url, primary_store_id, is_active";
-
-  // Pre-load all relevant scope rows + their profiles. Filter in
-  // memory rather than chaining .eq().in() on the DB, because
-  // the latter has been flaky against the user_role enum in this
-  // deployment — the same filter works fine in JS. This also mirrors
-  // exactly what org.js getMyTree() does for the leadership card,
-  // which is known to work on the user's data.
-  const { data: scopeRows } = await supa
-    .from("user_scopes")
-    .select("user_id, scope_type, scope_id")
-    .in("scope_type", ["store", "district", "area", "region"]);
-  const scopedUserIds = Array.from(new Set((scopeRows ?? []).map((s) => s.user_id)));
-
-  // Active profiles for those user_ids + any GMs whose primary_store
-  // is this store (the GM path doesn't always have a user_scopes row).
-  const { data: scopedProfiles } = scopedUserIds.length
-    ? await supa.from("profiles").select(profileFields).in("id", scopedUserIds).eq("is_active", true)
-    : { data: [] };
-  const { data: gmProfiles } = await supa
-    .from("profiles")
-    .select(profileFields)
-    .eq("primary_store_id", user.primary_store_id)
-    .eq("is_active", true);
-  const profileById = new Map();
-  for (const p of [...(scopedProfiles ?? []), ...(gmProfiles ?? [])]) {
-    profileById.set(p.id, p);
-  }
-
-  function findByRoleAndScope(roles, scopeType, scopeId) {
-    if (!scopeId) return null;
-    const matches = (scopeRows ?? []).filter((s) => {
-      if (s.scope_type !== scopeType) return false;
-      if (s.scope_id !== scopeId) return false;
-      const p = profileById.get(s.user_id);
-      return p && roles.includes(p.role);
-    });
-    if (!matches.length) return null;
-    matches.sort((a, b) => a.user_id.localeCompare(b.user_id));
-    return profileById.get(matches[0].user_id);
-  }
-
-  function findManagerInChain(roles, chain) {
-    for (const link of chain) {
-      const m = findByRoleAndScope(roles, link.scope_type, link.scope_id);
-      if (m) return m;
-    }
-    return null;
-  }
-
-  // GM: prefer profiles.primary_store_id match (the standard SOAR
-  // setup); fall back to user_scopes at scope_type='store' for GMs
-  // whose primary_store_id isn't populated. Take any GM (the caller
-  // themselves is a valid match — the UI renders a "That's you"
-  // indicator in that case).
-  const gmByStore = (gmProfiles ?? []).filter((p) => p.role === "gm");
-  gmByStore.sort((a, b) => a.id.localeCompare(b.id));
-  let gm = gmByStore[0] ?? null;
-  if (!gm) {
-    gm = findManagerInChain(["gm"], [
-      { scope_type: "store", scope_id: user.primary_store_id },
-    ]);
-  }
-
-  const districtOps = findManagerInChain(["do"], [
-    { scope_type: "district", scope_id: district?.id },
-    { scope_type: "area",     scope_id: area?.id },
-    { scope_type: "region",   scope_id: regionId },
-  ]);
-
-  const sdoOrRvp = findManagerInChain(["sdo", "rvp"], [
-    { scope_type: "area",   scope_id: area?.id },
-    { scope_type: "region", scope_id: regionId },
-  ]);
-
-  // Diagnostic counts — let the UI / network tab tell us why a slot
-  // is empty without needing DB access. Counts are aggregate; not PII.
-  const diag = {
-    total_scope_rows: (scopeRows ?? []).length,
-    total_scoped_profiles: scopedProfiles?.length ?? 0,
-    gm_profiles_at_primary_store: (gmProfiles ?? []).filter((p) => p.role === "gm").length,
-    district_scope_rows: district?.id
-      ? (scopeRows ?? []).filter((s) => s.scope_type === "district" && s.scope_id === district.id).length
-      : 0,
-    area_scope_rows: area?.id
-      ? (scopeRows ?? []).filter((s) => s.scope_type === "area" && s.scope_id === area.id).length
-      : 0,
-    region_scope_rows: regionId
-      ? (scopeRows ?? []).filter((s) => s.scope_type === "region" && s.scope_id === regionId).length
-      : 0,
-  };
-
-  return { chain: { gm, do: districtOps, sdo_or_rvp: sdoOrRvp }, context, diag };
 }
 
 // Scope options for the contact-edit form. Returns the regions /
@@ -649,7 +493,6 @@ export const handler = async (event) => {
     if (event.httpMethod === "GET") {
       if (action === "list") return unwrap(await listContacts(userClient(token)));
       if (action === "get") return unwrap(await getContact(userClient(token), params));
-      if (action === "escalation-chain") return unwrap(await escalationChain(supa, user));
       if (action === "scope-options") return unwrap(await scopeOptions(supa, user));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
@@ -665,8 +508,8 @@ export const handler = async (event) => {
       if (action === "delete")  return unwrap(await deleteContact(supa, user, body));
       if (action === "hide")    return unwrap(await hideContact(supa, user, body, { hide: true }));
       if (action === "unhide")  return unwrap(await hideContact(supa, user, body, { hide: false }));
-      if (action === "pin")     return unwrap(await pinContact(supa, user, body, { pin: true }));
-      if (action === "unpin")   return unwrap(await pinContact(supa, user, body, { pin: false }));
+      if (action === "pin")     return unwrap(await pinContact(supa, userClient(token), user, body, { pin: true }));
+      if (action === "unpin")   return unwrap(await pinContact(supa, userClient(token), user, body, { pin: false }));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
     return respond(405, { error: "method not allowed" });
