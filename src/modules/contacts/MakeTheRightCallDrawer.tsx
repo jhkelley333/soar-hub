@@ -9,6 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, Mail, MapPin, MessageSquare, Phone, ShieldAlert } from "lucide-react";
 import { Drawer } from "@/shared/ui/Drawer";
 import { Skeleton } from "@/shared/ui/Skeleton";
+import { useAuth } from "@/auth/AuthProvider";
 import { formatPhoneForDisplay } from "@/lib/phone";
 import { ROLE_LABELS } from "@/types/database";
 import type { EscalationContext, EscalationProfile } from "@/types/database";
@@ -21,6 +22,7 @@ export function MakeTheRightCallDrawer({
   open: boolean;
   onClose: () => void;
 }) {
+  const { profile } = useAuth();
   const query = useQuery({
     queryKey: ["escalation-chain"],
     queryFn: fetchEscalationChain,
@@ -33,8 +35,8 @@ export function MakeTheRightCallDrawer({
       <div className="space-y-5">
         {/* Framing message */}
         <div className="rounded-md border border-frost/40 bg-frost/10 px-3 py-2.5 text-sm text-midnight">
-          Talk with your manager first if they have any questions, concerns,
-          or suggestions regarding their position, responsibilities, or any
+          Talk with your manager first if you have any questions, concerns,
+          or suggestions regarding your position, responsibilities, or any
           other workplace concerns.
         </div>
 
@@ -67,6 +69,7 @@ export function MakeTheRightCallDrawer({
                 n={1}
                 title="Your General Manager"
                 person={query.data.chain.gm}
+                callerId={profile?.id ?? null}
                 missingScopeLabel={
                   query.data.context.store_number
                     ? `Store #${query.data.context.store_number}`
@@ -77,6 +80,7 @@ export function MakeTheRightCallDrawer({
                 n={2}
                 title="Director of Operations"
                 person={query.data.chain.do}
+                callerId={profile?.id ?? null}
                 missingScopeLabel={
                   query.data.context.district_name ??
                   query.data.context.area_name ??
@@ -88,6 +92,7 @@ export function MakeTheRightCallDrawer({
                 n={3}
                 title="Senior Director or Regional VP"
                 person={query.data.chain.sdo_or_rvp}
+                callerId={profile?.id ?? null}
                 missingScopeLabel={
                   query.data.context.area_name ??
                   query.data.context.region_name ??
@@ -151,13 +156,18 @@ function Step({
   n,
   title,
   person,
+  callerId,
   missingScopeLabel,
 }: {
   n: number;
   title: string;
   person: EscalationProfile | null;
+  callerId: string | null;
   missingScopeLabel: string | null;
 }) {
+  // If the resolved person IS the caller, render a "you are this role"
+  // indicator instead of asking them to call themselves.
+  const isSelf = !!person && !!callerId && person.id === callerId;
   return (
     <div className="rounded-md border border-zinc-200 bg-white p-3">
       <div className="flex items-start gap-3">
@@ -168,9 +178,14 @@ function Step({
           <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
             {title}
           </div>
-          {person ? (
-            <PersonCard person={person} />
-          ) : (
+          {person && isSelf && (
+            <p className="mt-1 text-sm text-emerald-700">
+              That&rsquo;s you — escalate to the next step if you need
+              support beyond your own authority.
+            </p>
+          )}
+          {person && !isSelf && <PersonCard person={person} />}
+          {!person && (
             <p className="mt-1 text-sm text-zinc-500">
               {missingScopeLabel
                 ? `No one with this role is assigned with scope over ${missingScopeLabel}. Ask your admin to add an assignment.`
