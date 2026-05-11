@@ -258,7 +258,7 @@ async function getMyTree(supa, user) {
     const { data } = await supa
       .from("profiles")
       .select(
-        "id, email, phone, full_name, preferred_name, role, primary_store_id, is_active"
+        "id, email, phone, full_name, preferred_name, role, primary_store_id, is_active, profile_photo_url"
       )
       .in("id", scopedUserIds)
       .eq("is_active", true);
