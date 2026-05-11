@@ -129,7 +129,7 @@ export const ROLE_LABELS: Record<UserRole, string> = {
 // Contacts + Vendors (Phase 0)
 // ============================================================
 
-export type Tier = "company" | "regional" | "store";
+export type Tier = "company" | "regional" | "area" | "district" | "store";
 export type ContactKind = "person" | "vendor" | "internal_team" | "corporate";
 export type PosFilter = "infor" | "micros";
 
@@ -147,6 +147,8 @@ export interface Vendor {
   zip: string | null;
   tier: Tier;
   region_id: string | null;
+  area_id: string | null;
+  district_id: string | null;
   store_id: string | null;
   preferred: boolean;
   hourly_rate: number | null;
@@ -181,6 +183,8 @@ export interface Contact {
   notes: string | null;
   tier: Tier;
   region_id: string | null;
+  area_id: string | null;
+  district_id: string | null;
   store_id: string | null;
   vendor_id: string | null;
   pos_filter: PosFilter | null;

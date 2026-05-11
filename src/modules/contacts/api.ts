@@ -64,9 +64,25 @@ export interface ContactInput {
   notes?: string | null;
   tier: Tier;
   region_id?: string | null;
+  area_id?: string | null;
+  district_id?: string | null;
   store_id?: string | null;
   vendor_id?: string | null;
   pos_filter?: PosFilter | null;
+}
+
+// Scope-options response — region/area/district/store choices the
+// caller can target with a contact, plus which tiers they can write.
+export interface ScopeOptionsResponse {
+  regions:   { id: string; code: string; name: string | null }[];
+  areas:     { id: string; code: string; name: string | null; region_id: string }[];
+  districts: { id: string; code: string; name: string | null; area_id: string }[];
+  stores:    { id: string; number: string; name: string | null; district_id: string }[];
+  writeable_tiers: Tier[];
+}
+
+export function fetchScopeOptions(): Promise<ScopeOptionsResponse> {
+  return request(`${CONTACTS_FN}?action=scope-options`);
 }
 
 export function createContact(input: ContactInput): Promise<{ contact: Contact }> {

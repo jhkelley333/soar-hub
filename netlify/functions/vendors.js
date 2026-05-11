@@ -29,7 +29,7 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const ORG_WIDE = new Set(["payroll", "admin", "vp", "coo"]);
 const LEADERSHIP_REACH_SCOPES = new Set(["district", "area", "region", "global"]);
 
-const TIERS = new Set(["company", "regional", "store"]);
+const TIERS = new Set(["company", "regional", "area", "district", "store"]);
 const DOC_TYPES = new Set(["w9", "insurance", "nda", "certification", "other"]);
 const STORAGE_BUCKET = "vendor-docs";
 const SIGNED_URL_EXPIRY_SECONDS = 600; // 10 minutes for view; uploads use the same window
@@ -94,6 +94,24 @@ async function callerVisibleRegionIds(supa, user) {
   );
 }
 
+async function callerVisibleAreaIds(supa, user) {
+  const { data } = await supa.rpc("user_visible_areas", { uid: user.id });
+  return new Set(
+    (data ?? [])
+      .map((v) => (typeof v === "string" ? v : v?.user_visible_areas ?? null))
+      .filter(Boolean)
+  );
+}
+
+async function callerVisibleDistrictIds(supa, user) {
+  const { data } = await supa.rpc("user_visible_districts", { uid: user.id });
+  return new Set(
+    (data ?? [])
+      .map((v) => (typeof v === "string" ? v : v?.user_visible_districts ?? null))
+      .filter(Boolean)
+  );
+}
+
 async function callerHasLeadershipReach(supa, user) {
   if (ORG_WIDE.has(user.role)) return true;
   const { data } = await supa
@@ -101,33 +119,47 @@ async function callerHasLeadershipReach(supa, user) {
   return (data ?? []).some((s) => LEADERSHIP_REACH_SCOPES.has(s.scope_type));
 }
 
-async function callerCanWriteVendor(supa, user, { tier, region_id, store_id }) {
+async function callerCanWriteVendor(supa, user, v) {
+  const { tier, region_id, area_id, district_id, store_id } = v;
   if (ORG_WIDE.has(user.role)) return true;
   if (tier === "company") return false;
   if (tier === "regional") {
     if (!region_id) return false;
     if (!(await callerHasLeadershipReach(supa, user))) return false;
-    const regions = await callerVisibleRegionIds(supa, user);
-    return regions.has(region_id);
+    return (await callerVisibleRegionIds(supa, user)).has(region_id);
+  }
+  if (tier === "area") {
+    if (!area_id) return false;
+    if (!(await callerHasLeadershipReach(supa, user))) return false;
+    return (await callerVisibleAreaIds(supa, user)).has(area_id);
+  }
+  if (tier === "district") {
+    if (!district_id) return false;
+    if (!(await callerHasLeadershipReach(supa, user))) return false;
+    return (await callerVisibleDistrictIds(supa, user)).has(district_id);
   }
   if (tier === "store") {
     if (!store_id) return false;
-    const stores = await callerVisibleStoreIds(supa, user);
-    return stores.has(store_id);
+    return (await callerVisibleStoreIds(supa, user)).has(store_id);
   }
   return false;
 }
 
-async function callerCanReadVendor(supa, user, { tier, region_id, store_id }) {
+async function callerCanReadVendor(supa, user, v) {
+  const { tier, region_id, area_id, district_id, store_id } = v;
   if (ORG_WIDE.has(user.role)) return true;
   if (tier === "company") return true;
   if (tier === "regional") {
-    const regions = await callerVisibleRegionIds(supa, user);
-    return regions.has(region_id);
+    return (await callerVisibleRegionIds(supa, user)).has(region_id);
+  }
+  if (tier === "area") {
+    return (await callerVisibleAreaIds(supa, user)).has(area_id);
+  }
+  if (tier === "district") {
+    return (await callerVisibleDistrictIds(supa, user)).has(district_id);
   }
   if (tier === "store") {
-    const stores = await callerVisibleStoreIds(supa, user);
-    return stores.has(store_id);
+    return (await callerVisibleStoreIds(supa, user)).has(store_id);
   }
   return false;
 }
@@ -198,13 +230,21 @@ function buildVendorPayload(body, { skipScope = false } = {}) {
 
   if (!skipScope) {
     const tier = body?.tier;
-    if (!TIERS.has(tier)) return { error: "tier must be company/regional/store." };
-    const region_id = tier === "regional" ? normString(body?.region_id, 100) : null;
-    const store_id  = tier === "store"    ? normString(body?.store_id, 100)  : null;
-    if (tier === "regional" && !region_id) return { error: "region_id required for regional tier." };
-    if (tier === "store"    && !store_id)  return { error: "store_id required for store tier." };
+    if (!TIERS.has(tier)) {
+      return { error: "tier must be company/regional/area/district/store." };
+    }
+    const region_id   = tier === "regional" ? normString(body?.region_id, 100)   : null;
+    const area_id     = tier === "area"     ? normString(body?.area_id, 100)     : null;
+    const district_id = tier === "district" ? normString(body?.district_id, 100) : null;
+    const store_id    = tier === "store"    ? normString(body?.store_id, 100)    : null;
+    if (tier === "regional" && !region_id)   return { error: "region_id required for regional tier." };
+    if (tier === "area"     && !area_id)     return { error: "area_id required for area tier." };
+    if (tier === "district" && !district_id) return { error: "district_id required for district tier." };
+    if (tier === "store"    && !store_id)    return { error: "store_id required for store tier." };
     out.tier = tier;
     out.region_id = region_id;
+    out.area_id = area_id;
+    out.district_id = district_id;
     out.store_id = store_id;
   }
 

@@ -32,12 +32,16 @@ type TierFilter = "all" | Tier;
 const TIER_LABEL: Record<Tier, string> = {
   company: "Company",
   regional: "Regional",
+  area: "Area",
+  district: "District",
   store: "Store",
 };
 
-const TIER_TONE: Record<Tier, "info" | "warning" | "neutral"> = {
+const TIER_TONE: Record<Tier, "info" | "warning" | "neutral" | "success"> = {
   company: "info",
   regional: "warning",
+  area: "warning",
+  district: "success",
   store: "neutral",
 };
 
@@ -114,7 +118,7 @@ export function ContactsPage() {
       if (!buckets.has(cat)) buckets.set(cat, []);
       buckets.get(cat)!.push(c);
     }
-    const tierOrder: Record<Tier, number> = { company: 0, regional: 1, store: 2 };
+    const tierOrder: Record<Tier, number> = { company: 0, regional: 1, area: 2, district: 3, store: 4 };
     const out: { category: string; contacts: Contact[] }[] = [];
     for (const [category, list] of buckets) {
       list.sort((a, b) => {
@@ -148,7 +152,7 @@ export function ContactsPage() {
         description="Three-tier directory: company, regional, store."
         actions={
           <div className="flex flex-wrap gap-2">
-            <Button variant="primary" onClick={() => setCallDrawerOpen(true)}>
+            <Button variant="danger" onClick={() => setCallDrawerOpen(true)}>
               <Headphones className="mr-1.5 h-3.5 w-3.5" strokeWidth={1.75} />
               Make the Right Call
             </Button>
@@ -188,7 +192,7 @@ export function ContactsPage() {
             )}
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
-            {(["all", "company", "regional", "store"] as const).map((t) => (
+            {(["all", "company", "regional", "area", "district", "store"] as const).map((t) => (
               <TierPill
                 key={t}
                 active={tierFilter === t}
