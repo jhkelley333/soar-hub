@@ -161,8 +161,8 @@ export function MakeTheRightCallDrawer({
           title="Sonic HR"
           phone="8666576642"
           phoneDisplay="(866) 657-6642"
-          website="https://www.support.sonicdrivein.com/ContactUs/EmailUs"
-          websiteLabel="support.sonicdrivein.com — Contact Us / Email Us"
+          website="https://support.sonicdrivein.com/"
+          websiteLabel="support.sonicdrivein.com"
           subtitle="Please allow 48 hours for response."
         />
 
