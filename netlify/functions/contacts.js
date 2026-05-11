@@ -37,6 +37,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
 
 const ORG_WIDE = new Set(["payroll", "admin", "vp", "coo"]);
 const LEADERSHIP_REACH_SCOPES = new Set(["district", "area", "region", "global"]);
@@ -50,6 +51,20 @@ function admin() {
     throw new Error("contacts env vars not configured");
   }
   return createClient(SUPABASE_URL, SERVICE_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
+// User-scoped client. Reads issued through this client go through
+// PostgREST as the caller, so RLS in 0030 filters rows automatically.
+// Writes keep using admin() because the audit-log inserts need to
+// bypass the no-policy RLS on the audit tables.
+function userClient(token) {
+  if (!SUPABASE_URL || !ANON_KEY) {
+    throw new Error("contacts env vars not configured (anon key)");
+  }
+  return createClient(SUPABASE_URL, ANON_KEY, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }
@@ -68,7 +83,7 @@ async function getSessionUser(event) {
     .eq("id", userRes.user.id)
     .single();
   if (!profile || !profile.is_active) return null;
-  return profile;
+  return { profile, token };
 }
 
 function respond(statusCode, payload) {
@@ -246,14 +261,10 @@ function buildContactPayload(body, { skipScope = false } = {}) {
 // Actions
 // ----------------------------------------------------------------------------
 
-async function listContacts(supa, _user) {
-  // RLS does the filtering. Service role bypasses RLS so we re-enforce
-  // by including tier/scope in the query and trusting that the caller's
-  // UI will only show what makes sense. To be safe AND consistent with
-  // RLS, we use the user's JWT for this call. Simplest: just have the
-  // browser call this with the user JWT directly. Until that refactor,
-  // we fetch everything and filter in JS as a defense-in-depth.
-  const { data, error } = await supa
+async function listContacts(userSupa) {
+  // Issued through the caller's JWT — RLS policies in migration 0030
+  // filter the row set down to what the caller is allowed to see.
+  const { data, error } = await userSupa
     .from("contacts")
     .select("*")
     .order("display_name");
@@ -261,10 +272,11 @@ async function listContacts(supa, _user) {
   return { contacts: data ?? [] };
 }
 
-async function getContact(supa, _user, query) {
+async function getContact(userSupa, query) {
   const id = String(query?.id || "").trim();
   if (!id) return { error: "id required.", status: 400 };
-  const { data, error } = await supa.from("contacts").select("*").eq("id", id).maybeSingle();
+  // RLS gates the SELECT — a hidden row returns null (treated as 404).
+  const { data, error } = await userSupa.from("contacts").select("*").eq("id", id).maybeSingle();
   if (error) return { error: error.message, status: 500 };
   if (!data) return { error: "Not found.", status: 404 };
   return { contact: data };
@@ -620,13 +632,14 @@ function unwrap(result) {
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
 
-  let user;
+  let session;
   try {
-    user = await getSessionUser(event);
+    session = await getSessionUser(event);
   } catch (e) {
     return respond(500, { error: e.message || "auth failed" });
   }
-  if (!user) return respond(401, { error: "unauthorized" });
+  if (!session) return respond(401, { error: "unauthorized" });
+  const { profile: user, token } = session;
 
   const params = event.queryStringParameters || {};
   const action = params.action || "";
@@ -634,8 +647,8 @@ export const handler = async (event) => {
   try {
     const supa = admin();
     if (event.httpMethod === "GET") {
-      if (action === "list") return unwrap(await listContacts(supa, user));
-      if (action === "get") return unwrap(await getContact(supa, user, params));
+      if (action === "list") return unwrap(await listContacts(userClient(token)));
+      if (action === "get") return unwrap(await getContact(userClient(token), params));
       if (action === "escalation-chain") return unwrap(await escalationChain(supa, user));
       if (action === "scope-options") return unwrap(await scopeOptions(supa, user));
       return respond(400, { error: `unknown GET action: ${action}` });
