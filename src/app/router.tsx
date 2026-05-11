@@ -10,6 +10,7 @@ import { WorkOrdersPage } from "@/modules/work-orders/WorkOrdersPage";
 import { PafPage } from "@/modules/paf/PafPage";
 import { PafQueuePage } from "@/modules/paf/PafQueuePage";
 import { ResourcesPage } from "@/modules/resources/ResourcesPage";
+import { ContactsPage } from "@/modules/contacts/ContactsPage";
 import { TeamPage } from "@/modules/team/TeamPage";
 import { CfmExpiringPage } from "@/modules/team/CfmExpiringPage";
 import { OrgPage } from "@/modules/admin/OrgPage";
@@ -51,6 +52,7 @@ export const router = createBrowserRouter([
           </ProtectedRoute>
         ),
       },
+      { path: "contacts", element: <ContactsPage /> },
       {
         path: "resources",
         element: (
