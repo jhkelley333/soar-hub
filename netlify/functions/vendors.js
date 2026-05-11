@@ -25,6 +25,7 @@ import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
 
 const ORG_WIDE = new Set(["payroll", "admin", "vp", "coo"]);
 const LEADERSHIP_REACH_SCOPES = new Set(["district", "area", "region", "global"]);
@@ -43,6 +44,20 @@ function admin() {
   });
 }
 
+// User-scoped client. Reads issued through this client go through
+// PostgREST as the caller, so RLS in 0030 filters rows automatically.
+// Storage signing keeps using admin() because the storage SDK needs
+// the service key to mint signed URLs.
+function userClient(token) {
+  if (!SUPABASE_URL || !ANON_KEY) {
+    throw new Error("vendors env vars not configured (anon key)");
+  }
+  return createClient(SUPABASE_URL, ANON_KEY, {
+    global: { headers: { Authorization: `Bearer ${token}` } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+}
+
 async function getSessionUser(event) {
   const header = event.headers?.authorization || event.headers?.Authorization;
   if (!header?.startsWith("Bearer ")) return null;
@@ -57,7 +72,7 @@ async function getSessionUser(event) {
     .eq("id", userRes.user.id)
     .single();
   if (!profile || !profile.is_active) return null;
-  return profile;
+  return { profile, token };
 }
 
 function respond(statusCode, payload) {
@@ -255,17 +270,19 @@ function buildVendorPayload(body, { skipScope = false } = {}) {
 // Actions
 // ----------------------------------------------------------------------------
 
-async function listVendors(supa, _user) {
-  const { data, error } = await supa
+async function listVendors(userSupa) {
+  // RLS (migration 0030) filters the row set down to what the caller can see.
+  const { data, error } = await userSupa
     .from("vendors").select("*").order("company_name");
   if (error) return { error: error.message, status: 500 };
   return { vendors: data ?? [] };
 }
 
-async function getVendor(supa, _user, query) {
+async function getVendor(userSupa, query) {
   const id = String(query?.id || "").trim();
   if (!id) return { error: "id required.", status: 400 };
-  const { data, error } = await supa.from("vendors").select("*").eq("id", id).maybeSingle();
+  // RLS gates the SELECT — a hidden row returns null (treated as 404).
+  const { data, error } = await userSupa.from("vendors").select("*").eq("id", id).maybeSingle();
   if (error) return { error: error.message, status: 500 };
   if (!data) return { error: "Not found.", status: 404 };
   return { vendor: data };
@@ -328,31 +345,28 @@ async function deleteVendor(supa, user, body) {
 // Vendor docs
 // ----------------------------------------------------------------------------
 
-async function listVendorDocs(supa, user, query) {
+async function listVendorDocs(userSupa, adminSupa, query) {
   const vendorId = String(query?.vendor_id || "").trim();
   if (!vendorId) return { error: "vendor_id required.", status: 400 };
-  const { data: vendor } = await supa.from("vendors").select("*").eq("id", vendorId).maybeSingle();
-  if (!vendor) return { error: "Vendor not found.", status: 404 };
-  if (!(await callerCanReadVendor(supa, user, vendor))) {
-    return { error: "forbidden", status: 403 };
-  }
-  const { data, error } = await supa
+  // Parent-vendor read via user client — RLS gates whether the caller
+  // can see this vendor at all. Hidden vendor → 404 (don't leak existence).
+  const { data: vendor } = await userSupa.from("vendors").select("id").eq("id", vendorId).maybeSingle();
+  if (!vendor) return { error: "Not found.", status: 404 };
+  const { data, error } = await adminSupa
     .from("vendor_docs").select("*").eq("vendor_id", vendorId).order("uploaded_at", { ascending: false });
   if (error) return { error: error.message, status: 500 };
   return { docs: data ?? [] };
 }
 
-async function docSignedUrl(supa, user, query) {
+async function docSignedUrl(userSupa, adminSupa, query) {
   const docId = String(query?.id || "").trim();
   if (!docId) return { error: "id required.", status: 400 };
-  const { data: doc } = await supa.from("vendor_docs").select("*").eq("id", docId).maybeSingle();
+  const { data: doc } = await adminSupa.from("vendor_docs").select("*").eq("id", docId).maybeSingle();
   if (!doc) return { error: "Not found.", status: 404 };
-  const { data: vendor } = await supa.from("vendors").select("*").eq("id", doc.vendor_id).maybeSingle();
-  if (!vendor) return { error: "Vendor not found.", status: 404 };
-  if (!(await callerCanReadVendor(supa, user, vendor))) {
-    return { error: "forbidden", status: 403 };
-  }
-  const { data, error } = await supa.storage
+  // Gate via parent-vendor visibility through user client + RLS.
+  const { data: vendor } = await userSupa.from("vendors").select("id").eq("id", doc.vendor_id).maybeSingle();
+  if (!vendor) return { error: "Not found.", status: 404 };
+  const { data, error } = await adminSupa.storage
     .from(STORAGE_BUCKET)
     .createSignedUrl(doc.storage_path, SIGNED_URL_EXPIRY_SECONDS);
   if (error) return { error: error.message, status: 500 };
@@ -472,24 +486,26 @@ function unwrap(result) {
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
 
-  let user;
+  let session;
   try {
-    user = await getSessionUser(event);
+    session = await getSessionUser(event);
   } catch (e) {
     return respond(500, { error: e.message || "auth failed" });
   }
-  if (!user) return respond(401, { error: "unauthorized" });
+  if (!session) return respond(401, { error: "unauthorized" });
+  const { profile: user, token } = session;
 
   const params = event.queryStringParameters || {};
   const action = params.action || "";
 
   try {
     const supa = admin();
+    const usupa = userClient(token);
     if (event.httpMethod === "GET") {
-      if (action === "list")              return unwrap(await listVendors(supa, user));
-      if (action === "get")               return unwrap(await getVendor(supa, user, params));
-      if (action === "docs")              return unwrap(await listVendorDocs(supa, user, params));
-      if (action === "doc-signed-url")    return unwrap(await docSignedUrl(supa, user, params));
+      if (action === "list")              return unwrap(await listVendors(usupa));
+      if (action === "get")               return unwrap(await getVendor(usupa, params));
+      if (action === "docs")              return unwrap(await listVendorDocs(usupa, supa, params));
+      if (action === "doc-signed-url")    return unwrap(await docSignedUrl(usupa, supa, params));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {
