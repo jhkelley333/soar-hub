@@ -89,6 +89,7 @@ export interface LeadershipPerson {
   full_name: string | null;
   preferred_name: string | null;
   role: string;
+  profile_photo_url?: string | null;
 }
 
 export interface StoreLeadership {
