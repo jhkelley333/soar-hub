@@ -42,7 +42,7 @@ const ORG_WIDE = new Set(["payroll", "admin", "vp", "coo"]);
 const LEADERSHIP_REACH_SCOPES = new Set(["district", "area", "region", "global"]);
 
 const CONTACT_TYPES = new Set(["person", "vendor", "internal_team", "corporate"]);
-const TIERS = new Set(["company", "regional", "store"]);
+const TIERS = new Set(["company", "regional", "area", "district", "store"]);
 const POS_FILTERS = new Set(["infor", "micros"]);
 
 function admin() {
@@ -106,6 +106,24 @@ async function callerVisibleRegionIds(supa, user) {
   );
 }
 
+async function callerVisibleAreaIds(supa, user) {
+  const { data } = await supa.rpc("user_visible_areas", { uid: user.id });
+  return new Set(
+    (data ?? [])
+      .map((v) => (typeof v === "string" ? v : v?.user_visible_areas ?? null))
+      .filter(Boolean)
+  );
+}
+
+async function callerVisibleDistrictIds(supa, user) {
+  const { data } = await supa.rpc("user_visible_districts", { uid: user.id });
+  return new Set(
+    (data ?? [])
+      .map((v) => (typeof v === "string" ? v : v?.user_visible_districts ?? null))
+      .filter(Boolean)
+  );
+}
+
 async function callerHasLeadershipReach(supa, user) {
   if (ORG_WIDE.has(user.role)) return true;
   const { data } = await supa
@@ -115,7 +133,8 @@ async function callerHasLeadershipReach(supa, user) {
   return (data ?? []).some((s) => LEADERSHIP_REACH_SCOPES.has(s.scope_type));
 }
 
-async function callerCanWriteContact(supa, user, { tier, region_id, store_id }) {
+async function callerCanWriteContact(supa, user, contact) {
+  const { tier, region_id, area_id, district_id, store_id } = contact;
   if (ORG_WIDE.has(user.role)) return true;
   if (tier === "company") return false; // only admin / org-wide
   if (tier === "regional") {
@@ -123,6 +142,18 @@ async function callerCanWriteContact(supa, user, { tier, region_id, store_id }) 
     if (!(await callerHasLeadershipReach(supa, user))) return false;
     const regions = await callerVisibleRegionIds(supa, user);
     return regions.has(region_id);
+  }
+  if (tier === "area") {
+    if (!area_id) return false;
+    if (!(await callerHasLeadershipReach(supa, user))) return false;
+    const areas = await callerVisibleAreaIds(supa, user);
+    return areas.has(area_id);
+  }
+  if (tier === "district") {
+    if (!district_id) return false;
+    if (!(await callerHasLeadershipReach(supa, user))) return false;
+    const districts = await callerVisibleDistrictIds(supa, user);
+    return districts.has(district_id);
   }
   if (tier === "store") {
     if (!store_id) return false;
@@ -151,12 +182,18 @@ function normEmail(raw) {
 
 function validateScopeShape(body) {
   const tier = body?.tier;
-  if (!TIERS.has(tier)) return { error: "tier must be company/regional/store." };
-  const region_id = tier === "regional" ? normString(body?.region_id, 100) : null;
-  const store_id  = tier === "store"    ? normString(body?.store_id, 100)  : null;
-  if (tier === "regional" && !region_id) return { error: "region_id required for regional tier." };
-  if (tier === "store"    && !store_id)  return { error: "store_id required for store tier." };
-  return { tier, region_id, store_id };
+  if (!TIERS.has(tier)) {
+    return { error: "tier must be company/regional/area/district/store." };
+  }
+  const region_id   = tier === "regional" ? normString(body?.region_id, 100)   : null;
+  const area_id     = tier === "area"     ? normString(body?.area_id, 100)     : null;
+  const district_id = tier === "district" ? normString(body?.district_id, 100) : null;
+  const store_id    = tier === "store"    ? normString(body?.store_id, 100)    : null;
+  if (tier === "regional" && !region_id)   return { error: "region_id required for regional tier." };
+  if (tier === "area"     && !area_id)     return { error: "area_id required for area tier." };
+  if (tier === "district" && !district_id) return { error: "district_id required for district tier." };
+  if (tier === "store"    && !store_id)    return { error: "store_id required for store tier." };
+  return { tier, region_id, area_id, district_id, store_id };
 }
 
 function buildContactPayload(body, { skipScope = false } = {}) {
@@ -198,6 +235,8 @@ function buildContactPayload(body, { skipScope = false } = {}) {
     if (scope.error) return scope;
     out.tier = scope.tier;
     out.region_id = scope.region_id;
+    out.area_id = scope.area_id;
+    out.district_id = scope.district_id;
     out.store_id = scope.store_id;
   }
   return out;
@@ -296,8 +335,11 @@ async function hideContact(supa, user, body, { hide }) {
   const { data: existing } = await supa
     .from("contacts").select("id, tier, hidden_for_store_ids").eq("id", id).maybeSingle();
   if (!existing) return { error: "Not found.", status: 404 };
-  if (existing.tier !== "regional") {
-    return { error: "Only regional contacts can be hidden per-store.", status: 400 };
+  if (!["regional", "area", "district"].includes(existing.tier)) {
+    return {
+      error: "Only regional/area/district contacts can be hidden per-store.",
+      status: 400,
+    };
   }
   const current = new Set(existing.hidden_for_store_ids ?? []);
   if (hide) current.add(user.primary_store_id);
@@ -334,9 +376,11 @@ async function pinContact(supa, user, body, { pin }) {
   return { ok: true, pinned: Array.from(current) };
 }
 
-// Make the Right Call escalation chain: GM at user's store, DO over
-// the user's store's district, SDO-or-RVP over the user's region.
-// Resolved via user_scopes against the calling user's primary store.
+// Make the Right Call escalation chain: GM at user's store, DO who
+// covers the user's district / area / region (whichever level their
+// user_scopes is set at), SDO or RVP who covers the user's area or
+// region. Walks up the scope hierarchy at each level so we find the
+// right person regardless of where their scope was assigned.
 async function escalationChain(supa, user) {
   if (!user.primary_store_id) {
     return { chain: { gm: null, do: null, sdo_or_rvp: null }, missing: "primary_store_id" };
@@ -354,50 +398,143 @@ async function escalationChain(supa, user) {
     : { data: null };
   const regionId = area?.region_id ?? null;
 
-  // Profile fields we surface in the drawer.
   const profileFields = "id, email, full_name, preferred_name, phone, role, profile_photo_url";
 
-  // GM: profile with role='gm' and primary_store_id = my store.
-  const { data: gms } = await supa
+  // Walk the given list of (scope_type, scope_id) tuples in order. At
+  // each level, look for an active profile whose role is in `roles`
+  // and who has a user_scopes row at that scope. First level with a
+  // match wins; multiple candidates at the same level are sorted by
+  // user_id for determinism. This is what lets a DO scoped at area
+  // level (covering multiple districts) resolve correctly for a user
+  // whose primary store is in one of those districts.
+  async function findManagerInChain(roles, chain) {
+    for (const link of chain) {
+      if (!link.scope_id) continue;
+      const { data: scopes } = await supa
+        .from("user_scopes")
+        .select("user_id")
+        .eq("scope_type", link.scope_type)
+        .eq("scope_id", link.scope_id);
+      const ids = (scopes ?? []).map((s) => s.user_id);
+      if (ids.length === 0) continue;
+      const { data: profs } = await supa
+        .from("profiles")
+        .select(profileFields)
+        .in("id", ids)
+        .in("role", roles)
+        .eq("is_active", true);
+      if (profs?.length) {
+        profs.sort((a, b) => a.id.localeCompare(b.id));
+        return profs[0];
+      }
+    }
+    return null;
+  }
+
+  // GM: try profiles.primary_store_id first (legacy / standard setup),
+  // then fall back to a user_scopes lookup at the store level for GMs
+  // whose primary_store_id isn't populated.
+  const { data: gmsByStore } = await supa
     .from("profiles")
     .select(profileFields)
     .eq("role", "gm")
     .eq("primary_store_id", user.primary_store_id)
     .eq("is_active", true)
+    .order("id")
     .limit(1);
-  const gm = gms?.[0] ?? null;
-
-  // DO: a user with a user_scopes row scope_type='district' for our
-  // district, AND role 'do' on their profile. Take the first stable
-  // match (sorted by user_id for determinism, same pattern as
-  // findManager in org.js).
-  async function findManager(role, scopeType, scopeId) {
-    if (!scopeId) return null;
-    const { data: scopes } = await supa
-      .from("user_scopes")
-      .select("user_id")
-      .eq("scope_type", scopeType)
-      .eq("scope_id", scopeId);
-    const candidateIds = (scopes ?? []).map((s) => s.user_id);
-    if (candidateIds.length === 0) return null;
-    const { data: profs } = await supa
-      .from("profiles")
-      .select(profileFields)
-      .in("id", candidateIds)
-      .eq("role", role)
-      .eq("is_active", true);
-    if (!profs?.length) return null;
-    profs.sort((a, b) => a.id.localeCompare(b.id));
-    return profs[0];
+  let gm = gmsByStore?.[0] ?? null;
+  if (!gm) {
+    gm = await findManagerInChain(["gm"], [
+      { scope_type: "store", scope_id: user.primary_store_id },
+    ]);
   }
 
-  const districtOps = await findManager("do", "district", district?.id);
+  // DO: walk district → area → region. Covers DOs scoped at any of
+  // those levels (the standard is district, but multi-district DOs
+  // may be scoped at area).
+  const districtOps = await findManagerInChain(["do"], [
+    { scope_type: "district", scope_id: district?.id },
+    { scope_type: "area",     scope_id: area?.id },
+    { scope_type: "region",   scope_id: regionId },
+  ]);
 
-  // SDO/RVP: SDO over the area, fall back to RVP over the region.
-  let sdoOrRvp = await findManager("sdo", "area", area?.id);
-  if (!sdoOrRvp) sdoOrRvp = await findManager("rvp", "region", regionId);
+  // SDO or RVP: prefer SDO at area, fall back to either role at
+  // region. Same "walk up the chain" pattern; either role at a higher
+  // scope counts.
+  const sdoOrRvp = await findManagerInChain(["sdo", "rvp"], [
+    { scope_type: "area",   scope_id: area?.id },
+    { scope_type: "region", scope_id: regionId },
+  ]);
 
   return { chain: { gm, do: districtOps, sdo_or_rvp: sdoOrRvp } };
+}
+
+// Scope options for the contact-edit form. Returns the regions /
+// areas / districts / stores the caller can target with a contact,
+// based on their role + user_scopes. The UI uses this to populate
+// the dropdowns under each tier — so a DO with district scope sees
+// only their districts (plus their stores) and CAN'T accidentally
+// select an area outside their reach. Admin / org-wide get everything.
+async function scopeOptions(supa, user) {
+  // Resolve caller's reach.
+  const visibleStoreIds  = Array.from(await callerVisibleStoreIds(supa, user));
+  const visibleRegionIds = ORG_WIDE.has(user.role)
+    ? null  // null = "all"
+    : Array.from(await callerVisibleRegionIds(supa, user));
+  const visibleAreaIds = ORG_WIDE.has(user.role)
+    ? null
+    : Array.from(await callerVisibleAreaIds(supa, user));
+  const visibleDistrictIds = ORG_WIDE.has(user.role)
+    ? null
+    : Array.from(await callerVisibleDistrictIds(supa, user));
+
+  const [
+    { data: regions },
+    { data: areas },
+    { data: districts },
+    { data: stores },
+  ] = await Promise.all([
+    visibleRegionIds === null
+      ? supa.from("regions").select("id, code, name").order("code")
+      : visibleRegionIds.length
+        ? supa.from("regions").select("id, code, name").in("id", visibleRegionIds).order("code")
+        : Promise.resolve({ data: [] }),
+    visibleAreaIds === null
+      ? supa.from("areas").select("id, code, name, region_id").order("code")
+      : visibleAreaIds.length
+        ? supa.from("areas").select("id, code, name, region_id").in("id", visibleAreaIds).order("code")
+        : Promise.resolve({ data: [] }),
+    visibleDistrictIds === null
+      ? supa.from("districts").select("id, code, name, area_id").order("code")
+      : visibleDistrictIds.length
+        ? supa.from("districts").select("id, code, name, area_id").in("id", visibleDistrictIds).order("code")
+        : Promise.resolve({ data: [] }),
+    ORG_WIDE.has(user.role)
+      ? supa.from("stores").select("id, number, name, district_id").eq("is_active", true).order("number")
+      : visibleStoreIds.length
+        ? supa.from("stores").select("id, number, name, district_id").in("id", visibleStoreIds).eq("is_active", true).order("number")
+        : Promise.resolve({ data: [] }),
+  ]);
+
+  // Caller can write at region/area/district tiers only if they have
+  // leadership reach. Admin always can. Bundle the flag so the UI can
+  // hide / disable tier options the user can't actually use.
+  const writeTiers = new Set();
+  writeTiers.add("store"); // anyone with visible stores
+  if (ORG_WIDE.has(user.role)) writeTiers.add("company");
+  if (await callerHasLeadershipReach(supa, user)) {
+    if ((regions ?? []).length)   writeTiers.add("regional");
+    if ((areas ?? []).length)     writeTiers.add("area");
+    if ((districts ?? []).length) writeTiers.add("district");
+  }
+
+  return {
+    regions: regions ?? [],
+    areas: areas ?? [],
+    districts: districts ?? [],
+    stores: stores ?? [],
+    writeable_tiers: Array.from(writeTiers),
+  };
 }
 
 // ----------------------------------------------------------------------------
@@ -431,6 +568,7 @@ export const handler = async (event) => {
       if (action === "list") return unwrap(await listContacts(supa, user));
       if (action === "get") return unwrap(await getContact(supa, user, params));
       if (action === "escalation-chain") return unwrap(await escalationChain(supa, user));
+      if (action === "scope-options") return unwrap(await scopeOptions(supa, user));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {

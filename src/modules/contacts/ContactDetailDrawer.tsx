@@ -22,17 +22,25 @@ import {
 const TIER_LABEL: Record<Tier, string> = {
   company: "Company",
   regional: "Regional",
+  area: "Area",
+  district: "District",
   store: "Store",
 };
 
-const TIER_TONE: Record<Tier, "info" | "warning" | "neutral"> = {
+const TIER_TONE: Record<Tier, "info" | "warning" | "neutral" | "success"> = {
   company: "info",
   regional: "warning",
+  area: "warning",
+  district: "success",
   store: "neutral",
 };
 
-// Mirror of the server-side write rules in netlify/functions/contacts.js.
-// UI hint only; server is the source of truth.
+// Hint mirror of the server-side write rules in
+// netlify/functions/contacts.js — server is the source of truth.
+// For the new region/area/district tiers we can only roughly hint
+// (we don't know the user's scope IDs client-side), so we surface
+// the Edit button for any leadership role and let the server reject
+// if the scope doesn't actually match.
 function callerCanEdit(
   role: string | undefined,
   primaryStoreId: string | null | undefined,
@@ -41,7 +49,7 @@ function callerCanEdit(
   if (!role) return false;
   if (["admin", "payroll", "vp", "coo"].includes(role)) return true;
   if (contact.tier === "company") return false;
-  if (contact.tier === "regional") {
+  if (["regional", "area", "district"].includes(contact.tier)) {
     return ["do", "sdo", "rvp"].includes(role);
   }
   if (contact.tier === "store") {
@@ -82,9 +90,14 @@ export function ContactDetailDrawer({
     staleTime: 60_000,
   });
 
+  // Hide-for-my-store applies to any tier that fans out to multiple
+  // stores — regional, area, district. (Store-tier is already specific
+  // to one store; company applies to everyone and shouldn't be hideable.)
+  const isHideableTier =
+    !!contact && ["regional", "area", "district"].includes(contact.tier);
   const isHiddenForMe = !!(
     contact &&
-    contact.tier === "regional" &&
+    isHideableTier &&
     profile?.primary_store_id &&
     contact.hidden_for_store_ids.includes(profile.primary_store_id)
   );
@@ -102,10 +115,7 @@ export function ContactDetailDrawer({
   });
 
   const canEdit = !!contact && callerCanEdit(profile?.role, profile?.primary_store_id, contact);
-  const canHide =
-    !!contact &&
-    contact.tier === "regional" &&
-    !!profile?.primary_store_id;
+  const canHide = isHideableTier && !!profile?.primary_store_id;
 
   return (
     <Drawer

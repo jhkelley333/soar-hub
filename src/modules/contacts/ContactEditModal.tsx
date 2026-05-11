@@ -1,7 +1,7 @@
-// Add / edit contact modal. The form shape depends on the caller's
-// role: GMs can only create store-tier contacts for their own store;
-// DO/SDO/RVP can create regional contacts for their region; admins
-// can do anything. The server enforces the same rules.
+// Add / edit contact modal. Tiers and scope options are driven by the
+// server's scope-options endpoint, so each user sees only the tiers
+// they can actually write at + the regions/areas/districts/stores
+// inside their reach. Server re-enforces; this is hint-only UI.
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -11,9 +11,14 @@ import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
-import { supabase } from "@/lib/supabase";
 import type { Contact, ContactKind, Tier } from "@/types/database";
-import { createContact, deleteContact, updateContact, type ContactInput } from "./api";
+import {
+  createContact,
+  deleteContact,
+  fetchScopeOptions,
+  updateContact,
+  type ContactInput,
+} from "./api";
 
 const CONTACT_TYPES: { key: ContactKind; label: string }[] = [
   { key: "person", label: "Person" },
@@ -22,21 +27,15 @@ const CONTACT_TYPES: { key: ContactKind; label: string }[] = [
   { key: "corporate", label: "Corporate" },
 ];
 
-// Tiers the caller can create at, based on role. Mirrors the server.
-function tiersForRole(role: string | undefined): Tier[] {
-  if (!role) return [];
-  if (["admin", "payroll", "vp", "coo"].includes(role)) {
-    return ["company", "regional", "store"];
-  }
-  if (["do", "sdo", "rvp"].includes(role)) {
-    return ["regional", "store"];
-  }
-  if (role === "gm") return ["store"];
-  return [];
-}
+const TIER_LABEL: Record<Tier, string> = {
+  company: "Company (all stores)",
+  regional: "Regional (entire region)",
+  area: "Area (entire area)",
+  district: "District (all stores in district)",
+  store: "Store (one store)",
+};
 
-interface RegionRow { id: string; name: string | null; code: string | null; }
-interface StoreRow { id: string; number: string; name: string | null; }
+const TIER_ORDER: Tier[] = ["company", "regional", "area", "district", "store"];
 
 export function ContactEditModal({
   target,
@@ -52,8 +51,6 @@ export function ContactEditModal({
   const qc = useQueryClient();
   const toast = useToast();
 
-  const allowedTiers = useMemo(() => tiersForRole(profile?.role), [profile?.role]);
-
   const [displayName, setDisplayName] = useState("");
   const [contactType, setContactType] = useState<ContactKind>("person");
   const [phone, setPhone] = useState("");
@@ -63,10 +60,29 @@ export function ContactEditModal({
   const [category, setCategory] = useState("");
   const [notes, setNotes] = useState("");
   const [tier, setTier] = useState<Tier>("store");
-  const [regionId, setRegionId] = useState<string>("");
-  const [storeId, setStoreId] = useState<string>("");
+  const [regionId, setRegionId]     = useState<string>("");
+  const [areaId, setAreaId]         = useState<string>("");
+  const [districtId, setDistrictId] = useState<string>("");
+  const [storeId, setStoreId]       = useState<string>("");
   const [posFilter, setPosFilter] = useState<"" | "infor" | "micros">("");
   const [error, setError] = useState<string | null>(null);
+
+  // Driven by the server: which tiers can this user write, and what
+  // scope options are available under each tier. Solves the "admin
+  // tier picker has no regions" issue — the server controls SELECT
+  // visibility on regions/areas/districts/stores and returns exactly
+  // what the caller can target.
+  const scopeQuery = useQuery({
+    queryKey: ["contacts-scope-options"],
+    queryFn: fetchScopeOptions,
+    enabled: open,
+    staleTime: 5 * 60_000,
+  });
+
+  const allowedTiers: Tier[] = useMemo(() => {
+    const set = new Set(scopeQuery.data?.writeable_tiers ?? []);
+    return TIER_ORDER.filter((t) => set.has(t));
+  }, [scopeQuery.data]);
 
   // Hydrate when opening for an existing contact or fresh.
   useEffect(() => {
@@ -83,11 +99,16 @@ export function ContactEditModal({
       setNotes(existing.notes ?? "");
       setTier(existing.tier);
       setRegionId(existing.region_id ?? "");
+      setAreaId(existing.area_id ?? "");
+      setDistrictId(existing.district_id ?? "");
       setStoreId(existing.store_id ?? "");
       setPosFilter(existing.pos_filter ?? "");
     } else {
-      // New contact — default to the tightest scope the caller has.
-      const t = allowedTiers[allowedTiers.length - 1] ?? "store";
+      // New contact — default to the narrowest tier the caller can
+      // write (store), or fall back to whatever's allowed.
+      const t = allowedTiers.includes("store")
+        ? "store"
+        : (allowedTiers[allowedTiers.length - 1] ?? "store");
       setDisplayName("");
       setContactType("person");
       setPhone("");
@@ -98,39 +119,12 @@ export function ContactEditModal({
       setNotes("");
       setTier(t);
       setRegionId("");
+      setAreaId("");
+      setDistrictId("");
       setStoreId(t === "store" ? (profile?.primary_store_id ?? "") : "");
       setPosFilter("");
     }
   }, [open, existing, allowedTiers, profile?.primary_store_id]);
-
-  // Region + store options for the scope pickers. Read directly via
-  // Supabase JS — RLS lets any signed-in user read org rows.
-  const regionsQuery = useQuery({
-    queryKey: ["org-regions-for-contacts"],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("regions")
-        .select("id, name, code")
-        .order("code");
-      return (data ?? []) as RegionRow[];
-    },
-    enabled: open && tier === "regional",
-    staleTime: 10 * 60_000,
-  });
-
-  const storesQuery = useQuery({
-    queryKey: ["org-stores-for-contacts"],
-    queryFn: async () => {
-      const { data } = await supabase
-        .from("stores")
-        .select("id, number, name")
-        .eq("is_active", true)
-        .order("number");
-      return (data ?? []) as StoreRow[];
-    },
-    enabled: open && tier === "store",
-    staleTime: 10 * 60_000,
-  });
 
   const saveMut = useMutation({
     mutationFn: async () => {
@@ -144,9 +138,11 @@ export function ContactEditModal({
         category: category.trim() || null,
         notes: notes.trim() || null,
         tier,
-        region_id: tier === "regional" ? regionId : null,
-        store_id: tier === "store" ? storeId : null,
-        pos_filter: posFilter || null,
+        region_id:   tier === "regional" ? regionId   : null,
+        area_id:     tier === "area"     ? areaId     : null,
+        district_id: tier === "district" ? districtId : null,
+        store_id:    tier === "store"    ? storeId    : null,
+        pos_filter:  posFilter || null,
       };
       if (existing) return updateContact(existing.id, payload);
       return createContact(payload);
@@ -176,14 +172,10 @@ export function ContactEditModal({
       setError("Display name is required.");
       return;
     }
-    if (tier === "regional" && !regionId) {
-      setError("Pick a region.");
-      return;
-    }
-    if (tier === "store" && !storeId) {
-      setError("Pick a store.");
-      return;
-    }
+    if (tier === "regional" && !regionId)    return setError("Pick a region.");
+    if (tier === "area"     && !areaId)      return setError("Pick an area.");
+    if (tier === "district" && !districtId)  return setError("Pick a district.");
+    if (tier === "store"    && !storeId)     return setError("Pick a store.");
     saveMut.mutate();
   }
 
@@ -194,6 +186,8 @@ export function ContactEditModal({
   }
 
   if (!open) return null;
+
+  const scope = scopeQuery.data;
 
   return (
     <Modal
@@ -312,10 +306,11 @@ export function ContactEditModal({
               disabled={!isNew && profile?.role !== "admin"}
               className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-60"
             >
+              {allowedTiers.length === 0 && (
+                <option value="">— Loading…</option>
+              )}
               {allowedTiers.map((t) => (
-                <option key={t} value={t}>
-                  {t === "company" ? "Company" : t === "regional" ? "Regional" : "Store"}
-                </option>
+                <option key={t} value={t}>{TIER_LABEL[t]}</option>
               ))}
             </select>
             {!isNew && profile?.role !== "admin" && (
@@ -339,43 +334,58 @@ export function ContactEditModal({
           </div>
         </div>
 
+        {/* Scope pickers, one per tier */}
         {tier === "regional" && (
-          <div>
-            <Label htmlFor="c-region">Region *</Label>
-            <select
-              id="c-region"
-              value={regionId}
-              onChange={(e) => setRegionId(e.target.value)}
-              className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
-            >
-              <option value="">— Select region —</option>
-              {(regionsQuery.data ?? []).map((r) => (
-                <option key={r.id} value={r.id}>
-                  {r.code} — {r.name}
-                </option>
-              ))}
-            </select>
-          </div>
+          <ScopePicker
+            label="Region *"
+            id="c-region"
+            value={regionId}
+            onChange={setRegionId}
+            options={(scope?.regions ?? []).map((r) => ({
+              value: r.id,
+              label: `${r.code} — ${r.name ?? ""}`,
+            }))}
+            empty="No regions in your scope."
+          />
         )}
-
+        {tier === "area" && (
+          <ScopePicker
+            label="Area *"
+            id="c-area"
+            value={areaId}
+            onChange={setAreaId}
+            options={(scope?.areas ?? []).map((a) => ({
+              value: a.id,
+              label: `${a.code} — ${a.name ?? ""}`,
+            }))}
+            empty="No areas in your scope."
+          />
+        )}
+        {tier === "district" && (
+          <ScopePicker
+            label="District *"
+            id="c-district"
+            value={districtId}
+            onChange={setDistrictId}
+            options={(scope?.districts ?? []).map((d) => ({
+              value: d.id,
+              label: `${d.code} — ${d.name ?? ""}`,
+            }))}
+            empty="No districts in your scope."
+          />
+        )}
         {tier === "store" && (
-          <div>
-            <Label htmlFor="c-store">Store *</Label>
-            <select
-              id="c-store"
-              value={storeId}
-              onChange={(e) => setStoreId(e.target.value)}
-              className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
-            >
-              <option value="">— Select store —</option>
-              {(storesQuery.data ?? []).map((s) => (
-                <option key={s.id} value={s.id}>
-                  Store #{s.number}
-                  {s.name ? ` — ${s.name}` : ""}
-                </option>
-              ))}
-            </select>
-          </div>
+          <ScopePicker
+            label="Store *"
+            id="c-store"
+            value={storeId}
+            onChange={setStoreId}
+            options={(scope?.stores ?? []).map((s) => ({
+              value: s.id,
+              label: `Store #${s.number}${s.name ? ` — ${s.name}` : ""}`,
+            }))}
+            empty="No stores in your scope."
+          />
         )}
 
         <div>
@@ -397,5 +407,44 @@ export function ContactEditModal({
         )}
       </form>
     </Modal>
+  );
+}
+
+function ScopePicker({
+  label,
+  id,
+  value,
+  onChange,
+  options,
+  empty,
+}: {
+  label: string;
+  id: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+  empty: string;
+}) {
+  return (
+    <div>
+      <Label htmlFor={id}>{label}</Label>
+      {options.length === 0 ? (
+        <p className="mt-1 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm text-zinc-600">
+          {empty}
+        </p>
+      ) : (
+        <select
+          id={id}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+        >
+          <option value="">— Select —</option>
+          {options.map((opt) => (
+            <option key={opt.value} value={opt.value}>{opt.label}</option>
+          ))}
+        </select>
+      )}
+    </div>
   );
 }
