@@ -443,75 +443,99 @@ async function escalationChain(supa, user) {
     region_name: region?.name ?? null,
   };
 
-  const profileFields = "id, email, full_name, preferred_name, phone, role, profile_photo_url";
+  const profileFields = "id, email, full_name, preferred_name, phone, role, profile_photo_url, primary_store_id, is_active";
 
-  // Walk the given list of (scope_type, scope_id) tuples in order. At
-  // each level, look for an active profile whose role is in `roles`
-  // and who has a user_scopes row at that scope. First level with a
-  // match wins; multiple candidates at the same level are sorted by
-  // user_id for determinism. This is what lets a DO scoped at area
-  // level (covering multiple districts) resolve correctly for a user
-  // whose primary store is in one of those districts.
-  async function findManagerInChain(roles, chain) {
+  // Pre-load all relevant scope rows + their profiles. Filter in
+  // memory rather than chaining .eq().in() on the DB, because
+  // the latter has been flaky against the user_role enum in this
+  // deployment — the same filter works fine in JS. This also mirrors
+  // exactly what org.js getMyTree() does for the leadership card,
+  // which is known to work on the user's data.
+  const { data: scopeRows } = await supa
+    .from("user_scopes")
+    .select("user_id, scope_type, scope_id")
+    .in("scope_type", ["store", "district", "area", "region"]);
+  const scopedUserIds = Array.from(new Set((scopeRows ?? []).map((s) => s.user_id)));
+
+  // Active profiles for those user_ids + any GMs whose primary_store
+  // is this store (the GM path doesn't always have a user_scopes row).
+  const { data: scopedProfiles } = scopedUserIds.length
+    ? await supa.from("profiles").select(profileFields).in("id", scopedUserIds).eq("is_active", true)
+    : { data: [] };
+  const { data: gmProfiles } = await supa
+    .from("profiles")
+    .select(profileFields)
+    .eq("primary_store_id", user.primary_store_id)
+    .eq("is_active", true);
+  const profileById = new Map();
+  for (const p of [...(scopedProfiles ?? []), ...(gmProfiles ?? [])]) {
+    profileById.set(p.id, p);
+  }
+
+  function findByRoleAndScope(roles, scopeType, scopeId) {
+    if (!scopeId) return null;
+    const matches = (scopeRows ?? []).filter((s) => {
+      if (s.scope_type !== scopeType) return false;
+      if (s.scope_id !== scopeId) return false;
+      const p = profileById.get(s.user_id);
+      return p && roles.includes(p.role);
+    });
+    if (!matches.length) return null;
+    matches.sort((a, b) => a.user_id.localeCompare(b.user_id));
+    return profileById.get(matches[0].user_id);
+  }
+
+  function findManagerInChain(roles, chain) {
     for (const link of chain) {
-      if (!link.scope_id) continue;
-      const { data: scopes } = await supa
-        .from("user_scopes")
-        .select("user_id")
-        .eq("scope_type", link.scope_type)
-        .eq("scope_id", link.scope_id);
-      const ids = (scopes ?? []).map((s) => s.user_id);
-      if (ids.length === 0) continue;
-      const { data: profs } = await supa
-        .from("profiles")
-        .select(profileFields)
-        .in("id", ids)
-        .in("role", roles)
-        .eq("is_active", true);
-      if (profs?.length) {
-        profs.sort((a, b) => a.id.localeCompare(b.id));
-        return profs[0];
-      }
+      const m = findByRoleAndScope(roles, link.scope_type, link.scope_id);
+      if (m) return m;
     }
     return null;
   }
 
-  // GM: try profiles.primary_store_id first (legacy / standard setup),
-  // then fall back to a user_scopes lookup at the store level for GMs
-  // whose primary_store_id isn't populated.
-  const { data: gmsByStore } = await supa
-    .from("profiles")
-    .select(profileFields)
-    .eq("role", "gm")
-    .eq("primary_store_id", user.primary_store_id)
-    .eq("is_active", true)
-    .order("id")
-    .limit(1);
-  let gm = gmsByStore?.[0] ?? null;
+  // GM: prefer profiles.primary_store_id match (the standard SOAR
+  // setup); fall back to user_scopes at scope_type='store' for GMs
+  // whose primary_store_id isn't populated. Take any GM (the caller
+  // themselves is a valid match — the UI renders a "That's you"
+  // indicator in that case).
+  const gmByStore = (gmProfiles ?? []).filter((p) => p.role === "gm");
+  gmByStore.sort((a, b) => a.id.localeCompare(b.id));
+  let gm = gmByStore[0] ?? null;
   if (!gm) {
-    gm = await findManagerInChain(["gm"], [
+    gm = findManagerInChain(["gm"], [
       { scope_type: "store", scope_id: user.primary_store_id },
     ]);
   }
 
-  // DO: walk district → area → region. Covers DOs scoped at any of
-  // those levels (the standard is district, but multi-district DOs
-  // may be scoped at area).
-  const districtOps = await findManagerInChain(["do"], [
+  const districtOps = findManagerInChain(["do"], [
     { scope_type: "district", scope_id: district?.id },
     { scope_type: "area",     scope_id: area?.id },
     { scope_type: "region",   scope_id: regionId },
   ]);
 
-  // SDO or RVP: prefer SDO at area, fall back to either role at
-  // region. Same "walk up the chain" pattern; either role at a higher
-  // scope counts.
-  const sdoOrRvp = await findManagerInChain(["sdo", "rvp"], [
+  const sdoOrRvp = findManagerInChain(["sdo", "rvp"], [
     { scope_type: "area",   scope_id: area?.id },
     { scope_type: "region", scope_id: regionId },
   ]);
 
-  return { chain: { gm, do: districtOps, sdo_or_rvp: sdoOrRvp }, context };
+  // Diagnostic counts — let the UI / network tab tell us why a slot
+  // is empty without needing DB access. Counts are aggregate; not PII.
+  const diag = {
+    total_scope_rows: (scopeRows ?? []).length,
+    total_scoped_profiles: scopedProfiles?.length ?? 0,
+    gm_profiles_at_primary_store: (gmProfiles ?? []).filter((p) => p.role === "gm").length,
+    district_scope_rows: district?.id
+      ? (scopeRows ?? []).filter((s) => s.scope_type === "district" && s.scope_id === district.id).length
+      : 0,
+    area_scope_rows: area?.id
+      ? (scopeRows ?? []).filter((s) => s.scope_type === "area" && s.scope_id === area.id).length
+      : 0,
+    region_scope_rows: regionId
+      ? (scopeRows ?? []).filter((s) => s.scope_type === "region" && s.scope_id === regionId).length
+      : 0,
+  };
+
+  return { chain: { gm, do: districtOps, sdo_or_rvp: sdoOrRvp }, context, diag };
 }
 
 // Scope options for the contact-edit form. Returns the regions /
