@@ -38,6 +38,11 @@ export interface Profile {
   cfm_cert_number: string | null;
   cfm_issued_at: string | null;     // ISO date
   cfm_expires_at: string | null;    // ISO date — generated column (issued + 5y)
+  // Phase 0 contacts module (migration 0029):
+  pinned_contact_ids: string[];
+  // JSON of nav-item order; null = default order. Reserved for the
+  // drag-to-reorder sidebar feature.
+  sidebar_order: string[] | null;
   created_at: string;
   updated_at: string;
 }
@@ -119,3 +124,85 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   payroll: "Payroll",
   admin: "Admin",
 };
+
+// ============================================================
+// Contacts + Vendors (Phase 0)
+// ============================================================
+
+export type Tier = "company" | "regional" | "store";
+export type ContactKind = "person" | "vendor" | "internal_team" | "corporate";
+export type PosFilter = "infor" | "micros";
+
+export interface Vendor {
+  id: string;
+  company_name: string;
+  contact_name: string | null;
+  phone: string | null;
+  email: string | null;
+  website: string | null;
+  trade_category: string | null;
+  address: string | null;
+  city: string | null;
+  state: string | null;
+  zip: string | null;
+  tier: Tier;
+  region_id: string | null;
+  store_id: string | null;
+  preferred: boolean;
+  hourly_rate: number | null;
+  response_time_hours: number | null;
+  w9_on_file: boolean;
+  insurance_expiry: string | null; // YYYY-MM-DD
+  notes: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface VendorDoc {
+  id: string;
+  vendor_id: string;
+  doc_type: "w9" | "insurance" | "nda" | "certification" | "other";
+  storage_path: string;
+  uploaded_by: string | null;
+  uploaded_at: string;
+  expires_at: string | null;
+}
+
+export interface Contact {
+  id: string;
+  display_name: string;
+  contact_type: ContactKind;
+  phone: string | null;
+  extension: string | null;
+  email: string | null;
+  website: string | null;
+  category: string | null;
+  notes: string | null;
+  tier: Tier;
+  region_id: string | null;
+  store_id: string | null;
+  vendor_id: string | null;
+  pos_filter: PosFilter | null;
+  created_by: string | null;
+  hidden_for_store_ids: string[];
+  created_at: string;
+  updated_at: string;
+}
+
+// Profile fields surfaced in escalation-chain responses (Make the Right Call).
+export interface EscalationProfile {
+  id: string;
+  email: string;
+  full_name: string | null;
+  preferred_name: string | null;
+  phone: string | null;
+  role: UserRole;
+  profile_photo_url: string | null;
+}
+
+export interface EscalationChain {
+  gm: EscalationProfile | null;
+  do: EscalationProfile | null;
+  sdo_or_rvp: EscalationProfile | null;
+}
