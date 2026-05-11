@@ -247,11 +247,14 @@ async function getMyTree(supa, user) {
   }
 
   // Managers (DO / SDO / RVP) by district / area / region — stitched
-  // onto each store as the Leadership card data.
+  // onto each store as the Leadership card data. We also pull 'store'
+  // scopes here so GMs assigned via the Org Admin tree (which writes to
+  // user_scopes rather than profile.primary_store_id) still resolve as
+  // their store's GM in the Leadership card.
   const { data: scopeRows } = await supa
     .from("user_scopes")
     .select("user_id, scope_type, scope_id")
-    .in("scope_type", ["district", "area", "region"]);
+    .in("scope_type", ["store", "district", "area", "region"]);
   const scopedUserIds = Array.from(new Set((scopeRows ?? []).map((r) => r.user_id)));
   let scopedProfiles = [];
   if (scopedUserIds.length) {
@@ -281,10 +284,24 @@ async function getMyTree(supa, user) {
     return profileById.get(matches[0].user_id);
   }
 
-  // GM per store: pulled from the team-members fetch above, since GMs
-  // are stored as profiles with role='gm' + primary_store_id pointing
-  // at the store.
+  // GM per store: union of two sources of truth, since the codebase has
+  // historically wired GMs in two ways.
+  //   (1) profile.primary_store_id pointing at the store (preferred — this
+  //       is what PAF, birthdays, and team-members all key off).
+  //   (2) a user_scopes row with scope_type='store' and the user's role='gm'
+  //       (what the Org Admin tree writes when an admin assigns a GM via
+  //       the org chart UI).
+  // When both exist for the same store, source (1) wins because that's the
+  // field the rest of the app reads from.
   const gmByStore = new Map();
+  // Source (2) first so source (1) can overwrite.
+  for (const row of scopeRows ?? []) {
+    if (row.scope_type !== "store") continue;
+    const p = profileById.get(row.user_id);
+    if (p && p.role === "gm" && p.is_active) {
+      gmByStore.set(row.scope_id, p);
+    }
+  }
   for (const m of members ?? []) {
     if (m.role === "gm" && m.primary_store_id) {
       gmByStore.set(m.primary_store_id, m);
