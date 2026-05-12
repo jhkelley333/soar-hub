@@ -17,6 +17,11 @@ export interface MyStoreTeamMember {
 
 export type DriveThruType = "single_pole_two_menus" | "split_housing";
 
+// Free-form key/value bag stored on stores.attributes (jsonb). Keys are
+// admin-defined strings; values are scalars (we render as strings in v1).
+export type CustomAttributeValue = string | number | boolean | null;
+export type CustomAttributes = Record<string, CustomAttributeValue>;
+
 export interface MyStoreNode {
   id: string;
   number: string;
@@ -53,6 +58,8 @@ export interface MyStoreNode {
   has_trailer_stall: boolean;
   trailer_stall_number: string | null;
   third_party_delivery: string[];
+  // Free-form admin-defined attributes. Default `{}` on new stores.
+  attributes: CustomAttributes;
   team_members: MyStoreTeamMember[];
 }
 
