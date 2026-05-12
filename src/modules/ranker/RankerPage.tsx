@@ -269,7 +269,6 @@ export function RankerPage() {
           week={week}
           store={store}
           peerStore={peerStore}
-          onPeerChange={setPeerStore}
           onPeerCandidatesLoaded={setPeerCandidates}
         />
       )}
