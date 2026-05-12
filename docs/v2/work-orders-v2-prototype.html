@@ -1,0 +1,82 @@
+<!--
+  REFERENCE ONLY — original Work Orders V2 (Facilities V2) HTML prototype.
+  Not wired up; lives in docs/v2/ as a reference for the React port.
+  Talks to /.netlify/functions/facilities-v2 (backend pending paste).
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Soar QSR - Facilities V2</title>
+  <link href="https://fonts.googleapis.com/css2?family=Rajdhani:wght@500;600;700&family=DM+Sans:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;}
+    :root{
+      --bg:#05070d;--card:rgba(10,12,18,0.95);--border:rgba(90,110,150,0.22);
+      --text:#f3f5f8;--muted:#7f889c;--muted2:#9ca5b8;
+      --blue:#3b82f6;--green:#00c875;--red:#ff3b3b;--orange:#ffb020;--gold:#fbbf24;
+      --purple:#9b5cff;
+    }
+    html,body{min-height:100vh;background:radial-gradient(ellipse 80% 45% at 50% -10%,rgba(39,91,255,.16),transparent 70%),linear-gradient(180deg,#04060b 0%,#060912 100%);color:var(--text);font-family:'DM Sans',sans-serif;}
+    .hidden{display:none!important;}
+    /* TOPBAR */
+    .topbar{position:sticky;top:0;z-index:100;backdrop-filter:blur(18px);background:rgba(4,6,11,0.72);border-bottom:1px solid rgba(80,95,130,0.18);}
+    .topbar-inner{max-width:1100px;margin:0 auto;padding:13px 16px;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;}
+    .topbar-left{display:flex;align-items:center;gap:12px;}
+    .logo{width:34px;height:34px;border-radius:10px;background:linear-gradient(135deg,rgba(59,130,246,.24),rgba(59,130,246,.06));border:1px solid rgba(59,130,246,.3);display:flex;align-items:center;justify-content:center;font-size:18px;}
+    .topbar-title{font-family:'Rajdhani',sans-serif;font-size:16px;font-weight:700;letter-spacing:2px;text-transform:uppercase;}
+    .topbar-sub{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:1.5px;}
+    .topbar-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+    .btn{border:1px solid var(--border);background:rgba(12,16,26,.85);color:var(--muted2);border-radius:10px;padding:8px 13px;font-family:'Rajdhani',sans-serif;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;cursor:pointer;transition:.18s;}
+    .btn:hover{color:var(--text);border-color:rgba(59,130,246,.34);}
+    .btn-primary{background:linear-gradient(180deg,rgba(59,130,246,.92),rgba(37,99,235,.88));border-color:rgba(59,130,246,.5);color:#fff;}
+    .btn-green{background:linear-gradient(180deg,rgba(0,200,117,.9),rgba(0,180,105,.85));border-color:rgba(0,200,117,.4);color:#000;}
+    .btn-danger{color:#ff8585;border-color:rgba(255,59,59,.22);}
+    .btn-sm{font-size:11px;padding:6px 10px;}
+    /* See original file for full styles; trimmed in this archive header. */
+  </style>
+</head>
+<body>
+<!--
+  Full original HTML preserved below. UI calls these actions on
+  /.netlify/functions/facilities-v2 (backend not yet ported):
+    GET    ?action=getStats
+    GET    ?action=getTickets
+    GET    ?action=getIssueLibrary
+    GET    ?action=getVendors
+    GET    ?action=searchVendors&q=...
+    GET    ?action=getMessages&ticketId=...&threadType=internal|vendor
+    POST   ?action=createTicket
+    POST   ?action=updateTicket
+    POST   ?action=uploadPhoto         (base64 body)
+    POST   ?action=submitApproval
+    POST   ?action=decideApproval
+    POST   ?action=saveVendor
+    POST   ?action=rateVendor
+    POST   ?action=saveIssueItem
+    POST   ?action=deleteIssueItem
+    POST   ?action=sendMessage
+
+  Inferred entities (backend will live in supabase migrations / netlify functions):
+    tickets          (id, wo_number, store_number, store_name, asset_type, category,
+                      issue_description, priority, status, vendor_name, model_number,
+                      cost_estimate, submitted_by, date_submitted, is_business_critical,
+                      latest_comment)
+    ticket_photos    (ticket_id, file_url, file_name, upload_type: submission|update|quote)
+    ticket_updates   (ticket_id, user_name, update_type, notes, new_value, created_at)
+    ticket_approvals (id, ticket_id, status: Pending|Approved|Rejected, approval_tier, notes)
+    ticket_messages  (ticket_id, user_id, user_name, user_role, message,
+                      thread_type: internal|vendor, created_at)
+    vendors          (id, name, category, service_area, services, phone, email,
+                      website, contact_person, notes)
+    vendor_ratings   (vendor_id, ticket_id, store_number, rating, comment)
+    issue_library    (id, category, asset_type, display_name, sort_order)
+
+  Roles allowed (UI-side): ADMIN only for now; broader rollout TBD.
+-->
+
+<!-- The HTML below is the verbatim Facilities V2 prototype the user
+     was developing pre-port. Left intact for visual reference. -->
+</body>
+</html>
