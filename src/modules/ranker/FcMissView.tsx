@@ -67,7 +67,7 @@ export function FcMissView({ week, onDrillStore, onDrillH2H }: Props) {
   if (missRows.length === 0) {
     return (
       <EmptyState
-        title="No FC miss for week ${week}".replace("${week}", week)
+        title={`No FC miss for week ${week}`}
         description="Every store in scope is at or above its FC target this week."
       />
     );
