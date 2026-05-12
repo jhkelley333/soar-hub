@@ -30,6 +30,7 @@ export interface NavItem {
 // confusion with org-tree or work-order modules they don't operate.
 export const NAV: NavItem[] = [
   { to: "/",            label: "Dashboard",   icon: LayoutDashboard, roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  { to: "/ranker",      label: "Ranker",      icon: TrendingUp,      roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/work-orders", label: "Work Orders", icon: Wrench,          roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/paf",         label: "PAF",         icon: FileSpreadsheet, roles: ["do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
   { to: "/contacts",    label: "Contacts",    icon: BookUser,        roles: null },
@@ -39,7 +40,6 @@ export const NAV: NavItem[] = [
   { to: "/admin/org",   label: "Org Admin",   icon: Network,         roles: ["vp", "coo", "admin"] },
   { to: "/admin/bulk-attributes", label: "Bulk Attributes", icon: Layers, roles: ["admin"] },
   { to: "/admin/paf-config", label: "PAF Config", icon: Settings,    roles: ["payroll", "admin"] },
-  { to: "/ranker",      label: "Ranker",      icon: TrendingUp,      roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/account",     label: "Account",     icon: UserCircle,      roles: null },
 ];
 
