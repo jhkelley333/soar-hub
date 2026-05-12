@@ -1,7 +1,8 @@
 // Ranker — module entry. Toolbar with week + tab-specific selects,
-// three-tab UI (Portfolio / Store View / Head-to-Head), state lifted
-// here for cross-tab drilldown navigation. Route gating is handled by
-// router.tsx (do/sdo/rvp/vp/coo/admin only), so we don't repeat it.
+// four-tab UI (Portfolio / Store View / Head-to-Head / FC Miss), state
+// lifted here for cross-tab drilldown navigation. Route gating is
+// handled by router.tsx (do/sdo/rvp/vp/coo/admin only), so we don't
+// repeat it.
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -16,14 +17,16 @@ import { money } from "./format";
 import { PortfolioView } from "./PortfolioView";
 import { StoreView } from "./StoreView";
 import { H2HView } from "./H2HView";
+import { FcMissView } from "./FcMissView";
 import type { PeerCandidate } from "./types";
 
-type Tab = "portfolio" | "store" | "h2h";
+type Tab = "portfolio" | "store" | "h2h" | "fcmiss";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "portfolio", label: "Portfolio" },
   { id: "store", label: "Store View" },
   { id: "h2h", label: "Head-to-Head" },
+  { id: "fcmiss", label: "FC Miss" },
 ];
 
 export function RankerPage() {
@@ -273,6 +276,13 @@ export function RankerPage() {
         />
       )}
       {tab === "h2h" && <H2HView week={week} storeA={storeA} storeB={storeB} />}
+      {tab === "fcmiss" && (
+        <FcMissView
+          week={week}
+          onDrillStore={handleDrillStore}
+          onDrillH2H={handleDrillH2H}
+        />
+      )}
     </>
   );
 }

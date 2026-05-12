@@ -63,6 +63,7 @@ export interface PortfolioRow {
   callsPer10k: number | null;
   varToChart: number | null;
   rankChange: number | null;
+  annualizedFcMiss: number | null;
 }
 
 export interface InitResponse {

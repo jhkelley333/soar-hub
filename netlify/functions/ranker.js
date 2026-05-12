@@ -294,6 +294,9 @@ function getPortfolioRows(rows, idxMap, stores) {
       complaints:  parseNum(getMetricRaw(r, idxMap, "complaints")),
       callsPer10k: parseNum(getMetricRaw(r, idxMap, "callsPer10k")),
       varToChart:  parseNum(getMetricRaw(r, idxMap, "varToChart")),
+      // Surfaced so the React Ranker can render an "FC Miss" watchlist
+      // tab without an extra per-store roundtrip.
+      annualizedFcMiss: parseNum(getMetricRaw(r, idxMap, "annualizedFcMiss")),
     });
   }
   return out;
