@@ -28,7 +28,6 @@ interface Props {
   week: string;
   store: string;
   peerStore: string;
-  onPeerChange: (peer: string) => void;
   onPeerCandidatesLoaded: (peers: PeerCandidate[]) => void;
 }
 
@@ -51,7 +50,6 @@ export function StoreView({
   week,
   store,
   peerStore,
-  onPeerChange,
   onPeerCandidatesLoaded,
 }: Props) {
   const [trendWeeks, setTrendWeeks] = useState<number>(4);
