@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ClipboardList, Mail, MapPin, Pencil, Phone, Settings } from "lucide-react";
+import { ArrowLeft, ClipboardList, Mail, MapPin, Pencil, Phone, Plus, Settings, Trash2 } from "lucide-react";
 import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
 import { Badge } from "@/shared/ui/Badge";
 import { Button } from "@/shared/ui/Button";
@@ -24,6 +24,8 @@ import {
   type VendorEditableFields,
 } from "./api";
 import type {
+  CustomAttributes,
+  CustomAttributeValue,
   LeadershipPerson,
   MyStoreNode,
   MyStoreTeamMember,
@@ -44,6 +46,15 @@ function formatBirthdayShort(iso: string | null): string | null {
 const ATTRIBUTE_EDITOR_ROLES = new Set<UserRole>([
   "admin", "payroll", "vp", "coo", "do", "sdo", "rvp",
 ]);
+
+// Render a CustomAttributeValue for display. We coerce to string but
+// keep an italic placeholder for empty values so the read-mode card
+// doesn't render a bare key with nothing beside it.
+function formatCustomValue(value: CustomAttributeValue): string {
+  if (value === null || value === undefined || value === "") return "—";
+  if (typeof value === "boolean") return value ? "Yes" : "No";
+  return String(value);
+}
 
 export function StoreDetail({
   store,
@@ -632,6 +643,8 @@ const DRIVE_THRU_TYPE_LABELS: Record<string, string> = {
 function StoreAttributesCard({ store }: { store: MyStoreNode }) {
   const enabledPrograms = PROGRAM_LABELS.filter((p) => store[p.key] === true);
   const providers = store.third_party_delivery ?? [];
+  const customAttrs = store.attributes ?? {};
+  const customAttrEntries = Object.entries(customAttrs);
 
   // Hide the card if NOTHING is set — keeps newly-onboarded stores
   // from showing a sea of empty rows.
@@ -644,7 +657,8 @@ function StoreAttributesCard({ store }: { store: MyStoreNode }) {
     store.stall_pop_menu_count > 0 ||
     store.has_trailer_stall ||
     !!store.drive_thru_type ||
-    !!store.drive_thru_lanes;
+    !!store.drive_thru_lanes ||
+    customAttrEntries.length > 0;
 
   if (!hasAnyAttributes) return null;
 
@@ -652,7 +666,7 @@ function StoreAttributesCard({ store }: { store: MyStoreNode }) {
     <Card>
       <CardHeader
         title="Store attributes"
-        description="Programs, drive-thru, restrooms, stall data."
+        description="Programs, drive-thru, restrooms, stall data, custom fields."
       />
       <CardBody className="space-y-4">
         {/* Active programs */}
@@ -730,6 +744,23 @@ function StoreAttributesCard({ store }: { store: MyStoreNode }) {
             )}
           </dl>
         )}
+
+        {/* Custom attributes (free-form) */}
+        {customAttrEntries.length > 0 && (
+          <div>
+            <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+              Custom attributes
+            </div>
+            <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              {customAttrEntries
+                .slice()
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([k, v]) => (
+                  <Stat key={k} label={k} value={formatCustomValue(v)} />
+                ))}
+            </dl>
+          </div>
+        )}
       </CardBody>
     </Card>
   );
@@ -759,6 +790,72 @@ const ATTR_DRIVE_THRU_TYPES: { key: string; label: string }[] = [
   { key: "split_housing", label: "Split housing" },
 ];
 
+// Editor row shape — we keep an explicit array of { key, value } rows
+// rather than the object form so duplicates / empty keys can exist
+// during editing without immediately overwriting each other. The save
+// step collapses to an object.
+interface CustomAttrRow {
+  key: string;
+  value: string;
+}
+
+const CUSTOM_ATTR_MAX_KEYS = 50;
+const CUSTOM_ATTR_MAX_KEY_LENGTH = 64;
+const CUSTOM_ATTR_MAX_VALUE_LENGTH = 500;
+
+function attributesObjectToRows(attrs: CustomAttributes | undefined): CustomAttrRow[] {
+  if (!attrs) return [];
+  return Object.entries(attrs)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => ({
+      key,
+      value:
+        value === null || value === undefined
+          ? ""
+          : typeof value === "boolean"
+            ? value ? "true" : "false"
+            : String(value),
+    }));
+}
+
+// Build the object we'll send to the server. Drops rows whose key is
+// blank (those are still being typed), trims keys, and rejects duplicates
+// by returning an error string. Caller decides how to surface the error.
+function rowsToAttributesObject(
+  rows: CustomAttrRow[]
+): { ok: true; value: CustomAttributes } | { ok: false; error: string } {
+  const out: CustomAttributes = {};
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const trimmed = row.key.trim();
+    if (!trimmed) continue; // skip in-progress empty keys
+    if (trimmed.length > CUSTOM_ATTR_MAX_KEY_LENGTH) {
+      return {
+        ok: false,
+        error: `Attribute key "${trimmed.slice(0, 20)}…" is too long (max ${CUSTOM_ATTR_MAX_KEY_LENGTH}).`,
+      };
+    }
+    if (row.value.length > CUSTOM_ATTR_MAX_VALUE_LENGTH) {
+      return {
+        ok: false,
+        error: `Value for "${trimmed}" is too long (max ${CUSTOM_ATTR_MAX_VALUE_LENGTH}).`,
+      };
+    }
+    if (seen.has(trimmed)) {
+      return { ok: false, error: `Duplicate attribute key: "${trimmed}".` };
+    }
+    seen.add(trimmed);
+    out[trimmed] = row.value;
+  }
+  if (Object.keys(out).length > CUSTOM_ATTR_MAX_KEYS) {
+    return {
+      ok: false,
+      error: `Too many custom attributes (max ${CUSTOM_ATTR_MAX_KEYS}).`,
+    };
+  }
+  return { ok: true, value: out };
+}
+
 function AttributesEditDrawer({
   open,
   onClose,
@@ -787,6 +884,7 @@ function AttributesEditDrawer({
   const [hasTrailerStall, setHasTrailerStall] = useState(false);
   const [trailerStallNumber, setTrailerStallNumber] = useState("");
   const [thirdPartyDelivery, setThirdPartyDelivery] = useState<string[]>([]);
+  const [customAttrRows, setCustomAttrRows] = useState<CustomAttrRow[]>([]);
 
   // Hydrate from the store whenever the drawer opens or the store changes.
   useEffect(() => {
@@ -807,10 +905,17 @@ function AttributesEditDrawer({
     setHasTrailerStall(!!store.has_trailer_stall);
     setTrailerStallNumber(store.trailer_stall_number ?? "");
     setThirdPartyDelivery(Array.isArray(store.third_party_delivery) ? store.third_party_delivery : []);
+    setCustomAttrRows(attributesObjectToRows(store.attributes));
   }, [open, store]);
 
   const mut = useMutation({
     mutationFn: () => {
+      const built = rowsToAttributesObject(customAttrRows);
+      if (!built.ok) {
+        // Throw so onError surfaces the validation message — keeps the
+        // mutation API surface consistent with server errors.
+        throw new Error(built.error);
+      }
       const fields: Partial<StoreAttributesEditableFields> = {
         has_apple_pay: hasApplePay,
         has_order_ahead: hasOrderAhead,
@@ -828,6 +933,7 @@ function AttributesEditDrawer({
         has_trailer_stall: hasTrailerStall,
         trailer_stall_number: trailerStallNumber.trim() || null,
         third_party_delivery: thirdPartyDelivery,
+        attributes: built.value,
       };
       return updateStoreAttributes(store.id, fields);
     },
@@ -839,6 +945,18 @@ function AttributesEditDrawer({
     onError: (e: unknown) =>
       toast.push(e instanceof Error ? e.message : "Save failed.", "error"),
   });
+
+  function updateCustomRow(index: number, patch: Partial<CustomAttrRow>) {
+    setCustomAttrRows((rows) =>
+      rows.map((r, i) => (i === index ? { ...r, ...patch } : r))
+    );
+  }
+  function addCustomRow() {
+    setCustomAttrRows((rows) => [...rows, { key: "", value: "" }]);
+  }
+  function removeCustomRow(index: number) {
+    setCustomAttrRows((rows) => rows.filter((_, i) => i !== index));
+  }
 
   return (
     <Drawer
@@ -1011,6 +1129,67 @@ function AttributesEditDrawer({
               />
             ))}
           </div>
+        </div>
+
+        {/* Custom attributes (free-form bag) */}
+        <div>
+          <div className="mb-2 flex items-end justify-between gap-2">
+            <div>
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                Custom attributes
+              </div>
+              <p className="mt-0.5 text-xs text-zinc-500">
+                Free-form key/value pairs. Up to {CUSTOM_ATTR_MAX_KEYS} entries.
+              </p>
+            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={addCustomRow}
+              disabled={customAttrRows.length >= CUSTOM_ATTR_MAX_KEYS}
+            >
+              <Plus className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+              Add
+            </Button>
+          </div>
+          {customAttrRows.length === 0 ? (
+            <div className="rounded-md border border-dashed border-zinc-200 px-3 py-4 text-center text-xs text-zinc-500">
+              No custom attributes yet.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {customAttrRows.map((row, i) => (
+                <div
+                  key={i}
+                  className="grid grid-cols-[1fr_1fr_auto] gap-2 items-start"
+                >
+                  <Input
+                    aria-label={`Attribute ${i + 1} key`}
+                    value={row.key}
+                    onChange={(e) => updateCustomRow(i, { key: e.target.value })}
+                    placeholder="key"
+                    maxLength={CUSTOM_ATTR_MAX_KEY_LENGTH}
+                  />
+                  <Input
+                    aria-label={`Attribute ${i + 1} value`}
+                    value={row.value}
+                    onChange={(e) => updateCustomRow(i, { value: e.target.value })}
+                    placeholder="value"
+                    maxLength={CUSTOM_ATTR_MAX_VALUE_LENGTH}
+                  />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => removeCustomRow(i)}
+                    aria-label={`Delete attribute ${i + 1}`}
+                    title="Delete"
+                  >
+                    <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </Drawer>
