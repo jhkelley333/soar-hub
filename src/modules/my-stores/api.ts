@@ -1,7 +1,7 @@
 // Typed wrappers around netlify/functions/org.
 
 import { supabase } from "@/lib/supabase";
-import type { BirthdayEntry, MyTreeResponse } from "./types";
+import type { BirthdayEntry, CustomAttributes, MyTreeResponse } from "./types";
 
 const FN = "/.netlify/functions/org";
 
@@ -95,8 +95,9 @@ export function fetchStoreVendorAudit(
 }
 
 // Store attributes — programs / drive-thru / restrooms / stall data /
-// third-party delivery. Accessible from My Stores → store detail to
-// admin / payroll / vp / coo / do / sdo / rvp.
+// third-party delivery / free-form custom attributes bag. Accessible
+// from My Stores → store detail to admin / payroll / vp / coo / do /
+// sdo / rvp.
 export interface StoreAttributesEditableFields {
   has_apple_pay: boolean;
   has_order_ahead: boolean;
@@ -114,6 +115,9 @@ export interface StoreAttributesEditableFields {
   has_trailer_stall: boolean;
   trailer_stall_number: string | null;
   third_party_delivery: string[];
+  // Free-form key/value bag. Sending this replaces the existing
+  // attributes object entirely on the row.
+  attributes: CustomAttributes;
 }
 
 export interface UpdateStoreAttributesResponse {
