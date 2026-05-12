@@ -206,7 +206,7 @@ async function getMyTree(supa, user) {
             "has_drive_thru, has_clearance_bar, drive_thru_lanes, drive_thru_type, " +
             "public_restroom_count, patio_pop_menu_count, patio_pop_stall_numbers, " +
             "order_ahead_stall_count, order_ahead_stall_numbers, stall_pop_menu_count, " +
-            "has_trailer_stall, trailer_stall_number, third_party_delivery"
+            "has_trailer_stall, trailer_stall_number, third_party_delivery, attributes"
         )
         .in("id", visibleStoreIds)
         .order("number"),
@@ -339,6 +339,7 @@ async function getMyTree(supa, user) {
               .filter((s) => s.district_id === d.id)
               .map((s) => ({
                 ...s,
+                attributes: s.attributes ?? {},
                 team_members: membersByStore.get(s.id) ?? [],
               })),
           })),
@@ -629,11 +630,11 @@ async function updateStoreVendor(supa, user, body) {
 // update-store-attributes (POST)
 // ----------------------------------------------------------------------------
 //
-// Edit programs / drive-thru / stall data / third-party delivery from
-// the My Stores → store detail gear icon. Available to anyone with
-// store visibility above GM: admin, payroll, vp, coo (org-wide) and
-// any do/sdo/rvp whose visible scope includes the store. GMs are NOT
-// granted this path — they have vendor edit only.
+// Edit programs / drive-thru / stall data / third-party delivery / free-
+// form attributes from the My Stores → store detail gear icon. Available
+// to anyone with store visibility above GM: admin, payroll, vp, coo
+// (org-wide) and any do/sdo/rvp whose visible scope includes the store.
+// GMs are NOT granted this path — they have vendor edit only.
 //
 // Plate IQ Email + Soar Company Name + store contact (email/phone/
 // address) are intentionally NOT in this whitelist. Those stay
@@ -649,6 +650,7 @@ const ATTRIBUTE_EDITABLE_FIELDS = [
   "stall_pop_menu_count",
   "has_trailer_stall", "trailer_stall_number",
   "third_party_delivery",
+  "attributes",
 ];
 
 const ATTRIBUTE_BOOL_FIELDS = new Set([
@@ -662,6 +664,68 @@ const ATTRIBUTE_COUNT_FIELDS = new Set([
 const ATTRIBUTE_TEXT_FIELDS = new Set([
   "patio_pop_stall_numbers", "order_ahead_stall_numbers", "trailer_stall_number",
 ]);
+
+// Limits for the free-form `attributes` jsonb bag. Conservative — bumps
+// are cheap. Prevents a single store from becoming a 1 MB blob and
+// keeps the admin UI tractable.
+const ATTR_MAX_KEYS         = 50;
+const ATTR_MAX_KEY_LENGTH   = 64;
+const ATTR_MAX_VALUE_LENGTH = 500;
+const ATTR_RESERVED_KEYS    = new Set(["__proto__", "constructor", "prototype"]);
+
+// Validates + normalizes the free-form `attributes` payload. Returns
+// either { ok: true, value } or { error }. Object identity is preserved
+// (we don't mutate the caller's value).
+function validateCustomAttributes(raw) {
+  if (raw === null || raw === undefined) return { ok: true, value: {} };
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    return { error: "attributes must be an object." };
+  }
+  const keys = Object.keys(raw);
+  if (keys.length > ATTR_MAX_KEYS) {
+    return { error: `attributes can have at most ${ATTR_MAX_KEYS} entries.` };
+  }
+  const out = {};
+  for (const key of keys) {
+    if (ATTR_RESERVED_KEYS.has(key)) {
+      return { error: `attribute key "${key}" is reserved.` };
+    }
+    const trimmedKey = String(key).trim();
+    if (!trimmedKey) {
+      return { error: "attribute keys cannot be empty." };
+    }
+    if (trimmedKey.length > ATTR_MAX_KEY_LENGTH) {
+      return {
+        error: `attribute key "${trimmedKey.slice(0, 20)}…" exceeds ${ATTR_MAX_KEY_LENGTH} characters.`,
+      };
+    }
+    const value = raw[key];
+    if (value === null) {
+      out[trimmedKey] = null;
+      continue;
+    }
+    if (typeof value === "boolean" || typeof value === "number") {
+      if (typeof value === "number" && !Number.isFinite(value)) {
+        return { error: `attribute "${trimmedKey}" has non-finite numeric value.` };
+      }
+      out[trimmedKey] = value;
+      continue;
+    }
+    if (typeof value === "string") {
+      if (value.length > ATTR_MAX_VALUE_LENGTH) {
+        return {
+          error: `attribute "${trimmedKey}" exceeds ${ATTR_MAX_VALUE_LENGTH} characters.`,
+        };
+      }
+      out[trimmedKey] = value;
+      continue;
+    }
+    return {
+      error: `attribute "${trimmedKey}" must be a string, number, boolean, or null.`,
+    };
+  }
+  return { ok: true, value: out };
+}
 
 async function callerCanEditStoreAttributes(supa, user, storeId) {
   if (ORG_WIDE.has(user.role)) return true;
@@ -724,6 +788,10 @@ async function updateStoreAttributes(supa, user, body) {
         }
       }
       updates[f] = raw;
+    } else if (f === "attributes") {
+      const result = validateCustomAttributes(raw);
+      if (result.error) return { error: result.error, status: 400 };
+      updates[f] = result.value;
     } else if (ATTRIBUTE_TEXT_FIELDS.has(f)) {
       if (raw === null || (typeof raw === "string" && raw.trim() === "")) {
         updates[f] = null;
