@@ -34,8 +34,27 @@
 //
 // V2 will add write actions (rename, move, deactivate, add) and audit
 // inserts into org_changes. V1 leaves writes alone on purpose.
+//
+// Bulk attribute set/delete actions (admin-only):
+//
+//   POST /.netlify/functions/org-mgmt?action=bulk-attribute-preview
+//   POST /.netlify/functions/org-mgmt?action=bulk-attribute-apply
+//     body: {
+//       scope: { type: "all" }
+//            | { type: "region",   id: uuid }
+//            | { type: "area",     id: uuid }
+//            | { type: "district", id: uuid },
+//       key:    string,
+//       value:  string | number | boolean | null   (ignored when delete=true)
+//       delete: boolean                            (default false)
+//       confirm: true                              (apply only)
+//     }
+//   Preview returns the resolved store list + how many already have the
+//   key. Apply writes stores.attributes and logs one store_attribute_audit
+//   row per affected store with a shared bulk_operation_id.
 
 import { createClient } from "@supabase/supabase-js";
+import { randomUUID } from "crypto";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -748,6 +767,305 @@ async function fetchOrgHistory(supa, user, query) {
 }
 
 // ----------------------------------------------------------------------------
+// Bulk attribute set / delete (admin-only)
+// ----------------------------------------------------------------------------
+
+// Limits mirror the single-store editor in netlify/functions/org.js +
+// the My Stores → Manage attributes drawer. Keep these aligned.
+const BULK_ATTR_MAX_KEY_LENGTH   = 64;
+const BULK_ATTR_MAX_VALUE_LENGTH = 500;
+const BULK_ATTR_RESERVED_KEYS    = new Set(["__proto__", "constructor", "prototype"]);
+// Sanity cap on how big a single bulk apply can be. 5000 stores is
+// well above realistic franchise size; mostly here to bound worst-case
+// audit-insert latency.
+const BULK_ATTR_MAX_STORES = 5000;
+
+function validateBulkKey(raw) {
+  if (typeof raw !== "string") return { error: "key must be a string." };
+  const trimmed = raw.trim();
+  if (!trimmed) return { error: "key cannot be empty." };
+  if (trimmed.length > BULK_ATTR_MAX_KEY_LENGTH) {
+    return { error: `key exceeds ${BULK_ATTR_MAX_KEY_LENGTH} characters.` };
+  }
+  if (BULK_ATTR_RESERVED_KEYS.has(trimmed)) {
+    return { error: `key "${trimmed}" is reserved.` };
+  }
+  return { value: trimmed };
+}
+
+// Coerces + validates a single value (the "set" payload). Mirrors the
+// validateCustomAttributes per-value logic in org.js. delete=true
+// callers should skip this entirely.
+function validateBulkValue(raw) {
+  if (raw === null) return { value: null };
+  if (typeof raw === "boolean") return { value: raw };
+  if (typeof raw === "number") {
+    if (!Number.isFinite(raw)) {
+      return { error: "numeric value must be finite." };
+    }
+    return { value: raw };
+  }
+  if (typeof raw === "string") {
+    if (raw.length > BULK_ATTR_MAX_VALUE_LENGTH) {
+      return { error: `value exceeds ${BULK_ATTR_MAX_VALUE_LENGTH} characters.` };
+    }
+    return { value: raw };
+  }
+  return { error: "value must be a string, number, boolean, or null." };
+}
+
+// Resolve a scope spec to the array of active store rows it covers.
+// Returns { error } on bad input, { stores } otherwise. Each store row
+// includes the current attributes bag so callers can compute deltas
+// without a second roundtrip.
+async function resolveScopeStores(supa, scope) {
+  if (!scope || typeof scope !== "object") {
+    return { error: "scope is required." };
+  }
+  const type = String(scope.type || "").trim();
+
+  if (type === "all") {
+    const { data, error } = await supa
+      .from("stores")
+      .select("id, number, name, attributes")
+      .eq("is_active", true)
+      .order("number");
+    if (error) return { error: error.message };
+    return { stores: data ?? [] };
+  }
+
+  if (!["region", "area", "district"].includes(type)) {
+    return { error: `Unknown scope type: ${type}` };
+  }
+  const id = String(scope.id || "").trim();
+  if (!id) return { error: `scope.id is required for type "${type}".` };
+
+  // Walk the org tree downward to collect district ids in scope, then
+  // pull active stores whose district_id is in that set.
+  let districtIds = [];
+  if (type === "district") {
+    districtIds = [id];
+  } else if (type === "area") {
+    const { data, error } = await supa
+      .from("districts")
+      .select("id")
+      .eq("area_id", id);
+    if (error) return { error: error.message };
+    districtIds = (data ?? []).map((d) => d.id);
+  } else if (type === "region") {
+    const { data: areas, error: areaErr } = await supa
+      .from("areas")
+      .select("id")
+      .eq("region_id", id);
+    if (areaErr) return { error: areaErr.message };
+    const areaIds = (areas ?? []).map((a) => a.id);
+    if (areaIds.length === 0) return { stores: [] };
+    const { data: dists, error: distErr } = await supa
+      .from("districts")
+      .select("id")
+      .in("area_id", areaIds);
+    if (distErr) return { error: distErr.message };
+    districtIds = (dists ?? []).map((d) => d.id);
+  }
+
+  if (districtIds.length === 0) return { stores: [] };
+
+  const { data: stores, error } = await supa
+    .from("stores")
+    .select("id, number, name, attributes")
+    .in("district_id", districtIds)
+    .eq("is_active", true)
+    .order("number");
+  if (error) return { error: error.message };
+  return { stores: stores ?? [] };
+}
+
+// Returns the human-readable label of a scope ("All stores",
+// "Region Frisco DFW 1", etc.). Used in audit messages + preview UI.
+async function describeScope(supa, scope) {
+  if (!scope) return "(no scope)";
+  if (scope.type === "all") return "All stores";
+  const table =
+    scope.type === "region" ? "regions" :
+    scope.type === "area" ? "areas" :
+    scope.type === "district" ? "districts" : null;
+  if (!table) return `(unknown scope ${scope.type})`;
+  const { data } = await supa
+    .from(table)
+    .select("code, name")
+    .eq("id", scope.id)
+    .maybeSingle();
+  if (!data) return `(missing ${scope.type})`;
+  const label =
+    data.code && data.name && data.code !== data.name
+      ? `${data.code} — ${data.name}`
+      : data.name || data.code;
+  return `${scope.type.charAt(0).toUpperCase() + scope.type.slice(1)} ${label}`;
+}
+
+async function bulkAttributePreview(supa, user, body) {
+  const adminCheck = requireAdmin(user);
+  if (adminCheck) return adminCheck;
+
+  const keyResult = validateBulkKey(body?.key);
+  if (keyResult.error) return { error: keyResult.error, status: 400 };
+  const key = keyResult.value;
+
+  const isDelete = !!body?.delete;
+  let value;
+  if (!isDelete) {
+    const v = validateBulkValue(body?.value);
+    if (v.error) return { error: v.error, status: 400 };
+    value = v.value;
+  }
+
+  const scoped = await resolveScopeStores(supa, body?.scope);
+  if (scoped.error) return { error: scoped.error, status: 400 };
+  const stores = scoped.stores;
+  if (stores.length > BULK_ATTR_MAX_STORES) {
+    return {
+      error: `Scope resolves to ${stores.length} stores; max ${BULK_ATTR_MAX_STORES} per operation.`,
+      status: 400,
+    };
+  }
+
+  const sample = stores.slice(0, 20).map((s) => ({
+    id: s.id,
+    number: s.number,
+    name: s.name,
+  }));
+  const alreadyHasKey = stores.filter(
+    (s) => s.attributes && Object.prototype.hasOwnProperty.call(s.attributes, key)
+  ).length;
+  // For delete: only count stores that actually have the key today,
+  // because deleting a missing key is a no-op (we'd want to skip the
+  // write in apply anyway).
+  const willChange = isDelete
+    ? alreadyHasKey
+    : stores.filter((s) => {
+        if (!s.attributes || !Object.prototype.hasOwnProperty.call(s.attributes, key)) {
+          return true; // setting a new key always changes
+        }
+        return s.attributes[key] !== value;
+      }).length;
+  return {
+    scope_label: await describeScope(supa, body.scope),
+    operation: isDelete ? "delete" : "set",
+    key,
+    value: isDelete ? undefined : value,
+    in_scope_count: stores.length,
+    already_has_key_count: alreadyHasKey,
+    will_change_count: willChange,
+    sample_stores: sample,
+  };
+}
+
+async function bulkAttributeApply(supa, user, body) {
+  const adminCheck = requireAdmin(user);
+  if (adminCheck) return adminCheck;
+
+  if (body?.confirm !== true) {
+    return { error: "confirm: true is required on apply.", status: 400 };
+  }
+  const keyResult = validateBulkKey(body?.key);
+  if (keyResult.error) return { error: keyResult.error, status: 400 };
+  const key = keyResult.value;
+
+  const isDelete = !!body?.delete;
+  let value;
+  if (!isDelete) {
+    const v = validateBulkValue(body?.value);
+    if (v.error) return { error: v.error, status: 400 };
+    value = v.value;
+  }
+
+  const scoped = await resolveScopeStores(supa, body?.scope);
+  if (scoped.error) return { error: scoped.error, status: 400 };
+  const stores = scoped.stores;
+  if (stores.length > BULK_ATTR_MAX_STORES) {
+    return {
+      error: `Scope resolves to ${stores.length} stores; max ${BULK_ATTR_MAX_STORES} per operation.`,
+      status: 400,
+    };
+  }
+
+  const bulkOpId = randomUUID();
+  const auditRows = [];
+  let updated = 0;
+  let skipped = 0;
+  const errors = [];
+
+  for (const s of stores) {
+    const current = s.attributes && typeof s.attributes === "object" ? s.attributes : {};
+    const hasKey = Object.prototype.hasOwnProperty.call(current, key);
+    const oldValue = hasKey ? current[key] : null;
+
+    let nextAttrs;
+    if (isDelete) {
+      if (!hasKey) {
+        skipped++;
+        continue;
+      }
+      nextAttrs = { ...current };
+      delete nextAttrs[key];
+    } else {
+      if (hasKey && current[key] === value) {
+        skipped++;
+        continue;
+      }
+      nextAttrs = { ...current, [key]: value };
+    }
+
+    const { error: upErr } = await supa
+      .from("stores")
+      .update({ attributes: nextAttrs })
+      .eq("id", s.id);
+    if (upErr) {
+      errors.push({ store_id: s.id, number: s.number, error: upErr.message });
+      continue;
+    }
+    updated++;
+    auditRows.push({
+      store_id: s.id,
+      actor_id: user.id,
+      actor_email: user.email,
+      attribute_key: key,
+      old_value: hasKey ? oldValue : null,
+      new_value: isDelete ? null : value,
+      action: isDelete ? "delete" : "set",
+      bulk_operation_id: bulkOpId,
+    });
+  }
+
+  if (auditRows.length) {
+    // chunk in 500s to keep INSERT payloads small.
+    for (let i = 0; i < auditRows.length; i += 500) {
+      const chunk = auditRows.slice(i, i + 500);
+      const { error: auditErr } = await supa
+        .from("store_attribute_audit")
+        .insert(chunk);
+      if (auditErr) {
+        console.warn("[org-mgmt] store_attribute_audit insert failed", auditErr);
+        // Don't fail the whole apply if audit insert fails — surface
+        // through response so the UI can warn.
+        errors.push({ store_id: null, error: `audit log failed: ${auditErr.message}` });
+        break;
+      }
+    }
+  }
+
+  return {
+    bulk_operation_id: bulkOpId,
+    operation: isDelete ? "delete" : "set",
+    key,
+    in_scope_count: stores.length,
+    updated,
+    skipped,
+    errors,
+  };
+}
+
+// ----------------------------------------------------------------------------
 // Bulk import (admin only) — preview + commit a flat CSV that mixes all
 // four org kinds in a single file. Existing rows (matched by code, or
 // by number for stores) are UPDATED; missing rows are INSERTED. Each
@@ -1204,6 +1522,12 @@ export const handler = async (event) => {
       if (action === "move") return unwrap(await moveOrgNode(supa, user, body));
       if (action === "bulk-preview") return unwrap(await orgBulkPreview(supa, user, body));
       if (action === "bulk-import") return unwrap(await orgBulkImport(supa, user, body));
+      if (action === "bulk-attribute-preview") {
+        return unwrap(await bulkAttributePreview(supa, user, body));
+      }
+      if (action === "bulk-attribute-apply") {
+        return unwrap(await bulkAttributeApply(supa, user, body));
+      }
       return respond(400, { error: `unknown POST action: ${action}` });
     }
     return respond(405, { error: "method not allowed" });
