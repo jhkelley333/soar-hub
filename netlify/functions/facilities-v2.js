@@ -27,6 +27,9 @@
 //                                             Netlify exposes URL by default
 
 import { createClient } from "@supabase/supabase-js";
+import { can, requireCap, tierFor, activityVisibilityForTier } from "./_lib/permissions.js";
+import { transition, setPause, isWithinReopenGrace, REOPEN_GRACE } from "./_lib/ticketStateMachine.js";
+import { toNewStatus, toLegacyStatus, annotateLegacy } from "./_lib/statusMapping.js";
 
 const SUPABASE_URL =
   process.env.VITE_SUPABASE_URL ||
@@ -602,7 +605,7 @@ export const handler = async (event) => {
           *,
           ticket_photos(id, file_url, file_name, upload_type, created_at),
           ticket_approvals(id, approval_tier, status, requested_at, approved_at, approved_by, notes, quote_url),
-          ticket_updates(id, user_name, update_type, notes, created_at)
+          ticket_activities(id, user_name, event_type, event_data, notes, created_at)
         `)
         .order("date_submitted", { ascending: false });
 
@@ -617,7 +620,7 @@ export const handler = async (event) => {
 
       const { data, error } = await query;
       if (error) throw error;
-      return respond(200, { ok: true, tickets: data });
+      return respond(200, { ok: true, tickets: annotateLegacy(data) });
     }
 
     // ── GET SINGLE TICKET ──
@@ -630,12 +633,12 @@ export const handler = async (event) => {
           *,
           ticket_photos(*),
           ticket_approvals(*),
-          ticket_updates(*)
+          ticket_activities(*)
         `)
         .eq("id", id)
         .single();
       if (error) throw error;
-      return respond(200, { ok: true, ticket: data });
+      return respond(200, { ok: true, ticket: annotateLegacy(data) });
     }
 
     // ── CREATE TICKET ──
@@ -672,7 +675,7 @@ export const handler = async (event) => {
           asset_type:             assetType || "",
           model_number:           modelNumber || "",
           issue_description:      issueDescription,
-          status:                 "Received",
+          status:                 "submitted",
           priority:               priority || "Standard",
           is_business_critical:   isBusinessCritical || false,
           troubleshooting_checked:troubleshootingChecked || false,
@@ -685,14 +688,17 @@ export const handler = async (event) => {
         .single();
       if (ticketError) throw ticketError;
 
-      await supabase.from("ticket_updates").insert({
+      await supabase.from("ticket_activities").insert({
         ticket_id:   ticket.id,
         user_id:     userId,
         user_name:   userName,
         user_role:   role,
         update_type: "created",
-        new_value:   "Received",
+        new_value:   "submitted",
         notes:       "Ticket created",
+        event_type:  "ticket_created",
+        event_data:  { initial_status: "submitted", wo_number: woNumber },
+        visibility:  "all",
       });
 
       if (photos && photos.length) {
@@ -714,7 +720,7 @@ export const handler = async (event) => {
         console.warn("[facilities-v2] notifyTicketEvent submitted failed", e);
       }
 
-      return respond(200, { ok: true, ticket, woNumber });
+      return respond(200, { ok: true, ticket: annotateLegacy(ticket), woNumber });
     }
 
     // ── UPDATE TICKET ──
@@ -728,16 +734,136 @@ export const handler = async (event) => {
 
       const { data: current } = await supabase
         .from("tickets")
-        .select("status, vendor_name")
+        .select("status, pause_state, vendor_name, closed_at")
         .eq("id", id)
         .single();
+      if (!current) {
+        return respond(404, { ok: false, message: "Ticket not found." });
+      }
 
       const updates = { updated_at: new Date().toISOString() };
-      if (status) {
-        updates.status = status;
-        updates.date_status_updated = new Date().toISOString();
+      const activityEntries = [];
+
+      // ── Status change — route through state machine ──
+      // Legacy clients send v1 strings ("Closed", "In Progress"); new
+      // clients send the v2 enum ("closed", "in_progress"). toNewStatus
+      // normalizes both.
+      if (status !== undefined && status !== null && status !== "") {
+        const mapped = toNewStatus(status);
+        if (!mapped || !mapped.status) {
+          return respond(422, {
+            ok: false,
+            error: "unknown_status",
+            message: `Unrecognized status value: ${status}`,
+          });
+        }
+        const targetStatus = mapped.status;
+        const targetPause  = mapped.pause_state;
+
+        if (targetStatus !== current.status) {
+          // Real transition. Legacy callers may not send the structured
+          // reason/vendor fields the state machine wants. For backwards
+          // compatibility during the dual-write release, derive defaults
+          // for known-safe cases; otherwise reject with 422 and let the
+          // caller learn the new shape.
+          const transitionPayload = { ...payload };
+          if (targetStatus === "closed" && !transitionPayload.store_close_reason
+              && !transitionPayload.admin_close_reason) {
+            // Legacy "Closed" with no reason → assume admin close, verified.
+            transitionPayload.admin_close_reason = "completed_and_verified";
+            transitionPayload.resolution_category =
+              transitionPayload.resolution_category || "completed_and_verified";
+          }
+          if (targetStatus === "scheduled" && !transitionPayload.vendor_id && vendorId) {
+            transitionPayload.vendor_id = vendorId;
+          }
+
+          let machineResult;
+          try {
+            machineResult = transition({
+              from: current.status,
+              to:   targetStatus,
+              payload: transitionPayload,
+              ctx: {
+                ticketId:    id,
+                closed_at:   current.closed_at,
+                pause_state: current.pause_state,
+                actor: { id: userId, role, tier: tierFor(role) },
+              },
+            });
+          } catch (smErr) {
+            const code = smErr.statusCode || 500;
+            return respond(code, {
+              ok: false,
+              error: smErr.code || "state_machine_error",
+              message: smErr.message,
+              ...(smErr.from ? { from: smErr.from, to: smErr.to } : {}),
+              ...(smErr.field ? { field: smErr.field } : {}),
+            });
+          }
+
+          Object.assign(updates, machineResult.updates);
+          updates.date_status_updated = new Date().toISOString();
+          if (targetStatus === "closed" || targetStatus === "cancelled") {
+            // Preserve legacy `date_completed` for v1 reporting tools.
+            updates.date_completed = updates.closed_at || new Date().toISOString();
+          }
+
+          if (machineResult.activity) {
+            activityEntries.push({
+              ticket_id: id, user_id: userId, user_name: userName, user_role: role,
+              update_type: "status_change",
+              old_value:   current.status,
+              new_value:   targetStatus,
+              event_type:  machineResult.activity.event_type,
+              event_data:  machineResult.activity.event_data,
+              visibility:  machineResult.activity.visibility,
+            });
+          }
+          if (machineResult.pauseResetActivity) {
+            activityEntries.push({
+              ticket_id: id, user_id: userId, user_name: userName, user_role: role,
+              update_type: "pause_state_change",
+              event_type:  machineResult.pauseResetActivity.event_type,
+              event_data:  machineResult.pauseResetActivity.event_data,
+              visibility:  machineResult.pauseResetActivity.visibility,
+            });
+          }
+        }
+
+        // Legacy substatus (On Hold / Part on Order / New Equipment
+        // Ordered) implies a pause_state too. Apply it after status if
+        // status didn't auto-reset it.
+        if (targetPause && targetPause !== "none"
+            && (targetStatus === "in_progress" || targetStatus === "scheduled")) {
+          if (current.pause_state !== targetPause) {
+            updates.pause_state = targetPause;
+            activityEntries.push({
+              ticket_id: id, user_id: userId, user_name: userName, user_role: role,
+              update_type: "pause_state_change",
+              event_type:  "pause_state_changed",
+              event_data:  { from: current.pause_state, to: targetPause,
+                             auto_reset: false, source: "legacy_status_mapping" },
+              visibility:  "all",
+            });
+          }
+        }
       }
-      if (notes !== undefined) updates.latest_comment = notes;
+
+      // ── Non-status field edits ──
+      if (notes !== undefined) {
+        updates.latest_comment = notes;
+        if (notes && String(notes).trim()) {
+          activityEntries.push({
+            ticket_id: id, user_id: userId, user_name: userName, user_role: role,
+            update_type: "comment",
+            notes,
+            event_type:  "comment_added",
+            event_data:  { text: notes },
+            visibility:  "all",
+          });
+        }
+      }
       if (vendorName !== undefined) updates.vendor_name = vendorName;
       if (vendorId) updates.vendor_id = vendorId;
       if (vendorEta) updates.vendor_eta = vendorEta;
@@ -746,8 +872,25 @@ export const handler = async (event) => {
       if (isBusinessCritical !== undefined) {
         updates.is_business_critical = isBusinessCritical;
       }
-      if (status === "Closed") {
-        updates.date_completed = new Date().toISOString();
+      if (vendorName && vendorName !== current.vendor_name) {
+        activityEntries.push({
+          ticket_id: id, user_id: userId, user_name: userName, user_role: role,
+          update_type: "vendor_assigned",
+          new_value:   vendorName,
+          event_type:  "assigned",
+          event_data:  { vendor_name: vendorName, vendor_id: vendorId || null },
+          visibility:  "all",
+        });
+      }
+      if (vendorEta) {
+        activityEntries.push({
+          ticket_id: id, user_id: userId, user_name: userName, user_role: role,
+          update_type: "eta_set",
+          new_value:   String(vendorEta),
+          event_type:  "eta_set",
+          event_data:  { eta: vendorEta },
+          visibility:  "all",
+        });
       }
 
       const { data: ticket, error } = await supabase
@@ -758,29 +901,172 @@ export const handler = async (event) => {
         .single();
       if (error) throw error;
 
-      const auditEntries = [];
-      if (status && current && status !== current.status) {
-        auditEntries.push({
-          ticket_id: id, user_id: userId, user_name: userName, user_role: role,
-          update_type: "status_change", old_value: current.status, new_value: status,
+      if (activityEntries.length) {
+        await supabase.from("ticket_activities").insert(activityEntries);
+      }
+      return respond(200, { ok: true, ticket: annotateLegacy(ticket) });
+    }
+
+    // ── TRANSITION TICKET (new strict path) ──
+    // Single endpoint for any status change. Same state machine,
+    // strict payload validation. New UI uses this directly; the
+    // legacy updateTicket also routes status changes through the
+    // same machine for backwards compat.
+    if (action === "transitionTicket" && event.httpMethod === "POST") {
+      const denied = requireCap(profile, "transition_status");
+      if (denied) return denied;
+
+      const body = JSON.parse(event.body || "{}");
+      const { id, to, payload: txPayload = {} } = body;
+      if (!id || !to) {
+        return respond(400, { ok: false, message: "id and to required." });
+      }
+
+      const { data: current } = await supabase
+        .from("tickets")
+        .select("status, pause_state, closed_at, vendor_name")
+        .eq("id", id)
+        .single();
+      if (!current) return respond(404, { ok: false, message: "Ticket not found." });
+
+      let result;
+      try {
+        result = transition({
+          from: current.status,
+          to,
+          payload: txPayload,
+          ctx: {
+            ticketId:    id,
+            closed_at:   current.closed_at,
+            pause_state: current.pause_state,
+            actor: { id: userId, role, tier: tierFor(role) },
+          },
+        });
+      } catch (smErr) {
+        const code = smErr.statusCode || 500;
+        return respond(code, {
+          ok: false,
+          error: smErr.code || "state_machine_error",
+          message: smErr.message,
+          ...(smErr.from ? { from: smErr.from, to: smErr.to } : {}),
+          ...(smErr.field ? { field: smErr.field } : {}),
         });
       }
-      if (notes) {
-        auditEntries.push({
+
+      const updates = {
+        ...result.updates,
+        date_status_updated: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      };
+      if (to === "closed" || to === "cancelled") {
+        updates.date_completed = updates.closed_at || new Date().toISOString();
+      }
+
+      const { data: ticket, error } = await supabase
+        .from("tickets")
+        .update(updates)
+        .eq("id", id)
+        .select()
+        .single();
+      if (error) throw error;
+
+      const activityRows = [];
+      if (result.activity) {
+        activityRows.push({
           ticket_id: id, user_id: userId, user_name: userName, user_role: role,
-          update_type: "comment", notes,
+          update_type: "status_change",
+          old_value:   current.status,
+          new_value:   to,
+          event_type:  result.activity.event_type,
+          event_data:  result.activity.event_data,
+          visibility:  result.activity.visibility,
         });
       }
-      if (vendorName && current && vendorName !== current.vendor_name) {
-        auditEntries.push({
+      if (result.pauseResetActivity) {
+        activityRows.push({
           ticket_id: id, user_id: userId, user_name: userName, user_role: role,
-          update_type: "vendor_assigned", new_value: vendorName,
+          update_type: "pause_state_change",
+          event_type:  result.pauseResetActivity.event_type,
+          event_data:  result.pauseResetActivity.event_data,
+          visibility:  result.pauseResetActivity.visibility,
         });
       }
-      if (auditEntries.length) {
-        await supabase.from("ticket_updates").insert(auditEntries);
+      if (activityRows.length) {
+        await supabase.from("ticket_activities").insert(activityRows);
       }
-      return respond(200, { ok: true, ticket });
+
+      return respond(200, { ok: true, ticket: annotateLegacy(ticket) });
+    }
+
+    // ── SET PAUSE STATE ──
+    if (action === "setPauseState" && event.httpMethod === "POST") {
+      const denied = requireCap(profile, "set_pause_state");
+      if (denied) return denied;
+
+      const body = JSON.parse(event.body || "{}");
+      const { id, pause_state: nextPause, reason_note: reasonNote } = body;
+      if (!id || nextPause === undefined) {
+        return respond(400, { ok: false, message: "id and pause_state required." });
+      }
+      const { data: current } = await supabase
+        .from("tickets")
+        .select("status, pause_state")
+        .eq("id", id)
+        .single();
+      if (!current) return respond(404, { ok: false, message: "Ticket not found." });
+
+      let result;
+      try {
+        result = setPause({
+          currentStatus: current.status,
+          currentPause:  current.pause_state,
+          to:            nextPause,
+          reasonNote,
+        });
+      } catch (smErr) {
+        return respond(smErr.statusCode || 500, {
+          ok: false,
+          error: smErr.code || "state_machine_error",
+          message: smErr.message,
+        });
+      }
+
+      const { data: ticket, error } = await supabase
+        .from("tickets")
+        .update({ ...result.updates, updated_at: new Date().toISOString() })
+        .eq("id", id)
+        .select()
+        .single();
+      if (error) throw error;
+
+      await supabase.from("ticket_activities").insert({
+        ticket_id: id, user_id: userId, user_name: userName, user_role: role,
+        update_type: "pause_state_change",
+        event_type:  result.activity.event_type,
+        event_data:  result.activity.event_data,
+        visibility:  result.activity.visibility,
+      });
+
+      return respond(200, { ok: true, ticket: annotateLegacy(ticket) });
+    }
+
+    // ── GET TICKET ACTIVITIES ──
+    if (action === "getTicketActivities") {
+      const { id } = event.queryStringParameters || {};
+      if (!id) return respond(400, { ok: false, message: "id required." });
+
+      let q = supabase
+        .from("ticket_activities")
+        .select("id, ticket_id, user_id, user_name, user_role, event_type, event_data, notes, visibility, created_at")
+        .eq("ticket_id", id)
+        .order("created_at", { ascending: false });
+
+      const allowed = activityVisibilityForTier(tierFor(role));
+      if (allowed) q = q.in("visibility", allowed);
+
+      const { data, error } = await q;
+      if (error) throw error;
+      return respond(200, { ok: true, activities: data || [] });
     }
 
     // ── SUBMIT APPROVAL ──
@@ -811,10 +1097,14 @@ export const handler = async (event) => {
         })
         .eq("id", id);
 
-      await supabase.from("ticket_updates").insert({
+      await supabase.from("ticket_activities").insert({
         ticket_id:   id, user_id: userId, user_name: userName,
         user_role:   role, update_type: "approval", new_value: "Pending",
         notes:       `Approval requested: ${approvalTier}`,
+        event_type:  "approval_requested",
+        event_data:  { approval_tier: approvalTier, quote_url: quoteUrl || null,
+                       notes: approvalNotes || null },
+        visibility:  "all",
       });
 
       const { data: refreshed } = await supabase
@@ -859,10 +1149,13 @@ export const handler = async (event) => {
         })
         .eq("id", id);
 
-      await supabase.from("ticket_updates").insert({
+      await supabase.from("ticket_activities").insert({
         ticket_id:   id, user_id: userId, user_name: userName,
         user_role:   role, update_type: "approval", new_value: decision,
         notes:       `Approval ${decision} by ${userName}`,
+        event_type:  "approval_decided",
+        event_data:  { decision, decided_by: userName, decision_notes: decisionNotes || null },
+        visibility:  "all",
       });
 
       const { data: refreshed } = await supabase
@@ -918,6 +1211,20 @@ export const handler = async (event) => {
         })
         .select()
         .single();
+
+      // Activity entry so the photo shows up on the ticket timeline.
+      await supabase.from("ticket_activities").insert({
+        ticket_id: id, user_id: userId, user_name: userName, user_role: role,
+        update_type: "photo_added",
+        event_type:  "photo_added",
+        event_data: {
+          photo_id:    photo?.id,
+          file_name:   photoName || "photo.jpg",
+          upload_type: uploadType || "update",
+        },
+        visibility: "all",
+      });
+
       return respond(200, { ok: true, photo });
     }
 
