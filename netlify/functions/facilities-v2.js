@@ -505,35 +505,64 @@ export const handler = async (event) => {
     if (action === "getCallerStores") {
       const isSingle = role === "gm" || role === "shift_manager";
 
+      // Helper — resolves { id, number, name }[] from a list of store numbers.
+      // Used by the user_scopes fallback below.
+      async function hydrateStoresByNumbers(numbers) {
+        if (!numbers.length) return [];
+        const { data, error } = await supabase
+          .from("stores")
+          .select("id, number, name")
+          .in("number", numbers)
+          .order("number");
+        if (error) return [];
+        return (data || []).map((s) => ({
+          id: s.id,
+          number: String(s.number),
+          name: s.name || "",
+        }));
+      }
+
       if (isSingle) {
-        // Look up primary_store_id inline so widening getCallerProfile()
-        // (which gates every action) isn't required.
+        // Try primary_store_id first (legacy GM pattern).
         const { data: meRow } = await supabase
           .from("profiles")
           .select("primary_store_id")
           .eq("id", userId)
           .single();
         const primaryStoreId = meRow?.primary_store_id;
-        if (!primaryStoreId) {
-          return respond(200, { ok: true, mode: "single", stores: [] });
+        if (primaryStoreId) {
+          const { data: store } = await supabase
+            .from("stores")
+            .select("id, number, name")
+            .eq("id", primaryStoreId)
+            .single();
+          if (store) {
+            return respond(200, {
+              ok: true,
+              mode: "single",
+              stores: [{
+                id: store.id,
+                number: String(store.number),
+                name: store.name || "",
+              }],
+            });
+          }
         }
-        const { data: store, error } = await supabase
-          .from("stores")
-          .select("id, number, name")
-          .eq("id", primaryStoreId)
-          .single();
-        if (error || !store) {
-          return respond(200, { ok: true, mode: "single", stores: [] });
+
+        // Fall back to user_scopes — shift managers (and some GMs) are
+        // assigned via scopes instead of profiles.primary_store_id. If
+        // scopes resolve to exactly one store, auto-fill; if multiple,
+        // hand back a list so the modal can render a dropdown.
+        const access = await getStoresForUser(supabase, profile);
+        if (!access.all && access.stores.length === 1) {
+          const stores = await hydrateStoresByNumbers(access.stores);
+          return respond(200, { ok: true, mode: "single", stores });
         }
-        return respond(200, {
-          ok: true,
-          mode: "single",
-          stores: [{
-            id: store.id,
-            number: String(store.number),
-            name: store.name || "",
-          }],
-        });
+        if (!access.all && access.stores.length > 1) {
+          const stores = await hydrateStoresByNumbers(access.stores);
+          return respond(200, { ok: true, mode: "list", stores });
+        }
+        return respond(200, { ok: true, mode: "single", stores: [] });
       }
 
       const access = await getStoresForUser(supabase, profile);
