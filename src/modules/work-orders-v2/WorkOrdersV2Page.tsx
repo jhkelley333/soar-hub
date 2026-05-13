@@ -8,6 +8,7 @@ import {
   AlertTriangle,
   ChevronDown,
   ChevronUp,
+  FileText,
   Image as ImageIcon,
   Loader2,
   Plus,
@@ -608,22 +609,35 @@ function PhotoSection({
         <div className="text-xs text-zinc-500">No photos yet.</div>
       ) : (
         <div className="flex flex-wrap gap-2">
-          {photos.map((p) => (
-            <a
-              key={p.id}
-              href={p.file_url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="block h-16 w-16 overflow-hidden rounded border border-zinc-200 bg-white"
-            >
-              <img
-                src={p.file_url}
-                alt={p.file_name || ""}
-                className="h-full w-full object-cover"
-                loading="lazy"
-              />
-            </a>
-          ))}
+          {photos.map((p) => {
+            const isPdf =
+              (p.file_name || "").toLowerCase().endsWith(".pdf") ||
+              (p.file_url || "").toLowerCase().endsWith(".pdf");
+            return (
+              <a
+                key={p.id}
+                href={p.file_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                title={p.file_name || ""}
+                className="block h-16 w-16 overflow-hidden rounded border border-zinc-200 bg-white"
+              >
+                {isPdf ? (
+                  <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 bg-rose-50 px-1 text-rose-700">
+                    <FileText className="h-5 w-5" strokeWidth={1.75} />
+                    <span className="text-[9px] font-semibold uppercase tracking-wide">PDF</span>
+                  </div>
+                ) : (
+                  <img
+                    src={p.file_url}
+                    alt={p.file_name || ""}
+                    className="h-full w-full object-cover"
+                    loading="lazy"
+                  />
+                )}
+              </a>
+            );
+          })}
         </div>
       )}
     </div>
