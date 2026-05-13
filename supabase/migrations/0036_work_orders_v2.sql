@@ -1,14 +1,14 @@
 -- supabase/migrations/0036_work_orders_v2.sql
 --
 -- Work Orders V2 (Facilities V2) — schema for the long-running
--- claude/work-orders-v2 branch. Built directly from the user's
--- original prototype schema:
---   * Bare table names (tickets, vendors, …) — v1 work-orders talks
---     to Smartsheet, so there's no name collision in Supabase.
---   * Same column shapes, same trigger, same seed data, same storage
---     bucket name (ticket-photos).
---   * Idempotent (IF NOT EXISTS / ON CONFLICT DO NOTHING) so the
---     migration is safe to re-run if it was partially applied earlier.
+-- claude/work-orders-v2 branch. Built from the user's original
+-- prototype schema with two updates from the v2 setup:
+--   * Tables keep their bare names (tickets, vendors, …) — v1
+--     work-orders talks to Smartsheet, so there's no name collision
+--     in Supabase.
+--   * Storage bucket is `wo2-ticket-photos` (public). Existing photos
+--     live on a different Supabase project; this migration provisions
+--     the bucket fresh on Soar Hub v2.
 --
 -- Additions on top of the original schema (required by the v2 UI but
 -- missing from the original SQL):
@@ -16,9 +16,8 @@
 --   * vendor_ratings    — star ratings per closed ticket
 --   * next_wo_sequence  — RPC used by facilities-v2.js for atomic WO #s
 --
--- Do NOT apply this until v2 is ready to test against the Soar Hub v2
--- Supabase project. Storage bucket creation at the bottom requires
--- the service-role connection used by the SQL Editor.
+-- Idempotent (IF NOT EXISTS / ON CONFLICT DO NOTHING) so the migration
+-- is safe to re-run if anything was already in place.
 
 -- ── WO SEQUENCES ─────────────────────────────────────────────
 create table if not exists wo_sequences (
@@ -310,11 +309,11 @@ insert into issue_library (category, asset_type, display_name, sort_order) value
 ('Other', 'Security', 'Cameras',     93)
 on conflict do nothing;
 
--- ── STORAGE BUCKET ───────────────────────────────────────────
--- Private bucket; the function returns getPublicUrl() which only
--- resolves while service-role-issued signed URLs are in use.
+-- ── STORAGE BUCKET (wo2-ticket-photos, public) ───────────────
+-- Public so the function's getPublicUrl() resolves anonymously when
+-- thumbnails render in the v2 UI.
 insert into storage.buckets (id, name, public)
-values ('ticket-photos', 'ticket-photos', false)
-on conflict do nothing;
+values ('wo2-ticket-photos', 'wo2-ticket-photos', true)
+on conflict (id) do update set public = excluded.public;
 
 notify pgrst, 'reload schema';
