@@ -1,7 +1,6 @@
 // Types for Work Orders V2 — mirrors the JSON shapes returned by
 // netlify/functions/facilities-v2.js. Kept narrow on purpose: only the
-// fields the React page reads or writes are typed. Anything else
-// passes through as `unknown` so we don't drift on every backend tweak.
+// fields the React page reads or writes are typed.
 
 export type TicketStatus =
   | "Received"
@@ -161,11 +160,6 @@ export interface UploadPhotoResponse {
   photo: TicketPhoto;
 }
 
-// ── Approvals ────────────────────────────────────────────────
-
-// Tier labels match what the backend wants in `approval_tier`. The
-// numeric thresholds are display-only; the function doesn't enforce a
-// cost-vs-tier check (decideApproval only checks the caller is DO+).
 export const APPROVAL_TIERS = [
   { value: "DO < $500",       label: "DO — under $500" },
   { value: "SDO $501-$1000",  label: "SDO — $501 to $1,000" },
@@ -186,8 +180,6 @@ export interface DecideApprovalBody {
   decision: "Approved" | "Rejected";
   notes?: string;
 }
-
-// ── Chat ─────────────────────────────────────────────────────
 
 export type ThreadType = "internal" | "vendor";
 
@@ -213,8 +205,6 @@ export interface SendMessageBody {
   message: string;
   threadType?: ThreadType;
 }
-
-// ── Vendors ──────────────────────────────────────────────────
 
 export interface Vendor {
   id: string;
@@ -260,8 +250,6 @@ export interface RateVendorBody {
   comment?: string;
 }
 
-// ── Issue library admin CRUD ─────────────────────────────────
-
 export interface SaveIssueItemBody {
   id?: string;
   category: string;
@@ -269,3 +257,72 @@ export interface SaveIssueItemBody {
   display_name: string;
   sort_order?: number;
 }
+
+// ── Email templates ──────────────────────────────────────────
+
+// One row per event kind in `email_templates`. Mustache-ish `{{var}}`
+// placeholders get replaced at send-time. is_active=false makes the
+// function fall back to the hardcoded default (so a busted template
+// doesn't stop sends).
+export interface EmailTemplate {
+  id: string;
+  kind: string;
+  subject: string;
+  body_html: string;
+  is_active: boolean;
+  updated_by: string | null;
+  updated_at: string;
+}
+
+export interface EmailTemplatesResponse {
+  ok: true;
+  templates: EmailTemplate[];
+}
+
+export interface SaveEmailTemplateBody {
+  kind: string;
+  subject: string;
+  body_html: string;
+  is_active?: boolean;
+}
+
+export interface PreviewEmailTemplateBody {
+  subject: string;
+  body_html: string;
+  // Optional override; backend uses a sample ticket when omitted.
+  vars?: Record<string, string | number | boolean>;
+}
+
+export interface PreviewEmailTemplateResponse {
+  ok: true;
+  subject: string;
+  html: string;
+}
+
+// Variables the backend exposes for substitution. Keep in sync with
+// `buildTicketVars` in facilities-v2.js.
+export const TEMPLATE_VARS = [
+  { name: "wo_number",              label: "WO Number" },
+  { name: "store_number",           label: "Store Number" },
+  { name: "store_name",             label: "Store Name" },
+  { name: "asset_type",             label: "Asset Type" },
+  { name: "category",               label: "Category" },
+  { name: "priority",               label: "Priority" },
+  { name: "status",                 label: "Status" },
+  { name: "issue_description",      label: "Issue Description" },
+  { name: "approval_level",         label: "Approval Tier" },
+  { name: "approval_request_notes", label: "Approval Notes (request)" },
+  { name: "approval_status",        label: "Approval Status" },
+  { name: "approval_approved_by",   label: "Approved/Rejected By" },
+  { name: "submitted_by",           label: "Submitted By" },
+  { name: "is_business_critical",   label: "Business Critical (Yes/No)" },
+  { name: "link",                   label: "App URL" },
+] as const;
+
+// Kinds the page knows about. The DB can hold more (no schema constraint
+// other than uniqueness), but the UI only renders these.
+export const EMAIL_TEMPLATE_KINDS = [
+  { kind: "submitted",          label: "Ticket Submitted" },
+  { kind: "approval_requested", label: "Approval Requested" },
+  { kind: "approval_decided",   label: "Approval Decided" },
+] as const;
