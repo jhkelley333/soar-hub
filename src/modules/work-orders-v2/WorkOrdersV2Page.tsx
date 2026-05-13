@@ -43,6 +43,7 @@ import { ApprovalSection } from "./ApprovalSection";
 import { TicketChat } from "./TicketChat";
 import { VendorsTab } from "./VendorsTab";
 import { IssueLibraryTab } from "./IssueLibraryTab";
+import { TroubleshootingTipsTab } from "./TroubleshootingTipsTab";
 import { EmailTemplatesTab } from "./EmailTemplatesTab";
 
 const STATUS_TONE: Record<TicketStatus, "info" | "warning" | "success" | "danger" | "neutral"> = {
@@ -73,11 +74,12 @@ const CATEGORIES = [
   "Other",
 ];
 
-type TabId = "tickets" | "vendors" | "library" | "email-templates";
+type TabId = "tickets" | "vendors" | "library" | "troubleshooting" | "email-templates";
 const TABS: { id: TabId; label: string }[] = [
   { id: "tickets", label: "Tickets" },
   { id: "vendors", label: "Vendors" },
   { id: "library", label: "Issue Library" },
+  { id: "troubleshooting", label: "Troubleshooting" },
   { id: "email-templates", label: "Email Templates" },
 ];
 
@@ -143,6 +145,7 @@ export function WorkOrdersV2Page() {
       {tab === "tickets" && <TicketsTab />}
       {tab === "vendors" && <VendorsTab callerRole={CALLER_ROLE} />}
       {tab === "library" && <IssueLibraryTab />}
+      {tab === "troubleshooting" && <TroubleshootingTipsTab />}
       {tab === "email-templates" && <EmailTemplatesTab />}
     </>
   );
