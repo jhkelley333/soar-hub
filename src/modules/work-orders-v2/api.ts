@@ -20,10 +20,14 @@ import type {
   SaveIssueItemBody,
   SaveVendorBody,
   SendMessageBody,
+  SetPauseStateBody,
   StatsResponse,
   SubmitApprovalBody,
   ThreadType,
+  Ticket,
+  TicketActivitiesResponse,
   TicketsResponse,
+  TransitionTicketBody,
   UpdateTicketBody,
   UploadPhotoBody,
   UploadPhotoResponse,
@@ -205,4 +209,32 @@ export function fileToBase64(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error || new Error("FileReader error"));
     reader.readAsDataURL(file);
   });
+}
+
+// ── v2 Phase-1 endpoints ─────────────────────────────────────────
+
+export function transitionTicket(
+  payload: TransitionTicketBody,
+): Promise<{ ok: true; ticket: Ticket }> {
+  return request<{ ok: true; ticket: Ticket }>(`${FN}?action=transitionTicket`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function setPauseState(
+  payload: SetPauseStateBody,
+): Promise<{ ok: true; ticket: Ticket }> {
+  return request<{ ok: true; ticket: Ticket }>(`${FN}?action=setPauseState`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchTicketActivities(
+  id: string,
+): Promise<TicketActivitiesResponse> {
+  return request<TicketActivitiesResponse>(
+    `${FN}?action=getTicketActivities&id=${encodeURIComponent(id)}`,
+  );
 }

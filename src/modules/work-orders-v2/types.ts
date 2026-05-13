@@ -2,30 +2,89 @@
 // netlify/functions/facilities-v2.js. Kept narrow on purpose: only the
 // fields the React page reads or writes are typed.
 
+// v2 status enum (Phase 1). The API returns this on `Ticket.status` and
+// also carries the legacy text on `Ticket.status_legacy` for one release
+// cycle (PR 1 → PR 3 cleanup). UI should use `statusLabel()` for human
+// display so it doesn't have to know the underlying enum spelling.
 export type TicketStatus =
-  | "Received"
-  | "Pending Approval"
-  | "Approved"
-  | "Rejected - See Notes"
-  | "Scheduled"
-  | "In Progress"
-  | "On Hold"
-  | "Part on Order"
-  | "New Equipment Ordered"
-  | "Closed";
+  | "submitted"
+  | "in_progress"
+  | "scheduled"
+  | "on_site"
+  | "completed"
+  | "closed"
+  | "cancelled";
 
 export const TICKET_STATUSES: TicketStatus[] = [
-  "Received",
-  "Pending Approval",
-  "Approved",
-  "Rejected - See Notes",
-  "Scheduled",
-  "In Progress",
-  "On Hold",
-  "Part on Order",
-  "New Equipment Ordered",
-  "Closed",
+  "submitted",
+  "in_progress",
+  "scheduled",
+  "on_site",
+  "completed",
+  "closed",
+  "cancelled",
 ];
+
+// Orthogonal pause state. Only meaningful when status is in_progress
+// or scheduled — the server auto-resets to 'none' on any other status.
+export type PauseState =
+  | "none"
+  | "on_hold"
+  | "awaiting_parts"
+  | "awaiting_replacement";
+
+// Reason / resolution enums — surfaced by the new endpoints + the
+// "Why are you closing?" / "Why reopen?" pickers shipping in PR 2.
+export type StoreCloseReason =
+  | "user_error"
+  | "resolved_internally"
+  | "duplicate"
+  | "no_longer_needed";
+
+export type AdminCloseReason =
+  | "completed_and_verified"
+  | "auto_closed_no_verification"
+  | "cancelled_by_ops"
+  | "equipment_replaced"
+  | "written_off"
+  | "deferred_to_capex";
+
+export type ReopenReason =
+  | "not_fixed"
+  | "recurred"
+  | "wrong_diagnosis"
+  | "other";
+
+export type ResolutionCategory =
+  | "repaired"
+  | "replaced"
+  | "no_issue_found"
+  | "deferred"
+  | "migrated_unknown";
+
+// Human-readable label for a v2 status. Used for display only —
+// comparisons and routing should always use the raw enum.
+export function statusLabel(s: TicketStatus | string | null | undefined): string {
+  switch (s) {
+    case "submitted":   return "Submitted";
+    case "in_progress": return "In Progress";
+    case "scheduled":   return "Scheduled";
+    case "on_site":     return "On Site";
+    case "completed":   return "Completed";
+    case "closed":      return "Closed";
+    case "cancelled":   return "Cancelled";
+    default:            return s ? String(s) : "—";
+  }
+}
+
+// Treats `completed`, `closed`, `cancelled` as not-open. The existing
+// "Open only" filter uses this. `completed` is intentionally NOT open
+// — it's a working state awaiting store confirmation, but reporting
+// and the open-count badge should treat it as closed-pending-signoff.
+export function isOpenStatus(s: TicketStatus | string | null | undefined): boolean {
+  if (!s) return true;
+  return s !== "completed" && s !== "closed" && s !== "cancelled";
+}
 
 export type TicketPriority = "Emergency" | "Urgent" | "Standard" | "Planned";
 export const TICKET_PRIORITIES: TicketPriority[] = [
@@ -54,11 +113,30 @@ export interface TicketApproval {
   quote_url: string | null;
 }
 
+// Legacy alias kept for compat — same shape as TicketActivity, but
+// optional. The API now returns `ticket_activities`; older consumers
+// reading `ticket_updates` should switch.
 export interface TicketUpdate {
   id: string;
   user_name: string | null;
   update_type: string;
   notes: string | null;
+  created_at: string;
+}
+
+// Activity feed entry — one row per state-changing action on a ticket
+// (status change, vendor assignment, ETA set, photo upload, comment,
+// approval, etc.). event_data is unstructured JSON; the shape varies
+// by event_type.
+export interface TicketActivity {
+  id: string;
+  user_id: string | null;
+  user_name: string | null;
+  user_role: string | null;
+  event_type: string;
+  event_data: Record<string, unknown>;
+  notes: string | null;
+  visibility: "store" | "admin" | "vendor" | "all";
   created_at: string;
 }
 
@@ -71,7 +149,20 @@ export interface Ticket {
   asset_type: string | null;
   model_number: string | null;
   issue_description: string | null;
+  // v2: status is now the new 7-value enum. status_legacy carries the
+  // old human-readable label for one release cycle.
   status: TicketStatus;
+  status_legacy?: string | null;
+  pause_state?: PauseState | null;
+  pause_reason_note?: string | null;
+  resolution_category?: ResolutionCategory | null;
+  store_close_reason?: StoreCloseReason | null;
+  admin_close_reason?: AdminCloseReason | null;
+  closed_by_store?: boolean;
+  callback_of?: string | null;
+  related_to?: string | null;
+  completed_at?: string | null;
+  closed_at?: string | null;
   priority: TicketPriority;
   is_business_critical: boolean;
   vendor_name: string | null;
@@ -82,7 +173,37 @@ export interface Ticket {
   latest_comment: string | null;
   ticket_photos?: TicketPhoto[];
   ticket_approvals?: TicketApproval[];
+  ticket_activities?: TicketActivity[];
+  // Kept for backwards compat; the API now returns ticket_activities.
   ticket_updates?: TicketUpdate[];
+}
+
+export interface TicketActivitiesResponse {
+  ok: true;
+  activities: TicketActivity[];
+}
+
+// New endpoint shapes (PR 1).
+
+export type TransitionPayload = Partial<{
+  vendor_id: string;
+  store_close_reason: StoreCloseReason;
+  admin_close_reason: AdminCloseReason;
+  resolution_category: ResolutionCategory;
+  reopen_reason: ReopenReason;
+  reopen_reason_text: string;
+}>;
+
+export interface TransitionTicketBody {
+  id: string;
+  to: TicketStatus;
+  payload?: TransitionPayload;
+}
+
+export interface SetPauseStateBody {
+  id: string;
+  pause_state: PauseState;
+  reason_note?: string;
 }
 
 export interface TicketsResponse {

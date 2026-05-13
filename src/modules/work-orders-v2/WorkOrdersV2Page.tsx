@@ -34,6 +34,8 @@ import {
 import {
   TICKET_PRIORITIES,
   TICKET_STATUSES,
+  isOpenStatus,
+  statusLabel,
   type Ticket,
   type TicketPriority,
   type TicketStatus,
@@ -47,16 +49,13 @@ import { TroubleshootingTipsTab } from "./TroubleshootingTipsTab";
 import { EmailTemplatesTab } from "./EmailTemplatesTab";
 
 const STATUS_TONE: Record<TicketStatus, "info" | "warning" | "success" | "danger" | "neutral"> = {
-  "Received":              "info",
-  "Pending Approval":      "warning",
-  "Approved":              "success",
-  "Rejected - See Notes":  "danger",
-  "Scheduled":             "info",
-  "In Progress":           "warning",
-  "On Hold":               "danger",
-  "Part on Order":         "info",
-  "New Equipment Ordered": "info",
-  "Closed":                "neutral",
+  "submitted":   "info",
+  "in_progress": "warning",
+  "scheduled":   "info",
+  "on_site":     "warning",
+  "completed":   "success",
+  "closed":      "neutral",
+  "cancelled":   "neutral",
 };
 
 const PRIORITY_TONE: Record<TicketPriority, "danger" | "warning" | "neutral"> = {
@@ -179,7 +178,7 @@ function TicketsTab() {
   const tickets = ticketsQ.data?.tickets ?? [];
   const filtered = useMemo(() => {
     return tickets.filter((t) => {
-      if (openOnly && t.status === "Closed") return false;
+      if (openOnly && !isOpenStatus(t.status)) return false;
       if (status && t.status !== status) return false;
       if (priority && t.priority !== priority) return false;
       if (category && t.category !== category) return false;
@@ -310,8 +309,8 @@ function StatsRow({
 }) {
   const cards = [
     { label: "Open", value: stats?.open ?? 0, tone: "" as const },
-    { label: "In Progress", value: stats?.byStatus?.["In Progress"] ?? 0, tone: "" as const },
-    { label: "On Hold", value: stats?.byStatus?.["On Hold"] ?? 0, tone: "" as const },
+    { label: "In Progress", value: stats?.byStatus?.["in_progress"] ?? 0, tone: "" as const },
+    { label: "On Site", value: stats?.byStatus?.["on_site"] ?? 0, tone: "" as const },
     { label: "Business Critical", value: stats?.critical ?? 0, tone: (stats?.critical ?? 0) > 0 ? "alert" : "" as const },
     { label: "15+ Days Open", value: stats?.aged ?? 0, tone: (stats?.aged ?? 0) > 0 ? "alert" : "" as const },
   ];
@@ -364,7 +363,7 @@ function FilterBar({
           className="h-9 rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
         >
           <option value="">All Statuses</option>
-          {TICKET_STATUSES.map((s) => <option key={s}>{s}</option>)}
+          {TICKET_STATUSES.map((s) => <option key={s} value={s}>{statusLabel(s)}</option>)}
         </select>
       </FilterField>
       <FilterField label="Priority">
@@ -438,9 +437,10 @@ function TicketCard({
   onError: (msg: string) => void;
 }) {
   const days = daysOpen(ticket);
-  const aged = ticket.status !== "Closed" && days !== null && days >= 15;
+  const open = isOpenStatus(ticket.status);
+  const aged = open && days !== null && days >= 15;
   const ageTone =
-    days === null || ticket.status === "Closed" ? "neutral" :
+    days === null || !open ? "neutral" :
     days <= 7  ? "success" :
     days <= 14 ? "warning" :
     "danger";
@@ -475,7 +475,7 @@ function TicketCard({
           </div>
         </div>
         <div className="flex items-center gap-1.5">
-          <Badge tone={STATUS_TONE[ticket.status]}>{ticket.status}</Badge>
+          <Badge tone={STATUS_TONE[ticket.status] ?? "neutral"}>{statusLabel(ticket.status)}</Badge>
           {ticket.priority && ticket.priority !== "Standard" && (
             <Badge tone={PRIORITY_TONE[ticket.priority]}>{ticket.priority}</Badge>
           )}
@@ -695,7 +695,7 @@ function UpdateForm({
 
   const mut = useMutation({
     mutationFn: () => {
-      if (status === "Closed" && !notes.trim()) {
+      if (status === "closed" && !notes.trim()) {
         return Promise.reject(new Error("Notes are required to close a ticket."));
       }
       return updateTicket({
@@ -733,7 +733,7 @@ function UpdateForm({
             onChange={(e) => setStatus(e.target.value as TicketStatus)}
             className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           >
-            {TICKET_STATUSES.map((s) => <option key={s}>{s}</option>)}
+            {TICKET_STATUSES.map((s) => <option key={s} value={s}>{statusLabel(s)}</option>)}
           </select>
         </div>
         <div>
