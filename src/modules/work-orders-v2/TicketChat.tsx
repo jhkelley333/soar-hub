@@ -88,8 +88,10 @@ export function TicketChat({ ticketId, onError }: Props) {
           />
           <ThreadTab
             label="🏢 Vendor"
-            active={thread === "vendor"}
-            onClick={() => setThread("vendor")}
+            active={false}
+            onClick={() => undefined}
+            disabled
+            title="Vendor chat is coming soon — use internal for now."
           />
           <button
             type="button"
@@ -151,20 +153,34 @@ function ThreadTab({
   label,
   active,
   onClick,
+  disabled,
+  title,
 }: {
   label: string;
   active: boolean;
   onClick: () => void;
+  disabled?: boolean;
+  title?: string;
 }) {
+  let className: string;
+  if (disabled) {
+    className =
+      "cursor-not-allowed rounded-md border border-zinc-200 bg-zinc-100 px-2 py-1 text-[11px] font-semibold text-zinc-400";
+  } else if (active) {
+    className =
+      "rounded-md border border-accent bg-accent/10 px-2 py-1 text-[11px] font-semibold text-accent";
+  } else {
+    className =
+      "rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-semibold text-zinc-500 hover:text-midnight";
+  }
   return (
     <button
       type="button"
       onClick={onClick}
-      className={
-        active
-          ? "rounded-md border border-accent bg-accent/10 px-2 py-1 text-[11px] font-semibold text-accent"
-          : "rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-semibold text-zinc-500 hover:text-midnight"
-      }
+      disabled={disabled}
+      title={title}
+      aria-disabled={disabled || undefined}
+      className={className}
     >
       {label}
     </button>
