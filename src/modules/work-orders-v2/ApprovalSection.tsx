@@ -1,8 +1,11 @@
 // Approval controls inside the expanded ticket card. Two flows:
 //
 //   1. Submit Approval — anyone with access can request approval for a
-//      specific tier (DO / SDO / VP). Inline form (tier + notes + quote URL).
-//      Backend logs the row + flips the ticket's approval_status to Pending.
+//      specific tier (DO / SDO / VP). Inline form (tier + notes + quote
+//      file or URL). If a quote file is attached we upload it through
+//      the same wo2-ticket-photos bucket with upload_type='quote'; the
+//      resulting public URL is written into the approval row's
+//      quote_url column.
 //
 //   2. Decide Approval — DO+ only. When the latest approval row is
 //      Pending, show Approve/Reject buttons. Rejection requires a note.
@@ -11,14 +14,14 @@
 // but we mirror it client-side so non-DO admins (e.g. payroll, GM) don't
 // see the buttons at all.
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { CheckCircle2, Loader2, XCircle } from "lucide-react";
+import { CheckCircle2, FileText, Loader2, Paperclip, XCircle } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
 import { Badge } from "@/shared/ui/Badge";
-import { decideApproval, submitApproval } from "./api";
+import { decideApproval, fileToBase64, submitApproval, uploadPhoto } from "./api";
 import {
   APPROVAL_TIERS,
   type ApprovalTier,
@@ -33,8 +36,6 @@ interface Props {
   onError: (msg: string) => void;
 }
 
-// Role hierarchy from the backend. Mirrored here so the UI hides
-// approve/reject buttons for users who can't actually use them.
 const ROLE_LEVEL: Record<string, number> = {
   admin: 1, coo: 1, vp: 1,
   rvp: 2, sdo: 2,
@@ -68,23 +69,41 @@ export function ApprovalSection({
   const [tier, setTier] = useState<ApprovalTier>(APPROVAL_TIERS[0].value);
   const [notes, setNotes] = useState("");
   const [quoteUrl, setQuoteUrl] = useState("");
+  const [quoteFile, setQuoteFile] = useState<File | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const submit = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       if (!notes.trim()) {
-        return Promise.reject(new Error("Approval notes are required."));
+        throw new Error("Approval notes are required.");
+      }
+      // If a file is attached, upload it first via the photos endpoint
+      // with upload_type='quote'. Same bucket as ticket photos — the
+      // upload_type column keeps them straight.
+      let finalUrl = quoteUrl.trim();
+      if (quoteFile) {
+        const photoData = await fileToBase64(quoteFile);
+        const result = await uploadPhoto({
+          id: ticket.id,
+          photoData,
+          photoType: quoteFile.type || "application/octet-stream",
+          photoName: quoteFile.name,
+          uploadType: "quote",
+        });
+        if (result.photo?.file_url) finalUrl = result.photo.file_url;
       }
       return submitApproval({
         id: ticket.id,
         approvalTier: tier,
         approvalNotes: notes.trim(),
-        quoteUrl: quoteUrl.trim() || undefined,
+        quoteUrl: finalUrl || undefined,
       });
     },
     onSuccess: () => {
       setRequesting(false);
       setNotes("");
       setQuoteUrl("");
+      setQuoteFile(null);
       onChanged();
     },
     onError: (e: unknown) =>
@@ -123,20 +142,21 @@ export function ApprovalSection({
 
   return (
     <div>
-      <div className="mb-1.5 flex items-center justify-between">
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-          Approval
-        </div>
-        {!latest && !requesting && (
-          <button
-            type="button"
-            onClick={() => setRequesting(true)}
-            className="text-xs font-medium text-accent hover:underline"
-          >
-            Request approval →
-          </button>
-        )}
+      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+        Approval
       </div>
+
+      {/* Prominent CTA when no approval has been requested yet. */}
+      {!latest && !requesting && (
+        <button
+          type="button"
+          onClick={() => setRequesting(true)}
+          className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 transition hover:border-amber-400 hover:bg-amber-100"
+        >
+          <FileText className="h-4 w-4" strokeWidth={1.75} />
+          Request Approval
+        </button>
+      )}
 
       {latest && (
         <div className="rounded-md border border-zinc-100 bg-white p-3">
@@ -153,8 +173,9 @@ export function ApprovalSection({
                 href={latest.quote_url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-xs font-medium text-accent hover:underline"
+                className="inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline"
               >
+                <Paperclip className="h-3 w-3" strokeWidth={1.75} />
                 Quote ↗
               </a>
             )}
@@ -187,11 +208,23 @@ export function ApprovalSection({
               )}
             </div>
           )}
+          {/* Allow another approval round on an already-decided ticket. */}
+          {latest.status !== "Pending" && (
+            <div className="mt-2">
+              <button
+                type="button"
+                onClick={() => setRequesting(true)}
+                className="text-xs font-medium text-accent hover:underline"
+              >
+                Submit another approval request →
+              </button>
+            </div>
+          )}
         </div>
       )}
 
       {requesting && (
-        <div className="space-y-3 rounded-md border border-zinc-100 bg-white p-3">
+        <div className="mt-2 space-y-3 rounded-md border border-amber-200 bg-amber-50/50 p-3">
           <div>
             <Label htmlFor={`appr-tier-${ticket.id}`}>Approval Tier *</Label>
             <select
@@ -214,15 +247,57 @@ export function ApprovalSection({
               className="block w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
             />
           </div>
+
+          {/* Quote attachment — file OR URL. The file path uploads
+              through the same photo endpoint with upload_type='quote'. */}
           <div>
-            <Label htmlFor={`appr-quote-${ticket.id}`}>Quote URL</Label>
+            <Label>Attach Quote</Label>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={submit.isPending}
+              className="flex w-full items-center justify-center gap-2 rounded-md border-2 border-dashed border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-600 transition hover:border-accent hover:bg-accent/5 hover:text-midnight disabled:opacity-50"
+            >
+              <Paperclip className="h-4 w-4" strokeWidth={1.75} />
+              {quoteFile ? quoteFile.name : "Tap to attach image or PDF"}
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*,.pdf,application/pdf"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.target.files?.[0] || null;
+                setQuoteFile(f);
+                e.target.value = "";
+              }}
+            />
+            {quoteFile && (
+              <button
+                type="button"
+                onClick={() => setQuoteFile(null)}
+                className="mt-1 text-[11px] text-red-600 hover:underline"
+              >
+                Remove
+              </button>
+            )}
+          </div>
+
+          <div>
+            <Label htmlFor={`appr-quote-${ticket.id}`}>
+              Or paste a Drive URL
+            </Label>
             <Input
               id={`appr-quote-${ticket.id}`}
               value={quoteUrl}
               onChange={(e) => setQuoteUrl(e.target.value)}
-              placeholder="https://drive.google.com/…  (optional)"
+              placeholder="https://drive.google.com/…"
             />
+            <div className="mt-0.5 text-[10px] text-zinc-500">
+              If both a file and a URL are provided, the uploaded file's URL wins.
+            </div>
           </div>
+
           <div className="flex gap-2">
             <Button
               variant="primary"
@@ -234,7 +309,10 @@ export function ApprovalSection({
             </Button>
             <Button
               variant="ghost"
-              onClick={() => setRequesting(false)}
+              onClick={() => {
+                setRequesting(false);
+                setQuoteFile(null);
+              }}
               disabled={submit.isPending}
             >
               Cancel
