@@ -531,17 +531,24 @@ export const handler = async (event) => {
     if (action === "getCallerStores") {
       const isSingle = role === "gm" || role === "shift_manager";
 
-      // Helper — resolves { id, number, name }[] from a list of store numbers.
-      // Used by the user_scopes fallback below.
-      async function hydrateStoresByNumbers(numbers) {
-        if (!numbers.length) return [];
-        const { data, error } = await supabase
+      // Source of truth: user_visible_stores(uid) RPC (migration 0032).
+      // Already encodes user_scopes (store/district/area/region/global)
+      // AND profile.primary_store_id fallback. Using it here means v2
+      // store visibility is identical to v1 + the rest of the app.
+      async function visibleStoreRows() {
+        const { data: visibleIds } = await supabase.rpc("user_visible_stores", {
+          uid: userId,
+        });
+        const ids = (visibleIds ?? [])
+          .map((v) => (typeof v === "string" ? v : v?.user_visible_stores ?? null))
+          .filter(Boolean);
+        if (!ids.length) return [];
+        const { data: rows } = await supabase
           .from("stores")
           .select("id, number, name")
-          .in("number", numbers)
+          .in("id", ids)
           .order("number");
-        if (error) return [];
-        return (data || []).map((s) => ({
+        return (rows || []).map((s) => ({
           id: s.id,
           number: String(s.number),
           name: s.name || "",
@@ -549,67 +556,40 @@ export const handler = async (event) => {
       }
 
       if (isSingle) {
-        // Try primary_store_id first (legacy GM pattern).
-        const { data: meRow } = await supabase
-          .from("profiles")
-          .select("primary_store_id")
-          .eq("id", userId)
-          .single();
-        const primaryStoreId = meRow?.primary_store_id;
-        if (primaryStoreId) {
-          const { data: store } = await supabase
-            .from("stores")
-            .select("id, number, name")
-            .eq("id", primaryStoreId)
-            .single();
-          if (store) {
-            return respond(200, {
-              ok: true,
-              mode: "single",
-              stores: [{
-                id: store.id,
-                number: String(store.number),
-                name: store.name || "",
-              }],
-            });
-          }
+        const stores = await visibleStoreRows();
+        if (stores.length === 0) {
+          return respond(200, { ok: true, mode: "single", stores: [] });
         }
-
-        // Fall back to user_scopes — shift managers (and some GMs) are
-        // assigned via scopes instead of profiles.primary_store_id. If
-        // scopes resolve to exactly one store, auto-fill; if multiple,
-        // hand back a list so the modal can render a dropdown.
-        const access = await getStoresForUser(supabase, profile);
-        if (!access.all && access.stores.length === 1) {
-          const stores = await hydrateStoresByNumbers(access.stores);
+        if (stores.length === 1) {
           return respond(200, { ok: true, mode: "single", stores });
         }
-        if (!access.all && access.stores.length > 1) {
-          const stores = await hydrateStoresByNumbers(access.stores);
-          return respond(200, { ok: true, mode: "list", stores });
-        }
-        return respond(200, { ok: true, mode: "single", stores: [] });
+        // Multi-site shift_manager / GM — let them pick from a dropdown.
+        return respond(200, { ok: true, mode: "list", stores });
       }
 
-      const access = await getStoresForUser(supabase, profile);
-      let query = supabase.from("stores").select("id, number, name");
-      if (access.all) {
-        // No filter — admin/coo/vp/sdo/rvp see every store.
-      } else if (access.stores.length) {
-        query = query.in("number", access.stores);
-      } else {
-        return respond(200, { ok: true, mode: "list", stores: [] });
+      // Non-single roles: admin/coo/vp/sdo/rvp see every active store
+      // (existing v2 contract). DO falls through user_visible_stores.
+      if (["admin", "coo", "vp", "sdo", "rvp"].includes(role)) {
+        const { data: rows, error } = await supabase
+          .from("stores")
+          .select("id, number, name")
+          .order("number");
+        if (error) throw error;
+        return respond(200, {
+          ok: true,
+          mode: "list",
+          stores: (rows || []).map((s) => ({
+            id: s.id,
+            number: String(s.number),
+            name: s.name || "",
+          })),
+        });
       }
-      const { data: rows, error } = await query.order("number");
-      if (error) throw error;
+
       return respond(200, {
         ok: true,
         mode: "list",
-        stores: (rows || []).map((s) => ({
-          id: s.id,
-          number: String(s.number),
-          name: s.name || "",
-        })),
+        stores: await visibleStoreRows(),
       });
     }
 
