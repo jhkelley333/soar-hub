@@ -1,8 +1,3 @@
-<!--
-  REFERENCE ONLY — original Work Orders V2 (Facilities V2) HTML prototype.
-  Not wired up; lives in docs/v2/ as a reference for the React port.
-  Talks to /.netlify/functions/facilities-v2 (backend pending paste).
--->
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -34,49 +29,289 @@
     .btn-green{background:linear-gradient(180deg,rgba(0,200,117,.9),rgba(0,180,105,.85));border-color:rgba(0,200,117,.4);color:#000;}
     .btn-danger{color:#ff8585;border-color:rgba(255,59,59,.22);}
     .btn-sm{font-size:11px;padding:6px 10px;}
-    /* See original file for full styles; trimmed in this archive header. */
+    .page{max-width:1100px;margin:0 auto;padding:18px 16px 52px;}
+    .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;}
+    .tab{padding:10px 16px;border-radius:10px;border:1px solid rgba(105,120,155,.24);background:rgba(10,12,18,.82);color:#8089a0;font-family:'Rajdhani',sans-serif;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;cursor:pointer;transition:.18s;}
+    .tab.active{color:#fff;background:linear-gradient(180deg,rgba(59,130,246,.9),rgba(37,99,235,.84));border-color:rgba(142,185,255,.6);}
+    .panel{display:none;}.panel.active{display:block;}
+    .stats-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:20px;}
+    .stat-card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:16px;text-align:center;}
+    .stat-card.alert{border-color:rgba(255,59,59,.45);}
+    .stat-num{font-family:'Rajdhani',sans-serif;font-size:30px;font-weight:700;line-height:1;margin-bottom:4px;}
+    .stat-lbl{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:1px;}
+    .stat-card.alert .stat-num,.stat-card.alert .stat-lbl{color:#ff5050;}
+    .filterbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;background:var(--card);border:1px solid var(--border);border-radius:16px;padding:12px 14px;margin-bottom:20px;}
+    .filter-select{background:#0f1520;border:1px solid rgba(95,110,145,.22);border-radius:10px;color:var(--text);padding:9px 12px;font-size:13px;outline:none;-webkit-appearance:none;appearance:none;cursor:pointer;}
+    .filter-select option{background:#0f1520;color:var(--text);}
+    .search-input{flex:1;min-width:200px;background:rgba(15,18,30,.92);border:1px solid rgba(95,110,145,.22);border-radius:10px;color:var(--text);padding:9px 12px;font-size:13px;outline:none;font-family:'DM Sans',sans-serif;}
+    .ticket-list{display:flex;flex-direction:column;gap:12px;}
+    .ticket-card{background:var(--card);border:1px solid var(--border);border-radius:16px;overflow:hidden;transition:border-color .2s;}
+    .ticket-card:hover{border-color:rgba(95,110,145,.38);}
+    .ticket-card.aged{box-shadow:inset 3px 0 0 rgba(255,59,59,.7);}
+    .ticket-card.critical{box-shadow:inset 3px 0 0 rgba(251,191,36,.8);}
+    .ticket-head{display:flex;justify-content:space-between;gap:12px;padding:14px 18px;cursor:pointer;user-select:none;flex-wrap:wrap;align-items:center;}
+    .ticket-head:hover{background:rgba(255,255,255,.015);}
+    .ticket-wo{font-family:'Courier New',monospace;font-size:11px;color:var(--muted);margin-bottom:3px;}
+    .ticket-title{font-family:'Rajdhani',sans-serif;font-size:17px;font-weight:700;margin-bottom:3px;}
+    .ticket-meta{font-size:12px;color:var(--muted);}
+    .ticket-badges{display:flex;gap:6px;align-items:center;flex-wrap:wrap;flex-shrink:0;}
+    .pill{padding:4px 10px;border-radius:8px;border:1px solid transparent;font-family:'Rajdhani',sans-serif;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;white-space:nowrap;}
+    .pill-received  {background:rgba(59,130,246,.1);border-color:rgba(59,130,246,.22);color:#8eb9ff;}
+    .pill-pending   {background:rgba(255,176,32,.1);border-color:rgba(255,176,32,.22);color:#ffd07d;}
+    .pill-approved  {background:rgba(0,200,117,.1);border-color:rgba(0,200,117,.22);color:#79ebb8;}
+    .pill-rejected  {background:rgba(255,59,59,.1);border-color:rgba(255,59,59,.22);color:#ff8a8a;}
+    .pill-inprogress{background:rgba(255,176,32,.1);border-color:rgba(255,176,32,.22);color:#ffd07d;}
+    .pill-onhold    {background:rgba(255,59,59,.08);border-color:rgba(255,59,59,.18);color:#ff8a8a;}
+    .pill-scheduled {background:rgba(85,182,255,.1);border-color:rgba(85,182,255,.22);color:#8ed9ff;}
+    .pill-partonorder{background:rgba(155,92,255,.1);border-color:rgba(155,92,255,.22);color:#d0b0ff;}
+    .pill-closed    {background:rgba(0,200,117,.08);border-color:rgba(0,200,117,.18);color:#79ebb8;}
+    .pill-critical  {background:rgba(251,191,36,.1);border-color:rgba(251,191,36,.3);color:var(--gold);}
+    .age-badge{padding:4px 9px;border-radius:6px;font-family:'Rajdhani',sans-serif;font-size:11px;font-weight:700;border:1px solid transparent;white-space:nowrap;}
+    .age-green {background:rgba(0,200,117,.1);border-color:rgba(0,200,117,.3);color:var(--green);}
+    .age-yellow{background:rgba(255,176,32,.1);border-color:rgba(255,176,32,.3);color:var(--orange);}
+    .age-red   {background:rgba(255,59,59,.1);border-color:rgba(255,59,59,.3);color:#ff4444;}
+    .age-grey  {background:rgba(255,255,255,.05);border-color:var(--border);color:var(--muted);}
+    .ticket-body{padding:18px;border-top:1px solid rgba(95,110,145,.16);background:rgba(255,255,255,.01);}
+    .detail-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:16px;}
+    .detail-lbl{font-family:'Rajdhani',sans-serif;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin-bottom:3px;}
+    .detail-val{color:var(--muted2);font-size:13px;line-height:1.5;}
+    .sec-title{font-family:'Rajdhani',sans-serif;font-size:11px;font-weight:700;letter-spacing:2px;text-transform:uppercase;color:#86b8ff;margin:16px 0 10px;display:flex;align-items:center;gap:8px;}
+    .sec-title::after{content:'';flex:1;height:1px;background:linear-gradient(90deg,rgba(59,130,246,.28),transparent);}
+    .photo-grid{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;}
+    .photo-thumb{width:72px;height:72px;border-radius:8px;object-fit:cover;border:1px solid var(--border);cursor:pointer;}
+    .timeline{display:flex;flex-direction:column;gap:8px;}
+    .timeline-item{display:flex;gap:10px;align-items:flex-start;}
+    .timeline-dot{width:8px;height:8px;border-radius:50%;background:var(--blue);margin-top:5px;flex-shrink:0;}
+    .timeline-content{font-size:12px;color:var(--muted2);}
+    .timeline-time{font-size:11px;color:var(--muted);}
+    .form-label{font-family:'Rajdhani',sans-serif;font-size:11px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);display:block;margin-bottom:5px;}
+    .form-input,.form-select,.form-textarea{width:100%;background:rgba(18,22,32,.92);border:1px solid rgba(95,110,145,.22);border-radius:12px;color:var(--text);padding:10px 12px;font-size:14px;outline:none;font-family:'DM Sans',sans-serif;}
+    .form-select{background:#0f1520;-webkit-appearance:none;appearance:none;cursor:pointer;}
+    .form-select option{background:#0f1520;color:var(--text);}
+    .form-textarea{min-height:80px;resize:vertical;}
+    .form-input:focus,.form-select:focus,.form-textarea:focus{border-color:rgba(59,130,246,.42);}
+    .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;}
+    .form-row.full{grid-template-columns:1fr;}
+    .form-group{margin-bottom:12px;}
+    .typeahead-wrap{position:relative;}
+    .typeahead-dropdown{position:absolute;top:100%;left:0;right:0;z-index:50;background:#0f1520;border:1px solid rgba(95,110,145,.3);border-radius:12px;max-height:260px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.4);}
+    .typeahead-item{padding:10px 14px;cursor:pointer;font-size:13px;border-bottom:1px solid rgba(95,110,145,.1);transition:background .12s;}
+    .typeahead-item:last-child{border-bottom:none;}
+    .typeahead-item:hover,.typeahead-item.selected{background:rgba(59,130,246,.12);}
+    .typeahead-cat{font-family:'Rajdhani',sans-serif;font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);margin-bottom:2px;}
+    .typeahead-name{color:var(--text);}
+    .wo-preview{background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.2);border-radius:10px;padding:10px 14px;margin-bottom:14px;display:flex;align-items:center;gap:10px;}
+    .wo-preview-label{font-family:'Rajdhani',sans-serif;font-size:10px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted);}
+    .wo-preview-num{font-family:'Courier New',monospace;font-size:16px;font-weight:700;color:var(--blue);}
+    .approval-panel{background:rgba(41,121,255,.04);border:1px solid rgba(41,121,255,.2);border-radius:12px;padding:16px;margin-top:12px;}
+    .approval-badge{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:8px;font-family:'Rajdhani',sans-serif;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;}
+    .approval-pending {background:rgba(255,176,32,.1);border:1px solid rgba(255,176,32,.3);color:var(--orange);}
+    .approval-approved{background:rgba(0,200,117,.1);border:1px solid rgba(0,200,117,.3);color:var(--green);}
+    .approval-rejected{background:rgba(255,59,59,.1);border:1px solid rgba(255,59,59,.3);color:var(--red);}
+    .file-upload-zone{border:2px dashed rgba(95,110,145,.3);border-radius:12px;padding:20px;text-align:center;cursor:pointer;transition:.2s;}
+    .file-upload-zone:hover{border-color:rgba(59,130,246,.4);background:rgba(59,130,246,.04);}
+    .file-upload-zone.has-files{border-color:rgba(0,200,117,.4);background:rgba(0,200,117,.04);}
+    .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:200;display:flex;align-items:center;justify-content:center;padding:20px;}
+    .modal{background:#0c1220;border:1px solid rgba(90,105,145,.3);border-radius:18px;padding:28px;width:100%;max-width:600px;max-height:92vh;overflow-y:auto;}
+    .modal-title{font-family:'Rajdhani',sans-serif;font-size:20px;font-weight:700;letter-spacing:1px;text-transform:uppercase;margin-bottom:20px;display:flex;justify-content:space-between;align-items:center;}
+    .modal-close{background:none;border:none;color:var(--muted);font-size:20px;cursor:pointer;padding:4px;}
+    .issue-item{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid rgba(95,110,145,.1);}
+    .issue-item:last-child{border-bottom:none;}
+    .issue-cat-badge{padding:3px 8px;border-radius:6px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.2);color:#8eb9ff;font-family:'Rajdhani',sans-serif;font-size:10px;font-weight:700;letter-spacing:1px;text-transform:uppercase;white-space:nowrap;}
+    .toast-wrap{position:fixed;right:18px;bottom:18px;z-index:9999;display:flex;flex-direction:column;gap:8px;max-width:320px;}
+    .toast{padding:12px 14px;border-radius:12px;border:1px solid transparent;font-size:13px;animation:toastIn .2s ease;}
+    .toast.success{background:rgba(0,200,117,.12);border-color:rgba(0,200,117,.28);color:#79ebb8;}
+    .toast.error  {background:rgba(255,59,59,.12);border-color:rgba(255,59,59,.28);color:#ff8a8a;}
+    .toast.info   {background:rgba(59,130,246,.12);border-color:rgba(59,130,246,.28);color:#8eb9ff;}
+    @keyframes toastIn{from{transform:translateX(40px);opacity:0;}to{transform:none;opacity:1;}}
+    .spinner{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.25);border-top-color:currentColor;border-radius:50%;animation:spin .6s linear infinite;}
+    @keyframes spin{to{transform:rotate(360deg);}}
+    .empty{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:44px 20px;text-align:center;color:var(--muted);}
+    .chat-wrap{background:rgba(8,12,22,.95);border:1px solid rgba(80,100,140,.22);border-radius:14px;overflow:hidden;margin-top:4px;}
+    .chat-messages{max-height:280px;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:10px;}
+    .chat-msg{display:flex;gap:10px;align-items:flex-start;}
+    .chat-msg.mine{flex-direction:row-reverse;}
+    .chat-avatar{width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-family:'Rajdhani',sans-serif;font-size:13px;font-weight:700;flex-shrink:0;}
+    .chat-bubble{max-width:75%;padding:9px 13px;border-radius:12px;font-size:13px;line-height:1.5;}
+    .chat-msg.mine .chat-bubble{background:rgba(59,130,246,.18);border:1px solid rgba(59,130,246,.28);color:var(--text);border-radius:12px 4px 12px 12px;}
+    .chat-msg:not(.mine) .chat-bubble{background:rgba(255,255,255,.05);border:1px solid rgba(95,110,145,.18);color:var(--text);border-radius:4px 12px 12px 12px;}
+    .chat-meta{font-size:10px;color:var(--muted);margin-top:3px;}
+    .chat-role{display:inline-block;padding:1px 6px;border-radius:4px;font-family:'Rajdhani',sans-serif;font-size:9px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;margin-right:4px;}
+    .chat-role-admin{background:rgba(0,200,117,.1);color:#6ee7b7;}
+    .chat-role-do{background:rgba(155,92,255,.1);color:#c4a5ff;}
+    .chat-role-sdo{background:rgba(255,176,32,.1);color:#ffb020;}
+    .chat-role-gm{background:rgba(59,130,246,.1);color:#8eb9ff;}
+    .chat-role-store{background:rgba(255,255,255,.06);color:var(--muted2);}
+    .chat-input-row{display:flex;gap:8px;padding:10px 14px;border-top:1px solid rgba(80,100,140,.18);background:rgba(5,8,16,.9);}
+    .chat-input{flex:1;background:rgba(18,22,32,.92);border:1px solid rgba(95,110,145,.22);border-radius:10px;color:var(--text);padding:9px 12px;font-size:13px;outline:none;font-family:'DM Sans',sans-serif;resize:none;}
+    .chat-input:focus{border-color:rgba(59,130,246,.4);}
+    .chat-send{padding:9px 14px;background:linear-gradient(180deg,rgba(59,130,246,.92),rgba(37,99,235,.88));border:1px solid rgba(59,130,246,.4);color:#fff;border-radius:10px;font-family:'Rajdhani',sans-serif;font-size:12px;font-weight:700;letter-spacing:1px;text-transform:uppercase;cursor:pointer;white-space:nowrap;}
+    .chat-empty{text-align:center;color:var(--muted);font-size:13px;padding:20px;}
+    .chat-tab-btn{padding:6px 14px;border-radius:8px;border:1px solid rgba(95,110,145,.22);background:rgba(10,12,18,.8);color:var(--muted);font-family:'Rajdhani',sans-serif;font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase;cursor:pointer;transition:.15s;}
+    .chat-tab-btn.active{background:rgba(59,130,246,.15);border-color:rgba(59,130,246,.35);color:#8eb9ff;}
+    .chat-tab-btn[data-thread="vendor"].active{background:rgba(155,92,255,.15);border-color:rgba(155,92,255,.35);color:#c4a5ff;}
+    @media(max-width:768px){.stats-grid{grid-template-columns:repeat(3,1fr);}.detail-grid{grid-template-columns:1fr 1fr;}.form-row{grid-template-columns:1fr;}}
+    @media(max-width:480px){.stats-grid{grid-template-columns:repeat(2,1fr);}.detail-grid{grid-template-columns:1fr;}}
   </style>
 </head>
 <body>
 <!--
-  Full original HTML preserved below. UI calls these actions on
-  /.netlify/functions/facilities-v2 (backend not yet ported):
-    GET    ?action=getStats
-    GET    ?action=getTickets
-    GET    ?action=getIssueLibrary
-    GET    ?action=getVendors
-    GET    ?action=searchVendors&q=...
-    GET    ?action=getMessages&ticketId=...&threadType=internal|vendor
-    POST   ?action=createTicket
-    POST   ?action=updateTicket
-    POST   ?action=uploadPhoto         (base64 body)
-    POST   ?action=submitApproval
-    POST   ?action=decideApproval
-    POST   ?action=saveVendor
-    POST   ?action=rateVendor
-    POST   ?action=saveIssueItem
-    POST   ?action=deleteIssueItem
-    POST   ?action=sendMessage
-
-  Inferred entities (backend will live in supabase migrations / netlify functions):
-    tickets          (id, wo_number, store_number, store_name, asset_type, category,
-                      issue_description, priority, status, vendor_name, model_number,
-                      cost_estimate, submitted_by, date_submitted, is_business_critical,
-                      latest_comment)
-    ticket_photos    (ticket_id, file_url, file_name, upload_type: submission|update|quote)
-    ticket_updates   (ticket_id, user_name, update_type, notes, new_value, created_at)
-    ticket_approvals (id, ticket_id, status: Pending|Approved|Rejected, approval_tier, notes)
-    ticket_messages  (ticket_id, user_id, user_name, user_role, message,
-                      thread_type: internal|vendor, created_at)
-    vendors          (id, name, category, service_area, services, phone, email,
-                      website, contact_person, notes)
-    vendor_ratings   (vendor_id, ticket_id, store_number, rating, comment)
-    issue_library    (id, category, asset_type, display_name, sort_order)
-
-  Roles allowed (UI-side): ADMIN only for now; broader rollout TBD.
+  REFERENCE ONLY — original Facilities V2 prototype HTML, full version.
+  Render it via:
+    https://htmlpreview.github.io/?https://raw.githubusercontent.com/jhkelley333/soar-hub/claude/work-orders-v2/docs/v2/work-orders-v2-prototype.html
+  This file is static markup with sample mock data so the structure is
+  visible without the backend. Auth gates + fetch calls are stripped.
 -->
 
-<!-- The HTML below is the verbatim Facilities V2 prototype the user
-     was developing pre-port. Left intact for visual reference. -->
+<div class="topbar">
+  <div class="topbar-inner">
+    <div class="topbar-left">
+      <div class="logo">🏗️</div>
+      <div>
+        <div class="topbar-title">Facilities V2</div>
+        <div class="topbar-sub">Work Orders</div>
+      </div>
+    </div>
+    <div class="topbar-actions">
+      <button class="btn btn-green btn-sm">+ New Request</button>
+      <button class="btn btn-sm">↻ Refresh</button>
+    </div>
+  </div>
+</div>
+
+<div class="page">
+  <div class="tabs">
+    <button class="tab active">🎫 Tickets</button>
+    <button class="tab">👥 Vendors</button>
+    <button class="tab">⚙️ Issue Library</button>
+  </div>
+
+  <div class="stats-grid">
+    <div class="stat-card"><div class="stat-num">12</div><div class="stat-lbl">Open</div></div>
+    <div class="stat-card"><div class="stat-num">4</div><div class="stat-lbl">In Progress</div></div>
+    <div class="stat-card"><div class="stat-num">2</div><div class="stat-lbl">On Hold</div></div>
+    <div class="stat-card alert"><div class="stat-num">1</div><div class="stat-lbl">Business Critical</div></div>
+    <div class="stat-card alert"><div class="stat-num">3</div><div class="stat-lbl">15+ Days Open</div></div>
+  </div>
+
+  <div class="filterbar">
+    <select class="filter-select"><option>All Statuses</option><option>Received</option><option>In Progress</option><option>Closed</option></select>
+    <select class="filter-select"><option>All Priorities</option><option>Emergency</option><option>Urgent</option></select>
+    <select class="filter-select"><option>All Categories</option><option>Equipment Type</option><option>Facilities & Infrastructure</option></select>
+    <input type="text" class="search-input" placeholder="Search tickets, WO#, store...">
+    <label style="display:flex;align-items:center;gap:6px;color:var(--muted2);font-size:13px;white-space:nowrap;cursor:pointer;">
+      <input type="checkbox" style="accent-color:var(--blue);width:16px;height:16px;"> Open Only
+    </label>
+  </div>
+
+  <div class="ticket-list">
+    <!-- Sample ticket card — collapsed -->
+    <div class="ticket-card aged">
+      <div class="ticket-head">
+        <div style="flex:1;min-width:0;">
+          <div class="ticket-wo">WO-1082-014 · Store 1082 · Apr 28, 2026</div>
+          <div class="ticket-title">Ice Machine (Left)</div>
+          <div class="ticket-meta">Bin won't auger ice — making cubes but stuck in chute…</div>
+        </div>
+        <div class="ticket-badges">
+          <span class="pill pill-inprogress">In Progress</span>
+          <span class="pill pill-pending">Urgent</span>
+          <span class="age-badge age-red">17D</span>
+          <span style="display:inline-flex;align-items:center;gap:3px;padding:3px 7px;border-radius:6px;background:rgba(59,130,246,.1);border:1px solid rgba(59,130,246,.25);color:#8eb9ff;font-size:10px;font-weight:700;">💬 3</span>
+          <span style="color:var(--muted);font-size:10px;">▼</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sample ticket card — expanded -->
+    <div class="ticket-card critical">
+      <div class="ticket-head">
+        <div style="flex:1;min-width:0;">
+          <div class="ticket-wo">WO-1144-007 · Store 1144 · 🔴 CRITICAL · May 10, 2026</div>
+          <div class="ticket-title">Walk-In Cooler</div>
+          <div class="ticket-meta">Temperature reading 52°F, food at risk. Vendor en route.</div>
+        </div>
+        <div class="ticket-badges">
+          <span class="pill pill-scheduled">Scheduled</span>
+          <span class="pill pill-rejected">Emergency</span>
+          <span class="age-badge age-green">2D</span>
+          <span style="color:var(--muted);font-size:10px;">▲</span>
+        </div>
+      </div>
+      <div class="ticket-body">
+        <div class="detail-grid">
+          <div><div class="detail-lbl">Store</div><div class="detail-val">Frisco DFW 1 #1144</div></div>
+          <div><div class="detail-lbl">Category</div><div class="detail-val">Equipment Type</div></div>
+          <div><div class="detail-lbl">Vendor</div><div class="detail-val">Coastal Refrigeration</div></div>
+          <div><div class="detail-lbl">Model #</div><div class="detail-val">Norlake KLB7488</div></div>
+          <div><div class="detail-lbl">Cost Estimate</div><div class="detail-val">$1,840.00</div></div>
+          <div><div class="detail-lbl">Submitted By</div><div class="detail-val">Jane Smith (GM)</div></div>
+        </div>
+        <div><div class="detail-lbl">Issue Description</div><div class="detail-val" style="margin-top:4px;">Walk-in cooler holding at 52°F overnight. Compressor running but condenser fan not engaging. All product moved to spare reach-in.</div></div>
+
+        <div class="sec-title">Photos (2)</div>
+        <div class="photo-grid">
+          <div class="photo-thumb" style="background:linear-gradient(135deg,#2a3a5e,#1a2438);display:flex;align-items:center;justify-content:center;color:#8eb9ff;font-size:24px;">🖼</div>
+          <div class="photo-thumb" style="background:linear-gradient(135deg,#3a2a5e,#2a1838);display:flex;align-items:center;justify-content:center;color:#c4a5ff;font-size:24px;">🖼</div>
+        </div>
+
+        <div class="sec-title">Approval</div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px;">
+          <span class="approval-badge approval-approved">Approved</span>
+          <span style="font-size:12px;color:var(--muted);">VP $1001-$1750</span>
+          <span style="font-size:12px;color:var(--muted2);">Approved 5/11 — proceed with repair.</span>
+        </div>
+
+        <div class="sec-title">Update Ticket</div>
+        <div class="form-row" style="margin-bottom:10px;">
+          <div><label class="form-label">Status</label><select class="form-select"><option>Scheduled</option><option>In Progress</option><option>Closed</option></select></div>
+          <div><label class="form-label">Priority</label><select class="form-select"><option>Emergency</option><option>Urgent</option></select></div>
+        </div>
+        <div class="form-group"><label class="form-label">Vendor</label><input type="text" class="form-input" value="Coastal Refrigeration"></div>
+        <div class="form-group"><label class="form-label">Notes / Comment</label><textarea class="form-textarea" placeholder="Add update notes..."></textarea></div>
+        <div style="display:flex;gap:8px;margin-top:10px;">
+          <button class="btn btn-primary btn-sm">💾 Save Update</button>
+          <button class="btn btn-sm">📷 Add Photo</button>
+          <button class="btn btn-sm">📋 Request Approval</button>
+        </div>
+
+        <div class="sec-title">Activity</div>
+        <div class="timeline">
+          <div class="timeline-item"><div class="timeline-dot"></div><div><div class="timeline-content"><b>Jane Smith</b> · status_change → Scheduled</div><div class="timeline-time">May 11, 2026</div></div></div>
+          <div class="timeline-item"><div class="timeline-dot"></div><div><div class="timeline-content"><b>Coastal Refrigeration</b> · vendor_assigned</div><div class="timeline-time">May 11, 2026</div></div></div>
+          <div class="timeline-item"><div class="timeline-dot"></div><div><div class="timeline-content"><b>Jane Smith</b> · created</div><div class="timeline-time">May 10, 2026</div></div></div>
+        </div>
+
+        <div class="sec-title">💬 Messages</div>
+        <div style="display:flex;gap:6px;margin-bottom:8px;">
+          <button class="chat-tab-btn active">🔒 Internal</button>
+          <button class="chat-tab-btn">🏢 Vendor</button>
+        </div>
+        <div class="chat-wrap">
+          <div class="chat-messages">
+            <div class="chat-msg">
+              <div class="chat-avatar" style="background:#3b82f622;color:#3b82f6;border:1px solid #3b82f644;">JS</div>
+              <div>
+                <div class="chat-bubble">Cooler down again at 1140. Pulling product now.</div>
+                <div class="chat-meta"><span class="chat-role chat-role-gm">GM</span>Jane Smith · 2h ago</div>
+              </div>
+            </div>
+            <div class="chat-msg mine">
+              <div class="chat-avatar" style="background:#00c87522;color:#00c875;border:1px solid #00c87544;">HK</div>
+              <div>
+                <div class="chat-bubble">Vendor confirmed — ETA 4pm today. Approved at VP tier already.</div>
+                <div class="chat-meta"><span class="chat-role chat-role-admin">ADMIN</span>Heath Kelley · 1h ago</div>
+              </div>
+            </div>
+          </div>
+          <div class="chat-input-row">
+            <textarea class="chat-input" placeholder="Type a message... (Enter to send)" rows="1"></textarea>
+            <button class="chat-send">Send</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
 </body>
 </html>
