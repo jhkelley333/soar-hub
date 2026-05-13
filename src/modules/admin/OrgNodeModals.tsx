@@ -273,7 +273,11 @@ export function EditOrgNodeModal({
           ...(target.kind === "store" ? { district_id: parentId } : {}),
         } as never);
       }
-      qc.invalidateQueries({ queryKey: ["org-tree"] });
+      // Await the refetch so the modal doesn't close (and the toast
+      // doesn't fire) until the tree shows the new value. Otherwise the
+      // page can briefly render stale data and users believe the save
+      // didn't take.
+      await qc.refetchQueries({ queryKey: ["org-tree"] });
       toast.push("Saved.", "success");
       onClose();
     } catch (err) {
@@ -298,7 +302,7 @@ export function EditOrgNodeModal({
         id: target.node.id,
         is_active: next,
       });
-      qc.invalidateQueries({ queryKey: ["org-tree"] });
+      await qc.refetchQueries({ queryKey: ["org-tree"] });
       toast.push(next ? "Reactivated." : "Deactivated.", "success");
       onClose();
     } catch (err) {
@@ -795,7 +799,7 @@ export function AddOrgNodeModal({
 
     try {
       await create.mutateAsync(input);
-      qc.invalidateQueries({ queryKey: ["org-tree"] });
+      await qc.refetchQueries({ queryKey: ["org-tree"] });
       toast.push(`${KIND_LABEL[target.kind]} created.`, "success");
       onClose();
     } catch (err) {

@@ -164,10 +164,11 @@ async function findUsersForStore(supabase, storeNumber, roleFilter) {
   if (!storeNumber) return [];
   const { data: store } = await supabase
     .from("stores")
-    .select("id, district_id")
+    .select("id, district_id, email")
     .eq("number", String(storeNumber))
     .maybeSingle();
   if (!store) return [];
+  const storeEmail = (store.email || "").trim() || null;
 
   const ids = [store.id];
   if (store.district_id) {
@@ -204,7 +205,17 @@ async function findUsersForStore(supabase, storeNumber, roleFilter) {
   if (rf?.length) q = q.in("role", rf);
 
   const { data: users } = await q;
-  return users || [];
+  // For GM and shift_manager, always route to the store's shared
+  // email (stores.email) instead of their personal profile email.
+  // The store inbox is the GM's working address for this app, and it
+  // survives staff turnover. Never substitute plate_iq_email.
+  return (users || []).map((u) => {
+    const role = String(u.role || "").toLowerCase();
+    if (role === "gm" || role === "shift_manager") {
+      return { ...u, email: storeEmail };
+    }
+    return u;
+  });
 }
 
 function escapeHtml(s) {
@@ -372,7 +383,22 @@ async function notifyTicketEvent(supabase, ticket, kind) {
         .select("id, email, full_name, role")
         .eq("id", ticket.submitted_by_user_id)
         .maybeSingle();
-      if (u) recipients = [u];
+      if (u) {
+        // Same policy as findUsersForStore: GM and shift_manager
+        // always route to the store inbox, not their personal email.
+        const submitterRole = String(u.role || "").toLowerCase();
+        if (submitterRole === "gm" || submitterRole === "shift_manager") {
+          const { data: storeRow } = await supabase
+            .from("stores")
+            .select("email")
+            .eq("number", String(ticket.store_number))
+            .maybeSingle();
+          const storeEmail = (storeRow?.email || "").trim() || null;
+          recipients = [{ ...u, email: storeEmail }];
+        } else {
+          recipients = [u];
+        }
+      }
     }
   }
 
@@ -505,56 +531,65 @@ export const handler = async (event) => {
     if (action === "getCallerStores") {
       const isSingle = role === "gm" || role === "shift_manager";
 
-      if (isSingle) {
-        // Look up primary_store_id inline so widening getCallerProfile()
-        // (which gates every action) isn't required.
-        const { data: meRow } = await supabase
-          .from("profiles")
-          .select("primary_store_id")
-          .eq("id", userId)
-          .single();
-        const primaryStoreId = meRow?.primary_store_id;
-        if (!primaryStoreId) {
-          return respond(200, { ok: true, mode: "single", stores: [] });
-        }
-        const { data: store, error } = await supabase
+      // Source of truth: user_visible_stores(uid) RPC (migration 0032).
+      // Already encodes user_scopes (store/district/area/region/global)
+      // AND profile.primary_store_id fallback. Using it here means v2
+      // store visibility is identical to v1 + the rest of the app.
+      async function visibleStoreRows() {
+        const { data: visibleIds } = await supabase.rpc("user_visible_stores", {
+          uid: userId,
+        });
+        const ids = (visibleIds ?? [])
+          .map((v) => (typeof v === "string" ? v : v?.user_visible_stores ?? null))
+          .filter(Boolean);
+        if (!ids.length) return [];
+        const { data: rows } = await supabase
           .from("stores")
           .select("id, number, name")
-          .eq("id", primaryStoreId)
-          .single();
-        if (error || !store) {
-          return respond(200, { ok: true, mode: "single", stores: [] });
-        }
-        return respond(200, {
-          ok: true,
-          mode: "single",
-          stores: [{
-            id: store.id,
-            number: String(store.number),
-            name: store.name || "",
-          }],
-        });
-      }
-
-      const access = await getStoresForUser(supabase, profile);
-      let query = supabase.from("stores").select("id, number, name");
-      if (access.all) {
-        // No filter — admin/coo/vp/sdo/rvp see every store.
-      } else if (access.stores.length) {
-        query = query.in("number", access.stores);
-      } else {
-        return respond(200, { ok: true, mode: "list", stores: [] });
-      }
-      const { data: rows, error } = await query.order("number");
-      if (error) throw error;
-      return respond(200, {
-        ok: true,
-        mode: "list",
-        stores: (rows || []).map((s) => ({
+          .in("id", ids)
+          .order("number");
+        return (rows || []).map((s) => ({
           id: s.id,
           number: String(s.number),
           name: s.name || "",
-        })),
+        }));
+      }
+
+      if (isSingle) {
+        const stores = await visibleStoreRows();
+        if (stores.length === 0) {
+          return respond(200, { ok: true, mode: "single", stores: [] });
+        }
+        if (stores.length === 1) {
+          return respond(200, { ok: true, mode: "single", stores });
+        }
+        // Multi-site shift_manager / GM — let them pick from a dropdown.
+        return respond(200, { ok: true, mode: "list", stores });
+      }
+
+      // Non-single roles: admin/coo/vp/sdo/rvp see every active store
+      // (existing v2 contract). DO falls through user_visible_stores.
+      if (["admin", "coo", "vp", "sdo", "rvp"].includes(role)) {
+        const { data: rows, error } = await supabase
+          .from("stores")
+          .select("id, number, name")
+          .order("number");
+        if (error) throw error;
+        return respond(200, {
+          ok: true,
+          mode: "list",
+          stores: (rows || []).map((s) => ({
+            id: s.id,
+            number: String(s.number),
+            name: s.name || "",
+          })),
+        });
+      }
+
+      return respond(200, {
+        ok: true,
+        mode: "list",
+        stores: await visibleStoreRows(),
       });
     }
 
