@@ -135,9 +135,32 @@ update tickets set
   end
 where status_new is null;  -- idempotent: only fill rows we haven't seen
 
--- Promote the new status column to canonical.
-alter table tickets rename column status to status_legacy_text;
-alter table tickets rename column status_new to status;
+-- Promote the new status column to canonical. Wrapped so a re-run
+-- after a partial failure is idempotent.
+do $$ begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'tickets'
+      and column_name = 'status' and data_type = 'text'
+  ) then
+    alter table tickets rename column status to status_legacy_text;
+  end if;
+end $$;
+
+do $$ begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'tickets'
+      and column_name = 'status_new'
+  ) and not exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'tickets'
+      and column_name = 'status' and udt_name = 'ticket_status_v2'
+  ) then
+    alter table tickets rename column status_new to status;
+  end if;
+end $$;
+
 alter table tickets alter column status set not null;
 alter table tickets alter column status set default 'submitted'::ticket_status_v2;
 alter table tickets alter column pause_state set not null;
