@@ -9,11 +9,15 @@
 //      resources.js). Caller's role/scope come from the `profiles`
 //      table, not the session blob.
 //
-//   2. Tables: `wo2_*` prefix everywhere so v2 can live alongside v1
-//      work-orders without colliding. Storage bucket: `wo2-ticket-photos`.
+//   2. Roles: lowercase enum from `profiles.role`. The role hierarchy
+//      adds rvp/vp/coo (which the original schema didn't know about)
+//      and slots them above DO so "DO and above" approval gates keep
+//      working for the broader org tree.
 //
 // Lives on the `claude/work-orders-v2` branch — NOT shipped to main.
 // Migration 0036 must be applied before this function will work.
+// Table names match the user's original prototype schema (bare names,
+// no `wo2_` prefix). Storage bucket is `ticket-photos` (private).
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -146,13 +150,13 @@ async function generateWONumber(supabase, storeNumber) {
   });
   if (error) {
     const { data: seq } = await supabase
-      .from("wo2_sequences")
+      .from("wo_sequences")
       .select("last_sequence")
       .eq("store_number", String(storeNumber))
       .single();
     const next = ((seq && seq.last_sequence) || 0) + 1;
     await supabase
-      .from("wo2_sequences")
+      .from("wo_sequences")
       .upsert({ store_number: String(storeNumber), last_sequence: next });
     return `WO-${storeNumber}-${String(next).padStart(3, "0")}`;
   }
@@ -175,7 +179,7 @@ export const handler = async (event) => {
     // ── GET ISSUE LIBRARY ──
     if (action === "getIssueLibrary") {
       const { data, error } = await supabase
-        .from("wo2_issue_library")
+        .from("issue_library")
         .select("*")
         .order("category")
         .order("sort_order");
@@ -187,12 +191,12 @@ export const handler = async (event) => {
     if (action === "getTickets") {
       const storeAccess = await getStoresForUser(supabase, profile);
       let query = supabase
-        .from("wo2_tickets")
+        .from("tickets")
         .select(`
           *,
-          ticket_photos:wo2_ticket_photos(id, file_url, file_name, upload_type, created_at),
-          ticket_approvals:wo2_ticket_approvals(id, approval_tier, status, requested_at, approved_at, approved_by, notes, quote_url),
-          ticket_updates:wo2_ticket_updates(id, user_name, update_type, notes, created_at)
+          ticket_photos(id, file_url, file_name, upload_type, created_at),
+          ticket_approvals(id, approval_tier, status, requested_at, approved_at, approved_by, notes, quote_url),
+          ticket_updates(id, user_name, update_type, notes, created_at)
         `)
         .order("date_submitted", { ascending: false });
 
@@ -216,12 +220,12 @@ export const handler = async (event) => {
       const { id } = event.queryStringParameters || {};
       if (!id) return respond(400, { ok: false, message: "id required." });
       const { data, error } = await supabase
-        .from("wo2_tickets")
+        .from("tickets")
         .select(`
           *,
-          ticket_photos:wo2_ticket_photos(*),
-          ticket_approvals:wo2_ticket_approvals(*),
-          ticket_updates:wo2_ticket_updates(*)
+          ticket_photos(*),
+          ticket_approvals(*),
+          ticket_updates(*)
         `)
         .eq("id", id)
         .single();
@@ -249,7 +253,7 @@ export const handler = async (event) => {
       const woNumber = await generateWONumber(supabase, storeNumber);
 
       const { data: ticket, error: ticketError } = await supabase
-        .from("wo2_tickets")
+        .from("tickets")
         .insert({
           wo_number:              woNumber,
           store_number:           storeNumber,
@@ -276,7 +280,7 @@ export const handler = async (event) => {
         .single();
       if (ticketError) throw ticketError;
 
-      await supabase.from("wo2_ticket_updates").insert({
+      await supabase.from("ticket_updates").insert({
         ticket_id:   ticket.id,
         user_id:     userId,
         user_name:   userName,
@@ -296,7 +300,7 @@ export const handler = async (event) => {
           uploaded_by: userName,
           upload_type: "submission",
         }));
-        await supabase.from("wo2_ticket_photos").insert(photoRows);
+        await supabase.from("ticket_photos").insert(photoRows);
       }
 
       return respond(200, { ok: true, ticket, woNumber });
@@ -312,7 +316,7 @@ export const handler = async (event) => {
       if (!id) return respond(400, { ok: false, message: "id required." });
 
       const { data: current } = await supabase
-        .from("wo2_tickets")
+        .from("tickets")
         .select("status, vendor_name")
         .eq("id", id)
         .single();
@@ -336,7 +340,7 @@ export const handler = async (event) => {
       }
 
       const { data: ticket, error } = await supabase
-        .from("wo2_tickets")
+        .from("tickets")
         .update(updates)
         .eq("id", id)
         .select()
@@ -363,7 +367,7 @@ export const handler = async (event) => {
         });
       }
       if (auditEntries.length) {
-        await supabase.from("wo2_ticket_updates").insert(auditEntries);
+        await supabase.from("ticket_updates").insert(auditEntries);
       }
       return respond(200, { ok: true, ticket });
     }
@@ -375,7 +379,7 @@ export const handler = async (event) => {
         return respond(400, { ok: false, message: "id and approvalTier required." });
       }
       const { error: approvalError } = await supabase
-        .from("wo2_ticket_approvals")
+        .from("ticket_approvals")
         .insert({
           ticket_id:    id,
           approval_tier:approvalTier,
@@ -387,7 +391,7 @@ export const handler = async (event) => {
       if (approvalError) throw approvalError;
 
       await supabase
-        .from("wo2_tickets")
+        .from("tickets")
         .update({
           approval_level:         approvalTier,
           approval_request_notes: approvalNotes || "",
@@ -396,7 +400,7 @@ export const handler = async (event) => {
         })
         .eq("id", id);
 
-      await supabase.from("wo2_ticket_updates").insert({
+      await supabase.from("ticket_updates").insert({
         ticket_id:   id, user_id: userId, user_name: userName,
         user_role:   role, update_type: "approval", new_value: "Pending",
         notes:       `Approval requested: ${approvalTier}`,
@@ -412,7 +416,7 @@ export const handler = async (event) => {
       }
       const { id, approvalId, decision, notes } = JSON.parse(event.body);
       await supabase
-        .from("wo2_ticket_approvals")
+        .from("ticket_approvals")
         .update({
           status:      decision,
           approved_by: userName,
@@ -422,7 +426,7 @@ export const handler = async (event) => {
         .eq("id", approvalId);
 
       await supabase
-        .from("wo2_tickets")
+        .from("tickets")
         .update({
           approval_status:     decision,
           approval_approved_by:userName,
@@ -431,7 +435,7 @@ export const handler = async (event) => {
         })
         .eq("id", id);
 
-      await supabase.from("wo2_ticket_updates").insert({
+      await supabase.from("ticket_updates").insert({
         ticket_id:   id, user_id: userId, user_name: userName,
         user_role:   role, update_type: "approval", new_value: decision,
         notes:       `Approval ${decision} by ${userName}`,
@@ -451,7 +455,7 @@ export const handler = async (event) => {
       const fileName = `${id}/${Date.now()}.${ext}`;
 
       const { error: uploadError } = await supabase.storage
-        .from("wo2-ticket-photos")
+        .from("ticket-photos")
         .upload(fileName, buf, {
           contentType: photoType || "image/jpeg",
           upsert: false,
@@ -461,11 +465,11 @@ export const handler = async (event) => {
         throw uploadError;
       }
       const { data: { publicUrl } } = supabase.storage
-        .from("wo2-ticket-photos")
+        .from("ticket-photos")
         .getPublicUrl(fileName);
 
       const { data: photo } = await supabase
-        .from("wo2_ticket_photos")
+        .from("ticket_photos")
         .insert({
           ticket_id:   id,
           file_url:    publicUrl || fileName,
@@ -489,7 +493,7 @@ export const handler = async (event) => {
       const { id: vendorId, ...fields } = payload;
       if (vendorId) {
         const { data, error } = await supabase
-          .from("wo2_vendors")
+          .from("vendors")
           .update(fields)
           .eq("id", vendorId)
           .select()
@@ -498,7 +502,7 @@ export const handler = async (event) => {
         return respond(200, { ok: true, vendor: data });
       } else {
         const { data, error } = await supabase
-          .from("wo2_vendors")
+          .from("vendors")
           .insert(fields)
           .select()
           .single();
@@ -511,7 +515,7 @@ export const handler = async (event) => {
     if (action === "getStats") {
       const storeAccess = await getStoresForUser(supabase, profile);
       let query = supabase
-        .from("wo2_tickets")
+        .from("tickets")
         .select("status, priority, is_business_critical, date_submitted, store_number");
       if (!storeAccess.all && storeAccess.stores.length) {
         query = query.in("store_number", storeAccess.stores);
@@ -553,7 +557,7 @@ export const handler = async (event) => {
       const { id: itemId, ...fields } = payload;
       if (itemId) {
         const { data, error } = await supabase
-          .from("wo2_issue_library")
+          .from("issue_library")
           .update(fields)
           .eq("id", itemId)
           .select()
@@ -562,7 +566,7 @@ export const handler = async (event) => {
         return respond(200, { ok: true, item: data });
       } else {
         const { data, error } = await supabase
-          .from("wo2_issue_library")
+          .from("issue_library")
           .insert(fields)
           .select()
           .single();
@@ -575,7 +579,7 @@ export const handler = async (event) => {
         return respond(403, { ok: false, message: "Admin only." });
       }
       const { id: itemId } = JSON.parse(event.body);
-      await supabase.from("wo2_issue_library").delete().eq("id", itemId);
+      await supabase.from("issue_library").delete().eq("id", itemId);
       return respond(200, { ok: true });
     }
 
@@ -593,7 +597,7 @@ export const handler = async (event) => {
         return respond(400, { ok: false, message: "Rating must be 1-5." });
       }
       const { data, error } = await supabase
-        .from("wo2_vendor_ratings")
+        .from("vendor_ratings")
         .insert({
           vendor_id:    vendorId,
           ticket_id:    ticketId || null,
@@ -613,7 +617,7 @@ export const handler = async (event) => {
         return respond(400, { ok: false, message: "vendorId required." });
       }
       const { data, error } = await supabase
-        .from("wo2_vendor_ratings")
+        .from("vendor_ratings")
         .select("*")
         .eq("vendor_id", vendorId)
         .order("rated_at", { ascending: false });
@@ -629,8 +633,8 @@ export const handler = async (event) => {
     // ── VENDOR LIST / SEARCH ──
     if (action === "getVendors") {
       const { data: vendors, error } = await supabase
-        .from("wo2_vendors")
-        .select("*, vendor_ratings:wo2_vendor_ratings(rating)")
+        .from("vendors")
+        .select("*, vendor_ratings(rating)")
         .eq("is_active", true)
         .order("name");
       if (error) throw error;
@@ -647,7 +651,7 @@ export const handler = async (event) => {
     if (action === "searchVendors") {
       const { q, assetType } = event.queryStringParameters || {};
       let query = supabase
-        .from("wo2_vendors")
+        .from("vendors")
         .select("id,name,category,service_area,services,phone,email,contact_person")
         .eq("is_active", true);
       if (q) {
@@ -672,7 +676,7 @@ export const handler = async (event) => {
       }
       const thread = threadType || "internal";
       const { data, error } = await supabase
-        .from("wo2_ticket_messages")
+        .from("ticket_messages")
         .select("*")
         .eq("ticket_id", ticketId)
         .eq("thread_type", thread)
@@ -689,7 +693,7 @@ export const handler = async (event) => {
       }
       const thread = threadType || "internal";
       const { data, error } = await supabase
-        .from("wo2_ticket_messages")
+        .from("ticket_messages")
         .insert({
           ticket_id:   ticketId,
           user_id:     userId,
