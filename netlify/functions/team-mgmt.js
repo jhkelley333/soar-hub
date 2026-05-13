@@ -567,6 +567,13 @@ async function addUser(supa, manager, body) {
   }
 
   // ---- Update the auto-created profile with the real role + phone + name ----
+  // primary_store_id is kept in sync with the scope (see updateUser for
+  // the same logic) — gm / shift_manager + store scope → that store;
+  // anything else → null. Keeps user_visible_stores from double-counting.
+  const newPrimary =
+    (role === "gm" || role === "shift_manager") && expectedScope === "store"
+      ? scope_id
+      : null;
   const { error: profileErr } = await supa
     .from("profiles")
     .update({
@@ -574,6 +581,7 @@ async function addUser(supa, manager, body) {
       phone: normalizedPhone,
       role,
       is_active: true,
+      primary_store_id: newPrimary,
     })
     .eq("id", newUserId);
   if (profileErr) {
@@ -800,6 +808,29 @@ async function updateUser(supa, manager, body) {
       scope_type: newScope.scope_type,
       scope_id: newScope.scope_id,
     });
+
+    // Keep profiles.primary_store_id in sync with the scope. For
+    // gm / shift_manager a store-level scope IS the primary store,
+    // so they must match — otherwise user_visible_stores() returns
+    // the union of both, and the user keeps seeing their old store
+    // after a "transfer". For broader scopes (district / area /
+    // region / global) or non-gm/sm roles, primary_store_id has no
+    // defined meaning and must be cleared.
+    const primaryFix =
+      (effectiveRole === "gm" || effectiveRole === "shift_manager") &&
+      newScope.scope_type === "store"
+        ? { primary_store_id: newScope.scope_id }
+        : { primary_store_id: null };
+    const { error: primErr } = await supa
+      .from("profiles")
+      .update(primaryFix)
+      .eq("id", target_id);
+    if (primErr) {
+      return {
+        error: `Couldn't sync primary_store_id: ${primErr.message}`,
+        status: 500,
+      };
+    }
     if (insErr) {
       return {
         error: `Couldn't set new scope: ${insErr.message}`,

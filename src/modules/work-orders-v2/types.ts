@@ -133,6 +133,7 @@ export interface IssueLibraryItem {
   asset_type: string;
   display_name: string;
   sort_order: number;
+  troubleshooting_tips: string | null;
 }
 
 export interface IssueLibraryResponse {
@@ -296,6 +297,7 @@ export interface SaveIssueItemBody {
   asset_type: string;
   display_name: string;
   sort_order?: number;
+  troubleshooting_tips?: string | null;
 }
 
 // ── Email templates ──────────────────────────────────────────

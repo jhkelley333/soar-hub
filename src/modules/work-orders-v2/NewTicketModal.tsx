@@ -65,6 +65,10 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
   const [vendorName, setVendorName] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Troubleshooting gate — required answer before submit. Tips come from
+  // the picked issue_library row (or the category fallback map below).
+  const [troubleshooted, setTroubleshooted] = useState<"" | "yes" | "no">("");
+  const [pickedTips, setPickedTips] = useState<string | null>(null);
 
   // Tracked separately from `issueText` so picking a suggestion closes
   // the dropdown even though the input value still matches.
@@ -91,6 +95,8 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
     setFiles([]);
     setDropdownOpen(false);
     setVendorPickAsset("");
+    setTroubleshooted("");
+    setPickedTips(null);
   }, [open]);
 
   // For single-store callers (GM / shift_manager) auto-fill the store
@@ -124,6 +130,12 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
     setAssetType(item.display_name);
     setDropdownOpen(false);
     setVendorPickAsset(item.display_name);
+    setPickedTips(
+      item.troubleshooting_tips?.trim()
+        || fallbackTipsFor(item.category, item.asset_type, item.display_name)
+        || null,
+    );
+    setTroubleshooted(""); // re-prompt the gate when issue changes
     // Cancel any pending blur-close so the click doesn't fight us.
     if (dropdownCloseTimer.current) {
       window.clearTimeout(dropdownCloseTimer.current);
@@ -138,6 +150,9 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
     // Clear vendor recommendations if the user resumed editing — they're
     // no longer for a confirmed asset type.
     if (vendorPickAsset && value !== vendorPickAsset) setVendorPickAsset("");
+    // Reset tips + gate so a fresh pick is required.
+    setPickedTips(null);
+    setTroubleshooted("");
   }
 
   // Vendor recommendations fire only after the user picks an issue, so
@@ -161,6 +176,9 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
     mutationFn: async () => {
       if (!storeNumber.trim()) throw new Error("Store number is required.");
       if (!description.trim()) throw new Error("Issue description is required.");
+      if (troubleshooted === "") {
+        throw new Error('Answer "Did you troubleshoot?" before submitting.');
+      }
       const body: CreateTicketBody = {
         storeNumber: storeNumber.trim(),
         category: category || undefined,
@@ -171,6 +189,7 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
         isBusinessCritical: businessCritical,
         vendorContacted: !!vendorName.trim(),
         vendorName: vendorName || undefined,
+        troubleshootingChecked: troubleshooted === "yes",
       };
       const created = await createTicket(body);
       // Upload any attached photos sequentially so failures are obvious.
@@ -299,6 +318,60 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
             )}
           </div>
 
+          {pickedTips && (
+            <div className="rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-900">
+              <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-blue-700">
+                Things to check first
+              </div>
+              <ul className="space-y-0.5">
+                {pickedTips
+                  .split(/\r?\n/)
+                  .map((s) => s.trim())
+                  .filter(Boolean)
+                  .map((line, i) => (
+                    <li key={i} className="whitespace-pre-wrap leading-snug">
+                      {line}
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          )}
+
+          <div>
+            <Label>Did you troubleshoot? *</Label>
+            <div className="mt-1 flex gap-2">
+              <button
+                type="button"
+                onClick={() => setTroubleshooted("yes")}
+                className={
+                  "flex-1 rounded-md border px-3 py-2 text-sm font-medium transition " +
+                  (troubleshooted === "yes"
+                    ? "border-green-500 bg-green-50 text-green-900"
+                    : "border-zinc-200 bg-white text-zinc-700 hover:border-accent")
+                }
+              >
+                Yes
+              </button>
+              <button
+                type="button"
+                onClick={() => setTroubleshooted("no")}
+                className={
+                  "flex-1 rounded-md border px-3 py-2 text-sm font-medium transition " +
+                  (troubleshooted === "no"
+                    ? "border-amber-500 bg-amber-50 text-amber-900"
+                    : "border-zinc-200 bg-white text-zinc-700 hover:border-accent")
+                }
+              >
+                No
+              </button>
+            </div>
+            {troubleshooted === "no" && (
+              <div className="mt-1 text-[11px] text-amber-700">
+                Please try the steps above before submitting — most issues clear without a vendor visit.
+              </div>
+            )}
+          </div>
+
           <div>
             <Label htmlFor="nt-model">Model Number</Label>
             <Input
@@ -419,7 +492,8 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
           <Button
             variant="primary"
             onClick={() => submit.mutate()}
-            disabled={submit.isPending}
+            disabled={submit.isPending || troubleshooted === ""}
+            title={troubleshooted === "" ? "Answer the troubleshooting question first." : undefined}
           >
             {submit.isPending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
             {submit.isPending ? "Submitting…" : "Submit Request"}
@@ -498,4 +572,82 @@ function StoreField({ id, value, onChange, loading, error, data }: StoreFieldPro
       ))}
     </select>
   );
+}
+
+// Heuristic fallback when an issue_library row has no curated tips.
+// Picks a list based on category/asset_type keywords so the user still
+// gets a "things to check first" prompt for un-customized items. Admins
+// can override by editing the issue_library row's troubleshooting_tips.
+function fallbackTipsFor(category: string, assetType: string, displayName: string): string | null {
+  const hay = `${category} ${assetType} ${displayName}`.toLowerCase();
+  if (/fryer/.test(hay)) {
+    return [
+      "• Check the breaker — flip fully off, then back on.",
+      "• Confirm oil level is between the min/max lines.",
+      "• Verify thermostat dial is set correctly.",
+      "• Listen for burners igniting — if silent, gas valve may be off.",
+    ].join("\n");
+  }
+  if (/hvac|ac\b|heat|furnace|rtu/.test(hay)) {
+    return [
+      "• Replace or clean the air filter.",
+      "• Check thermostat batteries and mode (Cool / Heat).",
+      "• Inspect the breaker.",
+      "• Confirm the outdoor unit isn't iced over or blocked.",
+    ].join("\n");
+  }
+  if (/ice/.test(hay) && /(machine|maker)/.test(hay)) {
+    return [
+      "• Verify water supply valve is fully open.",
+      "• Check the water filter — swap if older than 6 months.",
+      "• Look at the breaker.",
+      "• Confirm bin door closes flush so the bin-full sensor isn't tripped.",
+    ].join("\n");
+  }
+  if (/refrig|cooler|freezer|walk-in|reach-in/.test(hay)) {
+    return [
+      "• Check the breaker.",
+      "• Verify thermostat setpoint hasn't been changed.",
+      "• Look for blocked vents (over-packed boxes) or dirty condenser coils.",
+      "• Confirm the door gasket seals flush.",
+    ].join("\n");
+  }
+  if (/pos|register|kiosk|tablet|drawer/.test(hay)) {
+    return [
+      "• Power cycle — fully off for 30 seconds, then back on.",
+      "• Confirm network cables are seated; test internet on another device.",
+      "• Check for an error banner/toast on the device.",
+      "• Note the exact error message.",
+    ].join("\n");
+  }
+  if (/frozen drink|slush|bib|co2|beverage/.test(hay)) {
+    return [
+      "• Check the breaker.",
+      "• Verify CO2 / syrup BIB is not empty.",
+      "• Inspect lines for kinks or disconnections.",
+      "• Note any leaking around fittings.",
+    ].join("\n");
+  }
+  if (/door|lock|hinge/.test(hay)) {
+    return [
+      "• Try the door multiple times to identify if the issue is intermittent.",
+      "• Check for visible damage on hinges or strike plate.",
+      "• Confirm the lock turns freely with the key.",
+    ].join("\n");
+  }
+  if (/light|bulb|lamp|fixture/.test(hay)) {
+    return [
+      "• Try swapping the bulb with a known-good one.",
+      "• Check the breaker.",
+      "• Note if any other lights on the same circuit are out.",
+    ].join("\n");
+  }
+  if (/plumb|leak|water|drain|sink|toilet/.test(hay)) {
+    return [
+      "• Locate the shutoff valve in case the leak worsens.",
+      "• Note where the water is coming from (supply line vs drain).",
+      "• Check for standing water or damage to nearby surfaces.",
+    ].join("\n");
+  }
+  return null;
 }
