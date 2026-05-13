@@ -17,6 +17,7 @@ import { OrgPage } from "@/modules/admin/OrgPage";
 import { BulkImportPage } from "@/modules/admin/BulkImportPage";
 import { BulkOrgImportPage } from "@/modules/admin/BulkOrgImportPage";
 import { BulkAttributesPage } from "@/modules/admin/BulkAttributesPage";
+import { FeatureFlagsPage } from "@/modules/admin/FeatureFlagsPage";
 import { PafConfigPage } from "@/modules/admin/pafConfig/PafConfigPage";
 import { RankerPage } from "@/modules/ranker/RankerPage";
 import { MyStoresPage } from "@/modules/my-stores/MyStoresPage";
@@ -103,6 +104,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <BulkAttributesPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/feature-flags",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <FeatureFlagsPage />
           </ProtectedRoute>
         ),
       },
