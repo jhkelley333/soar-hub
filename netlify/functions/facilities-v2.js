@@ -1,23 +1,26 @@
 // netlify/functions/facilities-v2.js
 //
-// Work Orders V2 (Facilities V2) — ported from the legacy cookie-auth
-// prototype in docs/v2/facilities-v2-prototype.js. Two behavioral
-// changes from the original:
+// Work Orders V2 (Facilities V2) — Supabase Bearer-JWT auth, bare-name
+// tables, wo2-ticket-photos bucket (public). Lives on the
+// claude/work-orders-v2 branch.
 //
-//   1. Auth: Supabase Bearer JWT instead of soar_session cookie.
-//      Matches the rest of the soar-hub functions (paf.js, org-mgmt.js,
-//      resources.js). Caller's role/scope come from the `profiles`
-//      table, not the session blob.
+// Email notifications via Resend (REST API, no extra dep):
+//   * createTicket       → notifies GM + DO with scope over the store
+//   * submitApproval     → notifies users whose role matches the tier
+//                          (DO < $500 → role 'do', SDO… → 'sdo', VP… → 'vp')
+//   * decideApproval     → notifies the original requester
+// Each send also writes a row into ticket_notifications (status="sent"
+// or "failed: <reason>") so the audit log shows who was told what.
 //
-//   2. Roles: lowercase enum from `profiles.role`. The role hierarchy
-//      adds rvp/vp/coo (which the original schema didn't know about)
-//      and slots them above DO so "DO and above" approval gates keep
-//      working for the broader org tree.
-//
-// Lives on the `claude/work-orders-v2` branch — NOT shipped to main.
-// Migration 0036 must be applied before this function will work.
-// Table names match the user's original prototype schema (bare names).
-// Storage bucket is `wo2-ticket-photos` (public).
+// Required env vars:
+//   SUPABASE_URL / VITE_SUPABASE_URL
+//   SUPABASE_SERVICE_ROLE_KEY / SUPABASE_SERVICE_KEY
+//   RESEND_API_KEY                          — same key PAF already uses
+//   FACILITIES_FROM_EMAIL                   — optional, defaults to the
+//                                             PAF address (verified domain)
+//   FACILITIES_FROM_NAME                    — optional, default "SOAR Facilities"
+//   APP_URL                                 — base URL for deep links;
+//                                             Netlify exposes URL by default
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -62,10 +65,6 @@ function respond(statusCode, body) {
   };
 }
 
-// Org-tier hierarchy. Lower number = higher authority. "DO and above"
-// in the original was level <= 3; that mapping is preserved here, with
-// admin/coo/vp pulled to the top tier and rvp slotted between sdo and
-// vp to match the real reporting structure.
 function roleLevel(role) {
   const levels = {
     admin: 1, coo: 1, vp: 1,
@@ -78,15 +77,11 @@ function roleLevel(role) {
   return levels[String(role || "").toLowerCase()] || 99;
 }
 
-// Resolve the caller's visible store numbers via user_scopes. Returns
-// `{ all: true }` for org-wide tiers; otherwise an explicit string list
-// of store numbers.
 async function getStoresForUser(supabase, profile) {
   const role = String(profile.role || "").toLowerCase();
   if (["admin", "coo", "vp", "sdo", "rvp"].includes(role)) {
     return { all: true, stores: [] };
   }
-
   const { data: scopes } = await supabase
     .from("user_scopes")
     .select("scope_type, scope_id")
@@ -106,9 +101,6 @@ async function getStoresForUser(supabase, profile) {
     .filter((s) => s.scope_type === "region")
     .map((s) => s.scope_id);
 
-  // Walk region → areas → districts → stores so a region/area scope
-  // expands to every store under it. Duplicate IDs are deduped by the
-  // final Set.
   if (regionIds.length) {
     const { data } = await supabase
       .from("areas")
@@ -143,9 +135,6 @@ async function getStoresForUser(supabase, profile) {
   };
 }
 
-// Atomic per-store sequence. Uses the next_wo_sequence RPC introduced
-// in migration 0036; falls back to a non-atomic upsert if the RPC is
-// missing (e.g. running this branch against a partially-migrated db).
 async function generateWONumber(supabase, storeNumber) {
   const { data, error } = await supabase.rpc("next_wo_sequence", {
     p_store: String(storeNumber),
@@ -163,6 +152,199 @@ async function generateWONumber(supabase, storeNumber) {
     return `WO-${storeNumber}-${String(next).padStart(3, "0")}`;
   }
   return `WO-${storeNumber}-${String(data).padStart(3, "0")}`;
+}
+
+// ── Notifications ─────────────────────────────────────────────
+
+// Walk store → district → area → region to find every user whose
+// `user_scopes` covers the given store. Optionally filter by role.
+// Inverse of getStoresForUser.
+async function findUsersForStore(supabase, storeNumber, roleFilter) {
+  if (!storeNumber) return [];
+  const { data: store } = await supabase
+    .from("stores")
+    .select("id, district_id")
+    .eq("number", String(storeNumber))
+    .maybeSingle();
+  if (!store) return [];
+
+  const ids = [store.id];
+  if (store.district_id) {
+    ids.push(store.district_id);
+    const { data: district } = await supabase
+      .from("districts")
+      .select("area_id")
+      .eq("id", store.district_id)
+      .maybeSingle();
+    if (district?.area_id) {
+      ids.push(district.area_id);
+      const { data: area } = await supabase
+        .from("areas")
+        .select("region_id")
+        .eq("id", district.area_id)
+        .maybeSingle();
+      if (area?.region_id) ids.push(area.region_id);
+    }
+  }
+
+  const { data: scopes } = await supabase
+    .from("user_scopes")
+    .select("user_id")
+    .in("scope_id", ids);
+  const userIds = [...new Set((scopes || []).map((s) => s.user_id))];
+  if (!userIds.length) return [];
+
+  let q = supabase
+    .from("profiles")
+    .select("id, email, full_name, role")
+    .in("id", userIds)
+    .eq("is_active", true);
+  const rf = Array.isArray(roleFilter) ? roleFilter : roleFilter ? [roleFilter] : null;
+  if (rf?.length) q = q.in("role", rf);
+
+  const { data: users } = await q;
+  return users || [];
+}
+
+function escapeHtml(s) {
+  return String(s ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function appBaseUrl() {
+  return process.env.APP_URL || process.env.URL || "";
+}
+
+function buildSubject(ticket, kind) {
+  if (kind === "submitted") {
+    const what = ticket.asset_type || ticket.category || "Service Request";
+    return `[Work Order] New ${ticket.wo_number} — Store ${ticket.store_number}: ${what}`;
+  }
+  if (kind === "approval_requested") {
+    return `[Work Order] Approval needed (${ticket.approval_level || "—"}) — ${ticket.wo_number}`;
+  }
+  if (kind === "approval_decided") {
+    return `[Work Order] Approval ${ticket.approval_status || "Decided"} — ${ticket.wo_number}`;
+  }
+  return `[Work Order] Update — ${ticket.wo_number}`;
+}
+
+function buildHtml(ticket, kind) {
+  const base = appBaseUrl();
+  const link = base ? `${base}/admin/work-orders-v2` : "";
+  const linkHtml = link
+    ? `<p style="margin-top:16px;"><a href="${link}" style="background:#2563eb;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none;font-weight:600;">View in Work Orders V2 →</a></p>`
+    : "";
+  const detail = `
+    <table style="font-size:14px;border-collapse:collapse;margin:10px 0;">
+      <tr><td style="padding:3px 8px;color:#666;">WO #</td><td style="padding:3px 8px;font-family:monospace;">${escapeHtml(ticket.wo_number)}</td></tr>
+      <tr><td style="padding:3px 8px;color:#666;">Store</td><td style="padding:3px 8px;">${escapeHtml(ticket.store_number)}${ticket.store_name ? ` — ${escapeHtml(ticket.store_name)}` : ""}</td></tr>
+      <tr><td style="padding:3px 8px;color:#666;">Asset</td><td style="padding:3px 8px;">${escapeHtml(ticket.asset_type || "—")}</td></tr>
+      <tr><td style="padding:3px 8px;color:#666;">Priority</td><td style="padding:3px 8px;">${escapeHtml(ticket.priority || "—")}${ticket.is_business_critical ? " · 🔴 Critical" : ""}</td></tr>
+      <tr><td style="padding:3px 8px;color:#666;">Status</td><td style="padding:3px 8px;">${escapeHtml(ticket.status)}</td></tr>
+    </table>
+  `;
+  let body = "";
+  if (kind === "submitted") {
+    body = `<p>A new facilities work order was submitted.</p>${detail}<p><strong>Issue:</strong></p><p style="white-space:pre-wrap;color:#333;">${escapeHtml(ticket.issue_description || "—")}</p>`;
+  } else if (kind === "approval_requested") {
+    body = `<p><strong>Approval requested at tier:</strong> ${escapeHtml(ticket.approval_level || "—")}</p>${detail}<p><strong>Request notes:</strong></p><p style="white-space:pre-wrap;color:#333;">${escapeHtml(ticket.approval_request_notes || "—")}</p>`;
+  } else if (kind === "approval_decided") {
+    body = `<p>Your approval request was <strong>${escapeHtml(ticket.approval_status || "Decided")}</strong>${ticket.approval_approved_by ? ` by ${escapeHtml(ticket.approval_approved_by)}` : ""}.</p>${detail}`;
+  }
+  return `<!DOCTYPE html><html><body style="font-family:Arial,Helvetica,sans-serif;color:#222;max-width:620px;margin:0 auto;padding:16px;">${body}${linkHtml}<p style="font-size:11px;color:#999;margin-top:24px;border-top:1px solid #eee;padding-top:8px;">Sent automatically by SOAR Facilities V2.</p></body></html>`;
+}
+
+async function sendEmail({ to, subject, html }) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    return { sent: false, reason: "RESEND_API_KEY not set" };
+  }
+  // Fall back to the verified PAF address if the new facilities address
+  // hasn't been configured yet. Sending from an unverified domain via
+  // Resend will return 403, so this guards against silent failures.
+  const fromAddr =
+    process.env.FACILITIES_FROM_EMAIL ||
+    process.env.RESEND_FROM_EMAIL ||
+    "paf@mysoarhub.com";
+  const fromName = process.env.FACILITIES_FROM_NAME || "SOAR Facilities";
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: `${fromName} <${fromAddr}>`,
+        to: Array.isArray(to) ? to : [to],
+        subject,
+        html,
+      }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { sent: false, reason: body?.message || `HTTP ${res.status}` };
+    }
+    return { sent: true, id: body.id };
+  } catch (e) {
+    return { sent: false, reason: e?.message || String(e) };
+  }
+}
+
+// kind: 'submitted' | 'approval_requested' | 'approval_decided'
+async function notifyTicketEvent(supabase, ticket, kind) {
+  let recipients = [];
+  if (kind === "submitted") {
+    recipients = await findUsersForStore(supabase, ticket.store_number, ["gm", "do"]);
+  } else if (kind === "approval_requested") {
+    const tier = String(ticket.approval_level || "");
+    let role = "do";
+    if (tier.startsWith("SDO")) role = "sdo";
+    else if (tier.startsWith("VP")) role = "vp";
+    recipients = await findUsersForStore(supabase, ticket.store_number, [role]);
+  } else if (kind === "approval_decided") {
+    if (ticket.submitted_by_user_id) {
+      const { data: u } = await supabase
+        .from("profiles")
+        .select("id, email, full_name, role")
+        .eq("id", ticket.submitted_by_user_id)
+        .maybeSingle();
+      if (u) recipients = [u];
+    }
+  }
+
+  // Dedupe by email + drop entries without an address.
+  const seen = new Set();
+  recipients = recipients.filter((r) => {
+    if (!r?.email) return false;
+    if (seen.has(r.email)) return false;
+    seen.add(r.email);
+    return true;
+  });
+  if (!recipients.length) return;
+
+  const subject = buildSubject(ticket, kind);
+  const html = buildHtml(ticket, kind);
+
+  // Send + log each individually so a single bad address doesn't
+  // poison the rest, and so ticket_notifications captures who-got-what.
+  for (const r of recipients) {
+    const result = await sendEmail({ to: r.email, subject, html });
+    await supabase.from("ticket_notifications").insert({
+      ticket_id: ticket.id,
+      recipient_email: r.email,
+      recipient_name: r.full_name,
+      notification_type: kind,
+      subject,
+      message: html,
+      status: result.sent ? "sent" : `failed: ${result.reason}`,
+    }).then(() => {}).catch((e) => {
+      console.warn("[facilities-v2] notification log insert failed", e);
+    });
+  }
 }
 
 export const handler = async (event) => {
@@ -205,7 +387,6 @@ export const handler = async (event) => {
       if (!storeAccess.all && storeAccess.stores.length) {
         query = query.in("store_number", storeAccess.stores);
       } else if (!storeAccess.all) {
-        // User has no scope at all — return empty list rather than 403.
         return respond(200, { ok: true, tickets: [] });
       }
 
@@ -303,6 +484,14 @@ export const handler = async (event) => {
           upload_type: "submission",
         }));
         await supabase.from("ticket_photos").insert(photoRows);
+      }
+
+      // Notify GM + DO of the store. Best-effort: errors are logged
+      // server-side but don't fail the create.
+      try {
+        await notifyTicketEvent(supabase, ticket, "submitted");
+      } catch (e) {
+        console.warn("[facilities-v2] notifyTicketEvent submitted failed", e);
       }
 
       return respond(200, { ok: true, ticket, woNumber });
@@ -408,6 +597,20 @@ export const handler = async (event) => {
         notes:       `Approval requested: ${approvalTier}`,
       });
 
+      // Re-pull the ticket so the notification sees the updated tier.
+      const { data: refreshed } = await supabase
+        .from("tickets")
+        .select("*")
+        .eq("id", id)
+        .single();
+      if (refreshed) {
+        try {
+          await notifyTicketEvent(supabase, refreshed, "approval_requested");
+        } catch (e) {
+          console.warn("[facilities-v2] notifyTicketEvent approval_requested failed", e);
+        }
+      }
+
       return respond(200, { ok: true });
     }
 
@@ -442,6 +645,19 @@ export const handler = async (event) => {
         user_role:   role, update_type: "approval", new_value: decision,
         notes:       `Approval ${decision} by ${userName}`,
       });
+
+      const { data: refreshed } = await supabase
+        .from("tickets")
+        .select("*")
+        .eq("id", id)
+        .single();
+      if (refreshed) {
+        try {
+          await notifyTicketEvent(supabase, refreshed, "approval_decided");
+        } catch (e) {
+          console.warn("[facilities-v2] notifyTicketEvent approval_decided failed", e);
+        }
+      }
 
       return respond(200, { ok: true });
     }
