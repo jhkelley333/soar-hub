@@ -1070,6 +1070,59 @@ export const handler = async (event) => {
       return respond(200, { ok: true, vendors: data });
     }
 
+    // ── RECENT MESSAGES (dashboard notification) ──
+    // Surfaces ticket_messages created within the last N hours that the
+    // caller did NOT author, scoped to tickets in their store access.
+    // Used by the Dashboard "Take Action" widget to flag conversations
+    // that need a reply.
+    if (action === "getRecentMessages") {
+      const rawHours = Number((event.queryStringParameters || {}).hours);
+      const hours = Number.isFinite(rawHours) && rawHours > 0
+        ? Math.min(rawHours, 168) // cap at 7 days
+        : 48;
+      const since = new Date(Date.now() - hours * 3600_000).toISOString();
+      const access = await getStoresForUser(supabase, profile);
+
+      const { data, error } = await supabase
+        .from("ticket_messages")
+        .select(`
+          id, ticket_id, user_id, user_name, user_role,
+          message, thread_type, created_at,
+          tickets!inner(wo_number, store_number, asset_type, status)
+        `)
+        .gte("created_at", since)
+        .order("created_at", { ascending: false })
+        .limit(50);
+      if (error) throw error;
+
+      const filtered = (data || []).filter((m) => {
+        // Drop the caller's own messages so we only surface things
+        // someone else wrote.
+        if (m.user_id && m.user_id === userId) return false;
+        // Honor scope when the caller isn't all-stores.
+        if (!access.all) {
+          const sn = m.tickets?.store_number;
+          if (!sn || !access.stores.includes(String(sn))) return false;
+        }
+        return true;
+      }).slice(0, 20);
+
+      const messages = filtered.map((m) => ({
+        id:           m.id,
+        ticket_id:    m.ticket_id,
+        wo_number:    m.tickets?.wo_number || "",
+        store_number: m.tickets?.store_number ? String(m.tickets.store_number) : "",
+        asset_type:   m.tickets?.asset_type || null,
+        ticket_status:m.tickets?.status || null,
+        user_name:    m.user_name,
+        user_role:    m.user_role,
+        message:      m.message,
+        thread_type:  m.thread_type,
+        created_at:   m.created_at,
+      }));
+      return respond(200, { ok: true, messages, count: messages.length });
+    }
+
     // ── MESSAGES ──
     if (action === "getMessages") {
       const { ticketId, threadType } = event.queryStringParameters || {};

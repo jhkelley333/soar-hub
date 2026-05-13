@@ -15,6 +15,7 @@ import type {
   PreviewEmailTemplateBody,
   PreviewEmailTemplateResponse,
   RateVendorBody,
+  RecentMessagesResponse,
   SaveEmailTemplateBody,
   SaveIssueItemBody,
   SaveVendorBody,
@@ -118,6 +119,14 @@ export function sendMessage(payload: SendMessageBody): Promise<{ ok: true }> {
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export function fetchRecentMessages(
+  hours = 48,
+): Promise<RecentMessagesResponse> {
+  return request<RecentMessagesResponse>(
+    `${FN}?action=getRecentMessages&hours=${hours}`,
+  );
 }
 
 export function fetchVendors(): Promise<VendorsResponse> {

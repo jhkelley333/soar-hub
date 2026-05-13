@@ -216,6 +216,30 @@ export interface MessagesResponse {
   threadType: ThreadType;
 }
 
+// Shape of one row returned by getRecentMessages. Lighter than the
+// per-ticket message view — embeds the ticket fields the dashboard
+// widget needs so it can render a link to the ticket without a second
+// round-trip.
+export interface RecentMessage {
+  id: string;
+  ticket_id: string;
+  wo_number: string;
+  store_number: string;
+  asset_type: string | null;
+  ticket_status: string | null;
+  user_name: string | null;
+  user_role: string | null;
+  message: string;
+  thread_type: ThreadType;
+  created_at: string;
+}
+
+export interface RecentMessagesResponse {
+  ok: true;
+  messages: RecentMessage[];
+  count: number;
+}
+
 export interface SendMessageBody {
   ticketId: string;
   message: string;

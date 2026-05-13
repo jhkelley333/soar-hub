@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowRight, MapPin, Phone } from "lucide-react";
+import { ArrowRight, MapPin, MessageSquare, Phone } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
 import { Badge } from "@/shared/ui/Badge";
@@ -13,6 +13,8 @@ import { listSdoQueue } from "@/modules/paf/api";
 import { PafTable } from "@/modules/paf/PafTable";
 import { BirthdayWidget } from "@/modules/my-stores/BirthdayWidget";
 import { BirthdayCelebration } from "@/modules/my-stores/BirthdayCelebration";
+import { fetchRecentMessages } from "@/modules/work-orders-v2/api";
+import type { RecentMessage } from "@/modules/work-orders-v2/types";
 import { supabase } from "@/lib/supabase";
 import { formatPhoneForDisplay } from "@/lib/phone";
 
@@ -153,6 +155,8 @@ export function DashboardPage() {
 
       {profile && SDO_REVIEW_ROLES.has(profile.role) && <SdoQueueWidget />}
 
+      {profile?.role === "admin" && <RecentTicketMessagesWidget />}
+
       <BirthdayCelebration />
     </>
   );
@@ -197,6 +201,116 @@ function SdoQueueWidget() {
         </CardBody>
       </Card>
     </div>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Recent ticket-messages widget — surfaces conversations from the last
+// 48 hours that someone other than the viewer wrote. Renders quiet when
+// inbox-zero so the dashboard doesn't grow indefinitely.
+// ----------------------------------------------------------------------------
+function RecentTicketMessagesWidget() {
+  const query = useQuery({
+    queryKey: ["wo2", "recent-messages", 48],
+    queryFn: () => fetchRecentMessages(48),
+    staleTime: 30_000,
+  });
+
+  const messages = query.data?.messages ?? [];
+
+  return (
+    <div className="mt-6">
+      <Card>
+        <CardHeader
+          title="New Work-Order Messages"
+          description="Replies and updates from the last 48 hours."
+        />
+        <CardBody>
+          {query.isLoading ? (
+            <div className="text-sm text-zinc-500">Loading…</div>
+          ) : query.isError ? (
+            <div className="text-sm text-red-700">
+              {(query.error as Error)?.message ?? "Couldn't load messages."}
+            </div>
+          ) : messages.length === 0 ? (
+            <div className="text-sm text-zinc-500">
+              No new messages — you're all caught up.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <Badge tone="warning">
+                  {messages.length} new
+                </Badge>
+                <Link
+                  to="/admin/work-orders-v2"
+                  className="text-xs font-medium text-accent hover:underline"
+                >
+                  Open Work Orders V2 →
+                </Link>
+              </div>
+              <ul className="divide-y divide-zinc-100 rounded-md border border-zinc-200">
+                {messages.slice(0, 5).map((m) => (
+                  <li key={m.id}>
+                    <RecentMessageRow m={m} />
+                  </li>
+                ))}
+              </ul>
+              {messages.length > 5 && (
+                <div className="text-[11px] text-zinc-500">
+                  +{messages.length - 5} more in the queue.
+                </div>
+              )}
+            </div>
+          )}
+        </CardBody>
+      </Card>
+    </div>
+  );
+}
+
+function RecentMessageRow({ m }: { m: RecentMessage }) {
+  const preview = m.message.length > 120
+    ? `${m.message.slice(0, 120).trim()}…`
+    : m.message;
+  const when = (() => {
+    const d = new Date(m.created_at);
+    if (Number.isNaN(d.getTime())) return "";
+    const diffMin = Math.floor((Date.now() - d.getTime()) / 60_000);
+    if (diffMin < 1) return "just now";
+    if (diffMin < 60) return `${diffMin}m ago`;
+    if (diffMin < 1440) return `${Math.floor(diffMin / 60)}h ago`;
+    return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  })();
+  return (
+    <Link
+      to="/admin/work-orders-v2"
+      className="flex items-start gap-2 px-3 py-2 transition hover:bg-zinc-50"
+    >
+      <MessageSquare
+        className="mt-0.5 h-4 w-4 shrink-0 text-zinc-400"
+        strokeWidth={1.75}
+      />
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-500">
+          <span className="font-semibold text-midnight">
+            {m.wo_number || "—"}
+          </span>
+          {m.store_number && (
+            <span className="text-zinc-400">· Store {m.store_number}</span>
+          )}
+          {m.thread_type === "vendor" && (
+            <Badge tone="info">Vendor</Badge>
+          )}
+          <span className="ml-auto text-zinc-400">{when}</span>
+        </div>
+        <div className="mt-0.5 truncate text-sm text-midnight">{preview}</div>
+        <div className="mt-0.5 text-[11px] text-zinc-500">
+          {m.user_name || "Unknown"}
+          {m.user_role && <span className="ml-1 text-zinc-400">({m.user_role})</span>}
+        </div>
+      </div>
+    </Link>
   );
 }
 
