@@ -1,18 +1,13 @@
 // Work Orders V2 — admin-only test page at /admin/work-orders-v2.
-// Read + filter + status-update + new-ticket + photo upload against
-// netlify/functions/facilities-v2. Not exposed in nav for non-admins;
-// lives on the v2 branch only.
+// Three-tab UI (Tickets / Vendors / Issue Library) backed by
+// netlify/functions/facilities-v2. Lives on the v2 branch only.
 //
-// Scope (v1.1 of the V2 port):
-//   * Stat cards (open / in progress / on hold / critical / aged)
-//   * Filter bar (status, priority, category, search, open-only)
-//   * "+ New Ticket" modal with issue typeahead + photo attach
-//   * Expandable ticket cards with detail + inline update form
-//   * Per-ticket "Add Photos" button (multi-file)
-//   * Activity timeline (last 5 ticket_updates)
-//   * Photo grid (read + open in new tab)
-// Skipped for now (TODO v2.2):
-//   * Approval request/decide, chat, vendor mgmt, issue library admin.
+// Scope (v2.2 of the port):
+//   * Tickets tab: filters + expandable cards with detail, photos,
+//     approval (request + decide), internal/vendor chat, inline update,
+//     activity timeline.
+//   * Vendors tab: list + search + add/edit + rate.
+//   * Issue Library tab: admin-only CRUD over the typeahead seed list.
 
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -50,6 +45,10 @@ import {
   type TicketStatus,
 } from "./types";
 import { NewTicketModal } from "./NewTicketModal";
+import { ApprovalSection } from "./ApprovalSection";
+import { TicketChat } from "./TicketChat";
+import { VendorsTab } from "./VendorsTab";
+import { IssueLibraryTab } from "./IssueLibraryTab";
 
 const STATUS_TONE: Record<TicketStatus, "info" | "warning" | "success" | "danger" | "neutral"> = {
   "Received":              "info",
@@ -79,6 +78,18 @@ const CATEGORIES = [
   "Other",
 ];
 
+type TabId = "tickets" | "vendors" | "library";
+const TABS: { id: TabId; label: string }[] = [
+  { id: "tickets", label: "Tickets" },
+  { id: "vendors", label: "Vendors" },
+  { id: "library", label: "Issue Library" },
+];
+
+// Route is admin-only, so we can treat the caller as admin for any
+// child-component role checks. If the gate is widened later, replace
+// this with a real auth context lookup.
+const CALLER_ROLE = "admin";
+
 function daysOpen(t: Ticket): number | null {
   if (!t.date_submitted) return null;
   const d = new Date(t.date_submitted);
@@ -101,6 +112,43 @@ function fmtMoney(v: number | string | null) {
 }
 
 export function WorkOrdersV2Page() {
+  const [tab, setTab] = useState<TabId>("tickets");
+
+  return (
+    <>
+      <PageHeader
+        title="Work Orders V2"
+        description="Admin test page — facilities ticketing on Supabase. /admin/work-orders-v2 while v2 is in development."
+      />
+
+      <div className="mb-4 flex border-b border-zinc-200">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setTab(t.id)}
+            className={cn(
+              "-mb-px border-b-2 px-4 py-2 text-sm font-medium tracking-tight transition",
+              tab === t.id
+                ? "border-accent text-midnight"
+                : "border-transparent text-zinc-500 hover:text-midnight",
+            )}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "tickets" && <TicketsTab />}
+      {tab === "vendors" && <VendorsTab callerRole={CALLER_ROLE} />}
+      {tab === "library" && <IssueLibraryTab />}
+    </>
+  );
+}
+
+// ── Tickets Tab ───────────────────────────────────────────────────
+
+function TicketsTab() {
   const toast = useToast();
   const qc = useQueryClient();
 
@@ -156,22 +204,16 @@ export function WorkOrdersV2Page() {
 
   return (
     <>
-      <PageHeader
-        title="Work Orders V2"
-        description="Admin test page — facilities ticketing on Supabase. Lives at /admin/work-orders-v2 while the v2 module is in development."
-        actions={
-          <div className="flex gap-2">
-            <Button variant="primary" onClick={() => setModalOpen(true)}>
-              <Plus className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
-              New Ticket
-            </Button>
-            <Button variant="ghost" onClick={refetchAll}>
-              <RefreshCw className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
-              Refresh
-            </Button>
-          </div>
-        }
-      />
+      <div className="mb-4 flex justify-end gap-2">
+        <Button variant="primary" onClick={() => setModalOpen(true)}>
+          <Plus className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+          New Ticket
+        </Button>
+        <Button variant="ghost" onClick={refetchAll}>
+          <RefreshCw className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+          Refresh
+        </Button>
+      </div>
 
       <StatsRow loading={statsQ.isLoading} stats={statsQ.data?.stats} />
 
@@ -222,6 +264,10 @@ export function WorkOrdersV2Page() {
             }}
             onPhotoUploaded={(count) => {
               toast.push(`${count} photo${count === 1 ? "" : "s"} uploaded.`, "success");
+              refetchAll();
+            }}
+            onApprovalChanged={() => {
+              toast.push("Approval saved.", "success");
               refetchAll();
             }}
             onError={(e) => toast.push(e, "error")}
@@ -375,6 +421,7 @@ function TicketCard({
   onToggle,
   onUpdated,
   onPhotoUploaded,
+  onApprovalChanged,
   onError,
 }: {
   ticket: Ticket;
@@ -382,6 +429,7 @@ function TicketCard({
   onToggle: () => void;
   onUpdated: () => void;
   onPhotoUploaded: (count: number) => void;
+  onApprovalChanged: () => void;
   onError: (msg: string) => void;
 }) {
   const days = daysOpen(ticket);
@@ -447,9 +495,18 @@ function TicketCard({
             onError={onError}
           />
 
+          <ApprovalSection
+            ticket={ticket}
+            callerRole={CALLER_ROLE}
+            onChanged={onApprovalChanged}
+            onError={onError}
+          />
+
           <UpdateForm ticket={ticket} onUpdated={onUpdated} onError={onError} />
 
           {(ticket.ticket_updates?.length ?? 0) > 0 && <Activity updates={ticket.ticket_updates!} />}
+
+          <TicketChat ticketId={ticket.id} onError={onError} />
         </CardBody>
       )}
     </Card>
@@ -486,9 +543,6 @@ function DescriptionBlock({ label, value }: { label: string; value: string | nul
   );
 }
 
-// Combined photo grid + per-ticket uploader. The hidden <input> picks
-// multi-file image/* and the upload loop runs sequentially so a single
-// failure surfaces clearly instead of getting swallowed in Promise.all.
 function PhotoSection({
   ticket,
   onUploaded,
