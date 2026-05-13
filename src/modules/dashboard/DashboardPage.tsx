@@ -20,6 +20,12 @@ import { formatPhoneForDisplay } from "@/lib/phone";
 
 const SDO_REVIEW_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
 
+// Roles included in the Work Orders V2 BETA. Mirrors the route gating in
+// router.tsx and the nav entry in nav.ts. Excludes payroll (focused PAF role).
+const WO2_BETA_ROLES = new Set([
+  "shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin",
+]);
+
 // Anything in this set counts as "closed/done" for dashboard purposes.
 // Pulled from the canonical list in netlify/functions/work-orders.js.
 const TERMINAL_STATUSES = new Set(["Closed", "Completed", "Cancelled"]);
@@ -155,7 +161,7 @@ export function DashboardPage() {
 
       {profile && SDO_REVIEW_ROLES.has(profile.role) && <SdoQueueWidget />}
 
-      {profile?.role === "admin" && <RecentTicketMessagesWidget />}
+      {profile && WO2_BETA_ROLES.has(profile.role) && <RecentTicketMessagesWidget />}
 
       <BirthdayCelebration />
     </>

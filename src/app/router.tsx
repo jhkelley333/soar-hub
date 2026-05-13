@@ -117,7 +117,7 @@ export const router = createBrowserRouter([
       {
         path: "admin/work-orders-v2",
         element: (
-          <ProtectedRoute requireRoles={["admin"]}>
+          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <WorkOrdersV2Page />
           </ProtectedRoute>
         ),

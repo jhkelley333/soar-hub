@@ -113,8 +113,13 @@ export function WorkOrdersV2Page() {
   return (
     <>
       <PageHeader
-        title="Work Orders V2"
-        description="Admin test page — facilities ticketing on Supabase. /admin/work-orders-v2 while v2 is in development."
+        title={
+          <span className="inline-flex items-center gap-2">
+            Work Orders V2
+            <Badge tone="warning">BETA</Badge>
+          </span>
+        }
+        description="Facilities ticketing on Supabase — open BETA. Please report issues so we can iterate before rolling this out as the primary work-orders flow."
       />
 
       <div className="mb-4 flex border-b border-zinc-200">
