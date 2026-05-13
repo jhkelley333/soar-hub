@@ -9,16 +9,20 @@
 //   * submitApproval     → notifies users whose role matches the tier
 //                          (DO < $500 → role 'do', SDO… → 'sdo', VP… → 'vp')
 //   * decideApproval     → notifies the original requester
-// Each send also writes a row into ticket_notifications (status="sent"
-// or "failed: <reason>") so the audit log shows who was told what.
+// Each send also writes a row into ticket_notifications so the audit
+// log shows who got what.
+//
+// Templates: admin-editable rows in `email_templates` keyed by `kind`.
+// `{{variable}}` placeholders get replaced with html-escaped values at
+// send-time. If the row is missing or inactive the function falls back
+// to a hardcoded default so a broken template doesn't stop sends.
 //
 // Required env vars:
 //   SUPABASE_URL / VITE_SUPABASE_URL
 //   SUPABASE_SERVICE_ROLE_KEY / SUPABASE_SERVICE_KEY
 //   RESEND_API_KEY                          — same key PAF already uses
-//   FACILITIES_FROM_EMAIL                   — optional, defaults to the
-//                                             PAF address (verified domain)
-//   FACILITIES_FROM_NAME                    — optional, default "SOAR Facilities"
+//   FACILITIES_FROM_EMAIL                   — defaults to PAF's address
+//   FACILITIES_FROM_NAME                    — default "SOAR Facilities"
 //   APP_URL                                 — base URL for deep links;
 //                                             Netlify exposes URL by default
 
@@ -156,9 +160,6 @@ async function generateWONumber(supabase, storeNumber) {
 
 // ── Notifications ─────────────────────────────────────────────
 
-// Walk store → district → area → region to find every user whose
-// `user_scopes` covers the given store. Optionally filter by role.
-// Inverse of getStoresForUser.
 async function findUsersForStore(supabase, storeNumber, roleFilter) {
   if (!storeNumber) return [];
   const { data: store } = await supabase
@@ -217,7 +218,53 @@ function appBaseUrl() {
   return process.env.APP_URL || process.env.URL || "";
 }
 
-function buildSubject(ticket, kind) {
+// Build the substitution dictionary for {{var}} placeholders. Anything
+// not in this map gets left as the raw token at render-time so an
+// unknown var doesn't silently delete text.
+function buildTicketVars(ticket) {
+  const base = appBaseUrl();
+  return {
+    wo_number: ticket.wo_number || "",
+    store_number: ticket.store_number || "",
+    store_name: ticket.store_name || "",
+    asset_type: ticket.asset_type || "",
+    category: ticket.category || "",
+    priority: ticket.priority || "",
+    status: ticket.status || "",
+    issue_description: ticket.issue_description || "",
+    approval_level: ticket.approval_level || "",
+    approval_request_notes: ticket.approval_request_notes || "",
+    approval_status: ticket.approval_status || "",
+    approval_approved_by: ticket.approval_approved_by || "",
+    submitted_by: ticket.submitted_by || "",
+    is_business_critical: ticket.is_business_critical ? "Yes" : "No",
+    link: base ? `${base}/admin/work-orders-v2` : "",
+  };
+}
+
+// Mustache-ish: only `{{name}}` is supported. Unknown vars stay as-is
+// so the admin can spot typos. Values are html-escaped before insert.
+function renderTemplate(text, vars) {
+  if (!text) return "";
+  return String(text).replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_, key) => {
+    const v = vars[key];
+    return v === undefined ? `{{${key}}}` : escapeHtml(String(v));
+  });
+}
+
+async function getActiveTemplate(supabase, kind) {
+  const { data } = await supabase
+    .from("email_templates")
+    .select("subject, body_html, is_active")
+    .eq("kind", kind)
+    .maybeSingle();
+  if (!data || !data.is_active) return null;
+  return data;
+}
+
+// Hardcoded fallback used when the DB template is missing or off.
+// Kept tight so a busted template can't take notifications down.
+function fallbackSubject(ticket, kind) {
   if (kind === "submitted") {
     const what = ticket.asset_type || ticket.category || "Service Request";
     return `[Work Order] New ${ticket.wo_number} — Store ${ticket.store_number}: ${what}`;
@@ -231,7 +278,7 @@ function buildSubject(ticket, kind) {
   return `[Work Order] Update — ${ticket.wo_number}`;
 }
 
-function buildHtml(ticket, kind) {
+function fallbackHtml(ticket, kind) {
   const base = appBaseUrl();
   const link = base ? `${base}/admin/work-orders-v2` : "";
   const linkHtml = link
@@ -254,7 +301,24 @@ function buildHtml(ticket, kind) {
   } else if (kind === "approval_decided") {
     body = `<p>Your approval request was <strong>${escapeHtml(ticket.approval_status || "Decided")}</strong>${ticket.approval_approved_by ? ` by ${escapeHtml(ticket.approval_approved_by)}` : ""}.</p>${detail}`;
   }
-  return `<!DOCTYPE html><html><body style="font-family:Arial,Helvetica,sans-serif;color:#222;max-width:620px;margin:0 auto;padding:16px;">${body}${linkHtml}<p style="font-size:11px;color:#999;margin-top:24px;border-top:1px solid #eee;padding-top:8px;">Sent automatically by SOAR Facilities V2.</p></body></html>`;
+  return `<!DOCTYPE html><html><body style="font-family:Arial,Helvetica,sans-serif;color:#222;max-width:620px;margin:0 auto;padding:16px;">${body}${linkHtml}<p style="font-size:11px;color:#999;margin-top:24px;border-top:1px solid #eee;padding-top:8px;">Sent automatically by SOAR Facilities V2 (fallback template).</p></body></html>`;
+}
+
+// Returns { subject, html } using a DB template if available, otherwise
+// the hardcoded fallback. Always succeeds.
+async function renderEmail(supabase, ticket, kind) {
+  const tmpl = await getActiveTemplate(supabase, kind);
+  if (tmpl) {
+    const vars = buildTicketVars(ticket);
+    return {
+      subject: renderTemplate(tmpl.subject, vars),
+      html: renderTemplate(tmpl.body_html, vars),
+    };
+  }
+  return {
+    subject: fallbackSubject(ticket, kind),
+    html: fallbackHtml(ticket, kind),
+  };
 }
 
 async function sendEmail({ to, subject, html }) {
@@ -262,9 +326,6 @@ async function sendEmail({ to, subject, html }) {
   if (!apiKey) {
     return { sent: false, reason: "RESEND_API_KEY not set" };
   }
-  // Fall back to the verified PAF address if the new facilities address
-  // hasn't been configured yet. Sending from an unverified domain via
-  // Resend will return 403, so this guards against silent failures.
   const fromAddr =
     process.env.FACILITIES_FROM_EMAIL ||
     process.env.RESEND_FROM_EMAIL ||
@@ -294,7 +355,6 @@ async function sendEmail({ to, subject, html }) {
   }
 }
 
-// kind: 'submitted' | 'approval_requested' | 'approval_decided'
 async function notifyTicketEvent(supabase, ticket, kind) {
   let recipients = [];
   if (kind === "submitted") {
@@ -316,7 +376,6 @@ async function notifyTicketEvent(supabase, ticket, kind) {
     }
   }
 
-  // Dedupe by email + drop entries without an address.
   const seen = new Set();
   recipients = recipients.filter((r) => {
     if (!r?.email) return false;
@@ -326,11 +385,8 @@ async function notifyTicketEvent(supabase, ticket, kind) {
   });
   if (!recipients.length) return;
 
-  const subject = buildSubject(ticket, kind);
-  const html = buildHtml(ticket, kind);
+  const { subject, html } = await renderEmail(supabase, ticket, kind);
 
-  // Send + log each individually so a single bad address doesn't
-  // poison the rest, and so ticket_notifications captures who-got-what.
   for (const r of recipients) {
     const result = await sendEmail({ to: r.email, subject, html });
     await supabase.from("ticket_notifications").insert({
@@ -360,6 +416,75 @@ export const handler = async (event) => {
   const supabase = getSupabase();
 
   try {
+    // ── EMAIL TEMPLATES (admin only for writes) ──
+    if (action === "getEmailTemplates") {
+      const { data, error } = await supabase
+        .from("email_templates")
+        .select("*")
+        .order("kind");
+      if (error) throw error;
+      return respond(200, { ok: true, templates: data });
+    }
+    if (action === "saveEmailTemplate" && event.httpMethod === "POST") {
+      if (role !== "admin") {
+        return respond(403, { ok: false, message: "Admin only." });
+      }
+      const payload = JSON.parse(event.body);
+      const { kind, subject, body_html, is_active } = payload;
+      if (!kind || !subject || !body_html) {
+        return respond(400, {
+          ok: false,
+          message: "kind, subject, body_html required.",
+        });
+      }
+      const { data, error } = await supabase
+        .from("email_templates")
+        .upsert({
+          kind,
+          subject,
+          body_html,
+          is_active: is_active !== false,
+          updated_by: userName,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "kind" })
+        .select()
+        .single();
+      if (error) throw error;
+      return respond(200, { ok: true, template: data });
+    }
+    if (action === "previewEmailTemplate" && event.httpMethod === "POST") {
+      if (role !== "admin") {
+        return respond(403, { ok: false, message: "Admin only." });
+      }
+      const { subject, body_html, vars } = JSON.parse(event.body);
+      if (!subject || !body_html) {
+        return respond(400, {
+          ok: false, message: "subject and body_html required.",
+        });
+      }
+      const sampleVars = vars || buildTicketVars({
+        wo_number: "WO-1082-001",
+        store_number: "1082",
+        store_name: "Test Store",
+        asset_type: "Fryer",
+        category: "Equipment Type",
+        priority: "Urgent",
+        status: "Pending Approval",
+        issue_description: "Sample issue description for preview.",
+        approval_level: "SDO $501-$1000",
+        approval_request_notes: "Sample approval notes.",
+        approval_status: "Approved",
+        approval_approved_by: "Jane Approver",
+        submitted_by: "GM Test",
+        is_business_critical: false,
+      });
+      return respond(200, {
+        ok: true,
+        subject: renderTemplate(subject, sampleVars),
+        html: renderTemplate(body_html, sampleVars),
+      });
+    }
+
     // ── GET ISSUE LIBRARY ──
     if (action === "getIssueLibrary") {
       const { data, error } = await supabase
@@ -486,8 +611,6 @@ export const handler = async (event) => {
         await supabase.from("ticket_photos").insert(photoRows);
       }
 
-      // Notify GM + DO of the store. Best-effort: errors are logged
-      // server-side but don't fail the create.
       try {
         await notifyTicketEvent(supabase, ticket, "submitted");
       } catch (e) {
@@ -597,7 +720,6 @@ export const handler = async (event) => {
         notes:       `Approval requested: ${approvalTier}`,
       });
 
-      // Re-pull the ticket so the notification sees the updated tier.
       const { data: refreshed } = await supabase
         .from("tickets")
         .select("*")
