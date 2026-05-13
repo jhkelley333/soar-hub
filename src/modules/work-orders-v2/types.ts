@@ -81,7 +81,6 @@ export interface Ticket {
   date_submitted: string;
   date_completed: string | null;
   latest_comment: string | null;
-  // joined children (may be missing on some endpoints)
   ticket_photos?: TicketPhoto[];
   ticket_approvals?: TicketApproval[];
   ticket_updates?: TicketUpdate[];
@@ -151,8 +150,8 @@ export interface CreateTicketResponse {
 
 export interface UploadPhotoBody {
   id: string;
-  photoData: string;     // base64 (no data: prefix)
-  photoType: string;     // mime
+  photoData: string;
+  photoType: string;
   photoName: string;
   uploadType?: "submission" | "update" | "quote";
 }
@@ -160,4 +159,113 @@ export interface UploadPhotoBody {
 export interface UploadPhotoResponse {
   ok: true;
   photo: TicketPhoto;
+}
+
+// ── Approvals ────────────────────────────────────────────────
+
+// Tier labels match what the backend wants in `approval_tier`. The
+// numeric thresholds are display-only; the function doesn't enforce a
+// cost-vs-tier check (decideApproval only checks the caller is DO+).
+export const APPROVAL_TIERS = [
+  { value: "DO < $500",       label: "DO — under $500" },
+  { value: "SDO $501-$1000",  label: "SDO — $501 to $1,000" },
+  { value: "VP $1001-$1750",  label: "VP — $1,001 to $1,750" },
+] as const;
+export type ApprovalTier = typeof APPROVAL_TIERS[number]["value"];
+
+export interface SubmitApprovalBody {
+  id: string;
+  approvalTier: ApprovalTier;
+  approvalNotes: string;
+  quoteUrl?: string;
+}
+
+export interface DecideApprovalBody {
+  id: string;
+  approvalId: string;
+  decision: "Approved" | "Rejected";
+  notes?: string;
+}
+
+// ── Chat ─────────────────────────────────────────────────────
+
+export type ThreadType = "internal" | "vendor";
+
+export interface TicketMessage {
+  id: string;
+  ticket_id: string;
+  user_id: string | null;
+  user_name: string | null;
+  user_role: string | null;
+  message: string;
+  thread_type: ThreadType;
+  created_at: string;
+}
+
+export interface MessagesResponse {
+  ok: true;
+  messages: TicketMessage[];
+  threadType: ThreadType;
+}
+
+export interface SendMessageBody {
+  ticketId: string;
+  message: string;
+  threadType?: ThreadType;
+}
+
+// ── Vendors ──────────────────────────────────────────────────
+
+export interface Vendor {
+  id: string;
+  name: string;
+  category: string | null;
+  service_area: string | null;
+  services: string | null;
+  phone: string | null;
+  email: string | null;
+  website: string | null;
+  contact_person: string | null;
+  notes: string | null;
+  notification_preference?: string | null;
+  is_active?: boolean;
+  avgRating: number | null;
+  totalRatings: number;
+}
+
+export interface VendorsResponse {
+  ok: true;
+  vendors: Vendor[];
+}
+
+export interface SaveVendorBody {
+  id?: string;
+  name: string;
+  category?: string;
+  service_area?: string;
+  services?: string;
+  contact_person?: string;
+  phone?: string;
+  email?: string;
+  website?: string;
+  notes?: string;
+  is_active?: boolean;
+}
+
+export interface RateVendorBody {
+  vendorId: string;
+  ticketId?: string;
+  storeNumber?: string;
+  rating: number;
+  comment?: string;
+}
+
+// ── Issue library admin CRUD ─────────────────────────────────
+
+export interface SaveIssueItemBody {
+  id?: string;
+  category: string;
+  asset_type: string;
+  display_name: string;
+  sort_order?: number;
 }
