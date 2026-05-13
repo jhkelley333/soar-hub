@@ -1,13 +1,6 @@
 // Work Orders V2 — admin-only test page at /admin/work-orders-v2.
-// Three-tab UI (Tickets / Vendors / Issue Library) backed by
-// netlify/functions/facilities-v2. Lives on the v2 branch only.
-//
-// Scope (v2.2 of the port):
-//   * Tickets tab: filters + expandable cards with detail, photos,
-//     approval (request + decide), internal/vendor chat, inline update,
-//     activity timeline.
-//   * Vendors tab: list + search + add/edit + rate.
-//   * Issue Library tab: admin-only CRUD over the typeahead seed list.
+// Four-tab UI (Tickets / Vendors / Issue Library / Email Templates)
+// backed by netlify/functions/facilities-v2. Lives on the v2 branch only.
 
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -49,6 +42,7 @@ import { ApprovalSection } from "./ApprovalSection";
 import { TicketChat } from "./TicketChat";
 import { VendorsTab } from "./VendorsTab";
 import { IssueLibraryTab } from "./IssueLibraryTab";
+import { EmailTemplatesTab } from "./EmailTemplatesTab";
 
 const STATUS_TONE: Record<TicketStatus, "info" | "warning" | "success" | "danger" | "neutral"> = {
   "Received":              "info",
@@ -78,11 +72,12 @@ const CATEGORIES = [
   "Other",
 ];
 
-type TabId = "tickets" | "vendors" | "library";
+type TabId = "tickets" | "vendors" | "library" | "email-templates";
 const TABS: { id: TabId; label: string }[] = [
   { id: "tickets", label: "Tickets" },
   { id: "vendors", label: "Vendors" },
   { id: "library", label: "Issue Library" },
+  { id: "email-templates", label: "Email Templates" },
 ];
 
 // Route is admin-only, so we can treat the caller as admin for any
@@ -142,6 +137,7 @@ export function WorkOrdersV2Page() {
       {tab === "tickets" && <TicketsTab />}
       {tab === "vendors" && <VendorsTab callerRole={CALLER_ROLE} />}
       {tab === "library" && <IssueLibraryTab />}
+      {tab === "email-templates" && <EmailTemplatesTab />}
     </>
   );
 }
