@@ -165,6 +165,7 @@ function IssueEditModal({
   const [assetType, setAssetType] = useState(item?.asset_type || "");
   const [displayName, setDisplayName] = useState(item?.display_name || "");
   const [sortOrder, setSortOrder] = useState(String(item?.sort_order ?? 0));
+  const [tips, setTips] = useState(item?.troubleshooting_tips || "");
 
   const mut = useMutation({
     mutationFn: () => {
@@ -177,6 +178,7 @@ function IssueEditModal({
         asset_type: assetType.trim(),
         display_name: displayName.trim(),
         sort_order: Number(sortOrder) || 0,
+        troubleshooting_tips: tips.trim() ? tips.trim() : null,
       });
     },
     onSuccess: onSaved,
@@ -241,6 +243,20 @@ function IssueEditModal({
               value={sortOrder}
               onChange={(e) => setSortOrder(e.target.value)}
             />
+          </div>
+          <div>
+            <Label htmlFor="il-tips">Troubleshooting Tips</Label>
+            <textarea
+              id="il-tips"
+              value={tips}
+              onChange={(e) => setTips(e.target.value)}
+              rows={5}
+              placeholder={"One tip per line. Shown on the New Service Request modal when this issue is picked.\n\nExample:\n• Check the breaker.\n• Confirm oil level is in range."}
+              className="block w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+            <div className="mt-1 text-[10px] text-zinc-400">
+              Leave blank to use the generic fallback for this category.
+            </div>
           </div>
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-zinc-100 px-5 py-3">
