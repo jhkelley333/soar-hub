@@ -21,6 +21,7 @@ import { PafConfigPage } from "@/modules/admin/pafConfig/PafConfigPage";
 import { RankerPage } from "@/modules/ranker/RankerPage";
 import { MyStoresPage } from "@/modules/my-stores/MyStoresPage";
 import { AccountPage } from "@/modules/account/AccountPage";
+import { WorkOrdersV2Page } from "@/modules/work-orders-v2/WorkOrdersV2Page";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -110,6 +111,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["payroll", "admin"]}>
             <PafConfigPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/work-orders-v2",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <WorkOrdersV2Page />
           </ProtectedRoute>
         ),
       },
