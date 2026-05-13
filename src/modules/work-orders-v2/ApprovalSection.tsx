@@ -2,10 +2,9 @@
 //
 //   1. Submit Approval — anyone with access can request approval for a
 //      specific tier (DO / SDO / VP). Inline form (tier + notes + quote
-//      file or URL). If a quote file is attached we upload it through
-//      the same wo2-ticket-photos bucket with upload_type='quote'; the
-//      resulting public URL is written into the approval row's
-//      quote_url column.
+//      file). The quote file goes through the same wo2-ticket-photos
+//      bucket with upload_type='quote'; the resulting public URL is
+//      written into the approval row's quote_url column.
 //
 //   2. Decide Approval — DO+ only. When the latest approval row is
 //      Pending, show Approve/Reject buttons. Rejection requires a note.
@@ -18,7 +17,6 @@ import { useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { CheckCircle2, FileText, Loader2, Paperclip, XCircle } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
-import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
 import { Badge } from "@/shared/ui/Badge";
 import { decideApproval, fileToBase64, submitApproval, uploadPhoto } from "./api";
@@ -68,7 +66,6 @@ export function ApprovalSection({
   const [requesting, setRequesting] = useState(false);
   const [tier, setTier] = useState<ApprovalTier>(APPROVAL_TIERS[0].value);
   const [notes, setNotes] = useState("");
-  const [quoteUrl, setQuoteUrl] = useState("");
   const [quoteFile, setQuoteFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -80,7 +77,7 @@ export function ApprovalSection({
       // If a file is attached, upload it first via the photos endpoint
       // with upload_type='quote'. Same bucket as ticket photos — the
       // upload_type column keeps them straight.
-      let finalUrl = quoteUrl.trim();
+      let finalUrl: string | undefined = undefined;
       if (quoteFile) {
         const photoData = await fileToBase64(quoteFile);
         const result = await uploadPhoto({
@@ -96,13 +93,12 @@ export function ApprovalSection({
         id: ticket.id,
         approvalTier: tier,
         approvalNotes: notes.trim(),
-        quoteUrl: finalUrl || undefined,
+        quoteUrl: finalUrl,
       });
     },
     onSuccess: () => {
       setRequesting(false);
       setNotes("");
-      setQuoteUrl("");
       setQuoteFile(null);
       onChanged();
     },
@@ -248,8 +244,8 @@ export function ApprovalSection({
             />
           </div>
 
-          {/* Quote attachment — file OR URL. The file path uploads
-              through the same photo endpoint with upload_type='quote'. */}
+          {/* Quote attachment — file only. Uploads via the photo
+              endpoint with upload_type='quote' before submit. */}
           <div>
             <Label>Attach Quote</Label>
             <button
@@ -281,21 +277,6 @@ export function ApprovalSection({
                 Remove
               </button>
             )}
-          </div>
-
-          <div>
-            <Label htmlFor={`appr-quote-${ticket.id}`}>
-              Or paste a Drive URL
-            </Label>
-            <Input
-              id={`appr-quote-${ticket.id}`}
-              value={quoteUrl}
-              onChange={(e) => setQuoteUrl(e.target.value)}
-              placeholder="https://drive.google.com/…"
-            />
-            <div className="mt-0.5 text-[10px] text-zinc-500">
-              If both a file and a URL are provided, the uploaded file's URL wins.
-            </div>
           </div>
 
           <div className="flex gap-2">
