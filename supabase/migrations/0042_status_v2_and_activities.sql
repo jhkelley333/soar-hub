@@ -173,13 +173,16 @@ alter table ticket_activities alter column event_type set not null;
 
 -- One `migrated` activity entry per backfilled-closed ticket so the
 -- timeline shows where the old data came from. Skipped if already
--- present (re-run safety).
-insert into ticket_activities (ticket_id, event_type, event_data, visibility, created_at)
+-- present (re-run safety). update_type is populated alongside the
+-- new event_type — the legacy column still carries a NOT NULL
+-- constraint for one release cycle.
+insert into ticket_activities (ticket_id, event_type, event_data, visibility, created_at, update_type)
 select t.id,
        'migrated',
        jsonb_build_object('migrated_from', t.status_legacy_text, 'legacy', true),
        'all',
-       now()
+       now(),
+       'migrated'
 from tickets t
 where t.status = 'closed'
   and t.resolution_category = 'migrated_unknown'
