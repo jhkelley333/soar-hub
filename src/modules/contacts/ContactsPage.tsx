@@ -2,6 +2,10 @@
 // contact directory with pinned + category grouping + search +
 // tier-filter pills + auto-filter by the user's store POS system, and a
 // prominent "Make the Right Call" button feeding the escalation drawer.
+//
+// Top-level toggle (Contacts / Vendors): the Vendors view pulls live
+// from /.netlify/functions/facilities-v2 (the Facilities V2 vendors
+// table) and is read-only here — managed at /admin/work-orders-v2.
 
 import { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -19,6 +23,7 @@ import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { supabase } from "@/lib/supabase";
 import { formatPhoneForDisplay } from "@/lib/phone";
+import { cn } from "@/lib/cn";
 import type { Contact, Tier } from "@/types/database";
 import {
   listContacts,
@@ -28,8 +33,10 @@ import {
 import { ContactDetailDrawer } from "./ContactDetailDrawer";
 import { ContactEditModal } from "./ContactEditModal";
 import { MakeTheRightCallDrawer } from "./MakeTheRightCallDrawer";
+import { VendorsListSection } from "./VendorsListSection";
 
 type TierFilter = "all" | Tier;
+type ViewMode = "contacts" | "vendors";
 
 const TIER_LABEL: Record<Tier, string> = {
   company: "Company",
@@ -49,9 +56,6 @@ const TIER_TONE: Record<Tier, "info" | "warning" | "neutral" | "success"> = {
 
 const EDITOR_ROLES = new Set(["admin", "payroll", "vp", "coo", "do", "sdo", "rvp", "gm"]);
 
-// Generate a PDF of the currently-visible contact rows. Includes the
-// caller's POS auto-filter context so the export reflects what they saw
-// on screen, not the full unfiltered set.
 function downloadContactsAsPDF(
   contacts: Contact[],
   userPos: string | null,
@@ -63,7 +67,7 @@ function downloadContactsAsPDF(
   doc.setFontSize(9);
   doc.setTextColor(120);
   const subtitle = userPos
-    ? `Filtered for ${userPos === "infor" ? "Infor" : "Micros"} POS \u00b7 Exported ${ts}`
+    ? `Filtered for ${userPos === "infor" ? "Infor" : "Micros"} POS · Exported ${ts}`
     : `Exported ${ts}`;
   doc.text(subtitle, 40, 66);
   doc.setTextColor(0);
@@ -100,6 +104,7 @@ export function ContactsPage() {
   const qc = useQueryClient();
   const toast = useToast();
 
+  const [view, setView] = useState<ViewMode>("contacts");
   const [search, setSearch] = useState("");
   const [tierFilter, setTierFilter] = useState<TierFilter>("all");
   const [openId, setOpenId] = useState<string | null>(null);
@@ -113,11 +118,9 @@ export function ContactsPage() {
     queryKey: ["contacts-list"],
     queryFn: listContacts,
     staleTime: 60_000,
+    enabled: view === "contacts",
   });
 
-  // The user's store's POS system, if known. Used for the auto-filter
-  // banner: contacts with pos_filter set get hidden unless it matches
-  // (or pos_filter is null = applies to everyone).
   const userPosQuery = useQuery({
     queryKey: ["user-store-pos", profile?.primary_store_id],
     queryFn: async () => {
@@ -140,7 +143,6 @@ export function ContactsPage() {
     const q = search.trim().toLowerCase();
     return allContacts.filter((c) => {
       if (tierFilter !== "all" && c.tier !== tierFilter) return false;
-      // POS auto-filter: hide contacts that target a different POS than mine.
       if (userPos && c.pos_filter && c.pos_filter !== userPos) return false;
       if (q) {
         const hay = [c.display_name, c.phone, c.email, c.notes, c.category]
@@ -156,8 +158,6 @@ export function ContactsPage() {
     [filtered, pinned]
   );
 
-  // Group remaining by category; sort within category by tier asc
-  // (company → regional → store), then by display_name.
   const grouped = useMemo(() => {
     const rest = filtered.filter((c) => !pinned.has(c.id));
     const buckets = new Map<string, Contact[]>();
@@ -185,7 +185,6 @@ export function ContactsPage() {
     const fn = isPinned ? unpinContact : pinContact;
     fn(c.id)
       .then(() => {
-        // Refresh profile so pinned_contact_ids updates immediately.
         qc.invalidateQueries({ queryKey: ["auth-profile"] });
       })
       .catch((e: unknown) => {
@@ -197,130 +196,161 @@ export function ContactsPage() {
     <>
       <PageHeader
         title="Contacts"
-        description="Three-tier directory: company, regional, store."
+        description={
+          view === "contacts"
+            ? "Three-tier directory: company, regional, store."
+            : "Vendor directory pulled from Facilities V2."
+        }
         actions={
-          <div className="flex flex-wrap gap-2">
-            <Button variant="danger" onClick={() => setCallDrawerOpen(true)}>
-              <PhoneOutgoing className="mr-1.5 h-3.5 w-3.5" strokeWidth={1.75} />
-              Make the Right Call
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => downloadContactsAsPDF(filtered, userPos)}
-              disabled={filtered.length === 0}
-              title="Download the currently visible contacts as a PDF"
-            >
-              <Download className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
-              Download PDF
-            </Button>
-            {canCreate && (
-              <Button variant="ghost" size="sm" onClick={() => setEditing("new")}>
-                <Plus className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
-                Add contact
+          view === "contacts" ? (
+            <div className="flex flex-wrap gap-2">
+              <Button variant="danger" onClick={() => setCallDrawerOpen(true)}>
+                <PhoneOutgoing className="mr-1.5 h-3.5 w-3.5" strokeWidth={1.75} />
+                Make the Right Call
               </Button>
-            )}
-          </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => downloadContactsAsPDF(filtered, userPos)}
+                disabled={filtered.length === 0}
+                title="Download the currently visible contacts as a PDF"
+              >
+                <Download className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+                Download PDF
+              </Button>
+              {canCreate && (
+                <Button variant="ghost" size="sm" onClick={() => setEditing("new")}>
+                  <Plus className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+                  Add contact
+                </Button>
+              )}
+            </div>
+          ) : null
         }
       />
 
-      <Card className="mb-4">
-        <div className="space-y-3 p-3">
-          <div className="relative">
-            <Search
-              className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400"
-              strokeWidth={1.75}
-            />
-            <Input
-              type="search"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search by name, phone, email, category…"
-              className="pl-9 pr-9"
-            />
-            {search && (
-              <button
-                type="button"
-                onClick={() => setSearch("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-midnight"
-                aria-label="Clear search"
-              >
-                <X className="h-3 w-3" strokeWidth={2} />
-              </button>
+      {/* View toggle */}
+      <div className="mb-4 flex border-b border-zinc-200">
+        {(["contacts", "vendors"] as const).map((v) => (
+          <button
+            key={v}
+            type="button"
+            onClick={() => setView(v)}
+            className={cn(
+              "-mb-px border-b-2 px-4 py-2 text-sm font-medium tracking-tight transition",
+              view === v
+                ? "border-accent text-midnight"
+                : "border-transparent text-zinc-500 hover:text-midnight",
             )}
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {(["all", "company", "regional", "area", "district", "store"] as const).map((t) => (
-              <TierPill
-                key={t}
-                active={tierFilter === t}
-                onClick={() => setTierFilter(t)}
-                label={t === "all" ? "All" : TIER_LABEL[t]}
-              />
-            ))}
-            {userPos && (
-              <span className="ml-auto text-xs text-zinc-500">
-                Auto-filtered for{" "}
-                <span className="font-medium text-midnight">
-                  {userPos === "infor" ? "Infor" : "Micros"}
-                </span>{" "}
-                POS
-              </span>
-            )}
-          </div>
-        </div>
-      </Card>
+          >
+            {v === "contacts" ? "Contacts" : "Vendors"}
+          </button>
+        ))}
+      </div>
 
-      {contactsQuery.isLoading && (
-        <div className="space-y-2">
-          <Skeleton className="h-16 w-full" />
-          <Skeleton className="h-16 w-full" />
-          <Skeleton className="h-16 w-full" />
-        </div>
-      )}
+      {view === "vendors" && <VendorsListSection />}
 
-      {contactsQuery.isError && (
-        <EmptyState
-          title="Couldn't load contacts"
-          description={(contactsQuery.error as Error)?.message ?? "Try again."}
-        />
-      )}
+      {view === "contacts" && (
+        <>
+          <Card className="mb-4">
+            <div className="space-y-3 p-3">
+              <div className="relative">
+                <Search
+                  className="pointer-events-none absolute left-3 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400"
+                  strokeWidth={1.75}
+                />
+                <Input
+                  type="search"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search by name, phone, email, category…"
+                  className="pl-9 pr-9"
+                />
+                {search && (
+                  <button
+                    type="button"
+                    onClick={() => setSearch("")}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-midnight"
+                    aria-label="Clear search"
+                  >
+                    <X className="h-3 w-3" strokeWidth={2} />
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(["all", "company", "regional", "area", "district", "store"] as const).map((t) => (
+                  <TierPill
+                    key={t}
+                    active={tierFilter === t}
+                    onClick={() => setTierFilter(t)}
+                    label={t === "all" ? "All" : TIER_LABEL[t]}
+                  />
+                ))}
+                {userPos && (
+                  <span className="ml-auto text-xs text-zinc-500">
+                    Auto-filtered for{" "}
+                    <span className="font-medium text-midnight">
+                      {userPos === "infor" ? "Infor" : "Micros"}
+                    </span>{" "}
+                    POS
+                  </span>
+                )}
+              </div>
+            </div>
+          </Card>
 
-      {contactsQuery.data && filtered.length === 0 && (
-        <EmptyState
-          title={search || tierFilter !== "all" ? "No matches" : "No contacts yet"}
-          description={
-            search || tierFilter !== "all"
-              ? "Adjust the filters or clear the search."
-              : canCreate
-                ? "Add your first contact to get started."
-                : "Your admin hasn't added any contacts yet."
-          }
-        />
-      )}
+          {contactsQuery.isLoading && (
+            <div className="space-y-2">
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
+              <Skeleton className="h-16 w-full" />
+            </div>
+          )}
 
-      {contactsQuery.data && filtered.length > 0 && (
-        <div className="space-y-5">
-          {pinnedContacts.length > 0 && (
-            <ContactGroup
-              category="📌 Pinned"
-              contacts={pinnedContacts}
-              pinned={pinned}
-              onTogglePin={togglePin}
-              onOpen={(c) => setOpenId(c.id)}
+          {contactsQuery.isError && (
+            <EmptyState
+              title="Couldn't load contacts"
+              description={(contactsQuery.error as Error)?.message ?? "Try again."}
             />
           )}
-          {grouped.map((g) => (
-            <ContactGroup
-              key={g.category}
-              category={g.category}
-              contacts={g.contacts}
-              pinned={pinned}
-              onTogglePin={togglePin}
-              onOpen={(c) => setOpenId(c.id)}
+
+          {contactsQuery.data && filtered.length === 0 && (
+            <EmptyState
+              title={search || tierFilter !== "all" ? "No matches" : "No contacts yet"}
+              description={
+                search || tierFilter !== "all"
+                  ? "Adjust the filters or clear the search."
+                  : canCreate
+                    ? "Add your first contact to get started."
+                    : "Your admin hasn't added any contacts yet."
+              }
             />
-          ))}
-        </div>
+          )}
+
+          {contactsQuery.data && filtered.length > 0 && (
+            <div className="space-y-5">
+              {pinnedContacts.length > 0 && (
+                <ContactGroup
+                  category="📌 Pinned"
+                  contacts={pinnedContacts}
+                  pinned={pinned}
+                  onTogglePin={togglePin}
+                  onOpen={(c) => setOpenId(c.id)}
+                />
+              )}
+              {grouped.map((g) => (
+                <ContactGroup
+                  key={g.category}
+                  category={g.category}
+                  contacts={g.contacts}
+                  pinned={pinned}
+                  onTogglePin={togglePin}
+                  onOpen={(c) => setOpenId(c.id)}
+                />
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       {/* Drawers / modals */}

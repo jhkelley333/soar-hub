@@ -11,6 +11,7 @@ import {
   UserCircle,
   Settings,
   Layers,
+  Hammer,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -40,6 +41,10 @@ export const NAV: NavItem[] = [
   { to: "/admin/org",   label: "Org Admin",   icon: Network,         roles: ["vp", "coo", "admin"] },
   { to: "/admin/bulk-attributes", label: "Bulk Attributes", icon: Layers, roles: ["admin"] },
   { to: "/admin/paf-config", label: "PAF Config", icon: Settings,    roles: ["payroll", "admin"] },
+  // BETA — Work Orders V2 module opened to field roles for live testing.
+  // Excludes payroll (focused PAF role); excluded from "admin/" path
+  // grouping but the URL is preserved to avoid breaking deep links.
+  { to: "/admin/work-orders-v2", label: "Work Orders V2 (BETA)", icon: Hammer, roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/account",     label: "Account",     icon: UserCircle,      roles: null },
 ];
 
