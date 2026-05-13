@@ -110,6 +110,23 @@ export interface UpdateTicketBody {
   notes?: string;
 }
 
+// One store the caller has access to, as returned by `getCallerStores`.
+// `number` is the user-facing store number (e.g. "1082"). `name` may be
+// blank for stores that don't have a friendly name set.
+export interface CallerStore {
+  id: string;
+  number: string;
+  name: string;
+}
+
+export interface CallerStoresResponse {
+  ok: true;
+  // "single" → auto-fill (GM / shift-manager get their primary store).
+  // "list"   → render a dropdown (DO+ pick from scoped stores).
+  mode: "single" | "list";
+  stores: CallerStore[];
+}
+
 export interface IssueLibraryItem {
   id: string;
   category: string;
@@ -138,7 +155,6 @@ export interface CreateTicketBody {
   troubleshootingChecked?: boolean;
   vendorContacted?: boolean;
   vendorName?: string;
-  costEstimate?: number | null;
 }
 
 export interface CreateTicketResponse {

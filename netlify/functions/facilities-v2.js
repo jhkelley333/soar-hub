@@ -54,7 +54,7 @@ async function getCallerProfile(event) {
   if (!userRes?.user) return null;
   const { data: profile } = await supa
     .from("profiles")
-    .select("id, email, full_name, role, is_active")
+    .select("id, email, full_name, role, is_active, primary_store_id")
     .eq("id", userRes.user.id)
     .single();
   if (!profile || !profile.is_active) return null;
@@ -494,6 +494,60 @@ export const handler = async (event) => {
         .order("sort_order");
       if (error) throw error;
       return respond(200, { ok: true, items: data });
+    }
+
+    // ── GET CALLER STORES ──
+    // Drives the Store field on the New Ticket modal.
+    //   - GM / shift_manager → "single" mode + their primary store (auto-fill)
+    //   - DO+                → "list"   mode + every store in their scope
+    // Stores arrive as { id, number, name } so the UI can render either a
+    // chip or a dropdown without a second round-trip.
+    if (action === "getCallerStores") {
+      const isSingle = role === "gm" || role === "shift_manager";
+
+      if (isSingle) {
+        if (!profile.primary_store_id) {
+          return respond(200, { ok: true, mode: "single", stores: [] });
+        }
+        const { data: store, error } = await supabase
+          .from("stores")
+          .select("id, number, name")
+          .eq("id", profile.primary_store_id)
+          .single();
+        if (error || !store) {
+          return respond(200, { ok: true, mode: "single", stores: [] });
+        }
+        return respond(200, {
+          ok: true,
+          mode: "single",
+          stores: [{
+            id: store.id,
+            number: String(store.number),
+            name: store.name || "",
+          }],
+        });
+      }
+
+      const access = await getStoresForUser(supabase, profile);
+      let query = supabase.from("stores").select("id, number, name");
+      if (access.all) {
+        // No filter — admin/coo/vp/sdo/rvp see every store.
+      } else if (access.stores.length) {
+        query = query.in("number", access.stores);
+      } else {
+        return respond(200, { ok: true, mode: "list", stores: [] });
+      }
+      const { data: rows, error } = await query.order("number");
+      if (error) throw error;
+      return respond(200, {
+        ok: true,
+        mode: "list",
+        stores: (rows || []).map((s) => ({
+          id: s.id,
+          number: String(s.number),
+          name: s.name || "",
+        })),
+      });
     }
 
     // ── GET TICKETS ──

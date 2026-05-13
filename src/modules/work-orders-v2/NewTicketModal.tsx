@@ -5,21 +5,25 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Loader2, Upload, X } from "lucide-react";
+import { Camera, Loader2, Upload, X } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
 import {
   createTicket,
+  fetchCallerStores,
   fetchIssueLibrary,
   fileToBase64,
+  searchVendors,
   uploadPhoto,
 } from "./api";
 import {
   TICKET_PRIORITIES,
+  type CallerStore,
   type CreateTicketBody,
   type IssueLibraryItem,
   type TicketPriority,
+  type Vendor,
 } from "./types";
 
 interface Props {
@@ -39,6 +43,16 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
     staleTime: 5 * 60_000,
   });
 
+  // Stores the caller has access to. Drives whether the Store field is
+  // auto-filled (GM / shift-manager → single primary store) or a
+  // dropdown (DO+ → pick from scoped stores).
+  const callerStores = useQuery({
+    queryKey: ["wo2", "callerStores"],
+    queryFn: fetchCallerStores,
+    enabled: open,
+    staleTime: 5 * 60_000,
+  });
+
   // Form state.
   const [storeNumber, setStoreNumber] = useState("");
   const [issueText, setIssueText] = useState("");
@@ -49,7 +63,6 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
   const [priority, setPriority] = useState<TicketPriority>("Standard");
   const [businessCritical, setBusinessCritical] = useState(false);
   const [vendorName, setVendorName] = useState("");
-  const [costEstimate, setCostEstimate] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -57,6 +70,11 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
   // the dropdown even though the input value still matches.
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const dropdownCloseTimer = useRef<number | null>(null);
+
+  // The asset_type used to fetch vendor recommendations. Set when the
+  // user picks an issue from the typeahead, cleared when they edit the
+  // text again.
+  const [vendorPickAsset, setVendorPickAsset] = useState("");
 
   // Reset on open/close so a re-open starts clean.
   useEffect(() => {
@@ -70,10 +88,21 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
     setPriority("Standard");
     setBusinessCritical(false);
     setVendorName("");
-    setCostEstimate("");
     setFiles([]);
     setDropdownOpen(false);
+    setVendorPickAsset("");
   }, [open]);
+
+  // For single-store callers (GM / shift_manager) auto-fill the store
+  // number once the caller-stores response arrives.
+  useEffect(() => {
+    if (!open) return;
+    const data = callerStores.data;
+    if (!data) return;
+    if (data.mode === "single" && data.stores[0]) {
+      setStoreNumber(data.stores[0].number);
+    }
+  }, [open, callerStores.data]);
 
   // Filter issue library by current typeahead text.
   const suggestions = useMemo(() => {
@@ -94,6 +123,7 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
     setCategory(item.category);
     setAssetType(item.display_name);
     setDropdownOpen(false);
+    setVendorPickAsset(item.display_name);
     // Cancel any pending blur-close so the click doesn't fight us.
     if (dropdownCloseTimer.current) {
       window.clearTimeout(dropdownCloseTimer.current);
@@ -105,7 +135,22 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
     setIssueText(value);
     setAssetType(value);
     setDropdownOpen(true);
+    // Clear vendor recommendations if the user resumed editing — they're
+    // no longer for a confirmed asset type.
+    if (vendorPickAsset && value !== vendorPickAsset) setVendorPickAsset("");
   }
+
+  // Vendor recommendations fire only after the user picks an issue, so
+  // we always have a concrete asset_type to filter by. Limit to 3.
+  const vendorRecs = useQuery({
+    queryKey: ["wo2", "vendorRecs", vendorPickAsset],
+    queryFn: () => searchVendors("", vendorPickAsset),
+    enabled: open && !!vendorPickAsset,
+    staleTime: 60_000,
+  });
+  const recommendedVendors: Vendor[] = useMemo(() => {
+    return (vendorRecs.data?.vendors ?? []).slice(0, 3);
+  }, [vendorRecs.data]);
 
   function handleFiles(input: HTMLInputElement) {
     const arr = Array.from(input.files ?? []).slice(0, MAX_PHOTOS);
@@ -126,7 +171,6 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
         isBusinessCritical: businessCritical,
         vendorContacted: !!vendorName.trim(),
         vendorName: vendorName || undefined,
-        costEstimate: costEstimate ? Number(costEstimate) : null,
       };
       const created = await createTicket(body);
       // Upload any attached photos sequentially so failures are obvious.
@@ -183,12 +227,14 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
         <div className="space-y-4 px-5 py-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
-              <Label htmlFor="nt-store">Store Number *</Label>
-              <Input
+              <Label htmlFor="nt-store">Store *</Label>
+              <StoreField
                 id="nt-store"
                 value={storeNumber}
-                onChange={(e) => setStoreNumber(e.target.value)}
-                placeholder="e.g. 1082"
+                onChange={setStoreNumber}
+                loading={callerStores.isLoading}
+                error={callerStores.error}
+                data={callerStores.data}
               />
             </div>
             <div>
@@ -275,27 +321,49 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
             />
           </div>
 
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <div>
-              <Label htmlFor="nt-vendor">Vendor Name</Label>
-              <Input
-                id="nt-vendor"
-                value={vendorName}
-                onChange={(e) => setVendorName(e.target.value)}
-                placeholder="Optional"
-              />
-            </div>
-            <div>
-              <Label htmlFor="nt-cost">Cost Estimate ($)</Label>
-              <Input
-                id="nt-cost"
-                value={costEstimate}
-                onChange={(e) => setCostEstimate(e.target.value)}
-                placeholder="0.00"
-                type="number"
-                step="0.01"
-              />
-            </div>
+          <div>
+            <Label htmlFor="nt-vendor">Vendor Name</Label>
+            <Input
+              id="nt-vendor"
+              value={vendorName}
+              onChange={(e) => setVendorName(e.target.value)}
+              placeholder="Optional"
+            />
+            {vendorPickAsset && recommendedVendors.length > 0 && (
+              <div className="mt-2">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                  Suggested vendors for {vendorPickAsset}
+                </div>
+                <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-3">
+                  {recommendedVendors.map((v) => {
+                    const picked = vendorName === v.name;
+                    return (
+                      <button
+                        key={v.id}
+                        type="button"
+                        onClick={() => setVendorName(v.name)}
+                        className={
+                          "rounded-md border px-3 py-2 text-left text-xs transition " +
+                          (picked
+                            ? "border-accent bg-accent/5 text-midnight"
+                            : "border-zinc-200 bg-white text-zinc-700 hover:border-accent hover:bg-accent/5")
+                        }
+                      >
+                        <div className="font-medium text-midnight">{v.name}</div>
+                        {v.category && (
+                          <div className="mt-0.5 text-[10px] uppercase tracking-wide text-zinc-500">
+                            {v.category}
+                          </div>
+                        )}
+                        {v.phone && (
+                          <div className="mt-0.5 text-[11px] text-zinc-600">{v.phone}</div>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
           </div>
 
           <label className="flex items-center gap-2 text-sm text-midnight">
@@ -310,6 +378,13 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
 
           <div>
             <Label htmlFor="nt-photos">Photos (up to {MAX_PHOTOS})</Label>
+            <div className="mb-2 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
+              <Camera className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.75} />
+              <div>
+                <span className="font-semibold">One photo must show the equipment serial number.</span>{" "}
+                Vendors need it to look up parts and warranty info.
+              </div>
+            </div>
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
@@ -352,5 +427,75 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
         </div>
       </div>
     </div>
+  );
+}
+
+interface StoreFieldProps {
+  id: string;
+  value: string;
+  onChange: (next: string) => void;
+  loading: boolean;
+  error: unknown;
+  data: { mode: "single" | "list"; stores: CallerStore[] } | undefined;
+}
+
+// Renders one of three states:
+//   loading                  → disabled placeholder
+//   error / no stores        → falls back to a free-text input
+//   single (GM, shift mgr)   → read-only auto-filled chip
+//   list (DO+)               → <select> of stores in scope
+function StoreField({ id, value, onChange, loading, error, data }: StoreFieldProps) {
+  if (loading) {
+    return (
+      <Input
+        id={id}
+        value=""
+        onChange={() => undefined}
+        placeholder="Loading…"
+        disabled
+      />
+    );
+  }
+
+  // If the lookup failed or returned nothing, fall back to manual entry
+  // so the user can still submit (e.g. admins / first-run accounts).
+  if (error || !data || data.stores.length === 0) {
+    return (
+      <Input
+        id={id}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="e.g. 1082"
+      />
+    );
+  }
+
+  if (data.mode === "single") {
+    const store = data.stores[0];
+    return (
+      <div
+        id={id}
+        className="flex h-9 items-center rounded-md border border-zinc-200 bg-zinc-50 px-3 text-sm text-midnight"
+      >
+        <span className="font-medium">{store.number}</span>
+        {store.name && <span className="ml-2 text-zinc-500">— {store.name}</span>}
+      </div>
+    );
+  }
+
+  return (
+    <select
+      id={id}
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+    >
+      <option value="">Select a store…</option>
+      {data.stores.map((s) => (
+        <option key={s.id} value={s.number}>
+          {s.number}{s.name ? ` — ${s.name}` : ""}
+        </option>
+      ))}
+    </select>
   );
 }

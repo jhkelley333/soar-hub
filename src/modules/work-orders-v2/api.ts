@@ -4,6 +4,7 @@
 
 import { supabase } from "@/lib/supabase";
 import type {
+  CallerStoresResponse,
   CreateTicketBody,
   CreateTicketResponse,
   DecideApprovalBody,
@@ -74,6 +75,10 @@ export function fetchIssueLibrary(): Promise<IssueLibraryResponse> {
   return request<IssueLibraryResponse>(`${FN}?action=getIssueLibrary`);
 }
 
+export function fetchCallerStores(): Promise<CallerStoresResponse> {
+  return request<CallerStoresResponse>(`${FN}?action=getCallerStores`);
+}
+
 export function createTicket(payload: CreateTicketBody): Promise<CreateTicketResponse> {
   return request<CreateTicketResponse>(`${FN}?action=createTicket`, {
     method: "POST",
@@ -119,10 +124,13 @@ export function fetchVendors(): Promise<VendorsResponse> {
   return request<VendorsResponse>(`${FN}?action=getVendors`);
 }
 
-export function searchVendors(q: string): Promise<{ ok: true; vendors: Vendor[] }> {
-  return request<{ ok: true; vendors: Vendor[] }>(
-    `${FN}?action=searchVendors&q=${encodeURIComponent(q)}`,
-  );
+export function searchVendors(
+  q: string,
+  assetType?: string,
+): Promise<{ ok: true; vendors: Vendor[] }> {
+  const params = new URLSearchParams({ action: "searchVendors", q });
+  if (assetType) params.set("assetType", assetType);
+  return request<{ ok: true; vendors: Vendor[] }>(`${FN}?${params.toString()}`);
 }
 
 export function saveVendor(payload: SaveVendorBody): Promise<{ ok: true; vendor: Vendor }> {
