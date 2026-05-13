@@ -54,7 +54,7 @@ async function getCallerProfile(event) {
   if (!userRes?.user) return null;
   const { data: profile } = await supa
     .from("profiles")
-    .select("id, email, full_name, role, is_active, primary_store_id")
+    .select("id, email, full_name, role, is_active")
     .eq("id", userRes.user.id)
     .single();
   if (!profile || !profile.is_active) return null;
@@ -506,13 +506,21 @@ export const handler = async (event) => {
       const isSingle = role === "gm" || role === "shift_manager";
 
       if (isSingle) {
-        if (!profile.primary_store_id) {
+        // Look up primary_store_id inline so widening getCallerProfile()
+        // (which gates every action) isn't required.
+        const { data: meRow } = await supabase
+          .from("profiles")
+          .select("primary_store_id")
+          .eq("id", userId)
+          .single();
+        const primaryStoreId = meRow?.primary_store_id;
+        if (!primaryStoreId) {
           return respond(200, { ok: true, mode: "single", stores: [] });
         }
         const { data: store, error } = await supabase
           .from("stores")
           .select("id, number, name")
-          .eq("id", profile.primary_store_id)
+          .eq("id", primaryStoreId)
           .single();
         if (error || !store) {
           return respond(200, { ok: true, mode: "single", stores: [] });
