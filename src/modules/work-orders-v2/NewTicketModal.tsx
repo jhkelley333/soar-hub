@@ -53,6 +53,11 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
   const [files, setFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Tracked separately from `issueText` so picking a suggestion closes
+  // the dropdown even though the input value still matches.
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const dropdownCloseTimer = useRef<number | null>(null);
+
   // Reset on open/close so a re-open starts clean.
   useEffect(() => {
     if (!open) return;
@@ -67,6 +72,7 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
     setVendorName("");
     setCostEstimate("");
     setFiles([]);
+    setDropdownOpen(false);
   }, [open]);
 
   // Filter issue library by current typeahead text.
@@ -87,6 +93,18 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
     setIssueText(item.display_name);
     setCategory(item.category);
     setAssetType(item.display_name);
+    setDropdownOpen(false);
+    // Cancel any pending blur-close so the click doesn't fight us.
+    if (dropdownCloseTimer.current) {
+      window.clearTimeout(dropdownCloseTimer.current);
+      dropdownCloseTimer.current = null;
+    }
+  }
+
+  function handleIssueTextChange(value: string) {
+    setIssueText(value);
+    setAssetType(value);
+    setDropdownOpen(true);
   }
 
   function handleFiles(input: HTMLInputElement) {
@@ -140,6 +158,12 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
+      onKeyDown={(e) => {
+        if (e.key === "Escape") {
+          if (dropdownOpen) setDropdownOpen(false);
+          else onClose();
+        }
+      }}
     >
       <div className="w-full max-w-2xl max-h-[92vh] overflow-y-auto rounded-xl bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-3">
@@ -185,19 +209,31 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
             <Input
               id="nt-issue"
               value={issueText}
-              onChange={(e) => {
-                setIssueText(e.target.value);
-                setAssetType(e.target.value);
+              onChange={(e) => handleIssueTextChange(e.target.value)}
+              onFocus={() => {
+                if (issueText.trim().length > 0) setDropdownOpen(true);
+              }}
+              onBlur={() => {
+                // Delay so a click on a suggestion can register before
+                // the blur closes the dropdown.
+                dropdownCloseTimer.current = window.setTimeout(() => {
+                  setDropdownOpen(false);
+                  dropdownCloseTimer.current = null;
+                }, 150);
               }}
               placeholder="Start typing — e.g. fryer, roof, HVAC…"
               autoComplete="off"
             />
-            {suggestions.length > 0 && (
+            {dropdownOpen && suggestions.length > 0 && (
               <ul className="absolute z-10 mt-1 max-h-60 w-full overflow-y-auto rounded-md border border-zinc-200 bg-white shadow-md">
                 {suggestions.map((s) => (
                   <li key={s.id}>
                     <button
                       type="button"
+                      // onMouseDown fires before the input's blur, so
+                      // pickIssue runs even if the input loses focus
+                      // before the click handler would have run.
+                      onMouseDown={(e) => e.preventDefault()}
                       onClick={() => pickIssue(s)}
                       className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50"
                     >
