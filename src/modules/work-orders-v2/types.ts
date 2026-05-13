@@ -111,3 +111,53 @@ export interface UpdateTicketBody {
   vendorName?: string;
   notes?: string;
 }
+
+export interface IssueLibraryItem {
+  id: string;
+  category: string;
+  asset_type: string;
+  display_name: string;
+  sort_order: number;
+}
+
+export interface IssueLibraryResponse {
+  ok: true;
+  items: IssueLibraryItem[];
+}
+
+export interface CreateTicketBody {
+  storeNumber: string;
+  storeName?: string;
+  storeEmail?: string;
+  doEmail?: string;
+  sdoEmail?: string;
+  category?: string;
+  assetType?: string;
+  modelNumber?: string;
+  issueDescription: string;
+  priority?: TicketPriority;
+  isBusinessCritical?: boolean;
+  troubleshootingChecked?: boolean;
+  vendorContacted?: boolean;
+  vendorName?: string;
+  costEstimate?: number | null;
+}
+
+export interface CreateTicketResponse {
+  ok: true;
+  ticket: Ticket;
+  woNumber: string;
+}
+
+export interface UploadPhotoBody {
+  id: string;
+  photoData: string;     // base64 (no data: prefix)
+  photoType: string;     // mime
+  photoName: string;
+  uploadType?: "submission" | "update" | "quote";
+}
+
+export interface UploadPhotoResponse {
+  ok: true;
+  photo: TicketPhoto;
+}
