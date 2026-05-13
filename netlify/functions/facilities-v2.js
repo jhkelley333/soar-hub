@@ -164,10 +164,11 @@ async function findUsersForStore(supabase, storeNumber, roleFilter) {
   if (!storeNumber) return [];
   const { data: store } = await supabase
     .from("stores")
-    .select("id, district_id")
+    .select("id, district_id, email")
     .eq("number", String(storeNumber))
     .maybeSingle();
   if (!store) return [];
+  const storeEmail = (store.email || "").trim() || null;
 
   const ids = [store.id];
   if (store.district_id) {
@@ -204,7 +205,17 @@ async function findUsersForStore(supabase, storeNumber, roleFilter) {
   if (rf?.length) q = q.in("role", rf);
 
   const { data: users } = await q;
-  return users || [];
+  // For GM and shift_manager, always route to the store's shared
+  // email (stores.email) instead of their personal profile email.
+  // The store inbox is the GM's working address for this app, and it
+  // survives staff turnover. Never substitute plate_iq_email.
+  return (users || []).map((u) => {
+    const role = String(u.role || "").toLowerCase();
+    if (role === "gm" || role === "shift_manager") {
+      return { ...u, email: storeEmail };
+    }
+    return u;
+  });
 }
 
 function escapeHtml(s) {
@@ -372,7 +383,22 @@ async function notifyTicketEvent(supabase, ticket, kind) {
         .select("id, email, full_name, role")
         .eq("id", ticket.submitted_by_user_id)
         .maybeSingle();
-      if (u) recipients = [u];
+      if (u) {
+        // Same policy as findUsersForStore: GM and shift_manager
+        // always route to the store inbox, not their personal email.
+        const submitterRole = String(u.role || "").toLowerCase();
+        if (submitterRole === "gm" || submitterRole === "shift_manager") {
+          const { data: storeRow } = await supabase
+            .from("stores")
+            .select("email")
+            .eq("number", String(ticket.store_number))
+            .maybeSingle();
+          const storeEmail = (storeRow?.email || "").trim() || null;
+          recipients = [{ ...u, email: storeEmail }];
+        } else {
+          recipients = [u];
+        }
+      }
     }
   }
 
