@@ -627,11 +627,47 @@ async function updateOrgNode(supa, user, body) {
   if (beforeErr) return { error: beforeErr.message, status: 500 };
   if (!beforeRow) return { error: "Not found.", status: 404 };
 
-  const { error: updErr } = await supa
+  const { data: updatedRow, error: updErr } = await supa
     .from(table)
     .update(updates)
-    .eq("id", id);
+    .eq("id", id)
+    .select("*")
+    .maybeSingle();
   if (updErr) return { error: updErr.message, status: 500 };
+  if (!updatedRow) {
+    // Either the row vanished mid-update or the service-role write
+    // affected 0 rows. Either way the client thinks the save worked
+    // but the data didn't move — surface a real error instead.
+    return {
+      error: "Update affected 0 rows. The record may have been deleted.",
+      status: 404,
+    };
+  }
+
+  // Defensive read-back: compare what we asked Postgres to set against
+  // what came back. If any field didn't persist (silent trigger, RLS
+  // policy on a column, etc.), refuse to lie to the caller.
+  const drift = [];
+  for (const k of Object.keys(updates)) {
+    const want = updates[k];
+    const got  = updatedRow[k];
+    // Loose compare so null/"" and 1/true equivalents don't flag as drift.
+    const same =
+      (want === null && (got === null || got === undefined)) ||
+      (typeof want === "boolean" && !!got === want) ||
+      (Array.isArray(want) && Array.isArray(got) && JSON.stringify(want) === JSON.stringify(got)) ||
+      (String(want ?? "") === String(got ?? ""));
+    if (!same) drift.push({ field: k, sent: want, saved: got });
+  }
+  if (drift.length) {
+    console.warn("[org-mgmt] update drift", { kind, id, drift });
+    return {
+      error:
+        `Some fields didn't persist: ${drift.map((d) => d.field).join(", ")}. ` +
+        `Check column constraints or triggers.`,
+      status: 500,
+    };
+  }
 
   if (isActiveChange === true && beforeRow.is_active === false) {
     action = "reactivate";
@@ -649,7 +685,7 @@ async function updateOrgNode(supa, user, body) {
     after,
   });
 
-  return { ok: true };
+  return { ok: true, node: updatedRow };
 }
 
 // ---------- move (parent reassignment) ----------
