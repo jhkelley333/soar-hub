@@ -6,12 +6,22 @@ import { supabase } from "@/lib/supabase";
 import type {
   CreateTicketBody,
   CreateTicketResponse,
+  DecideApprovalBody,
   IssueLibraryResponse,
+  MessagesResponse,
+  RateVendorBody,
+  SaveIssueItemBody,
+  SaveVendorBody,
+  SendMessageBody,
   StatsResponse,
+  SubmitApprovalBody,
+  ThreadType,
   TicketsResponse,
   UpdateTicketBody,
   UploadPhotoBody,
   UploadPhotoResponse,
+  Vendor,
+  VendorsResponse,
 } from "./types";
 
 const FN = "/.netlify/functions/facilities-v2";
@@ -70,6 +80,71 @@ export function uploadPhoto(payload: UploadPhotoBody): Promise<UploadPhotoRespon
   return request<UploadPhotoResponse>(`${FN}?action=uploadPhoto`, {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export function submitApproval(payload: SubmitApprovalBody): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`${FN}?action=submitApproval`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function decideApproval(payload: DecideApprovalBody): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`${FN}?action=decideApproval`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchMessages(ticketId: string, threadType: ThreadType): Promise<MessagesResponse> {
+  return request<MessagesResponse>(
+    `${FN}?action=getMessages&ticketId=${encodeURIComponent(ticketId)}&threadType=${threadType}`,
+  );
+}
+
+export function sendMessage(payload: SendMessageBody): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`${FN}?action=sendMessage`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchVendors(): Promise<VendorsResponse> {
+  return request<VendorsResponse>(`${FN}?action=getVendors`);
+}
+
+export function searchVendors(q: string): Promise<{ ok: true; vendors: Vendor[] }> {
+  return request<{ ok: true; vendors: Vendor[] }>(
+    `${FN}?action=searchVendors&q=${encodeURIComponent(q)}`,
+  );
+}
+
+export function saveVendor(payload: SaveVendorBody): Promise<{ ok: true; vendor: Vendor }> {
+  return request<{ ok: true; vendor: Vendor }>(`${FN}?action=saveVendor`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function rateVendor(payload: RateVendorBody): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`${FN}?action=rateVendor`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function saveIssueItem(payload: SaveIssueItemBody): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`${FN}?action=saveIssueItem`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteIssueItem(id: string): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`${FN}?action=deleteIssueItem`, {
+    method: "POST",
+    body: JSON.stringify({ id }),
   });
 }
 
