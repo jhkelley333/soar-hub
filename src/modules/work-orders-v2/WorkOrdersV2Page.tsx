@@ -1,19 +1,30 @@
 // Work Orders V2 — admin-only test page at /admin/work-orders-v2.
-// Read + filter + status-update against netlify/functions/facilities-v2.
-// Not exposed in nav for non-admins; lives on the v2 branch only.
+// Read + filter + status-update + new-ticket + photo upload against
+// netlify/functions/facilities-v2. Not exposed in nav for non-admins;
+// lives on the v2 branch only.
 //
-// Scope (v1 of the V2 port):
+// Scope (v1.1 of the V2 port):
 //   * Stat cards (open / in progress / on hold / critical / aged)
 //   * Filter bar (status, priority, category, search, open-only)
+//   * "+ New Ticket" modal with issue typeahead + photo attach
 //   * Expandable ticket cards with detail + inline update form
+//   * Per-ticket "Add Photos" button (multi-file)
 //   * Activity timeline (last 5 ticket_updates)
-//   * Photo grid (read-only — uploads come in v2.1)
-// Skipped for now (TODO v2.1):
-//   * New-ticket modal, chat, approvals, vendor mgmt, issue library admin.
+//   * Photo grid (read + open in new tab)
+// Skipped for now (TODO v2.2):
+//   * Approval request/decide, chat, vendor mgmt, issue library admin.
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ChevronDown, ChevronUp, Loader2, RefreshCw } from "lucide-react";
+import {
+  AlertTriangle,
+  ChevronDown,
+  ChevronUp,
+  Image as ImageIcon,
+  Loader2,
+  Plus,
+  RefreshCw,
+} from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -24,7 +35,13 @@ import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { fetchStats, fetchTickets, updateTicket } from "./api";
+import {
+  fetchStats,
+  fetchTickets,
+  fileToBase64,
+  updateTicket,
+  uploadPhoto,
+} from "./api";
 import {
   TICKET_PRIORITIES,
   TICKET_STATUSES,
@@ -32,6 +49,7 @@ import {
   type TicketPriority,
   type TicketStatus,
 } from "./types";
+import { NewTicketModal } from "./NewTicketModal";
 
 const STATUS_TONE: Record<TicketStatus, "info" | "warning" | "success" | "danger" | "neutral"> = {
   "Received":              "info",
@@ -103,6 +121,7 @@ export function WorkOrdersV2Page() {
   const [search, setSearch] = useState("");
   const [openOnly, setOpenOnly] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [modalOpen, setModalOpen] = useState(false);
 
   const tickets = ticketsQ.data?.tickets ?? [];
   const filtered = useMemo(() => {
@@ -141,10 +160,16 @@ export function WorkOrdersV2Page() {
         title="Work Orders V2"
         description="Admin test page — facilities ticketing on Supabase. Lives at /admin/work-orders-v2 while the v2 module is in development."
         actions={
-          <Button variant="ghost" onClick={refetchAll}>
-            <RefreshCw className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
-            Refresh
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="primary" onClick={() => setModalOpen(true)}>
+              <Plus className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+              New Ticket
+            </Button>
+            <Button variant="ghost" onClick={refetchAll}>
+              <RefreshCw className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+              Refresh
+            </Button>
+          </div>
         }
       />
 
@@ -178,7 +203,7 @@ export function WorkOrdersV2Page() {
           title={tickets.length === 0 ? "No tickets yet" : "No tickets match these filters"}
           description={
             tickets.length === 0
-              ? "Once a request is submitted (UI or backend insert), it'll show up here."
+              ? "Click “New Ticket” above to submit a test request."
               : "Try clearing a filter or the search box."
           }
         />
@@ -195,10 +220,25 @@ export function WorkOrdersV2Page() {
               toast.push("Ticket updated.", "success");
               refetchAll();
             }}
+            onPhotoUploaded={(count) => {
+              toast.push(`${count} photo${count === 1 ? "" : "s"} uploaded.`, "success");
+              refetchAll();
+            }}
             onError={(e) => toast.push(e, "error")}
           />
         ))}
       </div>
+
+      <NewTicketModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        onCreated={(woNumber) => {
+          setModalOpen(false);
+          toast.push(`Ticket ${woNumber} created.`, "success");
+          refetchAll();
+        }}
+        onError={(msg) => toast.push(msg, "error")}
+      />
     </>
   );
 }
@@ -334,12 +374,14 @@ function TicketCard({
   expanded,
   onToggle,
   onUpdated,
+  onPhotoUploaded,
   onError,
 }: {
   ticket: Ticket;
   expanded: boolean;
   onToggle: () => void;
   onUpdated: () => void;
+  onPhotoUploaded: (count: number) => void;
   onError: (msg: string) => void;
 }) {
   const days = daysOpen(ticket);
@@ -399,7 +441,11 @@ function TicketCard({
             <DescriptionBlock label="Latest Comment" value={ticket.latest_comment} />
           )}
 
-          {(ticket.ticket_photos?.length ?? 0) > 0 && <PhotoStrip photos={ticket.ticket_photos!} />}
+          <PhotoSection
+            ticket={ticket}
+            onUploaded={onPhotoUploaded}
+            onError={onError}
+          />
 
           <UpdateForm ticket={ticket} onUpdated={onUpdated} onError={onError} />
 
@@ -440,31 +486,96 @@ function DescriptionBlock({ label, value }: { label: string; value: string | nul
   );
 }
 
-function PhotoStrip({ photos }: { photos: Ticket["ticket_photos"] }) {
-  if (!photos?.length) return null;
+// Combined photo grid + per-ticket uploader. The hidden <input> picks
+// multi-file image/* and the upload loop runs sequentially so a single
+// failure surfaces clearly instead of getting swallowed in Promise.all.
+function PhotoSection({
+  ticket,
+  onUploaded,
+  onError,
+}: {
+  ticket: Ticket;
+  onUploaded: (count: number) => void;
+  onError: (msg: string) => void;
+}) {
+  const photos = ticket.ticket_photos ?? [];
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const upload = useMutation({
+    mutationFn: async (files: File[]) => {
+      let count = 0;
+      for (const f of files) {
+        const photoData = await fileToBase64(f);
+        await uploadPhoto({
+          id: ticket.id,
+          photoData,
+          photoType: f.type || "image/jpeg",
+          photoName: f.name,
+          uploadType: "update",
+        });
+        count++;
+      }
+      return count;
+    },
+    onSuccess: (count) => onUploaded(count),
+    onError: (e: unknown) => onError(e instanceof Error ? e.message : "Upload failed."),
+  });
+
+  function handleFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []).slice(0, 5);
+    e.target.value = "";
+    if (files.length === 0) return;
+    upload.mutate(files);
+  }
+
   return (
     <div>
-      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-        Photos ({photos.length})
+      <div className="mb-1.5 flex items-center justify-between">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+          Photos {photos.length > 0 && `(${photos.length})`}
+        </div>
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={upload.isPending}
+          className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-600 transition hover:border-accent hover:text-midnight disabled:opacity-50"
+        >
+          {upload.isPending
+            ? <Loader2 className="h-3 w-3 animate-spin" />
+            : <ImageIcon className="h-3 w-3" strokeWidth={1.75} />}
+          {upload.isPending ? "Uploading…" : "Add Photos"}
+        </button>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={handleFiles}
+        />
       </div>
-      <div className="flex flex-wrap gap-2">
-        {photos.map((p) => (
-          <a
-            key={p.id}
-            href={p.file_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block h-16 w-16 overflow-hidden rounded border border-zinc-200 bg-white"
-          >
-            <img
-              src={p.file_url}
-              alt={p.file_name || ""}
-              className="h-full w-full object-cover"
-              loading="lazy"
-            />
-          </a>
-        ))}
-      </div>
+      {photos.length === 0 ? (
+        <div className="text-xs text-zinc-500">No photos yet.</div>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {photos.map((p) => (
+            <a
+              key={p.id}
+              href={p.file_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="block h-16 w-16 overflow-hidden rounded border border-zinc-200 bg-white"
+            >
+              <img
+                src={p.file_url}
+                alt={p.file_name || ""}
+                className="h-full w-full object-cover"
+                loading="lazy"
+              />
+            </a>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
