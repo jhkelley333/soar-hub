@@ -16,8 +16,8 @@
 //
 // Lives on the `claude/work-orders-v2` branch — NOT shipped to main.
 // Migration 0036 must be applied before this function will work.
-// Table names match the user's original prototype schema (bare names,
-// no `wo2_` prefix). Storage bucket is `ticket-photos` (private).
+// Table names match the user's original prototype schema (bare names).
+// Storage bucket is `wo2-ticket-photos` (public).
 
 import { createClient } from "@supabase/supabase-js";
 
@@ -27,6 +27,8 @@ const SUPABASE_URL =
 const SERVICE_KEY =
   process.env.SUPABASE_SERVICE_ROLE_KEY ||
   process.env.SUPABASE_SERVICE_KEY;
+
+const PHOTOS_BUCKET = "wo2-ticket-photos";
 
 function getSupabase() {
   return createClient(SUPABASE_URL, SERVICE_KEY, {
@@ -455,7 +457,7 @@ export const handler = async (event) => {
       const fileName = `${id}/${Date.now()}.${ext}`;
 
       const { error: uploadError } = await supabase.storage
-        .from("ticket-photos")
+        .from(PHOTOS_BUCKET)
         .upload(fileName, buf, {
           contentType: photoType || "image/jpeg",
           upsert: false,
@@ -465,7 +467,7 @@ export const handler = async (event) => {
         throw uploadError;
       }
       const { data: { publicUrl } } = supabase.storage
-        .from("ticket-photos")
+        .from(PHOTOS_BUCKET)
         .getPublicUrl(fileName);
 
       const { data: photo } = await supabase
