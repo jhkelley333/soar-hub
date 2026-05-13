@@ -4,9 +4,14 @@
 
 import { supabase } from "@/lib/supabase";
 import type {
+  CreateTicketBody,
+  CreateTicketResponse,
+  IssueLibraryResponse,
   StatsResponse,
   TicketsResponse,
   UpdateTicketBody,
+  UploadPhotoBody,
+  UploadPhotoResponse,
 } from "./types";
 
 const FN = "/.netlify/functions/facilities-v2";
@@ -47,5 +52,42 @@ export function updateTicket(payload: UpdateTicketBody): Promise<{ ok: true }> {
   return request<{ ok: true }>(`${FN}?action=updateTicket`, {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export function fetchIssueLibrary(): Promise<IssueLibraryResponse> {
+  return request<IssueLibraryResponse>(`${FN}?action=getIssueLibrary`);
+}
+
+export function createTicket(payload: CreateTicketBody): Promise<CreateTicketResponse> {
+  return request<CreateTicketResponse>(`${FN}?action=createTicket`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function uploadPhoto(payload: UploadPhotoBody): Promise<UploadPhotoResponse> {
+  return request<UploadPhotoResponse>(`${FN}?action=uploadPhoto`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+// Reads a File into a base64 string (no data: prefix). Used by the
+// new-ticket modal + the "Add Photos" button on each ticket card.
+export function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string") {
+        reject(new Error("Failed to read file"));
+        return;
+      }
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error || new Error("FileReader error"));
+    reader.readAsDataURL(file);
   });
 }
