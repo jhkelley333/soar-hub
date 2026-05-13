@@ -7,9 +7,14 @@ import type {
   CreateTicketBody,
   CreateTicketResponse,
   DecideApprovalBody,
+  EmailTemplatesResponse,
+  EmailTemplate,
   IssueLibraryResponse,
   MessagesResponse,
+  PreviewEmailTemplateBody,
+  PreviewEmailTemplateResponse,
   RateVendorBody,
+  SaveEmailTemplateBody,
   SaveIssueItemBody,
   SaveVendorBody,
   SendMessageBody,
@@ -145,6 +150,24 @@ export function deleteIssueItem(id: string): Promise<{ ok: true }> {
   return request<{ ok: true }>(`${FN}?action=deleteIssueItem`, {
     method: "POST",
     body: JSON.stringify({ id }),
+  });
+}
+
+export function fetchEmailTemplates(): Promise<EmailTemplatesResponse> {
+  return request<EmailTemplatesResponse>(`${FN}?action=getEmailTemplates`);
+}
+
+export function saveEmailTemplate(payload: SaveEmailTemplateBody): Promise<{ ok: true; template: EmailTemplate }> {
+  return request<{ ok: true; template: EmailTemplate }>(`${FN}?action=saveEmailTemplate`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function previewEmailTemplate(payload: PreviewEmailTemplateBody): Promise<PreviewEmailTemplateResponse> {
+  return request<PreviewEmailTemplateResponse>(`${FN}?action=previewEmailTemplate`, {
+    method: "POST",
+    body: JSON.stringify(payload),
   });
 }
 
