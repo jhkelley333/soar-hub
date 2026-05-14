@@ -79,13 +79,18 @@ const CATEGORIES = [
 ];
 
 type TabId = "tickets" | "vendors" | "library" | "troubleshooting" | "email-templates" | "vendor-qr";
-const TABS: { id: TabId; label: string; adminOnly?: boolean }[] = [
+const TABS: {
+  id: TabId;
+  label: string;
+  // Roles allowed to see the tab. If omitted, everyone in the BETA cohort sees it.
+  roles?: string[];
+}[] = [
   { id: "tickets", label: "Tickets" },
   { id: "vendors", label: "Vendors" },
   { id: "library", label: "Issue Library" },
   { id: "troubleshooting", label: "Troubleshooting" },
-  { id: "email-templates", label: "Email Templates" },
-  { id: "vendor-qr", label: "Vendor QR", adminOnly: true },
+  { id: "email-templates", label: "Email Templates", roles: ["admin"] },
+  { id: "vendor-qr", label: "Vendor QR", roles: ["sdo", "rvp", "vp", "coo", "admin"] },
 ];
 
 // Caller's role comes from the real auth context now (PR 2). The route
@@ -132,7 +137,7 @@ export function WorkOrdersV2Page() {
 
       <div className="mb-4 flex border-b border-zinc-200">
         {TABS
-          .filter((t) => !t.adminOnly || callerRole === "admin")
+          .filter((t) => !t.roles || t.roles.includes(callerRole))
           .map((t) => (
             <button
               key={t.id}
@@ -155,7 +160,9 @@ export function WorkOrdersV2Page() {
       {tab === "library" && <IssueLibraryTab />}
       {tab === "troubleshooting" && <TroubleshootingTipsTab />}
       {tab === "email-templates" && <EmailTemplatesTab />}
-      {tab === "vendor-qr" && callerRole === "admin" && <VendorPortalAdminTab />}
+      {tab === "vendor-qr"
+        && ["sdo", "rvp", "vp", "coo", "admin"].includes(callerRole)
+        && <VendorPortalAdminTab />}
     </>
   );
 }
