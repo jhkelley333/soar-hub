@@ -47,6 +47,11 @@ import { VendorsTab } from "./VendorsTab";
 import { IssueLibraryTab } from "./IssueLibraryTab";
 import { TroubleshootingTipsTab } from "./TroubleshootingTipsTab";
 import { EmailTemplatesTab } from "./EmailTemplatesTab";
+import { StatusBar } from "./StatusBar";
+import { TicketActionBar } from "./TicketActionBar";
+import { TicketActivityFeed } from "./TicketActivityFeed";
+import { useAuth } from "@/auth/AuthProvider";
+import { useFlag } from "@/lib/flags";
 
 const STATUS_TONE: Record<TicketStatus, "info" | "warning" | "success" | "danger" | "neutral"> = {
   "submitted":   "info",
@@ -82,10 +87,9 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "email-templates", label: "Email Templates" },
 ];
 
-// Route is admin-only, so we can treat the caller as admin for any
-// child-component role checks. If the gate is widened later, replace
-// this with a real auth context lookup.
-const CALLER_ROLE = "admin";
+// Caller's role comes from the real auth context now (PR 2). The route
+// is opened to field tiers during BETA; legacy hardcoded admin role is
+// gone. Sub-components that need the role take it as a prop.
 
 function daysOpen(t: Ticket): number | null {
   if (!t.date_submitted) return null;
@@ -110,6 +114,8 @@ function fmtMoney(v: number | string | null) {
 
 export function WorkOrdersV2Page() {
   const [tab, setTab] = useState<TabId>("tickets");
+  const { profile } = useAuth();
+  const callerRole = profile?.role || "gm"; // safe default; backend re-checks every action
 
   return (
     <>
@@ -142,7 +148,7 @@ export function WorkOrdersV2Page() {
       </div>
 
       {tab === "tickets" && <TicketsTab />}
-      {tab === "vendors" && <VendorsTab callerRole={CALLER_ROLE} />}
+      {tab === "vendors" && <VendorsTab callerRole={callerRole} />}
       {tab === "library" && <IssueLibraryTab />}
       {tab === "troubleshooting" && <TroubleshootingTipsTab />}
       {tab === "email-templates" && <EmailTemplatesTab />}
@@ -155,6 +161,9 @@ export function WorkOrdersV2Page() {
 function TicketsTab() {
   const toast = useToast();
   const qc = useQueryClient();
+  const { profile } = useAuth();
+  const callerRole = profile?.role || "gm";
+  const statusV2Ui = useFlag("wo2_status_v2");
 
   const ticketsQ = useQuery({
     queryKey: ["wo2", "tickets"],
@@ -261,6 +270,8 @@ function TicketsTab() {
             key={t.id}
             ticket={t}
             expanded={expanded.has(t.id)}
+            callerRole={callerRole}
+            statusV2Ui={statusV2Ui}
             onToggle={() => toggleExpand(t.id)}
             onUpdated={() => {
               toast.push("Ticket updated.", "success");
@@ -427,6 +438,8 @@ function TicketCard({
   onPhotoUploaded,
   onApprovalChanged,
   onError,
+  callerRole,
+  statusV2Ui,
 }: {
   ticket: Ticket;
   expanded: boolean;
@@ -435,6 +448,8 @@ function TicketCard({
   onPhotoUploaded: (count: number) => void;
   onApprovalChanged: () => void;
   onError: (msg: string) => void;
+  callerRole: string;
+  statusV2Ui: boolean;
 }) {
   const days = daysOpen(ticket);
   const open = isOpenStatus(ticket.status);
@@ -488,6 +503,20 @@ function TicketCard({
 
       {expanded && (
         <CardBody className="border-t border-zinc-100 bg-zinc-50/60 space-y-4">
+          {statusV2Ui && (
+            <div className="space-y-2 rounded-md border border-zinc-200 bg-white p-3">
+              <StatusBar
+                status={ticket.status}
+                pauseState={ticket.pause_state}
+                closedByStore={ticket.closed_by_store}
+              />
+              <TicketActionBar
+                ticketId={ticket.id}
+                status={ticket.status}
+                closedAt={ticket.closed_at}
+              />
+            </div>
+          )}
           <DetailGrid ticket={ticket} />
           <DescriptionBlock label="Issue Description" value={ticket.issue_description} />
           {ticket.latest_comment && (
@@ -502,14 +531,28 @@ function TicketCard({
 
           <ApprovalSection
             ticket={ticket}
-            callerRole={CALLER_ROLE}
+            callerRole={callerRole}
             onChanged={onApprovalChanged}
             onError={onError}
           />
 
-          <UpdateForm ticket={ticket} onUpdated={onUpdated} onError={onError} />
+          {/* Legacy edit form. When the new status-bar UI is on, this
+              still renders the non-status fields (notes / vendor / cost
+              / priority / business-critical) but hides the status
+              dropdown — transitions go through TicketActionBar above. */}
+          <UpdateForm
+            ticket={ticket}
+            onUpdated={onUpdated}
+            onError={onError}
+            hideStatusField={statusV2Ui}
+          />
 
-          {(ticket.ticket_updates?.length ?? 0) > 0 && <Activity updates={ticket.ticket_updates!} />}
+          {statusV2Ui ? (
+            <ActivityFeedPanel ticketId={ticket.id} />
+          ) : (
+            (ticket.ticket_updates?.length ?? 0) > 0 &&
+              <Activity updates={ticket.ticket_updates!} />
+          )}
 
           <TicketChat ticketId={ticket.id} onError={onError} />
         </CardBody>
@@ -652,6 +695,17 @@ function PhotoSection({
   );
 }
 
+function ActivityFeedPanel({ ticketId }: { ticketId: string }) {
+  return (
+    <div>
+      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+        Activity
+      </div>
+      <TicketActivityFeed ticketId={ticketId} />
+    </div>
+  );
+}
+
 function Activity({ updates }: { updates: Ticket["ticket_updates"] }) {
   if (!updates?.length) return null;
   const sorted = [...updates]
@@ -683,10 +737,12 @@ function UpdateForm({
   ticket,
   onUpdated,
   onError,
+  hideStatusField = false,
 }: {
   ticket: Ticket;
   onUpdated: () => void;
   onError: (msg: string) => void;
+  hideStatusField?: boolean;
 }) {
   const [status, setStatus] = useState<TicketStatus>(ticket.status);
   const [priority, setPriority] = useState<TicketPriority>(ticket.priority);
@@ -695,12 +751,16 @@ function UpdateForm({
 
   const mut = useMutation({
     mutationFn: () => {
-      if (status === "closed" && !notes.trim()) {
+      // Only the legacy dropdown can send a status change through here.
+      // When statusV2Ui is on, the action bar handles transitions and
+      // this field is hidden — status stays equal to ticket.status, so
+      // the diff below excludes it.
+      if (!hideStatusField && status === "closed" && !notes.trim()) {
         return Promise.reject(new Error("Notes are required to close a ticket."));
       }
       return updateTicket({
         id: ticket.id,
-        status: status !== ticket.status ? status : undefined,
+        status: !hideStatusField && status !== ticket.status ? status : undefined,
         priority: priority !== ticket.priority ? priority : undefined,
         vendorName: vendorName !== (ticket.vendor_name || "") ? vendorName : undefined,
         notes: notes.trim() || undefined,
@@ -714,7 +774,7 @@ function UpdateForm({
   });
 
   const dirty =
-    status !== ticket.status ||
+    (!hideStatusField && status !== ticket.status) ||
     priority !== ticket.priority ||
     vendorName !== (ticket.vendor_name || "") ||
     notes.trim().length > 0;
@@ -725,17 +785,19 @@ function UpdateForm({
         Update Ticket
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div>
-          <Label htmlFor={`wo2-status-${ticket.id}`}>Status</Label>
-          <select
-            id={`wo2-status-${ticket.id}`}
-            value={status}
-            onChange={(e) => setStatus(e.target.value as TicketStatus)}
-            className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-          >
-            {TICKET_STATUSES.map((s) => <option key={s} value={s}>{statusLabel(s)}</option>)}
-          </select>
-        </div>
+        {!hideStatusField && (
+          <div>
+            <Label htmlFor={`wo2-status-${ticket.id}`}>Status</Label>
+            <select
+              id={`wo2-status-${ticket.id}`}
+              value={status}
+              onChange={(e) => setStatus(e.target.value as TicketStatus)}
+              className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            >
+              {TICKET_STATUSES.map((s) => <option key={s} value={s}>{statusLabel(s)}</option>)}
+            </select>
+          </div>
+        )}
         <div>
           <Label htmlFor={`wo2-priority-${ticket.id}`}>Priority</Label>
           <select
