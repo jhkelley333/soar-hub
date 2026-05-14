@@ -152,9 +152,21 @@ function describe(a: TicketActivity): string {
     case "status_changed":
       return `Status: ${statusLabel(String(d?.from ?? "") as TicketStatus)} → ${statusLabel(String(d?.to ?? "") as TicketStatus)}`;
     case "pause_state_changed":
-      return d?.auto_reset
-        ? "Pause cleared (auto)"
-        : `Pause: ${d?.from || "none"} → ${d?.to || "none"}`;
+      if (d?.auto_reset) return "Pause cleared (auto)";
+      // Special-case awaiting_parts since it's the only pause with
+      // attribution metadata (vendor vs customer ordering). Read
+      // nicer than a literal enum diff.
+      if (d?.to === "awaiting_parts") {
+        return d?.ordered_by === "vendor"
+          ? "Parts on order — vendor will order"
+          : d?.ordered_by === "customer"
+            ? "Parts on order — customer will order"
+            : "Parts on order";
+      }
+      if (d?.from === "awaiting_parts" && (d?.to === "none" || !d?.to)) {
+        return "Parts received — work resumed";
+      }
+      return `Pause: ${d?.from || "none"} → ${d?.to || "none"}`;
     case "assigned":
       return d?.vendor_name ? `Vendor assigned: ${d.vendor_name}` : "Vendor assigned";
     case "eta_set":
@@ -196,6 +208,11 @@ function detailLine(a: TicketActivity): string | null {
       return d?.notes ? String(d.notes) : null;
     case "approval_decided":
       return d?.decision_notes ? String(d.decision_notes) : null;
+    case "pause_state_changed":
+      // Show the parts notes (part #s, ETA, vendor PO) when we have
+      // them. Falls through to a.notes for other pause types.
+      if (d?.to === "awaiting_parts" && d?.notes) return String(d.notes);
+      return a.notes || null;
     default:
       return a.notes || null;
   }

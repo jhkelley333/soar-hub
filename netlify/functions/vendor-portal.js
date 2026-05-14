@@ -696,10 +696,17 @@ export const handler = async (event) => {
           old_value: fromStatus, new_value: newStatus,
           event_type: "status_changed",
           event_data: {
+            // describe() in TicketActivityFeed reads from / to off
+            // event_data, not the old_value / new_value columns, so
+            // both have to be populated for the row to render as
+            // "Status: X → Y" instead of "Status: — → —".
+            from: fromStatus,
+            to:   newStatus,
+            reason_code: "parts_on_order",
+            reason_text: reason,
             vendor_self_report: true,
             acted_on_behalf_of_vendor: true,
             vendor_identity: identity,
-            reason: "parts_on_order",
           },
           visibility: "all",
         });
@@ -709,8 +716,13 @@ export const handler = async (event) => {
         user_role: "vendor",
         update_type: "pause_state_change",
         old_value: fromPause, new_value: "awaiting_parts",
-        event_type: "pause_state_change",
+        // Note "ed" suffix — matches the canonical event_type used
+        // by facilities-v2 and consumed by TicketActivityFeed's
+        // describe() switch.
+        event_type: "pause_state_changed",
         event_data: {
+          from: fromPause,
+          to:   "awaiting_parts",
           ordered_by: orderedBy,
           reason,
           notes: body.notes || null,
