@@ -17,6 +17,7 @@ import { fetchRecentMessages } from "@/modules/work-orders-v2/api";
 import type { RecentMessage } from "@/modules/work-orders-v2/types";
 import { supabase } from "@/lib/supabase";
 import { formatPhoneForDisplay } from "@/lib/phone";
+import { OpenWorkOrdersWidget } from "./OpenWorkOrdersWidget";
 
 const SDO_REVIEW_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
 
@@ -160,6 +161,8 @@ export function DashboardPage() {
       </div>
 
       {profile && SDO_REVIEW_ROLES.has(profile.role) && <SdoQueueWidget />}
+
+      {profile && WO2_BETA_ROLES.has(profile.role) && <OpenWorkOrdersWidget />}
 
       {profile && WO2_BETA_ROLES.has(profile.role) && <RecentTicketMessagesWidget />}
 

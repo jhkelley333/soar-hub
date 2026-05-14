@@ -44,13 +44,39 @@ async function authHeaders(): Promise<HeadersInit> {
   return { Authorization: `Bearer ${token}` };
 }
 
+// supabase-js usually auto-refreshes the access token ~60s before
+// expiry, but a backgrounded tab or a sleeping device can miss the
+// refresh window — getSession() then returns a stale token and
+// every facilities-v2 call comes back as "Not authenticated."
+// We bounce off a single 401 by forcing a refresh and retrying.
+async function refreshSessionAndGetToken(): Promise<string | null> {
+  const { data, error } = await supabase.auth.refreshSession();
+  if (error) {
+    console.warn("[wo2/api] refreshSession failed", error);
+    return null;
+  }
+  return data.session?.access_token ?? null;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = {
     ...(await authHeaders()),
     ...(init.body ? { "Content-Type": "application/json" } : {}),
     ...(init.headers ?? {}),
   };
-  const res = await fetch(path, { ...init, headers });
+  let res = await fetch(path, { ...init, headers });
+  // Retry once after a forced session refresh — handles the
+  // background-tab stale-token case described above.
+  if (res.status === 401) {
+    const fresh = await refreshSessionAndGetToken();
+    if (fresh) {
+      const retryHeaders = {
+        ...headers,
+        Authorization: `Bearer ${fresh}`,
+      };
+      res = await fetch(path, { ...init, headers: retryHeaders });
+    }
+  }
   const body = await res.json().catch(() => ({}));
   if (!res.ok || (body as { ok?: boolean }).ok === false) {
     throw new Error(
@@ -67,6 +93,37 @@ export function fetchTickets(): Promise<TicketsResponse> {
 
 export function fetchStats(): Promise<StatsResponse> {
   return request<StatsResponse>(`${FN}?action=getStats`);
+}
+
+export interface OpenAlertItem {
+  id: string;
+  wo_number: string | null;
+  store_number: string | null;
+  summary: string;
+  priority: string | null;
+  status: string;
+  timestamp: string;
+  cost_estimate?: number | null;
+  approval_tier?: string | null;
+  is_business_critical?: boolean | null;
+}
+
+export interface OpenAlertGroup {
+  key: "new24h" | "awaitingApproval" | "emergencies" | "stuck";
+  label: string;
+  tone: "info" | "warning" | "danger" | "neutral";
+  count: number;
+  items: OpenAlertItem[];
+}
+
+export interface OpenAlertsResponse {
+  ok: true;
+  groups: OpenAlertGroup[];
+  total_unique_tickets: number;
+}
+
+export function fetchOpenWorkOrderAlerts(): Promise<OpenAlertsResponse> {
+  return request<OpenAlertsResponse>(`${FN}?action=getOpenWorkOrderAlerts`);
 }
 
 export function updateTicket(payload: UpdateTicketBody): Promise<{ ok: true }> {

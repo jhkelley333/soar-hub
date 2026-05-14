@@ -84,6 +84,33 @@ function roleLevel(role) {
   return levels[String(role || "").toLowerCase()] || 99;
 }
 
+// Maps the caller's role to the approval tier label(s) they can act
+// on. Strings here mirror the literal values stored in
+// ticket_approvals.approval_tier (set by submitApproval and the
+// vendor-portal submitQuote flow).
+function approvalTiersForRole(role) {
+  switch (String(role || "").toLowerCase()) {
+    case "do":    return ["DO < $500"];
+    case "sdo":   return ["SDO $501-$1000"];
+    case "rvp":
+    case "vp":
+    case "coo":   return ["VP $1001-$1750"];
+    case "admin": return ["DO < $500", "SDO $501-$1000", "VP $1001-$1750"];
+    default:      return [];
+  }
+}
+
+// Empty bucket scaffold so the dashboard widget always renders the
+// same four sections even when a caller has zero stores in scope.
+function emptyAlertGroups() {
+  return [
+    { key: "new24h",           label: "New (last 24h)",                tone: "info",    count: 0, items: [] },
+    { key: "awaitingApproval", label: "Awaiting your approval",        tone: "warning", count: 0, items: [] },
+    { key: "emergencies",      label: "Emergency / Business Critical open", tone: "danger", count: 0, items: [] },
+    { key: "stuck",            label: "No activity in 3+ days",        tone: "neutral", count: 0, items: [] },
+  ];
+}
+
 async function getStoresForUser(supabase, profile) {
   const role = String(profile.role || "").toLowerCase();
   if (["admin", "coo", "vp", "sdo", "rvp"].includes(role)) {
@@ -1468,6 +1495,179 @@ export const handler = async (event) => {
         created_at:   m.created_at,
       }));
       return respond(200, { ok: true, messages, count: messages.length });
+    }
+
+    // ── OPEN WORK ORDER ALERTS ──
+    // Powers the dashboard bell widget. Returns a small set of
+    // actionable buckets, scoped to the caller's visible stores:
+    //   * new24h        — submitted in the last 24h
+    //   * awaitingApproval — pending quotes routed to the caller's
+    //                        approval tier (DO/SDO/VP)
+    //   * emergencies   — Emergency priority OR business-critical,
+    //                     not yet in a terminal state
+    //   * stuck         — non-terminal tickets with no update in 72h
+    //
+    // Each bucket caps at 5 preview items + a total count. Total
+    // unique tickets across buckets returned for the badge so a
+    // ticket counted in two buckets isn't double-counted on the bell.
+    if (action === "getOpenWorkOrderAlerts") {
+      const access = await getStoresForUser(supabase, profile);
+      const role = String(profile.role || "").toLowerCase();
+
+      // Resolve store_number list. Top-of-house roles get "all" but
+      // we still pull the full list for the .in() filter.
+      let visibleStoreNumbers = null;
+      if (access.all) {
+        const { data } = await supabase.from("stores").select("number").eq("is_active", true);
+        visibleStoreNumbers = (data || []).map((s) => String(s.number));
+      } else {
+        visibleStoreNumbers = (access.stores || []).map((s) => String(s.number));
+      }
+      if (!visibleStoreNumbers.length) {
+        return respond(200, {
+          ok: true,
+          groups: emptyAlertGroups(role),
+          total_unique_tickets: 0,
+        });
+      }
+
+      const NON_TERMINAL = ["submitted", "in_progress", "scheduled", "on_site"];
+      const dayAgo  = new Date(Date.now() - 24 * 3600_000).toISOString();
+      const t72ago  = new Date(Date.now() - 72 * 3600_000).toISOString();
+
+      // 1. New (24h) — just-submitted
+      const { data: newRows } = await supabase
+        .from("tickets")
+        .select("id, wo_number, store_number, asset_type, category, priority, status, date_submitted")
+        .in("store_number", visibleStoreNumbers)
+        .eq("status", "submitted")
+        .gte("date_submitted", dayAgo)
+        .order("date_submitted", { ascending: false });
+
+      // 2. Emergencies / business critical, still open
+      const { data: emergencyRows } = await supabase
+        .from("tickets")
+        .select("id, wo_number, store_number, asset_type, category, priority, status, is_business_critical, date_submitted")
+        .in("store_number", visibleStoreNumbers)
+        .in("status", NON_TERMINAL)
+        .or("priority.eq.Emergency,is_business_critical.eq.true")
+        .order("date_submitted", { ascending: false });
+
+      // 3. Stuck — non-terminal, no update in 72h
+      const { data: stuckRows } = await supabase
+        .from("tickets")
+        .select("id, wo_number, store_number, asset_type, category, priority, status, updated_at")
+        .in("store_number", visibleStoreNumbers)
+        .in("status", NON_TERMINAL)
+        .lte("updated_at", t72ago)
+        .order("updated_at", { ascending: true });
+
+      // 4. Awaiting your approval — pending quotes in caller's tier.
+      // GMs / shift managers don't approve quotes; they get an empty
+      // bucket. Admin tier sees every pending tier.
+      const callerTiers = approvalTiersForRole(role);
+      let approvalRows = [];
+      if (callerTiers.length) {
+        const { data } = await supabase
+          .from("ticket_approvals")
+          .select(`
+            id, ticket_id, approval_tier, requested_by, notes, created_at,
+            tickets!inner(id, wo_number, store_number, asset_type, category,
+                          priority, status, cost_estimate)
+          `)
+          .eq("status", "Pending")
+          .in("tickets.store_number", visibleStoreNumbers)
+          .in("approval_tier", callerTiers)
+          .order("created_at", { ascending: false });
+        approvalRows = data || [];
+      }
+
+      const groups = [
+        {
+          key:   "new24h",
+          label: "New (last 24h)",
+          tone:  "info",
+          count: (newRows || []).length,
+          items: (newRows || []).slice(0, 5).map((t) => ({
+            id:           t.id,
+            wo_number:    t.wo_number,
+            store_number: t.store_number,
+            summary:      t.asset_type || t.category || "Service Request",
+            priority:     t.priority,
+            status:       t.status,
+            timestamp:    t.date_submitted,
+          })),
+        },
+        {
+          key:   "awaitingApproval",
+          label: "Awaiting your approval",
+          tone:  "warning",
+          count: approvalRows.length,
+          items: approvalRows.slice(0, 5).map((a) => ({
+            id:            a.tickets?.id || a.ticket_id,
+            wo_number:     a.tickets?.wo_number || "—",
+            store_number:  a.tickets?.store_number || null,
+            summary:       a.tickets?.asset_type || a.tickets?.category || "Quote",
+            priority:      a.tickets?.priority || "Standard",
+            status:        a.tickets?.status || "submitted",
+            timestamp:     a.created_at,
+            cost_estimate: a.tickets?.cost_estimate ?? null,
+            approval_tier: a.approval_tier,
+          })),
+        },
+        {
+          key:   "emergencies",
+          label: "Emergency / Business Critical open",
+          tone:  "danger",
+          count: (emergencyRows || []).length,
+          items: (emergencyRows || []).slice(0, 5).map((t) => ({
+            id:           t.id,
+            wo_number:    t.wo_number,
+            store_number: t.store_number,
+            summary:      t.asset_type || t.category || "Service Request",
+            priority:     t.priority,
+            status:       t.status,
+            timestamp:    t.date_submitted,
+            is_business_critical: t.is_business_critical,
+          })),
+        },
+        {
+          key:   "stuck",
+          label: "No activity in 3+ days",
+          tone:  "neutral",
+          count: (stuckRows || []).length,
+          items: (stuckRows || []).slice(0, 5).map((t) => ({
+            id:           t.id,
+            wo_number:    t.wo_number,
+            store_number: t.store_number,
+            summary:      t.asset_type || t.category || "Service Request",
+            priority:     t.priority,
+            status:       t.status,
+            timestamp:    t.updated_at,
+          })),
+        },
+      ];
+
+      // Total unique tickets across all buckets so the bell badge
+      // doesn't double-count emergencies that are also stuck, etc.
+      const ids = new Set();
+      for (const g of groups) for (const it of g.items) if (it.id) ids.add(it.id);
+      // For the badge we want the FULL counts not just preview items.
+      // Build a separate id set from raw rows to capture beyond preview.
+      const allIds = new Set();
+      for (const t of newRows       || []) allIds.add(t.id);
+      for (const t of emergencyRows || []) allIds.add(t.id);
+      for (const t of stuckRows     || []) allIds.add(t.id);
+      for (const a of approvalRows) {
+        const tid = a.tickets?.id || a.ticket_id;
+        if (tid) allIds.add(tid);
+      }
+
+      return respond(200, {
+        ok: true,
+        groups,
+        total_unique_tickets: allIds.size,
+      });
     }
 
     // ── MESSAGES ──
