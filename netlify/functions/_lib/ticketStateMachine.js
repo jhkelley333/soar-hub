@@ -166,12 +166,22 @@ const TRANSITIONS = {
   "on_site->in_progress":     { validate: () => null,
                                 sideEffects: () => ({}) },
 
-  "completed->closed":        { validate: () => null, // resolution_category optional — defaults below
+  "completed->closed":        { validate: () => null,
+                                // resolution_category is OPTIONAL on this
+                                // transition. Store-side "Confirm Fix" sends
+                                // no payload → both columns stay null and
+                                // we mark closed_by_store=true. Admin closes
+                                // can pass either field. Reporting infers
+                                // "verified" from (status='closed' AND
+                                // completed_at IS NOT NULL).
                                 sideEffects: (p) => ({
-                                  resolution_category:
-                                    p.resolution_category || "completed_and_verified",
-                                  admin_close_reason:
-                                    p.admin_close_reason || "completed_and_verified",
+                                  ...(p.resolution_category
+                                    ? { resolution_category: p.resolution_category }
+                                    : {}),
+                                  ...(p.admin_close_reason
+                                    ? { admin_close_reason: p.admin_close_reason }
+                                    : {}),
+                                  closed_by_store: !p.admin_close_reason,
                                   closed_at: nowIso(),
                                 }) },
 
