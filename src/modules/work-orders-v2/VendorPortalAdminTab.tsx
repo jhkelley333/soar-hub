@@ -213,41 +213,53 @@ export function VendorPortalAdminTab() {
         </div>
       </div>
 
-      {q.isLoading && (
-        <div className="space-y-3">
-          <Skeleton className="h-28 w-full" />
-          <Skeleton className="h-28 w-full" />
-        </div>
-      )}
-      {q.isError && (
-        <EmptyState
-          title="Couldn't load tokens"
-          description={(q.error as Error)?.message ?? "Try again."}
-        />
-      )}
-      {!q.isLoading && !q.isError && tokens.length === 0 && (
-        <EmptyState
-          title="No vendor QR tokens yet"
-          description="Click 'New QR' to mint one for a store."
-        />
-      )}
+      {/* Recent Vendor Activity sits ABOVE the token list — when an
+          admin opens this tab they're usually looking for "what just
+          happened" first, not "what tokens exist." Token management
+          is below, where they go when they need to mint or revoke. */}
+      <RecentActivitySection />
 
-      <div className="space-y-3">
-        {tokens.map((t) => (
-          <TokenRow
-            key={t.id}
-            token={t}
-            onRevoke={() =>
-              revokeToken(t.id).then(
-                () => {
-                  toast.push("Token revoked.", "success");
-                  qc.invalidateQueries({ queryKey: ["wo2", "qr-tokens"] });
-                },
-                (e: Error) => toast.push(e.message, "error"),
-              )
-            }
+      <div className="mt-8 border-t border-zinc-200 pt-6">
+        <div className="mb-3 text-sm font-semibold tracking-tight text-midnight">
+          QR Codes
+        </div>
+
+        {q.isLoading && (
+          <div className="space-y-3">
+            <Skeleton className="h-28 w-full" />
+            <Skeleton className="h-28 w-full" />
+          </div>
+        )}
+        {q.isError && (
+          <EmptyState
+            title="Couldn't load tokens"
+            description={(q.error as Error)?.message ?? "Try again."}
           />
-        ))}
+        )}
+        {!q.isLoading && !q.isError && tokens.length === 0 && (
+          <EmptyState
+            title="No vendor QR tokens yet"
+            description="Click 'New QR' to mint one for a store."
+          />
+        )}
+
+        <div className="space-y-3">
+          {tokens.map((t) => (
+            <TokenRow
+              key={t.id}
+              token={t}
+              onRevoke={() =>
+                revokeToken(t.id).then(
+                  () => {
+                    toast.push("Token revoked.", "success");
+                    qc.invalidateQueries({ queryKey: ["wo2", "qr-tokens"] });
+                  },
+                  (e: Error) => toast.push(e.message, "error"),
+                )
+              }
+            />
+          ))}
+        </div>
       </div>
 
       {createOpen && (
@@ -274,8 +286,6 @@ export function VendorPortalAdminTab() {
           }}
         />
       )}
-
-      <RecentActivitySection />
     </>
   );
 }
@@ -305,7 +315,7 @@ function RecentActivitySection() {
   );
 
   return (
-    <div className="mt-8 border-t border-zinc-200 pt-6">
+    <div>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div>
           <div className="text-sm font-semibold tracking-tight text-midnight">
