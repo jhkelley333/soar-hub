@@ -534,12 +534,13 @@ export const handler = async (event) => {
       return respond(200, { ok: true, photo });
     }
 
-    // ── Admin-only token management ──────────────────────────
+    // ── Manager-only (SDO+) token management + monitoring ────
     // Distinct from the anonymous portal actions above; these
-    // require a Bearer JWT and admin role. Listed under the same
-    // function name to keep deploy simple.
-    if (["adminList", "adminCreate", "adminRevoke"].includes(action)) {
-      return await handleAdmin(supabase, event, action);
+    // require a Bearer JWT and an "admin tier" role. Listed under
+    // the same function name to keep deploy simple. Non-admin
+    // managers are scoped to stores visible to them.
+    if (["adminList", "adminCreate", "adminRevoke", "adminListVisits"].includes(action)) {
+      return await handleManager(supabase, event, action);
     }
 
     return respond(400, { ok: false, error: "unknown_action", action });
@@ -552,7 +553,13 @@ export const handler = async (event) => {
   }
 };
 
-async function getAdminProfile(supabase, event) {
+// Roles allowed to manage QR tokens. SDO+ matches the "admin" tier
+// from the central permission utility — district leadership owns
+// store-level config in our operational model. Non-admin tiers are
+// scoped by their visible-stores list below.
+const QR_MANAGER_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
+
+async function getQrManagerProfile(supabase, event) {
   const header = event.headers?.authorization || event.headers?.Authorization;
   if (!header?.startsWith("Bearer ")) return null;
   const token = header.slice("Bearer ".length).trim();
@@ -565,15 +572,46 @@ async function getAdminProfile(supabase, event) {
     .eq("id", userRes.user.id)
     .single();
   if (!profile || !profile.is_active) return null;
-  if (profile.role !== "admin") return null;
+  if (!QR_MANAGER_ROLES.has(String(profile.role).toLowerCase())) return null;
   return profile;
 }
 
-async function handleAdmin(supabase, event, action) {
-  const profile = await getAdminProfile(supabase, event);
-  if (!profile) {
-    return respond(403, { ok: false, error: "admin_only" });
+// Returns either { all: true } for top-level roles, or
+// { all: false, stores: Set<string> } for scoped roles.
+// Uses user_visible_stores() RPC so we honor the same scope
+// resolution every other module trusts.
+async function visibleStoresForManager(supabase, profile) {
+  const role = String(profile.role || "").toLowerCase();
+  // Top-of-house roles see everything regardless of scope rows.
+  if (role === "admin" || role === "coo" || role === "vp") {
+    return { all: true, stores: null };
   }
+  const { data: visibleIds } = await supabase.rpc("user_visible_stores", {
+    uid: profile.id,
+  });
+  const ids = (visibleIds ?? [])
+    .map((v) => (typeof v === "string" ? v : v?.user_visible_stores ?? null))
+    .filter(Boolean);
+  if (!ids.length) return { all: false, stores: new Set() };
+  const { data: stores } = await supabase
+    .from("stores")
+    .select("number")
+    .in("id", ids);
+  return {
+    all: false,
+    stores: new Set((stores || []).map((s) => String(s.number))),
+  };
+}
+
+async function handleManager(supabase, event, action) {
+  const profile = await getQrManagerProfile(supabase, event);
+  if (!profile) {
+    return respond(403, { ok: false, error: "manager_role_required" });
+  }
+  const scope = await visibleStoresForManager(supabase, profile);
+  // Helper — ensures the requested store is in this manager's scope.
+  const canManageStore = (storeNumber) =>
+    scope.all || scope.stores.has(String(storeNumber));
 
   if (action === "adminList") {
     const storeNumber = (event.queryStringParameters || {}).store;
@@ -582,13 +620,19 @@ async function handleAdmin(supabase, event, action) {
       .select("id, store_number, token, label, is_active, expires_at, created_at, revoked_at, created_by_id, revoked_by_id")
       .order("created_at", { ascending: false });
     if (storeNumber) q = q.eq("store_number", storeNumber);
+    // Scope filter — non-admin managers only see their stores.
+    if (!scope.all) {
+      const stores = Array.from(scope.stores);
+      if (!stores.length) return respond(200, { ok: true, tokens: [] });
+      q = q.in("store_number", stores);
+    }
     const { data, error } = await q;
     if (error) throw error;
 
-    // Also pull a small visit summary per token for the admin list.
+    // Visit summary per token for the list view.
     const tokenIds = (data || []).map((r) => r.id);
-    let visitCounts = {};
-    let lastVisits = {};
+    const visitCounts = {};
+    const lastVisits = {};
     if (tokenIds.length) {
       const { data: visits } = await supabase
         .from("vendor_visits")
@@ -614,11 +658,17 @@ async function handleAdmin(supabase, event, action) {
     if (!storeNumber) {
       return respond(400, { ok: false, error: "store_number required" });
     }
+    if (!canManageStore(storeNumber)) {
+      return respond(403, {
+        ok: false,
+        error: "store_outside_scope",
+        message: `Store ${storeNumber} is outside your scope.`,
+      });
+    }
     const label = body.label ? String(body.label).trim() : null;
     const ttlDays = Number(body.ttl_days) || 365;
     const expiresAt = new Date(Date.now() + ttlDays * 86400_000).toISOString();
 
-    // Mint token via the DB helper added in migration 0044.
     const { data: tokenRow } = await supabase.rpc("gen_store_qr_token");
     const generatedToken = tokenRow || (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2));
 
@@ -641,6 +691,16 @@ async function handleAdmin(supabase, event, action) {
     const body = JSON.parse(event.body || "{}");
     const id = body.id;
     if (!id) return respond(400, { ok: false, error: "id required" });
+    // Confirm the target token is in this manager's scope.
+    const { data: target } = await supabase
+      .from("store_qr_tokens")
+      .select("store_number")
+      .eq("id", id)
+      .maybeSingle();
+    if (!target) return respond(404, { ok: false, error: "token_not_found" });
+    if (!canManageStore(target.store_number)) {
+      return respond(403, { ok: false, error: "store_outside_scope" });
+    }
     const { error } = await supabase
       .from("store_qr_tokens")
       .update({
@@ -653,7 +713,130 @@ async function handleAdmin(supabase, event, action) {
     return respond(200, { ok: true });
   }
 
-  return respond(400, { ok: false, error: "unknown_admin_action", action });
+  // ── adminListVisits: recent activity feed with danger flags ──
+  if (action === "adminListVisits") {
+    const qs = event.queryStringParameters || {};
+    const sinceDays = Math.max(1, Math.min(Number(qs.days) || 7, 90));
+    const since = new Date(Date.now() - sinceDays * 86400_000).toISOString();
+    const limit = Math.max(1, Math.min(Number(qs.limit) || 100, 500));
+
+    // Pull visits in window, scoped via tokens.
+    let visitsQuery = supabase
+      .from("vendor_visits")
+      .select(`
+        id, token_id, ticket_id, vendor_name, vendor_company, vendor_phone,
+        action, notes, remote_ip, user_agent, created_at,
+        store_qr_tokens!inner(store_number, label, is_active, expires_at)
+      `)
+      .gte("created_at", since)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (!scope.all) {
+      const stores = Array.from(scope.stores);
+      if (!stores.length) return respond(200, { ok: true, visits: [] });
+      visitsQuery = visitsQuery.in("store_qr_tokens.store_number", stores);
+    }
+    const { data: visits, error: vErr } = await visitsQuery;
+    if (vErr) throw vErr;
+
+    // Pull broader window for flag computation (need 24h of history
+    // even if user asked for a 1-day window).
+    const flagWindow = new Date(Date.now() - 24 * 3600_000).toISOString();
+    const { data: recentForFlags } = await supabase
+      .from("vendor_visits")
+      .select("token_id, ticket_id, action, remote_ip, created_at")
+      .gte("created_at", flagWindow);
+
+    const flagged = (visits || []).map((v) => {
+      const flags = computeFlags(v, recentForFlags || []);
+      return {
+        id:              v.id,
+        token_id:        v.token_id,
+        ticket_id:       v.ticket_id,
+        store_number:    v.store_qr_tokens?.store_number || null,
+        token_label:     v.store_qr_tokens?.label || null,
+        token_active:    v.store_qr_tokens?.is_active ?? null,
+        token_expires_at:v.store_qr_tokens?.expires_at || null,
+        vendor_name:     v.vendor_name,
+        vendor_company:  v.vendor_company,
+        vendor_phone:    v.vendor_phone,
+        action:          v.action,
+        notes:           v.notes,
+        remote_ip:       v.remote_ip,
+        user_agent:      v.user_agent,
+        created_at:      v.created_at,
+        flags,
+      };
+    });
+
+    return respond(200, {
+      ok: true,
+      visits: flagged,
+      flag_summary: summarizeFlags(flagged),
+    });
+  }
+
+  return respond(400, { ok: false, error: "unknown_manager_action", action });
+}
+
+// Per-visit flag computation. Each flag is a tag string. The
+// frontend renders them as colored badges. Severity ordering is
+// purely for display: info < warning < danger.
+function computeFlags(v, recentBucket) {
+  const flags = [];
+  const tokenVisits = recentBucket.filter((r) => r.token_id === v.token_id);
+
+  // 1. Multi-IP from same token in last 24h.
+  const ips = new Set(tokenVisits.map((r) => r.remote_ip).filter(Boolean));
+  if (ips.size >= 2) {
+    flags.push({ key: "multi_ip", severity: "warning",
+      label: `Multiple IPs (${ips.size}) in 24h` });
+  }
+
+  // 2. High velocity in last hour.
+  const hourAgo = Date.now() - 3600_000;
+  const recentHour = tokenVisits.filter((r) => new Date(r.created_at).getTime() >= hourAgo);
+  if (recentHour.length >= 5) {
+    flags.push({ key: "high_velocity", severity: "warning",
+      label: `${recentHour.length} scans in last hour` });
+  }
+
+  // 3. Drive-by completion (on_site immediately followed by completed).
+  if (v.action === "completed" && v.ticket_id) {
+    const sameTicket = tokenVisits
+      .filter((r) => r.ticket_id === v.ticket_id)
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+    const idx = sameTicket.findIndex((r) => r.created_at === v.created_at);
+    if (idx > 0) {
+      const prev = sameTicket[idx - 1];
+      const gapMs = new Date(v.created_at) - new Date(prev.created_at);
+      if (prev.action === "on_site" && gapMs < 5 * 60_000) {
+        flags.push({ key: "driveby_complete", severity: "danger",
+          label: `On site → completed in ${Math.round(gapMs / 1000)}s` });
+      }
+    }
+    // 4. Completed without any photo for this ticket from any vendor visit.
+    const photoEvidence = tokenVisits.some(
+      (r) => r.ticket_id === v.ticket_id && r.action === "photo_added");
+    if (!photoEvidence) {
+      flags.push({ key: "no_photo_evidence", severity: "warning",
+        label: "Completed with no vendor photos" });
+    }
+  }
+
+  // 5. Token already expired (shouldn't happen — backend rejects —
+  // but flag any historical visits that snuck in).
+  return flags;
+}
+
+function summarizeFlags(visits) {
+  const counts = {};
+  for (const v of visits) {
+    for (const f of v.flags || []) {
+      counts[f.key] = (counts[f.key] || 0) + 1;
+    }
+  }
+  return counts;
 }
 
 // tierFor is imported but currently unused — kept for future symmetry
