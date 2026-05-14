@@ -182,12 +182,28 @@ export function VendorPortalPage() {
 
   const { store, tickets, tokenLabel } = resolveQ.data;
 
+  // Companies that have open tickets at THIS store. Powers the
+  // identity-form dropdown so a vendor doesn't have to type their
+  // own name — they pick from the list of who's actually been
+  // assigned work here today. Sorted by ticket count desc.
+  const vendorOptions = (() => {
+    const map = new Map<string, number>();
+    for (const t of tickets) {
+      const name = (t.vendor_name || "").trim();
+      if (name) map.set(name, (map.get(name) || 0) + 1);
+    }
+    return Array.from(map.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+  })();
+
   // Identity collection guard — needed once per device.
   if (!identity) {
     return (
       <Frame>
         <IdentityForm
           store={store}
+          vendorOptions={vendorOptions}
           onSave={(id) => { saveIdentity(id); setIdentity(id); }}
         />
       </Frame>
@@ -271,16 +287,30 @@ function BadToken({ message }: { message?: string }) {
 
 function IdentityForm({
   store,
+  vendorOptions,
   onSave,
 }: {
   store: PortalStore;
+  vendorOptions: { name: string; count: number }[];
   onSave: (id: Identity) => void;
 }) {
   const [name, setName] = useState("");
-  const [company, setCompany] = useState("");
+  // Two-step company picker: pick from the list of vendors with
+  // open tickets at this store, or pick "other" → type free-text.
+  // Saves a typed-vs-picked round trip when the tech is in the list.
+  const [companyChoice, setCompanyChoice] = useState<string>(
+    vendorOptions.length > 0 ? vendorOptions[0].name : "__other__"
+  );
+  const [companyOther, setCompanyOther] = useState("");
   const [phone, setPhone] = useState("");
 
-  const ok = name.trim().length >= 2;
+  const resolvedCompany = companyChoice === "__other__"
+    ? companyOther.trim()
+    : companyChoice;
+
+  const ok = name.trim().length >= 2 && (
+    companyChoice !== "__other__" || companyOther.trim().length >= 2
+  );
 
   return (
     <div className="space-y-4">
@@ -309,13 +339,45 @@ function IdentityForm({
               className="block w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
             />
           </Field>
-          <Field label="Company">
-            <input
-              type="text" autoComplete="organization"
-              value={company} onChange={(e) => setCompany(e.target.value)}
-              placeholder="Smith HVAC"
-              className="block w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-            />
+          <Field label="Company *">
+            {vendorOptions.length > 0 ? (
+              <>
+                <select
+                  value={companyChoice}
+                  onChange={(e) => setCompanyChoice(e.target.value)}
+                  className="block w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                >
+                  <optgroup label="Assigned at this store today">
+                    {vendorOptions.map((v) => (
+                      <option key={v.name} value={v.name}>
+                        {v.name} ({v.count} {v.count === 1 ? "ticket" : "tickets"})
+                      </option>
+                    ))}
+                  </optgroup>
+                  <option value="__other__">Other / not listed</option>
+                </select>
+                {companyChoice === "__other__" && (
+                  <input
+                    type="text" autoComplete="organization"
+                    value={companyOther}
+                    onChange={(e) => setCompanyOther(e.target.value)}
+                    placeholder="Type your company name"
+                    className="mt-2 block w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                )}
+                <div className="mt-1 text-[10px] text-zinc-500">
+                  Pick the company that dispatched you. We'll show only your tickets first.
+                </div>
+              </>
+            ) : (
+              <input
+                type="text" autoComplete="organization"
+                value={companyOther}
+                onChange={(e) => setCompanyOther(e.target.value)}
+                placeholder="Smith HVAC"
+                className="block w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            )}
           </Field>
           <Field label="Phone (for callback)">
             <input
@@ -329,7 +391,7 @@ function IdentityForm({
             disabled={!ok}
             onClick={() => onSave({
               vendor_name: name.trim(),
-              vendor_company: company.trim(),
+              vendor_company: resolvedCompany,
               vendor_phone: phone.trim(),
             })}
           >
@@ -390,6 +452,22 @@ function TicketList({
   onPick: (id: string) => void;
   onIdentityChange: () => void;
 }) {
+  // Filter mode toggle. Default: filter by vendor_company match
+  // (case-insensitive substring both directions, so "Frostex"
+  // matches "Frostex Refrigeration" and vice versa). Vendor can
+  // flip to "Show all" if their assignment isn't in the list.
+  const [showAll, setShowAll] = useState(false);
+  const needle = identity.vendor_company?.toLowerCase().trim() || "";
+  const matches = needle
+    ? tickets.filter((t) => {
+        const v = (t.vendor_name || "").toLowerCase().trim();
+        if (!v) return false;
+        return v.includes(needle) || needle.includes(v);
+      })
+    : [];
+  const visibleTickets = showAll || !needle ? tickets : matches;
+  const showAllToggle = needle && tickets.length > matches.length;
+
   return (
     <div className="space-y-4">
       <div className="rounded-md border border-zinc-200 bg-white p-3">
@@ -423,18 +501,52 @@ function TicketList({
         </div>
       </div>
 
-      <div className="text-sm font-semibold text-midnight">
-        Open tickets at this store
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-sm font-semibold text-midnight">
+          {needle && !showAll
+            ? `Tickets for ${identity.vendor_company}`
+            : "Open tickets at this store"}
+        </div>
+        {showAllToggle && (
+          <button
+            type="button"
+            onClick={() => setShowAll((v) => !v)}
+            className="text-xs font-medium text-accent hover:underline"
+          >
+            {showAll
+              ? `Show only ${identity.vendor_company} (${matches.length})`
+              : `Show all open (${tickets.length})`}
+          </button>
+        )}
       </div>
+
+      {needle && !showAll && matches.length === 0 && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          No open tickets are assigned to <strong>{identity.vendor_company}</strong> at this store.
+          {tickets.length > 0 && (
+            <>
+              {" "}
+              <button
+                type="button"
+                onClick={() => setShowAll(true)}
+                className="font-medium text-accent underline"
+              >
+                Show all {tickets.length} open ticket{tickets.length === 1 ? "" : "s"}
+              </button>
+              {" "}instead.
+            </>
+          )}
+        </div>
+      )}
 
       {tickets.length === 0 ? (
         <div className="rounded-md border border-zinc-200 bg-white px-4 py-6 text-center text-sm text-zinc-500">
           No open tickets. If you were called for work that isn't listed here,
           contact your District Operator.
         </div>
-      ) : (
+      ) : visibleTickets.length === 0 ? null : (
         <ul className="space-y-2">
-          {tickets.map((t) => (
+          {visibleTickets.map((t) => (
             <li key={t.id}>
               <button
                 type="button"
