@@ -221,6 +221,7 @@ export const handler = async (event) => {
           id, wo_number, store_number, store_name, asset_type, category,
           model_number, issue_description, priority, is_business_critical,
           status, pause_state, vendor_name, vendor_eta, cost_estimate,
+          approval_status, approval_level, approval_request_notes,
           troubleshooting_checked, date_submitted, closed_at,
           ticket_photos(id, file_url, file_name, upload_type, created_at)
         `)
