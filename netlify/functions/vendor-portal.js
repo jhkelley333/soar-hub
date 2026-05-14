@@ -207,6 +207,23 @@ async function maybeAlertDriveByCompletion(supabase, {
   }
 }
 
+// Normalized store-number equality. Forgives type differences
+// (text vs numeric in PostgREST responses), surrounding whitespace,
+// and leading zeros — all of which have shown up across migrations
+// and bulk-import paths. Use this instead of `===` whenever
+// comparing token.store_number with ticket.store_number.
+function storesMatch(a, b) {
+  const norm = (v) => {
+    if (v == null) return "";
+    const s = String(v).trim();
+    // Strip leading zeros for numeric-looking strings only — "0123"
+    // → "123" but leave "01-A" alone.
+    if (/^\d+$/.test(s)) return s.replace(/^0+/, "") || "0";
+    return s;
+  };
+  return norm(a) === norm(b);
+}
+
 function escapeHtml(s) {
   return String(s)
     .replace(/&/g, "&amp;")
@@ -327,6 +344,11 @@ export const handler = async (event) => {
       if (!tok) return respond(404, { ok: false, error: "invalid_or_expired_token" });
       if (!ticketId) return respond(400, { ok: false, error: "ticketId required" });
 
+      // Fetch the ticket WITHOUT scoping by store_number first, then
+      // compare normalized strings. The .eq filter does an exact
+      // server-side comparison that can fail on store_number type
+      // mismatches (text vs int) or whitespace — we'd rather have
+      // the row back and inspect it than mysteriously return null.
       const { data: ticket } = await supabase
         .from("tickets")
         .select(`
@@ -339,10 +361,24 @@ export const handler = async (event) => {
           ticket_photos(id, file_url, file_name, upload_type, created_at)
         `)
         .eq("id", ticketId)
-        .eq("store_number", tok.store_number) // scope to this store
         .maybeSingle();
       if (!ticket) {
-        return respond(404, { ok: false, error: "ticket_not_at_this_store" });
+        return respond(404, { ok: false, error: "ticket_not_found" });
+      }
+      if (!storesMatch(ticket.store_number, tok.store_number)) {
+        console.warn("[vendor-portal] getTicket store mismatch", {
+          ticketId,
+          ticketStore: ticket.store_number,
+          tokenStore:  tok.store_number,
+        });
+        return respond(404, {
+          ok: false,
+          error: "ticket_not_at_this_store",
+          debug: {
+            ticket_store: String(ticket.store_number ?? ""),
+            token_store:  String(tok.store_number ?? ""),
+          },
+        });
       }
       return respond(200, { ok: true, ticket });
     }
@@ -386,15 +422,32 @@ export const handler = async (event) => {
     const { ip, ua } = clientInfo(event);
 
     // Confirm the target ticket belongs to this store. Hard guard
-    // against guessing other stores' ticket IDs.
+    // against guessing other stores' ticket IDs. Same defensive
+    // pattern as getTicket: pull the row without the store filter
+    // so a type/whitespace mismatch on store_number doesn't silently
+    // 404 us with a misleading "not at this store" message.
     const { data: current } = await supabase
       .from("tickets")
       .select("id, status, pause_state, closed_at, store_number, wo_number")
       .eq("id", ticketId)
-      .eq("store_number", tok.store_number)
       .maybeSingle();
     if (!current) {
-      return respond(404, { ok: false, error: "ticket_not_at_this_store" });
+      return respond(404, { ok: false, error: "ticket_not_found" });
+    }
+    if (!storesMatch(current.store_number, tok.store_number)) {
+      console.warn("[vendor-portal] mutating-action store mismatch", {
+        action, ticketId,
+        ticketStore: current.store_number,
+        tokenStore:  tok.store_number,
+      });
+      return respond(404, {
+        ok: false,
+        error: "ticket_not_at_this_store",
+        debug: {
+          ticket_store: String(current.store_number ?? ""),
+          token_store:  String(tok.store_number ?? ""),
+        },
+      });
     }
 
     // ── markOnSite ───────────────────────────────────────────

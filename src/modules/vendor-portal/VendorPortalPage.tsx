@@ -122,28 +122,44 @@ function saveIdentity(id: Identity) {
 
 // ── Fetch helpers ────────────────────────────────────────────────
 
+// Carries the full response payload through the thrown Error so the
+// page can render debug fields (like the store-number mismatch
+// values returned by the backend on ticket_not_at_this_store).
+class PortalError extends Error {
+  payload: Record<string, unknown>;
+  constructor(message: string, payload: Record<string, unknown>) {
+    super(message);
+    this.payload = payload;
+  }
+}
+
+function readableError(json: Record<string, unknown>, fallback: string): string {
+  const msg = (json.message as string | undefined) || (json.error as string | undefined);
+  if (!msg) return fallback;
+  const debug = json.debug as Record<string, string | number> | undefined;
+  if (!debug) return msg;
+  const pairs = Object.entries(debug).map(([k, v]) => `${k}=${v}`).join(", ");
+  return `${msg} (${pairs})`;
+}
+
 async function postPortal<T>(path: string, body: unknown): Promise<T> {
   const res = await fetch(path, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
-  const json = await res.json().catch(() => ({}));
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok || (json as { ok?: boolean }).ok === false) {
-    throw new Error((json as { message?: string; error?: string })?.message
-                  || (json as { error?: string })?.error
-                  || `HTTP ${res.status}`);
+    throw new PortalError(readableError(json, `HTTP ${res.status}`), json);
   }
   return json as T;
 }
 
 async function getPortal<T>(url: string): Promise<T> {
   const res = await fetch(url);
-  const json = await res.json().catch(() => ({}));
+  const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
   if (!res.ok || (json as { ok?: boolean }).ok === false) {
-    throw new Error((json as { message?: string; error?: string })?.message
-                  || (json as { error?: string })?.error
-                  || `HTTP ${res.status}`);
+    throw new PortalError(readableError(json, `HTTP ${res.status}`), json);
   }
   return json as T;
 }
