@@ -21,6 +21,8 @@ import {
   CheckCircle2,
   ChevronLeft,
   Loader2,
+  Mail,
+  Phone,
   ReceiptText,
   Truck,
   Upload,
@@ -55,11 +57,19 @@ interface PortalStore {
   name: string | null;
   city: string | null;
   state: string | null;
+  phone: string | null;
+}
+
+interface PortalDoContact {
+  name: string | null;
+  email: string | null;
+  phone: string | null;
 }
 
 interface ResolveResponse {
   ok: true;
   store: PortalStore | null;
+  do_contact: PortalDoContact | null;
   tokenLabel: string | null;
   tickets: PortalTicket[];
 }
@@ -143,6 +153,20 @@ function fileToBase64(file: File): Promise<string> {
   });
 }
 
+// Lightweight phone formatter (no external dependency — we don't pull
+// the auth-coupled helper from @/lib/phone into this public page).
+function formatPhone(raw: string | null | undefined): string {
+  if (!raw) return "";
+  const digits = String(raw).replace(/\D/g, "");
+  if (digits.length === 10) {
+    return `(${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+  }
+  if (digits.length === 11 && digits.startsWith("1")) {
+    return `(${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7)}`;
+  }
+  return raw;
+}
+
 function relTime(iso: string): string {
   if (!iso) return "";
   const ms = new Date(iso).getTime();
@@ -180,7 +204,7 @@ export function VendorPortalPage() {
     return <Frame><BadToken /></Frame>;
   }
 
-  const { store, tickets, tokenLabel } = resolveQ.data;
+  const { store, tickets, tokenLabel, do_contact: doContact } = resolveQ.data;
 
   // Companies that have open tickets at THIS store. Powers the
   // identity-form dropdown so a vendor doesn't have to type their
@@ -236,6 +260,7 @@ export function VendorPortalPage() {
         tokenLabel={tokenLabel}
         tickets={tickets}
         identity={identity}
+        doContact={doContact}
         onPick={(id) => setSelectedTicketId(id)}
         onIdentityChange={() => {
           localStorage.removeItem(IDENT_KEY);
@@ -443,12 +468,13 @@ function BigButton({
 // ── Ticket list screen ───────────────────────────────────────────
 
 function TicketList({
-  store, tokenLabel, tickets, identity, onPick, onIdentityChange,
+  store, tokenLabel, tickets, identity, doContact, onPick, onIdentityChange,
 }: {
   store: PortalStore;
   tokenLabel: string | null;
   tickets: PortalTicket[];
   identity: Identity;
+  doContact: PortalDoContact | null;
   onPick: (id: string) => void;
   onIdentityChange: () => void;
 }) {
@@ -520,30 +546,24 @@ function TicketList({
         )}
       </div>
 
-      {needle && !showAll && matches.length === 0 && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          No open tickets are assigned to <strong>{identity.vendor_company}</strong> at this store.
-          {tickets.length > 0 && (
-            <>
-              {" "}
-              <button
-                type="button"
-                onClick={() => setShowAll(true)}
-                className="font-medium text-accent underline"
-              >
-                Show all {tickets.length} open ticket{tickets.length === 1 ? "" : "s"}
-              </button>
-              {" "}instead.
-            </>
-          )}
-        </div>
+      {needle && !showAll && matches.length === 0 && tickets.length > 0 && (
+        <NoTicketsPanel
+          kind="none-for-company"
+          companyName={identity.vendor_company}
+          store={store}
+          doContact={doContact}
+          onShowAll={() => setShowAll(true)}
+          showAllCount={tickets.length}
+        />
       )}
 
       {tickets.length === 0 ? (
-        <div className="rounded-md border border-zinc-200 bg-white px-4 py-6 text-center text-sm text-zinc-500">
-          No open tickets. If you were called for work that isn't listed here,
-          contact your District Operator.
-        </div>
+        <NoTicketsPanel
+          kind="none-at-all"
+          companyName={identity.vendor_company}
+          store={store}
+          doContact={doContact}
+        />
       ) : visibleTickets.length === 0 ? null : (
         <ul className="space-y-2">
           {visibleTickets.map((t) => (
@@ -592,6 +612,94 @@ function PriorityBadge({ p }: { p: string }) {
     <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${tone}`}>
       {p}
     </span>
+  );
+}
+
+// ── No-tickets escalation panel ─────────────────────────────────
+// Shown when either:
+//   "none-at-all"      → the store has zero open tickets
+//   "none-for-company" → caller's vendor_company doesn't match any
+//                        ticket assignment; suggests Show All as
+//                        the inline alternative + escalation contact.
+//
+// Provides Manager-on-Duty messaging + click-to-call/email for the
+// DO so the vendor isn't sent home empty-handed.
+
+function NoTicketsPanel({
+  kind, companyName, store, doContact, onShowAll, showAllCount,
+}: {
+  kind: "none-at-all" | "none-for-company";
+  companyName?: string;
+  store: PortalStore;
+  doContact: PortalDoContact | null;
+  onShowAll?: () => void;
+  showAllCount?: number;
+}) {
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50 p-4">
+      <div className="text-base font-semibold text-amber-900">
+        {kind === "none-at-all"
+          ? "No open tickets at this store"
+          : <>No open tickets for <span className="underline decoration-amber-400">{companyName}</span></>}
+      </div>
+      <div className="mt-1 text-sm text-amber-900">
+        Please speak with the <strong>Manager on Duty</strong> so they can submit
+        the ticket. Once it's in the system you'll see it here.
+      </div>
+
+      {store.phone && (
+        <a
+          href={`tel:${store.phone}`}
+          className="mt-3 inline-flex items-center gap-2 rounded-md border border-amber-300 bg-white px-3 py-2 text-sm font-medium text-amber-900 hover:bg-amber-100"
+        >
+          <Phone className="h-4 w-4" strokeWidth={1.75} />
+          Call this store: {formatPhone(store.phone)}
+        </a>
+      )}
+
+      {kind === "none-for-company" && onShowAll && showAllCount ? (
+        <div className="mt-3">
+          <button
+            type="button"
+            onClick={onShowAll}
+            className="text-xs font-medium text-accent underline"
+          >
+            Show all {showAllCount} open ticket{showAllCount === 1 ? "" : "s"} at this store
+          </button>
+        </div>
+      ) : null}
+
+      {doContact && (doContact.name || doContact.phone || doContact.email) && (
+        <div className="mt-4 border-t border-amber-200 pt-3">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-900">
+            For escalation, contact the District Operator
+          </div>
+          {doContact.name && (
+            <div className="mt-1 text-sm font-medium text-amber-900">{doContact.name}</div>
+          )}
+          <div className="mt-1 flex flex-col gap-1">
+            {doContact.phone && (
+              <a
+                href={`tel:${doContact.phone}`}
+                className="inline-flex items-center gap-2 text-sm text-accent underline"
+              >
+                <Phone className="h-3.5 w-3.5" strokeWidth={1.75} />
+                {formatPhone(doContact.phone)}
+              </a>
+            )}
+            {doContact.email && (
+              <a
+                href={`mailto:${doContact.email}`}
+                className="inline-flex items-center gap-2 break-all text-sm text-accent underline"
+              >
+                <Mail className="h-3.5 w-3.5" strokeWidth={1.75} />
+                {doContact.email}
+              </a>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1004,6 +1112,11 @@ function QuoteModal({
     return "VP $1001-$1750";
   }, [amount]);
 
+  const previewUrl = useMemo(() => {
+    if (!file || !file.type.startsWith("image/")) return null;
+    return URL.createObjectURL(file);
+  }, [file]);
+
   const mut = useMutation({
     mutationFn: async () => {
       const amt = Number(amount);
@@ -1011,7 +1124,7 @@ function QuoteModal({
         return Promise.reject(new Error("Enter a positive dollar amount."));
       }
       if (!file) {
-        return Promise.reject(new Error("Attach a quote PDF before submitting."));
+        return Promise.reject(new Error("Attach the quote — PDF or a photo — before submitting."));
       }
       const photoData = await fileToBase64(file);
       return postPortal(`${FN}?action=submitQuote`, {
@@ -1062,18 +1175,60 @@ function QuoteModal({
               className="block w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm"
             />
           </Field>
-          <Field label="Quote PDF *">
-            <label className="block">
-              <input
-                type="file" accept="application/pdf,image/*"
-                onChange={(e) => setFile(e.target.files?.[0] || null)}
-                className="hidden"
-              />
-              <span className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-zinc-300 bg-white px-3 py-3 text-sm font-medium text-zinc-700 hover:border-accent">
-                <Upload className="h-4 w-4" strokeWidth={1.75} />
-                {file ? file.name : "Attach PDF"}
-              </span>
-            </label>
+          <Field label="Quote (PDF or photo) *">
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block">
+                <input
+                  type="file" accept="application/pdf,image/*"
+                  onChange={(e) => setFile(e.target.files?.[0] || null)}
+                  className="hidden"
+                />
+                <span className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-zinc-300 bg-white px-3 py-3 text-sm font-medium text-zinc-700 hover:border-accent">
+                  <Upload className="h-4 w-4" strokeWidth={1.75} />
+                  Attach file
+                </span>
+              </label>
+              <label className="block">
+                <input
+                  type="file" accept="image/*" capture="environment"
+                  onChange={(e) => setFile(e.target.files?.[0] || null)}
+                  className="hidden"
+                />
+                <span className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-zinc-300 bg-white px-3 py-3 text-sm font-medium text-zinc-700 hover:border-accent">
+                  <Camera className="h-4 w-4" strokeWidth={1.75} />
+                  Take photo
+                </span>
+              </label>
+            </div>
+            {file && (
+              <div className="mt-2 flex items-start gap-2 rounded-md border border-zinc-200 bg-zinc-50 p-2">
+                {previewUrl ? (
+                  <img
+                    src={previewUrl}
+                    alt="Quote preview"
+                    className="h-16 w-16 shrink-0 rounded-md border border-zinc-200 object-cover"
+                  />
+                ) : (
+                  <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-md border border-zinc-200 bg-white text-[10px] font-semibold text-zinc-500">
+                    PDF
+                  </div>
+                )}
+                <div className="min-w-0 flex-1 text-[11px]">
+                  <div className="truncate font-medium text-midnight">{file.name}</div>
+                  <div className="text-zinc-500">{Math.ceil(file.size / 1024)} KB</div>
+                  <button
+                    type="button"
+                    onClick={() => setFile(null)}
+                    className="mt-1 text-[10px] text-red-600 underline"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            )}
+            <div className="mt-1 text-[10px] text-zinc-500">
+              Hand-written quotes work — snap a clear photo and we'll attach it as-is.
+            </div>
           </Field>
           {mut.isError && (
             <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
