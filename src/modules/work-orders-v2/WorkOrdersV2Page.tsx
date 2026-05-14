@@ -47,6 +47,7 @@ import { VendorsTab } from "./VendorsTab";
 import { IssueLibraryTab } from "./IssueLibraryTab";
 import { TroubleshootingTipsTab } from "./TroubleshootingTipsTab";
 import { EmailTemplatesTab } from "./EmailTemplatesTab";
+import { VendorPortalAdminTab } from "./VendorPortalAdminTab";
 import { StatusBar } from "./StatusBar";
 import { TicketActionBar } from "./TicketActionBar";
 import { TicketActivityFeed } from "./TicketActivityFeed";
@@ -77,13 +78,14 @@ const CATEGORIES = [
   "Other",
 ];
 
-type TabId = "tickets" | "vendors" | "library" | "troubleshooting" | "email-templates";
-const TABS: { id: TabId; label: string }[] = [
+type TabId = "tickets" | "vendors" | "library" | "troubleshooting" | "email-templates" | "vendor-qr";
+const TABS: { id: TabId; label: string; adminOnly?: boolean }[] = [
   { id: "tickets", label: "Tickets" },
   { id: "vendors", label: "Vendors" },
   { id: "library", label: "Issue Library" },
   { id: "troubleshooting", label: "Troubleshooting" },
   { id: "email-templates", label: "Email Templates" },
+  { id: "vendor-qr", label: "Vendor QR", adminOnly: true },
 ];
 
 // Caller's role comes from the real auth context now (PR 2). The route
@@ -129,21 +131,23 @@ export function WorkOrdersV2Page() {
       />
 
       <div className="mb-4 flex border-b border-zinc-200">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            type="button"
-            onClick={() => setTab(t.id)}
-            className={cn(
-              "-mb-px border-b-2 px-4 py-2 text-sm font-medium tracking-tight transition",
-              tab === t.id
-                ? "border-accent text-midnight"
-                : "border-transparent text-zinc-500 hover:text-midnight",
-            )}
-          >
-            {t.label}
-          </button>
-        ))}
+        {TABS
+          .filter((t) => !t.adminOnly || callerRole === "admin")
+          .map((t) => (
+            <button
+              key={t.id}
+              type="button"
+              onClick={() => setTab(t.id)}
+              className={cn(
+                "-mb-px border-b-2 px-4 py-2 text-sm font-medium tracking-tight transition",
+                tab === t.id
+                  ? "border-accent text-midnight"
+                  : "border-transparent text-zinc-500 hover:text-midnight",
+              )}
+            >
+              {t.label}
+            </button>
+          ))}
       </div>
 
       {tab === "tickets" && <TicketsTab />}
@@ -151,6 +155,7 @@ export function WorkOrdersV2Page() {
       {tab === "library" && <IssueLibraryTab />}
       {tab === "troubleshooting" && <TroubleshootingTipsTab />}
       {tab === "email-templates" && <EmailTemplatesTab />}
+      {tab === "vendor-qr" && callerRole === "admin" && <VendorPortalAdminTab />}
     </>
   );
 }

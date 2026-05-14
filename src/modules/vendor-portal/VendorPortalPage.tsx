@@ -1,0 +1,885 @@
+// Public, anonymous vendor portal. Routed at /v/:token.
+//
+// Flow:
+//   1. Resolve the token → show store name + a list of open tickets
+//      at that store.
+//   2. Vendor identifies themselves (name, company, phone). Saved
+//      in localStorage so they don't retype on every visit.
+//   3. Vendor picks a ticket → ticket detail screen.
+//   4. From ticket detail: Mark On Site, Mark Completed, Submit Quote,
+//      Upload Photo. Each routes through netlify/functions/vendor-portal.
+//
+// Designed for phone-first. Big buttons, full-screen layout, native
+// inputs. No app, no login. The token IS the auth.
+
+import { useMemo, useState } from "react";
+import { useParams } from "react-router-dom";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  AlertTriangle,
+  Camera,
+  CheckCircle2,
+  ChevronLeft,
+  Loader2,
+  ReceiptText,
+  Truck,
+  Upload,
+} from "lucide-react";
+
+const FN = "/.netlify/functions/vendor-portal";
+
+// ── Types mirroring the function's responses ─────────────────────
+
+interface Identity {
+  vendor_name: string;
+  vendor_company: string;
+  vendor_phone: string;
+}
+
+interface PortalTicket {
+  id: string;
+  wo_number: string;
+  asset_type: string | null;
+  category: string | null;
+  issue_description: string | null;
+  priority: string;
+  vendor_name: string | null;
+  status: string;
+  pause_state: string;
+  date_submitted: string;
+}
+
+interface PortalStore {
+  number: string;
+  name: string | null;
+  city: string | null;
+  state: string | null;
+}
+
+interface ResolveResponse {
+  ok: true;
+  store: PortalStore | null;
+  tokenLabel: string | null;
+  tickets: PortalTicket[];
+}
+
+interface PortalTicketDetail extends PortalTicket {
+  store_number: string;
+  store_name: string | null;
+  model_number: string | null;
+  is_business_critical: boolean;
+  vendor_eta: string | null;
+  cost_estimate: number | string | null;
+  troubleshooting_checked: boolean;
+  closed_at: string | null;
+  ticket_photos?: Array<{
+    id: string;
+    file_url: string;
+    file_name: string | null;
+    upload_type: string | null;
+    created_at: string;
+  }>;
+}
+
+// ── localStorage helpers ─────────────────────────────────────────
+
+const IDENT_KEY = "vendor-portal:identity";
+
+function loadIdentity(): Identity | null {
+  try {
+    const raw = localStorage.getItem(IDENT_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed?.vendor_name) return parsed;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function saveIdentity(id: Identity) {
+  try { localStorage.setItem(IDENT_KEY, JSON.stringify(id)); } catch {}
+}
+
+// ── Fetch helpers ────────────────────────────────────────────────
+
+async function postPortal<T>(path: string, body: unknown): Promise<T> {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || (json as { ok?: boolean }).ok === false) {
+    throw new Error((json as { message?: string; error?: string })?.message
+                  || (json as { error?: string })?.error
+                  || `HTTP ${res.status}`);
+  }
+  return json as T;
+}
+
+async function getPortal<T>(url: string): Promise<T> {
+  const res = await fetch(url);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok || (json as { ok?: boolean }).ok === false) {
+    throw new Error((json as { message?: string; error?: string })?.message
+                  || (json as { error?: string })?.error
+                  || `HTTP ${res.status}`);
+  }
+  return json as T;
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const r = String(reader.result || "");
+      const idx = r.indexOf(",");
+      resolve(idx >= 0 ? r.slice(idx + 1) : r);
+    };
+    reader.onerror = () => reject(reader.error || new Error("FileReader error"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function relTime(iso: string): string {
+  if (!iso) return "";
+  const ms = new Date(iso).getTime();
+  if (!Number.isFinite(ms)) return "";
+  const diffMin = Math.floor((Date.now() - ms) / 60_000);
+  if (diffMin < 1) return "just now";
+  if (diffMin < 60) return `${diffMin}m ago`;
+  if (diffMin < 1440) return `${Math.floor(diffMin / 60)}h ago`;
+  return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+// ── Main component ───────────────────────────────────────────────
+
+export function VendorPortalPage() {
+  const { token } = useParams<{ token: string }>();
+  const [identity, setIdentity] = useState<Identity | null>(() => loadIdentity());
+  const [selectedTicketId, setSelectedTicketId] = useState<string | null>(null);
+
+  const resolveQ = useQuery({
+    queryKey: ["vendor-portal-resolve", token],
+    queryFn: () => getPortal<ResolveResponse>(`${FN}?action=resolve&token=${encodeURIComponent(token || "")}`),
+    enabled: !!token,
+    staleTime: 30_000,
+  });
+
+  if (!token) return <Frame><BadToken /></Frame>;
+
+  if (resolveQ.isLoading) {
+    return <Frame><LoadingScreen label="Looking up your store…" /></Frame>;
+  }
+  if (resolveQ.isError) {
+    return <Frame><BadToken message={(resolveQ.error as Error)?.message} /></Frame>;
+  }
+  if (!resolveQ.data?.store) {
+    return <Frame><BadToken /></Frame>;
+  }
+
+  const { store, tickets, tokenLabel } = resolveQ.data;
+
+  // Identity collection guard — needed once per device.
+  if (!identity) {
+    return (
+      <Frame>
+        <IdentityForm
+          store={store}
+          onSave={(id) => { saveIdentity(id); setIdentity(id); }}
+        />
+      </Frame>
+    );
+  }
+
+  // Ticket detail screen.
+  if (selectedTicketId) {
+    return (
+      <Frame>
+        <TicketDetailScreen
+          token={token}
+          ticketId={selectedTicketId}
+          identity={identity}
+          onBack={() => setSelectedTicketId(null)}
+          onIdentityChange={() => {
+            saveIdentity({ vendor_name: "", vendor_company: "", vendor_phone: "" });
+            setIdentity(null);
+          }}
+        />
+      </Frame>
+    );
+  }
+
+  // Ticket list.
+  return (
+    <Frame>
+      <TicketList
+        store={store}
+        tokenLabel={tokenLabel}
+        tickets={tickets}
+        identity={identity}
+        onPick={(id) => setSelectedTicketId(id)}
+        onIdentityChange={() => {
+          localStorage.removeItem(IDENT_KEY);
+          setIdentity(null);
+        }}
+      />
+    </Frame>
+  );
+}
+
+// ── UI primitives ────────────────────────────────────────────────
+
+function Frame({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="min-h-screen bg-zinc-50">
+      <header className="border-b border-zinc-200 bg-white px-4 py-3">
+        <div className="flex items-center gap-2 text-base font-semibold tracking-tight text-midnight">
+          <Truck className="h-5 w-5 text-accent" strokeWidth={2} />
+          SOAR Vendor Portal
+        </div>
+      </header>
+      <main className="mx-auto max-w-2xl px-4 py-4 pb-24">{children}</main>
+    </div>
+  );
+}
+
+function LoadingScreen({ label }: { label: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center gap-3 pt-20 text-zinc-500">
+      <Loader2 className="h-6 w-6 animate-spin" />
+      <div className="text-sm">{label}</div>
+    </div>
+  );
+}
+
+function BadToken({ message }: { message?: string }) {
+  return (
+    <div className="rounded-md border border-red-200 bg-red-50 px-4 py-6 text-center">
+      <AlertTriangle className="mx-auto h-8 w-8 text-red-500" strokeWidth={1.75} />
+      <div className="mt-2 text-base font-semibold text-red-900">QR code not active</div>
+      <div className="mt-1 text-sm text-red-800">
+        {message || "This QR code is invalid, expired, or has been revoked. Ask the store manager for a new sticker, or call the District Operator who dispatched you."}
+      </div>
+    </div>
+  );
+}
+
+// ── Identity form ────────────────────────────────────────────────
+
+function IdentityForm({
+  store,
+  onSave,
+}: {
+  store: PortalStore;
+  onSave: (id: Identity) => void;
+}) {
+  const [name, setName] = useState("");
+  const [company, setCompany] = useState("");
+  const [phone, setPhone] = useState("");
+
+  const ok = name.trim().length >= 2;
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-md border border-zinc-200 bg-white p-3 text-sm">
+        <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">You're at</div>
+        <div className="mt-0.5 font-semibold text-midnight">Store {store.number}</div>
+        {(store.city || store.state) && (
+          <div className="text-xs text-zinc-500">
+            {[store.city, store.state].filter(Boolean).join(", ")}
+          </div>
+        )}
+      </div>
+      <div className="rounded-md border border-zinc-200 bg-white p-4">
+        <div className="text-base font-semibold tracking-tight text-midnight">
+          Tell us who's here
+        </div>
+        <div className="mt-1 text-xs text-zinc-500">
+          One-time setup, saved on this phone.
+        </div>
+        <div className="mt-3 space-y-3">
+          <Field label="Your name *">
+            <input
+              type="text" autoComplete="name"
+              value={name} onChange={(e) => setName(e.target.value)}
+              placeholder="John Smith"
+              className="block w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+          </Field>
+          <Field label="Company">
+            <input
+              type="text" autoComplete="organization"
+              value={company} onChange={(e) => setCompany(e.target.value)}
+              placeholder="Smith HVAC"
+              className="block w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+          </Field>
+          <Field label="Phone (for callback)">
+            <input
+              type="tel" autoComplete="tel" inputMode="tel"
+              value={phone} onChange={(e) => setPhone(e.target.value)}
+              placeholder="(555) 555-5555"
+              className="block w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+          </Field>
+          <BigButton
+            disabled={!ok}
+            onClick={() => onSave({
+              vendor_name: name.trim(),
+              vendor_company: company.trim(),
+              vendor_phone: phone.trim(),
+            })}
+          >
+            Continue
+          </BigButton>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="text-xs font-medium text-zinc-600">{label}</span>
+      <div className="mt-1">{children}</div>
+    </label>
+  );
+}
+
+function BigButton({
+  children, onClick, disabled, tone = "primary", icon,
+}: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  disabled?: boolean;
+  tone?: "primary" | "ghost" | "danger" | "success";
+  icon?: React.ReactNode;
+}) {
+  const toneCls =
+    tone === "primary" ? "bg-accent text-white hover:bg-accent/90" :
+    tone === "success" ? "bg-emerald-600 text-white hover:bg-emerald-700" :
+    tone === "danger"  ? "bg-red-600 text-white hover:bg-red-700" :
+                         "border border-zinc-300 bg-white text-midnight hover:bg-zinc-50";
+  return (
+    <button
+      type="button" onClick={onClick} disabled={disabled}
+      className={
+        "flex w-full items-center justify-center gap-2 rounded-md px-4 py-3 text-base font-semibold tracking-tight transition disabled:opacity-50 " +
+        toneCls
+      }
+    >
+      {icon}
+      {children}
+    </button>
+  );
+}
+
+// ── Ticket list screen ───────────────────────────────────────────
+
+function TicketList({
+  store, tokenLabel, tickets, identity, onPick, onIdentityChange,
+}: {
+  store: PortalStore;
+  tokenLabel: string | null;
+  tickets: PortalTicket[];
+  identity: Identity;
+  onPick: (id: string) => void;
+  onIdentityChange: () => void;
+}) {
+  return (
+    <div className="space-y-4">
+      <div className="rounded-md border border-zinc-200 bg-white p-3">
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Store</div>
+            <div className="text-base font-semibold text-midnight">
+              {store.number}{store.name ? ` — ${store.name}` : ""}
+            </div>
+            {(store.city || store.state) && (
+              <div className="text-xs text-zinc-500">
+                {[store.city, store.state].filter(Boolean).join(", ")}
+              </div>
+            )}
+            {tokenLabel && (
+              <div className="mt-1 text-[10px] uppercase tracking-wide text-zinc-400">
+                {tokenLabel}
+              </div>
+            )}
+          </div>
+          <div className="text-right text-[11px] text-zinc-500">
+            <div>{identity.vendor_name}</div>
+            {identity.vendor_company && <div>{identity.vendor_company}</div>}
+            <button
+              type="button" onClick={onIdentityChange}
+              className="mt-1 text-[10px] text-accent underline"
+            >
+              Not me
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="text-sm font-semibold text-midnight">
+        Open tickets at this store
+      </div>
+
+      {tickets.length === 0 ? (
+        <div className="rounded-md border border-zinc-200 bg-white px-4 py-6 text-center text-sm text-zinc-500">
+          No open tickets. If you were called for work that isn't listed here,
+          contact your District Operator.
+        </div>
+      ) : (
+        <ul className="space-y-2">
+          {tickets.map((t) => (
+            <li key={t.id}>
+              <button
+                type="button"
+                onClick={() => onPick(t.id)}
+                className="block w-full rounded-md border border-zinc-200 bg-white p-3 text-left hover:border-accent hover:bg-accent/5"
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-mono text-[11px] text-zinc-500">{t.wo_number}</span>
+                  <PriorityBadge p={t.priority} />
+                </div>
+                <div className="mt-0.5 text-base font-semibold text-midnight">
+                  {t.asset_type || t.category || "Service Request"}
+                </div>
+                {t.issue_description && (
+                  <div className="mt-0.5 line-clamp-2 text-xs text-zinc-700">
+                    {t.issue_description}
+                  </div>
+                )}
+                <div className="mt-1 flex items-center justify-between text-[11px] text-zinc-500">
+                  <span>Status: {humanStatus(t.status, t.pause_state)}</span>
+                  <span>{relTime(t.date_submitted)}</span>
+                </div>
+                {t.vendor_name && (
+                  <div className="mt-0.5 text-[11px] text-zinc-500">
+                    Assigned to: {t.vendor_name}
+                  </div>
+                )}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+function PriorityBadge({ p }: { p: string }) {
+  const tone =
+    p === "Emergency" ? "bg-red-100 text-red-900" :
+    p === "Urgent"    ? "bg-amber-100 text-amber-900" :
+                        "bg-zinc-100 text-zinc-700";
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${tone}`}>
+      {p}
+    </span>
+  );
+}
+
+function humanStatus(s: string, pause: string): string {
+  if (s === "in_progress" && pause && pause !== "none") {
+    if (pause === "on_hold")              return "In Progress · On Hold";
+    if (pause === "awaiting_parts")       return "In Progress · Awaiting Parts";
+    if (pause === "awaiting_replacement") return "In Progress · Awaiting Replacement";
+  }
+  switch (s) {
+    case "submitted":   return "Submitted";
+    case "in_progress": return "In Progress";
+    case "scheduled":   return "Scheduled";
+    case "on_site":     return "On Site";
+    case "completed":   return "Completed";
+    case "closed":      return "Closed";
+    case "cancelled":   return "Cancelled";
+    default:            return s;
+  }
+}
+
+// ── Ticket detail screen + actions ───────────────────────────────
+
+function TicketDetailScreen({
+  token, ticketId, identity, onBack, onIdentityChange,
+}: {
+  token: string;
+  ticketId: string;
+  identity: Identity;
+  onBack: () => void;
+  onIdentityChange: () => void;
+}) {
+  const qc = useQueryClient();
+  const ticketQ = useQuery({
+    queryKey: ["vendor-portal-ticket", token, ticketId],
+    queryFn: () => getPortal<{ ok: true; ticket: PortalTicketDetail }>(
+      `${FN}?action=getTicket&token=${encodeURIComponent(token)}&ticketId=${encodeURIComponent(ticketId)}`,
+    ),
+    staleTime: 15_000,
+  });
+
+  const [quoteOpen, setQuoteOpen] = useState(false);
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["vendor-portal-resolve", token] });
+    qc.invalidateQueries({ queryKey: ["vendor-portal-ticket", token, ticketId] });
+  };
+
+  const onSite = useMutation({
+    mutationFn: (notes: string) => postPortal(`${FN}?action=markOnSite`, {
+      token, ticketId, identity, notes: notes || undefined,
+    }),
+    onSuccess: invalidate,
+  });
+  const completed = useMutation({
+    mutationFn: ({ notes, resolution_category }: { notes: string; resolution_category: string }) =>
+      postPortal(`${FN}?action=markCompleted`, {
+        token, ticketId, identity,
+        notes: notes || undefined,
+        resolution_category: resolution_category || undefined,
+      }),
+    onSuccess: invalidate,
+  });
+  const photo = useMutation({
+    mutationFn: async ({ file, label }: { file: File; label: string }) => {
+      const photoData = await fileToBase64(file);
+      return postPortal(`${FN}?action=uploadPhoto`, {
+        token, ticketId, identity,
+        photoData, photoType: file.type, photoName: file.name, label,
+      });
+    },
+    onSuccess: invalidate,
+  });
+
+  if (ticketQ.isLoading) return <LoadingScreen label="Loading ticket…" />;
+  if (ticketQ.isError || !ticketQ.data?.ticket) {
+    return (
+      <div className="space-y-3">
+        <BackButton onClick={onBack} />
+        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">
+          {(ticketQ.error as Error)?.message || "Could not load this ticket."}
+        </div>
+      </div>
+    );
+  }
+  const ticket = ticketQ.data.ticket;
+  const terminal = ticket.status === "closed" || ticket.status === "cancelled";
+  const alreadyOnSite = ticket.status === "on_site" || ticket.status === "completed";
+  const alreadyDone = ticket.status === "completed";
+
+  return (
+    <div className="space-y-4">
+      <BackButton onClick={onBack} />
+
+      <div className="rounded-md border border-zinc-200 bg-white p-3">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-mono text-[11px] text-zinc-500">{ticket.wo_number}</span>
+          <PriorityBadge p={ticket.priority} />
+        </div>
+        <div className="mt-1 text-lg font-semibold text-midnight">
+          {ticket.asset_type || ticket.category || "Service Request"}
+        </div>
+        {ticket.model_number && (
+          <div className="text-[11px] uppercase tracking-wide text-zinc-500">
+            Model: <span className="font-mono text-zinc-700">{ticket.model_number}</span>
+          </div>
+        )}
+        {ticket.is_business_critical && (
+          <div className="mt-1 inline-block rounded-full bg-red-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-900">
+            Business Critical
+          </div>
+        )}
+        <div className="mt-2 text-[11px] text-zinc-500">
+          Status: {humanStatus(ticket.status, ticket.pause_state)}
+        </div>
+      </div>
+
+      {ticket.issue_description && (
+        <div className="rounded-md border border-zinc-200 bg-white p-3">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Issue</div>
+          <div className="mt-1 whitespace-pre-wrap text-sm text-midnight">
+            {ticket.issue_description}
+          </div>
+        </div>
+      )}
+
+      {ticket.troubleshooting_checked && (
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+          ✓ Store confirmed they ran the standard troubleshooting steps before
+          calling.
+        </div>
+      )}
+
+      {!!ticket.ticket_photos?.length && (
+        <div className="rounded-md border border-zinc-200 bg-white p-3">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+            Photos from the store
+          </div>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {ticket.ticket_photos.map((p) => (
+              <a
+                key={p.id} href={p.file_url} target="_blank" rel="noopener noreferrer"
+                className="block aspect-square overflow-hidden rounded-md border border-zinc-200 bg-zinc-100"
+              >
+                {p.file_name?.toLowerCase().endsWith(".pdf") ? (
+                  <div className="flex h-full items-center justify-center text-[10px] text-zinc-500">PDF</div>
+                ) : (
+                  <img
+                    src={p.file_url} alt={p.file_name || ""}
+                    className="h-full w-full object-cover"
+                  />
+                )}
+              </a>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Action buttons */}
+      {!terminal && (
+        <div className="space-y-3">
+          {!alreadyOnSite && (
+            <BigButton
+              tone="primary" icon={<Truck className="h-5 w-5" strokeWidth={2} />}
+              onClick={() => {
+                const notes = window.prompt("Add a quick note? (optional)") || "";
+                onSite.mutate(notes);
+              }}
+              disabled={onSite.isPending}
+            >
+              {onSite.isPending ? "Marking…" : "I'm on site"}
+            </BigButton>
+          )}
+          {!alreadyDone && (
+            <BigButton
+              tone="success" icon={<CheckCircle2 className="h-5 w-5" strokeWidth={2} />}
+              onClick={() => {
+                const notes = window.prompt("Brief note on the work done? (optional)") || "";
+                completed.mutate({ notes, resolution_category: "repaired" });
+              }}
+              disabled={completed.isPending}
+            >
+              {completed.isPending ? "Marking…" : "Work completed"}
+            </BigButton>
+          )}
+          <BigButton
+            tone="ghost" icon={<ReceiptText className="h-5 w-5" strokeWidth={2} />}
+            onClick={() => setQuoteOpen(true)}
+          >
+            Submit a quote
+          </BigButton>
+
+          <PhotoButton
+            onPick={(file, label) => photo.mutate({ file, label })}
+            pending={photo.isPending}
+          />
+        </div>
+      )}
+
+      {terminal && (
+        <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm text-zinc-700">
+          This ticket is {ticket.status}. No further vendor actions are possible.
+          If you believe this is wrong, contact the District Operator.
+        </div>
+      )}
+
+      <div className="mt-6 text-center text-[11px] text-zinc-400">
+        Logged in as <strong>{identity.vendor_name}</strong>
+        {identity.vendor_company && ` · ${identity.vendor_company}`}
+        {" · "}
+        <button type="button" onClick={onIdentityChange} className="underline">change</button>
+      </div>
+
+      {quoteOpen && (
+        <QuoteModal
+          token={token}
+          ticketId={ticketId}
+          identity={identity}
+          onClose={() => setQuoteOpen(false)}
+          onSubmitted={() => { setQuoteOpen(false); invalidate(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function BackButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button" onClick={onClick}
+      className="inline-flex items-center gap-1 text-xs font-medium text-accent"
+    >
+      <ChevronLeft className="h-4 w-4" strokeWidth={2} />
+      Back to tickets
+    </button>
+  );
+}
+
+// ── Photo button ─────────────────────────────────────────────────
+
+function PhotoButton({
+  onPick, pending,
+}: {
+  onPick: (file: File, label: string) => void;
+  pending: boolean;
+}) {
+  const [label, setLabel] = useState("after");
+  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (file) onPick(file, label);
+    e.target.value = ""; // allow re-select same file
+  }
+  return (
+    <div className="space-y-2 rounded-md border border-zinc-200 bg-white p-3">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+        Upload a photo
+      </div>
+      <select
+        value={label} onChange={(e) => setLabel(e.target.value)}
+        className="block w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm"
+      >
+        <option value="before">Before</option>
+        <option value="after">After</option>
+        <option value="serial">Serial / Nameplate</option>
+        <option value="other">Other</option>
+      </select>
+      <label className="block">
+        <input
+          type="file" accept="image/*" capture="environment"
+          onChange={handleChange} className="hidden"
+        />
+        <span className={
+          "flex w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-zinc-300 bg-white px-4 py-3 text-sm font-medium text-zinc-700 hover:border-accent hover:bg-accent/5" +
+          (pending ? " opacity-50 pointer-events-none" : "")
+        }>
+          {pending
+            ? <Loader2 className="h-4 w-4 animate-spin" />
+            : <Camera className="h-4 w-4" strokeWidth={1.75} />}
+          {pending ? "Uploading…" : "Take or choose a photo"}
+        </span>
+      </label>
+    </div>
+  );
+}
+
+// ── Quote modal ──────────────────────────────────────────────────
+
+function QuoteModal({
+  token, ticketId, identity, onClose, onSubmitted,
+}: {
+  token: string;
+  ticketId: string;
+  identity: Identity;
+  onClose: () => void;
+  onSubmitted: () => void;
+}) {
+  const [amount, setAmount] = useState("");
+  const [notes, setNotes] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+
+  const inferredTier = useMemo(() => {
+    const n = Number(amount);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    if (n < 500) return "DO < $500";
+    if (n <= 1000) return "SDO $501-$1000";
+    return "VP $1001-$1750";
+  }, [amount]);
+
+  const mut = useMutation({
+    mutationFn: async () => {
+      const amt = Number(amount);
+      if (!Number.isFinite(amt) || amt <= 0) {
+        return Promise.reject(new Error("Enter a positive dollar amount."));
+      }
+      if (!file) {
+        return Promise.reject(new Error("Attach a quote PDF before submitting."));
+      }
+      const photoData = await fileToBase64(file);
+      return postPortal(`${FN}?action=submitQuote`, {
+        token, ticketId, identity,
+        amount: amt,
+        notes: notes || undefined,
+        photo: {
+          photoData,
+          photoType: file.type,
+          photoName: file.name,
+        },
+      });
+    },
+    onSuccess: onSubmitted,
+  });
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center"
+      onClick={(e) => { if (e.target === e.currentTarget && !mut.isPending) onClose(); }}
+    >
+      <div className="w-full max-w-md rounded-t-xl bg-white shadow-2xl sm:rounded-xl">
+        <div className="border-b border-zinc-100 px-5 py-3 text-base font-semibold text-midnight">
+          Submit a Quote
+        </div>
+        <div className="space-y-3 px-5 py-4">
+          <Field label="Quote amount *">
+            <div className="flex items-center gap-1">
+              <span className="text-zinc-500">$</span>
+              <input
+                type="number" min="0" step="0.01" inputMode="decimal"
+                value={amount} onChange={(e) => setAmount(e.target.value)}
+                placeholder="0.00"
+                className="block w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base"
+              />
+            </div>
+            {inferredTier && (
+              <div className="mt-1 text-[10px] text-zinc-500">
+                Routes to: <strong>{inferredTier}</strong>
+              </div>
+            )}
+          </Field>
+          <Field label="Notes">
+            <textarea
+              value={notes} onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              placeholder="What does this cover?"
+              className="block w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm"
+            />
+          </Field>
+          <Field label="Quote PDF *">
+            <label className="block">
+              <input
+                type="file" accept="application/pdf,image/*"
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
+                className="hidden"
+              />
+              <span className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-md border border-dashed border-zinc-300 bg-white px-3 py-3 text-sm font-medium text-zinc-700 hover:border-accent">
+                <Upload className="h-4 w-4" strokeWidth={1.75} />
+                {file ? file.name : "Attach PDF"}
+              </span>
+            </label>
+          </Field>
+          {mut.isError && (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
+              {(mut.error as Error).message}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-zinc-100 px-5 py-3">
+          <button
+            type="button" onClick={onClose} disabled={mut.isPending}
+            className="rounded-md px-3 py-2 text-sm font-medium text-zinc-700 hover:bg-zinc-100 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button" onClick={() => mut.mutate()} disabled={mut.isPending}
+            className="rounded-md bg-accent px-3 py-2 text-sm font-semibold text-white hover:bg-accent/90 disabled:opacity-50"
+          >
+            {mut.isPending && <Loader2 className="mr-1 inline h-3.5 w-3.5 animate-spin" />}
+            Submit Quote
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}

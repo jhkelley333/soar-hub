@@ -90,6 +90,22 @@ const TRANSITIONS = {
   "submitted->scheduled":     { validate: (p) => validateVendor(p),
                                 sideEffects: (p) => vendorSideEffects(p) },
 
+  // Skip-forward: vendor walked in cold without a scheduled slot.
+  // Same outcome as submitted -> in_progress -> on_site but in one
+  // transition. Often the vendor portal path.
+  "submitted->on_site":       { validate: () => null,
+                                sideEffects: (p) => vendorSideEffects(p) },
+
+  // Skip-forward: work happened entirely off-system. DO discovered
+  // it was done after the fact, or vendor self-reported completion
+  // without ever marking on_site. resolution_category optional.
+  "submitted->completed":     { validate: () => null,
+                                sideEffects: (p) => ({
+                                  resolution_category: p.resolution_category || null,
+                                  ...vendorSideEffects(p),
+                                  completed_at: nowIso(),
+                                }) },
+
   "submitted->closed":        { validate: (p) => requireField(p, "store_close_reason", "false-alarm close"),
                                 sideEffects: (p) => ({
                                   store_close_reason: p.store_close_reason,
@@ -150,6 +166,15 @@ const TRANSITIONS = {
 
   "scheduled->on_site":       { validate: () => null,
                                 sideEffects: () => ({}) },
+
+  // Skip-forward: vendor came, finished the job, but the on_site
+  // step was never recorded (busy store, vendor self-reporting from
+  // the truck on the way out). resolution_category optional.
+  "scheduled->completed":     { validate: () => null,
+                                sideEffects: (p) => ({
+                                  resolution_category: p.resolution_category || null,
+                                  completed_at: nowIso(),
+                                }) },
 
   "scheduled->in_progress":   { validate: () => null,
                                 sideEffects: () => ({}) },
