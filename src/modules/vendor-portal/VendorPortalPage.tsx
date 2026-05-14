@@ -23,9 +23,11 @@ import {
   ClipboardList,
   Loader2,
   Mail,
+  MessageCircle,
   Package,
   Phone,
   ReceiptText,
+  Send,
   Truck,
   Upload,
   X,
@@ -1030,6 +1032,12 @@ function TicketDetailScreen({
         </div>
       )}
 
+      {/* Vendor chat thread — small panel at the bottom of the
+          ticket detail so the vendor can message the DO/GM without
+          leaving the page. Polls every 15s while the ticket is open
+          so a reply from the store side lands quickly. */}
+      <VendorChatPanel token={token} ticketId={ticketId} identity={identity} />
+
       <div className="mt-6 text-center text-[11px] text-zinc-400">
         Logged in as <strong>{identity.vendor_name}</strong>
         {identity.vendor_company && ` · ${identity.vendor_company}`}
@@ -1391,6 +1399,167 @@ function QuoteButton({
     >
       Submit a quote
     </BigButton>
+  );
+}
+
+// ── Vendor chat panel ──────────────────────────────────────────
+// Small chat thread at the bottom of the ticket detail screen.
+// Reads the `vendor` thread on ticket_messages and lets the vendor
+// post new messages with their self-attested identity. Polls every
+// 15s for new replies. Same thread is visible to staff via the WO2
+// TicketChat "Vendor" tab.
+
+interface VendorChatMessage {
+  id: string;
+  user_id: string | null;
+  user_name: string | null;
+  user_role: string | null;
+  message: string;
+  created_at: string;
+}
+
+function VendorChatPanel({
+  token, ticketId, identity,
+}: {
+  token: string;
+  ticketId: string;
+  identity: Identity;
+}) {
+  const qc = useQueryClient();
+  const listRef = useRef<HTMLDivElement>(null);
+  const [draft, setDraft] = useState("");
+
+  const msgsQ = useQuery({
+    queryKey: ["vendor-portal-chat", token, ticketId],
+    queryFn: () => getPortal<{ ok: true; messages: VendorChatMessage[] }>(
+      `${FN}?action=getVendorMessages&token=${encodeURIComponent(token)}&ticketId=${encodeURIComponent(ticketId)}`,
+    ),
+    staleTime: 5_000,
+    refetchInterval: 15_000,
+    refetchIntervalInBackground: false,
+  });
+
+  // Auto-scroll to bottom on new messages.
+  useEffect(() => {
+    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+  }, [msgsQ.data]);
+
+  const send = useMutation({
+    mutationFn: (text: string) =>
+      postPortal(`${FN}?action=sendVendorMessage`, {
+        token, ticketId, identity, message: text,
+      }),
+    onSuccess: () => {
+      setDraft("");
+      qc.invalidateQueries({ queryKey: ["vendor-portal-chat", token, ticketId] });
+    },
+  });
+
+  const messages = msgsQ.data?.messages || [];
+
+  function handleSend() {
+    const text = draft.trim();
+    if (!text) return;
+    send.mutate(text);
+  }
+  function onKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
+    }
+  }
+
+  return (
+    <div className="mt-6 rounded-md border border-zinc-200 bg-white">
+      <div className="flex items-center justify-between border-b border-zinc-100 px-3 py-2">
+        <div className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-zinc-600">
+          <MessageCircle className="h-3.5 w-3.5 text-accent" strokeWidth={2} />
+          Message the store
+        </div>
+        <div className="text-[10px] text-zinc-400">
+          {msgsQ.isFetching ? "Refreshing…" : "Visible to the store + DO"}
+        </div>
+      </div>
+      <div ref={listRef} className="max-h-72 space-y-2 overflow-y-auto p-3">
+        {msgsQ.isLoading && (
+          <div className="text-center text-xs text-zinc-500">Loading…</div>
+        )}
+        {!msgsQ.isLoading && messages.length === 0 && (
+          <div className="text-center text-xs text-zinc-500">
+            No messages yet. Drop a note if you need anything from the store.
+          </div>
+        )}
+        {messages.map((m) => (
+          <VendorChatBubble
+            key={m.id}
+            m={m}
+            mine={m.user_role === "VENDOR" && (
+              m.user_name === identity.vendor_company ||
+              m.user_name === identity.vendor_name
+            )}
+          />
+        ))}
+      </div>
+      <div className="flex items-end gap-2 border-t border-zinc-100 bg-zinc-50 px-2 py-2">
+        <textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={onKeyDown}
+          rows={1}
+          placeholder="Type a message to the store / DO…"
+          className="flex-1 resize-none rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+        />
+        <button
+          type="button"
+          onClick={handleSend}
+          disabled={send.isPending || !draft.trim()}
+          className="inline-flex items-center gap-1 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white disabled:opacity-50"
+        >
+          {send.isPending
+            ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            : <Send className="h-3.5 w-3.5" strokeWidth={1.75} />}
+          Send
+        </button>
+      </div>
+      {send.isError && (
+        <div className="border-t border-red-100 bg-red-50 px-3 py-1.5 text-[11px] text-red-900">
+          {(send.error as Error).message}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function VendorChatBubble({ m, mine }: { m: VendorChatMessage; mine: boolean }) {
+  const time = relTime(m.created_at);
+  const isStaff = m.user_role && m.user_role.toUpperCase() !== "VENDOR";
+  return (
+    <div className={mine ? "flex justify-end" : "flex justify-start"}>
+      <div className={mine ? "max-w-[80%]" : "max-w-[80%]"}>
+        <div
+          className={
+            "whitespace-pre-wrap rounded-md px-3 py-2 text-sm " +
+            (mine
+              ? "bg-accent/10 text-midnight"
+              : isStaff
+                ? "bg-blue-50 text-midnight"
+                : "bg-zinc-100 text-midnight")
+          }
+        >
+          {m.message}
+        </div>
+        <div className={
+          "mt-0.5 text-[10px] text-zinc-500 " + (mine ? "text-right" : "")
+        }>
+          {!mine && m.user_role && (
+            <span className="mr-1 rounded bg-zinc-200 px-1 py-0.5 text-[9px] font-semibold uppercase">
+              {m.user_role}
+            </span>
+          )}
+          {m.user_name || "Unknown"} · {time}
+        </div>
+      </div>
+    </div>
   );
 }
 

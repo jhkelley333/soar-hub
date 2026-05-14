@@ -411,6 +411,41 @@ export const handler = async (event) => {
       return await handleMyStoreTokens(supabase, event);
     }
 
+    // ── getVendorMessages: anonymous read of the vendor thread ──
+    // Vendor portal chat read. Authenticated via the QR token.
+    // Only the 'vendor' thread is exposed — the 'internal' thread
+    // (between DOs/GMs) stays private to authed staff.
+    if (action === "getVendorMessages") {
+      const tok = await resolveToken(supabase, qs.token);
+      if (!tok) return respond(404, { ok: false, error: "invalid_or_expired_token" });
+      if (!qs.ticketId) return respond(400, { ok: false, error: "ticketId required" });
+
+      // Confirm ticket belongs to this token's store before exposing
+      // messages — same defense as getTicket.
+      const { data: ticket, error: tErr } = await supabase
+        .from("tickets")
+        .select("id, store_number")
+        .eq("id", qs.ticketId)
+        .maybeSingle();
+      if (tErr) {
+        return respond(500, { ok: false, error: "ticket_query_failed", message: tErr.message });
+      }
+      if (!ticket) return respond(404, { ok: false, error: "ticket_not_found" });
+      if (!storesMatch(ticket.store_number, tok.store_number)) {
+        return respond(404, { ok: false, error: "ticket_not_at_this_store" });
+      }
+
+      const { data: msgs, error } = await supabase
+        .from("ticket_messages")
+        .select("id, user_id, user_name, user_role, message, thread_type, created_at")
+        .eq("ticket_id", qs.ticketId)
+        .eq("thread_type", "vendor")
+        .order("created_at", { ascending: true })
+        .limit(200);
+      if (error) throw error;
+      return respond(200, { ok: true, messages: msgs || [] });
+    }
+
     // ── Anonymous mutating actions from here down ──────────────
     if (event.httpMethod !== "POST") {
       return respond(405, { ok: false, error: "method_not_allowed" });
@@ -843,6 +878,43 @@ export const handler = async (event) => {
         remote_ip: ip, user_agent: ua,
       });
       return respond(200, { ok: true, tier, quoteUrl });
+    }
+
+    // ── sendVendorMessage: post a message to the vendor thread ──
+    if (action === "sendVendorMessage") {
+      const text = String(body.message || "").trim();
+      if (!text) {
+        return respond(400, { ok: false, error: "message required" });
+      }
+      if (text.length > 2000) {
+        return respond(400, { ok: false, error: "message_too_long" });
+      }
+      const { error } = await supabase.from("ticket_messages").insert({
+        ticket_id:   ticketId,
+        user_id:     null,
+        // Display the company first if we have one — that's what the
+        // store side cares about ("Frostex says X"). Fallback to the
+        // tech's name.
+        user_name:   identity.vendor_company || identity.vendor_name,
+        user_role:   "VENDOR",
+        message:     text,
+        thread_type: "vendor",
+      });
+      if (error) throw error;
+
+      // Audit trail on the vendor side. Doesn't double-write the
+      // message text to vendor_visits.notes to keep the audit log
+      // compact; the ticket_messages row IS the message record.
+      await logVisit(supabase, {
+        token_id: tok.id, ticket_id: ticketId,
+        vendor_name: identity.vendor_name,
+        vendor_company: identity.vendor_company,
+        vendor_phone: identity.vendor_phone,
+        action: "message_sent",
+        notes: text.slice(0, 200),
+        remote_ip: ip, user_agent: ua,
+      });
+      return respond(200, { ok: true });
     }
 
     // ── uploadPhoto (standalone) ─────────────────────────────

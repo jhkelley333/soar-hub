@@ -88,10 +88,9 @@ export function TicketChat({ ticketId, onError }: Props) {
           />
           <ThreadTab
             label="🏢 Vendor"
-            active={false}
-            onClick={() => undefined}
-            disabled
-            title="Vendor chat is coming soon — use internal for now."
+            active={thread === "vendor"}
+            onClick={() => setThread("vendor")}
+            title="Visible to the vendor scanning the store's QR code."
           />
           <button
             type="button"
