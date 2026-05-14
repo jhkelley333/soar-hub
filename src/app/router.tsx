@@ -23,12 +23,16 @@ import { RankerPage } from "@/modules/ranker/RankerPage";
 import { MyStoresPage } from "@/modules/my-stores/MyStoresPage";
 import { AccountPage } from "@/modules/account/AccountPage";
 import { WorkOrdersV2Page } from "@/modules/work-orders-v2/WorkOrdersV2Page";
+import { VendorPortalPage } from "@/modules/vendor-portal/VendorPortalPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
   { path: "/reset-password", element: <ResetPasswordPage /> },
   { path: "/accept-invite", element: <AcceptInvitePage /> },
   { path: "/paf/accept", element: <PafAcceptPage /> },
+  // Public anonymous vendor portal — opens directly from QR sticker.
+  // Token in the URL is the only credential; no login required.
+  { path: "/v/:token", element: <VendorPortalPage /> },
   {
     path: "/",
     element: (
