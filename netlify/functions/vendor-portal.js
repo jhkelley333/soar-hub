@@ -189,7 +189,16 @@ export const handler = async (event) => {
       return respond(200, { ok: true, ticket });
     }
 
-    // ── Mutating actions from here down ────────────────────────
+    // ── Manager-only (SDO+) token management + monitoring ────
+    // These use Bearer JWT auth and mix GET (list/listVisits) and
+    // POST (create/revoke). Dispatch BEFORE the anonymous-mutating
+    // 405 guard below; the manager handler enforces its own method
+    // checks per action.
+    if (["adminList", "adminCreate", "adminRevoke", "adminListVisits"].includes(action)) {
+      return await handleManager(supabase, event, action);
+    }
+
+    // ── Anonymous mutating actions from here down ──────────────
     if (event.httpMethod !== "POST") {
       return respond(405, { ok: false, error: "method_not_allowed" });
     }
@@ -534,14 +543,9 @@ export const handler = async (event) => {
       return respond(200, { ok: true, photo });
     }
 
-    // ── Manager-only (SDO+) token management + monitoring ────
-    // Distinct from the anonymous portal actions above; these
-    // require a Bearer JWT and an "admin tier" role. Listed under
-    // the same function name to keep deploy simple. Non-admin
-    // managers are scoped to stores visible to them.
-    if (["adminList", "adminCreate", "adminRevoke", "adminListVisits"].includes(action)) {
-      return await handleManager(supabase, event, action);
-    }
+    // Manager actions dispatched at the top of the handler (see
+    // earlier branch) so GETs aren't blocked by the anonymous-POST
+    // guard. This block intentionally left as a fall-through.
 
     return respond(400, { ok: false, error: "unknown_action", action });
   } catch (err) {
