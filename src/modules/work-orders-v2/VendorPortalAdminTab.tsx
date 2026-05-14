@@ -644,7 +644,12 @@ function TokenRow({
               </button>
             )}
           </div>
-          <QrPanel url={url} active={token.is_active} />
+          <QrPanel
+            url={url}
+            active={token.is_active}
+            storeNumber={token.store_number}
+            storeLabel={token.label}
+          />
         </div>
       </CardBody>
     </Card>
@@ -1052,7 +1057,14 @@ function ResultTile({
 // QR panel — renders a QR via an external image API so we don't have
 // to bundle a generator. Falls back to the URL text if the image
 // fails to load. Includes a Print button.
-function QrPanel({ url, active }: { url: string; active: boolean }) {
+function QrPanel({
+  url, active, storeNumber, storeLabel,
+}: {
+  url: string;
+  active: boolean;
+  storeNumber: string;
+  storeLabel: string | null;
+}) {
   const printRef = useRef<HTMLDivElement>(null);
   // QR image via a stable, no-cost CDN. If you don't want a third
   // party dependency we can swap to a JS generator (~3kb gzipped).
@@ -1060,25 +1072,49 @@ function QrPanel({ url, active }: { url: string; active: boolean }) {
     () => `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(url)}`,
     [url],
   );
+  // Larger size on the printed sheet — bigger QR scans more reliably
+  // from across a room.
+  const printSrc = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(url)}`;
 
   function printQr() {
     if (!printRef.current) return;
-    const w = window.open("", "_blank", "width=400,height=500");
+    const w = window.open("", "_blank", "width=420,height=560");
     if (!w) return;
+    const safeNumber = String(storeNumber)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+    const safeLabel = storeLabel
+      ? String(storeLabel)
+          .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+      : "";
     w.document.write(`
-      <html><head><title>Vendor QR</title>
+      <html><head><title>Vendor QR — Store ${safeNumber}</title>
       <style>
-        body { font-family: -apple-system, sans-serif; padding: 24px; text-align: center; }
-        img { display: block; margin: 24px auto; }
-        .url { font-family: monospace; font-size: 11px; color: #666; word-break: break-all; }
-        h1 { font-size: 18px; }
-        p { font-size: 13px; color: #444; }
+        @page { margin: 0.5in; }
+        body { font-family: -apple-system, sans-serif; padding: 24px; text-align: center; color: #111; }
+        h1 { font-size: 22px; margin: 0 0 8px 0; }
+        .store-number {
+          font-size: 92px;
+          font-weight: 800;
+          line-height: 1;
+          letter-spacing: -0.02em;
+          margin: 8px 0 16px 0;
+        }
+        .label { font-size: 12px; color: #777; margin-top: -8px; margin-bottom: 16px; }
+        img { display: block; margin: 16px auto; }
+        p { font-size: 14px; color: #333; line-height: 1.5; max-width: 360px; margin: 0 auto; }
+        .footer { margin-top: 24px; font-size: 10px; color: #999; }
       </style>
       </head><body>
         <h1>Vendor Quick Update</h1>
-        <p>Scan to mark on-site, completed, or submit a quote.</p>
-        <img src="${qrSrc}" alt="QR code" width="240" height="240" />
-        <div class="url">${url}</div>
+        <div class="store-number">${safeNumber}</div>
+        ${safeLabel ? `<div class="label">${safeLabel}</div>` : ""}
+        <img src="${printSrc}" alt="QR code" width="320" height="320" />
+        <p>Scan with your phone camera to mark <strong>on-site</strong>,
+           mark <strong>completed</strong>, submit a <strong>quote</strong>,
+           or upload <strong>photos</strong>. No login required.</p>
+        <div class="footer">SOAR Hub Vendor Portal · Store ${safeNumber}</div>
       </body></html>
     `);
     w.document.close();

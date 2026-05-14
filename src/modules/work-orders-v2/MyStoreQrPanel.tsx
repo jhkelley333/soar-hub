@@ -168,37 +168,47 @@ function PrintableSticker({ token }: { token: MyStoreToken }) {
       setPrinting(false);
       return;
     }
-    const storeLine = `Store ${escapeForPrint(token.store_number)}${
-      token.store_name ? ` — ${escapeForPrint(token.store_name)}` : ""
-    }`;
+    const safeNumber = escapeForPrint(token.store_number);
+    const safeName = token.store_name ? escapeForPrint(token.store_name) : "";
     const labelLine = token.label ? `<div class="label">${escapeForPrint(token.label)}</div>` : "";
+    // Bigger size on the printed QR — 320x320 reads better from a
+    // few feet away when stuck to a back-of-house door.
+    const printSrc = `https://api.qrserver.com/v1/create-qr-code/?size=320x320&data=${encodeURIComponent(url)}`;
     w.document.write(`
       <html>
       <head>
-        <title>Vendor QR — ${storeLine}</title>
+        <title>Vendor QR — Store ${safeNumber}</title>
         <style>
           @page { margin: 0.5in; }
           body { font-family: -apple-system, system-ui, "Segoe UI", sans-serif; padding: 24px; text-align: center; color: #111; }
-          h1 { font-size: 20px; margin: 0 0 4px 0; }
-          .store { font-size: 13px; color: #444; margin-bottom: 24px; }
-          .label { font-size: 11px; color: #888; margin-top: -16px; margin-bottom: 16px; }
+          h1 { font-size: 22px; margin: 0 0 8px 0; }
+          .store-number {
+            font-size: 92px;
+            font-weight: 800;
+            line-height: 1;
+            letter-spacing: -0.02em;
+            margin: 8px 0 4px 0;
+          }
+          .store-name { font-size: 16px; color: #555; margin-bottom: 20px; }
+          .label { font-size: 12px; color: #777; margin-top: -8px; margin-bottom: 16px; }
           img { display: block; margin: 0 auto 16px auto; }
-          .instruct { font-size: 13px; color: #444; line-height: 1.5; max-width: 320px; margin: 0 auto; }
+          .instruct { font-size: 14px; color: #333; line-height: 1.5; max-width: 360px; margin: 0 auto; }
           .instruct strong { color: #111; }
           .footer { margin-top: 24px; font-size: 10px; color: #999; }
         </style>
       </head>
       <body>
         <h1>Vendor Quick Update</h1>
-        <div class="store">${storeLine}</div>
+        <div class="store-number">${safeNumber}</div>
+        ${safeName ? `<div class="store-name">${safeName}</div>` : ""}
         ${labelLine}
-        <img src="${qrSrc}" alt="QR code" width="240" height="240" />
+        <img src="${printSrc}" alt="QR code" width="320" height="320" />
         <div class="instruct">
           Scan with your phone camera to mark <strong>on-site</strong>,
           mark <strong>completed</strong>, submit a <strong>quote</strong>,
           or upload <strong>photos</strong>. No login required.
         </div>
-        <div class="footer">SOAR Hub Vendor Portal</div>
+        <div class="footer">SOAR Hub Vendor Portal · Store ${safeNumber}</div>
       </body>
       </html>
     `);
