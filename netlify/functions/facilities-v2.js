@@ -1273,13 +1273,18 @@ export const handler = async (event) => {
       if (error) throw error;
 
       const now = Date.now();
-      const open = data.filter((t) => t.status !== "Closed").length;
-      const closed = data.filter((t) => t.status === "Closed").length;
+      // "Open" is anything not in a terminal state. Phase 1 enum:
+      // completed counts as still-open-pending-confirmation, closed
+      // and cancelled are terminal. Mirrors the frontend's
+      // isOpenStatus() helper exactly.
+      const TERMINAL = new Set(["completed", "closed", "cancelled"]);
+      const open     = data.filter((t) => !TERMINAL.has(t.status)).length;
+      const closed   = data.filter((t) => t.status === "closed").length;
       const critical = data.filter(
-        (t) => t.is_business_critical && t.status !== "Closed",
+        (t) => t.is_business_critical && !TERMINAL.has(t.status),
       ).length;
       const aged = data.filter((t) => {
-        if (t.status === "Closed") return false;
+        if (TERMINAL.has(t.status)) return false;
         const d = new Date(t.date_submitted);
         return (now - d.getTime()) / 86400000 >= 15;
       }).length;
