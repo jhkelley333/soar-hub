@@ -194,7 +194,7 @@ export const handler = async (event) => {
     // POST (create/revoke). Dispatch BEFORE the anonymous-mutating
     // 405 guard below; the manager handler enforces its own method
     // checks per action.
-    if (["adminList", "adminCreate", "adminRevoke", "adminListVisits"].includes(action)) {
+    if (["adminList", "adminCreate", "adminRevoke", "adminListVisits", "adminBulkCreate"].includes(action)) {
       return await handleManager(supabase, event, action);
     }
 
@@ -689,6 +689,111 @@ async function handleManager(supabase, event, action) {
       .single();
     if (error) throw error;
     return respond(200, { ok: true, token: data });
+  }
+
+  // ── adminBulkCreate: mint tokens for many stores at once ──
+  // Admin-tier only. Two modes:
+  //   "all_missing" — mint a token for every active store that
+  //                   doesn't already have an active token.
+  //   "specific"    — mint tokens for an explicit store_numbers list.
+  // Stores already covered by an active token are skipped (returned
+  // with status "skipped") so a re-run is safe.
+  if (action === "adminBulkCreate" && event.httpMethod === "POST") {
+    // SDO+ can mint single tokens; bulk is intentionally tighter —
+    // limit to admin so a regional rollout requires top-of-house
+    // sign-off, not district leadership doing it ad-hoc.
+    if (String(profile.role).toLowerCase() !== "admin") {
+      return respond(403, { ok: false, error: "admin_only_for_bulk" });
+    }
+    const body = JSON.parse(event.body || "{}");
+    const mode = body.mode === "specific" ? "specific" : "all_missing";
+    const label = body.label ? String(body.label).trim() : null;
+    const ttlDays = Number(body.ttl_days) || 365;
+    const expiresAt = new Date(Date.now() + ttlDays * 86400_000).toISOString();
+
+    let targetStores = [];
+    if (mode === "specific") {
+      if (!Array.isArray(body.store_numbers) || body.store_numbers.length === 0) {
+        return respond(400, { ok: false, error: "store_numbers required for specific mode" });
+      }
+      targetStores = Array.from(new Set(
+        body.store_numbers
+          .map((s) => String(s).trim())
+          .filter(Boolean),
+      ));
+    } else {
+      const { data: stores, error } = await supabase
+        .from("stores")
+        .select("number")
+        .eq("is_active", true);
+      if (error) throw error;
+      targetStores = (stores || []).map((s) => String(s.number));
+    }
+
+    // Cap to a sane upper bound so a typo can't accidentally try
+    // to mint thousands of tokens in one shot.
+    if (targetStores.length > 500) {
+      return respond(400, {
+        ok: false,
+        error: "too_many_stores",
+        message: "Bulk create capped at 500 stores per request.",
+      });
+    }
+
+    // Find which already have an active, non-expired token.
+    const nowIso = new Date().toISOString();
+    const { data: existing } = await supabase
+      .from("store_qr_tokens")
+      .select("store_number, expires_at")
+      .in("store_number", targetStores)
+      .eq("is_active", true);
+    const covered = new Set(
+      (existing || [])
+        .filter((r) => !r.expires_at || r.expires_at > nowIso)
+        .map((r) => String(r.store_number)),
+    );
+
+    const results = [];
+    for (const sn of targetStores) {
+      if (covered.has(sn)) {
+        results.push({
+          store_number: sn,
+          status: "skipped",
+          message: "active token already exists",
+        });
+        continue;
+      }
+      try {
+        const { data: tokenStr } = await supabase.rpc("gen_store_qr_token");
+        const generatedToken = tokenStr ||
+          (Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2));
+        const { data: row, error: insErr } = await supabase
+          .from("store_qr_tokens")
+          .insert({
+            store_number: sn,
+            token: generatedToken,
+            label,
+            expires_at: expiresAt,
+            created_by_id: profile.id,
+          })
+          .select("id, token, store_number")
+          .single();
+        if (insErr) throw insErr;
+        results.push({ store_number: sn, status: "created", token: row });
+      } catch (e) {
+        results.push({
+          store_number: sn,
+          status: "failed",
+          message: e?.message || "insert failed",
+        });
+      }
+    }
+
+    const summary = results.reduce(
+      (acc, r) => ({ ...acc, [r.status]: (acc[r.status] || 0) + 1 }),
+      {},
+    );
+    return respond(200, { ok: true, results, summary });
   }
 
   if (action === "adminRevoke" && event.httpMethod === "POST") {
