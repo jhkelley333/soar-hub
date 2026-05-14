@@ -158,11 +158,19 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
   // Vendor recommendations fire only after the user picks an issue, so
   // we always have a concrete asset_type to filter by. Limit to 3.
   // Pass the chosen store_number so the search filters out vendors
-  // not visible at this store (vendor_scopes). Vendors with no
-  // scope rows still show — legacy "national" fallback.
+  // not visible at this store (vendor_scopes), AND pass the issue's
+  // category so unit-specific asset types ("HVAC 1", "Fryer 2")
+  // still match the high-level vendor categories ("HVAC", "Fryer").
+  // Vendors with no scope rows still show — legacy "national"
+  // fallback.
   const vendorRecs = useQuery({
-    queryKey: ["wo2", "vendorRecs", vendorPickAsset, storeNumber.trim()],
-    queryFn: () => searchVendors("", vendorPickAsset, storeNumber.trim() || undefined),
+    queryKey: ["wo2", "vendorRecs", vendorPickAsset, storeNumber.trim(), category],
+    queryFn: () => searchVendors(
+      "",
+      vendorPickAsset,
+      storeNumber.trim() || undefined,
+      category || undefined,
+    ),
     enabled: open && !!vendorPickAsset,
     staleTime: 60_000,
   });
