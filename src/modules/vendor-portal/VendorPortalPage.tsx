@@ -23,6 +23,7 @@ import {
   ClipboardList,
   Loader2,
   Mail,
+  Package,
   Phone,
   ReceiptText,
   Truck,
@@ -85,6 +86,9 @@ interface PortalTicketDetail extends PortalTicket {
   approval_status: "Pending" | "Approved" | "Rejected" | null;
   approval_level: string | null;
   approval_request_notes: string | null;
+  parts_ordered_by: "vendor" | "customer" | null;
+  parts_ordered_notes: string | null;
+  parts_ordered_at: string | null;
   troubleshooting_checked: boolean;
   closed_at: string | null;
   ticket_photos?: Array<{
@@ -845,6 +849,19 @@ function TicketDetailScreen({
     onSuccess: invalidate,
   });
 
+  // Parts-on-order sheet. Opens when the vendor taps "Parts on order"
+  // and asks who's responsible for ordering them.
+  const [partsOpen, setPartsOpen] = useState(false);
+  const partsOnOrder = useMutation({
+    mutationFn: (args: { ordered_by: "vendor" | "customer"; notes: string }) =>
+      postPortal(`${FN}?action=markPartsOnOrder`, {
+        token, ticketId, identity,
+        ordered_by: args.ordered_by,
+        notes:      args.notes || undefined,
+      }),
+    onSuccess: invalidate,
+  });
+
   if (ticketQ.isLoading) return <LoadingScreen label="Loading ticket…" />;
   if (ticketQ.isError || !ticketQ.data?.ticket) {
     return (
@@ -870,6 +887,14 @@ function TicketDetailScreen({
           decision={approvalAlert}
           amount={ticket.cost_estimate}
           onDismiss={() => setApprovalAlert(null)}
+        />
+      )}
+
+      {ticket.pause_state === "awaiting_parts" && (
+        <PartsOnOrderBanner
+          orderedBy={ticket.parts_ordered_by}
+          notes={ticket.parts_ordered_notes}
+          orderedAt={ticket.parts_ordered_at}
         />
       )}
 
@@ -965,6 +990,16 @@ function TicketDetailScreen({
             onSubmit={() => setQuoteOpen(true)}
           />
 
+          <BigButton
+            tone="ghost" icon={<Package className="h-5 w-5" strokeWidth={2} />}
+            onClick={() => setPartsOpen(true)}
+            disabled={partsOnOrder.isPending}
+          >
+            {ticket.pause_state === "awaiting_parts"
+              ? "Update parts order"
+              : "Parts on order"}
+          </BigButton>
+
           <PhotoButton
             onPick={(file, label) => photo.mutate({ file, label })}
             pending={photo.isPending}
@@ -996,6 +1031,30 @@ function TicketDetailScreen({
         />
       )}
 
+      {partsOpen && (
+        <PartsOnOrderSheet
+          existing={
+            ticket.pause_state === "awaiting_parts"
+              ? {
+                  ordered_by: ticket.parts_ordered_by,
+                  notes:      ticket.parts_ordered_notes,
+                }
+              : null
+          }
+          submitting={partsOnOrder.isPending}
+          onClose={() => setPartsOpen(false)}
+          onConfirm={async (args) => {
+            try {
+              await partsOnOrder.mutateAsync(args);
+              setPartsOpen(false);
+            } catch {
+              // error surfaces in the sheet's error region
+            }
+          }}
+          errorMessage={partsOnOrder.error instanceof Error ? partsOnOrder.error.message : null}
+        />
+      )}
+
       {confirmAction && (
         <ActionConfirmSheet
           kind={confirmAction}
@@ -1015,6 +1074,138 @@ function TicketDetailScreen({
           }}
         />
       )}
+    </div>
+  );
+}
+
+// Parts-on-order sheet. Asks the vendor who's responsible for
+// ordering the parts (vendor or customer/us) and an optional note
+// for part numbers, expected arrival, vendor's PO, etc. Submits to
+// markPartsOnOrder which parks the ticket in
+// in_progress / awaiting_parts with the metadata attached.
+//
+// If the ticket is ALREADY in awaiting_parts, this sheet acts as
+// an editor — pre-fills with the current values so the vendor can
+// update (e.g., "started as vendor, customer is taking over").
+function PartsOnOrderSheet({
+  existing, submitting, errorMessage, onClose, onConfirm,
+}: {
+  existing: { ordered_by: "vendor" | "customer" | null; notes: string | null } | null;
+  submitting: boolean;
+  errorMessage: string | null;
+  onClose: () => void;
+  onConfirm: (args: { ordered_by: "vendor" | "customer"; notes: string }) => void | Promise<void>;
+}) {
+  const [orderedBy, setOrderedBy] = useState<"vendor" | "customer" | "">(
+    existing?.ordered_by ?? "",
+  );
+  const [notes, setNotes] = useState(existing?.notes ?? "");
+  const valid = orderedBy === "vendor" || orderedBy === "customer";
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center"
+      onClick={(e) => { if (e.target === e.currentTarget && !submitting) onClose(); }}
+    >
+      <div className="w-full max-w-md rounded-t-xl bg-white shadow-2xl sm:rounded-xl">
+        <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-3">
+          <div className="text-base font-semibold text-midnight">
+            {existing ? "Update parts order" : "Parts on order"}
+          </div>
+          <button
+            type="button" onClick={onClose} disabled={submitting}
+            className="rounded p-1 text-zinc-400 hover:bg-zinc-100"
+            aria-label="Close"
+          >
+            <X className="h-5 w-5" strokeWidth={1.75} />
+          </button>
+        </div>
+        <div className="space-y-4 px-5 py-4">
+          <p className="text-sm text-zinc-700">
+            We'll mark this ticket as <strong>awaiting parts</strong> so the
+            store and DO know the work is paused. Tell us who's responsible
+            for ordering them.
+          </p>
+          <div className="space-y-2">
+            <label className="flex cursor-pointer items-start gap-2 rounded-md border border-zinc-200 bg-white p-3 hover:border-accent">
+              <input
+                type="radio" name="parts-by"
+                checked={orderedBy === "vendor"}
+                onChange={() => setOrderedBy("vendor")}
+                className="mt-0.5 h-4 w-4 accent-accent"
+              />
+              <div className="flex-1">
+                <div className="text-sm font-medium text-midnight">
+                  Vendor will order
+                </div>
+                <div className="text-[11px] text-zinc-500">
+                  You'll source the parts from your supplier and return to
+                  finish the work.
+                </div>
+              </div>
+            </label>
+            <label className="flex cursor-pointer items-start gap-2 rounded-md border border-zinc-200 bg-white p-3 hover:border-accent">
+              <input
+                type="radio" name="parts-by"
+                checked={orderedBy === "customer"}
+                onChange={() => setOrderedBy("customer")}
+                className="mt-0.5 h-4 w-4 accent-accent"
+              />
+              <div className="flex-1">
+                <div className="text-sm font-medium text-midnight">
+                  Customer will order
+                </div>
+                <div className="text-[11px] text-zinc-500">
+                  We'll source the parts. We'll contact you when they arrive.
+                </div>
+              </div>
+            </label>
+          </div>
+          <div>
+            <span className="text-xs font-medium text-zinc-600">
+              Parts / expected arrival (optional)
+            </span>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              placeholder='e.g. "Compressor relay #ABC-123, ETA Wed"'
+              className="mt-1 block w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+            <div className="mt-1 text-[10px] text-zinc-500">
+              Part numbers, your PO, expected arrival — anything that helps
+              the next person who picks this up.
+            </div>
+          </div>
+          {errorMessage && (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
+              {errorMessage}
+            </div>
+          )}
+        </div>
+        <div className="flex flex-col gap-2 border-t border-zinc-100 px-5 py-3">
+          <BigButton
+            tone="primary"
+            icon={<Package className="h-5 w-5" strokeWidth={2} />}
+            disabled={!valid || submitting}
+            onClick={() => {
+              if (!valid) return;
+              onConfirm({ ordered_by: orderedBy as "vendor" | "customer", notes: notes.trim() });
+            }}
+          >
+            {submitting
+              ? "Saving…"
+              : existing
+                ? "Update parts order"
+                : "Mark parts on order"}
+          </BigButton>
+          <button
+            type="button" onClick={onClose} disabled={submitting}
+            className="rounded-md px-4 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1184,6 +1375,45 @@ function QuoteButton({
     >
       Submit a quote
     </BigButton>
+  );
+}
+
+// ── Parts on order banner ──────────────────────────────────────
+// Persistent (non-dismissible) banner that surfaces who's ordering
+// the parts + the original notes. Stays up the whole time the
+// ticket is in pause_state = 'awaiting_parts'. Vendor uses the
+// "Update parts order" button below if they need to change who's
+// ordering or update the notes.
+
+function PartsOnOrderBanner({
+  orderedBy, notes, orderedAt,
+}: {
+  orderedBy: "vendor" | "customer" | null;
+  notes: string | null;
+  orderedAt: string | null;
+}) {
+  const label = orderedBy === "vendor"
+    ? "Vendor ordering parts"
+    : orderedBy === "customer"
+      ? "Customer ordering parts"
+      : "Parts on order";
+  return (
+    <div className="flex items-start gap-3 rounded-md border border-blue-200 bg-blue-50 p-3">
+      <Package className="mt-0.5 h-5 w-5 shrink-0 text-blue-700" strokeWidth={2} />
+      <div className="flex-1 text-sm text-blue-900">
+        <div className="font-semibold">{label}</div>
+        {notes && (
+          <div className="mt-0.5 whitespace-pre-wrap text-[12px] text-blue-900/90">
+            {notes}
+          </div>
+        )}
+        {orderedAt && (
+          <div className="mt-1 text-[10px] uppercase tracking-wide text-blue-700/80">
+            Ordered {new Date(orderedAt).toLocaleDateString()}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

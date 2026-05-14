@@ -334,6 +334,7 @@ export const handler = async (event) => {
           model_number, issue_description, priority, is_business_critical,
           status, pause_state, vendor_name, vendor_eta, cost_estimate,
           approval_status, approval_level, approval_request_notes,
+          parts_ordered_by, parts_ordered_notes, parts_ordered_at,
           troubleshooting_checked, date_submitted, closed_at,
           ticket_photos(id, file_url, file_name, upload_type, created_at)
         `)
@@ -559,6 +560,105 @@ export const handler = async (event) => {
         storeNumber: current.store_number,
         vendor:      identity,
       }).catch((e) => console.warn("[vendor-portal] drive-by alert path failed", e));
+      return respond(200, { ok: true });
+    }
+
+    // ── markPartsOnOrder ────────────────────────────────────
+    // Vendor parks the ticket because parts are on order. Captures
+    // who's responsible for ordering ('vendor' or 'customer') and
+    // optional notes (part numbers, expected arrival, vendor PO).
+    // Moves the ticket into the existing in_progress / awaiting_parts
+    // pause state — same shape the DO uses from the WO2 UI — so it
+    // shows up in the queue with the familiar "Awaiting Parts" label.
+    if (action === "markPartsOnOrder") {
+      const orderedByRaw = String(body.ordered_by || "").toLowerCase();
+      const orderedBy = orderedByRaw === "customer" ? "customer" :
+                       orderedByRaw === "vendor"   ? "vendor"   : null;
+      if (!orderedBy) {
+        return respond(400, {
+          ok: false,
+          error: "ordered_by required (vendor|customer)",
+        });
+      }
+      if (current.status === "closed" || current.status === "cancelled") {
+        return respond(409, { ok: false, error: "ticket_terminal" });
+      }
+      if (current.status === "completed") {
+        return respond(409, { ok: false, error: "ticket_already_completed" });
+      }
+
+      // From submitted/scheduled/on_site we move into in_progress so
+      // the ticket shows up in the right bucket while paused. From
+      // in_progress we stay put. We don't run this through the state
+      // machine because there's no single status transition that
+      // captures both the status change AND the pause change in one
+      // step; we emit the activity rows manually instead.
+      const newStatus = current.status === "in_progress" ? "in_progress" : "in_progress";
+      const fromStatus = current.status;
+      const fromPause  = current.pause_state || "none";
+      const nowIso = new Date().toISOString();
+
+      const reason = orderedBy === "vendor"
+        ? "Vendor ordering parts"
+        : "Customer ordering parts";
+
+      const updates = {
+        status:              newStatus,
+        pause_state:         "awaiting_parts",
+        parts_ordered_by:    orderedBy,
+        parts_ordered_notes: body.notes || null,
+        parts_ordered_at:    nowIso,
+        date_status_updated: nowIso,
+        updated_at:          nowIso,
+      };
+      const { error } = await supabase.from("tickets").update(updates).eq("id", ticketId);
+      if (error) throw error;
+
+      // Activity rows: status change (if any) + pause state change.
+      const activityRows = [];
+      if (fromStatus !== newStatus) {
+        activityRows.push({
+          ticket_id: ticketId, user_id: null, user_name: identity.vendor_name,
+          user_role: "vendor",
+          update_type: "status_change",
+          old_value: fromStatus, new_value: newStatus,
+          event_type: "status_changed",
+          event_data: {
+            vendor_self_report: true,
+            acted_on_behalf_of_vendor: true,
+            vendor_identity: identity,
+            reason: "parts_on_order",
+          },
+          visibility: "all",
+        });
+      }
+      activityRows.push({
+        ticket_id: ticketId, user_id: null, user_name: identity.vendor_name,
+        user_role: "vendor",
+        update_type: "pause_state_change",
+        old_value: fromPause, new_value: "awaiting_parts",
+        event_type: "pause_state_change",
+        event_data: {
+          ordered_by: orderedBy,
+          reason,
+          notes: body.notes || null,
+          vendor_self_report: true,
+          acted_on_behalf_of_vendor: true,
+          vendor_identity: identity,
+        },
+        visibility: "all",
+      });
+      await supabase.from("ticket_activities").insert(activityRows);
+
+      await logVisit(supabase, {
+        token_id: tok.id, ticket_id: ticketId,
+        vendor_name: identity.vendor_name,
+        vendor_company: identity.vendor_company,
+        vendor_phone: identity.vendor_phone,
+        action: "parts_on_order",
+        notes: `${reason}${body.notes ? ` — ${body.notes}` : ""}`,
+        remote_ip: ip, user_agent: ua,
+      });
       return respond(200, { ok: true });
     }
 
