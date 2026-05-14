@@ -141,9 +141,40 @@ export const handler = async (event) => {
 
       const { data: store } = await supabase
         .from("stores")
-        .select("number, name, city, state")
+        .select("id, number, name, city, state, phone, district_id")
         .eq("number", tok.store_number)
         .maybeSingle();
+
+      // Look up a DO assigned either directly to this store or to
+      // its district. Used by the portal's empty-state panel so a
+      // vendor with no matching ticket can call escalation directly
+      // instead of "contact your District Operator" in the abstract.
+      let doContact = null;
+      if (store?.id) {
+        const scopeIds = [store.id];
+        if (store.district_id) scopeIds.push(store.district_id);
+        const { data: scopes } = await supabase
+          .from("user_scopes")
+          .select("user_id")
+          .in("scope_id", scopeIds);
+        const userIds = [...new Set((scopes || []).map((s) => s.user_id))];
+        if (userIds.length) {
+          const { data: dos } = await supabase
+            .from("profiles")
+            .select("full_name, email, phone, role")
+            .in("id", userIds)
+            .eq("role", "do")
+            .eq("is_active", true)
+            .limit(1);
+          if (dos && dos.length > 0) {
+            doContact = {
+              name:  dos[0].full_name,
+              email: dos[0].email,
+              phone: dos[0].phone,
+            };
+          }
+        }
+      }
 
       // Open tickets = anything not in a terminal state. Vendors
       // should see in-flight work; closed/cancelled is irrelevant.
@@ -155,9 +186,22 @@ export const handler = async (event) => {
         .order("priority", { ascending: false })
         .order("date_submitted", { ascending: false });
 
+      // Drop the internal `id` and `district_id` from the response;
+      // anonymous callers don't need them.
+      const storeOut = store
+        ? {
+            number: store.number,
+            name:   store.name,
+            city:   store.city,
+            state:  store.state,
+            phone:  store.phone,
+          }
+        : null;
+
       return respond(200, {
         ok: true,
-        store,
+        store: storeOut,
+        do_contact: doContact,
         tokenLabel: tok.label,
         tickets: tickets || [],
       });
