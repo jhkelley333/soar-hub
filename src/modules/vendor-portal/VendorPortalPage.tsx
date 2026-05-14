@@ -12,7 +12,7 @@
 // Designed for phone-first. Big buttons, full-screen layout, native
 // inputs. No app, no login. The token IS the auth.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -82,6 +82,9 @@ interface PortalTicketDetail extends PortalTicket {
   is_business_critical: boolean;
   vendor_eta: string | null;
   cost_estimate: number | string | null;
+  approval_status: "Pending" | "Approved" | "Rejected" | null;
+  approval_level: string | null;
+  approval_request_notes: string | null;
   troubleshooting_checked: boolean;
   closed_at: string | null;
   ticket_photos?: Array<{
@@ -772,12 +775,21 @@ function TicketDetailScreen({
   onIdentityChange: () => void;
 }) {
   const qc = useQueryClient();
+  // While a quote is pending approval, poll every 8 seconds so a DO
+  // approval or rejection lands on the vendor's phone within a few
+  // beats. Once the approval resolves (Approved/Rejected), polling
+  // stops automatically — no need to hammer the API after that.
   const ticketQ = useQuery({
     queryKey: ["vendor-portal-ticket", token, ticketId],
     queryFn: () => getPortal<{ ok: true; ticket: PortalTicketDetail }>(
       `${FN}?action=getTicket&token=${encodeURIComponent(token)}&ticketId=${encodeURIComponent(ticketId)}`,
     ),
-    staleTime: 15_000,
+    staleTime: 5_000,
+    refetchInterval: (q: { state: { data?: { ticket?: PortalTicketDetail } } }) => {
+      const status = q.state.data?.ticket?.approval_status;
+      return status === "Pending" ? 8000 : false;
+    },
+    refetchIntervalInBackground: false,
   });
 
   const [quoteOpen, setQuoteOpen] = useState(false);
@@ -786,6 +798,21 @@ function TicketDetailScreen({
   // action kind so the same component renders different copy +
   // routes to the right mutation on confirm.
   const [confirmAction, setConfirmAction] = useState<"on_site" | "completed" | null>(null);
+
+  // Sticky alert that fires when the quote approval state transitions
+  // from Pending → Approved/Rejected. The banner stays visible until
+  // the vendor dismisses it. We track the previous status with a ref
+  // so we only fire on the transition, not on every poll.
+  const [approvalAlert, setApprovalAlert] = useState<"Approved" | "Rejected" | null>(null);
+  const prevApprovalRef = useRef<string | null>(null);
+  useEffect(() => {
+    const current = ticketQ.data?.ticket?.approval_status ?? null;
+    const prev = prevApprovalRef.current;
+    if (prev === "Pending" && (current === "Approved" || current === "Rejected")) {
+      setApprovalAlert(current);
+    }
+    prevApprovalRef.current = current;
+  }, [ticketQ.data?.ticket?.approval_status]);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["vendor-portal-resolve", token] });
@@ -837,6 +864,14 @@ function TicketDetailScreen({
   return (
     <div className="space-y-4">
       <BackButton onClick={onBack} />
+
+      {approvalAlert && (
+        <ApprovalAlertBanner
+          decision={approvalAlert}
+          amount={ticket.cost_estimate}
+          onDismiss={() => setApprovalAlert(null)}
+        />
+      )}
 
       <div className="rounded-md border border-zinc-200 bg-white p-3">
         <div className="flex items-center justify-between gap-2">
@@ -923,12 +958,12 @@ function TicketDetailScreen({
               {completed.isPending ? "Marking…" : "Work completed"}
             </BigButton>
           )}
-          <BigButton
-            tone="ghost" icon={<ReceiptText className="h-5 w-5" strokeWidth={2} />}
-            onClick={() => setQuoteOpen(true)}
-          >
-            Submit a quote
-          </BigButton>
+          <QuoteButton
+            approvalStatus={ticket.approval_status}
+            costEstimate={ticket.cost_estimate}
+            approvalLevel={ticket.approval_level}
+            onSubmit={() => setQuoteOpen(true)}
+          />
 
           <PhotoButton
             onPick={(file, label) => photo.mutate({ file, label })}
@@ -1078,6 +1113,123 @@ function BackButton({ onClick }: { onClick: () => void }) {
       <ChevronLeft className="h-4 w-4" strokeWidth={2} />
       Back to tickets
     </button>
+  );
+}
+
+// ── Quote button (state-aware) ──────────────────────────────────
+// Replaces the always-active "Submit a quote" button with a state
+// machine driven by ticket.approval_status:
+//   null      → "Submit a quote" (active)
+//   Pending   → "Quote submitted — awaiting approval" (disabled,
+//               with a spinner-like indicator)
+//   Approved  → "✓ Quote approved" (disabled, green)
+//   Rejected  → "Quote rejected — submit a new quote" (active, the
+//               new submission will replace the prior pending row)
+
+function QuoteButton({
+  approvalStatus, costEstimate, approvalLevel, onSubmit,
+}: {
+  approvalStatus: PortalTicketDetail["approval_status"];
+  costEstimate: PortalTicketDetail["cost_estimate"];
+  approvalLevel: PortalTicketDetail["approval_level"];
+  onSubmit: () => void;
+}) {
+  const amount = costEstimate != null && Number.isFinite(Number(costEstimate))
+    ? `$${Number(costEstimate).toFixed(2)}`
+    : null;
+
+  if (approvalStatus === "Pending") {
+    return (
+      <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-amber-900">
+          <Loader2 className="h-4 w-4 animate-spin" strokeWidth={2} />
+          Quote submitted — awaiting approval
+        </div>
+        <div className="mt-1 text-[11px] text-amber-800">
+          {amount && approvalLevel
+            ? `${amount} sent to ${approvalLevel} for review.`
+            : "Sent for review."}
+          {" "}You'll see the decision here as soon as it lands.
+        </div>
+      </div>
+    );
+  }
+  if (approvalStatus === "Approved") {
+    return (
+      <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3">
+        <div className="flex items-center gap-2 text-sm font-semibold text-emerald-900">
+          <CheckCircle2 className="h-4 w-4" strokeWidth={2} />
+          Quote approved
+        </div>
+        <div className="mt-1 text-[11px] text-emerald-800">
+          {amount ? `${amount} cleared.` : "Cleared."} Proceed with the work.
+        </div>
+      </div>
+    );
+  }
+  if (approvalStatus === "Rejected") {
+    return (
+      <BigButton
+        tone="ghost" icon={<ReceiptText className="h-5 w-5" strokeWidth={2} />}
+        onClick={onSubmit}
+      >
+        Quote rejected — submit a new one
+      </BigButton>
+    );
+  }
+  return (
+    <BigButton
+      tone="ghost" icon={<ReceiptText className="h-5 w-5" strokeWidth={2} />}
+      onClick={onSubmit}
+    >
+      Submit a quote
+    </BigButton>
+  );
+}
+
+// ── Approval alert banner ───────────────────────────────────────
+// Fires once when approval_status transitions from Pending →
+// Approved/Rejected (handled by the parent's useEffect). Sticky at
+// the top of the ticket detail screen so a vendor who looked away
+// can't miss it. Dismissible.
+
+function ApprovalAlertBanner({
+  decision, amount, onDismiss,
+}: {
+  decision: "Approved" | "Rejected";
+  amount: PortalTicketDetail["cost_estimate"];
+  onDismiss: () => void;
+}) {
+  const tone = decision === "Approved"
+    ? "bg-emerald-600 text-white"
+    : "bg-red-600 text-white";
+  const Icon = decision === "Approved" ? CheckCircle2 : AlertTriangle;
+  const formatted = amount != null && Number.isFinite(Number(amount))
+    ? `$${Number(amount).toFixed(2)}`
+    : null;
+  return (
+    <div className={`flex items-start gap-3 rounded-md px-4 py-3 shadow-lg ${tone}`}>
+      <Icon className="mt-0.5 h-5 w-5 shrink-0" strokeWidth={2} />
+      <div className="flex-1">
+        <div className="text-sm font-semibold">
+          {decision === "Approved"
+            ? `Your quote was approved${formatted ? ` (${formatted})` : ""}!`
+            : `Your quote was rejected${formatted ? ` (${formatted})` : ""}.`}
+        </div>
+        <div className="mt-0.5 text-xs opacity-90">
+          {decision === "Approved"
+            ? "You're cleared to proceed with the work."
+            : "Talk to your DO before continuing. You can also submit a revised quote below."}
+        </div>
+      </div>
+      <button
+        type="button" onClick={onDismiss}
+        className="rounded p-1 text-white/80 hover:bg-white/10"
+        aria-label="Dismiss"
+      >
+        <X className="h-4 w-4" strokeWidth={2} />
+      </button>
+    </div>
   );
 }
 
