@@ -84,6 +84,114 @@ function roleLevel(role) {
   return levels[String(role || "").toLowerCase()] || 99;
 }
 
+// Parse a scope spec from the bulk-vendor-import UI. Examples:
+//   "national"
+//   "district:Edmond"
+//   "district:Edmond,Norman"
+//   "store:1242, 1245, 1601"
+//   "district:Edmond | store:1601 | area:OKC Metro"
+//
+// Returns { scopes: [{scope_type, scope_id?}], errors: [string] }.
+// scope_id is null for 'national'; for everything else it's a UUID
+// resolved against the provided name->id maps. Unresolved names go
+// into errors.
+function parseScopeString(raw, maps) {
+  const out = { scopes: [], errors: [] };
+  const trimmed = String(raw || "").trim();
+  if (!trimmed) return out; // empty → no scope rows (legacy fallback)
+
+  for (const segment of trimmed.split("|")) {
+    const s = segment.trim();
+    if (!s) continue;
+    if (s.toLowerCase() === "national") {
+      out.scopes.push({ scope_type: "national", scope_id: null });
+      continue;
+    }
+    const colon = s.indexOf(":");
+    if (colon < 0) {
+      out.errors.push(`unrecognized scope "${s}" (expected "type:name")`);
+      continue;
+    }
+    const type = s.slice(0, colon).trim().toLowerCase();
+    const namesRaw = s.slice(colon + 1).trim();
+    if (!["region", "area", "district", "store"].includes(type)) {
+      out.errors.push(`unknown scope_type "${type}"`);
+      continue;
+    }
+    const names = namesRaw.split(",").map((n) => n.trim()).filter(Boolean);
+    if (names.length === 0) {
+      out.errors.push(`no names listed for ${type}`);
+      continue;
+    }
+    for (const name of names) {
+      let id = null;
+      if (type === "store") {
+        id = maps.storesByNumber.get(name) || null;
+      } else if (type === "district") {
+        id = maps.districtsByName.get(name.toLowerCase()) || null;
+      } else if (type === "area") {
+        id = maps.areasByName.get(name.toLowerCase()) || null;
+      } else if (type === "region") {
+        id = maps.regionsByName.get(name.toLowerCase()) || null;
+      }
+      if (!id) {
+        out.errors.push(`${type} "${name}" not found`);
+        continue;
+      }
+      out.scopes.push({ scope_type: type, scope_id: id });
+    }
+  }
+  return out;
+}
+
+// Resolve the set of scope keys (one per hierarchy level) that
+// match a given store. Returns a Set of string keys like
+// "national", "region:<uuid>", "district:<uuid>" etc., or null if
+// the store can't be found.
+//
+// A vendor is visible at the store iff at least one of its
+// vendor_scopes rows produces a key in this set (or it has no scope
+// rows at all — legacy fallback).
+async function visibleScopeKeysForStore(supabase, storeNumber) {
+  const num = String(storeNumber).trim();
+  if (!num) return null;
+  // store_number is text in some installs and the eq() coercion is
+  // forgiving enough here. If it returns null, caller treats as
+  // "no scoping" and shows all.
+  const { data: store } = await supabase
+    .from("stores")
+    .select("id, district_id, districts(area_id, areas(region_id))")
+    .eq("number", num)
+    .maybeSingle();
+  if (!store) return null;
+  const districtId = store.district_id || null;
+  const areaId = store.districts?.area_id || null;
+  const regionId = store.districts?.areas?.region_id || null;
+  const keys = new Set();
+  keys.add("national");
+  if (store.id)    keys.add(`store:${store.id}`);
+  if (districtId)  keys.add(`district:${districtId}`);
+  if (areaId)      keys.add(`area:${areaId}`);
+  if (regionId)    keys.add(`region:${regionId}`);
+  return keys;
+}
+
+// True if any of the vendor's scope rows matches a key in
+// allowedSet. Zero rows = legacy "visible everywhere" fallback.
+function isVendorVisibleAtStore(scopes, allowedSet) {
+  if (!scopes || scopes.length === 0) return true; // legacy fallback
+  for (const s of scopes) {
+    if (s.scope_type === "national") {
+      if (allowedSet.has("national")) return true;
+      continue;
+    }
+    if (s.scope_id && allowedSet.has(`${s.scope_type}:${s.scope_id}`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // Maps the caller's role to the approval tier label(s) they can act
 // on. Strings here mirror the literal values stored in
 // ticket_approvals.approval_tier (set by submitApproval and the
@@ -1255,6 +1363,174 @@ export const handler = async (event) => {
       return respond(200, { ok: true, photo });
     }
 
+    // ── BULK IMPORT VENDORS ──
+    // Admin-only. Accepts an array of vendor rows + optional scope
+    // strings. Upserts by name (matches the existing
+    // vendors_name_unique constraint). Each scope string is parsed
+    // into one or more vendor_scopes inserts; resolution failures
+    // are surfaced per-row so the admin can fix the input.
+    //
+    // Body shape:
+    //   { rows: [{
+    //       name, category, services, service_area,
+    //       contact_person, email, phone, notes, website,
+    //       is_active (optional bool),
+    //       scope          // e.g. "district:Edmond | store:1242,1245" or "national"
+    //     }, ...],
+    //     replace_scopes: bool   // when true, existing scopes are wiped
+    //                            // before new ones are inserted (default true)
+    //   }
+    if (action === "bulkImportVendors" && event.httpMethod === "POST") {
+      if (role !== "admin") {
+        return respond(403, { ok: false, message: "Admin only." });
+      }
+      const body = JSON.parse(event.body || "{}");
+      const rows = Array.isArray(body.rows) ? body.rows : [];
+      const replaceScopes = body.replace_scopes !== false; // default true
+      if (rows.length === 0) {
+        return respond(400, { ok: false, message: "rows[] required" });
+      }
+      if (rows.length > 1000) {
+        return respond(400, { ok: false, message: "max 1000 rows per import" });
+      }
+
+      // Build name maps for district/area/region/store so we can
+      // resolve scope strings ("district:Edmond") to UUIDs. Done up
+      // front so each row's resolver is in-memory only.
+      const [districtsR, areasR, regionsR, storesR] = await Promise.all([
+        supabase.from("districts").select("id, name"),
+        supabase.from("areas").select("id, name"),
+        supabase.from("regions").select("id, name"),
+        supabase.from("stores").select("id, number"),
+      ]);
+      const districtsByName = new Map(
+        (districtsR.data || []).map((d) => [String(d.name).toLowerCase().trim(), d.id]),
+      );
+      const areasByName = new Map(
+        (areasR.data || []).map((a) => [String(a.name).toLowerCase().trim(), a.id]),
+      );
+      const regionsByName = new Map(
+        (regionsR.data || []).map((r) => [String(r.name).toLowerCase().trim(), r.id]),
+      );
+      const storesByNumber = new Map(
+        (storesR.data || []).map((s) => [String(s.number).trim(), s.id]),
+      );
+
+      const results = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        const name = String(r.name || "").trim();
+        if (!name) {
+          results.push({ row: i + 1, name: "", status: "failed", message: "name required" });
+          continue;
+        }
+
+        // Parse the scope string. Returns { ok, scopes, errors[] }.
+        const parsed = parseScopeString(r.scope || "", {
+          districtsByName, areasByName, regionsByName, storesByNumber,
+        });
+        if (parsed.errors.length > 0) {
+          results.push({
+            row: i + 1, name,
+            status: "failed",
+            message: `scope: ${parsed.errors.join("; ")}`,
+          });
+          continue;
+        }
+
+        const isActive = r.is_active === false || r.is_active === "false"
+          ? false
+          : true;
+
+        try {
+          // Upsert by name. We do select-or-insert manually instead
+          // of supabase's onConflict because we also need to know
+          // whether this is a create or update for the results.
+          const { data: existing } = await supabase
+            .from("vendors")
+            .select("id")
+            .eq("name", name)
+            .maybeSingle();
+
+          const fields = {
+            name,
+            category:        r.category || null,
+            services:        r.services || null,
+            service_area:    r.service_area || null,
+            contact_person:  r.contact_person || null,
+            email:           r.email || null,
+            phone:           r.phone || null,
+            notes:           r.notes || null,
+            website:         r.website || null,
+            is_active:       isActive,
+          };
+
+          let vendorId;
+          let kind;
+          if (existing) {
+            const { error } = await supabase
+              .from("vendors")
+              .update(fields)
+              .eq("id", existing.id);
+            if (error) throw error;
+            vendorId = existing.id;
+            kind = "updated";
+          } else {
+            const { data: inserted, error } = await supabase
+              .from("vendors")
+              .insert(fields)
+              .select("id")
+              .single();
+            if (error) throw error;
+            vendorId = inserted.id;
+            kind = "created";
+          }
+
+          // Scope rows.
+          if (replaceScopes) {
+            await supabase
+              .from("vendor_scopes")
+              .delete()
+              .eq("vendor_id", vendorId);
+          }
+          if (parsed.scopes.length > 0) {
+            const scopeRows = parsed.scopes.map((s) => ({
+              vendor_id:     vendorId,
+              scope_type:    s.scope_type,
+              scope_id:      s.scope_type === "national" ? null : s.scope_id,
+              created_by_id: userId,
+            }));
+            // Ignore unique-violation if a row already exists when
+            // replaceScopes=false (caller wanted append semantics).
+            const { error: scopeErr } = await supabase
+              .from("vendor_scopes")
+              .insert(scopeRows);
+            if (scopeErr && !replaceScopes && scopeErr.code !== "23505") {
+              throw scopeErr;
+            }
+          }
+
+          results.push({
+            row: i + 1, name,
+            status: kind, // "created" | "updated"
+            scopes: parsed.scopes.length,
+          });
+        } catch (e) {
+          results.push({
+            row: i + 1, name,
+            status: "failed",
+            message: e?.message || "insert failed",
+          });
+        }
+      }
+
+      const summary = results.reduce(
+        (acc, r) => ({ ...acc, [r.status]: (acc[r.status] || 0) + 1 }),
+        {},
+      );
+      return respond(200, { ok: true, results, summary });
+    }
+
     // ── SAVE VENDOR ──
     if (action === "saveVendor" && event.httpMethod === "POST") {
       if (roleLevel(role) > 3) {
@@ -1408,13 +1684,33 @@ export const handler = async (event) => {
 
     // ── VENDOR LIST / SEARCH ──
     if (action === "getVendors") {
+      // Optional store-scoped filtering: if storeNumber is passed,
+      // restrict to vendors whose vendor_scopes intersect the
+      // store's hierarchy (or who have no scopes at all = legacy
+      // "visible everywhere" fallback).
+      const { storeNumber } = event.queryStringParameters || {};
       const { data: vendors, error } = await supabase
         .from("vendors")
-        .select("*, vendor_ratings(rating)")
+        .select("*, vendor_ratings(rating), vendor_scopes(id, scope_type, scope_id)")
         .eq("is_active", true)
         .order("name");
       if (error) throw error;
-      const enriched = (vendors || []).map((v) => {
+
+      let visibleVendors = vendors || [];
+      if (storeNumber) {
+        const allowedSet = await visibleScopeKeysForStore(supabase, storeNumber);
+        if (allowedSet === null) {
+          // Store lookup failed; fall back to "show everything" so
+          // the caller isn't blocked on a transient error.
+          visibleVendors = vendors || [];
+        } else {
+          visibleVendors = (vendors || []).filter((v) =>
+            isVendorVisibleAtStore(v.vendor_scopes || [], allowedSet),
+          );
+        }
+      }
+
+      const enriched = visibleVendors.map((v) => {
         const ratings = (v.vendor_ratings || []).map((r) => r.rating);
         const avg = ratings.length
           ? Math.round((ratings.reduce((t, r) => t + r, 0) / ratings.length) * 10) / 10
@@ -1424,11 +1720,76 @@ export const handler = async (event) => {
       });
       return respond(200, { ok: true, vendors: enriched });
     }
+    // ── VENDOR SCOPES ──
+    // Get scopes for a single vendor (used by the edit modal).
+    if (action === "getVendorScopes") {
+      const { vendorId } = event.queryStringParameters || {};
+      if (!vendorId) {
+        return respond(400, { ok: false, message: "vendorId required" });
+      }
+      const { data: scopes, error } = await supabase
+        .from("vendor_scopes")
+        .select("id, scope_type, scope_id, created_at")
+        .eq("vendor_id", vendorId);
+      if (error) throw error;
+      return respond(200, { ok: true, scopes: scopes || [] });
+    }
+
+    // Replace a vendor's full scope set in one call. Frontend sends
+    // the desired list; we diff against current rows and add/remove
+    // as needed in a single transaction-ish pass (best-effort
+    // without explicit transactions — duplicates are caught by the
+    // partial unique indexes).
+    if (action === "setVendorScopes" && event.httpMethod === "POST") {
+      if (roleLevel(role) > 3) {
+        return respond(403, { ok: false, message: "DO and above only." });
+      }
+      const { vendorId, scopes } = JSON.parse(event.body);
+      if (!vendorId || !Array.isArray(scopes)) {
+        return respond(400, { ok: false, message: "vendorId + scopes[] required" });
+      }
+      // Validate each scope entry.
+      for (const s of scopes) {
+        if (!["national", "region", "area", "district", "store"].includes(s.scope_type)) {
+          return respond(400, { ok: false, message: `bad scope_type: ${s.scope_type}` });
+        }
+        if (s.scope_type === "national" && s.scope_id) {
+          return respond(400, { ok: false, message: "national scope cannot have scope_id" });
+        }
+        if (s.scope_type !== "national" && !s.scope_id) {
+          return respond(400, { ok: false, message: `${s.scope_type} scope requires scope_id` });
+        }
+      }
+      // Wipe + replace. Simpler than diffing and we don't have rows
+      // big enough for the rewrite to matter.
+      const { error: delErr } = await supabase
+        .from("vendor_scopes")
+        .delete()
+        .eq("vendor_id", vendorId);
+      if (delErr) throw delErr;
+      if (scopes.length > 0) {
+        const rows = scopes.map((s) => ({
+          vendor_id:     vendorId,
+          scope_type:    s.scope_type,
+          scope_id:      s.scope_type === "national" ? null : s.scope_id,
+          created_by_id: userId,
+        }));
+        const { error: insErr } = await supabase
+          .from("vendor_scopes")
+          .insert(rows);
+        if (insErr) throw insErr;
+      }
+      return respond(200, { ok: true, count: scopes.length });
+    }
+
     if (action === "searchVendors") {
-      const { q, assetType } = event.queryStringParameters || {};
+      const { q, assetType, storeNumber } = event.queryStringParameters || {};
+      // Pull scope rows alongside so we can scope-filter post-query.
+      // Limit applied AFTER scope filter so we don't return only 8
+      // pre-filter candidates and then potentially nothing.
       let query = supabase
         .from("vendors")
-        .select("id,name,category,service_area,services,phone,email,contact_person")
+        .select("id,name,category,service_area,services,phone,email,contact_person,vendor_scopes(scope_type,scope_id)")
         .eq("is_active", true);
       if (q) {
         query = query.or(
@@ -1438,10 +1799,25 @@ export const handler = async (event) => {
       if (assetType) {
         query = query.ilike("services", `%${assetType}%`);
       }
-      query = query.limit(8).order("name");
+      query = query.order("name");
       const { data, error } = await query;
       if (error) throw error;
-      return respond(200, { ok: true, vendors: data });
+      let visible = data || [];
+      if (storeNumber) {
+        const allowed = await visibleScopeKeysForStore(supabase, storeNumber);
+        if (allowed) {
+          visible = visible.filter((v) =>
+            isVendorVisibleAtStore(v.vendor_scopes || [], allowed),
+          );
+        }
+      }
+      // Strip the scope rows from the response (frontend doesn't
+      // need them here) and cap to 8 like before.
+      const trimmed = visible.slice(0, 8).map((v) => {
+        const { vendor_scopes, ...rest } = v;
+        return rest;
+      });
+      return respond(200, { ok: true, vendors: trimmed });
     }
 
     // ── RECENT MESSAGES (dashboard notification) ──

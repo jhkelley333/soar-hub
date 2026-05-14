@@ -190,16 +190,82 @@ export function fetchRecentMessages(
   );
 }
 
-export function fetchVendors(): Promise<VendorsResponse> {
-  return request<VendorsResponse>(`${FN}?action=getVendors`);
+export function fetchVendors(opts?: { storeNumber?: string }): Promise<VendorsResponse> {
+  const qs = opts?.storeNumber
+    ? `&storeNumber=${encodeURIComponent(opts.storeNumber)}`
+    : "";
+  return request<VendorsResponse>(`${FN}?action=getVendors${qs}`);
+}
+
+export interface VendorScopeRow {
+  id: string;
+  scope_type: "national" | "region" | "area" | "district" | "store";
+  scope_id: string | null;
+  created_at?: string;
+}
+
+export function fetchVendorScopes(vendorId: string): Promise<{ ok: true; scopes: VendorScopeRow[] }> {
+  return request<{ ok: true; scopes: VendorScopeRow[] }>(
+    `${FN}?action=getVendorScopes&vendorId=${encodeURIComponent(vendorId)}`,
+  );
+}
+
+export function setVendorScopes(
+  vendorId: string,
+  scopes: Array<{ scope_type: VendorScopeRow["scope_type"]; scope_id: string | null }>,
+): Promise<{ ok: true; count: number }> {
+  return request<{ ok: true; count: number }>(`${FN}?action=setVendorScopes`, {
+    method: "POST",
+    body: JSON.stringify({ vendorId, scopes }),
+  });
+}
+
+export interface BulkVendorRow {
+  name: string;
+  category?: string;
+  services?: string;
+  service_area?: string;
+  contact_person?: string;
+  email?: string;
+  phone?: string;
+  notes?: string;
+  website?: string;
+  is_active?: boolean;
+  scope?: string;
+}
+
+export interface BulkVendorResult {
+  row: number;
+  name: string;
+  status: "created" | "updated" | "failed";
+  message?: string;
+  scopes?: number;
+}
+
+export interface BulkVendorResponse {
+  ok: true;
+  results: BulkVendorResult[];
+  summary: Partial<Record<"created" | "updated" | "failed", number>>;
+}
+
+export function bulkImportVendors(
+  rows: BulkVendorRow[],
+  replaceScopes = true,
+): Promise<BulkVendorResponse> {
+  return request<BulkVendorResponse>(`${FN}?action=bulkImportVendors`, {
+    method: "POST",
+    body: JSON.stringify({ rows, replace_scopes: replaceScopes }),
+  });
 }
 
 export function searchVendors(
   q: string,
   assetType?: string,
+  storeNumber?: string,
 ): Promise<{ ok: true; vendors: Vendor[] }> {
   const params = new URLSearchParams({ action: "searchVendors", q });
   if (assetType) params.set("assetType", assetType);
+  if (storeNumber) params.set("storeNumber", storeNumber);
   return request<{ ok: true; vendors: Vendor[] }>(`${FN}?${params.toString()}`);
 }
 
