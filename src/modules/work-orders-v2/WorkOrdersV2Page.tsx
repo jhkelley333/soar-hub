@@ -142,6 +142,25 @@ export function WorkOrdersV2Page() {
         description="Facilities ticketing on Supabase — open BETA. Please report issues so we can iterate before rolling this out as the primary work-orders flow."
       />
 
+      {/* "Powered by FacilityOS" branding mark — Poppins semibold w/
+          neon-cyan glow. Sits just under the page header so it reads
+          as a credit line without competing with the title. */}
+      <div className="mb-4 -mt-2 flex justify-end">
+        <span
+          style={{
+            fontFamily: '"Poppins", "DM Sans", system-ui, sans-serif',
+            fontWeight: 600,
+            letterSpacing: "0.06em",
+            color: "#5FFBF1",
+            textShadow:
+              "0 0 4px #5FFBF1, 0 0 8px rgba(95, 251, 241, 0.65), 0 0 18px rgba(95, 251, 241, 0.35)",
+          }}
+          className="text-[11px] uppercase"
+        >
+          Powered by FacilityOS
+        </span>
+      </div>
+
       <div className="mb-4 flex border-b border-zinc-200">
         {TABS
           .filter((t) => !t.roles || t.roles.includes(callerRole))
