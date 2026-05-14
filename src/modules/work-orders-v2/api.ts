@@ -95,6 +95,37 @@ export function fetchStats(): Promise<StatsResponse> {
   return request<StatsResponse>(`${FN}?action=getStats`);
 }
 
+export interface OpenAlertItem {
+  id: string;
+  wo_number: string | null;
+  store_number: string | null;
+  summary: string;
+  priority: string | null;
+  status: string;
+  timestamp: string;
+  cost_estimate?: number | null;
+  approval_tier?: string | null;
+  is_business_critical?: boolean | null;
+}
+
+export interface OpenAlertGroup {
+  key: "new24h" | "awaitingApproval" | "emergencies" | "stuck";
+  label: string;
+  tone: "info" | "warning" | "danger" | "neutral";
+  count: number;
+  items: OpenAlertItem[];
+}
+
+export interface OpenAlertsResponse {
+  ok: true;
+  groups: OpenAlertGroup[];
+  total_unique_tickets: number;
+}
+
+export function fetchOpenWorkOrderAlerts(): Promise<OpenAlertsResponse> {
+  return request<OpenAlertsResponse>(`${FN}?action=getOpenWorkOrderAlerts`);
+}
+
 export function updateTicket(payload: UpdateTicketBody): Promise<{ ok: true }> {
   return request<{ ok: true }>(`${FN}?action=updateTicket`, {
     method: "POST",
