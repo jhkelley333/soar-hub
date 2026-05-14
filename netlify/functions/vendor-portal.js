@@ -349,7 +349,7 @@ export const handler = async (event) => {
       // server-side comparison that can fail on store_number type
       // mismatches (text vs int) or whitespace — we'd rather have
       // the row back and inspect it than mysteriously return null.
-      const { data: ticket } = await supabase
+      const { data: ticket, error: ticketErr } = await supabase
         .from("tickets")
         .select(`
           id, wo_number, store_number, store_name, asset_type, category,
@@ -362,6 +362,17 @@ export const handler = async (event) => {
         `)
         .eq("id", ticketId)
         .maybeSingle();
+      // Distinguish a real DB error (e.g. missing column from a not-
+      // yet-applied migration) from a genuine "no such row" so we
+      // don't gaslight the caller with ticket_not_found.
+      if (ticketErr) {
+        console.error("[vendor-portal] getTicket query error", ticketErr);
+        return respond(500, {
+          ok: false,
+          error: "ticket_query_failed",
+          message: ticketErr.message || "Database query failed.",
+        });
+      }
       if (!ticket) {
         return respond(404, { ok: false, error: "ticket_not_found" });
       }
@@ -426,11 +437,19 @@ export const handler = async (event) => {
     // pattern as getTicket: pull the row without the store filter
     // so a type/whitespace mismatch on store_number doesn't silently
     // 404 us with a misleading "not at this store" message.
-    const { data: current } = await supabase
+    const { data: current, error: currentErr } = await supabase
       .from("tickets")
       .select("id, status, pause_state, closed_at, store_number, wo_number")
       .eq("id", ticketId)
       .maybeSingle();
+    if (currentErr) {
+      console.error("[vendor-portal] mutating-action query error", currentErr);
+      return respond(500, {
+        ok: false,
+        error: "ticket_query_failed",
+        message: currentErr.message || "Database query failed.",
+      });
+    }
     if (!current) {
       return respond(404, { ok: false, error: "ticket_not_found" });
     }
@@ -677,10 +696,17 @@ export const handler = async (event) => {
           old_value: fromStatus, new_value: newStatus,
           event_type: "status_changed",
           event_data: {
+            // describe() in TicketActivityFeed reads from / to off
+            // event_data, not the old_value / new_value columns, so
+            // both have to be populated for the row to render as
+            // "Status: X → Y" instead of "Status: — → —".
+            from: fromStatus,
+            to:   newStatus,
+            reason_code: "parts_on_order",
+            reason_text: reason,
             vendor_self_report: true,
             acted_on_behalf_of_vendor: true,
             vendor_identity: identity,
-            reason: "parts_on_order",
           },
           visibility: "all",
         });
@@ -690,8 +716,13 @@ export const handler = async (event) => {
         user_role: "vendor",
         update_type: "pause_state_change",
         old_value: fromPause, new_value: "awaiting_parts",
-        event_type: "pause_state_change",
+        // Note "ed" suffix — matches the canonical event_type used
+        // by facilities-v2 and consumed by TicketActivityFeed's
+        // describe() switch.
+        event_type: "pause_state_changed",
         event_data: {
+          from: fromPause,
+          to:   "awaiting_parts",
           ordered_by: orderedBy,
           reason,
           notes: body.notes || null,
