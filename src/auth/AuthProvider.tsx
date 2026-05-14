@@ -76,6 +76,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // resolves AFTER onAuthStateChange has fired for user B.
   const generationRef = useRef(0);
 
+  // Mirror of profile.id without dep-array invalidation. The
+  // onAuthStateChange listener captures profile from initial closure,
+  // so reading `profile` directly inside it would always see null.
+  // We need the live current value to decide whether to skip a
+  // redundant reload and whether to preserve the existing profile on
+  // a background timeout.
+  const profileIdRef = useRef<string | null>(null);
+  useEffect(() => { profileIdRef.current = profile?.id ?? null; }, [profile]);
+
   async function loadProfile(userId: string) {
     const gen = ++generationRef.current;
     const [{ data: profileData }, { data: scopesData }] = await Promise.all([
@@ -133,34 +142,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     })();
 
-    const { data: sub } = supabase.auth.onAuthStateChange(async (_event, next) => {
+    const { data: sub } = supabase.auth.onAuthStateChange(async (event, next) => {
       setSession(next);
-      if (next?.user) {
-        try {
-          // Bound the post-auth profile load — a hung Supabase query
-          // here used to leave LoginPage stuck on "Working…" forever
-          // because the session was set but profile never arrived.
-          await Promise.race([
-            loadProfile(next.user.id),
-            timeout<void>("loadProfile (auth change)", AUTH_BOOT_TIMEOUT_MS),
-          ]);
-        } catch (e) {
-          // The session itself is valid (we just got it from supabase-
-          // js); only the profile fetch failed. Wiping the session
-          // would silently bounce the user back to the login screen
-          // with no explanation. Surface the error and leave the
-          // session intact so they can retry / refresh / contact
-          // support.
-          console.warn("[auth] post-auth-change loadProfile failed; keeping session, clearing profile", e);
-          setProfile(null);
-          setScopes([]);
-        }
-      } else {
+      if (!next?.user) {
         // Sign-out (or session expired). Bump the generation so any
         // in-flight loadProfile bails before re-populating profile.
         generationRef.current++;
         setProfile(null);
         setScopes([]);
+        return;
+      }
+      // Skip the reload on routine token refreshes for the same user.
+      // Supabase fires onAuthStateChange every ~50 minutes with event
+      // TOKEN_REFRESHED — the profile row hasn't changed, so the
+      // re-query is wasted work that also gives a transient PostgREST
+      // hiccup a chance to nuke the in-memory profile via timeout. We
+      // only need to (re)fetch when the user actually signed in,
+      // their metadata changed, or we don't yet have a profile loaded.
+      const currentProfileId = profileIdRef.current;
+      const sameUser = currentProfileId === next.user.id;
+      const needReload =
+        event === "SIGNED_IN" ||
+        event === "USER_UPDATED" ||
+        event === "INITIAL_SESSION" ||
+        !sameUser;
+      if (!needReload) return;
+      try {
+        // Bound the post-auth profile load — a hung Supabase query
+        // here used to leave LoginPage stuck on "Working…" forever
+        // because the session was set but profile never arrived.
+        await Promise.race([
+          loadProfile(next.user.id),
+          timeout<void>("loadProfile (auth change)", AUTH_BOOT_TIMEOUT_MS),
+        ]);
+      } catch (e) {
+        // Failure path. If we already have a profile loaded for this
+        // user, KEEP it — the timeout was almost certainly a transient
+        // PostgREST blip and clearing it would log the user out of
+        // every guarded route until they navigate. If we don't yet
+        // have a profile, clear scopes so role checks fail closed.
+        if (sameUser) {
+          console.warn("[auth] background loadProfile failed; keeping existing profile", e);
+        } else {
+          console.warn("[auth] post-auth-change loadProfile failed; keeping session, clearing profile", e);
+          setProfile(null);
+          setScopes([]);
+        }
       }
     });
 
