@@ -1783,7 +1783,7 @@ export const handler = async (event) => {
     }
 
     if (action === "searchVendors") {
-      const { q, assetType, storeNumber } = event.queryStringParameters || {};
+      const { q, assetType, category, storeNumber } = event.queryStringParameters || {};
       // Pull scope rows alongside so we can scope-filter post-query.
       // Limit applied AFTER scope filter so we don't return only 8
       // pre-filter candidates and then potentially nothing.
@@ -1796,8 +1796,28 @@ export const handler = async (event) => {
           `name.ilike.%${q}%,services.ilike.%${q}%,category.ilike.%${q}%`,
         );
       }
-      if (assetType) {
-        query = query.ilike("services", `%${assetType}%`);
+      // Match on asset_type AND/OR the issue's category against both
+      // vendor.services and vendor.category. Issues like "HVAC 1"
+      // and "HVAC 2" are store-specific equipment names; the vendor
+      // catalog uses higher-level categories ("HVAC"). Without
+      // matching on category we'd return zero HVAC vendors for any
+      // store with numbered units.
+      if (assetType || category) {
+        const orParts = [];
+        const escape = (s) => String(s).replace(/[(),]/g, "");
+        if (assetType) {
+          const a = escape(assetType);
+          orParts.push(`services.ilike.%${a}%`);
+          orParts.push(`category.ilike.%${a}%`);
+        }
+        if (category) {
+          const c = escape(category);
+          orParts.push(`services.ilike.%${c}%`);
+          orParts.push(`category.ilike.%${c}%`);
+        }
+        if (orParts.length) {
+          query = query.or(orParts.join(","));
+        }
       }
       query = query.order("name");
       const { data, error } = await query;

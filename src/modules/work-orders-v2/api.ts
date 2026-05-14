@@ -262,10 +262,12 @@ export function searchVendors(
   q: string,
   assetType?: string,
   storeNumber?: string,
+  category?: string,
 ): Promise<{ ok: true; vendors: Vendor[] }> {
   const params = new URLSearchParams({ action: "searchVendors", q });
   if (assetType) params.set("assetType", assetType);
   if (storeNumber) params.set("storeNumber", storeNumber);
+  if (category) params.set("category", category);
   return request<{ ok: true; vendors: Vendor[] }>(`${FN}?${params.toString()}`);
 }
 
