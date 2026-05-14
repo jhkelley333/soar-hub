@@ -58,6 +58,27 @@ function invalidPayload(message, extra) {
   return err;
 }
 
+// Vendor validators — schedule transitions accept either a vendor_id
+// (preferred, links to the vendors table) OR a vendor_name (free text,
+// for the common case where a GM calls a vendor that isn't yet in the
+// table). The legacy "vendor_id required" version is too strict for
+// the operational reality where store users routinely schedule new
+// vendors by name.
+function validateVendor(payload) {
+  const hasId = payload?.vendor_id && String(payload.vendor_id).trim();
+  const hasName = payload?.vendor_name && String(payload.vendor_name).trim();
+  if (hasId || hasName) return null;
+  return invalidPayload(
+    "Schedule requires a vendor (pick from the vendor list or enter a name)",
+    { field: "vendor_id_or_name" });
+}
+function vendorSideEffects(payload) {
+  const out = {};
+  if (payload?.vendor_id) out.vendor_id = payload.vendor_id;
+  if (payload?.vendor_name) out.vendor_name = payload.vendor_name;
+  return out;
+}
+
 // Transition table — keyed `from -> to`. Each entry: validate(payload, ctx)
 // returns null|Error; sideEffects(payload, ctx) returns partial updates
 // to fold into the ticket row. Both omit pause_state auto-reset —
@@ -66,8 +87,8 @@ const TRANSITIONS = {
   "submitted->in_progress":   { validate: () => null,
                                 sideEffects: () => ({}) },
 
-  "submitted->scheduled":     { validate: (p) => requireField(p, "vendor_id", "schedule"),
-                                sideEffects: (p) => ({ vendor_id: p.vendor_id }) },
+  "submitted->scheduled":     { validate: (p) => validateVendor(p),
+                                sideEffects: (p) => vendorSideEffects(p) },
 
   "submitted->closed":        { validate: (p) => requireField(p, "store_close_reason", "false-alarm close"),
                                 sideEffects: (p) => ({
@@ -91,8 +112,8 @@ const TRANSITIONS = {
                                   closed_at: nowIso(),
                                 }) },
 
-  "in_progress->scheduled":   { validate: (p) => requireField(p, "vendor_id", "schedule"),
-                                sideEffects: (p) => ({ vendor_id: p.vendor_id }) },
+  "in_progress->scheduled":   { validate: (p) => validateVendor(p),
+                                sideEffects: (p) => vendorSideEffects(p) },
 
   "in_progress->on_site":     { validate: () => null,
                                 sideEffects: () => ({}) },
