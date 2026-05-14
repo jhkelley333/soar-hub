@@ -48,6 +48,7 @@ import { IssueLibraryTab } from "./IssueLibraryTab";
 import { TroubleshootingTipsTab } from "./TroubleshootingTipsTab";
 import { EmailTemplatesTab } from "./EmailTemplatesTab";
 import { VendorPortalAdminTab } from "./VendorPortalAdminTab";
+import { MyStoreQrPanel } from "./MyStoreQrPanel";
 import { StatusBar } from "./StatusBar";
 import { TicketActionBar } from "./TicketActionBar";
 import { TicketActivityFeed } from "./TicketActivityFeed";
@@ -78,7 +79,7 @@ const CATEGORIES = [
   "Other",
 ];
 
-type TabId = "tickets" | "vendors" | "library" | "troubleshooting" | "email-templates" | "vendor-qr";
+type TabId = "tickets" | "vendors" | "library" | "troubleshooting" | "email-templates" | "vendor-qr" | "my-store-qr";
 const TABS: {
   id: TabId;
   label: string;
@@ -90,6 +91,12 @@ const TABS: {
   { id: "library", label: "Issue Library" },
   { id: "troubleshooting", label: "Troubleshooting" },
   { id: "email-templates", label: "Email Templates", roles: ["admin"] },
+  // My Store QR: read-only print panel for the caller's own stores.
+  // Anyone in the WO2 BETA cohort can see + print their store's QR.
+  { id: "my-store-qr", label: "My Store QR" },
+  // Vendor QR: full management (mint, revoke, monitor activity).
+  // SDO+ only — SDOs can mint for their district stores; admins
+  // see global.
   { id: "vendor-qr", label: "Vendor QR", roles: ["sdo", "rvp", "vp", "coo", "admin"] },
 ];
 
@@ -160,6 +167,7 @@ export function WorkOrdersV2Page() {
       {tab === "library" && <IssueLibraryTab />}
       {tab === "troubleshooting" && <TroubleshootingTipsTab />}
       {tab === "email-templates" && <EmailTemplatesTab />}
+      {tab === "my-store-qr" && <MyStoreQrPanel />}
       {tab === "vendor-qr"
         && ["sdo", "rvp", "vp", "coo", "admin"].includes(callerRole)
         && <VendorPortalAdminTab />}

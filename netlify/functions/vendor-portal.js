@@ -104,6 +104,118 @@ async function logVisit(supa, payload) {
   }
 }
 
+// Minimal Resend wrapper — same pattern as facilities-v2's sendEmail
+// but duplicated here so the vendor portal stays self-contained.
+async function sendEmail({ to, subject, html }) {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) return { sent: false, reason: "RESEND_API_KEY not set" };
+  const fromAddr =
+    process.env.RESEND_FROM_EMAIL ||
+    "paf@mysoarhub.com";
+  const fromName = process.env.RESEND_FROM_NAME || "SOAR Vendor Alerts";
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: `${fromName} <${fromAddr}>`,
+        to: Array.isArray(to) ? to : [to],
+        subject,
+        html,
+      }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return { sent: false, reason: body?.message || `HTTP ${res.status}` };
+    }
+    return { sent: true, id: body.id };
+  } catch (e) {
+    return { sent: false, reason: e?.message || String(e) };
+  }
+}
+
+// Drive-by completion: vendor marked on-site and then completed in
+// under 5 minutes. Real service almost always takes longer; this
+// pattern is a strong signal that someone may have hit both buttons
+// in rapid succession without doing the work. Fires an admin email.
+//
+// Called from markCompleted AFTER the visit is logged so we have the
+// just-written row in the DB.
+async function maybeAlertDriveByCompletion(supabase, {
+  tokenId, ticketId, woNumber, storeNumber, vendor,
+}) {
+  // Find the most recent on_site visit for this same ticket+token.
+  const { data: prior } = await supabase
+    .from("vendor_visits")
+    .select("action, created_at")
+    .eq("token_id", tokenId)
+    .eq("ticket_id", ticketId)
+    .order("created_at", { ascending: false })
+    .limit(10);
+  const onSite = (prior || []).find((v) => v.action === "on_site");
+  if (!onSite) return; // no prior on_site → can't be a drive-by
+  const completed = (prior || []).find((v) => v.action === "completed");
+  if (!completed) return;
+  const gapMs = new Date(completed.created_at) - new Date(onSite.created_at);
+  if (!Number.isFinite(gapMs) || gapMs < 0 || gapMs >= 5 * 60_000) return;
+
+  // Find admin emails. Tier-resolution would be ideal but for v1 we
+  // only target literal role=admin so the alert volume stays low.
+  const { data: admins } = await supabase
+    .from("profiles")
+    .select("email, full_name")
+    .eq("role", "admin")
+    .eq("is_active", true);
+  const recipients = (admins || []).map((a) => a.email).filter(Boolean);
+  if (!recipients.length) return;
+
+  const seconds = Math.round(gapMs / 1000);
+  const subject = `[Vendor flag] Drive-by completion at Store ${storeNumber}`;
+  const safeCompany = escapeHtml(vendor?.vendor_company || "");
+  const safeName    = escapeHtml(vendor?.vendor_name    || "");
+  const safePhone   = escapeHtml(vendor?.vendor_phone   || "");
+  const safeWO      = escapeHtml(woNumber || "");
+  const safeStore   = escapeHtml(storeNumber || "");
+  const html = `
+    <div style="font-family: -apple-system, system-ui, sans-serif; max-width: 560px; color: #111;">
+      <h2 style="margin-bottom: 4px;">Drive-by completion flagged</h2>
+      <p style="margin-top: 4px; color: #444;">
+        A vendor marked a ticket completed only <strong>${seconds} seconds</strong>
+        after marking on-site. Real service calls almost always take longer;
+        this pattern is worth a manual check.
+      </p>
+      <table style="border-collapse: collapse; margin-top: 12px;">
+        <tr><td style="padding: 4px 12px 4px 0; color: #666;">Store</td><td><strong>${safeStore}</strong></td></tr>
+        <tr><td style="padding: 4px 12px 4px 0; color: #666;">Ticket</td><td>${safeWO}</td></tr>
+        <tr><td style="padding: 4px 12px 4px 0; color: #666;">Vendor company</td><td>${safeCompany || "—"}</td></tr>
+        <tr><td style="padding: 4px 12px 4px 0; color: #666;">Vendor tech</td><td>${safeName || "—"}</td></tr>
+        <tr><td style="padding: 4px 12px 4px 0; color: #666;">Phone</td><td>${safePhone || "—"}</td></tr>
+        <tr><td style="padding: 4px 12px 4px 0; color: #666;">On-site → completed</td><td>${seconds}s</td></tr>
+      </table>
+      <p style="margin-top: 16px; font-size: 13px; color: #555;">
+        Review the full visit history in Work Orders V2 → Vendor QR → Recent Vendor Activity.
+      </p>
+    </div>
+  `;
+  try {
+    await sendEmail({ to: recipients, subject, html });
+  } catch (e) {
+    console.warn("[vendor-portal] drive-by alert send failed", e);
+  }
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 // Cost → approval tier mapping. Capped at VP per design decision —
 // anything above $1,750 still routes to VP.
 function tierForCost(amount) {
@@ -222,6 +334,7 @@ export const handler = async (event) => {
           model_number, issue_description, priority, is_business_critical,
           status, pause_state, vendor_name, vendor_eta, cost_estimate,
           approval_status, approval_level, approval_request_notes,
+          parts_ordered_by, parts_ordered_notes, parts_ordered_at,
           troubleshooting_checked, date_submitted, closed_at,
           ticket_photos(id, file_url, file_name, upload_type, created_at)
         `)
@@ -241,6 +354,14 @@ export const handler = async (event) => {
     // checks per action.
     if (["adminList", "adminCreate", "adminRevoke", "adminListVisits", "adminBulkCreate"].includes(action)) {
       return await handleManager(supabase, event, action);
+    }
+
+    // ── myStoreTokens: read-only token print panel for GMs/DOs ──
+    // Any authenticated user gets their store's active QR token(s)
+    // so they can print the sticker themselves. No create/revoke
+    // here — that stays with SDO+ via the manager handler above.
+    if (action === "myStoreTokens") {
+      return await handleMyStoreTokens(supabase, event);
     }
 
     // ── Anonymous mutating actions from here down ──────────────
@@ -427,6 +548,115 @@ export const handler = async (event) => {
         vendor_company: identity.vendor_company,
         vendor_phone: identity.vendor_phone,
         action: "completed", notes: body.notes || null,
+        remote_ip: ip, user_agent: ua,
+      });
+      // Fire-and-forget drive-by detection. We don't await this in
+      // the response path because the user's action succeeded — the
+      // alert is bonus monitoring. Any error is logged and swallowed.
+      maybeAlertDriveByCompletion(supabase, {
+        tokenId:     tok.id,
+        ticketId,
+        woNumber:    current.wo_number,
+        storeNumber: current.store_number,
+        vendor:      identity,
+      }).catch((e) => console.warn("[vendor-portal] drive-by alert path failed", e));
+      return respond(200, { ok: true });
+    }
+
+    // ── markPartsOnOrder ────────────────────────────────────
+    // Vendor parks the ticket because parts are on order. Captures
+    // who's responsible for ordering ('vendor' or 'customer') and
+    // optional notes (part numbers, expected arrival, vendor PO).
+    // Moves the ticket into the existing in_progress / awaiting_parts
+    // pause state — same shape the DO uses from the WO2 UI — so it
+    // shows up in the queue with the familiar "Awaiting Parts" label.
+    if (action === "markPartsOnOrder") {
+      const orderedByRaw = String(body.ordered_by || "").toLowerCase();
+      const orderedBy = orderedByRaw === "customer" ? "customer" :
+                       orderedByRaw === "vendor"   ? "vendor"   : null;
+      if (!orderedBy) {
+        return respond(400, {
+          ok: false,
+          error: "ordered_by required (vendor|customer)",
+        });
+      }
+      if (current.status === "closed" || current.status === "cancelled") {
+        return respond(409, { ok: false, error: "ticket_terminal" });
+      }
+      if (current.status === "completed") {
+        return respond(409, { ok: false, error: "ticket_already_completed" });
+      }
+
+      // From submitted/scheduled/on_site we move into in_progress so
+      // the ticket shows up in the right bucket while paused. From
+      // in_progress we stay put. We don't run this through the state
+      // machine because there's no single status transition that
+      // captures both the status change AND the pause change in one
+      // step; we emit the activity rows manually instead.
+      const newStatus = current.status === "in_progress" ? "in_progress" : "in_progress";
+      const fromStatus = current.status;
+      const fromPause  = current.pause_state || "none";
+      const nowIso = new Date().toISOString();
+
+      const reason = orderedBy === "vendor"
+        ? "Vendor ordering parts"
+        : "Customer ordering parts";
+
+      const updates = {
+        status:              newStatus,
+        pause_state:         "awaiting_parts",
+        parts_ordered_by:    orderedBy,
+        parts_ordered_notes: body.notes || null,
+        parts_ordered_at:    nowIso,
+        date_status_updated: nowIso,
+        updated_at:          nowIso,
+      };
+      const { error } = await supabase.from("tickets").update(updates).eq("id", ticketId);
+      if (error) throw error;
+
+      // Activity rows: status change (if any) + pause state change.
+      const activityRows = [];
+      if (fromStatus !== newStatus) {
+        activityRows.push({
+          ticket_id: ticketId, user_id: null, user_name: identity.vendor_name,
+          user_role: "vendor",
+          update_type: "status_change",
+          old_value: fromStatus, new_value: newStatus,
+          event_type: "status_changed",
+          event_data: {
+            vendor_self_report: true,
+            acted_on_behalf_of_vendor: true,
+            vendor_identity: identity,
+            reason: "parts_on_order",
+          },
+          visibility: "all",
+        });
+      }
+      activityRows.push({
+        ticket_id: ticketId, user_id: null, user_name: identity.vendor_name,
+        user_role: "vendor",
+        update_type: "pause_state_change",
+        old_value: fromPause, new_value: "awaiting_parts",
+        event_type: "pause_state_change",
+        event_data: {
+          ordered_by: orderedBy,
+          reason,
+          notes: body.notes || null,
+          vendor_self_report: true,
+          acted_on_behalf_of_vendor: true,
+          vendor_identity: identity,
+        },
+        visibility: "all",
+      });
+      await supabase.from("ticket_activities").insert(activityRows);
+
+      await logVisit(supabase, {
+        token_id: tok.id, ticket_id: ticketId,
+        vendor_name: identity.vendor_name,
+        vendor_company: identity.vendor_company,
+        vendor_phone: identity.vendor_phone,
+        action: "parts_on_order",
+        notes: `${reason}${body.notes ? ` — ${body.notes}` : ""}`,
         remote_ip: ip, user_agent: ua,
       });
       return respond(200, { ok: true });
@@ -650,6 +880,67 @@ async function visibleStoresForManager(supabase, profile) {
     all: false,
     stores: new Set((stores || []).map((s) => String(s.number))),
   };
+}
+
+// Read-only print panel for any logged-in user. Returns active,
+// non-expired tokens for stores visible to the caller via
+// user_visible_stores. GMs and DOs use this to print their own
+// store's sticker without bothering admin.
+async function handleMyStoreTokens(supabase, event) {
+  const header = event.headers?.authorization || event.headers?.Authorization;
+  if (!header?.startsWith("Bearer ")) {
+    return respond(401, { ok: false, error: "auth_required" });
+  }
+  const jwt = header.slice("Bearer ".length).trim();
+  if (!jwt) return respond(401, { ok: false, error: "auth_required" });
+  const { data: userRes } = await supabase.auth.getUser(jwt);
+  if (!userRes?.user) return respond(401, { ok: false, error: "invalid_session" });
+
+  // Resolve visible stores. Empty visible-stores → empty token list.
+  const { data: visibleIds } = await supabase.rpc("user_visible_stores", {
+    uid: userRes.user.id,
+  });
+  const storeIds = (visibleIds ?? [])
+    .map((v) => (typeof v === "string" ? v : v?.user_visible_stores ?? null))
+    .filter(Boolean);
+  if (!storeIds.length) return respond(200, { ok: true, tokens: [] });
+
+  const { data: stores } = await supabase
+    .from("stores")
+    .select("number, name, city, state")
+    .in("id", storeIds);
+  const storeNumbers = (stores || []).map((s) => String(s.number));
+  if (!storeNumbers.length) return respond(200, { ok: true, tokens: [] });
+
+  const nowIso = new Date().toISOString();
+  const { data: tokens } = await supabase
+    .from("store_qr_tokens")
+    .select("id, store_number, token, label, expires_at, created_at")
+    .in("store_number", storeNumbers)
+    .eq("is_active", true)
+    .order("created_at", { ascending: false });
+
+  // Filter expired tokens client-side (PostgREST .or() syntax is
+  // gnarly; the table is small enough to filter in JS).
+  const active = (tokens || []).filter(
+    (t) => !t.expires_at || t.expires_at > nowIso,
+  );
+
+  const storeMap = new Map((stores || []).map((s) => [String(s.number), s]));
+  const annotated = active.map((t) => {
+    const s = storeMap.get(t.store_number);
+    return {
+      id:           t.id,
+      store_number: t.store_number,
+      store_name:   s?.name || null,
+      store_city:   s?.city || null,
+      store_state:  s?.state || null,
+      token:        t.token,
+      label:        t.label,
+      expires_at:   t.expires_at,
+    };
+  });
+  return respond(200, { ok: true, tokens: annotated });
 }
 
 async function handleManager(supabase, event, action) {

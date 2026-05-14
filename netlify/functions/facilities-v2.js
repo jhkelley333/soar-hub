@@ -1154,7 +1154,7 @@ export const handler = async (event) => {
         user_role:   role, update_type: "approval", new_value: decision,
         notes:       `Approval ${decision} by ${userName}`,
         event_type:  "approval_decided",
-        event_data:  { decision, decided_by: userName, decision_notes: decisionNotes || null },
+        event_data:  { decision, decided_by: userName, decision_notes: notes || null },
         visibility:  "all",
       });
 
