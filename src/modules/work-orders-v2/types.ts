@@ -367,6 +367,15 @@ export interface Vendor {
   is_active?: boolean;
   avgRating: number | null;
   totalRatings: number;
+  // Scope rows returned by getVendors when the join is included.
+  // Empty array == legacy "visible everywhere" fallback. Render
+  // these as chips on the vendor row so users can see at a glance
+  // which markets a vendor covers.
+  vendor_scopes?: Array<{
+    id?: string;
+    scope_type: "national" | "region" | "area" | "district" | "store";
+    scope_id: string | null;
+  }>;
 }
 
 export interface VendorsResponse {

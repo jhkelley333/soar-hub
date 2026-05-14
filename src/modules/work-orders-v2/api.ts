@@ -197,6 +197,18 @@ export function fetchVendors(opts?: { storeNumber?: string }): Promise<VendorsRe
   return request<VendorsResponse>(`${FN}?action=getVendors${qs}`);
 }
 
+export interface OrgIndexResponse {
+  ok: true;
+  regions: Array<{ id: string; name: string; code: string | null }>;
+  areas: Array<{ id: string; name: string; code: string | null; region_id: string | null }>;
+  districts: Array<{ id: string; name: string; code: string | null; area_id: string | null }>;
+  stores: Array<{ id: string; number: string; name: string | null }>;
+}
+
+export function fetchOrgIndex(): Promise<OrgIndexResponse> {
+  return request<OrgIndexResponse>(`${FN}?action=getOrgIndex`);
+}
+
 export interface VendorScopeRow {
   id: string;
   scope_type: "national" | "region" | "area" | "district" | "store";
@@ -246,6 +258,64 @@ export interface BulkVendorResponse {
   ok: true;
   results: BulkVendorResult[];
   summary: Partial<Record<"created" | "updated" | "failed", number>>;
+}
+
+export interface VendorPreference {
+  id: string;
+  store_id: string;
+  category: string;
+  vendor_id: string;
+  rank: number;
+  notes: string | null;
+  created_at?: string;
+  stores?: { number: string; name: string | null } | null;
+}
+
+export function fetchVendorPreferences(vendorId: string) {
+  return request<{ ok: true; preferences: VendorPreference[] }>(
+    `${FN}?action=getVendorPreferences&vendorId=${encodeURIComponent(vendorId)}`,
+  );
+}
+
+export interface StoreVendorPreference {
+  id: string;
+  store_id: string;
+  category: string;
+  vendor_id: string;
+  rank: number;
+  notes: string | null;
+  created_at?: string;
+  vendors?: { name: string; category: string | null } | null;
+}
+
+export function fetchStoreVendorPreferences(opts: { storeId?: string; storeNumber?: string }) {
+  const params = new URLSearchParams({ action: "getStoreVendorPreferences" });
+  if (opts.storeId)     params.set("storeId", opts.storeId);
+  if (opts.storeNumber) params.set("storeNumber", opts.storeNumber);
+  return request<{ ok: true; store_id: string; preferences: StoreVendorPreference[] }>(
+    `${FN}?${params.toString()}`,
+  );
+}
+
+export function saveStoreVendorPreference(body: {
+  id?: string;
+  store_id: string;
+  vendor_id: string;
+  category: string;
+  rank?: number;
+  notes?: string;
+}) {
+  return request<{ ok: true; preference: StoreVendorPreference }>(
+    `${FN}?action=saveStoreVendorPreference`,
+    { method: "POST", body: JSON.stringify(body) },
+  );
+}
+
+export function deleteStoreVendorPreference(id: string) {
+  return request<{ ok: true }>(`${FN}?action=deleteStoreVendorPreference`, {
+    method: "POST",
+    body: JSON.stringify({ id }),
+  });
 }
 
 export function bulkImportVendors(

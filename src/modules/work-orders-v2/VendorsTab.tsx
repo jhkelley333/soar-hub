@@ -6,7 +6,7 @@
 //   * Anyone can rate a vendor (1-5 stars + optional comment).
 //   * DO+ can add / edit vendors (backend enforces).
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Layers, Loader2, Mail, Pencil, Phone, Plus, Star, X } from "lucide-react";
 import { Card, CardBody } from "@/shared/ui/Card";
@@ -18,11 +18,20 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import {
   bulkImportVendors,
+  deleteStoreVendorPreference,
+  fetchOrgIndex,
+  fetchVendorPreferences,
   fetchVendors,
+  fetchVendorScopes,
   rateVendor,
+  saveStoreVendorPreference,
   saveVendor,
+  setVendorScopes,
   type BulkVendorResult,
   type BulkVendorRow,
+  type OrgIndexResponse,
+  type VendorPreference,
+  type VendorScopeRow,
 } from "./api";
 import type { SaveVendorBody, Vendor } from "./types";
 
@@ -44,6 +53,15 @@ export function VendorsTab({ callerRole }: { callerRole: string }) {
     queryKey: ["wo2", "vendors"],
     queryFn: () => fetchVendors(),
     staleTime: 60_000,
+  });
+
+  // Org index for resolving vendor_scope_id → label. Fetched once,
+  // cached for the session. Used by VendorRow's scope chips and
+  // by the in-modal scope editor.
+  const orgQ = useQuery({
+    queryKey: ["wo2", "org-index"],
+    queryFn: fetchOrgIndex,
+    staleTime: 5 * 60_000,
   });
 
   const [search, setSearch] = useState("");
@@ -133,6 +151,7 @@ export function VendorsTab({ callerRole }: { callerRole: string }) {
           <VendorRow
             key={v.id}
             vendor={v}
+            org={orgQ.data}
             canManage={canManage(callerRole)}
             onEdit={() => setEditing(v)}
             onRate={() => setRating(v)}
@@ -143,6 +162,7 @@ export function VendorsTab({ callerRole }: { callerRole: string }) {
       {editing !== null && (
         <VendorEditModal
           vendor={editing === "new" ? null : editing}
+          org={orgQ.data}
           onClose={() => setEditing(null)}
           onSaved={() => {
             toast.push("Vendor saved.", "success");
@@ -180,11 +200,13 @@ export function VendorsTab({ callerRole }: { callerRole: string }) {
 
 function VendorRow({
   vendor,
+  org,
   canManage,
   onEdit,
   onRate,
 }: {
   vendor: Vendor;
+  org: OrgIndexResponse | undefined;
   canManage: boolean;
   onEdit: () => void;
   onRate: () => void;
@@ -193,6 +215,10 @@ function VendorRow({
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
+  const scopeChips = useMemo(
+    () => buildScopeChips(vendor.vendor_scopes || [], org),
+    [vendor.vendor_scopes, org],
+  );
   return (
     <Card>
       <CardBody className="space-y-2">
@@ -247,6 +273,32 @@ function VendorRow({
             )}
           </div>
         </div>
+        {scopeChips.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1">
+            <span className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+              Scope:
+            </span>
+            {scopeChips.map((c) => (
+              <span
+                key={c.key}
+                className={
+                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium " +
+                  (c.tone === "national"
+                    ? "bg-emerald-100 text-emerald-900"
+                    : c.tone === "region"
+                      ? "bg-violet-100 text-violet-900"
+                      : c.tone === "area"
+                        ? "bg-blue-100 text-blue-900"
+                        : c.tone === "district"
+                          ? "bg-amber-100 text-amber-900"
+                          : "bg-zinc-100 text-zinc-700")
+                }
+              >
+                {c.label}
+              </span>
+            ))}
+          </div>
+        )}
         {services.length > 0 && (
           <div className="flex flex-wrap gap-1">
             {services.map((s) => (
@@ -287,11 +339,13 @@ function Stars({ rating, total }: { rating: number | null; total: number }) {
 
 function VendorEditModal({
   vendor,
+  org,
   onClose,
   onSaved,
   onError,
 }: {
   vendor: Vendor | null;
+  org: OrgIndexResponse | undefined;
   onClose: () => void;
   onSaved: () => void;
   onError: (msg: string) => void;
@@ -306,9 +360,31 @@ function VendorEditModal({
   const [website, setWebsite] = useState(vendor?.website || "");
   const [notes, setNotes] = useState(vendor?.notes || "");
 
+  // Scope editor state. Holds the desired list of scope rows for
+  // this vendor. We fetch existing rows on mount (for an edit),
+  // then mutate locally; on save, we push the full desired list to
+  // setVendorScopes which wipes + replaces.
+  const scopesQ = useQuery({
+    queryKey: ["wo2", "vendor-scopes", vendor?.id || "new"],
+    queryFn: () => fetchVendorScopes(vendor!.id),
+    enabled: !!vendor,
+    staleTime: 60_000,
+  });
+  const [draftScopes, setDraftScopes] = useState<Array<{
+    scope_type: "national" | "region" | "area" | "district" | "store";
+    scope_id: string | null;
+  }>>([]);
+  useEffect(() => {
+    if (scopesQ.data?.scopes) {
+      setDraftScopes(scopesQ.data.scopes.map((s) => ({
+        scope_type: s.scope_type, scope_id: s.scope_id,
+      })));
+    }
+  }, [scopesQ.data]);
+
   const mut = useMutation({
-    mutationFn: () => {
-      if (!name.trim()) return Promise.reject(new Error("Vendor name is required."));
+    mutationFn: async () => {
+      if (!name.trim()) throw new Error("Vendor name is required.");
       const payload: SaveVendorBody = {
         name: name.trim(),
         category: category || undefined,
@@ -321,7 +397,14 @@ function VendorEditModal({
         notes: notes || undefined,
       };
       if (vendor) payload.id = vendor.id;
-      return saveVendor(payload);
+      // Save vendor first — for a new vendor we need the returned
+      // id before we can persist scope rows against it.
+      const saveRes = await saveVendor(payload);
+      const vendorId = vendor?.id || saveRes.vendor?.id;
+      if (vendorId) {
+        await setVendorScopes(vendorId, draftScopes);
+      }
+      return saveRes;
     },
     onSuccess: onSaved,
     onError: (e: unknown) =>
@@ -395,6 +478,42 @@ function VendorEditModal({
             <Label htmlFor="vm-notes">Notes</Label>
             <Input id="vm-notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
           </div>
+
+          {/* Scope editor — controls which stores see this vendor. */}
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+            <div className="flex items-baseline justify-between">
+              <div className="text-sm font-semibold tracking-tight text-midnight">
+                Scope
+              </div>
+              <span className="text-[10px] text-zinc-500">
+                Which stores see this vendor. Empty = visible to all (legacy fallback).
+              </span>
+            </div>
+            <ScopeEditor
+              org={org}
+              scopes={draftScopes}
+              loading={!!vendor && scopesQ.isLoading}
+              onChange={setDraftScopes}
+            />
+          </div>
+
+          {/* Preferred Vendor editor — per-store rank. Only available
+              for vendors that are already saved (have an id) so the
+              preference rows can FK to them. */}
+          {vendor && (
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+              <div className="flex items-baseline justify-between">
+                <div className="text-sm font-semibold tracking-tight text-midnight">
+                  Preferred at
+                </div>
+                <span className="text-[10px] text-zinc-500">
+                  Stores where this vendor is primary/backup for a category.
+                  Sorts to the top of the picker.
+                </span>
+              </div>
+              <PreferenceEditor vendor={vendor} org={org} />
+            </div>
+          )}
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-zinc-100 px-5 py-3">
           <Button variant="ghost" onClick={onClose} disabled={mut.isPending}>Cancel</Button>
@@ -601,10 +720,15 @@ function BulkImportVendorsModal({
                   <li>
                     <strong>scope</strong> column accepts:{" "}
                     <code className="rounded bg-white px-1 py-0.5 text-[10px]">national</code>,{" "}
-                    <code className="rounded bg-white px-1 py-0.5 text-[10px]">district:Edmond,Norman</code>,{" "}
+                    <code className="rounded bg-white px-1 py-0.5 text-[10px]">region:R04</code> /{" "}
+                    <code className="rounded bg-white px-1 py-0.5 text-[10px]">region:OK Region</code>,{" "}
+                    <code className="rounded bg-white px-1 py-0.5 text-[10px]">area:</code> or{" "}
+                    <code className="rounded bg-white px-1 py-0.5 text-[10px]">district:</code> followed by
+                    one or more codes <em>or</em> names (comma-separated),{" "}
                     <code className="rounded bg-white px-1 py-0.5 text-[10px]">store:1242,1245</code>,
                     or combinations separated by{" "}
-                    <code className="rounded bg-white px-1 py-0.5 text-[10px]">|</code>.
+                    <code className="rounded bg-white px-1 py-0.5 text-[10px]">|</code>.{" "}
+                    <strong>Codes are recommended</strong> — they don't break if you rename a region.
                   </li>
                   <li>
                     Rows match existing vendors by <strong>name</strong> (unique).
@@ -790,4 +914,405 @@ function parsePastedTable(raw: string): {
     if (row.name) out.rows.push(row);
   }
   return out;
+}
+
+// ── Scope editor ─────────────────────────────────────────────
+// Inline editor used inside VendorEditModal. Shows the current
+// scope rows as chips with remove buttons, plus an "Add scope"
+// picker (type select + target select). Returns updates via
+// onChange — the parent is responsible for persisting on save.
+//
+// The picker hides the second select until a non-'national' type
+// is chosen. "national" stands alone and only one row of it is
+// allowed at a time (enforced by the partial unique index in 0046,
+// also de-duped client-side).
+
+type ScopeDraft = { scope_type: VendorScopeRow["scope_type"]; scope_id: string | null };
+
+function ScopeEditor({
+  org,
+  scopes,
+  loading,
+  onChange,
+}: {
+  org: OrgIndexResponse | undefined;
+  scopes: ScopeDraft[];
+  loading: boolean;
+  onChange: (next: ScopeDraft[]) => void;
+}) {
+  const [pendingType, setPendingType] = useState<VendorScopeRow["scope_type"] | "">("");
+  const [pendingTarget, setPendingTarget] = useState<string>("");
+
+  // Build option lists for the target select based on pendingType.
+  const targetOptions = useMemo(() => {
+    if (!org) return [];
+    switch (pendingType) {
+      case "region":
+        return org.regions.map((r) => ({
+          id: r.id,
+          label: r.code ? `${r.code} — ${r.name}` : r.name,
+        }));
+      case "area":
+        return org.areas.map((a) => ({
+          id: a.id,
+          label: a.code ? `${a.code} — ${a.name}` : a.name,
+        }));
+      case "district":
+        return org.districts.map((d) => ({
+          id: d.id,
+          label: d.code ? `${d.code} — ${d.name}` : d.name,
+        }));
+      case "store":
+        return org.stores.map((s) => ({
+          id: s.id,
+          label: s.name ? `#${s.number} — ${s.name}` : `#${s.number}`,
+        }));
+      default:
+        return [];
+    }
+  }, [pendingType, org]);
+
+  function addScope() {
+    if (!pendingType) return;
+    if (pendingType === "national") {
+      // Don't add a duplicate national row.
+      if (scopes.some((s) => s.scope_type === "national")) return;
+      onChange([...scopes, { scope_type: "national", scope_id: null }]);
+    } else {
+      if (!pendingTarget) return;
+      if (scopes.some((s) => s.scope_type === pendingType && s.scope_id === pendingTarget)) {
+        return; // already in the list
+      }
+      onChange([...scopes, { scope_type: pendingType, scope_id: pendingTarget }]);
+    }
+    setPendingType("");
+    setPendingTarget("");
+  }
+
+  function removeAt(idx: number) {
+    onChange(scopes.filter((_, i) => i !== idx));
+  }
+
+  if (loading) {
+    return <div className="mt-2 text-xs text-zinc-500">Loading scopes…</div>;
+  }
+
+  return (
+    <div className="mt-2 space-y-2">
+      {scopes.length === 0 ? (
+        <div className="rounded-md border border-dashed border-zinc-300 bg-white px-3 py-2 text-[11px] text-zinc-500">
+          No scope rows yet — this vendor is currently visible to every store.
+          Add a scope below to restrict.
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-1">
+          {scopes.map((s, i) => (
+            <ScopeDraftChip
+              key={`${s.scope_type}:${s.scope_id ?? "national"}:${i}`}
+              draft={s}
+              org={org}
+              onRemove={() => removeAt(i)}
+            />
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2 rounded-md border border-zinc-200 bg-white p-2">
+        <select
+          value={pendingType}
+          onChange={(e) => {
+            setPendingType(e.target.value as VendorScopeRow["scope_type"] | "");
+            setPendingTarget("");
+          }}
+          className="h-8 rounded-md border border-zinc-200 bg-white px-2 text-xs"
+        >
+          <option value="">Pick scope type…</option>
+          <option value="national">National</option>
+          <option value="region">Region</option>
+          <option value="area">Area</option>
+          <option value="district">District</option>
+          <option value="store">Store</option>
+        </select>
+        {pendingType && pendingType !== "national" && (
+          <select
+            value={pendingTarget}
+            onChange={(e) => setPendingTarget(e.target.value)}
+            className="h-8 min-w-[200px] flex-1 rounded-md border border-zinc-200 bg-white px-2 text-xs"
+          >
+            <option value="">Pick {pendingType}…</option>
+            {targetOptions.map((o) => (
+              <option key={o.id} value={o.id}>{o.label}</option>
+            ))}
+          </select>
+        )}
+        <Button
+          variant="primary"
+          onClick={addScope}
+          disabled={!pendingType || (pendingType !== "national" && !pendingTarget)}
+        >
+          Add
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ScopeDraftChip({
+  draft, org, onRemove,
+}: {
+  draft: ScopeDraft;
+  org: OrgIndexResponse | undefined;
+  onRemove: () => void;
+}) {
+  const label = draftLabel(draft, org);
+  const tone =
+    draft.scope_type === "national" ? "bg-emerald-100 text-emerald-900" :
+    draft.scope_type === "region"   ? "bg-violet-100 text-violet-900" :
+    draft.scope_type === "area"     ? "bg-blue-100 text-blue-900" :
+    draft.scope_type === "district" ? "bg-amber-100 text-amber-900" :
+                                      "bg-zinc-100 text-zinc-700";
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-medium ${tone}`}>
+      {label}
+      <button
+        type="button" onClick={onRemove}
+        className="ml-0.5 rounded-full p-0.5 hover:bg-black/10"
+        aria-label="Remove"
+      >
+        <X className="h-2.5 w-2.5" strokeWidth={2} />
+      </button>
+    </span>
+  );
+}
+
+// ── Preference editor ─────────────────────────────────────────
+// Lives inside the vendor edit modal. Reads per-vendor preference
+// rows and renders them as a list with add/remove. Mutations
+// invalidate the local query so the list re-fetches.
+function PreferenceEditor({
+  vendor, org,
+}: {
+  vendor: Vendor;
+  org: OrgIndexResponse | undefined;
+}) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const prefsQ = useQuery({
+    queryKey: ["wo2", "vendor-prefs", vendor.id],
+    queryFn: () => fetchVendorPreferences(vendor.id),
+    staleTime: 30_000,
+  });
+  const [pickedStoreId, setPickedStoreId] = useState("");
+  const [pickedCategory, setPickedCategory] = useState("");
+  const [pickedRank, setPickedRank] = useState("1");
+
+  const addMut = useMutation({
+    mutationFn: () => {
+      if (!pickedStoreId) throw new Error("Pick a store.");
+      if (!pickedCategory.trim()) throw new Error("Category is required.");
+      return saveStoreVendorPreference({
+        store_id: pickedStoreId,
+        vendor_id: vendor.id,
+        category: pickedCategory.trim(),
+        rank: Number(pickedRank) || 1,
+      });
+    },
+    onSuccess: () => {
+      setPickedStoreId("");
+      setPickedCategory("");
+      setPickedRank("1");
+      qc.invalidateQueries({ queryKey: ["wo2", "vendor-prefs", vendor.id] });
+      toast.push("Preference saved.", "success");
+    },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Save failed.", "error"),
+  });
+  const delMut = useMutation({
+    mutationFn: (id: string) => deleteStoreVendorPreference(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["wo2", "vendor-prefs", vendor.id] });
+      toast.push("Preference removed.", "info");
+    },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Remove failed.", "error"),
+  });
+
+  const prefs = prefsQ.data?.preferences || [];
+  const vendorCategories = (vendor.category || "")
+    .split(",").map((c) => c.trim()).filter(Boolean);
+
+  return (
+    <div className="mt-2 space-y-2">
+      {prefsQ.isLoading ? (
+        <div className="text-xs text-zinc-500">Loading…</div>
+      ) : prefs.length === 0 ? (
+        <div className="rounded-md border border-dashed border-zinc-300 bg-white px-3 py-2 text-[11px] text-zinc-500">
+          No preferences yet. Add one below to make this vendor the primary or
+          backup for a category at a specific store.
+        </div>
+      ) : (
+        <ul className="divide-y divide-zinc-100 rounded-md border border-zinc-200 bg-white">
+          {prefs.map((p) => <PreferenceRow key={p.id} pref={p} onRemove={() => delMut.mutate(p.id)} pending={delMut.isPending} />)}
+        </ul>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2 rounded-md border border-zinc-200 bg-white p-2">
+        <select
+          value={pickedStoreId}
+          onChange={(e) => setPickedStoreId(e.target.value)}
+          className="h-8 min-w-[180px] rounded-md border border-zinc-200 bg-white px-2 text-xs"
+        >
+          <option value="">Pick store…</option>
+          {(org?.stores || []).map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name ? `#${s.number} — ${s.name}` : `#${s.number}`}
+            </option>
+          ))}
+        </select>
+        {vendorCategories.length > 0 ? (
+          <select
+            value={pickedCategory}
+            onChange={(e) => setPickedCategory(e.target.value)}
+            className="h-8 rounded-md border border-zinc-200 bg-white px-2 text-xs"
+          >
+            <option value="">Pick category…</option>
+            {vendorCategories.map((c) => (
+              <option key={c} value={c}>{c}</option>
+            ))}
+            <option value="__custom__">Other (type below)…</option>
+          </select>
+        ) : null}
+        {(vendorCategories.length === 0 || pickedCategory === "__custom__") && (
+          <Input
+            value={pickedCategory === "__custom__" ? "" : pickedCategory}
+            onChange={(e) => setPickedCategory(e.target.value)}
+            placeholder="Category (e.g. HVAC)"
+            className="h-8 w-[160px] text-xs"
+          />
+        )}
+        <select
+          value={pickedRank}
+          onChange={(e) => setPickedRank(e.target.value)}
+          className="h-8 w-[110px] rounded-md border border-zinc-200 bg-white px-2 text-xs"
+        >
+          <option value="1">1 — primary</option>
+          <option value="2">2 — backup</option>
+          <option value="3">3 — third</option>
+        </select>
+        <Button
+          variant="primary"
+          onClick={() => addMut.mutate()}
+          disabled={addMut.isPending || !pickedStoreId || !pickedCategory.trim() || pickedCategory === "__custom__"}
+        >
+          {addMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Add"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function PreferenceRow({
+  pref, onRemove, pending,
+}: {
+  pref: VendorPreference;
+  onRemove: () => void;
+  pending: boolean;
+}) {
+  const rankLabel = pref.rank === 1 ? "primary" : pref.rank === 2 ? "backup" : `rank ${pref.rank}`;
+  return (
+    <li className="flex items-center justify-between px-3 py-2 text-xs">
+      <div>
+        <span className="font-mono font-semibold text-midnight">
+          #{pref.stores?.number || "—"}
+        </span>
+        {pref.stores?.name && <span className="ml-1 text-zinc-500">{pref.stores.name}</span>}
+        <span className="mx-2 text-zinc-400">·</span>
+        <span className="text-midnight">{pref.category}</span>
+        <span className="mx-2 text-zinc-400">·</span>
+        <span className={
+          pref.rank === 1
+            ? "rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-900"
+            : "rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-700"
+        }>
+          {rankLabel}
+        </span>
+      </div>
+      <button
+        type="button"
+        onClick={onRemove}
+        disabled={pending}
+        className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-red-600 disabled:opacity-50"
+        aria-label="Remove"
+      >
+        <X className="h-3 w-3" strokeWidth={1.75} />
+      </button>
+    </li>
+  );
+}
+
+function draftLabel(s: ScopeDraft, org: OrgIndexResponse | undefined): string {
+  if (s.scope_type === "national") return "National";
+  if (!org) return `${s.scope_type}: ${s.scope_id ?? "?"}`;
+  if (s.scope_type === "region") {
+    const r = org.regions.find((x) => x.id === s.scope_id);
+    return r ? `Region: ${r.code || r.name}` : `Region: ?`;
+  }
+  if (s.scope_type === "area") {
+    const a = org.areas.find((x) => x.id === s.scope_id);
+    return a ? `Area: ${a.code || a.name}` : `Area: ?`;
+  }
+  if (s.scope_type === "district") {
+    const d = org.districts.find((x) => x.id === s.scope_id);
+    return d ? `District: ${d.code || d.name}` : `District: ?`;
+  }
+  if (s.scope_type === "store") {
+    const st = org.stores.find((x) => x.id === s.scope_id);
+    return st ? `Store #${st.number}` : `Store: ?`;
+  }
+  return s.scope_type;
+}
+
+// Build a flat list of scope chips for a vendor row. Resolves each
+// scope_id against the org index so the chip label is "Edmond
+// District" instead of a UUID. Unresolved IDs (stale references)
+// render as "<type>: ?" so they're still visible — not silently
+// dropped.
+interface ScopeChip {
+  key: string;
+  label: string;
+  tone: "national" | "region" | "area" | "district" | "store";
+}
+
+function buildScopeChips(
+  scopes: NonNullable<Vendor["vendor_scopes"]>,
+  org: OrgIndexResponse | undefined,
+): ScopeChip[] {
+  if (!scopes.length) return [];
+  const chips: ScopeChip[] = [];
+  const regionsById   = new Map((org?.regions   || []).map((r) => [r.id, r]));
+  const areasById     = new Map((org?.areas     || []).map((a) => [a.id, a]));
+  const districtsById = new Map((org?.districts || []).map((d) => [d.id, d]));
+  const storesById    = new Map((org?.stores    || []).map((s) => [s.id, s]));
+  for (const s of scopes) {
+    if (s.scope_type === "national") {
+      chips.push({ key: "national", label: "National", tone: "national" });
+      continue;
+    }
+    const id = s.scope_id || "";
+    const key = `${s.scope_type}:${id}`;
+    let label = `${s.scope_type}: ?`;
+    if (s.scope_type === "region" && regionsById.has(id)) {
+      const r = regionsById.get(id)!;
+      label = r.code || r.name;
+    } else if (s.scope_type === "area" && areasById.has(id)) {
+      const a = areasById.get(id)!;
+      label = a.code || a.name;
+    } else if (s.scope_type === "district" && districtsById.has(id)) {
+      const d = districtsById.get(id)!;
+      label = d.code || d.name;
+    } else if (s.scope_type === "store" && storesById.has(id)) {
+      const st = storesById.get(id)!;
+      label = `#${st.number}`;
+    }
+    chips.push({ key, label, tone: s.scope_type });
+  }
+  return chips;
 }

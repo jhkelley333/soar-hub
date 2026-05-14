@@ -125,14 +125,16 @@ function parseScopeString(raw, maps) {
     }
     for (const name of names) {
       let id = null;
+      const lc = name.toLowerCase();
       if (type === "store") {
         id = maps.storesByNumber.get(name) || null;
       } else if (type === "district") {
-        id = maps.districtsByName.get(name.toLowerCase()) || null;
+        // Code preferred (stable across renames), name as fallback.
+        id = maps.districtsByCode.get(lc) || maps.districtsByName.get(lc) || null;
       } else if (type === "area") {
-        id = maps.areasByName.get(name.toLowerCase()) || null;
+        id = maps.areasByCode.get(lc) || maps.areasByName.get(lc) || null;
       } else if (type === "region") {
-        id = maps.regionsByName.get(name.toLowerCase()) || null;
+        id = maps.regionsByCode.get(lc) || maps.regionsByName.get(lc) || null;
       }
       if (!id) {
         out.errors.push(`${type} "${name}" not found`);
@@ -177,9 +179,11 @@ async function visibleScopeKeysForStore(supabase, storeNumber) {
 }
 
 // True if any of the vendor's scope rows matches a key in
-// allowedSet. Zero rows = legacy "visible everywhere" fallback.
-function isVendorVisibleAtStore(scopes, allowedSet) {
-  if (!scopes || scopes.length === 0) return true; // legacy fallback
+// allowedSet. Zero rows behavior depends on the
+// wo2_strict_vendor_scopes feature flag: strict=true → invisible,
+// strict=false (default) → visible (legacy fallback).
+function isVendorVisibleAtStore(scopes, allowedSet, strict = false) {
+  if (!scopes || scopes.length === 0) return !strict;
   for (const s of scopes) {
     if (s.scope_type === "national") {
       if (allowedSet.has("national")) return true;
@@ -190,6 +194,23 @@ function isVendorVisibleAtStore(scopes, allowedSet) {
     }
   }
   return false;
+}
+
+// Read the strict-scope feature flag. Cached per-invocation since
+// the function is called several times per request via the various
+// vendor list paths. Default false on any read failure so we fail
+// open (vendors stay visible).
+async function isStrictVendorScopes(supabase) {
+  try {
+    const { data } = await supabase
+      .from("feature_flags")
+      .select("enabled")
+      .eq("key", "wo2_strict_vendor_scopes")
+      .maybeSingle();
+    return !!data?.enabled;
+  } catch {
+    return false;
+  }
 }
 
 // Maps the caller's role to the approval tier label(s) they can act
@@ -1394,23 +1415,35 @@ export const handler = async (event) => {
         return respond(400, { ok: false, message: "max 1000 rows per import" });
       }
 
-      // Build name maps for district/area/region/store so we can
-      // resolve scope strings ("district:Edmond") to UUIDs. Done up
+      // Build name AND code maps for district/area/region/store so
+      // we can resolve scope strings ("district:Edmond" or
+      // "district:D-OKC-01") to UUIDs. Codes are preferred when
+      // they exist because they're stable across renames; names
+      // remain a convenience for hand-written imports. Done up
       // front so each row's resolver is in-memory only.
       const [districtsR, areasR, regionsR, storesR] = await Promise.all([
-        supabase.from("districts").select("id, name"),
-        supabase.from("areas").select("id, name"),
-        supabase.from("regions").select("id, name"),
+        supabase.from("districts").select("id, name, code"),
+        supabase.from("areas").select("id, name, code"),
+        supabase.from("regions").select("id, name, code"),
         supabase.from("stores").select("id, number"),
       ]);
       const districtsByName = new Map(
         (districtsR.data || []).map((d) => [String(d.name).toLowerCase().trim(), d.id]),
       );
+      const districtsByCode = new Map(
+        (districtsR.data || []).filter((d) => d.code).map((d) => [String(d.code).toLowerCase().trim(), d.id]),
+      );
       const areasByName = new Map(
         (areasR.data || []).map((a) => [String(a.name).toLowerCase().trim(), a.id]),
       );
+      const areasByCode = new Map(
+        (areasR.data || []).filter((a) => a.code).map((a) => [String(a.code).toLowerCase().trim(), a.id]),
+      );
       const regionsByName = new Map(
         (regionsR.data || []).map((r) => [String(r.name).toLowerCase().trim(), r.id]),
+      );
+      const regionsByCode = new Map(
+        (regionsR.data || []).filter((r) => r.code).map((r) => [String(r.code).toLowerCase().trim(), r.id]),
       );
       const storesByNumber = new Map(
         (storesR.data || []).map((s) => [String(s.number).trim(), s.id]),
@@ -1427,7 +1460,10 @@ export const handler = async (event) => {
 
         // Parse the scope string. Returns { ok, scopes, errors[] }.
         const parsed = parseScopeString(r.scope || "", {
-          districtsByName, areasByName, regionsByName, storesByNumber,
+          districtsByName, districtsByCode,
+          areasByName,     areasByCode,
+          regionsByName,   regionsByCode,
+          storesByNumber,
         });
         if (parsed.errors.length > 0) {
           results.push({
@@ -1704,8 +1740,9 @@ export const handler = async (event) => {
           // the caller isn't blocked on a transient error.
           visibleVendors = vendors || [];
         } else {
+          const strict = await isStrictVendorScopes(supabase);
           visibleVendors = (vendors || []).filter((v) =>
-            isVendorVisibleAtStore(v.vendor_scopes || [], allowedSet),
+            isVendorVisibleAtStore(v.vendor_scopes || [], allowedSet, strict),
           );
         }
       }
@@ -1720,6 +1757,124 @@ export const handler = async (event) => {
       });
       return respond(200, { ok: true, vendors: enriched });
     }
+    // ── VENDOR STORE PREFERENCES ──
+    // Per-store ranked preferences by category. Read-anyone (so the
+    // vendor picker / dashboard can decorate accordingly); writes
+    // require DO+.
+    if (action === "getStoreVendorPreferences") {
+      const { storeId, storeNumber } = event.queryStringParameters || {};
+      let resolvedStoreId = storeId || null;
+      if (!resolvedStoreId && storeNumber) {
+        const { data: s } = await supabase
+          .from("stores")
+          .select("id")
+          .eq("number", String(storeNumber).trim())
+          .maybeSingle();
+        resolvedStoreId = s?.id || null;
+      }
+      if (!resolvedStoreId) {
+        return respond(400, { ok: false, message: "storeId or storeNumber required" });
+      }
+      const { data, error } = await supabase
+        .from("vendor_store_preferences")
+        .select("id, store_id, category, vendor_id, rank, notes, created_at, vendors(name, category)")
+        .eq("store_id", resolvedStoreId)
+        .order("category")
+        .order("rank");
+      if (error) throw error;
+      return respond(200, { ok: true, store_id: resolvedStoreId, preferences: data || [] });
+    }
+
+    // Per-vendor view of preference rows for the vendor edit modal.
+    if (action === "getVendorPreferences") {
+      const { vendorId } = event.queryStringParameters || {};
+      if (!vendorId) {
+        return respond(400, { ok: false, message: "vendorId required" });
+      }
+      const { data, error } = await supabase
+        .from("vendor_store_preferences")
+        .select("id, store_id, category, vendor_id, rank, notes, created_at, stores(number, name)")
+        .eq("vendor_id", vendorId)
+        .order("category")
+        .order("rank");
+      if (error) throw error;
+      return respond(200, { ok: true, preferences: data || [] });
+    }
+
+    if (action === "saveStoreVendorPreference" && event.httpMethod === "POST") {
+      if (roleLevel(role) > 3) {
+        return respond(403, { ok: false, message: "DO and above only." });
+      }
+      const body = JSON.parse(event.body || "{}");
+      const { id, store_id, vendor_id, category, rank, notes } = body;
+      if (!store_id || !vendor_id || !category) {
+        return respond(400, {
+          ok: false, message: "store_id, vendor_id, category required",
+        });
+      }
+      const fields = {
+        store_id,
+        vendor_id,
+        category: String(category).trim(),
+        rank: Number.isFinite(Number(rank)) ? Number(rank) : 1,
+        notes: notes || null,
+        created_by_id: userId,
+      };
+      if (id) {
+        const { data, error } = await supabase
+          .from("vendor_store_preferences")
+          .update(fields)
+          .eq("id", id)
+          .select()
+          .single();
+        if (error) throw error;
+        return respond(200, { ok: true, preference: data });
+      }
+      const { data, error } = await supabase
+        .from("vendor_store_preferences")
+        .upsert(fields, { onConflict: "store_id,category,vendor_id" })
+        .select()
+        .single();
+      if (error) throw error;
+      return respond(200, { ok: true, preference: data });
+    }
+
+    if (action === "deleteStoreVendorPreference" && event.httpMethod === "POST") {
+      if (roleLevel(role) > 3) {
+        return respond(403, { ok: false, message: "DO and above only." });
+      }
+      const { id } = JSON.parse(event.body || "{}");
+      if (!id) return respond(400, { ok: false, message: "id required" });
+      const { error } = await supabase
+        .from("vendor_store_preferences")
+        .delete()
+        .eq("id", id);
+      if (error) throw error;
+      return respond(200, { ok: true });
+    }
+
+    // ── ORG LOOKUPS (for scope label rendering) ──
+    // Tiny endpoint that returns the regions/areas/districts/stores
+    // index any vendor-scope-aware UI needs to resolve scope_id ->
+    // readable label. Authed; everyone in the BETA can call this
+    // (no scope filtering — labels for the whole org are needed to
+    // render vendor scope badges).
+    if (action === "getOrgIndex") {
+      const [r, a, d, s] = await Promise.all([
+        supabase.from("regions").select("id, name, code").order("name"),
+        supabase.from("areas").select("id, name, code, region_id").order("name"),
+        supabase.from("districts").select("id, name, code, area_id").order("name"),
+        supabase.from("stores").select("id, number, name").order("number"),
+      ]);
+      return respond(200, {
+        ok: true,
+        regions:   r.data || [],
+        areas:     a.data || [],
+        districts: d.data || [],
+        stores:    s.data || [],
+      });
+    }
+
     // ── VENDOR SCOPES ──
     // Get scopes for a single vendor (used by the edit modal).
     if (action === "getVendorScopes") {
@@ -1826,9 +1981,49 @@ export const handler = async (event) => {
       if (storeNumber) {
         const allowed = await visibleScopeKeysForStore(supabase, storeNumber);
         if (allowed) {
+          const strict = await isStrictVendorScopes(supabase);
           visible = visible.filter((v) =>
-            isVendorVisibleAtStore(v.vendor_scopes || [], allowed),
+            isVendorVisibleAtStore(v.vendor_scopes || [], allowed, strict),
           );
+        }
+        // Sort preferred vendors to the top. Pull preference rows
+        // for this store that match the caller's category (or any
+        // category if none was given). Vendors appear by rank asc;
+        // non-preferred vendors keep their natural name order.
+        if (category || assetType) {
+          // Resolve store id from the number to query preferences.
+          const { data: storeRow } = await supabase
+            .from("stores")
+            .select("id")
+            .eq("number", String(storeNumber).trim())
+            .maybeSingle();
+          if (storeRow?.id) {
+            let prefsQuery = supabase
+              .from("vendor_store_preferences")
+              .select("vendor_id, category, rank")
+              .eq("store_id", storeRow.id);
+            const { data: prefs } = await prefsQuery;
+            const matches = (prefs || []).filter((p) => {
+              const pc = String(p.category || "").toLowerCase();
+              const tryCat = (s) => s && pc.includes(String(s).toLowerCase());
+              return tryCat(category) || tryCat(assetType);
+            });
+            if (matches.length > 0) {
+              const rankByVendorId = new Map();
+              for (const m of matches) {
+                const prior = rankByVendorId.get(m.vendor_id);
+                if (prior == null || m.rank < prior) {
+                  rankByVendorId.set(m.vendor_id, m.rank);
+                }
+              }
+              visible.sort((a, b) => {
+                const ra = rankByVendorId.has(a.id) ? rankByVendorId.get(a.id) : 9999;
+                const rb = rankByVendorId.has(b.id) ? rankByVendorId.get(b.id) : 9999;
+                if (ra !== rb) return ra - rb;
+                return (a.name || "").localeCompare(b.name || "");
+              });
+            }
+          }
         }
       }
       // Strip the scope rows from the response (frontend doesn't
