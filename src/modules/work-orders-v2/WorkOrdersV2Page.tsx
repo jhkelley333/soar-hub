@@ -51,7 +51,6 @@ import { StatusBar } from "./StatusBar";
 import { TicketActionBar } from "./TicketActionBar";
 import { TicketActivityFeed } from "./TicketActivityFeed";
 import { useAuth } from "@/auth/AuthProvider";
-import { useFlag } from "@/lib/flags";
 
 const STATUS_TONE: Record<TicketStatus, "info" | "warning" | "success" | "danger" | "neutral"> = {
   "submitted":   "info",
@@ -163,7 +162,6 @@ function TicketsTab() {
   const qc = useQueryClient();
   const { profile } = useAuth();
   const callerRole = profile?.role || "gm";
-  const statusV2Ui = useFlag("wo2_status_v2");
 
   const ticketsQ = useQuery({
     queryKey: ["wo2", "tickets"],
@@ -271,7 +269,6 @@ function TicketsTab() {
             ticket={t}
             expanded={expanded.has(t.id)}
             callerRole={callerRole}
-            statusV2Ui={statusV2Ui}
             onToggle={() => toggleExpand(t.id)}
             onUpdated={() => {
               toast.push("Ticket updated.", "success");
@@ -439,7 +436,6 @@ function TicketCard({
   onApprovalChanged,
   onError,
   callerRole,
-  statusV2Ui,
 }: {
   ticket: Ticket;
   expanded: boolean;
@@ -449,7 +445,6 @@ function TicketCard({
   onApprovalChanged: () => void;
   onError: (msg: string) => void;
   callerRole: string;
-  statusV2Ui: boolean;
 }) {
   const days = daysOpen(ticket);
   const open = isOpenStatus(ticket.status);
@@ -503,20 +498,18 @@ function TicketCard({
 
       {expanded && (
         <CardBody className="border-t border-zinc-100 bg-zinc-50/60 space-y-4">
-          {statusV2Ui && (
-            <div className="space-y-2 rounded-md border border-zinc-200 bg-white p-3">
-              <StatusBar
-                status={ticket.status}
-                pauseState={ticket.pause_state}
-                closedByStore={ticket.closed_by_store}
-              />
-              <TicketActionBar
-                ticketId={ticket.id}
-                status={ticket.status}
-                closedAt={ticket.closed_at}
-              />
-            </div>
-          )}
+          <div className="space-y-2 rounded-md border border-zinc-200 bg-white p-3">
+            <StatusBar
+              status={ticket.status}
+              pauseState={ticket.pause_state}
+              closedByStore={ticket.closed_by_store}
+            />
+            <TicketActionBar
+              ticketId={ticket.id}
+              status={ticket.status}
+              closedAt={ticket.closed_at}
+            />
+          </div>
           <DetailGrid ticket={ticket} />
           <DescriptionBlock label="Issue Description" value={ticket.issue_description} />
           {ticket.latest_comment && (
@@ -536,23 +529,12 @@ function TicketCard({
             onError={onError}
           />
 
-          {/* Legacy edit form. When the new status-bar UI is on, this
-              still renders the non-status fields (notes / vendor / cost
-              / priority / business-critical) but hides the status
-              dropdown — transitions go through TicketActionBar above. */}
-          <UpdateForm
-            ticket={ticket}
-            onUpdated={onUpdated}
-            onError={onError}
-            hideStatusField={statusV2Ui}
-          />
+          {/* Edit form for the non-status fields (notes / vendor /
+              priority / business-critical). Status transitions are
+              handled by TicketActionBar at the top of the card. */}
+          <UpdateForm ticket={ticket} onUpdated={onUpdated} onError={onError} />
 
-          {statusV2Ui ? (
-            <ActivityFeedPanel ticketId={ticket.id} />
-          ) : (
-            (ticket.ticket_updates?.length ?? 0) > 0 &&
-              <Activity updates={ticket.ticket_updates!} />
-          )}
+          <ActivityFeedPanel ticketId={ticket.id} />
 
           <TicketChat ticketId={ticket.id} onError={onError} />
         </CardBody>
@@ -706,66 +688,27 @@ function ActivityFeedPanel({ ticketId }: { ticketId: string }) {
   );
 }
 
-function Activity({ updates }: { updates: Ticket["ticket_updates"] }) {
-  if (!updates?.length) return null;
-  const sorted = [...updates]
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
-    .slice(0, 5);
-  return (
-    <div>
-      <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-        Activity
-      </div>
-      <ul className="space-y-1.5">
-        {sorted.map((u) => (
-          <li key={u.id} className="flex gap-2 text-xs">
-            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
-            <div className="min-w-0">
-              <span className="font-medium text-midnight">{u.user_name || "System"}</span>
-              <span className="text-zinc-500"> · {u.update_type}</span>
-              {u.notes && <span className="text-zinc-700">: {u.notes}</span>}
-              <div className="text-[10px] text-zinc-400">{fmtDate(u.created_at)}</div>
-            </div>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
-
 function UpdateForm({
   ticket,
   onUpdated,
   onError,
-  hideStatusField = false,
 }: {
   ticket: Ticket;
   onUpdated: () => void;
   onError: (msg: string) => void;
-  hideStatusField?: boolean;
 }) {
-  const [status, setStatus] = useState<TicketStatus>(ticket.status);
   const [priority, setPriority] = useState<TicketPriority>(ticket.priority);
   const [vendorName, setVendorName] = useState(ticket.vendor_name || "");
   const [notes, setNotes] = useState("");
 
   const mut = useMutation({
-    mutationFn: () => {
-      // Only the legacy dropdown can send a status change through here.
-      // When statusV2Ui is on, the action bar handles transitions and
-      // this field is hidden — status stays equal to ticket.status, so
-      // the diff below excludes it.
-      if (!hideStatusField && status === "closed" && !notes.trim()) {
-        return Promise.reject(new Error("Notes are required to close a ticket."));
-      }
-      return updateTicket({
+    mutationFn: () =>
+      updateTicket({
         id: ticket.id,
-        status: !hideStatusField && status !== ticket.status ? status : undefined,
         priority: priority !== ticket.priority ? priority : undefined,
         vendorName: vendorName !== (ticket.vendor_name || "") ? vendorName : undefined,
         notes: notes.trim() || undefined,
-      });
-    },
+      }),
     onSuccess: () => {
       setNotes("");
       onUpdated();
@@ -774,7 +717,6 @@ function UpdateForm({
   });
 
   const dirty =
-    (!hideStatusField && status !== ticket.status) ||
     priority !== ticket.priority ||
     vendorName !== (ticket.vendor_name || "") ||
     notes.trim().length > 0;
@@ -785,19 +727,6 @@ function UpdateForm({
         Update Ticket
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {!hideStatusField && (
-          <div>
-            <Label htmlFor={`wo2-status-${ticket.id}`}>Status</Label>
-            <select
-              id={`wo2-status-${ticket.id}`}
-              value={status}
-              onChange={(e) => setStatus(e.target.value as TicketStatus)}
-              className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-            >
-              {TICKET_STATUSES.map((s) => <option key={s} value={s}>{statusLabel(s)}</option>)}
-            </select>
-          </div>
-        )}
         <div>
           <Label htmlFor={`wo2-priority-${ticket.id}`}>Priority</Label>
           <select

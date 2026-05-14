@@ -113,17 +113,6 @@ export interface TicketApproval {
   quote_url: string | null;
 }
 
-// Legacy alias kept for compat — same shape as TicketActivity, but
-// optional. The API now returns `ticket_activities`; older consumers
-// reading `ticket_updates` should switch.
-export interface TicketUpdate {
-  id: string;
-  user_name: string | null;
-  update_type: string;
-  notes: string | null;
-  created_at: string;
-}
-
 // Activity feed entry — one row per state-changing action on a ticket
 // (status change, vendor assignment, ETA set, photo upload, comment,
 // approval, etc.). event_data is unstructured JSON; the shape varies
@@ -149,10 +138,7 @@ export interface Ticket {
   asset_type: string | null;
   model_number: string | null;
   issue_description: string | null;
-  // v2: status is now the new 7-value enum. status_legacy carries the
-  // old human-readable label for one release cycle.
   status: TicketStatus;
-  status_legacy?: string | null;
   pause_state?: PauseState | null;
   pause_reason_note?: string | null;
   resolution_category?: ResolutionCategory | null;
@@ -174,8 +160,6 @@ export interface Ticket {
   ticket_photos?: TicketPhoto[];
   ticket_approvals?: TicketApproval[];
   ticket_activities?: TicketActivity[];
-  // Kept for backwards compat; the API now returns ticket_activities.
-  ticket_updates?: TicketUpdate[];
 }
 
 export interface TicketActivitiesResponse {

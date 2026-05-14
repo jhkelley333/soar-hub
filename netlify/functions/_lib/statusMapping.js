@@ -1,24 +1,13 @@
-// Translates between the v1 free-text status values and the v2 enum.
+// One-way translation from legacy v1 status strings to v2 enum values.
 //
-// Used in three places:
-//   1. updateTicket — accepts old or new values from the client
-//      (existing UI still sends old; new UI sends new). Normalizes to
-//      the new enum before going through the state machine.
-//   2. getTickets / getTicket — every ticket response includes both
-//      `status` (new enum) and `status_legacy` (old text), so any
-//      legacy consumer keeps working for one release cycle.
-//   3. notifyTicketEvent rendering — emails currently use legacy text
-//      labels; they keep doing so until templates are reauthored.
-//
-// The mapping is lossy in one direction (new → old): on_site,
-// completed, and cancelled have no v1 equivalent, so we use the
-// closest legacy label. The state machine never writes those values
-// during PR 1 unless a caller explicitly uses the new endpoints, so
-// in practice the loss only matters for callers reading new-only
-// states via the legacy field.
+// Kept after PR 3 because updateTicket's normalization still accepts
+// either spelling — guards against any caller that hasn't been updated
+// to send v2 enum values directly. The reverse direction (new → old)
+// is preserved for the rare external integration that still expects
+// a human-readable status label; it's not auto-attached to API
+// responses anymore.
 
-// Old text → { status, pause_state }
-// pause_state defaults to "none" when not present.
+// Old text → { status, pause_state }. pause_state defaults to 'none'.
 const OLD_TO_NEW = {
   "Received":              { status: "submitted",   pause_state: "none" },
   "Pending Approval":      { status: "submitted",   pause_state: "none" },
@@ -33,9 +22,9 @@ const OLD_TO_NEW = {
   "Cancelled":             { status: "cancelled",   pause_state: "none" },
 };
 
-// New enum → best-fit legacy label, taking pause_state into account
-// when the status is in_progress so the legacy consumer sees the
-// substatus they're used to.
+// New enum → best-fit legacy label. Lossy for on_site / completed /
+// cancelled. Used by exports / integrations that haven't migrated to
+// the v2 enum spelling.
 function legacyLabel(status, pauseState) {
   if (status === "in_progress") {
     switch (pauseState) {
@@ -59,7 +48,6 @@ function legacyLabel(status, pauseState) {
 export function toNewStatus(legacyOrNew) {
   if (!legacyOrNew) return null;
   const s = String(legacyOrNew);
-  // Already a new-style enum value?
   if (["submitted","in_progress","scheduled","on_site","completed","closed","cancelled"].includes(s)) {
     return { status: s, pause_state: null };
   }
@@ -70,21 +58,4 @@ export function toNewStatus(legacyOrNew) {
 
 export function toLegacyStatus(newStatus, pauseState) {
   return legacyLabel(newStatus, pauseState || "none");
-}
-
-// Add a `status_legacy` field to one or many ticket rows in-place.
-// Caller passes ticket object(s) with `status` and `pause_state` set
-// (as returned by Supabase from the new schema).
-export function annotateLegacy(ticketOrTickets) {
-  if (!ticketOrTickets) return ticketOrTickets;
-  if (Array.isArray(ticketOrTickets)) {
-    return ticketOrTickets.map((t) => ({
-      ...t,
-      status_legacy: toLegacyStatus(t.status, t.pause_state),
-    }));
-  }
-  return {
-    ...ticketOrTickets,
-    status_legacy: toLegacyStatus(ticketOrTickets.status, ticketOrTickets.pause_state),
-  };
 }

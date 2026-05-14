@@ -29,7 +29,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { can, requireCap, tierFor, activityVisibilityForTier } from "./_lib/permissions.js";
 import { transition, setPause, isWithinReopenGrace, REOPEN_GRACE } from "./_lib/ticketStateMachine.js";
-import { toNewStatus, toLegacyStatus, annotateLegacy } from "./_lib/statusMapping.js";
+import { toNewStatus, toLegacyStatus } from "./_lib/statusMapping.js";
 
 const SUPABASE_URL =
   process.env.VITE_SUPABASE_URL ||
@@ -620,7 +620,7 @@ export const handler = async (event) => {
 
       const { data, error } = await query;
       if (error) throw error;
-      return respond(200, { ok: true, tickets: annotateLegacy(data) });
+      return respond(200, { ok: true, tickets: data });
     }
 
     // ── GET SINGLE TICKET ──
@@ -638,7 +638,7 @@ export const handler = async (event) => {
         .eq("id", id)
         .single();
       if (error) throw error;
-      return respond(200, { ok: true, ticket: annotateLegacy(data) });
+      return respond(200, { ok: true, ticket: data });
     }
 
     // ── CREATE TICKET ──
@@ -720,7 +720,7 @@ export const handler = async (event) => {
         console.warn("[facilities-v2] notifyTicketEvent submitted failed", e);
       }
 
-      return respond(200, { ok: true, ticket: annotateLegacy(ticket), woNumber });
+      return respond(200, { ok: true, ticket, woNumber });
     }
 
     // ── UPDATE TICKET ──
@@ -904,7 +904,7 @@ export const handler = async (event) => {
       if (activityEntries.length) {
         await supabase.from("ticket_activities").insert(activityEntries);
       }
-      return respond(200, { ok: true, ticket: annotateLegacy(ticket) });
+      return respond(200, { ok: true, ticket });
     }
 
     // ── TRANSITION TICKET (new strict path) ──
@@ -995,7 +995,7 @@ export const handler = async (event) => {
         await supabase.from("ticket_activities").insert(activityRows);
       }
 
-      return respond(200, { ok: true, ticket: annotateLegacy(ticket) });
+      return respond(200, { ok: true, ticket });
     }
 
     // ── SET PAUSE STATE ──
@@ -1047,7 +1047,7 @@ export const handler = async (event) => {
         visibility:  result.activity.visibility,
       });
 
-      return respond(200, { ok: true, ticket: annotateLegacy(ticket) });
+      return respond(200, { ok: true, ticket });
     }
 
     // ── GET TICKET ACTIVITIES ──
