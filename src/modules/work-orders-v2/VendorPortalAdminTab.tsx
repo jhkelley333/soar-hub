@@ -10,14 +10,17 @@ import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
+  CheckCircle2,
   Copy,
   Eye,
+  Layers,
   Loader2,
   Plus,
   Printer,
   ShieldOff,
   X,
 } from "lucide-react";
+import { useAuth } from "@/auth/AuthProvider";
 import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
@@ -86,6 +89,52 @@ function revokeToken(id: string) {
   });
 }
 
+interface BulkCreateBody {
+  mode: "all_missing" | "specific";
+  store_numbers?: string[];
+  label?: string;
+  ttl_days?: number;
+}
+interface BulkCreateResult {
+  store_number: string;
+  status: "created" | "skipped" | "failed";
+  message?: string;
+  token?: { id: string; token: string; store_number: string };
+}
+interface BulkCreateResponse {
+  ok: true;
+  results: BulkCreateResult[];
+  summary: Partial<Record<"created" | "skipped" | "failed", number>>;
+}
+
+function bulkCreate(payload: BulkCreateBody): Promise<BulkCreateResponse> {
+  return authedFetch<BulkCreateResponse>(`${FN}?action=adminBulkCreate`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+interface StoreLite {
+  id: string;
+  number: string;
+  name: string | null;
+}
+
+// Small store-list fetcher. Reads from PostgREST directly (active
+// stores only) for the picker dropdowns.
+async function fetchActiveStores(): Promise<StoreLite[]> {
+  const { supabase } = await import("@/lib/supabase");
+  const { data, error } = await supabase
+    .from("stores")
+    .select("id, number, name, is_active")
+    .eq("is_active", true)
+    .order("number");
+  if (error) throw new Error(error.message);
+  return (data || []).map((s: { id: string; number: string; name: string | null }) => ({
+    id: s.id, number: String(s.number), name: s.name,
+  }));
+}
+
 interface VendorVisitRow {
   id: string;
   token_id: string;
@@ -116,8 +165,12 @@ function listVisits(days: number) {
 export function VendorPortalAdminTab() {
   const toast = useToast();
   const qc = useQueryClient();
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === "admin";
+
   const [storeFilter, setStoreFilter] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const q = useQuery({
     queryKey: ["wo2", "qr-tokens", storeFilter],
@@ -125,12 +178,18 @@ export function VendorPortalAdminTab() {
     staleTime: 30_000,
   });
 
+  const storesQ = useQuery({
+    queryKey: ["wo2", "active-stores"],
+    queryFn: fetchActiveStores,
+    staleTime: 5 * 60_000,
+  });
+
   const tokens = q.data?.tokens || [];
 
   return (
     <>
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div className="text-xs text-zinc-500">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="max-w-md text-xs text-zinc-500">
           One QR per store. Vendors scan to mark on-site / completed and submit quotes.
           Tokens are revocable; new ones can be issued any time.
         </div>
@@ -141,6 +200,12 @@ export function VendorPortalAdminTab() {
             placeholder="Filter by store #…"
             className="w-40"
           />
+          {isAdmin && (
+            <Button variant="ghost" onClick={() => setBulkOpen(true)}>
+              <Layers className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+              Bulk create
+            </Button>
+          )}
           <Button variant="primary" onClick={() => setCreateOpen(true)}>
             <Plus className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
             New QR
@@ -187,6 +252,8 @@ export function VendorPortalAdminTab() {
 
       {createOpen && (
         <CreateTokenModal
+          stores={storesQ.data || []}
+          existingTokens={tokens}
           onClose={() => setCreateOpen(false)}
           onCreated={() => {
             setCreateOpen(false);
@@ -194,6 +261,17 @@ export function VendorPortalAdminTab() {
             toast.push("Token created.", "success");
           }}
           onError={(msg) => toast.push(msg, "error")}
+        />
+      )}
+
+      {bulkOpen && isAdmin && (
+        <BulkCreateModal
+          stores={storesQ.data || []}
+          existingTokens={tokens}
+          onClose={() => setBulkOpen(false)}
+          onDone={() => {
+            qc.invalidateQueries({ queryKey: ["wo2", "qr-tokens"] });
+          }}
         />
       )}
 
@@ -564,8 +642,10 @@ function TokenRow({
 }
 
 function CreateTokenModal({
-  onClose, onCreated, onError,
+  stores, existingTokens, onClose, onCreated, onError,
 }: {
+  stores: StoreLite[];
+  existingTokens: QrToken[];
   onClose: () => void;
   onCreated: () => void;
   onError: (msg: string) => void;
@@ -574,10 +654,28 @@ function CreateTokenModal({
   const [label, setLabel] = useState("");
   const [ttlDays, setTtlDays] = useState("365");
 
+  // Stores that already have an active token — surfaced as a warning
+  // chip so the admin doesn't accidentally mint a duplicate. We DON'T
+  // block submission; the backend allows multiple tokens per store
+  // (e.g. one for back-of-house + one for the manager's clipboard)
+  // and would just create another active row.
+  const activeStoreNumbers = useMemo(
+    () => new Set(existingTokens.filter((t) => t.is_active).map((t) => t.store_number)),
+    [existingTokens],
+  );
+  const storesWithoutToken = useMemo(
+    () => stores.filter((s) => !activeStoreNumbers.has(s.number)),
+    [stores, activeStoreNumbers],
+  );
+  const storesWithToken = useMemo(
+    () => stores.filter((s) => activeStoreNumbers.has(s.number)),
+    [stores, activeStoreNumbers],
+  );
+
   const mut = useMutation({
     mutationFn: () => {
       if (!storeNumber.trim()) {
-        return Promise.reject(new Error("Store number is required."));
+        return Promise.reject(new Error("Pick a store."));
       }
       return createToken({
         store_number: storeNumber.trim(),
@@ -600,14 +698,40 @@ function CreateTokenModal({
         </div>
         <div className="space-y-3 px-5 py-4">
           <div>
-            <Label htmlFor="qr-store">Store number *</Label>
-            <Input
+            <Label htmlFor="qr-store">Store *</Label>
+            <select
               id="qr-store"
               value={storeNumber}
               onChange={(e) => setStoreNumber(e.target.value)}
-              placeholder="e.g. 1242"
+              className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               autoFocus
-            />
+            >
+              <option value="">Pick a store…</option>
+              {storesWithoutToken.length > 0 && (
+                <optgroup label="Without active token">
+                  {storesWithoutToken.map((s) => (
+                    <option key={s.id} value={s.number}>
+                      {s.number}{s.name ? ` — ${s.name}` : ""}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+              {storesWithToken.length > 0 && (
+                <optgroup label="Already has an active token">
+                  {storesWithToken.map((s) => (
+                    <option key={s.id} value={s.number}>
+                      {s.number}{s.name ? ` — ${s.name}` : ""}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
+            </select>
+            {storeNumber && activeStoreNumbers.has(storeNumber) && (
+              <div className="mt-1 inline-flex items-center gap-1 rounded-md bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900">
+                <AlertTriangle className="h-3 w-3" strokeWidth={2} />
+                This store already has an active token — minting a second one is allowed but uncommon.
+              </div>
+            )}
           </div>
           <div>
             <Label htmlFor="qr-label">Label (optional)</Label>
@@ -636,12 +760,281 @@ function CreateTokenModal({
           <Button variant="ghost" onClick={onClose} disabled={mut.isPending}>
             Cancel
           </Button>
-          <Button variant="primary" onClick={() => mut.mutate()} disabled={mut.isPending}>
+          <Button
+            variant="primary"
+            onClick={() => mut.mutate()}
+            disabled={mut.isPending || !storeNumber}
+          >
             {mut.isPending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
             Create
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Bulk Create Modal ────────────────────────────────────────────
+
+function BulkCreateModal({
+  stores, existingTokens, onClose, onDone,
+}: {
+  stores: StoreLite[];
+  existingTokens: QrToken[];
+  onClose: () => void;
+  onDone: () => void;
+}) {
+  const [mode, setMode] = useState<"all_missing" | "specific">("all_missing");
+  const [pastedList, setPastedList] = useState("");
+  const [label, setLabel] = useState("");
+  const [ttlDays, setTtlDays] = useState("365");
+  const [results, setResults] = useState<BulkCreateResult[] | null>(null);
+  const [summary, setSummary] = useState<BulkCreateResponse["summary"] | null>(null);
+
+  const activeStoreNumbers = useMemo(
+    () => new Set(existingTokens.filter((t) => t.is_active).map((t) => t.store_number)),
+    [existingTokens],
+  );
+
+  const targetCount = useMemo(() => {
+    if (mode === "all_missing") {
+      return stores.filter((s) => !activeStoreNumbers.has(s.number)).length;
+    }
+    return pastedList
+      .split(/[\s,]+/)
+      .map((s) => s.trim())
+      .filter(Boolean).length;
+  }, [mode, stores, activeStoreNumbers, pastedList]);
+
+  const mut = useMutation({
+    mutationFn: async () => {
+      const payload: BulkCreateBody = {
+        mode,
+        label: label.trim() || undefined,
+        ttl_days: Number(ttlDays) || 365,
+      };
+      if (mode === "specific") {
+        payload.store_numbers = pastedList
+          .split(/[\s,]+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        if (!payload.store_numbers.length) {
+          throw new Error("Paste at least one store number.");
+        }
+      }
+      return bulkCreate(payload);
+    },
+    onSuccess: (r) => {
+      setResults(r.results);
+      setSummary(r.summary);
+      onDone();
+    },
+  });
+
+  const showResults = results !== null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={(e) => { if (e.target === e.currentTarget && !mut.isPending) onClose(); }}
+    >
+      <div className="w-full max-w-xl overflow-hidden rounded-xl bg-white shadow-2xl">
+        <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-3">
+          <div className="text-base font-semibold text-midnight">Bulk-create vendor QR tokens</div>
+          <button
+            type="button" onClick={onClose} disabled={mut.isPending}
+            className="rounded p-1 text-zinc-400 hover:bg-zinc-100"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" strokeWidth={1.75} />
+          </button>
+        </div>
+
+        {!showResults ? (
+          <>
+            <div className="space-y-4 px-5 py-4">
+              <div>
+                <Label>Which stores</Label>
+                <div className="mt-1 space-y-2">
+                  <label className="flex cursor-pointer items-start gap-2 rounded-md border border-zinc-200 bg-white p-3 hover:border-accent">
+                    <input
+                      type="radio" name="bulk-mode"
+                      checked={mode === "all_missing"}
+                      onChange={() => setMode("all_missing")}
+                      className="mt-0.5 h-4 w-4 accent-accent"
+                    />
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-midnight">
+                        All active stores without an active token
+                      </div>
+                      <div className="text-[11px] text-zinc-500">
+                        Skips stores that already have one. Safe to re-run.
+                      </div>
+                      <div className="mt-1 text-[11px] font-semibold text-accent">
+                        {mode === "all_missing" ? `${targetCount} store${targetCount === 1 ? "" : "s"} will get a new token` : ""}
+                      </div>
+                    </div>
+                  </label>
+                  <label className="flex cursor-pointer items-start gap-2 rounded-md border border-zinc-200 bg-white p-3 hover:border-accent">
+                    <input
+                      type="radio" name="bulk-mode"
+                      checked={mode === "specific"}
+                      onChange={() => setMode("specific")}
+                      className="mt-0.5 h-4 w-4 accent-accent"
+                    />
+                    <div className="flex-1">
+                      <div className="text-sm font-medium text-midnight">
+                        Specific stores (paste a list)
+                      </div>
+                      <textarea
+                        value={pastedList}
+                        onChange={(e) => setPastedList(e.target.value)}
+                        rows={3}
+                        placeholder="1242, 1945, 2167"
+                        disabled={mode !== "specific"}
+                        className="mt-1 block w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm font-mono text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent disabled:bg-zinc-50"
+                      />
+                      <div className="mt-1 text-[11px] text-zinc-500">
+                        Comma- or whitespace-separated store numbers. Stores that already
+                        have an active token will be skipped.
+                      </div>
+                      {mode === "specific" && targetCount > 0 && (
+                        <div className="mt-1 text-[11px] font-semibold text-accent">
+                          {targetCount} store{targetCount === 1 ? "" : "s"} in your list
+                        </div>
+                      )}
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor="bulk-label">Label (applied to all)</Label>
+                  <Input
+                    id="bulk-label"
+                    value={label}
+                    onChange={(e) => setLabel(e.target.value)}
+                    placeholder='e.g. "v2 rollout"'
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="bulk-ttl">Expires in (days)</Label>
+                  <Input
+                    id="bulk-ttl"
+                    type="number" min={1}
+                    value={ttlDays}
+                    onChange={(e) => setTtlDays(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {mut.isError && (
+                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
+                  {(mut.error as Error).message}
+                </div>
+              )}
+            </div>
+            <div className="flex items-center justify-end gap-2 border-t border-zinc-100 px-5 py-3">
+              <Button variant="ghost" onClick={onClose} disabled={mut.isPending}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => mut.mutate()}
+                disabled={mut.isPending || targetCount === 0 || targetCount > 500}
+              >
+                {mut.isPending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+                {mut.isPending
+                  ? `Minting ${targetCount}…`
+                  : `Mint ${targetCount} token${targetCount === 1 ? "" : "s"}`}
+              </Button>
+            </div>
+          </>
+        ) : (
+          <BulkCreateResultsView
+            results={results || []}
+            summary={summary || {}}
+            onClose={onClose}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BulkCreateResultsView({
+  results, summary, onClose,
+}: {
+  results: BulkCreateResult[];
+  summary: BulkCreateResponse["summary"];
+  onClose: () => void;
+}) {
+  const created = results.filter((r) => r.status === "created");
+  const skipped = results.filter((r) => r.status === "skipped");
+  const failed  = results.filter((r) => r.status === "failed");
+
+  return (
+    <>
+      <div className="space-y-3 px-5 py-4">
+        <div className="grid grid-cols-3 gap-2">
+          <ResultTile tone="success" count={summary.created || 0} label="Created" />
+          <ResultTile tone="neutral" count={summary.skipped || 0} label="Skipped" />
+          <ResultTile tone="danger"  count={summary.failed  || 0} label="Failed" />
+        </div>
+        {failed.length > 0 && (
+          <div className="rounded-md border border-red-200 bg-red-50 p-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-red-900">
+              Failures
+            </div>
+            <ul className="mt-1 space-y-0.5 text-xs text-red-900">
+              {failed.map((r) => (
+                <li key={r.store_number} className="font-mono">
+                  Store {r.store_number}: {r.message}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <details className="rounded-md border border-zinc-200 bg-white p-3 text-xs" open={false}>
+          <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+            Per-store breakdown ({results.length})
+          </summary>
+          <ul className="mt-2 max-h-60 space-y-0.5 overflow-y-auto">
+            {[...created, ...skipped, ...failed].map((r) => (
+              <li key={r.store_number} className="flex items-center gap-2">
+                {r.status === "created" && <CheckCircle2 className="h-3 w-3 text-emerald-600" strokeWidth={2} />}
+                {r.status === "skipped" && <span className="h-3 w-3 rounded-full bg-zinc-300" />}
+                {r.status === "failed"  && <AlertTriangle className="h-3 w-3 text-red-600" strokeWidth={2} />}
+                <span className="font-mono">Store {r.store_number}</span>
+                {r.message && <span className="text-zinc-500">— {r.message}</span>}
+              </li>
+            ))}
+          </ul>
+        </details>
+      </div>
+      <div className="flex items-center justify-end gap-2 border-t border-zinc-100 px-5 py-3">
+        <Button variant="primary" onClick={onClose}>Done</Button>
+      </div>
+    </>
+  );
+}
+
+function ResultTile({
+  tone, count, label,
+}: {
+  tone: "success" | "neutral" | "danger";
+  count: number;
+  label: string;
+}) {
+  const cls =
+    tone === "success" ? "border-emerald-200 bg-emerald-50 text-emerald-900" :
+    tone === "danger"  ? "border-red-200 bg-red-50 text-red-900" :
+                         "border-zinc-200 bg-zinc-50 text-zinc-700";
+  return (
+    <div className={`rounded-md border px-3 py-2 ${cls}`}>
+      <div className="text-lg font-semibold tabular-nums">{count}</div>
+      <div className="text-[10px] font-semibold uppercase tracking-wide">{label}</div>
     </div>
   );
 }

@@ -24,6 +24,7 @@ import {
   ReceiptText,
   Truck,
   Upload,
+  X,
 } from "lucide-react";
 
 const FN = "/.netlify/functions/vendor-portal";
@@ -181,12 +182,28 @@ export function VendorPortalPage() {
 
   const { store, tickets, tokenLabel } = resolveQ.data;
 
+  // Companies that have open tickets at THIS store. Powers the
+  // identity-form dropdown so a vendor doesn't have to type their
+  // own name — they pick from the list of who's actually been
+  // assigned work here today. Sorted by ticket count desc.
+  const vendorOptions = (() => {
+    const map = new Map<string, number>();
+    for (const t of tickets) {
+      const name = (t.vendor_name || "").trim();
+      if (name) map.set(name, (map.get(name) || 0) + 1);
+    }
+    return Array.from(map.entries())
+      .map(([name, count]) => ({ name, count }))
+      .sort((a, b) => b.count - a.count);
+  })();
+
   // Identity collection guard — needed once per device.
   if (!identity) {
     return (
       <Frame>
         <IdentityForm
           store={store}
+          vendorOptions={vendorOptions}
           onSave={(id) => { saveIdentity(id); setIdentity(id); }}
         />
       </Frame>
@@ -270,16 +287,30 @@ function BadToken({ message }: { message?: string }) {
 
 function IdentityForm({
   store,
+  vendorOptions,
   onSave,
 }: {
   store: PortalStore;
+  vendorOptions: { name: string; count: number }[];
   onSave: (id: Identity) => void;
 }) {
   const [name, setName] = useState("");
-  const [company, setCompany] = useState("");
+  // Two-step company picker: pick from the list of vendors with
+  // open tickets at this store, or pick "other" → type free-text.
+  // Saves a typed-vs-picked round trip when the tech is in the list.
+  const [companyChoice, setCompanyChoice] = useState<string>(
+    vendorOptions.length > 0 ? vendorOptions[0].name : "__other__"
+  );
+  const [companyOther, setCompanyOther] = useState("");
   const [phone, setPhone] = useState("");
 
-  const ok = name.trim().length >= 2;
+  const resolvedCompany = companyChoice === "__other__"
+    ? companyOther.trim()
+    : companyChoice;
+
+  const ok = name.trim().length >= 2 && (
+    companyChoice !== "__other__" || companyOther.trim().length >= 2
+  );
 
   return (
     <div className="space-y-4">
@@ -308,13 +339,45 @@ function IdentityForm({
               className="block w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
             />
           </Field>
-          <Field label="Company">
-            <input
-              type="text" autoComplete="organization"
-              value={company} onChange={(e) => setCompany(e.target.value)}
-              placeholder="Smith HVAC"
-              className="block w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-            />
+          <Field label="Company *">
+            {vendorOptions.length > 0 ? (
+              <>
+                <select
+                  value={companyChoice}
+                  onChange={(e) => setCompanyChoice(e.target.value)}
+                  className="block w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                >
+                  <optgroup label="Assigned at this store today">
+                    {vendorOptions.map((v) => (
+                      <option key={v.name} value={v.name}>
+                        {v.name} ({v.count} {v.count === 1 ? "ticket" : "tickets"})
+                      </option>
+                    ))}
+                  </optgroup>
+                  <option value="__other__">Other / not listed</option>
+                </select>
+                {companyChoice === "__other__" && (
+                  <input
+                    type="text" autoComplete="organization"
+                    value={companyOther}
+                    onChange={(e) => setCompanyOther(e.target.value)}
+                    placeholder="Type your company name"
+                    className="mt-2 block w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                )}
+                <div className="mt-1 text-[10px] text-zinc-500">
+                  Pick the company that dispatched you. We'll show only your tickets first.
+                </div>
+              </>
+            ) : (
+              <input
+                type="text" autoComplete="organization"
+                value={companyOther}
+                onChange={(e) => setCompanyOther(e.target.value)}
+                placeholder="Smith HVAC"
+                className="block w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            )}
           </Field>
           <Field label="Phone (for callback)">
             <input
@@ -328,7 +391,7 @@ function IdentityForm({
             disabled={!ok}
             onClick={() => onSave({
               vendor_name: name.trim(),
-              vendor_company: company.trim(),
+              vendor_company: resolvedCompany,
               vendor_phone: phone.trim(),
             })}
           >
@@ -389,6 +452,22 @@ function TicketList({
   onPick: (id: string) => void;
   onIdentityChange: () => void;
 }) {
+  // Filter mode toggle. Default: filter by vendor_company match
+  // (case-insensitive substring both directions, so "Frostex"
+  // matches "Frostex Refrigeration" and vice versa). Vendor can
+  // flip to "Show all" if their assignment isn't in the list.
+  const [showAll, setShowAll] = useState(false);
+  const needle = identity.vendor_company?.toLowerCase().trim() || "";
+  const matches = needle
+    ? tickets.filter((t) => {
+        const v = (t.vendor_name || "").toLowerCase().trim();
+        if (!v) return false;
+        return v.includes(needle) || needle.includes(v);
+      })
+    : [];
+  const visibleTickets = showAll || !needle ? tickets : matches;
+  const showAllToggle = needle && tickets.length > matches.length;
+
   return (
     <div className="space-y-4">
       <div className="rounded-md border border-zinc-200 bg-white p-3">
@@ -422,18 +501,52 @@ function TicketList({
         </div>
       </div>
 
-      <div className="text-sm font-semibold text-midnight">
-        Open tickets at this store
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-sm font-semibold text-midnight">
+          {needle && !showAll
+            ? `Tickets for ${identity.vendor_company}`
+            : "Open tickets at this store"}
+        </div>
+        {showAllToggle && (
+          <button
+            type="button"
+            onClick={() => setShowAll((v) => !v)}
+            className="text-xs font-medium text-accent hover:underline"
+          >
+            {showAll
+              ? `Show only ${identity.vendor_company} (${matches.length})`
+              : `Show all open (${tickets.length})`}
+          </button>
+        )}
       </div>
+
+      {needle && !showAll && matches.length === 0 && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          No open tickets are assigned to <strong>{identity.vendor_company}</strong> at this store.
+          {tickets.length > 0 && (
+            <>
+              {" "}
+              <button
+                type="button"
+                onClick={() => setShowAll(true)}
+                className="font-medium text-accent underline"
+              >
+                Show all {tickets.length} open ticket{tickets.length === 1 ? "" : "s"}
+              </button>
+              {" "}instead.
+            </>
+          )}
+        </div>
+      )}
 
       {tickets.length === 0 ? (
         <div className="rounded-md border border-zinc-200 bg-white px-4 py-6 text-center text-sm text-zinc-500">
           No open tickets. If you were called for work that isn't listed here,
           contact your District Operator.
         </div>
-      ) : (
+      ) : visibleTickets.length === 0 ? null : (
         <ul className="space-y-2">
-          {tickets.map((t) => (
+          {visibleTickets.map((t) => (
             <li key={t.id}>
               <button
                 type="button"
@@ -521,6 +634,11 @@ function TicketDetailScreen({
   });
 
   const [quoteOpen, setQuoteOpen] = useState(false);
+  // Action confirmation sheet — replaces window.prompt() so the
+  // dialog can't be suppressed by the browser. Holds the in-flight
+  // action kind so the same component renders different copy +
+  // routes to the right mutation on confirm.
+  const [confirmAction, setConfirmAction] = useState<"on_site" | "completed" | null>(null);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["vendor-portal-resolve", token] });
@@ -643,10 +761,7 @@ function TicketDetailScreen({
           {!alreadyOnSite && (
             <BigButton
               tone="primary" icon={<Truck className="h-5 w-5" strokeWidth={2} />}
-              onClick={() => {
-                const notes = window.prompt("Add a quick note? (optional)") || "";
-                onSite.mutate(notes);
-              }}
+              onClick={() => setConfirmAction("on_site")}
               disabled={onSite.isPending}
             >
               {onSite.isPending ? "Marking…" : "I'm on site"}
@@ -655,10 +770,7 @@ function TicketDetailScreen({
           {!alreadyDone && (
             <BigButton
               tone="success" icon={<CheckCircle2 className="h-5 w-5" strokeWidth={2} />}
-              onClick={() => {
-                const notes = window.prompt("Brief note on the work done? (optional)") || "";
-                completed.mutate({ notes, resolution_category: "repaired" });
-              }}
+              onClick={() => setConfirmAction("completed")}
               disabled={completed.isPending}
             >
               {completed.isPending ? "Marking…" : "Work completed"}
@@ -701,6 +813,111 @@ function TicketDetailScreen({
           onSubmitted={() => { setQuoteOpen(false); invalidate(); }}
         />
       )}
+
+      {confirmAction && (
+        <ActionConfirmSheet
+          kind={confirmAction}
+          submitting={onSite.isPending || completed.isPending}
+          onClose={() => setConfirmAction(null)}
+          onConfirm={async (notes) => {
+            try {
+              if (confirmAction === "on_site") {
+                await onSite.mutateAsync(notes);
+              } else {
+                await completed.mutateAsync({ notes, resolution_category: "repaired" });
+              }
+              setConfirmAction(null);
+            } catch {
+              // error surfaces in the sheet's error region
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Mobile-first bottom sheet that replaces window.prompt() for the
+// On-Site and Completed actions. Browsers can't suppress this; we
+// render it in our own DOM. Optional notes field, large confirm
+// button, swipe-down close gesture not implemented (taps outside
+// or Cancel button work fine for our needs).
+function ActionConfirmSheet({
+  kind, submitting, onConfirm, onClose,
+}: {
+  kind: "on_site" | "completed";
+  submitting: boolean;
+  onConfirm: (notes: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [notes, setNotes] = useState("");
+
+  const cfg = kind === "on_site"
+    ? {
+        title: "Mark as on site",
+        body:  "Confirms you've arrived and started the work. The store and DO will be notified.",
+        cta:   "Yes — I'm on site",
+        tone:  "primary" as const,
+        icon:  <Truck className="h-5 w-5" strokeWidth={2} />,
+      }
+    : {
+        title: "Mark as completed",
+        body:  "Confirms the work is done. The store will be asked to verify. You won't be able to undo this from here — call the DO if you need to reopen.",
+        cta:   "Yes — work is complete",
+        tone:  "success" as const,
+        icon:  <CheckCircle2 className="h-5 w-5" strokeWidth={2} />,
+      };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center"
+      onClick={(e) => { if (e.target === e.currentTarget && !submitting) onClose(); }}
+    >
+      <div className="w-full max-w-md rounded-t-xl bg-white shadow-2xl sm:rounded-xl">
+        <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-3">
+          <div className="text-base font-semibold text-midnight">{cfg.title}</div>
+          <button
+            type="button" onClick={onClose} disabled={submitting}
+            className="rounded p-1 text-zinc-400 hover:bg-zinc-100"
+            aria-label="Close"
+          >
+            <X className="h-5 w-5" strokeWidth={1.75} />
+          </button>
+        </div>
+        <div className="space-y-3 px-5 py-4">
+          <p className="text-sm text-zinc-700">{cfg.body}</p>
+          <div>
+            <span className="text-xs font-medium text-zinc-600">
+              Notes (optional)
+            </span>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              placeholder={kind === "on_site"
+                ? "Anything the store should know? (optional)"
+                : "Brief description of the repair (optional)"}
+              className="mt-1 block w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+          </div>
+        </div>
+        <div className="flex flex-col gap-2 border-t border-zinc-100 px-5 py-3">
+          <BigButton
+            tone={cfg.tone}
+            icon={cfg.icon}
+            disabled={submitting}
+            onClick={() => onConfirm(notes.trim())}
+          >
+            {submitting ? "Saving…" : cfg.cta}
+          </BigButton>
+          <button
+            type="button" onClick={onClose} disabled={submitting}
+            className="rounded-md px-4 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
