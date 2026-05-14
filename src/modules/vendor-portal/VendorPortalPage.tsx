@@ -24,6 +24,7 @@ import {
   ReceiptText,
   Truck,
   Upload,
+  X,
 } from "lucide-react";
 
 const FN = "/.netlify/functions/vendor-portal";
@@ -521,6 +522,11 @@ function TicketDetailScreen({
   });
 
   const [quoteOpen, setQuoteOpen] = useState(false);
+  // Action confirmation sheet — replaces window.prompt() so the
+  // dialog can't be suppressed by the browser. Holds the in-flight
+  // action kind so the same component renders different copy +
+  // routes to the right mutation on confirm.
+  const [confirmAction, setConfirmAction] = useState<"on_site" | "completed" | null>(null);
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["vendor-portal-resolve", token] });
@@ -643,10 +649,7 @@ function TicketDetailScreen({
           {!alreadyOnSite && (
             <BigButton
               tone="primary" icon={<Truck className="h-5 w-5" strokeWidth={2} />}
-              onClick={() => {
-                const notes = window.prompt("Add a quick note? (optional)") || "";
-                onSite.mutate(notes);
-              }}
+              onClick={() => setConfirmAction("on_site")}
               disabled={onSite.isPending}
             >
               {onSite.isPending ? "Marking…" : "I'm on site"}
@@ -655,10 +658,7 @@ function TicketDetailScreen({
           {!alreadyDone && (
             <BigButton
               tone="success" icon={<CheckCircle2 className="h-5 w-5" strokeWidth={2} />}
-              onClick={() => {
-                const notes = window.prompt("Brief note on the work done? (optional)") || "";
-                completed.mutate({ notes, resolution_category: "repaired" });
-              }}
+              onClick={() => setConfirmAction("completed")}
               disabled={completed.isPending}
             >
               {completed.isPending ? "Marking…" : "Work completed"}
@@ -701,6 +701,111 @@ function TicketDetailScreen({
           onSubmitted={() => { setQuoteOpen(false); invalidate(); }}
         />
       )}
+
+      {confirmAction && (
+        <ActionConfirmSheet
+          kind={confirmAction}
+          submitting={onSite.isPending || completed.isPending}
+          onClose={() => setConfirmAction(null)}
+          onConfirm={async (notes) => {
+            try {
+              if (confirmAction === "on_site") {
+                await onSite.mutateAsync(notes);
+              } else {
+                await completed.mutateAsync({ notes, resolution_category: "repaired" });
+              }
+              setConfirmAction(null);
+            } catch {
+              // error surfaces in the sheet's error region
+            }
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// Mobile-first bottom sheet that replaces window.prompt() for the
+// On-Site and Completed actions. Browsers can't suppress this; we
+// render it in our own DOM. Optional notes field, large confirm
+// button, swipe-down close gesture not implemented (taps outside
+// or Cancel button work fine for our needs).
+function ActionConfirmSheet({
+  kind, submitting, onConfirm, onClose,
+}: {
+  kind: "on_site" | "completed";
+  submitting: boolean;
+  onConfirm: (notes: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [notes, setNotes] = useState("");
+
+  const cfg = kind === "on_site"
+    ? {
+        title: "Mark as on site",
+        body:  "Confirms you've arrived and started the work. The store and DO will be notified.",
+        cta:   "Yes — I'm on site",
+        tone:  "primary" as const,
+        icon:  <Truck className="h-5 w-5" strokeWidth={2} />,
+      }
+    : {
+        title: "Mark as completed",
+        body:  "Confirms the work is done. The store will be asked to verify. You won't be able to undo this from here — call the DO if you need to reopen.",
+        cta:   "Yes — work is complete",
+        tone:  "success" as const,
+        icon:  <CheckCircle2 className="h-5 w-5" strokeWidth={2} />,
+      };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center"
+      onClick={(e) => { if (e.target === e.currentTarget && !submitting) onClose(); }}
+    >
+      <div className="w-full max-w-md rounded-t-xl bg-white shadow-2xl sm:rounded-xl">
+        <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-3">
+          <div className="text-base font-semibold text-midnight">{cfg.title}</div>
+          <button
+            type="button" onClick={onClose} disabled={submitting}
+            className="rounded p-1 text-zinc-400 hover:bg-zinc-100"
+            aria-label="Close"
+          >
+            <X className="h-5 w-5" strokeWidth={1.75} />
+          </button>
+        </div>
+        <div className="space-y-3 px-5 py-4">
+          <p className="text-sm text-zinc-700">{cfg.body}</p>
+          <div>
+            <span className="text-xs font-medium text-zinc-600">
+              Notes (optional)
+            </span>
+            <textarea
+              value={notes}
+              onChange={(e) => setNotes(e.target.value)}
+              rows={3}
+              placeholder={kind === "on_site"
+                ? "Anything the store should know? (optional)"
+                : "Brief description of the repair (optional)"}
+              className="mt-1 block w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+          </div>
+        </div>
+        <div className="flex flex-col gap-2 border-t border-zinc-100 px-5 py-3">
+          <BigButton
+            tone={cfg.tone}
+            icon={cfg.icon}
+            disabled={submitting}
+            onClick={() => onConfirm(notes.trim())}
+          >
+            {submitting ? "Saving…" : cfg.cta}
+          </BigButton>
+          <button
+            type="button" onClick={onClose} disabled={submitting}
+            className="rounded-md px-4 py-2 text-sm font-medium text-zinc-600 hover:bg-zinc-100 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
