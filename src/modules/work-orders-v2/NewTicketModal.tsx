@@ -13,6 +13,7 @@ import {
   createTicket,
   fetchCallerStores,
   fetchIssueLibrary,
+  fetchVendors,
   fileToBase64,
   searchVendors,
   uploadPhoto,
@@ -177,6 +178,34 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
   const recommendedVendors: Vendor[] = useMemo(() => {
     return (vendorRecs.data?.vendors ?? []).slice(0, 3);
   }, [vendorRecs.data]);
+
+  // Full visible-to-this-store vendor list, for the "Search all
+  // vendors" expandable picker. Lazy — only fetched when the user
+  // opens the picker (`vendorSearchOpen`).
+  const [vendorSearchOpen, setVendorSearchOpen] = useState(false);
+  const [vendorSearchQ, setVendorSearchQ] = useState("");
+  const allVendorsQ = useQuery({
+    queryKey: ["wo2", "vendorsForStore", storeNumber.trim()],
+    queryFn: () => fetchVendors({ storeNumber: storeNumber.trim() || undefined }),
+    enabled: open && vendorSearchOpen,
+    staleTime: 60_000,
+  });
+  const filteredVendorSearch: Vendor[] = useMemo(() => {
+    const list = allVendorsQ.data?.vendors ?? [];
+    const q = vendorSearchQ.trim().toLowerCase();
+    if (!q) return list.slice(0, 20);
+    const recIds = new Set(recommendedVendors.map((r) => r.id));
+    return list
+      .filter((v) => !recIds.has(v.id)) // don't double-list recommendations
+      .filter((v) =>
+        [v.name, v.category, v.services, v.service_area, v.phone, v.email, v.contact_person]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase()
+          .includes(q),
+      )
+      .slice(0, 20);
+  }, [allVendorsQ.data, vendorSearchQ, recommendedVendors]);
 
   function handleFiles(input: HTMLInputElement) {
     const arr = Array.from(input.files ?? []).slice(0, MAX_PHOTOS);
@@ -448,6 +477,94 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
                 </div>
               </div>
             )}
+
+            {/* "Search all vendors" expandable picker — searches the
+                full vendor list visible to this store (scope-filtered)
+                so a GM can find a vendor the recs missed without
+                leaving the form. */}
+            <div className="mt-2">
+              {!vendorSearchOpen ? (
+                <button
+                  type="button"
+                  onClick={() => setVendorSearchOpen(true)}
+                  className="text-[11px] font-medium text-accent hover:underline"
+                >
+                  Search all vendors…
+                </button>
+              ) : (
+                <div className="rounded-md border border-zinc-200 bg-white p-2">
+                  <div className="flex items-center gap-2">
+                    <Input
+                      value={vendorSearchQ}
+                      onChange={(e) => setVendorSearchQ(e.target.value)}
+                      placeholder="Search vendor name, category, service…"
+                      autoFocus
+                      className="h-8 flex-1 text-xs"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => { setVendorSearchOpen(false); setVendorSearchQ(""); }}
+                      className="rounded p-1 text-zinc-400 hover:bg-zinc-100"
+                      aria-label="Close vendor search"
+                    >
+                      <X className="h-3.5 w-3.5" strokeWidth={1.75} />
+                    </button>
+                  </div>
+                  <div className="mt-2 max-h-56 overflow-y-auto">
+                    {allVendorsQ.isLoading && (
+                      <div className="px-1 py-2 text-[11px] text-zinc-500">Loading vendors…</div>
+                    )}
+                    {allVendorsQ.isError && (
+                      <div className="px-1 py-2 text-[11px] text-red-700">
+                        {(allVendorsQ.error as Error)?.message ?? "Couldn't load vendors."}
+                      </div>
+                    )}
+                    {!allVendorsQ.isLoading && !allVendorsQ.isError && filteredVendorSearch.length === 0 && (
+                      <div className="px-1 py-2 text-[11px] text-zinc-500">
+                        {vendorSearchQ.trim()
+                          ? "No vendors match — try a broader search, or type the vendor name above to enter manually."
+                          : "Type to filter the vendor list for this store."}
+                      </div>
+                    )}
+                    <ul className="divide-y divide-zinc-100">
+                      {filteredVendorSearch.map((v) => {
+                        const picked = vendorName === v.name;
+                        return (
+                          <li key={v.id}>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setVendorName(v.name);
+                                setVendorSearchOpen(false);
+                                setVendorSearchQ("");
+                              }}
+                              className={
+                                "block w-full px-2 py-1.5 text-left text-xs transition " +
+                                (picked
+                                  ? "bg-accent/10 text-midnight"
+                                  : "text-zinc-700 hover:bg-zinc-50")
+                              }
+                            >
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-medium text-midnight">{v.name}</span>
+                                {v.phone && (
+                                  <span className="text-[10px] text-zinc-500">{v.phone}</span>
+                                )}
+                              </div>
+                              {(v.category || v.service_area) && (
+                                <div className="mt-0.5 text-[10px] uppercase tracking-wide text-zinc-500">
+                                  {[v.category, v.service_area].filter(Boolean).join(" · ")}
+                                </div>
+                              )}
+                            </button>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
 
           <label className="flex items-center gap-2 text-sm text-midnight">
