@@ -68,6 +68,16 @@ export function VendorsTab({ callerRole }: { callerRole: string }) {
 
   const [search, setSearch] = useState("");
   const [area, setArea] = useState("");
+  // Scope filter — narrows the list to vendors whose scope rows
+  // match a given type+id, or "none" for vendors with zero scope
+  // rows (legacy fallback). Values look like:
+  //   ""             → all
+  //   "none"         → no scope rows
+  //   "national"
+  //   "region:<id>"
+  //   "area:<id>"
+  //   "district:<id>"
+  const [scopeFilter, setScopeFilter] = useState("");
   const [editing, setEditing] = useState<Vendor | "new" | null>(null);
   const [rating, setRating] = useState<Vendor | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -96,6 +106,7 @@ export function VendorsTab({ callerRole }: { callerRole: string }) {
     const q = search.trim().toLowerCase();
     return vendors.filter((v) => {
       if (area && (v.service_area || "") !== area) return false;
+      if (!matchesScopeFilter(v, scopeFilter)) return false;
       if (!q) return true;
       return [v.name, v.category, v.service_area, v.services, v.phone, v.email, v.contact_person, v.notes]
         .filter(Boolean)
@@ -103,7 +114,7 @@ export function VendorsTab({ callerRole }: { callerRole: string }) {
         .toLowerCase()
         .includes(q);
     });
-  }, [vendors, search, area]);
+  }, [vendors, search, area, scopeFilter]);
 
   return (
     <>
@@ -127,6 +138,46 @@ export function VendorsTab({ callerRole }: { callerRole: string }) {
           >
             <option value="">All Areas</option>
             {areas.map((a) => <option key={a}>{a}</option>)}
+          </select>
+        </div>
+        <div>
+          <Label htmlFor="vendor-scope-filter">Scope</Label>
+          <select
+            id="vendor-scope-filter"
+            value={scopeFilter}
+            onChange={(e) => setScopeFilter(e.target.value)}
+            className="h-9 min-w-[180px] rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+          >
+            <option value="">All scopes</option>
+            <option value="none">⚠ No scope rows (legacy)</option>
+            <option value="national">National</option>
+            {orgQ.data?.regions && orgQ.data.regions.length > 0 && (
+              <optgroup label="Region">
+                {orgQ.data.regions.map((r) => (
+                  <option key={r.id} value={`region:${r.id}`}>
+                    {r.code ? `${r.code} — ${r.name}` : r.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {orgQ.data?.areas && orgQ.data.areas.length > 0 && (
+              <optgroup label="Area">
+                {orgQ.data.areas.map((a) => (
+                  <option key={a.id} value={`area:${a.id}`}>
+                    {a.code ? `${a.code} — ${a.name}` : a.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
+            {orgQ.data?.districts && orgQ.data.districts.length > 0 && (
+              <optgroup label="District">
+                {orgQ.data.districts.map((d) => (
+                  <option key={d.id} value={`district:${d.id}`}>
+                    {d.code ? `${d.code} — ${d.name}` : d.name}
+                  </option>
+                ))}
+              </optgroup>
+            )}
           </select>
         </div>
         {canManage(callerRole) && (
@@ -1556,6 +1607,26 @@ function daysHint(raw: string): string {
   if (months < 12) return `≈ ${months} months`;
   const years = Math.round((n / 365) * 10) / 10;
   return years === 1 ? "≈ 1 year" : `≈ ${years} years`;
+}
+
+// Predicate for the directory "Scope" filter. filter values follow
+// the same shape used in the dropdown:
+//   ""             → match anything
+//   "none"         → vendor has zero scope rows
+//   "national"     → vendor has a national row
+//   "region:<id>"  → vendor has a region row with that id
+//   "area:<id>"
+//   "district:<id>"
+function matchesScopeFilter(vendor: Vendor, filter: string): boolean {
+  const scopes = vendor.vendor_scopes || [];
+  if (!filter) return true;
+  if (filter === "none") return scopes.length === 0;
+  if (filter === "national") return scopes.some((s) => s.scope_type === "national");
+  const idx = filter.indexOf(":");
+  if (idx < 0) return false;
+  const type = filter.slice(0, idx);
+  const id = filter.slice(idx + 1);
+  return scopes.some((s) => s.scope_type === type && s.scope_id === id);
 }
 
 // ── Bulk scope edit modal ───────────────────────────────────
