@@ -376,6 +376,15 @@ export interface Vendor {
     scope_type: "national" | "region" | "area" | "district" | "store";
     scope_id: string | null;
   }>;
+  // Default warranty offered by this vendor. Days under the hood;
+  // UI converts to a "≈ X months" hint alongside the raw number.
+  // parts_warranty_source distinguishes vendor-backed coverage
+  // from manufacturer pass-through (which may already be expired
+  // by the time something breaks).
+  labor_warranty_days?: number | null;
+  parts_warranty_days?: number | null;
+  parts_warranty_source?: "vendor" | "manufacturer" | "none" | null;
+  warranty_notes?: string | null;
 }
 
 export interface VendorsResponse {
@@ -395,6 +404,10 @@ export interface SaveVendorBody {
   website?: string;
   notes?: string;
   is_active?: boolean;
+  labor_warranty_days?: number | null;
+  parts_warranty_days?: number | null;
+  parts_warranty_source?: "vendor" | "manufacturer" | "none" | null;
+  warranty_notes?: string | null;
 }
 
 export interface RateVendorBody {

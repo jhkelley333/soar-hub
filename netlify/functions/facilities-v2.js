@@ -84,6 +84,30 @@ function roleLevel(role) {
   return levels[String(role || "").toLowerCase()] || 99;
 }
 
+// Tiny helpers for warranty fields. Lenient on input — empty
+// strings, whitespace, garbage all become null instead of NaN.
+function parseIntOrNull(v) {
+  if (v == null) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  const n = parseInt(s, 10);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+// Accepts vendor / manufacturer / mfg / mfr / none — case-insensitive.
+// Anything else returns null so the CHECK constraint isn't tripped.
+function normalizeWarrantySource(v) {
+  if (v == null) return null;
+  const s = String(v).trim().toLowerCase();
+  if (!s) return null;
+  if (s === "vendor")                                       return "vendor";
+  if (s === "manufacturer" || s === "mfg" || s === "mfr" ||
+      s === "manufacturer pass-through" || s === "pass-through" ||
+      s === "passthrough")                                  return "manufacturer";
+  if (s === "none")                                         return "none";
+  return null;
+}
+
 // Parse a scope spec from the bulk-vendor-import UI. Examples:
 //   "national"
 //   "district:Edmond"
@@ -1488,17 +1512,27 @@ export const handler = async (event) => {
             .eq("name", name)
             .maybeSingle();
 
+          // Coerce warranty fields if present. Strings → ints;
+          // anything else (empty, missing) stays null.
+          const labWar  = parseIntOrNull(r.labor_warranty_days);
+          const partWar = parseIntOrNull(r.parts_warranty_days);
+          const partSrc = normalizeWarrantySource(r.parts_warranty_source);
+
           const fields = {
             name,
-            category:        r.category || null,
-            services:        r.services || null,
-            service_area:    r.service_area || null,
-            contact_person:  r.contact_person || null,
-            email:           r.email || null,
-            phone:           r.phone || null,
-            notes:           r.notes || null,
-            website:         r.website || null,
-            is_active:       isActive,
+            category:               r.category || null,
+            services:               r.services || null,
+            service_area:           r.service_area || null,
+            contact_person:         r.contact_person || null,
+            email:                  r.email || null,
+            phone:                  r.phone || null,
+            notes:                  r.notes || null,
+            website:                r.website || null,
+            is_active:              isActive,
+            labor_warranty_days:    labWar,
+            parts_warranty_days:    partWar,
+            parts_warranty_source:  partSrc,
+            warranty_notes:         r.warranty_notes || null,
           };
 
           let vendorId;

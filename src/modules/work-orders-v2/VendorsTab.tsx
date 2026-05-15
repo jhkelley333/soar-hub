@@ -360,6 +360,21 @@ function VendorEditModal({
   const [website, setWebsite] = useState(vendor?.website || "");
   const [notes, setNotes] = useState(vendor?.notes || "");
 
+  // Warranty defaults. Stored as days under the hood; the UI shows
+  // a "≈ N months" hint next to the input. Source enum captures
+  // who actually backs the parts warranty (vendor vs manufacturer
+  // pass-through).
+  const [laborDays, setLaborDays] = useState<string>(
+    vendor?.labor_warranty_days != null ? String(vendor.labor_warranty_days) : "",
+  );
+  const [partsDays, setPartsDays] = useState<string>(
+    vendor?.parts_warranty_days != null ? String(vendor.parts_warranty_days) : "",
+  );
+  const [partsSource, setPartsSource] = useState<"" | "vendor" | "manufacturer" | "none">(
+    vendor?.parts_warranty_source ?? "",
+  );
+  const [warrantyNotes, setWarrantyNotes] = useState(vendor?.warranty_notes || "");
+
   // Scope editor state. Holds the desired list of scope rows for
   // this vendor. We fetch existing rows on mount (for an edit),
   // then mutate locally; on save, we push the full desired list to
@@ -385,6 +400,10 @@ function VendorEditModal({
   const mut = useMutation({
     mutationFn: async () => {
       if (!name.trim()) throw new Error("Vendor name is required.");
+      // Warranty days: empty string → null (clears the field).
+      // Anything else parsed as int; non-numeric ignored (kept null).
+      const labWarN  = laborDays.trim()  === "" ? null : Number(laborDays);
+      const partWarN = partsDays.trim()  === "" ? null : Number(partsDays);
       const payload: SaveVendorBody = {
         name: name.trim(),
         category: category || undefined,
@@ -395,6 +414,10 @@ function VendorEditModal({
         email: email || undefined,
         website: website || undefined,
         notes: notes || undefined,
+        labor_warranty_days:   Number.isFinite(labWarN as number)  ? (labWarN as number)  : null,
+        parts_warranty_days:   Number.isFinite(partWarN as number) ? (partWarN as number) : null,
+        parts_warranty_source: partsSource || null,
+        warranty_notes:        warrantyNotes || null,
       };
       if (vendor) payload.id = vendor.id;
       // Save vendor first — for a new vendor we need the returned
@@ -477,6 +500,94 @@ function VendorEditModal({
           <div>
             <Label htmlFor="vm-notes">Notes</Label>
             <Input id="vm-notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </div>
+
+          {/* Warranty defaults — auto-populated onto a ticket when
+              this vendor marks it completed. DO can still override
+              per-ticket. */}
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+            <div className="flex items-baseline justify-between">
+              <div className="text-sm font-semibold tracking-tight text-midnight">
+                Warranty (default offer)
+              </div>
+              <span className="text-[10px] text-zinc-500">
+                Copied onto every ticket this vendor completes. Editable per-ticket later.
+              </span>
+            </div>
+            <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <Label htmlFor="vm-labor">Labor warranty (days)</Label>
+                <Input
+                  id="vm-labor" type="number" min={0}
+                  value={laborDays}
+                  onChange={(e) => setLaborDays(e.target.value)}
+                  placeholder="e.g. 90"
+                />
+                <div className="mt-0.5 text-[10px] text-zinc-500">
+                  {daysHint(laborDays)} · covers vendor workmanship
+                </div>
+              </div>
+              <div>
+                <Label htmlFor="vm-parts">Parts warranty (days)</Label>
+                <Input
+                  id="vm-parts" type="number" min={0}
+                  value={partsDays}
+                  onChange={(e) => setPartsDays(e.target.value)}
+                  placeholder="e.g. 365"
+                />
+                <div className="mt-0.5 text-[10px] text-zinc-500">
+                  {daysHint(partsDays)} · covers replacement parts
+                </div>
+              </div>
+            </div>
+            <div className="mt-3">
+              <Label>Parts warranty source</Label>
+              <div className="mt-1 flex flex-wrap gap-2">
+                {([
+                  { v: "vendor",       label: "Vendor-backed",          desc: "Vendor honors directly" },
+                  { v: "manufacturer", label: "Manufacturer pass-through", desc: "Vendor files claim with mfg" },
+                  { v: "none",         label: "None",                    desc: "No parts warranty" },
+                ] as const).map((opt) => (
+                  <label
+                    key={opt.v}
+                    className={
+                      "flex cursor-pointer items-start gap-2 rounded-md border bg-white px-2.5 py-1.5 text-xs " +
+                      (partsSource === opt.v ? "border-accent ring-1 ring-accent/40" : "border-zinc-200 hover:border-accent")
+                    }
+                  >
+                    <input
+                      type="radio"
+                      name="parts-source"
+                      checked={partsSource === opt.v}
+                      onChange={() => setPartsSource(opt.v)}
+                      className="mt-0.5 h-3 w-3 accent-accent"
+                    />
+                    <span>
+                      <span className="font-medium text-midnight">{opt.label}</span>
+                      <span className="ml-1 text-[10px] text-zinc-500">{opt.desc}</span>
+                    </span>
+                  </label>
+                ))}
+                {partsSource !== "" && (
+                  <button
+                    type="button"
+                    onClick={() => setPartsSource("")}
+                    className="text-[11px] text-zinc-500 underline"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="mt-3">
+              <Label htmlFor="vm-warranty-notes">Warranty notes (optional)</Label>
+              <Input
+                id="vm-warranty-notes"
+                value={warrantyNotes}
+                onChange={(e) => setWarrantyNotes(e.target.value)}
+                placeholder="e.g. Excludes gaskets and seals. Must report failure within 48h."
+              />
+            </div>
           </div>
 
           {/* Scope editor — controls which stores see this vendor. */}
@@ -641,6 +752,11 @@ const RECOGNIZED_FIELDS = [
   "name", "category", "services", "service_area",
   "contact_person", "email", "phone", "notes", "website",
   "is_active", "scope",
+  // Warranty default fields. Days as integers; source one of
+  // 'vendor' / 'manufacturer' / 'none' (lenient parser accepts
+  // 'mfg', 'pass-through', etc.).
+  "labor_warranty_days", "parts_warranty_days",
+  "parts_warranty_source", "warranty_notes",
 ] as const;
 
 type ImportField = typeof RECOGNIZED_FIELDS[number];
@@ -710,7 +826,9 @@ function BulkImportVendorsModal({
                     First row = header. Recognized columns:{" "}
                     <code className="rounded bg-white px-1 py-0.5 text-[10px]">
                       name, category, services, service_area, contact_person,
-                      email, phone, notes, website, is_active, scope
+                      email, phone, notes, website, is_active, scope,
+                      labor_warranty_days, parts_warranty_days,
+                      parts_warranty_source, warranty_notes
                     </code>
                   </li>
                   <li>
@@ -1315,4 +1433,19 @@ function buildScopeChips(
     chips.push({ key, label, tone: s.scope_type });
   }
   return chips;
+}
+
+// "90" → "≈ 3 months"; empty / non-numeric → "".
+function daysHint(raw: string): string {
+  const s = (raw || "").trim();
+  if (!s) return "";
+  const n = Number(s);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  if (n === 1) return "≈ 1 day";
+  if (n < 30) return `≈ ${n} days`;
+  if (n < 60) return "≈ 1 month";
+  const months = Math.round(n / 30);
+  if (months < 12) return `≈ ${months} months`;
+  const years = Math.round((n / 365) * 10) / 10;
+  return years === 1 ? "≈ 1 year" : `≈ ${years} years`;
 }

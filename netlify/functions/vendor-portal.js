@@ -357,6 +357,8 @@ export const handler = async (event) => {
           status, pause_state, vendor_name, vendor_eta, cost_estimate,
           approval_status, approval_level, approval_request_notes,
           parts_ordered_by, parts_ordered_notes, parts_ordered_at,
+          warranty_labor_days, warranty_parts_days, warranty_parts_source,
+          warranty_starts_at, warranty_notes,
           troubleshooting_checked, date_submitted, closed_at,
           ticket_photos(id, file_url, file_name, upload_type, created_at)
         `)
@@ -610,10 +612,38 @@ export const handler = async (event) => {
         });
       }
 
+      // Look up the vendor's default warranty (if any) and copy it
+      // onto the ticket. Match by name against the vendors table —
+      // same string the vendor self-selected from the portal. If
+      // either days field is set, we stamp warranty_starts_at = now
+      // so expiration math is straightforward elsewhere.
+      const vendorNameForLookup = identity.vendor_company || identity.vendor_name;
+      let warrantyDefaults = null;
+      if (vendorNameForLookup) {
+        const { data: vendorRow } = await supabase
+          .from("vendors")
+          .select("labor_warranty_days, parts_warranty_days, parts_warranty_source, warranty_notes")
+          .eq("name", vendorNameForLookup)
+          .maybeSingle();
+        if (vendorRow && (
+          vendorRow.labor_warranty_days != null ||
+          vendorRow.parts_warranty_days != null
+        )) {
+          warrantyDefaults = vendorRow;
+        }
+      }
+
       const updates = {
         ...result.updates,
         date_status_updated: new Date().toISOString(),
         updated_at: new Date().toISOString(),
+        ...(warrantyDefaults ? {
+          warranty_labor_days:   warrantyDefaults.labor_warranty_days,
+          warranty_parts_days:   warrantyDefaults.parts_warranty_days,
+          warranty_parts_source: warrantyDefaults.parts_warranty_source,
+          warranty_notes:        warrantyDefaults.warranty_notes,
+          warranty_starts_at:    new Date().toISOString(),
+        } : {}),
       };
       const { error } = await supabase.from("tickets").update(updates).eq("id", ticketId);
       if (error) throw error;

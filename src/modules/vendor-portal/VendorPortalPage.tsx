@@ -91,6 +91,11 @@ interface PortalTicketDetail extends PortalTicket {
   parts_ordered_by: "vendor" | "customer" | null;
   parts_ordered_notes: string | null;
   parts_ordered_at: string | null;
+  warranty_labor_days: number | null;
+  warranty_parts_days: number | null;
+  warranty_parts_source: "vendor" | "manufacturer" | "none" | null;
+  warranty_starts_at: string | null;
+  warranty_notes: string | null;
   troubleshooting_checked: boolean;
   closed_at: string | null;
   ticket_photos?: Array<{
@@ -916,6 +921,18 @@ function TicketDetailScreen({
         />
       )}
 
+      {ticket.warranty_starts_at && (
+        (ticket.warranty_labor_days != null || ticket.warranty_parts_days != null) && (
+          <WarrantyBanner
+            startsAt={ticket.warranty_starts_at}
+            laborDays={ticket.warranty_labor_days}
+            partsDays={ticket.warranty_parts_days}
+            partsSource={ticket.warranty_parts_source}
+            notes={ticket.warranty_notes}
+          />
+        )
+      )}
+
       <div className="rounded-md border border-zinc-200 bg-white p-3">
         <div className="flex items-center justify-between gap-2">
           <span className="font-mono text-[11px] text-zinc-500">{ticket.wo_number}</span>
@@ -1600,6 +1617,95 @@ function PartsOnOrderBanner({
       </div>
     </div>
   );
+}
+
+// ── Warranty banner ────────────────────────────────────────────
+// Shown on a completed ticket when the vendor's warranty has been
+// stamped (auto-populated on completion from vendor defaults).
+// Shows raw days + a "≈ N months" hint + the expiration date.
+// Tone shifts from emerald → amber → red as expiration nears.
+
+function WarrantyBanner({
+  startsAt, laborDays, partsDays, partsSource, notes,
+}: {
+  startsAt: string;
+  laborDays: number | null;
+  partsDays: number | null;
+  partsSource: "vendor" | "manufacturer" | "none" | null;
+  notes: string | null;
+}) {
+  const start = new Date(startsAt);
+  const now = Date.now();
+  const lab = warrantyStatus(start, laborDays, now);
+  const par = warrantyStatus(start, partsDays, now);
+  const sourceLabel =
+    partsSource === "manufacturer" ? "mfg pass-through" :
+    partsSource === "none"         ? "no parts coverage" :
+                                     null;
+  return (
+    <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-900">
+        Warranty
+      </div>
+      <div className="mt-1 space-y-1 text-xs text-emerald-900">
+        {laborDays != null && lab && (
+          <div>
+            <span className="font-semibold">Labor:</span>{" "}
+            {laborDays} days
+            {lab.hint && <span className="text-emerald-700"> ({lab.hint})</span>}
+            <span className="ml-2 text-emerald-700">·</span>{" "}
+            <span className={lab.tone === "danger" ? "text-red-700 font-semibold"
+                          : lab.tone === "warn"   ? "text-amber-700 font-semibold"
+                          :                         "text-emerald-700"}>
+              {lab.label}
+            </span>
+          </div>
+        )}
+        {partsDays != null && par && (
+          <div>
+            <span className="font-semibold">Parts:</span>{" "}
+            {partsDays} days
+            {par.hint && <span className="text-emerald-700"> ({par.hint})</span>}
+            {sourceLabel && <span className="text-emerald-700"> · {sourceLabel}</span>}
+            <span className="ml-2 text-emerald-700">·</span>{" "}
+            <span className={par.tone === "danger" ? "text-red-700 font-semibold"
+                          : par.tone === "warn"   ? "text-amber-700 font-semibold"
+                          :                         "text-emerald-700"}>
+              {par.label}
+            </span>
+          </div>
+        )}
+        {notes && (
+          <div className="mt-1 whitespace-pre-wrap text-[11px] text-emerald-900/90">
+            {notes}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Compute warranty expiration display for one duration.
+// tone: 'ok' (>30d left), 'warn' (<=30d), 'danger' (expired).
+function warrantyStatus(start: Date, days: number | null, now: number) {
+  if (days == null) return null;
+  const startMs = start.getTime();
+  if (!Number.isFinite(startMs)) return null;
+  const expiresMs = startMs + days * 86400_000;
+  const daysLeft = Math.floor((expiresMs - now) / 86400_000);
+  const expDate = new Date(expiresMs).toLocaleDateString("en-US", {
+    month: "short", day: "numeric", year: "numeric",
+  });
+  if (daysLeft < 0) {
+    return { label: `expired ${expDate}`, tone: "danger" as const, hint: "" };
+  }
+  if (daysLeft <= 30) {
+    return { label: `expires ${expDate} (${daysLeft}d left)`, tone: "warn" as const, hint: "" };
+  }
+  // Friendly hint: months left for long warranties.
+  const months = Math.round(daysLeft / 30);
+  const hint = months >= 2 ? `~${months} months left` : "";
+  return { label: `expires ${expDate}`, tone: "ok" as const, hint };
 }
 
 // ── Approval alert banner ───────────────────────────────────────
