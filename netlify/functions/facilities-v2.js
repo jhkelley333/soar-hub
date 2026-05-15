@@ -1904,6 +1904,82 @@ export const handler = async (event) => {
       return respond(200, { ok: true });
     }
 
+    // ── IN-WARRANTY MATCHES ──
+    // Used by the new-ticket flow to warn a GM that a related
+    // completed ticket may still be under warranty — should this be
+    // a callback to that vendor rather than a fresh dispatch?
+    //
+    // Inputs: storeNumber (required), assetType + category (at
+    // least one). Returns up to 5 closed/completed tickets at this
+    // store where (asset_type ilike assetType OR category ilike
+    // category) AND warranty_starts_at is set AND labor- or
+    // parts-warranty still has time on it.
+    if (action === "getRelatedInWarranty") {
+      const { storeNumber, assetType, category } = event.queryStringParameters || {};
+      if (!storeNumber) {
+        return respond(400, { ok: false, message: "storeNumber required" });
+      }
+      if (!assetType && !category) {
+        return respond(200, { ok: true, tickets: [] });
+      }
+      // Pull a window of recent warranty-stamped tickets at this
+      // store; do the asset-type / category match in JS so we can
+      // use ILIKE-ish substring semantics consistent with what the
+      // vendor recommendation flow uses elsewhere.
+      const yearAgo = new Date(Date.now() - 365 * 86400_000).toISOString();
+      const { data: rows } = await supabase
+        .from("tickets")
+        .select(`
+          id, wo_number, asset_type, category, vendor_name,
+          completed_at, closed_at, store_number,
+          warranty_labor_days, warranty_parts_days,
+          warranty_parts_source, warranty_starts_at, warranty_notes
+        `)
+        .eq("store_number", String(storeNumber).trim())
+        .in("status", ["closed", "completed"])
+        .not("warranty_starts_at", "is", null)
+        .gte("warranty_starts_at", yearAgo)
+        .order("warranty_starts_at", { ascending: false });
+
+      const at = String(assetType || "").toLowerCase().trim();
+      const cat = String(category || "").toLowerCase().trim();
+      const now = Date.now();
+      const matches = [];
+      for (const t of rows || []) {
+        const tA = String(t.asset_type || "").toLowerCase();
+        const tC = String(t.category || "").toLowerCase();
+        const assetMatch = at && (
+          tA.includes(at) || at.includes(tA) ||
+          tC.includes(at) // also match against category for unit-suffixed types
+        );
+        const catMatch = cat && (
+          tC.includes(cat) || cat.includes(tC)
+        );
+        if (!assetMatch && !catMatch) continue;
+        // Is warranty still active?
+        const startMs = new Date(t.warranty_starts_at).getTime();
+        if (!Number.isFinite(startMs)) continue;
+        const laborOk = (t.warranty_labor_days || 0) > 0 &&
+          startMs + t.warranty_labor_days * 86400_000 > now;
+        const partsOk = (t.warranty_parts_days || 0) > 0 &&
+          startMs + t.warranty_parts_days * 86400_000 > now;
+        if (!laborOk && !partsOk) continue;
+        matches.push({
+          ...t,
+          labor_active: laborOk,
+          parts_active: partsOk,
+          labor_expires_at: t.warranty_labor_days
+            ? new Date(startMs + t.warranty_labor_days * 86400_000).toISOString()
+            : null,
+          parts_expires_at: t.warranty_parts_days
+            ? new Date(startMs + t.warranty_parts_days * 86400_000).toISOString()
+            : null,
+        });
+        if (matches.length >= 5) break;
+      }
+      return respond(200, { ok: true, tickets: matches });
+    }
+
     // ── ORG LOOKUPS (for scope label rendering) ──
     // Tiny endpoint that returns the regions/areas/districts/stores
     // index any vendor-scope-aware UI needs to resolve scope_id ->

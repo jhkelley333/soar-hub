@@ -209,6 +209,37 @@ export function fetchOrgIndex(): Promise<OrgIndexResponse> {
   return request<OrgIndexResponse>(`${FN}?action=getOrgIndex`);
 }
 
+export interface RelatedInWarrantyTicket {
+  id: string;
+  wo_number: string;
+  asset_type: string | null;
+  category: string | null;
+  vendor_name: string | null;
+  completed_at: string | null;
+  closed_at: string | null;
+  store_number: string;
+  warranty_labor_days: number | null;
+  warranty_parts_days: number | null;
+  warranty_parts_source: "vendor" | "manufacturer" | "none" | null;
+  warranty_starts_at: string;
+  warranty_notes: string | null;
+  labor_active: boolean;
+  parts_active: boolean;
+  labor_expires_at: string | null;
+  parts_expires_at: string | null;
+}
+
+export function fetchRelatedInWarranty(
+  storeNumber: string,
+  assetType?: string,
+  category?: string,
+): Promise<{ ok: true; tickets: RelatedInWarrantyTicket[] }> {
+  const params = new URLSearchParams({ action: "getRelatedInWarranty", storeNumber });
+  if (assetType) params.set("assetType", assetType);
+  if (category)  params.set("category",  category);
+  return request<{ ok: true; tickets: RelatedInWarrantyTicket[] }>(`${FN}?${params.toString()}`);
+}
+
 export interface VendorScopeRow {
   id: string;
   scope_type: "national" | "region" | "area" | "district" | "store";

@@ -13,10 +13,12 @@ import {
   createTicket,
   fetchCallerStores,
   fetchIssueLibrary,
+  fetchRelatedInWarranty,
   fetchVendors,
   fileToBase64,
   searchVendors,
   uploadPhoto,
+  type RelatedInWarrantyTicket,
 } from "./api";
 import {
   TICKET_PRIORITIES,
@@ -178,6 +180,22 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
   const recommendedVendors: Vendor[] = useMemo(() => {
     return (vendorRecs.data?.vendors ?? []).slice(0, 3);
   }, [vendorRecs.data]);
+
+  // Warranty hint — does this store already have a recently-
+  // completed ticket for the same asset/category that's still
+  // under warranty? If so, surface it as a heads-up so the GM can
+  // decide whether this is a callback rather than a fresh dispatch.
+  const warrantyHintQ = useQuery({
+    queryKey: ["wo2", "warrantyHint", storeNumber.trim(), vendorPickAsset, category],
+    queryFn: () => fetchRelatedInWarranty(storeNumber.trim(), vendorPickAsset, category),
+    enabled: open && !!storeNumber.trim() && (!!vendorPickAsset || !!category),
+    staleTime: 60_000,
+  });
+  const [dismissedHints, setDismissedHints] = useState<Set<string>>(new Set());
+  const warrantyHints: RelatedInWarrantyTicket[] = useMemo(() => {
+    const all = warrantyHintQ.data?.tickets ?? [];
+    return all.filter((t) => !dismissedHints.has(t.id));
+  }, [warrantyHintQ.data, dismissedHints]);
 
   // Full visible-to-this-store vendor list, for the "Search all
   // vendors" expandable picker. Lazy — only fetched when the user
@@ -438,6 +456,70 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
               className="block w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
             />
           </div>
+
+          {warrantyHints.length > 0 && (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-emerald-900">
+                Heads up — possible warranty match{warrantyHints.length === 1 ? "" : "es"}
+              </div>
+              <div className="mt-1 text-xs text-emerald-900">
+                A recently completed ticket at this store may still be under warranty.
+                Should this be a callback to the same vendor instead?
+              </div>
+              <ul className="mt-2 space-y-2">
+                {warrantyHints.map((h) => (
+                  <li key={h.id} className="rounded-md border border-emerald-100 bg-white p-2 text-xs">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                      <span className="font-mono font-semibold text-midnight">{h.wo_number}</span>
+                      <span className="text-zinc-700">{h.asset_type || h.category}</span>
+                      {h.vendor_name && (
+                        <span className="text-zinc-500">· {h.vendor_name}</span>
+                      )}
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-emerald-900">
+                      {h.labor_active && h.labor_expires_at && (
+                        <span className="mr-2">
+                          Labor warranty active through {fmtShortDate(h.labor_expires_at)}
+                        </span>
+                      )}
+                      {h.parts_active && h.parts_expires_at && (
+                        <span>
+                          Parts warranty active through {fmtShortDate(h.parts_expires_at)}
+                          {h.warranty_parts_source === "manufacturer" && " (mfg)"}
+                        </span>
+                      )}
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap gap-2">
+                      {h.vendor_name && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setVendorName(h.vendor_name || "");
+                            setDescription((d) => {
+                              const tag = `[Callback for ${h.wo_number}]`;
+                              if (d.includes(tag)) return d;
+                              return d.trim() ? `${tag} ${d}` : tag;
+                            });
+                            setDismissedHints((prev) => new Set(prev).add(h.id));
+                          }}
+                          className="rounded-md border border-emerald-300 bg-white px-2 py-1 text-[11px] font-medium text-emerald-900 hover:bg-emerald-50"
+                        >
+                          Use as callback — assign {h.vendor_name}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setDismissedHints((prev) => new Set(prev).add(h.id))}
+                        className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-600 hover:bg-zinc-50"
+                      >
+                        Different issue, continue
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
 
           <div>
             <Label htmlFor="nt-vendor">Vendor Name</Label>
@@ -797,4 +879,10 @@ function fallbackTipsFor(category: string, assetType: string, displayName: strin
     ].join("\n");
   }
   return null;
+}
+
+function fmtShortDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
