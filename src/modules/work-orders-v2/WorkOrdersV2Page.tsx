@@ -550,6 +550,10 @@ function TicketCard({
   onError: (msg: string) => void;
   callerRole: string;
 }) {
+  const { profile } = useAuth();
+  const isSubmitter = !!profile?.id
+    && !!ticket.submitted_by_user_id
+    && profile.id === ticket.submitted_by_user_id;
   const days = daysOpen(ticket);
   const open = isOpenStatus(ticket.status);
   const aged = open && days !== null && days >= 15;
@@ -612,6 +616,7 @@ function TicketCard({
               ticketId={ticket.id}
               status={ticket.status}
               closedAt={ticket.closed_at}
+              isSubmitter={isSubmitter}
             />
           </div>
           <DetailGrid ticket={ticket} />

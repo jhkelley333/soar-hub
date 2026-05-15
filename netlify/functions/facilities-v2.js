@@ -1104,10 +1104,27 @@ export const handler = async (event) => {
 
       const { data: current } = await supabase
         .from("tickets")
-        .select("status, pause_state, closed_at, vendor_name")
+        .select("status, pause_state, closed_at, vendor_name, submitted_by_user_id")
         .eq("id", id)
         .single();
       if (!current) return respond(404, { ok: false, message: "Ticket not found." });
+
+      // Submitter-cancel guard. The state machine itself accepts
+      // cancelled_by_submitter, but only the actual submitter should
+      // be able to use that path. Anyone else needs cancelled_by_ops
+      // (which still requires the DO+ tier elsewhere in the system).
+      if (
+        to === "cancelled"
+        && txPayload?.admin_close_reason === "cancelled_by_submitter"
+        && current.submitted_by_user_id
+        && current.submitted_by_user_id !== userId
+      ) {
+        return respond(403, {
+          ok: false,
+          error: "not_submitter",
+          message: "Only the original submitter can cancel using this path.",
+        });
+      }
 
       let result;
       try {

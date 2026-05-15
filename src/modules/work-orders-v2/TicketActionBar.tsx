@@ -27,6 +27,10 @@ interface ActionDef {
   icon?:      "check" | "x" | "truck" | "rotate" | "pause";
   payload?:   TransitionPayload;
   modal?:     ReasonModalConfig;
+  // When true, only show when isSubmitter prop is also true (the
+  // caller is the original submitter of this ticket). Used for the
+  // submitter-cancel action.
+  submitterOnly?: boolean;
 }
 
 // Actions per current state — encoded straight from §J of the locked
@@ -64,6 +68,17 @@ const ACTIONS_BY_STATE: Record<TicketStatus, ActionDef[]> = {
       icon: "x",
       variant: "ghost",
       modal: { kind: "store_close" } },
+    // Submitter cancellation — only the GM who created this ticket
+    // sees it. Distinct from "Close — False Alarm" (which a DO can
+    // also use); this is "I shouldn't have submitted this" by the
+    // person who did. Goes to cancelled (terminal), not closed.
+    { key: "submitter_cancel",
+      label: "Cancel my ticket",
+      to: "cancelled",
+      icon: "x",
+      variant: "ghost",
+      modal: { kind: "submitter_cancellation" },
+      submitterOnly: true },
   ],
   in_progress: [
     { key: "schedule",
@@ -175,6 +190,10 @@ interface Props {
   // purely a UI hint so store users aren't shown the deeper modal
   // when the false-alarm version is what they want.
   showAdminCloseFromInProgress?: boolean;
+  // True if the caller is the original submitter of this ticket.
+  // Unlocks submitter-only actions (currently: "Cancel my ticket"
+  // for submitted state).
+  isSubmitter?: boolean;
 }
 
 // Closed → in_progress is allowed only within the 30-day reopen grace
@@ -182,13 +201,18 @@ interface Props {
 // "Create Related Ticket" in its place).
 const REOPEN_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
 
-export function TicketActionBar({ ticketId, status, closedAt, showAdminCloseFromInProgress = true }: Props) {
+export function TicketActionBar({
+  ticketId, status, closedAt,
+  showAdminCloseFromInProgress = true,
+  isSubmitter = false,
+}: Props) {
   const toast = useToast();
   const qc = useQueryClient();
   const [modalAction, setModalAction] = useState<ActionDef | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
 
-  const actionsRaw = ACTIONS_BY_STATE[status] || [];
+  const actionsRaw = (ACTIONS_BY_STATE[status] || [])
+    .filter((a) => !a.submitterOnly || isSubmitter);
 
   // Filter rules:
   //   - Closed: hide Reopen if past the grace window.
