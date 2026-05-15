@@ -280,7 +280,7 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
       onClick={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
@@ -291,8 +291,8 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
         }
       }}
     >
-      <div className="w-full max-w-2xl max-h-[92vh] overflow-y-auto rounded-xl bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-3">
+      <div className="flex max-h-[96vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-xl bg-white shadow-2xl sm:max-h-[92vh] sm:rounded-xl">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-zinc-100 bg-white px-5 py-3">
           <div className="text-base font-semibold tracking-tight text-midnight">
             New Service Request
           </div>
@@ -306,7 +306,7 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
           </button>
         </div>
 
-        <div className="space-y-4 px-5 py-4">
+        <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <Label htmlFor="nt-store">Store *</Label>
@@ -714,7 +714,7 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
           </div>
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-zinc-100 px-5 py-3">
+        <div className="sticky bottom-0 z-10 flex flex-col-reverse items-stretch gap-2 border-t border-zinc-100 bg-white px-5 py-3 sm:flex-row sm:items-center sm:justify-end">
           <Button variant="ghost" onClick={onClose} disabled={submit.isPending}>
             Cancel
           </Button>
