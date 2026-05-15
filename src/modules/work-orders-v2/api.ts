@@ -106,10 +106,11 @@ export interface OpenAlertItem {
   cost_estimate?: number | null;
   approval_tier?: string | null;
   is_business_critical?: boolean | null;
+  vendor_name?: string | null;
 }
 
 export interface OpenAlertGroup {
-  key: "new24h" | "awaitingApproval" | "emergencies" | "stuck";
+  key: "new24h" | "awaitingApproval" | "emergencies" | "awaitingConfirmation" | "stuck";
   label: string;
   tone: "info" | "warning" | "danger" | "neutral";
   count: number;

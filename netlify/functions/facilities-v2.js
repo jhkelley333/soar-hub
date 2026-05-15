@@ -257,10 +257,11 @@ function approvalTiersForRole(role) {
 // same four sections even when a caller has zero stores in scope.
 function emptyAlertGroups() {
   return [
-    { key: "new24h",           label: "New (last 24h)",                tone: "info",    count: 0, items: [] },
-    { key: "awaitingApproval", label: "Awaiting your approval",        tone: "warning", count: 0, items: [] },
-    { key: "emergencies",      label: "Emergency / Business Critical open", tone: "danger", count: 0, items: [] },
-    { key: "stuck",            label: "No activity in 3+ days",        tone: "neutral", count: 0, items: [] },
+    { key: "new24h",               label: "New (last 24h)",                tone: "info",    count: 0, items: [] },
+    { key: "awaitingApproval",     label: "Awaiting your approval",        tone: "warning", count: 0, items: [] },
+    { key: "emergencies",          label: "Emergency / Business Critical open", tone: "danger", count: 0, items: [] },
+    { key: "awaitingConfirmation", label: "Awaiting your confirmation",    tone: "info",    count: 0, items: [] },
+    { key: "stuck",                label: "No activity in 3+ days",        tone: "neutral", count: 0, items: [] },
   ];
 }
 
@@ -2354,6 +2355,18 @@ export const handler = async (event) => {
         .lte("updated_at", t72ago)
         .order("updated_at", { ascending: true });
 
+      // 3b. Awaiting your confirmation — completed tickets the
+      // store hasn't yet confirmed/closed. closed_by_store=false on
+      // a completed row means a vendor said done but no one at the
+      // store has signed off yet. Most actionable for GMs but
+      // informational for DOs+.
+      const { data: awaitingConfirmationRows } = await supabase
+        .from("tickets")
+        .select("id, wo_number, store_number, asset_type, category, priority, status, completed_at, vendor_name")
+        .in("store_number", visibleStoreNumbers)
+        .eq("status", "completed")
+        .order("completed_at", { ascending: false });
+
       // 4. Awaiting your approval — pending quotes in caller's tier.
       // GMs / shift managers don't approve quotes; they get an empty
       // bucket. Admin tier sees every pending tier.
@@ -2424,6 +2437,22 @@ export const handler = async (event) => {
           })),
         },
         {
+          key:   "awaitingConfirmation",
+          label: "Awaiting your confirmation",
+          tone:  "info",
+          count: (awaitingConfirmationRows || []).length,
+          items: (awaitingConfirmationRows || []).slice(0, 5).map((t) => ({
+            id:           t.id,
+            wo_number:    t.wo_number,
+            store_number: t.store_number,
+            summary:      t.asset_type || t.category || "Service Request",
+            priority:     t.priority,
+            status:       t.status,
+            timestamp:    t.completed_at,
+            vendor_name:  t.vendor_name,
+          })),
+        },
+        {
           key:   "stuck",
           label: "No activity in 3+ days",
           tone:  "neutral",
@@ -2447,9 +2476,10 @@ export const handler = async (event) => {
       // For the badge we want the FULL counts not just preview items.
       // Build a separate id set from raw rows to capture beyond preview.
       const allIds = new Set();
-      for (const t of newRows       || []) allIds.add(t.id);
-      for (const t of emergencyRows || []) allIds.add(t.id);
-      for (const t of stuckRows     || []) allIds.add(t.id);
+      for (const t of newRows                    || []) allIds.add(t.id);
+      for (const t of emergencyRows              || []) allIds.add(t.id);
+      for (const t of stuckRows                  || []) allIds.add(t.id);
+      for (const t of awaitingConfirmationRows   || []) allIds.add(t.id);
       for (const a of approvalRows) {
         const tid = a.tickets?.id || a.ticket_id;
         if (tid) allIds.add(tid);
