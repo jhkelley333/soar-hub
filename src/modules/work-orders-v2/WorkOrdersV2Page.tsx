@@ -7,12 +7,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ChevronDown,
+  ChevronLeft,
   ChevronUp,
   FileText,
   Image as ImageIcon,
   Loader2,
   Plus,
   RefreshCw,
+  Settings,
 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
@@ -79,26 +81,32 @@ const CATEGORIES = [
   "Other",
 ];
 
-type TabId = "tickets" | "vendors" | "library" | "troubleshooting" | "email-templates" | "vendor-qr" | "my-store-qr";
+// Main page tabs. Settings-style tabs (Issue Library / Troubleshooting
+// / Email Templates / Vendor QR) live in a separate Settings panel
+// reached from the gear icon in the page header — gated to RVP+ only.
+type TabId = "tickets" | "vendors" | "my-store-qr";
 const TABS: {
   id: TabId;
   label: string;
-  // Roles allowed to see the tab. If omitted, everyone in the BETA cohort sees it.
   roles?: string[];
 }[] = [
   { id: "tickets", label: "Tickets" },
   { id: "vendors", label: "Vendors" },
-  { id: "library", label: "Issue Library" },
-  { id: "troubleshooting", label: "Troubleshooting" },
-  { id: "email-templates", label: "Email Templates", roles: ["admin"] },
   // My Store QR: read-only print panel for the caller's own stores.
   // Anyone in the WO2 BETA cohort can see + print their store's QR.
   { id: "my-store-qr", label: "My Store QR" },
-  // Vendor QR: full management (mint, revoke, monitor activity).
-  // SDO+ only — SDOs can mint for their district stores; admins
-  // see global.
-  { id: "vendor-qr", label: "Vendor QR", roles: ["sdo", "rvp", "vp", "coo", "admin"] },
 ];
+
+// Settings sub-tabs — rendered only when the user enters Settings
+// via the gear icon. RVP+ only.
+type SettingsTabId = "library" | "troubleshooting" | "email-templates" | "vendor-qr";
+const SETTINGS_TABS: { id: SettingsTabId; label: string }[] = [
+  { id: "library",         label: "Issue Library" },
+  { id: "troubleshooting", label: "Troubleshooting" },
+  { id: "email-templates", label: "Email Templates" },
+  { id: "vendor-qr",       label: "Vendor QR" },
+];
+const SETTINGS_ROLES = new Set(["rvp", "vp", "coo", "admin"]);
 
 // Caller's role comes from the real auth context now (PR 2). The route
 // is opened to field tiers during BETA; legacy hardcoded admin role is
@@ -127,8 +135,12 @@ function fmtMoney(v: number | string | null) {
 
 export function WorkOrdersV2Page() {
   const [tab, setTab] = useState<TabId>("tickets");
+  // When non-null, we're inside the Settings panel rather than the
+  // main tab strip. Holds whichever settings sub-tab is active.
+  const [settingsTab, setSettingsTab] = useState<SettingsTabId | null>(null);
   const { profile } = useAuth();
   const callerRole = profile?.role || "gm"; // safe default; backend re-checks every action
+  const canSeeSettings = SETTINGS_ROLES.has(callerRole);
 
   return (
     <>
@@ -139,7 +151,24 @@ export function WorkOrdersV2Page() {
             <Badge tone="warning">BETA</Badge>
           </span>
         }
-        description="Facilities ticketing on Supabase — open BETA. Please report issues so we can iterate before rolling this out as the primary work-orders flow."
+        description={
+          settingsTab
+            ? "Settings — Issue library, troubleshooting tips, email templates, and vendor QR management."
+            : "Facilities ticketing on Supabase — open BETA. Please report issues so we can iterate before rolling this out as the primary work-orders flow."
+        }
+        actions={
+          canSeeSettings && !settingsTab ? (
+            <button
+              type="button"
+              onClick={() => setSettingsTab("library")}
+              className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:border-accent hover:text-midnight"
+              title="Settings (RVP+)"
+            >
+              <Settings className="h-4 w-4" strokeWidth={1.75} />
+              Settings
+            </button>
+          ) : null
+        }
       />
 
       {/* "Powered by FacilityOS" credit line. Wrapped in a dark pill
@@ -164,35 +193,68 @@ export function WorkOrdersV2Page() {
         </span>
       </div>
 
-      <div className="mb-4 flex border-b border-zinc-200">
-        {TABS
-          .filter((t) => !t.roles || t.roles.includes(callerRole))
-          .map((t) => (
+      {settingsTab ? (
+        <>
+          <div className="mb-4 flex items-center justify-between gap-3 border-b border-zinc-200">
+            <div className="flex">
+              {SETTINGS_TABS.map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setSettingsTab(t.id)}
+                  className={cn(
+                    "-mb-px border-b-2 px-4 py-2 text-sm font-medium tracking-tight transition",
+                    settingsTab === t.id
+                      ? "border-accent text-midnight"
+                      : "border-transparent text-zinc-500 hover:text-midnight",
+                  )}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
             <button
-              key={t.id}
               type="button"
-              onClick={() => setTab(t.id)}
-              className={cn(
-                "-mb-px border-b-2 px-4 py-2 text-sm font-medium tracking-tight transition",
-                tab === t.id
-                  ? "border-accent text-midnight"
-                  : "border-transparent text-zinc-500 hover:text-midnight",
-              )}
+              onClick={() => setSettingsTab(null)}
+              className="mb-2 inline-flex items-center gap-1 text-xs font-medium text-accent hover:underline"
             >
-              {t.label}
+              <ChevronLeft className="h-3.5 w-3.5" strokeWidth={1.75} />
+              Back to Work Orders
             </button>
-          ))}
-      </div>
+          </div>
 
-      {tab === "tickets" && <TicketsTab />}
-      {tab === "vendors" && <VendorsTab callerRole={callerRole} />}
-      {tab === "library" && <IssueLibraryTab />}
-      {tab === "troubleshooting" && <TroubleshootingTipsTab />}
-      {tab === "email-templates" && <EmailTemplatesTab />}
-      {tab === "my-store-qr" && <MyStoreQrPanel />}
-      {tab === "vendor-qr"
-        && ["sdo", "rvp", "vp", "coo", "admin"].includes(callerRole)
-        && <VendorPortalAdminTab />}
+          {settingsTab === "library"         && <IssueLibraryTab />}
+          {settingsTab === "troubleshooting" && <TroubleshootingTipsTab />}
+          {settingsTab === "email-templates" && <EmailTemplatesTab />}
+          {settingsTab === "vendor-qr"       && <VendorPortalAdminTab />}
+        </>
+      ) : (
+        <>
+          <div className="mb-4 flex border-b border-zinc-200">
+            {TABS
+              .filter((t) => !t.roles || t.roles.includes(callerRole))
+              .map((t) => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setTab(t.id)}
+                  className={cn(
+                    "-mb-px border-b-2 px-4 py-2 text-sm font-medium tracking-tight transition",
+                    tab === t.id
+                      ? "border-accent text-midnight"
+                      : "border-transparent text-zinc-500 hover:text-midnight",
+                  )}
+                >
+                  {t.label}
+                </button>
+              ))}
+          </div>
+
+          {tab === "tickets"      && <TicketsTab />}
+          {tab === "vendors"      && <VendorsTab callerRole={callerRole} />}
+          {tab === "my-store-qr"  && <MyStoreQrPanel />}
+        </>
+      )}
     </>
   );
 }
