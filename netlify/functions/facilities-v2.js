@@ -1971,6 +1971,80 @@ export const handler = async (event) => {
       return respond(200, { ok: true, count: scopes.length });
     }
 
+    // Bulk variant: apply the same scope set to many vendors at once.
+    // mode = 'replace' wipes each vendor's existing scopes first
+    // (same as the single-vendor flow); mode = 'add' inserts only
+    // missing rows so existing scopes are preserved. Returns
+    // per-vendor results so the UI can show a breakdown.
+    if (action === "bulkSetVendorScopes" && event.httpMethod === "POST") {
+      if (roleLevel(role) > 3) {
+        return respond(403, { ok: false, message: "DO and above only." });
+      }
+      const { vendor_ids: vendorIds, scopes, mode } = JSON.parse(event.body);
+      if (!Array.isArray(vendorIds) || vendorIds.length === 0) {
+        return respond(400, { ok: false, message: "vendor_ids[] required" });
+      }
+      if (!Array.isArray(scopes)) {
+        return respond(400, { ok: false, message: "scopes[] required" });
+      }
+      if (vendorIds.length > 500) {
+        return respond(400, { ok: false, message: "max 500 vendors per bulk request" });
+      }
+      const isReplace = mode !== "add"; // default: replace
+      // Validate scope entries once up front.
+      for (const s of scopes) {
+        if (!["national", "region", "area", "district", "store"].includes(s.scope_type)) {
+          return respond(400, { ok: false, message: `bad scope_type: ${s.scope_type}` });
+        }
+        if (s.scope_type === "national" && s.scope_id) {
+          return respond(400, { ok: false, message: "national scope cannot have scope_id" });
+        }
+        if (s.scope_type !== "national" && !s.scope_id) {
+          return respond(400, { ok: false, message: `${s.scope_type} scope requires scope_id` });
+        }
+      }
+      const results = [];
+      for (const vid of vendorIds) {
+        try {
+          if (isReplace) {
+            const { error: delErr } = await supabase
+              .from("vendor_scopes")
+              .delete()
+              .eq("vendor_id", vid);
+            if (delErr) throw delErr;
+          }
+          if (scopes.length > 0) {
+            const rows = scopes.map((s) => ({
+              vendor_id:     vid,
+              scope_type:    s.scope_type,
+              scope_id:      s.scope_type === "national" ? null : s.scope_id,
+              created_by_id: userId,
+            }));
+            // In add mode, conflict on the partial unique indexes
+            // means "already has this scope" — swallow the dupe.
+            const { error: insErr } = await supabase
+              .from("vendor_scopes")
+              .insert(rows);
+            if (insErr && !(insErr.code === "23505" && !isReplace)) {
+              throw insErr;
+            }
+          }
+          results.push({ vendor_id: vid, status: "updated", scopes: scopes.length });
+        } catch (e) {
+          results.push({
+            vendor_id: vid,
+            status: "failed",
+            message: e?.message || "update failed",
+          });
+        }
+      }
+      const summary = results.reduce(
+        (acc, r) => ({ ...acc, [r.status]: (acc[r.status] || 0) + 1 }),
+        {},
+      );
+      return respond(200, { ok: true, results, summary, mode: isReplace ? "replace" : "add" });
+    }
+
     if (action === "searchVendors") {
       const { q, assetType, category, storeNumber } = event.queryStringParameters || {};
       // Pull scope rows alongside so we can scope-filter post-query.

@@ -232,6 +232,30 @@ export function setVendorScopes(
   });
 }
 
+export interface BulkScopeResult {
+  vendor_id: string;
+  status: "updated" | "failed";
+  message?: string;
+  scopes?: number;
+}
+export interface BulkScopeResponse {
+  ok: true;
+  results: BulkScopeResult[];
+  summary: Partial<Record<"updated" | "failed", number>>;
+  mode: "replace" | "add";
+}
+
+export function bulkSetVendorScopes(
+  vendorIds: string[],
+  scopes: Array<{ scope_type: VendorScopeRow["scope_type"]; scope_id: string | null }>,
+  mode: "replace" | "add",
+): Promise<BulkScopeResponse> {
+  return request<BulkScopeResponse>(`${FN}?action=bulkSetVendorScopes`, {
+    method: "POST",
+    body: JSON.stringify({ vendor_ids: vendorIds, scopes, mode }),
+  });
+}
+
 export interface BulkVendorRow {
   name: string;
   category?: string;
