@@ -101,6 +101,27 @@ The user sees `Stop hook feedback: ...There are N unpushed commit(s)...` after a
 - **Adding more data points per store** — user asked about extending the `stores` table. Three options offered (A: add columns + extend BulkOrgImport, B: jsonb metadata bag, C: ad-hoc SQL bulk update). Awaiting user's choice on which fields to add.
 - **PR #37** for the My Stores sprint — patch in user's queue, not yet applied/pushed.
 
+### Parked ideas (not pursuing now, revisit on user prompt)
+
+- **Progressive Web App (PWA) for Work Orders V2, My Team, Chat.** Scoped at three tiers:
+  - **Tier A — Installable + offline reads** (~5 days). Manifest, icons, service worker via `vite-plugin-pwa` + Workbox, TanStack Query persistence to IndexedDB, offline UI primitives (banner, stale chip), install prompt component (Chrome/Edge + iOS "Add to Home Screen" instructions), Supabase auth durability check. WO2 / My Team / Chat all get cached reads.
+  - **Tier B — Mobile-optimized layouts** (~3-4 days on top). Bottom nav for WO2 tabs on narrow screens, swipe-actions on ticket rows (mark on-site / complete), pull-to-refresh, FAB for new ticket, single-column thumb-scrolled team cards, full-height chat with keyboard handling, optimistic send.
+  - **Tier C — Offline writes + push notifications** (~5-7 days). IndexedDB write queue with retry + conflict resolution, VAPID push subscriptions wired to drive-by/quote-approved alerts. Deferred until usage data justifies.
+  - Recommendation when we revisit: ship Tier A standalone, pilot with 2-3 GMs + 2 DOs, then prioritize Tier B based on their feedback. Skip Tier C until someone reports a real offline-write loss.
+  - Open questions to answer first: app name on home screen, icon source (vector SOAR logo), splash theme color, which WO2 admin tabs to hide on mobile.
+
+- **Approver Portal for COO / VP / RVPs (token-in-URL, same pattern as vendor QR).** ~2 days. One PR.
+  - Migration 0048: `approver_tokens(user_id, token, label, is_active, expires_at, last_used_at, revoked_at, revoked_by_id)`. Token bound to a specific profile server-side.
+  - `netlify/functions/approver-portal.js`: `resolve` (token → profile), `listPending` (filtered to caller's approval tier), `decide` (delegates to existing `decideApproval` code path; logs IP + UA in audit).
+  - Public route `/a/:token` — mobile-first approval queue, big approve/reject buttons, in-app confirm sheet (anti-suppress pattern from vendor portal).
+  - Admin UI: extend Vendor QR pattern — mint per-user, copy URL or display QR for AirDrop / Signal handoff, revoke.
+  - "Stays logged in" behavior: indefinite until admin revokes or `expires_at` passes (default 365d). No client-side identity; the URL IS the credential. Survives phone replacement (just save the URL on the new device).
+  - Open questions to answer first:
+    1. Tier rule — strict to caller's tier, or allow escalation override into lower tiers?
+    2. Notes on every approval, or one-tap "approve, no notes" for the common case?
+    3. Optional WebAuthn / biometric for high-dollar approvals (>$5k) — adds ~1 day, probably skip in v1.
+    4. Token transmission channel — recommend AirDrop / Signal / 1Password share, not plain email.
+
 ## Working directly with the user
 
 - They run `pbpaste > /tmp/x` to capture clipboard.
