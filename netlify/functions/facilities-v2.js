@@ -237,6 +237,44 @@ async function isStrictVendorScopes(supabase) {
   }
 }
 
+// Returns a Map<ticket_id, unread_count> for the caller, scoped to
+// the provided ticket ids. "Unread" = a ticket_messages row whose
+// author is not the caller AND whose created_at is after the
+// caller's ticket_views.last_seen_at (or no view row exists yet).
+//
+// Called by getTickets to decorate the list response. Tolerates
+// transient errors — caller swallows the throw and renders the
+// list without unread counts rather than failing the whole call.
+async function computeUnreadByTicket(supabase, userId, ticketIds) {
+  const empty = new Map();
+  if (!userId || !Array.isArray(ticketIds) || ticketIds.length === 0) return empty;
+
+  const [{ data: msgs }, { data: views }] = await Promise.all([
+    supabase
+      .from("ticket_messages")
+      .select("ticket_id, user_id, created_at")
+      .in("ticket_id", ticketIds),
+    supabase
+      .from("ticket_views")
+      .select("ticket_id, last_seen_at")
+      .eq("user_id", userId)
+      .in("ticket_id", ticketIds),
+  ]);
+
+  const seenById = new Map();
+  for (const v of views || []) seenById.set(v.ticket_id, v.last_seen_at);
+
+  const counts = new Map();
+  for (const m of msgs || []) {
+    if (m.user_id === userId) continue; // ignore my own messages
+    const seen = seenById.get(m.ticket_id);
+    if (!seen || new Date(m.created_at).getTime() > new Date(seen).getTime()) {
+      counts.set(m.ticket_id, (counts.get(m.ticket_id) || 0) + 1);
+    }
+  }
+  return counts;
+}
+
 // Bulk scope update routine — extracted so both bulkSetVendorScopes
 // (scope-only) and bulkEditVendors (scope + active + warranty) can
 // reuse the same logic. Body shape:
@@ -869,7 +907,45 @@ export const handler = async (event) => {
 
       const { data, error } = await query;
       if (error) throw error;
+
+      // Decorate each ticket with unread_message_count from
+      // ticket_views. A "message" is unread when:
+      //   * its author isn't the caller, AND
+      //   * either no view row exists for (caller, ticket) yet,
+      //     OR message.created_at > ticket_views.last_seen_at.
+      // We pull just the messages + view rows for the returned
+      // ticket ids and aggregate in JS — cheaper than a per-row
+      // subquery and avoids RLS gymnastics.
+      try {
+        const ids = (data || []).map((t) => t.id);
+        const unreadById = await computeUnreadByTicket(supabase, userId, ids);
+        for (const t of data || []) {
+          t.unread_message_count = unreadById.get(t.id) || 0;
+        }
+      } catch (e) {
+        console.warn("[facilities-v2] unread-count decoration failed", e);
+      }
       return respond(200, { ok: true, tickets: data });
+    }
+
+    // ── MARK TICKET SEEN ──
+    // Upserts ticket_views.last_seen_at = now() for (caller,
+    // ticket). Called when the user expands a card or posts a
+    // message — anything that means "I've looked at this."
+    if (action === "markTicketSeen" && event.httpMethod === "POST") {
+      const { ticketId } = JSON.parse(event.body || "{}");
+      if (!ticketId) {
+        return respond(400, { ok: false, message: "ticketId required" });
+      }
+      const { error } = await supabase
+        .from("ticket_views")
+        .upsert({
+          user_id:      userId,
+          ticket_id:    ticketId,
+          last_seen_at: new Date().toISOString(),
+        }, { onConflict: "user_id,ticket_id" });
+      if (error) throw error;
+      return respond(200, { ok: true });
     }
 
     // ── GET SINGLE TICKET ──

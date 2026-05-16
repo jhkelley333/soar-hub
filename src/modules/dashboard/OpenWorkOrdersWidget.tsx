@@ -201,7 +201,7 @@ function AlertItemRow({ group, item }: { group: OpenAlertGroup; item: OpenAlertI
 
   return (
     <Link
-      to="/admin/work-orders-v2"
+      to={`/admin/work-orders-v2?ticket=${encodeURIComponent(item.id)}`}
       className="flex items-start gap-2 px-3 py-2 transition hover:bg-zinc-50"
     >
       <AlertTriangle
