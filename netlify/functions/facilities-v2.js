@@ -237,6 +237,74 @@ async function isStrictVendorScopes(supabase) {
   }
 }
 
+// Bulk scope update routine — extracted so both bulkSetVendorScopes
+// (scope-only) and bulkEditVendors (scope + active + warranty) can
+// reuse the same logic. Body shape:
+//   { vendor_ids: [], scopes: [...], mode: 'replace' | 'add' }
+async function runBulkScopeUpdate(supabase, userId, body) {
+  const vendorIds = Array.isArray(body.vendor_ids) ? body.vendor_ids : [];
+  const scopes    = Array.isArray(body.scopes)     ? body.scopes     : [];
+  if (vendorIds.length === 0) {
+    return respond(400, { ok: false, message: "vendor_ids[] required" });
+  }
+  if (vendorIds.length > 500) {
+    return respond(400, { ok: false, message: "max 500 vendors per bulk request" });
+  }
+  const isReplace = body.mode !== "add"; // default: replace
+  // Validate scope entries once up front.
+  for (const s of scopes) {
+    if (!["national", "region", "area", "district", "store"].includes(s.scope_type)) {
+      return respond(400, { ok: false, message: `bad scope_type: ${s.scope_type}` });
+    }
+    if (s.scope_type === "national" && s.scope_id) {
+      return respond(400, { ok: false, message: "national scope cannot have scope_id" });
+    }
+    if (s.scope_type !== "national" && !s.scope_id) {
+      return respond(400, { ok: false, message: `${s.scope_type} scope requires scope_id` });
+    }
+  }
+  const results = [];
+  for (const vid of vendorIds) {
+    try {
+      if (isReplace) {
+        const { error: delErr } = await supabase
+          .from("vendor_scopes")
+          .delete()
+          .eq("vendor_id", vid);
+        if (delErr) throw delErr;
+      }
+      if (scopes.length > 0) {
+        const rows = scopes.map((s) => ({
+          vendor_id:     vid,
+          scope_type:    s.scope_type,
+          scope_id:      s.scope_type === "national" ? null : s.scope_id,
+          created_by_id: userId,
+        }));
+        // In add mode, conflict on the partial unique indexes means
+        // "already has this scope" — swallow the dupe.
+        const { error: insErr } = await supabase
+          .from("vendor_scopes")
+          .insert(rows);
+        if (insErr && !(insErr.code === "23505" && !isReplace)) {
+          throw insErr;
+        }
+      }
+      results.push({ vendor_id: vid, status: "updated", scopes: scopes.length });
+    } catch (e) {
+      results.push({
+        vendor_id: vid,
+        status: "failed",
+        message: e?.message || "update failed",
+      });
+    }
+  }
+  const summary = results.reduce(
+    (acc, r) => ({ ...acc, [r.status]: (acc[r.status] || 0) + 1 }),
+    {},
+  );
+  return respond(200, { ok: true, results, summary, mode: isReplace ? "replace" : "add" });
+}
+
 // Maps the caller's role to the approval tier label(s) they can act
 // on. Strings here mirror the literal values stored in
 // ticket_approvals.approval_tier (set by submitApproval and the
@@ -2074,69 +2142,119 @@ export const handler = async (event) => {
       if (roleLevel(role) > 3) {
         return respond(403, { ok: false, message: "DO and above only." });
       }
-      const { vendor_ids: vendorIds, scopes, mode } = JSON.parse(event.body);
-      if (!Array.isArray(vendorIds) || vendorIds.length === 0) {
-        return respond(400, { ok: false, message: "vendor_ids[] required" });
+      const body = JSON.parse(event.body);
+      return await runBulkScopeUpdate(supabase, userId, body);
+    }
+
+    // Combined bulk edit. Lets the caller toggle is_active, apply
+    // warranty defaults, AND/OR apply scopes in a single call.
+    // Each optional section is applied only when included — fields
+    // not in the body are left untouched.
+    //
+    // Body shape:
+    //   { vendor_ids: [...],
+    //     active?: { is_active: boolean },
+    //     warranty?: {
+    //       labor_warranty_days?: int | null,
+    //       parts_warranty_days?: int | null,
+    //       parts_warranty_source?: 'vendor'|'manufacturer'|'none'|null,
+    //       warranty_notes?: string | null
+    //     },
+    //     scope?: { scopes: [...], mode: 'replace' | 'add' }
+    //   }
+    if (action === "bulkEditVendors" && event.httpMethod === "POST") {
+      if (roleLevel(role) > 3) {
+        return respond(403, { ok: false, message: "DO and above only." });
       }
-      if (!Array.isArray(scopes)) {
-        return respond(400, { ok: false, message: "scopes[] required" });
+      const body = JSON.parse(event.body || "{}");
+      const vendorIds = Array.isArray(body.vendor_ids) ? body.vendor_ids : [];
+      if (vendorIds.length === 0) {
+        return respond(400, { ok: false, message: "vendor_ids[] required" });
       }
       if (vendorIds.length > 500) {
         return respond(400, { ok: false, message: "max 500 vendors per bulk request" });
       }
-      const isReplace = mode !== "add"; // default: replace
-      // Validate scope entries once up front.
-      for (const s of scopes) {
-        if (!["national", "region", "area", "district", "store"].includes(s.scope_type)) {
-          return respond(400, { ok: false, message: `bad scope_type: ${s.scope_type}` });
+      if (!body.active && !body.warranty && !body.scope) {
+        return respond(400, { ok: false, message: "nothing to update — include active, warranty, or scope" });
+      }
+
+      // Build the vendors update payload for the active + warranty
+      // sections. Skipped entirely if neither is present.
+      const vendorUpdates = {};
+      if (body.active && typeof body.active.is_active === "boolean") {
+        vendorUpdates.is_active = body.active.is_active;
+      }
+      if (body.warranty) {
+        const w = body.warranty;
+        // Each field is explicitly optional. We use "in" so passing
+        // null clears a field, while omitting it preserves the
+        // existing value.
+        if ("labor_warranty_days" in w) {
+          vendorUpdates.labor_warranty_days =
+            w.labor_warranty_days == null ? null : Number(w.labor_warranty_days);
         }
-        if (s.scope_type === "national" && s.scope_id) {
-          return respond(400, { ok: false, message: "national scope cannot have scope_id" });
+        if ("parts_warranty_days" in w) {
+          vendorUpdates.parts_warranty_days =
+            w.parts_warranty_days == null ? null : Number(w.parts_warranty_days);
         }
-        if (s.scope_type !== "national" && !s.scope_id) {
-          return respond(400, { ok: false, message: `${s.scope_type} scope requires scope_id` });
+        if ("parts_warranty_source" in w) {
+          const src = normalizeWarrantySource(w.parts_warranty_source);
+          vendorUpdates.parts_warranty_source = src;
+        }
+        if ("warranty_notes" in w) {
+          vendorUpdates.warranty_notes = w.warranty_notes || null;
         }
       }
+
       const results = [];
       for (const vid of vendorIds) {
+        const row = { vendor_id: vid, status: "updated", actions: [] };
         try {
-          if (isReplace) {
-            const { error: delErr } = await supabase
-              .from("vendor_scopes")
-              .delete()
-              .eq("vendor_id", vid);
-            if (delErr) throw delErr;
-          }
-          if (scopes.length > 0) {
-            const rows = scopes.map((s) => ({
-              vendor_id:     vid,
-              scope_type:    s.scope_type,
-              scope_id:      s.scope_type === "national" ? null : s.scope_id,
-              created_by_id: userId,
-            }));
-            // In add mode, conflict on the partial unique indexes
-            // means "already has this scope" — swallow the dupe.
-            const { error: insErr } = await supabase
-              .from("vendor_scopes")
-              .insert(rows);
-            if (insErr && !(insErr.code === "23505" && !isReplace)) {
-              throw insErr;
+          if (Object.keys(vendorUpdates).length > 0) {
+            const { error } = await supabase
+              .from("vendors")
+              .update(vendorUpdates)
+              .eq("id", vid);
+            if (error) throw error;
+            if ("is_active" in vendorUpdates) row.actions.push(
+              vendorUpdates.is_active ? "activated" : "deactivated",
+            );
+            if ("labor_warranty_days" in vendorUpdates ||
+                "parts_warranty_days" in vendorUpdates ||
+                "parts_warranty_source" in vendorUpdates ||
+                "warranty_notes" in vendorUpdates) {
+              row.actions.push("warranty");
             }
           }
-          results.push({ vendor_id: vid, status: "updated", scopes: scopes.length });
+          if (body.scope) {
+            // Reuse the scope routine.
+            const scopeRes = await runBulkScopeUpdate(supabase, userId, {
+              vendor_ids: [vid],
+              scopes:     body.scope.scopes,
+              mode:       body.scope.mode,
+            });
+            // scopeRes is a response object — peek into its body's
+            // results to find this vendor's outcome.
+            const inner = JSON.parse(scopeRes.body)?.results?.[0];
+            if (inner?.status === "failed") {
+              throw new Error(inner.message || "scope update failed");
+            }
+            row.actions.push("scope");
+          }
+          if (row.actions.length === 0) {
+            row.status = "noop";
+          }
         } catch (e) {
-          results.push({
-            vendor_id: vid,
-            status: "failed",
-            message: e?.message || "update failed",
-          });
+          row.status = "failed";
+          row.message = e?.message || "update failed";
         }
+        results.push(row);
       }
       const summary = results.reduce(
         (acc, r) => ({ ...acc, [r.status]: (acc[r.status] || 0) + 1 }),
         {},
       );
-      return respond(200, { ok: true, results, summary, mode: isReplace ? "replace" : "add" });
+      return respond(200, { ok: true, results, summary });
     }
 
     if (action === "searchVendors") {

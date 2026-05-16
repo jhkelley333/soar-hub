@@ -288,6 +288,38 @@ export function bulkSetVendorScopes(
   });
 }
 
+export interface BulkEditBody {
+  vendor_ids: string[];
+  active?: { is_active: boolean };
+  warranty?: {
+    labor_warranty_days?: number | null;
+    parts_warranty_days?: number | null;
+    parts_warranty_source?: "vendor" | "manufacturer" | "none" | null;
+    warranty_notes?: string | null;
+  };
+  scope?: {
+    scopes: Array<{ scope_type: VendorScopeRow["scope_type"]; scope_id: string | null }>;
+    mode: "replace" | "add";
+  };
+}
+export interface BulkEditResult {
+  vendor_id: string;
+  status: "updated" | "noop" | "failed";
+  actions?: string[];
+  message?: string;
+}
+export interface BulkEditResponse {
+  ok: true;
+  results: BulkEditResult[];
+  summary: Partial<Record<"updated" | "noop" | "failed", number>>;
+}
+export function bulkEditVendors(body: BulkEditBody): Promise<BulkEditResponse> {
+  return request<BulkEditResponse>(`${FN}?action=bulkEditVendors`, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 export interface BulkVendorRow {
   name: string;
   category?: string;

@@ -17,6 +17,7 @@ import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import {
+  bulkEditVendors,
   bulkImportVendors,
   bulkSetVendorScopes,
   deleteStoreVendorPreference,
@@ -28,6 +29,8 @@ import {
   saveStoreVendorPreference,
   saveVendor,
   setVendorScopes,
+  type BulkEditBody,
+  type BulkEditResult,
   type BulkScopeResult,
   type BulkVendorResult,
   type BulkVendorRow,
@@ -87,6 +90,7 @@ export function VendorsTab({ callerRole }: { callerRole: string }) {
   // canManage gating already controls whether checkboxes appear.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [bulkScopeOpen, setBulkScopeOpen] = useState(false);
+  const [bulkEditOpen, setBulkEditOpen]   = useState(false);
   function toggleSelected(id: string) {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -304,6 +308,21 @@ export function VendorsTab({ callerRole }: { callerRole: string }) {
         />
       )}
 
+      {bulkEditOpen && canManage(callerRole) && selectedIds.size > 0 && (
+        <BulkEditVendorsModal
+          vendors={vendors.filter((v) => selectedIds.has(v.id))}
+          org={orgQ.data}
+          onClose={() => setBulkEditOpen(false)}
+          onDone={() => {
+            qc.invalidateQueries({ queryKey: ["wo2", "vendors"] });
+            setSelectedIds(new Set());
+            setBulkEditOpen(false);
+          }}
+          onError={(m) => toast.push(m, "error")}
+          onSuccess={(m) => toast.push(m, "success")}
+        />
+      )}
+
       {/* Sticky action bar when the user has anything selected.
           Renders OUTSIDE the normal flow so it floats above the
           last row regardless of scroll. */}
@@ -317,9 +336,13 @@ export function VendorsTab({ callerRole }: { callerRole: string }) {
               <Button variant="ghost" onClick={() => setSelectedIds(new Set())}>
                 Clear
               </Button>
-              <Button variant="primary" onClick={() => setBulkScopeOpen(true)}>
+              <Button variant="ghost" onClick={() => setBulkScopeOpen(true)}>
                 <Layers className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
-                Edit scope for {selectedIds.size}
+                Scope only
+              </Button>
+              <Button variant="primary" onClick={() => setBulkEditOpen(true)}>
+                <Pencil className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+                Edit {selectedIds.size} selected
               </Button>
             </div>
           </div>
@@ -1607,6 +1630,441 @@ function daysHint(raw: string): string {
   if (months < 12) return `≈ ${months} months`;
   const years = Math.round((n / 365) * 10) / 10;
   return years === 1 ? "≈ 1 year" : `≈ ${years} years`;
+}
+
+// ── Bulk edit modal ────────────────────────────────────────────
+// Three checkbox-gated sections: Status (activate/deactivate),
+// Warranty defaults, and Scope. The user opts each section in,
+// configures it, and submits — only opted-in sections are applied.
+// Single backend call (bulkEditVendors) for the whole batch.
+
+function BulkEditVendorsModal({
+  vendors, org, onClose, onDone, onError, onSuccess,
+}: {
+  vendors: Vendor[];
+  org: OrgIndexResponse | undefined;
+  onClose: () => void;
+  onDone: () => void;
+  onError: (msg: string) => void;
+  onSuccess: (msg: string) => void;
+}) {
+  // Section opt-ins.
+  const [doStatus,   setDoStatus]   = useState(false);
+  const [doWarranty, setDoWarranty] = useState(false);
+  const [doScope,    setDoScope]    = useState(false);
+
+  // Section state.
+  const [statusActive, setStatusActive] = useState<"active" | "inactive">("active");
+
+  const [laborDays, setLaborDays]   = useState("");
+  const [partsDays, setPartsDays]   = useState("");
+  const [partsSource, setPartsSource] = useState<"" | "vendor" | "manufacturer" | "none">("");
+  const [warrantyNotes, setWarrantyNotes] = useState("");
+  // Per-warranty-field "clear" toggle so the user can intentionally
+  // wipe a field on all selected vendors.
+  const [clearLaborDays,   setClearLaborDays]   = useState(false);
+  const [clearPartsDays,   setClearPartsDays]   = useState(false);
+  const [clearPartsSource, setClearPartsSource] = useState(false);
+  const [clearNotes,       setClearNotes]       = useState(false);
+
+  const [draftScopes, setDraftScopes] = useState<ScopeDraft[]>([]);
+  const [scopeMode,   setScopeMode]   = useState<"replace" | "add">("add");
+
+  const [results, setResults] = useState<BulkEditResult[] | null>(null);
+
+  const validWarranty = !doWarranty || (
+    // At least one warranty field has a value OR is being cleared
+    (clearLaborDays   || laborDays.trim()     !== "") ||
+    (clearPartsDays   || partsDays.trim()     !== "") ||
+    (clearPartsSource || partsSource          !== "") ||
+    (clearNotes       || warrantyNotes.trim() !== "")
+  );
+  const validScope = !doScope || draftScopes.length > 0;
+  const anythingChecked = doStatus || doWarranty || doScope;
+  const canSubmit = anythingChecked && validWarranty && validScope;
+
+  const mut = useMutation({
+    mutationFn: () => {
+      const body: BulkEditBody = { vendor_ids: vendors.map((v) => v.id) };
+      if (doStatus) {
+        body.active = { is_active: statusActive === "active" };
+      }
+      if (doWarranty) {
+        body.warranty = {};
+        if (clearLaborDays)         body.warranty.labor_warranty_days   = null;
+        else if (laborDays.trim())  body.warranty.labor_warranty_days   = Number(laborDays);
+        if (clearPartsDays)         body.warranty.parts_warranty_days   = null;
+        else if (partsDays.trim())  body.warranty.parts_warranty_days   = Number(partsDays);
+        if (clearPartsSource)       body.warranty.parts_warranty_source = null;
+        else if (partsSource)       body.warranty.parts_warranty_source = partsSource;
+        if (clearNotes)             body.warranty.warranty_notes        = null;
+        else if (warrantyNotes.trim()) body.warranty.warranty_notes     = warrantyNotes.trim();
+      }
+      if (doScope) {
+        body.scope = { scopes: draftScopes, mode: scopeMode };
+      }
+      return bulkEditVendors(body);
+    },
+    onSuccess: (r) => {
+      setResults(r.results);
+      const { updated = 0, failed = 0 } = r.summary;
+      if (failed > 0) {
+        onError(`${failed} vendor${failed === 1 ? "" : "s"} failed — see details below.`);
+      } else {
+        onSuccess(`Edited ${updated} vendor${updated === 1 ? "" : "s"}.`);
+      }
+    },
+    onError: (e: unknown) => onError(e instanceof Error ? e.message : "Bulk edit failed."),
+  });
+
+  const showResults = results !== null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      onClick={(e) => { if (e.target === e.currentTarget && !mut.isPending) onClose(); }}
+    >
+      <div className="flex max-h-[92vh] w-full max-w-2xl flex-col overflow-hidden rounded-xl bg-white shadow-2xl">
+        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-zinc-100 bg-white px-5 py-3">
+          <div className="text-base font-semibold tracking-tight text-midnight">
+            Edit {vendors.length} vendor{vendors.length === 1 ? "" : "s"}
+          </div>
+          <button
+            type="button" onClick={onClose} disabled={mut.isPending}
+            className="rounded p-1 text-zinc-400 hover:bg-zinc-100"
+            aria-label="Close"
+          >
+            <X className="h-4 w-4" strokeWidth={1.75} />
+          </button>
+        </div>
+
+        {!showResults ? (
+          <>
+            <div className="flex-1 space-y-4 overflow-y-auto px-5 py-4">
+              <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                  Applying to
+                </div>
+                <div className="mt-1 max-h-20 overflow-y-auto">
+                  {vendors.map((v) => (
+                    <span
+                      key={v.id}
+                      className="mr-1 mb-1 inline-block rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[11px] text-zinc-700"
+                    >
+                      {v.name}
+                    </span>
+                  ))}
+                </div>
+                <div className="mt-2 text-[11px] text-zinc-500">
+                  Only checked sections below will be applied. Unchecked sections leave each vendor's existing values alone.
+                </div>
+              </div>
+
+              {/* STATUS section */}
+              <SectionToggle
+                label="Status"
+                checked={doStatus}
+                onChange={setDoStatus}
+              >
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {(["active", "inactive"] as const).map((v) => (
+                    <label
+                      key={v}
+                      className={
+                        "flex cursor-pointer items-center gap-2 rounded-md border px-3 py-1.5 text-xs " +
+                        (statusActive === v
+                          ? "border-accent bg-accent/10 text-midnight"
+                          : "border-zinc-200 bg-white text-zinc-700 hover:border-accent")
+                      }
+                    >
+                      <input
+                        type="radio" name="bulk-edit-status"
+                        checked={statusActive === v}
+                        onChange={() => setStatusActive(v)}
+                        className="h-3.5 w-3.5 accent-accent"
+                      />
+                      Mark as {v}
+                    </label>
+                  ))}
+                </div>
+              </SectionToggle>
+
+              {/* WARRANTY section */}
+              <SectionToggle
+                label="Warranty defaults"
+                checked={doWarranty}
+                onChange={setDoWarranty}
+              >
+                <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <BulkWarrantyField
+                    label="Labor warranty (days)"
+                    value={laborDays}
+                    onChange={setLaborDays}
+                    clear={clearLaborDays}
+                    onClearChange={setClearLaborDays}
+                  />
+                  <BulkWarrantyField
+                    label="Parts warranty (days)"
+                    value={partsDays}
+                    onChange={setPartsDays}
+                    clear={clearPartsDays}
+                    onClearChange={setClearPartsDays}
+                  />
+                </div>
+                <div className="mt-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-medium text-zinc-600">Parts warranty source</span>
+                    <label className="flex items-center gap-1 text-[10px] text-zinc-500">
+                      <input
+                        type="checkbox"
+                        checked={clearPartsSource}
+                        onChange={(e) => setClearPartsSource(e.target.checked)}
+                        className="h-3 w-3 accent-accent"
+                      />
+                      Clear
+                    </label>
+                  </div>
+                  <div className={"mt-1 flex flex-wrap gap-2 " + (clearPartsSource ? "opacity-50 pointer-events-none" : "")}>
+                    {(["vendor", "manufacturer", "none"] as const).map((v) => (
+                      <label
+                        key={v}
+                        className={
+                          "flex cursor-pointer items-center gap-2 rounded-md border px-2.5 py-1 text-xs " +
+                          (partsSource === v
+                            ? "border-accent bg-accent/10 text-midnight"
+                            : "border-zinc-200 bg-white text-zinc-700 hover:border-accent")
+                        }
+                      >
+                        <input
+                          type="radio" name="bulk-edit-parts-source"
+                          checked={partsSource === v}
+                          onChange={() => setPartsSource(v)}
+                          className="h-3 w-3 accent-accent"
+                        />
+                        {v === "vendor" ? "Vendor-backed"
+                          : v === "manufacturer" ? "Mfg pass-through"
+                          : "None"}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+                <div className="mt-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[11px] font-medium text-zinc-600">Warranty notes</span>
+                    <label className="flex items-center gap-1 text-[10px] text-zinc-500">
+                      <input
+                        type="checkbox"
+                        checked={clearNotes}
+                        onChange={(e) => setClearNotes(e.target.checked)}
+                        className="h-3 w-3 accent-accent"
+                      />
+                      Clear
+                    </label>
+                  </div>
+                  <Input
+                    value={warrantyNotes}
+                    onChange={(e) => setWarrantyNotes(e.target.value)}
+                    placeholder="e.g. Excludes gaskets and seals. Must report failure within 48h."
+                    disabled={clearNotes}
+                    className={clearNotes ? "opacity-50" : ""}
+                  />
+                </div>
+              </SectionToggle>
+
+              {/* SCOPE section */}
+              <SectionToggle
+                label="Scope"
+                checked={doScope}
+                onChange={setDoScope}
+              >
+                <div className="mt-2 space-y-2">
+                  <div className="flex flex-wrap gap-2">
+                    {(["add", "replace"] as const).map((m) => (
+                      <label
+                        key={m}
+                        className={
+                          "flex cursor-pointer items-center gap-2 rounded-md border px-3 py-1.5 text-xs " +
+                          (scopeMode === m
+                            ? "border-accent bg-accent/10 text-midnight"
+                            : "border-zinc-200 bg-white text-zinc-700 hover:border-accent")
+                        }
+                      >
+                        <input
+                          type="radio" name="bulk-edit-scope-mode"
+                          checked={scopeMode === m}
+                          onChange={() => setScopeMode(m)}
+                          className="h-3.5 w-3.5 accent-accent"
+                        />
+                        {m === "add" ? "Add to existing" : "Replace existing"}
+                      </label>
+                    ))}
+                  </div>
+                  <ScopeEditor
+                    org={org}
+                    scopes={draftScopes}
+                    loading={false}
+                    onChange={setDraftScopes}
+                  />
+                </div>
+              </SectionToggle>
+
+              {mut.isError && (
+                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
+                  {(mut.error as Error).message}
+                </div>
+              )}
+            </div>
+            <div className="sticky bottom-0 z-10 flex flex-col-reverse items-stretch gap-2 border-t border-zinc-100 bg-white px-5 py-3 sm:flex-row sm:items-center sm:justify-end">
+              <Button variant="ghost" onClick={onClose} disabled={mut.isPending}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                onClick={() => mut.mutate()}
+                disabled={mut.isPending || !canSubmit}
+              >
+                {mut.isPending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+                Apply to {vendors.length} vendor{vendors.length === 1 ? "" : "s"}
+              </Button>
+            </div>
+          </>
+        ) : (
+          <BulkEditResultsView
+            results={results || []}
+            vendors={vendors}
+            onClose={onDone}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function SectionToggle({
+  label, checked, onChange, children,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={"rounded-md border p-3 " + (checked ? "border-accent/40 bg-accent/5" : "border-zinc-200 bg-white")}>
+      <label className="flex cursor-pointer items-center gap-2">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+          className="h-4 w-4 accent-accent"
+        />
+        <span className="text-sm font-semibold tracking-tight text-midnight">
+          {label}
+        </span>
+      </label>
+      {checked && children}
+    </div>
+  );
+}
+
+function BulkWarrantyField({
+  label, value, onChange, clear, onClearChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  clear: boolean;
+  onClearChange: (c: boolean) => void;
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <span className="text-[11px] font-medium text-zinc-600">{label}</span>
+        <label className="flex items-center gap-1 text-[10px] text-zinc-500">
+          <input
+            type="checkbox"
+            checked={clear}
+            onChange={(e) => onClearChange(e.target.checked)}
+            className="h-3 w-3 accent-accent"
+          />
+          Clear
+        </label>
+      </div>
+      <Input
+        type="number"
+        min={0}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        disabled={clear}
+        className={clear ? "opacity-50" : ""}
+        placeholder={clear ? "(will be cleared)" : "e.g. 90"}
+      />
+      <div className="mt-0.5 text-[10px] text-zinc-500">
+        {clear ? "Will be set to empty for all selected." : daysHint(value)}
+      </div>
+    </div>
+  );
+}
+
+function BulkEditResultsView({
+  results, vendors, onClose,
+}: {
+  results: BulkEditResult[];
+  vendors: Vendor[];
+  onClose: () => void;
+}) {
+  const updated = results.filter((r) => r.status === "updated");
+  const noop    = results.filter((r) => r.status === "noop");
+  const failed  = results.filter((r) => r.status === "failed");
+  const nameById = new Map(vendors.map((v) => [v.id, v.name]));
+
+  return (
+    <>
+      <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+        <div className="grid grid-cols-3 gap-2">
+          <ResultTile tone="success" count={updated.length} label="Updated" />
+          <ResultTile tone="info"    count={noop.length}    label="No change" />
+          <ResultTile tone="danger"  count={failed.length}  label="Failed" />
+        </div>
+        {failed.length > 0 && (
+          <div className="rounded-md border border-red-200 bg-red-50 p-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-red-900">
+              Failures
+            </div>
+            <ul className="mt-1 space-y-0.5 text-xs text-red-900">
+              {failed.map((r) => (
+                <li key={r.vendor_id}>
+                  <span className="font-mono">{nameById.get(r.vendor_id) || r.vendor_id}</span>:{" "}
+                  {r.message || "unknown error"}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <details className="rounded-md border border-zinc-200 bg-white p-3 text-xs">
+          <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+            Full breakdown ({results.length})
+          </summary>
+          <ul className="mt-2 max-h-72 space-y-0.5 overflow-y-auto">
+            {results.map((r) => (
+              <li key={r.vendor_id} className="flex items-center gap-2">
+                {r.status === "updated" && <CheckCircle2 className="h-3 w-3 text-emerald-600" strokeWidth={2} />}
+                {r.status === "noop"    && <span className="h-3 w-3 rounded-full bg-zinc-300" />}
+                {r.status === "failed"  && <X className="h-3 w-3 text-red-600" strokeWidth={2} />}
+                <span>{nameById.get(r.vendor_id) || r.vendor_id}</span>
+                {r.actions && r.actions.length > 0 && (
+                  <span className="text-zinc-500">— {r.actions.join(", ")}</span>
+                )}
+                {r.message && <span className="text-zinc-500">— {r.message}</span>}
+              </li>
+            ))}
+          </ul>
+        </details>
+      </div>
+      <div className="sticky bottom-0 z-10 flex items-center justify-end gap-2 border-t border-zinc-100 bg-white px-5 py-3">
+        <Button variant="primary" onClick={onClose}>Done</Button>
+      </div>
+    </>
+  );
 }
 
 // Predicate for the directory "Scope" filter. filter values follow
