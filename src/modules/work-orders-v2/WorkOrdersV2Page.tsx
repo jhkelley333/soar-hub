@@ -13,6 +13,7 @@ import {
   FileText,
   Image as ImageIcon,
   Loader2,
+  MessageCircle,
   Plus,
   RefreshCw,
   Settings,
@@ -31,6 +32,7 @@ import {
   fetchStats,
   fetchTickets,
   fileToBase64,
+  markTicketSeen,
   updateTicket,
   uploadPhoto,
 } from "./api";
@@ -312,6 +314,11 @@ function TicketsTab() {
       next.add(focusTicketId);
       return next;
     });
+    // Mark seen for the deep-linked ticket so the unread badge
+    // clears as the user lands.
+    markTicketSeen(focusTicketId)
+      .then(() => qc.invalidateQueries({ queryKey: ["wo2", "tickets"] }))
+      .catch((e) => console.warn("[wo2] markTicketSeen (deep-link) failed", e));
     // Scroll the card into view after the expansion animation settles.
     const id = focusTicketId;
     const scroll = () => {
@@ -320,7 +327,7 @@ function TicketsTab() {
     };
     const t = setTimeout(scroll, 200);
     return () => clearTimeout(t);
-  }, [focusTicketId, tickets]);
+  }, [focusTicketId, tickets, qc]);
   const filtered = useMemo(() => {
     return tickets.filter((t) => {
       if (openOnly && !isOpenStatus(t.status)) return false;
@@ -341,8 +348,19 @@ function TicketsTab() {
   function toggleExpand(id: string) {
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
+      const wasExpanded = next.has(id);
+      if (wasExpanded) {
+        next.delete(id);
+      } else {
+        next.add(id);
+        // Mark seen as soon as the user opens the card. Fire and
+        // forget — if it fails, the badge just stays until the next
+        // tickets refetch. Invalidate the list so the badge updates
+        // immediately on success.
+        markTicketSeen(id)
+          .then(() => qc.invalidateQueries({ queryKey: ["wo2", "tickets"] }))
+          .catch((e) => console.warn("[wo2] markTicketSeen failed", e));
+      }
       return next;
     });
   }
@@ -633,6 +651,15 @@ function TicketCard({
           </div>
         </div>
         <div className="flex items-center gap-1.5">
+          {(ticket.unread_message_count ?? 0) > 0 && (
+            <span
+              title={`${ticket.unread_message_count} unread message${ticket.unread_message_count === 1 ? "" : "s"}`}
+              className="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold text-accent"
+            >
+              <MessageCircle className="h-3 w-3" strokeWidth={2} />
+              {ticket.unread_message_count}
+            </span>
+          )}
           <Badge tone={STATUS_TONE[ticket.status] ?? "neutral"}>{statusLabel(ticket.status)}</Badge>
           {ticket.priority && ticket.priority !== "Standard" && (
             <Badge tone={PRIORITY_TONE[ticket.priority]}>{ticket.priority}</Badge>

@@ -191,6 +191,16 @@ export function fetchRecentMessages(
   );
 }
 
+// Upsert ticket_views.last_seen_at for the caller. Marks every
+// existing message on that ticket as read. Frontend calls this
+// when the user expands a card or posts a chat message.
+export function markTicketSeen(ticketId: string): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`${FN}?action=markTicketSeen`, {
+    method: "POST",
+    body: JSON.stringify({ ticketId }),
+  });
+}
+
 export function fetchVendors(opts?: { storeNumber?: string }): Promise<VendorsResponse> {
   const qs = opts?.storeNumber
     ? `&storeNumber=${encodeURIComponent(opts.storeNumber)}`

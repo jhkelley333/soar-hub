@@ -156,6 +156,11 @@ export interface Ticket {
   cost_estimate: number | string | null;
   submitted_by: string | null;
   submitted_by_user_id: string | null;
+  // Server-decorated count of messages on this ticket that the
+  // current caller has not yet seen (other users' messages newer
+  // than the caller's ticket_views.last_seen_at). 0 when there's
+  // nothing new or when the call failed to decorate.
+  unread_message_count?: number;
   date_submitted: string;
   date_completed: string | null;
   latest_comment: string | null;
