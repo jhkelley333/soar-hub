@@ -116,15 +116,24 @@ const TRANSITIONS = {
   "submitted->cancelled":     { validate: (p) => {
                                   const e = requireField(p, "admin_close_reason", "cancellation");
                                   if (e) return e;
-                                  if (p.admin_close_reason !== "cancelled_by_ops") {
+                                  // Allowed values:
+                                  //   cancelled_by_ops — DO/SDO/admin cancellation
+                                  //   cancelled_by_submitter — the original submitter
+                                  //     cancelled before any vendor work started
+                                  //     (sub-reasons captured in admin_close_notes:
+                                  //      false_alarm / duplicate / wrong_store /
+                                  //      fixed_self / other)
+                                  const allowed = ["cancelled_by_ops", "cancelled_by_submitter"];
+                                  if (!allowed.includes(p.admin_close_reason)) {
                                     return invalidPayload(
-                                      'cancellation requires admin_close_reason = "cancelled_by_ops"',
+                                      `cancellation requires admin_close_reason in [${allowed.join(", ")}]`,
                                       { field: "admin_close_reason" });
                                   }
                                   return null;
                                 },
                                 sideEffects: (p) => ({
                                   admin_close_reason: p.admin_close_reason,
+                                  admin_close_notes:  p.admin_close_notes || null,
                                   closed_at: nowIso(),
                                 }) },
 

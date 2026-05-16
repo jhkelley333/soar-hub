@@ -106,10 +106,11 @@ export interface OpenAlertItem {
   cost_estimate?: number | null;
   approval_tier?: string | null;
   is_business_critical?: boolean | null;
+  vendor_name?: string | null;
 }
 
 export interface OpenAlertGroup {
-  key: "new24h" | "awaitingApproval" | "emergencies" | "stuck";
+  key: "new24h" | "awaitingApproval" | "emergencies" | "awaitingConfirmation" | "stuck";
   label: string;
   tone: "info" | "warning" | "danger" | "neutral";
   count: number;
@@ -209,6 +210,37 @@ export function fetchOrgIndex(): Promise<OrgIndexResponse> {
   return request<OrgIndexResponse>(`${FN}?action=getOrgIndex`);
 }
 
+export interface RelatedInWarrantyTicket {
+  id: string;
+  wo_number: string;
+  asset_type: string | null;
+  category: string | null;
+  vendor_name: string | null;
+  completed_at: string | null;
+  closed_at: string | null;
+  store_number: string;
+  warranty_labor_days: number | null;
+  warranty_parts_days: number | null;
+  warranty_parts_source: "vendor" | "manufacturer" | "none" | null;
+  warranty_starts_at: string;
+  warranty_notes: string | null;
+  labor_active: boolean;
+  parts_active: boolean;
+  labor_expires_at: string | null;
+  parts_expires_at: string | null;
+}
+
+export function fetchRelatedInWarranty(
+  storeNumber: string,
+  assetType?: string,
+  category?: string,
+): Promise<{ ok: true; tickets: RelatedInWarrantyTicket[] }> {
+  const params = new URLSearchParams({ action: "getRelatedInWarranty", storeNumber });
+  if (assetType) params.set("assetType", assetType);
+  if (category)  params.set("category",  category);
+  return request<{ ok: true; tickets: RelatedInWarrantyTicket[] }>(`${FN}?${params.toString()}`);
+}
+
 export interface VendorScopeRow {
   id: string;
   scope_type: "national" | "region" | "area" | "district" | "store";
@@ -253,6 +285,38 @@ export function bulkSetVendorScopes(
   return request<BulkScopeResponse>(`${FN}?action=bulkSetVendorScopes`, {
     method: "POST",
     body: JSON.stringify({ vendor_ids: vendorIds, scopes, mode }),
+  });
+}
+
+export interface BulkEditBody {
+  vendor_ids: string[];
+  active?: { is_active: boolean };
+  warranty?: {
+    labor_warranty_days?: number | null;
+    parts_warranty_days?: number | null;
+    parts_warranty_source?: "vendor" | "manufacturer" | "none" | null;
+    warranty_notes?: string | null;
+  };
+  scope?: {
+    scopes: Array<{ scope_type: VendorScopeRow["scope_type"]; scope_id: string | null }>;
+    mode: "replace" | "add";
+  };
+}
+export interface BulkEditResult {
+  vendor_id: string;
+  status: "updated" | "noop" | "failed";
+  actions?: string[];
+  message?: string;
+}
+export interface BulkEditResponse {
+  ok: true;
+  results: BulkEditResult[];
+  summary: Partial<Record<"updated" | "noop" | "failed", number>>;
+}
+export function bulkEditVendors(body: BulkEditBody): Promise<BulkEditResponse> {
+  return request<BulkEditResponse>(`${FN}?action=bulkEditVendors`, {
+    method: "POST",
+    body: JSON.stringify(body),
   });
 }
 

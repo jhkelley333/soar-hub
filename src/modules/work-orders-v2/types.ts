@@ -45,6 +45,7 @@ export type AdminCloseReason =
   | "completed_and_verified"
   | "auto_closed_no_verification"
   | "cancelled_by_ops"
+  | "cancelled_by_submitter"
   | "equipment_replaced"
   | "written_off"
   | "deferred_to_capex";
@@ -154,6 +155,7 @@ export interface Ticket {
   vendor_name: string | null;
   cost_estimate: number | string | null;
   submitted_by: string | null;
+  submitted_by_user_id: string | null;
   date_submitted: string;
   date_completed: string | null;
   latest_comment: string | null;
@@ -171,8 +173,10 @@ export interface TicketActivitiesResponse {
 
 export type TransitionPayload = Partial<{
   vendor_id: string;
+  vendor_name: string;
   store_close_reason: StoreCloseReason;
   admin_close_reason: AdminCloseReason;
+  admin_close_notes: string;
   resolution_category: ResolutionCategory;
   reopen_reason: ReopenReason;
   reopen_reason_text: string;

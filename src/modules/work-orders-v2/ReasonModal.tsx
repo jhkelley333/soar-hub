@@ -48,6 +48,17 @@ const REOPEN_OPTIONS: { value: ReopenReason; label: string }[] = [
   { value: "other",            label: "Other (please describe below)" },
 ];
 
+// Sub-reasons for a submitter-initiated cancellation. Stored in
+// admin_close_notes; admin_close_reason is always
+// 'cancelled_by_submitter' for this path.
+const SUBMITTER_CANCEL_OPTIONS: { value: string; label: string }[] = [
+  { value: "false_alarm",   label: "False alarm / not actually broken" },
+  { value: "fixed_self",    label: "Fixed itself / store handled it" },
+  { value: "duplicate",     label: "Duplicate — another ticket already covers this" },
+  { value: "wrong_store",   label: "Submitted on the wrong store" },
+  { value: "other",         label: "Other (please describe below)" },
+];
+
 export type ReasonModalConfig =
   | {
       kind: "store_close";
@@ -62,6 +73,14 @@ export type ReasonModalConfig =
     }
   | {
       kind: "cancellation";
+      title?: string;
+      submitLabel?: string;
+    }
+  | {
+      // Submitter (GM/shift) cancelling their own ticket before any
+      // vendor work has begun. Sub-reason captured in admin_close_notes
+      // so we keep a single column shape but distinguish meaningfully.
+      kind: "submitter_cancellation";
       title?: string;
       submitLabel?: string;
     }
@@ -127,6 +146,16 @@ export function ReasonModal({ open, config, onClose, onSubmit, submitting, error
       }
       case "cancellation":
         return { admin_close_reason: "cancelled_by_ops" };
+      case "submitter_cancellation": {
+        if (!reason) return null;
+        const notes = text.trim()
+          ? `${reason}: ${text.trim()}`
+          : reason;
+        return {
+          admin_close_reason: "cancelled_by_submitter",
+          admin_close_notes: notes,
+        } as TransitionPayload;
+      }
       case "reopen": {
         if (!reason) return null;
         const payload: TransitionPayload = { reopen_reason: reason as ReopenReason };
@@ -205,6 +234,36 @@ export function ReasonModal({ open, config, onClose, onSubmit, submitting, error
               <em> &quot;Cancelled by operations&quot;</em>. Cancelled tickets are
               terminal — no further action is possible.
             </div>
+          )}
+          {config.kind === "submitter_cancellation" && (
+            <>
+              <ReasonSelect
+                label="Why are you cancelling?"
+                value={reason}
+                onChange={setReason}
+                options={SUBMITTER_CANCEL_OPTIONS}
+              />
+              {(reason === "other" || reason === "duplicate") && (
+                <div>
+                  <label className="block text-[11px] font-medium text-zinc-600">
+                    {reason === "duplicate"
+                      ? "Which WO number is the duplicate? (optional)"
+                      : "Tell us more (optional)"}
+                  </label>
+                  <input
+                    type="text"
+                    value={text}
+                    onChange={(e) => setText(e.target.value)}
+                    placeholder={reason === "duplicate" ? "WO-1234" : ""}
+                    className="mt-1 block w-full rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                  />
+                </div>
+              )}
+              <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] text-zinc-600">
+                Cancelled tickets are terminal — no further action is possible.
+                Only available before any vendor work has started.
+              </div>
+            </>
           )}
           {config.kind === "reopen" && (
             <>
@@ -313,6 +372,7 @@ function defaultTitle(kind: ReasonModalConfig["kind"]): string {
     case "store_close":    return "Close — False Alarm";
     case "admin_close":    return "Close Ticket";
     case "cancellation":   return "Cancel Ticket";
+    case "submitter_cancellation": return "Cancel this ticket";
     case "reopen":         return "Reopen Ticket";
     case "resolution_only":return "Resolution";
     case "vendor_schedule":return "Schedule Vendor";
@@ -323,6 +383,7 @@ function defaultSubmit(kind: ReasonModalConfig["kind"]): string {
     case "store_close":    return "Close Ticket";
     case "admin_close":    return "Close Ticket";
     case "cancellation":   return "Cancel Ticket";
+    case "submitter_cancellation": return "Cancel my ticket";
     case "reopen":         return "Reopen";
     case "resolution_only":return "Save";
     case "vendor_schedule":return "Schedule";

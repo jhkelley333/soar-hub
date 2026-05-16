@@ -550,6 +550,10 @@ function TicketCard({
   onError: (msg: string) => void;
   callerRole: string;
 }) {
+  const { profile } = useAuth();
+  const isSubmitter = !!profile?.id
+    && !!ticket.submitted_by_user_id
+    && profile.id === ticket.submitted_by_user_id;
   const days = daysOpen(ticket);
   const open = isOpenStatus(ticket.status);
   const aged = open && days !== null && days >= 15;
@@ -612,8 +616,25 @@ function TicketCard({
               ticketId={ticket.id}
               status={ticket.status}
               closedAt={ticket.closed_at}
+              isSubmitter={isSubmitter}
             />
           </div>
+
+          {ticket.status === "completed" && (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-900">
+                Awaiting your confirmation
+              </div>
+              <div className="mt-1 text-sm text-amber-900">
+                The vendor marked this completed{ticket.vendor_name ? ` (${ticket.vendor_name})` : ""}.
+                Please confirm the work was done satisfactorily, or reopen if it
+                wasn't. Use the buttons in the action bar above:
+                {" "}<strong>Confirm Fix</strong> to close, or
+                {" "}<strong>Reopen — Not Fixed</strong> to send it back.
+              </div>
+            </div>
+          )}
+
           <DetailGrid ticket={ticket} />
           <DescriptionBlock label="Issue Description" value={ticket.issue_description} />
           {ticket.latest_comment && (
