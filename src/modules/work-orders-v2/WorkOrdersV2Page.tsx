@@ -2,7 +2,8 @@
 // Four-tab UI (Tickets / Vendors / Issue Library / Email Templates)
 // backed by netlify/functions/facilities-v2. Lives on the v2 branch only.
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -41,6 +42,7 @@ import {
   type Ticket,
   type TicketPriority,
   type TicketStatus,
+  type ThreadType,
 } from "./types";
 import { NewTicketModal } from "./NewTicketModal";
 import { ApprovalSection } from "./ApprovalSection";
@@ -267,6 +269,15 @@ function TicketsTab() {
   const { profile } = useAuth();
   const callerRole = profile?.role || "gm";
 
+  // URL params for dashboard deep-link.
+  //   ?ticket=<uuid>           → auto-expand that ticket on mount
+  //   ?thread=internal|vendor  → set the chat tab to that thread
+  //                              when the ticket renders
+  const [searchParams] = useSearchParams();
+  const focusTicketId = searchParams.get("ticket") || null;
+  const focusThread =
+    (searchParams.get("thread") as ThreadType | null) || null;
+
   const ticketsQ = useQuery({
     queryKey: ["wo2", "tickets"],
     queryFn: fetchTickets,
@@ -287,6 +298,29 @@ function TicketsTab() {
   const [modalOpen, setModalOpen] = useState(false);
 
   const tickets = ticketsQ.data?.tickets ?? [];
+
+  // Once tickets are loaded, if we have a ?ticket= deep-link, make
+  // sure it's expanded + scrolled into view. Strip the param from
+  // the URL after we apply it so a refresh doesn't keep re-focusing.
+  useEffect(() => {
+    if (!focusTicketId || tickets.length === 0) return;
+    const exists = tickets.some((t) => t.id === focusTicketId);
+    if (!exists) return;
+    setExpanded((prev) => {
+      if (prev.has(focusTicketId)) return prev;
+      const next = new Set(prev);
+      next.add(focusTicketId);
+      return next;
+    });
+    // Scroll the card into view after the expansion animation settles.
+    const id = focusTicketId;
+    const scroll = () => {
+      const el = document.querySelector<HTMLElement>(`[data-ticket-id="${id}"]`);
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+    };
+    const t = setTimeout(scroll, 200);
+    return () => clearTimeout(t);
+  }, [focusTicketId, tickets]);
   const filtered = useMemo(() => {
     return tickets.filter((t) => {
       if (openOnly && !isOpenStatus(t.status)) return false;
@@ -373,6 +407,7 @@ function TicketsTab() {
             ticket={t}
             expanded={expanded.has(t.id)}
             callerRole={callerRole}
+            initialThread={t.id === focusTicketId ? focusThread : null}
             onToggle={() => toggleExpand(t.id)}
             onUpdated={() => {
               toast.push("Ticket updated.", "success");
@@ -540,6 +575,7 @@ function TicketCard({
   onApprovalChanged,
   onError,
   callerRole,
+  initialThread,
 }: {
   ticket: Ticket;
   expanded: boolean;
@@ -549,6 +585,9 @@ function TicketCard({
   onApprovalChanged: () => void;
   onError: (msg: string) => void;
   callerRole: string;
+  // When non-null, opens this card's TicketChat with the given
+  // thread selected (used by dashboard deep-link).
+  initialThread?: ThreadType | null;
 }) {
   const { profile } = useAuth();
   const isSubmitter = !!profile?.id
@@ -565,6 +604,7 @@ function TicketCard({
 
   return (
     <Card
+      data-ticket-id={ticket.id}
       className={cn(
         "overflow-hidden",
         aged && "border-l-4 border-l-red-500",
@@ -661,7 +701,11 @@ function TicketCard({
 
           <ActivityFeedPanel ticketId={ticket.id} />
 
-          <TicketChat ticketId={ticket.id} onError={onError} />
+          <TicketChat
+            ticketId={ticket.id}
+            onError={onError}
+            initialThread={initialThread || undefined}
+          />
         </CardBody>
       )}
     </Card>

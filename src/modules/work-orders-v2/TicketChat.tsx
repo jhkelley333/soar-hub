@@ -11,6 +11,10 @@ import type { ThreadType, TicketMessage } from "./types";
 interface Props {
   ticketId: string;
   onError: (msg: string) => void;
+  // Optional starting thread. When provided (e.g. from a dashboard
+  // deep-link like /admin/work-orders-v2?ticket=X&thread=vendor)
+  // the chat opens on that thread instead of the default "internal".
+  initialThread?: ThreadType;
 }
 
 function initials(name: string | null) {
@@ -32,9 +36,9 @@ function fmtTime(ts: string) {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-export function TicketChat({ ticketId, onError }: Props) {
+export function TicketChat({ ticketId, onError, initialThread }: Props) {
   const qc = useQueryClient();
-  const [thread, setThread] = useState<ThreadType>("internal");
+  const [thread, setThread] = useState<ThreadType>(initialThread || "internal");
   const [draft, setDraft] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
 
