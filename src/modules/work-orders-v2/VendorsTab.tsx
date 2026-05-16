@@ -19,7 +19,6 @@ import { useToast } from "@/shared/ui/Toaster";
 import {
   bulkEditVendors,
   bulkImportVendors,
-  bulkSetVendorScopes,
   deleteStoreVendorPreference,
   fetchOrgIndex,
   fetchVendorPreferences,
@@ -31,7 +30,6 @@ import {
   setVendorScopes,
   type BulkEditBody,
   type BulkEditResult,
-  type BulkScopeResult,
   type BulkVendorResult,
   type BulkVendorRow,
   type OrgIndexResponse,
@@ -89,7 +87,6 @@ export function VendorsTab({ callerRole }: { callerRole: string }) {
   // changes — clearing the filter doesn't drop your selection.
   // canManage gating already controls whether checkboxes appear.
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [bulkScopeOpen, setBulkScopeOpen] = useState(false);
   const [bulkEditOpen, setBulkEditOpen]   = useState(false);
   function toggleSelected(id: string) {
     setSelectedIds((prev) => {
@@ -293,20 +290,6 @@ export function VendorsTab({ callerRole }: { callerRole: string }) {
         />
       )}
 
-      {bulkScopeOpen && canManage(callerRole) && selectedIds.size > 0 && (
-        <BulkScopeEditModal
-          vendors={vendors.filter((v) => selectedIds.has(v.id))}
-          org={orgQ.data}
-          onClose={() => setBulkScopeOpen(false)}
-          onDone={() => {
-            qc.invalidateQueries({ queryKey: ["wo2", "vendors"] });
-            setSelectedIds(new Set());
-            setBulkScopeOpen(false);
-          }}
-          onError={(m) => toast.push(m, "error")}
-          onSuccess={(m) => toast.push(m, "success")}
-        />
-      )}
 
       {bulkEditOpen && canManage(callerRole) && selectedIds.size > 0 && (
         <BulkEditVendorsModal
@@ -325,20 +308,24 @@ export function VendorsTab({ callerRole }: { callerRole: string }) {
 
       {/* Sticky action bar when the user has anything selected.
           Renders OUTSIDE the normal flow so it floats above the
-          last row regardless of scroll. */}
+          last row regardless of scroll. z-40 to clear sidebar
+          (z-50 reserved for mobile drawer). Inner container wraps
+          on narrow widths so buttons stay visible on phones.
+          Safe-area inset for iOS home-bar overlap. */}
       {canManage(callerRole) && selectedIds.size > 0 && (
-        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-zinc-200 bg-white/95 px-4 py-2 shadow-2xl backdrop-blur supports-[backdrop-filter]:bg-white/80">
-          <div className="mx-auto flex max-w-5xl items-center justify-between gap-3">
+        <div
+          className="fixed inset-x-0 bottom-0 z-40 border-t border-zinc-200 bg-white shadow-2xl"
+          style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+        >
+          <div className="mx-auto flex max-w-5xl flex-wrap items-center justify-between gap-2 px-4 py-2">
             <div className="text-xs text-zinc-700">
-              <span className="font-semibold">{selectedIds.size} vendor{selectedIds.size === 1 ? "" : "s"} selected</span>
+              <span className="font-semibold">
+                {selectedIds.size} vendor{selectedIds.size === 1 ? "" : "s"} selected
+              </span>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <Button variant="ghost" onClick={() => setSelectedIds(new Set())}>
                 Clear
-              </Button>
-              <Button variant="ghost" onClick={() => setBulkScopeOpen(true)}>
-                <Layers className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
-                Scope only
               </Button>
               <Button variant="primary" onClick={() => setBulkEditOpen(true)}>
                 <Pencil className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
@@ -2087,237 +2074,3 @@ function matchesScopeFilter(vendor: Vendor, filter: string): boolean {
   return scopes.some((s) => s.scope_type === type && s.scope_id === id);
 }
 
-// ── Bulk scope edit modal ───────────────────────────────────
-// Lets the admin/DO apply the same scope set to many vendors at
-// once. Two modes:
-//   replace — wipe each vendor's existing scopes, then add the new
-//   add     — keep existing, only insert the new (no-op for
-//             vendors that already have the same scope)
-// Selection is captured by the parent (selectedIds) and passed in
-// as the list of Vendor objects so we can preview names.
-
-function BulkScopeEditModal({
-  vendors,
-  org,
-  onClose,
-  onDone,
-  onError,
-  onSuccess,
-}: {
-  vendors: Vendor[];
-  org: OrgIndexResponse | undefined;
-  onClose: () => void;
-  onDone: () => void;
-  onError: (msg: string) => void;
-  onSuccess: (msg: string) => void;
-}) {
-  const [draftScopes, setDraftScopes] = useState<ScopeDraft[]>([]);
-  const [mode, setMode] = useState<"replace" | "add">("add");
-  const [results, setResults] = useState<BulkScopeResult[] | null>(null);
-
-  const mut = useMutation({
-    mutationFn: () => {
-      if (draftScopes.length === 0) {
-        return Promise.reject(new Error("Add at least one scope to apply."));
-      }
-      return bulkSetVendorScopes(
-        vendors.map((v) => v.id),
-        draftScopes,
-        mode,
-      );
-    },
-    onSuccess: (r) => {
-      setResults(r.results);
-      const { updated = 0, failed = 0 } = r.summary;
-      if (failed > 0) {
-        onError(`${failed} vendor${failed === 1 ? "" : "s"} failed — see details below.`);
-      } else {
-        onSuccess(`Scope applied to ${updated} vendor${updated === 1 ? "" : "s"}.`);
-        // Don't auto-close so the user can confirm; they hit Done to
-        // dismiss + refresh.
-      }
-    },
-    onError: (e: unknown) =>
-      onError(e instanceof Error ? e.message : "Bulk update failed."),
-  });
-
-  const showResults = results !== null;
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
-      onClick={(e) => { if (e.target === e.currentTarget && !mut.isPending) onClose(); }}
-    >
-      <div className="w-full max-w-2xl max-h-[92vh] overflow-y-auto rounded-xl bg-white shadow-2xl">
-        <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-3">
-          <div className="text-base font-semibold tracking-tight text-midnight">
-            Edit scope for {vendors.length} vendor{vendors.length === 1 ? "" : "s"}
-          </div>
-          <button
-            type="button" onClick={onClose} disabled={mut.isPending}
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-100"
-            aria-label="Close"
-          >
-            <X className="h-4 w-4" strokeWidth={1.75} />
-          </button>
-        </div>
-
-        {!showResults ? (
-          <>
-            <div className="space-y-4 px-5 py-4">
-              <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-700">
-                <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
-                  Selected
-                </div>
-                <div className="mt-1 max-h-24 overflow-y-auto">
-                  {vendors.map((v) => (
-                    <span
-                      key={v.id}
-                      className="mr-1 inline-block rounded bg-white px-1.5 py-0.5 text-[11px] text-zinc-700 border border-zinc-200"
-                    >
-                      {v.name}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div>
-                <Label>Mode</Label>
-                <div className="mt-1 space-y-2">
-                  <label className="flex cursor-pointer items-start gap-2 rounded-md border border-zinc-200 bg-white p-3 hover:border-accent">
-                    <input
-                      type="radio" name="bulk-scope-mode"
-                      checked={mode === "add"}
-                      onChange={() => setMode("add")}
-                      className="mt-0.5 h-4 w-4 accent-accent"
-                    />
-                    <div className="flex-1">
-                      <div className="text-sm font-medium text-midnight">
-                        Add to existing scopes
-                      </div>
-                      <div className="text-[11px] text-zinc-500">
-                        Keeps each vendor's current scope rows. Inserts new ones below if not already present. Safe default.
-                      </div>
-                    </div>
-                  </label>
-                  <label className="flex cursor-pointer items-start gap-2 rounded-md border border-zinc-200 bg-white p-3 hover:border-accent">
-                    <input
-                      type="radio" name="bulk-scope-mode"
-                      checked={mode === "replace"}
-                      onChange={() => setMode("replace")}
-                      className="mt-0.5 h-4 w-4 accent-accent"
-                    />
-                    <div className="flex-1">
-                      <div className="text-sm font-medium text-midnight">
-                        Replace existing scopes
-                      </div>
-                      <div className="text-[11px] text-zinc-500">
-                        Wipes each selected vendor's current scope rows and replaces them with only the rows below. Use to standardize an inconsistent roster.
-                      </div>
-                    </div>
-                  </label>
-                </div>
-              </div>
-
-              <div>
-                <Label>Scopes to apply</Label>
-                <ScopeEditor
-                  org={org}
-                  scopes={draftScopes}
-                  loading={false}
-                  onChange={setDraftScopes}
-                />
-              </div>
-
-              {mut.isError && (
-                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
-                  {(mut.error as Error).message}
-                </div>
-              )}
-            </div>
-            <div className="flex items-center justify-end gap-2 border-t border-zinc-100 px-5 py-3">
-              <Button variant="ghost" onClick={onClose} disabled={mut.isPending}>
-                Cancel
-              </Button>
-              <Button
-                variant="primary"
-                onClick={() => mut.mutate()}
-                disabled={mut.isPending || draftScopes.length === 0}
-              >
-                {mut.isPending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
-                {mode === "replace"
-                  ? `Replace scopes for ${vendors.length}`
-                  : `Add scopes to ${vendors.length}`}
-              </Button>
-            </div>
-          </>
-        ) : (
-          <BulkScopeResultsView
-            results={results || []}
-            vendors={vendors}
-            onClose={onDone}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
-function BulkScopeResultsView({
-  results, vendors, onClose,
-}: {
-  results: BulkScopeResult[];
-  vendors: Vendor[];
-  onClose: () => void;
-}) {
-  const updated = results.filter((r) => r.status === "updated");
-  const failed  = results.filter((r) => r.status === "failed");
-  const nameById = new Map(vendors.map((v) => [v.id, v.name]));
-
-  return (
-    <>
-      <div className="space-y-3 px-5 py-4">
-        <div className="grid grid-cols-2 gap-2">
-          <ResultTile tone="success" count={updated.length} label="Updated" />
-          <ResultTile tone="danger"  count={failed.length}  label="Failed" />
-        </div>
-        {failed.length > 0 && (
-          <div className="rounded-md border border-red-200 bg-red-50 p-3">
-            <div className="text-[11px] font-semibold uppercase tracking-wide text-red-900">
-              Failures
-            </div>
-            <ul className="mt-1 space-y-0.5 text-xs text-red-900">
-              {failed.map((r) => (
-                <li key={r.vendor_id}>
-                  <span className="font-mono">{nameById.get(r.vendor_id) || r.vendor_id}</span>:{" "}
-                  {r.message || "unknown error"}
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-        <details className="rounded-md border border-zinc-200 bg-white p-3 text-xs">
-          <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
-            Full breakdown ({results.length})
-          </summary>
-          <ul className="mt-2 max-h-72 space-y-0.5 overflow-y-auto">
-            {results.map((r) => (
-              <li key={r.vendor_id} className="flex items-center gap-2">
-                {r.status === "updated" && <CheckCircle2 className="h-3 w-3 text-emerald-600" strokeWidth={2} />}
-                {r.status === "failed"  && <X className="h-3 w-3 text-red-600" strokeWidth={2} />}
-                <span>{nameById.get(r.vendor_id) || r.vendor_id}</span>
-                {typeof r.scopes === "number" && (
-                  <span className="text-zinc-500">— {r.scopes} scope{r.scopes === 1 ? "" : "s"} applied</span>
-                )}
-                {r.message && <span className="text-zinc-500">— {r.message}</span>}
-              </li>
-            ))}
-          </ul>
-        </details>
-      </div>
-      <div className="flex items-center justify-end gap-2 border-t border-zinc-100 px-5 py-3">
-        <Button variant="primary" onClick={onClose}>Done</Button>
-      </div>
-    </>
-  );
-}
