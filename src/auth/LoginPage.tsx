@@ -248,26 +248,7 @@ export function LoginPage() {
             </div>
           )}
 
-          {mode !== "forgot" && (
-            <div className="mt-6">
-              <button
-                type="button"
-                onClick={handleGoogle}
-                disabled={googlePending || submitting}
-                className="flex w-full items-center justify-center gap-2 rounded-md border border-zinc-300 bg-white px-4 py-2.5 text-sm font-medium text-midnight transition hover:bg-zinc-50 disabled:opacity-50"
-              >
-                <GoogleMark />
-                {googlePending ? "Redirecting to Google…" : "Continue with Google"}
-              </button>
-              <div className="my-4 flex items-center gap-3 text-[10px] uppercase tracking-wide text-zinc-400">
-                <span className="h-px flex-1 bg-zinc-200" />
-                or
-                <span className="h-px flex-1 bg-zinc-200" />
-              </div>
-            </div>
-          )}
-
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} className="mt-6 space-y-5">
             <div>
               <Label htmlFor="identifier">Phone number or email</Label>
               <div className="relative">
@@ -366,6 +347,31 @@ export function LoginPage() {
               {mode === "forgot" && "Back to sign in"}
             </button>
           </div>
+
+          {/* Above-store / corporate sign-in. Lives below the form
+              and below the mode toggles so it doesn't compete with
+              the GM + shift-manager flow at the top — phone +
+              password is the primary path for floor staff. */}
+          {mode !== "forgot" && (
+            <div className="mt-6 border-t border-zinc-100 pt-5">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                Above-store team
+              </div>
+              <div className="mt-1 text-[11px] text-zinc-500">
+                DOs, SDOs, and corporate users with a SOAR QSR Google
+                Workspace account.
+              </div>
+              <button
+                type="button"
+                onClick={handleGoogle}
+                disabled={googlePending || submitting}
+                className="mt-3 flex w-full items-center justify-center gap-2 rounded-md border border-zinc-300 bg-white px-4 py-2.5 text-sm font-medium text-midnight transition hover:bg-zinc-50 disabled:opacity-50"
+              >
+                <GoogleMark />
+                {googlePending ? "Redirecting to Google…" : "Continue with Google"}
+              </button>
+            </div>
+          )}
         </div>
 
         <p className="mt-6 text-center text-xs text-white/70">
