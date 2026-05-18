@@ -284,6 +284,7 @@ export function AccountPage() {
 
         <div className="space-y-6">
           <CertifiedFoodManagerCard />
+          <SignInMethodsCard />
           <PasswordCard />
         </div>
       </div>
@@ -685,6 +686,149 @@ function CertifiedFoodManagerCard() {
         </form>
       </CardBody>
     </Card>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Sign-in methods card — shows which identities are linked to this
+// account and lets the user connect Google.
+//
+// Why link from here instead of the login page? The login page can't
+// know which existing account to link to until the OAuth roundtrip is
+// done — Supabase auto-links by email, but only if emails match
+// exactly. Linking while ALREADY signed in is bulletproof: the
+// existing user_id is in the session, so Supabase attaches the new
+// identity to THAT row, no email-matching ambiguity.
+// ----------------------------------------------------------------------------
+
+interface AuthIdentity {
+  id?: string;
+  provider: string;
+  identity_data?: { email?: string; full_name?: string } | null;
+  created_at?: string;
+}
+
+function SignInMethodsCard() {
+  const { session } = useAuth();
+  const toast = useToast();
+  const [pending, setPending] = useState<"google" | null>(null);
+
+  const identities: AuthIdentity[] =
+    (session?.user?.identities as AuthIdentity[] | undefined) || [];
+  const hasEmail  = identities.some((i) => i.provider === "email");
+  const hasGoogle = identities.some((i) => i.provider === "google");
+  const googleIdentity = identities.find((i) => i.provider === "google");
+
+  async function connectGoogle() {
+    setPending("google");
+    try {
+      // linkIdentity uses the current session to attach an extra
+      // provider to this user_id. Behaves exactly like
+      // signInWithOAuth (browser redirect) but the post-callback
+      // result is an additional identity, not a new user.
+      const supabaseAny = supabase as unknown as {
+        auth: {
+          linkIdentity: (args: { provider: string; options?: object }) => Promise<{ error: unknown }>;
+        };
+      };
+      const { error } = await supabaseAny.auth.linkIdentity({
+        provider: "google",
+        options: {
+          redirectTo: `${window.location.origin}/account`,
+          queryParams: {
+            hd: import.meta.env.VITE_GOOGLE_HOSTED_DOMAIN || "mysoarhub.com",
+            prompt: "select_account",
+          },
+        },
+      });
+      if (error) throw error;
+      // Redirect handled by Supabase; nothing else to do.
+    } catch (e) {
+      toast.push(
+        e instanceof Error ? e.message : "Couldn't start Google connection.",
+        "error",
+      );
+      setPending(null);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title="Sign-in methods"
+        description="One-click sign-in options for this account."
+      />
+      <CardBody>
+        <ul className="space-y-2">
+          {/* Email + password is always present for accounts created via
+              invite. We don't offer to unlink it — it's the fallback. */}
+          <li className="flex items-center justify-between rounded-md border border-zinc-200 bg-white px-3 py-2">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex h-6 w-6 items-center justify-center rounded bg-zinc-100 text-zinc-600">
+                @
+              </span>
+              <div>
+                <div className="text-sm font-medium text-midnight">Email + password</div>
+                <div className="text-[11px] text-zinc-500">
+                  {session?.user?.email || "—"}
+                </div>
+              </div>
+            </div>
+            {hasEmail
+              ? <Badge tone="success">Connected</Badge>
+              : <Badge tone="neutral">Not used</Badge>}
+          </li>
+
+          {/* Google */}
+          <li className="flex items-center justify-between rounded-md border border-zinc-200 bg-white px-3 py-2">
+            <div className="flex items-center gap-2">
+              <span className="inline-flex h-6 w-6 items-center justify-center rounded bg-white">
+                <SignInMethodGoogleMark />
+              </span>
+              <div>
+                <div className="text-sm font-medium text-midnight">Google</div>
+                <div className="text-[11px] text-zinc-500">
+                  {hasGoogle
+                    ? `Connected${googleIdentity?.identity_data?.email
+                        ? ` · ${googleIdentity.identity_data.email}` : ""}`
+                    : "Connect your Google account to enable one-click sign-in."}
+                </div>
+              </div>
+            </div>
+            {hasGoogle
+              ? <Badge tone="success">Connected</Badge>
+              : (
+                <Button
+                  variant="primary"
+                  onClick={connectGoogle}
+                  disabled={pending === "google"}
+                >
+                  {pending === "google" ? "Redirecting…" : "Connect"}
+                </Button>
+              )}
+          </li>
+        </ul>
+
+        {!hasGoogle && (
+          <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-[11px] text-zinc-600">
+            Connect Google here (rather than tapping "Continue with Google" on the
+            login page) — this links the new sign-in to your existing account so
+            your role, scopes, and history come with you.
+          </div>
+        )}
+      </CardBody>
+    </Card>
+  );
+}
+
+function SignInMethodGoogleMark() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true">
+      <path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/>
+      <path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"/>
+      <path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238C29.211 35.091 26.715 36 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/>
+      <path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-.792 2.237-2.231 4.166-4.087 5.571.001-.001.002-.001.003-.002l6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/>
+    </svg>
   );
 }
 
