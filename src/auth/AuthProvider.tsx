@@ -85,15 +85,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const profileIdRef = useRef<string | null>(null);
   useEffect(() => { profileIdRef.current = profile?.id ?? null; }, [profile]);
 
-  async function loadProfile(userId: string) {
+  async function loadProfile(userId: string): Promise<{ hasProfile: boolean }> {
     const gen = ++generationRef.current;
     const [{ data: profileData }, { data: scopesData }] = await Promise.all([
       supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
       supabase.from("user_scopes").select("*").eq("user_id", userId),
     ]);
-    if (gen !== generationRef.current) return; // superseded — bail
+    if (gen !== generationRef.current) return { hasProfile: false }; // superseded — bail
     setProfile((profileData as Profile) ?? null);
     setScopes((scopesData as UserScope[]) ?? []);
+    return { hasProfile: !!profileData };
   }
 
   // Clear local auth state and any stale session in storage. Called when we
@@ -171,10 +172,33 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Bound the post-auth profile load — a hung Supabase query
         // here used to leave LoginPage stuck on "Working…" forever
         // because the session was set but profile never arrived.
-        await Promise.race([
+        const result = await Promise.race([
           loadProfile(next.user.id),
-          timeout<void>("loadProfile (auth change)", AUTH_BOOT_TIMEOUT_MS),
+          timeout<{ hasProfile: boolean }>(
+            "loadProfile (auth change)", AUTH_BOOT_TIMEOUT_MS,
+          ),
         ]);
+        // SIGNED_IN but no matching profile row = OAuth login from
+        // a Google account that wasn't pre-invited. Sign them out
+        // and route to /login with an error flag so they're not
+        // stranded in a broken state. Only enforce on SIGNED_IN —
+        // background events keep their existing state per the
+        // earlier hardening.
+        if (event === "SIGNED_IN" && !result.hasProfile) {
+          console.warn("[auth] SIGNED_IN with no matching profile; signing out");
+          try { await supabase.auth.signOut(); } catch {}
+          purgeSupabaseStorage();
+          generationRef.current++;
+          setSession(null);
+          setProfile(null);
+          setScopes([]);
+          try {
+            const url = new URL(window.location.href);
+            url.pathname = "/login";
+            url.searchParams.set("error", "no_profile");
+            window.location.replace(url.toString());
+          } catch {}
+        }
       } catch (e) {
         // Failure path. If we already have a profile loaded for this
         // user, KEEP it — the timeout was almost certainly a transient
