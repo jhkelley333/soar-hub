@@ -122,9 +122,12 @@ export function LoginPage() {
           redirectTo: window.location.origin,
           queryParams: {
             // Hint Google's consent screen toward your Workspace.
-            // Replace via VITE_GOOGLE_HOSTED_DOMAIN env var if your
-            // Workspace lives at a different domain.
-            hd: import.meta.env.VITE_GOOGLE_HOSTED_DOMAIN || "mysoarhub.com",
+            // soarqsr.com is the actual Workspace domain where humans
+            // have accounts (hkelley@soarqsr.com etc.). mysoarhub.com
+            // is the app's email domain, not a sign-in directory.
+            // Override via VITE_GOOGLE_HOSTED_DOMAIN env var if your
+            // Workspace lives elsewhere.
+            hd: import.meta.env.VITE_GOOGLE_HOSTED_DOMAIN || "soarqsr.com",
             // Always show the account picker — important when users
             // are signed into multiple Google accounts in the browser.
             prompt: "select_account",

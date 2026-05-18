@@ -736,7 +736,9 @@ function SignInMethodsCard() {
         options: {
           redirectTo: `${window.location.origin}/account`,
           queryParams: {
-            hd: import.meta.env.VITE_GOOGLE_HOSTED_DOMAIN || "mysoarhub.com",
+            // soarqsr.com is the human Workspace; mysoarhub.com is
+            // the app's email domain. Override via env var if needed.
+            hd: import.meta.env.VITE_GOOGLE_HOSTED_DOMAIN || "soarqsr.com",
             prompt: "select_account",
           },
         },
