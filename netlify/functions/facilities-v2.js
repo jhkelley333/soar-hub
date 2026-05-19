@@ -630,7 +630,7 @@ async function sendEmail({ to, subject, html }) {
   const fromAddr =
     process.env.FACILITIES_FROM_EMAIL ||
     process.env.RESEND_FROM_EMAIL ||
-    "workorders@mysoarhub.com";
+    "notifications@mysoarhub.com";
   const fromName = process.env.FACILITIES_FROM_NAME || "SOAR Work Orders";
   try {
     const res = await fetch("https://api.resend.com/emails", {
