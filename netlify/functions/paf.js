@@ -151,7 +151,7 @@ function respond(statusCode, payload) {
 // substitution.
 // ----------------------------------------------------------------------------
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "paf@mysoarhub.com";
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "notifications@mysoarhub.com";
 const RESEND_FROM_NAME = process.env.RESEND_FROM_NAME || "SOAR PAF";
 const RESEND_REPLY_TO = process.env.RESEND_REPLY_TO || null;
 

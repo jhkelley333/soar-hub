@@ -111,7 +111,7 @@ async function sendEmail({ to, subject, html }) {
   if (!apiKey) return { sent: false, reason: "RESEND_API_KEY not set" };
   const fromAddr =
     process.env.RESEND_FROM_EMAIL ||
-    "workorders@mysoarhub.com";
+    "notifications@mysoarhub.com";
   const fromName = process.env.RESEND_FROM_NAME || "SOAR Work Orders";
   try {
     const res = await fetch("https://api.resend.com/emails", {
