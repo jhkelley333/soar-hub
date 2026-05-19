@@ -152,7 +152,14 @@ function respond(statusCode, payload) {
 // ----------------------------------------------------------------------------
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "notifications@mysoarhub.com";
-const RESEND_FROM_NAME = process.env.RESEND_FROM_NAME || "SOAR PAF";
+// PAF-specific display name. Falls back to the shared
+// RESEND_FROM_NAME if a global name is set instead, then to the
+// "Payroll Adjustment Form" default so recipients see a clear
+// brand for these emails regardless of env config.
+const RESEND_FROM_NAME =
+  process.env.PAF_FROM_NAME
+  || process.env.RESEND_FROM_NAME
+  || "Payroll Adjustment Form";
 const RESEND_REPLY_TO = process.env.RESEND_REPLY_TO || null;
 
 function appBaseUrl() {
