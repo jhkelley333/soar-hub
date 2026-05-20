@@ -54,6 +54,7 @@ import { IssueLibraryTab } from "./IssueLibraryTab";
 import { TroubleshootingTipsTab } from "./TroubleshootingTipsTab";
 import { EmailTemplatesTab } from "./EmailTemplatesTab";
 import { VendorPortalAdminTab } from "./VendorPortalAdminTab";
+import { PreventiveMaintenanceTab } from "./PreventiveMaintenanceTab";
 import { MyStoreQrPanel } from "./MyStoreQrPanel";
 import { StatusBar } from "./StatusBar";
 import { TicketActionBar } from "./TicketActionBar";
@@ -103,12 +104,13 @@ const TABS: {
 
 // Settings sub-tabs — rendered only when the user enters Settings
 // via the gear icon. RVP+ only.
-type SettingsTabId = "library" | "troubleshooting" | "email-templates" | "vendor-qr";
+type SettingsTabId = "library" | "troubleshooting" | "email-templates" | "vendor-qr" | "preventive-maintenance";
 const SETTINGS_TABS: { id: SettingsTabId; label: string }[] = [
   { id: "library",         label: "Issue Library" },
   { id: "troubleshooting", label: "Troubleshooting" },
   { id: "email-templates", label: "Email Templates" },
   { id: "vendor-qr",       label: "Vendor QR" },
+  { id: "preventive-maintenance", label: "Preventive Maintenance" },
 ];
 const SETTINGS_ROLES = new Set(["rvp", "vp", "coo", "admin"]);
 
@@ -231,6 +233,7 @@ export function WorkOrdersV2Page() {
           {settingsTab === "troubleshooting" && <TroubleshootingTipsTab />}
           {settingsTab === "email-templates" && <EmailTemplatesTab />}
           {settingsTab === "vendor-qr"       && <VendorPortalAdminTab />}
+          {settingsTab === "preventive-maintenance" && <PreventiveMaintenanceTab />}
         </>
       ) : (
         <>
