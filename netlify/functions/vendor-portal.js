@@ -110,9 +110,17 @@ async function sendEmail({ to, subject, html }) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) return { sent: false, reason: "RESEND_API_KEY not set" };
   const fromAddr =
+    process.env.FACILITIES_FROM_EMAIL ||
     process.env.RESEND_FROM_EMAIL ||
     "notifications@mysoarhub.com";
-  const fromName = process.env.RESEND_FROM_NAME || "SOAR Work Orders";
+  // Read the work-orders-specific override BEFORE falling back to
+  // the shared global so a stale RESEND_FROM_NAME=SOAR PAF (from
+  // the original PAF rollout) doesn't bleed into vendor-portal
+  // emails. Same precedence facilities-v2.js uses.
+  const fromName =
+    process.env.FACILITIES_FROM_NAME ||
+    process.env.RESEND_FROM_NAME ||
+    "SOAR Work Orders";
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
