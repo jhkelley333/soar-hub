@@ -29,13 +29,13 @@ export function LandingPage() {
         {/* Top brand strip — matches the Login page header so the
             landing and the sign-in flow feel like the same app. */}
         <header className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-4">
             <CupPlaceholder />
             <div>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.25em] text-white/80">
+              <div className="text-xs font-semibold uppercase tracking-[0.25em] text-white/80 sm:text-sm">
                 SOAR QSR
               </div>
-              <div className="text-base font-semibold tracking-tight">
+              <div className="text-xl font-semibold tracking-tight sm:text-2xl">
                 Operations Hub
               </div>
             </div>
@@ -144,8 +144,8 @@ function CupPlaceholder() {
   return (
     <svg
       viewBox="0 0 64 80"
-      width="36"
-      height="46"
+      width="56"
+      height="70"
       role="img"
       aria-label="SOAR QSR mark"
       className="drop-shadow-md"
