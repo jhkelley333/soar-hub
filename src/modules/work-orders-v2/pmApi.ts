@@ -176,6 +176,22 @@ export function deletePmSchedule(id: string): Promise<{ ok: true }> {
   });
 }
 
+export interface PatchSchedulePayload {
+  override_vendor_id?: string | null;
+  is_active?: boolean;
+  next_due_at?: string;
+}
+
+export function patchPmSchedule(
+  id: string,
+  patch: PatchSchedulePayload,
+): Promise<{ ok: true; schedule: PmSchedule }> {
+  return request(`${FN}?action=patchSchedule`, {
+    method: "POST",
+    body: JSON.stringify({ id, ...patch }),
+  });
+}
+
 export function spawnDuePmsNow(dryRun = false): Promise<SpawnSummary> {
   return request(`${FN}?action=spawnDueNow`, {
     method: "POST",
