@@ -10,6 +10,18 @@ import { supabase } from "@/lib/supabase";
 
 const FN = "/.netlify/functions/feature-flags";
 
+export interface ResolvedUser {
+  id: string;
+  full_name: string | null;
+  email: string | null;
+  role: string | null;
+}
+
+export interface ResolvedStore {
+  number: string;
+  name: string | null;
+}
+
 export interface FeatureFlagRow {
   key: string;
   enabled: boolean;
@@ -18,6 +30,10 @@ export interface FeatureFlagRow {
   notes: string | null;
   updated_at: string;
   updated_by_id: string | null;
+  // Server-hydrated names for the allowlists. Saves the admin UI from
+  // having to round-trip per row to render display names.
+  resolved_users?: ResolvedUser[];
+  resolved_stores?: ResolvedStore[];
 }
 
 interface ResolveAllResponse {
@@ -88,4 +104,18 @@ export function deleteFeatureFlag(key: string): Promise<{ ok: true }> {
     method: "POST",
     body: JSON.stringify({ key }),
   });
+}
+
+// Typeahead lookups for the admin allowlist editor. Both are admin-only
+// on the backend; UI surfaces them only inside FeatureFlagsPage.
+export function searchUsersForFlag(q: string): Promise<{ ok: true; users: ResolvedUser[] }> {
+  return authedFetch<{ ok: true; users: ResolvedUser[] }>(
+    `${FN}?action=searchUsers&q=${encodeURIComponent(q)}`,
+  );
+}
+
+export function searchStoresForFlag(q: string): Promise<{ ok: true; stores: ResolvedStore[] }> {
+  return authedFetch<{ ok: true; stores: ResolvedStore[] }>(
+    `${FN}?action=searchStores&q=${encodeURIComponent(q)}`,
+  );
 }

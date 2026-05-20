@@ -2,7 +2,10 @@ import { createBrowserRouter, Navigate, useLocation } from "react-router-dom";
 import { AppShell } from "@/app/AppShell";
 import { ProtectedRoute } from "@/auth/ProtectedRoute";
 import { useAuth } from "@/auth/AuthProvider";
+import { useFlag } from "@/lib/flags";
 import { LandingPage } from "@/auth/LandingPage";
+import type { ReactNode } from "react";
+import type { UserRole } from "@/types/database";
 import { LoginPage } from "@/auth/LoginPage";
 import { ResetPasswordPage } from "@/auth/ResetPasswordPage";
 import { AcceptInvitePage } from "@/auth/AcceptInvitePage";
@@ -44,9 +47,9 @@ export const router = createBrowserRouter([
       {
         path: "paf",
         element: (
-          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+          <FlagOrRoleRoute roles={["payroll", "admin"]} flagKey="paf_pilot">
             <PafPage />
-          </ProtectedRoute>
+          </FlagOrRoleRoute>
         ),
       },
       {
@@ -170,4 +173,41 @@ function RootRoute() {
   }
 
   return <AppShell />;
+}
+
+// FlagOrRoleRoute — pilot-friendly route guard. Lets a user in if their
+// role matches OR if the named feature flag resolves to ON for them.
+// Used to widen access to specific testers (per-user allowlist on the
+// flag) without changing the role rule. Profile-load failure is handled
+// the same way as ProtectedRoute(requireRoles).
+function FlagOrRoleRoute({
+  roles,
+  flagKey,
+  children,
+}: {
+  roles: UserRole[];
+  flagKey: string;
+  children: ReactNode;
+}) {
+  const { session, profile, loading } = useAuth();
+  const flagOn = useFlag(flagKey);
+  const location = useLocation();
+
+  if (loading) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-zinc-500">
+        Loading...
+      </div>
+    );
+  }
+  if (!session) {
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+  if (!profile) {
+    return <Navigate to="/" replace />;
+  }
+  if (roles.includes(profile.role) || flagOn) {
+    return <>{children}</>;
+  }
+  return <Navigate to="/" replace />;
 }
