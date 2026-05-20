@@ -1,6 +1,5 @@
 import {
   LayoutDashboard,
-  Wrench,
   FileSpreadsheet,
   BookOpen,
   BookUser,
@@ -38,7 +37,10 @@ export interface NavItem {
 export const NAV: NavItem[] = [
   { to: "/",            label: "Dashboard",   icon: LayoutDashboard, roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/ranker",      label: "Ranker",      icon: TrendingUp,      roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
-  { to: "/work-orders", label: "Work Orders", icon: Wrench,          roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // Legacy Work Orders (Smartsheet-backed) — hidden from the sidebar
+  // after the V2 cutover. Route stays alive for archival deep links;
+  // admins can still navigate to /work-orders manually if needed.
+  // { to: "/work-orders", label: "Work Orders", icon: Wrench, roles: ["admin"] },
   // PAF is currently in pilot mode — only payroll + admin by role. The
   // paf_pilot flag widens this to specific hand-picked testers (DOs,
   // RVPs, etc.) without code changes; admins add user IDs from
