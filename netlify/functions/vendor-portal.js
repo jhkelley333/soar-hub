@@ -26,6 +26,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { transition } from "./_lib/ticketStateMachine.js";
 import { tierFor } from "./_lib/permissions.js";
+import { sendEmail, notifyTicketEvent } from "./_lib/ticketEmail.js";
 
 const SUPABASE_URL =
   process.env.VITE_SUPABASE_URL ||
@@ -104,46 +105,6 @@ async function logVisit(supa, payload) {
   }
 }
 
-// Minimal Resend wrapper — same pattern as facilities-v2's sendEmail
-// but duplicated here so the vendor portal stays self-contained.
-async function sendEmail({ to, subject, html }) {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) return { sent: false, reason: "RESEND_API_KEY not set" };
-  const fromAddr =
-    process.env.FACILITIES_FROM_EMAIL ||
-    process.env.RESEND_FROM_EMAIL ||
-    "notifications@mysoarhub.com";
-  // Read the work-orders-specific override BEFORE falling back to
-  // the shared global so a stale RESEND_FROM_NAME=SOAR PAF (from
-  // the original PAF rollout) doesn't bleed into vendor-portal
-  // emails. Same precedence facilities-v2.js uses.
-  const fromName =
-    process.env.FACILITIES_FROM_NAME ||
-    process.env.RESEND_FROM_NAME ||
-    "SOAR Work Orders";
-  try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        from: `${fromName} <${fromAddr}>`,
-        to: Array.isArray(to) ? to : [to],
-        subject,
-        html,
-      }),
-    });
-    const body = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      return { sent: false, reason: body?.message || `HTTP ${res.status}` };
-    }
-    return { sent: true, id: body.id };
-  } catch (e) {
-    return { sent: false, reason: e?.message || String(e) };
-  }
-}
 
 // Drive-by completion: vendor marked on-site and then completed in
 // under 5 minutes. Real service almost always takes longer; this
@@ -915,6 +876,28 @@ export const handler = async (event) => {
         notes: `$${amount.toFixed(2)} • ${tier}`,
         remote_ip: ip, user_agent: ua,
       });
+
+      // Pull the refreshed ticket and fire an approval_requested
+      // email to the right approver tier. Mirrors what the
+      // DO-initiated submitApproval flow in facilities-v2 does;
+      // previously the vendor-portal quote path skipped this so
+      // approvers only saw new vendor quotes via the dashboard
+      // bell. Fire-and-forget — quote submission itself already
+      // succeeded; an email failure shouldn't bubble up.
+      supabase
+        .from("tickets")
+        .select("*")
+        .eq("id", ticketId)
+        .single()
+        .then(({ data: refreshed }) => {
+          if (refreshed) {
+            return notifyTicketEvent(supabase, refreshed, "approval_requested");
+          }
+        })
+        .catch((e) => {
+          console.warn("[vendor-portal] approval_requested notify failed", e);
+        });
+
       return respond(200, { ok: true, tier, quoteUrl });
     }
 
