@@ -103,7 +103,78 @@ export const handler = async (event) => {
         .select("key, enabled, allowlist_stores, allowlist_user_ids, notes, updated_at, updated_by_id")
         .order("key");
       if (error) throw error;
-      return respond(200, { ok: true, flags: data || [] });
+      const flags = data || [];
+
+      // Hydrate allowlists with human-readable names so the admin UI
+      // doesn't have to round-trip per-row. One union query covers
+      // every flag's referenced users + stores.
+      const allUserIds = new Set();
+      const allStoreNumbers = new Set();
+      for (const f of flags) {
+        for (const id of f.allowlist_user_ids || []) allUserIds.add(id);
+        for (const n of f.allowlist_stores || []) allStoreNumbers.add(String(n));
+      }
+      const usersById = new Map();
+      const storesByNumber = new Map();
+      if (allUserIds.size > 0) {
+        const { data: rows } = await supabase
+          .from("profiles")
+          .select("id, full_name, email, role")
+          .in("id", Array.from(allUserIds));
+        for (const r of rows || []) usersById.set(r.id, r);
+      }
+      if (allStoreNumbers.size > 0) {
+        const { data: rows } = await supabase
+          .from("stores")
+          .select("number, name")
+          .in("number", Array.from(allStoreNumbers));
+        for (const r of rows || []) storesByNumber.set(String(r.number), r);
+      }
+      const hydrated = flags.map((f) => ({
+        ...f,
+        resolved_users: (f.allowlist_user_ids || []).map((id) =>
+          usersById.get(id) || { id, full_name: null, email: null, role: null },
+        ),
+        resolved_stores: (f.allowlist_stores || []).map((n) =>
+          storesByNumber.get(String(n)) || { number: String(n), name: null },
+        ),
+      }));
+      return respond(200, { ok: true, flags: hydrated });
+    }
+
+    // Name-search for the user-picker in the admin flag editor. Matches
+    // full_name OR email, case-insensitive. Active users only. Capped at
+    // 20 results so the dropdown stays manageable. Empty query returns
+    // [] — caller is expected to type at least one character.
+    if (action === "searchUsers") {
+      const q = String((event.queryStringParameters || {}).q || "").trim();
+      if (!q) return respond(200, { ok: true, users: [] });
+      const like = `%${q.replace(/[%_]/g, "\\$&")}%`;
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, full_name, email, role")
+        .eq("is_active", true)
+        .or(`full_name.ilike.${like},email.ilike.${like}`)
+        .order("full_name", { ascending: true, nullsFirst: false })
+        .limit(20);
+      if (error) throw error;
+      return respond(200, { ok: true, users: data || [] });
+    }
+
+    // Number/name-search for the store-picker. Matches store number
+    // (string startsWith) or store name (ilike).
+    if (action === "searchStores") {
+      const q = String((event.queryStringParameters || {}).q || "").trim();
+      if (!q) return respond(200, { ok: true, stores: [] });
+      const like = `%${q.replace(/[%_]/g, "\\$&")}%`;
+      const { data, error } = await supabase
+        .from("stores")
+        .select("number, name")
+        .or(`number.ilike.${like},name.ilike.${like}`)
+        .order("number", { ascending: true })
+        .limit(20);
+      if (error) throw error;
+      return respond(200, { ok: true, stores: data || [] });
     }
 
     if (action === "upsert" && event.httpMethod === "POST") {

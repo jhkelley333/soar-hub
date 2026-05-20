@@ -8,9 +8,9 @@
 // re-checks role for every write action; UI hiding is not the only
 // guard.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, Plus, Trash2 } from "lucide-react";
+import { Loader2, Plus, Trash2, X, Search } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -23,8 +23,12 @@ import { useToast } from "@/shared/ui/Toaster";
 import {
   deleteFeatureFlag,
   listFeatureFlags,
+  searchStoresForFlag,
+  searchUsersForFlag,
   upsertFeatureFlag,
   type FeatureFlagRow,
+  type ResolvedStore,
+  type ResolvedUser,
 } from "@/lib/flags";
 
 export function FeatureFlagsPage() {
@@ -115,8 +119,16 @@ interface FlagRowProps {
 
 function FlagRow({ flag, onSaved, onError, onDeleted }: FlagRowProps) {
   const [enabled, setEnabled] = useState(flag.enabled);
-  const [stores, setStores] = useState(flag.allowlist_stores.join(", "));
-  const [userIds, setUserIds] = useState(flag.allowlist_user_ids.join(", "));
+  const [users, setUsers] = useState<ResolvedUser[]>(
+    flag.resolved_users && flag.resolved_users.length > 0
+      ? flag.resolved_users
+      : flag.allowlist_user_ids.map((id) => ({ id, full_name: null, email: null, role: null })),
+  );
+  const [stores, setStores] = useState<ResolvedStore[]>(
+    flag.resolved_stores && flag.resolved_stores.length > 0
+      ? flag.resolved_stores
+      : flag.allowlist_stores.map((n) => ({ number: n, name: null })),
+  );
   const [notes, setNotes] = useState(flag.notes || "");
 
   const save = useMutation({
@@ -124,14 +136,8 @@ function FlagRow({ flag, onSaved, onError, onDeleted }: FlagRowProps) {
       upsertFeatureFlag({
         key: flag.key,
         enabled,
-        allowlist_stores: stores
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
-        allowlist_user_ids: userIds
-          .split(",")
-          .map((s) => s.trim())
-          .filter(Boolean),
+        allowlist_stores: stores.map((s) => s.number),
+        allowlist_user_ids: users.map((u) => u.id),
         notes: notes.trim() || null,
       }),
     onSuccess: () => onSaved(),
@@ -178,22 +184,12 @@ function FlagRow({ flag, onSaved, onError, onDeleted }: FlagRowProps) {
           Enabled for everyone
         </label>
         <div>
-          <Label htmlFor={`stores-${flag.key}`}>Pilot stores (comma-separated store numbers)</Label>
-          <Input
-            id={`stores-${flag.key}`}
-            value={stores}
-            onChange={(e) => setStores(e.target.value)}
-            placeholder="1242, 2167"
-          />
+          <Label>Pilot stores</Label>
+          <StorePicker selected={stores} onChange={setStores} />
         </div>
         <div>
-          <Label htmlFor={`users-${flag.key}`}>Pilot users (comma-separated profile UUIDs)</Label>
-          <Input
-            id={`users-${flag.key}`}
-            value={userIds}
-            onChange={(e) => setUserIds(e.target.value)}
-            placeholder="aaaa-bbbb-…, cccc-dddd-…"
-          />
+          <Label>Pilot users</Label>
+          <UserPicker selected={users} onChange={setUsers} />
         </div>
         <div>
           <Label htmlFor={`notes-${flag.key}`}>Notes</Label>
@@ -308,6 +304,202 @@ function NewFlagModal({
           </Button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// useDebouncedValue — keystroke-friendly search throttle. 200ms is the
+// sweet spot for "feels instant" without hammering the backend.
+function useDebouncedValue<T>(value: T, ms = 200): T {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const t = setTimeout(() => setV(value), ms);
+    return () => clearTimeout(t);
+  }, [value, ms]);
+  return v;
+}
+
+interface UserPickerProps {
+  selected: ResolvedUser[];
+  onChange: (next: ResolvedUser[]) => void;
+}
+
+function UserPicker({ selected, onChange }: UserPickerProps) {
+  const [query, setQuery] = useState("");
+  const debounced = useDebouncedValue(query, 200);
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const results = useQuery({
+    queryKey: ["flag-search-users", debounced],
+    queryFn: () => searchUsersForFlag(debounced),
+    enabled: debounced.trim().length > 0,
+    staleTime: 30_000,
+  });
+
+  const selectedIds = new Set(selected.map((u) => u.id));
+  const matches = (results.data?.users || []).filter((u) => !selectedIds.has(u.id));
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2 py-1.5 focus-within:border-accent focus-within:ring-1 focus-within:ring-accent">
+        {selected.map((u) => (
+          <span
+            key={u.id}
+            className="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-xs text-midnight"
+          >
+            <span className="font-medium">{u.full_name || u.email || u.id}</span>
+            {u.role && <span className="text-[10px] uppercase text-zinc-500">{u.role}</span>}
+            <button
+              type="button"
+              onClick={() => onChange(selected.filter((s) => s.id !== u.id))}
+              className="rounded-full p-0.5 text-zinc-500 hover:bg-accent/20 hover:text-midnight"
+              aria-label={`Remove ${u.full_name || u.email}`}
+            >
+              <X className="h-3 w-3" strokeWidth={2} />
+            </button>
+          </span>
+        ))}
+        <div className="flex flex-1 items-center gap-1 px-1">
+          <Search className="h-3.5 w-3.5 text-zinc-400" strokeWidth={1.75} />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+            onFocus={() => setOpen(true)}
+            placeholder={selected.length === 0 ? "Search by name or email…" : "Add another…"}
+            className="min-w-[120px] flex-1 bg-transparent text-sm text-midnight placeholder:text-zinc-400 focus:outline-none"
+          />
+        </div>
+      </div>
+      {open && debounced.trim().length > 0 && (
+        <div className="absolute z-20 mt-1 max-h-64 w-full overflow-auto rounded-md border border-zinc-200 bg-white py-1 text-sm shadow-lg">
+          {results.isLoading && (
+            <div className="px-3 py-2 text-xs text-zinc-500">Searching…</div>
+          )}
+          {!results.isLoading && matches.length === 0 && (
+            <div className="px-3 py-2 text-xs text-zinc-500">No matches.</div>
+          )}
+          {matches.map((u) => (
+            <button
+              key={u.id}
+              type="button"
+              onClick={() => {
+                onChange([...selected, u]);
+                setQuery("");
+              }}
+              className="flex w-full items-center justify-between gap-2 px-3 py-1.5 text-left hover:bg-zinc-50"
+            >
+              <span className="min-w-0 flex-1 truncate">
+                <span className="font-medium text-midnight">{u.full_name || "—"}</span>
+                <span className="ml-2 text-xs text-zinc-500">{u.email}</span>
+              </span>
+              {u.role && (
+                <span className="text-[10px] uppercase tracking-wide text-zinc-500">{u.role}</span>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface StorePickerProps {
+  selected: ResolvedStore[];
+  onChange: (next: ResolvedStore[]) => void;
+}
+
+function StorePicker({ selected, onChange }: StorePickerProps) {
+  const [query, setQuery] = useState("");
+  const debounced = useDebouncedValue(query, 200);
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onDoc = (e: MouseEvent) => {
+      if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
+  const results = useQuery({
+    queryKey: ["flag-search-stores", debounced],
+    queryFn: () => searchStoresForFlag(debounced),
+    enabled: debounced.trim().length > 0,
+    staleTime: 30_000,
+  });
+
+  const selectedNumbers = new Set(selected.map((s) => s.number));
+  const matches = (results.data?.stores || []).filter(
+    (s) => !selectedNumbers.has(s.number),
+  );
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-2 py-1.5 focus-within:border-accent focus-within:ring-1 focus-within:ring-accent">
+        {selected.map((s) => (
+          <span
+            key={s.number}
+            className="inline-flex items-center gap-1 rounded-full bg-accent/10 px-2 py-0.5 text-xs text-midnight"
+          >
+            <span className="font-medium">#{s.number}</span>
+            {s.name && <span className="text-zinc-600">{s.name}</span>}
+            <button
+              type="button"
+              onClick={() => onChange(selected.filter((x) => x.number !== s.number))}
+              className="rounded-full p-0.5 text-zinc-500 hover:bg-accent/20 hover:text-midnight"
+              aria-label={`Remove store ${s.number}`}
+            >
+              <X className="h-3 w-3" strokeWidth={2} />
+            </button>
+          </span>
+        ))}
+        <div className="flex flex-1 items-center gap-1 px-1">
+          <Search className="h-3.5 w-3.5 text-zinc-400" strokeWidth={1.75} />
+          <input
+            type="text"
+            value={query}
+            onChange={(e) => { setQuery(e.target.value); setOpen(true); }}
+            onFocus={() => setOpen(true)}
+            placeholder={selected.length === 0 ? "Search by store number or name…" : "Add another…"}
+            className="min-w-[120px] flex-1 bg-transparent text-sm text-midnight placeholder:text-zinc-400 focus:outline-none"
+          />
+        </div>
+      </div>
+      {open && debounced.trim().length > 0 && (
+        <div className="absolute z-20 mt-1 max-h-64 w-full overflow-auto rounded-md border border-zinc-200 bg-white py-1 text-sm shadow-lg">
+          {results.isLoading && (
+            <div className="px-3 py-2 text-xs text-zinc-500">Searching…</div>
+          )}
+          {!results.isLoading && matches.length === 0 && (
+            <div className="px-3 py-2 text-xs text-zinc-500">No matches.</div>
+          )}
+          {matches.map((s) => (
+            <button
+              key={s.number}
+              type="button"
+              onClick={() => {
+                onChange([...selected, s]);
+                setQuery("");
+              }}
+              className="flex w-full items-center gap-2 px-3 py-1.5 text-left hover:bg-zinc-50"
+            >
+              <span className="font-medium text-midnight">#{s.number}</span>
+              <span className="text-zinc-600">{s.name || "—"}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import { LogOut } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthProvider";
 import { visibleNav } from "@/app/nav";
+import { fetchResolvedFlags } from "@/lib/flags";
 import { listPafs, listSdoQueue } from "@/modules/paf/api";
 import { ROLE_LABELS, type UserRole } from "@/types/database";
 import { cn } from "@/lib/cn";
@@ -51,7 +52,14 @@ function usePafBadgeCount(role: UserRole | undefined): number | null {
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { profile, signOut } = useAuth();
-  const items = visibleNav(profile?.role);
+  // Reuses the same query key as useFlag() so we don't double-fetch.
+  const flagsQ = useQuery({
+    queryKey: ["feature-flags"],
+    queryFn: fetchResolvedFlags,
+    staleTime: 60_000,
+    refetchOnWindowFocus: false,
+  });
+  const items = visibleNav(profile?.role, flagsQ.data?.flags);
   const pafBadge = usePafBadgeCount(profile?.role);
 
   return (

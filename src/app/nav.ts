@@ -23,6 +23,11 @@ export interface NavItem {
   icon: LucideIcon;
   // null = visible to everyone signed in
   roles: UserRole[] | null;
+  // Optional override: if set, the item is also visible to any user
+  // for whom this feature flag resolves to ON — even if their role
+  // wouldn't normally qualify. Used to give specific testers access
+  // during a pilot without changing the role allowlist.
+  flagKey?: string;
 }
 
 // Single source of truth for the sidebar. Adding a module = adding a row.
@@ -34,7 +39,12 @@ export const NAV: NavItem[] = [
   { to: "/",            label: "Dashboard",   icon: LayoutDashboard, roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/ranker",      label: "Ranker",      icon: TrendingUp,      roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/work-orders", label: "Work Orders", icon: Wrench,          roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
-  { to: "/paf",         label: "PAF",         icon: FileSpreadsheet, roles: ["do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
+  // PAF is currently in pilot mode — only payroll + admin by role. The
+  // paf_pilot flag widens this to specific hand-picked testers (DOs,
+  // RVPs, etc.) without code changes; admins add user IDs from
+  // /admin/feature-flags. To return to the previous "DO and up" rule,
+  // delete the flagKey here and add the original roles back to roles.
+  { to: "/paf",         label: "PAF",         icon: FileSpreadsheet, roles: ["payroll", "admin"], flagKey: "paf_pilot" },
   { to: "/contacts",    label: "Contacts",    icon: BookUser,        roles: null },
   { to: "/resources",   label: "Resources",   icon: BookOpen,        roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/team",        label: "My Team",     icon: Users,           roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
@@ -50,9 +60,17 @@ export const NAV: NavItem[] = [
   { to: "/account",     label: "Account",     icon: UserCircle,      roles: null },
 ];
 
-export function visibleNav(role: UserRole | undefined): NavItem[] {
+export function visibleNav(
+  role: UserRole | undefined,
+  flags: Record<string, boolean> = {},
+): NavItem[] {
   if (!role) return [];
-  return NAV.filter((item) => !item.roles || item.roles.includes(role));
+  return NAV.filter((item) => {
+    if (!item.roles) return true;
+    if (item.roles.includes(role)) return true;
+    if (item.flagKey && flags[item.flagKey]) return true;
+    return false;
+  });
 }
 
 // Where to land each role after sign-in. Payroll skips Dashboard
