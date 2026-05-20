@@ -233,6 +233,42 @@ export const handler = async (event) => {
       return respond(200, { ok: true });
     }
 
+    // patchSchedule — partial update of a single pm_schedule row by id.
+    // Used by the inline editors in the Schedules table (vendor
+    // override, active toggle, next-due tweak) so admins can mix and
+    // match per-store after bulk-assigning a template.
+    if (action === "patchSchedule" && event.httpMethod === "POST") {
+      const body = JSON.parse(event.body || "{}");
+      if (!body.id) return respond(400, { ok: false, message: "id required." });
+      const updates = {};
+      if ("override_vendor_id" in body) {
+        updates.override_vendor_id = body.override_vendor_id || null;
+      }
+      if ("is_active" in body) updates.is_active = !!body.is_active;
+      if ("next_due_at" in body && body.next_due_at) {
+        const d = new Date(body.next_due_at);
+        if (!isNaN(d.getTime())) updates.next_due_at = d.toISOString();
+      }
+      if (Object.keys(updates).length === 0) {
+        return respond(400, { ok: false, message: "Nothing to update." });
+      }
+      const { data, error } = await supabase
+        .from("pm_schedule")
+        .update(updates)
+        .eq("id", body.id)
+        .select(`
+          id, template_id, store_id, override_vendor_id,
+          next_due_at, last_completed_at, last_ticket_id, is_active,
+          created_at, updated_at,
+          pm_templates:template_id ( id, name, performer_type, default_vendor_id ),
+          stores:store_id ( id, number, name ),
+          vendors_override:override_vendor_id ( id, name )
+        `)
+        .single();
+      if (error) throw error;
+      return respond(200, { ok: true, schedule: data });
+    }
+
     if (action === "spawnDueNow" && event.httpMethod === "POST") {
       const body = event.body ? JSON.parse(event.body) : {};
       const result = await spawnDuePMs(supabase, { dryRun: !!body.dryRun });

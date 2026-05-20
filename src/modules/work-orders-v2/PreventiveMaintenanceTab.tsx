@@ -31,6 +31,7 @@ import {
   deletePmTemplate,
   listPmSchedules,
   listPmTemplates,
+  patchPmSchedule,
   spawnDuePmsNow,
   upsertPmSchedule,
   upsertPmTemplate,
@@ -561,6 +562,9 @@ function SchedulesView() {
   const qc = useQueryClient();
   const schedulesQ = useQuery({ queryKey: ["pm-schedules"], queryFn: () => listPmSchedules() });
   const templatesQ = useQuery({ queryKey: ["pm-templates"], queryFn: listPmTemplates });
+  // Shared vendors list for every inline picker in the table. Single
+  // round trip even when 100 stores are listed.
+  const vendorsQ = useQuery({ queryKey: ["pm-vendors-list"], queryFn: () => fetchVendors() });
   const [assigning, setAssigning] = useState(false);
 
   const del = useMutation({
@@ -678,7 +682,16 @@ function SchedulesView() {
                             </Badge>
                           </td>
                           <td className="py-1.5 pr-3 text-zinc-600">{fmtDate(s.last_completed_at)}</td>
-                          <td className="py-1.5 pr-3 text-zinc-600">{s.vendors_override?.name || "—"}</td>
+                          <td className="py-1.5 pr-3 text-zinc-600">
+                            <ScheduleVendorPicker
+                              schedule={s}
+                              vendors={vendorsQ.data?.vendors || []}
+                              templateDefaultName={
+                                (templatesQ.data?.templates || [])
+                                  .find((t) => t.id === s.template_id)?.vendors?.name || null
+                              }
+                            />
+                          </td>
                           <td className="py-1.5 pr-3">
                             {s.last_ticket_id ? (
                               <Badge tone="info">Spawned</Badge>
@@ -904,5 +917,72 @@ function AssignScheduleModal({ templates, onClose, onSaved }: AssignScheduleModa
         </div>
       </div>
     </div>
+  );
+}
+
+// ── Inline vendor picker for an existing schedule row ─────────────
+// Compact <select> that PATCHes pm_schedule.override_vendor_id on
+// change. Lets admins assign a different vendor per store after a
+// bulk-assign without nuking the schedule's next_due_at / completion
+// history.
+
+interface ScheduleVendorPickerProps {
+  schedule: PmSchedule;
+  vendors: { id: string; name: string; category?: string | null }[];
+  templateDefaultName: string | null;
+}
+
+function ScheduleVendorPicker({
+  schedule,
+  vendors,
+  templateDefaultName,
+}: ScheduleVendorPickerProps) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const isInternal = schedule.pm_templates?.performer_type === "internal";
+  // Optimistic local value so the select doesn't flicker between
+  // mutation start and cache refetch.
+  const [pending, setPending] = useState<string | null>(null);
+  const current = pending !== null ? pending : (schedule.override_vendor_id || "");
+
+  const patch = useMutation({
+    mutationFn: (vendorId: string) =>
+      patchPmSchedule(schedule.id, {
+        override_vendor_id: vendorId || null,
+      }),
+    onSuccess: () => {
+      toast.push("Vendor updated.", "success");
+      qc.invalidateQueries({ queryKey: ["pm-schedules"] });
+    },
+    onError: (e) => {
+      toast.push(e instanceof Error ? e.message : "Update failed.", "error");
+      setPending(null);
+    },
+  });
+
+  if (isInternal) {
+    return <span className="text-zinc-400">n/a (internal)</span>;
+  }
+
+  return (
+    <select
+      value={current}
+      disabled={patch.isPending}
+      onChange={(e) => {
+        const next = e.target.value;
+        setPending(next);
+        patch.mutate(next);
+      }}
+      className="block w-full max-w-[200px] rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-50"
+    >
+      <option value="">
+        Use default{templateDefaultName ? ` (${templateDefaultName})` : ""}
+      </option>
+      {vendors.map((v) => (
+        <option key={v.id} value={v.id}>
+          {v.name}
+        </option>
+      ))}
+    </select>
   );
 }
