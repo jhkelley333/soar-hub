@@ -969,6 +969,52 @@ export const handler = async (event) => {
     // strict payload validation. New UI uses this directly; the
     // legacy updateTicket also routes status changes through the
     // same machine for backwards compat.
+    // ── DELETE TICKET (admin only) ──
+    // Hard delete for cleaning up test tickets. Children cascade
+    // (ticket_activities, ticket_photos, ticket_messages,
+    // ticket_approvals, ticket_notifications all FK with ON DELETE
+    // CASCADE). PM schedules' last_ticket_id and tickets.callback_of
+    // / related_to FKs are ON DELETE SET NULL, so PM rotations and
+    // related-ticket links survive cleanly. Audit log entry recorded
+    // before the delete so we have a paper trail.
+    if (action === "deleteTicket" && event.httpMethod === "POST") {
+      if (role !== "admin") {
+        return respond(403, { ok: false, message: "Admin only." });
+      }
+      const body = JSON.parse(event.body || "{}");
+      const id = body.id;
+      if (!id) return respond(400, { ok: false, message: "id required." });
+
+      const { data: ticket, error: fetchErr } = await supabase
+        .from("tickets")
+        .select("id, wo_number, store_number, status, submitted_by")
+        .eq("id", id)
+        .maybeSingle();
+      if (fetchErr) throw fetchErr;
+      if (!ticket) return respond(404, { ok: false, message: "Ticket not found." });
+
+      console.log(
+        `[facilities-v2] admin ${userName} (${userId}) deleting ticket ` +
+        `${ticket.wo_number} (${ticket.id}) store=${ticket.store_number} ` +
+        `status=${ticket.status} submitter=${ticket.submitted_by}`,
+      );
+
+      const { error: delErr } = await supabase
+        .from("tickets")
+        .delete()
+        .eq("id", id);
+      if (delErr) throw delErr;
+
+      return respond(200, {
+        ok: true,
+        deleted: {
+          id: ticket.id,
+          wo_number: ticket.wo_number,
+          store_number: ticket.store_number,
+        },
+      });
+    }
+
     if (action === "transitionTicket" && event.httpMethod === "POST") {
       const denied = requireCap(profile, "transition_status");
       if (denied) return denied;
