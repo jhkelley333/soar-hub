@@ -131,6 +131,13 @@ async function findRecipients(supabase, ticket, kind) {
     }
     return [u];
   }
+  if (kind === "vendor_message_posted") {
+    // GMs and DOs are the humans who'd actually reply to a vendor
+    // message. SDOs+ can see the conversation in WO2's chat tab
+    // but aren't pinged by email here to avoid escalating routine
+    // "ETA changed" / "running late" chatter.
+    return findUsersForStore(supabase, ticket.store_number, ["gm", "do"]);
+  }
   return [];
 }
 
@@ -175,7 +182,7 @@ async function getActiveTemplate(supabase, kind) {
   return data;
 }
 
-function fallbackSubject(ticket, kind) {
+function fallbackSubject(ticket, kind, vars = {}) {
   if (kind === "submitted") {
     const what = ticket.asset_type || ticket.category || "Service Request";
     return `[Work Order] New ${ticket.wo_number} — Store ${ticket.store_number}: ${what}`;
@@ -186,10 +193,14 @@ function fallbackSubject(ticket, kind) {
   if (kind === "approval_decided") {
     return `[Work Order] Approval ${ticket.approval_status || "Decided"} — ${ticket.wo_number}`;
   }
+  if (kind === "vendor_message_posted") {
+    const vendor = vars.vendor_name || "Vendor";
+    return `[Work Order] New message from ${vendor} — ${ticket.wo_number}`;
+  }
   return `[Work Order] Update — ${ticket.wo_number}`;
 }
 
-function fallbackHtml(ticket, kind) {
+function fallbackHtml(ticket, kind, vars = {}) {
   const base = appBaseUrl();
   const link = base
     ? `${base}/admin/work-orders-v2?ticket=${encodeURIComponent(ticket.id || "")}`
@@ -213,22 +224,26 @@ function fallbackHtml(ticket, kind) {
     body = `<p><strong>Approval requested at tier:</strong> ${escapeHtml(ticket.approval_level || "—")}</p>${detail}<p><strong>Request notes:</strong></p><p style="white-space:pre-wrap;color:#333;">${escapeHtml(ticket.approval_request_notes || "—")}</p>`;
   } else if (kind === "approval_decided") {
     body = `<p>Your approval request was <strong>${escapeHtml(ticket.approval_status || "Decided")}</strong>${ticket.approval_approved_by ? ` by ${escapeHtml(ticket.approval_approved_by)}` : ""}.</p>${detail}`;
+  } else if (kind === "vendor_message_posted") {
+    const vendor = vars.vendor_name || "Vendor";
+    const preview = vars.message_preview || "";
+    body = `<p><strong>${escapeHtml(vendor)}</strong> posted a message on this work order.</p>${detail}<p><strong>Message:</strong></p><blockquote style="margin:8px 0;padding:8px 12px;border-left:3px solid #2563eb;background:#f1f5f9;color:#222;white-space:pre-wrap;">${escapeHtml(preview)}</blockquote><p style="font-size:12px;color:#666;">Reply directly in the Vendor chat tab on the work order.</p>`;
   }
   return `<!DOCTYPE html><html><body style="font-family:Arial,Helvetica,sans-serif;color:#222;max-width:620px;margin:0 auto;padding:16px;">${body}${linkHtml}<p style="font-size:11px;color:#999;margin-top:24px;border-top:1px solid #eee;padding-top:8px;">Sent automatically by SOAR Facilities V2 (fallback template).</p></body></html>`;
 }
 
-async function renderEmail(supabase, ticket, kind) {
+async function renderEmail(supabase, ticket, kind, extraVars = {}) {
   const tmpl = await getActiveTemplate(supabase, kind);
+  const vars = { ...buildTicketVars(ticket), ...extraVars };
   if (tmpl) {
-    const vars = buildTicketVars(ticket);
     return {
       subject: renderTemplate(tmpl.subject, vars),
       html: renderTemplate(tmpl.body_html, vars),
     };
   }
   return {
-    subject: fallbackSubject(ticket, kind),
-    html: fallbackHtml(ticket, kind),
+    subject: fallbackSubject(ticket, kind, vars),
+    html: fallbackHtml(ticket, kind, vars),
   };
 }
 
@@ -281,7 +296,7 @@ export async function sendEmail({ to, subject, html }) {
 // to ticket_notifications for the audit trail. Best-effort: any
 // individual log-insert failure is warned but doesn't break the
 // rest of the sends.
-export async function notifyTicketEvent(supabase, ticket, kind) {
+export async function notifyTicketEvent(supabase, ticket, kind, extraVars = {}) {
   const all = await findRecipients(supabase, ticket, kind);
   const seen = new Set();
   const recipients = all.filter((r) => {
@@ -292,7 +307,7 @@ export async function notifyTicketEvent(supabase, ticket, kind) {
   });
   if (!recipients.length) return;
 
-  const { subject, html } = await renderEmail(supabase, ticket, kind);
+  const { subject, html } = await renderEmail(supabase, ticket, kind, extraVars);
 
   for (const r of recipients) {
     const result = await sendEmail({ to: r.email, subject, html });

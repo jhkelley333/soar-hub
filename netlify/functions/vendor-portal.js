@@ -942,6 +942,49 @@ export const handler = async (event) => {
         notes: text.slice(0, 200),
         remote_ip: ip, user_agent: ua,
       });
+
+      // Notify GMs + DOs at the store — throttled to once per
+      // ticket per 30 minutes so a fast back-and-forth doesn't
+      // bury anyone's inbox. The "last email" check uses
+      // ticket_notifications, which is also the audit row this
+      // path writes on success — so the throttle is self-
+      // referencing and survives function cold-starts.
+      try {
+        const THROTTLE_MS = 30 * 60_000;
+        const cutoff = new Date(Date.now() - THROTTLE_MS).toISOString();
+        const { data: recent } = await supabase
+          .from("ticket_notifications")
+          .select("id")
+          .eq("ticket_id", ticketId)
+          .eq("notification_type", "vendor_message_posted")
+          .gt("created_at", cutoff)
+          .limit(1);
+        const throttled = recent && recent.length > 0;
+        if (!throttled) {
+          const { data: refreshed } = await supabase
+            .from("tickets")
+            .select("*")
+            .eq("id", ticketId)
+            .single();
+          if (refreshed) {
+            const preview = text.length > 200
+              ? text.slice(0, 200).trim() + "…"
+              : text;
+            await notifyTicketEvent(
+              supabase,
+              refreshed,
+              "vendor_message_posted",
+              {
+                vendor_name: identity.vendor_company || identity.vendor_name,
+                message_preview: preview,
+              },
+            );
+          }
+        }
+      } catch (e) {
+        console.warn("[vendor-portal] vendor_message_posted notify failed", e);
+      }
+
       return respond(200, { ok: true });
     }
 
