@@ -146,10 +146,14 @@ async function buildVendorIndex(supabase) {
 }
 
 // ── Store lookup ──
+// `stores` doesn't carry do_email / sdo_email / email columns — those
+// are recorded on the ticket itself at submit time in the v2-native
+// flow. For imported tickets we leave them blank; routing emails are
+// resolved at notify time from the org tree if needed.
 async function buildStoreIndex(supabase) {
   const { data, error } = await supabase
     .from("stores")
-    .select("id, number, name, email, do_email, sdo_email");
+    .select("id, number, name");
   if (error) throw error;
   const idx = new Map();
   for (const s of data || []) {
@@ -232,9 +236,9 @@ function candidateToTicket(c, woNumber) {
     wo_number:               woNumber,
     store_number:            c.storeNumber,
     store_name:              c.store?.name || "",
-    store_email:             c.store?.email || "",
-    do_email:                c.store?.do_email || "",
-    sdo_email:               c.store?.sdo_email || "",
+    store_email:             "",
+    do_email:                "",
+    sdo_email:               "",
     submitted_by:            c.submittedBy,
     submitted_by_user_id:    null,
     category:                c.category || "",
