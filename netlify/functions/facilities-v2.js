@@ -31,6 +31,7 @@ import { can, requireCap, tierFor, activityVisibilityForTier } from "./_lib/perm
 import { transition, setPause, isWithinReopenGrace, REOPEN_GRACE } from "./_lib/ticketStateMachine.js";
 import { toNewStatus, toLegacyStatus } from "./_lib/statusMapping.js";
 import { sendEmail, notifyTicketEvent } from "./_lib/ticketEmail.js";
+import { onPMTicketClosed } from "./_lib/pm.js";
 
 const SUPABASE_URL =
   process.env.VITE_SUPABASE_URL ||
@@ -1066,6 +1067,16 @@ export const handler = async (event) => {
       }
       if (activityRows.length) {
         await supabase.from("ticket_activities").insert(activityRows);
+      }
+
+      // PM bookkeeping: if this ticket was spawned from a PM schedule
+      // and just hit a success-close, advance the schedule's
+      // next_due_at and clear last_ticket_id so the next cycle can
+      // spawn. No-op for non-PM tickets or cancellations.
+      try {
+        await onPMTicketClosed(supabase, ticket);
+      } catch (e) {
+        console.warn("[facilities-v2] onPMTicketClosed failed:", e?.message);
       }
 
       return respond(200, { ok: true, ticket });
