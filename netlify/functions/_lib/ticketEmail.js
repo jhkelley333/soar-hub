@@ -103,7 +103,12 @@ async function findRecipients(supabase, ticket, kind) {
     const tier = String(ticket.approval_level || "");
     let role = "do";
     if (tier.startsWith("SDO")) role = "sdo";
-    else if (tier.startsWith("VP")) role = "vp";
+    // Top approver band — labelled "RVP $1001-$1750" since RVPs
+    // (Regional VPs) are the operational approvers at this tier,
+    // not corporate VPs. Old rows may still say "VP $1001-$1750"
+    // until the backfill runs; match either prefix so neither
+    // path breaks during the transition.
+    else if (tier.startsWith("RVP") || tier.startsWith("VP")) role = "rvp";
     return findUsersForStore(supabase, ticket.store_number, [role]);
   }
   if (kind === "approval_decided") {

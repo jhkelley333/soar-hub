@@ -209,7 +209,7 @@ function tierForCost(amount) {
   if (!Number.isFinite(n) || n <= 0) return null;
   if (n < 500)   return "DO < $500";
   if (n <= 1000) return "SDO $501-$1000";
-  return "VP $1001-$1750";
+  return "RVP $1001-$1750";
 }
 
 function pickIdentity(body) {
