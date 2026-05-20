@@ -17,6 +17,7 @@ import {
   Plus,
   RefreshCw,
   Settings,
+  Trash2,
 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
@@ -35,6 +36,7 @@ import {
   markTicketSeen,
   updateTicket,
   uploadPhoto,
+  deleteTicket,
 } from "./api";
 import {
   TICKET_PRIORITIES,
@@ -739,6 +741,15 @@ function TicketCard({
             onError={onError}
             initialThread={initialThread || undefined}
           />
+
+          {callerRole === "admin" && (
+            <AdminDeleteTicketRow
+              ticketId={ticket.id}
+              woNumber={ticket.wo_number}
+              onDeleted={onUpdated}
+              onError={onError}
+            />
+          )}
         </CardBody>
       )}
     </Card>
@@ -969,6 +980,104 @@ function UpdateForm({
         >
           {mut.isPending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
           Save Update
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// Admin-only hard-delete row at the bottom of the expanded ticket
+// card. Used to clean up test tickets / mistakes. Backend re-checks
+// admin role; this just hides the button for everyone else.
+//
+// Two-click safety: first click reveals a typed-confirmation row.
+// The actual mutation only fires after the user types "DELETE" and
+// presses Delete ticket. Avoids any single-click foot-gun while
+// still being fast enough to chew through a dozen test rows.
+function AdminDeleteTicketRow({
+  ticketId,
+  woNumber,
+  onDeleted,
+  onError,
+}: {
+  ticketId: string;
+  woNumber: string;
+  onDeleted: () => void;
+  onError: (msg: string) => void;
+}) {
+  const toast = useToast();
+  const [confirming, setConfirming] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+  const [pending, setPending] = useState(false);
+
+  async function doDelete() {
+    if (confirmText.trim().toUpperCase() !== "DELETE") {
+      toast.push("Type DELETE to confirm.", "error");
+      return;
+    }
+    setPending(true);
+    try {
+      await deleteTicket(ticketId);
+      toast.push(`Deleted ${woNumber}.`, "success");
+      onDeleted();
+    } catch (e) {
+      onError(e instanceof Error ? e.message : "Delete failed.");
+    } finally {
+      setPending(false);
+    }
+  }
+
+  if (!confirming) {
+    return (
+      <div className="flex justify-end border-t border-zinc-200 pt-3">
+        <button
+          type="button"
+          onClick={() => setConfirming(true)}
+          className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-red-700 hover:bg-red-50"
+          title="Admin: hard-delete this ticket"
+        >
+          <Trash2 className="h-3.5 w-3.5" strokeWidth={1.75} />
+          Delete ticket (admin)
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-red-200 bg-red-50 p-3">
+      <div className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold text-red-900">
+        <AlertTriangle className="h-3.5 w-3.5" strokeWidth={1.75} />
+        Hard-delete {woNumber}
+      </div>
+      <p className="mb-2 text-[11px] text-red-900">
+        This removes the ticket and all of its activities, photos, messages,
+        approvals, and notifications. Cannot be undone. Type{" "}
+        <code className="rounded bg-white px-1 py-0.5">DELETE</code> to confirm.
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <Input
+          value={confirmText}
+          onChange={(e) => setConfirmText(e.target.value)}
+          placeholder="DELETE"
+          className="w-32"
+        />
+        <Button
+          variant="primary"
+          onClick={doDelete}
+          disabled={pending || confirmText.trim().toUpperCase() !== "DELETE"}
+        >
+          {pending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+          Delete ticket
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={() => {
+            setConfirming(false);
+            setConfirmText("");
+          }}
+          disabled={pending}
+        >
+          Cancel
         </Button>
       </div>
     </div>

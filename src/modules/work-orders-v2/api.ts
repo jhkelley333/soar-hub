@@ -515,6 +515,19 @@ export function transitionTicket(
   });
 }
 
+// Admin-only hard delete. Use to clean up test tickets / mistakes.
+// Backend enforces role === "admin"; UI hides the button for everyone
+// else but the server is the real gate.
+export function deleteTicket(id: string): Promise<{
+  ok: true;
+  deleted: { id: string; wo_number: string; store_number: string };
+}> {
+  return request(`${FN}?action=deleteTicket`, {
+    method: "POST",
+    body: JSON.stringify({ id }),
+  });
+}
+
 export function setPauseState(
   payload: SetPauseStateBody,
 ): Promise<{ ok: true; ticket: Ticket }> {
