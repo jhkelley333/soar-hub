@@ -354,8 +354,8 @@ function approvalTiersForRole(role) {
     case "sdo":   return ["SDO $501-$1000"];
     case "rvp":
     case "vp":
-    case "coo":   return ["VP $1001-$1750"];
-    case "admin": return ["DO < $500", "SDO $501-$1000", "VP $1001-$1750"];
+    case "coo":   return ["RVP $1001-$1750"];
+    case "admin": return ["DO < $500", "SDO $501-$1000", "RVP $1001-$1750"];
     default:      return [];
   }
 }

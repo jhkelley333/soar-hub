@@ -294,7 +294,7 @@ export interface UploadPhotoResponse {
 export const APPROVAL_TIERS = [
   { value: "DO < $500",       label: "DO — under $500" },
   { value: "SDO $501-$1000",  label: "SDO — $501 to $1,000" },
-  { value: "VP $1001-$1750",  label: "VP — $1,001 to $1,750" },
+  { value: "RVP $1001-$1750", label: "RVP — $1,001 to $1,750" },
 ] as const;
 export type ApprovalTier = typeof APPROVAL_TIERS[number]["value"];
 

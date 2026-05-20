@@ -209,7 +209,7 @@ function tierForCost(amount) {
   if (!Number.isFinite(n) || n <= 0) return null;
   if (n < 500)   return "DO < $500";
   if (n <= 1000) return "SDO $501-$1000";
-  return "VP $1001-$1750";
+  return "RVP $1001-$1750";
 }
 
 function pickIdentity(body) {
@@ -656,16 +656,21 @@ export const handler = async (event) => {
         action: "completed", notes: body.notes || null,
         remote_ip: ip, user_agent: ua,
       });
-      // Fire-and-forget drive-by detection. We don't await this in
-      // the response path because the user's action succeeded — the
-      // alert is bonus monitoring. Any error is logged and swallowed.
-      maybeAlertDriveByCompletion(supabase, {
-        tokenId:     tok.id,
-        ticketId,
-        woNumber:    current.wo_number,
-        storeNumber: current.store_number,
-        vendor:      identity,
-      }).catch((e) => console.warn("[vendor-portal] drive-by alert path failed", e));
+      // Awaited so Netlify Functions can't freeze the container
+      // before the email + audit-log write complete. Vendor's
+      // action already succeeded — any error here is logged and
+      // swallowed so the response stays 200.
+      try {
+        await maybeAlertDriveByCompletion(supabase, {
+          tokenId:     tok.id,
+          ticketId,
+          woNumber:    current.wo_number,
+          storeNumber: current.store_number,
+          vendor:      identity,
+        });
+      } catch (e) {
+        console.warn("[vendor-portal] drive-by alert path failed", e);
+      }
       return respond(200, { ok: true });
     }
 
@@ -879,24 +884,26 @@ export const handler = async (event) => {
 
       // Pull the refreshed ticket and fire an approval_requested
       // email to the right approver tier. Mirrors what the
-      // DO-initiated submitApproval flow in facilities-v2 does;
-      // previously the vendor-portal quote path skipped this so
-      // approvers only saw new vendor quotes via the dashboard
-      // bell. Fire-and-forget — quote submission itself already
-      // succeeded; an email failure shouldn't bubble up.
-      supabase
-        .from("tickets")
-        .select("*")
-        .eq("id", ticketId)
-        .single()
-        .then(({ data: refreshed }) => {
-          if (refreshed) {
-            return notifyTicketEvent(supabase, refreshed, "approval_requested");
-          }
-        })
-        .catch((e) => {
-          console.warn("[vendor-portal] approval_requested notify failed", e);
-        });
+      // DO-initiated submitApproval flow in facilities-v2 does.
+      //
+      // Awaited (not fire-and-forget) because Netlify Functions
+      // can freeze the container the moment the response is
+      // returned — non-awaited promises don't always finish. The
+      // ~1-2s extra latency is worth the guarantee.
+      try {
+        const { data: refreshed } = await supabase
+          .from("tickets")
+          .select("*")
+          .eq("id", ticketId)
+          .single();
+        if (refreshed) {
+          await notifyTicketEvent(supabase, refreshed, "approval_requested");
+        }
+      } catch (e) {
+        // Email failures are non-fatal — the quote save already
+        // succeeded; surface the warning in logs and move on.
+        console.warn("[vendor-portal] approval_requested notify failed", e);
+      }
 
       return respond(200, { ok: true, tier, quoteUrl });
     }
