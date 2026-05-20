@@ -155,16 +155,11 @@ export function WorkOrdersV2Page() {
   return (
     <>
       <PageHeader
-        title={
-          <span className="inline-flex items-center gap-2">
-            Work Orders V2
-            <Badge tone="warning">BETA</Badge>
-          </span>
-        }
+        title="Work Orders"
         description={
           settingsTab
-            ? "Settings — Issue library, troubleshooting tips, email templates, and vendor QR management."
-            : "Facilities ticketing on Supabase — open BETA. Please report issues so we can iterate before rolling this out as the primary work-orders flow."
+            ? "Settings — issue library, troubleshooting tips, email templates, vendor QR, preventive maintenance, and legacy import."
+            : "Submit, route, and close facilities work orders across every store. Stores, vendors, and internal staff collaborate on each ticket in one place."
         }
         actions={
           canSeeSettings && !settingsTab ? (

@@ -36,6 +36,10 @@ export interface NavItem {
 // confusion with org-tree or work-order modules they don't operate.
 export const NAV: NavItem[] = [
   { to: "/",            label: "Dashboard",   icon: LayoutDashboard, roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // Work Orders V2 — now the primary facilities ticketing flow.
+  // Sits at the top right under Dashboard so it's the first
+  // operational tool field roles see.
+  { to: "/admin/work-orders-v2", label: "Work Orders", icon: Hammer, roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/ranker",      label: "Ranker",      icon: TrendingUp,      roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
   // Legacy Work Orders (Smartsheet-backed) — hidden from the sidebar
   // after the V2 cutover. Route stays alive for archival deep links;
@@ -55,10 +59,6 @@ export const NAV: NavItem[] = [
   { to: "/admin/bulk-attributes", label: "Bulk Attributes", icon: Layers, roles: ["admin"] },
   { to: "/admin/feature-flags",   label: "Feature Flags",   icon: Flag,   roles: ["admin"] },
   { to: "/admin/paf-config", label: "PAF Config", icon: Settings,    roles: ["payroll", "admin"] },
-  // BETA — Work Orders V2 module opened to field roles for live testing.
-  // Excludes payroll (focused PAF role); excluded from "admin/" path
-  // grouping but the URL is preserved to avoid breaking deep links.
-  { to: "/admin/work-orders-v2", label: "Work Orders V2 (BETA)", icon: Hammer, roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/account",     label: "Account",     icon: UserCircle,      roles: null },
 ];
 

@@ -29,6 +29,7 @@ import { MyStoresPage } from "@/modules/my-stores/MyStoresPage";
 import { AccountPage } from "@/modules/account/AccountPage";
 import { WorkOrdersV2Page } from "@/modules/work-orders-v2/WorkOrdersV2Page";
 import { VendorPortalPage } from "@/modules/vendor-portal/VendorPortalPage";
+import { PublicSubmitPage } from "@/modules/public-submit/PublicSubmitPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -38,6 +39,9 @@ export const router = createBrowserRouter([
   // Public anonymous vendor portal — opens directly from QR sticker.
   // Token in the URL is the only credential; no login required.
   { path: "/v/:token", element: <VendorPortalPage /> },
+  // Public ticket-submission page — anyone with the URL can search
+  // for a store and file a work order. Lives outside the auth tree.
+  { path: "/submit", element: <PublicSubmitPage /> },
   {
     path: "/",
     element: <RootRoute />,
