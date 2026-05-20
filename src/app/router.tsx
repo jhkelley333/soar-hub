@@ -1,6 +1,8 @@
-import { createBrowserRouter, Navigate } from "react-router-dom";
+import { createBrowserRouter, Navigate, useLocation } from "react-router-dom";
 import { AppShell } from "@/app/AppShell";
 import { ProtectedRoute } from "@/auth/ProtectedRoute";
+import { useAuth } from "@/auth/AuthProvider";
+import { LandingPage } from "@/auth/LandingPage";
 import { LoginPage } from "@/auth/LoginPage";
 import { ResetPasswordPage } from "@/auth/ResetPasswordPage";
 import { AcceptInvitePage } from "@/auth/AcceptInvitePage";
@@ -35,11 +37,7 @@ export const router = createBrowserRouter([
   { path: "/v/:token", element: <VendorPortalPage /> },
   {
     path: "/",
-    element: (
-      <ProtectedRoute>
-        <AppShell />
-      </ProtectedRoute>
-    ),
+    element: <RootRoute />,
     children: [
       { index: true, element: <DashboardPage /> },
       { path: "work-orders", element: <WorkOrdersPage /> },
@@ -147,3 +145,29 @@ export const router = createBrowserRouter([
   },
   { path: "*", element: <Navigate to="/" replace /> },
 ]);
+
+// RootRoute decides what fills the "/" slot:
+//   • loading auth         → spinner
+//   • no session + path /  → public LandingPage (firewall-friendly,
+//                             see comment block in LandingPage.tsx)
+//   • no session + sub-path → bounce to /login like ProtectedRoute did
+//   • session              → AppShell, which renders the child Outlet
+function RootRoute() {
+  const { session, loading } = useAuth();
+  const location = useLocation();
+
+  if (loading) {
+    return (
+      <div className="flex h-full items-center justify-center text-sm text-zinc-500">
+        Loading...
+      </div>
+    );
+  }
+
+  if (!session) {
+    if (location.pathname === "/") return <LandingPage />;
+    return <Navigate to="/login" replace state={{ from: location }} />;
+  }
+
+  return <AppShell />;
+}
