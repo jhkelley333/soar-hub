@@ -767,14 +767,38 @@ function ReplacementBanner({ ticket }: { ticket: Ticket }) {
     !!ticket.replacement_model
     || !!ticket.replacement_supplier
     || ticket.replacement_cost != null
-    || !!ticket.replacement_eta;
+    || !!ticket.replacement_eta
+    || !!ticket.replacement_asset_tag
+    || !!ticket.replacement_po_number;
   if (!hasAny) return null;
 
-  const items: Array<{ label: string; value: string }> = [];
-  items.push({ label: "Model / SKU", value: ticket.replacement_model || "—" });
-  items.push({ label: "Supplier",    value: ticket.replacement_supplier || "—" });
-  items.push({ label: "Cost",        value: fmtMoney(ticket.replacement_cost) });
-  items.push({ label: "Expected",    value: ticket.replacement_eta ? fmtDate(ticket.replacement_eta) : "—" });
+  // The receipt is a ticket_photos row tagged with the dedicated
+  // upload_type so we can link directly from this banner.
+  const receipt = (ticket.ticket_photos || []).find(
+    (p) => p.upload_type === "replacement_receipt",
+  );
+
+  // Build a warranty summary like "Labor 90d · Parts 365d (manufacturer)".
+  // Surfaces enough at a glance without a separate section.
+  const warrantyParts: string[] = [];
+  if (ticket.replacement_warranty_labor_days != null) {
+    warrantyParts.push(`Labor ${ticket.replacement_warranty_labor_days}d`);
+  }
+  if (ticket.replacement_warranty_parts_days != null) {
+    const src = ticket.replacement_warranty_parts_source;
+    warrantyParts.push(`Parts ${ticket.replacement_warranty_parts_days}d${src ? ` (${src})` : ""}`);
+  }
+  const warranty = warrantyParts.join(" · ") || "—";
+
+  const items: Array<{ label: string; value: string }> = [
+    { label: "Model / SKU",    value: ticket.replacement_model || "—" },
+    { label: "Supplier",       value: ticket.replacement_supplier || "—" },
+    { label: "Cost",           value: fmtMoney(ticket.replacement_cost) },
+    { label: "Expected",       value: ticket.replacement_eta ? fmtDate(ticket.replacement_eta) : "—" },
+    { label: "Asset tag",      value: ticket.replacement_asset_tag || "—" },
+    { label: "PO / Order #",   value: ticket.replacement_po_number || "—" },
+    { label: "Warranty",       value: warranty },
+  ];
 
   const isAwaiting = ticket.status === "awaiting_equipment";
   return (
@@ -782,11 +806,26 @@ function ReplacementBanner({ ticket }: { ticket: Ticket }) {
       "mt-3 rounded-md border p-3",
       isAwaiting ? "border-indigo-200 bg-indigo-50" : "border-zinc-200 bg-zinc-50",
     )}>
-      <div className={cn(
-        "text-[11px] font-semibold uppercase tracking-wide",
-        isAwaiting ? "text-indigo-900" : "text-zinc-700",
-      )}>
-        {isAwaiting ? "Awaiting replacement equipment" : "Replacement details"}
+      <div className="flex items-center justify-between">
+        <div className={cn(
+          "text-[11px] font-semibold uppercase tracking-wide",
+          isAwaiting ? "text-indigo-900" : "text-zinc-700",
+        )}>
+          {isAwaiting ? "Awaiting replacement equipment" : "Replacement details"}
+        </div>
+        {receipt && (
+          <a
+            href={receipt.file_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(
+              "text-[11px] font-semibold underline-offset-2 hover:underline",
+              isAwaiting ? "text-indigo-700" : "text-accent",
+            )}
+          >
+            View receipt
+          </a>
+        )}
       </div>
       <dl className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
         {items.map((i) => (

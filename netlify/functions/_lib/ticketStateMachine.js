@@ -101,13 +101,38 @@ function validateReplacement(payload) {
   return null;
 }
 function replacementSideEffects(payload) {
-  return {
+  const out = {
     replacement_model:      String(payload.replacement_model).trim(),
     replacement_supplier:   payload.replacement_supplier ? String(payload.replacement_supplier).trim() : null,
     replacement_cost:       Number(payload.replacement_cost),
     replacement_eta:        payload.replacement_eta,
     replacement_ordered_at: nowIso(),
   };
+  // Optional capture fields — set if the user provided them at order
+  // time. Everything else can be filled in later via the Update Ticket
+  // panel. These migrate cleanly into V3 assets.
+  if (payload.replacement_asset_tag) {
+    out.replacement_asset_tag = String(payload.replacement_asset_tag).trim();
+  }
+  if (payload.replacement_po_number) {
+    out.replacement_po_number = String(payload.replacement_po_number).trim();
+  }
+  if (payload.replacement_warranty_labor_days !== undefined
+      && payload.replacement_warranty_labor_days !== null
+      && payload.replacement_warranty_labor_days !== "") {
+    const n = Number(payload.replacement_warranty_labor_days);
+    if (Number.isFinite(n) && n >= 0) out.replacement_warranty_labor_days = Math.round(n);
+  }
+  if (payload.replacement_warranty_parts_days !== undefined
+      && payload.replacement_warranty_parts_days !== null
+      && payload.replacement_warranty_parts_days !== "") {
+    const n = Number(payload.replacement_warranty_parts_days);
+    if (Number.isFinite(n) && n >= 0) out.replacement_warranty_parts_days = Math.round(n);
+  }
+  if (payload.replacement_warranty_parts_source) {
+    out.replacement_warranty_parts_source = String(payload.replacement_warranty_parts_source);
+  }
+  return out;
 }
 
 // Transition table — keyed `from -> to`. Each entry: validate(payload, ctx)

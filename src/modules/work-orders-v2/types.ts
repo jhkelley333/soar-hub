@@ -165,6 +165,14 @@ export interface Ticket {
   replacement_cost: number | string | null;
   replacement_eta: string | null;
   replacement_ordered_at: string | null;
+  // V3-asset-capture columns. All optional at order time, filled in
+  // as data becomes available. When V3 ships an `assets` table these
+  // fields migrate forward via INSERT ... SELECT FROM tickets.
+  replacement_asset_tag: string | null;
+  replacement_po_number: string | null;
+  replacement_warranty_labor_days: number | null;
+  replacement_warranty_parts_days: number | null;
+  replacement_warranty_parts_source: "vendor" | "manufacturer" | "none" | null;
   cost_estimate: number | string | null;
   submitted_by: string | null;
   submitted_by_user_id: string | null;
@@ -203,6 +211,11 @@ export type TransitionPayload = Partial<{
   replacement_supplier: string;
   replacement_cost: number;
   replacement_eta: string;
+  replacement_asset_tag: string;
+  replacement_po_number: string;
+  replacement_warranty_labor_days: number;
+  replacement_warranty_parts_days: number;
+  replacement_warranty_parts_source: "vendor" | "manufacturer" | "none";
 }>;
 
 export interface TransitionTicketBody {
@@ -302,7 +315,7 @@ export interface UploadPhotoBody {
   photoData: string;
   photoType: string;
   photoName: string;
-  uploadType?: "submission" | "update" | "quote";
+  uploadType?: "submission" | "update" | "quote" | "replacement_receipt";
 }
 
 export interface UploadPhotoResponse {
