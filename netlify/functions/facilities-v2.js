@@ -922,7 +922,10 @@ export const handler = async (event) => {
         }
       }
       if (vendorName !== undefined) updates.vendor_name = vendorName;
-      if (vendorId) updates.vendor_id = vendorId;
+      // null clears the link (free-text vendor entry); undefined
+      // leaves it alone; any other value sets it. Lets the typeahead
+      // drop a stale vendor_id when the user types over the name.
+      if (vendorId !== undefined) updates.vendor_id = vendorId || null;
       if (vendorEta) updates.vendor_eta = vendorEta;
       if (costEstimate !== undefined) updates.cost_estimate = costEstimate;
       if (priority) updates.priority = priority;

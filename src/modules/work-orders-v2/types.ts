@@ -152,6 +152,7 @@ export interface Ticket {
   closed_at?: string | null;
   priority: TicketPriority;
   is_business_critical: boolean;
+  vendor_id: string | null;
   vendor_name: string | null;
   cost_estimate: number | string | null;
   submitted_by: string | null;
@@ -221,6 +222,7 @@ export interface UpdateTicketBody {
   status?: TicketStatus;
   priority?: TicketPriority;
   vendorName?: string;
+  vendorId?: string | null;
   notes?: string;
 }
 

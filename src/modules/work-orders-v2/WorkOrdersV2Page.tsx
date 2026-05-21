@@ -49,6 +49,7 @@ import {
   type ThreadType,
 } from "./types";
 import { NewTicketModal } from "./NewTicketModal";
+import { VendorSearchInput } from "./VendorSearchInput";
 import { ApprovalSection } from "./ApprovalSection";
 import { TicketChat } from "./TicketChat";
 import { VendorsTab } from "./VendorsTab";
@@ -686,6 +687,7 @@ function TicketCard({
               ticketId={ticket.id}
               status={ticket.status}
               closedAt={ticket.closed_at}
+              storeNumber={ticket.store_number}
               isSubmitter={isSubmitter}
             />
           </div>
@@ -907,14 +909,22 @@ function UpdateForm({
 }) {
   const [priority, setPriority] = useState<TicketPriority>(ticket.priority);
   const [vendorName, setVendorName] = useState(ticket.vendor_name || "");
+  const [vendorId, setVendorId] = useState<string | null>(ticket.vendor_id || null);
   const [notes, setNotes] = useState("");
+
+  const initialVendorName = ticket.vendor_name || "";
+  const initialVendorId = ticket.vendor_id || null;
 
   const mut = useMutation({
     mutationFn: () =>
       updateTicket({
         id: ticket.id,
         priority: priority !== ticket.priority ? priority : undefined,
-        vendorName: vendorName !== (ticket.vendor_name || "") ? vendorName : undefined,
+        vendorName: vendorName !== initialVendorName ? vendorName : undefined,
+        // Send vendorId on any change — including null, which the
+        // backend treats as "clear the link" so a typed-over name
+        // doesn't keep a stale id.
+        vendorId: vendorId !== initialVendorId ? vendorId : undefined,
         notes: notes.trim() || undefined,
       }),
     onSuccess: () => {
@@ -926,7 +936,8 @@ function UpdateForm({
 
   const dirty =
     priority !== ticket.priority ||
-    vendorName !== (ticket.vendor_name || "") ||
+    vendorName !== initialVendorName ||
+    vendorId !== initialVendorId ||
     notes.trim().length > 0;
 
   return (
@@ -949,11 +960,16 @@ function UpdateForm({
       </div>
       <div className="mt-3">
         <Label htmlFor={`wo2-vendor-${ticket.id}`}>Vendor</Label>
-        <Input
+        <VendorSearchInput
           id={`wo2-vendor-${ticket.id}`}
+          storeNumber={ticket.store_number}
           value={vendorName}
-          onChange={(e) => setVendorName(e.target.value)}
-          placeholder="Vendor name"
+          vendorId={vendorId}
+          onChange={({ name, id }) => {
+            setVendorName(name);
+            setVendorId(id);
+          }}
+          placeholder="Search vendors or type a one-off name…"
         />
       </div>
       <div className="mt-3">

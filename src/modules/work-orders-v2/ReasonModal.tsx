@@ -10,6 +10,7 @@ import { Loader2, X } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
+import { VendorSearchInput } from "./VendorSearchInput";
 import type {
   AdminCloseReason,
   ResolutionCategory,
@@ -104,17 +105,22 @@ export type ReasonModalConfig =
 interface Props {
   open: boolean;
   config: ReasonModalConfig;
+  // Optional. When provided and the modal config is vendor_schedule,
+  // the vendor field renders as a searchable, store-scoped typeahead
+  // instead of a free-text input. Falls back to plain text if absent.
+  storeNumber?: string;
   onClose: () => void;
   onSubmit: (payload: TransitionPayload) => Promise<void> | void;
   submitting?: boolean;
   error?: string | null;
 }
 
-export function ReasonModal({ open, config, onClose, onSubmit, submitting, error }: Props) {
+export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, submitting, error }: Props) {
   const [reason, setReason] = useState<string>("");
   const [text, setText] = useState<string>("");
   const [resolution, setResolution] = useState<ResolutionCategory | "">("");
   const [vendorName, setVendorName] = useState<string>("");
+  const [vendorId, setVendorId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -122,6 +128,7 @@ export function ReasonModal({ open, config, onClose, onSubmit, submitting, error
     setText("");
     setResolution("");
     setVendorName("");
+    setVendorId(null);
   }, [open, config.kind]);
 
   const title = useMemo(() => config.title || defaultTitle(config.kind), [config]);
@@ -168,9 +175,12 @@ export function ReasonModal({ open, config, onClose, onSubmit, submitting, error
       case "resolution_only":
         if (!resolution && !config.optional) return null;
         return resolution ? { resolution_category: resolution } : {};
-      case "vendor_schedule":
+      case "vendor_schedule": {
         if (!vendorName.trim()) return null;
-        return { vendor_name: vendorName.trim() } as TransitionPayload;
+        const payload: TransitionPayload = { vendor_name: vendorName.trim() };
+        if (vendorId) payload.vendor_id = vendorId;
+        return payload;
+      }
     }
   }
 
@@ -299,15 +309,30 @@ export function ReasonModal({ open, config, onClose, onSubmit, submitting, error
           {config.kind === "vendor_schedule" && (
             <div>
               <Label htmlFor="vendor-name">Vendor *</Label>
-              <Input
-                id="vendor-name"
-                value={vendorName}
-                onChange={(e) => setVendorName(e.target.value)}
-                placeholder="Type a vendor name (or pick from Vendors tab)"
-                autoComplete="off"
-              />
+              {storeNumber ? (
+                <VendorSearchInput
+                  id="vendor-name"
+                  storeNumber={storeNumber}
+                  value={vendorName}
+                  vendorId={vendorId}
+                  onChange={({ name, id }) => {
+                    setVendorName(name);
+                    setVendorId(id);
+                  }}
+                  placeholder="Search vendors or type a one-off name…"
+                  autoFocus
+                />
+              ) : (
+                <Input
+                  id="vendor-name"
+                  value={vendorName}
+                  onChange={(e) => setVendorName(e.target.value)}
+                  placeholder="Type a vendor name (or pick from Vendors tab)"
+                  autoComplete="off"
+                />
+              )}
               <div className="mt-1 text-[10px] text-zinc-500">
-                Use a known vendor name when possible — we'll link it automatically.
+                Pick from the list to link the ticket; or type a one-off name.
               </div>
             </div>
           )}
