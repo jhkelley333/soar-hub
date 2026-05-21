@@ -2131,7 +2131,7 @@ export const handler = async (event) => {
       // pre-filter candidates and then potentially nothing.
       let query = supabase
         .from("vendors")
-        .select("id,name,category,service_area,services,phone,email,contact_person,vendor_scopes(scope_type,scope_id)")
+        .select("id,name,category,service_area,services,phone,email,contact_person,is_internal,vendor_scopes(scope_type,scope_id)")
         .eq("is_active", true);
       if (q) {
         query = query.or(

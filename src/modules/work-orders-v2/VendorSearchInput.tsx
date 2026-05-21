@@ -140,7 +140,14 @@ export function VendorSearchInput({
               }}
               className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50"
             >
-              <div className="font-semibold text-midnight">{v.name}</div>
+              <div className="flex items-center gap-2">
+                <span className="font-semibold text-midnight">{v.name}</span>
+                {v.is_internal && (
+                  <span className="rounded-sm bg-indigo-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-indigo-800">
+                    Internal
+                  </span>
+                )}
+              </div>
               <div className="text-[11px] text-zinc-500">
                 {[v.category, v.service_area].filter(Boolean).join(" · ") || "—"}
               </div>
