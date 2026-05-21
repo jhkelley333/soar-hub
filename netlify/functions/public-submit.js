@@ -27,6 +27,23 @@ import { notifyTicketEvent } from "./_lib/ticketEmail.js";
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+// Same bucket WO2 uses. Public photos get upload_type =
+// 'public_submission' so admins can audit / mass-purge if abuse
+// shows up.
+const PHOTOS_BUCKET = "wo2-ticket-photos";
+
+// Public upload guards. The combination of all three keeps anonymous
+// uploads tightly scoped:
+//   * Per-photo size cap: 5 MB decoded (after base64). Modern phone
+//     photos comfortably fit; abusers can't lob 100 MB blobs.
+//   * Per-ticket count cap: 3 photos. Mirrors the form's UI.
+//   * Time window: 15 min from ticket creation. After this the
+//     ticket "closes" for public photo uploads even if the count
+//     isn't full yet.
+const MAX_PUBLIC_PHOTO_BYTES = 5 * 1024 * 1024;
+const MAX_PUBLIC_PHOTOS_PER_TICKET = 3;
+const PUBLIC_UPLOAD_WINDOW_MS = 15 * 60 * 1000;
+
 function getSupabase() {
   return createClient(SUPABASE_URL, SERVICE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -102,9 +119,14 @@ export const handler = async (event) => {
       const submitterPhone = String(body.submitter_phone || "").trim();
       const category = String(body.category || "").trim();
       const assetType = String(body.asset_type || "").trim();
+      const modelNumber = String(body.model_number || "").trim();
       const issueDescription = String(body.issue_description || "").trim();
       const priority = ["Standard", "Urgent", "Emergency"].includes(body.priority)
         ? body.priority : "Standard";
+      // Tri-state: true if the submitter explicitly said "yes", false
+      // otherwise. We don't gate submission on this — see the
+      // troubleshooting question on the public form.
+      const troubleshootingChecked = body.troubleshooting_checked === true;
 
       // Required fields. Be strict here — no anonymous "test"
       // submissions from the public form.
@@ -155,11 +177,12 @@ export const handler = async (event) => {
           submitted_by_user_id:   null,
           category:               category || "Public submission",
           asset_type:             assetType || "",
+          model_number:           modelNumber || "",
           issue_description:      issueDescription,
           status:                 "submitted",
           priority,
           is_business_critical:   false,
-          troubleshooting_checked:false,
+          troubleshooting_checked:troubleshootingChecked,
           vendor_contacted:       false,
           date_submitted:         new Date().toISOString(),
         })
@@ -199,11 +222,142 @@ export const handler = async (event) => {
       return respond(200, {
         ok: true,
         ticket: {
+          // Returning the uuid lets the client follow up with photo
+          // uploads against this just-created public ticket.
+          id: ticket.id,
           wo_number: ticket.wo_number,
           store_number: store.number,
           store_name: store.name,
         },
       });
+    }
+
+    // ── Issue-library typeahead (public) ──
+    // Same shape as the WO2 modal's typeahead. Exposed publicly
+    // because the library has no PII or operational details — just
+    // category + asset_type + display_name + troubleshooting_tips.
+    if (action === "searchIssueLibrary") {
+      const q = String((event.queryStringParameters || {}).q || "").trim();
+      if (q.length < 2) {
+        return respond(200, { ok: true, items: [] });
+      }
+      const { data, error } = await supabase
+        .from("issue_library")
+        .select("id, category, asset_type, display_name, troubleshooting_tips, sort_order")
+        .or(`display_name.ilike.%${q}%,category.ilike.%${q}%,asset_type.ilike.%${q}%`)
+        .order("sort_order", { ascending: true })
+        .order("display_name", { ascending: true })
+        .limit(20);
+      if (error) throw error;
+      return respond(200, { ok: true, items: data || [] });
+    }
+
+    // ── Photo upload for a just-created public ticket ──
+    // No auth, but heavily guarded:
+    //   * ticket must exist
+    //   * submitted_by_user_id IS NULL AND submitted_by starts with
+    //     "Public:" — so this can only target public-submitted rows
+    //   * ticket.date_submitted within PUBLIC_UPLOAD_WINDOW_MS
+    //   * existing public photo count < MAX_PUBLIC_PHOTOS_PER_TICKET
+    //   * decoded payload <= MAX_PUBLIC_PHOTO_BYTES
+    //   * MIME starts with "image/"
+    // Anyone forging a request would need to know a freshly-created
+    // ticket UUID. After 15 min or 3 photos the door closes.
+    if (action === "uploadPhoto" && event.httpMethod === "POST") {
+      const body = JSON.parse(event.body || "{}");
+      const ticketId = String(body.ticket_id || "").trim();
+      const photoData = String(body.photo_data || "");
+      const photoName = String(body.photo_name || "photo.jpg");
+      const photoType = String(body.photo_type || "image/jpeg");
+
+      if (!ticketId || !photoData) {
+        return respond(400, { ok: false, message: "ticket_id and photo_data required." });
+      }
+      if (!/^image\//.test(photoType)) {
+        return respond(400, { ok: false, message: "Only image uploads allowed." });
+      }
+
+      const { data: ticket, error: tErr } = await supabase
+        .from("tickets")
+        .select("id, submitted_by, submitted_by_user_id, date_submitted")
+        .eq("id", ticketId)
+        .maybeSingle();
+      if (tErr) throw tErr;
+      if (!ticket) return respond(404, { ok: false, message: "Ticket not found." });
+
+      if (ticket.submitted_by_user_id || !String(ticket.submitted_by || "").startsWith("Public:")) {
+        return respond(403, { ok: false, message: "Photo upload not allowed for this ticket." });
+      }
+      const ageMs = Date.now() - new Date(ticket.date_submitted).getTime();
+      if (!Number.isFinite(ageMs) || ageMs > PUBLIC_UPLOAD_WINDOW_MS) {
+        return respond(403, { ok: false, message: "Upload window has closed." });
+      }
+
+      const { count: existing } = await supabase
+        .from("ticket_photos")
+        .select("*", { count: "exact", head: true })
+        .eq("ticket_id", ticketId)
+        .eq("upload_type", "public_submission");
+      if ((existing ?? 0) >= MAX_PUBLIC_PHOTOS_PER_TICKET) {
+        return respond(429, {
+          ok: false,
+          message: `Photo limit reached (${MAX_PUBLIC_PHOTOS_PER_TICKET}).`,
+        });
+      }
+
+      const buf = Buffer.from(photoData, "base64");
+      if (buf.length === 0) {
+        return respond(400, { ok: false, message: "Empty photo." });
+      }
+      if (buf.length > MAX_PUBLIC_PHOTO_BYTES) {
+        return respond(413, {
+          ok: false,
+          message: `Photo too large (${(buf.length / 1024 / 1024).toFixed(1)} MB); cap is ${MAX_PUBLIC_PHOTO_BYTES / 1024 / 1024} MB.`,
+        });
+      }
+
+      const ext = (photoName.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+      const fileName = `${ticketId}/${Date.now()}_public.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from(PHOTOS_BUCKET)
+        .upload(fileName, buf, { contentType: photoType, upsert: false });
+      if (upErr) throw upErr;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from(PHOTOS_BUCKET)
+        .getPublicUrl(fileName);
+
+      const { data: photo, error: insErr } = await supabase
+        .from("ticket_photos")
+        .insert({
+          ticket_id:   ticketId,
+          file_url:    publicUrl || fileName,
+          file_name:   photoName,
+          file_size:   buf.length,
+          mime_type:   photoType,
+          uploaded_by: ticket.submitted_by,
+          upload_type: "public_submission",
+        })
+        .select()
+        .single();
+      if (insErr) throw insErr;
+
+      await supabase.from("ticket_activities").insert({
+        ticket_id:  ticketId,
+        user_id:    null,
+        user_name:  ticket.submitted_by,
+        user_role:  "public",
+        update_type:"photo_added",
+        event_type: "photo_added",
+        event_data: {
+          photo_id: photo?.id,
+          file_name: photoName,
+          upload_type: "public_submission",
+        },
+        visibility: "all",
+      });
+
+      return respond(200, { ok: true, photo });
     }
 
     return respond(400, { ok: false, message: `Unknown action: ${action}` });
