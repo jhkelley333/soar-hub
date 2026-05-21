@@ -12,6 +12,7 @@ import {
   Layers,
   Hammer,
   Flag,
+  ClipboardList,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -41,6 +42,10 @@ export const NAV: NavItem[] = [
   // operational tool field roles see.
   { to: "/admin/work-orders-v2", label: "Work Orders", icon: Hammer, roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/ranker",      label: "Ranker",      icon: TrendingUp,      roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // Workspaces: compliance forms + audits + CAPs + automations. Wide
+  // role allowlist so submitters can see their assignments; backend
+  // filters down by workspace_members + scope-based visibility.
+  { to: "/workspaces",  label: "Workspaces",  icon: ClipboardList,   roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
   // Legacy Work Orders (Smartsheet-backed) — hidden from the sidebar
   // after the V2 cutover. Route stays alive for archival deep links;
   // admins can still navigate to /work-orders manually if needed.
