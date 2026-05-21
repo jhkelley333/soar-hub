@@ -6,6 +6,7 @@ import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ClipboardList, Mail, MapPin, Pencil, Phone, Plus, Settings, Trash2 } from "lucide-react";
 import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
+import { ReplacementsTab } from "@/modules/work-orders-v2/ReplacementsTab";
 import { Badge } from "@/shared/ui/Badge";
 import { Button } from "@/shared/ui/Button";
 import { Drawer } from "@/shared/ui/Drawer";
@@ -143,6 +144,23 @@ export function StoreDetail({
 
       {/* Operations & vendor card */}
       <OperationsCard store={store} />
+
+      {/* Replacement equipment ordered for this store. Renders
+          nothing when there are no replacements; otherwise shows a
+          compact table embedded from the WO2 module. */}
+      <Card>
+        <CardHeader
+          title="Replacements"
+          description="Equipment ordered for this store via the Order Replacement action on a work order."
+        />
+        <CardBody>
+          <ReplacementsTab
+            storeNumber={store.number}
+            hideStoreColumn
+            compact
+          />
+        </CardBody>
+      </Card>
 
       {/* Store attributes (read-only here; editable from Org admin) */}
       <StoreAttributesCard store={store} />
