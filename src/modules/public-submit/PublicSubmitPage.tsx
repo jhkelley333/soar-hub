@@ -208,6 +208,7 @@ export function PublicSubmitPage() {
     setLoadingVendors(true);
     const params = new URLSearchParams({ store_number: pickedStore.number });
     if (effectiveCategory) params.set("category", effectiveCategory);
+    if (effectiveAssetType) params.set("asset_type", effectiveAssetType);
     let cancelled = false;
     (async () => {
       try {
@@ -229,7 +230,7 @@ export function PublicSubmitPage() {
     return () => {
       cancelled = true;
     };
-  }, [pickedStore, effectiveCategory]);
+  }, [pickedStore, effectiveCategory, effectiveAssetType]);
 
   // Revoke object URLs on unmount so we don't leak.
   useEffect(() => {
