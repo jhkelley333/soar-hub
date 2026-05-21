@@ -109,6 +109,15 @@ export type ReasonModalConfig =
       submitLabel?: string;
     };
 
+// A file the modal collected but doesn't upload itself. Order
+// Replacement attaches one (the receipt/invoice); the action bar
+// uploads it after the transition succeeds. Keeps the modal focused
+// on data capture rather than file orchestration.
+export interface PendingAttachment {
+  file: File;
+  uploadType: string;
+}
+
 interface Props {
   open: boolean;
   config: ReasonModalConfig;
@@ -117,7 +126,7 @@ interface Props {
   // instead of a free-text input. Falls back to plain text if absent.
   storeNumber?: string;
   onClose: () => void;
-  onSubmit: (payload: TransitionPayload) => Promise<void> | void;
+  onSubmit: (payload: TransitionPayload, attachment?: PendingAttachment) => Promise<void> | void;
   submitting?: boolean;
   error?: string | null;
 }
@@ -129,11 +138,19 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
   const [vendorName, setVendorName] = useState<string>("");
   const [vendorId, setVendorId] = useState<string | null>(null);
   // Replacement-equipment fields. Only meaningful for the
-  // order_replacement modal kind.
+  // order_replacement modal kind. Most are optional — the team fills
+  // in what's known at order time; the rest can be set later via the
+  // Update Ticket panel as the equipment arrives + gets installed.
   const [replModel, setReplModel] = useState<string>("");
   const [replSupplier, setReplSupplier] = useState<string>("");
   const [replCost, setReplCost] = useState<string>("");
   const [replEta, setReplEta] = useState<string>("");
+  const [replAssetTag, setReplAssetTag] = useState<string>("");
+  const [replPoNumber, setReplPoNumber] = useState<string>("");
+  const [replWarrLabor, setReplWarrLabor] = useState<string>("");
+  const [replWarrParts, setReplWarrParts] = useState<string>("");
+  const [replWarrSource, setReplWarrSource] = useState<"" | "vendor" | "manufacturer" | "none">("");
+  const [replReceipt, setReplReceipt] = useState<File | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -146,6 +163,12 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
     setReplSupplier("");
     setReplCost("");
     setReplEta("");
+    setReplAssetTag("");
+    setReplPoNumber("");
+    setReplWarrLabor("");
+    setReplWarrParts("");
+    setReplWarrSource("");
+    setReplReceipt(null);
   }, [open, config.kind]);
 
   const title = useMemo(() => config.title || defaultTitle(config.kind), [config]);
@@ -209,6 +232,17 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
           replacement_eta: eta,
         };
         if (replSupplier.trim()) payload.replacement_supplier = replSupplier.trim();
+        if (replAssetTag.trim()) payload.replacement_asset_tag = replAssetTag.trim();
+        if (replPoNumber.trim()) payload.replacement_po_number = replPoNumber.trim();
+        if (replWarrLabor.trim()) {
+          const n = Number(replWarrLabor);
+          if (Number.isFinite(n) && n >= 0) payload.replacement_warranty_labor_days = Math.round(n);
+        }
+        if (replWarrParts.trim()) {
+          const n = Number(replWarrParts);
+          if (Number.isFinite(n) && n >= 0) payload.replacement_warranty_parts_days = Math.round(n);
+        }
+        if (replWarrSource) payload.replacement_warranty_parts_source = replWarrSource;
         return payload;
       }
     }
@@ -219,7 +253,14 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
   async function handleSubmit() {
     const payload = buildPayload();
     if (!payload) return;
-    await onSubmit(payload);
+    // Receipt PDFs/images live on ticket_photos with a distinct
+    // upload_type so admins can filter / list them. The action bar
+    // does the actual upload after the transition succeeds.
+    const attachment: PendingAttachment | undefined =
+      config.kind === "order_replacement" && replReceipt
+        ? { file: replReceipt, uploadType: "replacement_receipt" }
+        : undefined;
+    await onSubmit(payload, attachment);
   }
 
   return (
@@ -425,6 +466,109 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
                     value={replEta}
                     onChange={(e) => setReplEta(e.target.value)}
                   />
+                </div>
+              </div>
+
+              {/* V3-asset-capture fields. All optional at order time;
+                  team can fill in the rest via Update Ticket as the
+                  data arrives. Section header sets expectations so
+                  users know they don't HAVE to fill these now. */}
+              <div className="border-t border-zinc-200 pt-3">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                  Asset details (optional — for the V3 asset register)
+                </div>
+                <div className="mt-2 grid grid-cols-2 gap-3">
+                  <div>
+                    <Label htmlFor="repl-asset-tag">Asset tag / serial #</Label>
+                    <Input
+                      id="repl-asset-tag"
+                      value={replAssetTag}
+                      onChange={(e) => setReplAssetTag(e.target.value)}
+                      placeholder="From the spec plate or sticker"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="repl-po">PO / order #</Label>
+                    <Input
+                      id="repl-po"
+                      value={replPoNumber}
+                      onChange={(e) => setReplPoNumber(e.target.value)}
+                      placeholder="From the supplier"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="border-t border-zinc-200 pt-3">
+                <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                  Warranty (optional)
+                </div>
+                <div className="mt-2 grid grid-cols-3 gap-3">
+                  <div>
+                    <Label htmlFor="repl-warr-labor">Labor (days)</Label>
+                    <Input
+                      id="repl-warr-labor"
+                      type="number"
+                      inputMode="numeric"
+                      min="0"
+                      value={replWarrLabor}
+                      onChange={(e) => setReplWarrLabor(e.target.value)}
+                      placeholder="90"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="repl-warr-parts">Parts (days)</Label>
+                    <Input
+                      id="repl-warr-parts"
+                      type="number"
+                      inputMode="numeric"
+                      min="0"
+                      value={replWarrParts}
+                      onChange={(e) => setReplWarrParts(e.target.value)}
+                      placeholder="365"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="repl-warr-source">Parts via</Label>
+                    <select
+                      id="repl-warr-source"
+                      value={replWarrSource}
+                      onChange={(e) => setReplWarrSource(e.target.value as typeof replWarrSource)}
+                      className="block h-9 w-full rounded-md border border-zinc-200 bg-white px-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                    >
+                      <option value="">—</option>
+                      <option value="vendor">Vendor</option>
+                      <option value="manufacturer">Manufacturer</option>
+                      <option value="none">None</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="border-t border-zinc-200 pt-3">
+                <Label htmlFor="repl-receipt">Receipt / invoice (optional)</Label>
+                <input
+                  id="repl-receipt"
+                  type="file"
+                  accept="image/*,application/pdf"
+                  onChange={(e) => setReplReceipt(e.target.files?.[0] || null)}
+                  className="block w-full text-sm text-zinc-700 file:mr-2 file:rounded-md file:border-0 file:bg-accent/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-midnight hover:file:bg-accent/20"
+                />
+                {replReceipt && (
+                  <div className="mt-1 flex items-center gap-2 text-[11px] text-zinc-500">
+                    <span className="truncate font-mono">{replReceipt.name}</span>
+                    <span>({(replReceipt.size / 1024).toFixed(0)} KB)</span>
+                    <button
+                      type="button"
+                      onClick={() => setReplReceipt(null)}
+                      className="text-red-600 hover:underline"
+                    >
+                      remove
+                    </button>
+                  </div>
+                )}
+                <div className="mt-1 text-[10px] text-zinc-500">
+                  PDF or image. Uploaded after the ticket transitions; failures don't block the order.
                 </div>
               </div>
             </div>

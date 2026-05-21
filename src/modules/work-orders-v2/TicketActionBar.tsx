@@ -12,9 +12,24 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, Loader2, Pause, RotateCcw, Truck, XCircle } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
-import { transitionTicket } from "./api";
-import type { TicketStatus, TransitionPayload } from "./types";
+import { transitionTicket, uploadPhoto } from "./api";
+import type { TicketStatus, TransitionPayload, UploadPhotoBody } from "./types";
 import { ReasonModal, type ReasonModalConfig } from "./ReasonModal";
+
+// Reads a File into a base64 string (sans the data: prefix) so it
+// can ride along on the uploadPhoto JSON body.
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const s = String(r.result || "");
+      const comma = s.indexOf(",");
+      resolve(comma >= 0 ? s.slice(comma + 1) : s);
+    };
+    r.onerror = () => reject(r.error || new Error("read failed"));
+    r.readAsDataURL(file);
+  });
+}
 
 // Visible action button definition. `payload` is set directly for
 // no-payload transitions (Confirm Fix, Mark On Site). `modalConfig`
@@ -344,9 +359,38 @@ export function TicketActionBar({
             setModalAction(null);
             setModalError(null);
           }}
-          onSubmit={async (payload) => {
-            try { await mut.mutateAsync({ to: modalAction.to, payload }); }
-            catch { /* error surfaced via mut.onError → modalError */ }
+          onSubmit={async (payload, attachment) => {
+            try {
+              await mut.mutateAsync({ to: modalAction.to, payload });
+              // Transition succeeded — now best-effort upload any
+              // attachment (currently only Order Replacement attaches
+              // a receipt). A failed upload doesn't roll back the
+              // transition: the ticket has already moved, we just
+              // surface a non-blocking warning and the user can
+              // re-attach via Update Ticket.
+              if (attachment) {
+                try {
+                  const base64 = await fileToBase64(attachment.file);
+                  const body: UploadPhotoBody = {
+                    id: ticketId,
+                    photoData: base64,
+                    photoType: attachment.file.type || "application/octet-stream",
+                    photoName: attachment.file.name,
+                    uploadType: attachment.uploadType as UploadPhotoBody["uploadType"],
+                  };
+                  await uploadPhoto(body);
+                  qc.invalidateQueries({ queryKey: ["wo2", "tickets"] });
+                } catch (upErr) {
+                  toast.push(
+                    "Ticket updated, but receipt upload failed. Re-attach from the ticket.",
+                    "error",
+                  );
+                  console.error("receipt upload failed:", upErr);
+                }
+              }
+            } catch {
+              /* error surfaced via mut.onError → modalError */
+            }
           }}
         />
       )}
