@@ -156,6 +156,7 @@ export function StoreDetail({
         <CardBody>
           <ReplacementsTab
             storeNumber={store.number}
+            storeId={store.id}
             hideStoreColumn
             compact
           />

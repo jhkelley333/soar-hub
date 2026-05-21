@@ -681,19 +681,26 @@ export const handler = async (event) => {
     }
 
     // ── GET REPLACEMENTS ──
-    // List every ticket where new equipment was ordered, regardless
-    // of status. Used by the Replacements tab in WO2 admin and the
-    // per-store list on My Stores. Scope-filtered to the caller's
-    // accessible stores; admins see all.
+    // Returns the UNION of:
+    //   (a) tickets where replacement_model IS NOT NULL — equipment
+    //       ordered through the WO2 workflow
+    //   (b) rows in equipment_register — manual entries (legacy
+    //       backfill or new purchases made outside the workflow)
     //
-    // Optional storeNumber query param narrows to one store. Returns
-    // a compact shape — only what the table needs — plus the receipt
-    // URL from ticket_photos (upload_type='replacement_receipt').
+    // Both shapes are normalized into the same payload with a
+    // synthesized `source` value so the client can distinguish them:
+    //   'wo2_ticket'    — from tickets
+    //   'manual_legacy' — equipment_register entered as backfill
+    //   'manual_direct' — equipment_register entered as a new direct purchase
+    //
+    // Scope-filtered to caller's accessible stores; optional storeNumber
+    // query param narrows to one store.
     if (action === "getReplacements") {
       const storeAccess = await getStoresForUser(supabase, profile);
       const { storeNumber: filterStore } = event.queryStringParameters || {};
 
-      let query = supabase
+      // (a) Ticket-sourced rows.
+      let tq = supabase
         .from("tickets")
         .select(`
           id, wo_number, store_number, store_name, status,
@@ -707,33 +714,160 @@ export const handler = async (event) => {
         `)
         .not("replacement_model", "is", null)
         .order("replacement_ordered_at", { ascending: false });
-
-      if (filterStore) {
-        query = query.eq("store_number", String(filterStore).trim());
-      }
+      if (filterStore) tq = tq.eq("store_number", String(filterStore).trim());
       if (!storeAccess.all && storeAccess.stores.length) {
-        query = query.in("store_number", storeAccess.stores);
+        tq = tq.in("store_number", storeAccess.stores);
       } else if (!storeAccess.all) {
         return respond(200, { ok: true, replacements: [] });
       }
 
-      const { data, error } = await query;
-      if (error) throw error;
+      // (b) equipment_register rows. Same scope rules.
+      let eq = supabase
+        .from("equipment_register")
+        .select(`
+          id, store_number, source, asset_tag, model, supplier, po_number,
+          cost, purchased_at, installed_at,
+          warranty_labor_days, warranty_parts_days, warranty_parts_source,
+          receipt_url, notes, created_by_name, created_at,
+          stores(name)
+        `)
+        .is("archived_at", null)
+        .order("created_at", { ascending: false });
+      if (filterStore) eq = eq.eq("store_number", String(filterStore).trim());
+      if (!storeAccess.all && storeAccess.stores.length) {
+        eq = eq.in("store_number", storeAccess.stores);
+      }
 
-      // Flatten the receipt URL onto each row so the client doesn't
-      // have to sift through ticket_photos. Pick the most recent
-      // replacement_receipt if multiple exist (shouldn't, but defensive).
-      const out = (data || []).map((t) => {
+      const [tRes, eRes] = await Promise.all([tq, eq]);
+      if (tRes.error) throw tRes.error;
+      if (eRes.error) throw eRes.error;
+
+      const ticketRows = (tRes.data || []).map((t) => {
         const receipts = (t.ticket_photos || [])
           .filter((p) => p.upload_type === "replacement_receipt");
         const { ticket_photos, ...rest } = t;
         return {
-          ...rest,
-          receipt_url: receipts[0]?.file_url || null,
+          source:           "wo2_ticket",
+          equipment_id:     null,
+          ticket_id:        rest.id,
+          wo_number:        rest.wo_number,
+          store_number:     rest.store_number,
+          store_name:       rest.store_name,
+          status:           rest.status,
+          asset_tag:        rest.replacement_asset_tag,
+          model:            rest.replacement_model,
+          supplier:         rest.replacement_supplier,
+          po_number:        rest.replacement_po_number,
+          cost:             rest.replacement_cost,
+          purchased_at:     rest.replacement_ordered_at,
+          installed_at:     rest.completed_at,
+          eta:              rest.replacement_eta,
+          warranty_labor_days:   rest.replacement_warranty_labor_days,
+          warranty_parts_days:   rest.replacement_warranty_parts_days,
+          warranty_parts_source: rest.replacement_warranty_parts_source,
+          receipt_url:      receipts[0]?.file_url || null,
+          notes:            null,
+          created_by_name:  null,
         };
       });
 
-      return respond(200, { ok: true, replacements: out });
+      const manualRows = (eRes.data || []).map((r) => ({
+        source:           r.source,
+        equipment_id:     r.id,
+        ticket_id:        null,
+        wo_number:        null,
+        store_number:     r.store_number,
+        store_name:       r.stores?.name || null,
+        status:           null,
+        asset_tag:        r.asset_tag,
+        model:            r.model,
+        supplier:         r.supplier,
+        po_number:        r.po_number,
+        cost:             r.cost,
+        purchased_at:     r.purchased_at,
+        installed_at:     r.installed_at,
+        eta:              null,
+        warranty_labor_days:   r.warranty_labor_days,
+        warranty_parts_days:   r.warranty_parts_days,
+        warranty_parts_source: r.warranty_parts_source,
+        receipt_url:      r.receipt_url,
+        notes:            r.notes,
+        created_by_name:  r.created_by_name,
+      }));
+
+      // Combine + sort newest-purchased first. Manual entries with
+      // no purchased_at fall to the bottom.
+      const combined = [...ticketRows, ...manualRows].sort((a, b) => {
+        const ta = a.purchased_at ? new Date(a.purchased_at).getTime() : 0;
+        const tb = b.purchased_at ? new Date(b.purchased_at).getTime() : 0;
+        return tb - ta;
+      });
+
+      return respond(200, { ok: true, replacements: combined });
+    }
+
+    // ── SAVE EQUIPMENT (manual register entry) ──
+    // DO and above. Insert when body.id is missing; update when set.
+    // Resolves store_number from store_id (FK) so it stays consistent.
+    if (action === "saveEquipment" && event.httpMethod === "POST") {
+      if (roleLevel(role) > 3) {
+        return respond(403, { ok: false, message: "DO and above only." });
+      }
+      const body = JSON.parse(event.body || "{}");
+      const { id: equipId, store_id, ...fields } = body;
+
+      // Resolve store_number from store_id — keep the denormalized
+      // column truthful even when callers don't send it.
+      let storeNumber = fields.store_number;
+      if (store_id && !storeNumber) {
+        const { data: s } = await supabase
+          .from("stores")
+          .select("number")
+          .eq("id", store_id)
+          .maybeSingle();
+        storeNumber = s?.number;
+      }
+      if (!store_id || !storeNumber) {
+        return respond(400, { ok: false, message: "store_id required." });
+      }
+      if (!fields.model || !String(fields.model).trim()) {
+        return respond(400, { ok: false, message: "model required." });
+      }
+      if (fields.source && !["manual_legacy", "manual_direct"].includes(fields.source)) {
+        return respond(400, { ok: false, message: "source must be manual_legacy or manual_direct." });
+      }
+
+      const payload = {
+        ...fields,
+        store_id,
+        store_number: storeNumber,
+        source: fields.source || "manual_direct",
+        created_by_user_id: userId,
+        created_by_name:    userName,
+      };
+
+      if (equipId) {
+        // On update, never let the caller change created_by / source-on-history
+        // through this path. Drop those keys.
+        delete payload.created_by_user_id;
+        delete payload.created_by_name;
+        const { data, error } = await supabase
+          .from("equipment_register")
+          .update(payload)
+          .eq("id", equipId)
+          .select()
+          .single();
+        if (error) throw error;
+        return respond(200, { ok: true, equipment: data });
+      } else {
+        const { data, error } = await supabase
+          .from("equipment_register")
+          .insert(payload)
+          .select()
+          .single();
+        if (error) throw error;
+        return respond(200, { ok: true, equipment: data });
+      }
     }
 
     // ── GET SINGLE TICKET ──
