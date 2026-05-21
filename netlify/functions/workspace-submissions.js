@@ -16,6 +16,10 @@
 //
 // Frontend calls /.netlify/functions/workspace-submissions?action=...
 // (workspaces.js still handles all other actions at its own URL.)
+//
+// Side-effect: when an audit submission has failed pass_fail_na
+// answers on questions with requires_cap_on_fail=true, this file
+// auto-creates the corresponding CAPs via autoCreateCapsForAuditAnswers().
 
 import { createClient } from "@supabase/supabase-js";
 import {
@@ -25,6 +29,7 @@ import {
 import {
   resolveSignoffCandidates,
   computeAuditScoring,
+  usersAtAnchorWithRole,
 } from "./_lib/workspace_resolvers.js";
 
 const SUPABASE_URL =
@@ -95,6 +100,112 @@ const ALLOWED_SIGNOFF_STATUS = [
   "pending_review", "in_review", "approved", "rejected", "revision_requested",
 ];
 const ALLOWED_AUDIT_RESULT = ["pass", "fail", "na"];
+
+// Default CAP due-window: 7 days from creation. Single knob if we ever
+// want a per-template override.
+const AUTO_CAP_DUE_DAYS = 7;
+
+// Resolve question.cap_assignee_rule → a single user id. CAPs are 1:1
+// with a person (unlike signoffs which can have a candidate pool), so
+// this returns ONE id. Falls back to `fallbackUserId` (typically the
+// submitter) if the rule can't be resolved to a real user.
+//
+// DSL kinds supported:
+//   { kind: "fixed",          user_id }
+//   { kind: "submitter" }            ← explicit "the submitter"
+//   { kind: "role_relative",  role, anchor: "submission_store" }
+//     (anchor="scope_anchor" not supported for CAPs — CAPs live at
+//     the store level; the workspace anchor would be too coarse.)
+async function resolveCapAssignee(supabase, rule, submissionStoreId, fallbackUserId) {
+  if (!rule || typeof rule !== "object") return fallbackUserId;
+  const kind = rule.kind;
+
+  if (kind === "fixed" && isUuid(rule.user_id)) {
+    return rule.user_id;
+  }
+  if (kind === "submitter") {
+    return fallbackUserId;
+  }
+  if (kind === "role_relative" && rule.anchor === "submission_store" && submissionStoreId) {
+    const users = await usersAtAnchorWithRole(supabase, "store", submissionStoreId, rule.role);
+    if (users.length) return users[0]; // first match (stable enough for v1)
+  }
+  return fallbackUserId;
+}
+
+// Auto-create CAPs for any failed audit answer where the question has
+// requires_cap_on_fail = true. Called after an audit submission's
+// answers have been inserted. Best-effort: per-CAP failures are
+// logged but don't abort the submission.
+//
+// Returns { created: <count>, ids: [uuid] }.
+async function autoCreateCapsForAuditAnswers({
+  supabase, profile, template, questions, insertedAnswers,
+  workspace, assignment, submission,
+}) {
+  if (!template || template.type !== "audit") return { created: 0, ids: [] };
+  if (!insertedAnswers?.length) return { created: 0, ids: [] };
+
+  const qById = new Map((questions || []).map((q) => [q.id, q]));
+  const created = [];
+
+  for (const ans of insertedAnswers) {
+    const q = qById.get(ans.question_id);
+    if (!q) continue;
+    if (q.field_type !== "pass_fail_na") continue;
+    if (ans.audit_result !== "fail") continue;
+    if (!q.requires_cap_on_fail) continue;
+
+    try {
+      const assigneeId = await resolveCapAssignee(
+        supabase, q.cap_assignee_rule, assignment.store_id, profile.id,
+      );
+      const dueAt = new Date(
+        Date.now() + AUTO_CAP_DUE_DAYS * 86_400_000,
+      ).toISOString();
+
+      const { data: cap, error } = await supabase
+        .from("workspace_corrective_action_plans")
+        .insert({
+          workspace_id: assignment.workspace_id,
+          submission_id: submission.id,
+          answer_id: ans.id,
+          question_id: q.id,
+          store_id: assignment.store_id || null,
+          assignee_id: assigneeId,
+          status: "open",
+          template_instructions: q.question_text,
+          due_at: dueAt,
+        })
+        .select("*")
+        .single();
+      if (error) {
+        console.warn("[workspace-submissions] auto-CAP insert failed:", error.message);
+        continue;
+      }
+
+      await logActivity(supabase, profile, {
+        workspaceId: assignment.workspace_id,
+        targetKind: "cap",
+        targetId: cap.id,
+        action: "cap.created",
+        afterState: cap,
+        eventData: {
+          submission_id: submission.id,
+          question_id: q.id,
+          source: "auto_audit_fail",
+          was_critical: q.is_critical,
+        },
+      });
+
+      created.push(cap.id);
+    } catch (err) {
+      console.warn("[workspace-submissions] auto-CAP loop error:", err?.message || err);
+    }
+  }
+
+  return { created: created.length, ids: created };
+}
 
 // ── Handler ─────────────────────────────────────────────────
 export const handler = async (event) => {
@@ -223,7 +334,9 @@ export const handler = async (event) => {
     // Submit a filled-out assignment. The big one. Validates answers
     // against the pinned template version, computes audit scoring if
     // applicable, resolves + snapshots signoff candidates, locks the
-    // submission, and moves the assignment to status='submitted'.
+    // submission, moves the assignment to status='submitted', and
+    // auto-creates CAPs for any failed audit answers with
+    // requires_cap_on_fail=true.
     if (action === "createSubmission" && event.httpMethod === "POST") {
       const payload = JSON.parse(event.body || "{}");
       const asnId = payload.assignment_id;
@@ -354,13 +467,16 @@ export const handler = async (event) => {
         .single();
       if (subErr) throw subErr;
 
+      let insertedAnswers = [];
       if (answerRows.length) {
         const rows = answerRows.map((r) => ({ ...r, submission_id: sub.id }));
-        const { error: ansErr } = await supabase.from("workspace_submission_answers").insert(rows);
+        const { data, error: ansErr } = await supabase
+          .from("workspace_submission_answers").insert(rows).select("*");
         if (ansErr) {
           await supabase.from("workspace_submissions").delete().eq("id", sub.id);
           throw ansErr;
         }
+        insertedAnswers = data || [];
       }
 
       if (steps && steps.length) {
@@ -377,6 +493,14 @@ export const handler = async (event) => {
         }
         await supabase.from("workspace_submission_signoffs").insert(signoffRows);
       }
+
+      // Auto-create CAPs for failed audit answers with requires_cap_on_fail.
+      // Best-effort: failures inside the loop are logged but don't roll
+      // back the submission (already locked + signoffs created).
+      const capResult = await autoCreateCapsForAuditAnswers({
+        supabase, profile, template, questions, insertedAnswers,
+        workspace, assignment: asn, submission: sub,
+      });
 
       await supabase
         .from("workspace_assignments")
@@ -396,6 +520,7 @@ export const handler = async (event) => {
           answer_count: answerRows.length,
           ...scoringFields,
           signoff_step_count: (steps || []).length,
+          auto_caps_created: capResult.created,
         },
       });
       await logActivity(supabase, profile, {
@@ -411,7 +536,8 @@ export const handler = async (event) => {
 
     // Create a revision after a reviewer requested changes. Chains to
     // the parent_submission_id; bumps version_number. Refused if the
-    // parent isn't in revision_requested state.
+    // parent isn't in revision_requested state. Auto-creates CAPs
+    // again if the revision still has failed audit answers.
     if (action === "createRevisionSubmission" && event.httpMethod === "POST") {
       const payload = JSON.parse(event.body || "{}");
       const parentId = payload.parent_submission_id;
@@ -520,13 +646,16 @@ export const handler = async (event) => {
         .single();
       if (subErr) throw subErr;
 
+      let insertedAnswers = [];
       if (answerRows.length) {
         const rows = answerRows.map((r) => ({ ...r, submission_id: sub.id }));
-        const { error: ansErr } = await supabase.from("workspace_submission_answers").insert(rows);
+        const { data, error: ansErr } = await supabase
+          .from("workspace_submission_answers").insert(rows).select("*");
         if (ansErr) {
           await supabase.from("workspace_submissions").delete().eq("id", sub.id);
           throw ansErr;
         }
+        insertedAnswers = data || [];
       }
 
       if (steps && steps.length) {
@@ -544,6 +673,12 @@ export const handler = async (event) => {
         await supabase.from("workspace_submission_signoffs").insert(signoffRows);
       }
 
+      // Auto-create CAPs for any failed audit answers in this revision.
+      const capResult = await autoCreateCapsForAuditAnswers({
+        supabase, profile, template, questions, insertedAnswers,
+        workspace, assignment: asn, submission: sub,
+      });
+
       await logActivity(supabase, profile, {
         workspaceId: asn.workspace_id,
         targetKind: "submission",
@@ -554,6 +689,7 @@ export const handler = async (event) => {
           parent_submission_id: parentId,
           version_number: sub.version_number,
           revision_reason: sub.revision_reason,
+          auto_caps_created: capResult.created,
         },
       });
 
