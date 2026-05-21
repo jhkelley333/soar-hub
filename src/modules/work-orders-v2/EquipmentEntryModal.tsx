@@ -15,12 +15,35 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Loader2, X } from "lucide-react";
+import { FileText, Loader2, X } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
 import { useToast } from "@/shared/ui/Toaster";
-import { fetchCallerStores, saveEquipment, type ReplacementRow, type SaveEquipmentBody } from "./api";
+import {
+  fetchCallerStores,
+  saveEquipment,
+  uploadEquipmentReceipt,
+  type ReplacementRow,
+  type SaveEquipmentBody,
+} from "./api";
+
+// Same helper used elsewhere — reads a File as base64 (without the
+// data: prefix) so it can ride along on JSON bodies.
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => {
+      const s = String(r.result || "");
+      const comma = s.indexOf(",");
+      resolve(comma >= 0 ? s.slice(comma + 1) : s);
+    };
+    r.onerror = () => reject(r.error || new Error("read failed"));
+    r.readAsDataURL(file);
+  });
+}
+
+const MAX_RECEIPT_BYTES = 10 * 1024 * 1024;
 
 interface Props {
   open: boolean;
@@ -55,7 +78,11 @@ export function EquipmentEntryModal({
   const [warrLabor, setWarrLabor] = useState("");
   const [warrParts, setWarrParts] = useState("");
   const [warrSource, setWarrSource] = useState<"" | "vendor" | "manufacturer" | "none">("");
-  const [receiptUrl, setReceiptUrl] = useState("");
+  // Receipt is a real file upload (PDF or image). Existing URL is
+  // shown as a "current receipt" link with a Replace affordance;
+  // picking a file marks it for upload after save.
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [existingReceiptUrl, setExistingReceiptUrl] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -89,7 +116,8 @@ export function EquipmentEntryModal({
       setWarrLabor(existing.warranty_labor_days == null ? "" : String(existing.warranty_labor_days));
       setWarrParts(existing.warranty_parts_days == null ? "" : String(existing.warranty_parts_days));
       setWarrSource(existing.warranty_parts_source || "");
-      setReceiptUrl(existing.receipt_url || "");
+      setExistingReceiptUrl(existing.receipt_url || null);
+      setReceiptFile(null);
       setNotes(existing.notes || "");
     } else {
       setSource("manual_direct");
@@ -103,7 +131,8 @@ export function EquipmentEntryModal({
       setWarrLabor("");
       setWarrParts("");
       setWarrSource("");
-      setReceiptUrl("");
+      setExistingReceiptUrl(null);
+      setReceiptFile(null);
       setNotes("");
     }
     if (storeIdLock) {
@@ -152,11 +181,31 @@ export function EquipmentEntryModal({
         if (Number.isFinite(n)) payload.warranty_parts_days = Math.round(n);
       }
       if (warrSource) payload.warranty_parts_source = warrSource;
-      if (receiptUrl.trim()) payload.receipt_url = receiptUrl.trim();
       if (notes.trim()) payload.notes = notes.trim();
       return saveEquipment(payload);
     },
-    onSuccess: () => {
+    onSuccess: async (res) => {
+      const id = (res as { equipment?: { id?: string } }).equipment?.id || existing?.equipment_id;
+      // Best-effort receipt upload. Failure surfaces a toast but
+      // does NOT roll back the save — the row is in; the user can
+      // re-attach via the edit modal.
+      if (id && receiptFile) {
+        try {
+          const base64 = await fileToBase64(receiptFile);
+          await uploadEquipmentReceipt({
+            id,
+            fileData: base64,
+            fileName: receiptFile.name,
+            fileType: receiptFile.type || "application/octet-stream",
+          });
+        } catch (upErr) {
+          toast.push(
+            "Equipment saved but receipt upload failed. Edit the row to retry.",
+            "error",
+          );
+          console.error("equipment receipt upload failed:", upErr);
+        }
+      }
       toast.push(isEdit ? "Equipment updated." : "Equipment added.", "success");
       qc.invalidateQueries({ queryKey: ["wo2", "replacements"] });
       onClose();
@@ -359,16 +408,52 @@ export function EquipmentEntryModal({
           </div>
 
           <div>
-            <Label htmlFor="eq-receipt">Receipt URL (optional)</Label>
-            <Input
+            <Label htmlFor="eq-receipt">Receipt / invoice (optional)</Label>
+            {existingReceiptUrl && !receiptFile && (
+              <div className="mb-2 flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs">
+                <FileText className="h-3.5 w-3.5 text-zinc-500" strokeWidth={1.75} />
+                <a
+                  href={existingReceiptUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-semibold text-accent hover:underline"
+                >
+                  Current receipt
+                </a>
+                <span className="text-zinc-500">— attach a new file below to replace.</span>
+              </div>
+            )}
+            <input
               id="eq-receipt"
-              value={receiptUrl}
-              onChange={(e) => setReceiptUrl(e.target.value)}
-              placeholder="Paste a link to the receipt in Drive / cloud storage"
+              type="file"
+              accept="image/*,application/pdf"
+              onChange={(e) => {
+                const f = e.target.files?.[0] || null;
+                if (f && f.size > MAX_RECEIPT_BYTES) {
+                  setError(`File too large (${(f.size / 1024 / 1024).toFixed(1)} MB); cap is 10 MB.`);
+                  e.target.value = "";
+                  return;
+                }
+                setError(null);
+                setReceiptFile(f);
+              }}
+              className="block w-full text-sm text-zinc-700 file:mr-2 file:rounded-md file:border-0 file:bg-accent/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-midnight hover:file:bg-accent/20"
             />
+            {receiptFile && (
+              <div className="mt-1 flex items-center gap-2 text-[11px] text-zinc-500">
+                <span className="truncate font-mono">{receiptFile.name}</span>
+                <span>({(receiptFile.size / 1024).toFixed(0)} KB)</span>
+                <button
+                  type="button"
+                  onClick={() => setReceiptFile(null)}
+                  className="text-red-600 hover:underline"
+                >
+                  remove
+                </button>
+              </div>
+            )}
             <div className="mt-1 text-[10px] text-zinc-500">
-              For files already in Drive, OneDrive, Dropbox etc. Paste the
-              shared link. (File upload coming with V3 Assets.)
+              PDF or image, up to 10 MB. Uploaded after the save; replaces any existing receipt on this row.
             </div>
           </div>
 
