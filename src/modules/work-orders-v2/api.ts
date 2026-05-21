@@ -91,28 +91,36 @@ export function fetchTickets(): Promise<TicketsResponse> {
   return request<TicketsResponse>(`${FN}?action=getTickets`);
 }
 
-// Compact row shape for the Replacements views. One per ticket where
-// replacement_model is set. receipt_url is flattened server-side
-// from the ticket_photos row tagged upload_type='replacement_receipt'.
+// Compact normalized row for the Replacements views. Server returns
+// the UNION of ticket-sourced rows (replacement_* columns) and
+// equipment_register rows (manual entries). `source` distinguishes
+// them; `equipment_id` is set only for manual rows (used for the
+// edit-in-place flow); `ticket_id` + `wo_number` are set only for
+// ticket-sourced rows.
+export type ReplacementSource = "wo2_ticket" | "manual_legacy" | "manual_direct";
+
 export interface ReplacementRow {
-  id: string;
-  wo_number: string;
+  source: ReplacementSource;
+  equipment_id: string | null;
+  ticket_id: string | null;
+  wo_number: string | null;
   store_number: string;
   store_name: string | null;
-  status: string;
-  replacement_model: string | null;
-  replacement_supplier: string | null;
-  replacement_cost: number | string | null;
-  replacement_eta: string | null;
-  replacement_ordered_at: string | null;
-  replacement_asset_tag: string | null;
-  replacement_po_number: string | null;
-  replacement_warranty_labor_days: number | null;
-  replacement_warranty_parts_days: number | null;
-  replacement_warranty_parts_source: "vendor" | "manufacturer" | "none" | null;
-  completed_at: string | null;
-  closed_at: string | null;
+  status: string | null;
+  asset_tag: string | null;
+  model: string | null;
+  supplier: string | null;
+  po_number: string | null;
+  cost: number | string | null;
+  purchased_at: string | null;
+  installed_at: string | null;
+  eta: string | null;
+  warranty_labor_days: number | null;
+  warranty_parts_days: number | null;
+  warranty_parts_source: "vendor" | "manufacturer" | "none" | null;
   receipt_url: string | null;
+  notes: string | null;
+  created_by_name: string | null;
 }
 
 export interface ReplacementsResponse {
@@ -125,6 +133,33 @@ export function fetchReplacements(opts?: { storeNumber?: string }): Promise<Repl
     ? `&storeNumber=${encodeURIComponent(opts.storeNumber)}`
     : "";
   return request<ReplacementsResponse>(`${FN}?action=getReplacements${qs}`);
+}
+
+// Manual equipment-register entry. id is set for updates, omitted on
+// insert. source defaults server-side to manual_direct when omitted.
+export interface SaveEquipmentBody {
+  id?: string;
+  store_id: string;
+  source?: "manual_legacy" | "manual_direct";
+  asset_tag?: string;
+  model: string;
+  supplier?: string;
+  po_number?: string;
+  cost?: number | null;
+  purchased_at?: string | null;
+  installed_at?: string | null;
+  warranty_labor_days?: number | null;
+  warranty_parts_days?: number | null;
+  warranty_parts_source?: "vendor" | "manufacturer" | "none" | null;
+  receipt_url?: string | null;
+  notes?: string | null;
+}
+
+export function saveEquipment(payload: SaveEquipmentBody): Promise<{ ok: true; equipment: { id: string } }> {
+  return request<{ ok: true; equipment: { id: string } }>(`${FN}?action=saveEquipment`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function fetchStats(): Promise<StatsResponse> {
