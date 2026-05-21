@@ -162,6 +162,25 @@ export function saveEquipment(payload: SaveEquipmentBody): Promise<{ ok: true; e
   });
 }
 
+// Uploads a receipt file (PDF or image) for an equipment_register
+// row. Backend writes the resulting URL onto receipt_url, replacing
+// whatever was there before. Caller should call saveEquipment first
+// to get the id when inserting a new row.
+export interface UploadEquipmentReceiptBody {
+  id: string;
+  fileData: string;
+  fileName: string;
+  fileType: string;
+}
+export function uploadEquipmentReceipt(
+  payload: UploadEquipmentReceiptBody,
+): Promise<{ ok: true; equipment: { id: string; receipt_url: string } }> {
+  return request<{ ok: true; equipment: { id: string; receipt_url: string } }>(
+    `${FN}?action=uploadEquipmentReceipt`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
+}
+
 export function fetchStats(): Promise<StatsResponse> {
   return request<StatsResponse>(`${FN}?action=getStats`);
 }

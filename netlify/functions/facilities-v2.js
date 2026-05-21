@@ -870,6 +870,81 @@ export const handler = async (event) => {
       }
     }
 
+    // ── UPLOAD EQUIPMENT RECEIPT ──
+    // Companion to saveEquipment for the manual register. Uploads a
+    // file (PDF or image) into the existing wo2-ticket-photos bucket
+    // at path `equipment/<equipment_id>/<timestamp>.<ext>` and writes
+    // the resulting public URL to equipment_register.receipt_url.
+    // Replaces whatever URL was there before (no history kept — the
+    // bucket retains the older object but the row points at the new
+    // one). DO+ only.
+    if (action === "uploadEquipmentReceipt" && event.httpMethod === "POST") {
+      if (roleLevel(role) > 3) {
+        return respond(403, { ok: false, message: "DO and above only." });
+      }
+      const body = JSON.parse(event.body || "{}");
+      const equipId = String(body.id || "").trim();
+      const fileData = String(body.fileData || "");
+      const fileName = String(body.fileName || "receipt");
+      const fileType = String(body.fileType || "application/octet-stream");
+      if (!equipId || !fileData) {
+        return respond(400, { ok: false, message: "id and fileData required." });
+      }
+      // Belt + suspenders on MIME — bucket already accepts anything,
+      // but reject obvious garbage so users aren't surprised when the
+      // file fails to render in a browser tab.
+      if (!/^(image\/|application\/pdf$)/i.test(fileType)) {
+        return respond(400, { ok: false, message: "Receipt must be an image or PDF." });
+      }
+
+      // Confirm the equipment row exists before we burn storage on it.
+      const { data: existing } = await supabase
+        .from("equipment_register")
+        .select("id")
+        .eq("id", equipId)
+        .maybeSingle();
+      if (!existing) {
+        return respond(404, { ok: false, message: "Equipment record not found." });
+      }
+
+      const buf = Buffer.from(fileData, "base64");
+      if (buf.length === 0) {
+        return respond(400, { ok: false, message: "Empty file." });
+      }
+      // 10 MB cap. Higher than the public-submit cap (5 MB) because
+      // this is an authenticated DO+ action, but still bounded so a
+      // misclick doesn't fling a 50 MB scanned invoice at the bucket.
+      if (buf.length > 10 * 1024 * 1024) {
+        return respond(413, {
+          ok: false,
+          message: `File too large (${(buf.length / 1024 / 1024).toFixed(1)} MB); cap is 10 MB.`,
+        });
+      }
+
+      const ext = (fileName.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "") || "bin";
+      const path = `equipment/${equipId}/${Date.now()}.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from(PHOTOS_BUCKET)
+        .upload(path, buf, { contentType: fileType, upsert: false });
+      if (upErr) {
+        console.error("equipment receipt upload error:", JSON.stringify(upErr));
+        throw upErr;
+      }
+      const { data: { publicUrl } } = supabase.storage
+        .from(PHOTOS_BUCKET)
+        .getPublicUrl(path);
+
+      const { data: updated, error: updErr } = await supabase
+        .from("equipment_register")
+        .update({ receipt_url: publicUrl })
+        .eq("id", equipId)
+        .select("id, receipt_url")
+        .single();
+      if (updErr) throw updErr;
+
+      return respond(200, { ok: true, equipment: updated });
+    }
+
     // ── GET SINGLE TICKET ──
     if (action === "getTicket") {
       const { id } = event.queryStringParameters || {};
