@@ -51,6 +51,11 @@ const GLOBAL_CAPS = {
 
   // Admin-only knobs:
   list_all_workspaces:  ["admin"],
+  // Hard delete is destructive — admin-only. Cascades through every
+  // child table (templates, submissions, CAPs, etc.). The handler
+  // additionally requires the workspace to be archived first as a
+  // guardrail, but at the capability level admin is the gate.
+  delete_workspace:     ["admin"],
 };
 
 export function canGlobal(profile, capability) {

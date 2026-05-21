@@ -5,7 +5,8 @@
 //
 // This slice covers the foundation layer (phase 0058):
 //   - workspaces:    listMine, getWorkspace, createWorkspace,
-//                    updateWorkspace, archiveWorkspace, unarchiveWorkspace
+//                    updateWorkspace, archiveWorkspace, unarchiveWorkspace,
+//                    deleteWorkspace  (admin-only hard delete)
 //   - members:       listMembers, addMember, updateMember, removeMember
 //   - activity log:  getActivity  (owner / admin only)
 //
@@ -414,6 +415,56 @@ export const handler = async (event) => {
       });
 
       return respond(200, { ok: true, workspace: after });
+    }
+
+    // Hard delete. Admin-only via the global capability AND the
+    // workspace must already be archived as a guardrail (call
+    // archiveWorkspace first). Cascades through every child table
+    // (templates, submissions, signoffs, CAPs, attachments, automations,
+    // and the workspace's own activity_log entries). We write a final
+    // orphan log row (workspace_id = NULL) BEFORE the delete so the
+    // deletion event survives the cascade.
+    if (action === "deleteWorkspace" && event.httpMethod === "POST") {
+      const denied = requireGlobalCap(profile, "delete_workspace");
+      if (denied) return denied;
+
+      const payload = JSON.parse(event.body || "{}");
+      const id = payload.id;
+      if (!isUuid(id)) return respond(400, { ok: false, message: "Bad workspace id." });
+
+      const { data: before } = await supabase
+        .from("workspaces").select("*").eq("id", id).single();
+      if (!before) return respond(404, { ok: false, message: "Workspace not found." });
+
+      if (!before.is_archived) {
+        return respond(400, {
+          ok: false,
+          message: "Archive the workspace before deleting it. POST archiveWorkspace first.",
+        });
+      }
+
+      // Orphan-log first — workspace_id NULL so this row survives the
+      // cascade. before_state captures what we're deleting; the actor
+      // identity snapshot lets future audits reconstruct who did this.
+      await logActivity(supabase, profile, {
+        workspaceId: null,
+        targetKind: "workspace",
+        targetId: id,
+        action: "workspace.deleted",
+        beforeState: before,
+        eventData: {
+          deleted_workspace_name: before.name,
+          deleted_workspace_visibility: before.visibility,
+        },
+      });
+
+      const { error } = await supabase
+        .from("workspaces")
+        .delete()
+        .eq("id", id);
+      if (error) throw error;
+
+      return respond(200, { ok: true });
     }
 
     // ════════════════════════════════════════════════════════════
