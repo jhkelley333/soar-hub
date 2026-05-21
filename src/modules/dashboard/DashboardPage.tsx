@@ -7,13 +7,12 @@ import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
 import { Badge } from "@/shared/ui/Badge";
 import { useAuth } from "@/auth/AuthProvider";
 import { ROLE_LABELS, type UserRole, type Store } from "@/types/database";
-import { listWorkOrders, type WorkOrder } from "@/modules/work-orders/api";
 import { fetchCfmExpiring } from "@/modules/team/api";
 import { listSdoQueue } from "@/modules/paf/api";
 import { PafTable } from "@/modules/paf/PafTable";
 import { BirthdayWidget } from "@/modules/my-stores/BirthdayWidget";
 import { BirthdayCelebration } from "@/modules/my-stores/BirthdayCelebration";
-import { fetchRecentMessages } from "@/modules/work-orders-v2/api";
+import { fetchCallerStores, fetchRecentMessages, fetchStats } from "@/modules/work-orders-v2/api";
 import type { RecentMessage } from "@/modules/work-orders-v2/types";
 import { supabase } from "@/lib/supabase";
 import { formatPhoneForDisplay } from "@/lib/phone";
@@ -21,26 +20,23 @@ import { OpenWorkOrdersWidget } from "./OpenWorkOrdersWidget";
 
 const SDO_REVIEW_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
 
-// Roles included in the Work Orders V2 BETA. Mirrors the route gating in
+// Roles included in the Work Orders module. Mirrors the route gating in
 // router.tsx and the nav entry in nav.ts. Excludes payroll (focused PAF role).
-const WO2_BETA_ROLES = new Set([
+const WO_ROLES = new Set([
   "shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin",
 ]);
 
-// Anything in this set counts as "closed/done" for dashboard purposes.
-// Pulled from the canonical list in netlify/functions/work-orders.js.
-const TERMINAL_STATUSES = new Set(["Closed", "Completed", "Cancelled"]);
+// Roles that effectively see every store (admin queues, multi-region
+// leaders). For these, "Stores in Scope" reads "All" instead of the
+// raw count to avoid a misleading "149" that doesn't change the
+// caller's day-to-day view.
+const ALL_STORES_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin", "payroll"]);
 
 function timeOfDayGreeting(d = new Date()): string {
   const h = d.getHours();
   if (h < 12) return "Good morning";
   if (h < 17) return "Good afternoon";
   return "Good evening";
-}
-
-function isOpen(wo: WorkOrder): boolean {
-  const status = String((wo as Record<string, unknown>)["Status"] ?? "").trim();
-  return status !== "" && !TERMINAL_STATUSES.has(status);
 }
 
 // Per-role copy for the Action Queue card. Shift managers don't see PAFs
@@ -84,10 +80,22 @@ export function DashboardPage() {
     "there";
   const greeting = `${timeOfDayGreeting()}, ${greetingName}`;
 
-  const woQuery = useQuery({
-    queryKey: ["work-orders", "index"],
-    queryFn: listWorkOrders,
+  // WO2-backed stats. Replaces the legacy Smartsheet `listWorkOrders`
+  // pull. `fetchStats` already filters by the caller's accessible
+  // stores server-side, so `stats.open` is the count for THIS user.
+  const woStatsQuery = useQuery({
+    queryKey: ["wo2", "stats"],
+    queryFn: fetchStats,
     staleTime: 30_000,
+  });
+
+  // `fetchCallerStores` returns the visible-stores list for the user.
+  // We use its length for the "Stores in Scope" tile (except for
+  // wide-scope roles where "All" is more meaningful than a raw count).
+  const storesQuery = useQuery({
+    queryKey: ["wo2", "caller-stores"],
+    queryFn: fetchCallerStores,
+    staleTime: 60_000,
   });
 
   const cfmQuery = useQuery({
@@ -96,13 +104,14 @@ export function DashboardPage() {
     staleTime: 60_000,
   });
 
-  const openCount = useMemo(() => {
-    return (woQuery.data?.workOrders ?? []).filter(isOpen).length;
-  }, [woQuery.data]);
+  const openCount = woStatsQuery.data?.stats.open ?? 0;
 
-  const storesInScope = woQuery.data?.user.canSeeAllStores
-    ? "All"
-    : String(woQuery.data?.user.storeNumbers.length ?? 0);
+  const storesInScope = useMemo(() => {
+    if (storesQuery.isLoading) return "…";
+    if (storesQuery.isError) return "—";
+    if (profile?.role && ALL_STORES_ROLES.has(profile.role)) return "All";
+    return String(storesQuery.data?.stores.length ?? 0);
+  }, [storesQuery.data, storesQuery.isLoading, storesQuery.isError, profile?.role]);
 
   const cfmTotal =
     (cfmQuery.data?.team.count_expired ?? 0) +
@@ -125,14 +134,14 @@ export function DashboardPage() {
         <Stat
           label="Open Work Orders"
           value={
-            woQuery.isLoading
+            woStatsQuery.isLoading
               ? "…"
-              : woQuery.isError
+              : woStatsQuery.isError
                 ? "—"
                 : String(openCount)
           }
           tone="warning"
-          to="/work-orders"
+          to="/admin/work-orders-v2"
         />
         <Stat
           label="CFMs Expiring (60d)"
@@ -140,7 +149,7 @@ export function DashboardPage() {
           tone={cfmTone === "neutral" ? "info" : cfmTone}
           to="/cfm-expiring"
         />
-        <Stat label="Stores in Scope" value={woQuery.isLoading ? "…" : storesInScope} tone="neutral" />
+        <Stat label="Stores in Scope" value={storesInScope} tone="neutral" />
       </div>
 
       <div className="mt-8 grid grid-cols-1 gap-4 lg:grid-cols-2">
@@ -162,9 +171,9 @@ export function DashboardPage() {
 
       {profile && SDO_REVIEW_ROLES.has(profile.role) && <SdoQueueWidget />}
 
-      {profile && WO2_BETA_ROLES.has(profile.role) && <OpenWorkOrdersWidget />}
+      {profile && WO_ROLES.has(profile.role) && <OpenWorkOrdersWidget />}
 
-      {profile && WO2_BETA_ROLES.has(profile.role) && <RecentTicketMessagesWidget />}
+      {profile && WO_ROLES.has(profile.role) && <RecentTicketMessagesWidget />}
 
       <BirthdayCelebration />
     </>
