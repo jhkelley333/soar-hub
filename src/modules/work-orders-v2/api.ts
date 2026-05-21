@@ -91,6 +91,42 @@ export function fetchTickets(): Promise<TicketsResponse> {
   return request<TicketsResponse>(`${FN}?action=getTickets`);
 }
 
+// Compact row shape for the Replacements views. One per ticket where
+// replacement_model is set. receipt_url is flattened server-side
+// from the ticket_photos row tagged upload_type='replacement_receipt'.
+export interface ReplacementRow {
+  id: string;
+  wo_number: string;
+  store_number: string;
+  store_name: string | null;
+  status: string;
+  replacement_model: string | null;
+  replacement_supplier: string | null;
+  replacement_cost: number | string | null;
+  replacement_eta: string | null;
+  replacement_ordered_at: string | null;
+  replacement_asset_tag: string | null;
+  replacement_po_number: string | null;
+  replacement_warranty_labor_days: number | null;
+  replacement_warranty_parts_days: number | null;
+  replacement_warranty_parts_source: "vendor" | "manufacturer" | "none" | null;
+  completed_at: string | null;
+  closed_at: string | null;
+  receipt_url: string | null;
+}
+
+export interface ReplacementsResponse {
+  ok: true;
+  replacements: ReplacementRow[];
+}
+
+export function fetchReplacements(opts?: { storeNumber?: string }): Promise<ReplacementsResponse> {
+  const qs = opts?.storeNumber
+    ? `&storeNumber=${encodeURIComponent(opts.storeNumber)}`
+    : "";
+  return request<ReplacementsResponse>(`${FN}?action=getReplacements${qs}`);
+}
+
 export function fetchStats(): Promise<StatsResponse> {
   return request<StatsResponse>(`${FN}?action=getStats`);
 }

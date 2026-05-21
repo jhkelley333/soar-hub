@@ -680,6 +680,62 @@ export const handler = async (event) => {
       return respond(200, { ok: true });
     }
 
+    // ── GET REPLACEMENTS ──
+    // List every ticket where new equipment was ordered, regardless
+    // of status. Used by the Replacements tab in WO2 admin and the
+    // per-store list on My Stores. Scope-filtered to the caller's
+    // accessible stores; admins see all.
+    //
+    // Optional storeNumber query param narrows to one store. Returns
+    // a compact shape — only what the table needs — plus the receipt
+    // URL from ticket_photos (upload_type='replacement_receipt').
+    if (action === "getReplacements") {
+      const storeAccess = await getStoresForUser(supabase, profile);
+      const { storeNumber: filterStore } = event.queryStringParameters || {};
+
+      let query = supabase
+        .from("tickets")
+        .select(`
+          id, wo_number, store_number, store_name, status,
+          replacement_model, replacement_supplier, replacement_cost,
+          replacement_eta, replacement_ordered_at,
+          replacement_asset_tag, replacement_po_number,
+          replacement_warranty_labor_days, replacement_warranty_parts_days,
+          replacement_warranty_parts_source,
+          completed_at, closed_at,
+          ticket_photos(file_url, upload_type)
+        `)
+        .not("replacement_model", "is", null)
+        .order("replacement_ordered_at", { ascending: false });
+
+      if (filterStore) {
+        query = query.eq("store_number", String(filterStore).trim());
+      }
+      if (!storeAccess.all && storeAccess.stores.length) {
+        query = query.in("store_number", storeAccess.stores);
+      } else if (!storeAccess.all) {
+        return respond(200, { ok: true, replacements: [] });
+      }
+
+      const { data, error } = await query;
+      if (error) throw error;
+
+      // Flatten the receipt URL onto each row so the client doesn't
+      // have to sift through ticket_photos. Pick the most recent
+      // replacement_receipt if multiple exist (shouldn't, but defensive).
+      const out = (data || []).map((t) => {
+        const receipts = (t.ticket_photos || [])
+          .filter((p) => p.upload_type === "replacement_receipt");
+        const { ticket_photos, ...rest } = t;
+        return {
+          ...rest,
+          receipt_url: receipts[0]?.file_url || null,
+        };
+      });
+
+      return respond(200, { ok: true, replacements: out });
+    }
+
     // ── GET SINGLE TICKET ──
     if (action === "getTicket") {
       const { id } = event.queryStringParameters || {};

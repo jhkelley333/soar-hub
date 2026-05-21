@@ -53,6 +53,7 @@ import { VendorSearchInput } from "./VendorSearchInput";
 import { ApprovalSection } from "./ApprovalSection";
 import { TicketChat } from "./TicketChat";
 import { VendorsTab } from "./VendorsTab";
+import { ReplacementsTab } from "./ReplacementsTab";
 import { IssueLibraryTab } from "./IssueLibraryTab";
 import { TroubleshootingTipsTab } from "./TroubleshootingTipsTab";
 import { EmailTemplatesTab } from "./EmailTemplatesTab";
@@ -94,7 +95,7 @@ const CATEGORIES = [
 // Main page tabs. Settings-style tabs (Issue Library / Troubleshooting
 // / Email Templates / Vendor QR) live in a separate Settings panel
 // reached from the gear icon in the page header — gated to RVP+ only.
-type TabId = "tickets" | "vendors" | "my-store-qr";
+type TabId = "tickets" | "vendors" | "replacements" | "my-store-qr";
 const TABS: {
   id: TabId;
   label: string;
@@ -102,6 +103,9 @@ const TABS: {
 }[] = [
   { id: "tickets", label: "Tickets" },
   { id: "vendors", label: "Vendors" },
+  // Replacements: every ticket where new equipment was ordered. The
+  // V2 dress rehearsal of the future V3 Assets register.
+  { id: "replacements", label: "Replacements" },
   // My Store QR: read-only print panel for the caller's own stores.
   // Anyone in the WO2 BETA cohort can see + print their store's QR.
   { id: "my-store-qr", label: "My Store QR" },
@@ -261,6 +265,7 @@ export function WorkOrdersV2Page() {
 
           {tab === "tickets"      && <TicketsTab />}
           {tab === "vendors"      && <VendorsTab callerRole={callerRole} />}
+          {tab === "replacements" && <ReplacementsTab />}
           {tab === "my-store-qr"  && <MyStoreQrPanel />}
         </>
       )}
