@@ -44,6 +44,60 @@ const MAX_PUBLIC_PHOTO_BYTES = 5 * 1024 * 1024;
 const MAX_PUBLIC_PHOTOS_PER_TICKET = 3;
 const PUBLIC_UPLOAD_WINDOW_MS = 15 * 60 * 1000;
 
+// ── Vendor visibility helpers ──
+// Inlined copies of the same functions in facilities-v2.js so this
+// function has no cross-file Lambda dep. A vendor is visible at a
+// store iff one of its vendor_scopes rows resolves to one of the
+// store's hierarchy keys, OR it has no scope rows (legacy "show
+// everywhere" fallback).
+async function visibleScopeKeysForStore(supabase, storeNumber) {
+  const num = String(storeNumber || "").trim();
+  if (!num) return null;
+  const { data: store } = await supabase
+    .from("stores")
+    .select("id, district_id, districts(area_id, areas(region_id))")
+    .eq("number", num)
+    .maybeSingle();
+  if (!store) return null;
+  const districtId = store.district_id || null;
+  const areaId = store.districts?.area_id || null;
+  const regionId = store.districts?.areas?.region_id || null;
+  const keys = new Set();
+  keys.add("national");
+  if (store.id)   keys.add(`store:${store.id}`);
+  if (districtId) keys.add(`district:${districtId}`);
+  if (areaId)     keys.add(`area:${areaId}`);
+  if (regionId)   keys.add(`region:${regionId}`);
+  return keys;
+}
+
+function isVendorVisibleAtStore(scopes, allowedSet, strict = false) {
+  if (!scopes || scopes.length === 0) return !strict;
+  for (const s of scopes) {
+    if (s.scope_type === "national") {
+      if (allowedSet.has("national")) return true;
+      continue;
+    }
+    if (s.scope_id && allowedSet.has(`${s.scope_type}:${s.scope_id}`)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+async function isStrictVendorScopes(supabase) {
+  try {
+    const { data } = await supabase
+      .from("feature_flags")
+      .select("enabled")
+      .eq("key", "wo2_strict_vendor_scopes")
+      .maybeSingle();
+    return !!data?.enabled;
+  } catch {
+    return false;
+  }
+}
+
 function getSupabase() {
   return createClient(SUPABASE_URL, SERVICE_KEY, {
     auth: { persistSession: false, autoRefreshToken: false },
@@ -127,6 +181,27 @@ export const handler = async (event) => {
       // otherwise. We don't gate submission on this — see the
       // troubleshooting question on the public form.
       const troubleshootingChecked = body.troubleshooting_checked === true;
+      // Optional vendor preference. If supplied, re-validate that the
+      // vendor exists, is active, and is visible at this store before
+      // writing it onto the ticket — never trust the client.
+      const vendorIdInput = body.vendor_id ? String(body.vendor_id).trim() : "";
+      let resolvedVendorId = null;
+      let resolvedVendorName = "";
+      if (vendorIdInput) {
+        const { data: v } = await supabase
+          .from("vendors")
+          .select("id, name, is_active, vendor_scopes(scope_type, scope_id)")
+          .eq("id", vendorIdInput)
+          .maybeSingle();
+        if (v && v.is_active) {
+          const allowedSet = await visibleScopeKeysForStore(supabase, store.number);
+          const strict = await isStrictVendorScopes(supabase);
+          if (allowedSet && isVendorVisibleAtStore(v.vendor_scopes || [], allowedSet, strict)) {
+            resolvedVendorId = v.id;
+            resolvedVendorName = v.name || "";
+          }
+        }
+      }
 
       // Required fields. Be strict here — no anonymous "test"
       // submissions from the public form.
@@ -183,6 +258,10 @@ export const handler = async (event) => {
           priority,
           is_business_critical:   false,
           troubleshooting_checked:troubleshootingChecked,
+          vendor_id:              resolvedVendorId,
+          vendor_name:            resolvedVendorName,
+          // vendor_contacted stays false — the submitter is suggesting
+          // a vendor, not confirming one has been contacted yet.
           vendor_contacted:       false,
           date_submitted:         new Date().toISOString(),
         })
@@ -250,6 +329,42 @@ export const handler = async (event) => {
         .limit(20);
       if (error) throw error;
       return respond(200, { ok: true, items: data || [] });
+    }
+
+    // ── Vendor list (public, store-scoped) ──
+    // Returns the same scope-filtered set of vendors the WO2 picker
+    // shows, but stripped down to id + name + category. Phone /
+    // email / cost-tier / ratings stay out so anonymous visitors
+    // can't farm the vendor directory.
+    if (action === "listVendors") {
+      const params = event.queryStringParameters || {};
+      const storeNumber = String(params.store_number || "").trim();
+      const category = String(params.category || "").trim();
+      if (!storeNumber) {
+        return respond(400, { ok: false, message: "store_number required" });
+      }
+      const { data: vendors, error } = await supabase
+        .from("vendors")
+        .select("id, name, category, vendor_scopes(scope_type, scope_id)")
+        .eq("is_active", true)
+        .order("name");
+      if (error) throw error;
+
+      const allowedSet = await visibleScopeKeysForStore(supabase, storeNumber);
+      const strict = await isStrictVendorScopes(supabase);
+      const visible = (vendors || []).filter((v) => {
+        if (!allowedSet) return true;
+        return isVendorVisibleAtStore(v.vendor_scopes || [], allowedSet, strict);
+      }).filter((v) => {
+        if (!category) return true;
+        // Loose category match — many vendors cover multiple
+        // categories via a slash- or comma-delimited string, so a
+        // simple includes() does the right thing here.
+        const vc = String(v.category || "").toLowerCase();
+        return !vc || vc.includes(category.toLowerCase()) || category.toLowerCase().includes(vc);
+      }).map((v) => ({ id: v.id, name: v.name, category: v.category || "" }));
+
+      return respond(200, { ok: true, vendors: visible });
     }
 
     // ── Photo upload for a just-created public ticket ──
