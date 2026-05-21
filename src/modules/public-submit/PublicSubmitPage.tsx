@@ -25,7 +25,6 @@ import {
   MapPin,
   Search,
   Trash2,
-  Wrench,
 } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Card, CardBody } from "@/shared/ui/Card";
@@ -371,8 +370,8 @@ export function PublicSubmitPage() {
     <div className="min-h-screen bg-zinc-50">
       <header className="border-b border-zinc-200 bg-white px-4 py-4">
         <div className="mx-auto flex max-w-2xl items-center gap-2 text-base font-semibold tracking-tight text-midnight">
-          <Wrench className="h-5 w-5 text-accent" strokeWidth={2} />
-          SOAR — Submit a Work Order
+          <img src="/favicon.svg" alt="" aria-hidden="true" className="h-6 w-6 rounded" />
+          SOAR QSR — Submit Work Order
         </div>
       </header>
 
