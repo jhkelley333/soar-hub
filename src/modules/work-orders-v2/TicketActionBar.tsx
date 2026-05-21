@@ -185,6 +185,10 @@ interface Props {
   ticketId:   string;
   status:     TicketStatus;
   closedAt?:  string | null;
+  // Store number for the ticket — passed through to ReasonModal so
+  // the Schedule Vendor flow can render a store-scoped vendor
+  // typeahead instead of a free-text input.
+  storeNumber?: string;
   // Adds the admin-close affordance for higher-tier callers. Backend
   // accepts admin_close from any tier (flat permissions) — this is
   // purely a UI hint so store users aren't shown the deeper modal
@@ -203,6 +207,7 @@ const REOPEN_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
 
 export function TicketActionBar({
   ticketId, status, closedAt,
+  storeNumber,
   showAdminCloseFromInProgress = true,
   isSubmitter = false,
 }: Props) {
@@ -282,6 +287,7 @@ export function TicketActionBar({
         <ReasonModal
           open={true}
           config={modalAction.modal!}
+          storeNumber={storeNumber}
           submitting={mut.isPending}
           error={modalError}
           onClose={() => {
