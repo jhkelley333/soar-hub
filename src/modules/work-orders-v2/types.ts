@@ -11,6 +11,7 @@ export type TicketStatus =
   | "in_progress"
   | "scheduled"
   | "on_site"
+  | "awaiting_equipment"
   | "completed"
   | "closed"
   | "cancelled";
@@ -20,6 +21,7 @@ export const TICKET_STATUSES: TicketStatus[] = [
   "in_progress",
   "scheduled",
   "on_site",
+  "awaiting_equipment",
   "completed",
   "closed",
   "cancelled",
@@ -71,6 +73,7 @@ export function statusLabel(s: TicketStatus | string | null | undefined): string
     case "in_progress": return "In Progress";
     case "scheduled":   return "Scheduled";
     case "on_site":     return "On Site";
+    case "awaiting_equipment": return "Awaiting Equipment";
     case "completed":   return "Completed";
     case "closed":      return "Closed";
     case "cancelled":   return "Cancelled";
@@ -154,6 +157,14 @@ export interface Ticket {
   is_business_critical: boolean;
   vendor_id: string | null;
   vendor_name: string | null;
+  // Replacement-equipment fields. Populated when the team decides to
+  // replace rather than repair (the Order Replacement action sets
+  // them; status transitions to "awaiting_equipment").
+  replacement_model: string | null;
+  replacement_supplier: string | null;
+  replacement_cost: number | string | null;
+  replacement_eta: string | null;
+  replacement_ordered_at: string | null;
   cost_estimate: number | string | null;
   submitted_by: string | null;
   submitted_by_user_id: string | null;
@@ -186,6 +197,12 @@ export type TransitionPayload = Partial<{
   resolution_category: ResolutionCategory;
   reopen_reason: ReopenReason;
   reopen_reason_text: string;
+  // Replacement-equipment payload — required when transitioning to
+  // awaiting_equipment via the Order Replacement action.
+  replacement_model: string;
+  replacement_supplier: string;
+  replacement_cost: number;
+  replacement_eta: string;
 }>;
 
 export interface TransitionTicketBody {
@@ -376,6 +393,10 @@ export interface Vendor {
   notes: string | null;
   notification_preference?: string | null;
   is_active?: boolean;
+  // True if this "vendor" is actually an in-house tech / internal
+  // facilities resource. Renders with an "Internal" chip badge in
+  // pickers and the vendor list so users can tell at a glance.
+  is_internal?: boolean;
   avgRating: number | null;
   totalRatings: number;
   // Scope rows returned by getVendors when the join is included.
@@ -415,6 +436,7 @@ export interface SaveVendorBody {
   website?: string;
   notes?: string;
   is_active?: boolean;
+  is_internal?: boolean;
   labor_warranty_days?: number | null;
   parts_warranty_days?: number | null;
   parts_warranty_source?: "vendor" | "manufacturer" | "none" | null;

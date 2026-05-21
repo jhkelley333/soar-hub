@@ -528,6 +528,10 @@ function VendorEditModal({
   const [email, setEmail] = useState(vendor?.email || "");
   const [website, setWebsite] = useState(vendor?.website || "");
   const [notes, setNotes] = useState(vendor?.notes || "");
+  // is_internal marks an in-house tech / internal facilities
+  // resource. Renders an "Internal" chip in the vendor typeahead
+  // and lets reporting split internal vs external by group-by.
+  const [isInternal, setIsInternal] = useState<boolean>(!!vendor?.is_internal);
 
   // Warranty defaults. Stored as days under the hood; the UI shows
   // a "≈ N months" hint next to the input. Source enum captures
@@ -583,6 +587,7 @@ function VendorEditModal({
         email: email || undefined,
         website: website || undefined,
         notes: notes || undefined,
+        is_internal: isInternal,
         labor_warranty_days:   Number.isFinite(labWarN as number)  ? (labWarN as number)  : null,
         parts_warranty_days:   Number.isFinite(partWarN as number) ? (partWarN as number) : null,
         parts_warranty_source: partsSource || null,
@@ -669,6 +674,23 @@ function VendorEditModal({
           <div>
             <Label htmlFor="vm-notes">Notes</Label>
             <Input id="vm-notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+          </div>
+
+          <div>
+            <label className="flex items-start gap-2 text-sm">
+              <input
+                type="checkbox"
+                checked={isInternal}
+                onChange={(e) => setIsInternal(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-zinc-300 text-accent focus:ring-accent"
+              />
+              <span>
+                <span className="font-semibold text-midnight">In-house tech / internal resource</span>
+                <span className="ml-1 text-xs text-zinc-500">
+                  — shows as an &ldquo;Internal&rdquo; chip in vendor pickers; reporting can split internal vs external.
+                </span>
+              </span>
+            </label>
           </div>
 
           {/* Warranty defaults — auto-populated onto a ticket when

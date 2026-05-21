@@ -66,13 +66,14 @@ import { TicketActivityFeed } from "./TicketActivityFeed";
 import { useAuth } from "@/auth/AuthProvider";
 
 const STATUS_TONE: Record<TicketStatus, "info" | "warning" | "success" | "danger" | "neutral"> = {
-  "submitted":   "info",
-  "in_progress": "warning",
-  "scheduled":   "info",
-  "on_site":     "warning",
-  "completed":   "success",
-  "closed":      "neutral",
-  "cancelled":   "neutral",
+  "submitted":          "info",
+  "in_progress":        "warning",
+  "scheduled":          "info",
+  "on_site":            "warning",
+  "awaiting_equipment": "warning",
+  "completed":          "success",
+  "closed":             "neutral",
+  "cancelled":          "neutral",
 };
 
 const PRIORITY_TONE: Record<TicketPriority, "danger" | "warning" | "neutral"> = {
@@ -707,6 +708,8 @@ function TicketCard({
             </div>
           )}
 
+          <ReplacementBanner ticket={ticket} />
+
           <DetailGrid ticket={ticket} />
           <DescriptionBlock label="Issue Description" value={ticket.issue_description} />
           {ticket.latest_comment && (
@@ -750,6 +753,55 @@ function TicketCard({
         </CardBody>
       )}
     </Card>
+  );
+}
+
+// Surfaces the replacement-equipment details once the team has
+// committed to ordering new equipment. Lives between the action-bar
+// notices and the detail grid so it's the first thing readers see
+// about the ticket's current direction. Renders nothing until at
+// least one replacement field is populated, so we don't show an
+// empty container on every ticket.
+function ReplacementBanner({ ticket }: { ticket: Ticket }) {
+  const hasAny =
+    !!ticket.replacement_model
+    || !!ticket.replacement_supplier
+    || ticket.replacement_cost != null
+    || !!ticket.replacement_eta;
+  if (!hasAny) return null;
+
+  const items: Array<{ label: string; value: string }> = [];
+  items.push({ label: "Model / SKU", value: ticket.replacement_model || "—" });
+  items.push({ label: "Supplier",    value: ticket.replacement_supplier || "—" });
+  items.push({ label: "Cost",        value: fmtMoney(ticket.replacement_cost) });
+  items.push({ label: "Expected",    value: ticket.replacement_eta ? fmtDate(ticket.replacement_eta) : "—" });
+
+  const isAwaiting = ticket.status === "awaiting_equipment";
+  return (
+    <div className={cn(
+      "mt-3 rounded-md border p-3",
+      isAwaiting ? "border-indigo-200 bg-indigo-50" : "border-zinc-200 bg-zinc-50",
+    )}>
+      <div className={cn(
+        "text-[11px] font-semibold uppercase tracking-wide",
+        isAwaiting ? "text-indigo-900" : "text-zinc-700",
+      )}>
+        {isAwaiting ? "Awaiting replacement equipment" : "Replacement details"}
+      </div>
+      <dl className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {items.map((i) => (
+          <div key={i.label}>
+            <dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">{i.label}</dt>
+            <dd className={cn(
+              "text-sm",
+              isAwaiting ? "text-indigo-900" : "text-midnight",
+            )}>
+              {i.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </div>
   );
 }
 

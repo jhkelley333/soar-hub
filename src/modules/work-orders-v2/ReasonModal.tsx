@@ -100,6 +100,13 @@ export type ReasonModalConfig =
       kind: "vendor_schedule";
       title?: string;
       submitLabel?: string;
+    }
+  | {
+      // Order replacement equipment. Transitions the ticket to
+      // awaiting_equipment and stamps the replacement_* columns.
+      kind: "order_replacement";
+      title?: string;
+      submitLabel?: string;
     };
 
 interface Props {
@@ -121,6 +128,12 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
   const [resolution, setResolution] = useState<ResolutionCategory | "">("");
   const [vendorName, setVendorName] = useState<string>("");
   const [vendorId, setVendorId] = useState<string | null>(null);
+  // Replacement-equipment fields. Only meaningful for the
+  // order_replacement modal kind.
+  const [replModel, setReplModel] = useState<string>("");
+  const [replSupplier, setReplSupplier] = useState<string>("");
+  const [replCost, setReplCost] = useState<string>("");
+  const [replEta, setReplEta] = useState<string>("");
 
   useEffect(() => {
     if (!open) return;
@@ -129,6 +142,10 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
     setResolution("");
     setVendorName("");
     setVendorId(null);
+    setReplModel("");
+    setReplSupplier("");
+    setReplCost("");
+    setReplEta("");
   }, [open, config.kind]);
 
   const title = useMemo(() => config.title || defaultTitle(config.kind), [config]);
@@ -179,6 +196,19 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
         if (!vendorName.trim()) return null;
         const payload: TransitionPayload = { vendor_name: vendorName.trim() };
         if (vendorId) payload.vendor_id = vendorId;
+        return payload;
+      }
+      case "order_replacement": {
+        const model = replModel.trim();
+        const eta = replEta.trim();
+        const cost = Number(replCost);
+        if (!model || !eta || !Number.isFinite(cost) || cost < 0) return null;
+        const payload: TransitionPayload = {
+          replacement_model: model,
+          replacement_cost: cost,
+          replacement_eta: eta,
+        };
+        if (replSupplier.trim()) payload.replacement_supplier = replSupplier.trim();
         return payload;
       }
     }
@@ -336,6 +366,69 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
               </div>
             </div>
           )}
+          {config.kind === "order_replacement" && (
+            <div className="space-y-3">
+              <div className="rounded-md border border-indigo-200 bg-indigo-50 p-3 text-xs text-indigo-900">
+                Records that you're ordering new equipment instead of repairing.
+                The ticket moves to <strong>Awaiting Equipment</strong> until the
+                install is complete.
+              </div>
+              <div>
+                <Label htmlFor="repl-model">Replacement model / SKU *</Label>
+                <Input
+                  id="repl-model"
+                  value={replModel}
+                  onChange={(e) => setReplModel(e.target.value)}
+                  placeholder="e.g. Frymaster FPP255, Hoshizaki KM-901"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <Label htmlFor="repl-supplier">Supplier (optional)</Label>
+                {storeNumber ? (
+                  <VendorSearchInput
+                    id="repl-supplier"
+                    storeNumber={storeNumber}
+                    value={replSupplier}
+                    vendorId={null}
+                    onChange={({ name }) => setReplSupplier(name)}
+                    placeholder="Search vendors or type a one-off name…"
+                  />
+                ) : (
+                  <Input
+                    id="repl-supplier"
+                    value={replSupplier}
+                    onChange={(e) => setReplSupplier(e.target.value)}
+                    placeholder="Who's the equipment coming from?"
+                  />
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor="repl-cost">Cost *</Label>
+                  <Input
+                    id="repl-cost"
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    min="0"
+                    value={replCost}
+                    onChange={(e) => setReplCost(e.target.value)}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="repl-eta">Expected install *</Label>
+                  <Input
+                    id="repl-eta"
+                    type="date"
+                    value={replEta}
+                    onChange={(e) => setReplEta(e.target.value)}
+                  />
+                </div>
+              </div>
+            </div>
+          )}
 
           {error && (
             <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
@@ -401,6 +494,7 @@ function defaultTitle(kind: ReasonModalConfig["kind"]): string {
     case "reopen":         return "Reopen Ticket";
     case "resolution_only":return "Resolution";
     case "vendor_schedule":return "Schedule Vendor";
+    case "order_replacement":return "Order Replacement Equipment";
   }
 }
 function defaultSubmit(kind: ReasonModalConfig["kind"]): string {
@@ -412,5 +506,6 @@ function defaultSubmit(kind: ReasonModalConfig["kind"]): string {
     case "reopen":         return "Reopen";
     case "resolution_only":return "Save";
     case "vendor_schedule":return "Schedule";
+    case "order_replacement":return "Order Replacement";
   }
 }

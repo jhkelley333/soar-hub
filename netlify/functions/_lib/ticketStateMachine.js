@@ -19,6 +19,7 @@ const REOPEN_GRACE_MS = REOPEN_GRACE_DAYS * 24 * 60 * 60 * 1000;
 
 const ALL_STATUSES = [
   "submitted", "in_progress", "scheduled", "on_site",
+  "awaiting_equipment",
   "completed", "closed", "cancelled",
 ];
 const ALL_PAUSE_STATES = ["none", "on_hold", "awaiting_parts", "awaiting_replacement"];
@@ -77,6 +78,36 @@ function vendorSideEffects(payload) {
   if (payload?.vendor_id) out.vendor_id = payload.vendor_id;
   if (payload?.vendor_name) out.vendor_name = payload.vendor_name;
   return out;
+}
+
+// Replacement-equipment validator. Required when transitioning INTO
+// awaiting_equipment: the team is committing to order new equipment
+// so we need at minimum what they're ordering and what it'll cost.
+// supplier + eta are strongly recommended but only enforced softly
+// (eta required so the dashboard can flag past-due replacements;
+// supplier optional because some orders go through corporate).
+function validateReplacement(payload) {
+  const e1 = requireField(payload, "replacement_model", "order replacement");
+  if (e1) return e1;
+  if (payload?.replacement_cost === undefined
+      || payload.replacement_cost === null
+      || payload.replacement_cost === "") {
+    return invalidPayload(
+      "order replacement: missing required field \"replacement_cost\"",
+      { field: "replacement_cost" });
+  }
+  const e3 = requireField(payload, "replacement_eta", "order replacement");
+  if (e3) return e3;
+  return null;
+}
+function replacementSideEffects(payload) {
+  return {
+    replacement_model:      String(payload.replacement_model).trim(),
+    replacement_supplier:   payload.replacement_supplier ? String(payload.replacement_supplier).trim() : null,
+    replacement_cost:       Number(payload.replacement_cost),
+    replacement_eta:        payload.replacement_eta,
+    replacement_ordered_at: nowIso(),
+  };
 }
 
 // Transition table — keyed `from -> to`. Each entry: validate(payload, ctx)
@@ -249,6 +280,57 @@ const TRANSITIONS = {
                                   callback_of: ctx.ticketId,
                                   closed_at: null,
                                 }) },
+
+  // ── Replacement-equipment branch ──
+  // The team has decided to replace rather than repair (cost-to-fix
+  // too high, equipment too old, etc). Reachable from every active
+  // status so the call can be made at any point in the workflow.
+  // Side-effects capture model + supplier + cost + ETA so the
+  // dashboard can flag past-due deliveries and reporting can total
+  // replacement spend.
+  "submitted->awaiting_equipment":   { validate:    (p) => validateReplacement(p),
+                                       sideEffects: (p) => replacementSideEffects(p) },
+  "in_progress->awaiting_equipment": { validate:    (p) => validateReplacement(p),
+                                       sideEffects: (p) => replacementSideEffects(p) },
+  "scheduled->awaiting_equipment":   { validate:    (p) => validateReplacement(p),
+                                       sideEffects: (p) => replacementSideEffects(p) },
+  "on_site->awaiting_equipment":     { validate:    (p) => validateReplacement(p),
+                                       sideEffects: (p) => replacementSideEffects(p) },
+
+  // Exits from awaiting_equipment.
+  //  → in_progress: equipment arrived, scheduling install / installer
+  //    is on their way. No extra payload required.
+  //  → completed: equipment installed and working. resolution_category
+  //    defaults to 'replaced' if not supplied — that's the whole point
+  //    of this branch.
+  //  → cancelled: changed our minds (won't replace after all). Standard
+  //    cancellation rules apply.
+  "awaiting_equipment->in_progress": { validate: () => null,
+                                       sideEffects: () => ({}) },
+  "awaiting_equipment->completed":   { validate: () => null,
+                                       sideEffects: (p) => ({
+                                         resolution_category: p.resolution_category || "replaced",
+                                         completed_at: nowIso(),
+                                       }) },
+  "awaiting_equipment->closed":      { validate: (p) => {
+                                         if (p.store_close_reason) return null;
+                                         const e1 = requireField(p, "admin_close_reason", "admin close");
+                                         if (e1) return e1;
+                                         return null;
+                                       },
+                                       sideEffects: (p) => ({
+                                         ...(p.store_close_reason
+                                           ? { store_close_reason: p.store_close_reason, closed_by_store: true }
+                                           : { admin_close_reason: p.admin_close_reason,
+                                               resolution_category: p.resolution_category || "replaced",
+                                               closed_by_store: false }),
+                                         closed_at: nowIso(),
+                                       }) },
+  "awaiting_equipment->cancelled":   { validate: (p) => requireField(p, "admin_close_reason", "cancellation"),
+                                       sideEffects: (p) => ({
+                                         admin_close_reason: p.admin_close_reason,
+                                         closed_at: nowIso(),
+                                       }) },
 };
 
 function validateReopenReason(payload) {
