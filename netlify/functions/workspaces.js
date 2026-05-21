@@ -16,6 +16,10 @@
 //                      archiveTemplateVersion
 //   questions:         listQuestions, upsertQuestions  (draft-only)
 //   approval steps:    listApprovalSteps, upsertApprovalSteps  (draft-only)
+//   schedules:         listSchedules, getSchedule, createSchedule,
+//                      updateSchedule, toggleSchedule, deleteSchedule
+//   assignments:       listAssignments, listMyAssignments, getAssignment,
+//                      createAssignment, cancelAssignment, startAssignment
 //   activity log:      getActivity  (owner / admin only)
 //
 // Versioning model: once a version is 'published', it's immutable.
@@ -87,7 +91,7 @@ function respond(statusCode, body) {
   };
 }
 
-// ── Activity log helper ────────────────────────────────────
+// ── Activity log helper ──────────────────────────────────────
 //
 // Writes a row to workspace_activity_log. Snapshots actor identity
 // (id, email, role) so audit history survives profile deletion.
@@ -112,7 +116,7 @@ async function logActivity(supabase, profile, opts) {
   }
 }
 
-// ── Visibility resolution ──────────────────────────────────
+// ── Visibility resolution ────────────────────────────────────
 //
 // Returns the list of workspace IDs visible to the caller. Mirrors
 // the workspaces_select RLS policy logic, but runs in JS because we
@@ -183,7 +187,7 @@ async function visibleWorkspaceIds(supabase, profile) {
   return { all: false, ids: Array.from(ids) };
 }
 
-// ── Validation helpers ───────────────────────────────────
+// ── Validation helpers ──────────────────────────────────────
 function isUuid(s) {
   return typeof s === "string"
     && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
@@ -198,6 +202,47 @@ const ALLOWED_FIELD_TYPE = [
   "checkbox", "date", "photo", "file", "signature", "pass_fail_na",
 ];
 const ALLOWED_VERSION_STATUS = ["draft", "published", "archived"];
+const ALLOWED_CADENCE = ["daily", "weekly", "biweekly", "monthly", "quarterly"];
+const ALLOWED_ASSIGNMENT_STATUS = ["pending", "in_progress", "submitted", "overdue", "cancelled"];
+
+// Validate an assignee_rule JSON payload. We don't fully resolve it
+// here (resolution happens in the sweep function at spawn time), but
+// we sanity-check the shape so bad rules don't sit in the table
+// silently waiting to fail in production.
+function validateAssigneeRule(r) {
+  if (!r || typeof r !== "object") return "assignee_rule (JSON object) required.";
+  const kind = String(r.kind || "");
+  if (kind === "fixed") {
+    if (!isUuid(r.user_id)) return "assignee_rule.user_id (uuid) required for kind=fixed.";
+    return null;
+  }
+  if (kind === "role_relative") {
+    if (typeof r.role !== "string" || !r.role.trim()) return "assignee_rule.role required for kind=role_relative.";
+    if (typeof r.anchor !== "string" || !r.anchor.trim()) return "assignee_rule.anchor required for kind=role_relative.";
+    return null;
+  }
+  if (kind === "per_store") {
+    const okScopeKind = ["region", "area", "district", "store"].includes(r.scope_kind);
+    if (!okScopeKind) return "assignee_rule.scope_kind must be region|area|district|store for kind=per_store.";
+    if (!isUuid(r.scope_id)) return "assignee_rule.scope_id (uuid) required for kind=per_store.";
+    if (typeof r.role_in_store !== "string" || !r.role_in_store.trim()) {
+      return "assignee_rule.role_in_store required for kind=per_store.";
+    }
+    return null;
+  }
+  return `assignee_rule.kind must be one of: fixed, role_relative, per_store (got: ${kind}).`;
+}
+
+// "HH:MM" with hour 0-23 and minute 0-59. Reject anything else so
+// the sweep function never has to parse garbage.
+function isValidSpawnTime(s) {
+  if (typeof s !== "string") return false;
+  const m = s.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return false;
+  const h = parseInt(m[1], 10);
+  const mn = parseInt(m[2], 10);
+  return h >= 0 && h <= 23 && mn >= 0 && mn <= 59;
+}
 
 // Normalize + validate a question payload from the client. Returns
 // { ok: true, row } for an insert-ready object, or { ok: false, msg }
@@ -276,7 +321,7 @@ async function workspaceIdForVersion(supabase, versionId) {
   return data?.workspace_templates?.workspace_id || null;
 }
 
-// ── Handler ──────────────────────────────────────────
+// ── Handler ─────────────────────────────────────────────────
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
 
@@ -289,9 +334,9 @@ export const handler = async (event) => {
   const supabase = getSupabase();
 
   try {
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
     // WORKSPACES
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
 
     // List workspaces the caller can see. Returns minimal columns —
     // the detail screen calls getWorkspace for the full row.
@@ -565,9 +610,9 @@ export const handler = async (event) => {
       return respond(200, { ok: true });
     }
 
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
     // MEMBERS
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
 
     if (action === "listMembers") {
       const wsId = (event.queryStringParameters || {}).workspace_id;
@@ -745,9 +790,9 @@ export const handler = async (event) => {
       return respond(200, { ok: true });
     }
 
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
     // TEMPLATES
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
 
     if (action === "listTemplates") {
       const wsId = (event.queryStringParameters || {}).workspace_id;
@@ -1003,9 +1048,9 @@ export const handler = async (event) => {
       return respond(200, { ok: true, template: after });
     }
 
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
     // TEMPLATE VERSIONS
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
 
     if (action === "listTemplateVersions") {
       const tplId = (event.queryStringParameters || {}).template_id;
@@ -1305,9 +1350,9 @@ export const handler = async (event) => {
       return respond(200, { ok: true, version: after });
     }
 
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
     // QUESTIONS (full-replace upsert on draft versions only)
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
 
     if (action === "listQuestions") {
       const vId = (event.queryStringParameters || {}).version_id;
@@ -1408,9 +1453,9 @@ export const handler = async (event) => {
       return respond(200, { ok: true, questions: inserted });
     }
 
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
     // APPROVAL STEPS (full-replace upsert on draft versions only)
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
 
     if (action === "listApprovalSteps") {
       const vId = (event.queryStringParameters || {}).version_id;
@@ -1500,9 +1545,640 @@ export const handler = async (event) => {
       return respond(200, { ok: true, approval_steps: inserted });
     }
 
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
+    // SCHEDULES
+    // ═══════════════════════════════════════════════════════════
+
+    if (action === "listSchedules") {
+      const wsId = (event.queryStringParameters || {}).workspace_id;
+      if (!isUuid(wsId)) return respond(400, { ok: false, message: "Bad workspace_id." });
+
+      const denied = await requireWorkspaceCap(supabase, profile, wsId, "view_workspace");
+      if (denied) return denied;
+
+      const { data, error } = await supabase
+        .from("workspace_schedules")
+        .select("*, workspace_templates:template_id(name, type)")
+        .eq("workspace_id", wsId)
+        .order("created_at", { ascending: false });
+      if (error) throw error;
+      return respond(200, { ok: true, schedules: data || [] });
+    }
+
+    if (action === "getSchedule") {
+      const id = (event.queryStringParameters || {}).id;
+      if (!isUuid(id)) return respond(400, { ok: false, message: "Bad schedule id." });
+
+      const { data, error } = await supabase
+        .from("workspace_schedules")
+        .select("*, workspace_templates:template_id(id, name, type, workspace_id)")
+        .eq("id", id)
+        .single();
+      if (error || !data) return respond(404, { ok: false, message: "Schedule not found." });
+
+      const denied = await requireWorkspaceCap(supabase, profile, data.workspace_id, "view_workspace");
+      if (denied) return denied;
+
+      return respond(200, { ok: true, schedule: data });
+    }
+
+    if (action === "createSchedule" && event.httpMethod === "POST") {
+      const payload = JSON.parse(event.body || "{}");
+      const wsId = payload.workspace_id;
+      const tplId = payload.template_id;
+      if (!isUuid(wsId)) return respond(400, { ok: false, message: "Bad workspace_id." });
+      if (!isUuid(tplId)) return respond(400, { ok: false, message: "Bad template_id." });
+
+      const denied = await requireWorkspaceCap(supabase, profile, wsId, "create_schedule");
+      if (denied) return denied;
+
+      // Confirm the template belongs to this workspace (defense against
+      // cross-workspace template references).
+      const { data: tpl } = await supabase
+        .from("workspace_templates")
+        .select("workspace_id, is_archived")
+        .eq("id", tplId)
+        .maybeSingle();
+      if (!tpl || tpl.workspace_id !== wsId) {
+        return respond(400, { ok: false, message: "Template not in this workspace." });
+      }
+      if (tpl.is_archived) {
+        return respond(400, { ok: false, message: "Cannot schedule against an archived template." });
+      }
+
+      const cadence = payload.cadence;
+      if (!ALLOWED_CADENCE.includes(cadence)) {
+        return respond(400, { ok: false, message: `Bad cadence. Allowed: ${ALLOWED_CADENCE.join(", ")}.` });
+      }
+
+      // Cadence-specific required fields. We don't enforce these at the
+      // DB level (the CHECK only constrains ranges); the API layer is
+      // where we make sure the schedule makes sense.
+      let dayOfWeek = null, dayOfMonth = null;
+      if (cadence === "weekly" || cadence === "biweekly") {
+        if (payload.day_of_week == null) {
+          return respond(400, { ok: false, message: "day_of_week (0-6) required for weekly/biweekly cadence." });
+        }
+        const n = Number(payload.day_of_week);
+        if (!Number.isInteger(n) || n < 0 || n > 6) {
+          return respond(400, { ok: false, message: "day_of_week must be 0-6 (Sun-Sat)." });
+        }
+        dayOfWeek = n;
+      }
+      if (cadence === "monthly" || cadence === "quarterly") {
+        if (payload.day_of_month == null) {
+          return respond(400, { ok: false, message: "day_of_month (1-28) required for monthly/quarterly cadence." });
+        }
+        const n = Number(payload.day_of_month);
+        if (!Number.isInteger(n) || n < 1 || n > 28) {
+          return respond(400, { ok: false, message: "day_of_month must be 1-28 (28 max to dodge month-edge cases)." });
+        }
+        dayOfMonth = n;
+      }
+
+      const spawnTime = payload.spawn_time || "08:00";
+      if (!isValidSpawnTime(spawnTime)) {
+        return respond(400, { ok: false, message: "spawn_time must be HH:MM (24h)." });
+      }
+      const spawnTz = (payload.spawn_tz || "America/Chicago").trim();
+
+      const ruleErr = validateAssigneeRule(payload.assignee_rule);
+      if (ruleErr) return respond(400, { ok: false, message: ruleErr });
+
+      let dueAfter = 24;
+      if (payload.due_after_hours != null) {
+        const n = Number(payload.due_after_hours);
+        if (!Number.isInteger(n) || n <= 0) {
+          return respond(400, { ok: false, message: "due_after_hours must be a positive integer." });
+        }
+        dueAfter = n;
+      }
+
+      // next_spawn_at left NULL on create — the sweep function picks
+      // these up on its first run and computes the first occurrence.
+      // Allows the admin to create a schedule without us needing to
+      // do full TZ math here.
+      const { data: sched, error } = await supabase
+        .from("workspace_schedules")
+        .insert({
+          workspace_id: wsId,
+          template_id: tplId,
+          cadence,
+          day_of_week: dayOfWeek,
+          day_of_month: dayOfMonth,
+          spawn_time: spawnTime,
+          spawn_tz: spawnTz,
+          assignee_rule: payload.assignee_rule,
+          due_after_hours: dueAfter,
+          is_active: payload.is_active !== false, // default true
+          created_by_id: profile.id,
+        })
+        .select("*")
+        .single();
+      if (error) throw error;
+
+      await logActivity(supabase, profile, {
+        workspaceId: wsId,
+        targetKind: "schedule",
+        targetId: sched.id,
+        action: "schedule.created",
+        afterState: sched,
+      });
+
+      return respond(200, { ok: true, schedule: sched });
+    }
+
+    if (action === "updateSchedule" && event.httpMethod === "POST") {
+      const payload = JSON.parse(event.body || "{}");
+      const id = payload.id;
+      if (!isUuid(id)) return respond(400, { ok: false, message: "Bad schedule id." });
+
+      const { data: before } = await supabase
+        .from("workspace_schedules").select("*").eq("id", id).single();
+      if (!before) return respond(404, { ok: false, message: "Schedule not found." });
+
+      const denied = await requireWorkspaceCap(supabase, profile, before.workspace_id, "manage_schedule");
+      if (denied) return denied;
+
+      const patch = {};
+      // Cadence changes are allowed but the day_of_* fields must be
+      // consistent. Easiest: re-validate the whole shape using the
+      // intended cadence (current or patched).
+      const nextCadence = payload.cadence || before.cadence;
+      if (payload.cadence && !ALLOWED_CADENCE.includes(payload.cadence)) {
+        return respond(400, { ok: false, message: "Bad cadence." });
+      }
+      if (payload.cadence) patch.cadence = payload.cadence;
+
+      const wantsWeeklyKind = ["weekly", "biweekly"].includes(nextCadence);
+      const wantsMonthlyKind = ["monthly", "quarterly"].includes(nextCadence);
+
+      if ("day_of_week" in payload) {
+        if (payload.day_of_week == null) {
+          if (wantsWeeklyKind) return respond(400, { ok: false, message: "day_of_week required for weekly/biweekly." });
+          patch.day_of_week = null;
+        } else {
+          const n = Number(payload.day_of_week);
+          if (!Number.isInteger(n) || n < 0 || n > 6) {
+            return respond(400, { ok: false, message: "day_of_week must be 0-6." });
+          }
+          patch.day_of_week = n;
+        }
+      }
+      if ("day_of_month" in payload) {
+        if (payload.day_of_month == null) {
+          if (wantsMonthlyKind) return respond(400, { ok: false, message: "day_of_month required for monthly/quarterly." });
+          patch.day_of_month = null;
+        } else {
+          const n = Number(payload.day_of_month);
+          if (!Number.isInteger(n) || n < 1 || n > 28) {
+            return respond(400, { ok: false, message: "day_of_month must be 1-28." });
+          }
+          patch.day_of_month = n;
+        }
+      }
+      if ("spawn_time" in payload) {
+        if (!isValidSpawnTime(payload.spawn_time)) {
+          return respond(400, { ok: false, message: "spawn_time must be HH:MM." });
+        }
+        patch.spawn_time = payload.spawn_time;
+      }
+      if ("spawn_tz" in payload) {
+        const tz = String(payload.spawn_tz || "").trim();
+        if (!tz) return respond(400, { ok: false, message: "spawn_tz cannot be empty." });
+        patch.spawn_tz = tz;
+      }
+      if ("assignee_rule" in payload) {
+        const err = validateAssigneeRule(payload.assignee_rule);
+        if (err) return respond(400, { ok: false, message: err });
+        patch.assignee_rule = payload.assignee_rule;
+      }
+      if ("due_after_hours" in payload) {
+        const n = Number(payload.due_after_hours);
+        if (!Number.isInteger(n) || n <= 0) {
+          return respond(400, { ok: false, message: "due_after_hours must be a positive integer." });
+        }
+        patch.due_after_hours = n;
+      }
+      if (typeof payload.is_active === "boolean") {
+        patch.is_active = payload.is_active;
+      }
+
+      // If any of cadence/day_of_week/day_of_month/spawn_time/spawn_tz
+      // changed, reset next_spawn_at so the sweeper recomputes from
+      // the new rule.
+      const scheduleFieldsChanged =
+        "cadence" in patch || "day_of_week" in patch || "day_of_month" in patch
+        || "spawn_time" in patch || "spawn_tz" in patch;
+      if (scheduleFieldsChanged) {
+        patch.next_spawn_at = null;
+      }
+
+      if (!Object.keys(patch).length) {
+        return respond(400, { ok: false, message: "Nothing to update." });
+      }
+
+      const { data: after, error } = await supabase
+        .from("workspace_schedules")
+        .update(patch)
+        .eq("id", id)
+        .select("*")
+        .single();
+      if (error) throw error;
+
+      await logActivity(supabase, profile, {
+        workspaceId: before.workspace_id,
+        targetKind: "schedule",
+        targetId: id,
+        action: "schedule.updated",
+        beforeState: before,
+        afterState: after,
+      });
+
+      return respond(200, { ok: true, schedule: after });
+    }
+
+    // Quick enable/disable without a full update. Convenience for UI
+    // toggles. Logs 'schedule.enabled' or 'schedule.disabled' so the
+    // audit trail captures the intent rather than a generic .updated.
+    if (action === "toggleSchedule" && event.httpMethod === "POST") {
+      const payload = JSON.parse(event.body || "{}");
+      const id = payload.id;
+      if (!isUuid(id)) return respond(400, { ok: false, message: "Bad schedule id." });
+      if (typeof payload.is_active !== "boolean") {
+        return respond(400, { ok: false, message: "is_active (boolean) required." });
+      }
+
+      const { data: before } = await supabase
+        .from("workspace_schedules").select("*").eq("id", id).single();
+      if (!before) return respond(404, { ok: false, message: "Schedule not found." });
+
+      const denied = await requireWorkspaceCap(supabase, profile, before.workspace_id, "manage_schedule");
+      if (denied) return denied;
+
+      if (before.is_active === payload.is_active) {
+        return respond(200, { ok: true, schedule: before, unchanged: true });
+      }
+
+      const { data: after, error } = await supabase
+        .from("workspace_schedules")
+        .update({ is_active: payload.is_active })
+        .eq("id", id)
+        .select("*")
+        .single();
+      if (error) throw error;
+
+      await logActivity(supabase, profile, {
+        workspaceId: before.workspace_id,
+        targetKind: "schedule",
+        targetId: id,
+        action: payload.is_active ? "schedule.enabled" : "schedule.disabled",
+        beforeState: before,
+        afterState: after,
+      });
+
+      return respond(200, { ok: true, schedule: after });
+    }
+
+    // Hard delete. Schedules don't carry their own history (audit log
+    // does), so deletion is safe. Existing assignments spawned from
+    // the schedule keep their schedule_id (FK is ON DELETE SET NULL).
+    if (action === "deleteSchedule" && event.httpMethod === "POST") {
+      const payload = JSON.parse(event.body || "{}");
+      const id = payload.id;
+      if (!isUuid(id)) return respond(400, { ok: false, message: "Bad schedule id." });
+
+      const { data: before } = await supabase
+        .from("workspace_schedules").select("*").eq("id", id).single();
+      if (!before) return respond(404, { ok: false, message: "Schedule not found." });
+
+      const denied = await requireWorkspaceCap(supabase, profile, before.workspace_id, "manage_schedule");
+      if (denied) return denied;
+
+      const { error } = await supabase
+        .from("workspace_schedules")
+        .delete()
+        .eq("id", id);
+      if (error) throw error;
+
+      await logActivity(supabase, profile, {
+        workspaceId: before.workspace_id,
+        targetKind: "schedule",
+        targetId: id,
+        action: "schedule.disabled",
+        beforeState: before,
+        eventData: { reason: "deleted" },
+      });
+
+      return respond(200, { ok: true });
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // ASSIGNMENTS
+    // ═══════════════════════════════════════════════════════════
+
+    // Workspace-scoped assignment list with optional status filter.
+    // Used by the "tasks in this workspace" admin/owner view.
+    if (action === "listAssignments") {
+      const wsId = (event.queryStringParameters || {}).workspace_id;
+      if (!isUuid(wsId)) return respond(400, { ok: false, message: "Bad workspace_id." });
+
+      const denied = await requireWorkspaceCap(supabase, profile, wsId, "view_workspace");
+      if (denied) return denied;
+
+      const status = (event.queryStringParameters || {}).status;
+      const assigneeFilter = (event.queryStringParameters || {}).assignee_id;
+      const limit = Math.min(
+        parseInt((event.queryStringParameters || {}).limit, 10) || 100,
+        500,
+      );
+
+      let q = supabase
+        .from("workspace_assignments")
+        .select(`
+          *,
+          workspace_templates:template_id(id, name, type),
+          assignee:assignee_id(id, full_name, email, role),
+          store:store_id(id, store_number, name)
+        `)
+        .eq("workspace_id", wsId)
+        .order("due_at", { ascending: true, nullsFirst: false })
+        .limit(limit);
+      if (status) {
+        const statuses = status.split(",").filter((s) => ALLOWED_ASSIGNMENT_STATUS.includes(s));
+        if (statuses.length) q = q.in("status", statuses);
+      }
+      if (assigneeFilter && isUuid(assigneeFilter)) {
+        q = q.eq("assignee_id", assigneeFilter);
+      }
+
+      const { data, error } = await q;
+      if (error) throw error;
+      return respond(200, { ok: true, assignments: data || [] });
+    }
+
+    // Caller's own assignment queue across ALL workspaces they have
+    // assignments in. Default filter: open work (pending + in_progress
+    // + overdue) — the "what should I be working on" view.
+    if (action === "listMyAssignments") {
+      const status = (event.queryStringParameters || {}).status;
+      const statuses = status
+        ? status.split(",").filter((s) => ALLOWED_ASSIGNMENT_STATUS.includes(s))
+        : ["pending", "in_progress", "overdue"];
+
+      const { data, error } = await supabase
+        .from("workspace_assignments")
+        .select(`
+          *,
+          workspaces:workspace_id(id, name),
+          workspace_templates:template_id(id, name, type),
+          store:store_id(id, store_number, name)
+        `)
+        .eq("assignee_id", profile.id)
+        .in("status", statuses)
+        .order("due_at", { ascending: true, nullsFirst: false });
+      if (error) throw error;
+      return respond(200, { ok: true, assignments: data || [] });
+    }
+
+    if (action === "getAssignment") {
+      const id = (event.queryStringParameters || {}).id;
+      if (!isUuid(id)) return respond(400, { ok: false, message: "Bad assignment id." });
+
+      const { data: asn, error } = await supabase
+        .from("workspace_assignments")
+        .select(`
+          *,
+          workspace_templates:template_id(id, name, type, audit_pass_threshold, critical_fails_audit),
+          workspace_template_versions:template_version_id(id, version_number, status),
+          assignee:assignee_id(id, full_name, email, role),
+          store:store_id(id, store_number, name)
+        `)
+        .eq("id", id)
+        .single();
+      if (error || !asn) return respond(404, { ok: false, message: "Assignment not found." });
+
+      // Visible if assignee OR workspace-member.
+      const isAssignee = asn.assignee_id === profile.id;
+      if (!isAssignee) {
+        const denied = await requireWorkspaceCap(supabase, profile, asn.workspace_id, "view_workspace");
+        if (denied) return denied;
+      }
+
+      return respond(200, { ok: true, assignment: asn });
+    }
+
+    // Ad-hoc assignment creation (not via schedule). Pins to the
+    // currently-published template version so the assignment can't be
+    // rug-pulled by a future publish.
+    if (action === "createAssignment" && event.httpMethod === "POST") {
+      const payload = JSON.parse(event.body || "{}");
+      const wsId = payload.workspace_id;
+      const tplId = payload.template_id;
+      const assigneeId = payload.assignee_id;
+      if (!isUuid(wsId)) return respond(400, { ok: false, message: "Bad workspace_id." });
+      if (!isUuid(tplId)) return respond(400, { ok: false, message: "Bad template_id." });
+      if (!isUuid(assigneeId)) return respond(400, { ok: false, message: "Bad assignee_id." });
+
+      const denied = await requireWorkspaceCap(supabase, profile, wsId, "create_assignment");
+      if (denied) return denied;
+
+      // Confirm the template is in the workspace + not archived.
+      const { data: tpl } = await supabase
+        .from("workspace_templates")
+        .select("workspace_id, is_archived, type")
+        .eq("id", tplId)
+        .maybeSingle();
+      if (!tpl || tpl.workspace_id !== wsId) {
+        return respond(400, { ok: false, message: "Template not in this workspace." });
+      }
+      if (tpl.is_archived) {
+        return respond(400, { ok: false, message: "Template is archived." });
+      }
+
+      // Resolve the current published version. If there's no published
+      // version yet, we can't create an assignment — the form has no
+      // content to fill out.
+      const { data: published } = await supabase
+        .from("workspace_template_versions")
+        .select("id, version_number")
+        .eq("template_id", tplId)
+        .eq("status", "published")
+        .order("version_number", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!published) {
+        return respond(400, {
+          ok: false,
+          message: "Template has no published version. Publish a draft before creating assignments.",
+        });
+      }
+
+      // Confirm assignee profile exists + is active.
+      const { data: assignee } = await supabase
+        .from("profiles")
+        .select("id, is_active")
+        .eq("id", assigneeId)
+        .maybeSingle();
+      if (!assignee || !assignee.is_active) {
+        return respond(400, { ok: false, message: "Assignee not found or inactive." });
+      }
+
+      // Optional store_id — if present, validate it exists.
+      let storeId = null;
+      if (payload.store_id != null) {
+        if (!isUuid(payload.store_id)) return respond(400, { ok: false, message: "Bad store_id." });
+        const { data: store } = await supabase
+          .from("stores").select("id").eq("id", payload.store_id).maybeSingle();
+        if (!store) return respond(400, { ok: false, message: "Store not found." });
+        storeId = payload.store_id;
+      }
+
+      // Optional due_at — ISO 8601 string.
+      let dueAt = null;
+      if (payload.due_at != null && payload.due_at !== "") {
+        const d = new Date(payload.due_at);
+        if (isNaN(d.getTime())) return respond(400, { ok: false, message: "due_at must be an ISO 8601 timestamp." });
+        dueAt = d.toISOString();
+      }
+
+      const { data: asn, error } = await supabase
+        .from("workspace_assignments")
+        .insert({
+          workspace_id: wsId,
+          template_id: tplId,
+          template_version_id: published.id,
+          assignee_id: assigneeId,
+          store_id: storeId,
+          status: "pending",
+          due_at: dueAt,
+          created_by_id: profile.id,
+        })
+        .select("*")
+        .single();
+      if (error) throw error;
+
+      await logActivity(supabase, profile, {
+        workspaceId: wsId,
+        targetKind: "assignment",
+        targetId: asn.id,
+        action: "assignment.created",
+        afterState: asn,
+        eventData: { source: "ad_hoc", template_version_number: published.version_number },
+      });
+
+      return respond(200, { ok: true, assignment: asn });
+    }
+
+    // Cancel a pending/in_progress assignment. Refused if already
+    // submitted (a real submission exists — caller should void the
+    // submission via its own flow). Reason is captured in event_data.
+    if (action === "cancelAssignment" && event.httpMethod === "POST") {
+      const payload = JSON.parse(event.body || "{}");
+      const id = payload.id;
+      if (!isUuid(id)) return respond(400, { ok: false, message: "Bad assignment id." });
+
+      const { data: before } = await supabase
+        .from("workspace_assignments").select("*").eq("id", id).single();
+      if (!before) return respond(404, { ok: false, message: "Assignment not found." });
+
+      const denied = await requireWorkspaceCap(supabase, profile, before.workspace_id, "cancel_assignment");
+      if (denied) return denied;
+
+      if (before.status === "submitted") {
+        return respond(400, {
+          ok: false,
+          message: "Already submitted — void the submission instead of cancelling the assignment.",
+        });
+      }
+      if (before.status === "cancelled") {
+        return respond(400, { ok: false, message: "Already cancelled." });
+      }
+
+      const { data: after, error } = await supabase
+        .from("workspace_assignments")
+        .update({
+          status: "cancelled",
+          cancelled_at: new Date().toISOString(),
+          cancelled_by_id: profile.id,
+        })
+        .eq("id", id)
+        .select("*")
+        .single();
+      if (error) throw error;
+
+      await logActivity(supabase, profile, {
+        workspaceId: before.workspace_id,
+        targetKind: "assignment",
+        targetId: id,
+        action: "assignment.cancelled",
+        beforeState: before,
+        afterState: after,
+        eventData: { reason: payload.reason || null },
+      });
+
+      return respond(200, { ok: true, assignment: after });
+    }
+
+    // Assignee marks an assignment "in_progress" (opened, started
+    // filling out). Idempotent: calling on an already-started
+    // assignment returns the row unchanged. Refused if not the
+    // assignee unless the caller has edit_workspace (admin override).
+    if (action === "startAssignment" && event.httpMethod === "POST") {
+      const payload = JSON.parse(event.body || "{}");
+      const id = payload.id;
+      if (!isUuid(id)) return respond(400, { ok: false, message: "Bad assignment id." });
+
+      const { data: before } = await supabase
+        .from("workspace_assignments").select("*").eq("id", id).single();
+      if (!before) return respond(404, { ok: false, message: "Assignment not found." });
+
+      const isAssignee = before.assignee_id === profile.id;
+      if (!isAssignee) {
+        // Admin override path — admins can mark something started on
+        // someone's behalf (rare, but useful when assignee is e.g.
+        // out and someone else is covering the form).
+        const denied = await requireWorkspaceCap(supabase, profile, before.workspace_id, "fill_assignment");
+        if (denied) return respond(403, { ok: false, message: "Only the assignee (or workspace editor) can start this." });
+      }
+
+      if (before.status === "cancelled") {
+        return respond(400, { ok: false, message: "Assignment is cancelled." });
+      }
+      if (before.status === "submitted") {
+        return respond(400, { ok: false, message: "Already submitted." });
+      }
+      // Already in_progress — return unchanged. Idempotent.
+      if (before.status === "in_progress") {
+        return respond(200, { ok: true, assignment: before, unchanged: true });
+      }
+
+      const { data: after, error } = await supabase
+        .from("workspace_assignments")
+        .update({
+          status: "in_progress",
+          started_at: new Date().toISOString(),
+        })
+        .eq("id", id)
+        .select("*")
+        .single();
+      if (error) throw error;
+
+      await logActivity(supabase, profile, {
+        workspaceId: before.workspace_id,
+        targetKind: "assignment",
+        targetId: id,
+        action: "assignment.started",
+        beforeState: before,
+        afterState: after,
+      });
+
+      return respond(200, { ok: true, assignment: after });
+    }
+
+    // ═══════════════════════════════════════════════════════════
     // ACTIVITY LOG
-    // ════════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
 
     // Owner / admin only. Paginated; newest first.
     if (action === "getActivity") {
