@@ -13,17 +13,42 @@
 -- that value when the ticket closes after install.
 --
 -- Rollback: see 0055_rollback.sql.
+--
+-- ╔══════════════════════════════════════════════════════════════╗
+-- ║                                                              ║
+-- ║   ⚠️  APPLY IN TWO PASSES — DO NOT PASTE ALL AT ONCE ⚠️     ║
+-- ║                                                              ║
+-- ║   Postgres rule: a new enum value must be committed before  ║
+-- ║   any statement in the same transaction can USE it. Supabase ║
+-- ║   wraps each SQL Editor run in a transaction, so the index  ║
+-- ║   in STEP 2 cannot reference the value added in STEP 1 in   ║
+-- ║   a single run — it fails with:                              ║
+-- ║                                                              ║
+-- ║     ERROR: 55P04: unsafe use of new value                   ║
+-- ║     "awaiting_equipment" of enum type ticket_status_v2      ║
+-- ║                                                              ║
+-- ║   Workflow:                                                  ║
+-- ║     1. Paste STEP 1 only → click RUN → wait for success     ║
+-- ║     2. Paste STEP 2 only → click RUN                         ║
+-- ║                                                              ║
+-- ║   Once both pass, status = 'awaiting_equipment' rows can be ║
+-- ║   inserted and the partial index will be used.               ║
+-- ║                                                              ║
+-- ╚══════════════════════════════════════════════════════════════╝
 
--- ─────────────────────────────────────────────────────────────
--- 1. Add the new enum value. alter type ... add value is not
--- transactional in older Postgres versions, so run it on its own.
--- ─────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════
+-- STEP 1  ──  Add the new enum value. Run THIS BLOCK ALONE first.
+-- ═══════════════════════════════════════════════════════════════
+
 alter type ticket_status_v2 add value if not exists 'awaiting_equipment';
 
--- ─────────────────────────────────────────────────────────────
--- 2. Replacement detail columns. All nullable — populated when
--- the team uses the new action.
--- ─────────────────────────────────────────────────────────────
+
+-- ═══════════════════════════════════════════════════════════════
+-- STEP 2  ──  Add the replacement detail columns + partial index.
+--             Run THIS BLOCK AFTER step 1 has committed.
+-- ═══════════════════════════════════════════════════════════════
+
 alter table public.tickets
   add column if not exists replacement_model      text,
   add column if not exists replacement_supplier   text,
@@ -31,7 +56,9 @@ alter table public.tickets
   add column if not exists replacement_eta        date,
   add column if not exists replacement_ordered_at timestamptz;
 
--- Helpful for "awaiting equipment past ETA" dashboards.
+-- Helpful for "awaiting equipment past ETA" dashboards. The partial
+-- predicate references the enum value added in STEP 1, which is why
+-- the two halves must run as separate transactions.
 create index if not exists tickets_replacement_eta_idx
   on public.tickets (replacement_eta)
   where status = 'awaiting_equipment';
