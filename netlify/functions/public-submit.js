@@ -332,39 +332,105 @@ export const handler = async (event) => {
     }
 
     // ── Vendor list (public, store-scoped) ──
-    // Returns the same scope-filtered set of vendors the WO2 picker
-    // shows, but stripped down to id + name + category. Phone /
-    // email / cost-tier / ratings stay out so anonymous visitors
-    // can't farm the vendor directory.
+    // Returns the same scope- and category-filtered set of vendors
+    // the WO2 NewTicketModal picker shows, but stripped down to id
+    // + name + category. Phone / email / cost-tier / ratings stay
+    // out so anonymous visitors can't farm the vendor directory.
+    //
+    // Matching mirrors facilities-v2's searchVendors: when the
+    // submitter has picked an issue (asset_type) and/or set a
+    // category, we ILIKE-match BOTH columns against BOTH the
+    // vendor's `services` field and its `category` field. Issues
+    // like "Fryer 2" / "HVAC 3" are store-specific equipment names
+    // but vendor.services stores the high-level terms ("fryer",
+    // "hvac"), so matching only against vendor.category misses most
+    // of the catalog.
     if (action === "listVendors") {
       const params = event.queryStringParameters || {};
       const storeNumber = String(params.store_number || "").trim();
       const category = String(params.category || "").trim();
+      const assetType = String(params.asset_type || "").trim();
       if (!storeNumber) {
         return respond(400, { ok: false, message: "store_number required" });
       }
-      const { data: vendors, error } = await supabase
+
+      // Pull the columns we need to match against (services +
+      // category) plus scope rows for visibility filtering. Drop
+      // services from the response so it doesn't leak.
+      let query = supabase
         .from("vendors")
-        .select("id, name, category, vendor_scopes(scope_type, scope_id)")
-        .eq("is_active", true)
-        .order("name");
+        .select("id, name, category, services, vendor_scopes(scope_type, scope_id)")
+        .eq("is_active", true);
+
+      if (assetType || category) {
+        const orParts = [];
+        const escape = (s) => String(s).replace(/[(),]/g, "");
+        if (assetType) {
+          const a = escape(assetType);
+          orParts.push(`services.ilike.%${a}%`);
+          orParts.push(`category.ilike.%${a}%`);
+        }
+        if (category) {
+          const c = escape(category);
+          orParts.push(`services.ilike.%${c}%`);
+          orParts.push(`category.ilike.%${c}%`);
+        }
+        if (orParts.length) query = query.or(orParts.join(","));
+      }
+      query = query.order("name");
+      const { data: vendors, error } = await query;
       if (error) throw error;
 
       const allowedSet = await visibleScopeKeysForStore(supabase, storeNumber);
       const strict = await isStrictVendorScopes(supabase);
-      const visible = (vendors || []).filter((v) => {
+      let visible = (vendors || []).filter((v) => {
         if (!allowedSet) return true;
         return isVendorVisibleAtStore(v.vendor_scopes || [], allowedSet, strict);
-      }).filter((v) => {
-        if (!category) return true;
-        // Loose category match — many vendors cover multiple
-        // categories via a slash- or comma-delimited string, so a
-        // simple includes() does the right thing here.
-        const vc = String(v.category || "").toLowerCase();
-        return !vc || vc.includes(category.toLowerCase()) || category.toLowerCase().includes(vc);
-      }).map((v) => ({ id: v.id, name: v.name, category: v.category || "" }));
+      });
 
-      return respond(200, { ok: true, vendors: visible });
+      // Float store-preferred vendors to the top, same as WO2's
+      // searchVendors. Resolves the store_id from the number, pulls
+      // preference rows that match this category/asset_type, sorts
+      // by rank asc with non-preferred vendors keeping their natural
+      // name order.
+      if (allowedSet && (category || assetType)) {
+        const { data: storeRow } = await supabase
+          .from("stores")
+          .select("id")
+          .eq("number", storeNumber)
+          .maybeSingle();
+        if (storeRow?.id) {
+          const { data: prefs } = await supabase
+            .from("vendor_store_preferences")
+            .select("vendor_id, category, rank")
+            .eq("store_id", storeRow.id);
+          const matches = (prefs || []).filter((p) => {
+            const pc = String(p.category || "").toLowerCase();
+            const tryCat = (s) => s && pc.includes(String(s).toLowerCase());
+            return tryCat(category) || tryCat(assetType);
+          });
+          if (matches.length > 0) {
+            const rankByVendorId = new Map();
+            for (const m of matches) {
+              const prior = rankByVendorId.get(m.vendor_id);
+              if (prior == null || m.rank < prior) {
+                rankByVendorId.set(m.vendor_id, m.rank);
+              }
+            }
+            visible.sort((a, b) => {
+              const ra = rankByVendorId.has(a.id) ? rankByVendorId.get(a.id) : 9999;
+              const rb = rankByVendorId.has(b.id) ? rankByVendorId.get(b.id) : 9999;
+              if (ra !== rb) return ra - rb;
+              return (a.name || "").localeCompare(b.name || "");
+            });
+          }
+        }
+      }
+
+      return respond(200, {
+        ok: true,
+        vendors: visible.map((v) => ({ id: v.id, name: v.name, category: v.category || "" })),
+      });
     }
 
     // ── Photo upload for a just-created public ticket ──
