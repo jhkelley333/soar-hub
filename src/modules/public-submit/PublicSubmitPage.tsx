@@ -49,6 +49,12 @@ interface IssueLibraryHit {
   troubleshooting_tips: string | null;
 }
 
+interface VendorHit {
+  id: string;
+  name: string;
+  category: string;
+}
+
 interface SubmitResult {
   id: string;
   wo_number: string;
@@ -121,6 +127,15 @@ export function PublicSubmitPage() {
   const [issueDescription, setIssueDescription] = useState("");
   const [troubleshooting, setTroubleshooting] = useState<"" | "yes" | "no">("");
 
+  // ── Vendor preference (optional) ──
+  // Loaded once a store is picked. Re-loads whenever the effective
+  // category changes so the list narrows as the submitter zeroes in
+  // on the issue. Server applies the same scope-filtering WO2 uses,
+  // and re-validates the chosen vendor_id at submit time.
+  const [vendors, setVendors] = useState<VendorHit[]>([]);
+  const [loadingVendors, setLoadingVendors] = useState(false);
+  const [vendorId, setVendorId] = useState("");
+
   // ── Photos ──
   const [photos, setPhotos] = useState<PhotoSlot[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -179,6 +194,42 @@ export function PublicSubmitPage() {
     }, 250);
     return () => clearTimeout(t);
   }, [issueQuery, pickedIssue]);
+
+  // Load store-scoped vendor list whenever the picked store or
+  // effective category changes. Clears the current pick if it's no
+  // longer in the filtered list so the submit body never carries a
+  // stale id.
+  useEffect(() => {
+    if (!pickedStore) {
+      setVendors([]);
+      setVendorId("");
+      return;
+    }
+    setLoadingVendors(true);
+    const params = new URLSearchParams({ store_number: pickedStore.number });
+    if (effectiveCategory) params.set("category", effectiveCategory);
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`${FN}?action=listVendors&${params.toString()}`);
+        const body = await res.json().catch(() => ({}));
+        if (cancelled) return;
+        const list = body.ok && Array.isArray(body.vendors) ? body.vendors : [];
+        setVendors(list);
+        setVendorId((prev) => (prev && list.some((v: VendorHit) => v.id === prev) ? prev : ""));
+      } catch {
+        if (!cancelled) {
+          setVendors([]);
+          setVendorId("");
+        }
+      } finally {
+        if (!cancelled) setLoadingVendors(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [pickedStore, effectiveCategory]);
 
   // Revoke object URLs on unmount so we don't leak.
   useEffect(() => {
@@ -254,6 +305,7 @@ export function PublicSubmitPage() {
           issue_description: issueDescription.trim(),
           priority,
           troubleshooting_checked: troubleshooting === "yes",
+          vendor_id: vendorId || null,
         }),
       });
       const tBody = await tRes.json().catch(() => ({}));
@@ -629,6 +681,35 @@ export function PublicSubmitPage() {
                     <div className="whitespace-pre-line">{pickedIssue.troubleshooting_tips}</div>
                   </div>
                 )}
+
+                <div>
+                  <Label htmlFor="ps-vendor">Preferred vendor (optional)</Label>
+                  <select
+                    id="ps-vendor"
+                    value={vendorId}
+                    onChange={(e) => setVendorId(e.target.value)}
+                    disabled={!pickedStore || loadingVendors}
+                    className="block w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent disabled:bg-zinc-50 disabled:text-zinc-400"
+                  >
+                    <option value="">
+                      {!pickedStore
+                        ? "Pick a store first…"
+                        : loadingVendors
+                        ? "Loading vendors…"
+                        : vendors.length === 0
+                        ? "No vendors available — let the team pick"
+                        : "Let the team pick"}
+                    </option>
+                    {vendors.map((v) => (
+                      <option key={v.id} value={v.id}>
+                        {v.name}{v.category ? ` · ${v.category}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  <div className="mt-1 text-[11px] text-zinc-500">
+                    Pick the vendor you'd like us to send out. If you're not sure, leave it blank — the facilities team will route it.
+                  </div>
+                </div>
 
                 <div>
                   <Label>Did you try basic troubleshooting? (optional)</Label>
