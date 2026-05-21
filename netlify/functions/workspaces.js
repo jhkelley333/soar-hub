@@ -3,15 +3,30 @@
 // REST handler for the Workspace feature (forms + audits + CAPs +
 // automations). Supabase Bearer-JWT auth, service-role client.
 //
-// This slice covers the foundation layer (phase 0058):
-//   - workspaces:    listMine, getWorkspace, createWorkspace,
-//                    updateWorkspace, archiveWorkspace, unarchiveWorkspace,
-//                    deleteWorkspace  (admin-only hard delete)
-//   - members:       listMembers, addMember, updateMember, removeMember
-//   - activity log:  getActivity  (owner / admin only)
+// Actions covered:
+//   workspaces:        listMine, getWorkspace, createWorkspace,
+//                      updateWorkspace, archiveWorkspace, unarchiveWorkspace,
+//                      deleteWorkspace  (admin-only hard delete)
+//   members:           listMembers, addMember, updateMember, removeMember
+//   templates:         listTemplates, getTemplate, createTemplate,
+//                      updateTemplate, archiveTemplate, unarchiveTemplate
+//   template versions: listTemplateVersions, getTemplateVersion,
+//                      createTemplateVersion (forks from published),
+//                      publishTemplateVersion (auto-archives previous),
+//                      archiveTemplateVersion
+//   questions:         listQuestions, upsertQuestions  (draft-only)
+//   approval steps:    listApprovalSteps, upsertApprovalSteps  (draft-only)
+//   activity log:      getActivity  (owner / admin only)
 //
-// Templates, assignments, submissions, CAPs, and automations get added
-// in follow-up slices as we work through each domain.
+// Versioning model: once a version is 'published', it's immutable.
+// To change anything, fork a new draft (createTemplateVersion),
+// edit it via upsertQuestions / upsertApprovalSteps, then publish it
+// (publishTemplateVersion auto-archives the previously published one).
+// Assignments + submissions reference template_version_id, so old
+// submissions stay forever bound to the questions they answered.
+//
+// Assignments, submissions, CAPs, and automations get added in
+// follow-up slices as we work through each domain.
 //
 // Auth model:
 //   - Every request must carry a Bearer token; we validate via
@@ -177,6 +192,89 @@ function isUuid(s) {
 const ALLOWED_VISIBILITY = ["private", "scoped", "organization"];
 const ALLOWED_ANCHOR_KIND = ["region", "area", "district", "store"];
 const ALLOWED_MEMBER_ROLE = ["owner", "editor", "submitter", "viewer"];
+const ALLOWED_TEMPLATE_TYPE = ["form", "audit"];
+const ALLOWED_FIELD_TYPE = [
+  "short_text", "long_text", "number", "select_one", "select_many",
+  "checkbox", "date", "photo", "file", "signature", "pass_fail_na",
+];
+const ALLOWED_VERSION_STATUS = ["draft", "published", "archived"];
+
+// Normalize + validate a question payload from the client. Returns
+// { ok: true, row } for an insert-ready object, or { ok: false, msg }
+// for a validation error. `position` is set by the caller — we don't
+// trust client-supplied positions; array order wins.
+function normalizeQuestion(q, position) {
+  if (!q || typeof q !== "object") return { ok: false, msg: "question must be an object." };
+  const fieldType = String(q.field_type || "").toLowerCase();
+  if (!ALLOWED_FIELD_TYPE.includes(fieldType)) {
+    return { ok: false, msg: `Bad field_type: ${q.field_type}` };
+  }
+  const text = String(q.question_text || "").trim();
+  if (!text) return { ok: false, msg: "question_text required." };
+  // Audit-specific numeric: weight must be >= 0 if present
+  let weight = null;
+  if (q.weight != null && q.weight !== "") {
+    weight = Number(q.weight);
+    if (!Number.isFinite(weight) || weight < 0) {
+      return { ok: false, msg: "weight must be a non-negative number." };
+    }
+  }
+  return {
+    ok: true,
+    row: {
+      position,
+      section_label:        (q.section_label || "").trim() || null,
+      question_text:        text,
+      field_type:           fieldType,
+      is_required:          !!q.is_required,
+      weight,
+      is_critical:          !!q.is_critical,
+      requires_cap_on_fail: !!q.requires_cap_on_fail,
+      cap_assignee_rule:    q.cap_assignee_rule || null,
+      field_config:         q.field_config || null,
+      conditional_logic:    q.conditional_logic || null,
+    },
+  };
+}
+
+// Same shape for approval steps. step_number is set by caller.
+function normalizeApprovalStep(s, stepNumber) {
+  if (!s || typeof s !== "object") return { ok: false, msg: "step must be an object." };
+  const label = String(s.label || "").trim();
+  if (!label) return { ok: false, msg: "step label required." };
+  if (!s.approver_rule || typeof s.approver_rule !== "object") {
+    return { ok: false, msg: "approver_rule (JSON object) required." };
+  }
+  return {
+    ok: true,
+    row: {
+      step_number:     stepNumber,
+      label,
+      approver_rule:   s.approver_rule,
+      any_can_approve: s.any_can_approve !== false, // default true
+    },
+  };
+}
+
+// Resolve the workspace_id for a given template_id or version_id —
+// needed for capability + activity-log calls without a round-trip
+// from the caller.
+async function workspaceIdForTemplate(supabase, templateId) {
+  const { data } = await supabase
+    .from("workspace_templates")
+    .select("workspace_id")
+    .eq("id", templateId)
+    .maybeSingle();
+  return data?.workspace_id || null;
+}
+async function workspaceIdForVersion(supabase, versionId) {
+  const { data } = await supabase
+    .from("workspace_template_versions")
+    .select("template_id, workspace_templates:template_id(workspace_id)")
+    .eq("id", versionId)
+    .maybeSingle();
+  return data?.workspace_templates?.workspace_id || null;
+}
 
 // ── Handler ──────────────────────────────────────────
 export const handler = async (event) => {
@@ -645,6 +743,761 @@ export const handler = async (event) => {
       });
 
       return respond(200, { ok: true });
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // TEMPLATES
+    // ════════════════════════════════════════════════════════════
+
+    if (action === "listTemplates") {
+      const wsId = (event.queryStringParameters || {}).workspace_id;
+      if (!isUuid(wsId)) return respond(400, { ok: false, message: "Bad workspace_id." });
+
+      const denied = await requireWorkspaceCap(supabase, profile, wsId, "view_workspace");
+      if (denied) return denied;
+
+      const includeArchived = (event.queryStringParameters || {}).include_archived === "true";
+
+      let q = supabase
+        .from("workspace_templates")
+        .select("*")
+        .eq("workspace_id", wsId)
+        .order("name");
+      if (!includeArchived) q = q.eq("is_archived", false);
+
+      const { data, error } = await q;
+      if (error) throw error;
+      return respond(200, { ok: true, templates: data || [] });
+    }
+
+    // Full template detail: row + every version (with publish state) +
+    // question count for the latest published version (or the latest
+    // draft if no published yet). Cheap; templates won't have many
+    // versions in practice.
+    if (action === "getTemplate") {
+      const id = (event.queryStringParameters || {}).id;
+      if (!isUuid(id)) return respond(400, { ok: false, message: "Bad template id." });
+
+      const { data: tpl, error: tplErr } = await supabase
+        .from("workspace_templates")
+        .select("*")
+        .eq("id", id)
+        .single();
+      if (tplErr || !tpl) return respond(404, { ok: false, message: "Template not found." });
+
+      const denied = await requireWorkspaceCap(supabase, profile, tpl.workspace_id, "view_workspace");
+      if (denied) return denied;
+
+      const { data: versions } = await supabase
+        .from("workspace_template_versions")
+        .select("*")
+        .eq("template_id", id)
+        .order("version_number", { ascending: false });
+
+      // Find the "current" version: prefer published, fall back to draft, fall back to archived.
+      const current = (versions || []).find((v) => v.status === "published")
+                    || (versions || []).find((v) => v.status === "draft")
+                    || (versions || [])[0]
+                    || null;
+
+      let questionCount = 0;
+      if (current) {
+        const { count } = await supabase
+          .from("workspace_template_questions")
+          .select("id", { count: "exact", head: true })
+          .eq("version_id", current.id);
+        questionCount = count || 0;
+      }
+
+      return respond(200, {
+        ok: true,
+        template: tpl,
+        versions: versions || [],
+        current_version_id: current?.id || null,
+        current_question_count: questionCount,
+      });
+    }
+
+    // Creates the template + a v1 draft version in one shot. Caller
+    // can then immediately upsertQuestions against the new version.
+    if (action === "createTemplate" && event.httpMethod === "POST") {
+      const payload = JSON.parse(event.body || "{}");
+      const wsId = payload.workspace_id;
+      if (!isUuid(wsId)) return respond(400, { ok: false, message: "Bad workspace_id." });
+
+      const denied = await requireWorkspaceCap(supabase, profile, wsId, "create_template");
+      if (denied) return denied;
+
+      const name = (payload.name || "").trim();
+      if (!name) return respond(400, { ok: false, message: "name required." });
+      const description = (payload.description || "").trim() || null;
+      const type = ALLOWED_TEMPLATE_TYPE.includes(payload.type) ? payload.type : "form";
+
+      let auditPassThreshold = null;
+      let criticalFailsAudit = true;
+      if (type === "audit") {
+        if (payload.audit_pass_threshold != null) {
+          const n = Number(payload.audit_pass_threshold);
+          if (!Number.isFinite(n) || n < 0 || n > 100) {
+            return respond(400, { ok: false, message: "audit_pass_threshold must be 0-100." });
+          }
+          auditPassThreshold = n;
+        }
+        if (typeof payload.critical_fails_audit === "boolean") {
+          criticalFailsAudit = payload.critical_fails_audit;
+        }
+      }
+
+      const { data: tpl, error } = await supabase
+        .from("workspace_templates")
+        .insert({
+          workspace_id: wsId,
+          name,
+          description,
+          type,
+          audit_pass_threshold: auditPassThreshold,
+          critical_fails_audit: criticalFailsAudit,
+          created_by_id: profile.id,
+        })
+        .select("*")
+        .single();
+      if (error) throw error;
+
+      // Auto-spawn v1 draft so the caller can immediately add questions.
+      const { data: v1, error: vErr } = await supabase
+        .from("workspace_template_versions")
+        .insert({
+          template_id: tpl.id,
+          version_number: 1,
+          status: "draft",
+          created_by_id: profile.id,
+        })
+        .select("*")
+        .single();
+      if (vErr) throw vErr;
+
+      await logActivity(supabase, profile, {
+        workspaceId: wsId,
+        targetKind: "template",
+        targetId: tpl.id,
+        action: "template.created",
+        afterState: tpl,
+      });
+      await logActivity(supabase, profile, {
+        workspaceId: wsId,
+        targetKind: "template_version",
+        targetId: v1.id,
+        action: "template_version.created",
+        afterState: v1,
+      });
+
+      return respond(200, { ok: true, template: tpl, version: v1 });
+    }
+
+    // Patch template metadata. Note: this DOES NOT touch any version
+    // contents — it only updates the template header (name, description,
+    // type, audit thresholds). Question/step edits go through
+    // upsertQuestions / upsertApprovalSteps on a DRAFT version.
+    if (action === "updateTemplate" && event.httpMethod === "POST") {
+      const payload = JSON.parse(event.body || "{}");
+      const id = payload.id;
+      if (!isUuid(id)) return respond(400, { ok: false, message: "Bad template id." });
+
+      const { data: before } = await supabase
+        .from("workspace_templates").select("*").eq("id", id).single();
+      if (!before) return respond(404, { ok: false, message: "Template not found." });
+
+      const denied = await requireWorkspaceCap(supabase, profile, before.workspace_id, "edit_template");
+      if (denied) return denied;
+
+      const patch = {};
+      if (typeof payload.name === "string") {
+        const n = payload.name.trim();
+        if (!n) return respond(400, { ok: false, message: "name cannot be empty." });
+        patch.name = n;
+      }
+      if ("description" in payload) {
+        patch.description = (payload.description || "").trim() || null;
+      }
+      // type changes are allowed but the caller should know what
+      // they're doing — switching form↔audit changes how submissions
+      // are scored. Existing versions keep their original semantics
+      // since template_version_id is the FK on assignments/submissions.
+      if (payload.type) {
+        if (!ALLOWED_TEMPLATE_TYPE.includes(payload.type)) {
+          return respond(400, { ok: false, message: "Bad type." });
+        }
+        patch.type = payload.type;
+      }
+      if ("audit_pass_threshold" in payload) {
+        if (payload.audit_pass_threshold == null) {
+          patch.audit_pass_threshold = null;
+        } else {
+          const n = Number(payload.audit_pass_threshold);
+          if (!Number.isFinite(n) || n < 0 || n > 100) {
+            return respond(400, { ok: false, message: "audit_pass_threshold must be 0-100." });
+          }
+          patch.audit_pass_threshold = n;
+        }
+      }
+      if (typeof payload.critical_fails_audit === "boolean") {
+        patch.critical_fails_audit = payload.critical_fails_audit;
+      }
+
+      if (!Object.keys(patch).length) {
+        return respond(400, { ok: false, message: "Nothing to update." });
+      }
+
+      const { data: after, error } = await supabase
+        .from("workspace_templates")
+        .update(patch)
+        .eq("id", id)
+        .select("*")
+        .single();
+      if (error) throw error;
+
+      await logActivity(supabase, profile, {
+        workspaceId: before.workspace_id,
+        targetKind: "template",
+        targetId: id,
+        action: "template.updated",
+        beforeState: before,
+        afterState: after,
+      });
+
+      return respond(200, { ok: true, template: after });
+    }
+
+    if (
+      (action === "archiveTemplate" || action === "unarchiveTemplate")
+      && event.httpMethod === "POST"
+    ) {
+      const payload = JSON.parse(event.body || "{}");
+      const id = payload.id;
+      if (!isUuid(id)) return respond(400, { ok: false, message: "Bad template id." });
+
+      const { data: before } = await supabase
+        .from("workspace_templates").select("*").eq("id", id).single();
+      if (!before) return respond(404, { ok: false, message: "Template not found." });
+
+      const denied = await requireWorkspaceCap(supabase, profile, before.workspace_id, "archive_template");
+      if (denied) return denied;
+
+      const target = action === "archiveTemplate";
+      const { data: after, error } = await supabase
+        .from("workspace_templates")
+        .update({ is_archived: target })
+        .eq("id", id)
+        .select("*")
+        .single();
+      if (error) throw error;
+
+      await logActivity(supabase, profile, {
+        workspaceId: before.workspace_id,
+        targetKind: "template",
+        targetId: id,
+        action: target ? "template.archived" : "template.unarchived",
+        afterState: after,
+      });
+
+      return respond(200, { ok: true, template: after });
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // TEMPLATE VERSIONS
+    // ════════════════════════════════════════════════════════════
+
+    if (action === "listTemplateVersions") {
+      const tplId = (event.queryStringParameters || {}).template_id;
+      if (!isUuid(tplId)) return respond(400, { ok: false, message: "Bad template_id." });
+
+      const wsId = await workspaceIdForTemplate(supabase, tplId);
+      if (!wsId) return respond(404, { ok: false, message: "Template not found." });
+
+      const denied = await requireWorkspaceCap(supabase, profile, wsId, "view_workspace");
+      if (denied) return denied;
+
+      const { data, error } = await supabase
+        .from("workspace_template_versions")
+        .select("*")
+        .eq("template_id", tplId)
+        .order("version_number", { ascending: false });
+      if (error) throw error;
+      return respond(200, { ok: true, versions: data || [] });
+    }
+
+    // Full version detail: row + questions (ordered) + approval steps.
+    if (action === "getTemplateVersion") {
+      const vId = (event.queryStringParameters || {}).id;
+      if (!isUuid(vId)) return respond(400, { ok: false, message: "Bad version id." });
+
+      const { data: ver, error: vErr } = await supabase
+        .from("workspace_template_versions")
+        .select("*, workspace_templates:template_id(workspace_id, name, type)")
+        .eq("id", vId)
+        .single();
+      if (vErr || !ver) return respond(404, { ok: false, message: "Version not found." });
+
+      const wsId = ver.workspace_templates?.workspace_id;
+      const denied = await requireWorkspaceCap(supabase, profile, wsId, "view_workspace");
+      if (denied) return denied;
+
+      const [{ data: questions }, { data: steps }] = await Promise.all([
+        supabase
+          .from("workspace_template_questions")
+          .select("*")
+          .eq("version_id", vId)
+          .order("position"),
+        supabase
+          .from("workspace_template_approval_steps")
+          .select("*")
+          .eq("version_id", vId)
+          .order("step_number"),
+      ]);
+
+      return respond(200, {
+        ok: true,
+        version: ver,
+        questions: questions || [],
+        approval_steps: steps || [],
+      });
+    }
+
+    // Forks a new draft from the current published version (or starts
+    // empty if none exists). Carries questions + approval steps into
+    // the new draft so the caller can edit-from-base.
+    if (action === "createTemplateVersion" && event.httpMethod === "POST") {
+      const payload = JSON.parse(event.body || "{}");
+      const tplId = payload.template_id;
+      if (!isUuid(tplId)) return respond(400, { ok: false, message: "Bad template_id." });
+
+      const wsId = await workspaceIdForTemplate(supabase, tplId);
+      if (!wsId) return respond(404, { ok: false, message: "Template not found." });
+
+      const denied = await requireWorkspaceCap(supabase, profile, wsId, "edit_template");
+      if (denied) return denied;
+
+      // Refuse if a draft already exists — one draft at a time.
+      // Caller should edit the existing draft or archive it first.
+      const { data: existingDraft } = await supabase
+        .from("workspace_template_versions")
+        .select("id, version_number")
+        .eq("template_id", tplId)
+        .eq("status", "draft")
+        .maybeSingle();
+      if (existingDraft) {
+        return respond(400, {
+          ok: false,
+          message: `A draft (v${existingDraft.version_number}) already exists. Edit or archive it first.`,
+          existing_draft_id: existingDraft.id,
+        });
+      }
+
+      // Find the highest version_number so we can bump.
+      const { data: latest } = await supabase
+        .from("workspace_template_versions")
+        .select("id, version_number, status")
+        .eq("template_id", tplId)
+        .order("version_number", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const nextNum = (latest?.version_number || 0) + 1;
+
+      // Source to fork from: the latest published version (skips
+      // archived/draft so we always start from the "live" content).
+      const { data: source } = await supabase
+        .from("workspace_template_versions")
+        .select("id")
+        .eq("template_id", tplId)
+        .eq("status", "published")
+        .order("version_number", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      const { data: newVer, error } = await supabase
+        .from("workspace_template_versions")
+        .insert({
+          template_id: tplId,
+          version_number: nextNum,
+          status: "draft",
+          created_by_id: profile.id,
+        })
+        .select("*")
+        .single();
+      if (error) throw error;
+
+      // If we have a source, carry its questions + approval steps forward.
+      if (source?.id) {
+        const { data: srcQuestions } = await supabase
+          .from("workspace_template_questions")
+          .select("*")
+          .eq("version_id", source.id)
+          .order("position");
+        if (srcQuestions?.length) {
+          const rows = srcQuestions.map((q) => ({
+            version_id: newVer.id,
+            position: q.position,
+            section_label: q.section_label,
+            question_text: q.question_text,
+            field_type: q.field_type,
+            is_required: q.is_required,
+            weight: q.weight,
+            is_critical: q.is_critical,
+            requires_cap_on_fail: q.requires_cap_on_fail,
+            cap_assignee_rule: q.cap_assignee_rule,
+            field_config: q.field_config,
+            conditional_logic: q.conditional_logic,
+          }));
+          await supabase.from("workspace_template_questions").insert(rows);
+        }
+
+        const { data: srcSteps } = await supabase
+          .from("workspace_template_approval_steps")
+          .select("*")
+          .eq("version_id", source.id)
+          .order("step_number");
+        if (srcSteps?.length) {
+          const rows = srcSteps.map((s) => ({
+            version_id: newVer.id,
+            step_number: s.step_number,
+            label: s.label,
+            approver_rule: s.approver_rule,
+            any_can_approve: s.any_can_approve,
+          }));
+          await supabase.from("workspace_template_approval_steps").insert(rows);
+        }
+      }
+
+      await logActivity(supabase, profile, {
+        workspaceId: wsId,
+        targetKind: "template_version",
+        targetId: newVer.id,
+        action: "template_version.created",
+        afterState: newVer,
+        eventData: { forked_from_version_id: source?.id || null },
+      });
+
+      return respond(200, {
+        ok: true,
+        version: newVer,
+        forked_from_version_id: source?.id || null,
+      });
+    }
+
+    // Publish a draft. Auto-archives whatever was previously published
+    // (one live version at a time per template).
+    if (action === "publishTemplateVersion" && event.httpMethod === "POST") {
+      const payload = JSON.parse(event.body || "{}");
+      const vId = payload.id;
+      if (!isUuid(vId)) return respond(400, { ok: false, message: "Bad version id." });
+
+      const { data: ver } = await supabase
+        .from("workspace_template_versions")
+        .select("*, workspace_templates:template_id(workspace_id)")
+        .eq("id", vId)
+        .maybeSingle();
+      if (!ver) return respond(404, { ok: false, message: "Version not found." });
+
+      const wsId = ver.workspace_templates?.workspace_id;
+      const denied = await requireWorkspaceCap(supabase, profile, wsId, "publish_template");
+      if (denied) return denied;
+
+      if (ver.status !== "draft") {
+        return respond(400, {
+          ok: false,
+          message: `Can only publish a draft. Current status: ${ver.status}.`,
+        });
+      }
+
+      // Sanity check: a publishable version must have at least one
+      // question. Otherwise it's an empty template.
+      const { count: qCount } = await supabase
+        .from("workspace_template_questions")
+        .select("id", { count: "exact", head: true })
+        .eq("version_id", vId);
+      if (!qCount) {
+        return respond(400, { ok: false, message: "Version has no questions — add at least one before publishing." });
+      }
+
+      // Archive whatever was previously published for this template.
+      await supabase
+        .from("workspace_template_versions")
+        .update({ status: "archived" })
+        .eq("template_id", ver.template_id)
+        .eq("status", "published");
+
+      // Publish this draft.
+      const { data: after, error } = await supabase
+        .from("workspace_template_versions")
+        .update({ status: "published", published_at: new Date().toISOString() })
+        .eq("id", vId)
+        .select("*")
+        .single();
+      if (error) throw error;
+
+      await logActivity(supabase, profile, {
+        workspaceId: wsId,
+        targetKind: "template_version",
+        targetId: vId,
+        action: "template_version.published",
+        beforeState: ver,
+        afterState: after,
+      });
+
+      return respond(200, { ok: true, version: after });
+    }
+
+    // Archive a specific version. Refused if it's the only published
+    // version (would leave template with no live content). Drafts can
+    // always be archived (effectively a discard).
+    if (action === "archiveTemplateVersion" && event.httpMethod === "POST") {
+      const payload = JSON.parse(event.body || "{}");
+      const vId = payload.id;
+      if (!isUuid(vId)) return respond(400, { ok: false, message: "Bad version id." });
+
+      const { data: ver } = await supabase
+        .from("workspace_template_versions")
+        .select("*, workspace_templates:template_id(workspace_id)")
+        .eq("id", vId)
+        .maybeSingle();
+      if (!ver) return respond(404, { ok: false, message: "Version not found." });
+
+      const wsId = ver.workspace_templates?.workspace_id;
+      const denied = await requireWorkspaceCap(supabase, profile, wsId, "edit_template");
+      if (denied) return denied;
+
+      if (ver.status === "archived") {
+        return respond(400, { ok: false, message: "Already archived." });
+      }
+      // If archiving the lone published, refuse — caller can publish
+      // a different draft first if they want to roll back.
+      if (ver.status === "published") {
+        const { count } = await supabase
+          .from("workspace_template_versions")
+          .select("id", { count: "exact", head: true })
+          .eq("template_id", ver.template_id)
+          .eq("status", "published");
+        if ((count || 0) <= 1) {
+          return respond(400, {
+            ok: false,
+            message: "Cannot archive the only published version. Publish a different version first.",
+          });
+        }
+      }
+
+      const { data: after, error } = await supabase
+        .from("workspace_template_versions")
+        .update({ status: "archived" })
+        .eq("id", vId)
+        .select("*")
+        .single();
+      if (error) throw error;
+
+      await logActivity(supabase, profile, {
+        workspaceId: wsId,
+        targetKind: "template_version",
+        targetId: vId,
+        action: "template_version.archived",
+        beforeState: ver,
+        afterState: after,
+      });
+
+      return respond(200, { ok: true, version: after });
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // QUESTIONS (full-replace upsert on draft versions only)
+    // ════════════════════════════════════════════════════════════
+
+    if (action === "listQuestions") {
+      const vId = (event.queryStringParameters || {}).version_id;
+      if (!isUuid(vId)) return respond(400, { ok: false, message: "Bad version_id." });
+
+      const wsId = await workspaceIdForVersion(supabase, vId);
+      if (!wsId) return respond(404, { ok: false, message: "Version not found." });
+
+      const denied = await requireWorkspaceCap(supabase, profile, wsId, "view_workspace");
+      if (denied) return denied;
+
+      const { data, error } = await supabase
+        .from("workspace_template_questions")
+        .select("*")
+        .eq("version_id", vId)
+        .order("position");
+      if (error) throw error;
+      return respond(200, { ok: true, questions: data || [] });
+    }
+
+    // Replace the entire question set for a draft version. Server
+    // normalizes positions (1..N by array order), validates each
+    // question, and applies in a delete+insert pair. Refused on
+    // non-draft versions (published / archived are immutable).
+    if (action === "upsertQuestions" && event.httpMethod === "POST") {
+      const payload = JSON.parse(event.body || "{}");
+      const vId = payload.version_id;
+      if (!isUuid(vId)) return respond(400, { ok: false, message: "Bad version_id." });
+      if (!Array.isArray(payload.questions)) {
+        return respond(400, { ok: false, message: "questions[] required." });
+      }
+
+      const { data: ver } = await supabase
+        .from("workspace_template_versions")
+        .select("*, workspace_templates:template_id(workspace_id)")
+        .eq("id", vId)
+        .maybeSingle();
+      if (!ver) return respond(404, { ok: false, message: "Version not found." });
+
+      const wsId = ver.workspace_templates?.workspace_id;
+      const denied = await requireWorkspaceCap(supabase, profile, wsId, "edit_template");
+      if (denied) return denied;
+
+      if (ver.status !== "draft") {
+        return respond(400, {
+          ok: false,
+          message: `Cannot edit questions on a ${ver.status} version. Fork a new draft first.`,
+        });
+      }
+
+      // Validate + normalize the whole array first. Reject the entire
+      // batch if anything's wrong; partial saves leave gnarly state.
+      const rows = [];
+      for (let i = 0; i < payload.questions.length; i++) {
+        const r = normalizeQuestion(payload.questions[i], i + 1);
+        if (!r.ok) {
+          return respond(400, { ok: false, message: `Question ${i + 1}: ${r.msg}` });
+        }
+        rows.push({ ...r.row, version_id: vId });
+      }
+
+      // Snapshot old set for the audit log before we wipe it.
+      const { data: oldRows } = await supabase
+        .from("workspace_template_questions")
+        .select("*")
+        .eq("version_id", vId)
+        .order("position");
+
+      // Replace. (No transaction wrapping via supabase-js, but the
+      // version's status='draft' invariant means nothing else points
+      // at these rows yet, so the brief gap between delete and insert
+      // is safe.)
+      await supabase
+        .from("workspace_template_questions")
+        .delete()
+        .eq("version_id", vId);
+
+      let inserted = [];
+      if (rows.length) {
+        const { data, error } = await supabase
+          .from("workspace_template_questions")
+          .insert(rows)
+          .select("*")
+          .order("position");
+        if (error) throw error;
+        inserted = data || [];
+      }
+
+      await logActivity(supabase, profile, {
+        workspaceId: wsId,
+        targetKind: "template_version",
+        targetId: vId,
+        action: "template_version.questions_changed",
+        beforeState: { question_count: (oldRows || []).length, questions: oldRows || [] },
+        afterState: { question_count: inserted.length, questions: inserted },
+      });
+
+      return respond(200, { ok: true, questions: inserted });
+    }
+
+    // ════════════════════════════════════════════════════════════
+    // APPROVAL STEPS (full-replace upsert on draft versions only)
+    // ════════════════════════════════════════════════════════════
+
+    if (action === "listApprovalSteps") {
+      const vId = (event.queryStringParameters || {}).version_id;
+      if (!isUuid(vId)) return respond(400, { ok: false, message: "Bad version_id." });
+
+      const wsId = await workspaceIdForVersion(supabase, vId);
+      if (!wsId) return respond(404, { ok: false, message: "Version not found." });
+
+      const denied = await requireWorkspaceCap(supabase, profile, wsId, "view_workspace");
+      if (denied) return denied;
+
+      const { data, error } = await supabase
+        .from("workspace_template_approval_steps")
+        .select("*")
+        .eq("version_id", vId)
+        .order("step_number");
+      if (error) throw error;
+      return respond(200, { ok: true, approval_steps: data || [] });
+    }
+
+    if (action === "upsertApprovalSteps" && event.httpMethod === "POST") {
+      const payload = JSON.parse(event.body || "{}");
+      const vId = payload.version_id;
+      if (!isUuid(vId)) return respond(400, { ok: false, message: "Bad version_id." });
+      if (!Array.isArray(payload.approval_steps)) {
+        return respond(400, { ok: false, message: "approval_steps[] required." });
+      }
+
+      const { data: ver } = await supabase
+        .from("workspace_template_versions")
+        .select("*, workspace_templates:template_id(workspace_id)")
+        .eq("id", vId)
+        .maybeSingle();
+      if (!ver) return respond(404, { ok: false, message: "Version not found." });
+
+      const wsId = ver.workspace_templates?.workspace_id;
+      const denied = await requireWorkspaceCap(supabase, profile, wsId, "edit_template");
+      if (denied) return denied;
+
+      if (ver.status !== "draft") {
+        return respond(400, {
+          ok: false,
+          message: `Cannot edit approval steps on a ${ver.status} version. Fork a new draft first.`,
+        });
+      }
+
+      const rows = [];
+      for (let i = 0; i < payload.approval_steps.length; i++) {
+        const r = normalizeApprovalStep(payload.approval_steps[i], i + 1);
+        if (!r.ok) {
+          return respond(400, { ok: false, message: `Step ${i + 1}: ${r.msg}` });
+        }
+        rows.push({ ...r.row, version_id: vId });
+      }
+
+      const { data: oldRows } = await supabase
+        .from("workspace_template_approval_steps")
+        .select("*")
+        .eq("version_id", vId)
+        .order("step_number");
+
+      await supabase
+        .from("workspace_template_approval_steps")
+        .delete()
+        .eq("version_id", vId);
+
+      let inserted = [];
+      if (rows.length) {
+        const { data, error } = await supabase
+          .from("workspace_template_approval_steps")
+          .insert(rows)
+          .select("*")
+          .order("step_number");
+        if (error) throw error;
+        inserted = data || [];
+      }
+
+      await logActivity(supabase, profile, {
+        workspaceId: wsId,
+        targetKind: "template_version",
+        targetId: vId,
+        action: "template_version.approval_steps_changed",
+        beforeState: { step_count: (oldRows || []).length, steps: oldRows || [] },
+        afterState: { step_count: inserted.length, steps: inserted },
+      });
+
+      return respond(200, { ok: true, approval_steps: inserted });
     }
 
     // ════════════════════════════════════════════════════════════
