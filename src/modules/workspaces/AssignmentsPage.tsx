@@ -2,6 +2,10 @@
 // to open work (pending + in_progress + overdue) and groups by due
 // bucket (overdue / today / this week / later / no due date). Each
 // row deep-links to /assignments/:id where the user starts the form.
+//
+// Also rendered inline (with `embedded` prop) inside the Workspaces
+// page's My Assignments tab — in that case we skip the PageHeader so
+// the outer page header isn't doubled.
 
 import { useState } from "react";
 import { Link } from "react-router-dom";
@@ -65,7 +69,7 @@ function statusTone(s: AssignmentStatus): "neutral" | "info" | "warning" | "dang
   return "warning"; // pending
 }
 
-export function AssignmentsPage() {
+export function AssignmentsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [filter, setFilter] = useState<StatusFilter>("open");
   const statuses = FILTER_OPTIONS.find((f) => f.key === filter)!.statuses;
 
@@ -85,10 +89,12 @@ export function AssignmentsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="My assignments"
-        description="Forms and audits assigned to you across all workspaces."
-      />
+      {!embedded && (
+        <PageHeader
+          title="My assignments"
+          description="Forms and audits assigned to you across all workspaces."
+        />
+      )}
 
       {/* Status filter chips */}
       <div className="flex flex-wrap gap-2">

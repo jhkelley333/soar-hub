@@ -2,6 +2,10 @@
 // caller is either the assignee (owns the fix) or the verifier
 // (signs off on the fix). Defaults to open work; toggle to include
 // closed/verified for history.
+//
+// Rendered inline (with `embedded` prop) inside the Workspaces page's
+// My CAPs tab — in that case we skip the PageHeader so the outer
+// page header isn't doubled.
 
 import { useState } from "react";
 import { Link } from "react-router-dom";
@@ -41,7 +45,7 @@ function statusIcon(s: CapStatus) {
   return AlertOctagon;
 }
 
-export function MyCapsPage() {
+export function MyCapsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [includeClosed, setIncludeClosed] = useState(false);
   const { profile } = useAuth();
 
@@ -71,10 +75,12 @@ export function MyCapsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="My CAPs"
-        description="Corrective action plans you own (assignee) or verify."
-      />
+      {!embedded && (
+        <PageHeader
+          title="My CAPs"
+          description="Corrective action plans you own (assignee) or verify."
+        />
+      )}
 
       <label className="flex items-center gap-2 text-sm text-gray-600">
         <input
