@@ -305,7 +305,7 @@ function drawImagePlaceholder(
   reason: "missing" | "failed",
 ) {
   doc.setDrawColor(200);
-  doc.setFillColor(245);
+  doc.setFillColor(245, 245, 245);
   doc.rect(x, y, w, h, "FD");
   doc.setTextColor(150);
   doc.setFontSize(9);
@@ -317,5 +317,5 @@ function drawImagePlaceholder(
   );
   doc.setTextColor(0);
   doc.setDrawColor(0);
-  doc.setFillColor(0);
+  doc.setFillColor(0, 0, 0);
 }
