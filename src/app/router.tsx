@@ -35,6 +35,7 @@ import { WorkspaceDetail } from "@/modules/workspaces/WorkspaceDetail";
 import { TemplateDetailPage } from "@/modules/workspaces/TemplateDetailPage";
 import { AssignmentsPage } from "@/modules/workspaces/AssignmentsPage";
 import { AssignmentDetailPage } from "@/modules/workspaces/AssignmentDetailPage";
+import { SubmissionFormPage } from "@/modules/workspaces/SubmissionFormPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -190,6 +191,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
             <AssignmentDetailPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "assignments/:id/fill",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+            <SubmissionFormPage />
           </ProtectedRoute>
         ),
       },

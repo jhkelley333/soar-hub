@@ -1,10 +1,10 @@
 // /assignments/:id — single assignment view. Shows metadata + the
-// CTAs that gate the submission flow (slice 4):
-//   • pending     → "Start" calls startAssignment, flips to in_progress
-//   • in_progress → "Open submission form" (placeholder until slice 4)
-//   • submitted   → "View submission" (placeholder until slice 4)
+// CTAs that gate the submission flow:
+//   • pending     → Start (flips to in_progress) + Open form link
+//   • in_progress → Open submission form (→ /assignments/:id/fill)
+//   • submitted   → View submission (placeholder until slice 5)
 //
-// Cancel is available to the workspace owner/admin OR the assignee
+// Cancel is available to the assignee on pending/in_progress
 // (backend enforces).
 
 import { useParams, useNavigate, Link } from "react-router-dom";
@@ -151,13 +151,21 @@ export function AssignmentDetailPage() {
         <Card className="p-5">
           <h3 className="font-semibold mb-1">Ready to start?</h3>
           <p className="text-sm text-gray-600 mb-3">
-            Starting marks this in-progress. You can resume the form any time
-            until you submit it.
+            Starting marks this in-progress and opens the form. You can
+            close the tab any time — answers auto-save in this browser
+            until you submit.
           </p>
-          <Button onClick={() => startMut.mutate()} disabled={startMut.isPending}>
-            <Play className="h-4 w-4 mr-1" />
-            {startMut.isPending ? "Starting..." : "Start"}
-          </Button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Button onClick={() => startMut.mutate()} disabled={startMut.isPending}>
+              <Play className="h-4 w-4 mr-1" />
+              {startMut.isPending ? "Starting..." : "Start"}
+            </Button>
+            <Link to={`/assignments/${a.id}/fill`}>
+              <Button variant="secondary">
+                <FileText className="h-4 w-4 mr-1" /> Open form without changing status
+              </Button>
+            </Link>
+          </div>
         </Card>
       )}
 
@@ -165,13 +173,14 @@ export function AssignmentDetailPage() {
         <Card className="p-5">
           <h3 className="font-semibold mb-1">In progress</h3>
           <p className="text-sm text-gray-600 mb-3">
-            Continue filling out the form. The submission flow lands in
-            the next slice — for now, this is where you'll pick up.
+            Pick up where you left off. Answers auto-save locally until you
+            hit Submit.
           </p>
-          <Button disabled title="Submission flow ships in the next slice">
-            <FileText className="h-4 w-4 mr-1" />
-            Open submission form
-          </Button>
+          <Link to={`/assignments/${a.id}/fill`}>
+            <Button>
+              <FileText className="h-4 w-4 mr-1" /> Open submission form
+            </Button>
+          </Link>
         </Card>
       )}
 
@@ -179,7 +188,7 @@ export function AssignmentDetailPage() {
         <Card className="p-5">
           <h3 className="font-semibold mb-1">Submitted</h3>
           <p className="text-sm text-gray-600 mb-3">
-            Sign-off and submission review land in the next slice.
+            Sign-off review lands in the next slice.
           </p>
           <Button variant="secondary" disabled title="Submission view ships in the next slice">
             <Eye className="h-4 w-4 mr-1" /> View submission
