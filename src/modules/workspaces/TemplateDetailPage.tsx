@@ -112,7 +112,7 @@ export function TemplateDetailPage() {
       <div>
         <Link
           to={`/workspaces/${wsId}`}
-          className="inline-flex items-center text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 mb-2"
+          className="inline-flex items-center text-sm text-gray-500 hover:text-gray-700 mb-2"
         >
           <ArrowLeft className="h-4 w-4 mr-1" /> Back to workspace
         </Link>
@@ -136,7 +136,7 @@ export function TemplateDetailPage() {
       </div>
 
       {template.type === "audit" && template.audit_pass_threshold != null && (
-        <Card className="p-3 text-sm bg-amber-50/50 dark:bg-amber-900/10 border-amber-200 dark:border-amber-900/40">
+        <Card className="p-3 text-sm bg-amber-50/50 border-amber-200">
           <strong>Audit settings:</strong>{" "}
           Pass threshold {template.audit_pass_threshold}%
           {template.critical_fails_audit && " · critical-fail overrides"}
@@ -178,7 +178,7 @@ export function TemplateDetailPage() {
 
       {/* Versions list */}
       <Card className="p-0 overflow-hidden">
-        <div className="divide-y divide-gray-200 dark:divide-gray-700">
+        <div className="divide-y divide-gray-200">
           {versions.map((v) => (
             <VersionRow
               key={v.id}
@@ -230,7 +230,7 @@ function VersionRow({
             <span className="flex items-center gap-1">{sb.icon} {version.status}</span>
           </Badge>
         </div>
-        <div className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+        <div className="text-xs text-gray-500 mt-0.5">
           Created {new Date(version.created_at).toLocaleString()}
           {version.published_at && ` · published ${new Date(version.published_at).toLocaleString()}`}
         </div>

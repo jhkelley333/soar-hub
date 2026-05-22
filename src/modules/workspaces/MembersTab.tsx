@@ -55,9 +55,9 @@ export function MembersTab({
       )}
 
       <Card className="p-0 overflow-hidden">
-        <div className="divide-y divide-gray-200 dark:divide-gray-700">
+        <div className="divide-y divide-gray-200">
           {members.length === 0 && (
-            <div className="p-6 text-center text-sm text-gray-500 dark:text-gray-400">
+            <div className="p-6 text-center text-sm text-gray-500">
               No members yet.
             </div>
           )}
@@ -114,7 +114,7 @@ function MemberRow({
             <ShieldCheck className="h-3.5 w-3.5 text-blue-500 shrink-0" />
           )}
         </div>
-        <div className="text-xs text-gray-500 dark:text-gray-400 truncate">
+        <div className="text-xs text-gray-500 truncate">
           {member.profiles?.email} • org role: {member.profiles?.role ?? "—"}
         </div>
         {error && <div className="text-xs text-red-600 mt-1">{error}</div>}
@@ -130,7 +130,7 @@ function MemberRow({
                 setUpdating(true);
                 updateMut.mutate(e.target.value as WorkspaceRole);
               }}
-              className="text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1"
+              className="text-sm rounded border border-gray-300 bg-white px-2 py-1"
             >
               {ROLES.map((r) => (
                 <option key={r.value} value={r.value}>{r.label}</option>
@@ -143,7 +143,7 @@ function MemberRow({
                 }
               }}
               disabled={removeMut.isPending}
-              className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 disabled:opacity-50"
+              className="p-1.5 rounded hover:bg-red-50 text-red-600 disabled:opacity-50"
               title="Remove from workspace"
             >
               <X className="h-4 w-4" />
@@ -202,7 +202,7 @@ function AddMemberForm({
               id="member-role"
               value={role}
               onChange={(e) => setRole(e.target.value as WorkspaceRole)}
-              className="w-full text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-2"
+              className="w-full text-sm rounded border border-gray-300 bg-white px-2 py-2"
             >
               {ROLES.map((r) => (
                 <option key={r.value} value={r.value}>{r.label}</option>
@@ -219,7 +219,7 @@ function AddMemberForm({
           {ROLES.find((r) => r.value === role)?.hint}
         </p>
         {error && (
-          <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 p-2 rounded">
+          <div className="text-sm text-red-600 bg-red-50 p-2 rounded">
             {error}
           </div>
         )}

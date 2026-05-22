@@ -95,27 +95,27 @@ export function CreateTemplateModal({
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={2}
-            className="w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
 
         <div>
           <Label>Type</Label>
           <div className="grid grid-cols-2 gap-2 mt-1">
-            <label className={`flex items-start gap-2 p-2 rounded border cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 ${type === "form" ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20" : "border-gray-200 dark:border-gray-700"}`}>
+            <label className={`flex items-start gap-2 p-2 rounded border cursor-pointer hover:bg-gray-50 ${type === "form" ? "border-blue-500 bg-blue-50" : "border-gray-200"}`}>
               <input type="radio" name="type" value="form" checked={type === "form"} onChange={() => setType("form")} className="mt-1" />
               <div>
                 <div className="font-medium text-sm">Form</div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">
+                <div className="text-xs text-gray-500">
                   Information capture. No scoring.
                 </div>
               </div>
             </label>
-            <label className={`flex items-start gap-2 p-2 rounded border cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800 ${type === "audit" ? "border-blue-500 bg-blue-50 dark:bg-blue-900/20" : "border-gray-200 dark:border-gray-700"}`}>
+            <label className={`flex items-start gap-2 p-2 rounded border cursor-pointer hover:bg-gray-50 ${type === "audit" ? "border-blue-500 bg-blue-50" : "border-gray-200"}`}>
               <input type="radio" name="type" value="audit" checked={type === "audit"} onChange={() => setType("audit")} className="mt-1" />
               <div>
                 <div className="font-medium text-sm">Audit</div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">
+                <div className="text-xs text-gray-500">
                   Pass/fail/NA questions, weighted scoring, auto-CAPs on fail.
                 </div>
               </div>
@@ -124,7 +124,7 @@ export function CreateTemplateModal({
         </div>
 
         {type === "audit" && (
-          <div className="space-y-3 p-3 rounded border border-amber-200 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-900/10">
+          <div className="space-y-3 p-3 rounded border border-amber-200 bg-amber-50/50">
             <div>
               <Label htmlFor="audit-thresh">Pass threshold (% of weighted points)</Label>
               <Input
@@ -148,7 +148,7 @@ export function CreateTemplateModal({
               />
               <div>
                 <div className="text-sm font-medium">Any critical-question failure fails the whole audit</div>
-                <div className="text-xs text-gray-500 dark:text-gray-400">
+                <div className="text-xs text-gray-500">
                   When on, a single fail on a critical question = audit_outcome: fail_critical,
                   regardless of percent score.
                 </div>
@@ -158,7 +158,7 @@ export function CreateTemplateModal({
         )}
 
         {error && (
-          <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 p-2 rounded">
+          <div className="text-sm text-red-600 bg-red-50 p-2 rounded">
             {error}
           </div>
         )}

@@ -54,7 +54,7 @@ export function WorkspacesPage() {
         description="Forms, audits, and compliance workflows."
         actions={
           <div className="flex items-center gap-2">
-            <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+            <label className="flex items-center gap-2 text-sm text-gray-600">
               <input
                 type="checkbox"
                 checked={includeArchived}
@@ -103,7 +103,7 @@ export function WorkspacesPage() {
 
       {includeArchived && archived.length > 0 && (
         <>
-          <div className="flex items-center gap-2 pt-4 text-sm font-medium text-gray-500 dark:text-gray-400">
+          <div className="flex items-center gap-2 pt-4 text-sm font-medium text-gray-500">
             <Archive className="h-4 w-4" />
             Archived ({archived.length})
           </div>
@@ -130,7 +130,7 @@ function WorkspaceCard({ ws }: { ws: Workspace }) {
     <Link to={`/workspaces/${ws.id}`} className="block group">
       <Card className="p-5 hover:shadow-md transition-shadow h-full">
         <div className="flex items-start justify-between gap-3 mb-2">
-          <h3 className="font-semibold text-gray-900 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400">
+          <h3 className="font-semibold text-gray-900 group-hover:text-blue-600">
             {ws.name}
           </h3>
           <Badge tone="neutral" className="shrink-0">
@@ -141,11 +141,11 @@ function WorkspaceCard({ ws }: { ws: Workspace }) {
           </Badge>
         </div>
         {ws.description && (
-          <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2">
+          <p className="text-sm text-gray-600 line-clamp-2">
             {ws.description}
           </p>
         )}
-        <div className="mt-3 text-xs text-gray-500 dark:text-gray-500">
+        <div className="mt-3 text-xs text-gray-500">
           Created {new Date(ws.created_at).toLocaleDateString()}
         </div>
       </Card>

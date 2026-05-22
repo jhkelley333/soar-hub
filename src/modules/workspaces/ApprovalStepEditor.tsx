@@ -77,7 +77,7 @@ export function ApprovalStepEditor({
               <button
                 onClick={onMoveUp}
                 disabled={index === 0}
-                className="p-0.5 hover:text-gray-700 dark:hover:text-gray-200 disabled:opacity-30"
+                className="p-0.5 hover:text-gray-700 disabled:opacity-30"
                 title="Move up"
               >
                 <ArrowUp className="h-3.5 w-3.5" />
@@ -85,7 +85,7 @@ export function ApprovalStepEditor({
               <button
                 onClick={onMoveDown}
                 disabled={index === total - 1}
-                className="p-0.5 hover:text-gray-700 dark:hover:text-gray-200 disabled:opacity-30"
+                className="p-0.5 hover:text-gray-700 disabled:opacity-30"
                 title="Move down"
               >
                 <ArrowDown className="h-3.5 w-3.5" />
@@ -114,7 +114,7 @@ export function ApprovalStepEditor({
               value={kind}
               onChange={(e) => changeKind(e.target.value)}
               disabled={readOnly}
-              className="w-full text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-2"
+              className="w-full text-sm rounded border border-gray-300 bg-white px-2 py-2"
             >
               {RULE_KINDS.map((r) => (
                 <option key={r.value} value={r.value}>{r.label}</option>
@@ -155,7 +155,7 @@ export function ApprovalStepEditor({
                   value={String(rule.anchor ?? "submission_store")}
                   onChange={(e) => updateRule({ anchor: e.target.value })}
                   disabled={readOnly}
-                  className="w-full text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-2"
+                  className="w-full text-sm rounded border border-gray-300 bg-white px-2 py-2"
                 >
                   {ANCHORS.map((a) => (
                     <option key={a.value} value={a.value}>{a.label}</option>
@@ -230,7 +230,7 @@ export function ApprovalStepEditor({
           {!readOnly && (
             <button
               onClick={() => setShowJson((v) => !v)}
-              className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+              className="text-xs text-blue-600 hover:underline"
             >
               {showJson ? "Hide" : "Show"} raw approver_rule JSON
             </button>
@@ -247,7 +247,7 @@ export function ApprovalStepEditor({
                 }}
                 rows={5}
                 disabled={readOnly}
-                className="w-full font-mono text-xs rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1.5"
+                className="w-full font-mono text-xs rounded border border-gray-300 bg-white px-2 py-1.5"
               />
             </div>
           )}
@@ -260,7 +260,7 @@ export function ApprovalStepEditor({
                 onDelete();
               }
             }}
-            className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 shrink-0"
+            className="p-1.5 rounded hover:bg-red-50 text-red-600 shrink-0"
             title="Delete step"
           >
             <Trash2 className="h-4 w-4" />
