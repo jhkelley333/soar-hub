@@ -1,8 +1,10 @@
-// /reno-scoping/:id — tabbed scope editor. PR 2a ships the page shell
-// with a header (store info, status, cohort, building type, submit /
-// review action buttons) and the four tab placeholders. PR 2b will
-// flesh out Checklist, Photos, and Review. Notes is implemented here
-// because it's a single-textarea / append-only feed.
+// /reno-scoping/:id — tabbed scope editor. Header shows store info,
+// status badge, cohort, building type, and the status-transition action
+// bar (submit / needs-revision / approve / reopen / delete-draft). The
+// four tabs are Checklist, Photos, Notes, and Review.
+//
+// PR 2b wires up Checklist + Photos. Review is still a stub — PR 3 fills
+// it in with the per-tier completion summary and a PDF export button.
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -35,7 +37,9 @@ import {
   fetchScopeNotes,
   transitionScopeStatus,
 } from "./api";
+import { ChecklistTab } from "./ChecklistTab";
 import { NotesTab } from "./NotesTab";
+import { PhotosTab } from "./PhotosTab";
 import {
   BUILDING_TYPE_LABELS,
   COHORT_LABELS,
@@ -245,8 +249,21 @@ export function ScopeDetailPage() {
         </TabButton>
       </div>
 
-      {tab === "checklist" && <ChecklistStub />}
-      {tab === "photos" && <PhotosStub />}
+      {tab === "checklist" && (
+        <ChecklistTab
+          scopeId={scope.id}
+          templateId={scope.template_id}
+          buildingType={scope.building_type}
+          canEdit={canEdit}
+        />
+      )}
+      {tab === "photos" && (
+        <PhotosTab
+          scopeId={scope.id}
+          templateId={scope.template_id}
+          canEdit={canEdit}
+        />
+      )}
       {tab === "notes" && (
         <NotesTab
           notes={notesQuery.data ?? []}
@@ -284,30 +301,6 @@ function TabButton({
       <Icon className="h-3.5 w-3.5" strokeWidth={2} />
       {children}
     </button>
-  );
-}
-
-function ChecklistStub() {
-  return (
-    <Card>
-      <div className="space-y-2 p-6 text-center text-sm text-zinc-500">
-        <ClipboardList className="mx-auto h-8 w-8 text-zinc-300" strokeWidth={1.5} />
-        <p className="font-medium text-zinc-700">Checklist UI ships in the next push.</p>
-        <p>27 items grouped by tier (Existing / Minimum / Plus-Up / Optional) with status, notes, and per-item photos.</p>
-      </div>
-    </Card>
-  );
-}
-
-function PhotosStub() {
-  return (
-    <Card>
-      <div className="space-y-2 p-6 text-center text-sm text-zinc-500">
-        <ImageIcon className="mx-auto h-8 w-8 text-zinc-300" strokeWidth={1.5} />
-        <p className="font-medium text-zinc-700">Photo upload ships in the next push.</p>
-        <p>10 required named slots + 8 generic overflow + ad-hoc item photos. Client-side compression + EXIF taken_at.</p>
-      </div>
-    </Card>
   );
 }
 
