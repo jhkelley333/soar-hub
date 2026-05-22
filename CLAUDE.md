@@ -14,9 +14,16 @@ How to verify:
 
 Active feature branch: **`claude/paf-form`**. The user merges PRs from this branch into `main` manually via GitHub UI; there is no auto-merge automation.
 
-## Patch ferry workflow
+## PR workflow
 
-The harness git proxy CANNOT push to GitHub. All code lives in the user's local repo at `~/soar-hub` on their MacBook. To get my work to them:
+- **PRs may be opened without checking in first.** Use `mcp__github__create_pull_request` against `main` once a branch is ready. Body should include a summary + a test-plan checklist + a link to the branch tree.
+- **Never merge a PR without explicit user confirmation.** Auto-merge is not enabled and the user prefers to eyeball the diff in the GitHub UI before merging.
+- Same rule applies to anything destructive on `main`: force-pushes, branch deletes, rewriting history — always ask.
+- Comments on PRs / issues are fine without asking, but stay frugal — only reply when there's something genuinely worth saying (a fix, a question, a "can't reproduce").
+
+## Patch ferry workflow (OBSOLETE — kept for historical reference)
+
+This was the workflow before direct push via the GitHub MCP. Current sessions push commits + open PRs directly via `mcp__github__push_files` and `mcp__github__create_pull_request`. Only fall back to the patch ferry if the MCP is genuinely unavailable.
 
 1. Generate plain unified diff (NOT format-patch — SHA mismatches): `git diff HEAD~1 HEAD > /tmp/foo.patch`
 2. Compress + base64: `gzip -9 -c /tmp/foo.patch | base64`
@@ -58,6 +65,9 @@ When the patch fails because the user's tree drifted from sandbox, fall back to 
 | 0021 | re-seed form_config: training dates instead of training_days | apply when ready |
 | 0022 | manageable_users() — SDOs include DOs | ✓ |
 | 0023 | profiles.show_birthday boolean default true | ✓ |
+| 0066 | reno_scoping_schema (Reno Scoping module) | ✓ |
+| 0067 | reno_scoping_seed (27 items, 18 photo slots) | ✓ |
+| 0068 | reno_storage_buckets (photos + 360 tours) | ✓ |
 
 ## Currently in flight
 
@@ -90,11 +100,11 @@ The user sees `Stop hook feedback: ...There are N unpushed commit(s)...` after a
 
 ## Other useful context
 
-- Auto-PR automation is NOT in place — user manually opens + merges PRs through the GitHub UI.
 - Existing TeamPage uses **email-copy buttons + tel: phone links**. New `MemberProfileDrawer` follows the same pattern.
 - PAF history on the member profile drawer is gated to viewers with role >= DO (do, sdo, rvp, vp, coo, admin, payroll). Two tabs: "Submitted" (exact match on submitter_id/email) and "Mentioned as employee" (fuzzy `ilike` on employee_name).
 - Confetti library: `canvas-confetti` (already in package.json).
 - Birthday widget grouping: by RVP, sorted by date asc then name. Uses `thisAndNextWeekRange()` from `dateRange.ts` (Mon of this week → Sun of next).
+- `current_role()` from `0001_init.sql:175` silently never landed in `pg_proc` (reserved-keyword conflict). Don't depend on it; define a module-scoped helper with a safe name (see `reno_caller_role()` in `0066_reno_scoping_schema.sql`). Worth a one-line cleanup migration eventually.
 
 ## Pending decisions / open threads
 
