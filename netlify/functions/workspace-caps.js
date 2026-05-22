@@ -89,7 +89,7 @@ const ALLOWED_CAP_STATUS = [
   "open", "in_progress", "proof_submitted", "verified", "closed", "reopened",
 ];
 
-// ── Handler ─────────────────────────────────────────────────
+// ── Handler ──────────────────────────────────────
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
 
@@ -122,7 +122,7 @@ export const handler = async (event) => {
           *,
           assignee:assignee_id(id, full_name, email, role),
           verifier:verifier_id(id, full_name, email, role),
-          store:store_id(id, store_number, name),
+          store:store_id(id, store_number:number, name),
           question:question_id(id, question_text, is_critical, weight)
         `)
         .eq("workspace_id", wsId)
@@ -162,7 +162,7 @@ export const handler = async (event) => {
           workspaces:workspace_id(id, name),
           assignee:assignee_id(id, full_name, email),
           verifier:verifier_id(id, full_name, email),
-          store:store_id(id, store_number, name),
+          store:store_id(id, store_number:number, name),
           question:question_id(id, question_text)
         `)
         .or(`assignee_id.eq.${profile.id},verifier_id.eq.${profile.id}`)
@@ -187,7 +187,7 @@ export const handler = async (event) => {
           *,
           assignee:assignee_id(id, full_name, email, role),
           verifier:verifier_id(id, full_name, email, role),
-          store:store_id(id, store_number, name),
+          store:store_id(id, store_number:number, name),
           question:question_id(id, question_text, is_critical, weight, field_type),
           submission:submission_id(id, submitted_at, audit_outcome, signoff_status),
           answer:answer_id(id, audit_result, audit_was_critical, answer_text, answer_json)
@@ -729,7 +729,7 @@ export const handler = async (event) => {
         .from("workspace_repeat_findings")
         .select(`
           *,
-          store:store_id(id, store_number, name),
+          store:store_id(id, store_number:number, name),
           question:question_id(id, question_text, is_critical, weight),
           acknowledged_by:acknowledged_by_id(id, full_name, email)
         `)
@@ -759,7 +759,7 @@ export const handler = async (event) => {
         .from("workspace_repeat_findings")
         .select(`
           *,
-          store:store_id(id, store_number, name),
+          store:store_id(id, store_number:number, name),
           question:question_id(id, question_text, is_critical, weight),
           acknowledged_by:acknowledged_by_id(id, full_name, email)
         `)
