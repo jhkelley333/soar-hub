@@ -28,6 +28,16 @@ export function Modal({
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
 
+  // Callers commonly pass an inline arrow for onClose (e.g.
+  // `onClose={() => { reset(); onClose(); }}`), which makes a fresh function
+  // reference on every render. If we put `onClose` in the open-effect deps,
+  // every parent rerender (incl. one per keystroke on a controlled form)
+  // would tear down + rebuild the focus trap — which steals focus away from
+  // the input the user is typing into. Read the latest handler through a
+  // ref instead, and key the effect off `open` only.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => { onCloseRef.current = onClose; }, [onClose]);
+
   useEffect(() => {
     if (!open) return;
     const previouslyFocused = document.activeElement as HTMLElement | null;
@@ -41,7 +51,7 @@ export function Modal({
 
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== "Tab") return;
@@ -78,7 +88,7 @@ export function Modal({
         previouslyFocused.focus();
       }
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open) return null;
 
