@@ -57,6 +57,7 @@ import {
   type DraftItem,
   type DraftSnapshot,
 } from "./draftStorage";
+import { PreConSection } from "./PreConSection";
 
 const SAVE_DEBOUNCE_MS = 600;
 
@@ -74,9 +75,10 @@ interface Props {
   templateId: string;
   buildingType: BuildingType;
   canEdit: boolean;
+  scope: import("./types").RenoScope;
 }
 
-export function ChecklistTab({ scopeId, templateId, buildingType, canEdit }: Props) {
+export function ChecklistTab({ scopeId, templateId, buildingType, canEdit, scope }: Props) {
   const queryClient = useQueryClient();
 
   const itemsQuery = useQuery({
@@ -240,6 +242,7 @@ export function ChecklistTab({ scopeId, templateId, buildingType, canEdit }: Pro
   return (
     <div className="space-y-4">
       <SyncBadge status={syncStatus} />
+      <PreConSection scope={scope} canEdit={canEdit} />
       {TIER_ORDER.map((tier) => {
         const tierItems = grouped[tier];
         if (!tierItems || tierItems.length === 0) return null;

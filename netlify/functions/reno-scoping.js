@@ -1,14 +1,6 @@
 // netlify/functions/reno-scoping.js
 //
-// Service-role backend for Reno Scoping status transitions. Lets the
-// client request a status change AND get an audit row written
-// atomically. The reno_scope_audit_log table has no INSERT policy, so
-// audit writes have to flow through this function (service-role bypass).
-//
-// Reads + checklist edits + photo/tour CRUD continue to go straight to
-// Supabase from the client — RLS handles auth on those paths.
-//
-// Actions:
+// Service-role backend for Reno Scoping. Two actions:
 //
 //   POST ?action=transition  (auth: bearer JWT)
 //     body: { scope_id, to_status, review_notes? }
@@ -20,6 +12,12 @@
 //           needs_revision   — DO+ only, from submitted|reviewed|approved
 //           approved         — DO+ only
 //           draft / reopen   — DO+ only, from approved (Reopen Review)
+//
+//   POST ?action=update-store-attributes  (auth: bearer JWT)
+//     body: { scope_id, attributes }
+//     -> patches a whitelisted subset of stores.* using service role,
+//        gated to the scope's scoper (during draft / needs_revision) or
+//        any DO+ on the scope.
 //
 // Pattern lifted from netlify/functions/paf.js — same admin() +
 // getSessionUser() helpers, same logAudit() shape.
@@ -209,6 +207,105 @@ async function handleTransition(event, profile) {
   return respond(200, { scope: updated });
 }
 
+// ---- update-store-attributes action ---------------------------------
+// Whitelist of stores.* columns the scope-bound attribute editor can
+// patch. Keeps the function from being a generic admin write path.
+
+const ATTRIBUTE_COLUMNS = new Set([
+  "patio_pop_menu_count",
+  "patio_pop_stall_numbers",
+  "order_ahead_stall_count",
+  "order_ahead_stall_numbers",
+  "stall_pop_menu_count",
+  "has_trailer_stall",
+  "trailer_stall_number",
+]);
+
+function sanitizeAttributes(input) {
+  if (!input || typeof input !== "object") return null;
+  const patch = {};
+  let count = 0;
+  for (const [key, value] of Object.entries(input)) {
+    if (!ATTRIBUTE_COLUMNS.has(key)) continue;
+    // Type coercion: ints come back as numbers, bools as booleans, text as strings.
+    if (key.endsWith("_count")) {
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < 0) continue;
+      patch[key] = Math.floor(n);
+    } else if (key === "has_trailer_stall") {
+      patch[key] = Boolean(value);
+    } else {
+      patch[key] = value == null ? null : String(value);
+    }
+    count += 1;
+  }
+  return count > 0 ? patch : null;
+}
+
+async function handleUpdateStoreAttributes(event, profile) {
+  let body;
+  try {
+    body = JSON.parse(event.body || "{}");
+  } catch {
+    return respond(400, { error: "Invalid JSON body" });
+  }
+  const { scope_id, attributes } = body;
+  if (!scope_id || typeof scope_id !== "string") {
+    return respond(400, { error: "scope_id is required" });
+  }
+
+  const patch = sanitizeAttributes(attributes);
+  if (!patch) {
+    return respond(400, { error: "No valid attribute fields supplied" });
+  }
+
+  const supa = admin();
+  const { data: scope, error: loadErr } = await supa
+    .from("reno_scopes")
+    .select("id, scoped_by, status, store_id")
+    .eq("id", scope_id)
+    .single();
+  if (loadErr || !scope) {
+    return respond(404, { error: "Scope not found" });
+  }
+
+  // Same write-gate as the scope itself: scoper on draft / needs_revision
+  // OR DO+ at any time.
+  const level = ROLE_LEVEL[profile.role] ?? -1;
+  const isScoper = scope.scoped_by === profile.id;
+  const isReviewer = level >= ROLE_LEVEL.do;
+  const canWrite =
+    isReviewer ||
+    (isScoper && (scope.status === "draft" || scope.status === "needs_revision"));
+  if (!canWrite) {
+    return respond(403, {
+      error: "Not authorized to update store attributes for this scope",
+    });
+  }
+
+  const { data: updated, error: updateErr } = await supa
+    .from("stores")
+    .update(patch)
+    .eq("id", scope.store_id)
+    .select("id, " + Array.from(ATTRIBUTE_COLUMNS).join(", "))
+    .single();
+  if (updateErr) {
+    return respond(500, { error: updateErr.message });
+  }
+
+  await logAudit(supa, {
+    scope_id,
+    actor_id: profile.id,
+    actor_email: profile.email,
+    action: "update_attributes",
+    from_status: scope.status,
+    to_status: scope.status,
+    detail: { fields: Object.keys(patch) },
+  });
+
+  return respond(200, { store: updated });
+}
+
 // ---- HTTP handler ----------------------------------------------------
 
 export const handler = async (event) => {
@@ -222,6 +319,9 @@ export const handler = async (event) => {
   }
   if (action === "transition") {
     return handleTransition(event, profile);
+  }
+  if (action === "update-store-attributes") {
+    return handleUpdateStoreAttributes(event, profile);
   }
   return respond(400, { error: `Unknown action: ${action}` });
 };
