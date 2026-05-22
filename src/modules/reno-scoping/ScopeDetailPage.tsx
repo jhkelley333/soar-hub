@@ -2,9 +2,6 @@
 // status badge, cohort, building type, and the status-transition action
 // bar (submit / needs-revision / approve / reopen / delete-draft). The
 // four tabs are Checklist, Photos, Notes, and Review.
-//
-// PR 2b wires up Checklist + Photos. Review is still a stub — PR 3 fills
-// it in with the per-tier completion summary and a PDF export button.
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -19,7 +16,6 @@ import {
   Send,
   Shield,
   Trash2,
-  XCircle,
 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
@@ -40,6 +36,7 @@ import {
 import { ChecklistTab } from "./ChecklistTab";
 import { NotesTab } from "./NotesTab";
 import { PhotosTab } from "./PhotosTab";
+import { ReviewTab } from "./ReviewTab";
 import {
   BUILDING_TYPE_LABELS,
   COHORT_LABELS,
@@ -273,7 +270,7 @@ export function ScopeDetailPage() {
           adding={addNoteMutation.isPending}
         />
       )}
-      {tab === "review" && <ReviewStub />}
+      {tab === "review" && <ReviewTab scope={scope} />}
     </>
   );
 }
@@ -301,17 +298,5 @@ function TabButton({
       <Icon className="h-3.5 w-3.5" strokeWidth={2} />
       {children}
     </button>
-  );
-}
-
-function ReviewStub() {
-  return (
-    <Card>
-      <div className="space-y-2 p-6 text-center text-sm text-zinc-500">
-        <XCircle className="mx-auto h-8 w-8 text-zinc-300" strokeWidth={1.5} />
-        <p className="font-medium text-zinc-700">Review summary ships in the next push.</p>
-        <p>Per-tier completion, fail/needs-work rollup, missing required photos, and an export-to-PDF button.</p>
-      </div>
-    </Card>
   );
 }
