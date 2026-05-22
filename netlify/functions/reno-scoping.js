@@ -218,6 +218,7 @@ const ATTRIBUTE_COLUMNS = new Set([
   "order_ahead_stall_count",
   "order_ahead_stall_numbers",
   "stall_pop_menu_count",
+  "stall_pop_stall_numbers",
   "has_trailer_stall",
   "trailer_stall_number",
   // Pre-Con building features (migration 0071)
