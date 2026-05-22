@@ -1,7 +1,8 @@
 // /reno-scoping/:id — tabbed scope editor. Header shows store info,
 // status badge, cohort, building type, and the status-transition action
-// bar (submit / needs-revision / approve / reopen / delete-draft). The
-// five tabs are Checklist, Photos, 360 Tour, Notes, and Review.
+// bar. Tabs in order: Pre-Con, Photos, 360 Tour, Notes, Review, Punch
+// List, Plus-Ups. Pre-Con / Punch List / Plus-Ups all reuse ChecklistTab
+// with different visibleTiers filters.
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -9,6 +10,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import {
   ArrowLeft,
   CheckCircle2,
+  ClipboardCheck,
   ClipboardList,
   Compass,
   Image as ImageIcon,
@@ -16,6 +18,7 @@ import {
   RotateCcw,
   Send,
   Shield,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -46,7 +49,7 @@ import {
   type ScopeStatus,
 } from "./types";
 
-type Tab = "checklist" | "photos" | "tour" | "notes" | "review";
+type Tab = "pre_con" | "photos" | "tour" | "notes" | "review" | "punch_list" | "plus_ups";
 
 const STATUS_BADGE: Record<ScopeStatus, "neutral" | "info" | "warning" | "success"> = {
   draft: "neutral",
@@ -61,7 +64,7 @@ export function ScopeDetailPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { profile } = useAuth();
-  const [tab, setTab] = useState<Tab>("checklist");
+  const [tab, setTab] = useState<Tab>("pre_con");
 
   const scopeQuery = useQuery({
     queryKey: ["reno-scope", id],
@@ -234,8 +237,8 @@ export function ScopeDetailPage() {
       </Card>
 
       <div className="mb-4 flex gap-1 overflow-x-auto rounded-md bg-zinc-100 p-1">
-        <TabButton active={tab === "checklist"} onClick={() => setTab("checklist")} icon={ClipboardList}>
-          Checklist
+        <TabButton active={tab === "pre_con"} onClick={() => setTab("pre_con")} icon={ClipboardList}>
+          Pre-Con
         </TabButton>
         <TabButton active={tab === "photos"} onClick={() => setTab("photos")} icon={ImageIcon}>
           Photos
@@ -249,15 +252,23 @@ export function ScopeDetailPage() {
         <TabButton active={tab === "review"} onClick={() => setTab("review")} icon={Shield}>
           Review
         </TabButton>
+        <TabButton active={tab === "punch_list"} onClick={() => setTab("punch_list")} icon={ClipboardCheck}>
+          Punch List
+        </TabButton>
+        <TabButton active={tab === "plus_ups"} onClick={() => setTab("plus_ups")} icon={Sparkles}>
+          Plus-Ups
+        </TabButton>
       </div>
 
-      {tab === "checklist" && (
+      {tab === "pre_con" && (
         <ChecklistTab
           scopeId={scope.id}
           templateId={scope.template_id}
           buildingType={scope.building_type}
           canEdit={canEdit}
           scope={scope}
+          visibleTiers={["existing_condition"]}
+          showPreConSection
         />
       )}
       {tab === "photos" && (
@@ -278,6 +289,26 @@ export function ScopeDetailPage() {
         />
       )}
       {tab === "review" && <ReviewTab scope={scope} />}
+      {tab === "punch_list" && (
+        <ChecklistTab
+          scopeId={scope.id}
+          templateId={scope.template_id}
+          buildingType={scope.building_type}
+          canEdit={canEdit}
+          scope={scope}
+          visibleTiers={["minimum_standard"]}
+        />
+      )}
+      {tab === "plus_ups" && (
+        <ChecklistTab
+          scopeId={scope.id}
+          templateId={scope.template_id}
+          buildingType={scope.building_type}
+          canEdit={canEdit}
+          scope={scope}
+          visibleTiers={["plus_up", "optional"]}
+        />
+      )}
     </>
   );
 }
