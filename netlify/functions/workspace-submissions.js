@@ -1373,6 +1373,187 @@ export const handler = async (event) => {
       });
     }
 
+    // ═══════════════════════════════════════════════════════════
+    // SELF-SERVE / AD-HOC ASSIGNMENTS  (CP5)
+    // ═══════════════════════════════════════════════════════════
+    //
+    // Three actions let a workspace member self-start an assignment
+    // from a flagged template, without it being pre-scheduled or
+    // hand-assigned. Adds the entry point we were missing for the
+    // "I'm doing a check right now" workflow that iAuditor /
+    // SafetyCulture default to.
+    //
+    // The template owner opts-in per template via setTemplateSelfServe
+    // (workspace owner / editor only). Members then discover startable
+    // templates via listSelfServeTemplates and create their own
+    // assignment via startAdHocAssignment.
+
+    // List the self-serve templates the caller has access to. Filters
+    // out archived templates and ones without a published version.
+    // Optional workspace_id narrows the result to a single workspace.
+    if (action === "listSelfServeTemplates") {
+      const qp = event.queryStringParameters || {};
+      const wsFilter = qp.workspace_id;
+      if (wsFilter && !isUuid(wsFilter)) {
+        return respond(400, { ok: false, message: "Bad workspace_id." });
+      }
+
+      // Get all workspaces where this user is a member (any role).
+      const { data: memberRows } = await supabase
+        .from("workspace_members")
+        .select("workspace_id, workspace_role")
+        .eq("user_id", profile.id);
+      let wsIds = (memberRows || []).map((m) => m.workspace_id);
+      if (wsFilter) wsIds = wsIds.filter((wid) => wid === wsFilter);
+      if (!wsIds.length) return respond(200, { ok: true, templates: [] });
+
+      const { data: templates, error } = await supabase
+        .from("workspace_templates")
+        .select("*, workspaces:workspace_id(id, name)")
+        .in("workspace_id", wsIds)
+        .eq("is_self_serve", true)
+        .eq("is_archived", false)
+        .order("name");
+      if (error) throw error;
+
+      // For each template, find its current published version. A
+      // template with no published version isn't startable yet.
+      const tplIds = (templates || []).map((t) => t.id);
+      const publishedByTplId = new Map();
+      if (tplIds.length) {
+        const { data: vers } = await supabase
+          .from("workspace_template_versions")
+          .select("id, template_id, version_number")
+          .in("template_id", tplIds)
+          .eq("status", "published");
+        for (const v of vers || []) publishedByTplId.set(v.template_id, v);
+      }
+
+      const rows = (templates || [])
+        .filter((t) => publishedByTplId.has(t.id))
+        .map((t) => ({
+          ...t,
+          current_version: publishedByTplId.get(t.id),
+        }));
+
+      return respond(200, { ok: true, templates: rows });
+    }
+
+    // Owner / editor toggles the self-serve flag on a template.
+    if (action === "setTemplateSelfServe" && event.httpMethod === "POST") {
+      const payload = JSON.parse(event.body || "{}");
+      const tplId = payload.template_id;
+      const isSelfServe = !!payload.is_self_serve;
+      if (!isUuid(tplId)) return respond(400, { ok: false, message: "Bad template_id." });
+
+      const { data: tpl } = await supabase
+        .from("workspace_templates")
+        .select("*")
+        .eq("id", tplId)
+        .single();
+      if (!tpl) return respond(404, { ok: false, message: "Template not found." });
+
+      const denied = await requireWorkspaceCap(supabase, profile, tpl.workspace_id, "manage_templates");
+      if (denied) return denied;
+
+      const { data: updated, error } = await supabase
+        .from("workspace_templates")
+        .update({ is_self_serve: isSelfServe })
+        .eq("id", tplId)
+        .select("*")
+        .single();
+      if (error) throw error;
+
+      await logActivity(supabase, profile, {
+        workspaceId: tpl.workspace_id,
+        targetKind: "template",
+        targetId: tplId,
+        action: isSelfServe ? "template.self_serve_enabled" : "template.self_serve_disabled",
+        beforeState: { is_self_serve: tpl.is_self_serve },
+        afterState: { is_self_serve: updated.is_self_serve },
+      });
+
+      return respond(200, { ok: true, template: updated });
+    }
+
+    // Create an assignment on the fly. Caller picks template + store,
+    // becomes the assignee themselves, starts in_progress, no due date.
+    // Routes the user to /assignments/:id/fill afterwards.
+    if (action === "startAdHocAssignment" && event.httpMethod === "POST") {
+      const payload = JSON.parse(event.body || "{}");
+      const tplId = payload.template_id;
+      const storeId = payload.store_id;
+      if (!isUuid(tplId)) return respond(400, { ok: false, message: "Bad template_id." });
+      if (!isUuid(storeId)) return respond(400, { ok: false, message: "Bad store_id." });
+
+      const { data: tpl } = await supabase
+        .from("workspace_templates")
+        .select("*")
+        .eq("id", tplId)
+        .single();
+      if (!tpl) return respond(404, { ok: false, message: "Template not found." });
+      if (tpl.is_archived) return respond(400, { ok: false, message: "Template is archived." });
+      if (!tpl.is_self_serve) {
+        return respond(403, { ok: false, message: "This template isn't self-serve. Ask an editor to assign it to you." });
+      }
+
+      const denied = await requireWorkspaceCap(supabase, profile, tpl.workspace_id, "fill_assignment");
+      if (denied) return denied;
+
+      const { data: ver } = await supabase
+        .from("workspace_template_versions")
+        .select("*")
+        .eq("template_id", tplId)
+        .eq("status", "published")
+        .order("version_number", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!ver) {
+        return respond(400, { ok: false, message: "Template has no published version yet." });
+      }
+
+      // Validate the store actually exists. Visibility-wise we let
+      // any workspace member who manages stores pick from their
+      // accessible list (enforced client-side via /org my-tree). The
+      // backend just checks the row is real.
+      const { data: store } = await supabase
+        .from("stores").select("id").eq("id", storeId).single();
+      if (!store) return respond(404, { ok: false, message: "Store not found." });
+
+      const nowIso = new Date().toISOString();
+      const { data: asn, error: insErr } = await supabase
+        .from("workspace_assignments")
+        .insert({
+          workspace_id: tpl.workspace_id,
+          template_id: tplId,
+          template_version_id: ver.id,
+          assignee_id: profile.id,
+          store_id: storeId,
+          status: "in_progress",
+          started_at: nowIso,
+          created_by_id: profile.id,
+        })
+        .select("*")
+        .single();
+      if (insErr) throw insErr;
+
+      await logActivity(supabase, profile, {
+        workspaceId: tpl.workspace_id,
+        targetKind: "assignment",
+        targetId: asn.id,
+        action: "assignment.ad_hoc_created",
+        afterState: asn,
+        eventData: {
+          template_id: tplId,
+          template_version_id: ver.id,
+          store_id: storeId,
+          source: "self_serve",
+        },
+      });
+
+      return respond(200, { ok: true, assignment: asn });
+    }
+
     return respond(404, { ok: false, message: `Unknown action: ${action}` });
   } catch (err) {
     console.error("workspace-submissions handler error:", err);
