@@ -212,6 +212,7 @@ async function handleTransition(event, profile) {
 // patch. Keeps the function from being a generic admin write path.
 
 const ATTRIBUTE_COLUMNS = new Set([
+  // Stall data (added in earlier migration)
   "patio_pop_menu_count",
   "patio_pop_stall_numbers",
   "order_ahead_stall_count",
@@ -219,6 +220,17 @@ const ATTRIBUTE_COLUMNS = new Set([
   "stall_pop_menu_count",
   "has_trailer_stall",
   "trailer_stall_number",
+  // Pre-Con building features (migration 0071)
+  "has_stall_canopy",
+  "has_clearance_bar",
+  "has_dt_order_canopy",
+]);
+
+const BOOLEAN_ATTRIBUTE_COLUMNS = new Set([
+  "has_trailer_stall",
+  "has_stall_canopy",
+  "has_clearance_bar",
+  "has_dt_order_canopy",
 ]);
 
 function sanitizeAttributes(input) {
@@ -227,12 +239,13 @@ function sanitizeAttributes(input) {
   let count = 0;
   for (const [key, value] of Object.entries(input)) {
     if (!ATTRIBUTE_COLUMNS.has(key)) continue;
-    // Type coercion: ints come back as numbers, bools as booleans, text as strings.
+    // Type coercion: ints (anything ending _count) come back as numbers,
+    // bools per the BOOLEAN whitelist, everything else as nullable text.
     if (key.endsWith("_count")) {
       const n = Number(value);
       if (!Number.isFinite(n) || n < 0) continue;
       patch[key] = Math.floor(n);
-    } else if (key === "has_trailer_stall") {
+    } else if (BOOLEAN_ATTRIBUTE_COLUMNS.has(key)) {
       patch[key] = Boolean(value);
     } else {
       patch[key] = value == null ? null : String(value);
