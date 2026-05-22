@@ -159,15 +159,67 @@ export async function updateScopeDamage(
   return data as RenoScope;
 }
 
-// Fetch the stall-data attributes off the parent store. RLS lets anyone
-// with can_see_store(store_id) read the row.
+// Generic Pre-Con findings patch. Accepts any of the migration 0071
+// fields on reno_scopes (counts, conditions, notes, booleans). RLS
+// handles auth — scoper on draft / needs_revision or DO+ any time.
+export type PreConFindingsPatch = Partial<
+  Pick<
+    RenoScope,
+    | "existing_acorn_pendant_count"
+    | "existing_wall_pack_count"
+    | "existing_patio_furniture_count"
+    | "existing_trashcan_count"
+    | "existing_building_signs_count"
+    | "existing_directional_signs_count"
+    | "bollard_count"
+    | "bollard_needs_repair_count"
+    | "bollard_notes"
+    | "steel_rust_severity"
+    | "stucco_eifs_condition"
+    | "nichiha_damage_count"
+    | "doghouse_disposition"
+    | "pylon_sign_condition"
+    | "stall_canopy_condition"
+    | "dt_order_canopy_condition"
+    | "dumpster_enclosure_ready"
+    | "drainage_issues_notes"
+  >
+>;
+
+export async function updateScopePreCon(
+  id: string,
+  patch: PreConFindingsPatch,
+): Promise<RenoScope> {
+  const { data, error } = await supabase
+    .from("reno_scopes")
+    .update(patch)
+    .eq("id", id)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return data as RenoScope;
+}
+
+// Fetch the store-level attributes that the Pre-Con section edits. RLS
+// lets anyone with can_see_store(store_id) read the row.
 export async function fetchStoreStallAttributes(
   storeId: string,
 ): Promise<import("./types").StoreStallAttributes> {
   const { data, error } = await supabase
     .from("stores")
     .select(
-      "patio_pop_menu_count, patio_pop_stall_numbers, order_ahead_stall_count, order_ahead_stall_numbers, stall_pop_menu_count, has_trailer_stall, trailer_stall_number",
+      [
+        "patio_pop_menu_count",
+        "patio_pop_stall_numbers",
+        "order_ahead_stall_count",
+        "order_ahead_stall_numbers",
+        "stall_pop_menu_count",
+        "has_trailer_stall",
+        "trailer_stall_number",
+        "has_stall_canopy",
+        "has_clearance_bar",
+        "has_dt_order_canopy",
+      ].join(", "),
     )
     .eq("id", storeId)
     .single();
