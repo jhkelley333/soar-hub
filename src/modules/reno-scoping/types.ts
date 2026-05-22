@@ -62,6 +62,14 @@ export interface ScopePhotoSlot {
   sort_order: number;
 }
 
+// Enum-ish text codes constrained by 0071's check constraints.
+export type SteelRustSeverity = "low" | "medium" | "high";
+export type StuccoEifsCondition = "good" | "minor_cracks" | "needs_patch";
+export type DoghouseDisposition = "paint" | "replace";
+export type PylonSignCondition = "good" | "reface" | "replace" | "none";
+export type StallCanopyCondition = "good" | "fair" | "poor" | "remove";
+export type DtOrderCanopyCondition = "good" | "fair" | "poor" | "replace" | "none";
+
 export interface RenoScope {
   id: string;
   store_id: string;
@@ -82,14 +90,40 @@ export interface RenoScope {
   // Pre-Con damage findings (added in migration 0070).
   damaged_oa_signs_count: number;
   damaged_oa_signs_notes: string | null;
+  // Pre-Con data additions (migration 0071) — counts of existing items
+  // that the GC will demolish.
+  existing_acorn_pendant_count: number;
+  existing_wall_pack_count: number;
+  existing_patio_furniture_count: number;
+  existing_trashcan_count: number;
+  existing_building_signs_count: number;
+  existing_directional_signs_count: number;
+  // Bollards.
+  bollard_count: number;
+  bollard_needs_repair_count: number;
+  bollard_notes: string | null;
+  // Surface-prep conditions.
+  steel_rust_severity: SteelRustSeverity | null;
+  stucco_eifs_condition: StuccoEifsCondition | null;
+  nichiha_damage_count: number;
+  doghouse_disposition: DoghouseDisposition | null;
+  // Existing signage condition.
+  pylon_sign_condition: PylonSignCondition | null;
+  // Site / canopy condition.
+  stall_canopy_condition: StallCanopyCondition | null;
+  dt_order_canopy_condition: DtOrderCanopyCondition | null;
+  dumpster_enclosure_ready: boolean | null;
+  drainage_issues_notes: string | null;
   created_at: string;
   updated_at: string;
 }
 
-// Stall-data attributes captured on the Pre-Con section of the
-// checklist. Mirrors a whitelisted subset of stores.* — the canonical
-// store row gets patched through the reno-scoping netlify function.
+// Store-level attributes captured on the Pre-Con section. Mirrors a
+// whitelisted subset of stores.* — the canonical store row gets patched
+// through the reno-scoping netlify function (stores.* writes are
+// admin-only at the RLS layer; the function gates by scope ownership).
 export interface StoreStallAttributes {
+  // Stall data (migration 0028).
   patio_pop_menu_count: number;
   patio_pop_stall_numbers: string | null;
   order_ahead_stall_count: number;
@@ -97,6 +131,10 @@ export interface StoreStallAttributes {
   stall_pop_menu_count: number;
   has_trailer_stall: boolean;
   trailer_stall_number: string | null;
+  // Pre-Con building features (migration 0071).
+  has_stall_canopy: boolean;
+  has_clearance_bar: boolean;
+  has_dt_order_canopy: boolean;
 }
 
 // List-view row: scope + denormalized store name/number + scoper name.
