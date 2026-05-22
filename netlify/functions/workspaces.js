@@ -53,6 +53,10 @@ import {
   requireWorkspaceCap,
   workspaceRoleFor,
 } from "./_lib/workspace_permissions.js";
+import {
+  resolveSignoffCandidates,
+  computeAuditScoring,
+} from "./_lib/workspace_resolvers.js";
 
 const SUPABASE_URL =
   process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -91,7 +95,7 @@ function respond(statusCode, body) {
   };
 }
 
-// ── Activity log helper ──────────────────────────────────────
+// ── Activity log helper ───────────────────────────────
 //
 // Writes a row to workspace_activity_log. Snapshots actor identity
 // (id, email, role) so audit history survives profile deletion.
@@ -116,7 +120,7 @@ async function logActivity(supabase, profile, opts) {
   }
 }
 
-// ── Visibility resolution ────────────────────────────────────
+// ── Visibility resolution ──────────────────────────────
 //
 // Returns the list of workspace IDs visible to the caller. Mirrors
 // the workspaces_select RLS policy logic, but runs in JS because we
@@ -187,7 +191,7 @@ async function visibleWorkspaceIds(supabase, profile) {
   return { all: false, ids: Array.from(ids) };
 }
 
-// ── Validation helpers ──────────────────────────────────────
+// ── Validation helpers ─────────────────────────────
 function isUuid(s) {
   return typeof s === "string"
     && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
@@ -321,7 +325,7 @@ async function workspaceIdForVersion(supabase, versionId) {
   return data?.workspace_templates?.workspace_id || null;
 }
 
-// ── Handler ─────────────────────────────────────────────────
+// ── Handler ──────────────────────────────────────
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
 
@@ -1899,7 +1903,7 @@ export const handler = async (event) => {
           *,
           workspace_templates:template_id(id, name, type),
           assignee:assignee_id(id, full_name, email, role),
-          store:store_id(id, store_number, name)
+          store:store_id(id, store_number:number, name)
         `)
         .eq("workspace_id", wsId)
         .order("due_at", { ascending: true, nullsFirst: false })
@@ -1932,7 +1936,7 @@ export const handler = async (event) => {
           *,
           workspaces:workspace_id(id, name),
           workspace_templates:template_id(id, name, type),
-          store:store_id(id, store_number, name)
+          store:store_id(id, store_number:number, name)
         `)
         .eq("assignee_id", profile.id)
         .in("status", statuses)
@@ -1952,7 +1956,7 @@ export const handler = async (event) => {
           workspace_templates:template_id(id, name, type, audit_pass_threshold, critical_fails_audit),
           workspace_template_versions:template_version_id(id, version_number, status),
           assignee:assignee_id(id, full_name, email, role),
-          store:store_id(id, store_number, name)
+          store:store_id(id, store_number:number, name)
         `)
         .eq("id", id)
         .single();
