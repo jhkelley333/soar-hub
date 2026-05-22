@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Plus, FileText, ClipboardCheck, Inbox } from "lucide-react";
+import { Plus, Play, FileText, ClipboardCheck, Inbox } from "lucide-react";
 import { Card } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -13,6 +13,7 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { Badge } from "@/shared/ui/Badge";
 import { listAssignments } from "./api";
 import { CreateAssignmentModal } from "./CreateAssignmentModal";
+import { StartAdHocModal } from "./StartAdHocModal";
 import type { WorkspaceAssignment, AssignmentStatus, WorkspaceMember } from "./types";
 
 type StatusFilter = "open" | "submitted" | "cancelled" | "all";
@@ -41,6 +42,7 @@ export function AssignmentsTab({
 }) {
   const [filter, setFilter] = useState<StatusFilter>("open");
   const [showCreate, setShowCreate] = useState(false);
+  const [showStartNew, setShowStartNew] = useState(false);
 
   const query = useQuery({
     queryKey: ["workspace-assignments", workspaceId, filter],
@@ -71,11 +73,18 @@ export function AssignmentsTab({
             </button>
           ))}
         </div>
-        {canCreate && (
-          <Button onClick={() => setShowCreate(true)}>
-            <Plus className="h-4 w-4 mr-1" /> Assign work
+        <div className="flex items-center gap-2">
+          {/* Start new is open to any member — backend filters to
+              self-serve templates the user is allowed to fill. */}
+          <Button variant="secondary" onClick={() => setShowStartNew(true)}>
+            <Play className="h-4 w-4 mr-1" /> Start new
           </Button>
-        )}
+          {canCreate && (
+            <Button onClick={() => setShowCreate(true)}>
+              <Plus className="h-4 w-4 mr-1" /> Assign work
+            </Button>
+          )}
+        </div>
       </div>
 
       {query.isLoading && (
@@ -119,6 +128,13 @@ export function AssignmentsTab({
           query.refetch();
         }}
       />
+
+      {showStartNew && (
+        <StartAdHocModal
+          workspaceId={workspaceId}
+          onClose={() => setShowStartNew(false)}
+        />
+      )}
     </div>
   );
 }
