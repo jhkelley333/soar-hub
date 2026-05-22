@@ -14,6 +14,8 @@
 --     from 0001_init.sql / 0002_add_vp_coo_roles.sql. There is no
 --     user_district() helper and no stores.gm_user_id column in this
 --     codebase; visibility is computed by walking user_scopes.
+--   * current_role() must be called as public.current_role() in policies
+--     because the bareword is a SQL-reserved niladic keyword.
 --   * updated_at trigger reuses the set_updated_at() helper from 0001.
 --   * "Leadership" in the brief == role_level(current_role()) >=
 --     role_level('rvp').
@@ -371,6 +373,10 @@ end $$;
 --   * Admin can do anything.
 -- App code is responsible for enforcing legal status transitions; the
 -- update policies only gate "can this user touch this row at all".
+--
+-- Note: current_role() is schema-qualified as public.current_role()
+-- because bare current_role is a SQL-reserved niladic function that
+-- the parser intercepts before the user-defined override can resolve.
 
 alter table scope_templates       enable row level security;
 alter table scope_template_items  enable row level security;
@@ -408,7 +414,7 @@ create policy reno_scopes_insert_scoper on reno_scopes
   for insert with check (
     can_see_store(store_id)
     and scoped_by = auth.uid()
-    and role_level(current_role()) >= role_level('gm')
+    and role_level(public.current_role()) >= role_level('gm')
   );
 
 -- Scoper editing their own draft (or kicked-back) scope.
@@ -425,7 +431,7 @@ create policy reno_scopes_update_own_draft on reno_scopes
 -- DO+ reviewing.
 create policy reno_scopes_update_reviewer on reno_scopes
   for update using (
-    role_level(current_role()) >= role_level('do')
+    role_level(public.current_role()) >= role_level('do')
     and can_see_store(store_id)
   ) with check (
     can_see_store(store_id)
@@ -451,7 +457,7 @@ create policy reno_scope_items_write on reno_scope_items
         and can_see_store(s.store_id)
         and (
           (s.scoped_by = auth.uid() and s.status in ('draft', 'needs_revision'))
-          or role_level(current_role()) >= role_level('do')
+          or role_level(public.current_role()) >= role_level('do')
         )
     )
   ) with check (
@@ -461,7 +467,7 @@ create policy reno_scope_items_write on reno_scope_items
         and can_see_store(s.store_id)
         and (
           (s.scoped_by = auth.uid() and s.status in ('draft', 'needs_revision'))
-          or role_level(current_role()) >= role_level('do')
+          or role_level(public.current_role()) >= role_level('do')
         )
     )
   );
@@ -478,7 +484,7 @@ create policy reno_scope_photos_write on reno_scope_photos
         and can_see_store(s.store_id)
         and (
           (s.scoped_by = auth.uid() and s.status in ('draft', 'needs_revision'))
-          or role_level(current_role()) >= role_level('do')
+          or role_level(public.current_role()) >= role_level('do')
         )
     )
   ) with check (
@@ -488,7 +494,7 @@ create policy reno_scope_photos_write on reno_scope_photos
         and can_see_store(s.store_id)
         and (
           (s.scoped_by = auth.uid() and s.status in ('draft', 'needs_revision'))
-          or role_level(current_role()) >= role_level('do')
+          or role_level(public.current_role()) >= role_level('do')
         )
     )
   );
@@ -505,7 +511,7 @@ create policy reno_scope_tours_write on reno_scope_tours
         and can_see_store(s.store_id)
         and (
           (s.scoped_by = auth.uid() and s.status in ('draft', 'needs_revision'))
-          or role_level(current_role()) >= role_level('do')
+          or role_level(public.current_role()) >= role_level('do')
         )
     )
   ) with check (
@@ -515,7 +521,7 @@ create policy reno_scope_tours_write on reno_scope_tours
         and can_see_store(s.store_id)
         and (
           (s.scoped_by = auth.uid() and s.status in ('draft', 'needs_revision'))
-          or role_level(current_role()) >= role_level('do')
+          or role_level(public.current_role()) >= role_level('do')
         )
     )
   );
