@@ -1,12 +1,12 @@
-// /workspaces/:id — workspace detail. Tabs: Overview, Members,
-// Activity. Future slices add: Templates, Schedules, Submissions,
+// /workspaces/:id — workspace detail. Tabs: Overview, Templates,
+// Assignments, Members, Activity. Future slices add: Submissions,
 // CAPs, Automations. Each tab is a separate file rendered here.
 
 import { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
-  ArrowLeft, Archive, ArchiveRestore, Trash2, Globe, Lock, MapPin, Settings, Users, Activity, AlertTriangle, FileText,
+  ArrowLeft, Archive, ArchiveRestore, Trash2, Globe, Lock, MapPin, Settings, Users, Activity, AlertTriangle, FileText, ClipboardList,
 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
@@ -21,16 +21,18 @@ import {
 } from "./api";
 import { MembersTab } from "./MembersTab";
 import { TemplatesTab } from "./TemplatesTab";
+import { AssignmentsTab } from "./AssignmentsTab";
 import { ActivityTab } from "./ActivityTab";
 import type { Workspace } from "./types";
 
-type TabKey = "overview" | "templates" | "members" | "activity";
+type TabKey = "overview" | "templates" | "assignments" | "members" | "activity";
 
 const TABS: Array<{ key: TabKey; label: string; icon: typeof Users }> = [
-  { key: "overview",  label: "Overview",  icon: Settings },
-  { key: "templates", label: "Templates", icon: FileText },
-  { key: "members",   label: "Members",   icon: Users },
-  { key: "activity",  label: "Activity",  icon: Activity },
+  { key: "overview",    label: "Overview",    icon: Settings },
+  { key: "templates",   label: "Templates",   icon: FileText },
+  { key: "assignments", label: "Assignments", icon: ClipboardList },
+  { key: "members",     label: "Members",     icon: Users },
+  { key: "activity",    label: "Activity",    icon: Activity },
 ];
 
 function visibilityIcon(v: Workspace["visibility"]) {
@@ -158,6 +160,13 @@ export function WorkspaceDetail() {
         <TemplatesTab
           workspaceId={workspace.id}
           canEdit={canEditSettings || my_workspace_role === "editor"}
+        />
+      )}
+      {tab === "assignments" && (
+        <AssignmentsTab
+          workspaceId={workspace.id}
+          members={members}
+          canCreate={canEditSettings || my_workspace_role === "editor"}
         />
       )}
       {tab === "members" && (
