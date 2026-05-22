@@ -2,6 +2,10 @@
 // Backed by listMySignoffs, which the server scopes to pending
 // signoff rows where the caller is in candidate_user_ids. Each row
 // links to /submissions/:id where the actual decision is made.
+//
+// Rendered inline (with `embedded` prop) inside the Workspaces page's
+// Sign-off Queue tab — in that case we skip the PageHeader so the
+// outer page header isn't doubled.
 
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -40,7 +44,7 @@ type QueueRow = {
   } | null;
 };
 
-export function SignoffQueuePage() {
+export function SignoffQueuePage({ embedded = false }: { embedded?: boolean } = {}) {
   const query = useQuery({
     queryKey: ["my-signoffs"],
     queryFn: () => listMySignoffs(),
@@ -50,10 +54,12 @@ export function SignoffQueuePage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title="Sign-off queue"
-        description="Submissions waiting for your approval, across every workspace you cover."
-      />
+      {!embedded && (
+        <PageHeader
+          title="Sign-off queue"
+          description="Submissions waiting for your approval, across every workspace you cover."
+        />
+      )}
 
       {query.isLoading && (
         <div className="space-y-3">
