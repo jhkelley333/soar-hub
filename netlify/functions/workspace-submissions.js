@@ -16,10 +16,6 @@
 //
 // Frontend calls /.netlify/functions/workspace-submissions?action=...
 // (workspaces.js still handles all other actions at its own URL.)
-//
-// Side-effect: when an audit submission has failed pass_fail_na
-// answers on questions with requires_cap_on_fail=true, this file
-// auto-creates the corresponding CAPs via autoCreateCapsForAuditAnswers().
 
 import { createClient } from "@supabase/supabase-js";
 import {
@@ -207,7 +203,7 @@ async function autoCreateCapsForAuditAnswers({
   return { created: created.length, ids: created };
 }
 
-// ── Handler ─────────────────────────────────────────────────
+// ── Handler ──────────────────────────────────────
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
 
@@ -334,9 +330,7 @@ export const handler = async (event) => {
     // Submit a filled-out assignment. The big one. Validates answers
     // against the pinned template version, computes audit scoring if
     // applicable, resolves + snapshots signoff candidates, locks the
-    // submission, moves the assignment to status='submitted', and
-    // auto-creates CAPs for any failed audit answers with
-    // requires_cap_on_fail=true.
+    // submission, and moves the assignment to status='submitted'.
     if (action === "createSubmission" && event.httpMethod === "POST") {
       const payload = JSON.parse(event.body || "{}");
       const asnId = payload.assignment_id;
@@ -536,8 +530,7 @@ export const handler = async (event) => {
 
     // Create a revision after a reviewer requested changes. Chains to
     // the parent_submission_id; bumps version_number. Refused if the
-    // parent isn't in revision_requested state. Auto-creates CAPs
-    // again if the revision still has failed audit answers.
+    // parent isn't in revision_requested state.
     if (action === "createRevisionSubmission" && event.httpMethod === "POST") {
       const payload = JSON.parse(event.body || "{}");
       const parentId = payload.parent_submission_id;
@@ -784,7 +777,7 @@ export const handler = async (event) => {
             assignment:assignment_id(id, workspace_id, store_id,
               workspaces:workspace_id(id, name),
               workspace_templates:template_id(id, name, type),
-              store:store_id(id, store_number, name)
+              store:store_id(id, store_number:number, name)
             )
           ),
           step:step_id(label)
