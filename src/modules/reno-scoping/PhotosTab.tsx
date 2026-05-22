@@ -115,7 +115,12 @@ export function PhotosTab({ scopeId, templateId, canEdit }: Props) {
     return <Skeleton className="h-96 w-full" />;
   }
 
-  async function handleUpload(file: File, slotId: string | null, itemId: string | null) {
+  async function handleUpload(
+    file: File,
+    slotId: string | null,
+    itemId: string | null,
+    caption: string | null = null,
+  ) {
     try {
       const compressed = await compressPhoto(file);
       const takenAt = await readPhotoTakenAt(compressed.blob);
@@ -126,12 +131,28 @@ export function PhotosTab({ scopeId, templateId, canEdit }: Props) {
         file: compressed.blob,
         filename: compressed.filename,
         taken_at: takenAt,
+        caption,
       });
     } catch (e) {
       // Surface in the uploadMutation.error state below; nothing more to do
       // here because the mutation already captured it.
       console.error("[reno-scoping] photo upload failed", e);
     }
+  }
+
+  // Overflow uploads prompt for a short caption so the photo can be
+  // identified later (e.g. "rusted DT handrail", "drain @ SE corner").
+  // Caption is optional — submitting empty / cancelling still uploads
+  // the photo with no caption, in which case the slot name shows as the
+  // label.
+  function handleOverflowUpload(file: File, slotId: string) {
+    const raw = window.prompt(
+      "Name this photo (optional — e.g. 'rusted DT handrail')",
+      "",
+    );
+    if (raw === null) return; // user hit Cancel
+    const caption = raw.trim() || null;
+    return handleUpload(file, slotId, null, caption);
   }
 
   return (
@@ -169,23 +190,29 @@ export function PhotosTab({ scopeId, templateId, canEdit }: Props) {
 
       <PhotoSection
         title="+Up / repair overflow"
-        subtitle="Optional. Use for plus-up evidence or anything that doesn't fit a named slot."
+        subtitle="Optional. Use for plus-up evidence or anything that doesn't fit a named slot. You'll be asked to name each photo."
       >
         <PhotoGrid
-          cells={overflowSlots.map((slot) => ({
-            key: slot.id,
-            label: slot.slot_name,
-            photo: photosBySlot[slot.id] ?? null,
-            onUpload: (f) => handleUpload(f, slot.id, null),
-            uploading: uploadMutation.isPending && uploadMutation.variables?.photo_slot_id === slot.id,
-            onDelete: photosBySlot[slot.id]
-              ? () => {
-                  const photo = photosBySlot[slot.id];
-                  if (window.confirm(`Delete photo from ${slot.slot_name}?`)) deleteMutation.mutate(photo);
-                }
-              : undefined,
-            canEdit,
-          }))}
+          cells={overflowSlots.map((slot) => {
+            const photo = photosBySlot[slot.id] ?? null;
+            // Caption (if set on upload) takes precedence over the
+            // generic slot name so the user can tell the overflow
+            // photos apart at a glance.
+            const label = photo?.caption ?? slot.slot_name;
+            return {
+              key: slot.id,
+              label,
+              photo,
+              onUpload: (f) => handleOverflowUpload(f, slot.id),
+              uploading: uploadMutation.isPending && uploadMutation.variables?.photo_slot_id === slot.id,
+              onDelete: photo
+                ? () => {
+                    if (window.confirm(`Delete photo "${label}"?`)) deleteMutation.mutate(photo);
+                  }
+                : undefined,
+              canEdit,
+            };
+          })}
         />
       </PhotoSection>
 

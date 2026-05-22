@@ -22,6 +22,7 @@ import {
   Cloud,
   Info,
   Loader2,
+  Trash2,
   TriangleAlert,
 } from "lucide-react";
 import { Card } from "@/shared/ui/Card";
@@ -30,9 +31,11 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { Badge } from "@/shared/ui/Badge";
 import { cn } from "@/lib/cn";
 import {
+  deleteScopePhoto,
   fetchScopeItems,
   fetchScopePhotos,
   fetchTemplateItems,
+  getPhotoSignedUrl,
   uploadScopePhoto,
   upsertScopeItem,
   type UpsertScopeItemInput,
@@ -45,6 +48,7 @@ import {
   itemRequiredForBuilding,
   type BuildingType,
   type RenoScopeItem,
+  type RenoScopePhoto,
   type ScopeItemStatus,
   type ScopeTemplateItem,
   type ScopeTier,
@@ -173,6 +177,9 @@ export function ChecklistTab({
 
   // Per-item photo upload (camera button on each row). Compresses +
   // reads EXIF, then writes via uploadScopePhoto with scope_item_id set.
+  // Accepts multiple files in one tap — the input allows multi-select
+  // from the device library; sequential camera captures also work by
+  // re-tapping the button.
   const photoUploadMutation = useMutation({
     mutationFn: async (args: { itemId: string; file: File }) => {
       const compressed = await compressPhoto(args.file);
@@ -190,11 +197,18 @@ export function ChecklistTab({
     },
   });
 
-  // Photo count per template_item_id for the camera-button badge.
-  const photoCountByItem: Record<string, number> = {};
+  const photoDeleteMutation = useMutation({
+    mutationFn: (photo: RenoScopePhoto) => deleteScopePhoto(photo),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["reno-scope-photos", scopeId] });
+    },
+  });
+
+  // Photos grouped by template_item_id for the thumbnail strip + count.
+  const photosByItem: Record<string, RenoScopePhoto[]> = {};
   for (const p of photosQuery.data ?? []) {
     if (p.scope_item_id) {
-      photoCountByItem[p.scope_item_id] = (photoCountByItem[p.scope_item_id] ?? 0) + 1;
+      (photosByItem[p.scope_item_id] = photosByItem[p.scope_item_id] ?? []).push(p);
     }
   }
 
@@ -315,11 +329,16 @@ export function ChecklistTab({
                     item={it}
                     buildingType={buildingType}
                     state={working[it.id]}
-                    photoCount={photoCountByItem[it.id] ?? 0}
+                    photos={photosByItem[it.id] ?? []}
                     onChange={(patch) => applyPatch(it.id, patch)}
                     onUploadPhoto={(file) =>
                       photoUploadMutation.mutateAsync({ itemId: it.id, file })
                     }
+                    onDeletePhoto={(photo) => {
+                      if (window.confirm(`Delete this photo from "${it.item_label}"?`)) {
+                        photoDeleteMutation.mutate(photo);
+                      }
+                    }}
                     photoUploading={
                       photoUploadMutation.isPending &&
                       photoUploadMutation.variables?.itemId === it.id
@@ -344,18 +363,20 @@ function ChecklistRow({
   item,
   buildingType,
   state,
-  photoCount,
+  photos,
   onChange,
   onUploadPhoto,
+  onDeletePhoto,
   photoUploading,
   disabled,
 }: {
   item: ScopeTemplateItem;
   buildingType: BuildingType;
   state: DraftItem | undefined;
-  photoCount: number;
+  photos: RenoScopePhoto[];
   onChange: (patch: Partial<Omit<DraftItem, "template_item_id">>) => void;
   onUploadPhoto: (file: File) => Promise<unknown>;
+  onDeletePhoto: (photo: RenoScopePhoto) => void;
   photoUploading: boolean;
   disabled: boolean;
 }) {
@@ -423,11 +444,13 @@ function ChecklistRow({
             onChange={(v) => onChange({ estimated_cost: v })}
           />
           <CameraButton
-            count={photoCount}
+            count={photos.length}
             uploading={photoUploading}
             disabled={disabled}
-            onPick={async (file) => {
-              await onUploadPhoto(file);
+            onPick={async (files) => {
+              for (const f of files) {
+                await onUploadPhoto(f);
+              }
             }}
           />
           <button
@@ -450,14 +473,111 @@ function ChecklistRow({
           className="w-full resize-none rounded-md border-0 bg-zinc-50 px-3 py-2 text-sm text-midnight ring-1 ring-inset ring-zinc-200 placeholder:text-zinc-400 focus:bg-white focus:ring-2 focus:ring-frost disabled:cursor-not-allowed"
         />
       )}
+
+      {photos.length > 0 && (
+        <RowPhotoStrip
+          photos={photos}
+          disabled={disabled}
+          onDelete={onDeletePhoto}
+        />
+      )}
     </div>
   );
 }
 
+// Thumbnail strip rendered below the row controls when one or more
+// photos are attached to this checklist item. Each thumbnail is a 64px
+// square; hovering reveals a delete button. Caption (if set) shows
+// underneath as a single-line label.
+function RowPhotoStrip({
+  photos,
+  disabled,
+  onDelete,
+}: {
+  photos: RenoScopePhoto[];
+  disabled: boolean;
+  onDelete: (photo: RenoScopePhoto) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2 pt-1">
+      {photos.map((p) => (
+        <RowPhotoThumb
+          key={p.id}
+          photo={p}
+          disabled={disabled}
+          onDelete={() => onDelete(p)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function RowPhotoThumb({
+  photo,
+  disabled,
+  onDelete,
+}: {
+  photo: RenoScopePhoto;
+  disabled: boolean;
+  onDelete: () => void;
+}) {
+  const url = useSignedUrl(photo.storage_path);
+  return (
+    <div className="space-y-0.5">
+      <div className="group relative h-16 w-16 overflow-hidden rounded-md bg-zinc-100 ring-1 ring-zinc-200">
+        {url ? (
+          <img
+            src={url}
+            alt={photo.caption ?? "Item photo"}
+            className="h-full w-full object-cover"
+            loading="lazy"
+          />
+        ) : (
+          <div className="flex h-full items-center justify-center">
+            <Loader2 className="h-4 w-4 animate-spin text-zinc-400" strokeWidth={2} />
+          </div>
+        )}
+        {!disabled && (
+          <button
+            type="button"
+            onClick={onDelete}
+            className="absolute right-0.5 top-0.5 rounded bg-black/60 p-0.5 text-white opacity-0 transition group-hover:opacity-100 hover:bg-black/80"
+            aria-label="Delete photo"
+          >
+            <Trash2 className="h-3 w-3" strokeWidth={2} />
+          </button>
+        )}
+      </div>
+      {photo.caption && (
+        <p className="line-clamp-1 max-w-[64px] text-[10px] text-zinc-500" title={photo.caption}>
+          {photo.caption}
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Signed URL for a photo blob in the reno-scope-photos bucket. Cached
+// for slightly less than the 1h URL expiry so we don't refetch on every
+// re-render.
+function useSignedUrl(storagePath: string | undefined): string | null {
+  const q = useQuery({
+    queryKey: ["reno-photo-signed-url", storagePath],
+    queryFn: () => getPhotoSignedUrl(storagePath!),
+    enabled: !!storagePath,
+    staleTime: 50 * 60_000,
+  });
+  return q.data ?? null;
+}
+
 // Camera button shown to the right of the cost input on each checklist
-// row. Tap → file picker (camera on mobile via capture="environment")
-// → handles upload via the row's onUploadPhoto callback. Shows a small
-// count badge when photos are already attached.
+// row. Tap → file picker (mobile gives the user "Take Photo" or "Photo
+// Library" — the latter supports multi-select). The `multiple` attribute
+// is intentionally paired without `capture` so the OS sheet offers both
+// camera and library; users who want a fresh capture just pick the
+// camera option, library multi-pick stays available for batch uploads
+// from a recent walk. Shows a count badge when photos are already
+// attached.
 function CameraButton({
   count,
   uploading,
@@ -467,7 +587,7 @@ function CameraButton({
   count: number;
   uploading: boolean;
   disabled: boolean;
-  onPick: (file: File) => Promise<void>;
+  onPick: (files: File[]) => Promise<void>;
 }) {
   return (
     <label
@@ -477,7 +597,7 @@ function CameraButton({
           ? "cursor-not-allowed bg-zinc-50 text-zinc-400 ring-zinc-200"
           : "cursor-pointer bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50",
       )}
-      title="Attach a photo to this item"
+      title="Attach photos to this item"
     >
       {uploading ? (
         <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
@@ -488,13 +608,13 @@ function CameraButton({
       <input
         type="file"
         accept="image/*"
-        capture="environment"
+        multiple
         disabled={disabled || uploading}
         className="hidden"
         onChange={async (e) => {
-          const f = e.target.files?.[0];
-          if (f) await onPick(f);
+          const files = e.target.files ? Array.from(e.target.files) : [];
           e.target.value = "";
+          if (files.length > 0) await onPick(files);
         }}
       />
     </label>
