@@ -9,6 +9,7 @@
 //   submissions:  listSubmissions, getSubmission, createSubmission,
 //                 createRevisionSubmission, unlockSubmission,
 //                 relockSubmission
+//   drafts:       loadDraft, saveDraft, discardDraft
 //   signoffs:     approveSignoff, rejectSignoff, requestRevision,
 //                 listMySignoffs
 //   attachments:  listAttachments, createAttachment, deleteAttachment,
@@ -89,6 +90,21 @@ async function logActivity(supabase, profile, opts) {
     });
   } catch (err) {
     console.warn("workspace-submissions.logActivity failed:", err?.message || err);
+  }
+}
+
+// Best-effort draft cleanup. Called after a submission is created. We
+// don't error if the draft row doesn't exist — just means the user
+// submitted from a fresh state with no autosave history.
+async function deleteDraft(supabase, assignmentId, userId) {
+  try {
+    await supabase
+      .from("workspace_submission_drafts")
+      .delete()
+      .eq("assignment_id", assignmentId)
+      .eq("user_id", userId);
+  } catch (err) {
+    console.warn("workspace-submissions.deleteDraft failed:", err?.message || err);
   }
 }
 
@@ -203,7 +219,7 @@ async function autoCreateCapsForAuditAnswers({
   return { created: created.length, ids: created };
 }
 
-// ── Handler ──────────────────────────────────────
+// ── Handler ──────────────────────────────────
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
 
@@ -216,9 +232,9 @@ export const handler = async (event) => {
   const supabase = getSupabase();
 
   try {
-    // ═══════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════
     // SUBMISSIONS
-    // ═══════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════
 
     if (action === "listSubmissions") {
       const wsId = (event.queryStringParameters || {}).workspace_id;
@@ -501,6 +517,9 @@ export const handler = async (event) => {
         .update({ status: "submitted" })
         .eq("id", asnId);
 
+      // Submission is canonical now — clear the autosaved draft.
+      await deleteDraft(supabase, asnId, profile.id);
+
       await logActivity(supabase, profile, {
         workspaceId: asn.workspace_id,
         targetKind: "submission",
@@ -672,6 +691,9 @@ export const handler = async (event) => {
         workspace, assignment: asn, submission: sub,
       });
 
+      // Submission is canonical now — clear the autosaved draft.
+      await deleteDraft(supabase, asn.id, profile.id);
+
       await logActivity(supabase, profile, {
         workspaceId: asn.workspace_id,
         targetKind: "submission",
@@ -762,9 +784,120 @@ export const handler = async (event) => {
       return respond(200, { ok: true, submission: after });
     }
 
-    // ═══════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════
+    // DRAFTS
+    // ═════════════════════════════════════════════════════════
+
+    // Read the current user's draft for an assignment. Returns
+    // { draft: null } if none exists. Marks the draft `stale: true`
+    // if the assignment now points to a different template version
+    // than the one captured at save time — caller should force a
+    // restart in that case.
+    if (action === "loadDraft") {
+      const asnId = (event.queryStringParameters || {}).assignment_id;
+      if (!isUuid(asnId)) return respond(400, { ok: false, message: "Bad assignment_id." });
+
+      const { data: asn } = await supabase
+        .from("workspace_assignments")
+        .select("id, workspace_id, template_version_id, assignee_id, status")
+        .eq("id", asnId)
+        .single();
+      if (!asn) return respond(404, { ok: false, message: "Assignment not found." });
+
+      // Drafts are 1:1 with the assignee. (Editors filling for someone
+      // else would need a more invasive change here + at saveDraft.)
+      if (asn.assignee_id !== profile.id) {
+        return respond(403, { ok: false, message: "Drafts are per-assignee." });
+      }
+
+      const { data: draft } = await supabase
+        .from("workspace_submission_drafts")
+        .select("*")
+        .eq("assignment_id", asnId)
+        .eq("user_id", profile.id)
+        .maybeSingle();
+
+      if (!draft) return respond(200, { ok: true, draft: null, stale: false });
+      const stale = draft.template_version_id !== asn.template_version_id;
+      return respond(200, { ok: true, draft, stale });
+    }
+
+    // Upsert the user's draft. Last-write-wins via client_updated_at:
+    // a payload with an older timestamp than the existing row is a
+    // no-op (another tab/device has fresher edits and we don't want
+    // to clobber them). The full answers array replaces the prior one.
+    if (action === "saveDraft" && event.httpMethod === "POST") {
+      const payload = JSON.parse(event.body || "{}");
+      const asnId = payload.assignment_id;
+      const verId = payload.template_version_id;
+      const clientUpdatedAt = payload.client_updated_at;
+      const answers = payload.answers;
+
+      if (!isUuid(asnId)) return respond(400, { ok: false, message: "Bad assignment_id." });
+      if (!isUuid(verId)) return respond(400, { ok: false, message: "Bad template_version_id." });
+      if (!Array.isArray(answers)) return respond(400, { ok: false, message: "answers[] required." });
+      if (!clientUpdatedAt || Number.isNaN(Date.parse(clientUpdatedAt))) {
+        return respond(400, { ok: false, message: "client_updated_at required (ISO timestamp)." });
+      }
+
+      const { data: asn } = await supabase
+        .from("workspace_assignments")
+        .select("id, assignee_id, template_version_id, status")
+        .eq("id", asnId)
+        .single();
+      if (!asn) return respond(404, { ok: false, message: "Assignment not found." });
+      if (asn.assignee_id !== profile.id) {
+        return respond(403, { ok: false, message: "Drafts are per-assignee." });
+      }
+      if (asn.status === "submitted" || asn.status === "cancelled") {
+        return respond(400, { ok: false, message: `Assignment is ${asn.status}; cannot save draft.` });
+      }
+
+      const { data: existing } = await supabase
+        .from("workspace_submission_drafts")
+        .select("client_updated_at")
+        .eq("assignment_id", asnId)
+        .eq("user_id", profile.id)
+        .maybeSingle();
+      if (existing && Date.parse(existing.client_updated_at) > Date.parse(clientUpdatedAt)) {
+        return respond(200, { ok: true, skipped: true, reason: "older_than_existing" });
+      }
+
+      const { data: draft, error } = await supabase
+        .from("workspace_submission_drafts")
+        .upsert({
+          assignment_id: asnId,
+          user_id: profile.id,
+          template_version_id: verId,
+          answers,
+          client_updated_at: clientUpdatedAt,
+          last_saved_at: new Date().toISOString(),
+        }, { onConflict: "assignment_id,user_id" })
+        .select("*")
+        .single();
+      if (error) throw error;
+
+      return respond(200, { ok: true, draft });
+    }
+
+    if (action === "discardDraft" && event.httpMethod === "POST") {
+      const payload = JSON.parse(event.body || "{}");
+      const asnId = payload.assignment_id;
+      if (!isUuid(asnId)) return respond(400, { ok: false, message: "Bad assignment_id." });
+
+      const { error } = await supabase
+        .from("workspace_submission_drafts")
+        .delete()
+        .eq("assignment_id", asnId)
+        .eq("user_id", profile.id);
+      if (error) throw error;
+
+      return respond(200, { ok: true });
+    }
+
+    // ═════════════════════════════════════════════════════════
     // SIGNOFFS
-    // ═══════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════
 
     if (action === "listMySignoffs") {
       const { data, error } = await supabase
@@ -984,9 +1117,9 @@ export const handler = async (event) => {
       return respond(200, { ok: true, signoff: updatedStep, submission_status: "revision_requested" });
     }
 
-    // ═══════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════
     // ATTACHMENTS
-    // ═══════════════════════════════════════════════════════════
+    // ═════════════════════════════════════════════════════════
 
     if (action === "listAttachments") {
       const wsId = (event.queryStringParameters || {}).workspace_id;
