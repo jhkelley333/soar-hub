@@ -4,7 +4,7 @@
 // from migrations 0058-0061 — snake_case columns kept as-is so the
 // frontend uses backend rows directly without renaming.
 
-// ── Workspaces ─────────────────────────────
+// ── Workspaces ──────────────────────────────────────────────
 export type WorkspaceVisibility = "private" | "scoped" | "organization";
 export type WorkspaceScopeKind = "region" | "area" | "district" | "store";
 export type WorkspaceRole = "owner" | "editor" | "submitter" | "viewer";
@@ -36,7 +36,7 @@ export interface WorkspaceMember {
   } | null;
 }
 
-// ── Templates ───────────────────────────────
+// ── Templates ───────────────────────────────────────────────
 export type TemplateType = "form" | "audit";
 export type VersionStatus = "draft" | "published" | "archived";
 export type FieldType =
@@ -55,6 +55,10 @@ export interface WorkspaceTemplate {
   audit_pass_threshold: number | null;
   critical_fails_audit: boolean;
   is_archived: boolean;
+  // Migration 0065: when true, any workspace member with
+  // fill_assignment can self-start an assignment from this template
+  // without it being pre-scheduled or hand-assigned.
+  is_self_serve: boolean;
   created_by_id: string | null;
   created_at: string;
 }
@@ -112,7 +116,7 @@ export interface TemplateApprovalStep {
   created_at: string;
 }
 
-// ── Schedules + Assignments ─────────────────────────
+// ── Schedules + Assignments ─────────────────────────────────
 export type Cadence = "daily" | "weekly" | "biweekly" | "monthly" | "quarterly";
 
 export interface WorkspaceSchedule {
@@ -159,7 +163,7 @@ export interface WorkspaceAssignment {
   workspaces?: { id: string; name: string } | null;
 }
 
-// ── Submissions + Signoffs ──────────────────────────
+// ── Submissions + Signoffs ──────────────────────────────────
 export type SignoffStatus =
   | "pending_review" | "in_review" | "approved" | "rejected" | "revision_requested";
 export type AuditOutcome = "pass" | "fail" | "fail_critical";
@@ -228,7 +232,7 @@ export interface SubmissionDraft {
   created_at: string;
 }
 
-// ── CAPs ───────────────────────────────────
+// ── CAPs ────────────────────────────────────────────────────
 export type CapStatus =
   | "open" | "in_progress" | "proof_submitted" | "verified" | "closed" | "reopened";
 export type CapProofVerifiedStatus = "accepted" | "rejected" | null;
@@ -267,7 +271,7 @@ export interface CapProof {
   verifier_notes: string | null;
 }
 
-// ── Repeat findings ──────────────────────────────
+// ── Repeat findings ────────────────────────────────────────
 export interface RepeatFinding {
   id: string;
   workspace_id: string;
@@ -288,7 +292,7 @@ export interface RepeatFinding {
   created_at: string;
 }
 
-// ── Automations ────────────────────────────────
+// ── Automations ────────────────────────────────────────────
 export interface WorkspaceAutomation {
   id: string;
   workspace_id: string;
@@ -304,7 +308,7 @@ export interface WorkspaceAutomation {
   updated_at: string;
 }
 
-// ── Attachments ────────────────────────────────
+// ── Attachments ────────────────────────────────────────────
 export interface WorkspaceAttachment {
   id: string;
   workspace_id: string;
@@ -320,7 +324,7 @@ export interface WorkspaceAttachment {
   created_at: string;
 }
 
-// ── Activity log ───────────────────────────────
+// ── Activity log ───────────────────────────────────────────
 export interface ActivityLogEntry {
   id: string;
   workspace_id: string | null;
@@ -336,7 +340,7 @@ export interface ActivityLogEntry {
   created_at: string;
 }
 
-// ── API response shapes ───────────────────────────
+// ── API response shapes ────────────────────────────────────
 export interface OkResponse { ok: true }
 export interface ErrorResponse { ok: false; message: string; error?: string }
 

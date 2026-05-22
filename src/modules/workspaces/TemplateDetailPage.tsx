@@ -24,6 +24,7 @@ import {
   createTemplateVersion,
   publishTemplateVersion,
   archiveTemplate,
+  setTemplateSelfServe,
 } from "./api";
 import { VersionEditor } from "./VersionEditor";
 import type { TemplateVersion, VersionStatus } from "./types";
@@ -62,6 +63,11 @@ export function TemplateDetailPage() {
   const archiveMut = useMutation({
     mutationFn: () => archiveTemplate(tplId!),
     onSuccess: () => navigate(`/workspaces/${wsId}`),
+  });
+
+  const selfServeMut = useMutation({
+    mutationFn: (next: boolean) => setTemplateSelfServe(tplId!, next),
+    onSuccess: () => query.refetch(),
   });
 
   if (query.isLoading) {
@@ -142,6 +148,38 @@ export function TemplateDetailPage() {
           {template.critical_fails_audit && " · critical-fail overrides"}
         </Card>
       )}
+
+      {/* Self-serve toggle — when ON, any workspace member can start
+          this template ad-hoc from My Assignments → "Start new". */}
+      <Card className="p-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h3 className="font-semibold text-sm">Self-serve</h3>
+            <p className="text-xs text-gray-600 mt-0.5 max-w-md">
+              When on, any workspace member can start this template on
+              demand from My Assignments — they pick the store and the
+              form opens. Off means the template only runs from
+              scheduled or hand-assigned work.
+            </p>
+          </div>
+          <label className="inline-flex items-center cursor-pointer shrink-0">
+            <input
+              type="checkbox"
+              checked={!!template.is_self_serve}
+              onChange={(e) => selfServeMut.mutate(e.target.checked)}
+              disabled={selfServeMut.isPending}
+              className="sr-only peer"
+              aria-label="Self-serve toggle"
+            />
+            <div className="relative w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-blue-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600" />
+          </label>
+        </div>
+        {template.is_self_serve && (
+          <div className="mt-2 text-xs text-blue-700">
+            Members will see this in the Start-new picker once a version is published.
+          </div>
+        )}
+      </Card>
 
       {/* Quick-action banner */}
       <Card className="p-4 flex items-center justify-between gap-3 flex-wrap">
