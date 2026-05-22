@@ -11,14 +11,16 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
-  ClipboardList, AlertTriangle, Calendar, CalendarClock, Clock, FileText, ClipboardCheck,
+  ClipboardList, AlertTriangle, Calendar, CalendarClock, Clock, FileText, ClipboardCheck, Plus,
 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
+import { Button } from "@/shared/ui/Button";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Badge } from "@/shared/ui/Badge";
 import { listMyAssignments } from "./api";
+import { StartAdHocModal } from "./StartAdHocModal";
 import type { WorkspaceAssignment, AssignmentStatus } from "./types";
 
 type StatusFilter = "open" | "submitted" | "cancelled" | "all";
@@ -71,6 +73,7 @@ function statusTone(s: AssignmentStatus): "neutral" | "info" | "warning" | "dang
 
 export function AssignmentsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [filter, setFilter] = useState<StatusFilter>("open");
+  const [showStartModal, setShowStartModal] = useState(false);
   const statuses = FILTER_OPTIONS.find((f) => f.key === filter)!.statuses;
 
   const query = useQuery({
@@ -87,17 +90,26 @@ export function AssignmentsPage({ embedded = false }: { embedded?: boolean } = {
     grouped.set(b, arr);
   }
 
+  const startNewButton = (
+    <Button onClick={() => setShowStartModal(true)}>
+      <Plus className="h-4 w-4 mr-1" />
+      Start new
+    </Button>
+  );
+
   return (
     <div className="space-y-6">
       {!embedded && (
         <PageHeader
           title="My assignments"
           description="Forms and audits assigned to you across all workspaces."
+          actions={startNewButton}
         />
       )}
 
-      {/* Status filter chips */}
-      <div className="flex flex-wrap gap-2">
+      {/* Status filter chips. When embedded the page header is suppressed,
+          so render the Start-new button alongside the chips instead. */}
+      <div className="flex flex-wrap items-center gap-2">
         {FILTER_OPTIONS.map((opt) => (
           <button
             key={opt.key}
@@ -112,7 +124,10 @@ export function AssignmentsPage({ embedded = false }: { embedded?: boolean } = {
             {opt.label}
           </button>
         ))}
+        {embedded && <div className="ml-auto">{startNewButton}</div>}
       </div>
+
+      {showStartModal && <StartAdHocModal onClose={() => setShowStartModal(false)} />}
 
       {query.isLoading && (
         <div className="space-y-3">

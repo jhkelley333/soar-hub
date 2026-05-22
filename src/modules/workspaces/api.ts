@@ -455,6 +455,34 @@ export function deleteAttachment(id: string) {
   return post<{ ok: true }>(FN_SUBS, "deleteAttachment", { id });
 }
 
+// ── Self-serve / ad-hoc assignments (CP5) ───────────
+//
+// Workspace members can self-start an assignment from any template
+// flagged is_self_serve. Routes through workspace-submissions for
+// consistency with other assignment-creating actions in CP1-4.
+
+export function listSelfServeTemplates(workspace_id?: string) {
+  return get<{
+    ok: true;
+    templates: Array<WorkspaceTemplate & {
+      workspaces?: { id: string; name: string } | null;
+      current_version: { id: string; template_id: string; version_number: number };
+    }>;
+  }>(FN_SUBS, "listSelfServeTemplates", { workspace_id });
+}
+
+export function setTemplateSelfServe(template_id: string, is_self_serve: boolean) {
+  return post<{ ok: true; template: WorkspaceTemplate }>(
+    FN_SUBS, "setTemplateSelfServe", { template_id, is_self_serve },
+  );
+}
+
+export function startAdHocAssignment(input: { template_id: string; store_id: string }) {
+  return post<{ ok: true; assignment: WorkspaceAssignment }>(
+    FN_SUBS, "startAdHocAssignment", input,
+  );
+}
+
 export function getAttachmentSignedUrl(id: string, expires_in = 60) {
   return get<{ ok: true; signed_url: string; expires_in: number; attachment: WorkspaceAttachment }>(
     FN_SUBS, "getAttachmentSignedUrl", { id, expires_in: String(expires_in) },
