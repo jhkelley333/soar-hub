@@ -14,6 +14,7 @@ import {
   fetchScopeItems,
   fetchScopePhotos,
   fetchScopeNotes,
+  fetchScopeTours,
   fetchTemplateItems,
   getPhotoSignedUrl,
 } from "./api";
@@ -33,12 +34,13 @@ import {
 const MAX_PHOTOS = 60;
 
 export async function exportScopePdf(scope: RenoScopeRow): Promise<void> {
-  const [items, answers, photos, slots, notes] = await Promise.all([
+  const [items, answers, photos, slots, notes, tours] = await Promise.all([
     fetchTemplateItems(scope.template_id),
     fetchScopeItems(scope.id),
     fetchScopePhotos(scope.id),
     fetchPhotoSlots(scope.template_id),
     fetchScopeNotes(scope.id),
+    fetchScopeTours(scope.id),
   ]);
 
   const doc = new jsPDF({ unit: "pt", format: "letter" });
@@ -268,9 +270,41 @@ export async function exportScopePdf(scope: RenoScopeRow): Promise<void> {
   }
 
   // ---- 360 tours -------------------------------------------------------
-  // PDF can't render Pannellum, so we just list each sphere by
-  // capture_position with a "view in app" hint.
-  // Tours table will be populated when PR 3b ships the tour upload UI.
+  // PDF can't render Pannellum, so we list each sphere by capture_position
+  // with an upload timestamp. The interactive viewer lives in the app's
+  // 360 Tour tab.
+  if (tours.length > 0) {
+    doc.addPage();
+    doc.setFontSize(13);
+    doc.setFont("helvetica", "bold");
+    doc.text("360 tours", margin, 50);
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(120);
+    doc.text(
+      "Interactive spheres are only available in the SOAR Hub app. The list below is for reference.",
+      margin,
+      66,
+    );
+    doc.setTextColor(0);
+    autoTable(doc, {
+      startY: 82,
+      head: [["#", "Capture position", "Uploaded"]],
+      body: tours.map((t, idx) => [
+        String(idx + 1),
+        t.capture_position,
+        new Date(t.uploaded_at).toLocaleString(),
+      ]),
+      theme: "grid",
+      styles: { fontSize: 9, cellPadding: 4, valign: "top" },
+      headStyles: { fillColor: [30, 41, 59] },
+      columnStyles: {
+        0: { cellWidth: 28, halign: "right" },
+        1: { cellWidth: "auto" },
+        2: { cellWidth: 160 },
+      },
+    });
+  }
 
   const today = new Date().toISOString().slice(0, 10);
   const number = scope.store?.number ?? "scope";
