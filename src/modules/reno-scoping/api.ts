@@ -143,31 +143,69 @@ export async function deleteScope(id: string): Promise<void> {
   if (error) throw error;
 }
 
+// Status transitions go through the service-role netlify function so
+// each one can also write a reno_scope_audit_log row atomically. The
+// audit-log table has no INSERT policy — only the function can write
+// to it.
 export async function transitionScopeStatus(
   id: string,
   toStatus: ScopeStatus,
   reviewNotes?: string | null
 ): Promise<RenoScope> {
   const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const patch: Partial<RenoScope> = { status: toStatus };
-  if (toStatus === "submitted") {
-    patch.submitted_at = new Date().toISOString();
+    data: { session },
+  } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error("Not signed in");
+
+  const res = await fetch("/.netlify/functions/reno-scoping?action=transition", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      scope_id: id,
+      to_status: toStatus,
+      review_notes: reviewNotes,
+    }),
+  });
+  if (!res.ok) {
+    let message = `Transition failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) message = body.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(message);
   }
-  if (toStatus === "reviewed" || toStatus === "needs_revision" || toStatus === "approved") {
-    patch.reviewed_at = new Date().toISOString();
-    patch.reviewed_by = user?.id ?? null;
-    if (reviewNotes !== undefined) patch.review_notes = reviewNotes;
-  }
+  const body = (await res.json()) as { scope: RenoScope };
+  return body.scope;
+}
+
+// ---- audit log read --------------------------------------------------
+
+export interface RenoScopeAuditEntry {
+  id: string;
+  scope_id: string;
+  actor_id: string | null;
+  actor_email: string | null;
+  action: string;
+  from_status: ScopeStatus | null;
+  to_status: ScopeStatus | null;
+  detail: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export async function fetchScopeAuditLog(scopeId: string): Promise<RenoScopeAuditEntry[]> {
   const { data, error } = await supabase
-    .from("reno_scopes")
-    .update(patch)
-    .eq("id", id)
+    .from("reno_scope_audit_log")
     .select("*")
-    .single();
+    .eq("scope_id", scopeId)
+    .order("created_at", { ascending: false });
   if (error) throw error;
-  return data as RenoScope;
+  return (data ?? []) as RenoScopeAuditEntry[];
 }
 
 // ---- scope items -----------------------------------------------------
@@ -396,4 +434,18 @@ export async function fetchScopableStores(): Promise<StoreOption[]> {
     .order("number");
   if (error) throw error;
   return (data ?? []) as StoreOption[];
+}
+
+// ---- sidebar badge ---------------------------------------------------
+// Count of scopes that are submitted but not yet reviewed, scoped by
+// RLS — DOs only see scopes in their district, RVPs in their region,
+// etc. Drives the pending badge next to the Reno Scoping nav item.
+
+export async function countPendingScopes(): Promise<number> {
+  const { count, error } = await supabase
+    .from("reno_scopes")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "submitted");
+  if (error) throw error;
+  return count ?? 0;
 }
