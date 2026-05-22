@@ -1,12 +1,12 @@
 // /workspaces/:id — workspace detail. Tabs: Overview, Templates,
-// Assignments, Submissions, Members, Activity. Future slices add:
-// Schedules, CAPs, Automations. Each tab is a separate file rendered here.
+// Schedules, Assignments, Submissions, Members, Activity. Future
+// slices add: CAPs, Automations. Each tab is a separate file rendered here.
 
 import { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
-  ArrowLeft, Archive, ArchiveRestore, Trash2, Globe, Lock, MapPin, Settings, Users, Activity, AlertTriangle, FileText, ClipboardList, Inbox,
+  ArrowLeft, Archive, ArchiveRestore, Trash2, Globe, Lock, MapPin, Settings, Users, Activity, AlertTriangle, FileText, ClipboardList, Inbox, CalendarClock,
 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
@@ -23,14 +23,16 @@ import { MembersTab } from "./MembersTab";
 import { TemplatesTab } from "./TemplatesTab";
 import { AssignmentsTab } from "./AssignmentsTab";
 import { SubmissionsTab } from "./SubmissionsTab";
+import { SchedulesTab } from "./SchedulesTab";
 import { ActivityTab } from "./ActivityTab";
 import type { Workspace } from "./types";
 
-type TabKey = "overview" | "templates" | "assignments" | "submissions" | "members" | "activity";
+type TabKey = "overview" | "templates" | "schedules" | "assignments" | "submissions" | "members" | "activity";
 
 const TABS: Array<{ key: TabKey; label: string; icon: typeof Users }> = [
   { key: "overview",    label: "Overview",    icon: Settings },
   { key: "templates",   label: "Templates",   icon: FileText },
+  { key: "schedules",   label: "Schedules",   icon: CalendarClock },
   { key: "assignments", label: "Assignments", icon: ClipboardList },
   { key: "submissions", label: "Submissions", icon: Inbox },
   { key: "members",     label: "Members",     icon: Users },
@@ -164,6 +166,12 @@ export function WorkspaceDetail() {
           canEdit={canEditSettings || my_workspace_role === "editor"}
         />
       )}
+      {tab === "schedules" && (
+        <SchedulesTab
+          workspaceId={workspace.id}
+          canEdit={canEditSettings || my_workspace_role === "editor"}
+        />
+      )}
       {tab === "assignments" && (
         <AssignmentsTab
           workspaceId={workspace.id}
@@ -237,14 +245,11 @@ function OverviewTab({
       <Card className="p-5 space-y-3">
         <h3 className="font-semibold">Future tabs</h3>
         <ul className="text-sm space-y-1 text-gray-500">
-          <li>Templates (form + audit builder)</li>
-          <li>Schedules (recurring assignments)</li>
-          <li>Submissions (filled-out forms)</li>
           <li>CAPs (corrective action plans)</li>
           <li>Automations (trigger → action rules)</li>
         </ul>
         <p className="text-xs text-gray-500">
-          Backend is ready for all of the above; the UI builds out in subsequent slices.
+          Backend is ready for the remaining slices; the UI builds out in subsequent commits.
         </p>
       </Card>
 
