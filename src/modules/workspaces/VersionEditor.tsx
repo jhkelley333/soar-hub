@@ -28,7 +28,10 @@ import type {
   TemplateType,
 } from "./types";
 
-type LocalQuestion = Omit<TemplateQuestion, "id" | "version_id" | "created_at" | "position"> & {
+// section_id is server-assigned from section_label by the backend
+// (see workspaces.js upsertQuestions), so the builder doesn't carry
+// it in local edit state.
+type LocalQuestion = Omit<TemplateQuestion, "id" | "version_id" | "created_at" | "position" | "section_id"> & {
   _key: string;  // local stable key for React, distinct from server id
 };
 
