@@ -13,6 +13,7 @@ import {
   Hammer,
   Flag,
   ClipboardList,
+  Inbox,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -46,6 +47,9 @@ export const NAV: NavItem[] = [
   // role allowlist so submitters can see their assignments; backend
   // filters down by workspace_members + scope-based visibility.
   { to: "/workspaces",  label: "Workspaces",  icon: ClipboardList,   roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
+  // Personal cross-workspace queue: "what's on my plate right now."
+  // Wide allowlist so any assignee can see what they owe.
+  { to: "/assignments", label: "My Assignments", icon: Inbox,        roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
   // Legacy Work Orders (Smartsheet-backed) — hidden from the sidebar
   // after the V2 cutover. Route stays alive for archival deep links;
   // admins can still navigate to /work-orders manually if needed.

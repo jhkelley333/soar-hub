@@ -33,6 +33,8 @@ import { PublicSubmitPage } from "@/modules/public-submit/PublicSubmitPage";
 import { WorkspacesPage } from "@/modules/workspaces/WorkspacesPage";
 import { WorkspaceDetail } from "@/modules/workspaces/WorkspaceDetail";
 import { TemplateDetailPage } from "@/modules/workspaces/TemplateDetailPage";
+import { AssignmentsPage } from "@/modules/workspaces/AssignmentsPage";
+import { AssignmentDetailPage } from "@/modules/workspaces/AssignmentDetailPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -172,6 +174,22 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
             <TemplateDetailPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "assignments",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+            <AssignmentsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "assignments/:id",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+            <AssignmentDetailPage />
           </ProtectedRoute>
         ),
       },
