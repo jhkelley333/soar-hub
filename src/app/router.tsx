@@ -40,6 +40,9 @@ import { SubmissionViewerPage } from "@/modules/workspaces/SubmissionViewerPage"
 import { SignoffQueuePage } from "@/modules/workspaces/SignoffQueuePage";
 import { MyCapsPage } from "@/modules/workspaces/MyCapsPage";
 import { CapDetailPage } from "@/modules/workspaces/CapDetailPage";
+import { RenoScopingPage } from "@/modules/reno-scoping/RenoScopingPage";
+import { NewScopePage } from "@/modules/reno-scoping/NewScopePage";
+import { ScopeDetailPage } from "@/modules/reno-scoping/ScopeDetailPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -235,6 +238,30 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
             <CapDetailPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "reno-scoping",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <RenoScopingPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "reno-scoping/new",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <NewScopePage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "reno-scoping/:id",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <ScopeDetailPage />
           </ProtectedRoute>
         ),
       },

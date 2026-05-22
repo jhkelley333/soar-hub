@@ -13,6 +13,7 @@ import {
   Hammer,
   Flag,
   ClipboardList,
+  HardHat,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -52,6 +53,11 @@ export const NAV: NavItem[] = [
   // for deep links (e.g. from the AssignmentDetailPage back-link), but
   // they don't appear in the sidebar — open /workspaces and switch tabs.
   { to: "/workspaces",  label: "Workspaces",  icon: ClipboardList,   roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
+  // Reno Scoping — Pre-Reskin Scoping for the 2026 Full-to-Bright
+  // program. GM+ can scope their own store; DO+ reviews. RLS filters
+  // visibility regardless, but we gate the nav link to GM+ so shift
+  // managers don't see a dead link.
+  { to: "/reno-scoping", label: "Reno Scoping", icon: HardHat,        roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   // Legacy Work Orders (Smartsheet-backed) — hidden from the sidebar
   // after the V2 cutover. Route stays alive for archival deep links;
   // admins can still navigate to /work-orders manually if needed.
