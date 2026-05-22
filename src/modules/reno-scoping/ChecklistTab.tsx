@@ -76,9 +76,25 @@ interface Props {
   buildingType: BuildingType;
   canEdit: boolean;
   scope: import("./types").RenoScope;
+  // Which tiers this tab is responsible for rendering. Pre-Con tab passes
+  // ["existing_condition"], Punch List passes ["minimum_standard"],
+  // Plus-Ups passes ["plus_up", "optional"]. Defaults to all four for
+  // backwards compatibility.
+  visibleTiers?: ScopeTier[];
+  // Whether the PreConSection (store attributes + damage notes) renders
+  // at the top of this tab. Only the Pre-Con tab sets this to true.
+  showPreConSection?: boolean;
 }
 
-export function ChecklistTab({ scopeId, templateId, buildingType, canEdit, scope }: Props) {
+export function ChecklistTab({
+  scopeId,
+  templateId,
+  buildingType,
+  canEdit,
+  scope,
+  visibleTiers,
+  showPreConSection = false,
+}: Props) {
   const queryClient = useQueryClient();
 
   const itemsQuery = useQuery({
@@ -114,19 +130,38 @@ export function ChecklistTab({ scopeId, templateId, buildingType, canEdit, scope
   const pendingRef = useRef<Set<string>>(new Set());
 
   // Hydrate working state from server + draft on first load.
+  //
+  // Also: any localStorage draft items that differ from the server snapshot
+  // get auto-queued for a debounced flush. This rescues edits that were
+  // made in another tab (or before a reload) where the original debounce
+  // never got to fire because the component unmounted first.
   useEffect(() => {
     if (!answersQuery.data) return;
     const draft = loadDraft(scopeId);
-    const merged: Record<string, DraftItem> = {};
+    const serverByKey: Record<string, DraftItem> = {};
     for (const a of answersQuery.data) {
-      merged[a.template_item_id] = serverToDraft(a);
+      serverByKey[a.template_item_id] = serverToDraft(a);
     }
+    const merged: Record<string, DraftItem> = { ...serverByKey };
     if (draft) {
       for (const [k, v] of Object.entries(draft.items)) {
         merged[k] = { ...(merged[k] ?? { template_item_id: k }), ...v };
+        // Queue items whose local copy differs from server so the next
+        // debounce flushes them — covers the "edited in another tab,
+        // unmounted before save" case.
+        const s = serverByKey[k];
+        if (!s || !sameDraftItem(s, merged[k])) {
+          pendingRef.current.add(k);
+        }
+      }
+      if (pendingRef.current.size > 0) {
+        setSyncStatus("saving");
+        if (debounceRef.current != null) window.clearTimeout(debounceRef.current);
+        debounceRef.current = window.setTimeout(flushPending, SAVE_DEBOUNCE_MS);
       }
     }
     setWorking(merged);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [answersQuery.data, scopeId]);
 
   const upsertMutation = useMutation({
@@ -227,6 +262,12 @@ export function ChecklistTab({ scopeId, templateId, buildingType, canEdit, scope
     buildingType,
   ]);
 
+  // Which tiers actually render in this instance. Defaults to all four
+  // when the prop isn't passed, so existing callers behave as before.
+  const tiersToRender: ScopeTier[] = (visibleTiers ?? TIER_ORDER).filter((t) =>
+    TIER_ORDER.includes(t),
+  );
+
   if (itemsQuery.isLoading || answersQuery.isLoading) {
     return <Skeleton className="h-96 w-full" />;
   }
@@ -242,8 +283,8 @@ export function ChecklistTab({ scopeId, templateId, buildingType, canEdit, scope
   return (
     <div className="space-y-4">
       <SyncBadge status={syncStatus} />
-      <PreConSection scope={scope} canEdit={canEdit} />
-      {TIER_ORDER.map((tier) => {
+      {showPreConSection && <PreConSection scope={scope} canEdit={canEdit} />}
+      {tiersToRender.map((tier) => {
         const tierItems = grouped[tier];
         if (!tierItems || tierItems.length === 0) return null;
         const counts = tierCounts(tierItems, working);
@@ -565,4 +606,16 @@ function tierCounts(
 
 function labelForBrickStone(bt: BuildingType): string {
   return bt === "brick_stone" ? "brick/stone" : bt;
+}
+
+// Shallow equality on the fields the draft cares about. Used to decide
+// whether a localStorage entry differs from the server snapshot and
+// needs to be re-queued for sync.
+function sameDraftItem(a: DraftItem, b: DraftItem): boolean {
+  return (
+    (a.status ?? null) === (b.status ?? null) &&
+    (a.notes ?? null) === (b.notes ?? null) &&
+    (a.estimated_cost ?? null) === (b.estimated_cost ?? null) &&
+    !!a.recommend_for_plus_up === !!b.recommend_for_plus_up
+  );
 }
