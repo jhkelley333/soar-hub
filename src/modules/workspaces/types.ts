@@ -4,7 +4,7 @@
 // from migrations 0058-0061 — snake_case columns kept as-is so the
 // frontend uses backend rows directly without renaming.
 
-// ── Workspaces ──────────────────────────────────────────────
+// ── Workspaces ─────────────────────────────────────
 export type WorkspaceVisibility = "private" | "scoped" | "organization";
 export type WorkspaceScopeKind = "region" | "area" | "district" | "store";
 export type WorkspaceRole = "owner" | "editor" | "submitter" | "viewer";
@@ -36,7 +36,7 @@ export interface WorkspaceMember {
   } | null;
 }
 
-// ── Templates ───────────────────────────────────────────────
+// ── Templates ──────────────────────────────────────
 export type TemplateType = "form" | "audit";
 export type VersionStatus = "draft" | "published" | "archived";
 export type FieldType =
@@ -69,9 +69,25 @@ export interface TemplateVersion {
   created_at: string;
 }
 
+// Sections are first-class as of migration 0063 — they have their own
+// position, label, and conditional_logic (show_if). Questions reference
+// a section via section_id; section_label remains on the question as a
+// display fallback and to keep the existing builder UI working
+// unchanged (the backend auto-syncs section rows from section_label on
+// upsertQuestions).
+export interface TemplateSection {
+  id: string;
+  version_id: string;
+  position: number;
+  label: string;
+  conditional_logic: Record<string, unknown> | null;
+  created_at: string;
+}
+
 export interface TemplateQuestion {
   id: string;
   version_id: string;
+  section_id: string | null;
   section_label: string | null;
   position: number;
   question_text: string;
@@ -96,7 +112,7 @@ export interface TemplateApprovalStep {
   created_at: string;
 }
 
-// ── Schedules + Assignments ─────────────────────────────────
+// ── Schedules + Assignments ─────────────────────────────
 export type Cadence = "daily" | "weekly" | "biweekly" | "monthly" | "quarterly";
 
 export interface WorkspaceSchedule {
@@ -143,7 +159,7 @@ export interface WorkspaceAssignment {
   workspaces?: { id: string; name: string } | null;
 }
 
-// ── Submissions + Signoffs ──────────────────────────────────
+// ── Submissions + Signoffs ─────────────────────────────
 export type SignoffStatus =
   | "pending_review" | "in_review" | "approved" | "rejected" | "revision_requested";
 export type AuditOutcome = "pass" | "fail" | "fail_critical";
@@ -199,7 +215,7 @@ export interface SubmissionSignoff {
   created_at: string;
 }
 
-// ── CAPs ────────────────────────────────────────────────────
+// ── CAPs ───────────────────────────────────────────
 export type CapStatus =
   | "open" | "in_progress" | "proof_submitted" | "verified" | "closed" | "reopened";
 export type CapProofVerifiedStatus = "accepted" | "rejected" | null;
@@ -238,7 +254,7 @@ export interface CapProof {
   verifier_notes: string | null;
 }
 
-// ── Repeat findings ────────────────────────────────────────
+// ── Repeat findings ──────────────────────────────────
 export interface RepeatFinding {
   id: string;
   workspace_id: string;
@@ -259,7 +275,7 @@ export interface RepeatFinding {
   created_at: string;
 }
 
-// ── Automations ────────────────────────────────────────────
+// ── Automations ─────────────────────────────────────
 export interface WorkspaceAutomation {
   id: string;
   workspace_id: string;
@@ -275,7 +291,7 @@ export interface WorkspaceAutomation {
   updated_at: string;
 }
 
-// ── Attachments ────────────────────────────────────────────
+// ── Attachments ─────────────────────────────────────
 export interface WorkspaceAttachment {
   id: string;
   workspace_id: string;
@@ -291,7 +307,7 @@ export interface WorkspaceAttachment {
   created_at: string;
 }
 
-// ── Activity log ───────────────────────────────────────────
+// ── Activity log ────────────────────────────────────
 export interface ActivityLogEntry {
   id: string;
   workspace_id: string | null;
@@ -307,7 +323,7 @@ export interface ActivityLogEntry {
   created_at: string;
 }
 
-// ── API response shapes ────────────────────────────────────
+// ── API response shapes ───────────────────────────────
 export interface OkResponse { ok: true }
 export interface ErrorResponse { ok: false; message: string; error?: string }
 

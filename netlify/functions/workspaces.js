@@ -191,7 +191,7 @@ async function visibleWorkspaceIds(supabase, profile) {
   return { all: false, ids: Array.from(ids) };
 }
 
-// ── Validation helpers ─────────────────────────────
+// ── Validation helpers ──────────────────────────────
 function isUuid(s) {
   return typeof s === "string"
     && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
@@ -1091,7 +1091,7 @@ export const handler = async (event) => {
       const denied = await requireWorkspaceCap(supabase, profile, wsId, "view_workspace");
       if (denied) return denied;
 
-      const [{ data: questions }, { data: steps }] = await Promise.all([
+      const [{ data: questions }, { data: steps }, { data: sections }] = await Promise.all([
         supabase
           .from("workspace_template_questions")
           .select("*")
@@ -1102,6 +1102,15 @@ export const handler = async (event) => {
           .select("*")
           .eq("version_id", vId)
           .order("step_number"),
+        // Sections are first-class as of migration 0063 — carry their
+        // own position + label + conditional_logic. Questions are
+        // ordered within a section by their own `position`, then
+        // grouped by section_id at render time.
+        supabase
+          .from("workspace_template_sections")
+          .select("*")
+          .eq("version_id", vId)
+          .order("position"),
       ]);
 
       return respond(200, {
@@ -1109,6 +1118,7 @@ export const handler = async (event) => {
         version: ver,
         questions: questions || [],
         approval_steps: steps || [],
+        sections: sections || [],
       });
     }
 
@@ -1434,11 +1444,109 @@ export const handler = async (event) => {
         .delete()
         .eq("version_id", vId);
 
+      // Sections are first-class as of 0063 — but the current builder
+      // UI still sends questions with only section_label (no section_id).
+      // Reconcile: for each unique non-empty label in this batch ensure
+      // a workspace_template_sections row exists (preserve any existing
+      // conditional_logic that's already set), assign positions by
+      // order-of-first-appearance, then stamp question.section_id from
+      // the resulting label→id map.
+      //
+      // ⚠️ UNCERTAIN: We keep existing section rows for labels that
+      // survived (so their conditional_logic isn't dropped) and insert
+      // new ones for new labels. Rows for labels that no longer appear
+      // are deleted to avoid stale section detritus. If a label gets
+      // renamed in the batch, its conditional_logic does NOT carry to
+      // the renamed row — that's effectively "delete old + add new",
+      // which feels correct for a string-based identifier.
+      const seenLabels = [];
+      const labelSeen = new Set();
+      for (const r of rows) {
+        const lbl = r.section_label;
+        if (lbl && !labelSeen.has(lbl)) {
+          labelSeen.add(lbl);
+          seenLabels.push(lbl);
+        }
+      }
+
+      let labelToSectionId = new Map();
+      if (seenLabels.length) {
+        const { data: existingSections } = await supabase
+          .from("workspace_template_sections")
+          .select("id, label, position, conditional_logic")
+          .eq("version_id", vId);
+        const byLabel = new Map((existingSections || []).map((s) => [s.label, s]));
+
+        // Insert any labels that don't have a section row yet, in
+        // order-of-first-appearance, picking positions after the
+        // highest currently-used position to avoid the unique
+        // (version_id, position) constraint.
+        let nextPos = 1 + Math.max(0, ...(existingSections || []).map((s) => s.position));
+        const toInsert = [];
+        for (const lbl of seenLabels) {
+          if (!byLabel.has(lbl)) {
+            toInsert.push({ version_id: vId, position: nextPos++, label: lbl });
+          }
+        }
+        if (toInsert.length) {
+          const { data: newSections, error: sErr } = await supabase
+            .from("workspace_template_sections")
+            .insert(toInsert)
+            .select("id, label");
+          if (sErr) throw sErr;
+          for (const s of newSections || []) byLabel.set(s.label, s);
+        }
+
+        // Build the label → id map for stamping on questions.
+        for (const lbl of seenLabels) {
+          const sec = byLabel.get(lbl);
+          if (sec) labelToSectionId.set(lbl, sec.id);
+        }
+
+        // Drop any section rows whose label no longer appears in the
+        // batch (keeps the table tidy; doesn't affect questions since
+        // FK is ON DELETE SET NULL — but no question references these
+        // sections anyway since we deleted them above).
+        const stale = (existingSections || [])
+          .filter((s) => !labelSeen.has(s.label))
+          .map((s) => s.id);
+        if (stale.length) {
+          await supabase
+            .from("workspace_template_sections")
+            .delete()
+            .in("id", stale);
+        }
+
+        // Renumber positions so they're contiguous + match
+        // seenLabels order (which mirrors question order).
+        for (let i = 0; i < seenLabels.length; i++) {
+          const sec = byLabel.get(seenLabels[i]);
+          if (sec && sec.position !== i + 1) {
+            await supabase
+              .from("workspace_template_sections")
+              .update({ position: i + 1 })
+              .eq("id", sec.id);
+          }
+        }
+      } else {
+        // No sections in this batch — wipe the table for this version.
+        await supabase
+          .from("workspace_template_sections")
+          .delete()
+          .eq("version_id", vId);
+      }
+
+      // Stamp section_id on each question row before insert.
+      const rowsWithSection = rows.map((r) => ({
+        ...r,
+        section_id: r.section_label ? labelToSectionId.get(r.section_label) || null : null,
+      }));
+
       let inserted = [];
-      if (rows.length) {
+      if (rowsWithSection.length) {
         const { data, error } = await supabase
           .from("workspace_template_questions")
-          .insert(rows)
+          .insert(rowsWithSection)
           .select("*")
           .order("position");
         if (error) throw error;

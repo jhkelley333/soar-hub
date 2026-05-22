@@ -21,6 +21,7 @@ import type {
   TemplateVersion,
   TemplateQuestion,
   TemplateApprovalStep,
+  TemplateSection,
   WorkspaceSchedule,
   WorkspaceAssignment,
   WorkspaceSubmission,
@@ -139,7 +140,7 @@ export function deleteWorkspace(id: string) {
   return post<{ ok: true }>(FN_WS, "deleteWorkspace", { id });
 }
 
-// ── Members ─────────────────────────────────────────────────
+// ── Members ──────────────────────────────────────────
 export function listMembers(workspace_id: string) {
   return get<{ ok: true; members: WorkspaceMember[] }>(
     FN_WS, "listMembers", { workspace_id },
@@ -215,7 +216,7 @@ export function archiveTemplate(id: string) {
   return post<{ ok: true; template: WorkspaceTemplate }>(FN_WS, "archiveTemplate", { id });
 }
 
-// ── Template versions ───────────────────────────────────────
+// ── Template versions ─────────────────────────────────
 export function getTemplateVersion(id: string) {
   return get<{
     ok: true;
@@ -224,6 +225,7 @@ export function getTemplateVersion(id: string) {
     };
     questions: TemplateQuestion[];
     approval_steps: TemplateApprovalStep[];
+    sections: TemplateSection[];
   }>(FN_WS, "getTemplateVersion", { id });
 }
 
