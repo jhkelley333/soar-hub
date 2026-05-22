@@ -308,7 +308,6 @@ export interface ActivityLogEntry {
 }
 
 // ── API response shapes ────────────────────────────────────
-export interface ListResponse<T> { ok: true; [key: string]: unknown }
 export interface OkResponse { ok: true }
 export interface ErrorResponse { ok: false; message: string; error?: string }
 
