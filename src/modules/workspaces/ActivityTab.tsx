@@ -9,7 +9,6 @@ import { Card } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
-import { Badge } from "@/shared/ui/Badge";
 import { getActivity } from "./api";
 import type { ActivityLogEntry } from "./types";
 
@@ -74,8 +73,7 @@ export function ActivityTab({ workspaceId }: { workspaceId: string }) {
   if (!entries.length) {
     return (
       <EmptyState
-        icon={<Activity className="h-8 w-8" />}
-        title="No activity yet"
+        title={<><Activity className="h-6 w-6 inline mr-2" /> No activity yet</>}
         description="Events from members, templates, submissions, and more will appear here."
       />
     );

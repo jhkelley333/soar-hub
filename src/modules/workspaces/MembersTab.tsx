@@ -21,9 +21,8 @@ const ROLES: Array<{ value: WorkspaceRole; label: string; hint: string }> = [
   { value: "viewer",    label: "Viewer",    hint: "Read-only access to the workspace." },
 ];
 
-function roleBadgeColor(role: string): "neutral" | "info" | "muted" {
+function roleBadgeTone(role: string): "neutral" | "info" {
   if (role === "owner") return "info";
-  if (role === "viewer") return "muted";
   return "neutral";
 }
 
@@ -151,7 +150,7 @@ function MemberRow({
             </button>
           </>
         ) : (
-          <Badge variant={roleBadgeColor(member.workspace_role)}>
+          <Badge tone={roleBadgeTone(member.workspace_role)}>
             {member.workspace_role}
           </Badge>
         )}

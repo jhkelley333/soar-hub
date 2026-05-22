@@ -86,7 +86,6 @@ export function WorkspacesPage() {
 
       {query.isSuccess && !workspaces.length && (
         <EmptyState
-          icon={<Plus className="h-8 w-8" />}
           title="No workspaces yet"
           description={
             canCreate
@@ -134,7 +133,7 @@ function WorkspaceCard({ ws }: { ws: Workspace }) {
           <h3 className="font-semibold text-gray-900 dark:text-gray-100 group-hover:text-blue-600 dark:group-hover:text-blue-400">
             {ws.name}
           </h3>
-          <Badge variant={ws.is_archived ? "muted" : "neutral"} className="shrink-0">
+          <Badge tone="neutral" className="shrink-0">
             <span className="flex items-center gap-1">
               {visibilityIcon(ws.visibility)}
               {visibilityLabel(ws.visibility)}

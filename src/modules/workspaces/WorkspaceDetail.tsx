@@ -101,13 +101,13 @@ export function WorkspaceDetail() {
           description={workspace.description ?? undefined}
           actions={
             <div className="flex items-center gap-2">
-              <Badge variant={workspace.is_archived ? "muted" : "neutral"}>
+              <Badge tone="neutral">
                 <span className="flex items-center gap-1">
                   {visibilityIcon(workspace.visibility)}
                   {workspace.visibility[0].toUpperCase() + workspace.visibility.slice(1)}
                 </span>
               </Badge>
-              {workspace.is_archived && <Badge variant="warning">Archived</Badge>}
+              {workspace.is_archived && <Badge tone="warning">Archived</Badge>}
             </div>
           }
         />
