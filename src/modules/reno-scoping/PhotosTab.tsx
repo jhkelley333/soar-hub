@@ -251,8 +251,8 @@ interface PhotoCell {
 function PhotoGrid({ cells }: { cells: PhotoCell[] }) {
   return (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-      {cells.map((c) => (
-        <PhotoCellView key={c.key} {...c} />
+      {cells.map(({ key, ...rest }) => (
+        <PhotoCellView key={key} {...rest} />
       ))}
     </div>
   );
