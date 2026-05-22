@@ -4,17 +4,16 @@
 // Conditional logic (show_if) hides/shows questions and whole sections
 // live as the user answers.
 //
-// Checkpoint 2 additions:
-//   ✓ localStorage immediate write + debounced (2s) server saveDraft
-//   ✓ Stale-draft detection: if the assignment's template version has
-//     changed since the draft was saved, force a fresh start
-//   ✓ Submit confirmation modal (preview of count + audit score)
-//   ✓ Post-submit success screen (with score/outcome for audits)
-//   ✓ 3-dot menu: Save now, Discard draft
-//   ✗ Photos / signatures / file uploads → Checkpoint 3/4
-//   ✗ Flagged-response inline note requirement → Checkpoint 3
-//   ✗ Live audit score in top bar → Checkpoint 3 (preview-on-submit
-//     for now)
+// Checkpoint 3 additions:
+//   ✓ Photo capture per question (compress + GPS + upload)
+//   ✓ Flagged-response inline notes (pass_fail_na fail with
+//     requires_cap_on_fail → required textarea) + optional photo
+//   ✓ Live audit score chip in the top bar
+//   ✓ Subtle slide/fade-in animation as questions appear from
+//     conditional logic
+//   ✗ Signature pad → Checkpoint 4
+//   ✗ Desktop two-column layout → Checkpoint 4
+//   ✗ Accessibility audit → Checkpoint 4
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
@@ -22,12 +21,15 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import {
   ArrowLeft, Send, Check, X, Minus, AlertTriangle, MoreVertical,
   CheckCircle2, XCircle, Cloud, CloudOff, Loader2, Trash2,
+  Camera, ImageIcon, Paperclip, X as XIconClose,
 } from "lucide-react";
 import {
   getAssignment, getTemplateVersion, createSubmission,
   loadDraft, saveDraft, discardDraft,
+  uploadAttachment, deleteAttachment, getAttachmentSignedUrl,
 } from "./api";
 import { shouldShow } from "./conditional";
+import { compressImage, getCachedGeolocation, blobToBase64 } from "./photo";
 import type {
   TemplateQuestion, TemplateSection, AuditResult, SubmissionAnswer,
   WorkspaceSubmission, WorkspaceTemplate,
@@ -41,12 +43,14 @@ type LocalAnswer = {
   answer_date?: string | null;
   answer_json?: unknown;
   audit_result?: AuditResult | null;
+  attachment_ids?: string[];
 };
 
 type SaveStatus = "idle" | "saving" | "saved" | "offline" | "error";
 
-const ATTACHMENT_TYPES = new Set(["photo", "file", "signature"]);
 const SAVE_DEBOUNCE_MS = 2000;
+const MAX_PHOTOS_PER_QUESTION = 5;
+const SIGNED_URL_TTL_SECONDS = 3600;
 
 function localKey(assignmentId: string) {
   return `wsdraft:${assignmentId}`;
@@ -59,7 +63,20 @@ function hasAnswerValue(a: LocalAnswer | undefined, q: TemplateQuestion): boolea
   if (q.field_type === "checkbox")     return typeof a.answer_boolean === "boolean";
   if (q.field_type === "number")       return a.answer_number != null;
   if (q.field_type === "date")         return !!a.answer_date;
+  if (q.field_type === "photo" || q.field_type === "file") {
+    return Array.isArray(a.attachment_ids) && a.attachment_ids.length > 0;
+  }
   return a.answer_text != null && a.answer_text !== "";
+}
+
+// A flagged-fail question (pass_fail_na + requires_cap_on_fail) needs
+// an inline note when the user marks it fail. The renderer enforces
+// this client-side; the backend has the same rule for safety.
+function flaggedFailNeedsNote(q: TemplateQuestion, a: LocalAnswer | undefined): boolean {
+  if (q.field_type !== "pass_fail_na") return false;
+  if (!q.requires_cap_on_fail) return false;
+  if (a?.audit_result !== "fail") return false;
+  return !a.answer_text || a.answer_text.trim() === "";
 }
 
 function groupBySection(questions: TemplateQuestion[]): Map<string | null, TemplateQuestion[]> {
@@ -73,10 +90,10 @@ function groupBySection(questions: TemplateQuestion[]): Map<string | null, Templ
   return out;
 }
 
-// Frontend-only audit preview for the submit-confirmation modal. NOT
-// authoritative — the backend recomputes on submit. Mirrors the
-// scoring logic in netlify/functions/_lib/workspace_resolvers.js so
-// the user sees the same number they'll get.
+// Frontend-only audit preview. NOT authoritative — the backend
+// recomputes on submit. Mirrors the scoring logic in
+// netlify/functions/_lib/workspace_resolvers.js so the user sees the
+// same number they'll get.
 function computeAuditPreview(
   template: WorkspaceTemplate | undefined,
   questions: TemplateQuestion[],
@@ -87,19 +104,21 @@ function computeAuditPreview(
   let possible = 0;
   let earned = 0;
   let criticalFailed = false;
+  let anyAnswered = false;
   for (const q of questions) {
     if (q.field_type !== "pass_fail_na") continue;
     if (!visibleQuestionIds.has(q.id)) continue;
     const a = answers.get(q.id);
     const w = q.weight ?? 1;
     if (a?.audit_result === "pass") {
-      possible += w;
-      earned += w;
+      possible += w; earned += w; anyAnswered = true;
     } else if (a?.audit_result === "fail") {
       possible += w;
       if (q.is_critical) criticalFailed = true;
+      anyAnswered = true;
+    } else if (a?.audit_result === "na") {
+      anyAnswered = true;
     }
-    // na / unanswered → neither earns nor counts toward possible.
   }
   const pct = possible > 0 ? Math.round((earned / possible) * 100) : 100;
   const threshold = template.audit_pass_threshold ?? 80;
@@ -107,8 +126,22 @@ function computeAuditPreview(
   const flipsToFail = template.critical_fails_audit && criticalFailed;
   const outcome: "pass" | "fail" | "fail_critical" =
     flipsToFail ? "fail_critical" : passByScore ? "pass" : "fail";
-  return { pct, threshold, possible, earned, criticalFailed, outcome };
+  return { pct, threshold, possible, earned, criticalFailed, outcome, anyAnswered };
 }
+
+// Inline CSS for the conditional show/hide animation. Kept in the
+// component file so we don't have to touch tailwind.config. The
+// motion-safe wrapper respects users' reduce-motion preference.
+const ANIMATION_CSS = `
+@keyframes ws-fade-slide-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.ws-anim-in { animation: ws-fade-slide-in 200ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .ws-anim-in { animation: none; }
+}
+`;
 
 export function SubmissionFormPage() {
   const { id } = useParams<{ id: string }>();
@@ -123,15 +156,25 @@ export function SubmissionFormPage() {
   const [showMenu, setShowMenu] = useState(false);
   const [saveStatus, setSaveStatus] = useState<SaveStatus>("idle");
   const [submitted, setSubmitted] = useState<WorkspaceSubmission | null>(null);
+  const [attachmentUrls, setAttachmentUrls] = useState<Map<string, string>>(new Map());
+  const [attachmentMetas, setAttachmentMetas] = useState<Map<string, { file_name: string; mime_type: string | null }>>(new Map());
 
-  // Refs let our debounced save and beforeunload handler see the
-  // current state without recreating timers on every keystroke.
   const answersRef = useRef(answers);
   const lastClientUpdatedAt = useRef<string>("");
   const saveTimerRef = useRef<number | null>(null);
   const questionRefs = useRef(new Map<string, HTMLDivElement>());
+  const blobUrlsRef = useRef(new Set<string>());
 
   useEffect(() => { answersRef.current = answers; }, [answers]);
+
+  // Clean up any object URLs we created for photo thumbnails on unmount,
+  // so we don't leak memory across navigation.
+  useEffect(() => {
+    return () => {
+      for (const u of blobUrlsRef.current) URL.revokeObjectURL(u);
+      blobUrlsRef.current.clear();
+    };
+  }, []);
 
   const asnQuery = useQuery({
     queryKey: ["assignment", id],
@@ -140,6 +183,7 @@ export function SubmissionFormPage() {
   });
   const assignment = asnQuery.data?.assignment;
   const versionId = assignment?.template_version_id;
+  const workspaceId = assignment?.workspace_id;
 
   const verQuery = useQuery({
     queryKey: ["template-version", versionId],
@@ -164,8 +208,8 @@ export function SubmissionFormPage() {
   );
 
   // One-time hydrate: populate the answers Map from whichever source
-  // is freshest (server draft vs. localStorage). Stale template
-  // version forces a restart screen instead.
+  // is freshest. Then fetch signed URLs for any photos referenced in
+  // the draft so they show up in the thumbnails immediately.
   useEffect(() => {
     if (initialized) return;
     if (!id || !versionId) return;
@@ -179,14 +223,12 @@ export function SubmissionFormPage() {
       return;
     }
 
-    // localStorage mirror — may be newer than server if user was offline.
     let local: { answers: LocalAnswer[]; client_updated_at: string; template_version_id: string } | null = null;
     try {
       const raw = localStorage.getItem(localKey(id));
       if (raw) local = JSON.parse(raw);
     } catch { /* ignore parse errors */ }
     if (local && local.template_version_id !== versionId) {
-      // localStorage is from a previous template version — discard.
       localStorage.removeItem(localKey(id));
       local = null;
     }
@@ -204,12 +246,44 @@ export function SubmissionFormPage() {
 
     if (chosen) {
       const map = new Map<string, LocalAnswer>();
+      const allAttachmentIds: string[] = [];
       for (const a of chosen.answers) {
-        if (a && typeof a.question_id === "string") map.set(a.question_id, a);
+        if (a && typeof a.question_id === "string") {
+          map.set(a.question_id, a);
+          if (Array.isArray(a.attachment_ids)) {
+            for (const aid of a.attachment_ids) {
+              if (typeof aid === "string") allAttachmentIds.push(aid);
+            }
+          }
+        }
       }
       setAnswers(map);
       lastClientUpdatedAt.current = chosen.client_updated_at;
       setSaveStatus("saved");
+
+      // Refresh signed URLs for any rehydrated attachments. Fire-and-
+      // forget so a slow network doesn't gate the form being usable.
+      void Promise.all(
+        allAttachmentIds.map(async (aid) => {
+          try {
+            const res = await getAttachmentSignedUrl(aid, SIGNED_URL_TTL_SECONDS);
+            return { aid, url: res.signed_url, attachment: res.attachment };
+          } catch { return null; }
+        }),
+      ).then((results) => {
+        setAttachmentUrls((prev) => {
+          const next = new Map(prev);
+          for (const r of results) if (r) next.set(r.aid, r.url);
+          return next;
+        });
+        setAttachmentMetas((prev) => {
+          const next = new Map(prev);
+          for (const r of results) {
+            if (r) next.set(r.aid, { file_name: r.attachment.file_name, mime_type: r.attachment.mime_type });
+          }
+          return next;
+        });
+      });
     }
     setInitialized(true);
   }, [
@@ -256,18 +330,27 @@ export function SubmissionFormPage() {
     return plan;
   }, [grouped, sections, visibleQuestionIds, visibleSectionIds]);
 
-  const { requiredTotal, requiredAnswered, missingRequiredIds } = useMemo(() => {
+  const { requiredTotal, requiredAnswered, missingRequiredIds, missingFlaggedNoteIds } = useMemo(() => {
     let total = 0;
     let answered = 0;
-    const missing: string[] = [];
+    const missingRequired: string[] = [];
+    const missingFlagged: string[] = [];
     for (const q of questions) {
-      if (!q.is_required) continue;
       if (!visibleQuestionIds.has(q.id)) continue;
-      total++;
-      if (hasAnswerValue(answers.get(q.id), q)) answered++;
-      else missing.push(q.id);
+      const a = answers.get(q.id);
+      if (q.is_required) {
+        total++;
+        if (hasAnswerValue(a, q)) answered++;
+        else missingRequired.push(q.id);
+      }
+      if (flaggedFailNeedsNote(q, a)) missingFlagged.push(q.id);
     }
-    return { requiredTotal: total, requiredAnswered: answered, missingRequiredIds: missing };
+    return {
+      requiredTotal: total,
+      requiredAnswered: answered,
+      missingRequiredIds: missingRequired,
+      missingFlaggedNoteIds: missingFlagged,
+    };
   }, [questions, visibleQuestionIds, answers]);
   const pct = requiredTotal === 0 ? 100 : Math.round((requiredAnswered / requiredTotal) * 100);
 
@@ -276,7 +359,7 @@ export function SubmissionFormPage() {
     [template, questions, answers, visibleQuestionIds],
   );
 
-  // ─── Autosave plumbing ──────────────────────────────
+  // ─── Autosave plumbing ──────────────────────────
 
   function persistLocal(map: Map<string, LocalAnswer>, clientUpdatedAt: string) {
     if (!id || !versionId) return;
@@ -303,16 +386,11 @@ export function SubmissionFormPage() {
         answers: Array.from(answersRef.current.values()) as Array<Record<string, unknown>>,
         client_updated_at: stamp,
       });
-      // Only mark saved if no newer edit happened while the request was in flight.
-      // `res.skipped` means the server already had a newer client_updated_at
-      // (another tab/device); from this client's view we're still in sync.
       if (lastClientUpdatedAt.current === stamp) {
         setSaveStatus("saved");
       }
       void res;
     } catch {
-      // Network or server error — localStorage already holds the
-      // latest, so this is recoverable. Subsequent edits will retry.
       setSaveStatus("offline");
     }
   }
@@ -339,26 +417,19 @@ export function SubmissionFormPage() {
     });
   }
 
-  // Best-effort: try to flush before the tab unloads. The browser
-  // won't wait for fetch, but localStorage is already written
-  // synchronously inside scheduleSave, so we don't lose data here —
-  // this just gives the server a chance.
   useEffect(() => {
     function onUnload() {
       if (saveTimerRef.current != null) {
         window.clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
       }
-      // Fire-and-forget. No await possible during unload.
       void flushSave();
     }
     window.addEventListener("beforeunload", onUnload);
     return () => window.removeEventListener("beforeunload", onUnload);
-    // flushSave reads refs, so we don't need it in deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Close the 3-dot menu on outside click.
   useEffect(() => {
     if (!showMenu) return;
     function onDoc(e: MouseEvent) {
@@ -369,7 +440,73 @@ export function SubmissionFormPage() {
     return () => document.removeEventListener("mousedown", onDoc);
   }, [showMenu]);
 
-  // ─── Actions ──────────────────────────────────────
+  // ─── Photo capture ──────────────────────────────
+
+  async function addPhoto(qid: string, file: File) {
+    if (!workspaceId) return;
+    const current = answersRef.current.get(qid);
+    const existing = (current?.attachment_ids ?? []).slice();
+    if (existing.length >= MAX_PHOTOS_PER_QUESTION) {
+      setSubmitError(`You can attach up to ${MAX_PHOTOS_PER_QUESTION} photos per question.`);
+      return;
+    }
+
+    try {
+      const { blob, name, mime } = await compressImage(file);
+      const base64 = await blobToBase64(blob);
+      const geo = await getCachedGeolocation();
+
+      const res = await uploadAttachment({
+        workspace_id: workspaceId,
+        file_name: name,
+        mime_type: mime,
+        file_data_base64: base64,
+        captured_at: new Date().toISOString(),
+        geo_lat: geo?.lat,
+        geo_lng: geo?.lng,
+      });
+
+      // Build a local blob URL for the immediate thumbnail — much
+      // faster than waiting for a signed URL round-trip and looks
+      // identical to the user.
+      const blobUrl = URL.createObjectURL(blob);
+      blobUrlsRef.current.add(blobUrl);
+      setAttachmentUrls((prev) => new Map(prev).set(res.attachment.id, blobUrl));
+      setAttachmentMetas((prev) => new Map(prev).set(res.attachment.id, {
+        file_name: res.attachment.file_name, mime_type: res.attachment.mime_type,
+      }));
+
+      setAnswer(qid, { attachment_ids: [...existing, res.attachment.id] });
+      setSubmitError(null);
+    } catch (e) {
+      setSubmitError((e as Error)?.message ?? "Photo upload failed.");
+    }
+  }
+
+  async function removePhoto(qid: string, attachmentId: string) {
+    const current = answersRef.current.get(qid);
+    const ids = (current?.attachment_ids ?? []).filter((x) => x !== attachmentId);
+    setAnswer(qid, { attachment_ids: ids });
+
+    // Drop the URL we were showing locally.
+    setAttachmentUrls((prev) => {
+      const url = prev.get(attachmentId);
+      if (url && url.startsWith("blob:")) {
+        URL.revokeObjectURL(url);
+        blobUrlsRef.current.delete(url);
+      }
+      const next = new Map(prev);
+      next.delete(attachmentId);
+      return next;
+    });
+
+    // Delete server-side. Best-effort: if it fails we still drop the
+    // local reference so the user isn't stuck looking at a thumbnail
+    // they can't recover.
+    try { await deleteAttachment(attachmentId); } catch { /* ignore */ }
+  }
+
+  // ─── Actions ────────────────────────────────────
 
   const submitMut = useMutation({
     mutationFn: () => createSubmission({
@@ -379,7 +516,6 @@ export function SubmissionFormPage() {
       ) as Array<Partial<SubmissionAnswer> & { question_id: string }>,
     }),
     onSuccess: (data) => {
-      // Backend already deleted the draft row; clear our localStorage.
       if (id) localStorage.removeItem(localKey(id));
       setSubmitted(data.submission);
       setShowConfirm(false);
@@ -401,6 +537,15 @@ export function SubmissionFormPage() {
       );
       return;
     }
+    if (missingFlaggedNoteIds.length) {
+      setShowErrors(true);
+      const firstEl = questionRefs.current.get(missingFlaggedNoteIds[0]);
+      if (firstEl) firstEl.scrollIntoView({ behavior: "smooth", block: "center" });
+      setSubmitError(
+        `${missingFlaggedNoteIds.length} flagged fail${missingFlaggedNoteIds.length === 1 ? "" : "s"} need a note explaining what went wrong.`,
+      );
+      return;
+    }
     setShowConfirm(true);
   }
 
@@ -416,14 +561,19 @@ export function SubmissionFormPage() {
   async function discardDraftNow() {
     setShowMenu(false);
     if (!id) return;
-    if (!window.confirm("Discard your in-progress answers? This cannot be undone.")) return;
+    if (!window.confirm("Discard your in-progress answers? Any uploaded photos will be deleted too.")) return;
     if (saveTimerRef.current != null) {
       window.clearTimeout(saveTimerRef.current);
       saveTimerRef.current = null;
     }
-    try { await discardDraft(id); } catch { /* ignore — local clear matters */ }
+    try { await discardDraft(id); } catch { /* ignore */ }
     localStorage.removeItem(localKey(id));
+    // Revoke any blob URLs we still hold so we don't leak.
+    for (const u of blobUrlsRef.current) URL.revokeObjectURL(u);
+    blobUrlsRef.current.clear();
     setAnswers(new Map());
+    setAttachmentUrls(new Map());
+    setAttachmentMetas(new Map());
     lastClientUpdatedAt.current = "";
     setSaveStatus("idle");
   }
@@ -432,13 +582,17 @@ export function SubmissionFormPage() {
     if (!id) return;
     try { await discardDraft(id); } catch { /* ignore */ }
     localStorage.removeItem(localKey(id));
+    for (const u of blobUrlsRef.current) URL.revokeObjectURL(u);
+    blobUrlsRef.current.clear();
     setAnswers(new Map());
+    setAttachmentUrls(new Map());
+    setAttachmentMetas(new Map());
     lastClientUpdatedAt.current = "";
     setStaleDraft(false);
     setSaveStatus("idle");
   }
 
-  // ─── Render ───────────────────────────────────────
+  // ─── Render ─────────────────────────────────────
 
   if (asnQuery.isLoading || verQuery.isLoading || draftQuery.isLoading) {
     return (
@@ -475,9 +629,6 @@ export function SubmissionFormPage() {
     );
   }
 
-  // Stale draft: template was republished while user had work in
-  // progress. Force a restart — scoring rules / questions may have
-  // changed under them.
   if (staleDraft) {
     return (
       <div className="-mx-4 -my-6 sm:-mx-6 sm:-my-8 lg:-mx-8 lg:-my-10 min-h-screen bg-gray-50 px-4 py-10 flex flex-col items-center justify-center">
@@ -511,7 +662,6 @@ export function SubmissionFormPage() {
     );
   }
 
-  // Post-submit success screen.
   if (submitted) {
     return (
       <SuccessScreen
@@ -524,6 +674,8 @@ export function SubmissionFormPage() {
 
   return (
     <div className="-mx-4 -my-6 sm:-mx-6 sm:-my-8 lg:-mx-8 lg:-my-10 min-h-screen flex flex-col bg-gray-50">
+      <style>{ANIMATION_CSS}</style>
+
       {/* Top bar */}
       <header className="sticky top-0 z-30 bg-white border-b border-gray-200">
         <div className="flex items-center gap-2 px-3 py-2.5 min-h-[48px]">
@@ -541,6 +693,12 @@ export function SubmissionFormPage() {
             </div>
             <SaveStatusLine status={saveStatus} />
           </div>
+          {auditPreview && auditPreview.anyAnswered && (
+            <LiveScoreChip
+              pct={auditPreview.pct}
+              outcome={auditPreview.outcome}
+            />
+          )}
           {/* 3-dot menu */}
           <div className="relative" data-menu-root>
             <button
@@ -604,7 +762,10 @@ export function SubmissionFormPage() {
         )}
 
         {renderPlan.map((block, bIdx) => (
-          <section key={block.kind === "section" ? block.section.id : `loose-${bIdx}`} className="space-y-3">
+          <section
+            key={block.kind === "section" ? block.section.id : `loose-${bIdx}`}
+            className="space-y-3 ws-anim-in"
+          >
             {block.kind === "section" && (
               <h2 className="text-xs uppercase tracking-wider font-semibold text-gray-500 px-1">
                 {block.section.label}
@@ -613,6 +774,7 @@ export function SubmissionFormPage() {
             {block.questions.map((q) => (
               <div
                 key={q.id}
+                className="ws-anim-in"
                 ref={(el) => {
                   if (el) questionRefs.current.set(q.id, el);
                   else questionRefs.current.delete(q.id);
@@ -622,7 +784,12 @@ export function SubmissionFormPage() {
                   question={q}
                   answer={answers.get(q.id)}
                   showError={showErrors}
+                  attachmentUrls={attachmentUrls}
+                  attachmentMetas={attachmentMetas}
+                  workspaceId={workspaceId}
                   onChange={(patch) => setAnswer(q.id, patch)}
+                  onAddPhoto={(file) => addPhoto(q.id, file)}
+                  onRemovePhoto={(aid) => removePhoto(q.id, aid)}
                 />
               </div>
             ))}
@@ -654,7 +821,6 @@ export function SubmissionFormPage() {
         </button>
       </footer>
 
-      {/* Submit confirmation modal */}
       {showConfirm && (
         <ConfirmSubmitModal
           requiredTotal={requiredTotal}
@@ -674,7 +840,26 @@ export function SubmissionFormPage() {
   );
 }
 
-// ─── Save status line ──────────────────────────────
+// ─── Live score chip ──────────────────────────────────
+
+function LiveScoreChip({
+  pct, outcome,
+}: { pct: number; outcome: "pass" | "fail" | "fail_critical" }) {
+  const cls =
+    outcome === "fail_critical" ? "bg-red-100 text-red-800 border-red-200"
+    : outcome === "fail"        ? "bg-red-50 text-red-700 border-red-200"
+                                : "bg-green-50 text-green-700 border-green-200";
+  return (
+    <div
+      className={`hidden xs:inline-flex sm:inline-flex items-center px-2 py-1 rounded-md border text-xs font-semibold tabular-nums ${cls}`}
+      aria-label={`Current audit score ${pct}%, ${outcome.replace("_", " ")}`}
+    >
+      {pct}%
+    </div>
+  );
+}
+
+// ─── Save status line ──────────────────────────────────
 
 function SaveStatusLine({ status }: { status: SaveStatus }) {
   if (status === "idle") return null;
@@ -793,7 +978,7 @@ function OutcomeBadge({ outcome }: { outcome: "pass" | "fail" | "fail_critical" 
   );
 }
 
-// ─── Success screen ────────────────────────────────
+// ─── Success screen ────────────────────────────────────
 
 function SuccessScreen({
   submission, template, assignmentId,
@@ -860,24 +1045,33 @@ function SuccessScreen({
   );
 }
 
-// ─── Question card ────────────────────────────────
+// ─── Question card ──────────────────────────────────
 
 function QuestionCard({
-  question, answer, showError, onChange,
+  question, answer, showError,
+  attachmentUrls, attachmentMetas, workspaceId,
+  onChange, onAddPhoto, onRemovePhoto,
 }: {
   question: TemplateQuestion;
   answer: LocalAnswer | undefined;
   showError: boolean;
+  attachmentUrls: Map<string, string>;
+  attachmentMetas: Map<string, { file_name: string; mime_type: string | null }>;
+  workspaceId: string | undefined;
   onChange: (patch: Partial<LocalAnswer>) => void;
+  onAddPhoto: (file: File) => void;
+  onRemovePhoto: (attachmentId: string) => void;
 }) {
   const ft = question.field_type;
-  const missing = showError && question.is_required && !hasAnswerValue(answer, question);
+  const missingRequired = showError && question.is_required && !hasAnswerValue(answer, question);
+  const missingFlaggedNote = showError && flaggedFailNeedsNote(question, answer);
+  const hasError = missingRequired || missingFlaggedNote;
 
   return (
     <div
       className={
         "rounded-lg bg-white border p-4 space-y-3 " +
-        (missing ? "border-red-300" : "border-gray-200")
+        (hasError ? "border-red-300" : "border-gray-200")
       }
     >
       <div>
@@ -954,21 +1148,235 @@ function QuestionCard({
       )}
 
       {ft === "pass_fail_na" && (
-        <PassFailNaField answer={answer} onChange={onChange} />
+        <>
+          <PassFailNaField answer={answer} onChange={onChange} />
+          {question.requires_cap_on_fail && answer?.audit_result === "fail" && (
+            <FlaggedFailNote
+              question={question}
+              answer={answer}
+              showError={showError}
+              attachmentUrls={attachmentUrls}
+              attachmentMetas={attachmentMetas}
+              workspaceId={workspaceId}
+              onChange={onChange}
+              onAddPhoto={onAddPhoto}
+              onRemovePhoto={onRemovePhoto}
+            />
+          )}
+        </>
       )}
 
-      {ATTACHMENT_TYPES.has(ft) && (
+      {(ft === "photo" || ft === "file") && (
+        <PhotoField
+          accept={ft === "photo" ? "image/*" : undefined}
+          allowCapture={ft === "photo"}
+          ids={answer?.attachment_ids ?? []}
+          attachmentUrls={attachmentUrls}
+          attachmentMetas={attachmentMetas}
+          disabled={!workspaceId}
+          onAdd={onAddPhoto}
+          onRemove={onRemovePhoto}
+        />
+      )}
+
+      {ft === "signature" && (
         <div className="text-xs text-gray-500 bg-gray-50 border border-gray-200 rounded p-2">
-          {ft === "photo" ? "Photo" : ft === "signature" ? "Signature" : "File"} capture
-          ships in a follow-up checkpoint.
+          Signature capture ships in a follow-up checkpoint.
         </div>
       )}
 
-      {missing && (
+      {missingRequired && (
         <div className="text-sm text-red-600" role="alert">
           This is required
         </div>
       )}
+      {missingFlaggedNote && !missingRequired && (
+        <div className="text-sm text-red-600" role="alert">
+          A note is required when a flagged item is marked failed.
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Flagged-fail inline note + optional photos ─────────
+
+function FlaggedFailNote({
+  question, answer, showError,
+  attachmentUrls, attachmentMetas, workspaceId,
+  onChange, onAddPhoto, onRemovePhoto,
+}: {
+  question: TemplateQuestion;
+  answer: LocalAnswer | undefined;
+  showError: boolean;
+  attachmentUrls: Map<string, string>;
+  attachmentMetas: Map<string, { file_name: string; mime_type: string | null }>;
+  workspaceId: string | undefined;
+  onChange: (patch: Partial<LocalAnswer>) => void;
+  onAddPhoto: (file: File) => void;
+  onRemovePhoto: (attachmentId: string) => void;
+}) {
+  const missing = showError && flaggedFailNeedsNote(question, answer);
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50 p-3 space-y-2 ws-anim-in">
+      <label className="block text-xs font-semibold text-amber-800 uppercase tracking-wide">
+        What went wrong?
+        <span className="text-red-600 ml-1" aria-label="required">*</span>
+      </label>
+      <textarea
+        value={answer?.answer_text ?? ""}
+        onChange={(e) => onChange({ answer_text: e.target.value })}
+        rows={2}
+        placeholder="Brief description — this gets attached to the CAP."
+        className={
+          "w-full rounded-md border px-3 py-2 text-[15px] bg-white focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-transparent " +
+          (missing ? "border-red-400" : "border-amber-300")
+        }
+      />
+      <div>
+        <label className="block text-xs font-semibold text-amber-800 uppercase tracking-wide mb-1">
+          Photo (optional)
+        </label>
+        <PhotoField
+          accept="image/*"
+          allowCapture
+          ids={answer?.attachment_ids ?? []}
+          attachmentUrls={attachmentUrls}
+          attachmentMetas={attachmentMetas}
+          disabled={!workspaceId}
+          onAdd={onAddPhoto}
+          onRemove={onRemovePhoto}
+          compact
+        />
+      </div>
+    </div>
+  );
+}
+
+// ─── Photo / file field ────────────────────────────────
+
+function PhotoField({
+  accept, allowCapture, ids,
+  attachmentUrls, attachmentMetas, disabled,
+  onAdd, onRemove, compact = false,
+}: {
+  accept?: string;
+  allowCapture?: boolean;
+  ids: string[];
+  attachmentUrls: Map<string, string>;
+  attachmentMetas: Map<string, { file_name: string; mime_type: string | null }>;
+  disabled?: boolean;
+  onAdd: (file: File) => void;
+  onRemove: (attachmentId: string) => void;
+  compact?: boolean;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const limitReached = ids.length >= MAX_PHOTOS_PER_QUESTION;
+
+  async function handleFiles(files: FileList | null) {
+    if (!files || !files.length) return;
+    setBusy(true);
+    try {
+      for (const f of Array.from(files)) {
+        if (ids.length + 1 > MAX_PHOTOS_PER_QUESTION) break;
+        await onAdd(f);
+      }
+    } finally {
+      setBusy(false);
+      if (inputRef.current) inputRef.current.value = "";
+    }
+  }
+
+  return (
+    <div className="space-y-2">
+      {ids.length > 0 && (
+        <div className={"grid gap-2 " + (compact ? "grid-cols-4" : "grid-cols-3 sm:grid-cols-4")}>
+          {ids.map((aid) => (
+            <PhotoThumb
+              key={aid}
+              url={attachmentUrls.get(aid)}
+              meta={attachmentMetas.get(aid)}
+              onRemove={() => onRemove(aid)}
+            />
+          ))}
+        </div>
+      )}
+
+      <input
+        ref={inputRef}
+        type="file"
+        accept={accept}
+        capture={allowCapture ? "environment" : undefined}
+        multiple
+        className="hidden"
+        onChange={(e) => handleFiles(e.target.files)}
+        disabled={disabled || busy}
+      />
+      <button
+        type="button"
+        onClick={() => inputRef.current?.click()}
+        disabled={disabled || busy || limitReached}
+        className={
+          "inline-flex items-center gap-2 h-10 px-3 rounded-md border text-sm font-medium transition " +
+          (limitReached
+            ? "border-gray-200 text-gray-400 bg-gray-50 cursor-not-allowed"
+            : "border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100")
+        }
+      >
+        {busy ? (
+          <Loader2 className="h-4 w-4 animate-spin" />
+        ) : allowCapture ? (
+          <Camera className="h-4 w-4" />
+        ) : (
+          <Paperclip className="h-4 w-4" />
+        )}
+        {busy
+          ? "Uploading…"
+          : allowCapture
+            ? (ids.length > 0 ? "Add another photo" : "Take photo")
+            : (ids.length > 0 ? "Add another file" : "Attach file")}
+      </button>
+      {limitReached && (
+        <div className="text-xs text-gray-500">Max {MAX_PHOTOS_PER_QUESTION} reached.</div>
+      )}
+    </div>
+  );
+}
+
+function PhotoThumb({
+  url, meta, onRemove,
+}: {
+  url: string | undefined;
+  meta: { file_name: string; mime_type: string | null } | undefined;
+  onRemove: () => void;
+}) {
+  const isImage = !meta?.mime_type || meta.mime_type.startsWith("image/");
+  return (
+    <div className="relative aspect-square rounded-md overflow-hidden border border-gray-200 bg-gray-50">
+      {url && isImage ? (
+        <a href={url} target="_blank" rel="noopener noreferrer" className="block w-full h-full">
+          <img src={url} alt={meta?.file_name ?? "attachment"} className="w-full h-full object-cover" />
+        </a>
+      ) : (
+        <a
+          href={url ?? "#"}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="w-full h-full flex flex-col items-center justify-center p-2 text-center text-[10px] text-gray-600 hover:bg-gray-100"
+        >
+          <ImageIcon className="h-6 w-6 mb-1" />
+          <div className="truncate w-full">{meta?.file_name ?? "file"}</div>
+        </a>
+      )}
+      <button
+        type="button"
+        onClick={onRemove}
+        aria-label="Remove photo"
+        className="absolute top-1 right-1 h-6 w-6 rounded-full bg-black/60 text-white flex items-center justify-center hover:bg-black/80"
+      >
+        <XIconClose className="h-3.5 w-3.5" />
+      </button>
     </div>
   );
 }
@@ -986,18 +1394,9 @@ function PassFailNaField({
     v: AuditResult; label: string; Icon: typeof Check;
     activeCls: string;
   }> = [
-    {
-      v: "pass", label: "Yes", Icon: Check,
-      activeCls: "bg-green-600 text-white border-green-600",
-    },
-    {
-      v: "fail", label: "No", Icon: X,
-      activeCls: "bg-red-600 text-white border-red-600",
-    },
-    {
-      v: "na", label: "N/A", Icon: Minus,
-      activeCls: "bg-gray-600 text-white border-gray-600",
-    },
+    { v: "pass", label: "Yes", Icon: Check, activeCls: "bg-green-600 text-white border-green-600" },
+    { v: "fail", label: "No",  Icon: X,     activeCls: "bg-red-600 text-white border-red-600" },
+    { v: "na",   label: "N/A", Icon: Minus, activeCls: "bg-gray-600 text-white border-gray-600" },
   ];
   return (
     <div className="grid grid-cols-3 gap-2">
@@ -1025,7 +1424,7 @@ function PassFailNaField({
   );
 }
 
-// ─── Select-one radio list ──────────────────────────
+// ─── Select-one radio list ───────────────────────────
 
 function SelectOneField({
   question, answer, onChange,
