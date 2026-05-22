@@ -79,8 +79,24 @@ export interface RenoScope {
   reviewed_at: string | null;
   reviewed_by: string | null;
   review_notes: string | null;
+  // Pre-Con damage findings (added in migration 0070).
+  damaged_oa_signs_count: number;
+  damaged_oa_signs_notes: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// Stall-data attributes captured on the Pre-Con section of the
+// checklist. Mirrors a whitelisted subset of stores.* — the canonical
+// store row gets patched through the reno-scoping netlify function.
+export interface StoreStallAttributes {
+  patio_pop_menu_count: number;
+  patio_pop_stall_numbers: string | null;
+  order_ahead_stall_count: number;
+  order_ahead_stall_numbers: string | null;
+  stall_pop_menu_count: number;
+  has_trailer_stall: boolean;
+  trailer_stall_number: string | null;
 }
 
 // List-view row: scope + denormalized store name/number + scoper name.
@@ -147,9 +163,12 @@ export const TIER_ORDER: ScopeTier[] = [
   "optional",
 ];
 
+// UI labels. The DB tier values stay snake_case (`existing_condition`,
+// `minimum_standard`) so existing data + RLS keep working; only the
+// visible label is changing to track the Pre-Con / Punch List naming.
 export const TIER_LABELS: Record<ScopeTier, string> = {
-  existing_condition: "Existing Conditions",
-  minimum_standard: "Minimum Standard",
+  existing_condition: "Pre-Con Check List",
+  minimum_standard: "Punch List",
   plus_up: "Plus-Ups",
   optional: "Optional",
 };
