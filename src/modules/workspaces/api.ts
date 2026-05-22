@@ -6,7 +6,7 @@
 //                                                schedules, assignments,
 //                                                activity log
 //   /.netlify/functions/workspace-submissions — submissions, signoffs,
-//                                                attachments
+//                                                attachments, drafts
 //   /.netlify/functions/workspace-caps        — CAPs, cap proofs,
 //                                                repeat findings
 //   /.netlify/functions/workspace-automations — automation CRUD
@@ -27,6 +27,7 @@ import type {
   WorkspaceSubmission,
   SubmissionAnswer,
   SubmissionSignoff,
+  SubmissionDraft,
   CorrectiveActionPlan,
   CapProof,
   RepeatFinding,
@@ -221,7 +222,10 @@ export function getTemplateVersion(id: string) {
   return get<{
     ok: true;
     version: TemplateVersion & {
-      workspace_templates?: { workspace_id: string; name: string; type: "form" | "audit" };
+      // Backend selects `workspace_templates:template_id(*)` so we
+      // get the full template row here — widened so callers can read
+      // audit_pass_threshold + critical_fails_audit for live preview.
+      workspace_templates?: WorkspaceTemplate;
     };
     questions: TemplateQuestion[];
     approval_steps: TemplateApprovalStep[];
@@ -331,7 +335,7 @@ export function cancelAssignment(id: string, reason?: string) {
 }
 
 // ═══════════════════════════════════════════════════════════
-// SUBMISSIONS + SIGNOFFS + ATTACHMENTS
+// SUBMISSIONS + SIGNOFFS + ATTACHMENTS + DRAFTS
 // ═══════════════════════════════════════════════════════════
 
 export function listSubmissions(input: {
@@ -370,6 +374,33 @@ export function createRevisionSubmission(input: {
   return post<{ ok: true; submission: WorkspaceSubmission }>(
     FN_SUBS, "createRevisionSubmission", input,
   );
+}
+
+// ── Drafts ──────────────────────────────────────────
+//
+// The renderer autosaves in-progress answers so a user can close the
+// tab / lose connection / pick up later without losing work. Server
+// row is 1:1 with (assignment, user); deleted on a successful submit.
+
+export function loadDraft(assignment_id: string) {
+  return get<{ ok: true; draft: SubmissionDraft | null; stale: boolean }>(
+    FN_SUBS, "loadDraft", { assignment_id },
+  );
+}
+
+export function saveDraft(input: {
+  assignment_id: string;
+  template_version_id: string;
+  answers: Array<Record<string, unknown>>;
+  client_updated_at: string;
+}) {
+  return post<{ ok: true; draft?: SubmissionDraft; skipped?: boolean; reason?: string }>(
+    FN_SUBS, "saveDraft", input,
+  );
+}
+
+export function discardDraft(assignment_id: string) {
+  return post<{ ok: true }>(FN_SUBS, "discardDraft", { assignment_id });
 }
 
 export function listMySignoffs() {
