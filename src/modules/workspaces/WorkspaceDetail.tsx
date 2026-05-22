@@ -1,12 +1,12 @@
 // /workspaces/:id — workspace detail. Tabs: Overview, Templates,
-// Schedules, Assignments, Submissions, Members, Activity. Future
-// slices add: CAPs, Automations. Each tab is a separate file rendered here.
+// Schedules, Assignments, Submissions, CAPs, Members, Activity.
+// Future slices add: Automations. Each tab is a separate file rendered here.
 
 import { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
-  ArrowLeft, Archive, ArchiveRestore, Trash2, Globe, Lock, MapPin, Settings, Users, Activity, AlertTriangle, FileText, ClipboardList, Inbox, CalendarClock,
+  ArrowLeft, Archive, ArchiveRestore, Trash2, Globe, Lock, MapPin, Settings, Users, Activity, AlertTriangle, FileText, ClipboardList, Inbox, CalendarClock, AlertOctagon,
 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
@@ -24,10 +24,11 @@ import { TemplatesTab } from "./TemplatesTab";
 import { AssignmentsTab } from "./AssignmentsTab";
 import { SubmissionsTab } from "./SubmissionsTab";
 import { SchedulesTab } from "./SchedulesTab";
+import { CapsTab } from "./CapsTab";
 import { ActivityTab } from "./ActivityTab";
 import type { Workspace } from "./types";
 
-type TabKey = "overview" | "templates" | "schedules" | "assignments" | "submissions" | "members" | "activity";
+type TabKey = "overview" | "templates" | "schedules" | "assignments" | "submissions" | "caps" | "members" | "activity";
 
 const TABS: Array<{ key: TabKey; label: string; icon: typeof Users }> = [
   { key: "overview",    label: "Overview",    icon: Settings },
@@ -35,6 +36,7 @@ const TABS: Array<{ key: TabKey; label: string; icon: typeof Users }> = [
   { key: "schedules",   label: "Schedules",   icon: CalendarClock },
   { key: "assignments", label: "Assignments", icon: ClipboardList },
   { key: "submissions", label: "Submissions", icon: Inbox },
+  { key: "caps",        label: "CAPs",        icon: AlertOctagon },
   { key: "members",     label: "Members",     icon: Users },
   { key: "activity",    label: "Activity",    icon: Activity },
 ];
@@ -182,6 +184,9 @@ export function WorkspaceDetail() {
       {tab === "submissions" && (
         <SubmissionsTab workspaceId={workspace.id} />
       )}
+      {tab === "caps" && (
+        <CapsTab workspaceId={workspace.id} />
+      )}
       {tab === "members" && (
         <MembersTab
           workspaceId={workspace.id}
@@ -245,11 +250,10 @@ function OverviewTab({
       <Card className="p-5 space-y-3">
         <h3 className="font-semibold">Future tabs</h3>
         <ul className="text-sm space-y-1 text-gray-500">
-          <li>CAPs (corrective action plans)</li>
           <li>Automations (trigger → action rules)</li>
         </ul>
         <p className="text-xs text-gray-500">
-          Backend is ready for the remaining slices; the UI builds out in subsequent commits.
+          The automations slice ships next; everything else is wired up.
         </p>
       </Card>
 

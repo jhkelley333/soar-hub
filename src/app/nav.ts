@@ -15,6 +15,7 @@ import {
   ClipboardList,
   Inbox,
   CheckSquare,
+  AlertOctagon,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -55,6 +56,10 @@ export const NAV: NavItem[] = [
   // Available from GM up (shift_manager almost never has approver
   // duty, but the row only renders if listMySignoffs returns rows).
   { to: "/signoffs",    label: "Sign-off Queue", icon: CheckSquare,   roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
+  // My CAPs — corrective action plans the caller owns (assignee) or
+  // verifies. Wide allowlist so anyone who can be assigned a CAP can
+  // see one in their queue.
+  { to: "/caps",        label: "My CAPs",     icon: AlertOctagon,    roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
   // Legacy Work Orders (Smartsheet-backed) — hidden from the sidebar
   // after the V2 cutover. Route stays alive for archival deep links;
   // admins can still navigate to /work-orders manually if needed.

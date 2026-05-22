@@ -38,6 +38,8 @@ import { AssignmentDetailPage } from "@/modules/workspaces/AssignmentDetailPage"
 import { SubmissionFormPage } from "@/modules/workspaces/SubmissionFormPage";
 import { SubmissionViewerPage } from "@/modules/workspaces/SubmissionViewerPage";
 import { SignoffQueuePage } from "@/modules/workspaces/SignoffQueuePage";
+import { MyCapsPage } from "@/modules/workspaces/MyCapsPage";
+import { CapDetailPage } from "@/modules/workspaces/CapDetailPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -217,6 +219,22 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
             <SignoffQueuePage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "caps",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+            <MyCapsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "caps/:id",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+            <CapDetailPage />
           </ProtectedRoute>
         ),
       },
