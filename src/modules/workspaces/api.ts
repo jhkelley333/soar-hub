@@ -222,9 +222,6 @@ export function getTemplateVersion(id: string) {
   return get<{
     ok: true;
     version: TemplateVersion & {
-      // Backend selects `workspace_templates:template_id(*)` so we
-      // get the full template row here — widened so callers can read
-      // audit_pass_threshold + critical_fails_audit for live preview.
       workspace_templates?: WorkspaceTemplate;
     };
     questions: TemplateQuestion[];
@@ -377,11 +374,6 @@ export function createRevisionSubmission(input: {
 }
 
 // ── Drafts ──────────────────────────────────────────
-//
-// The renderer autosaves in-progress answers so a user can close the
-// tab / lose connection / pick up later without losing work. Server
-// row is 1:1 with (assignment, user); deleted on a successful submit.
-
 export function loadDraft(assignment_id: string) {
   return get<{ ok: true; draft: SubmissionDraft | null; stale: boolean }>(
     FN_SUBS, "loadDraft", { assignment_id },
@@ -400,7 +392,9 @@ export function saveDraft(input: {
 }
 
 export function discardDraft(assignment_id: string) {
-  return post<{ ok: true }>(FN_SUBS, "discardDraft", { assignment_id });
+  return post<{ ok: true; attachments_deleted?: number }>(
+    FN_SUBS, "discardDraft", { assignment_id },
+  );
 }
 
 export function listMySignoffs() {
@@ -425,6 +419,7 @@ export function requestRevision(signoff_id: string, notes: string) {
   );
 }
 
+// ── Attachments ──────────────────────────────────
 export function createAttachment(input: {
   workspace_id: string;
   storage_path: string;
@@ -436,6 +431,28 @@ export function createAttachment(input: {
   return post<{ ok: true; attachment: WorkspaceAttachment }>(
     FN_SUBS, "createAttachment", input,
   );
+}
+
+// Upload + register an attachment in one shot. File bytes are sent as
+// base64 inside the JSON body — direct client-to-storage uploads aren't
+// possible on the workspace-attachments bucket (no INSERT policy).
+export function uploadAttachment(input: {
+  workspace_id: string;
+  file_name: string;
+  mime_type: string;
+  file_data_base64: string;
+  role?: string;
+  captured_at?: string;
+  geo_lat?: number;
+  geo_lng?: number;
+}) {
+  return post<{ ok: true; attachment: WorkspaceAttachment }>(
+    FN_SUBS, "uploadAttachment", input,
+  );
+}
+
+export function deleteAttachment(id: string) {
+  return post<{ ok: true }>(FN_SUBS, "deleteAttachment", { id });
 }
 
 export function getAttachmentSignedUrl(id: string, expires_in = 60) {

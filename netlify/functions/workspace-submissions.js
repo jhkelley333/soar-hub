@@ -12,13 +12,14 @@
 //   drafts:       loadDraft, saveDraft, discardDraft
 //   signoffs:     approveSignoff, rejectSignoff, requestRevision,
 //                 listMySignoffs
-//   attachments:  listAttachments, createAttachment, deleteAttachment,
-//                 getAttachmentSignedUrl
+//   attachments:  listAttachments, createAttachment, uploadAttachment,
+//                 deleteAttachment, getAttachmentSignedUrl
 //
 // Frontend calls /.netlify/functions/workspace-submissions?action=...
 // (workspaces.js still handles all other actions at its own URL.)
 
 import { createClient } from "@supabase/supabase-js";
+import { randomUUID } from "node:crypto";
 import {
   isOrgAdmin,
   requireWorkspaceCap,
@@ -33,6 +34,11 @@ const SUPABASE_URL =
   process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY =
   process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+
+// Max accepted upload size for uploadAttachment. After client-side
+// compression a photo should be well under this; Netlify Functions
+// allow ~6MB request bodies on the standard plan so we stay clear.
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
 
 function getSupabase() {
   return createClient(SUPABASE_URL, SERVICE_KEY, {
@@ -148,9 +154,9 @@ async function resolveCapAssignee(supabase, rule, submissionStoreId, fallbackUse
 // Auto-create CAPs for any failed audit answer where the question has
 // requires_cap_on_fail = true. Called after an audit submission's
 // answers have been inserted. Best-effort: per-CAP failures are
-// logged but don't abort the submission.
-//
-// Returns { created: <count>, ids: [uuid] }.
+// logged but don't abort the submission. The inline failure_notes
+// captured on the answer (answer_text) get copied onto the CAP so the
+// assignee can see exactly what was wrong without re-reading the form.
 async function autoCreateCapsForAuditAnswers({
   supabase, profile, template, questions, insertedAnswers,
   workspace, assignment, submission,
@@ -187,6 +193,7 @@ async function autoCreateCapsForAuditAnswers({
           assignee_id: assigneeId,
           status: "open",
           template_instructions: q.question_text,
+          failure_notes: ans.answer_text || null,
           due_at: dueAt,
         })
         .select("*")
@@ -219,7 +226,62 @@ async function autoCreateCapsForAuditAnswers({
   return { created: created.length, ids: created };
 }
 
-// ── Handler ──────────────────────────────────
+// Build an answer row for INSERT, doing per-field validation. Shared
+// between createSubmission and createRevisionSubmission. Throws a
+// `{ httpCode, message }` shape that the caller turns into a respond().
+function buildAnswerRow(q, a) {
+  let auditResult = null;
+  if (q.field_type === "pass_fail_na" && a.audit_result != null) {
+    if (!ALLOWED_AUDIT_RESULT.includes(a.audit_result)) {
+      throw { httpCode: 400, message: `Bad audit_result for "${q.question_text}". Must be pass|fail|na.` };
+    }
+    auditResult = a.audit_result;
+  }
+
+  // Flagged-fail notes: when a question requires a CAP on fail, the
+  // assignee must capture WHY it failed inline so the CAP arrives with
+  // useful context. Enforced server-side so the rule can't be bypassed
+  // by tampering with the client.
+  if (
+    q.field_type === "pass_fail_na"
+    && q.requires_cap_on_fail
+    && auditResult === "fail"
+    && (typeof a.answer_text !== "string" || a.answer_text.trim() === "")
+  ) {
+    throw {
+      httpCode: 400,
+      message: `Failed "${q.question_text}" needs a note explaining what went wrong.`,
+      question_id: q.id,
+    };
+  }
+
+  let attachmentIds = null;
+  if (Array.isArray(a.attachment_ids) && a.attachment_ids.length) {
+    for (const aid of a.attachment_ids) {
+      if (!isUuid(aid)) {
+        throw { httpCode: 400, message: "Invalid attachment_id in answer." };
+      }
+    }
+    attachmentIds = a.attachment_ids;
+  }
+
+  return {
+    question_id: q.id,
+    answer_text:    a.answer_text ?? null,
+    answer_number:  a.answer_number != null ? Number(a.answer_number) : null,
+    answer_boolean: typeof a.answer_boolean === "boolean" ? a.answer_boolean : null,
+    answer_date:    a.answer_date ?? null,
+    answer_json:    a.answer_json ?? null,
+    attachment_ids: attachmentIds,
+    audit_result:   auditResult,
+    audit_was_critical: q.field_type === "pass_fail_na" ? !!q.is_critical : null,
+    captured_at:    a.captured_at ?? null,
+    geo_lat:        a.geo_lat ?? null,
+    geo_lng:        a.geo_lng ?? null,
+  };
+}
+
+// ── Handler ──────────────────────────────────────
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
 
@@ -232,9 +294,9 @@ export const handler = async (event) => {
   const supabase = getSupabase();
 
   try {
-    // ═════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
     // SUBMISSIONS
-    // ═════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
 
     if (action === "listSubmissions") {
       const wsId = (event.queryStringParameters || {}).workspace_id;
@@ -281,9 +343,6 @@ export const handler = async (event) => {
       return respond(200, { ok: true, submissions: data || [] });
     }
 
-    // Full submission detail: row + answers (with question metadata) +
-    // signoffs (with step metadata). Visibility: submitter / assignee /
-    // any signoff candidate / workspace member with view_submissions.
     if (action === "getSubmission") {
       const id = (event.queryStringParameters || {}).id;
       if (!isUuid(id)) return respond(400, { ok: false, message: "Bad submission id." });
@@ -343,10 +402,6 @@ export const handler = async (event) => {
       });
     }
 
-    // Submit a filled-out assignment. The big one. Validates answers
-    // against the pinned template version, computes audit scoring if
-    // applicable, resolves + snapshots signoff candidates, locks the
-    // submission, and moves the assignment to status='submitted'.
     if (action === "createSubmission" && event.httpMethod === "POST") {
       const payload = JSON.parse(event.body || "{}");
       const asnId = payload.assignment_id;
@@ -374,7 +429,6 @@ export const handler = async (event) => {
         if (denied) return respond(403, { ok: false, message: "Only the assignee (or editor) can submit." });
       }
 
-      // Load the pinned template version + questions + approval steps + workspace.
       const { data: ver } = await supabase
         .from("workspace_template_versions")
         .select("*, workspace_templates:template_id(*)")
@@ -389,7 +443,6 @@ export const handler = async (event) => {
         supabase.from("workspaces").select("id, scope_anchor_kind, scope_anchor_id").eq("id", asn.workspace_id).single(),
       ]);
 
-      // Validate answers.
       const answerByQid = new Map();
       for (const a of payload.answers) {
         if (!isUuid(a?.question_id)) {
@@ -418,42 +471,12 @@ export const handler = async (event) => {
           });
         }
         if (!a) continue;
-
-        let auditResult = null;
-        if (q.field_type === "pass_fail_na" && a.audit_result != null) {
-          if (!ALLOWED_AUDIT_RESULT.includes(a.audit_result)) {
-            return respond(400, {
-              ok: false,
-              message: `Bad audit_result for "${q.question_text}". Must be pass|fail|na.`,
-            });
-          }
-          auditResult = a.audit_result;
+        try {
+          answerRows.push(buildAnswerRow(q, a));
+        } catch (err) {
+          if (err && err.httpCode) return respond(err.httpCode, { ok: false, ...err });
+          throw err;
         }
-
-        let attachmentIds = null;
-        if (Array.isArray(a.attachment_ids) && a.attachment_ids.length) {
-          for (const aid of a.attachment_ids) {
-            if (!isUuid(aid)) {
-              return respond(400, { ok: false, message: "Invalid attachment_id in answer." });
-            }
-          }
-          attachmentIds = a.attachment_ids;
-        }
-
-        answerRows.push({
-          question_id: q.id,
-          answer_text:    a.answer_text ?? null,
-          answer_number:  a.answer_number != null ? Number(a.answer_number) : null,
-          answer_boolean: typeof a.answer_boolean === "boolean" ? a.answer_boolean : null,
-          answer_date:    a.answer_date ?? null,
-          answer_json:    a.answer_json ?? null,
-          attachment_ids: attachmentIds,
-          audit_result:   auditResult,
-          audit_was_critical: q.field_type === "pass_fail_na" ? !!q.is_critical : null,
-          captured_at:    a.captured_at ?? null,
-          geo_lat:        a.geo_lat ?? null,
-          geo_lng:        a.geo_lng ?? null,
-        });
       }
 
       let scoringFields = {};
@@ -504,9 +527,6 @@ export const handler = async (event) => {
         await supabase.from("workspace_submission_signoffs").insert(signoffRows);
       }
 
-      // Auto-create CAPs for failed audit answers with requires_cap_on_fail.
-      // Best-effort: failures inside the loop are logged but don't roll
-      // back the submission (already locked + signoffs created).
       const capResult = await autoCreateCapsForAuditAnswers({
         supabase, profile, template, questions, insertedAnswers,
         workspace, assignment: asn, submission: sub,
@@ -547,9 +567,6 @@ export const handler = async (event) => {
       return respond(200, { ok: true, submission: sub });
     }
 
-    // Create a revision after a reviewer requested changes. Chains to
-    // the parent_submission_id; bumps version_number. Refused if the
-    // parent isn't in revision_requested state.
     if (action === "createRevisionSubmission" && event.httpMethod === "POST") {
       const payload = JSON.parse(event.body || "{}");
       const parentId = payload.parent_submission_id;
@@ -612,27 +629,12 @@ export const handler = async (event) => {
           });
         }
         if (!a) continue;
-        let auditResult = null;
-        if (q.field_type === "pass_fail_na" && a.audit_result != null) {
-          if (!ALLOWED_AUDIT_RESULT.includes(a.audit_result)) {
-            return respond(400, { ok: false, message: `Bad audit_result.` });
-          }
-          auditResult = a.audit_result;
+        try {
+          answerRows.push(buildAnswerRow(q, a));
+        } catch (err) {
+          if (err && err.httpCode) return respond(err.httpCode, { ok: false, ...err });
+          throw err;
         }
-        answerRows.push({
-          question_id: q.id,
-          answer_text:    a.answer_text ?? null,
-          answer_number:  a.answer_number != null ? Number(a.answer_number) : null,
-          answer_boolean: typeof a.answer_boolean === "boolean" ? a.answer_boolean : null,
-          answer_date:    a.answer_date ?? null,
-          answer_json:    a.answer_json ?? null,
-          attachment_ids: Array.isArray(a.attachment_ids) && a.attachment_ids.length ? a.attachment_ids : null,
-          audit_result:   auditResult,
-          audit_was_critical: q.field_type === "pass_fail_na" ? !!q.is_critical : null,
-          captured_at:    a.captured_at ?? null,
-          geo_lat:        a.geo_lat ?? null,
-          geo_lng:        a.geo_lng ?? null,
-        });
       }
 
       let scoringFields = {};
@@ -685,13 +687,11 @@ export const handler = async (event) => {
         await supabase.from("workspace_submission_signoffs").insert(signoffRows);
       }
 
-      // Auto-create CAPs for any failed audit answers in this revision.
       const capResult = await autoCreateCapsForAuditAnswers({
         supabase, profile, template, questions, insertedAnswers,
         workspace, assignment: asn, submission: sub,
       });
 
-      // Submission is canonical now — clear the autosaved draft.
       await deleteDraft(supabase, asn.id, profile.id);
 
       await logActivity(supabase, profile, {
@@ -784,15 +784,10 @@ export const handler = async (event) => {
       return respond(200, { ok: true, submission: after });
     }
 
-    // ═════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
     // DRAFTS
-    // ═════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
 
-    // Read the current user's draft for an assignment. Returns
-    // { draft: null } if none exists. Marks the draft `stale: true`
-    // if the assignment now points to a different template version
-    // than the one captured at save time — caller should force a
-    // restart in that case.
     if (action === "loadDraft") {
       const asnId = (event.queryStringParameters || {}).assignment_id;
       if (!isUuid(asnId)) return respond(400, { ok: false, message: "Bad assignment_id." });
@@ -804,8 +799,6 @@ export const handler = async (event) => {
         .single();
       if (!asn) return respond(404, { ok: false, message: "Assignment not found." });
 
-      // Drafts are 1:1 with the assignee. (Editors filling for someone
-      // else would need a more invasive change here + at saveDraft.)
       if (asn.assignee_id !== profile.id) {
         return respond(403, { ok: false, message: "Drafts are per-assignee." });
       }
@@ -822,10 +815,6 @@ export const handler = async (event) => {
       return respond(200, { ok: true, draft, stale });
     }
 
-    // Upsert the user's draft. Last-write-wins via client_updated_at:
-    // a payload with an older timestamp than the existing row is a
-    // no-op (another tab/device has fresher edits and we don't want
-    // to clobber them). The full answers array replaces the prior one.
     if (action === "saveDraft" && event.httpMethod === "POST") {
       const payload = JSON.parse(event.body || "{}");
       const asnId = payload.assignment_id;
@@ -880,10 +869,53 @@ export const handler = async (event) => {
       return respond(200, { ok: true, draft });
     }
 
+    // Discarding a draft also cleans up any photo/file attachments
+    // referenced inside it — otherwise we'd leak storage objects every
+    // time a user starts a form and bails. Best-effort: if one
+    // attachment delete fails, we still drop the draft row.
     if (action === "discardDraft" && event.httpMethod === "POST") {
       const payload = JSON.parse(event.body || "{}");
       const asnId = payload.assignment_id;
       if (!isUuid(asnId)) return respond(400, { ok: false, message: "Bad assignment_id." });
+
+      const { data: draft } = await supabase
+        .from("workspace_submission_drafts")
+        .select("answers")
+        .eq("assignment_id", asnId)
+        .eq("user_id", profile.id)
+        .maybeSingle();
+
+      const attachmentIds = [];
+      if (draft && Array.isArray(draft.answers)) {
+        for (const a of draft.answers) {
+          if (a && Array.isArray(a.attachment_ids)) {
+            for (const aid of a.attachment_ids) {
+              if (isUuid(aid)) attachmentIds.push(aid);
+            }
+          }
+        }
+      }
+
+      if (attachmentIds.length) {
+        const { data: rows } = await supabase
+          .from("workspace_attachments")
+          .select("id, storage_path, workspace_id, uploaded_by_id")
+          .in("id", attachmentIds);
+        const paths = (rows || [])
+          .filter((r) => r.uploaded_by_id === profile.id)
+          .map((r) => r.storage_path);
+        if (paths.length) {
+          try {
+            await supabase.storage.from("workspace-attachments").remove(paths);
+          } catch (err) {
+            console.warn("[workspace-submissions] discardDraft storage cleanup:", err?.message || err);
+          }
+          await supabase
+            .from("workspace_attachments")
+            .delete()
+            .in("id", (rows || []).filter((r) => r.uploaded_by_id === profile.id).map((r) => r.id));
+        }
+      }
 
       const { error } = await supabase
         .from("workspace_submission_drafts")
@@ -892,12 +924,12 @@ export const handler = async (event) => {
         .eq("user_id", profile.id);
       if (error) throw error;
 
-      return respond(200, { ok: true });
+      return respond(200, { ok: true, attachments_deleted: attachmentIds.length });
     }
 
-    // ═════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
     // SIGNOFFS
-    // ═════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
 
     if (action === "listMySignoffs") {
       const { data, error } = await supabase
@@ -1117,9 +1149,9 @@ export const handler = async (event) => {
       return respond(200, { ok: true, signoff: updatedStep, submission_status: "revision_requested" });
     }
 
-    // ═════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
     // ATTACHMENTS
-    // ═════════════════════════════════════════════════════════
+    // ═══════════════════════════════════════════════════════════
 
     if (action === "listAttachments") {
       const wsId = (event.queryStringParameters || {}).workspace_id;
@@ -1180,6 +1212,95 @@ export const handler = async (event) => {
         targetId: att.id,
         action: "attachment.uploaded",
         afterState: att,
+      });
+
+      return respond(200, { ok: true, attachment: att });
+    }
+
+    // Upload an attachment in a single call: payload carries the file
+    // bytes as base64 plus metadata. Direct client-to-storage uploads
+    // aren't possible because the workspace-attachments bucket has no
+    // INSERT policy (intentional — keeps anon out). Going through this
+    // function bundles the storage put + the metadata row write under
+    // one auth check.
+    //
+    // Caller is expected to have already compressed any large media.
+    // MAX_UPLOAD_BYTES is a safety net, not a UX guideline.
+    if (action === "uploadAttachment" && event.httpMethod === "POST") {
+      const payload = JSON.parse(event.body || "{}");
+      const wsId = payload.workspace_id;
+      const fileName = (payload.file_name || "").trim();
+      const mimeType = (payload.mime_type || "").trim();
+      const dataBase64 = payload.file_data_base64;
+
+      if (!isUuid(wsId)) return respond(400, { ok: false, message: "Bad workspace_id." });
+      if (!fileName) return respond(400, { ok: false, message: "file_name required." });
+      if (!mimeType) return respond(400, { ok: false, message: "mime_type required." });
+      if (typeof dataBase64 !== "string" || !dataBase64) {
+        return respond(400, { ok: false, message: "file_data_base64 required." });
+      }
+
+      const denied = await requireWorkspaceCap(supabase, profile, wsId, "fill_assignment");
+      if (denied) return denied;
+
+      let buf;
+      try {
+        buf = Buffer.from(dataBase64, "base64");
+      } catch {
+        return respond(400, { ok: false, message: "file_data_base64 is not valid base64." });
+      }
+      if (buf.length === 0) {
+        return respond(400, { ok: false, message: "Empty file." });
+      }
+      if (buf.length > MAX_UPLOAD_BYTES) {
+        return respond(400, {
+          ok: false,
+          message: `File too large (${Math.round(buf.length / 1024)} KB). Max ${MAX_UPLOAD_BYTES / 1024 / 1024} MB.`,
+        });
+      }
+
+      // Storage path: <workspace_id>/<uuid>-<safe-name>. Keep the
+      // original name in the suffix for human-readable downloads but
+      // strip anything that could collide with path traversal.
+      const safeName = fileName.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80);
+      const path = `${wsId}/${randomUUID()}-${safeName}`;
+
+      const { error: upErr } = await supabase.storage
+        .from("workspace-attachments")
+        .upload(path, buf, { contentType: mimeType, upsert: false });
+      if (upErr) {
+        return respond(500, { ok: false, message: `Upload failed: ${upErr.message}` });
+      }
+
+      const { data: att, error } = await supabase
+        .from("workspace_attachments")
+        .insert({
+          workspace_id: wsId,
+          storage_path: path,
+          file_name: fileName,
+          file_size: buf.length,
+          mime_type: mimeType,
+          role: payload.role || null,
+          captured_at: payload.captured_at || null,
+          geo_lat: payload.geo_lat ?? null,
+          geo_lng: payload.geo_lng ?? null,
+          uploaded_by_id: profile.id,
+        })
+        .select("*")
+        .single();
+      if (error) {
+        // Cleanup the orphaned storage object so we don't leak bytes.
+        await supabase.storage.from("workspace-attachments").remove([path]).catch(() => {});
+        throw error;
+      }
+
+      await logActivity(supabase, profile, {
+        workspaceId: wsId,
+        targetKind: "attachment",
+        targetId: att.id,
+        action: "attachment.uploaded",
+        afterState: att,
+        eventData: { method: "uploadAttachment", file_size: buf.length, mime_type: mimeType },
       });
 
       return respond(200, { ok: true, attachment: att });
