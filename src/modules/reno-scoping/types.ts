@@ -129,6 +129,7 @@ export interface StoreStallAttributes {
   order_ahead_stall_count: number;
   order_ahead_stall_numbers: string | null;
   stall_pop_menu_count: number;
+  stall_pop_stall_numbers: string | null;
   has_trailer_stall: boolean;
   trailer_stall_number: string | null;
   // Pre-Con building features (migration 0071).
