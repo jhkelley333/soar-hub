@@ -37,9 +37,13 @@ interface StoreOption {
 }
 
 export function StartAdHocModal({
-  onClose,
+  onClose, workspaceId,
 }: {
   onClose: () => void;
+  // When set, only templates in this workspace are shown and the
+  // workspace heading is hidden. Used when launching from inside a
+  // workspace tab so the picker matches the user's mental scope.
+  workspaceId?: string;
 }) {
   const navigate = useNavigate();
   const [step, setStep] = useState<Step>("template");
@@ -49,8 +53,8 @@ export function StartAdHocModal({
   const [error, setError] = useState<string | null>(null);
 
   const tplQuery = useQuery({
-    queryKey: ["self-serve-templates"],
-    queryFn: () => listSelfServeTemplates(),
+    queryKey: ["self-serve-templates", workspaceId ?? "all"],
+    queryFn: () => listSelfServeTemplates(workspaceId),
   });
 
   // Lazily load stores only once the user advances to step 2 — the
@@ -160,6 +164,7 @@ export function StartAdHocModal({
               error={tplQuery.error as Error | null}
               templates={templates}
               selectedId={selectedTemplate?.id ?? null}
+              groupByWorkspace={!workspaceId}
               onSelect={(t) => setSelectedTemplate(t)}
             />
           )}
@@ -223,15 +228,16 @@ export function StartAdHocModal({
   );
 }
 
-// ─── Template list ──────────────────────────────────
+// ─── Template list ────────────────────────────────
 
 function TemplateList({
-  loading, error, templates, selectedId, onSelect,
+  loading, error, templates, selectedId, groupByWorkspace = true, onSelect,
 }: {
   loading: boolean;
   error: Error | null;
   templates: SelfServeTemplate[];
   selectedId: string | null;
+  groupByWorkspace?: boolean;
   onSelect: (t: SelfServeTemplate) => void;
 }) {
   if (loading) {
@@ -255,13 +261,18 @@ function TemplateList({
   }
 
   // Group by workspace so the list reads naturally for multi-workspace
-  // users. Single-workspace users see one heading or none.
+  // users. When the picker is scoped to a single workspace (launched
+  // from inside a workspace tab) we skip the grouping for a flat list.
   const byWs = new Map<string, SelfServeTemplate[]>();
-  for (const t of templates) {
-    const wsName = t.workspaces?.name ?? "Workspace";
-    const arr = byWs.get(wsName) ?? [];
-    arr.push(t);
-    byWs.set(wsName, arr);
+  if (groupByWorkspace) {
+    for (const t of templates) {
+      const wsName = t.workspaces?.name ?? "Workspace";
+      const arr = byWs.get(wsName) ?? [];
+      arr.push(t);
+      byWs.set(wsName, arr);
+    }
+  } else {
+    byWs.set("", templates);
   }
   const groups = Array.from(byWs.entries());
 
@@ -311,7 +322,7 @@ function TemplateList({
   );
 }
 
-// ─── Store list ─────────────────────────────────────
+// ─── Store list ──────────────────────────────────
 
 function StoreList({
   loading, error, stores, search, onSearch, selectedId, onSelect,
