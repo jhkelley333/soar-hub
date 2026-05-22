@@ -143,6 +143,76 @@ export async function deleteScope(id: string): Promise<void> {
   if (error) throw error;
 }
 
+// Patch the damage-notes columns on a reno_scope row. RLS allows the
+// scoper to update on draft/needs_revision; DO+ on anything visible.
+export async function updateScopeDamage(
+  id: string,
+  patch: { damaged_oa_signs_count?: number; damaged_oa_signs_notes?: string | null },
+): Promise<RenoScope> {
+  const { data, error } = await supabase
+    .from("reno_scopes")
+    .update(patch)
+    .eq("id", id)
+    .select("*")
+    .single();
+  if (error) throw error;
+  return data as RenoScope;
+}
+
+// Fetch the stall-data attributes off the parent store. RLS lets anyone
+// with can_see_store(store_id) read the row.
+export async function fetchStoreStallAttributes(
+  storeId: string,
+): Promise<import("./types").StoreStallAttributes> {
+  const { data, error } = await supabase
+    .from("stores")
+    .select(
+      "patio_pop_menu_count, patio_pop_stall_numbers, order_ahead_stall_count, order_ahead_stall_numbers, stall_pop_menu_count, has_trailer_stall, trailer_stall_number",
+    )
+    .eq("id", storeId)
+    .single();
+  if (error) throw error;
+  return data as unknown as import("./types").StoreStallAttributes;
+}
+
+// Push edited stall-data back to the canonical stores row via the
+// netlify function (service-role bypass — stores writes are admin-only
+// at the RLS layer, but the function gates by scope ownership).
+export async function updateScopeStoreAttributes(
+  scopeId: string,
+  attributes: Partial<import("./types").StoreStallAttributes>,
+): Promise<import("./types").StoreStallAttributes> {
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  const token = session?.access_token;
+  if (!token) throw new Error("Not signed in");
+
+  const res = await fetch(
+    "/.netlify/functions/reno-scoping?action=update-store-attributes",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ scope_id: scopeId, attributes }),
+    },
+  );
+  if (!res.ok) {
+    let message = `Attribute update failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) message = body.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(message);
+  }
+  const body = (await res.json()) as { store: import("./types").StoreStallAttributes };
+  return body.store;
+}
+
 // Status transitions go through the service-role netlify function so
 // each one can also write a reno_scope_audit_log row atomically. The
 // audit-log table has no INSERT policy — only the function can write
