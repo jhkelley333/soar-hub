@@ -66,7 +66,7 @@ export function QuestionEditor({
               <button
                 onClick={onMoveUp}
                 disabled={index === 0}
-                className="p-0.5 hover:text-gray-700 dark:hover:text-gray-200 disabled:opacity-30"
+                className="p-0.5 hover:text-gray-700 disabled:opacity-30"
                 title="Move up"
               >
                 <ArrowUp className="h-3.5 w-3.5" />
@@ -74,7 +74,7 @@ export function QuestionEditor({
               <button
                 onClick={onMoveDown}
                 disabled={index === total - 1}
-                className="p-0.5 hover:text-gray-700 dark:hover:text-gray-200 disabled:opacity-30"
+                className="p-0.5 hover:text-gray-700 disabled:opacity-30"
                 title="Move down"
               >
                 <ArrowDown className="h-3.5 w-3.5" />
@@ -133,7 +133,7 @@ export function QuestionEditor({
                   });
                 }}
                 disabled={readOnly}
-                className="w-full text-sm rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-2"
+                className="w-full text-sm rounded border border-gray-300 bg-white px-2 py-2"
               >
                 {FIELD_TYPES.map((t) => (
                   <option key={t.value} value={t.value}>{t.label}</option>
@@ -157,8 +157,8 @@ export function QuestionEditor({
 
           {/* Audit-specific controls for pass_fail_na */}
           {isAudit && isPassFailNa && (
-            <div className="p-3 rounded border border-amber-200 dark:border-amber-900/40 bg-amber-50/50 dark:bg-amber-900/10 space-y-3">
-              <div className="flex items-center gap-2 text-xs font-medium text-amber-700 dark:text-amber-400">
+            <div className="p-3 rounded border border-amber-200 bg-amber-50/50 space-y-3">
+              <div className="flex items-center gap-2 text-xs font-medium text-amber-700">
                 <AlertTriangle className="h-3.5 w-3.5" />
                 AUDIT SCORING
               </div>
@@ -221,7 +221,7 @@ export function QuestionEditor({
                     }}
                     rows={3}
                     disabled={readOnly}
-                    className="w-full font-mono text-xs rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1.5"
+                    className="w-full font-mono text-xs rounded border border-gray-300 bg-white px-2 py-1.5"
                     placeholder='{ "kind": "submitter" }'
                   />
                   <p className="text-xs text-gray-500 mt-1">
@@ -237,14 +237,14 @@ export function QuestionEditor({
           {!readOnly && (
             <button
               onClick={() => setShowAdvanced((v) => !v)}
-              className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+              className="text-xs text-blue-600 hover:underline"
             >
               {showAdvanced ? "Hide" : "Show"} advanced (field config, conditional logic)
             </button>
           )}
 
           {showAdvanced && (
-            <div className="space-y-2 pl-3 border-l-2 border-gray-200 dark:border-gray-700">
+            <div className="space-y-2 pl-3 border-l-2 border-gray-200">
               <div>
                 <Label htmlFor={`q-config-${index}`} className="text-xs">field_config (JSON)</Label>
                 <textarea
@@ -258,7 +258,7 @@ export function QuestionEditor({
                   }}
                   rows={3}
                   disabled={readOnly}
-                  className="w-full font-mono text-xs rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1.5"
+                  className="w-full font-mono text-xs rounded border border-gray-300 bg-white px-2 py-1.5"
                   placeholder='e.g. { "options": ["A", "B", "C"], "allow_other": false }'
                 />
                 <p className="text-xs text-gray-500 mt-1">
@@ -279,7 +279,7 @@ export function QuestionEditor({
                   }}
                   rows={2}
                   disabled={readOnly}
-                  className="w-full font-mono text-xs rounded border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-2 py-1.5"
+                  className="w-full font-mono text-xs rounded border border-gray-300 bg-white px-2 py-1.5"
                   placeholder='e.g. { "show_if": [{ "question_id": "<uuid>", "op": "eq", "value": "yes" }] }'
                 />
               </div>
@@ -294,7 +294,7 @@ export function QuestionEditor({
                 onDelete();
               }
             }}
-            className="p-1.5 rounded hover:bg-red-50 dark:hover:bg-red-900/20 text-red-600 shrink-0"
+            className="p-1.5 rounded hover:bg-red-50 text-red-600 shrink-0"
             title="Delete question"
           >
             <Trash2 className="h-4 w-4" />

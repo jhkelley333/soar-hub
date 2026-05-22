@@ -207,7 +207,7 @@ export function VersionEditor({
           if (dirty && !confirm("Discard unsaved changes?")) return;
           onBack();
         }}
-        className="inline-flex items-center text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+        className="inline-flex items-center text-sm text-gray-500 hover:text-gray-700"
       >
         <ArrowLeft className="h-4 w-4 mr-1" /> Back to template
       </button>
@@ -235,21 +235,21 @@ export function VersionEditor({
       />
 
       {readOnly && (
-        <Card className="p-3 text-sm bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-900/40">
+        <Card className="p-3 text-sm bg-blue-50 border-blue-200">
           This version is <strong>{version.status}</strong> and cannot be edited. To change anything,
           fork a new draft from the template page.
         </Card>
       )}
 
       {/* Tab bar */}
-      <div className="border-b border-gray-200 dark:border-gray-700 flex gap-1">
+      <div className="border-b border-gray-200 flex gap-1">
         <button
           onClick={() => setTab("questions")}
           className={
             "px-4 py-2 text-sm font-medium border-b-2 -mb-px flex items-center gap-2 transition " +
             (tab === "questions"
-              ? "border-blue-500 text-blue-600 dark:text-blue-400"
-              : "border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100")
+              ? "border-blue-500 text-blue-600"
+              : "border-transparent text-gray-600 hover:text-gray-900")
           }
         >
           <FileQuestion className="h-4 w-4" />
@@ -260,8 +260,8 @@ export function VersionEditor({
           className={
             "px-4 py-2 text-sm font-medium border-b-2 -mb-px flex items-center gap-2 transition " +
             (tab === "steps"
-              ? "border-blue-500 text-blue-600 dark:text-blue-400"
-              : "border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100")
+              ? "border-blue-500 text-blue-600"
+              : "border-transparent text-gray-600 hover:text-gray-900")
           }
         >
           <ListChecks className="h-4 w-4" />
@@ -270,7 +270,7 @@ export function VersionEditor({
       </div>
 
       {saveError && (
-        <Card className="p-3 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-900/40">
+        <Card className="p-3 text-sm text-red-600 bg-red-50 border-red-200">
           {saveError}
         </Card>
       )}
@@ -279,7 +279,7 @@ export function VersionEditor({
       {tab === "questions" && (
         <div className="space-y-3">
           {questions.length === 0 && (
-            <Card className="p-6 text-center text-sm text-gray-500 dark:text-gray-400">
+            <Card className="p-6 text-center text-sm text-gray-500">
               No questions yet. {readOnly ? "" : "Click Add question to get started."}
             </Card>
           )}
@@ -315,7 +315,7 @@ export function VersionEditor({
       {tab === "steps" && (
         <div className="space-y-3">
           {steps.length === 0 && (
-            <Card className="p-6 text-center text-sm text-gray-500 dark:text-gray-400">
+            <Card className="p-6 text-center text-sm text-gray-500">
               No approval steps. Submissions on this version will auto-approve on submit.
               {readOnly ? "" : " Click Add step to add a sign-off chain."}
             </Card>

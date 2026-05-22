@@ -94,7 +94,7 @@ export function WorkspaceDetail() {
       <div>
         <Link
           to="/workspaces"
-          className="inline-flex items-center text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 mb-2"
+          className="inline-flex items-center text-sm text-gray-500 hover:text-gray-700 mb-2"
         >
           <ArrowLeft className="h-4 w-4 mr-1" /> All workspaces
         </Link>
@@ -116,7 +116,7 @@ export function WorkspaceDetail() {
       </div>
 
       {/* Tab bar */}
-      <div className="border-b border-gray-200 dark:border-gray-700 flex gap-1">
+      <div className="border-b border-gray-200 flex gap-1">
         {TABS.map((t) => {
           const Icon = t.icon;
           const isActive = t.key === tab;
@@ -127,8 +127,8 @@ export function WorkspaceDetail() {
               className={
                 "px-4 py-2 text-sm font-medium border-b-2 -mb-px flex items-center gap-2 transition " +
                 (isActive
-                  ? "border-blue-500 text-blue-600 dark:text-blue-400"
-                  : "border-transparent text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100")
+                  ? "border-blue-500 text-blue-600"
+                  : "border-transparent text-gray-600 hover:text-gray-900")
               }
             >
               <Icon className="h-4 w-4" />
@@ -192,29 +192,29 @@ function OverviewTab({
         <h3 className="font-semibold">Details</h3>
         <dl className="text-sm space-y-2">
           <div className="flex justify-between">
-            <dt className="text-gray-500 dark:text-gray-400">Visibility</dt>
+            <dt className="text-gray-500">Visibility</dt>
             <dd className="font-medium">
               {workspace.visibility[0].toUpperCase() + workspace.visibility.slice(1)}
             </dd>
           </div>
           {workspace.scope_anchor_kind && (
             <div className="flex justify-between">
-              <dt className="text-gray-500 dark:text-gray-400">Anchored at</dt>
+              <dt className="text-gray-500">Anchored at</dt>
               <dd className="font-medium font-mono text-xs">
                 {workspace.scope_anchor_kind} : {workspace.scope_anchor_id?.slice(0, 8)}…
               </dd>
             </div>
           )}
           <div className="flex justify-between">
-            <dt className="text-gray-500 dark:text-gray-400">Members</dt>
+            <dt className="text-gray-500">Members</dt>
             <dd className="font-medium">{memberCount}</dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-gray-500 dark:text-gray-400">Created</dt>
+            <dt className="text-gray-500">Created</dt>
             <dd className="font-medium">{new Date(workspace.created_at).toLocaleDateString()}</dd>
           </div>
           <div className="flex justify-between">
-            <dt className="text-gray-500 dark:text-gray-400">Your role</dt>
+            <dt className="text-gray-500">Your role</dt>
             <dd className="font-medium">{myRole ?? "—"}</dd>
           </div>
         </dl>
@@ -222,7 +222,7 @@ function OverviewTab({
 
       <Card className="p-5 space-y-3">
         <h3 className="font-semibold">Future tabs</h3>
-        <ul className="text-sm space-y-1 text-gray-500 dark:text-gray-400">
+        <ul className="text-sm space-y-1 text-gray-500">
           <li>Templates (form + audit builder)</li>
           <li>Schedules (recurring assignments)</li>
           <li>Submissions (filled-out forms)</li>
@@ -236,7 +236,7 @@ function OverviewTab({
 
       {canEditSettings && (
         <Card className="p-5 space-y-3 md:col-span-2">
-          <h3 className="font-semibold flex items-center gap-2 text-amber-600 dark:text-amber-400">
+          <h3 className="font-semibold flex items-center gap-2 text-amber-600">
             <AlertTriangle className="h-4 w-4" />
             Danger zone
           </h3>

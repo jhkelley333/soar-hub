@@ -82,7 +82,7 @@ export function ActivityTab({ workspaceId }: { workspaceId: string }) {
   return (
     <div className="space-y-4">
       <Card className="p-0 overflow-hidden">
-        <div className="divide-y divide-gray-200 dark:divide-gray-700">
+        <div className="divide-y divide-gray-200">
           {entries.map((e) => <ActivityRow key={e.id} entry={e} />)}
         </div>
       </Card>
@@ -100,12 +100,12 @@ function ActivityRow({ entry }: { entry: ActivityLogEntry }) {
   const color = CATEGORY[category] ?? "gray";
 
   const colorClass =
-    color === "blue"   ? "bg-blue-100   text-blue-700   dark:bg-blue-900/30   dark:text-blue-300" :
-    color === "green"  ? "bg-green-100  text-green-700  dark:bg-green-900/30  dark:text-green-300" :
-    color === "amber"  ? "bg-amber-100  text-amber-700  dark:bg-amber-900/30  dark:text-amber-300" :
-    color === "red"    ? "bg-red-100    text-red-700    dark:bg-red-900/30    dark:text-red-300" :
-    color === "purple" ? "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300" :
-                         "bg-gray-100   text-gray-700   dark:bg-gray-800     dark:text-gray-300";
+    color === "blue"   ? "bg-blue-100   text-blue-700    " :
+    color === "green"  ? "bg-green-100  text-green-700  " :
+    color === "amber"  ? "bg-amber-100  text-amber-700  " :
+    color === "red"    ? "bg-red-100    text-red-700      " :
+    color === "purple" ? "bg-purple-100 text-purple-700" :
+                         "bg-gray-100   text-gray-700      ";
 
   return (
     <div className="px-4 py-3 flex items-start gap-3">
@@ -113,10 +113,10 @@ function ActivityRow({ entry }: { entry: ActivityLogEntry }) {
         {entry.target_kind}
       </span>
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-gray-900 dark:text-gray-100">
+        <div className="text-sm font-medium text-gray-900">
           {entry.action}
         </div>
-        <div className="text-xs text-gray-500 dark:text-gray-400">
+        <div className="text-xs text-gray-500">
           {entry.actor_email ?? "—"} • {new Date(entry.created_at).toLocaleString()}
         </div>
         {entry.event_data && Object.keys(entry.event_data).length > 0 && (
@@ -124,7 +124,7 @@ function ActivityRow({ entry }: { entry: ActivityLogEntry }) {
             <summary className="text-xs text-gray-400 cursor-pointer hover:text-gray-600">
               Details
             </summary>
-            <pre className="mt-1 text-[11px] bg-gray-50 dark:bg-gray-900 p-2 rounded overflow-x-auto">
+            <pre className="mt-1 text-[11px] bg-gray-50 p-2 rounded overflow-x-auto">
               {JSON.stringify(entry.event_data, null, 2)}
             </pre>
           </details>

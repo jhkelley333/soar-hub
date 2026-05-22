@@ -118,7 +118,7 @@ export function CreateWorkspaceModal({
             onChange={(e) => setDescription(e.target.value)}
             placeholder="What this workspace is for, who should fill it out, etc."
             rows={3}
-            className="w-full rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-900 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
 
@@ -128,7 +128,7 @@ export function CreateWorkspaceModal({
             {VISIBILITY_OPTIONS.map((opt) => (
               <label
                 key={opt.value}
-                className="flex items-start gap-2 p-2 rounded border border-gray-200 dark:border-gray-700 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-800"
+                className="flex items-start gap-2 p-2 rounded border border-gray-200 cursor-pointer hover:bg-gray-50"
               >
                 <input
                   type="radio"
@@ -140,7 +140,7 @@ export function CreateWorkspaceModal({
                 />
                 <div className="flex-1">
                   <div className="font-medium text-sm">{opt.label}</div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400">{opt.hint}</div>
+                  <div className="text-xs text-gray-500">{opt.hint}</div>
                 </div>
               </label>
             ))}
@@ -148,7 +148,7 @@ export function CreateWorkspaceModal({
         </div>
 
         {error && (
-          <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 p-2 rounded">
+          <div className="text-sm text-red-600 bg-red-50 p-2 rounded">
             {error}
           </div>
         )}

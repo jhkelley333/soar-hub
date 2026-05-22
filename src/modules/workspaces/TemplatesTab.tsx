@@ -38,7 +38,7 @@ export function TemplatesTab({
       <div className="flex items-center justify-between">
         <h3 className="font-semibold">Templates ({active.length})</h3>
         <div className="flex items-center gap-3">
-          <label className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+          <label className="flex items-center gap-2 text-sm text-gray-600">
             <input
               type="checkbox"
               checked={includeArchived}
@@ -82,7 +82,7 @@ export function TemplatesTab({
 
       {includeArchived && archived.length > 0 && (
         <>
-          <div className="flex items-center gap-2 pt-3 text-sm font-medium text-gray-500 dark:text-gray-400">
+          <div className="flex items-center gap-2 pt-3 text-sm font-medium text-gray-500">
             <Archive className="h-4 w-4" />
             Archived ({archived.length})
           </div>
@@ -123,7 +123,7 @@ function TemplateCard({
         <div className="flex items-start justify-between gap-3 mb-2">
           <div className="flex items-center gap-2 min-w-0">
             <Icon className="h-4 w-4 text-gray-400 shrink-0" />
-            <h4 className="font-medium truncate group-hover:text-blue-600 dark:group-hover:text-blue-400">
+            <h4 className="font-medium truncate group-hover:text-blue-600">
               {template.name}
             </h4>
           </div>
@@ -135,12 +135,12 @@ function TemplateCard({
           </div>
         </div>
         {template.description && (
-          <p className="text-xs text-gray-600 dark:text-gray-400 line-clamp-2">
+          <p className="text-xs text-gray-600 line-clamp-2">
             {template.description}
           </p>
         )}
         {template.type === "audit" && template.audit_pass_threshold != null && (
-          <p className="text-xs text-gray-500 dark:text-gray-500 mt-2">
+          <p className="text-xs text-gray-500 mt-2">
             Pass threshold: {template.audit_pass_threshold}%
             {template.critical_fails_audit && " · critical fails the audit"}
           </p>
