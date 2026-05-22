@@ -99,10 +99,8 @@ export function LandingPage() {
         </section>
 
         {/* Footer — short, legitimate. Helps with reputation
-            classifiers that look for "ownership" signals.
-            Extra bottom padding leaves clearance for RollerBuddy so he
-            doesn't visually crowd the footer text on tall screens. */}
-        <footer className="mt-auto flex flex-wrap items-center justify-between gap-3 border-t border-white/20 pt-6 pb-32 text-[11px] text-white/60 lg:mt-24">
+            classifiers that look for "ownership" signals. */}
+        <footer className="mt-auto flex flex-wrap items-center justify-between gap-3 border-t border-white/20 pt-6 text-[11px] text-white/60 lg:mt-24">
           <div>© {new Date().getFullYear()} SOAR QSR. Internal use only.</div>
           <div className="flex items-center gap-4">
             <a

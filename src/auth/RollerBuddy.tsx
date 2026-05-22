@@ -93,7 +93,7 @@ export function RollerBuddy() {
     <div
       ref={wrapRef}
       onClick={handleClick}
-      className="pointer-events-auto fixed bottom-4 z-50 cursor-pointer select-none"
+      className="pointer-events-auto fixed bottom-10 z-50 cursor-pointer select-none"
       style={{
         transform: `translateX(${x}px) scaleX(${dir})`,
         transition: "transform 16ms linear",
