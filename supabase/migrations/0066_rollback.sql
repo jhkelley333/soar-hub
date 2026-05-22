@@ -37,6 +37,7 @@ drop trigger if exists scope_template_items_set_updated_at on scope_template_ite
 drop trigger if exists scope_templates_set_updated_at      on scope_templates;
 
 drop function if exists derive_reno_cohort();
+drop function if exists reno_caller_role();
 
 drop table if exists reno_scope_audit_log;
 drop table if exists reno_scope_notes;
