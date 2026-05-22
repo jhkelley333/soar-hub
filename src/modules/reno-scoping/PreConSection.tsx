@@ -233,6 +233,15 @@ function StallDataCard({
           onChange={(v) => patch("stall_pop_menu_count", v)}
           onBlur={() => commit("stall_pop_menu_count")}
         />
+        <TextField
+          id="stall-pop-stalls"
+          label="Stall POP stall #s"
+          placeholder="e.g. 1,2,5"
+          value={draft.stall_pop_stall_numbers ?? ""}
+          disabled={!canEdit}
+          onChange={(v) => patch("stall_pop_stall_numbers", v || null)}
+          onBlur={() => commit("stall_pop_stall_numbers")}
+        />
         <div className="space-y-2">
           <CheckboxField
             label="Trailer stall"
