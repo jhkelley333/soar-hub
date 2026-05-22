@@ -1,12 +1,12 @@
 // /workspaces/:id — workspace detail. Tabs: Overview, Templates,
-// Assignments, Members, Activity. Future slices add: Submissions,
-// CAPs, Automations. Each tab is a separate file rendered here.
+// Assignments, Submissions, Members, Activity. Future slices add:
+// Schedules, CAPs, Automations. Each tab is a separate file rendered here.
 
 import { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
-  ArrowLeft, Archive, ArchiveRestore, Trash2, Globe, Lock, MapPin, Settings, Users, Activity, AlertTriangle, FileText, ClipboardList,
+  ArrowLeft, Archive, ArchiveRestore, Trash2, Globe, Lock, MapPin, Settings, Users, Activity, AlertTriangle, FileText, ClipboardList, Inbox,
 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
@@ -22,15 +22,17 @@ import {
 import { MembersTab } from "./MembersTab";
 import { TemplatesTab } from "./TemplatesTab";
 import { AssignmentsTab } from "./AssignmentsTab";
+import { SubmissionsTab } from "./SubmissionsTab";
 import { ActivityTab } from "./ActivityTab";
 import type { Workspace } from "./types";
 
-type TabKey = "overview" | "templates" | "assignments" | "members" | "activity";
+type TabKey = "overview" | "templates" | "assignments" | "submissions" | "members" | "activity";
 
 const TABS: Array<{ key: TabKey; label: string; icon: typeof Users }> = [
   { key: "overview",    label: "Overview",    icon: Settings },
   { key: "templates",   label: "Templates",   icon: FileText },
   { key: "assignments", label: "Assignments", icon: ClipboardList },
+  { key: "submissions", label: "Submissions", icon: Inbox },
   { key: "members",     label: "Members",     icon: Users },
   { key: "activity",    label: "Activity",    icon: Activity },
 ];
@@ -168,6 +170,9 @@ export function WorkspaceDetail() {
           members={members}
           canCreate={canEditSettings || my_workspace_role === "editor"}
         />
+      )}
+      {tab === "submissions" && (
+        <SubmissionsTab workspaceId={workspace.id} />
       )}
       {tab === "members" && (
         <MembersTab

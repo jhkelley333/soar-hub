@@ -14,6 +14,7 @@ import {
   Flag,
   ClipboardList,
   Inbox,
+  CheckSquare,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -50,6 +51,10 @@ export const NAV: NavItem[] = [
   // Personal cross-workspace queue: "what's on my plate right now."
   // Wide allowlist so any assignee can see what they owe.
   { to: "/assignments", label: "My Assignments", icon: Inbox,        roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
+  // Sign-off queue: things waiting on the current user to approve.
+  // Available from GM up (shift_manager almost never has approver
+  // duty, but the row only renders if listMySignoffs returns rows).
+  { to: "/signoffs",    label: "Sign-off Queue", icon: CheckSquare,   roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
   // Legacy Work Orders (Smartsheet-backed) — hidden from the sidebar
   // after the V2 cutover. Route stays alive for archival deep links;
   // admins can still navigate to /work-orders manually if needed.

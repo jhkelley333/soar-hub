@@ -2,7 +2,9 @@
 // CTAs that gate the submission flow:
 //   • pending     → Start (flips to in_progress) + Open form link
 //   • in_progress → Open submission form (→ /assignments/:id/fill)
-//   • submitted   → View submission (placeholder until slice 5)
+//   • submitted   → pointers to the workspace's Submissions tab and
+//                   the Sign-off queue (the actual viewer lives at
+//                   /submissions/:id and is reachable from both).
 //
 // Cancel is available to the assignee on pending/in_progress
 // (backend enforces).
@@ -188,11 +190,19 @@ export function AssignmentDetailPage() {
         <Card className="p-5">
           <h3 className="font-semibold mb-1">Submitted</h3>
           <p className="text-sm text-gray-600 mb-3">
-            Sign-off review lands in the next slice.
+            Find the filled-out submission from your workspace's Submissions
+            tab — or, if you're a sign-off candidate, the Sign-off queue.
           </p>
-          <Button variant="secondary" disabled title="Submission view ships in the next slice">
-            <Eye className="h-4 w-4 mr-1" /> View submission
-          </Button>
+          <div className="flex items-center gap-2 flex-wrap">
+            <Link to={`/workspaces/${a.workspace_id}`}>
+              <Button variant="secondary">
+                <Eye className="h-4 w-4 mr-1" /> Open workspace
+              </Button>
+            </Link>
+            <Link to="/signoffs">
+              <Button variant="ghost">Sign-off queue</Button>
+            </Link>
+          </div>
         </Card>
       )}
 
