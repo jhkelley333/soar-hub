@@ -1,12 +1,13 @@
-// /workspaces/:id — workspace detail. All tabs (Overview, Templates,
-// Schedules, Assignments, Submissions, CAPs, Automations, Members,
-// Activity) are now wired up. Each tab is a separate file rendered here.
+// /workspaces/:id — workspace detail. Full tab set wired up:
+// Overview, Templates, Schedules, Assignments, Submissions, CAPs,
+// Findings, Automations, Members, Activity. Each tab is a separate
+// file rendered here.
 
 import { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
-  ArrowLeft, Archive, ArchiveRestore, Trash2, Globe, Lock, MapPin, Settings, Users, Activity, AlertTriangle, FileText, ClipboardList, Inbox, CalendarClock, AlertOctagon, Zap,
+  ArrowLeft, Archive, ArchiveRestore, Trash2, Globe, Lock, MapPin, Settings, Users, Activity, AlertTriangle, FileText, ClipboardList, Inbox, CalendarClock, AlertOctagon, Zap, RefreshCw,
 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
@@ -25,11 +26,12 @@ import { AssignmentsTab } from "./AssignmentsTab";
 import { SubmissionsTab } from "./SubmissionsTab";
 import { SchedulesTab } from "./SchedulesTab";
 import { CapsTab } from "./CapsTab";
+import { FindingsTab } from "./FindingsTab";
 import { AutomationsTab } from "./AutomationsTab";
 import { ActivityTab } from "./ActivityTab";
 import type { Workspace } from "./types";
 
-type TabKey = "overview" | "templates" | "schedules" | "assignments" | "submissions" | "caps" | "automations" | "members" | "activity";
+type TabKey = "overview" | "templates" | "schedules" | "assignments" | "submissions" | "caps" | "findings" | "automations" | "members" | "activity";
 
 const TABS: Array<{ key: TabKey; label: string; icon: typeof Users }> = [
   { key: "overview",    label: "Overview",    icon: Settings },
@@ -38,6 +40,7 @@ const TABS: Array<{ key: TabKey; label: string; icon: typeof Users }> = [
   { key: "assignments", label: "Assignments", icon: ClipboardList },
   { key: "submissions", label: "Submissions", icon: Inbox },
   { key: "caps",        label: "CAPs",        icon: AlertOctagon },
+  { key: "findings",    label: "Findings",    icon: RefreshCw },
   { key: "automations", label: "Automations", icon: Zap },
   { key: "members",     label: "Members",     icon: Users },
   { key: "activity",    label: "Activity",    icon: Activity },
@@ -189,6 +192,9 @@ export function WorkspaceDetail() {
       {tab === "caps" && (
         <CapsTab workspaceId={workspace.id} />
       )}
+      {tab === "findings" && (
+        <FindingsTab workspaceId={workspace.id} />
+      )}
       {tab === "automations" && (
         <AutomationsTab
           workspaceId={workspace.id}
@@ -259,8 +265,8 @@ function OverviewTab({
         <h3 className="font-semibold">All wired</h3>
         <p className="text-sm text-gray-500">
           Templates, schedules, assignments, submissions, sign-offs, CAPs,
-          and automations are all configurable from the tabs above. The
-          activity log is the audit trail.
+          repeat findings, and automations are all configurable from the
+          tabs above. The activity log is the audit trail.
         </p>
       </Card>
 
