@@ -120,6 +120,16 @@ export interface RenoScopePhoto {
   uploaded_at: string;
 }
 
+export interface RenoScopeTour {
+  id: string;
+  scope_id: string;
+  storage_path: string;
+  capture_position: string;
+  sort_order: number;
+  uploaded_by: string | null;
+  uploaded_at: string;
+}
+
 export interface RenoScopeNote {
   id: string;
   scope_id: string;
