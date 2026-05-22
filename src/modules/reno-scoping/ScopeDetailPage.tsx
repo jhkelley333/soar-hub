@@ -1,7 +1,7 @@
 // /reno-scoping/:id — tabbed scope editor. Header shows store info,
 // status badge, cohort, building type, and the status-transition action
 // bar (submit / needs-revision / approve / reopen / delete-draft). The
-// four tabs are Checklist, Photos, Notes, and Review.
+// five tabs are Checklist, Photos, 360 Tour, Notes, and Review.
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -10,6 +10,7 @@ import {
   ArrowLeft,
   CheckCircle2,
   ClipboardList,
+  Compass,
   Image as ImageIcon,
   MessageSquare,
   RotateCcw,
@@ -37,6 +38,7 @@ import { ChecklistTab } from "./ChecklistTab";
 import { NotesTab } from "./NotesTab";
 import { PhotosTab } from "./PhotosTab";
 import { ReviewTab } from "./ReviewTab";
+import { TourTab } from "./TourTab";
 import {
   BUILDING_TYPE_LABELS,
   COHORT_LABELS,
@@ -44,7 +46,7 @@ import {
   type ScopeStatus,
 } from "./types";
 
-type Tab = "checklist" | "photos" | "notes" | "review";
+type Tab = "checklist" | "photos" | "tour" | "notes" | "review";
 
 const STATUS_BADGE: Record<ScopeStatus, "neutral" | "info" | "warning" | "success"> = {
   draft: "neutral",
@@ -238,6 +240,9 @@ export function ScopeDetailPage() {
         <TabButton active={tab === "photos"} onClick={() => setTab("photos")} icon={ImageIcon}>
           Photos
         </TabButton>
+        <TabButton active={tab === "tour"} onClick={() => setTab("tour")} icon={Compass}>
+          360 Tour
+        </TabButton>
         <TabButton active={tab === "notes"} onClick={() => setTab("notes")} icon={MessageSquare}>
           Notes
         </TabButton>
@@ -261,6 +266,7 @@ export function ScopeDetailPage() {
           canEdit={canEdit}
         />
       )}
+      {tab === "tour" && <TourTab scopeId={scope.id} canEdit={canEdit} />}
       {tab === "notes" && (
         <NotesTab
           notes={notesQuery.data ?? []}
