@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Camera,
   Check,
   ChevronDown,
   ChevronRight,
@@ -30,10 +31,14 @@ import { Badge } from "@/shared/ui/Badge";
 import { cn } from "@/lib/cn";
 import {
   fetchScopeItems,
+  fetchScopePhotos,
   fetchTemplateItems,
+  uploadScopePhoto,
   upsertScopeItem,
   type UpsertScopeItemInput,
 } from "./api";
+import { compressPhoto } from "./photoCompress";
+import { readPhotoTakenAt } from "./exif";
 import {
   TIER_LABELS,
   TIER_ORDER,
@@ -83,6 +88,12 @@ export function ChecklistTab({ scopeId, templateId, buildingType, canEdit }: Pro
     queryKey: ["reno-scope-items", scopeId],
     queryFn: () => fetchScopeItems(scopeId),
   });
+  // Same query key as PhotosTab — they share the cache, and uploads
+  // from either tab invalidate the other.
+  const photosQuery = useQuery({
+    queryKey: ["reno-scope-photos", scopeId],
+    queryFn: () => fetchScopePhotos(scopeId),
+  });
 
   // Merge server answers + local draft into the working state. Server is
   // the baseline; draft items override (last-write-wins, surfaced via the
@@ -122,6 +133,33 @@ export function ChecklistTab({ scopeId, templateId, buildingType, canEdit }: Pro
       queryClient.invalidateQueries({ queryKey: ["reno-scope-items", scopeId] });
     },
   });
+
+  // Per-item photo upload (camera button on each row). Compresses +
+  // reads EXIF, then writes via uploadScopePhoto with scope_item_id set.
+  const photoUploadMutation = useMutation({
+    mutationFn: async (args: { itemId: string; file: File }) => {
+      const compressed = await compressPhoto(args.file);
+      const takenAt = await readPhotoTakenAt(compressed.blob);
+      return uploadScopePhoto({
+        scope_id: scopeId,
+        scope_item_id: args.itemId,
+        file: compressed.blob,
+        filename: compressed.filename,
+        taken_at: takenAt,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["reno-scope-photos", scopeId] });
+    },
+  });
+
+  // Photo count per template_item_id for the camera-button badge.
+  const photoCountByItem: Record<string, number> = {};
+  for (const p of photosQuery.data ?? []) {
+    if (p.scope_item_id) {
+      photoCountByItem[p.scope_item_id] = (photoCountByItem[p.scope_item_id] ?? 0) + 1;
+    }
+  }
 
   function flushPending() {
     const ids = Array.from(pendingRef.current);
@@ -233,7 +271,15 @@ export function ChecklistTab({ scopeId, templateId, buildingType, canEdit }: Pro
                     item={it}
                     buildingType={buildingType}
                     state={working[it.id]}
+                    photoCount={photoCountByItem[it.id] ?? 0}
                     onChange={(patch) => applyPatch(it.id, patch)}
+                    onUploadPhoto={(file) =>
+                      photoUploadMutation.mutateAsync({ itemId: it.id, file })
+                    }
+                    photoUploading={
+                      photoUploadMutation.isPending &&
+                      photoUploadMutation.variables?.itemId === it.id
+                    }
                     disabled={!canEdit}
                   />
                 ))}
@@ -254,13 +300,19 @@ function ChecklistRow({
   item,
   buildingType,
   state,
+  photoCount,
   onChange,
+  onUploadPhoto,
+  photoUploading,
   disabled,
 }: {
   item: ScopeTemplateItem;
   buildingType: BuildingType;
   state: DraftItem | undefined;
+  photoCount: number;
   onChange: (patch: Partial<Omit<DraftItem, "template_item_id">>) => void;
+  onUploadPhoto: (file: File) => Promise<unknown>;
+  photoUploading: boolean;
   disabled: boolean;
 }) {
   const required = itemRequiredForBuilding(item, buildingType);
@@ -326,6 +378,14 @@ function ChecklistRow({
             disabled={disabled}
             onChange={(v) => onChange({ estimated_cost: v })}
           />
+          <CameraButton
+            count={photoCount}
+            uploading={photoUploading}
+            disabled={disabled}
+            onPick={async (file) => {
+              await onUploadPhoto(file);
+            }}
+          />
           <button
             type="button"
             onClick={() => setNotesOpen((o) => !o)}
@@ -347,6 +407,53 @@ function ChecklistRow({
         />
       )}
     </div>
+  );
+}
+
+// Camera button shown to the right of the cost input on each checklist
+// row. Tap → file picker (camera on mobile via capture="environment")
+// → handles upload via the row's onUploadPhoto callback. Shows a small
+// count badge when photos are already attached.
+function CameraButton({
+  count,
+  uploading,
+  disabled,
+  onPick,
+}: {
+  count: number;
+  uploading: boolean;
+  disabled: boolean;
+  onPick: (file: File) => Promise<void>;
+}) {
+  return (
+    <label
+      className={cn(
+        "relative inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs ring-1 ring-inset transition",
+        disabled
+          ? "cursor-not-allowed bg-zinc-50 text-zinc-400 ring-zinc-200"
+          : "cursor-pointer bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50",
+      )}
+      title="Attach a photo to this item"
+    >
+      {uploading ? (
+        <Loader2 className="h-3 w-3 animate-spin" strokeWidth={2} />
+      ) : (
+        <Camera className="h-3 w-3" strokeWidth={2} />
+      )}
+      {count > 0 && <span className="font-semibold">{count}</span>}
+      <input
+        type="file"
+        accept="image/*"
+        capture="environment"
+        disabled={disabled || uploading}
+        className="hidden"
+        onChange={async (e) => {
+          const f = e.target.files?.[0];
+          if (f) await onPick(f);
+          e.target.value = "";
+        }}
+      />
+    </label>
   );
 }
 

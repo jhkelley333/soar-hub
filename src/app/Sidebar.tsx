@@ -5,7 +5,8 @@ import { useAuth } from "@/auth/AuthProvider";
 import { visibleNav } from "@/app/nav";
 import { fetchResolvedFlags } from "@/lib/flags";
 import { listPafs, listSdoQueue } from "@/modules/paf/api";
-import { ROLE_LABELS, type UserRole } from "@/types/database";
+import { countPendingScopes } from "@/modules/reno-scoping/api";
+import { ROLE_LABELS, roleLevel, type UserRole } from "@/types/database";
 import { cn } from "@/lib/cn";
 
 // Roles that see a PAF count badge in the sidebar. Submitters (DO,
@@ -50,6 +51,23 @@ function usePafBadgeCount(role: UserRole | undefined): number | null {
   return null;
 }
 
+// Count of submitted-but-not-yet-reviewed reno scopes visible to the
+// caller. RLS filters automatically — DOs see their district, RVPs see
+// their region, etc. Shown next to the Reno Scoping nav item for any
+// reviewer role (DO+).
+function useRenoBadgeCount(role: UserRole | undefined): number | null {
+  const level = role ? roleLevel(role) : null;
+  const isReviewer = level != null && level >= roleLevel("do")!;
+  const q = useQuery({
+    queryKey: ["reno-pending-count"],
+    queryFn: countPendingScopes,
+    enabled: isReviewer,
+    staleTime: 30_000,
+  });
+  if (!isReviewer) return null;
+  return q.data ?? null;
+}
+
 export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { profile, signOut } = useAuth();
   // Reuses the same query key as useFlag() so we don't double-fetch.
@@ -61,6 +79,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   });
   const items = visibleNav(profile?.role, flagsQ.data?.flags);
   const pafBadge = usePafBadgeCount(profile?.role);
+  const renoBadge = useRenoBadgeCount(profile?.role);
 
   return (
     <aside className="flex h-full w-60 flex-col border-r border-zinc-200 bg-white shadow-xl lg:shadow-none">
@@ -74,7 +93,16 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
       <nav className="flex-1 overflow-y-auto px-3 py-4">
         <ul className="space-y-0.5">
           {items.map((item) => {
-            const showBadge = item.to === "/paf" && typeof pafBadge === "number" && pafBadge > 0;
+            let badge: number | null = null;
+            if (item.to === "/paf" && typeof pafBadge === "number" && pafBadge > 0) {
+              badge = pafBadge;
+            } else if (
+              item.to === "/reno-scoping" &&
+              typeof renoBadge === "number" &&
+              renoBadge > 0
+            ) {
+              badge = renoBadge;
+            }
             return (
               <li key={item.to}>
                 <NavLink
@@ -94,7 +122,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
                     <>
                       <item.icon className="h-4 w-4" strokeWidth={1.75} />
                       <span className="flex-1">{item.label}</span>
-                      {showBadge && (
+                      {badge !== null && (
                         <span
                           className={cn(
                             "rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums",
@@ -102,9 +130,9 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
                               ? "bg-white/20 text-white"
                               : "bg-cherry text-white"
                           )}
-                          aria-label={`${pafBadge} item${pafBadge === 1 ? "" : "s"} awaiting action`}
+                          aria-label={`${badge} item${badge === 1 ? "" : "s"} awaiting action`}
                         >
-                          {pafBadge}
+                          {badge}
                         </span>
                       )}
                     </>
