@@ -257,6 +257,7 @@ export function ScopeDetailPage() {
           templateId={scope.template_id}
           buildingType={scope.building_type}
           canEdit={canEdit}
+          scope={scope}
         />
       )}
       {tab === "photos" && (
