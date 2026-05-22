@@ -6,7 +6,7 @@ import { useState } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import {
-  ArrowLeft, Archive, ArchiveRestore, Trash2, Globe, Lock, MapPin, Settings, Users, Activity, AlertTriangle,
+  ArrowLeft, Archive, ArchiveRestore, Trash2, Globe, Lock, MapPin, Settings, Users, Activity, AlertTriangle, FileText,
 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
@@ -20,15 +20,17 @@ import {
   deleteWorkspace,
 } from "./api";
 import { MembersTab } from "./MembersTab";
+import { TemplatesTab } from "./TemplatesTab";
 import { ActivityTab } from "./ActivityTab";
 import type { Workspace } from "./types";
 
-type TabKey = "overview" | "members" | "activity";
+type TabKey = "overview" | "templates" | "members" | "activity";
 
 const TABS: Array<{ key: TabKey; label: string; icon: typeof Users }> = [
-  { key: "overview", label: "Overview", icon: Settings  },
-  { key: "members",  label: "Members",  icon: Users     },
-  { key: "activity", label: "Activity", icon: Activity  },
+  { key: "overview",  label: "Overview",  icon: Settings },
+  { key: "templates", label: "Templates", icon: FileText },
+  { key: "members",   label: "Members",   icon: Users },
+  { key: "activity",  label: "Activity",  icon: Activity },
 ];
 
 function visibilityIcon(v: Workspace["visibility"]) {
@@ -150,6 +152,12 @@ export function WorkspaceDetail() {
               deleteMut.mutate();
             }
           }}
+        />
+      )}
+      {tab === "templates" && (
+        <TemplatesTab
+          workspaceId={workspace.id}
+          canEdit={canEditSettings || my_workspace_role === "editor"}
         />
       )}
       {tab === "members" && (

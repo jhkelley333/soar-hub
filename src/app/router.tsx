@@ -32,6 +32,7 @@ import { VendorPortalPage } from "@/modules/vendor-portal/VendorPortalPage";
 import { PublicSubmitPage } from "@/modules/public-submit/PublicSubmitPage";
 import { WorkspacesPage } from "@/modules/workspaces/WorkspacesPage";
 import { WorkspaceDetail } from "@/modules/workspaces/WorkspaceDetail";
+import { TemplateDetailPage } from "@/modules/workspaces/TemplateDetailPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -163,6 +164,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
             <WorkspaceDetail />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "workspaces/:wsId/templates/:tplId",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+            <TemplateDetailPage />
           </ProtectedRoute>
         ),
       },
