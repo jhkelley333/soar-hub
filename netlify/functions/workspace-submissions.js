@@ -1453,7 +1453,7 @@ export const handler = async (event) => {
         .single();
       if (!tpl) return respond(404, { ok: false, message: "Template not found." });
 
-      const denied = await requireWorkspaceCap(supabase, profile, tpl.workspace_id, "manage_templates");
+      const denied = await requireWorkspaceCap(supabase, profile, tpl.workspace_id, "edit_template");
       if (denied) return denied;
 
       const { data: updated, error } = await supabase
