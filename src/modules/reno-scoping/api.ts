@@ -11,6 +11,7 @@ import type {
   RenoScopeNote,
   RenoScopePhoto,
   RenoScopeRow,
+  RenoScopeTour,
   ScopeItemStatus,
   ScopePhotoSlot,
   ScopeStatus,
@@ -273,6 +274,78 @@ export async function deleteScopePhoto(photo: RenoScopePhoto): Promise<void> {
 export async function getPhotoSignedUrl(storagePath: string, expiresInSec = 3600): Promise<string> {
   const { data, error } = await supabase.storage
     .from(PHOTO_BUCKET)
+    .createSignedUrl(storagePath, expiresInSec);
+  if (error) throw error;
+  return data.signedUrl;
+}
+
+// ---- 360 tours -------------------------------------------------------
+
+export async function fetchScopeTours(scopeId: string): Promise<RenoScopeTour[]> {
+  const { data, error } = await supabase
+    .from("reno_scope_tours")
+    .select("*")
+    .eq("scope_id", scopeId)
+    .order("sort_order")
+    .order("uploaded_at");
+  if (error) throw error;
+  return (data ?? []) as RenoScopeTour[];
+}
+
+export interface UploadTourInput {
+  scope_id: string;
+  capture_position: string;
+  file: Blob;
+  filename: string;
+  contentType?: string;
+  sort_order?: number;
+}
+
+export async function uploadScopeTour(input: UploadTourInput): Promise<RenoScopeTour> {
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) throw new Error("Not signed in");
+
+  const storagePath = `${input.scope_id}/${Date.now()}-${input.filename}`;
+  const { error: uploadErr } = await supabase.storage
+    .from(TOUR_BUCKET)
+    .upload(storagePath, input.file, {
+      contentType: input.contentType ?? "image/jpeg",
+      upsert: false,
+    });
+  if (uploadErr) throw uploadErr;
+
+  const { data, error } = await supabase
+    .from("reno_scope_tours")
+    .insert({
+      scope_id: input.scope_id,
+      storage_path: storagePath,
+      capture_position: input.capture_position,
+      sort_order: input.sort_order ?? 0,
+      uploaded_by: user.id,
+    })
+    .select("*")
+    .single();
+  if (error) {
+    await supabase.storage.from(TOUR_BUCKET).remove([storagePath]);
+    throw error;
+  }
+  return data as RenoScopeTour;
+}
+
+export async function deleteScopeTour(tour: RenoScopeTour): Promise<void> {
+  const { error: dbErr } = await supabase
+    .from("reno_scope_tours")
+    .delete()
+    .eq("id", tour.id);
+  if (dbErr) throw dbErr;
+  await supabase.storage.from(TOUR_BUCKET).remove([tour.storage_path]).catch(() => {});
+}
+
+export async function getTourSignedUrl(storagePath: string, expiresInSec = 3600): Promise<string> {
+  const { data, error } = await supabase.storage
+    .from(TOUR_BUCKET)
     .createSignedUrl(storagePath, expiresInSec);
   if (error) throw error;
   return data.signedUrl;
