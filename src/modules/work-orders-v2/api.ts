@@ -91,6 +91,15 @@ export function fetchTickets(): Promise<TicketsResponse> {
   return request<TicketsResponse>(`${FN}?action=getTickets`);
 }
 
+// Single ticket with its photos, approvals, and activity feed joined in.
+// Used by the mobile detail view; the desktop page hydrates detail
+// inline from the list instead.
+export function fetchTicket(id: string): Promise<{ ok: true; ticket: Ticket }> {
+  return request<{ ok: true; ticket: Ticket }>(
+    `${FN}?action=getTicket&id=${encodeURIComponent(id)}`,
+  );
+}
+
 // Compact normalized row for the Replacements views. Server returns
 // the UNION of ticket-sourced rows (replacement_* columns) and
 // equipment_register rows (manual entries). `source` distinguishes
