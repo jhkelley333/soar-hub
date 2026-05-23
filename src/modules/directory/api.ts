@@ -1,14 +1,22 @@
 // Directory data — flattens the org tree from fetchMyTree() into role-
-// grouped people lists for the mobile contacts directory.
+// grouped people lists for the mobile contacts directory, AND pulls in
+// the hub's admin-curated contacts + vendor list so all four sources
+// share a single page.
 //
 // Real data: pulled from manageable_users() via the existing org
 // function, so RLS keeps the list scoped to who the caller can see.
+// Hub contacts come from listContacts() (admin-curated, three-tier),
+// vendors from fetchVendors() (WO2 catalog, scoped server-side).
 
 import { fetchMyTree } from "@/modules/my-stores/api";
 import type {
   LeadershipPerson,
   MyTreeResponse,
 } from "@/modules/my-stores/types";
+import { listContacts } from "@/modules/contacts/api";
+import { fetchVendors } from "@/modules/work-orders-v2/api";
+import type { Contact } from "@/types/database";
+import type { Vendor } from "@/modules/work-orders-v2/types";
 import type { UserRole } from "@/types/database";
 
 export interface DirectoryPerson {
@@ -21,6 +29,31 @@ export interface DirectoryPerson {
   subtitle: string;
   /** Used for the optional grouping label under the row. */
   districtCode: string | null;
+}
+
+// Hub contact normalized into a directory row. Lives alongside
+// DirectoryPerson because it's a near-identical shape but distinct
+// source — the Hub tab can render with a "Company" / "Region" / "Store"
+// scope chip.
+export interface DirectoryHubContact {
+  id: string;
+  name: string;
+  subtitle: string;       // e.g. "Company · IT Helpdesk" or "Store 4287 · Plumber"
+  email: string | null;
+  phone: string | null;
+  category: string | null;
+  tier: Contact["tier"];
+}
+
+// Vendor row normalized for the directory.
+export interface DirectoryVendor {
+  id: string;
+  name: string;
+  subtitle: string;       // category + service area
+  email: string | null;
+  phone: string | null;
+  category: string | null;
+  isInternal: boolean;
 }
 
 export interface DirectorySection {
@@ -36,6 +69,8 @@ export interface DirectoryData {
   district: DirectoryPerson[]; // GMs in caller's district(s)
   region: DirectoryPerson[];   // DOs in caller's region(s)
   aboveStore: DirectoryPerson[]; // SDO + RVP + VP + COO in scope
+  hub: DirectoryHubContact[];  // shared admin-curated contacts
+  vendors: DirectoryVendor[];  // WO2 vendor catalog in caller's scope
 }
 
 function nameOf(p: LeadershipPerson | null): string {
@@ -116,11 +151,73 @@ function pinnedTitleFor(role: UserRole | null): string {
   }
 }
 
+// Normalize a hub Contact into the directory shape. Tier label gives
+// the row a quick sense of where the contact came from.
+const TIER_LABEL: Record<Contact["tier"], string> = {
+  company: "Company",
+  regional: "Regional",
+  area: "Area",
+  district: "District",
+  store: "Store",
+};
+
+function hubContactRow(c: Contact): DirectoryHubContact {
+  const bits = [TIER_LABEL[c.tier], c.category].filter(Boolean);
+  return {
+    id: c.id,
+    name: c.display_name,
+    subtitle: bits.join(" · "),
+    email: c.email,
+    phone: c.phone,
+    category: c.category,
+    tier: c.tier,
+  };
+}
+
+function vendorRow(v: Vendor): DirectoryVendor {
+  const bits = [v.category, v.service_area].filter(Boolean) as string[];
+  return {
+    id: v.id,
+    name: v.name,
+    subtitle: bits.join(" · "),
+    email: v.email,
+    phone: v.phone,
+    category: v.category,
+    isInternal: !!v.is_internal,
+  };
+}
+
 export async function fetchDirectory(
   callerRole: UserRole | null,
   callerProfileId: string | null,
 ): Promise<DirectoryData> {
-  const tree: MyTreeResponse = await fetchMyTree();
+  // Pull every source in parallel. Each failure degrades to an empty
+  // list so the page still renders — the org tree is the only must-
+  // have, and even that has its own retry behavior in fetchMyTree().
+  const [treeRes, hubRes, vendorsRes] = await Promise.allSettled([
+    fetchMyTree(),
+    listContacts(),
+    fetchVendors(),
+  ]);
+
+  if (treeRes.status !== "fulfilled") {
+    // Surface the underlying error to the page; the other sources
+    // aren't useful without the team list as the spine.
+    throw treeRes.reason instanceof Error
+      ? treeRes.reason
+      : new Error("Couldn't load directory.");
+  }
+  const tree: MyTreeResponse = treeRes.value;
+
+  const hub: DirectoryHubContact[] =
+    hubRes.status === "fulfilled"
+      ? (hubRes.value.contacts ?? []).map(hubContactRow)
+      : [];
+
+  const vendors: DirectoryVendor[] =
+    vendorsRes.status === "fulfilled"
+      ? (vendorsRes.value.vendors ?? []).map(vendorRow)
+      : [];
 
   // Collect every store row across the tree, alongside the district +
   // region it belongs to. Stores already carry leadership in the
@@ -221,11 +318,18 @@ export async function fetchDirectory(
 
   return {
     scopeLabel,
-    totalCount: distinctGms.length + distinctDos.length + aboveStore.length,
+    totalCount:
+      distinctGms.length +
+      distinctDos.length +
+      aboveStore.length +
+      hub.length +
+      vendors.length,
     pinned: { title: pinnedTitleFor(callerRole), people: pinnedPeople },
     district: distinctGms,
     region: distinctDos,
     aboveStore,
+    hub,
+    vendors,
   };
 }
 
