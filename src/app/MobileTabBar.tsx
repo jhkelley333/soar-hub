@@ -10,6 +10,7 @@ import {
   Home,
   Inbox,
   Building2,
+  Hammer,
   Menu,
   type LucideIcon,
 } from "lucide-react";
@@ -26,9 +27,10 @@ export interface MobileTab {
 }
 
 export const MOBILE_TABS: MobileTab[] = [
-  { to: "/",          label: "Home",      Icon: Home,       endMatch: true },
-  { to: "/approvals", label: "Approvals", Icon: Inbox },
-  { to: "/region",    label: "Stores",    Icon: Building2 },
+  { to: "/",                     label: "Home",     Icon: Home,      endMatch: true },
+  { to: "/admin/work-orders-v2", label: "Work",     Icon: Hammer },
+  { to: "/approvals",            label: "Approvals", Icon: Inbox },
+  { to: "/region",               label: "Stores",   Icon: Building2 },
 ];
 
 export function MobileTabBar({
@@ -48,7 +50,7 @@ export function MobileTabBar({
       }}
       aria-label="Primary"
     >
-      <div className="grid grid-cols-4 max-w-md mx-auto">
+      <div className="grid grid-cols-5 max-w-md mx-auto">
         {MOBILE_TABS.map((t) => (
           <NavLink
             key={t.to}

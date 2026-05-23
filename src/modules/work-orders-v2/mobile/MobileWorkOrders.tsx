@@ -15,7 +15,7 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, MessageSquare, Clock, Plus } from "lucide-react";
+import { Search, MessageSquare, Clock, Plus, RefreshCw } from "lucide-react";
 import { AppHeader } from "@/shared/ui/AppHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -53,6 +53,9 @@ export function MobileWorkOrders() {
     queryKey: ["wo2", "tickets"],
     queryFn: fetchTickets,
     staleTime: 30_000,
+    // Auto-refresh when returning to the app / reconnecting.
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
 
   const tickets = ticketsQ.data?.tickets ?? [];
@@ -129,6 +132,20 @@ export function MobileWorkOrders() {
       <AppHeader
         title="Work Orders"
         subtitle={ticketsQ.data ? `${openCount} open` : "Loading…"}
+        trailing={
+          <button
+            type="button"
+            onClick={() => ticketsQ.refetch()}
+            disabled={ticketsQ.isFetching}
+            className="p-1 text-midnight-500 hover:text-midnight-900 disabled:opacity-50"
+            aria-label="Refresh"
+          >
+            <RefreshCw
+              className={cn("h-4 w-4", ticketsQ.isFetching && "animate-spin")}
+              strokeWidth={2}
+            />
+          </button>
+        }
       />
 
       {/* Search */}
