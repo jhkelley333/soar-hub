@@ -45,6 +45,7 @@ import { NewScopePage } from "@/modules/reno-scoping/NewScopePage";
 import { ScopeDetailPage } from "@/modules/reno-scoping/ScopeDetailPage";
 import { RegionPage } from "@/modules/region/RegionPage";
 import { ApprovalsPage } from "@/modules/approvals/ApprovalsPage";
+import { WalkthroughPage } from "@/modules/walkthrough/WalkthroughPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -111,6 +112,20 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <ApprovalsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Walkthrough (mobile-first preview). Hardcoded sample data —
+        // a "Weekly Walkthrough" template with 7 sections, currently
+        // on the Drive-thru section. Pass/Watch/Fail toggles + save-
+        // status pill all interact locally. Real form fills still live
+        // in /assignments/:id/fill (SubmissionFormPage). Preview-only
+        // route, no sidebar entry.
+        path: "walkthrough",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <WalkthroughPage />
           </ProtectedRoute>
         ),
       },
