@@ -296,12 +296,32 @@ export const handler = async (event) => {
           }
         : null;
 
+      // Active approval ladder, so the portal can show a vendor what
+      // clears fast (DO NTE) and what routes up. Active rows only,
+      // ordered low → high. Best-effort: the table may not exist on an
+      // un-migrated env, so swallow errors and return an empty ladder.
+      let approvalLadder = [];
+      try {
+        const { data: thr } = await supabase
+          .from("wo_approval_thresholds")
+          .select("label, nte_cents, is_active, sort_order")
+          .eq("is_active", true)
+          .order("sort_order", { ascending: true });
+        approvalLadder = (thr || []).map((t) => ({
+          label: t.label,
+          nte_cents: t.nte_cents,
+        }));
+      } catch (e) {
+        console.warn("[vendor-portal] approval ladder read failed", e);
+      }
+
       return respond(200, {
         ok: true,
         store: storeOut,
         do_contact: doContact,
         tokenLabel: tok.label,
         tickets: tickets || [],
+        approvalLadder,
       });
     }
 
