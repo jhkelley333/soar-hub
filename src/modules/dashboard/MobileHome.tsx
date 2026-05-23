@@ -18,6 +18,7 @@ import {
   Building2,
   ClipboardCheck,
   BookUser,
+  Hammer,
   ChevronRight,
   type LucideIcon,
 } from "lucide-react";
@@ -39,6 +40,12 @@ interface Destination {
 }
 
 const DESTINATIONS: Destination[] = [
+  {
+    to: "/admin/work-orders-v2",
+    label: "Work Orders",
+    subtitle: "View, create, and approve tickets",
+    Icon: Hammer,
+  },
   {
     to: "/approvals",
     label: "Approvals",
@@ -113,8 +120,8 @@ export function MobileHome() {
 
       <div className="px-5 pb-6">
         <p className="text-[10.5px] leading-snug text-midnight-400">
-          Tap More at the bottom for the full menu — work orders, PAF,
-          reno scoping, and admin tools all still live there.
+          Tap More at the bottom for the full menu — PAF, reno scoping,
+          and admin tools all still live there.
         </p>
       </div>
     </div>
