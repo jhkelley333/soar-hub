@@ -40,13 +40,17 @@ export function MobileWorkOrders() {
   const [status, setStatus] = useState<WoStatusFilter>("open");
   const [query, setQuery] = useState("");
 
+  // Same key + queryFn shape as the desktop page so a transition fired
+  // from the detail (which invalidates ["wo2","tickets"]) refreshes this
+  // list too. Desktop and mobile never mount together (useIsDesktop),
+  // so sharing the cache entry is safe.
   const ticketsQ = useQuery({
-    queryKey: ["wo2-tickets"],
-    queryFn: () => fetchTickets().then((r) => r.tickets),
+    queryKey: ["wo2", "tickets"],
+    queryFn: fetchTickets,
     staleTime: 30_000,
   });
 
-  const tickets = ticketsQ.data ?? [];
+  const tickets = ticketsQ.data?.tickets ?? [];
   const q = query.trim().toLowerCase();
 
   const openCount = useMemo(
