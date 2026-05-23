@@ -977,7 +977,8 @@ export const handler = async (event) => {
           *,
           ticket_photos(*),
           ticket_approvals(*),
-          ticket_activities(*)
+          ticket_activities(*),
+          ticket_quotes(*)
         `)
         .eq("id", id)
         .single();
@@ -990,7 +991,7 @@ export const handler = async (event) => {
       const payload = JSON.parse(event.body);
       const {
         storeNumber, storeName, storeEmail, doEmail, sdoEmail,
-        category, assetType, modelNumber, issueDescription,
+        category, assetType, modelNumber, issueDescription, workRequested,
         priority, isBusinessCritical, troubleshootingChecked,
         vendorContacted, vendorName, costEstimate, lineItems, photos,
       } = payload;
@@ -1029,6 +1030,7 @@ export const handler = async (event) => {
           asset_type:             assetType || "",
           model_number:           modelNumber || "",
           issue_description:      issueDescription,
+          work_requested:         workRequested || null,
           status:                 "submitted",
           priority:               priority || "Standard",
           is_business_critical:   isBusinessCritical || false,
@@ -1083,7 +1085,7 @@ export const handler = async (event) => {
       const payload = JSON.parse(event.body);
       const {
         id, status, notes, vendorName, vendorId, vendorEta,
-        costEstimate, lineItems, priority, isBusinessCritical,
+        costEstimate, lineItems, workRequested, priority, isBusinessCritical,
       } = payload;
       if (!id) return respond(400, { ok: false, message: "id required." });
 
@@ -1234,6 +1236,7 @@ export const handler = async (event) => {
         updates.cost_estimate = items && items.length ? totalCents / 100 : null;
       }
       if (priority) updates.priority = priority;
+      if (workRequested !== undefined) updates.work_requested = workRequested || null;
       if (isBusinessCritical !== undefined) {
         updates.is_business_critical = isBusinessCritical;
       }
@@ -1566,7 +1569,7 @@ export const handler = async (event) => {
       if (roleLevel(role) > 3) {
         return respond(403, { ok: false, message: "DO and above only." });
       }
-      const { id, approvalId, decision, notes } = JSON.parse(event.body);
+      const { id, approvalId, decision, notes, quoteId } = JSON.parse(event.body);
       await supabase
         .from("ticket_approvals")
         .update({
@@ -1577,14 +1580,25 @@ export const handler = async (event) => {
         })
         .eq("id", approvalId);
 
+      // Approving against a specific quote commits it: that quote becomes
+      // the recommended one and its total becomes the ticket's cost.
+      const ticketUpdates = {
+        approval_status:      decision,
+        approval_approved_by: userName,
+        approval_approved_at: new Date().toISOString(),
+        updated_at:           new Date().toISOString(),
+      };
+      if (decision === "Approved" && quoteId) {
+        await supabase.from("ticket_quotes")
+          .update({ is_recommended: false }).eq("ticket_id", id);
+        const { data: chosen } = await supabase.from("ticket_quotes")
+          .update({ is_recommended: true }).eq("id", quoteId).select().single();
+        if (chosen) ticketUpdates.cost_estimate = (chosen.amount_cents || 0) / 100;
+      }
+
       await supabase
         .from("tickets")
-        .update({
-          approval_status:     decision,
-          approval_approved_by:userName,
-          approval_approved_at:new Date().toISOString(),
-          updated_at:          new Date().toISOString(),
-        })
+        .update(ticketUpdates)
         .eq("id", id);
 
       await supabase.from("ticket_activities").insert({
@@ -1664,6 +1678,135 @@ export const handler = async (event) => {
       });
 
       return respond(200, { ok: true, photo });
+    }
+
+    // ── ADD QUOTE ──
+    // Adds a vendor quote (vendor + total + optional attached file) to a
+    // ticket. Internal source. The first quote — or one flagged
+    // recommended — becomes the recommended quote and drives the
+    // ticket's cost_estimate. File rides along as base64 like uploadPhoto.
+    if (action === "addQuote" && event.httpMethod === "POST") {
+      const {
+        ticketId, vendorName: qVendor, amountCents, note,
+        fileData, fileName, fileType, isRecommended,
+      } = JSON.parse(event.body);
+      if (!ticketId) return respond(400, { ok: false, message: "ticketId required." });
+
+      let fileUrl = null;
+      if (fileData) {
+        const buf = Buffer.from(fileData, "base64");
+        const ext = (fileName || "quote.pdf").split(".").pop();
+        const path = `${ticketId}/quotes/${Date.now()}.${ext}`;
+        const { error: upErr } = await supabase.storage
+          .from(PHOTOS_BUCKET)
+          .upload(path, buf, { contentType: fileType || "application/pdf", upsert: false });
+        if (upErr) throw upErr;
+        fileUrl = supabase.storage.from(PHOTOS_BUCKET).getPublicUrl(path).data.publicUrl || path;
+      }
+
+      // Does this ticket already have any quotes? The first one is
+      // recommended by default so the hero always has a total to show.
+      const { count: existing } = await supabase
+        .from("ticket_quotes")
+        .select("id", { count: "exact", head: true })
+        .eq("ticket_id", ticketId);
+      const makeRecommended = !!isRecommended || (existing || 0) === 0;
+
+      if (makeRecommended) {
+        await supabase.from("ticket_quotes")
+          .update({ is_recommended: false }).eq("ticket_id", ticketId);
+      }
+
+      const cents = parseIntOrNull(amountCents) || 0;
+      const { data: quote, error: qErr } = await supabase
+        .from("ticket_quotes")
+        .insert({
+          ticket_id:            ticketId,
+          vendor_name:          qVendor || "",
+          amount_cents:         cents,
+          file_url:             fileUrl,
+          file_name:            fileName || null,
+          note:                 note || null,
+          is_recommended:       makeRecommended,
+          source:               "internal",
+          submitted_by_user_id: userId,
+          submitted_by_name:    userName,
+        })
+        .select()
+        .single();
+      if (qErr) throw qErr;
+
+      if (makeRecommended) {
+        await supabase.from("tickets")
+          .update({ cost_estimate: cents / 100, updated_at: new Date().toISOString() })
+          .eq("id", ticketId);
+      }
+
+      await supabase.from("ticket_activities").insert({
+        ticket_id: ticketId, user_id: userId, user_name: userName, user_role: role,
+        update_type: "quote_added", event_type: "quote_added",
+        event_data: { vendor_name: qVendor || "", amount_cents: cents, quote_id: quote?.id },
+        visibility: "all",
+      });
+
+      return respond(200, { ok: true, quote });
+    }
+
+    // ── SET RECOMMENDED QUOTE ──
+    if (action === "setRecommendedQuote" && event.httpMethod === "POST") {
+      const { ticketId, quoteId } = JSON.parse(event.body);
+      if (!ticketId || !quoteId) {
+        return respond(400, { ok: false, message: "ticketId and quoteId required." });
+      }
+      await supabase.from("ticket_quotes")
+        .update({ is_recommended: false }).eq("ticket_id", ticketId);
+      const { data: chosen } = await supabase.from("ticket_quotes")
+        .update({ is_recommended: true }).eq("id", quoteId).select().single();
+      if (chosen) {
+        await supabase.from("tickets")
+          .update({ cost_estimate: (chosen.amount_cents || 0) / 100, updated_at: new Date().toISOString() })
+          .eq("id", ticketId);
+      }
+      return respond(200, { ok: true });
+    }
+
+    // ── DELETE QUOTE ──
+    if (action === "deleteQuote" && event.httpMethod === "POST") {
+      const { quoteId } = JSON.parse(event.body);
+      if (!quoteId) return respond(400, { ok: false, message: "quoteId required." });
+
+      const { data: quote } = await supabase
+        .from("ticket_quotes")
+        .select("id, ticket_id, is_recommended")
+        .eq("id", quoteId)
+        .single();
+      if (!quote) return respond(404, { ok: false, message: "Quote not found." });
+
+      await supabase.from("ticket_quotes").delete().eq("id", quoteId);
+
+      // If we removed the recommended quote, promote the next-newest one
+      // (if any) and re-sync the ticket cost; otherwise clear the cost.
+      if (quote.is_recommended) {
+        const { data: next } = await supabase
+          .from("ticket_quotes")
+          .select("id, amount_cents")
+          .eq("ticket_id", quote.ticket_id)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (next) {
+          await supabase.from("ticket_quotes")
+            .update({ is_recommended: true }).eq("id", next.id);
+          await supabase.from("tickets")
+            .update({ cost_estimate: (next.amount_cents || 0) / 100, updated_at: new Date().toISOString() })
+            .eq("id", quote.ticket_id);
+        } else {
+          await supabase.from("tickets")
+            .update({ cost_estimate: null, updated_at: new Date().toISOString() })
+            .eq("id", quote.ticket_id);
+        }
+      }
+      return respond(200, { ok: true });
     }
 
     // ── BULK IMPORT VENDORS ──

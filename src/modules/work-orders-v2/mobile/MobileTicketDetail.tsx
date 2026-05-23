@@ -12,25 +12,25 @@
 // slices — see the gap table in the PR.
 
 import { useEffect, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, Clock, MapPin, Wrench, User2, Paperclip, RefreshCw } from "lucide-react";
+import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
+import { ChevronLeft, Clock, MapPin, Wrench, User2, Pencil, RefreshCw, Loader2 } from "lucide-react";
 import { AppHeader } from "@/shared/ui/AppHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Avatar } from "@/shared/ui/Avatar";
 import { Lightbox } from "@/shared/ui/Lightbox";
+import { Drawer } from "@/shared/ui/Drawer";
+import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
-import { fetchTicket, markTicketSeen } from "../api";
-import type { TicketActivity } from "../types";
-import { StatusBar } from "../StatusBar";
-import { TicketActionBar } from "../TicketActionBar";
+import { fetchTicket, markTicketSeen, updateTicket } from "../api";
 import { TicketChat } from "../TicketChat";
 import { ApprovalSection } from "../ApprovalSection";
 import { CostHero } from "./CostHero";
 import { ApprovalChain } from "./ApprovalChain";
 import { ApprovalActionBar } from "./ApprovalActionBar";
+import { QuotesSection } from "./QuotesSection";
 import { relativeTime, isApprover, formatDollars } from "./woMobile";
 
 export function MobileTicketDetail({
@@ -71,20 +71,35 @@ export function MobileTicketDetail({
     };
   }, [ticketId, qc]);
 
-  const isSubmitter =
-    !!profile?.id &&
-    !!t?.submitted_by_user_id &&
-    profile.id === t.submitted_by_user_id;
-
   const approvals = t?.ticket_approvals ?? [];
   const latest = approvals.length > 0 ? approvals[approvals.length - 1] : null;
   const pending = latest?.status === "Pending" ? latest : null;
   const canDecide = !!pending && isApprover(profile?.role);
 
+  // The committed/recommended quote — approving commits this one.
+  const recommendedQuote =
+    (t?.ticket_quotes ?? []).find((qz) => qz.is_recommended) ??
+    (t?.ticket_quotes ?? [])[0] ??
+    null;
+
   function refreshTicket() {
     qc.invalidateQueries({ queryKey: ["wo2-ticket", ticketId] });
     qc.invalidateQueries({ queryKey: ["wo2", "tickets"] });
   }
+
+  // Inline edit of the Request (work_requested).
+  const [editReqOpen, setEditReqOpen] = useState(false);
+  const [reqDraft, setReqDraft] = useState("");
+  const saveRequest = useMutation({
+    mutationFn: () => updateTicket({ id: ticketId, workRequested: reqDraft.trim() }),
+    onSuccess: () => {
+      toast.push("Request updated.", "success");
+      setEditReqOpen(false);
+      refreshTicket();
+    },
+    onError: (e: unknown) =>
+      toast.push(e instanceof Error ? e.message : "Couldn't save.", "error"),
+  });
 
   const subtitle = t
     ? [t.category, t.asset_type, `SDI ${t.store_number}`].filter(Boolean).join(" · ")
@@ -142,12 +157,32 @@ export function MobileTicketDetail({
         <div className="flex-1 px-3 pt-3 pb-8 space-y-3">
           <CostHero ticket={t} latest={latest} canDecide={canDecide} />
 
-          {/* Request */}
+          {/* Request — the vendor's proposed scope of work. */}
           <section className="bg-surface rounded-xl ring-1 ring-midnight-100 shadow-card p-4">
-            <SectionTitle inline>Request</SectionTitle>
-            <h1 className="mt-1 text-[17px] font-semibold text-midnight-900 leading-snug">
-              {t.issue_description || t.category || "Work order"}
-            </h1>
+            <div className="flex items-center justify-between">
+              <SectionTitle inline>Request</SectionTitle>
+              <button
+                type="button"
+                onClick={() => { setReqDraft(t.work_requested || ""); setEditReqOpen(true); }}
+                className="inline-flex items-center gap-1 text-[11.5px] font-medium text-accent"
+              >
+                <Pencil className="h-3 w-3" strokeWidth={2} />
+                Edit
+              </button>
+            </div>
+            {t.work_requested ? (
+              <h1 className="mt-1 text-[17px] font-semibold text-midnight-900 leading-snug">
+                {t.work_requested}
+              </h1>
+            ) : (
+              <button
+                type="button"
+                onClick={() => { setReqDraft(""); setEditReqOpen(true); }}
+                className="mt-1 text-[14px] italic text-midnight-400"
+              >
+                Add what the vendor will do…
+              </button>
+            )}
             <div className="mt-2 flex items-center gap-2">
               <Avatar name={t.submitted_by || ""} size={24} />
               <span className="text-[12.5px] text-midnight-700">
@@ -158,18 +193,17 @@ export function MobileTicketDetail({
                 {relativeTime(t.date_submitted)}
               </span>
             </div>
-            {latest?.quote_url && (
-              <a
-                href={latest.quote_url}
-                target="_blank"
-                rel="noreferrer"
-                className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-frost-100 px-2.5 py-1.5 text-[12px] font-medium text-accent hover:bg-frost-200"
-              >
-                <Paperclip className="h-3.5 w-3.5" strokeWidth={2} />
-                View quote
-              </a>
-            )}
           </section>
+
+          {/* Justification — the store's narrative for why. */}
+          {t.issue_description && (
+            <section className="bg-surface rounded-xl ring-1 ring-midnight-100 shadow-card p-4">
+              <SectionTitle inline>Justification</SectionTitle>
+              <p className="mt-1 whitespace-pre-wrap text-[13.5px] leading-relaxed text-midnight-800">
+                {t.issue_description}
+              </p>
+            </section>
+          )}
 
           {/* Evidence */}
           {t.ticket_photos && t.ticket_photos.length > 0 && (
@@ -195,7 +229,10 @@ export function MobileTicketDetail({
             </section>
           )}
 
-          {/* Line items — cost breakdown feeding the hero's total. */}
+          {/* Quotes — vendor + total + attached file; pick a winner. */}
+          <QuotesSection ticket={t} onChanged={refreshTicket} />
+
+          {/* Line items — optional internal breakdown, if present. */}
           {t.line_items && t.line_items.length > 0 && (
             <section>
               <SectionTitle>Line items</SectionTitle>
@@ -270,27 +307,6 @@ export function MobileTicketDetail({
             </section>
           )}
 
-          {/* Lifecycle status + transitions. */}
-          <section>
-            <SectionTitle>Status</SectionTitle>
-            <div className="bg-surface rounded-xl ring-1 ring-midnight-100 shadow-card p-4 space-y-3">
-              <div className="overflow-x-auto">
-                <StatusBar
-                  status={t.status}
-                  pauseState={t.pause_state}
-                  closedByStore={t.closed_by_store}
-                />
-              </div>
-              <TicketActionBar
-                ticketId={t.id}
-                status={t.status}
-                closedAt={t.closed_at}
-                storeNumber={t.store_number}
-                isSubmitter={isSubmitter}
-              />
-            </div>
-          </section>
-
           {/* Messages */}
           <section>
             <SectionTitle>Messages</SectionTitle>
@@ -298,30 +314,17 @@ export function MobileTicketDetail({
               <TicketChat ticketId={t.id} onError={(msg) => toast.push(msg, "error")} />
             </div>
           </section>
-
-          {/* Activity */}
-          {t.ticket_activities && t.ticket_activities.length > 0 && (
-            <section>
-              <SectionTitle>Activity</SectionTitle>
-              <div className="bg-surface rounded-xl ring-1 ring-midnight-100 shadow-card p-4 space-y-3">
-                {[...t.ticket_activities]
-                  .sort(
-                    (a, b) =>
-                      new Date(b.created_at).getTime() -
-                      new Date(a.created_at).getTime(),
-                  )
-                  .map((a) => (
-                    <ActivityRow key={a.id} activity={a} />
-                  ))}
-              </div>
-            </section>
-          )}
         </div>
       )}
 
       {/* Sticky approval bar — only for an approver with a pending row. */}
       {t && canDecide && pending && (
-        <ApprovalActionBar ticket={t} approval={pending} onChanged={refreshTicket} />
+        <ApprovalActionBar
+          ticket={t}
+          approval={pending}
+          quoteId={recommendedQuote?.id ?? null}
+          onChanged={refreshTicket}
+        />
       )}
 
       {t?.ticket_photos && lightboxIndex !== null && (
@@ -332,6 +335,36 @@ export function MobileTicketDetail({
           onIndexChange={setLightboxIndex}
         />
       )}
+
+      {/* Edit the Request (vendor scope). */}
+      <Drawer
+        open={editReqOpen}
+        onClose={() => { if (!saveRequest.isPending) setEditReqOpen(false); }}
+        title="What the vendor will do"
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setEditReqOpen(false)} disabled={saveRequest.isPending}>
+              Cancel
+            </Button>
+            <Button variant="primary" onClick={() => saveRequest.mutate()} disabled={saveRequest.isPending}>
+              {saveRequest.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+              Save
+            </Button>
+          </>
+        }
+      >
+        <label className="text-[11px] font-semibold uppercase tracking-wider text-midnight-500">
+          Request
+        </label>
+        <textarea
+          value={reqDraft}
+          onChange={(e) => setReqDraft(e.target.value)}
+          rows={4}
+          autoFocus
+          placeholder="e.g. Replace ice maker — back-of-house Unit 2"
+          className="mt-1.5 block w-full rounded-lg border border-midnight-200 bg-white px-3 py-2 text-sm text-midnight-900 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+        />
+      </Drawer>
     </div>
   );
 }
@@ -377,24 +410,3 @@ function SectionTitle({
   );
 }
 
-function ActivityRow({ activity }: { activity: TicketActivity }) {
-  return (
-    <div className="flex items-start gap-3">
-      <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-midnight-300 shrink-0" />
-      <div className="min-w-0">
-        <div className="text-[12.5px] text-midnight-800">
-          {activity.notes || prettyEvent(activity.event_type)}
-        </div>
-        <div className="text-[11px] text-midnight-400">
-          {[activity.user_name, relativeTime(activity.created_at)]
-            .filter(Boolean)
-            .join(" · ")}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function prettyEvent(eventType: string): string {
-  return eventType.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
-}

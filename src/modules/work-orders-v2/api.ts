@@ -4,6 +4,7 @@
 
 import { supabase } from "@/lib/supabase";
 import type {
+  AddQuoteBody,
   CallerStoresResponse,
   CreateTicketBody,
   CreateTicketResponse,
@@ -33,6 +34,7 @@ import type {
   UploadPhotoResponse,
   Vendor,
   VendorsResponse,
+  WorkOrderQuote,
 } from "./types";
 
 const FN = "/.netlify/functions/facilities-v2";
@@ -266,6 +268,27 @@ export function decideApproval(payload: DecideApprovalBody): Promise<{ ok: true 
   return request<{ ok: true }>(`${FN}?action=decideApproval`, {
     method: "POST",
     body: JSON.stringify(payload),
+  });
+}
+
+export function addQuote(payload: AddQuoteBody): Promise<{ ok: true; quote: WorkOrderQuote }> {
+  return request<{ ok: true; quote: WorkOrderQuote }>(`${FN}?action=addQuote`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function setRecommendedQuote(ticketId: string, quoteId: string): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`${FN}?action=setRecommendedQuote`, {
+    method: "POST",
+    body: JSON.stringify({ ticketId, quoteId }),
+  });
+}
+
+export function deleteQuote(quoteId: string): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`${FN}?action=deleteQuote`, {
+    method: "POST",
+    body: JSON.stringify({ quoteId }),
   });
 }
 
