@@ -14,16 +14,18 @@
 
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { Search, MessageSquare, Clock } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Search, MessageSquare, Clock, Plus } from "lucide-react";
 import { AppHeader } from "@/shared/ui/AppHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Segmented } from "@/shared/ui/Segmented";
 import { TierBar } from "@/shared/ui/Tier";
+import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { fetchTickets } from "../api";
 import { statusLabel, isOpenStatus, type Ticket } from "../types";
+import { NewTicketModal } from "../NewTicketModal";
 import {
   ticketTier,
   priorityChipClass,
@@ -39,6 +41,9 @@ export function MobileWorkOrders() {
 
   const [status, setStatus] = useState<WoStatusFilter>("open");
   const [query, setQuery] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const qc = useQueryClient();
+  const toast = useToast();
 
   // Same key + queryFn shape as the desktop page so a transition fired
   // from the detail (which invalidates ["wo2","tickets"]) refreshes this
@@ -173,7 +178,7 @@ export function MobileWorkOrders() {
       )}
 
       {ticketsQ.data && (
-        <div className="px-3 pt-2 pb-12 space-y-2">
+        <div className="px-3 pt-2 pb-24 space-y-2">
           {filtered.length === 0 ? (
             <p className="text-center text-[12px] text-midnight-500 py-10">
               {q || status !== "open"
@@ -187,6 +192,29 @@ export function MobileWorkOrders() {
           )}
         </div>
       )}
+
+      {/* New-ticket FAB — floats above the bottom tab bar (lifted by the
+          tab-bar height + the iPhone home-indicator inset). */}
+      <button
+        type="button"
+        onClick={() => setCreateOpen(true)}
+        className="fixed right-4 z-30 inline-flex items-center gap-1.5 rounded-full bg-accent px-4 py-3 text-[13px] font-semibold text-white shadow-float hover:bg-accent-hover transition"
+        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 4.75rem)" }}
+      >
+        <Plus className="h-4 w-4" strokeWidth={2.5} />
+        New
+      </button>
+
+      <NewTicketModal
+        open={createOpen}
+        onClose={() => setCreateOpen(false)}
+        onCreated={(woNumber) => {
+          setCreateOpen(false);
+          qc.invalidateQueries({ queryKey: ["wo2", "tickets"] });
+          toast.push(`Work order ${woNumber} submitted.`, "success");
+        }}
+        onError={(msg) => toast.push(msg, "error")}
+      />
     </div>
   );
 }
