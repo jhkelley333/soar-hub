@@ -46,6 +46,7 @@ import { ScopeDetailPage } from "@/modules/reno-scoping/ScopeDetailPage";
 import { RegionPage } from "@/modules/region/RegionPage";
 import { ApprovalsPage } from "@/modules/approvals/ApprovalsPage";
 import { WalkthroughPage } from "@/modules/walkthrough/WalkthroughPage";
+import { DirectoryPage } from "@/modules/directory/DirectoryPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -126,6 +127,21 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <WalkthroughPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Directory (mobile-first preview). Real org data via
+        // fetchMyTree() — RLS-scoped to the caller. Pinned section
+        // adapts to the caller's role; segmented control switches
+        // between District / Region / Above-store. Lives at /directory
+        // so it doesn't collide with the existing /contacts page
+        // (which is the admin-curated vendor + regional directory).
+        // Preview-only route, no sidebar entry.
+        path: "directory",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <DirectoryPage />
           </ProtectedRoute>
         ),
       },
