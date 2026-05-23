@@ -986,6 +986,45 @@ export const handler = async (event) => {
       return respond(200, { ok: true, ticket: data });
     }
 
+    // ── APPROVAL THRESHOLDS (read) ──
+    // The editable authority ladder (Work Orders → Settings → Approval
+    // Limits). Readable by any signed-in user — routing + the vendor
+    // portal heads-up consume it.
+    if (action === "getApprovalThresholds") {
+      const { data, error } = await supabase
+        .from("wo_approval_thresholds")
+        .select("*")
+        .order("sort_order", { ascending: true });
+      if (error) throw error;
+      return respond(200, { ok: true, thresholds: data || [] });
+    }
+
+    // ── APPROVAL THRESHOLDS (save) ── RVP+ only.
+    if (action === "saveApprovalThresholds" && event.httpMethod === "POST") {
+      const SETTINGS = new Set(["rvp", "vp", "coo", "admin"]);
+      if (!SETTINGS.has((role || "").toLowerCase())) {
+        return respond(403, { ok: false, message: "RVP and above only." });
+      }
+      const { thresholds } = JSON.parse(event.body || "{}");
+      if (!Array.isArray(thresholds)) {
+        return respond(400, { ok: false, message: "thresholds array required." });
+      }
+      for (const t of thresholds) {
+        if (!t || !t.role) continue;
+        const cents = parseIntOrNull(t.nte_cents);
+        await supabase.from("wo_approval_thresholds").update({
+          nte_cents: cents == null ? 0 : cents,
+          is_active: !!t.is_active,
+          updated_at: new Date().toISOString(),
+        }).eq("role", String(t.role).toLowerCase());
+      }
+      const { data } = await supabase
+        .from("wo_approval_thresholds")
+        .select("*")
+        .order("sort_order", { ascending: true });
+      return respond(200, { ok: true, thresholds: data || [] });
+    }
+
     // ── CREATE TICKET ──
     if (action === "createTicket" && event.httpMethod === "POST") {
       const payload = JSON.parse(event.body);

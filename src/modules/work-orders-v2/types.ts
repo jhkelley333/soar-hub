@@ -362,6 +362,18 @@ export interface UploadPhotoResponse {
   photo: TicketPhoto;
 }
 
+// One rung of the editable approval authority ladder (migration 0077).
+// nte_cents = the not-to-exceed amount this role can approve solo. A
+// quote routes to the lowest is_active role whose NTE covers it.
+export interface ApprovalThreshold {
+  role: string;
+  label: string;
+  nte_cents: number;
+  is_active: boolean;
+  sort_order: number;
+  updated_at?: string;
+}
+
 export const APPROVAL_TIERS = [
   { value: "DO < $500",       label: "DO — under $500" },
   { value: "SDO $501-$1000",  label: "SDO — $501 to $1,000" },
