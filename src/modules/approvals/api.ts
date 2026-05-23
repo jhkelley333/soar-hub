@@ -1,14 +1,60 @@
-// Approvals queue — DO+ view of every pending sign-off across all
-// workspaces the caller covers. Wraps the existing `listMySignoffs()`
-// (which the server already scopes to candidate_user_ids for the
-// caller) and maps each row into a display-friendly shape.
+// Unified approvals queue. Merges three sources that each have their
+// own pending-decision pipeline today:
 //
-// Real data: store, template name, submitted_at, audit_score_percent,
-// audit_outcome. Tier is derived from audit_outcome (pass → green,
-// fail → yellow, fail_critical → red).
+//   1. Workspace sign-offs   — listMySignoffs() (audits/forms/walkthroughs)
+//   2. PAF approvals         — listSdoQueue()   (bonus PAFs awaiting SDO+)
+//   3. Work order approvals  — fetchOpenWorkOrderAlerts() filtered to
+//                              "awaitingApproval" + "emergencies"
+//
+// Each source's row gets normalized into a single ApprovalItem shape so
+// the page can render them in one tier-sorted list. Each row deep-links
+// back to its native detail page where the actual decision is made.
+//
+// RLS / role gating: every source is already scoped to what the caller
+// can see at the server. We additionally skip the PAF and WO pulls when
+// the caller's role doesn't approve those sources at all, so we don't
+// burn API calls.
 
 import { listMySignoffs } from "@/modules/workspaces/api";
+import { listSdoQueue } from "@/modules/paf/api";
+import {
+  fetchOpenWorkOrderAlerts,
+  type OpenAlertItem,
+} from "@/modules/work-orders-v2/api";
+import type { PafRow } from "@/modules/paf/types";
+import type { UserRole } from "@/types/database";
 import type { Tier } from "@/shared/ui/Tier";
+
+export type ApprovalSource = "workspace" | "paf" | "work_order";
+
+export interface ApprovalItem {
+  /** Unique key across all sources (prefixed by source so React keys + de-dupe work). */
+  id: string;
+  source: ApprovalSource;
+  sourceLabel: string;           // "Walkthrough" / "Bonus PAF" / "Work Order"
+  title: string;                 // primary line (template name, employee, WO summary)
+  subtitle: string;              // secondary line (workspace, category, vendor, etc.)
+  submittedAt: string;           // ISO timestamp
+  sdi: string | null;            // store number when known
+  storeName: string | null;
+  tier: Tier;                    // red / yellow / green
+  score: number | null;          // 0-100 audit score, or null
+  amount: number | null;         // dollar amount for PAF/WO, or null
+  flagged: number;               // count of critical flags
+  prior: string | null;          // "Resubmitted after revision" etc.
+  deepLink: string;              // where tapping the row goes
+}
+
+export interface ApprovalsQueue {
+  items: ApprovalItem[];
+  counts: { all: number; green: number; yellow: number; red: number };
+  bySource: { workspace: number; paf: number; work_order: number };
+}
+
+// ----------------------------------------------------------------------------
+// Source-specific raw types (narrow inline rather than widen each module's
+// canonical types, mirroring the existing pattern in SignoffQueuePage).
+// ----------------------------------------------------------------------------
 
 type RawSignoff = {
   id: string;
@@ -32,33 +78,22 @@ type RawSignoff = {
   } | null;
 };
 
-export interface ApprovalRow {
-  signoffId: string;
-  submissionId: string;
-  stepLabel: string;
-  type: string;                  // template name, e.g. "Weekly Walkthrough"
-  workspaceName: string;
-  submittedAt: string;           // ISO
-  sdi: string | null;            // store_number
-  storeName: string | null;
-  tier: Tier;
-  score: number | null;          // 0-100, null when not audited
-  flagged: number;               // 1 when audit_critical_failed, else 0
-  prior: string | null;          // human-readable "prior action" hint
-}
+// ----------------------------------------------------------------------------
+// Role gating
+// ----------------------------------------------------------------------------
 
-export interface ApprovalsQueue {
-  rows: ApprovalRow[];
-  counts: { all: number; green: number; yellow: number; red: number };
-}
+const PAF_APPROVER_ROLES = new Set<UserRole>(["sdo", "rvp", "vp", "coo", "admin"]);
+const WO_APPROVER_ROLES = new Set<UserRole>(["do", "sdo", "rvp", "vp", "coo", "admin"]);
+
+// ----------------------------------------------------------------------------
+// Normalizers
+// ----------------------------------------------------------------------------
 
 function tierFromOutcome(
   outcome: "pass" | "fail" | "fail_critical" | null,
 ): Tier {
   if (outcome === "fail_critical") return "red";
   if (outcome === "fail") return "yellow";
-  // pass or null (no audit) — treat both as green; non-audit forms
-  // have no critical failures, so they don't deserve a yellow flag.
   return "green";
 }
 
@@ -68,38 +103,144 @@ function priorActionFor(status: string): string | null {
   return null;
 }
 
-function mapRow(raw: RawSignoff): ApprovalRow | null {
+function workspaceRow(raw: RawSignoff): ApprovalItem | null {
   const s = raw.submission;
   if (!s) return null;
   const a = s.assignment;
   const tpl = a?.workspace_templates;
   return {
-    signoffId: raw.id,
-    submissionId: s.id,
-    stepLabel: raw.step?.label ?? `Step ${raw.step_number}`,
-    type: tpl?.name ?? "Submission",
-    workspaceName: a?.workspaces?.name ?? "",
+    id: `workspace:${raw.id}`,
+    source: "workspace",
+    sourceLabel: "Submission",
+    title: tpl?.name ?? "Submission",
+    subtitle: a?.workspaces?.name ?? "",
     submittedAt: s.submitted_at,
     sdi: a?.store?.store_number ?? null,
     storeName: a?.store?.name ?? null,
     tier: tierFromOutcome(s.audit_outcome),
     score: s.audit_score_percent,
+    amount: null,
     flagged: s.audit_critical_failed ? 1 : 0,
     prior: priorActionFor(s.signoff_status),
+    deepLink: `/submissions/${s.id}`,
   };
 }
 
-export async function fetchApprovalsQueue(): Promise<ApprovalsQueue> {
-  const res = await listMySignoffs();
-  const raws = (res.signoffs ?? []) as unknown as RawSignoff[];
-  const rows = raws.map(mapRow).filter((r): r is ApprovalRow => r != null);
-  const counts = {
-    all: rows.length,
-    green: rows.filter((r) => r.tier === "green").length,
-    yellow: rows.filter((r) => r.tier === "yellow").length,
-    red: rows.filter((r) => r.tier === "red").length,
+function moneyToNumber(v: number | string | null | undefined): number | null {
+  if (v == null) return null;
+  if (typeof v === "number") return v;
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+function pafRow(p: PafRow): ApprovalItem {
+  const amount =
+    moneyToNumber(p.reg_pay_rate) ??
+    moneyToNumber(p.new_pay_rate) ??
+    null;
+  // PAF tier: any item in the SDO queue is awaiting a decision, but
+  // none have audit-style critical failures. Yellow = "needs your
+  // attention" without crying wolf.
+  const tier: Tier = "yellow";
+  return {
+    id: `paf:${p.id}`,
+    source: "paf",
+    sourceLabel: "PAF",
+    title: p.employee_name || p.category,
+    subtitle: [p.category, p.store_name].filter(Boolean).join(" · "),
+    submittedAt: p.pay_period_end,
+    sdi: p.drive_in || null,
+    storeName: p.store_name ?? null,
+    tier,
+    score: null,
+    amount,
+    flagged: 0,
+    prior: null,
+    deepLink: `/paf/queue?id=${encodeURIComponent(p.id)}`,
   };
-  return { rows, counts };
+}
+
+function woRow(item: OpenAlertItem, tier: Tier): ApprovalItem {
+  return {
+    id: `work_order:${item.id}`,
+    source: "work_order",
+    sourceLabel: "Work Order",
+    title: item.title || item.ticket_number || "Work order",
+    subtitle: [item.category, item.vendor_name].filter(Boolean).join(" · "),
+    submittedAt: item.timestamp,
+    sdi: item.store_number || null,
+    storeName: item.store_name || null,
+    tier,
+    score: null,
+    amount: item.cost_estimate ?? null,
+    flagged: item.is_business_critical ? 1 : 0,
+    prior: null,
+    // WO2 routes deep-link via ?ticket=<id>
+    deepLink: `/admin/work-orders-v2?ticket=${encodeURIComponent(item.id)}`,
+  };
+}
+
+// ----------------------------------------------------------------------------
+// Public: fetch + merge
+// ----------------------------------------------------------------------------
+
+export async function fetchApprovalsQueue(
+  callerRole: UserRole | null,
+): Promise<ApprovalsQueue> {
+  // Run all three sources in parallel. Each falls back to an empty
+  // list on error so one broken source doesn't take down the queue.
+  const wantPaf = callerRole != null && PAF_APPROVER_ROLES.has(callerRole);
+  const wantWo = callerRole != null && WO_APPROVER_ROLES.has(callerRole);
+
+  const [signoffsRes, pafRes, woRes] = await Promise.allSettled([
+    listMySignoffs(),
+    wantPaf ? listSdoQueue() : Promise.resolve({ pafs: [] as PafRow[] }),
+    wantWo ? fetchOpenWorkOrderAlerts() : Promise.resolve(null),
+  ]);
+
+  const items: ApprovalItem[] = [];
+
+  // Workspace sign-offs
+  if (signoffsRes.status === "fulfilled") {
+    const raws = (signoffsRes.value.signoffs ?? []) as unknown as RawSignoff[];
+    for (const r of raws) {
+      const row = workspaceRow(r);
+      if (row) items.push(row);
+    }
+  }
+
+  // PAFs
+  if (pafRes.status === "fulfilled") {
+    for (const p of pafRes.value.pafs ?? []) items.push(pafRow(p));
+  }
+
+  // Work orders — only the awaitingApproval + emergencies groups belong
+  // in this queue. The other OpenAlerts groups (new24h, stuck, etc.)
+  // are reminders, not decisions.
+  if (woRes.status === "fulfilled" && woRes.value) {
+    for (const g of woRes.value.groups) {
+      if (g.key === "awaitingApproval") {
+        for (const it of g.items) items.push(woRow(it, "yellow"));
+      } else if (g.key === "emergencies") {
+        for (const it of g.items) items.push(woRow(it, "red"));
+      }
+    }
+  }
+
+  const counts = {
+    all: items.length,
+    green: items.filter((i) => i.tier === "green").length,
+    yellow: items.filter((i) => i.tier === "yellow").length,
+    red: items.filter((i) => i.tier === "red").length,
+  };
+
+  const bySource = {
+    workspace: items.filter((i) => i.source === "workspace").length,
+    paf: items.filter((i) => i.source === "paf").length,
+    work_order: items.filter((i) => i.source === "work_order").length,
+  };
+
+  return { items, counts, bySource };
 }
 
 // "2h ago" / "Yesterday" / "May 12" — pure presentational helper, kept
@@ -119,4 +260,10 @@ export function relativeTime(iso: string): string {
   if (diffDay === 1) return "Yesterday";
   if (diffDay < 7) return `${diffDay} days ago`;
   return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+// Dollar formatter for PAF / WO rows. Shows "$3,840" — same shape as
+// the design canvas.
+export function formatDollars(amount: number): string {
+  return `$${amount.toLocaleString(undefined, { maximumFractionDigits: 0 })}`;
 }
