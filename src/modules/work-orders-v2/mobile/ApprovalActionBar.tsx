@@ -25,10 +25,14 @@ type Sheet = "reject" | "info";
 export function ApprovalActionBar({
   ticket,
   approval,
+  quoteId,
   onChanged,
 }: {
   ticket: Ticket;
   approval: TicketApproval;
+  // The quote being committed on approve (recommended one). null when
+  // the WO carries no quotes yet.
+  quoteId?: string | null;
   onChanged: () => void;
 }) {
   const toast = useToast();
@@ -42,6 +46,7 @@ export function ApprovalActionBar({
         approvalId: approval.id,
         decision: vars.decision,
         notes: vars.notes,
+        quoteId: vars.decision === "Approved" ? quoteId ?? undefined : undefined,
       }),
     onSuccess: (_d, vars) => {
       toast.push(

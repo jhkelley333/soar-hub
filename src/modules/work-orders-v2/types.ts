@@ -143,6 +143,22 @@ export interface LineItem {
   amount_cents: number;
 }
 
+// A vendor quote attached to a work order (migration 0076). A WO can
+// carry several for comparison; the recommended one drives cost_estimate.
+export interface WorkOrderQuote {
+  id: string;
+  ticket_id: string;
+  vendor_name: string;
+  amount_cents: number;
+  file_url: string | null;
+  file_name: string | null;
+  note: string | null;
+  is_recommended: boolean;
+  source: "internal" | "vendor";
+  submitted_by_name: string | null;
+  created_at: string;
+}
+
 export interface Ticket {
   id: string;
   wo_number: string;
@@ -195,9 +211,13 @@ export interface Ticket {
   date_completed: string | null;
   latest_comment: string | null;
   line_items?: LineItem[];
+  // Vendor's proposed scope of work (the "Request"), distinct from
+  // issue_description (the store's narrative, shown as "Justification").
+  work_requested?: string | null;
   ticket_photos?: TicketPhoto[];
   ticket_approvals?: TicketApproval[];
   ticket_activities?: TicketActivity[];
+  ticket_quotes?: WorkOrderQuote[];
 }
 
 export interface TicketActivitiesResponse {
@@ -267,6 +287,8 @@ export interface UpdateTicketBody {
   notes?: string;
   // Replaces the cost breakdown; backend recomputes cost_estimate.
   lineItems?: LineItem[];
+  // Vendor's proposed scope of work.
+  workRequested?: string;
 }
 
 // One store the caller has access to, as returned by `getCallerStores`.
@@ -310,6 +332,7 @@ export interface CreateTicketBody {
   assetType?: string;
   modelNumber?: string;
   issueDescription: string;
+  workRequested?: string;
   priority?: TicketPriority;
   isBusinessCritical?: boolean;
   troubleshootingChecked?: boolean;
@@ -358,6 +381,21 @@ export interface DecideApprovalBody {
   approvalId: string;
   decision: "Approved" | "Rejected";
   notes?: string;
+  // When approving, commits this quote: it becomes recommended and its
+  // total becomes the ticket's cost.
+  quoteId?: string;
+}
+
+export interface AddQuoteBody {
+  ticketId: string;
+  vendorName: string;
+  amountCents: number;
+  note?: string;
+  isRecommended?: boolean;
+  // Optional quote file (base64, sans data: prefix) — see fileToBase64.
+  fileData?: string;
+  fileName?: string;
+  fileType?: string;
 }
 
 export type ThreadType = "internal" | "vendor";
