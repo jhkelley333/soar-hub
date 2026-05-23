@@ -4,7 +4,7 @@
 
 import type { Tier } from "@/shared/ui/Tier";
 import type { Ticket, TicketPriority, TicketStatus } from "../types";
-import { isOpenStatus } from "../types";
+import { APPROVAL_TIERS, isOpenStatus } from "../types";
 
 // Map a ticket to the red/yellow/green vocabulary the rest of the app
 // uses. Emergencies and business-critical work read red; urgent reads
@@ -72,4 +72,49 @@ export function matchesStatusFilter(t: Ticket, f: WoStatusFilter): boolean {
   if (f === "all") return true;
   if (f === "open") return isOpenStatus(t.status);
   return t.status === f;
+}
+
+// ── Approval helpers (mirror ApprovalSection's server-enforced gate) ──
+
+// roleLevel <= 3 can decide approvals. Kept in sync with the backend
+// decideApproval gate and ApprovalSection's client mirror.
+const ROLE_LEVEL: Record<string, number> = {
+  admin: 1, coo: 1, vp: 1,
+  rvp: 2, sdo: 2,
+  do: 3,
+  gm: 4,
+  shift_manager: 5,
+  payroll: 6,
+};
+
+export function isApprover(role: string | null | undefined): boolean {
+  if (!role) return false;
+  return (ROLE_LEVEL[role.toLowerCase()] ?? 99) <= 3;
+}
+
+// Whole days since submission. Stands in for the design's "days down".
+export function daysOpen(iso: string | null | undefined): number {
+  if (!iso) return 0;
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return 0;
+  return Math.max(0, Math.floor((Date.now() - then) / 86_400_000));
+}
+
+// Friendly label for an approval-tier value ("DO < $500" → "DO — under
+// $500"). Falls back to the raw value for tiers not in the canonical list.
+export function tierLabel(value: string | null | undefined): string {
+  if (!value) return "—";
+  return APPROVAL_TIERS.find((t) => t.value === value)?.label ?? value;
+}
+
+// "8:14a" — compact submission time for the hero stat chip.
+export function clockTime(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  let h = d.getHours();
+  const m = d.getMinutes().toString().padStart(2, "0");
+  const ap = h < 12 ? "a" : "p";
+  h = h % 12 || 12;
+  return `${h}:${m}${ap}`;
 }
