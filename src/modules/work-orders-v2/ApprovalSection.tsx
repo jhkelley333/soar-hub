@@ -156,6 +156,16 @@ export function ApprovalSection({
 
       {latest && (
         <div className="rounded-md border border-zinc-100 bg-white p-3">
+          {ticket.work_requested && (
+            <div className="mb-2">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                Request
+              </div>
+              <div className="text-sm font-semibold text-midnight">
+                {ticket.work_requested}
+              </div>
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={badgeTone(latest.status)}>{latest.status}</Badge>
             <span className="text-xs text-zinc-500">{latest.approval_tier}</span>
@@ -177,8 +187,13 @@ export function ApprovalSection({
             )}
           </div>
           {latest.notes && (
-            <div className="mt-1.5 whitespace-pre-wrap text-xs text-zinc-700">
-              {latest.notes}
+            <div className="mt-1.5">
+              <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                Justification
+              </div>
+              <div className="whitespace-pre-wrap text-xs text-zinc-700">
+                {latest.notes}
+              </div>
             </div>
           )}
           {latest.status === "Pending" && isApprover(callerRole) && (

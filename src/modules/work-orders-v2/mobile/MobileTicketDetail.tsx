@@ -202,12 +202,13 @@ export function MobileTicketDetail({
             </div>
           </section>
 
-          {/* Justification — the store's narrative for why. */}
-          {t.issue_description && (
+          {/* Justification — the quote's rationale (vendor's, when they
+              submitted one), falling back to the store's original report. */}
+          {(t.approval_request_notes || t.issue_description) && (
             <section className="bg-surface rounded-xl ring-1 ring-midnight-100 shadow-card p-4">
               <SectionTitle inline>Justification</SectionTitle>
               <p className="mt-1 whitespace-pre-wrap text-[13.5px] leading-relaxed text-midnight-800">
-                {t.issue_description}
+                {t.approval_request_notes || t.issue_description}
               </p>
             </section>
           )}

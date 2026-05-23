@@ -1860,6 +1860,7 @@ function QuoteModal({
   onSubmitted: () => void;
 }) {
   const [amount, setAmount] = useState("");
+  const [request, setRequest] = useState("");
   const [notes, setNotes] = useState("");
   const [file, setFile] = useState<File | null>(null);
 
@@ -1882,6 +1883,9 @@ function QuoteModal({
       if (!Number.isFinite(amt) || amt <= 0) {
         return Promise.reject(new Error("Enter a positive dollar amount."));
       }
+      if (!request.trim()) {
+        return Promise.reject(new Error("Add a short Request — what work is this for?"));
+      }
       if (!file) {
         return Promise.reject(new Error("Attach the quote — PDF or a photo — before submitting."));
       }
@@ -1889,6 +1893,7 @@ function QuoteModal({
       return postPortal(`${FN}?action=submitQuote`, {
         token, ticketId, identity,
         amount: amt,
+        workRequested: request.trim(),
         notes: notes || undefined,
         photo: {
           photoData,
@@ -1926,11 +1931,19 @@ function QuoteModal({
               </div>
             )}
           </Field>
-          <Field label="Notes">
+          <Field label="Request * (what work?)">
+            <input
+              type="text"
+              value={request} onChange={(e) => setRequest(e.target.value)}
+              placeholder="e.g., Replaced motor and belt"
+              className="block w-full rounded-md border border-zinc-300 bg-white px-3 py-2.5 text-base"
+            />
+          </Field>
+          <Field label="Justification">
             <textarea
               value={notes} onChange={(e) => setNotes(e.target.value)}
               rows={3}
-              placeholder="What does this cover?"
+              placeholder="Brief description of the work — the approver can open the quote for full detail."
               className="block w-full rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm"
             />
           </Field>

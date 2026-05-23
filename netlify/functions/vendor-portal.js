@@ -882,14 +882,21 @@ export const handler = async (event) => {
       });
       if (appErr) throw appErr;
 
-      // Bump the ticket's cost_estimate + approval status.
-      await supabase.from("tickets").update({
+      // Bump the ticket's cost_estimate + approval status. The vendor's
+      // "Request" (short scope, e.g. "Replaced motor and belt") lands on
+      // work_requested so the approval card's Request line reads right;
+      // the justification goes to approval_request_notes.
+      const ticketBump = {
         cost_estimate: amount,
         approval_level: tier,
         approval_request_notes: body.notes || `Vendor quote: $${amount.toFixed(2)}`,
         approval_status: "Pending",
         updated_at: new Date().toISOString(),
-      }).eq("id", ticketId);
+      };
+      if (body.workRequested && String(body.workRequested).trim()) {
+        ticketBump.work_requested = String(body.workRequested).trim();
+      }
+      await supabase.from("tickets").update(ticketBump).eq("id", ticketId);
 
       await supabase.from("ticket_activities").insert({
         ticket_id: ticketId, user_id: null, user_name: identity.vendor_name,
