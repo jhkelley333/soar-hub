@@ -371,14 +371,21 @@ async function runBulkScopeUpdate(supabase, userId, body) {
 // on. Strings here mirror the literal values stored in
 // ticket_approvals.approval_tier (set by submitApproval and the
 // vendor-portal submitQuote flow).
+// Approval tiers a role should SEE in its queue. A higher tier covers
+// every lower amount (matching the decideApproval gate and the "flag the
+// RVP so they can approve if the SDO is out" backup rule), so each role
+// sees its own tier plus all tiers beneath it — not just an exact match.
 function approvalTiersForRole(role) {
+  const DO  = "DO < $500";
+  const SDO = "SDO $501-$1000";
+  const RVP = "RVP $1001-$1750";
   switch (String(role || "").toLowerCase()) {
-    case "do":    return ["DO < $500"];
-    case "sdo":   return ["SDO $501-$1000"];
+    case "do":    return [DO];
+    case "sdo":   return [SDO, DO];
     case "rvp":
     case "vp":
-    case "coo":   return ["RVP $1001-$1750"];
-    case "admin": return ["DO < $500", "SDO $501-$1000", "RVP $1001-$1750"];
+    case "coo":   return [RVP, SDO, DO];
+    case "admin": return [RVP, SDO, DO];
     default:      return [];
   }
 }
