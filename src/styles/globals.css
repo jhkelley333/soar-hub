@@ -94,6 +94,17 @@
 
 html, body, #root { height: 100%; }
 
+/* Lock the document so ONLY the in-app scroll container moves. Without
+ * this rule iOS chains rubber-band overscroll up to the html/body when
+ * the user pulls past the top or bottom of main, which visually drags
+ * the AppShell's midnight strip and the MobileTabBar with it. Just
+ * overscroll-behavior — NOT overflow:hidden — so full-bleed auth
+ * routes (LandingPage, LoginPage) that exceed the viewport on a phone
+ * still scroll. */
+html, body {
+  overscroll-behavior: none;
+}
+
 /* iOS safe-area handling lives in AppShell — it paints a midnight
  * brand strip in the status-bar zone (top) and lets the MobileTabBar
  * own the home-indicator zone (bottom). LandingPage / LoginPage are

@@ -63,7 +63,13 @@ export function AppShell() {
           </>
         )}
 
-        <main className="min-w-0 flex-1 overflow-y-auto">
+        <main
+          className="min-w-0 flex-1 overflow-y-auto"
+          // Contain the rubber-band so a pull past the top/bottom of
+          // the content doesn't drag the AppShell's midnight strip
+          // or the MobileTabBar along with it.
+          style={{ overscrollBehavior: "contain" }}
+        >
           {/* Container restores the existing padded layout for legacy
               pages. Mobile-first pages set their own `mx-auto max-w-md`
               inside, which lives comfortably inside this wrapper at
