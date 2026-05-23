@@ -13,7 +13,10 @@
 // on the next install. The activate handler purges every cache whose
 // name doesn't match.
 
-const CACHE_NAME = "soar-hub-v1";
+// Bump the version suffix any time we ship a change users need to
+// pick up immediately (e.g. a stuck-cache fix). The activate handler
+// below purges every cache whose name doesn't match this one.
+const CACHE_NAME = "soar-hub-v2";
 
 // Precache the bare minimum the app needs to render an offline shell.
 // Vite hashes JS/CSS bundle filenames, so we let runtime caching pick
