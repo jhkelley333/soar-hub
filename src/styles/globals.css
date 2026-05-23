@@ -8,6 +8,7 @@
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
+  --font-display: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
   /* Surface scale — borrowed from zinc but tuned for executive density */
   --color-surface: #ffffff;
@@ -35,6 +36,60 @@
   --color-warning: #d97706;
   --color-danger: #E40046;
   --color-info: #008AD8;
+
+  /* ---------------------------------------------------------------------------
+   * Brand color scales (Claude Design import). OKLCH gives perceptually-even
+   * steps; the 500-600 step sits on the canonical brand hex above so all the
+   * existing single-token references keep landing on-brand.
+   * ------------------------------------------------------------------------ */
+
+  /* Midnight scale — navy. midnight-600 ≈ existing --color-midnight (#285780). */
+  --color-midnight-50:  oklch(96% 0.012 250);
+  --color-midnight-100: oklch(92% 0.018 250);
+  --color-midnight-200: oklch(86% 0.025 250);
+  --color-midnight-300: oklch(76% 0.035 250);
+  --color-midnight-400: oklch(62% 0.045 250);
+  --color-midnight-500: oklch(50% 0.06 250);
+  --color-midnight-600: oklch(43% 0.072 250);
+  --color-midnight-700: oklch(36% 0.062 250);
+  --color-midnight-800: oklch(28% 0.05 250);
+  --color-midnight-900: oklch(22% 0.04 250);
+  --color-midnight-950: oklch(16% 0.032 250);
+
+  /* Accent scale — sky. accent-500 ≈ existing --color-accent (#008AD8). */
+  --color-accent-100: oklch(94% 0.04 235);
+  --color-accent-200: oklch(85% 0.08 235);
+  --color-accent-300: oklch(75% 0.11 235);
+  --color-accent-500: oklch(60% 0.14 235);
+  --color-accent-600: oklch(52% 0.13 235);
+  --color-accent-700: oklch(44% 0.11 235);
+
+  /* Frost scale — pale cyan. frost-300 ≈ existing --color-frost (#74D2E7). */
+  --color-frost-100: oklch(94% 0.025 220);
+  --color-frost-200: oklch(88% 0.04 220);
+  --color-frost-300: oklch(82% 0.07 220);
+
+  /* Sonic scale — Sonic red. sonic ≡ cherry (#E40046). 700 is a slightly
+   * darker variant for text-on-light-pink situations. */
+  --color-sonic-50:  oklch(96% 0.025 25);
+  --color-sonic:     oklch(56% 0.22 25);
+  --color-sonic-700: oklch(46% 0.19 25);
+
+  /* Status aliases — Claude Design uses these short names. */
+  --color-ok:   #16a34a;
+  --color-bad:  #E40046;
+  --color-warn: #d97706;
+
+  /* Tier colors (used for the 4px left-bar + dot indicators). */
+  --color-tier-green:  oklch(64% 0.13 155);
+  --color-tier-yellow: oklch(78% 0.15 80);
+  --color-tier-red:    oklch(60% 0.16 25);
+
+  /* Card / bar shadows — softer than Tailwind defaults so they read on the
+   * near-white surface palette without competing with the hairline rings. */
+  --shadow-card:  0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.06);
+  --shadow-bar:   0 -2px 8px rgba(15, 23, 42, 0.04);
+  --shadow-float: 0 12px 32px rgba(15, 23, 42, 0.18);
 }
 
 html, body, #root { height: 100%; }
@@ -49,3 +104,45 @@ body {
 
 /* Disable iOS tap highlight — feels enterprise */
 * { -webkit-tap-highlight-color: transparent; }
+
+/* -----------------------------------------------------------------------------
+ * Utilities — small CSS classes that aren't worth living in Tailwind
+ * -------------------------------------------------------------------------- */
+
+/* Status / tier dot indicator. Width and height settable inline for variants. */
+.dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  vertical-align: middle;
+  flex: 0 0 auto;
+}
+
+/* Tier color helpers. The same name works as a bg-* utility because the
+ * .tier-* classes are background-color-only — combine with .dot or with a
+ * fixed-width bar element. */
+.tier-green  { background-color: var(--color-tier-green); }
+.tier-yellow { background-color: var(--color-tier-yellow); }
+.tier-red    { background-color: var(--color-tier-red); }
+
+/* Repeating diagonal stripe pattern — used as a photo-placeholder fill. */
+.placeholder-stripes {
+  background-color: var(--color-surface-sunk);
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 6px,
+    rgba(15, 23, 42, 0.04) 6px,
+    rgba(15, 23, 42, 0.04) 12px
+  );
+}
+
+/* Hide the scrollbar inside a fixed-height phone-like region without
+ * disabling scroll. Used by mocked viewports. */
+.phone-scroll {
+  scrollbar-width: none;
+}
+.phone-scroll::-webkit-scrollbar {
+  display: none;
+}
