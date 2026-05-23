@@ -48,7 +48,15 @@ export function AppShell() {
         </>
       )}
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div
+        className="flex min-w-0 flex-1 flex-col"
+        // Safety net for the iOS status bar inset. With the apple-
+        // mobile-web-app-status-bar-style: default the OS already
+        // pushes our content down, but on installed PWAs with a
+        // notch some iOS versions still leak — this guarantees the
+        // first row of content sits below the status bar.
+        style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
+      >
         <main className="flex-1 overflow-y-auto">
           {/* Container restores the existing padded layout for
               legacy pages. Mobile-first pages set their own
