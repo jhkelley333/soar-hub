@@ -135,6 +135,29 @@ async function findRecipients(supabase, ticket, kind) {
     }
     return [u];
   }
+  if (kind === "info_requested") {
+    // An approver is asking the submitter for more detail before they
+    // decide. Same recipient resolution as approval_decided: the
+    // submitter, with the store inbox substituted for GM / shift-manager.
+    if (!ticket.submitted_by_user_id) return [];
+    const { data: u } = await supabase
+      .from("profiles")
+      .select("id, email, full_name, role")
+      .eq("id", ticket.submitted_by_user_id)
+      .maybeSingle();
+    if (!u) return [];
+    const submitterRole = String(u.role || "").toLowerCase();
+    if (submitterRole === "gm" || submitterRole === "shift_manager") {
+      const { data: storeRow } = await supabase
+        .from("stores")
+        .select("email")
+        .eq("number", String(ticket.store_number))
+        .maybeSingle();
+      const storeEmail = (storeRow?.email || "").trim() || null;
+      return [{ ...u, email: storeEmail }];
+    }
+    return [u];
+  }
   if (kind === "vendor_message_posted") {
     // GMs and DOs are the humans who'd actually reply to a vendor
     // message. SDOs+ can see the conversation in WO2's chat tab
@@ -201,6 +224,9 @@ function fallbackSubject(ticket, kind, vars = {}) {
     const vendor = vars.vendor_name || "Vendor";
     return `[Work Order] New message from ${vendor} — ${ticket.wo_number}`;
   }
+  if (kind === "info_requested") {
+    return `[Work Order] More info needed — ${ticket.wo_number}`;
+  }
   return `[Work Order] Update — ${ticket.wo_number}`;
 }
 
@@ -228,6 +254,10 @@ function fallbackHtml(ticket, kind, vars = {}) {
     body = `<p><strong>Approval requested at tier:</strong> ${escapeHtml(ticket.approval_level || "—")}</p>${detail}<p><strong>Request notes:</strong></p><p style="white-space:pre-wrap;color:#333;">${escapeHtml(ticket.approval_request_notes || "—")}</p>`;
   } else if (kind === "approval_decided") {
     body = `<p>Your approval request was <strong>${escapeHtml(ticket.approval_status || "Decided")}</strong>${ticket.approval_approved_by ? ` by ${escapeHtml(ticket.approval_approved_by)}` : ""}.</p>${detail}`;
+  } else if (kind === "info_requested") {
+    const asker = vars.requested_by || "An approver";
+    const question = vars.question || "";
+    body = `<p><strong>${escapeHtml(asker)}</strong> needs more information before approving this work order.</p>${detail}<p><strong>Question:</strong></p><blockquote style="margin:8px 0;padding:8px 12px;border-left:3px solid #2563eb;background:#f1f5f9;color:#222;white-space:pre-wrap;">${escapeHtml(question)}</blockquote><p style="font-size:12px;color:#666;">Reply on the work order's chat thread so the approver can continue.</p>`;
   } else if (kind === "vendor_message_posted") {
     const vendor = vars.vendor_name || "Vendor";
     const preview = vars.message_preview || "";

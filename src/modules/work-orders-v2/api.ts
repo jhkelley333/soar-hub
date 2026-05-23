@@ -321,6 +321,15 @@ export function sendMessage(payload: SendMessageBody): Promise<{ ok: true }> {
   });
 }
 
+export function requestInfo(
+  payload: { ticketId: string; question: string },
+): Promise<{ ok: true; emailed: boolean }> {
+  return request<{ ok: true; emailed: boolean }>(`${FN}?action=requestInfo`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function fetchRecentMessages(
   hours = 48,
 ): Promise<RecentMessagesResponse> {
