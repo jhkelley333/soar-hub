@@ -1,54 +1,76 @@
-// Approvals queue — DO+ mobile-first view of every submission waiting
-// on a sign-off from the caller. Tier filter strip at the top, sorted
-// list (worst tier first, then oldest submission), tap a row to open
-// the full submission detail in the existing workspaces flow.
+// Unified approvals queue — DO+ mobile-first view of every pending
+// decision the caller owns, across three sources:
 //
-// Real data: pulled from listMySignoffs() — store, template name,
-// submitted_at, audit_score_percent, audit_outcome.
-// Placeholder: nothing. Score + tier are real audit outcomes.
+//   - Workspace sign-offs (audits / walkthroughs / forms)
+//   - PAF approvals (bonus PAFs awaiting SDO+)
+//   - Work order quote / emergency approvals
+//
+// Tier filter + source filter at the top, sorted list (worst tier
+// first, then oldest), tap a row to open its native detail page.
 
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Search, Filter, Clock, Flag } from "lucide-react";
+import {
+  Search, Filter, Clock, Flag,
+  ClipboardCheck, FileText, Hammer,
+} from "lucide-react";
 import { AppHeader } from "@/shared/ui/AppHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Segmented } from "@/shared/ui/Segmented";
 import { ScoreRing } from "@/shared/ui/ScoreRing";
 import { TierBar } from "@/shared/ui/Tier";
-import { BottomBar } from "@/shared/ui/BottomBar";
 import { StatusPill } from "@/shared/ui/StatusPill";
-import { fetchApprovalsQueue, relativeTime, type ApprovalRow } from "./api";
+import { useAuth } from "@/auth/AuthProvider";
+import { cn } from "@/lib/cn";
+import {
+  fetchApprovalsQueue,
+  formatDollars,
+  relativeTime,
+  type ApprovalItem,
+  type ApprovalSource,
+} from "./api";
 import type { Tier } from "@/shared/ui/Tier";
 
 type TierFilter = "all" | "red" | "yellow" | "green";
+type SourceFilter = "all" | ApprovalSource;
 
 const TIER_RANK: Record<Tier, number> = { red: 0, yellow: 1, green: 2 };
 
+const SOURCE_ICON: Record<ApprovalSource, typeof ClipboardCheck> = {
+  workspace: ClipboardCheck,
+  paf: FileText,
+  work_order: Hammer,
+};
+
 export function ApprovalsPage() {
+  const { profile } = useAuth();
   const [tier, setTier] = useState<TierFilter>("all");
+  const [source, setSource] = useState<SourceFilter>("all");
 
   const query = useQuery({
-    queryKey: ["approvals-queue"],
-    queryFn: fetchApprovalsQueue,
+    queryKey: ["approvals-queue", profile?.role],
+    queryFn: () => fetchApprovalsQueue(profile?.role ?? null),
     staleTime: 30_000,
+    enabled: !!profile,
   });
 
   const sorted = useMemo(() => {
-    const rows = query.data?.rows ?? [];
-    return [...rows].sort((a, b) => {
+    const items = query.data?.items ?? [];
+    return [...items].sort((a, b) => {
       if (TIER_RANK[a.tier] !== TIER_RANK[b.tier]) {
         return TIER_RANK[a.tier] - TIER_RANK[b.tier];
       }
-      // Within a tier, oldest submission first — those have been
-      // waiting longest.
       return new Date(a.submittedAt).getTime() - new Date(b.submittedAt).getTime();
     });
-  }, [query.data?.rows]);
+  }, [query.data?.items]);
 
-  const filtered = tier === "all" ? sorted : sorted.filter((s) => s.tier === tier);
-  const cleanGreenCount = sorted.filter((s) => s.tier === "green" && s.flagged === 0).length;
+  const filtered = sorted.filter((s) => {
+    if (tier !== "all" && s.tier !== tier) return false;
+    if (source !== "all" && s.source !== source) return false;
+    return true;
+  });
 
   return (
     <div className="mx-auto w-full max-w-md bg-surface-muted min-h-full pb-32">
@@ -65,7 +87,7 @@ export function ApprovalsPage() {
             <button
               type="button"
               className="text-midnight-500 hover:text-midnight-800"
-              aria-label="Search submissions"
+              aria-label="Search approvals"
             >
               <Search className="h-4 w-4" strokeWidth={2} />
             </button>
@@ -85,7 +107,7 @@ export function ApprovalsPage() {
       {query.isError && (
         <div className="p-4">
           <EmptyState
-            title="Couldn't load the approvals queue"
+            title="Couldn't load approvals"
             description={(query.error as Error)?.message ?? "Try again."}
           />
         </div>
@@ -93,9 +115,9 @@ export function ApprovalsPage() {
 
       {query.data && (
         <>
-          {/* Tier filter strip — sticky beneath the AppHeader so it
-              stays available while scrolling the list. */}
-          <div className="px-4 pt-3 pb-2 sticky top-12 z-10 bg-surface-muted border-b border-midnight-100">
+          {/* Filter band — sticky beneath the header. Two segments:
+              tier (urgency) and source (where it came from). */}
+          <div className="px-4 pt-3 pb-2 sticky top-12 z-10 bg-surface-muted border-b border-midnight-100 space-y-2">
             <Segmented<TierFilter>
               value={tier}
               onChange={setTier}
@@ -106,7 +128,20 @@ export function ApprovalsPage() {
                 { value: "green", label: "Green", count: query.data.counts.green, dot: "tier-green" },
               ]}
             />
-            <div className="mt-2 flex items-center justify-between text-[11.5px] text-midnight-500">
+            <div className="flex items-center justify-between">
+              <Segmented<SourceFilter>
+                dense
+                value={source}
+                onChange={setSource}
+                options={[
+                  { value: "all", label: "All sources" },
+                  { value: "workspace", label: "Audits", count: query.data.bySource.workspace },
+                  { value: "paf", label: "PAFs", count: query.data.bySource.paf },
+                  { value: "work_order", label: "Work orders", count: query.data.bySource.work_order },
+                ]}
+              />
+            </div>
+            <div className="flex items-center justify-between text-[11.5px] text-midnight-500">
               <span>Sorted by tier, then submission time</span>
               <button
                 type="button"
@@ -123,47 +158,20 @@ export function ApprovalsPage() {
             <div className="px-4 pt-8">
               <EmptyState
                 title="Nothing waiting on you"
-                description="Submissions you're a candidate signer for will show up here when they need a decision."
+                description="When submissions, PAFs, or work orders need your decision they'll appear here."
               />
             </div>
           ) : (
             <div className="px-3 pt-3 space-y-2">
               {filtered.length === 0 && (
                 <p className="text-center text-[12px] text-midnight-500 py-8">
-                  No submissions in this tier.
+                  No items match the current filters.
                 </p>
               )}
-              {filtered.map((r) => (
-                <ApprovalRowCard key={r.signoffId} row={r} />
+              {filtered.map((item) => (
+                <ApprovalCard key={item.id} item={item} />
               ))}
             </div>
-          )}
-
-          {/* Sticky batch action — only relevant when there are green
-              submissions with no flags. The button still routes through
-              the existing per-submission decision page (it doesn't yet
-              do a real batch call; the design intent is to surface the
-              "clean queue" pattern for the v1 visual). */}
-          {cleanGreenCount > 0 && (
-            <BottomBar>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className="flex-1 h-11 rounded-lg bg-midnight-900 text-white text-[14px] font-semibold inline-flex items-center justify-center gap-2 hover:bg-midnight-800 transition"
-                >
-                  Approve {cleanGreenCount} clean submission{cleanGreenCount === 1 ? "" : "s"}
-                </button>
-                <button
-                  type="button"
-                  className="h-11 px-3 rounded-lg ring-1 ring-midnight-200 text-midnight-700 text-[13px] font-medium hover:bg-surface transition"
-                >
-                  Review each
-                </button>
-              </div>
-              <div className="mt-1.5 text-center text-[10.5px] text-midnight-500">
-                Batch-approve will apply to green-tier submissions with no flags. (Preview — opens individual rows for now.)
-              </div>
-            </BottomBar>
           )}
         </>
       )}
@@ -172,71 +180,81 @@ export function ApprovalsPage() {
 }
 
 // ----------------------------------------------------------------------------
-// Row — one tappable card per pending submission. Mirrors the design
-// canvas pattern: SDI + store, type, time, tier bar, score donut on the
-// right, flag count + prior-action chip when relevant.
+// Row — one card per pending item. The source determines the right-
+// side affordance: workspace audits show a score donut; PAFs and work
+// orders show the dollar amount. Tier bar + flag chip + prior-action
+// chip are shared across sources.
 // ----------------------------------------------------------------------------
 
-function ApprovalRowCard({ row }: { row: ApprovalRow }) {
+function ApprovalCard({ item }: { item: ApprovalItem }) {
+  const SourceIcon = SOURCE_ICON[item.source];
   return (
     <Link
-      to={`/submissions/${row.submissionId}`}
+      to={item.deepLink}
       className="relative block bg-surface rounded-xl ring-1 ring-midnight-100 shadow-card pl-4 pr-3 py-3 hover:ring-midnight-200 transition"
     >
-      <TierBar tier={row.tier} />
+      <TierBar tier={item.tier} />
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            {row.sdi && (
+            <SourceIcon className="h-3 w-3 text-midnight-400" strokeWidth={2} />
+            <span className="text-[10.5px] font-semibold uppercase tracking-wider text-midnight-500">
+              {item.sourceLabel}
+            </span>
+            {item.sdi && (
               <>
+                <span className="text-midnight-300">·</span>
                 <span className="font-mono text-[11px] font-medium text-midnight-500">
-                  SDI {row.sdi}
+                  SDI {item.sdi}
                 </span>
-                {row.storeName && (
-                  <>
-                    <span className="text-midnight-300">·</span>
-                    <span className="text-[12.5px] text-midnight-700 truncate">
-                      {row.storeName}
-                    </span>
-                  </>
-                )}
               </>
             )}
-            {!row.sdi && row.storeName && (
-              <span className="text-[12.5px] text-midnight-700 truncate">{row.storeName}</span>
+            {!item.sdi && item.storeName && (
+              <>
+                <span className="text-midnight-300">·</span>
+                <span className="text-[12px] text-midnight-700 truncate">
+                  {item.storeName}
+                </span>
+              </>
             )}
           </div>
           <div className="mt-1 text-[15px] font-semibold text-midnight-900 leading-tight truncate">
-            {row.type}
+            {item.title}
           </div>
+          {item.subtitle && (
+            <div className="text-[12px] text-midnight-500 truncate">
+              {item.subtitle}
+            </div>
+          )}
           <div className="mt-1 flex items-center gap-2 text-[12px] text-midnight-500">
             <span className="inline-flex items-center gap-1">
               <Clock className="h-3 w-3" strokeWidth={2} />
-              {relativeTime(row.submittedAt)}
+              {relativeTime(item.submittedAt)}
             </span>
-            {row.workspaceName && (
-              <>
-                <span className="text-midnight-300">·</span>
-                <span className="truncate">{row.workspaceName}</span>
-              </>
-            )}
           </div>
-          {row.prior && (
+          {item.prior && (
             <div className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] text-midnight-500 bg-midnight-50 rounded-md px-1.5 py-0.5">
               <Flag className="h-3 w-3" strokeWidth={2} />
-              {row.prior}
+              {item.prior}
             </div>
           )}
         </div>
         <div className="flex flex-col items-end gap-1 shrink-0">
-          {row.score != null ? (
-            <ScoreRing value={Math.round(row.score)} tone={row.tier} size={44} />
+          {item.score != null ? (
+            <ScoreRing value={Math.round(item.score)} tone={item.tier} size={44} />
+          ) : item.amount != null ? (
+            <div className="text-[15px] font-semibold tabular-nums text-midnight-900 leading-none">
+              {formatDollars(item.amount)}
+            </div>
           ) : (
-            <span className="text-[10.5px] text-midnight-400">no score</span>
+            <span className="text-[10.5px] text-midnight-400">—</span>
           )}
-          {row.flagged > 0 && (
-            <span className="text-[10.5px] font-medium text-sonic-700">
-              {row.flagged} flagged
+          {item.flagged > 0 && (
+            <span className={cn(
+              "text-[10.5px] font-medium",
+              item.tier === "red" ? "text-sonic-700" : "text-midnight-600",
+            )}>
+              {item.tier === "red" ? "Emergency" : `${item.flagged} flagged`}
             </span>
           )}
         </div>
