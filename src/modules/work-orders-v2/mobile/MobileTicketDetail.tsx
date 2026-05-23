@@ -29,7 +29,7 @@ import { ApprovalSection } from "../ApprovalSection";
 import { CostHero } from "./CostHero";
 import { ApprovalChain } from "./ApprovalChain";
 import { ApprovalActionBar } from "./ApprovalActionBar";
-import { relativeTime, isApprover } from "./woMobile";
+import { relativeTime, isApprover, formatDollars } from "./woMobile";
 
 export function MobileTicketDetail({
   ticketId,
@@ -175,8 +175,41 @@ export function MobileTicketDetail({
             </section>
           )}
 
-          {/* Details — stands in for the line-item breakdown until that
-              backend slice lands. */}
+          {/* Line items — cost breakdown feeding the hero's total. */}
+          {t.line_items && t.line_items.length > 0 && (
+            <section>
+              <SectionTitle>Line items</SectionTitle>
+              <div className="bg-surface rounded-xl ring-1 ring-midnight-100 shadow-card divide-y divide-midnight-100">
+                {t.line_items.map((li, i) => (
+                  <div key={i} className="flex items-center gap-3 px-4 py-2.5">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[13.5px] text-midnight-900 truncate">
+                        {li.label}
+                      </div>
+                      {li.qty > 1 && (
+                        <div className="text-[11px] text-midnight-400">Qty {li.qty}</div>
+                      )}
+                    </div>
+                    <div className="text-[13.5px] font-semibold text-midnight-900 tabular-nums">
+                      {formatDollars(li.amount_cents / 100)}
+                    </div>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between px-4 py-2.5 bg-surface-sunk">
+                  <span className="text-[12px] font-semibold uppercase tracking-wider text-midnight-500">
+                    Total
+                  </span>
+                  <span className="text-[15px] font-semibold text-midnight-900 tabular-nums">
+                    {formatDollars(
+                      t.line_items.reduce((s, li) => s + li.amount_cents, 0) / 100,
+                    )}
+                  </span>
+                </div>
+              </div>
+            </section>
+          )}
+
+          {/* Details */}
           <section className="bg-surface rounded-xl ring-1 ring-midnight-100 shadow-card divide-y divide-midnight-100">
             <Fact icon={MapPin} label="Store">
               SDI {t.store_number}

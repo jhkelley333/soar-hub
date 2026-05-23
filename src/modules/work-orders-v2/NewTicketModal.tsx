@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Camera, Loader2, Search, Upload, X } from "lucide-react";
+import { Camera, Loader2, Plus, Search, Upload, X } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
@@ -26,6 +26,7 @@ import {
   type CallerStore,
   type CreateTicketBody,
   type IssueLibraryItem,
+  type LineItem,
   type TicketPriority,
   type Vendor,
 } from "./types";
@@ -38,6 +39,37 @@ interface Props {
 }
 
 const MAX_PHOTOS = 5;
+
+// Form-side cost row (strings while editing). Converted to LineItem on
+// submit; rows missing a label or a parseable amount are dropped.
+interface LineRow {
+  label: string;
+  qty: string;
+  amount: string;
+}
+
+function rowsToLineItems(rows: LineRow[]): LineItem[] {
+  const out: LineItem[] = [];
+  for (const r of rows) {
+    const label = r.label.trim();
+    const amount = parseFloat(r.amount);
+    if (!label || !Number.isFinite(amount)) continue;
+    const qty = parseInt(r.qty, 10);
+    out.push({
+      label,
+      qty: Number.isFinite(qty) && qty >= 1 ? qty : 1,
+      amount_cents: Math.round(amount * 100),
+    });
+  }
+  return out;
+}
+
+function lineRowsTotal(rows: LineRow[]): number {
+  return rows.reduce((sum, r) => {
+    const a = parseFloat(r.amount);
+    return sum + (Number.isFinite(a) ? a : 0);
+  }, 0);
+}
 
 export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
   const isDesktop = useIsDesktop();
@@ -71,6 +103,9 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
   const [vendorName, setVendorName] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  // Optional cost breakdown. Inputs stay as strings; converted to the
+  // LineItem shape (amount_cents) on submit. Backend derives the total.
+  const [lineRows, setLineRows] = useState<LineRow[]>([]);
   // Troubleshooting gate — required answer before submit. Tips come from
   // the picked issue_library row (or the category fallback map below).
   const [troubleshooted, setTroubleshooted] = useState<"" | "yes" | "no">("");
@@ -99,6 +134,7 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
     setBusinessCritical(false);
     setVendorName("");
     setFiles([]);
+    setLineRows([]);
     setDropdownOpen(false);
     setVendorPickAsset("");
     setTroubleshooted("");
@@ -245,6 +281,7 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
       if (troubleshooted === "") {
         throw new Error('Answer "Did you troubleshoot?" before submitting.');
       }
+      const lineItems = rowsToLineItems(lineRows);
       const body: CreateTicketBody = {
         storeNumber: storeNumber.trim(),
         category: category || undefined,
@@ -256,6 +293,7 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
         vendorContacted: !!vendorName.trim(),
         vendorName: vendorName || undefined,
         troubleshootingChecked: troubleshooted === "yes",
+        lineItems: lineItems.length ? lineItems : undefined,
       };
       const created = await createTicket(body);
       // Upload any attached photos sequentially so failures are obvious.
@@ -678,6 +716,91 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
                       })}
                     </ul>
                   </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Cost breakdown — optional. When any complete rows are
+              present the backend sets the total as cost_estimate. */}
+          <div>
+            <Label>Cost Breakdown</Label>
+            <p className="-mt-0.5 mb-2 text-[11px] text-zinc-500">
+              Optional. Add line items and we'll total them for the approval request.
+            </p>
+            {lineRows.length > 0 && (
+              <div className="space-y-2">
+                {lineRows.map((row, i) => (
+                  <div key={i} className="flex items-center gap-2">
+                    <div className="flex-1">
+                      <Input
+                        value={row.label}
+                        onChange={(e) =>
+                          setLineRows((rs) =>
+                            rs.map((r, j) => (j === i ? { ...r, label: e.target.value } : r)),
+                          )
+                        }
+                        placeholder="e.g. Replacement unit"
+                      />
+                    </div>
+                    <div className="w-14">
+                      <Input
+                        value={row.qty}
+                        onChange={(e) =>
+                          setLineRows((rs) =>
+                            rs.map((r, j) => (j === i ? { ...r, qty: e.target.value } : r)),
+                          )
+                        }
+                        inputMode="numeric"
+                        placeholder="Qty"
+                        className="text-center"
+                      />
+                    </div>
+                    <div className="relative w-28">
+                      <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-sm text-zinc-400">
+                        $
+                      </span>
+                      <Input
+                        value={row.amount}
+                        onChange={(e) =>
+                          setLineRows((rs) =>
+                            rs.map((r, j) => (j === i ? { ...r, amount: e.target.value } : r)),
+                          )
+                        }
+                        inputMode="decimal"
+                        placeholder="0"
+                        className="pl-5"
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setLineRows((rs) => rs.filter((_, j) => j !== i))}
+                      className="rounded p-1.5 text-zinc-400 hover:bg-zinc-100 hover:text-midnight"
+                      aria-label="Remove line item"
+                    >
+                      <X className="h-4 w-4" strokeWidth={1.75} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="mt-2 flex items-center justify-between">
+              <button
+                type="button"
+                onClick={() =>
+                  setLineRows((rs) => [...rs, { label: "", qty: "1", amount: "" }])
+                }
+                className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:border-accent hover:text-midnight"
+              >
+                <Plus className="h-3.5 w-3.5" strokeWidth={2} />
+                Add line item
+              </button>
+              {lineRows.length > 0 && (
+                <div className="text-sm font-semibold text-midnight">
+                  Total: ${lineRowsTotal(lineRows).toLocaleString(undefined, {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
                 </div>
               )}
             </div>

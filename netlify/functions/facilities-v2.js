@@ -96,6 +96,28 @@ function parseIntOrNull(v) {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
+// Normalize a client-supplied cost breakdown into the stored jsonb shape
+// + a total in cents. Each item is { label, qty, amount_cents } where
+// amount_cents is the LINE total. Drops blank/invalid rows so a stray
+// empty row in the form doesn't poison the array. Returns null items
+// when nothing usable was sent so callers can leave line_items untouched.
+function normalizeLineItems(raw) {
+  if (!Array.isArray(raw)) return { items: null, totalCents: 0 };
+  const items = [];
+  let totalCents = 0;
+  for (const r of raw) {
+    if (!r) continue;
+    const label = String(r.label ?? "").trim();
+    const cents = parseIntOrNull(r.amount_cents);
+    if (!label || cents == null) continue; // skip incomplete rows
+    let qty = parseIntOrNull(r.qty);
+    if (qty == null || qty < 1) qty = 1;
+    items.push({ label, qty, amount_cents: cents });
+    totalCents += cents;
+  }
+  return { items, totalCents };
+}
+
 // Accepts vendor / manufacturer / mfg / mfr / none — case-insensitive.
 // Anything else returns null so the CHECK constraint isn't tripped.
 function normalizeWarrantySource(v) {
@@ -970,7 +992,7 @@ export const handler = async (event) => {
         storeNumber, storeName, storeEmail, doEmail, sdoEmail,
         category, assetType, modelNumber, issueDescription,
         priority, isBusinessCritical, troubleshootingChecked,
-        vendorContacted, vendorName, costEstimate, photos,
+        vendorContacted, vendorName, costEstimate, lineItems, photos,
       } = payload;
 
       if (!storeNumber || !issueDescription) {
@@ -979,6 +1001,16 @@ export const handler = async (event) => {
           message: "Store number and issue description required.",
         });
       }
+
+      // When a cost breakdown is supplied, it is the source of truth for
+      // the total — keep cost_estimate in sync so existing readers (list,
+      // approval hero) stay correct without knowing about line items.
+      const { items: createItems, totalCents: createTotalCents } =
+        normalizeLineItems(lineItems);
+      const resolvedCost =
+        createItems && createItems.length
+          ? createTotalCents / 100
+          : (costEstimate || null);
 
       const woNumber = await generateWONumber(supabase, storeNumber);
 
@@ -1003,7 +1035,8 @@ export const handler = async (event) => {
           troubleshooting_checked:troubleshootingChecked || false,
           vendor_contacted:       vendorContacted || false,
           vendor_name:            vendorName || "",
-          cost_estimate:          costEstimate || null,
+          cost_estimate:          resolvedCost,
+          line_items:             createItems && createItems.length ? createItems : [],
           date_submitted:         new Date().toISOString(),
         })
         .select()
@@ -1050,7 +1083,7 @@ export const handler = async (event) => {
       const payload = JSON.parse(event.body);
       const {
         id, status, notes, vendorName, vendorId, vendorEta,
-        costEstimate, priority, isBusinessCritical,
+        costEstimate, lineItems, priority, isBusinessCritical,
       } = payload;
       if (!id) return respond(400, { ok: false, message: "id required." });
 
@@ -1193,6 +1226,13 @@ export const handler = async (event) => {
       if (vendorId !== undefined) updates.vendor_id = vendorId || null;
       if (vendorEta) updates.vendor_eta = vendorEta;
       if (costEstimate !== undefined) updates.cost_estimate = costEstimate;
+      // Editing the cost breakdown overrides cost_estimate with the
+      // recomputed total (sent last so it wins over any costEstimate above).
+      if (lineItems !== undefined) {
+        const { items, totalCents } = normalizeLineItems(lineItems);
+        updates.line_items = items || [];
+        updates.cost_estimate = items && items.length ? totalCents / 100 : null;
+      }
       if (priority) updates.priority = priority;
       if (isBusinessCritical !== undefined) {
         updates.is_business_critical = isBusinessCritical;
