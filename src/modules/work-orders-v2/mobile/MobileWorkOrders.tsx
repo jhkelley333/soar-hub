@@ -12,7 +12,7 @@
 // Phase 2 adds status transitions + chat; Phase 3 adds create; Phase 4
 // folds quote approvals into the detail. This file stays read-only.
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { Search, MessageSquare, Clock } from "lucide-react";
