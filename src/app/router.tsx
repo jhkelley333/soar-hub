@@ -44,6 +44,7 @@ import { RenoScopingPage } from "@/modules/reno-scoping/RenoScopingPage";
 import { NewScopePage } from "@/modules/reno-scoping/NewScopePage";
 import { ScopeDetailPage } from "@/modules/reno-scoping/ScopeDetailPage";
 import { RegionPage } from "@/modules/region/RegionPage";
+import { ApprovalsPage } from "@/modules/approvals/ApprovalsPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -97,6 +98,19 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <RegionPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Approvals queue (mobile-first preview). Pulls real pending
+        // workspace sign-offs scoped to the caller via the existing
+        // listMySignoffs() function. Tier + score come from the real
+        // audit_outcome / audit_score_percent — no placeholders here.
+        // Not in the sidebar (preview convention); open via /approvals.
+        path: "approvals",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <ApprovalsPage />
           </ProtectedRoute>
         ),
       },
