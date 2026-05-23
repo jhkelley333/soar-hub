@@ -307,6 +307,9 @@ export function TicketActionBar({
       toast.push(`Moved to ${to.replace("_", " ")}.`, "success");
       qc.invalidateQueries({ queryKey: ["wo2", "tickets"] });
       qc.invalidateQueries({ queryKey: ["wo2", "ticket-activities", ticketId] });
+      // Mobile detail reads the full ticket under this key; harmless on
+      // desktop (which hydrates detail from the list instead).
+      qc.invalidateQueries({ queryKey: ["wo2-ticket", ticketId] });
       setModalAction(null);
       setModalError(null);
     },

@@ -5,15 +5,21 @@
 // composer; Phase 4 wires the approval decision buttons. For now this
 // surfaces everything a user needs to understand the ticket at a glance.
 
-import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, Clock, MapPin, Wrench, User2, DollarSign } from "lucide-react";
 import { AppHeader } from "@/shared/ui/AppHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { StatusPill } from "@/shared/ui/StatusPill";
+import { useToast } from "@/shared/ui/Toaster";
+import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
-import { fetchTicket } from "../api";
+import { fetchTicket, markTicketSeen } from "../api";
 import { statusLabel, type TicketApproval, type TicketActivity } from "../types";
+import { StatusBar } from "../StatusBar";
+import { TicketActionBar } from "../TicketActionBar";
+import { TicketChat } from "../TicketChat";
 import { priorityChipClass, relativeTime, formatDollars } from "./woMobile";
 
 export function MobileTicketDetail({
@@ -23,6 +29,10 @@ export function MobileTicketDetail({
   ticketId: string;
   onBack: () => void;
 }) {
+  const { profile } = useAuth();
+  const toast = useToast();
+  const qc = useQueryClient();
+
   const q = useQuery({
     queryKey: ["wo2-ticket", ticketId],
     queryFn: () => fetchTicket(ticketId).then((r) => r.ticket),
@@ -30,6 +40,25 @@ export function MobileTicketDetail({
   });
 
   const t = q.data;
+
+  // Mark the ticket's unread messages as seen on open, then refresh the
+  // list so its unread badge clears. Best-effort — failure is silent.
+  useEffect(() => {
+    let cancelled = false;
+    markTicketSeen(ticketId)
+      .then(() => {
+        if (!cancelled) qc.invalidateQueries({ queryKey: ["wo2", "tickets"] });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [ticketId, qc]);
+
+  const isSubmitter =
+    !!profile?.id &&
+    !!t?.submitted_by_user_id &&
+    profile.id === t.submitted_by_user_id;
 
   return (
     <div className="mx-auto w-full max-w-md bg-surface-muted min-h-full">
@@ -177,11 +206,40 @@ export function MobileTicketDetail({
             </section>
           )}
 
-          {/* Phase 2 hint — actions + chat land here next. */}
-          <p className="px-2 pt-1 text-center text-[11px] text-midnight-400">
-            Actions and messaging are coming to mobile soon. For now, open
-            the desktop view to change status or reply.
-          </p>
+          {/* Actions — lifecycle bar + contextual transition buttons.
+              Reuses the desktop TicketActionBar (state machine + reason
+              modals), which validates server-side and refreshes both
+              the list and this detail on success. */}
+          <section>
+            <SectionTitle>Status</SectionTitle>
+            <div className="bg-surface rounded-xl ring-1 ring-midnight-100 shadow-card p-4 space-y-3">
+              <div className="overflow-x-auto">
+                <StatusBar
+                  status={t.status}
+                  pauseState={t.pause_state}
+                  closedByStore={t.closed_by_store}
+                />
+              </div>
+              <TicketActionBar
+                ticketId={t.id}
+                status={t.status}
+                closedAt={t.closed_at}
+                storeNumber={t.store_number}
+                isSubmitter={isSubmitter}
+              />
+            </div>
+          </section>
+
+          {/* Messages — internal + vendor threads. */}
+          <section>
+            <SectionTitle>Messages</SectionTitle>
+            <div className="bg-surface rounded-xl ring-1 ring-midnight-100 shadow-card p-3">
+              <TicketChat
+                ticketId={t.id}
+                onError={(msg) => toast.push(msg, "error")}
+              />
+            </div>
+          </section>
         </div>
       )}
     </div>
