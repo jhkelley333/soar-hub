@@ -38,8 +38,12 @@ export function MobileTabBar({
 }) {
   return (
     <nav
-      className="fixed bottom-0 inset-x-0 z-30 bg-white/95 backdrop-blur border-t border-midnight-100 lg:hidden"
+      className="shrink-0 border-t border-midnight-100 bg-white/95 backdrop-blur lg:hidden"
       style={{
+        // Padding-bottom carries the iPhone home-indicator inset so
+        // the buttons sit above the gesture bar. The nav itself is a
+        // regular flex row in AppShell — no fixed positioning — so
+        // content can't scroll past it.
         paddingBottom: "env(safe-area-inset-bottom, 0px)",
       }}
       aria-label="Primary"
