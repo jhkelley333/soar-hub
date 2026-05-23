@@ -609,7 +609,7 @@ function PersonalRow({
   return (
     <div className="w-full px-4 py-2.5">
       <div className="flex items-center gap-3">
-        <Avatar name={contact.name} size={32} />
+        <Avatar name={contact.name} photoUrl={contact.photo_url} size={32} />
         <div className="flex-1 min-w-0">
           <div className="text-[14px] font-medium text-midnight-900 truncate">
             {contact.name}
