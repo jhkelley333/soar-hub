@@ -35,6 +35,7 @@ export function QuotesSection({
   const [addOpen, setAddOpen] = useState(false);
   const [vendor, setVendor] = useState("");
   const [amount, setAmount] = useState("");
+  const [request, setRequest] = useState("");
   const [note, setNote] = useState("");
   const [file, setFile] = useState<File | null>(null);
 
@@ -43,12 +44,14 @@ export function QuotesSection({
       const cents = Math.round(parseFloat(amount) * 100);
       if (!vendor.trim()) throw new Error("Vendor name is required.");
       if (!Number.isFinite(cents) || cents <= 0) throw new Error("Enter a valid total.");
+      if (!request.trim()) throw new Error("Add a short Request — what work is this for?");
       if (!file) throw new Error("Attach the quote document.");
       const fileData = await fileToBase64(file);
       return addQuote({
         ticketId: ticket.id,
         vendorName: vendor.trim(),
         amountCents: cents,
+        workRequested: request.trim(),
         note: note.trim() || undefined,
         fileData,
         fileName: file.name,
@@ -58,7 +61,7 @@ export function QuotesSection({
     onSuccess: () => {
       toast.push("Quote added.", "success");
       setAddOpen(false);
-      setVendor(""); setAmount(""); setNote(""); setFile(null);
+      setVendor(""); setAmount(""); setRequest(""); setNote(""); setFile(null);
       onChanged();
     },
     onError: (e: unknown) =>
@@ -161,6 +164,15 @@ export function QuotesSection({
             </div>
           </div>
           <div>
+            <Label htmlFor="q-request">Request * (what work?)</Label>
+            <Input
+              id="q-request"
+              value={request}
+              onChange={(e) => setRequest(e.target.value)}
+              placeholder="e.g. Replaced motor and belt"
+            />
+          </div>
+          <div>
             <Label>Quote document *</Label>
             <label className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-md border-2 border-dashed border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-600 hover:border-accent hover:bg-accent/5">
               <Paperclip className="h-4 w-4" strokeWidth={1.75} />
@@ -174,13 +186,13 @@ export function QuotesSection({
             </label>
           </div>
           <div>
-            <Label htmlFor="q-note">Note</Label>
+            <Label htmlFor="q-note">Justification</Label>
             <textarea
               id="q-note"
               value={note}
               onChange={(e) => setNote(e.target.value)}
               rows={2}
-              placeholder="Optional context for the approver…"
+              placeholder="Brief description of the work — the approver can open the quote for full detail."
               className="block w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
             />
           </div>

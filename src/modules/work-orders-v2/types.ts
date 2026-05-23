@@ -409,6 +409,10 @@ export interface AddQuoteBody {
   vendorName: string;
   amountCents: number;
   note?: string;
+  // The Request — scope of work (e.g. "Replaced motor and belt"). Sets
+  // tickets.work_requested, keeping internal entry aligned with the
+  // vendor portal. Optional so existing callers don't break.
+  workRequested?: string;
   isRecommended?: boolean;
   // Optional quote file (base64, sans data: prefix) — see fileToBase64.
   fileData?: string;
