@@ -165,11 +165,14 @@ function woRow(item: OpenAlertItem, tier: Tier): ApprovalItem {
     id: `work_order:${item.id}`,
     source: "work_order",
     sourceLabel: "Work Order",
-    title: item.title || item.ticket_number || "Work order",
-    subtitle: [item.category, item.vendor_name].filter(Boolean).join(" · "),
+    title: item.summary || item.wo_number || "Work order",
+    subtitle: [item.priority, item.vendor_name].filter(Boolean).join(" · "),
     submittedAt: item.timestamp,
     sdi: item.store_number || null,
-    storeName: item.store_name || null,
+    // OpenAlertItem only carries store_number; the full store name
+    // isn't in the payload. The row falls back to showing SDI alone,
+    // which matches what the WO2 alerts widget does already.
+    storeName: null,
     tier,
     score: null,
     amount: item.cost_estimate ?? null,
