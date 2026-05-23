@@ -330,6 +330,11 @@ export function MobileTicketDetail({
           ticket={t}
           approval={pending}
           quoteId={recommendedQuote?.id ?? null}
+          amountCents={
+            recommendedQuote
+              ? recommendedQuote.amount_cents
+              : Math.round((Number(t.cost_estimate) || 0) * 100)
+          }
           onChanged={refreshTicket}
         />
       )}

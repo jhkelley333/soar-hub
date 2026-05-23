@@ -109,7 +109,11 @@ async function findRecipients(supabase, ticket, kind) {
     // until the backfill runs; match either prefix so neither
     // path breaks during the transition.
     else if (tier.startsWith("RVP") || tier.startsWith("VP")) role = "rvp";
-    return findUsersForStore(supabase, ticket.store_number, [role]);
+    // Backup coverage: also flag the next tier up so they can approve if
+    // the assigned approver is out (SDO request → also notify the RVP).
+    const backupRole = { do: "sdo", sdo: "rvp" }[role];
+    const roles = backupRole ? [role, backupRole] : [role];
+    return findUsersForStore(supabase, ticket.store_number, roles);
   }
   if (kind === "approval_decided") {
     if (!ticket.submitted_by_user_id) return [];
