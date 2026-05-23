@@ -14,6 +14,20 @@ import type { UserRole } from "@/types/database";
 // match a nav entry the user can actually see.
 const ALWAYS_ALLOWED = new Set(["/", "/account"]);
 
+// Detect installed-PWA / standalone display. In standalone mode on iOS,
+// signInWithOAuth bounces the user out to Safari for accounts.google.com
+// and they never make it back to the standalone app — they land in
+// Safari with the full URL bar. We hide the Google button in that mode
+// and steer them to email-based sign-in instead.
+function isStandalonePWA(): boolean {
+  if (typeof window === "undefined") return false;
+  const mql = window.matchMedia?.("(display-mode: standalone)");
+  if (mql?.matches) return true;
+  // iOS Safari predates display-mode and uses a non-standard flag.
+  const nav = window.navigator as Navigator & { standalone?: boolean };
+  return nav.standalone === true;
+}
+
 // Validate the `from` path captured by ProtectedRoute before redirecting
 // to it post-login. After a deploy, a stale `from` (e.g. /paf when the
 // user is now a shift_manager) can land them on a page they can't see,
@@ -110,6 +124,7 @@ export function LoginPage() {
   }, [location.search]);
 
   const detected = useMemo(() => detectMode(identifier), [identifier]);
+  const standalone = useMemo(() => isStandalonePWA(), []);
 
   async function handleGoogle() {
     setGooglePending(true);
@@ -351,25 +366,39 @@ export function LoginPage() {
           {/* Above-store / corporate sign-in. Lives below the form
               and below the mode toggles so it doesn't compete with
               the GM + shift-manager flow at the top — phone +
-              password is the primary path for floor staff. */}
+              password is the primary path for floor staff.
+
+              Hidden in standalone PWA mode: iOS bounces the OAuth
+              redirect into Safari and the user never returns to the
+              standalone app. We point them at email sign-in instead. */}
           {mode !== "forgot" && (
             <div className="mt-6 border-t border-zinc-100 pt-5">
               <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
                 Above-store team
               </div>
-              <div className="mt-1 text-[11px] text-zinc-500">
-                DOs, SDOs, and corporate users with a SOAR QSR Google
-                Workspace account.
-              </div>
-              <button
-                type="button"
-                onClick={handleGoogle}
-                disabled={googlePending || submitting}
-                className="mt-3 flex w-full items-center justify-center gap-2 rounded-md border border-zinc-300 bg-white px-4 py-2.5 text-sm font-medium text-midnight transition hover:bg-zinc-50 disabled:opacity-50"
-              >
-                <GoogleMark />
-                {googlePending ? "Redirecting to Google…" : "Continue with Google"}
-              </button>
+              {standalone ? (
+                <div className="mt-1 text-[11px] text-zinc-500">
+                  Google sign-in isn't available inside the installed
+                  app. Sign in with your work email above — or open the
+                  site in Safari to use Google.
+                </div>
+              ) : (
+                <>
+                  <div className="mt-1 text-[11px] text-zinc-500">
+                    DOs, SDOs, and corporate users with a SOAR QSR Google
+                    Workspace account.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleGoogle}
+                    disabled={googlePending || submitting}
+                    className="mt-3 flex w-full items-center justify-center gap-2 rounded-md border border-zinc-300 bg-white px-4 py-2.5 text-sm font-medium text-midnight transition hover:bg-zinc-50 disabled:opacity-50"
+                  >
+                    <GoogleMark />
+                    {googlePending ? "Redirecting to Google…" : "Continue with Google"}
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
