@@ -3,9 +3,33 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#0a0a0a" />
+
     <title>SOAR Hub</title>
+    <meta name="description" content="Operations hub for SOAR QSR teams — facilities work orders, personnel adjustments, store management, and team contacts." />
+
+    <!-- PWA: web app manifest is the single source of truth for icon
+         / display mode / theme color. Mobile browsers read it on
+         install. -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+
+    <!-- Browser address-bar tint. Matches manifest theme_color so the
+         OS chrome tints to SOAR midnight blue when this is the active
+         tab / installed app. -->
+    <meta name="theme-color" content="#285780" />
+
+    <!-- Browser favicon -->
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <!-- iOS PWA install hints. apple-mobile-web-app-capable lets the
+         installed app render fullscreen (no Safari chrome) on iOS
+         13+ when added to the home screen. status-bar-style
+         black-translucent makes the iOS status bar text read white
+         over the midnight splash + AppHeader. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="SOAR Hub" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link

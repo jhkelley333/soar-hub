@@ -1,0 +1,20 @@
+{
+  "name": "SOAR Hub",
+  "short_name": "SOAR Hub",
+  "description": "Operations hub for SOAR QSR teams — facilities work orders, personnel adjustments, store management, and team contacts.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#285780",
+  "theme_color": "#285780",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["business", "productivity"]
+}
