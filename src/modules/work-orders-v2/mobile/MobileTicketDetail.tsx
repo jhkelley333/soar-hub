@@ -21,7 +21,7 @@ import { Avatar } from "@/shared/ui/Avatar";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { fetchTicket, markTicketSeen } from "../api";
-import { statusLabel, type TicketActivity } from "../types";
+import type { TicketActivity } from "../types";
 import { StatusBar } from "../StatusBar";
 import { TicketActionBar } from "../TicketActionBar";
 import { TicketChat } from "../TicketChat";
