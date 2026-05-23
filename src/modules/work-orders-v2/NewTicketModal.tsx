@@ -9,6 +9,7 @@ import { Camera, Loader2, Search, Upload, X } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
+import { useIsDesktop } from "@/lib/useMediaQuery";
 import {
   createTicket,
   fetchCallerStores,
@@ -39,6 +40,8 @@ interface Props {
 const MAX_PHOTOS = 5;
 
 export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
+  const isDesktop = useIsDesktop();
+
   const issueLibrary = useQuery({
     queryKey: ["wo2", "issueLibrary"],
     queryFn: fetchIssueLibrary,
@@ -291,7 +294,19 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
         }
       }}
     >
-      <div className="flex max-h-[96vh] w-full max-w-2xl flex-col overflow-hidden rounded-t-xl bg-white shadow-2xl sm:max-h-[92vh] sm:rounded-xl">
+      <div
+        className="flex w-full max-w-2xl flex-col overflow-hidden rounded-t-xl bg-white shadow-2xl sm:rounded-xl"
+        style={{
+          // Cap the sheet so its top stays below the status bar / notch.
+          // It's anchored to the bottom (items-end), so a too-tall sheet
+          // would push its sticky header up behind the safe-area inset.
+          // env() can't live in a responsive Tailwind class, so we branch
+          // on viewport here. Desktop is centered and unaffected by insets.
+          maxHeight: isDesktop
+            ? "92vh"
+            : "calc(100dvh - env(safe-area-inset-top, 0px) - 1rem)",
+        }}
+      >
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-zinc-100 bg-white px-5 py-3">
           <div className="text-base font-semibold tracking-tight text-midnight">
             New Service Request
@@ -714,7 +729,10 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
           </div>
         </div>
 
-        <div className="sticky bottom-0 z-10 flex flex-col-reverse items-stretch gap-2 border-t border-zinc-100 bg-white px-5 py-3 sm:flex-row sm:items-center sm:justify-end">
+        <div
+          className="sticky bottom-0 z-10 flex flex-col-reverse items-stretch gap-2 border-t border-zinc-100 bg-white px-5 py-3 sm:flex-row sm:items-center sm:justify-end"
+          style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))" }}
+        >
           <Button variant="ghost" onClick={onClose} disabled={submit.isPending}>
             Cancel
           </Button>
