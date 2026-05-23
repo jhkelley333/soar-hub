@@ -70,12 +70,18 @@ interface PortalDoContact {
   phone: string | null;
 }
 
+interface ApprovalLadderRung {
+  label: string;
+  nte_cents: number;
+}
+
 interface ResolveResponse {
   ok: true;
   store: PortalStore | null;
   do_contact: PortalDoContact | null;
   tokenLabel: string | null;
   tickets: PortalTicket[];
+  approvalLadder?: ApprovalLadderRung[];
 }
 
 interface PortalTicketDetail extends PortalTicket {
@@ -235,7 +241,7 @@ export function VendorPortalPage() {
     return <Frame><BadToken /></Frame>;
   }
 
-  const { store, tickets, tokenLabel, do_contact: doContact } = resolveQ.data;
+  const { store, tickets, tokenLabel, do_contact: doContact, approvalLadder } = resolveQ.data;
 
   // Companies that have open tickets at THIS store. Powers the
   // identity-form dropdown so a vendor doesn't have to type their
@@ -293,6 +299,7 @@ export function VendorPortalPage() {
         tickets={tickets}
         identity={identity}
         doContact={doContact}
+        approvalLadder={approvalLadder}
         onPick={(id) => setSelectedTicketId(id)}
         onIdentityChange={() => {
           localStorage.removeItem(IDENT_KEY);
@@ -536,14 +543,52 @@ function BigButton({
 
 // ── Ticket list screen ───────────────────────────────────────────
 
+// Heads-up for the vendor: what clears fast vs. what routes up. The DO
+// baseline NTE is the key number — work under it can be approved on the
+// spot without bumping to a higher tier. Above the top rung it's a
+// verbal / Owner sign-off (handled off-system today).
+function ApprovalLadderCard({ ladder }: { ladder?: ApprovalLadderRung[] }) {
+  if (!ladder || ladder.length === 0) return null;
+  const rungs = [...ladder].sort((a, b) => a.nte_cents - b.nte_cents);
+  const base = rungs[0];
+  const top = rungs[rungs.length - 1];
+  const money = (cents: number) =>
+    `$${(cents / 100).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
+
+  return (
+    <div className="rounded-md border border-blue-200 bg-blue-50 p-3">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-blue-700">
+        Approval limits at this store
+      </div>
+      <p className="mt-1 text-[13px] text-blue-900">
+        Work up to <strong>{money(base.nte_cents)}</strong> can be approved on the
+        spot by the {base.label}. Above that it routes up for approval.
+      </p>
+      <ul className="mt-2 space-y-0.5 text-[12px] text-blue-900">
+        {rungs.map((r) => (
+          <li key={r.label} className="flex justify-between">
+            <span>{r.label}</span>
+            <span className="font-medium tabular-nums">up to {money(r.nte_cents)}</span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-2 text-[11.5px] text-blue-700">
+        Over {money(top.nte_cents)} needs a verbal / Owner sign-off — your{" "}
+        {top.label} will confirm before you proceed.
+      </p>
+    </div>
+  );
+}
+
 function TicketList({
-  store, tokenLabel, tickets, identity, doContact, onPick, onIdentityChange,
+  store, tokenLabel, tickets, identity, doContact, approvalLadder, onPick, onIdentityChange,
 }: {
   store: PortalStore;
   tokenLabel: string | null;
   tickets: PortalTicket[];
   identity: Identity;
   doContact: PortalDoContact | null;
+  approvalLadder?: ApprovalLadderRung[];
   onPick: (id: string) => void;
   onIdentityChange: () => void;
 }) {
@@ -595,6 +640,8 @@ function TicketList({
           </div>
         </div>
       </div>
+
+      <ApprovalLadderCard ladder={approvalLadder} />
 
       <div className="flex items-center justify-between gap-2">
         <div className="text-sm font-semibold text-midnight">
