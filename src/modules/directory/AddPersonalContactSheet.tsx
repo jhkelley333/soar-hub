@@ -6,14 +6,25 @@
 // storage bucket + picker. The form already has a photo_url field
 // shape ready for that.
 
-import { useEffect, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ChangeEvent,
+  type FormEvent,
+} from "react";
+import { Camera, X } from "lucide-react";
 import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
+import { Avatar } from "@/shared/ui/Avatar";
 import {
   createPersonalContact,
   updatePersonalContact,
+  uploadPersonalContactPhoto,
+  PHOTO_MIME,
+  PHOTO_MAX_BYTES,
   type PersonalContact,
   type PersonalContactInput,
 } from "./personalContactsApi";
@@ -47,6 +58,15 @@ export function AddPersonalContactSheet({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Photo state. `photoUrl` is the already-saved/uploaded URL (or the
+  // freshly-uploaded one); `pendingFile` is a locally-picked file not yet
+  // uploaded (we upload on save so a cancelled edit leaves no orphan).
+  // `localPreview` is an object URL for instant preview of pendingFile.
+  const [photoUrl, setPhotoUrl] = useState<string | null>(null);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [localPreview, setLocalPreview] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
   // Reset form whenever the sheet opens (or the editing target changes).
   useEffect(() => {
     if (!open) return;
@@ -55,8 +75,45 @@ export function AddPersonalContactSheet({
     setEmail(editing?.email ?? "");
     setCategory(editing?.category ?? "");
     setNotes(editing?.notes ?? "");
+    setPhotoUrl(editing?.photo_url ?? null);
+    setPendingFile(null);
+    setLocalPreview(null);
     setError(null);
   }, [open, editing]);
+
+  // Revoke the object URL when it changes / unmounts to avoid leaks.
+  useEffect(() => {
+    return () => {
+      if (localPreview) URL.revokeObjectURL(localPreview);
+    };
+  }, [localPreview]);
+
+  function onPickPhoto(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-picking the same file
+    if (!file) return;
+    if (!PHOTO_MIME.includes(file.type)) {
+      setError("Photo must be JPG, PNG, or WEBP.");
+      return;
+    }
+    if (file.size > PHOTO_MAX_BYTES) {
+      setError("Photo must be 5 MB or smaller.");
+      return;
+    }
+    setError(null);
+    setPendingFile(file);
+    if (localPreview) URL.revokeObjectURL(localPreview);
+    setLocalPreview(URL.createObjectURL(file));
+  }
+
+  function clearPhoto() {
+    setPendingFile(null);
+    if (localPreview) URL.revokeObjectURL(localPreview);
+    setLocalPreview(null);
+    setPhotoUrl(null);
+  }
+
+  const previewUrl = localPreview ?? photoUrl;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -68,12 +125,20 @@ export function AddPersonalContactSheet({
     setSaving(true);
     setError(null);
     try {
+      // Upload a freshly-picked photo first so its URL goes in with the
+      // save. If the user cleared the photo, photoUrl is null and we
+      // persist that (removes it from the contact).
+      let finalPhotoUrl = photoUrl;
+      if (pendingFile) {
+        finalPhotoUrl = await uploadPersonalContactPhoto(pendingFile);
+      }
       const payload: PersonalContactInput = {
         name: trimmed,
         phone: phone.trim() || null,
         email: email.trim() || null,
         category: category.trim() || null,
         notes: notes.trim() || null,
+        photo_url: finalPhotoUrl,
       };
       const res = isEdit
         ? await updatePersonalContact(editing!.id, payload)
@@ -108,6 +173,49 @@ export function AddPersonalContactSheet({
       }
     >
       <form id="personal-contact-form" onSubmit={handleSubmit} className="space-y-4">
+        {/* Photo picker */}
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            className="relative shrink-0 rounded-full focus:outline-none focus:ring-2 focus:ring-accent/40"
+            aria-label="Choose contact photo"
+          >
+            <Avatar name={name || "?"} photoUrl={previewUrl} size={56} />
+            <span className="absolute -bottom-0.5 -right-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-accent text-white ring-2 ring-white">
+              <Camera className="h-3 w-3" strokeWidth={2.25} />
+            </span>
+          </button>
+          <div className="min-w-0">
+            <button
+              type="button"
+              onClick={() => fileRef.current?.click()}
+              className="text-[13px] font-medium text-accent hover:underline"
+            >
+              {previewUrl ? "Change photo" : "Add a photo"}
+            </button>
+            {previewUrl && (
+              <button
+                type="button"
+                onClick={clearPhoto}
+                className="ml-3 inline-flex items-center gap-1 text-[12px] text-midnight-500 hover:text-cherry"
+              >
+                <X className="h-3 w-3" strokeWidth={2} /> Remove
+              </button>
+            )}
+            <p className="mt-0.5 text-[10.5px] text-midnight-400">
+              JPG, PNG, or WEBP · up to 5 MB
+            </p>
+          </div>
+          <input
+            ref={fileRef}
+            type="file"
+            accept={PHOTO_MIME.join(",")}
+            className="hidden"
+            onChange={onPickPhoto}
+          />
+        </div>
+
         <div>
           <Label htmlFor="pc-name">Name *</Label>
           <Input
