@@ -3,10 +3,10 @@
 // the pending approval (DO+ with a Pending row). Wires to the real
 // decideApproval endpoint.
 //
-// "Request info" has no email/needs_info backend yet (that's a separate
-// slice), so it posts the question into the ticket's internal chat
-// thread — honest about what it does. Reject opens the same sheet for a
-// required reason.
+// "Request info" posts the question to the ticket's internal thread AND
+// fires an outbound Resend alert to the submitter (requestInfo action).
+// No inbound parsing — the reply comes back on the thread. Reject opens
+// the same sheet for a required reason.
 
 import { useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -17,7 +17,7 @@ import { Drawer } from "@/shared/ui/Drawer";
 import { Avatar } from "@/shared/ui/Avatar";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
-import { decideApproval, sendMessage, fetchApprovalThresholds } from "../api";
+import { decideApproval, requestInfo, fetchApprovalThresholds } from "../api";
 import type { Ticket, TicketApproval } from "../types";
 import { canApprove, isOverTopTier, requiredApprover } from "../approval";
 import { formatDollars } from "./woMobile";
@@ -84,19 +84,20 @@ export function ApprovalActionBar({
 
   const askInfo = useMutation({
     mutationFn: () =>
-      sendMessage({
-        ticketId: ticket.id,
-        message: text.trim(),
-        threadType: "internal",
-      }),
-    onSuccess: () => {
-      toast.push("Question posted to the ticket thread.", "success");
+      requestInfo({ ticketId: ticket.id, question: text.trim() }),
+    onSuccess: (res) => {
+      toast.push(
+        res.emailed
+          ? "Question sent — submitter emailed and posted to the thread."
+          : "Question posted to the ticket thread.",
+        "success",
+      );
       setSheet(null);
       setText("");
       onChanged();
     },
     onError: (e: unknown) =>
-      toast.push(e instanceof Error ? e.message : "Couldn't post.", "error"),
+      toast.push(e instanceof Error ? e.message : "Couldn't send.", "error"),
   });
 
   const amount = formatDollars(amountCents > 0 ? amountCents / 100 : ticket.cost_estimate);
@@ -218,8 +219,8 @@ export function ApprovalActionBar({
         />
         {sheet === "info" && (
           <p className="mt-2 text-[11.5px] text-midnight-400">
-            Posts to this work order's internal thread so the back-and-forth
-            stays tied to the ticket.
+            Emails the submitter and posts to this work order's internal thread,
+            so the back-and-forth stays tied to the ticket.
           </p>
         )}
       </Drawer>

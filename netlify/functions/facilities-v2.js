@@ -3054,6 +3054,48 @@ export const handler = async (event) => {
       return respond(200, { ok: true, message: data });
     }
 
+    // ── requestInfo: approver asks the submitter for more detail ──
+    // Posts the question to the internal thread AND fires an outbound
+    // Resend alert to the submitter. No inbound parsing — they reply on
+    // the ticket thread (or off-band) for now.
+    if (action === "requestInfo" && event.httpMethod === "POST") {
+      const { ticketId, question } = JSON.parse(event.body);
+      if (!ticketId || !question || !question.trim()) {
+        return respond(400, { ok: false, message: "ticketId and question required." });
+      }
+      const q = question.trim();
+
+      await supabase.from("ticket_messages").insert({
+        ticket_id:   ticketId,
+        user_id:     userId,
+        user_name:   userName,
+        user_role:   role.toUpperCase(),
+        message:     q,
+        thread_type: "internal",
+      });
+
+      await supabase.from("ticket_activities").insert({
+        ticket_id: ticketId, user_id: userId, user_name: userName,
+        user_role: role, update_type: "info_request",
+        event_type: "info_requested", notes: q, visibility: "all",
+      });
+
+      let emailed = false;
+      try {
+        const { data: ticket } = await supabase
+          .from("tickets").select("*").eq("id", ticketId).single();
+        if (ticket) {
+          await notifyTicketEvent(supabase, ticket, "info_requested", {
+            question: q, requested_by: userName,
+          });
+          emailed = true;
+        }
+      } catch (e) {
+        console.warn("[facilities-v2] notifyTicketEvent info_requested failed", e);
+      }
+      return respond(200, { ok: true, emailed });
+    }
+
     return respond(400, { ok: false, message: "Unknown action." });
   } catch (err) {
     console.error("facilities-v2 error:", err);
