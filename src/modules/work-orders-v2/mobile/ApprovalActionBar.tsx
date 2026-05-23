@@ -9,15 +9,17 @@
 // required reason.
 
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { Check, MessageSquarePlus, Loader2, Send } from "lucide-react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { Check, MessageSquarePlus, Loader2, Send, PhoneCall } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { BottomBar } from "@/shared/ui/BottomBar";
 import { Drawer } from "@/shared/ui/Drawer";
 import { Avatar } from "@/shared/ui/Avatar";
 import { useToast } from "@/shared/ui/Toaster";
-import { decideApproval, sendMessage } from "../api";
+import { useAuth } from "@/auth/AuthProvider";
+import { decideApproval, sendMessage, fetchApprovalThresholds } from "../api";
 import type { Ticket, TicketApproval } from "../types";
+import { canApprove, isOverTopTier, requiredApprover } from "../approval";
 import { formatDollars } from "./woMobile";
 
 type Sheet = "reject" | "info";
@@ -26,6 +28,7 @@ export function ApprovalActionBar({
   ticket,
   approval,
   quoteId,
+  amountCents,
   onChanged,
 }: {
   ticket: Ticket;
@@ -33,20 +36,38 @@ export function ApprovalActionBar({
   // The quote being committed on approve (recommended one). null when
   // the WO carries no quotes yet.
   quoteId?: string | null;
+  // Amount under review (recommended quote total, else cost_estimate).
+  amountCents: number;
   onChanged: () => void;
 }) {
   const toast = useToast();
+  const { profile } = useAuth();
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const [text, setText] = useState("");
 
+  const thrQ = useQuery({
+    queryKey: ["wo2", "approval-thresholds"],
+    queryFn: () => fetchApprovalThresholds().then((r) => r.thresholds),
+    staleTime: 5 * 60_000,
+  });
+  const thresholds = thrQ.data ?? [];
+
+  // While thresholds load (or none configured), don't block — fall back
+  // to allowing the action; the server re-checks the gate regardless.
+  const overTop = thresholds.length > 0 && isOverTopTier(amountCents, thresholds);
+  const allowed =
+    thresholds.length === 0 || canApprove(profile?.role, amountCents, thresholds);
+  const required = thresholds.length ? requiredApprover(amountCents, thresholds) : null;
+
   const decide = useMutation({
-    mutationFn: (vars: { decision: "Approved" | "Rejected"; notes?: string }) =>
+    mutationFn: (vars: { decision: "Approved" | "Rejected"; notes?: string; verbal?: boolean }) =>
       decideApproval({
         id: ticket.id,
         approvalId: approval.id,
         decision: vars.decision,
         notes: vars.notes,
         quoteId: vars.decision === "Approved" ? quoteId ?? undefined : undefined,
+        verbal: vars.verbal,
       }),
     onSuccess: (_d, vars) => {
       toast.push(
@@ -78,7 +99,7 @@ export function ApprovalActionBar({
       toast.push(e instanceof Error ? e.message : "Couldn't post.", "error"),
   });
 
-  const amount = formatDollars(ticket.cost_estimate);
+  const amount = formatDollars(amountCents > 0 ? amountCents / 100 : ticket.cost_estimate);
   const busy = decide.isPending || askInfo.isPending;
 
   function send() {
@@ -117,19 +138,29 @@ export function ApprovalActionBar({
           <Button
             variant="primary"
             className="flex-1"
-            onClick={() => decide.mutate({ decision: "Approved" })}
-            disabled={busy}
+            onClick={() => decide.mutate({ decision: "Approved", verbal: overTop })}
+            disabled={busy || !allowed}
           >
             {decide.isPending && decide.variables?.decision === "Approved" ? (
               <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            ) : overTop ? (
+              <PhoneCall className="mr-1 h-4 w-4" strokeWidth={2} />
             ) : (
               <Check className="mr-1 h-4 w-4" strokeWidth={2.5} />
             )}
-            Approve{amount ? ` · ${amount}` : ""}
+            {overTop
+              ? "Record verbal approval"
+              : `Approve${amount ? ` · ${amount}` : ""}`}
           </Button>
         </div>
         <p className="mt-2 text-center text-[11px] text-midnight-400">
-          Approving records your decision on this work order.
+          {allowed
+            ? overTop
+              ? "Above the top tier — record the verbal / Owner approval here."
+              : "Approving records your decision and commits the recommended quote."
+            : overTop
+              ? `${amount ?? "This"} needs a verbal / Owner approval recorded by a higher tier.`
+              : `${amount ?? "This"} is above your limit${required ? ` — needs ${required.label}` : ""}.`}
         </p>
       </BottomBar>
 

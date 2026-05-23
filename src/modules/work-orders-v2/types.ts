@@ -396,6 +396,9 @@ export interface DecideApprovalBody {
   // When approving, commits this quote: it becomes recommended and its
   // total becomes the ticket's cost.
   quoteId?: string;
+  // True when recording an out-of-system (verbal / Owner) approval for an
+  // amount above the top active tier.
+  verbal?: boolean;
 }
 
 export interface AddQuoteBody {

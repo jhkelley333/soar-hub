@@ -1608,14 +1608,64 @@ export const handler = async (event) => {
       if (roleLevel(role) > 3) {
         return respond(403, { ok: false, message: "DO and above only." });
       }
-      const { id, approvalId, decision, notes, quoteId } = JSON.parse(event.body);
+      const { id, approvalId, decision, notes, quoteId, verbal } = JSON.parse(event.body);
+
+      // ── Amount-based authority gate (only when approving) ──
+      // Amount = the chosen/recommended quote, else the ticket's cost.
+      // A caller can approve only if their ladder position is at or above
+      // the lowest ACTIVE tier whose NTE covers the amount (so a higher
+      // tier always covers a lower amount — an RVP can clear an SDO-band
+      // quote). Above the top active tier it's verbal/Owner: only that
+      // top tier or higher may record it, and only with verbal=true.
+      let approvalNote = notes || "";
+      if (decision === "Approved") {
+        let amountCents = 0;
+        if (quoteId) {
+          const { data: qz } = await supabase
+            .from("ticket_quotes").select("amount_cents").eq("id", quoteId).maybeSingle();
+          amountCents = qz?.amount_cents || 0;
+        } else {
+          const { data: tk } = await supabase
+            .from("tickets").select("cost_estimate").eq("id", id).maybeSingle();
+          amountCents = Math.round((Number(tk?.cost_estimate) || 0) * 100);
+        }
+
+        const { data: thr } = await supabase
+          .from("wo_approval_thresholds").select("*").order("sort_order", { ascending: true });
+        const active = (thr || []).filter((t) => t.is_active);
+        const isAdmin = String(role).toLowerCase() === "admin";
+        const callerRow = (thr || []).find((t) => t.role === String(role).toLowerCase());
+
+        if (active.length && amountCents > 0 && !isAdmin) {
+          const topActive = active.reduce((a, b) => (b.nte_cents > a.nte_cents ? b : a));
+          const fmt = (c) => `$${(c / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })}`;
+          if (amountCents > topActive.nte_cents) {
+            if (!verbal || !callerRow || callerRow.sort_order < topActive.sort_order) {
+              return respond(422, {
+                ok: false, error: "verbal_required",
+                message: `${fmt(amountCents)} is above the top approval tier (${topActive.label} ${fmt(topActive.nte_cents)}). It needs a verbal / Owner approval recorded by ${topActive.label} or above.`,
+              });
+            }
+            approvalNote = `${approvalNote ? approvalNote + " " : ""}— verbal approval (WhatsApp/Owner) recorded by ${userName}`;
+          } else {
+            const required = active.find((t) => t.nte_cents >= amountCents);
+            if (!callerRow || !required || callerRow.sort_order < required.sort_order) {
+              return respond(422, {
+                ok: false, error: "exceeds_authority",
+                message: `${fmt(amountCents)} is above your approval limit. Needs ${required ? required.label : "a higher approver"}.`,
+              });
+            }
+          }
+        }
+      }
+
       await supabase
         .from("ticket_approvals")
         .update({
           status:      decision,
           approved_by: userName,
           approved_at: new Date().toISOString(),
-          notes:       notes || "",
+          notes:       approvalNote,
         })
         .eq("id", approvalId);
 
