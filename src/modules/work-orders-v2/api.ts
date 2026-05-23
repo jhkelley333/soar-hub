@@ -5,6 +5,7 @@
 import { supabase } from "@/lib/supabase";
 import type {
   AddQuoteBody,
+  ApprovalThreshold,
   CallerStoresResponse,
   CreateTicketBody,
   CreateTicketResponse,
@@ -269,6 +270,21 @@ export function decideApproval(payload: DecideApprovalBody): Promise<{ ok: true 
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export function fetchApprovalThresholds(): Promise<{ ok: true; thresholds: ApprovalThreshold[] }> {
+  return request<{ ok: true; thresholds: ApprovalThreshold[] }>(
+    `${FN}?action=getApprovalThresholds`,
+  );
+}
+
+export function saveApprovalThresholds(
+  thresholds: Pick<ApprovalThreshold, "role" | "nte_cents" | "is_active">[],
+): Promise<{ ok: true; thresholds: ApprovalThreshold[] }> {
+  return request<{ ok: true; thresholds: ApprovalThreshold[] }>(
+    `${FN}?action=saveApprovalThresholds`,
+    { method: "POST", body: JSON.stringify({ thresholds }) },
+  );
 }
 
 export function addQuote(payload: AddQuoteBody): Promise<{ ok: true; quote: WorkOrderQuote }> {
