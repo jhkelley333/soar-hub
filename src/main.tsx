@@ -6,6 +6,7 @@ import { AuthProvider } from "@/auth/AuthProvider";
 import { router } from "@/app/router";
 import { queryClient } from "@/lib/queryClient";
 import { ToastProvider } from "@/shared/ui/Toaster";
+import { registerServiceWorker } from "@/lib/registerSW";
 import "@/styles/globals.css";
 
 // Defensive: Supabase auth emails (recovery + invite) should redirect to
@@ -37,3 +38,8 @@ createRoot(root).render(
     </QueryClientProvider>
   </StrictMode>
 );
+
+// Register the service worker after the initial render kicks off so
+// the SW install never competes with first paint. Dev / unsupported
+// browsers no-op.
+registerServiceWorker();
