@@ -11,15 +11,17 @@
 // chain, the needs_info email flow) are intentionally left to later
 // slices — see the gap table in the PR.
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, Clock, MapPin, Wrench, User2, Paperclip } from "lucide-react";
+import { ChevronLeft, Clock, MapPin, Wrench, User2, Paperclip, RefreshCw } from "lucide-react";
 import { AppHeader } from "@/shared/ui/AppHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Avatar } from "@/shared/ui/Avatar";
+import { Lightbox } from "@/shared/ui/Lightbox";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
+import { cn } from "@/lib/cn";
 import { fetchTicket, markTicketSeen } from "../api";
 import type { TicketActivity } from "../types";
 import { StatusBar } from "../StatusBar";
@@ -41,11 +43,16 @@ export function MobileTicketDetail({
   const { profile } = useAuth();
   const toast = useToast();
   const qc = useQueryClient();
+  const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
 
   const q = useQuery({
     queryKey: ["wo2-ticket", ticketId],
     queryFn: () => fetchTicket(ticketId).then((r) => r.ticket),
     staleTime: 15_000,
+    // Re-pull when the user returns to the app or reconnects, so an
+    // approver who backgrounded the PWA sees the latest state.
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
 
   const t = q.data;
@@ -96,6 +103,20 @@ export function MobileTicketDetail({
             aria-label="Back to work orders"
           >
             <ChevronLeft className="h-5 w-5" strokeWidth={2} />
+          </button>
+        }
+        trailing={
+          <button
+            type="button"
+            onClick={() => q.refetch()}
+            disabled={q.isFetching}
+            className="p-1 text-midnight-500 hover:text-midnight-900 disabled:opacity-50"
+            aria-label="Refresh"
+          >
+            <RefreshCw
+              className={cn("h-4 w-4", q.isFetching && "animate-spin")}
+              strokeWidth={2}
+            />
           </button>
         }
       />
@@ -155,12 +176,11 @@ export function MobileTicketDetail({
             <section>
               <SectionTitle>Evidence · {t.ticket_photos.length} photos</SectionTitle>
               <div className="grid grid-cols-3 gap-2 px-1">
-                {t.ticket_photos.map((p) => (
-                  <a
+                {t.ticket_photos.map((p, i) => (
+                  <button
                     key={p.id}
-                    href={p.file_url}
-                    target="_blank"
-                    rel="noreferrer"
+                    type="button"
+                    onClick={() => setLightboxIndex(i)}
                     className="block aspect-square rounded-lg overflow-hidden ring-1 ring-midnight-100 bg-surface-sunk"
                   >
                     <img
@@ -169,7 +189,7 @@ export function MobileTicketDetail({
                       className="h-full w-full object-cover"
                       loading="lazy"
                     />
-                  </a>
+                  </button>
                 ))}
               </div>
             </section>
@@ -302,6 +322,15 @@ export function MobileTicketDetail({
       {/* Sticky approval bar — only for an approver with a pending row. */}
       {t && canDecide && pending && (
         <ApprovalActionBar ticket={t} approval={pending} onChanged={refreshTicket} />
+      )}
+
+      {t?.ticket_photos && lightboxIndex !== null && (
+        <Lightbox
+          photos={t.ticket_photos.map((p) => ({ url: p.file_url, name: p.file_name }))}
+          index={lightboxIndex}
+          onClose={() => setLightboxIndex(null)}
+          onIndexChange={setLightboxIndex}
+        />
       )}
     </div>
   );
