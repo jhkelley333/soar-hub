@@ -214,6 +214,9 @@ export interface Ticket {
   // Vendor's proposed scope of work (the "Request"), distinct from
   // issue_description (the store's narrative, shown as "Justification").
   work_requested?: string | null;
+  // Rationale captured when an approval is requested (the vendor's
+  // justification on a quote submission). Shown as "Justification".
+  approval_request_notes?: string | null;
   ticket_photos?: TicketPhoto[];
   ticket_approvals?: TicketApproval[];
   ticket_activities?: TicketActivity[];
