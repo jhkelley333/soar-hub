@@ -16,10 +16,11 @@ import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import { fetchTicket, markTicketSeen } from "../api";
-import { statusLabel, type TicketApproval, type TicketActivity } from "../types";
+import { statusLabel, type TicketActivity } from "../types";
 import { StatusBar } from "../StatusBar";
 import { TicketActionBar } from "../TicketActionBar";
 import { TicketChat } from "../TicketChat";
+import { ApprovalSection } from "../ApprovalSection";
 import { priorityChipClass, relativeTime, formatDollars } from "./woMobile";
 
 export function MobileTicketDetail({
@@ -176,17 +177,24 @@ export function MobileTicketDetail({
             </section>
           )}
 
-          {/* Approvals */}
-          {t.ticket_approvals && t.ticket_approvals.length > 0 && (
-            <section>
-              <SectionTitle>Approvals</SectionTitle>
-              <div className="bg-surface rounded-xl ring-1 ring-midnight-100 shadow-card divide-y divide-midnight-100">
-                {t.ticket_approvals.map((a) => (
-                  <ApprovalRow key={a.id} approval={a} />
-                ))}
-              </div>
-            </section>
-          )}
+          {/* Approval — request a quote sign-off, or (DO+) approve/reject
+              the pending one. Reuses the desktop ApprovalSection, which
+              role-gates the decide buttons client-side and is enforced
+              server-side. This is what the Approvals-queue deep-link
+              lands on. */}
+          <section>
+            <div className="bg-surface rounded-xl ring-1 ring-midnight-100 shadow-card p-4">
+              <ApprovalSection
+                ticket={t}
+                callerRole={profile?.role ?? ""}
+                onChanged={() => {
+                  qc.invalidateQueries({ queryKey: ["wo2-ticket", ticketId] });
+                  qc.invalidateQueries({ queryKey: ["wo2", "tickets"] });
+                }}
+                onError={(msg) => toast.push(msg, "error")}
+              />
+            </div>
+          </section>
 
           {/* Activity */}
           {t.ticket_activities && t.ticket_activities.length > 0 && (
@@ -272,30 +280,6 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
     <div className="px-2 pb-1.5 pt-1 text-[10.5px] font-semibold uppercase tracking-wider text-midnight-500">
       {children}
-    </div>
-  );
-}
-
-function ApprovalRow({ approval }: { approval: TicketApproval }) {
-  const kind =
-    approval.status === "Approved"
-      ? "approved"
-      : approval.status === "Rejected"
-      ? "error"
-      : "pending";
-  return (
-    <div className="flex items-center gap-3 px-4 py-2.5">
-      <div className="flex-1 min-w-0">
-        <div className="text-[13px] font-medium text-midnight-900 truncate">
-          {approval.approval_tier}
-        </div>
-        {approval.notes && (
-          <div className="text-[11.5px] text-midnight-500 truncate">
-            {approval.notes}
-          </div>
-        )}
-      </div>
-      <StatusPill kind={kind}>{approval.status}</StatusPill>
     </div>
   );
 }
