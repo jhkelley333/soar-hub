@@ -1,19 +1,20 @@
 // AppShell — chrome around the authenticated app. Responsive:
 //
-//   lg+   — sidebar nav on the left, max-w-7xl content container with
-//           the existing desktop padding. Same as before.
-//   < lg  — no sidebar in flow, no top hamburger bar. Content keeps
-//           the same padded container so legacy pages render the way
-//           they used to; mobile-first pages set their own max-w-md
-//           inside and ignore it. Bottom-tab nav at the bottom for
-//           the three most common destinations + a More tab that
-//           opens the full sidebar as a slide-in drawer, so nothing
-//           in the existing nav becomes unreachable. Each screen now
-//           brings its own AppHeader when it needs one.
-//
-// This is the foundation for the "feels like an app" experience on
-// mobile. Combined with the PWA manifest + service worker (separate
-// PR) it gives installed users a true standalone phone experience.
+//   lg+   — sidebar nav on the left, max-w-7xl content container. Same
+//           as before. The mobile-only chrome elements collapse to
+//           display:none and contribute no layout space.
+//   < lg  — three stacked rows:
+//             1. midnight brand strip that owns the iOS status-bar
+//                safe-area zone. The system clock + signal icons sit
+//                ON this strip in white (status-bar-style is
+//                black-translucent in index.html).
+//             2. main scroll area — flex-1, the ONLY scrollable
+//                element in the shell.
+//             3. MobileTabBar — a real flex item, NOT position:fixed.
+//                Content in the scroll area can never underrun it
+//                because the layout doesn't let it. Its own
+//                padding-bottom carries the home-indicator inset.
+//           Sidebar opens as a left drawer when "More" is tapped.
 
 import { useState } from "react";
 import { Outlet } from "react-router-dom";
@@ -28,52 +29,54 @@ export function AppShell() {
   useIdleLogout();
 
   return (
-    <div className="flex h-full bg-surface-muted">
-      {/* Sidebar — always visible on lg+. On mobile it only renders
-          while the More drawer is open, on top of the content. */}
-      <div className="hidden lg:flex">
-        <Sidebar />
-      </div>
+    <div className="flex h-full flex-col bg-surface-muted">
+      {/* Mobile-only status-bar backdrop. Height equals the iPhone's
+          safe-area-inset-top (notch / Dynamic Island), so the system
+          status bar paints on a midnight brand strip instead of on
+          page content. Desktop hides it. */}
+      <div
+        aria-hidden
+        className="shrink-0 bg-midnight lg:hidden"
+        style={{ height: "env(safe-area-inset-top, 0px)" }}
+      />
 
-      {moreOpen && (
-        <>
-          <div
-            className="fixed inset-0 z-40 bg-zinc-900/40 lg:hidden"
-            onClick={() => setMoreOpen(false)}
-            aria-hidden="true"
-          />
-          <div className="fixed inset-y-0 left-0 z-50 lg:hidden">
-            <Sidebar onNavigate={() => setMoreOpen(false)} />
-          </div>
-        </>
-      )}
+      {/* Body row: sidebar (desktop) + main scroll area. min-h-0 is the
+          flex-child trick that lets the inner overflow-y-auto actually
+          scroll instead of expanding the parent. */}
+      <div className="flex min-h-0 flex-1">
+        {/* Sidebar — always visible on lg+. */}
+        <div className="hidden lg:flex">
+          <Sidebar />
+        </div>
 
-      {/* The iOS safe-area inset lives on #root in globals.css so every
-          page (AppShell, LandingPage, LoginPage) inherits it. No per-
-          shell padding here. */}
-      <div className="flex min-w-0 flex-1 flex-col">
-        <main className="flex-1 overflow-y-auto">
-          {/* Container restores the existing padded layout for
-              legacy pages. Mobile-first pages set their own
-              `mx-auto max-w-md` inside, which lives comfortably
-              inside this wrapper at every viewport. */}
+        {/* Sidebar drawer — mobile only when "More" is tapped. */}
+        {moreOpen && (
+          <>
+            <div
+              className="fixed inset-0 z-40 bg-zinc-900/40 lg:hidden"
+              onClick={() => setMoreOpen(false)}
+              aria-hidden="true"
+            />
+            <div className="fixed inset-y-0 left-0 z-50 lg:hidden">
+              <Sidebar onNavigate={() => setMoreOpen(false)} />
+            </div>
+          </>
+        )}
+
+        <main className="min-w-0 flex-1 overflow-y-auto">
+          {/* Container restores the existing padded layout for legacy
+              pages. Mobile-first pages set their own `mx-auto max-w-md`
+              inside, which lives comfortably inside this wrapper at
+              every viewport. */}
           <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
             <Outlet />
           </div>
-          {/* Reserve room at the bottom of the scroll area for the
-              mobile tab bar so it can't sit on top of the last
-              piece of content. Desktop hides this spacer. */}
-          <div
-            className="h-16 lg:hidden"
-            style={{ marginBottom: "env(safe-area-inset-bottom, 0px)" }}
-            aria-hidden
-          />
         </main>
-
-        {/* Bottom-tab nav — mobile only. Sits on top of content, lifted
-            above the iOS home indicator via safe-area inset. */}
-        <MobileTabBar onMoreClick={() => setMoreOpen(true)} />
       </div>
+
+      {/* Bottom-tab nav — mobile only, lives as a real flex row in the
+          column above so content can never scroll past it. */}
+      <MobileTabBar onMoreClick={() => setMoreOpen(true)} />
     </div>
   );
 }

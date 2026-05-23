@@ -94,16 +94,11 @@
 
 html, body, #root { height: 100%; }
 
-/* iOS status-bar safe area — anchored at #root so every page
- * (AppShell, LandingPage, LoginPage) inherits the inset without
- * each one having to remember. Only top inset here; bottom inset
- * is already handled by MobileTabBar's own padding-bottom so we
- * don't double-count above the home indicator. box-sizing keeps
- * the height: 100% math correct now that #root carries padding. */
-#root {
-  padding-top: env(safe-area-inset-top, 0);
-  box-sizing: border-box;
-}
+/* iOS safe-area handling lives in AppShell — it paints a midnight
+ * brand strip in the status-bar zone (top) and lets the MobileTabBar
+ * own the home-indicator zone (bottom). LandingPage / LoginPage are
+ * full-bleed colored hero pages, so the status bar reads against
+ * their own backdrops with no inset needed. */
 
 body {
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
