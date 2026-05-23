@@ -833,6 +833,24 @@ export const handler = async (event) => {
         });
       }
 
+      // Record the quote as a first-class ticket_quotes row (source =
+      // vendor) so it shows in the approval card's Quotes section with a
+      // "Vendor" chip. Marked recommended — it's the quote this approval
+      // request is for; clear any prior recommendation first.
+      await supabase.from("ticket_quotes")
+        .update({ is_recommended: false }).eq("ticket_id", ticketId);
+      await supabase.from("ticket_quotes").insert({
+        ticket_id:         ticketId,
+        vendor_name:       identity.vendor_name || "",
+        amount_cents:      Math.round(amount * 100),
+        file_url:          quoteUrl,
+        file_name:         body.photo?.photoName || null,
+        note:              body.notes || null,
+        is_recommended:    true,
+        source:            "vendor",
+        submitted_by_name: identity.vendor_name || null,
+      });
+
       // Create the approval request row.
       const { error: appErr } = await supabase.from("ticket_approvals").insert({
         ticket_id: ticketId,

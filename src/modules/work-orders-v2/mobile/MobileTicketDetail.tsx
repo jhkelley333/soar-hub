@@ -82,6 +82,13 @@ export function MobileTicketDetail({
     (t?.ticket_quotes ?? [])[0] ??
     null;
 
+  // Evidence excludes quote attachments — those live in the Quotes
+  // section (vendor-submitted quotes also land in ticket_photos as
+  // upload_type='quote', and a quote PDF would render as a broken image).
+  const evidencePhotos = (t?.ticket_photos ?? []).filter(
+    (p) => p.upload_type !== "quote",
+  );
+
   function refreshTicket() {
     qc.invalidateQueries({ queryKey: ["wo2-ticket", ticketId] });
     qc.invalidateQueries({ queryKey: ["wo2", "tickets"] });
@@ -206,11 +213,11 @@ export function MobileTicketDetail({
           )}
 
           {/* Evidence */}
-          {t.ticket_photos && t.ticket_photos.length > 0 && (
+          {evidencePhotos.length > 0 && (
             <section>
-              <SectionTitle>Evidence · {t.ticket_photos.length} photos</SectionTitle>
+              <SectionTitle>Evidence · {evidencePhotos.length} photos</SectionTitle>
               <div className="grid grid-cols-3 gap-2 px-1">
-                {t.ticket_photos.map((p, i) => (
+                {evidencePhotos.map((p, i) => (
                   <button
                     key={p.id}
                     type="button"
@@ -327,9 +334,9 @@ export function MobileTicketDetail({
         />
       )}
 
-      {t?.ticket_photos && lightboxIndex !== null && (
+      {evidencePhotos.length > 0 && lightboxIndex !== null && (
         <Lightbox
-          photos={t.ticket_photos.map((p) => ({ url: p.file_url, name: p.file_name }))}
+          photos={evidencePhotos.map((p) => ({ url: p.file_url, name: p.file_name }))}
           index={lightboxIndex}
           onClose={() => setLightboxIndex(null)}
           onIndexChange={setLightboxIndex}
