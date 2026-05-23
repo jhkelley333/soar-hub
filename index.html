@@ -40,7 +40,16 @@
     />
   </head>
   <body class="h-full bg-zinc-50 text-zinc-900 antialiased">
-    <div id="root" class="h-full"></div>
+    <!-- Inline padding-top + box-sizing on #root so the iOS status-bar
+         safe-area inset reaches the page even when globals.css is still
+         the previous deploy's hashed file in the service-worker cache.
+         The same rule lives in globals.css for explicit-ness; this is
+         belt-and-suspenders for stale-cache cases on installed PWAs. -->
+    <div
+      id="root"
+      class="h-full"
+      style="padding-top: env(safe-area-inset-top, 0); box-sizing: border-box;"
+    ></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
