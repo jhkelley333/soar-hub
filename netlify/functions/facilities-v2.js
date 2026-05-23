@@ -1783,7 +1783,7 @@ export const handler = async (event) => {
     // ticket's cost_estimate. File rides along as base64 like uploadPhoto.
     if (action === "addQuote" && event.httpMethod === "POST") {
       const {
-        ticketId, vendorName: qVendor, amountCents, note,
+        ticketId, vendorName: qVendor, amountCents, note, workRequested,
         fileData, fileName, fileType, isRecommended,
       } = JSON.parse(event.body);
       if (!ticketId) return respond(400, { ok: false, message: "ticketId required." });
@@ -1832,10 +1832,17 @@ export const handler = async (event) => {
         .single();
       if (qErr) throw qErr;
 
-      if (makeRecommended) {
-        await supabase.from("tickets")
-          .update({ cost_estimate: cents / 100, updated_at: new Date().toISOString() })
-          .eq("id", ticketId);
+      // Sync ticket-level fields. The recommended quote drives the cost;
+      // the Request (work_requested) is set from this submission when
+      // provided, keeping vendor-portal and internal entry aligned.
+      const ticketPatch = {};
+      if (makeRecommended) ticketPatch.cost_estimate = cents / 100;
+      if (workRequested && String(workRequested).trim()) {
+        ticketPatch.work_requested = String(workRequested).trim();
+      }
+      if (Object.keys(ticketPatch).length) {
+        ticketPatch.updated_at = new Date().toISOString();
+        await supabase.from("tickets").update(ticketPatch).eq("id", ticketId);
       }
 
       await supabase.from("ticket_activities").insert({

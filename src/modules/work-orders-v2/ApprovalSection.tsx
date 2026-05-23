@@ -63,6 +63,14 @@ export function ApprovalSection({
   const approvals = ticket.ticket_approvals ?? [];
   const latest = approvals.length > 0 ? approvals[approvals.length - 1] : null;
 
+  // Justification follows the recommended quote so it tracks whichever
+  // quote is committed, falling back to the approval row's notes.
+  const recommendedQuote =
+    (ticket.ticket_quotes ?? []).find((qz) => qz.is_recommended) ??
+    (ticket.ticket_quotes ?? [])[0] ??
+    null;
+  const justification = recommendedQuote?.note || latest?.notes || null;
+
   const [requesting, setRequesting] = useState(false);
   const [tier, setTier] = useState<ApprovalTier>(APPROVAL_TIERS[0].value);
   const [notes, setNotes] = useState("");
@@ -186,13 +194,13 @@ export function ApprovalSection({
               </a>
             )}
           </div>
-          {latest.notes && (
+          {justification && (
             <div className="mt-1.5">
               <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
                 Justification
               </div>
               <div className="whitespace-pre-wrap text-xs text-zinc-700">
-                {latest.notes}
+                {justification}
               </div>
             </div>
           )}

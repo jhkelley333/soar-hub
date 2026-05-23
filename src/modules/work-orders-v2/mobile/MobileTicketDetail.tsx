@@ -12,19 +12,17 @@
 // slices — see the gap table in the PR.
 
 import { useEffect, useState } from "react";
-import { useQuery, useQueryClient, useMutation } from "@tanstack/react-query";
-import { ChevronLeft, Clock, MapPin, Wrench, User2, Pencil, RefreshCw, Loader2 } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ChevronLeft, Clock, MapPin, Wrench, User2, RefreshCw } from "lucide-react";
 import { AppHeader } from "@/shared/ui/AppHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Avatar } from "@/shared/ui/Avatar";
 import { Lightbox } from "@/shared/ui/Lightbox";
-import { Drawer } from "@/shared/ui/Drawer";
-import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
-import { fetchTicket, markTicketSeen, updateTicket } from "../api";
+import { fetchTicket, markTicketSeen } from "../api";
 import { TicketChat } from "../TicketChat";
 import { ApprovalSection } from "../ApprovalSection";
 import { CostHero } from "./CostHero";
@@ -94,20 +92,6 @@ export function MobileTicketDetail({
     qc.invalidateQueries({ queryKey: ["wo2", "tickets"] });
   }
 
-  // Inline edit of the Request (work_requested).
-  const [editReqOpen, setEditReqOpen] = useState(false);
-  const [reqDraft, setReqDraft] = useState("");
-  const saveRequest = useMutation({
-    mutationFn: () => updateTicket({ id: ticketId, workRequested: reqDraft.trim() }),
-    onSuccess: () => {
-      toast.push("Request updated.", "success");
-      setEditReqOpen(false);
-      refreshTicket();
-    },
-    onError: (e: unknown) =>
-      toast.push(e instanceof Error ? e.message : "Couldn't save.", "error"),
-  });
-
   const subtitle = t
     ? [t.category, t.asset_type, `SDI ${t.store_number}`].filter(Boolean).join(" · ")
     : "Loading…";
@@ -164,31 +148,19 @@ export function MobileTicketDetail({
         <div className="flex-1 px-3 pt-3 pb-8 space-y-3">
           <CostHero ticket={t} latest={latest} canDecide={canDecide} />
 
-          {/* Request — the vendor's proposed scope of work. */}
+          {/* Request — the scope of work, set by the vendor (or internal
+              on their behalf) when a quote is submitted. Read-only here:
+              it follows the quote, not an approver's edit. */}
           <section className="bg-surface rounded-xl ring-1 ring-midnight-100 shadow-card p-4">
-            <div className="flex items-center justify-between">
-              <SectionTitle inline>Request</SectionTitle>
-              <button
-                type="button"
-                onClick={() => { setReqDraft(t.work_requested || ""); setEditReqOpen(true); }}
-                className="inline-flex items-center gap-1 text-[11.5px] font-medium text-accent"
-              >
-                <Pencil className="h-3 w-3" strokeWidth={2} />
-                Edit
-              </button>
-            </div>
+            <SectionTitle inline>Request</SectionTitle>
             {t.work_requested ? (
               <h1 className="mt-1 text-[17px] font-semibold text-midnight-900 leading-snug">
                 {t.work_requested}
               </h1>
             ) : (
-              <button
-                type="button"
-                onClick={() => { setReqDraft(""); setEditReqOpen(true); }}
-                className="mt-1 text-[14px] italic text-midnight-400"
-              >
-                Add what the vendor will do…
-              </button>
+              <p className="mt-1 text-[14px] italic text-midnight-400">
+                Set when the vendor submits their quote.
+              </p>
             )}
             <div className="mt-2 flex items-center gap-2">
               <Avatar name={t.submitted_by || ""} size={24} />
@@ -202,13 +174,15 @@ export function MobileTicketDetail({
             </div>
           </section>
 
-          {/* Justification — the quote's rationale (vendor's, when they
-              submitted one), falling back to the store's original report. */}
-          {(t.approval_request_notes || t.issue_description) && (
+          {/* Justification — the recommended quote's rationale, so it
+              tracks whichever quote is committed (updates as new quotes
+              come in or the recommendation changes). Falls back to the
+              ticket-level request notes, then the store's report. */}
+          {(recommendedQuote?.note || t.approval_request_notes || t.issue_description) && (
             <section className="bg-surface rounded-xl ring-1 ring-midnight-100 shadow-card p-4">
               <SectionTitle inline>Justification</SectionTitle>
               <p className="mt-1 whitespace-pre-wrap text-[13.5px] leading-relaxed text-midnight-800">
-                {t.approval_request_notes || t.issue_description}
+                {recommendedQuote?.note || t.approval_request_notes || t.issue_description}
               </p>
             </section>
           )}
@@ -348,36 +322,6 @@ export function MobileTicketDetail({
           onIndexChange={setLightboxIndex}
         />
       )}
-
-      {/* Edit the Request (vendor scope). */}
-      <Drawer
-        open={editReqOpen}
-        onClose={() => { if (!saveRequest.isPending) setEditReqOpen(false); }}
-        title="What the vendor will do"
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setEditReqOpen(false)} disabled={saveRequest.isPending}>
-              Cancel
-            </Button>
-            <Button variant="primary" onClick={() => saveRequest.mutate()} disabled={saveRequest.isPending}>
-              {saveRequest.isPending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
-              Save
-            </Button>
-          </>
-        }
-      >
-        <label className="text-[11px] font-semibold uppercase tracking-wider text-midnight-500">
-          Request
-        </label>
-        <textarea
-          value={reqDraft}
-          onChange={(e) => setReqDraft(e.target.value)}
-          rows={4}
-          autoFocus
-          placeholder="e.g. Replace ice maker — back-of-house Unit 2"
-          className="mt-1.5 block w-full rounded-lg border border-midnight-200 bg-white px-3 py-2 text-sm text-midnight-900 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-        />
-      </Drawer>
     </div>
   );
 }
