@@ -22,11 +22,13 @@
 
     <!-- iOS PWA install hints. apple-mobile-web-app-capable lets the
          installed app render fullscreen (no Safari chrome) on iOS
-         13+ when added to the home screen. status-bar-style
-         black-translucent makes the iOS status bar text read white
-         over the midnight splash + AppHeader. -->
+         13+ when added to the home screen. status-bar-style "default"
+         renders an opaque white status bar with dark icons that sits
+         above page content (vs. "black-translucent" which paints the
+         status bar transparently over content and caused overlap with
+         page headers on iPhone). -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
     <meta name="apple-mobile-web-app-title" content="SOAR Hub" />
     <link rel="apple-touch-icon" href="/favicon.svg" />
 
