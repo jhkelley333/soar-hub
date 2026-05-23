@@ -133,6 +133,16 @@ export interface TicketActivity {
   created_at: string;
 }
 
+// One row of a work order's cost breakdown. amount_cents is the LINE
+// total (qty already factored in). Stored as a jsonb array on the
+// ticket (migration 0075); the ticket's cost_estimate is kept in sync
+// by the backend as the sum.
+export interface LineItem {
+  label: string;
+  qty: number;
+  amount_cents: number;
+}
+
 export interface Ticket {
   id: string;
   wo_number: string;
@@ -184,6 +194,7 @@ export interface Ticket {
   date_submitted: string;
   date_completed: string | null;
   latest_comment: string | null;
+  line_items?: LineItem[];
   ticket_photos?: TicketPhoto[];
   ticket_approvals?: TicketApproval[];
   ticket_activities?: TicketActivity[];
@@ -254,6 +265,8 @@ export interface UpdateTicketBody {
   vendorName?: string;
   vendorId?: string | null;
   notes?: string;
+  // Replaces the cost breakdown; backend recomputes cost_estimate.
+  lineItems?: LineItem[];
 }
 
 // One store the caller has access to, as returned by `getCallerStores`.
@@ -302,6 +315,9 @@ export interface CreateTicketBody {
   troubleshootingChecked?: boolean;
   vendorContacted?: boolean;
   vendorName?: string;
+  // Optional cost breakdown. When present the backend sets cost_estimate
+  // to the sum, so callers don't send costEstimate separately.
+  lineItems?: LineItem[];
 }
 
 export interface CreateTicketResponse {
