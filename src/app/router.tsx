@@ -27,7 +27,7 @@ import { PafConfigPage } from "@/modules/admin/pafConfig/PafConfigPage";
 import { RankerPage } from "@/modules/ranker/RankerPage";
 import { MyStoresPage } from "@/modules/my-stores/MyStoresPage";
 import { AccountPage } from "@/modules/account/AccountPage";
-import { WorkOrdersV2Page } from "@/modules/work-orders-v2/WorkOrdersV2Page";
+import { WorkOrdersV2Route } from "@/modules/work-orders-v2/WorkOrdersV2Route";
 import { VendorPortalPage } from "@/modules/vendor-portal/VendorPortalPage";
 import { PublicSubmitPage } from "@/modules/public-submit/PublicSubmitPage";
 import { WorkspacesPage } from "@/modules/workspaces/WorkspacesPage";
@@ -206,7 +206,7 @@ export const router = createBrowserRouter([
         path: "admin/work-orders-v2",
         element: (
           <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
-            <WorkOrdersV2Page />
+            <WorkOrdersV2Route />
           </ProtectedRoute>
         ),
       },
