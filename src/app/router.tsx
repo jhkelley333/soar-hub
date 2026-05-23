@@ -43,6 +43,7 @@ import { CapDetailPage } from "@/modules/workspaces/CapDetailPage";
 import { RenoScopingPage } from "@/modules/reno-scoping/RenoScopingPage";
 import { NewScopePage } from "@/modules/reno-scoping/NewScopePage";
 import { ScopeDetailPage } from "@/modules/reno-scoping/ScopeDetailPage";
+import { RegionPage } from "@/modules/region/RegionPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -88,6 +89,17 @@ export const router = createBrowserRouter([
       },
       { path: "account", element: <AccountPage /> },
       { path: "my-stores", element: <MyStoresPage /> },
+      {
+        // Region rollup (mobile-first preview). Visible to DO+ — GMs
+        // only see one store and don't need a rollup. Placeholder
+        // scores; see src/modules/region/scoring.ts.
+        path: "region",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <RegionPage />
+          </ProtectedRoute>
+        ),
+      },
       {
         path: "team",
         element: (

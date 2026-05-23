@@ -14,6 +14,7 @@ import {
   Flag,
   ClipboardList,
   HardHat,
+  Gauge,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -43,6 +44,11 @@ export const NAV: NavItem[] = [
   // operational tool field roles see.
   { to: "/admin/work-orders-v2", label: "Work Orders", icon: Hammer, roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/ranker",      label: "Ranker",      icon: TrendingUp,      roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // Region rollup — at-a-glance health of every store in scope. Mobile-
+  // first preview from the 2026 design import. DO+ only (GMs only have
+  // one store and don't need a rollup). Score/tier/trend are placeholder
+  // values for now; see src/modules/region/scoring.ts.
+  { to: "/region",      label: "Region",      icon: Gauge,           roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
   // Workspaces is a tabbed landing page that hosts the workspace list
   // plus the personal cross-workspace queues (My Assignments, Sign-off
   // Queue, My CAPs) as inner tabs. Wide role allowlist so submitters
