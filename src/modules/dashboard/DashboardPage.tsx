@@ -17,6 +17,7 @@ import type { RecentMessage } from "@/modules/work-orders-v2/types";
 import { supabase } from "@/lib/supabase";
 import { formatPhoneForDisplay } from "@/lib/phone";
 import { OpenWorkOrdersWidget } from "./OpenWorkOrdersWidget";
+import { MobileHome } from "./MobileHome";
 
 const SDO_REVIEW_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
 
@@ -125,57 +126,67 @@ export function DashboardPage() {
 
   return (
     <>
-      <PageHeader
-        title={greeting}
-        description="What needs your attention today."
-      />
+      {/* Mobile (< lg): a clean launcher into the four design-import
+          screens. Replaces the desktop grid-of-stats layout when the
+          screen is too narrow to show it without crowding. */}
+      <div className="lg:hidden">
+        <MobileHome />
+      </div>
 
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <Stat
-          label="Open Work Orders"
-          value={
-            woStatsQuery.isLoading
-              ? "…"
-              : woStatsQuery.isError
-                ? "—"
-                : String(openCount)
-          }
-          tone="warning"
-          to="/admin/work-orders-v2"
+      {/* Desktop (lg+): the existing dashboard, unchanged. */}
+      <div className="hidden lg:block">
+        <PageHeader
+          title={greeting}
+          description="What needs your attention today."
         />
-        <Stat
-          label="CFMs Expiring (60d)"
-          value={cfmQuery.isLoading ? "…" : cfmQuery.isError ? "—" : String(cfmTotal)}
-          tone={cfmTone === "neutral" ? "info" : cfmTone}
-          to="/cfm-expiring"
-        />
-        <Stat label="Stores in Scope" value={storesInScope} tone="neutral" />
+
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+          <Stat
+            label="Open Work Orders"
+            value={
+              woStatsQuery.isLoading
+                ? "…"
+                : woStatsQuery.isError
+                  ? "—"
+                  : String(openCount)
+            }
+            tone="warning"
+            to="/admin/work-orders-v2"
+          />
+          <Stat
+            label="CFMs Expiring (60d)"
+            value={cfmQuery.isLoading ? "…" : cfmQuery.isError ? "—" : String(cfmTotal)}
+            tone={cfmTone === "neutral" ? "info" : cfmTone}
+            to="/cfm-expiring"
+          />
+          <Stat label="Stores in Scope" value={storesInScope} tone="neutral" />
+        </div>
+
+        <div className="mt-8 grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <Card>
+            <CardHeader title="Action Queue" description="Items waiting on you." />
+            <CardBody>
+              <div className="text-sm text-zinc-500">
+                {actionQueueCopy(profile?.role)}
+              </div>
+            </CardBody>
+          </Card>
+
+          <PrimaryStoreCard />
+        </div>
+
+        <div className="mt-6">
+          <BirthdayWidget />
+        </div>
+
+        {profile && SDO_REVIEW_ROLES.has(profile.role) && <SdoQueueWidget />}
+
+        {profile && WO_ROLES.has(profile.role) && <OpenWorkOrdersWidget />}
+
+        {profile && WO_ROLES.has(profile.role) && <RecentTicketMessagesWidget />}
+
+        <BirthdayCelebration />
       </div>
-
-      <div className="mt-8 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader title="Action Queue" description="Items waiting on you." />
-          <CardBody>
-            <div className="text-sm text-zinc-500">
-              {actionQueueCopy(profile?.role)}
-            </div>
-          </CardBody>
-        </Card>
-
-        <PrimaryStoreCard />
-      </div>
-
-      <div className="mt-6">
-        <BirthdayWidget />
-      </div>
-
-      {profile && SDO_REVIEW_ROLES.has(profile.role) && <SdoQueueWidget />}
-
-      {profile && WO_ROLES.has(profile.role) && <OpenWorkOrdersWidget />}
-
-      {profile && WO_ROLES.has(profile.role) && <RecentTicketMessagesWidget />}
-
-      <BirthdayCelebration />
     </>
   );
 }
