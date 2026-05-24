@@ -11,7 +11,7 @@
 // OPERATIONS subtitle, a loading line + dots, and a "Powered by a mint"
 // footer.
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 import { SplashCup } from "./SplashCup";
@@ -31,6 +31,25 @@ export function LaunchSplash({ greeting, subline, showSignIn }: Props) {
   // permission prompt, so the first cup tap both rattles the ice and
   // requests motion access, unlocking shake for the rest of the visit.
   const [agitate, setAgitate] = useState(0);
+
+  // Force the document + body background to the splash navy while the
+  // splash is on screen, restoring on exit. iOS standalone PWAs paint
+  // the home-indicator safe area from the document/body background — a
+  // fixed inset-0 element can't reach it — so this is what actually
+  // kills the white strip at the bottom. Scoped to the splash so the
+  // home (light) is unaffected.
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const prevHtml = html.style.backgroundColor;
+    const prevBody = body.style.backgroundColor;
+    html.style.backgroundColor = "#0c1c2e";
+    body.style.backgroundColor = "#0c1c2e";
+    return () => {
+      html.style.backgroundColor = prevHtml;
+      body.style.backgroundColor = prevBody;
+    };
+  }, []);
   const motionAsked = useRef(false);
   const rattle = useCallback(() => setAgitate((a) => a + 1), []);
   useShake(rattle);
