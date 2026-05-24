@@ -94,6 +94,15 @@
 
 html, body, #root { height: 100%; }
 
+/* iOS standalone PWAs paint the home-indicator safe area with the
+ * document background. Default white shows as a "white strip" below
+ * full-bleed screens (the launch splash) when a fixed/dvh element
+ * doesn't reach into the inset. Anchoring the document background to the
+ * splash's deep navy makes that strip invisible on the splash and, on
+ * the home, it sits harmlessly behind the white tab bar (which covers
+ * the inset). On-brand with the midnight status-bar strip up top. */
+html { background-color: #0c1c2e; }
+
 /* Lock the document so ONLY the in-app scroll container moves. Without
  * this rule iOS chains rubber-band overscroll up to the html/body when
  * the user pulls past the top or bottom of main, which visually drags
