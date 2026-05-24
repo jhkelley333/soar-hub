@@ -42,11 +42,10 @@ export function MobileTabBar({
     <nav
       className="shrink-0 border-t border-white/10 bg-midnight lg:hidden"
       style={{
-        // Pad by half the home-indicator inset so the bar sits tight to
-        // the bottom edge while still clearing the indicator pill. The
-        // midnight bg paints the inset, keeping the bottom a cohesive
-        // navy frame.
-        paddingBottom: "calc(env(safe-area-inset-bottom, 0px) / 2)",
+        // Pad by a quarter of the home-indicator inset so the bar sits
+        // tight to the bottom edge. The midnight bg paints the inset,
+        // keeping the bottom a cohesive navy frame.
+        paddingBottom: "calc(env(safe-area-inset-bottom, 0px) / 4)",
       }}
       aria-label="Primary"
     >

@@ -32,10 +32,9 @@ const TIER_TEXT: Record<Tier, string> = {
   green: "text-ok",
 };
 
-// FC miss is always a bad thing, so any positive miss is never green:
-//   ≤ 0  (met / beat commitment) → green
+// FC miss is always a bad thing, so a positive miss is never green:
+//   no miss — $0 or no data (—) → green
 //   > 0  → red if above the median positive miss, else yellow
-// Stores without FC-miss data are left untiered (neutral).
 function buildTiers(rows: PortfolioRow[]): Map<string, Tier> {
   const positives = rows
     .map((r) => r.annualizedFcMiss)
@@ -47,8 +46,7 @@ function buildTiers(rows: PortfolioRow[]): Map<string, Tier> {
   const m = new Map<string, Tier>();
   for (const r of rows) {
     const v = r.annualizedFcMiss;
-    if (v == null) continue;
-    if (v <= 0) m.set(r.store, "green");
+    if (v == null || v <= 0) m.set(r.store, "green");
     else m.set(r.store, v > median ? "red" : "yellow");
   }
   return m;
