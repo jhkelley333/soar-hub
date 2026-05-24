@@ -9,7 +9,7 @@ import { NavLink } from "react-router-dom";
 import {
   Home,
   BadgeCheck,
-  Store,
+  BookUser,
   Wrench,
   Menu,
   type LucideIcon,
@@ -27,10 +27,10 @@ export interface MobileTab {
 }
 
 export const MOBILE_TABS: MobileTab[] = [
-  { to: "/",                     label: "Home",     Icon: Home,      endMatch: true },
-  { to: "/admin/work-orders-v2", label: "Work",     Icon: Wrench },
+  { to: "/",                     label: "Home",      Icon: Home,      endMatch: true },
+  { to: "/admin/work-orders-v2", label: "Work",      Icon: Wrench },
   { to: "/approvals",            label: "Approvals", Icon: BadgeCheck },
-  { to: "/region",               label: "Stores",   Icon: Store },
+  { to: "/directory",            label: "Directory", Icon: BookUser },
 ];
 
 export function MobileTabBar({
@@ -42,12 +42,11 @@ export function MobileTabBar({
     <nav
       className="shrink-0 border-t border-white/10 bg-midnight lg:hidden"
       style={{
-        // Sit the bar tight to the bottom edge like native tab bars:
-        // pad by the home-indicator inset minus ~20px so the labels drop
-        // close to the edge (still clearing the indicator pill), with a
-        // small floor for non-notched devices. The midnight bg paints the
-        // inset, keeping the bottom a cohesive navy frame.
-        paddingBottom: "max(calc(env(safe-area-inset-bottom, 0px) - 20px), 6px)",
+        // Pad by half the home-indicator inset so the bar sits tight to
+        // the bottom edge while still clearing the indicator pill. The
+        // midnight bg paints the inset, keeping the bottom a cohesive
+        // navy frame.
+        paddingBottom: "calc(env(safe-area-inset-bottom, 0px) / 2)",
       }}
       aria-label="Primary"
     >

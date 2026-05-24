@@ -16,7 +16,7 @@ import confetti from "canvas-confetti";
 import {
   BadgeCheck,
   Wrench,
-  Store,
+  Trophy,
   Route,
   ChevronRight,
   type LucideIcon,
@@ -101,7 +101,6 @@ export function MobileHome() {
   const birthdayCount = birthdaysQ.data?.entries.length ?? 0;
 
   const scopeFull = role && treeQ.data ? launchScopeLabel(treeQ.data, role) : null;
-  const scopeShort = scopeFull?.split(" · ")[0] ?? null;
 
   const num = (q: { isLoading: boolean }, v: number) => (q.isLoading ? "—" : String(v));
 
@@ -221,11 +220,11 @@ export function MobileHome() {
           sub="Start new"
         />
         <QuickAction
-          to="/region"
-          Icon={Store}
+          to="/ranker"
+          Icon={Trophy}
           gradient="linear-gradient(135deg,#5cc6e2,#2196b8)"
-          title="Stores"
-          sub={scopeShort || "Your stores"}
+          title="Ranker"
+          sub="This week"
         />
         <QuickAction
           to="/admin/work-orders-v2"
