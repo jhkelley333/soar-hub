@@ -39,9 +39,9 @@ export function SplashCup({ className }: { className?: string }) {
           <stop offset="100%" stopColor="rgba(255,255,255,0.10)" />
         </linearGradient>
         <linearGradient id="splashStraw" x1="0" y1="0" x2="1" y2="0">
-          <stop offset="0%" stopColor="#ff3b52" />
-          <stop offset="55%" stopColor="#e4112e" />
-          <stop offset="100%" stopColor="#b30d23" />
+          <stop offset="0%" stopColor="#6cc6ee" />
+          <stop offset="55%" stopColor="#1390cf" />
+          <stop offset="100%" stopColor="#0a5f8a" />
         </linearGradient>
         <clipPath id="splashCupInside">
           <path d="M 46 98 L 198 98 L 176 320 L 68 320 Z" />
@@ -95,9 +95,20 @@ export function SplashCup({ className }: { className?: string }) {
           </g>
         ))}
 
-        {/* Carbonation */}
+        {/* Carbonation — rises and fades on a loop */}
         {BUBBLES.map(([cx, cy, r], i) => (
-          <circle key={i} cx={cx} cy={cy} r={r} fill="rgba(255,255,255,0.55)" />
+          <circle
+            key={i}
+            className="splash-bubble"
+            cx={cx}
+            cy={cy}
+            r={r}
+            fill="rgba(255,255,255,0.55)"
+            style={{
+              animationDuration: `${2.8 + (i % 4) * 0.7}s`,
+              animationDelay: `${((i * 0.37) % 3).toFixed(2)}s`,
+            }}
+          />
         ))}
 
         {/* Left gloss streak */}

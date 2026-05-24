@@ -140,6 +140,23 @@ body {
  * Utilities — small CSS classes that aren't worth living in Tailwind
  * -------------------------------------------------------------------------- */
 
+/* Launch-splash carbonation: bubbles drift upward and fade, clipped to
+ * the cup interior. Per-bubble duration/delay is set inline for a
+ * natural, non-synchronized rise. */
+@keyframes splash-bubble {
+  0%   { transform: translateY(6px);   opacity: 0; }
+  20%  { opacity: 0.7; }
+  90%  { opacity: 0.45; }
+  100% { transform: translateY(-86px); opacity: 0; }
+}
+.splash-bubble {
+  animation: splash-bubble 3s ease-in infinite;
+  will-change: transform, opacity;
+}
+@media (prefers-reduced-motion: reduce) {
+  .splash-bubble { animation: none; }
+}
+
 /* Status / tier dot indicator. Width and height settable inline for variants. */
 .dot {
   display: inline-block;
