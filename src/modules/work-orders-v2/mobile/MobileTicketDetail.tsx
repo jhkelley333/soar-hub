@@ -189,19 +189,6 @@ export function MobileTicketDetail({
             </div>
           </section>
 
-          {/* Justification — the recommended quote's rationale, so it
-              tracks whichever quote is committed (updates as new quotes
-              come in or the recommendation changes). Falls back to the
-              ticket-level request notes, then the store's report. */}
-          {(recommendedQuote?.note || t.approval_request_notes || t.issue_description) && (
-            <section className="bg-surface rounded-xl ring-1 ring-midnight-100 shadow-card p-4">
-              <SectionTitle inline>Justification</SectionTitle>
-              <p className="mt-1 whitespace-pre-wrap text-[13.5px] leading-relaxed text-midnight-800">
-                {recommendedQuote?.note || t.approval_request_notes || t.issue_description}
-              </p>
-            </section>
-          )}
-
           {/* Evidence */}
           {evidencePhotos.length > 0 && (
             <section>
