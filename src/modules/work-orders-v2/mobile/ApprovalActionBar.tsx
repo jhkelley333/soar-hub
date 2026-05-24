@@ -10,7 +10,7 @@
 
 import { useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Check, MessageSquarePlus, Loader2, Send, PhoneCall } from "lucide-react";
+import { Check, MessageSquarePlus, Loader2, Send, PhoneCall, X } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { BottomBar } from "@/shared/ui/BottomBar";
 import { Drawer } from "@/shared/ui/Drawer";
@@ -47,8 +47,8 @@ export function ApprovalActionBar({
 
   // "Ask the requester" sheet fields.
   const [subject, setSubject] = useState("");
-  const [ccSelf, setCcSelf] = useState(true);
-  const [bccText, setBccText] = useState("");
+  const [ccList, setCcList] = useState<string[]>([]);
+  const [bccList, setBccList] = useState<string[]>([]);
   const [openThread, setOpenThread] = useState(true);
   const [pauseClock, setPauseClock] = useState(true);
   const [notifySdo, setNotifySdo] = useState(false);
@@ -58,8 +58,8 @@ export function ApprovalActionBar({
   function openInfo() {
     setText("");
     setSubject(defaultSubject);
-    setCcSelf(true);
-    setBccText("");
+    setCcList(profile?.email ? [profile.email] : []);
+    setBccList([]);
     setOpenThread(true);
     setPauseClock(true);
     setNotifySdo(false);
@@ -109,8 +109,8 @@ export function ApprovalActionBar({
         ticketId: ticket.id,
         question: text.trim(),
         subject: subject.trim() || undefined,
-        cc: ccSelf && profile?.email ? [profile.email] : [],
-        bcc: bccText.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean),
+        cc: ccList,
+        bcc: bccList,
         openThread,
         pauseClock,
         notifySdo,
@@ -248,26 +248,17 @@ export function ApprovalActionBar({
                 <Chip>{ticket.submitted_by || "Requester"} · Requester</Chip>
               </RecipientRow>
               <RecipientRow label="Cc">
-                <button
-                  type="button"
-                  onClick={() => setCcSelf((v) => !v)}
-                  className={cn(
-                    "rounded-full px-2 py-0.5 text-[12px] font-medium ring-1",
-                    ccSelf
-                      ? "bg-accent/10 text-accent ring-accent/30"
-                      : "bg-surface text-midnight-400 ring-midnight-200 line-through",
-                  )}
-                >
-                  You · for the record
-                </button>
+                <EmailChips
+                  emails={ccList}
+                  onChange={setCcList}
+                  placeholder="Add email…"
+                />
               </RecipientRow>
               <RecipientRow label="Bcc">
-                <input
-                  value={bccText}
-                  onChange={(e) => setBccText(e.target.value)}
+                <EmailChips
+                  emails={bccList}
+                  onChange={setBccList}
                   placeholder="Add emails (vendor, maintenance…)"
-                  inputMode="email"
-                  className="w-full bg-transparent text-[13px] text-midnight-900 placeholder:text-midnight-400 focus:outline-none"
                 />
               </RecipientRow>
             </div>
@@ -294,7 +285,6 @@ export function ApprovalActionBar({
                 value={text}
                 onChange={(e) => setText(e.target.value.slice(0, 2000))}
                 rows={5}
-                autoFocus
                 placeholder="What do you need clarified before approving?"
                 className="mt-1.5 block w-full rounded-lg border border-midnight-200 bg-white px-3 py-2 text-sm text-midnight-900 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
               />
@@ -340,6 +330,65 @@ function RecipientRow({ label, children }: { label: string; children: ReactNode 
         {label}
       </span>
       <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  );
+}
+
+// A multi-email entry: existing emails render as removable chips; typing
+// + Enter / comma / space (or blur) commits a new one. Module-level so it
+// keeps a stable identity and never remounts mid-typing.
+function EmailChips({
+  emails,
+  onChange,
+  placeholder,
+}: {
+  emails: string[];
+  onChange: (next: string[]) => void;
+  placeholder: string;
+}) {
+  const [draft, setDraft] = useState("");
+  function commit(raw: string) {
+    const parts = raw.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean);
+    if (!parts.length) return;
+    const next = [...emails];
+    for (const p of parts) if (!next.includes(p)) next.push(p);
+    onChange(next);
+    setDraft("");
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-1.5">
+      {emails.map((e) => (
+        <span
+          key={e}
+          className="inline-flex items-center gap-1 rounded-full bg-frost-100 px-2 py-0.5 text-[12px] font-medium text-midnight-800 ring-1 ring-midnight-100"
+        >
+          {e}
+          <button
+            type="button"
+            onClick={() => onChange(emails.filter((x) => x !== e))}
+            className="text-midnight-400 hover:text-midnight-700"
+            aria-label={`Remove ${e}`}
+          >
+            <X className="h-3 w-3" strokeWidth={2.5} />
+          </button>
+        </span>
+      ))}
+      <input
+        value={draft}
+        onChange={(ev) => setDraft(ev.target.value)}
+        onKeyDown={(ev) => {
+          if (ev.key === "Enter" || ev.key === "," || ev.key === " ") {
+            ev.preventDefault();
+            commit(draft);
+          } else if (ev.key === "Backspace" && !draft && emails.length) {
+            onChange(emails.slice(0, -1));
+          }
+        }}
+        onBlur={() => commit(draft)}
+        placeholder={emails.length ? "" : placeholder}
+        inputMode="email"
+        className="min-w-[8ch] flex-1 bg-transparent text-[13px] text-midnight-900 placeholder:text-midnight-400 focus:outline-none"
+      />
     </div>
   );
 }

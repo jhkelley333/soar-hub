@@ -35,6 +35,16 @@ export function Drawer({
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
 
+  // Keep the latest onClose in a ref so the focus/keydown effect below
+  // doesn't list it as a dependency. Callers commonly pass an inline
+  // arrow (new identity every render); if the effect depended on it, it
+  // would re-run on every parent re-render and re-pull focus to the first
+  // focusable element — which steals focus out of inputs on each keystroke.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
   useEffect(() => {
     if (!open) return;
     // Capture the trigger so we can restore focus on close.
@@ -52,7 +62,7 @@ export function Drawer({
 
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape") {
-        onClose();
+        onCloseRef.current();
         return;
       }
       if (e.key !== "Tab") return;
@@ -93,7 +103,7 @@ export function Drawer({
         previouslyFocused.focus();
       }
     };
-  }, [open, onClose]);
+  }, [open]);
 
   // Browsers warn (and screen readers misbehave) when an element with
   // aria-hidden still owns focus. When the drawer closes — typically as
