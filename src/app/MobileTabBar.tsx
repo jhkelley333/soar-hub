@@ -42,12 +42,12 @@ export function MobileTabBar({
     <nav
       className="shrink-0 border-t border-white/10 bg-midnight lg:hidden"
       style={{
-        // Sit the bar close to the bottom edge like native tab bars:
-        // pad by the home-indicator inset minus ~14px (so the labels
-        // drop near the edge but still clear the indicator pill), with a
-        // small floor for non-notched devices. The midnight bg still
-        // paints the inset, so the bottom stays a cohesive navy frame.
-        paddingBottom: "max(calc(env(safe-area-inset-bottom, 0px) - 14px), 6px)",
+        // Sit the bar tight to the bottom edge like native tab bars:
+        // pad by the home-indicator inset minus ~20px so the labels drop
+        // close to the edge (still clearing the indicator pill), with a
+        // small floor for non-notched devices. The midnight bg paints the
+        // inset, keeping the bottom a cohesive navy frame.
+        paddingBottom: "max(calc(env(safe-area-inset-bottom, 0px) - 20px), 6px)",
       }}
       aria-label="Primary"
     >
@@ -59,7 +59,7 @@ export function MobileTabBar({
             end={t.endMatch}
             className={({ isActive }) =>
               cn(
-                "flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium transition",
+                "flex flex-col items-center justify-center gap-0.5 pt-2 pb-1 text-[10px] font-medium transition",
                 isActive
                   ? "text-white"
                   : "text-white/55 hover:text-white/85",
@@ -80,7 +80,7 @@ export function MobileTabBar({
         <button
           type="button"
           onClick={onMoreClick}
-          className="flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium text-white/55 hover:text-white/85 transition"
+          className="flex flex-col items-center justify-center gap-0.5 pt-2 pb-1 text-[10px] font-medium text-white/55 hover:text-white/85 transition"
           aria-label="Open full navigation"
         >
           <Menu className="h-5 w-5" strokeWidth={1.75} />

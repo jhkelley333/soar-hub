@@ -22,10 +22,8 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
-import { roleLevel } from "@/types/database";
 import { cn } from "@/lib/cn";
 import { fetchApprovalsQueue, relativeTime } from "@/modules/approvals/api";
-import { fetchRegionRollup } from "@/modules/region/api";
 import { fetchBirthdays, fetchMyTree, launchScopeLabel } from "@/modules/my-stores/api";
 import { thisAndNextWeekRange, isToday } from "@/modules/my-stores/dateRange";
 import { fetchRecentMessages } from "@/modules/work-orders-v2/api";
@@ -70,7 +68,6 @@ function initials(name: string | null | undefined): string {
 export function MobileHome() {
   const { profile } = useAuth();
   const role = profile?.role ?? null;
-  const isDoPlus = role != null && (roleLevel(role) ?? 0) >= 30;
 
   const firstName =
     profile?.preferred_name?.trim() || profile?.full_name?.split(" ")[0] || "there";
@@ -85,12 +82,6 @@ export function MobileHome() {
   const treeQ = useQuery({
     queryKey: ["my-stores-tree"],
     queryFn: fetchMyTree,
-    staleTime: 5 * 60_000,
-  });
-  const rollupQ = useQuery({
-    queryKey: ["region-rollup"],
-    queryFn: fetchRegionRollup,
-    enabled: isDoPlus,
     staleTime: 5 * 60_000,
   });
   const birthdaysQ = useQuery({
@@ -111,7 +102,6 @@ export function MobileHome() {
 
   const scopeFull = role && treeQ.data ? launchScopeLabel(treeQ.data, role) : null;
   const scopeShort = scopeFull?.split(" · ")[0] ?? null;
-  const regionIndex = rollupQ.data?.index ?? null;
 
   const num = (q: { isLoading: boolean }, v: number) => (q.isLoading ? "—" : String(v));
 
@@ -183,19 +173,9 @@ export function MobileHome() {
             "radial-gradient(ellipse 130% 100% at 100% 0%, #356491 0%, #285780 45%, #1d4063 100%)",
         }}
       >
-        <div className="flex items-start justify-between">
-          <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-frost-300">
-            Today
-          </p>
-          {isDoPlus && regionIndex != null && (
-            <div className="text-right">
-              <p className="text-[10px] font-medium uppercase tracking-wide text-white/55">
-                Region index
-              </p>
-              <p className="text-[22px] font-semibold leading-none">{regionIndex}</p>
-            </div>
-          )}
-        </div>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-frost-300">
+          Today
+        </p>
 
         <div className="mt-1 flex items-baseline gap-2">
           <span className="text-[44px] font-bold leading-none">
