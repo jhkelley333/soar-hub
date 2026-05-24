@@ -11,6 +11,7 @@ import { useNavigate } from "react-router-dom";
 import { Search, Plus } from "lucide-react";
 import { AppHeader } from "@/shared/ui/AppHeader";
 import { EmptyState } from "@/shared/ui/EmptyState";
+import { Drawer } from "@/shared/ui/Drawer";
 import { useToast } from "@/shared/ui/Toaster";
 import { ChatTabs } from "./components/ChatTabs";
 import { ActionCard } from "./components/ActionCard";
@@ -25,6 +26,7 @@ export function ChatInboxPage() {
   const [tab, setTab] = useState<ChatTab>("all");
   const [search, setSearch] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
+  const [needsYouOpen, setNeedsYouOpen] = useState(false);
 
   const threads = SAMPLE_THREADS;
 
@@ -94,38 +96,29 @@ export function ChatInboxPage() {
         </div>
       </div>
 
-      {/* Needs you */}
-      {needsYou.length > 0 && (
-        <section className="px-4 pb-1 pt-2">
-          <div className="mb-2 flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-midnight-500">
-              <span className="h-1.5 w-1.5 rounded-full bg-accent" />
-              Needs you · {needsYou.length}
-            </div>
-            <button
-              type="button"
-              onClick={() => toast.push("Needs-you list is coming next.", "info")}
-              className="text-[12.5px] font-medium text-accent hover:underline"
-            >
-              See all
-            </button>
-          </div>
-          <div className="space-y-2.5">
-            {needsYou.slice(0, 2).map((t) => (
-              <ActionCard
-                key={t.id}
-                thread={t}
-                onOpen={() => openThread(t.id)}
-                onAction={(a) => toast.push(`"${a}" — wired to the work flow next.`, "info")}
-              />
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* Tabs */}
-      <div className="sticky top-[5.5rem] z-10 mt-2 bg-surface-muted">
-        <ChatTabs active={tab} counts={counts} onChange={setTab} />
+      {/* Tabs + Needs-you launcher */}
+      <div className="sticky top-[5.5rem] z-10 bg-surface-muted">
+        <ChatTabs
+          active={tab}
+          counts={counts}
+          onChange={setTab}
+          trailing={
+            needsYou.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => setNeedsYouOpen(true)}
+                className="my-1.5 inline-flex items-center gap-1.5 rounded-full bg-accent/10 px-2.5 py-1 text-[12.5px] font-semibold text-accent"
+                aria-label={`${needsYou.length} need you`}
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-accent" />
+                Needs you
+                <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-accent px-1.5 text-[11px] font-semibold text-white">
+                  {needsYou.length}
+                </span>
+              </button>
+            ) : null
+          }
+        />
       </div>
 
       {/* Conversation list */}
@@ -169,6 +162,28 @@ export function ChatInboxPage() {
           toast.push(`Started "${s}" — opening the thread is next.`, "success")
         }
       />
+
+      <Drawer
+        open={needsYouOpen}
+        onClose={() => setNeedsYouOpen(false)}
+        title={`Needs you · ${needsYou.length}`}
+      >
+        <div className="space-y-2.5">
+          {needsYou.map((t) => (
+            <ActionCard
+              key={t.id}
+              thread={t}
+              onOpen={() => {
+                setNeedsYouOpen(false);
+                openThread(t.id);
+              }}
+              onAction={(a) =>
+                toast.push(`"${a}" — wired to the work flow next.`, "info")
+              }
+            />
+          ))}
+        </div>
+      </Drawer>
     </div>
   );
 }

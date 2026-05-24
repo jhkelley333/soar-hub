@@ -2,6 +2,7 @@
 // counts. Active tab: accent underline + bolder text + filled count.
 
 import { cn } from "@/lib/cn";
+import type { ReactNode } from "react";
 import type { ChatTab } from "../types";
 
 const TABS: { id: ChatTab; label: string }[] = [
@@ -15,13 +16,15 @@ export function ChatTabs({
   active,
   counts,
   onChange,
+  trailing,
 }: {
   active: ChatTab;
   counts: Record<ChatTab, number>;
   onChange: (t: ChatTab) => void;
+  trailing?: ReactNode;
 }) {
   return (
-    <div className="flex gap-5 border-b border-midnight-100 px-4">
+    <div className="flex items-stretch gap-5 border-b border-midnight-100 px-4">
       {TABS.map((t) => {
         const isActive = active === t.id;
         const c = counts[t.id];
@@ -53,6 +56,7 @@ export function ChatTabs({
           </button>
         );
       })}
+      {trailing && <div className="ml-auto flex items-center">{trailing}</div>}
     </div>
   );
 }
