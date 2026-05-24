@@ -143,7 +143,10 @@ export function Drawer({
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >
-        <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-3">
+        <div
+          className="flex items-center justify-between border-b border-zinc-100 px-5 pb-3"
+          style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top, 0px))" }}
+        >
           <h2
             id="drawer-title"
             className="text-base font-semibold tracking-tight text-midnight"
@@ -159,9 +162,17 @@ export function Drawer({
             <X className="h-4 w-4" strokeWidth={2} />
           </button>
         </div>
-        <div className="flex-1 overflow-y-auto px-5 py-4">{children}</div>
+        <div
+          className="flex-1 overflow-y-auto px-5 py-4"
+          style={footer ? undefined : { paddingBottom: "calc(1rem + env(safe-area-inset-bottom, 0px))" }}
+        >
+          {children}
+        </div>
         {footer && (
-          <div className="flex justify-end gap-2 border-t border-zinc-100 bg-zinc-50 px-5 py-3">
+          <div
+            className="flex justify-end gap-2 border-t border-zinc-100 bg-zinc-50 px-5 pt-3"
+            style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))" }}
+          >
             {footer}
           </div>
         )}
