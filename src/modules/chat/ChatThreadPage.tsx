@@ -8,6 +8,7 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { useAuth } from "@/auth/AuthProvider";
 import { GroupThread } from "./components/group/GroupThread";
 import { fetchThread, markThreadRead } from "./api";
+import { useChatRealtime } from "./useChatRealtime";
 
 export function ChatThreadPage() {
   const { threadId = "" } = useParams();
@@ -23,6 +24,8 @@ export function ChatThreadPage() {
   useEffect(() => {
     if (threadId) markThreadRead(threadId).catch(() => {});
   }, [threadId]);
+
+  useChatRealtime(threadId);
 
   if (q.isLoading) {
     return (
