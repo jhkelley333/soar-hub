@@ -61,7 +61,16 @@ export function ApprovalSection({
   onError,
 }: Props) {
   const approvals = ticket.ticket_approvals ?? [];
-  const latest = approvals.length > 0 ? approvals[approvals.length - 1] : null;
+  // Newest approval by requested_at, not array position — PostgREST embed
+  // order isn't guaranteed and an UPDATE (rejection) can reshuffle it,
+  // which left the panel stuck on a stale "Rejected" after a resubmit.
+  const latest =
+    approvals.length > 0
+      ? [...approvals].sort(
+          (a, b) =>
+            new Date(a.requested_at).getTime() - new Date(b.requested_at).getTime(),
+        )[approvals.length - 1]
+      : null;
 
   // Justification follows the recommended quote so it tracks whichever
   // quote is committed, falling back to the approval row's notes.

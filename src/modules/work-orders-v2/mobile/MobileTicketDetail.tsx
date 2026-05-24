@@ -70,7 +70,17 @@ export function MobileTicketDetail({
   }, [ticketId, qc]);
 
   const approvals = t?.ticket_approvals ?? [];
-  const latest = approvals.length > 0 ? approvals[approvals.length - 1] : null;
+  // Pick the newest approval by requested_at — NOT array position.
+  // PostgREST doesn't guarantee embed order, and an UPDATE (e.g. a
+  // rejection) can reshuffle it, which left the card stuck showing a
+  // stale "Rejected" after the vendor resubmitted.
+  const latest =
+    approvals.length > 0
+      ? [...approvals].sort(
+          (a, b) =>
+            new Date(a.requested_at).getTime() - new Date(b.requested_at).getTime(),
+        )[approvals.length - 1]
+      : null;
   const pending = latest?.status === "Pending" ? latest : null;
   const canDecide = !!pending && isApprover(profile?.role);
 
