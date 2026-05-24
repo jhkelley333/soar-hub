@@ -84,7 +84,6 @@ export function MobileHome() {
 
   const bySource = approvalsQ.data?.bySource;
   const itemsNeedYou = approvalsQ.data?.counts.all ?? 0;
-  const approvalsCount = bySource ? bySource.workspace + bySource.paf : 0;
   const woReview = bySource?.work_order ?? 0;
   const birthdayCount = birthdaysQ.data?.entries.length ?? 0;
 
@@ -148,10 +147,20 @@ export function MobileHome() {
           <span className="text-[13px] text-white/70">items need you</span>
         </div>
 
-        <div className="mt-4 grid grid-cols-3 gap-2.5">
-          <StatTile to="/approvals" label="Approvals" value={num(approvalsQ, approvalsCount)} />
-          <StatTile to="/admin/work-orders-v2" label="WO review" value={num(approvalsQ, woReview)} />
-          <StatTile to="/my-stores" label="Birthdays" value={num(birthdaysQ, birthdayCount)} />
+        <div className="mt-4">
+          <Link
+            to="/my-stores"
+            className="flex items-center gap-3 rounded-2xl bg-white/10 px-4 py-3 ring-1 ring-white/10 transition active:scale-[0.99] active:bg-white/15"
+          >
+            <span className="text-[26px] font-semibold leading-none">
+              {num(birthdaysQ, birthdayCount)}
+            </span>
+            <span className="min-w-0">
+              <p className="text-[13px] font-medium leading-tight">Birthdays</p>
+              <p className="text-[11px] text-white/60">this &amp; next week</p>
+            </span>
+            <ChevronRight className="ml-auto h-4 w-4 text-white/40" strokeWidth={2} />
+          </Link>
         </div>
       </section>
 
@@ -229,18 +238,6 @@ export function MobileHome() {
         )}
       </div>
     </div>
-  );
-}
-
-function StatTile({ to, label, value }: { to: string; label: string; value: string }) {
-  return (
-    <Link
-      to={to}
-      className="rounded-2xl bg-white/10 px-3 py-2.5 ring-1 ring-white/10 transition active:scale-[0.97] active:bg-white/15"
-    >
-      <p className="text-[22px] font-semibold leading-none">{value}</p>
-      <p className="mt-1 text-[11px] text-white/65">{label}</p>
-    </Link>
   );
 }
 
