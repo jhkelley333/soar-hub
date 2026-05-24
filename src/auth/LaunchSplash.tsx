@@ -44,7 +44,7 @@ export function LaunchSplash({ greeting, subline, showSignIn }: Props) {
 
   return (
     <div
-      className="relative flex min-h-full flex-col items-center justify-center overflow-hidden px-6 text-center"
+      className="fixed inset-0 flex flex-col items-center justify-center overflow-hidden px-6 text-center"
       style={{
         background:
           "radial-gradient(ellipse 110% 70% at 50% 38%, #2b4f73 0%, #173049 45%, #0c1c2e 100%)",
