@@ -8,9 +8,9 @@
 import { NavLink } from "react-router-dom";
 import {
   Home,
-  Inbox,
-  Building2,
-  Hammer,
+  BadgeCheck,
+  Store,
+  Wrench,
   Menu,
   type LucideIcon,
 } from "lucide-react";
@@ -28,9 +28,9 @@ export interface MobileTab {
 
 export const MOBILE_TABS: MobileTab[] = [
   { to: "/",                     label: "Home",     Icon: Home,      endMatch: true },
-  { to: "/admin/work-orders-v2", label: "Work",     Icon: Hammer },
-  { to: "/approvals",            label: "Approvals", Icon: Inbox },
-  { to: "/region",               label: "Stores",   Icon: Building2 },
+  { to: "/admin/work-orders-v2", label: "Work",     Icon: Wrench },
+  { to: "/approvals",            label: "Approvals", Icon: BadgeCheck },
+  { to: "/region",               label: "Stores",   Icon: Store },
 ];
 
 export function MobileTabBar({
