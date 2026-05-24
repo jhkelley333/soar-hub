@@ -70,7 +70,17 @@ export function MobileTicketDetail({
   }, [ticketId, qc]);
 
   const approvals = t?.ticket_approvals ?? [];
-  const latest = approvals.length > 0 ? approvals[approvals.length - 1] : null;
+  // Pick the newest approval by requested_at — NOT array position.
+  // PostgREST doesn't guarantee embed order, and an UPDATE (e.g. a
+  // rejection) can reshuffle it, which left the card stuck showing a
+  // stale "Rejected" after the vendor resubmitted.
+  const latest =
+    approvals.length > 0
+      ? [...approvals].sort(
+          (a, b) =>
+            new Date(a.requested_at).getTime() - new Date(b.requested_at).getTime(),
+        )[approvals.length - 1]
+      : null;
   const pending = latest?.status === "Pending" ? latest : null;
   const canDecide = !!pending && isApprover(profile?.role);
 
@@ -158,9 +168,14 @@ export function MobileTicketDetail({
                 {t.work_requested}
               </h1>
             ) : (
-              <p className="mt-1 text-[14px] italic text-midnight-400">
-                Set when the vendor submits their quote.
-              </p>
+              <>
+                <h1 className="mt-1 text-[17px] font-semibold italic text-midnight-300 leading-snug">
+                  e.g., Replace motor and belt
+                </h1>
+                <p className="mt-0.5 text-[11.5px] text-midnight-400">
+                  Comes from the vendor's quote.
+                </p>
+              </>
             )}
             <div className="mt-2 flex items-center gap-2">
               <Avatar name={t.submitted_by || ""} size={24} />
