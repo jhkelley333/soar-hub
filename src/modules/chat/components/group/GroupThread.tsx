@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, Search, MoreHorizontal, Paperclip, Send } from "lucide-react";
+import { ChevronLeft, Search, MoreHorizontal, Paperclip, ArrowUp } from "lucide-react";
 import { useToast } from "@/shared/ui/Toaster";
 import { MessageBubble } from "./MessageBubble";
 import { SystemMessage } from "./SystemMessage";
@@ -31,6 +31,26 @@ export function GroupThread({
   const isGroup = thread.kind === "group";
   const myRole = members.find((m) => m.user_id === currentUserId)?.role;
   const readOnly = thread.kind === "broadcast" && myRole !== "owner";
+
+  // Who you're talking with — names of everyone but you. Direct threads
+  // store no title, so the header gets the other person's name here.
+  const otherNames = members
+    .filter((m) => m.user_id !== currentUserId)
+    .map((m) => users[m.user_id]?.name || users[m.user_id]?.first)
+    .filter(Boolean) as string[];
+
+  let headerTitle = thread.title;
+  let headerSubtitle = thread.subtitle || "";
+  if (thread.kind === "direct") {
+    headerTitle = otherNames[0] || thread.title || "Direct message";
+    headerSubtitle = "Direct message";
+  } else if (isGroup) {
+    headerTitle = thread.title || "Group";
+    headerSubtitle = otherNames.length ? otherNames.join(", ") : `${members.length} members`;
+  } else if (thread.kind === "broadcast") {
+    headerTitle = thread.title || "Announcement";
+    headerSubtitle = thread.subtitle || "Announcement";
+  }
 
   const stripMembers: StripMember[] = members.map((m) => ({
     id: m.user_id,
@@ -59,10 +79,8 @@ export function GroupThread({
           <ChevronLeft className="h-5 w-5" strokeWidth={2} />
         </button>
         <div className="min-w-0 flex-1 text-center">
-          <p className="truncate text-[15px] font-semibold text-midnight-900">{thread.title}</p>
-          <p className="truncate text-[11.5px] text-midnight-500">
-            {isGroup ? `${members.length} members` : thread.subtitle || "Direct message"}
-          </p>
+          <p className="truncate text-[15px] font-semibold text-midnight-900">{headerTitle}</p>
+          <p className="truncate text-[11.5px] text-midnight-500">{headerSubtitle}</p>
         </div>
         <button type="button" className="rounded-full p-1.5 text-midnight-500 hover:bg-surface-muted" aria-label="Search in thread">
           <Search className="h-[18px] w-[18px]" strokeWidth={2} />
@@ -101,18 +119,22 @@ export function GroupThread({
 
       {readOnly ? (
         <div
-          className="shrink-0 border-t border-midnight-100 bg-surface px-4 py-3 text-center text-[13px] text-midnight-500"
-          style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) / 2 + 12px)" }}
+          className="shrink-0 border-t border-midnight-100 bg-surface px-5 pt-3 text-center text-[13px] text-midnight-500"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}
         >
           This is an announcement — replies are disabled.
         </div>
       ) : (
         <div
-          className="flex shrink-0 items-end gap-2 border-t border-midnight-100 bg-surface px-3 pt-2.5"
-          style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) / 2 + 10px)" }}
+          className="flex shrink-0 items-end gap-2.5 border-t border-midnight-100 bg-surface px-4 pt-3"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}
         >
-          <button type="button" className="mb-1 text-midnight-400 hover:text-midnight-700" aria-label="Attach">
-            <Paperclip className="h-5 w-5" strokeWidth={2} />
+          <button
+            type="button"
+            className="mb-1 shrink-0 text-midnight-400 transition hover:text-midnight-700"
+            aria-label="Attach"
+          >
+            <Paperclip className="h-[22px] w-[22px]" strokeWidth={2} />
           </button>
           <input
             value={draft}
@@ -120,17 +142,17 @@ export function GroupThread({
             onKeyDown={(e) => {
               if (e.key === "Enter" && draft.trim()) send.mutate(draft.trim());
             }}
-            placeholder={`Message ${thread.title}…`}
-            className="min-w-0 flex-1 rounded-full bg-surface-sunk px-4 py-2.5 text-[14px] text-midnight-900 placeholder:text-midnight-400 focus:outline-none"
+            placeholder="Message"
+            className="min-w-0 flex-1 rounded-[20px] border border-midnight-200 bg-surface px-4 py-2.5 text-[15px] text-midnight-900 placeholder:text-midnight-400 focus:border-midnight-300 focus:outline-none"
           />
           <button
             type="button"
             onClick={() => draft.trim() && send.mutate(draft.trim())}
             disabled={!draft.trim() || send.isPending}
-            className="mb-0.5 flex h-9 w-9 items-center justify-center rounded-full bg-midnight-900 text-white disabled:opacity-40"
+            className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-white transition disabled:bg-midnight-200"
             aria-label="Send"
           >
-            <Send className="h-[18px] w-[18px]" strokeWidth={2} />
+            <ArrowUp className="h-[20px] w-[20px]" strokeWidth={2.5} />
           </button>
         </div>
       )}

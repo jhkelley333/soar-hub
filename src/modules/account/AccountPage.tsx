@@ -8,7 +8,7 @@ import {
 } from "react";
 import { useBlocker } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Camera, Check, Download, FileText, Trash2 } from "lucide-react";
+import { Bell, Camera, Check, Download, FileText, Trash2 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -20,6 +20,16 @@ import { useAuth } from "@/auth/AuthProvider";
 import { supabase } from "@/lib/supabase";
 import { ROLE_LABELS } from "@/types/database";
 import { formatPhoneForDisplay, normalizePhone } from "@/lib/phone";
+import {
+  pushSupported,
+  isIOS,
+  isStandalone,
+  isPushEnabled,
+  enablePush,
+  disablePush,
+  sendTestPush,
+  notificationPermission,
+} from "@/lib/push";
 
 const SHIRT_SIZES = ["XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
 const AVATAR_BUCKET = "avatars";
@@ -283,12 +293,128 @@ export function AccountPage() {
         </Card>
 
         <div className="space-y-6">
+          <NotificationsCard />
           <CertifiedFoodManagerCard />
           <SignInMethodsCard />
           <PasswordCard />
         </div>
       </div>
     </>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Notifications — per-device Web Push opt-in. iOS requires the PWA be
+// installed to the Home Screen before push is allowed, so we gate the
+// enable button behind an install hint when running in iOS Safari.
+// ----------------------------------------------------------------------------
+
+function NotificationsCard() {
+  const toast = useToast();
+  const [enabled, setEnabled] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [perm, setPerm] = useState<NotificationPermission | "unsupported">(
+    notificationPermission(),
+  );
+
+  const supported = pushSupported();
+  const iosNeedsInstall = isIOS() && !isStandalone();
+
+  useEffect(() => {
+    isPushEnabled().then(setEnabled).catch(() => {});
+  }, []);
+
+  const enable = async () => {
+    setBusy(true);
+    try {
+      await enablePush();
+      setEnabled(true);
+      setPerm(notificationPermission());
+      toast.push("Notifications are on for this device.", "success");
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : "Couldn't enable notifications.", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const disable = async () => {
+    setBusy(true);
+    try {
+      await disablePush();
+      setEnabled(false);
+      toast.push("Notifications turned off for this device.", "info");
+    } catch {
+      toast.push("Couldn't turn off notifications.", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const test = async () => {
+    try {
+      await sendTestPush();
+      toast.push("Test sent — watch for the notification.", "info");
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : "Test failed.", "error");
+    }
+  };
+
+  return (
+    <Card>
+      <CardHeader title="Notifications" />
+      <CardBody>
+        <p className="text-sm text-zinc-600">
+          Get a push notification on this device for new chat messages and announcements.
+        </p>
+
+        {!supported && (
+          <p className="mt-3 rounded-md bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
+            This browser doesn't support push notifications.
+          </p>
+        )}
+
+        {supported && iosNeedsInstall && (
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            <p className="font-semibold">Install to your Home Screen first</p>
+            <p className="mt-1">
+              On iPhone, notifications only work from the installed app. In Safari, tap the Share
+              button, then <span className="font-medium">Add to Home Screen</span>. Open SOAR Hub
+              from that icon and come back here to turn them on.
+            </p>
+          </div>
+        )}
+
+        {supported && !iosNeedsInstall && (
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            {enabled ? (
+              <>
+                <Badge tone="success" className="inline-flex items-center gap-1">
+                  <Bell className="h-3 w-3" strokeWidth={2.5} /> On for this device
+                </Badge>
+                <Button variant="secondary" onClick={test} disabled={busy}>
+                  Send test
+                </Button>
+                <Button variant="ghost" onClick={disable} disabled={busy}>
+                  Turn off
+                </Button>
+              </>
+            ) : (
+              <Button onClick={enable} disabled={busy}>
+                <Bell className="h-4 w-4" strokeWidth={2} />
+                {busy ? "Enabling…" : "Enable notifications"}
+              </Button>
+            )}
+          </div>
+        )}
+
+        {supported && !iosNeedsInstall && perm === "denied" && (
+          <p className="mt-3 text-xs text-red-600">
+            Notifications are blocked in your settings. Re-allow them for this site, then enable here.
+          </p>
+        )}
+      </CardBody>
+    </Card>
   );
 }
 

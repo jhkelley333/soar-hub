@@ -16,7 +16,7 @@
 // Bump the version suffix any time we ship a change users need to
 // pick up immediately (e.g. a stuck-cache fix). The activate handler
 // below purges every cache whose name doesn't match this one.
-const CACHE_NAME = "soar-hub-v5";
+const CACHE_NAME = "soar-hub-v6";
 
 // Precache the bare minimum the app needs to render an offline shell.
 // Vite hashes JS/CSS bundle filenames, so we let runtime caching pick
@@ -55,6 +55,45 @@ self.addEventListener("activate", (event) => {
         ),
       )
       .then(() => self.clients.claim()),
+  );
+});
+
+// ── Web Push ─────────────────────────────────────────────────────────
+// A push arrives as an encrypted JSON payload { title, body, url?, tag? }.
+// Show it as a system notification; clicking it focuses an existing app
+// window (or opens one) at the payload's url.
+
+self.addEventListener("push", (event) => {
+  let data = {};
+  try {
+    data = event.data ? event.data.json() : {};
+  } catch {
+    data = { title: "SOAR Hub", body: event.data ? event.data.text() : "" };
+  }
+  const title = data.title || "SOAR Hub";
+  const options = {
+    body: data.body || "",
+    icon: "/app-icon.png",
+    badge: "/app-icon.png",
+    tag: data.tag || undefined,
+    data: { url: data.url || "/" },
+  };
+  event.waitUntil(self.registration.showNotification(title, options));
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const target = event.notification.data?.url || "/";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if ("focus" in client) {
+          client.navigate?.(target);
+          return client.focus();
+        }
+      }
+      return self.clients.openWindow ? self.clients.openWindow(target) : undefined;
+    }),
   );
 });
 
