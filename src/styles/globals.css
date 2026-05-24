@@ -122,6 +122,20 @@ body {
 /* Disable iOS tap highlight — feels enterprise */
 * { -webkit-tap-highlight-color: transparent; }
 
+/* iOS auto-zooms the page when you focus a form control whose font-size
+ * is under 16px, and in the installed PWA's locked shell it doesn't
+ * cleanly zoom back out — so tapping a small input visibly enlarges the
+ * screen and shoves the header / tab bar out of place. Forcing a 16px
+ * minimum on form controls for touch devices stops the auto-zoom. Scoped
+ * to `pointer: coarse` so the desktop layout (fine pointer) is untouched. */
+@media (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
+
 /* -----------------------------------------------------------------------------
  * Utilities — small CSS classes that aren't worth living in Tailwind
  * -------------------------------------------------------------------------- */
