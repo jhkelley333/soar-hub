@@ -13,10 +13,10 @@ import { useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
-  Inbox,
-  Hammer,
-  Building2,
-  ClipboardCheck,
+  BadgeCheck,
+  Wrench,
+  Store,
+  Route,
   ChevronRight,
   type LucideIcon,
 } from "lucide-react";
@@ -160,10 +160,34 @@ export function MobileHome() {
         Quick actions
       </h2>
       <div className="grid grid-cols-2 gap-3">
-        <QuickAction to="/approvals" Icon={Inbox} title="Approvals" sub={`${itemsNeedYou} pending`} />
-        <QuickAction to="/walkthrough" Icon={ClipboardCheck} title="Walkthrough" sub="Start new" />
-        <QuickAction to="/region" Icon={Building2} title="Stores" sub={scopeShort || "Your stores"} />
-        <QuickAction to="/admin/work-orders-v2" Icon={Hammer} title="Work orders" sub={`${woReview} awaiting`} />
+        <QuickAction
+          to="/approvals"
+          Icon={BadgeCheck}
+          gradient="linear-gradient(135deg,#1a9bdd,#0173b5)"
+          title="Approvals"
+          sub={`${itemsNeedYou} pending`}
+        />
+        <QuickAction
+          to="/walkthrough"
+          Icon={Route}
+          gradient="linear-gradient(135deg,#3f6d97,#21496f)"
+          title="Walkthrough"
+          sub="Start new"
+        />
+        <QuickAction
+          to="/region"
+          Icon={Store}
+          gradient="linear-gradient(135deg,#5cc6e2,#2196b8)"
+          title="Stores"
+          sub={scopeShort || "Your stores"}
+        />
+        <QuickAction
+          to="/admin/work-orders-v2"
+          Icon={Wrench}
+          gradient="linear-gradient(135deg,#ef3358,#c2003a)"
+          title="Work orders"
+          sub={`${woReview} awaiting`}
+        />
       </div>
 
       {/* Recent */}
@@ -187,6 +211,9 @@ export function MobileHome() {
                 i > 0 && "border-t border-midnight-100",
               )}
             >
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-frost-100 text-midnight-700">
+                <Wrench className="h-[17px] w-[17px]" strokeWidth={2} />
+              </div>
               <div className="min-w-0 flex-1">
                 <p className="truncate text-[13.5px] font-semibold text-midnight-900">
                   SDI {m.store_number}
@@ -209,7 +236,7 @@ function StatTile({ to, label, value }: { to: string; label: string; value: stri
   return (
     <Link
       to={to}
-      className="rounded-2xl bg-white/10 px-3 py-2.5 ring-1 ring-white/10 transition active:bg-white/15"
+      className="rounded-2xl bg-white/10 px-3 py-2.5 ring-1 ring-white/10 transition active:scale-[0.97] active:bg-white/15"
     >
       <p className="text-[22px] font-semibold leading-none">{value}</p>
       <p className="mt-1 text-[11px] text-white/65">{label}</p>
@@ -220,22 +247,27 @@ function StatTile({ to, label, value }: { to: string; label: string; value: stri
 function QuickAction({
   to,
   Icon,
+  gradient,
   title,
   sub,
 }: {
   to: string;
   Icon: LucideIcon;
+  gradient: string;
   title: string;
   sub: string;
 }) {
   return (
     <Link
       to={to}
-      className="group rounded-2xl bg-surface p-4 shadow-card ring-1 ring-midnight-100 transition hover:ring-midnight-200"
+      className="rounded-2xl bg-surface p-4 shadow-card ring-1 ring-midnight-100 transition active:scale-[0.97] hover:ring-midnight-200"
     >
       <div className="flex items-center justify-between">
-        <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-frost-100 text-midnight-700">
-          <Icon className="h-[18px] w-[18px]" strokeWidth={1.85} />
+        <div
+          className="flex h-11 w-11 items-center justify-center rounded-[14px] text-white shadow-[0_4px_10px_rgba(15,23,42,0.18)]"
+          style={{ background: gradient }}
+        >
+          <Icon className="h-[19px] w-[19px]" strokeWidth={2.1} />
         </div>
         <ChevronRight className="h-4 w-4 text-midnight-300" strokeWidth={2} />
       </div>
