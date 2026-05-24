@@ -9,9 +9,10 @@
 //
 // Renders on phones (< lg); DashboardPage still handles desktop.
 
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
+import confetti from "canvas-confetti";
 import {
   BadgeCheck,
   Wrench,
@@ -26,7 +27,7 @@ import { cn } from "@/lib/cn";
 import { fetchApprovalsQueue, relativeTime } from "@/modules/approvals/api";
 import { fetchRegionRollup } from "@/modules/region/api";
 import { fetchBirthdays, fetchMyTree, launchScopeLabel } from "@/modules/my-stores/api";
-import { thisAndNextWeekRange } from "@/modules/my-stores/dateRange";
+import { thisAndNextWeekRange, isToday } from "@/modules/my-stores/dateRange";
 import { fetchRecentMessages } from "@/modules/work-orders-v2/api";
 
 function greetingFor(d = new Date()): string {
@@ -34,6 +35,27 @@ function greetingFor(d = new Date()): string {
   if (h < 12) return "Good morning";
   if (h < 18) return "Good afternoon";
   return "Good evening";
+}
+
+// A short confetti burst from the top of the screen (over the birthday
+// banner). Returns a cleanup that cancels the trailing shot if the user
+// navigates away mid-celebration.
+function fireBirthdayConfetti(): () => void {
+  const defaults = { spread: 70, startVelocity: 45, ticks: 220, gravity: 0.9 };
+  const colors = ["#E40046", "#74D2E7", "#008AD8", "#FFD166"];
+  confetti({ ...defaults, particleCount: 80, origin: { x: 0.2, y: 0.28 }, colors });
+  confetti({ ...defaults, particleCount: 80, origin: { x: 0.8, y: 0.28 }, colors });
+  const t = setTimeout(
+    () => confetti({ ...defaults, particleCount: 60, origin: { x: 0.5, y: 0.22 }, colors }),
+    400,
+  );
+  return () => clearTimeout(t);
+}
+
+function birthdayMessage(names: string[]): string {
+  if (names.length === 1) return `Happy Birthday, ${names[0]}!`;
+  if (names.length === 2) return `Happy Birthday, ${names[0]} & ${names[1]}!`;
+  return `Happy Birthday, ${names[0]} & ${names.length - 1} others!`;
 }
 
 function initials(name: string | null | undefined): string {
@@ -95,6 +117,24 @@ export function MobileHome() {
 
   const recent = (recentQ.data?.messages ?? []).slice(0, 4);
 
+  // Anyone celebrating today (opt-outs are already excluded server-side).
+  const todaysBirthdays = useMemo(
+    () => (birthdaysQ.data?.entries ?? []).filter((e) => isToday(e.birthday)),
+    [birthdaysQ.data],
+  );
+  const birthdayNames = todaysBirthdays
+    .map((e) => (e.name || "").split(" ")[0])
+    .filter(Boolean);
+
+  // Confetti once per session per day when there's a birthday today.
+  useEffect(() => {
+    if (todaysBirthdays.length === 0) return;
+    const key = `soar.homeBday.${new Date().toISOString().slice(0, 10)}`;
+    if (sessionStorage.getItem(key)) return;
+    sessionStorage.setItem(key, "1");
+    return fireBirthdayConfetti();
+  }, [todaysBirthdays.length]);
+
   return (
     <div className="mx-auto min-h-full w-full max-w-md bg-surface-muted px-4 pb-8">
       {/* Header */}
@@ -117,6 +157,23 @@ export function MobileHome() {
           {initials(profile?.full_name)}
         </div>
       </header>
+
+      {/* Birthday banner — only when someone's celebrating today */}
+      {birthdayNames.length > 0 && (
+        <Link
+          to="/my-stores"
+          className="mb-4 flex items-center gap-3 rounded-2xl px-4 py-3 text-white shadow-card transition active:scale-[0.99]"
+          style={{ background: "linear-gradient(135deg,#5cc6e2,#0a86cf)" }}
+        >
+          <span className="text-[22px] leading-none">🎂</span>
+          <div className="min-w-0">
+            <p className="text-[14px] font-semibold leading-tight">
+              {birthdayMessage(birthdayNames)}
+            </p>
+            <p className="text-[11.5px] text-white/85">From the whole SOAR team 🎉</p>
+          </div>
+        </Link>
+      )}
 
       {/* Today hero card */}
       <section
