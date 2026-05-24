@@ -264,11 +264,21 @@ export const handler = async (event) => {
       if (!threadId || !text?.trim()) return respond(400, { ok: false, message: "threadId and text required." });
       const { data: mine } = await supa
         .from("chat_thread_members")
-        .select("user_id")
+        .select("user_id, role")
         .eq("thread_id", threadId)
         .eq("user_id", uid)
         .maybeSingle();
       if (!mine) return respond(403, { ok: false, message: "Not a member of this thread." });
+
+      // Broadcasts are announce-only: only the owner (poster) can add messages.
+      const { data: thr } = await supa
+        .from("chat_threads")
+        .select("kind")
+        .eq("id", threadId)
+        .maybeSingle();
+      if (thr?.kind === "broadcast" && mine.role !== "owner") {
+        return respond(403, { ok: false, message: "This is an announcement — replies are disabled." });
+      }
       const { data, error } = await supa
         .from("chat_messages")
         .insert({ thread_id: threadId, from_user_id: uid, text: text.trim() })
@@ -321,6 +331,74 @@ export const handler = async (event) => {
           .from("chat_messages")
           .insert({ thread_id: thread.id, from_user_id: uid, text: b.firstMessage.trim() });
       }
+      return respond(200, { ok: true, threadId: thread.id });
+    }
+
+    // Post a news / announcement broadcast. Audience is resolved server-side:
+    //   "subtree"  → everyone the poster manages (manageable_users)
+    //   "company"  → all active profiles (COO / admin only)
+    // The poster is the owner; recipients are members. Broadcasts surface in
+    // the News tab and never trip "Needs you" (announce-only).
+    if (action === "broadcast" && event.httpMethod === "POST") {
+      const b = JSON.parse(event.body || "{}");
+      const role = String(caller.role || "").toLowerCase();
+      const title = String(b.title || "").trim();
+      const text = String(b.text || "").trim();
+      const audience = b.audience === "company" ? "company" : "subtree";
+
+      if (!text) return respond(400, { ok: false, message: "Message body is required." });
+
+      const CAN_POST = ["do", "sdo", "rvp", "vp", "coo", "admin"];
+      const CAN_POST_COMPANY = ["coo", "admin"];
+      if (!CAN_POST.includes(role)) {
+        return respond(403, { ok: false, message: "You don't have permission to post news." });
+      }
+      if (audience === "company" && !CAN_POST_COMPANY.includes(role)) {
+        return respond(403, { ok: false, message: "Only COO / admin can post company-wide." });
+      }
+
+      let recipientIds = [];
+      if (audience === "company") {
+        const { data: all } = await supa
+          .from("profiles")
+          .select("id")
+          .eq("is_active", true);
+        recipientIds = (all ?? []).map((p) => p.id);
+      } else {
+        const { data: managed } = await supa.rpc("manageable_users", { manager_id: uid });
+        recipientIds = (managed ?? []).map((p) => p.id);
+      }
+
+      const participants = Array.from(new Set([uid, ...recipientIds.filter(Boolean)]));
+      if (participants.length <= 1) {
+        return respond(400, { ok: false, message: "No recipients in your downline to broadcast to." });
+      }
+
+      const { data: thread, error: tErr } = await supa
+        .from("chat_threads")
+        .insert({
+          kind: "broadcast",
+          title: title || "Announcement",
+          subtitle: audience === "company" ? "Company-wide" : `${participants.length - 1} recipients`,
+          created_by: uid,
+        })
+        .select()
+        .single();
+      if (tErr) throw tErr;
+
+      await supa.from("chat_thread_members").insert(
+        participants.map((u) => ({
+          thread_id: thread.id,
+          user_id: u,
+          role: u === uid ? "owner" : "member",
+          last_read_at: u === uid ? new Date().toISOString() : null,
+        })),
+      );
+
+      await supa
+        .from("chat_messages")
+        .insert({ thread_id: thread.id, from_user_id: uid, text });
+
       return respond(200, { ok: true, threadId: thread.id });
     }
 

@@ -104,6 +104,18 @@ export function createThread(body: CreateThreadBody): Promise<{ ok: true; thread
   return req(`${FN}?action=create`, { method: "POST", body: JSON.stringify(body) });
 }
 
+export type BroadcastAudience = "subtree" | "company";
+
+// Post a news / announcement broadcast. Audience is resolved server-side
+// from the caller's org subtree (or company-wide for COO / admin).
+export function postBroadcast(body: {
+  title?: string;
+  text: string;
+  audience: BroadcastAudience;
+}): Promise<{ ok: true; threadId: string }> {
+  return req(`${FN}?action=broadcast`, { method: "POST", body: JSON.stringify(body) });
+}
+
 export type ScopeKind = "workorder" | "submission";
 
 // Find-or-create the chat thread tied to a work order / PAF and return it.
