@@ -2,6 +2,7 @@
 
 import { supabase } from "@/lib/supabase";
 import type { BirthdayEntry, CustomAttributes, MyTreeResponse } from "./types";
+import type { UserRole } from "@/types/database";
 
 const FN = "/.netlify/functions/org";
 
@@ -34,6 +35,68 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export function fetchMyTree(): Promise<MyTreeResponse> {
   return request<MyTreeResponse>(`${FN}?action=my-tree`);
+}
+
+// The org-level word for a role — used for the launch-splash loading
+// line before the tree resolves ("Loading your market…").
+export function scopeWordForRole(role: UserRole): string {
+  switch (role) {
+    case "gm":
+    case "shift_manager":
+      return "store";
+    case "do":
+      return "market";
+    case "sdo":
+      return "area";
+    case "rvp":
+      return "region";
+    default:
+      return "region";
+  }
+}
+
+// Role-aware launch-splash label: names the user's scope level and
+// counts the stores under it, from their (RLS-scoped) my-tree.
+//   RVP → "Region 14 · 47 stores"   SDO → "Area 9 · 18 stores"
+//   DO  → "Market 14B · 9 stores"   GM  → "SDI 4287"
+// Returns null when no scope resolves (e.g. payroll), so the caller can
+// fall back to the generic word.
+export function launchScopeLabel(
+  tree: MyTreeResponse,
+  role: UserRole,
+): string | null {
+  const regions = tree.regions ?? [];
+  const areas = regions.flatMap((r) => r.areas ?? []);
+  const districts = areas.flatMap((a) => a.districts ?? []);
+  const stores = districts.flatMap((d) => d.stores ?? []);
+  const count = stores.length;
+  if (count === 0 && regions.length === 0) return null;
+
+  const plural = (n: number) => `${n} store${n === 1 ? "" : "s"}`;
+  const named = (name: string | null, code: string | null, word: string) =>
+    (name && name.trim()) || (code ? `${word} ${code}` : word);
+
+  switch (role) {
+    case "gm":
+    case "shift_manager":
+      return stores[0] ? `SDI ${stores[0].number}` : "your store";
+    case "do":
+      return districts.length === 1
+        ? `${named(districts[0].name, districts[0].code, "Market")} · ${plural(count)}`
+        : `${districts.length} markets · ${plural(count)}`;
+    case "sdo":
+      return areas.length === 1
+        ? `${named(areas[0].name, areas[0].code, "Area")} · ${plural(count)}`
+        : `${areas.length} areas · ${plural(count)}`;
+    case "rvp":
+      return regions.length === 1
+        ? `${named(regions[0].name, regions[0].code, "Region")} · ${plural(count)}`
+        : `${regions.length} regions · ${plural(count)}`;
+    default:
+      return regions.length === 1
+        ? `${named(regions[0].name, regions[0].code, "Region")} · ${plural(count)}`
+        : `${regions.length} regions · ${plural(count)}`;
+  }
 }
 
 export function fetchBirthdays(start: string, end: string): Promise<{ entries: BirthdayEntry[] }> {

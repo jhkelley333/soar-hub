@@ -17,12 +17,14 @@
 //           Sidebar opens as a left drawer when "More" is tapped.
 
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "@/app/Sidebar";
 import { MobileTabBar } from "@/app/MobileTabBar";
 import { useIdleLogout } from "@/auth/useIdleLogout";
 import { useAuth } from "@/auth/AuthProvider";
 import { LaunchSplash } from "@/auth/LaunchSplash";
+import { fetchMyTree, launchScopeLabel, scopeWordForRole } from "@/modules/my-stores/api";
 import { cn } from "@/lib/cn";
 
 // Personalized launch splash shown on the first authenticated load of a
@@ -61,6 +63,23 @@ export function AppShell() {
   // 2-hour idle auto-logout. Only active while a session exists (the
   // hook bails internally otherwise).
   useIdleLogout();
+
+  // Personalized splash subline: name the caller's scope + store count.
+  // Shares the ["my-stores-tree"] cache the home/region views use, so
+  // this is usually a no-op fetch after the first cold start.
+  const role = profile?.role;
+  const treeQ = useQuery({
+    queryKey: ["my-stores-tree"],
+    queryFn: fetchMyTree,
+    enabled: splash.active && !!role,
+    staleTime: 5 * 60_000,
+  });
+  const scopeLabel = treeQ.data && role ? launchScopeLabel(treeQ.data, role) : null;
+  const splashSubline = !role
+    ? "Loading…"
+    : scopeLabel
+      ? `Loading ${scopeLabel}`
+      : `Loading your ${scopeWordForRole(role)}…`;
 
   return (
     <div className="flex h-full flex-col bg-surface-muted">
@@ -129,7 +148,7 @@ export function AppShell() {
         >
           <LaunchSplash
             greeting={greetingFor(profile?.full_name)}
-            subline="Loading your region…"
+            subline={splashSubline}
           />
         </div>
       )}
