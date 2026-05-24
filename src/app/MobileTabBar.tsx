@@ -40,12 +40,12 @@ export function MobileTabBar({
 }) {
   return (
     <nav
-      className="shrink-0 border-t border-midnight-100 bg-white/95 backdrop-blur lg:hidden"
+      className="shrink-0 border-t border-white/10 bg-midnight lg:hidden"
       style={{
-        // Padding-bottom carries the iPhone home-indicator inset so
-        // the buttons sit above the gesture bar. The nav itself is a
-        // regular flex row in AppShell — no fixed positioning — so
-        // content can't scroll past it.
+        // Padding-bottom carries the iPhone home-indicator inset so the
+        // buttons sit above the gesture bar — and the midnight bg paints
+        // that inset, giving a cohesive navy frame with the top
+        // status-bar strip (no white safe-area strip).
         paddingBottom: "env(safe-area-inset-bottom, 0px)",
       }}
       aria-label="Primary"
@@ -60,8 +60,8 @@ export function MobileTabBar({
               cn(
                 "flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium transition",
                 isActive
-                  ? "text-midnight-900"
-                  : "text-midnight-400 hover:text-midnight-700",
+                  ? "text-white"
+                  : "text-white/55 hover:text-white/85",
               )
             }
           >
@@ -79,7 +79,7 @@ export function MobileTabBar({
         <button
           type="button"
           onClick={onMoreClick}
-          className="flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium text-midnight-400 hover:text-midnight-700 transition"
+          className="flex flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium text-white/55 hover:text-white/85 transition"
           aria-label="Open full navigation"
         >
           <Menu className="h-5 w-5" strokeWidth={1.75} />
