@@ -38,8 +38,8 @@ function useLaunchSplash() {
   useEffect(() => {
     if (!active) return;
     sessionStorage.setItem("soar_launch_shown", "1");
-    const fade = window.setTimeout(() => setFading(true), 1000);
-    const done = window.setTimeout(() => setActive(false), 1500);
+    const fade = window.setTimeout(() => setFading(true), 2200);
+    const done = window.setTimeout(() => setActive(false), 2800);
     return () => {
       window.clearTimeout(fade);
       window.clearTimeout(done);
