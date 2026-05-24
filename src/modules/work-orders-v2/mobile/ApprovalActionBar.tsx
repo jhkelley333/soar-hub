@@ -8,15 +8,15 @@
 // No inbound parsing — the reply comes back on the thread. Reject opens
 // the same sheet for a required reason.
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, MessageSquarePlus, Loader2, Send, PhoneCall } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { BottomBar } from "@/shared/ui/BottomBar";
 import { Drawer } from "@/shared/ui/Drawer";
-import { Avatar } from "@/shared/ui/Avatar";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
+import { cn } from "@/lib/cn";
 import { decideApproval, requestInfo, fetchApprovalThresholds } from "../api";
 import type { Ticket, TicketApproval } from "../types";
 import { canApprove, isOverTopTier, requiredApprover } from "../approval";
@@ -44,6 +44,27 @@ export function ApprovalActionBar({
   const { profile } = useAuth();
   const [sheet, setSheet] = useState<Sheet | null>(null);
   const [text, setText] = useState("");
+
+  // "Ask the requester" sheet fields.
+  const [subject, setSubject] = useState("");
+  const [ccSelf, setCcSelf] = useState(true);
+  const [bccText, setBccText] = useState("");
+  const [openThread, setOpenThread] = useState(true);
+  const [pauseClock, setPauseClock] = useState(true);
+  const [notifySdo, setNotifySdo] = useState(false);
+
+  const defaultSubject = `Info needed on ${ticket.wo_number || "this WO"}${ticket.work_requested ? ` — ${ticket.work_requested}` : ""}`;
+
+  function openInfo() {
+    setText("");
+    setSubject(defaultSubject);
+    setCcSelf(true);
+    setBccText("");
+    setOpenThread(true);
+    setPauseClock(true);
+    setNotifySdo(false);
+    setSheet("info");
+  }
 
   const thrQ = useQuery({
     queryKey: ["wo2", "approval-thresholds"],
@@ -84,12 +105,21 @@ export function ApprovalActionBar({
 
   const askInfo = useMutation({
     mutationFn: () =>
-      requestInfo({ ticketId: ticket.id, question: text.trim() }),
+      requestInfo({
+        ticketId: ticket.id,
+        question: text.trim(),
+        subject: subject.trim() || undefined,
+        cc: ccSelf && profile?.email ? [profile.email] : [],
+        bcc: bccText.split(/[,;\s]+/).map((s) => s.trim()).filter(Boolean),
+        openThread,
+        pauseClock,
+        notifySdo,
+      }),
     onSuccess: (res) => {
       toast.push(
         res.emailed
-          ? "Question sent — submitter emailed and posted to the thread."
-          : "Question posted to the ticket thread.",
+          ? `Sent to ${res.recipients.to[0] ?? "the requester"}${pauseClock ? " · moved to Needs info" : ""}.`
+          : "Posted to the work order thread.",
         "success",
       );
       setSheet(null);
@@ -130,7 +160,7 @@ export function ApprovalActionBar({
           <Button
             variant="secondary"
             className="flex-none"
-            onClick={() => { setSheet("info"); setText(""); }}
+            onClick={openInfo}
             disabled={busy}
           >
             <MessageSquarePlus className="mr-1 h-3.5 w-3.5" strokeWidth={2} />
@@ -189,41 +219,168 @@ export function ApprovalActionBar({
           </>
         }
       >
-        {sheet === "info" && (
-          <div className="mb-3 flex items-center gap-2 rounded-lg bg-frost-100 px-3 py-2">
-            <Avatar name={ticket.submitted_by || ""} size={28} />
-            <div className="min-w-0">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-midnight-400">
-                To
-              </div>
-              <div className="text-[13px] font-medium text-midnight-900 truncate">
-                {ticket.submitted_by || "Requester"}
-              </div>
+        {sheet === "reject" ? (
+          <>
+            <label className="text-[11px] font-semibold uppercase tracking-wider text-midnight-500">
+              Reason for rejection
+            </label>
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              rows={5}
+              autoFocus
+              placeholder="Why is this being rejected? The requester will see this."
+              className="mt-1.5 block w-full rounded-lg border border-midnight-200 bg-white px-3 py-2 text-sm text-midnight-900 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            />
+          </>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-[12px] text-midnight-500">
+              Sends an email + posts to the work order.
+              {pauseClock ? " Moves the WO to " : " "}
+              {pauseClock && <span className="font-semibold text-amber-700">Needs info</span>}
+              {pauseClock ? "." : ""}
+            </p>
+
+            {/* Recipients */}
+            <div className="rounded-lg ring-1 ring-midnight-100 divide-y divide-midnight-100">
+              <RecipientRow label="To">
+                <Chip>{ticket.submitted_by || "Requester"} · Requester</Chip>
+              </RecipientRow>
+              <RecipientRow label="Cc">
+                <button
+                  type="button"
+                  onClick={() => setCcSelf((v) => !v)}
+                  className={cn(
+                    "rounded-full px-2 py-0.5 text-[12px] font-medium ring-1",
+                    ccSelf
+                      ? "bg-accent/10 text-accent ring-accent/30"
+                      : "bg-surface text-midnight-400 ring-midnight-200 line-through",
+                  )}
+                >
+                  You · for the record
+                </button>
+              </RecipientRow>
+              <RecipientRow label="Bcc">
+                <input
+                  value={bccText}
+                  onChange={(e) => setBccText(e.target.value)}
+                  placeholder="Add emails (vendor, maintenance…)"
+                  inputMode="email"
+                  className="w-full bg-transparent text-[13px] text-midnight-900 placeholder:text-midnight-400 focus:outline-none"
+                />
+              </RecipientRow>
             </div>
+
+            <div>
+              <label className="text-[11px] font-semibold uppercase tracking-wider text-midnight-500">
+                Subject
+              </label>
+              <input
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+                className="mt-1.5 block w-full rounded-lg border border-midnight-200 bg-white px-3 py-2 text-sm text-midnight-900 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </div>
+
+            <div>
+              <div className="flex items-center justify-between">
+                <label className="text-[11px] font-semibold uppercase tracking-wider text-midnight-500">
+                  Your question
+                </label>
+                <span className="text-[10px] text-midnight-400">{text.length}/2000</span>
+              </div>
+              <textarea
+                value={text}
+                onChange={(e) => setText(e.target.value.slice(0, 2000))}
+                rows={5}
+                autoFocus
+                placeholder="What do you need clarified before approving?"
+                className="mt-1.5 block w-full rounded-lg border border-midnight-200 bg-white px-3 py-2 text-sm text-midnight-900 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </div>
+
+            {/* Options */}
+            <div className="rounded-lg ring-1 ring-midnight-100 divide-y divide-midnight-100">
+              <OptionRow
+                checked={openThread}
+                onToggle={() => setOpenThread((v) => !v)}
+                title="Open a chat thread"
+                hint="Keeps the back-and-forth tied to this WO."
+              />
+              <OptionRow
+                checked={pauseClock}
+                onToggle={() => setPauseClock((v) => !v)}
+                title="Pause approval clock until they reply"
+                hint="Marks the WO Needs info so it isn't flagged as stuck."
+              />
+              <OptionRow
+                checked={notifySdo}
+                onToggle={() => setNotifySdo((v) => !v)}
+                title="Also notify the SDO"
+                hint="Use if this might escalate above your authority."
+              />
+            </div>
+
+            <p className="text-[11px] text-midnight-400">
+              Sent from your SOAR address with reply-to set to this WO — replies
+              post back into the thread automatically once inbound is live.
+            </p>
           </div>
-        )}
-        <label className="text-[11px] font-semibold uppercase tracking-wider text-midnight-500">
-          {sheet === "reject" ? "Reason for rejection" : "Your question"}
-        </label>
-        <textarea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          rows={5}
-          autoFocus
-          placeholder={
-            sheet === "reject"
-              ? "Why is this being rejected? The requester will see this."
-              : "What do you need clarified before approving?"
-          }
-          className="mt-1.5 block w-full rounded-lg border border-midnight-200 bg-white px-3 py-2 text-sm text-midnight-900 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-        />
-        {sheet === "info" && (
-          <p className="mt-2 text-[11.5px] text-midnight-400">
-            Emails the submitter and posts to this work order's internal thread,
-            so the back-and-forth stays tied to the ticket.
-          </p>
         )}
       </Drawer>
     </>
+  );
+}
+
+function RecipientRow({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-2">
+      <span className="w-7 shrink-0 text-[11px] font-semibold uppercase tracking-wider text-midnight-400">
+        {label}
+      </span>
+      <div className="min-w-0 flex-1">{children}</div>
+    </div>
+  );
+}
+
+function Chip({ children }: { children: ReactNode }) {
+  return (
+    <span className="inline-flex items-center rounded-full bg-frost-100 px-2 py-0.5 text-[12px] font-medium text-midnight-800 ring-1 ring-midnight-100">
+      {children}
+    </span>
+  );
+}
+
+function OptionRow({
+  checked,
+  onToggle,
+  title,
+  hint,
+}: {
+  checked: boolean;
+  onToggle: () => void;
+  title: string;
+  hint: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      className="flex w-full items-start gap-3 px-3 py-2.5 text-left"
+    >
+      <span
+        className={cn(
+          "mt-0.5 flex h-5 w-9 shrink-0 items-center rounded-full px-0.5 transition-colors",
+          checked ? "justify-end bg-accent" : "justify-start bg-midnight-200",
+        )}
+      >
+        <span className="h-4 w-4 rounded-full bg-white" />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-[13px] font-medium text-midnight-900">{title}</span>
+        <span className="block text-[11.5px] text-midnight-400">{hint}</span>
+      </span>
+    </button>
   );
 }

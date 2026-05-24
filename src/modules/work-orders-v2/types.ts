@@ -217,6 +217,11 @@ export interface Ticket {
   // Rationale captured when an approval is requested (the vendor's
   // justification on a quote submission). Shown as "Justification".
   approval_request_notes?: string | null;
+  // Needs-info: set while an approver's "Request more info" is awaiting a
+  // reply. Pauses the approval clock; cleared on reply or a decision.
+  awaiting_info?: boolean;
+  awaiting_info_at?: string | null;
+  info_request_note?: string | null;
   ticket_photos?: TicketPhoto[];
   ticket_approvals?: TicketApproval[];
   ticket_activities?: TicketActivity[];

@@ -158,6 +158,22 @@ export function MobileTicketDetail({
         <div className="flex-1 px-3 pt-3 pb-8 space-y-3">
           <CostHero ticket={t} latest={latest} canDecide={canDecide} />
 
+          {t.awaiting_info && (
+            <div className="flex items-start gap-2 rounded-xl bg-amber-50 ring-1 ring-amber-200 px-4 py-2.5">
+              <Clock className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" strokeWidth={2} />
+              <div className="min-w-0">
+                <div className="text-[12.5px] font-semibold text-amber-800">
+                  Needs info — awaiting reply
+                </div>
+                {t.info_request_note && (
+                  <div className="truncate text-[11.5px] text-amber-700">
+                    {t.info_request_note}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
           {/* Request — the scope of work, set by the vendor (or internal
               on their behalf) when a quote is submitted. Read-only here:
               it follows the quote, not an approver's edit. */}

@@ -30,7 +30,7 @@ import { createClient } from "@supabase/supabase-js";
 import { can, requireCap, tierFor, activityVisibilityForTier } from "./_lib/permissions.js";
 import { transition, setPause, isWithinReopenGrace, REOPEN_GRACE } from "./_lib/ticketStateMachine.js";
 import { toNewStatus, toLegacyStatus } from "./_lib/statusMapping.js";
-import { sendEmail, notifyTicketEvent } from "./_lib/ticketEmail.js";
+import { sendEmail, notifyTicketEvent, findUsersForStore } from "./_lib/ticketEmail.js";
 import { onPMTicketClosed } from "./_lib/pm.js";
 
 const SUPABASE_URL =
@@ -1682,6 +1682,8 @@ export const handler = async (event) => {
         approval_status:      decision,
         approval_approved_by: userName,
         approval_approved_at: new Date().toISOString(),
+        awaiting_info:        false,
+        awaiting_info_at:     null,
         updated_at:           new Date().toISOString(),
       };
       if (decision === "Approved" && quoteId) {
@@ -3065,49 +3067,126 @@ export const handler = async (event) => {
         .select()
         .single();
       if (error) throw error;
+
+      // A reply on the thread answers any outstanding info request —
+      // clear Needs-info so the approval clock resumes.
+      await supabase.from("tickets")
+        .update({ awaiting_info: false, awaiting_info_at: null })
+        .eq("id", ticketId)
+        .eq("awaiting_info", true);
+
       return respond(200, { ok: true, message: data });
     }
 
-    // ── requestInfo: approver asks the submitter for more detail ──
-    // Posts the question to the internal thread AND fires an outbound
-    // Resend alert to the submitter. No inbound parsing — they reply on
-    // the ticket thread (or off-band) for now.
+    // ── requestInfo: "Ask the requester" ──
+    // Emails the chosen recipients (TO = requester by default, plus any
+    // CC/BCC the approver added, optionally the SDO) with reply-to set to
+    // a per-WO inbound address so replies sync back via the inbound
+    // webhook. Optionally opens a chat thread and pauses the approval
+    // clock (Needs-info).
     if (action === "requestInfo" && event.httpMethod === "POST") {
-      const { ticketId, question } = JSON.parse(event.body);
-      if (!ticketId || !question || !question.trim()) {
+      const reqBody = JSON.parse(event.body);
+      const { ticketId } = reqBody;
+      const question = String(reqBody.question || "").trim();
+      if (!ticketId || !question) {
         return respond(400, { ok: false, message: "ticketId and question required." });
       }
-      const q = question.trim();
+      const openThread = reqBody.openThread !== false; // default on
+      const pauseClock = reqBody.pauseClock !== false;  // default on
+      const notifySdo  = !!reqBody.notifySdo;
+      const ccIn    = Array.isArray(reqBody.cc)      ? reqBody.cc.filter(Boolean)      : [];
+      const bccIn   = Array.isArray(reqBody.bcc)     ? reqBody.bcc.filter(Boolean)     : [];
+      const toExtra = Array.isArray(reqBody.toExtra) ? reqBody.toExtra.filter(Boolean) : [];
 
-      await supabase.from("ticket_messages").insert({
-        ticket_id:   ticketId,
-        user_id:     userId,
-        user_name:   userName,
-        user_role:   role.toUpperCase(),
-        message:     q,
-        thread_type: "internal",
-      });
+      const { data: ticket } = await supabase
+        .from("tickets")
+        .select("id, wo_number, store_number, work_requested, submitted_by_user_id")
+        .eq("id", ticketId)
+        .single();
+      if (!ticket) return respond(404, { ok: false, message: "Ticket not found." });
+
+      // TO defaults to the requester; GM / shift-manager → store inbox.
+      const toList = [...toExtra];
+      if (ticket.submitted_by_user_id) {
+        const { data: sub } = await supabase
+          .from("profiles").select("email, role")
+          .eq("id", ticket.submitted_by_user_id).maybeSingle();
+        if (sub) {
+          const r = String(sub.role || "").toLowerCase();
+          let email = sub.email;
+          if (r === "gm" || r === "shift_manager") {
+            const { data: st } = await supabase
+              .from("stores").select("email")
+              .eq("number", String(ticket.store_number)).maybeSingle();
+            email = (st?.email || "").trim() || sub.email;
+          }
+          if (email) toList.unshift(email);
+        }
+      }
+
+      const cc = [...ccIn];
+      if (notifySdo) {
+        const sdos = await findUsersForStore(supabase, ticket.store_number, ["sdo"]);
+        for (const s of sdos) if (s.email) cc.push(s.email);
+      }
+
+      const uniq = (arr) => [...new Set(arr.filter(Boolean))];
+      const to  = uniq(toList);
+      const ccF = uniq(cc).filter((e) => !to.includes(e));
+      const bccF = uniq(bccIn).filter((e) => !to.includes(e) && !ccF.includes(e));
+
+      const subject =
+        String(reqBody.subject || "").trim() ||
+        `Info needed on ${ticket.wo_number || "this WO"}${ticket.work_requested ? ` — ${ticket.work_requested}` : ""}`;
+
+      const inboundDomain = process.env.RESEND_INBOUND_DOMAIN || "inbound.mysoarhub.com";
+      const replyTo = `wo-${ticketId}@${inboundDomain}`;
+
+      const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const base = process.env.APP_URL || process.env.URL || "";
+      const link = base ? `${base}/admin/work-orders-v2?ticket=${encodeURIComponent(ticketId)}` : "";
+      const html = `<!DOCTYPE html><html><body style="font-family:Arial,Helvetica,sans-serif;color:#222;max-width:620px;margin:0 auto;padding:16px;">`
+        + `<p><strong>${esc(userName)}</strong> needs more information before approving <strong>${esc(ticket.wo_number || "")}</strong>${ticket.work_requested ? ` — ${esc(ticket.work_requested)}` : ""}.</p>`
+        + `<p><strong>Question:</strong></p>`
+        + `<blockquote style="margin:8px 0;padding:8px 12px;border-left:3px solid #2563eb;background:#f1f5f9;color:#222;white-space:pre-wrap;">${esc(question)}</blockquote>`
+        + `<p style="font-size:13px;color:#555;">Just reply to this email — your answer posts back onto the work order automatically.</p>`
+        + (link ? `<p style="margin-top:16px;"><a href="${link}" style="background:#2563eb;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none;font-weight:600;">Open the work order →</a></p>` : "")
+        + `</body></html>`;
+
+      let emailed = false, emailReason = null;
+      if (to.length) {
+        const result = await sendEmail({ to, cc: ccF, bcc: bccF, subject, html, replyTo });
+        emailed = result.sent;
+        if (!result.sent) emailReason = result.reason;
+        await supabase.from("ticket_notifications").insert({
+          ticket_id: ticketId, recipient_email: to.join(", "),
+          notification_type: "info_requested", subject, message: html,
+          status: result.sent ? "sent" : `failed: ${result.reason}`,
+        }).then(() => {}).catch(() => {});
+      }
+
+      if (openThread) {
+        await supabase.from("ticket_messages").insert({
+          ticket_id: ticketId, user_id: userId, user_name: userName,
+          user_role: role.toUpperCase(), message: question, thread_type: "internal",
+        });
+      }
+
+      await supabase.from("tickets").update({
+        awaiting_info: pauseClock,
+        awaiting_info_at: pauseClock ? new Date().toISOString() : null,
+        info_request_note: question,
+        updated_at: new Date().toISOString(),
+      }).eq("id", ticketId);
 
       await supabase.from("ticket_activities").insert({
         ticket_id: ticketId, user_id: userId, user_name: userName,
         user_role: role, update_type: "info_request",
-        event_type: "info_requested", notes: q, visibility: "all",
+        event_type: "info_requested", notes: question,
+        event_data: { to, cc: ccF, bcc: bccF, paused: pauseClock }, visibility: "all",
       });
 
-      let emailed = false;
-      try {
-        const { data: ticket } = await supabase
-          .from("tickets").select("*").eq("id", ticketId).single();
-        if (ticket) {
-          await notifyTicketEvent(supabase, ticket, "info_requested", {
-            question: q, requested_by: userName,
-          });
-          emailed = true;
-        }
-      } catch (e) {
-        console.warn("[facilities-v2] notifyTicketEvent info_requested failed", e);
-      }
-      return respond(200, { ok: true, emailed });
+      return respond(200, { ok: true, emailed, emailReason, recipients: { to, cc: ccF, bcc: bccF } });
     }
 
     return respond(400, { ok: false, message: "Unknown action." });
