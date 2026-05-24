@@ -14,6 +14,7 @@ import { useToast } from "@/shared/ui/Toaster";
 import { ChatTabs } from "./components/ChatTabs";
 import { ActionCard } from "./components/ActionCard";
 import { ConversationRow } from "./components/ConversationRow";
+import { ComposeModal } from "./components/ComposeModal";
 import { SAMPLE_THREADS } from "./sampleData";
 import type { ChatTab } from "./types";
 
@@ -21,6 +22,7 @@ export function ChatInboxPage() {
   const toast = useToast();
   const [tab, setTab] = useState<ChatTab>("all");
   const [search, setSearch] = useState("");
+  const [composeOpen, setComposeOpen] = useState(false);
 
   const threads = SAMPLE_THREADS;
 
@@ -69,7 +71,7 @@ export function ChatInboxPage() {
         trailing={
           <button
             type="button"
-            onClick={() => toast.push("Compose is coming next.", "info")}
+            onClick={() => setComposeOpen(true)}
             className="text-midnight-600 hover:text-midnight-900"
             aria-label="New chat"
           >
@@ -152,12 +154,20 @@ export function ChatInboxPage() {
       {/* Compose FAB */}
       <button
         type="button"
-        onClick={() => toast.push("Compose is coming next.", "info")}
+        onClick={() => setComposeOpen(true)}
         aria-label="New chat"
         className="fixed bottom-20 right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-midnight-900 text-white shadow-float transition active:scale-95"
       >
         <Plus className="h-6 w-6" strokeWidth={2.25} />
       </button>
+
+      <ComposeModal
+        open={composeOpen}
+        onClose={() => setComposeOpen(false)}
+        onCreated={(s) =>
+          toast.push(`Started "${s}" — opening the thread is next.`, "success")
+        }
+      />
     </div>
   );
 }
