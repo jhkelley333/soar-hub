@@ -324,6 +324,107 @@ export const handler = async (event) => {
       return respond(200, { ok: true, threadId: thread.id });
     }
 
+    // Find-or-create the chat thread tied to a work order or PAF. Clicking
+    // "Discuss" from a WO/PAF lands the caller in the same thread every time;
+    // the first click seeds members (requester/submitter/SDO approver + the
+    // opener) and a system context line.
+    if (action === "scoped" && event.httpMethod === "POST") {
+      const { scopeKind, scopeRef } = JSON.parse(event.body || "{}");
+      if (!["workorder", "submission"].includes(scopeKind) || !scopeRef) {
+        return respond(400, { ok: false, message: "scopeKind (workorder|submission) and scopeRef required." });
+      }
+
+      const { data: existing } = await supa
+        .from("chat_threads")
+        .select("id")
+        .eq("scope_kind", scopeKind)
+        .eq("scope_ref", scopeRef)
+        .order("created_at", { ascending: true })
+        .limit(1)
+        .maybeSingle();
+
+      if (existing) {
+        const { data: mem } = await supa
+          .from("chat_thread_members")
+          .select("user_id")
+          .eq("thread_id", existing.id)
+          .eq("user_id", uid)
+          .maybeSingle();
+        if (!mem) {
+          await supa.from("chat_thread_members").insert({
+            thread_id: existing.id,
+            user_id: uid,
+            role: "member",
+            last_read_at: new Date().toISOString(),
+          });
+        }
+        return respond(200, { ok: true, threadId: existing.id });
+      }
+
+      let kind = scopeKind;
+      let title = "";
+      let subtitle = "";
+      let systemText = "";
+      const participants = [uid];
+
+      if (scopeKind === "workorder") {
+        const { data: wo } = await supa
+          .from("tickets")
+          .select("wo_number, store_number, store_name, submitted_by_user_id")
+          .eq("id", scopeRef)
+          .maybeSingle();
+        if (!wo) return respond(404, { ok: false, message: "Work order not found." });
+        const store = wo.store_name || (wo.store_number ? `Store ${wo.store_number}` : "");
+        title = `WO ${wo.wo_number || ""}`.trim();
+        subtitle = store;
+        systemText = `Discussion started for work order ${wo.wo_number || ""}${store ? ` · ${store}` : ""}.`;
+        if (wo.submitted_by_user_id) participants.push(wo.submitted_by_user_id);
+      } else {
+        const { data: paf } = await supa
+          .from("paf_submissions")
+          .select("employee_name, submitter_id, sdo_approver_id, status")
+          .eq("id", scopeRef)
+          .maybeSingle();
+        if (!paf) return respond(404, { ok: false, message: "PAF not found." });
+        title = `PAF · ${paf.employee_name || "Submission"}`;
+        subtitle = paf.status || "";
+        systemText = `Discussion started for ${paf.employee_name || "this"} PAF.`;
+        if (paf.submitter_id) participants.push(paf.submitter_id);
+        if (paf.sdo_approver_id) participants.push(paf.sdo_approver_id);
+      }
+
+      const uniqueParticipants = Array.from(new Set(participants.filter(Boolean)));
+
+      const { data: thread, error: tErr } = await supa
+        .from("chat_threads")
+        .insert({
+          kind,
+          title,
+          subtitle,
+          scope_kind: scopeKind,
+          scope_ref: scopeRef,
+          created_by: uid,
+        })
+        .select()
+        .single();
+      if (tErr) throw tErr;
+
+      await supa.from("chat_thread_members").insert(
+        uniqueParticipants.map((u) => ({
+          thread_id: thread.id,
+          user_id: u,
+          role: u === uid ? "owner" : "member",
+          last_read_at: u === uid ? new Date().toISOString() : null,
+        })),
+      );
+
+      await supa
+        .from("chat_messages")
+        .insert({ thread_id: thread.id, from_user_id: null, text: systemText, system: true });
+
+      return respond(200, { ok: true, threadId: thread.id });
+    }
+
     if (action === "markRead" && event.httpMethod === "POST") {
       const { threadId } = JSON.parse(event.body || "{}");
       if (!threadId) return respond(400, { ok: false, message: "threadId required." });

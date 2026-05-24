@@ -4,6 +4,7 @@ import { fetchPafAudit } from "./api";
 import type { PafAuditEntry, PafRow } from "./types";
 import { formatUSD } from "./cost";
 import { cn } from "@/lib/cn";
+import { DiscussButton } from "@/modules/chat/DiscussButton";
 
 // Maps audit log action codes (kept short for storage) to human labels.
 const AUDIT_LABEL: Record<string, string> = {
@@ -35,6 +36,10 @@ export function PafDetail({ paf }: { paf: PafRow }) {
   return (
     <div className="space-y-4 text-sm">
       <ApprovalStepper paf={paf} />
+
+      <div className="flex justify-end">
+        <DiscussButton scopeKind="submission" scopeRef={paf.id} />
+      </div>
 
       <Section title="Submission">
         <Grid>

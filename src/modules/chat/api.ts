@@ -104,6 +104,19 @@ export function createThread(body: CreateThreadBody): Promise<{ ok: true; thread
   return req(`${FN}?action=create`, { method: "POST", body: JSON.stringify(body) });
 }
 
+export type ScopeKind = "workorder" | "submission";
+
+// Find-or-create the chat thread tied to a work order / PAF and return it.
+export function openScopedThread(
+  scopeKind: ScopeKind,
+  scopeRef: string,
+): Promise<{ ok: true; threadId: string }> {
+  return req(`${FN}?action=scoped`, {
+    method: "POST",
+    body: JSON.stringify({ scopeKind, scopeRef }),
+  });
+}
+
 export function markThreadRead(threadId: string): Promise<{ ok: true }> {
   return req(`${FN}?action=markRead`, {
     method: "POST",

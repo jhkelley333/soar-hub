@@ -24,6 +24,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import { fetchTicket, markTicketSeen } from "../api";
 import { TicketChat } from "../TicketChat";
+import { DiscussButton } from "@/modules/chat/DiscussButton";
 import { ApprovalSection } from "../ApprovalSection";
 import { CostHero } from "./CostHero";
 import { ApprovalChain } from "./ApprovalChain";
@@ -306,6 +307,14 @@ export function MobileTicketDetail({
               </div>
             </section>
           )}
+
+          <section>
+            <DiscussButton
+              scopeKind="workorder"
+              scopeRef={t.id}
+              className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-surface px-3 py-2.5 text-[13px] font-semibold text-midnight-700 shadow-card ring-1 ring-midnight-100 disabled:opacity-50"
+            />
+          </section>
 
           {/* Messages */}
           <section>

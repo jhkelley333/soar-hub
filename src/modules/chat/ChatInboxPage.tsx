@@ -19,6 +19,7 @@ import { ActionCard } from "./components/ActionCard";
 import { ConversationRow } from "./components/ConversationRow";
 import { ComposeModal } from "./components/ComposeModal";
 import { fetchInbox } from "./api";
+import { useChatRealtime } from "./useChatRealtime";
 import type { ChatTab } from "./types";
 
 export function ChatInboxPage() {
@@ -34,6 +35,7 @@ export function ChatInboxPage() {
     queryFn: fetchInbox,
     staleTime: 30_000,
   });
+  useChatRealtime();
   const threads = inboxQ.data?.threads ?? [];
 
   const needsYou = useMemo(() => threads.filter((t) => t.needsYou), [threads]);
