@@ -18,7 +18,14 @@ const BUBBLES = [
   [166, 304, 2], [128, 184, 1.8], [190, 268, 2], [74, 256, 1.6],
 ];
 
-export function SplashCup({ className }: { className?: string }) {
+export function SplashCup({
+  className,
+  agitate = 0,
+}: {
+  className?: string;
+  /** Increment to make the ice cubes rattle (shake / tap). */
+  agitate?: number;
+}) {
   return (
     <svg
       xmlns="http://www.w3.org/2000/svg"
@@ -71,27 +78,33 @@ export function SplashCup({ className }: { className?: string }) {
           strokeLinecap="round"
         />
 
-        {/* Ice cubes */}
+        {/* Ice cubes — inner group rattles when `agitate` changes */}
         {ICE.map((c, i) => (
           <g key={i} transform={`translate(${c.x} ${c.y}) rotate(${c.r})`}>
-            <rect
-              x={-c.s / 2}
-              y={-c.s / 2}
-              width={c.s}
-              height={c.s}
-              rx={c.s * 0.16}
-              fill="rgba(255,255,255,0.50)"
-              stroke="rgba(255,255,255,0.75)"
-              strokeWidth="1.2"
-            />
-            <rect
-              x={-c.s / 2 + 5}
-              y={-c.s / 2 + 5}
-              width={c.s * 0.34}
-              height={c.s * 0.14}
-              rx={c.s * 0.07}
-              fill="rgba(255,255,255,0.85)"
-            />
+            <g
+              key={agitate}
+              className={agitate > 0 ? "ice-jiggle" : undefined}
+              style={{ animationDelay: `${(i % 5) * 45}ms` }}
+            >
+              <rect
+                x={-c.s / 2}
+                y={-c.s / 2}
+                width={c.s}
+                height={c.s}
+                rx={c.s * 0.16}
+                fill="rgba(255,255,255,0.50)"
+                stroke="rgba(255,255,255,0.75)"
+                strokeWidth="1.2"
+              />
+              <rect
+                x={-c.s / 2 + 5}
+                y={-c.s / 2 + 5}
+                width={c.s * 0.34}
+                height={c.s * 0.14}
+                rx={c.s * 0.07}
+                fill="rgba(255,255,255,0.85)"
+              />
+            </g>
           </g>
         ))}
 

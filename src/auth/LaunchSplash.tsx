@@ -11,9 +11,11 @@
 // OPERATIONS subtitle, a loading line + dots, and a "Powered by a mint"
 // footer.
 
+import { useCallback, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ArrowRight } from "lucide-react";
 import { SplashCup } from "./SplashCup";
+import { enableMotion, useShake } from "./useShake";
 
 interface Props {
   /** Personalized line above the wordmark, e.g. "Good morning, Marcus". */
@@ -25,6 +27,21 @@ interface Props {
 }
 
 export function LaunchSplash({ greeting, subline, showSignIn }: Props) {
+  // Shake (or tap) the cup → ice rattles. iOS gates motion behind a
+  // permission prompt, so the first cup tap both rattles the ice and
+  // requests motion access, unlocking shake for the rest of the visit.
+  const [agitate, setAgitate] = useState(0);
+  const motionAsked = useRef(false);
+  const rattle = useCallback(() => setAgitate((a) => a + 1), []);
+  useShake(rattle);
+  const onCupTap = useCallback(() => {
+    if (!motionAsked.current) {
+      motionAsked.current = true;
+      void enableMotion();
+    }
+    rattle();
+  }, [rattle]);
+
   return (
     <div
       className="relative flex min-h-full flex-col items-center justify-center overflow-hidden px-6 text-center"
@@ -44,7 +61,17 @@ export function LaunchSplash({ greeting, subline, showSignIn }: Props) {
         </h1>
         <span aria-hidden="true" className="mt-2.5 h-0.5 w-14 rounded-full bg-white/30" />
 
-        <SplashCup className="mt-9 h-52 w-auto drop-shadow-[0_22px_45px_rgba(0,0,0,0.40)]" />
+        <button
+          type="button"
+          onClick={onCupTap}
+          aria-label="Shake or tap to rattle the ice"
+          className="mt-9 appearance-none border-0 bg-transparent p-0"
+        >
+          <SplashCup
+            agitate={agitate}
+            className="h-52 w-auto drop-shadow-[0_22px_45px_rgba(0,0,0,0.40)]"
+          />
+        </button>
 
         <p className="mt-8 text-xs font-semibold uppercase tracking-[0.25em] text-frost-300">
           Sonic Operations
