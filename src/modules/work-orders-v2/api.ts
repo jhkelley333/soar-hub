@@ -314,11 +314,16 @@ export function fetchMessages(ticketId: string, threadType: ThreadType): Promise
   );
 }
 
-export function sendMessage(payload: SendMessageBody): Promise<{ ok: true }> {
-  return request<{ ok: true }>(`${FN}?action=sendMessage`, {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+export function sendMessage(
+  payload: SendMessageBody,
+): Promise<{ ok: true; emailed?: boolean; emailReason?: string | null }> {
+  return request<{ ok: true; emailed?: boolean; emailReason?: string | null }>(
+    `${FN}?action=sendMessage`,
+    {
+      method: "POST",
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 export interface RequestInfoBody {

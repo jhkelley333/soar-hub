@@ -425,7 +425,7 @@ export interface AddQuoteBody {
   fileType?: string;
 }
 
-export type ThreadType = "internal" | "vendor";
+export type ThreadType = "internal" | "vendor" | "requester";
 
 export interface TicketMessage {
   id: string;
