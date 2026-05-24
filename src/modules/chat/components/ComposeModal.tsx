@@ -6,14 +6,25 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { User, Users, ClipboardList, Search, Check, X } from "lucide-react";
+import { User, Users, ClipboardList, Megaphone, Search, Check, X } from "lucide-react";
 import { Drawer } from "@/shared/ui/Drawer";
 import { useToast } from "@/shared/ui/Toaster";
+import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
-import { fetchContacts, createThread, type ChatContact, type CreateThreadBody } from "../api";
+import {
+  fetchContacts,
+  createThread,
+  postBroadcast,
+  type ChatContact,
+  type CreateThreadBody,
+  type BroadcastAudience,
+} from "../api";
 
-type Scope = "direct" | "group" | "tied";
+type Scope = "direct" | "group" | "tied" | "news";
 type TiedKind = "submission" | "workorder";
+
+const NEWS_POSTER_ROLES = ["do", "sdo", "rvp", "vp", "coo", "admin"];
+const NEWS_COMPANY_ROLES = ["coo", "admin"];
 
 interface WorkItem {
   id: string;
@@ -40,6 +51,11 @@ export function ComposeModal({
   const navigate = useNavigate();
   const toast = useToast();
   const qc = useQueryClient();
+  const { profile } = useAuth();
+
+  const role = String(profile?.role || "").toLowerCase();
+  const canPostNews = NEWS_POSTER_ROLES.includes(role);
+  const canPostCompany = NEWS_COMPANY_ROLES.includes(role);
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [scope, setScope] = useState<Scope | null>(null);
@@ -47,6 +63,8 @@ export function ComposeModal({
   const [groupName, setGroupName] = useState("");
   const [objectId, setObjectId] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const [newsTitle, setNewsTitle] = useState("");
+  const [audience, setAudience] = useState<BroadcastAudience>("subtree");
   const [q, setQ] = useState("");
 
   const contactsQ = useQuery({
@@ -69,6 +87,19 @@ export function ComposeModal({
       toast.push(e instanceof Error ? e.message : "Couldn't create the chat.", "error"),
   });
 
+  const broadcastMut = useMutation({
+    mutationFn: () =>
+      postBroadcast({ title: newsTitle.trim(), text: message.trim(), audience }),
+    onSuccess: ({ threadId }) => {
+      qc.invalidateQueries({ queryKey: ["chat", "inbox"] });
+      onCreated?.();
+      close();
+      navigate(`/chat/${threadId}`);
+    },
+    onError: (e: unknown) =>
+      toast.push(e instanceof Error ? e.message : "Couldn't post the update.", "error"),
+  });
+
   function reset() {
     setStep(1);
     setScope(null);
@@ -76,6 +107,8 @@ export function ComposeModal({
     setGroupName("");
     setObjectId(null);
     setMessage("");
+    setNewsTitle("");
+    setAudience("subtree");
     setQ("");
   }
   function close() {
@@ -120,6 +153,10 @@ export function ComposeModal({
   }
 
   function submit() {
+    if (scope === "news") {
+      broadcastMut.mutate();
+      return;
+    }
     let body: CreateThreadBody;
     if (scope === "group") {
       body = { kind: "group", title: groupName.trim(), participantUserIds: people };
@@ -143,13 +180,15 @@ export function ComposeModal({
   const title =
     step === 1
       ? "New message"
-      : scope === "group"
-        ? "New group"
-        : scope === "tied"
-          ? "Tie to…"
-          : step === 3
-            ? "Message"
-            : "Direct message";
+      : scope === "news"
+        ? "Post an update"
+        : scope === "group"
+          ? "New group"
+          : scope === "tied"
+            ? "Tie to…"
+            : step === 3
+              ? "Message"
+              : "Direct message";
 
   const footer = (() => {
     if (step === 1) return null;
@@ -173,6 +212,25 @@ export function ComposeModal({
             className="ml-auto h-10 rounded-lg bg-midnight-900 px-5 text-[14px] font-semibold text-white disabled:opacity-40"
           >
             Create group · {people.length} {people.length === 1 ? "member" : "members"}
+          </button>
+        </div>
+      );
+    }
+    if (step === 2 && scope === "news") {
+      return (
+        <div className="flex items-center gap-2">
+          {back}
+          <button
+            type="button"
+            disabled={!message.trim() || broadcastMut.isPending}
+            onClick={submit}
+            className="ml-auto h-10 rounded-lg bg-accent px-5 text-[14px] font-semibold text-white disabled:opacity-40"
+          >
+            {broadcastMut.isPending
+              ? "Posting…"
+              : audience === "company"
+                ? "Post company-wide"
+                : "Post to my team"}
           </button>
         </div>
       );
@@ -227,6 +285,9 @@ export function ComposeModal({
             <PickOption Icon={User} tint="frost" title="Direct message" sub="One-on-one with a teammate" onClick={() => { setScope("direct"); setStep(2); }} />
             <PickOption Icon={Users} tint="frost" title="New group" sub="Multiple people · name + member list" onClick={() => { setScope("group"); setStep(2); }} />
             <PickOption Icon={ClipboardList} tint="sonic" title="About a submission, WO, or store" sub="Auto-pulls participants and history" onClick={() => { setScope("tied"); setStep(2); }} />
+            {canPostNews && (
+              <PickOption Icon={Megaphone} tint="sonic" title="Post an update" sub="Announcement to your team — shows in News" onClick={() => { setScope("news"); setStep(2); }} />
+            )}
           </div>
 
           {contacts.length > 0 && (
@@ -296,6 +357,49 @@ export function ComposeModal({
         <PeopleList contacts={filtered} q={q} setQ={setQ} selected={people} onToggle={togglePerson} hasExternal={hasExternal} loading={contactsQ.isLoading} />
       )}
 
+      {step === 2 && scope === "news" && (
+        <div>
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-midnight-400">Audience</p>
+          <div className="mb-4 space-y-2">
+            <AudienceOption
+              active={audience === "subtree"}
+              title="My team"
+              sub="Everyone in your reporting line"
+              onClick={() => setAudience("subtree")}
+            />
+            {canPostCompany && (
+              <AudienceOption
+                active={audience === "company"}
+                title="Company-wide"
+                sub="Every active user"
+                onClick={() => setAudience("company")}
+              />
+            )}
+          </div>
+
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-midnight-400">Title (optional)</p>
+          <input
+            value={newsTitle}
+            onChange={(e) => setNewsTitle(e.target.value)}
+            placeholder="e.g. Q3 store standards update"
+            className="mb-4 w-full rounded-xl border border-midnight-200 px-3 py-2.5 text-[15px] text-midnight-900 placeholder:text-midnight-400 focus:border-accent focus:outline-none"
+          />
+
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-midnight-400">Message</p>
+          <textarea
+            value={message}
+            onChange={(e) => setMessage(e.target.value)}
+            rows={6}
+            autoFocus
+            placeholder="Write your announcement…"
+            className="w-full resize-none rounded-xl border border-midnight-200 px-3 py-2.5 text-[15px] text-midnight-900 placeholder:text-midnight-400 focus:border-accent focus:outline-none"
+          />
+          <p className="mt-2 text-[12px] text-midnight-500">
+            Recipients can read but not reply. They'll see it in their News tab.
+          </p>
+        </div>
+      )}
+
       {step === 2 && scope === "tied" && (
         <ul className="divide-y divide-midnight-100">
           {RECENT_WORK.map((w) => {
@@ -340,6 +444,27 @@ function PickOption({ Icon, tint, title, sub, onClick }: { Icon: typeof User; ti
         <p className="text-[14.5px] font-semibold text-midnight-900">{title}</p>
         <p className="text-[12px] text-midnight-500">{sub}</p>
       </div>
+    </button>
+  );
+}
+
+function AudienceOption({ active, title, sub, onClick }: { active: boolean; title: string; sub: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "flex w-full items-center gap-3 rounded-xl p-3 text-left ring-1 transition",
+        active ? "bg-accent/5 ring-accent" : "bg-surface ring-midnight-100 hover:ring-midnight-300",
+      )}
+    >
+      <div className="min-w-0 flex-1">
+        <p className="text-[14px] font-semibold text-midnight-900">{title}</p>
+        <p className="text-[12px] text-midnight-500">{sub}</p>
+      </div>
+      <span className={cn("flex h-5 w-5 items-center justify-center rounded-full border", active ? "border-accent bg-accent text-white" : "border-midnight-300")}>
+        {active && <Check className="h-3 w-3" strokeWidth={3} />}
+      </span>
     </button>
   );
 }

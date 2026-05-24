@@ -29,6 +29,8 @@ export function GroupThread({
 
   const { thread, members, users, messages } = data;
   const isGroup = thread.kind === "group";
+  const myRole = members.find((m) => m.user_id === currentUserId)?.role;
+  const readOnly = thread.kind === "broadcast" && myRole !== "owner";
 
   const stripMembers: StripMember[] = members.map((m) => ({
     id: m.user_id,
@@ -97,32 +99,41 @@ export function GroupThread({
         })}
       </div>
 
-      <div
-        className="flex shrink-0 items-end gap-2 border-t border-midnight-100 bg-surface px-3 pt-2.5"
-        style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) / 2 + 10px)" }}
-      >
-        <button type="button" className="mb-1 text-midnight-400 hover:text-midnight-700" aria-label="Attach">
-          <Paperclip className="h-5 w-5" strokeWidth={2} />
-        </button>
-        <input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && draft.trim()) send.mutate(draft.trim());
-          }}
-          placeholder={`Message ${thread.title}…`}
-          className="min-w-0 flex-1 rounded-full bg-surface-sunk px-4 py-2.5 text-[14px] text-midnight-900 placeholder:text-midnight-400 focus:outline-none"
-        />
-        <button
-          type="button"
-          onClick={() => draft.trim() && send.mutate(draft.trim())}
-          disabled={!draft.trim() || send.isPending}
-          className="mb-0.5 flex h-9 w-9 items-center justify-center rounded-full bg-midnight-900 text-white disabled:opacity-40"
-          aria-label="Send"
+      {readOnly ? (
+        <div
+          className="shrink-0 border-t border-midnight-100 bg-surface px-4 py-3 text-center text-[13px] text-midnight-500"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) / 2 + 12px)" }}
         >
-          <Send className="h-[18px] w-[18px]" strokeWidth={2} />
-        </button>
-      </div>
+          This is an announcement — replies are disabled.
+        </div>
+      ) : (
+        <div
+          className="flex shrink-0 items-end gap-2 border-t border-midnight-100 bg-surface px-3 pt-2.5"
+          style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) / 2 + 10px)" }}
+        >
+          <button type="button" className="mb-1 text-midnight-400 hover:text-midnight-700" aria-label="Attach">
+            <Paperclip className="h-5 w-5" strokeWidth={2} />
+          </button>
+          <input
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && draft.trim()) send.mutate(draft.trim());
+            }}
+            placeholder={`Message ${thread.title}…`}
+            className="min-w-0 flex-1 rounded-full bg-surface-sunk px-4 py-2.5 text-[14px] text-midnight-900 placeholder:text-midnight-400 focus:outline-none"
+          />
+          <button
+            type="button"
+            onClick={() => draft.trim() && send.mutate(draft.trim())}
+            disabled={!draft.trim() || send.isPending}
+            className="mb-0.5 flex h-9 w-9 items-center justify-center rounded-full bg-midnight-900 text-white disabled:opacity-40"
+            aria-label="Send"
+          >
+            <Send className="h-[18px] w-[18px]" strokeWidth={2} />
+          </button>
+        </div>
+      )}
     </div>
   );
 }
