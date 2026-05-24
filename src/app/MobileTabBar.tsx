@@ -42,11 +42,12 @@ export function MobileTabBar({
     <nav
       className="shrink-0 border-t border-white/10 bg-midnight lg:hidden"
       style={{
-        // Padding-bottom carries the iPhone home-indicator inset so the
-        // buttons sit above the gesture bar — and the midnight bg paints
-        // that inset, giving a cohesive navy frame with the top
-        // status-bar strip (no white safe-area strip).
-        paddingBottom: "env(safe-area-inset-bottom, 0px)",
+        // Sit the bar close to the bottom edge like native tab bars:
+        // pad by the home-indicator inset minus ~14px (so the labels
+        // drop near the edge but still clear the indicator pill), with a
+        // small floor for non-notched devices. The midnight bg still
+        // paints the inset, so the bottom stays a cohesive navy frame.
+        paddingBottom: "max(calc(env(safe-area-inset-bottom, 0px) - 14px), 6px)",
       }}
       aria-label="Primary"
     >
