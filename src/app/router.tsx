@@ -47,6 +47,7 @@ import { RegionPage } from "@/modules/region/RegionPage";
 import { ApprovalsPage } from "@/modules/approvals/ApprovalsPage";
 import { WalkthroughPage } from "@/modules/walkthrough/WalkthroughPage";
 import { DirectoryPage } from "@/modules/directory/DirectoryPage";
+import { ChatInboxPage } from "@/modules/chat/ChatInboxPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -82,6 +83,7 @@ export const router = createBrowserRouter([
         ),
       },
       { path: "contacts", element: <ContactsPage /> },
+      { path: "chat", element: <ChatInboxPage /> },
       {
         path: "resources",
         element: (
