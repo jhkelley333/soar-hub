@@ -158,9 +158,14 @@ export function MobileTicketDetail({
                 {t.work_requested}
               </h1>
             ) : (
-              <p className="mt-1 text-[14px] italic text-midnight-400">
-                Set when the vendor submits their quote.
-              </p>
+              <>
+                <h1 className="mt-1 text-[17px] font-semibold italic text-midnight-300 leading-snug">
+                  e.g., Replace motor and belt
+                </h1>
+                <p className="mt-0.5 text-[11.5px] text-midnight-400">
+                  Comes from the vendor's quote.
+                </p>
+              </>
             )}
             <div className="mt-2 flex items-center gap-2">
               <Avatar name={t.submitted_by || ""} size={24} />
