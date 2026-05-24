@@ -15,7 +15,7 @@ import { useCallback, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Search,
-  MessageSquare,
+  Mail,
   Phone,
   Plus,
   Pencil,
@@ -163,7 +163,7 @@ export function DirectoryPage() {
           dense
           options={[
             { value: "team", label: "Team", count: counts.team },
-            { value: "hub", label: "Hub", count: counts.hub },
+            { value: "hub", label: "Contacts", count: counts.hub },
             { value: "vendors", label: "Vendors", count: counts.vendors },
             { value: "mine", label: "Mine", count: counts.mine },
           ]}
@@ -199,15 +199,20 @@ export function DirectoryPage() {
           )}
 
           {tab === "hub" && (
-            <SimpleList
-              empty={
-                q
-                  ? "No hub contacts match that search."
-                  : "No shared contacts in your scope yet."
-              }
-              items={filteredHub}
-              renderRow={(c) => <HubContactRow key={c.id} contact={c} />}
-            />
+            <>
+              <p className="px-1 pb-2 text-[11.5px] text-midnight-500">
+                Back office &amp; support
+              </p>
+              <SimpleList
+                empty={
+                  q
+                    ? "No contacts match that search."
+                    : "No shared contacts in your scope yet."
+                }
+                items={filteredHub}
+                renderRow={(c) => <HubContactRow key={c.id} contact={c} />}
+              />
+            </>
           )}
 
           {tab === "vendors" && (
@@ -509,11 +514,11 @@ function ActionLinks({
           aria-label={`Email ${name}`}
           title={`Email ${email}`}
         >
-          <MessageSquare className="h-3.5 w-3.5" strokeWidth={2} />
+          <Mail className="h-3.5 w-3.5" strokeWidth={2} />
         </a>
       ) : (
         <span className="p-1.5 opacity-40" title="No email on file">
-          <MessageSquare className="h-3.5 w-3.5" strokeWidth={2} />
+          <Mail className="h-3.5 w-3.5" strokeWidth={2} />
         </span>
       )}
       {phone ? (

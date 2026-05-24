@@ -9,7 +9,7 @@
 //
 // Renders on phones (< lg); DashboardPage still handles desktop.
 
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import confetti from "canvas-confetti";
@@ -23,9 +23,15 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
+import { Drawer } from "@/shared/ui/Drawer";
 import { fetchApprovalsQueue, relativeTime } from "@/modules/approvals/api";
 import { fetchBirthdays, fetchMyTree, launchScopeLabel } from "@/modules/my-stores/api";
-import { thisAndNextWeekRange, isToday } from "@/modules/my-stores/dateRange";
+import {
+  thisAndNextWeekRange,
+  isToday,
+  isTomorrow,
+  formatMonthDay,
+} from "@/modules/my-stores/dateRange";
 import { fetchRecentMessages } from "@/modules/work-orders-v2/api";
 
 function greetingFor(d = new Date()): string {
@@ -115,6 +121,14 @@ export function MobileHome() {
     .map((e) => (e.name || "").split(" ")[0])
     .filter(Boolean);
 
+  const [bdayOpen, setBdayOpen] = useState(false);
+  const bdayEntries = useMemo(() => {
+    const list = birthdaysQ.data?.entries ?? [];
+    return [...list].sort((a, b) =>
+      a.birthday.slice(5).localeCompare(b.birthday.slice(5)),
+    );
+  }, [birthdaysQ.data]);
+
   // Confetti once per session per day when there's a birthday today.
   useEffect(() => {
     if (todaysBirthdays.length === 0) return;
@@ -149,9 +163,10 @@ export function MobileHome() {
 
       {/* Birthday banner — only when someone's celebrating today */}
       {birthdayNames.length > 0 && (
-        <Link
-          to="/my-stores"
-          className="mb-4 flex items-center gap-3 rounded-2xl px-4 py-3 text-white shadow-card transition active:scale-[0.99]"
+        <button
+          type="button"
+          onClick={() => setBdayOpen(true)}
+          className="mb-4 flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-white shadow-card transition active:scale-[0.99]"
           style={{ background: "linear-gradient(135deg,#5cc6e2,#0a86cf)" }}
         >
           <span className="text-[22px] leading-none">🎂</span>
@@ -161,7 +176,7 @@ export function MobileHome() {
             </p>
             <p className="text-[11.5px] text-white/85">From the whole SOAR team 🎉</p>
           </div>
-        </Link>
+        </button>
       )}
 
       {/* Today hero card */}
@@ -184,9 +199,10 @@ export function MobileHome() {
         </div>
 
         <div className="mt-4">
-          <Link
-            to="/my-stores"
-            className="flex items-center gap-3 rounded-2xl bg-white/10 px-4 py-3 ring-1 ring-white/10 transition active:scale-[0.99] active:bg-white/15"
+          <button
+            type="button"
+            onClick={() => setBdayOpen(true)}
+            className="flex w-full items-center gap-3 rounded-2xl bg-white/10 px-4 py-3 text-left ring-1 ring-white/10 transition active:scale-[0.99] active:bg-white/15"
           >
             <span className="text-[26px] font-semibold leading-none">
               {num(birthdaysQ, birthdayCount)}
@@ -196,7 +212,7 @@ export function MobileHome() {
               <p className="text-[11px] text-white/60">this &amp; next week</p>
             </span>
             <ChevronRight className="ml-auto h-4 w-4 text-white/40" strokeWidth={2} />
-          </Link>
+          </button>
         </div>
       </section>
 
@@ -273,6 +289,55 @@ export function MobileHome() {
           ))
         )}
       </div>
+
+      <Drawer
+        open={bdayOpen}
+        onClose={() => setBdayOpen(false)}
+        title="Birthdays · this & next week"
+      >
+        {bdayEntries.length === 0 ? (
+          <p className="px-1 py-8 text-center text-[13px] text-midnight-500">
+            No birthdays this week or next.
+          </p>
+        ) : (
+          <ul className="divide-y divide-midnight-100">
+            {bdayEntries.map((e) => {
+              const today = isToday(e.birthday);
+              const tomorrow = isTomorrow(e.birthday);
+              const where =
+                e.store_name || (e.store_number ? `SDI ${e.store_number}` : null);
+              return (
+                <li key={e.id} className="flex items-center gap-3 py-3">
+                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-frost-100 text-[12px] font-semibold text-midnight-700">
+                    {initials(e.name)}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-[14px] font-medium text-midnight-900">
+                      {e.name}
+                      {today && " 🎂"}
+                    </p>
+                    <p className="truncate text-[12px] text-midnight-500">
+                      {[e.role, where].filter(Boolean).join(" · ")}
+                    </p>
+                  </div>
+                  <span
+                    className={cn(
+                      "shrink-0 text-[12px]",
+                      today
+                        ? "font-semibold text-accent"
+                        : tomorrow
+                          ? "font-medium text-midnight-700"
+                          : "text-midnight-500",
+                    )}
+                  >
+                    {today ? "Today" : tomorrow ? "Tomorrow" : formatMonthDay(e.birthday)}
+                  </span>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </Drawer>
     </div>
   );
 }
