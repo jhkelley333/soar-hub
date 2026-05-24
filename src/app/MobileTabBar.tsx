@@ -8,7 +8,7 @@
 import { NavLink } from "react-router-dom";
 import {
   Home,
-  BadgeCheck,
+  MessageCircle,
   BookUser,
   Wrench,
   Menu,
@@ -29,7 +29,7 @@ export interface MobileTab {
 export const MOBILE_TABS: MobileTab[] = [
   { to: "/",                     label: "Home",      Icon: Home,      endMatch: true },
   { to: "/admin/work-orders-v2", label: "Work",      Icon: Wrench },
-  { to: "/approvals",            label: "Approvals", Icon: BadgeCheck },
+  { to: "/chat",                 label: "Chat",      Icon: MessageCircle },
   { to: "/directory",            label: "Directory", Icon: BookUser },
 ];
 

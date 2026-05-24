@@ -48,6 +48,7 @@ import { ApprovalsPage } from "@/modules/approvals/ApprovalsPage";
 import { WalkthroughPage } from "@/modules/walkthrough/WalkthroughPage";
 import { DirectoryPage } from "@/modules/directory/DirectoryPage";
 import { ChatInboxPage } from "@/modules/chat/ChatInboxPage";
+import { ChatThreadPage } from "@/modules/chat/ChatThreadPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -84,6 +85,7 @@ export const router = createBrowserRouter([
       },
       { path: "contacts", element: <ContactsPage /> },
       { path: "chat", element: <ChatInboxPage /> },
+      { path: "chat/:threadId", element: <ChatThreadPage /> },
       {
         path: "resources",
         element: (

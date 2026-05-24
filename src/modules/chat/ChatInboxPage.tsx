@@ -7,6 +7,7 @@
 // flow + backend land. "Needs you" is treated as a server-derived flag.
 
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Search, Plus } from "lucide-react";
 import { AppHeader } from "@/shared/ui/AppHeader";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -20,6 +21,7 @@ import type { ChatTab } from "./types";
 
 export function ChatInboxPage() {
   const toast = useToast();
+  const navigate = useNavigate();
   const [tab, setTab] = useState<ChatTab>("all");
   const [search, setSearch] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
@@ -60,8 +62,7 @@ export function ChatInboxPage() {
       });
   }, [threads, tab, search]);
 
-  const openThread = (title: string) =>
-    toast.push(`Opening "${title}" — the thread view is next.`, "info");
+  const openThread = (id: string) => navigate(`/chat/${id}`);
 
   return (
     <div className="relative mx-auto min-h-full w-full max-w-md bg-surface-muted">
@@ -114,7 +115,7 @@ export function ChatInboxPage() {
               <ActionCard
                 key={t.id}
                 thread={t}
-                onOpen={() => openThread(t.title)}
+                onOpen={() => openThread(t.id)}
                 onAction={(a) => toast.push(`"${a}" — wired to the work flow next.`, "info")}
               />
             ))}
@@ -144,7 +145,7 @@ export function ChatInboxPage() {
           <ul className="divide-y divide-midnight-100">
             {list.map((t) => (
               <li key={t.id}>
-                <ConversationRow thread={t} onOpen={() => openThread(t.title)} />
+                <ConversationRow thread={t} onOpen={() => openThread(t.id)} />
               </li>
             ))}
           </ul>

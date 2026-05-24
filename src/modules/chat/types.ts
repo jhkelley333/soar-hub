@@ -51,3 +51,14 @@ export interface ChatThread {
   /** Up to two member initials for the group avatar stack. */
   memberInitials?: string[];
 }
+
+export interface ChatMessage {
+  id: string;
+  threadId: string;
+  /** "system" for state-change events. */
+  fromUserId: string;
+  text: string;
+  /** Pre-formatted display time, e.g. "Tue 4:18p". */
+  at: string;
+  system?: boolean;
+}

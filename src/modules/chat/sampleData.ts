@@ -2,7 +2,66 @@
 // Replace with a real Netlify function + Supabase query when the chat
 // backend lands; the UI reads only from these shapes.
 
-import type { ChatThread } from "./types";
+import type { ChatThread, ChatMessage } from "./types";
+
+export const CURRENT_USER_ID = "u-me";
+
+export const USERS: Record<
+  string,
+  { name: string; first: string; initials: string; online?: boolean }
+> = {
+  "u-me": { name: "You", first: "You", initials: "MR" },
+  "u-sarah": { name: "Sarah Chen", first: "Sarah", initials: "SC", online: true },
+  "u-priya": { name: "Priya Mehta", first: "Priya", initials: "PM" },
+  "u-megan": { name: "Megan O'Hara", first: "Megan", initials: "MO", online: true },
+  "u-andre": { name: "Andre Whitfield", first: "Andre", initials: "AW" },
+  "u-tyler": { name: "Tyler Brooks", first: "Tyler", initials: "TB" },
+  "u-diego": { name: "Diego Alvarez", first: "Diego", initials: "DA", online: true },
+  "u-linda": { name: "Linda Chow", first: "Linda", initials: "LC", online: true },
+  "u-janelle": { name: "Janelle Aoki", first: "Janelle", initials: "JA" },
+};
+
+// Sample messages per thread. Replace with a backend query later.
+const MESSAGES: Record<string, ChatMessage[]> = {
+  "grp-d14b-gms": [
+    { id: "m1", threadId: "grp-d14b-gms", fromUserId: "u-sarah", text: "Yep — switched over last Friday. Zero complaints. Part #SD-LID-3X.", at: "Tue 4:18p" },
+    { id: "m2", threadId: "grp-d14b-gms", fromUserId: "u-priya", text: "Filing the requisition tonight. Thanks.", at: "Tue 4:22p" },
+    { id: "m3", threadId: "grp-d14b-gms", fromUserId: "u-megan", text: "@Marcus quick one — can I push the Crowley resubmission to Friday? My carhop closer is out today.", at: "Wed 8:31a" },
+    { id: "m4", threadId: "grp-d14b-gms", fromUserId: "u-me", text: "Yes — push to Friday EOD. Reply here when posted so I get the heads-up.", at: "Wed 8:34a" },
+    { id: "m5", threadId: "grp-d14b-gms", fromUserId: "u-megan", text: "👍 will do. (sorry, no emoji, ack.)", at: "Wed 8:35a" },
+    { id: "m6", threadId: "grp-d14b-gms", fromUserId: "system", text: "GM Tyler Brooks pinned a message.", at: "Today 9:02a", system: true },
+    { id: "m7", threadId: "grp-d14b-gms", fromUserId: "u-andre", text: "Pin for visibility: Sonic Day 4-week ramp doc is in the regional drive — start staffing now.", at: "Today 11:14a" },
+  ],
+  "dm-linda": [
+    { id: "l1", threadId: "dm-linda", fromUserId: "u-linda", text: "Got 5 min after lunch? Want to talk about the Crowley resubmission.", at: "10:12a" },
+  ],
+};
+
+// Members per thread (for the members strip). Falls back to participants.
+const MEMBERS: Record<string, string[]> = {
+  "grp-d14b-gms": ["u-sarah", "u-priya", "u-diego", "u-megan", "u-andre", "u-tyler", "u-linda", "u-me"],
+};
+
+export function getThreadById(id: string): ChatThread | undefined {
+  return SAMPLE_THREADS.find((t) => t.id === id);
+}
+
+export function getMessages(id: string): ChatMessage[] {
+  return MESSAGES[id] ?? [];
+}
+
+export function getMembers(id: string): string[] {
+  return MEMBERS[id] ?? getThreadById(id)?.participantUserIds ?? [];
+}
+
+const PINNED: Record<string, string> = {
+  "grp-d14b-gms":
+    "Sonic Day 4-week ramp doc is in the regional drive — start staffing now.",
+};
+
+export function getPinned(id: string): string | undefined {
+  return PINNED[id];
+}
 
 // Relative timestamps are pre-baked as display strings in `at`; updatedAt
 // is a real ISO so sort order works. (When wired to a backend, format
