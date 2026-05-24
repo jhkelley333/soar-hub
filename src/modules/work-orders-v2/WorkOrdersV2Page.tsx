@@ -52,6 +52,7 @@ import { NewTicketModal } from "./NewTicketModal";
 import { VendorSearchInput } from "./VendorSearchInput";
 import { ApprovalSection } from "./ApprovalSection";
 import { TicketChat } from "./TicketChat";
+import { DiscussButton } from "@/modules/chat/DiscussButton";
 import { VendorsTab } from "./VendorsTab";
 import { ReplacementsTab } from "./ReplacementsTab";
 import { IssueLibraryTab } from "./IssueLibraryTab";
@@ -719,6 +720,11 @@ function TicketCard({
           <ReplacementBanner ticket={ticket} />
 
           <DetailGrid ticket={ticket} />
+
+          <div className="flex justify-end">
+            <DiscussButton scopeKind="workorder" scopeRef={ticket.id} />
+          </div>
+
           <DescriptionBlock label="Issue Description" value={ticket.issue_description} />
           {ticket.latest_comment && (
             <DescriptionBlock label="Latest Comment" value={ticket.latest_comment} />
