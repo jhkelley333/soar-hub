@@ -16,17 +16,70 @@
 //                padding-bottom carries the home-indicator inset.
 //           Sidebar opens as a left drawer when "More" is tapped.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "@/app/Sidebar";
 import { MobileTabBar } from "@/app/MobileTabBar";
 import { useIdleLogout } from "@/auth/useIdleLogout";
+import { useAuth } from "@/auth/AuthProvider";
+import { LaunchSplash } from "@/auth/LaunchSplash";
+import { fetchMyTree, launchScopeLabel, scopeWordForRole } from "@/modules/my-stores/api";
+import { cn } from "@/lib/cn";
+
+// Personalized launch splash shown on the first authenticated load of a
+// session, then faded into the home. Guarded by sessionStorage so it
+// doesn't replay on every in-session reload / re-mount.
+function useLaunchSplash() {
+  const [active, setActive] = useState(
+    () => !sessionStorage.getItem("soar_launch_shown"),
+  );
+  const [fading, setFading] = useState(false);
+  useEffect(() => {
+    if (!active) return;
+    sessionStorage.setItem("soar_launch_shown", "1");
+    const fade = window.setTimeout(() => setFading(true), 1000);
+    const done = window.setTimeout(() => setActive(false), 1500);
+    return () => {
+      window.clearTimeout(fade);
+      window.clearTimeout(done);
+    };
+  }, [active]);
+  return { active, fading };
+}
+
+function greetingFor(name: string | null | undefined) {
+  const hour = new Date().getHours();
+  const part =
+    hour < 12 ? "Good morning" : hour < 18 ? "Good afternoon" : "Good evening";
+  const first = (name || "").trim().split(/\s+/)[0];
+  return first ? `${part}, ${first}` : part;
+}
 
 export function AppShell() {
   const [moreOpen, setMoreOpen] = useState(false);
+  const { profile } = useAuth();
+  const splash = useLaunchSplash();
   // 2-hour idle auto-logout. Only active while a session exists (the
   // hook bails internally otherwise).
   useIdleLogout();
+
+  // Personalized splash subline: name the caller's scope + store count.
+  // Shares the ["my-stores-tree"] cache the home/region views use, so
+  // this is usually a no-op fetch after the first cold start.
+  const role = profile?.role;
+  const treeQ = useQuery({
+    queryKey: ["my-stores-tree"],
+    queryFn: fetchMyTree,
+    enabled: splash.active && !!role,
+    staleTime: 5 * 60_000,
+  });
+  const scopeLabel = treeQ.data && role ? launchScopeLabel(treeQ.data, role) : null;
+  const splashSubline = !role
+    ? "Loading…"
+    : scopeLabel
+      ? `Loading ${scopeLabel}`
+      : `Loading your ${scopeWordForRole(role)}…`;
 
   return (
     <div className="flex h-full flex-col bg-surface-muted">
@@ -83,6 +136,22 @@ export function AppShell() {
       {/* Bottom-tab nav — mobile only, lives as a real flex row in the
           column above so content can never scroll past it. */}
       <MobileTabBar onMoreClick={() => setMoreOpen(true)} />
+
+      {/* First-load personalized launch splash, fades into the home. */}
+      {splash.active && (
+        <div
+          className={cn(
+            "fixed inset-0 z-[60] transition-opacity duration-500",
+            splash.fading ? "opacity-0" : "opacity-100",
+          )}
+          aria-hidden={splash.fading}
+        >
+          <LaunchSplash
+            greeting={greetingFor(profile?.full_name)}
+            subline={splashSubline}
+          />
+        </div>
+      )}
     </div>
   );
 }

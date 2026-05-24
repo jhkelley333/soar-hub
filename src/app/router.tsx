@@ -3,7 +3,7 @@ import { AppShell } from "@/app/AppShell";
 import { ProtectedRoute } from "@/auth/ProtectedRoute";
 import { useAuth } from "@/auth/AuthProvider";
 import { useFlag } from "@/lib/flags";
-import { LandingPage } from "@/auth/LandingPage";
+import { LaunchSplash } from "@/auth/LaunchSplash";
 import type { ReactNode } from "react";
 import type { UserRole } from "@/types/database";
 import { LoginPage } from "@/auth/LoginPage";
@@ -328,9 +328,9 @@ export const router = createBrowserRouter([
 ]);
 
 // RootRoute decides what fills the "/" slot:
-//   • loading auth         → spinner
-//   • no session + path /  → public LandingPage (firewall-friendly,
-//                             see comment block in LandingPage.tsx)
+//   • loading auth         → LaunchSplash (boot)
+//   • no session + path /  → LaunchSplash landing variant (Sign in CTA
+//                             + descriptor; firewall-friendly)
 //   • no session + sub-path → bounce to /login like ProtectedRoute did
 //   • session              → AppShell, which renders the child Outlet
 function RootRoute() {
@@ -338,15 +338,11 @@ function RootRoute() {
   const location = useLocation();
 
   if (loading) {
-    return (
-      <div className="flex h-full items-center justify-center text-sm text-zinc-500">
-        Loading...
-      </div>
-    );
+    return <LaunchSplash subline="Starting up…" />;
   }
 
   if (!session) {
-    if (location.pathname === "/") return <LandingPage />;
+    if (location.pathname === "/") return <LaunchSplash showSignIn />;
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
 

@@ -140,6 +140,39 @@ body {
  * Utilities — small CSS classes that aren't worth living in Tailwind
  * -------------------------------------------------------------------------- */
 
+/* Launch-splash carbonation: bubbles drift upward and fade, clipped to
+ * the cup interior. Per-bubble duration/delay is set inline for a
+ * natural, non-synchronized rise. */
+@keyframes splash-bubble {
+  0%   { transform: translateY(6px);   opacity: 0; }
+  20%  { opacity: 0.7; }
+  90%  { opacity: 0.45; }
+  100% { transform: translateY(-86px); opacity: 0; }
+}
+.splash-bubble {
+  animation: splash-bubble 3s ease-in infinite;
+  will-change: transform, opacity;
+}
+@media (prefers-reduced-motion: reduce) {
+  .splash-bubble { animation: none; }
+}
+
+/* Shake / tap the splash cup → the ice cubes rattle. Applied to a group
+ * wrapped inside each cube's positioning transform, so the wobble is
+ * relative (rotate/translate around the cube's own center). */
+@keyframes ice-jiggle {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  15%      { transform: translate(-2.5px, 1.5px) rotate(-7deg); }
+  40%      { transform: translate(2.5px, -2px)  rotate(6deg); }
+  65%      { transform: translate(-1.5px, 1px)  rotate(-3deg); }
+  85%      { transform: translate(1px, -0.5px)  rotate(1.5deg); }
+}
+.ice-jiggle {
+  animation: ice-jiggle 0.8s ease-in-out;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
 /* Status / tier dot indicator. Width and height settable inline for variants. */
 .dot {
   display: inline-block;
