@@ -13,6 +13,7 @@
 // unread, or unread @mentions) — the full approver-state rules come later.
 
 import { createClient } from "@supabase/supabase-js";
+import { sendPushToUsers } from "./_lib/push.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY =
@@ -273,7 +274,7 @@ export const handler = async (event) => {
       // Broadcasts are announce-only: only the owner (poster) can add messages.
       const { data: thr } = await supa
         .from("chat_threads")
-        .select("kind")
+        .select("kind, title")
         .eq("id", threadId)
         .maybeSingle();
       if (thr?.kind === "broadcast" && mine.role !== "owner") {
@@ -290,6 +291,30 @@ export const handler = async (event) => {
         .update({ last_read_at: new Date().toISOString() })
         .eq("thread_id", threadId)
         .eq("user_id", uid);
+
+      // Best-effort push to the other members. Never blocks the send.
+      try {
+        const { data: mems } = await supa
+          .from("chat_thread_members")
+          .select("user_id")
+          .eq("thread_id", threadId);
+        const senderName = displayName(caller);
+        const notifTitle =
+          thr?.kind === "direct" || !thr?.title ? senderName : `${senderName} · ${thr.title}`;
+        await sendPushToUsers(
+          supa,
+          (mems || []).map((m) => m.user_id),
+          {
+            title: notifTitle,
+            body: text.trim().slice(0, 180),
+            url: `/chat/${threadId}`,
+            tag: `thread-${threadId}`,
+          },
+          { excludeUserId: uid },
+        );
+      } catch (e) {
+        console.warn("[chat] push notify failed", e?.message || e);
+      }
       return respond(200, { ok: true, message: data });
     }
 
@@ -398,6 +423,23 @@ export const handler = async (event) => {
       await supa
         .from("chat_messages")
         .insert({ thread_id: thread.id, from_user_id: uid, text });
+
+      // Best-effort push to recipients of the announcement.
+      try {
+        await sendPushToUsers(
+          supa,
+          uniqueParticipants,
+          {
+            title: title ? `📣 ${title}` : "📣 New announcement",
+            body: text.slice(0, 180),
+            url: `/chat/${thread.id}`,
+            tag: `thread-${thread.id}`,
+          },
+          { excludeUserId: uid },
+        );
+      } catch (e) {
+        console.warn("[chat] broadcast push failed", e?.message || e);
+      }
 
       return respond(200, { ok: true, threadId: thread.id });
     }
