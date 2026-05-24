@@ -61,9 +61,15 @@ export function TicketChat({ ticketId, onError, initialThread }: Props) {
       if (!trimmed) return Promise.reject(new Error("Empty message."));
       return sendMessage({ ticketId, message: trimmed, threadType: thread });
     },
-    onSuccess: () => {
+    onSuccess: (res) => {
       setDraft("");
       qc.invalidateQueries({ queryKey: ["wo2", "messages", ticketId, thread] });
+      if (thread === "requester" && res && res.emailed === false) {
+        onError(
+          res.emailReason ||
+            "Message saved, but the email to the requester didn't send.",
+        );
+      }
     },
     onError: (e: unknown) =>
       onError(e instanceof Error ? e.message : "Send failed."),
@@ -96,6 +102,12 @@ export function TicketChat({ ticketId, onError, initialThread }: Props) {
             onClick={() => setThread("vendor")}
             title="Visible to the vendor scanning the store's QR code."
           />
+          <ThreadTab
+            label="✉️ Requester"
+            active={thread === "requester"}
+            onClick={() => setThread("requester")}
+            title="Emails the work order's requester. Their replies post back here."
+          />
           <button
             type="button"
             onClick={() => msgsQ.refetch()}
@@ -126,13 +138,24 @@ export function TicketChat({ ticketId, onError, initialThread }: Props) {
           )}
           {messages.map((m) => <ChatBubble key={m.id} m={m} />)}
         </div>
+        {thread === "requester" && (
+          <div className="border-t border-amber-100 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-700">
+            Messages here are emailed to the requester. Their replies post back to this thread.
+          </div>
+        )}
         <div className="flex items-end gap-2 border-t border-zinc-100 bg-zinc-50 px-2 py-2">
           <textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKeyDown}
             rows={1}
-            placeholder={thread === "vendor" ? "Message to vendor…" : "Internal team message…"}
+            placeholder={
+              thread === "vendor"
+                ? "Message to vendor…"
+                : thread === "requester"
+                  ? "Email the requester…"
+                  : "Internal team message…"
+            }
             className="flex-1 resize-none rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />
           <button

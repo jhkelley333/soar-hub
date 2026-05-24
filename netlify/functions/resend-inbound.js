@@ -175,7 +175,7 @@ export const handler = async (event) => {
     user_name: fromName,
     user_role: "REPLY",
     message,
-    thread_type: "internal",
+    thread_type: "requester",
   });
 
   await supabase

@@ -479,6 +479,27 @@ async function generateWONumber(supabase, storeNumber) {
   return `WO-${storeNumber}-${String(data).padStart(3, "0")}`;
 }
 
+// Resolve the email address we'd reach a work order's requester at.
+// GM / shift-manager submissions route to the store inbox; everyone
+// else to their own profile email. Shared by the requester chat thread
+// and the "Ask the requester" info request.
+async function resolveRequesterEmail(supabase, ticket) {
+  if (!ticket || !ticket.submitted_by_user_id) return null;
+  const { data: sub } = await supabase
+    .from("profiles").select("email, role")
+    .eq("id", ticket.submitted_by_user_id).maybeSingle();
+  if (!sub) return null;
+  const r = String(sub.role || "").toLowerCase();
+  let email = sub.email;
+  if (r === "gm" || r === "shift_manager") {
+    const { data: st } = await supabase
+      .from("stores").select("email")
+      .eq("number", String(ticket.store_number)).maybeSingle();
+    email = (st?.email || "").trim() || sub.email;
+  }
+  return email || null;
+}
+
 
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
@@ -3068,14 +3089,50 @@ export const handler = async (event) => {
         .single();
       if (error) throw error;
 
-      // A reply on the thread answers any outstanding info request —
-      // clear Needs-info so the approval clock resumes.
-      await supabase.from("tickets")
-        .update({ awaiting_info: false, awaiting_info_at: null })
-        .eq("id", ticketId)
-        .eq("awaiting_info", true);
+      // The requester thread is an outbound email bridge: posting here
+      // emails the work order's requester with a reply-to that routes
+      // their answer back onto this same thread via resend-inbound.
+      let emailed = false, emailReason = null;
+      if (thread === "requester") {
+        const { data: ticket } = await supabase
+          .from("tickets")
+          .select("id, wo_number, store_number, work_requested, submitted_by_user_id")
+          .eq("id", ticketId).single();
+        const to = await resolveRequesterEmail(supabase, ticket);
+        if (!to) {
+          emailReason = "No requester email on file for this work order.";
+        } else {
+          const inboundDomain = process.env.RESEND_INBOUND_DOMAIN || "inbound.mysoarhub.com";
+          const replyTo = `wo-${ticketId}@${inboundDomain}`;
+          const subject = `Re: ${ticket.wo_number || "your work order"}${ticket.work_requested ? ` — ${ticket.work_requested}` : ""}`;
+          const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+          const base = process.env.APP_URL || process.env.URL || "";
+          const link = base ? `${base}/admin/work-orders-v2?ticket=${encodeURIComponent(ticketId)}` : "";
+          const html = `<!DOCTYPE html><html><body style="font-family:Arial,Helvetica,sans-serif;color:#222;max-width:620px;margin:0 auto;padding:16px;">`
+            + `<p><strong>${esc(userName)}</strong> sent you a message about <strong>${esc(ticket.wo_number || "your work order")}</strong>${ticket.work_requested ? ` — ${esc(ticket.work_requested)}` : ""}.</p>`
+            + `<blockquote style="margin:8px 0;padding:8px 12px;border-left:3px solid #2563eb;background:#f1f5f9;color:#222;white-space:pre-wrap;">${esc(message.trim())}</blockquote>`
+            + `<p style="font-size:13px;color:#555;">Just reply to this email — your response posts back onto the work order automatically.</p>`
+            + (link ? `<p style="margin-top:16px;"><a href="${link}" style="background:#2563eb;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none;font-weight:600;">Open the work order →</a></p>` : "")
+            + `</body></html>`;
+          const result = await sendEmail({ to, subject, html, replyTo });
+          emailed = result.sent;
+          if (!result.sent) emailReason = result.reason;
+          await supabase.from("ticket_notifications").insert({
+            ticket_id: ticketId, recipient_email: to,
+            notification_type: "requester_message", subject, message: html,
+            status: result.sent ? "sent" : `failed: ${result.reason}`,
+          }).then(() => {}).catch(() => {});
+        }
+      } else {
+        // A reply on the internal/vendor thread answers any outstanding
+        // info request — clear Needs-info so the approval clock resumes.
+        await supabase.from("tickets")
+          .update({ awaiting_info: false, awaiting_info_at: null })
+          .eq("id", ticketId)
+          .eq("awaiting_info", true);
+      }
 
-      return respond(200, { ok: true, message: data });
+      return respond(200, { ok: true, message: data, emailed, emailReason });
     }
 
     // ── requestInfo: "Ask the requester" ──
