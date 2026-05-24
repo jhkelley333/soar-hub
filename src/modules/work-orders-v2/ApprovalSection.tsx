@@ -15,11 +15,12 @@
 
 import { useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { CheckCircle2, FileText, Loader2, Paperclip, XCircle } from "lucide-react";
+import { CheckCircle2, FileText, Loader2, MessageSquarePlus, Paperclip, XCircle } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Label } from "@/shared/ui/Label";
 import { Badge } from "@/shared/ui/Badge";
-import { decideApproval, fileToBase64, submitApproval, uploadPhoto } from "./api";
+import { useAuth } from "@/auth/AuthProvider";
+import { decideApproval, fileToBase64, requestInfo, submitApproval, uploadPhoto } from "./api";
 import {
   APPROVAL_TIERS,
   type ApprovalTier,
@@ -141,6 +142,30 @@ export function ApprovalSection({
       onError(e instanceof Error ? e.message : "Decision failed."),
   });
 
+  const { profile } = useAuth();
+  const [askingInfo, setAskingInfo] = useState(false);
+  const [infoText, setInfoText] = useState("");
+  const [infoNotifySdo, setInfoNotifySdo] = useState(false);
+  const askInfo = useMutation({
+    mutationFn: () =>
+      requestInfo({
+        ticketId: ticket.id,
+        question: infoText.trim(),
+        cc: profile?.email ? [profile.email] : [],
+        notifySdo: infoNotifySdo,
+        openThread: true,
+        pauseClock: true,
+      }),
+    onSuccess: () => {
+      setAskingInfo(false);
+      setInfoText("");
+      setInfoNotifySdo(false);
+      onChanged();
+    },
+    onError: (e: unknown) =>
+      onError(e instanceof Error ? e.message : "Couldn't send."),
+  });
+
   function handleDecide(decision: "Approved" | "Rejected") {
     const noteFromUser =
       decision === "Approved"
@@ -185,6 +210,7 @@ export function ApprovalSection({
           )}
           <div className="flex flex-wrap items-center gap-2">
             <Badge tone={badgeTone(latest.status)}>{latest.status}</Badge>
+            {ticket.awaiting_info && <Badge tone="warning">Needs info</Badge>}
             <span className="text-xs text-zinc-500">{latest.approval_tier}</span>
             {latest.approved_by && (
               <span className="text-xs text-zinc-500">
@@ -214,7 +240,7 @@ export function ApprovalSection({
             </div>
           )}
           {latest.status === "Pending" && isApprover(callerRole) && (
-            <div className="mt-2 flex gap-2">
+            <div className="mt-2 flex flex-wrap gap-2">
               <Button
                 variant="primary"
                 onClick={() => handleDecide("Approved")}
@@ -231,9 +257,56 @@ export function ApprovalSection({
                 <XCircle className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
                 Reject
               </Button>
+              <Button
+                variant="ghost"
+                onClick={() => setAskingInfo((v) => !v)}
+                disabled={decide.isPending}
+              >
+                <MessageSquarePlus className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+                Request info
+              </Button>
               {decide.isPending && (
                 <Loader2 className="my-auto h-3.5 w-3.5 animate-spin text-zinc-400" />
               )}
+            </div>
+          )}
+
+          {latest.status === "Pending" && isApprover(callerRole) && askingInfo && (
+            <div className="mt-2 rounded-md border border-zinc-200 bg-zinc-50 p-2.5">
+              <Label htmlFor="info-q">Ask the requester</Label>
+              <textarea
+                id="info-q"
+                value={infoText}
+                onChange={(e) => setInfoText(e.target.value.slice(0, 2000))}
+                rows={3}
+                placeholder="What do you need clarified before approving? Emails the requester; reply syncs back here."
+                className="mt-1 block w-full rounded-md border border-zinc-300 bg-white px-2.5 py-2 text-sm"
+              />
+              <label className="mt-1.5 flex items-center gap-2 text-[12px] text-zinc-600">
+                <input
+                  type="checkbox"
+                  checked={infoNotifySdo}
+                  onChange={(e) => setInfoNotifySdo(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-accent"
+                />
+                Also notify the SDO
+              </label>
+              <div className="mt-2 flex gap-2">
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    if (!infoText.trim()) { onError("Enter a question."); return; }
+                    askInfo.mutate();
+                  }}
+                  disabled={askInfo.isPending}
+                >
+                  {askInfo.isPending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+                  Send · moves to Needs info
+                </Button>
+                <Button variant="ghost" onClick={() => setAskingInfo(false)} disabled={askInfo.isPending}>
+                  Cancel
+                </Button>
+              </div>
             </div>
           )}
           {/* Allow another approval round on an already-decided ticket. */}

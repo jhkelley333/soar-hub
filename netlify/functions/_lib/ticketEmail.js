@@ -41,7 +41,7 @@ function escapeHtml(s) {
 // (stores.email) rather than the user's personal profile email —
 // the store inbox survives staff turnover and is the de facto
 // working address for facility operations.
-async function findUsersForStore(supabase, storeNumber, roleFilter) {
+export async function findUsersForStore(supabase, storeNumber, roleFilter) {
   if (!storeNumber) return [];
   const { data: store } = await supabase
     .from("stores")
@@ -288,7 +288,7 @@ async function renderEmail(supabase, ticket, kind, extraVars = {}) {
 // FACILITIES_FROM_EMAIL first, then RESEND_FROM_EMAIL, then a
 // hardcoded default — same precedence in both subsystems so the
 // FROM address can't drift.
-export async function sendEmail({ to, subject, html }) {
+export async function sendEmail({ to, subject, html, cc, bcc, replyTo }) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
     return { sent: false, reason: "RESEND_API_KEY not set" };
@@ -301,6 +301,15 @@ export async function sendEmail({ to, subject, html }) {
     process.env.FACILITIES_FROM_NAME ||
     process.env.RESEND_FROM_NAME ||
     "SOAR Work Orders";
+  const payload = {
+    from: `${fromName} <${fromAddr}>`,
+    to: Array.isArray(to) ? to : [to],
+    subject,
+    html,
+  };
+  if (cc && (Array.isArray(cc) ? cc.length : cc)) payload.cc = Array.isArray(cc) ? cc : [cc];
+  if (bcc && (Array.isArray(bcc) ? bcc.length : bcc)) payload.bcc = Array.isArray(bcc) ? bcc : [bcc];
+  if (replyTo) payload.reply_to = replyTo;
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -308,12 +317,7 @@ export async function sendEmail({ to, subject, html }) {
         Authorization: `Bearer ${apiKey}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        from: `${fromName} <${fromAddr}>`,
-        to: Array.isArray(to) ? to : [to],
-        subject,
-        html,
-      }),
+      body: JSON.stringify(payload),
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {

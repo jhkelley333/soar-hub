@@ -321,13 +321,26 @@ export function sendMessage(payload: SendMessageBody): Promise<{ ok: true }> {
   });
 }
 
+export interface RequestInfoBody {
+  ticketId: string;
+  question: string;
+  subject?: string;
+  /** Extra TO emails beyond the auto-resolved requester. */
+  toExtra?: string[];
+  cc?: string[];
+  bcc?: string[];
+  openThread?: boolean;
+  pauseClock?: boolean;
+  notifySdo?: boolean;
+}
+
 export function requestInfo(
-  payload: { ticketId: string; question: string },
-): Promise<{ ok: true; emailed: boolean }> {
-  return request<{ ok: true; emailed: boolean }>(`${FN}?action=requestInfo`, {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+  payload: RequestInfoBody,
+): Promise<{ ok: true; emailed: boolean; emailReason: string | null; recipients: { to: string[]; cc: string[]; bcc: string[] } }> {
+  return request<{ ok: true; emailed: boolean; emailReason: string | null; recipients: { to: string[]; cc: string[]; bcc: string[] } }>(
+    `${FN}?action=requestInfo`,
+    { method: "POST", body: JSON.stringify(payload) },
+  );
 }
 
 export function fetchRecentMessages(
