@@ -32,18 +32,25 @@ const TIER_TEXT: Record<Tier, string> = {
   green: "text-ok",
 };
 
-// FC miss: higher = worse. Tier the stores that have data into terciles
-// (worst third red → best third green). Stores without FC-miss data are
-// left untiered (neutral).
+// FC miss is always a bad thing, so any positive miss is never green:
+//   ≤ 0  (met / beat commitment) → green
+//   > 0  → red if above the median positive miss, else yellow
+// Stores without FC-miss data are left untiered (neutral).
 function buildTiers(rows: PortfolioRow[]): Map<string, Tier> {
-  const withMiss = rows
-    .filter((r) => r.annualizedFcMiss != null)
-    .sort((a, b) => (b.annualizedFcMiss as number) - (a.annualizedFcMiss as number));
-  const n = withMiss.length;
+  const positives = rows
+    .map((r) => r.annualizedFcMiss)
+    .filter((v): v is number => v != null && v > 0)
+    .sort((a, b) => a - b);
+  const median = positives.length
+    ? positives[Math.floor((positives.length - 1) / 2)]
+    : 0;
   const m = new Map<string, Tier>();
-  withMiss.forEach((r, i) => {
-    m.set(r.store, i < n / 3 ? "red" : i < (2 * n) / 3 ? "yellow" : "green");
-  });
+  for (const r of rows) {
+    const v = r.annualizedFcMiss;
+    if (v == null) continue;
+    if (v <= 0) m.set(r.store, "green");
+    else m.set(r.store, v > median ? "red" : "yellow");
+  }
   return m;
 }
 
