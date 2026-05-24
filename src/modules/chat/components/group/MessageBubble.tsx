@@ -1,18 +1,15 @@
-// Chat — message bubble. Sent (you) = navy, right-aligned; received =
-// light bubble, left, with avatar + name on the first message of a run.
-// @mentions are highlighted (cherry when received, frost when sent).
+// Chat — message bubble. Sent (you) = navy, right; received = light,
+// left, with avatar + name on the first message of a run. @mentions are
+// highlighted (cherry received, frost sent).
 
 import { cn } from "@/lib/cn";
-import { CURRENT_USER_ID, USERS } from "../../sampleData";
 import type { ChatMessage } from "../../types";
+import type { ChatUserLite } from "../../api";
 
 function renderText(text: string, sent: boolean) {
   return text.split(/(@\w+)/g).map((part, i) =>
     part.startsWith("@") ? (
-      <span
-        key={i}
-        className={cn("font-semibold", sent ? "text-frost-300" : "text-sonic")}
-      >
+      <span key={i} className={cn("font-semibold", sent ? "text-frost-300" : "text-sonic")}>
         {part}
       </span>
     ) : (
@@ -23,16 +20,17 @@ function renderText(text: string, sent: boolean) {
 
 export function MessageBubble({
   message,
+  sent,
+  user,
   showName,
   showAvatar,
 }: {
   message: ChatMessage;
+  sent: boolean;
+  user?: ChatUserLite;
   showName: boolean;
   showAvatar: boolean;
 }) {
-  const sent = message.fromUserId === CURRENT_USER_ID;
-  const user = USERS[message.fromUserId];
-
   if (sent) {
     return (
       <div className="mt-1 flex flex-col items-end">

@@ -2,12 +2,13 @@
 // sticky header, search, a "Needs you" strip (0–2 action cards), the
 // All / Direct / Groups / News tab bar, and the conversation list.
 //
-// Sample data only for now (see ./sampleData). Tapping rows/actions and
-// the compose FAB are stubbed with toasts until the thread view + compose
-// flow + backend land. "Needs you" is treated as a server-derived flag.
+// Data comes from the chat Netlify function (see ./api). The compose FAB
+// opens ComposeModal (which navigates to the new thread on create) and the
+// "Needs you" strip opens a drawer of action cards.
 
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { Search, Plus } from "lucide-react";
 import { AppHeader } from "@/shared/ui/AppHeader";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -17,7 +18,7 @@ import { ChatTabs } from "./components/ChatTabs";
 import { ActionCard } from "./components/ActionCard";
 import { ConversationRow } from "./components/ConversationRow";
 import { ComposeModal } from "./components/ComposeModal";
-import { SAMPLE_THREADS } from "./sampleData";
+import { fetchInbox } from "./api";
 import type { ChatTab } from "./types";
 
 export function ChatInboxPage() {
@@ -28,7 +29,12 @@ export function ChatInboxPage() {
   const [composeOpen, setComposeOpen] = useState(false);
   const [needsYouOpen, setNeedsYouOpen] = useState(false);
 
-  const threads = SAMPLE_THREADS;
+  const inboxQ = useQuery({
+    queryKey: ["chat", "inbox"],
+    queryFn: fetchInbox,
+    staleTime: 30_000,
+  });
+  const threads = inboxQ.data?.threads ?? [];
 
   const needsYou = useMemo(() => threads.filter((t) => t.needsYou), [threads]);
 
@@ -123,14 +129,23 @@ export function ChatInboxPage() {
 
       {/* Conversation list */}
       <div className="overflow-hidden">
-        {list.length === 0 ? (
+        {inboxQ.isLoading ? (
+          <div className="p-8 text-center text-[13px] text-midnight-400">Loading chats…</div>
+        ) : inboxQ.isError ? (
+          <div className="p-6">
+            <EmptyState
+              title="Couldn't load chats"
+              description={(inboxQ.error as Error)?.message ?? "Try again."}
+            />
+          </div>
+        ) : list.length === 0 ? (
           <div className="p-6">
             <EmptyState
               title={search ? "No threads match" : "Nothing here yet"}
               description={
                 search
                   ? "Try a different search."
-                  : "New conversations will show up in this tab."
+                  : "Tap + to start a conversation."
               }
             />
           </div>
@@ -155,13 +170,7 @@ export function ChatInboxPage() {
         <Plus className="h-6 w-6" strokeWidth={2.25} />
       </button>
 
-      <ComposeModal
-        open={composeOpen}
-        onClose={() => setComposeOpen(false)}
-        onCreated={(s) =>
-          toast.push(`Started "${s}" — opening the thread is next.`, "success")
-        }
-      />
+      <ComposeModal open={composeOpen} onClose={() => setComposeOpen(false)} />
 
       <Drawer
         open={needsYouOpen}
