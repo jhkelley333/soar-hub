@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { useAuth } from "./AuthProvider";
 import { useToast } from "@/shared/ui/Toaster";
 import { isStandalone } from "@/lib/push";
+import { STAY_SIGNED_IN_KEY } from "./LoginPage";
 
 // 2 hours of no activity = sign out. Activity = mouse, keyboard, touch,
 // scroll. JWT itself has a 24h cap on the server side, so this layer
@@ -29,8 +30,11 @@ export function useIdleLogout() {
 
   useEffect(() => {
     if (!session) return;
-    // Installed app = trusted personal device; no idle logout.
-    if (isStandalone()) return;
+    // Installed app = trusted personal device; no idle logout — UNLESS the
+    // user unchecked "Stay signed in on this device" at login (e.g. a GM on
+    // a shared store tablet), in which case the 2-hour rule still applies.
+    const staySignedIn = localStorage.getItem(STAY_SIGNED_IN_KEY) !== "0";
+    if (isStandalone() && staySignedIn) return;
 
     let lastActivity = Date.now();
     let signedOut = false;
