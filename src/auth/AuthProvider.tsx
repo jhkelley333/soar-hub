@@ -122,34 +122,62 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let cancelled = false;
 
     (async () => {
+      const finish = () => {
+        if (cancelled) return;
+        setLoading(false);
+        perfMark("auth: interactive");
+        perfReport();
+      };
+
+      // Step 1 — read the persisted session. With the no-op lock this is
+      // a local read and should be near-instant; a timeout/throw here
+      // means the client is wedged or the stored token is unreadable, so
+      // clear it for a clean login. This is genuinely abnormal and is the
+      // ONLY boot path that purges — distinct from a slow profile fetch
+      // below, which must never clear anything.
+      let initial: Session | null = null;
       try {
         perfMark("auth: getSession start");
-        const { data: { session: initial } } = await Promise.race([
+        const res = await Promise.race([
           supabase.auth.getSession(),
           timeout<{ data: { session: Session | null } }>("getSession", AUTH_BOOT_TIMEOUT_MS),
         ]);
+        initial = res.data.session;
+      } catch (e) {
         if (cancelled) return;
-        perfMark("auth: session ready");
-        setSession(initial);
-        if (initial?.user) {
+        console.warn("[auth] getSession failed during boot; clearing stale session", e);
+        await clearStaleSession();
+        finish();
+        return;
+      }
+      if (cancelled) return;
+      perfMark("auth: session ready");
+      setSession(initial);
+
+      // Step 2 — load the profile. CRITICAL: a slow or failed profile
+      // fetch must NEVER destroy a valid session. On a cold mobile radio
+      // the profiles + user_scopes queries can blow past the timeout even
+      // though the session is perfectly good — purging here logged users
+      // out on bad networks. Keep the session and let onAuthStateChange's
+      // INITIAL_SESSION retry the profile; ProtectedRoute surfaces a
+      // recoverable "couldn't load profile" state until it lands. This
+      // mirrors the running token-refresh path, which already preserves
+      // the session on a profile-load failure.
+      if (initial?.user) {
+        try {
           perfMark("auth: profile fetch start");
           await Promise.race([
             loadProfile(initial.user.id),
-            timeout<void>("loadProfile", AUTH_BOOT_TIMEOUT_MS),
+            timeout<{ hasProfile: boolean }>("loadProfile", AUTH_BOOT_TIMEOUT_MS),
           ]);
           perfMark("auth: profile ready");
-        }
-      } catch (e) {
-        if (cancelled) return;
-        console.warn("[auth] boot failed; purging persisted session and falling through to login", e);
-        await clearStaleSession();
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-          perfMark("auth: interactive");
-          perfReport();
+        } catch (e) {
+          if (cancelled) return;
+          console.warn("[auth] boot profile load failed; keeping session, INITIAL_SESSION will retry", e);
         }
       }
+
+      finish();
     })();
 
     const { data: sub } = supabase.auth.onAuthStateChange(async (event, next) => {
