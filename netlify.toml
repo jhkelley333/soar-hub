@@ -13,13 +13,19 @@
   status = 200
 
 # Cache headers. Vite emits content-hashed filenames under /assets/, so
-# those are safe to cache forever; HTML must always be revalidated so a
-# user who already has the tab open picks up the latest entry-point on
-# next load instead of pinning to a stale bundle reference.
+# those are safe to cache forever; the HTML entry-point must always be
+# revalidated so a user picks up the latest bundle reference rather than
+# pinning to a stale one. We use `no-cache` (revalidate every time) rather
+# than `no-store` (never cache at all): both prevent stale pinning, but
+# no-cache lets the browser — and the service worker's background
+# refresh — settle a conditional request with a cheap 304 instead of
+# re-downloading the document. (The service worker serves the shell from
+# Cache Storage on the critical path; this header governs its background
+# revalidation and any client the SW doesn't yet control.)
 [[headers]]
   for = "/index.html"
   [headers.values]
-    Cache-Control = "no-cache, no-store, must-revalidate"
+    Cache-Control = "no-cache, must-revalidate"
 
 [[headers]]
   for = "/assets/*"
