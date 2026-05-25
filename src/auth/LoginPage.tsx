@@ -114,6 +114,12 @@ export function LoginPage() {
   const [googlePending, setGooglePending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
+  // Email-OTP ("magic") state. Once the code is sent we swap the form to a
+  // code-entry step and verify in-app — no link to click, so the installed
+  // PWA never has to hand off to the browser to finish sign-in.
+  const [codeSent, setCodeSent] = useState(false);
+  const [codeEmail, setCodeEmail] = useState("");
+  const [code, setCode] = useState("");
 
   // Surface AuthProvider's OAuth no-profile bounce (?error=no_profile).
   // Driven via the URL so the redirect can land here cleanly without
@@ -168,8 +174,8 @@ export function LoginPage() {
     return <Navigate to={safeRedirectTarget(from, profile.role)} replace />;
   }
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
+  async function handleSubmit(e?: FormEvent) {
+    e?.preventDefault();
     setSubmitting(true);
     setError(null);
     setInfo(null);
@@ -189,13 +195,17 @@ export function LoginPage() {
         const { error } = await withTimeout(
           supabase.auth.signInWithOtp({
             email,
+            // emailRedirectTo keeps the magic LINK in the email working
+            // for browser users; PWA users use the code below instead.
             options: { emailRedirectTo: window.location.origin },
           }),
-          "Magic link",
+          "Email code",
           SIGN_IN_TIMEOUT_MS
         );
         if (error) throw error;
-        setInfo("Check your email for a sign-in link.");
+        setCodeEmail(email);
+        setCodeSent(true);
+        setInfo("We emailed you a 6-digit code. Enter it below to sign in.");
       } else {
         // forgot
         const { error } = await withTimeout(
@@ -217,9 +227,47 @@ export function LoginPage() {
     }
   }
 
+  async function handleVerifyCode(e: FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      const { error } = await withTimeout(
+        // Email-OTP sent via signInWithOtp verifies with type "email".
+        // On success onAuthStateChange fires SIGNED_IN, AuthProvider
+        // loads the profile, and the redirect at the top of this
+        // component takes over — all without leaving the PWA.
+        supabase.auth.verifyOtp({
+          email: codeEmail,
+          token: code.trim(),
+          type: "email",
+        }),
+        "Code check",
+        SIGN_IN_TIMEOUT_MS
+      );
+      if (error) throw error;
+    } catch (err) {
+      setError(
+        err instanceof Error
+          ? err.message
+          : "That code didn't work. Check it or resend a new one."
+      );
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  function resetCodeStep() {
+    setCodeSent(false);
+    setCode("");
+    setError(null);
+    setInfo(null);
+  }
+
   // Show a phone or envelope icon next to the input as a confidence signal.
   const Icon =
     detected === "email" ? Mail : detected === "phone" ? Phone : null;
+  const onCodeStep = mode === "magic" && codeSent;
 
   return (
     <div className="relative flex min-h-full flex-col items-center justify-center overflow-hidden bg-accent px-4 py-12 text-white">
@@ -248,7 +296,8 @@ export function LoginPage() {
           </h2>
           <p className="mt-1 text-sm text-zinc-500">
             {mode === "password" && "Use your phone or email and password."}
-            {mode === "magic" && "We'll email you a sign-in link."}
+            {mode === "magic" && !codeSent && "We'll email you a 6-digit code."}
+            {mode === "magic" && codeSent && `Enter the code we sent to ${codeEmail}.`}
             {mode === "forgot" &&
               "Enter your phone or email and we'll send a reset link."}
           </p>
@@ -263,38 +312,61 @@ export function LoginPage() {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="mt-6 space-y-5">
-            <div>
-              <Label htmlFor="identifier">Phone number or email</Label>
-              <div className="relative">
+          <form
+            onSubmit={onCodeStep ? handleVerifyCode : handleSubmit}
+            className="mt-6 space-y-5"
+          >
+            {onCodeStep ? (
+              <div>
+                <Label htmlFor="otp">6-digit code</Label>
                 <Input
-                  id="identifier"
+                  id="otp"
                   type="text"
-                  inputMode={
-                    detected === "email"
-                      ? "email"
-                      : detected === "phone"
-                        ? "tel"
-                        : "text"
-                  }
-                  autoComplete="username"
-                  autoCapitalize="off"
-                  spellCheck={false}
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  autoFocus
                   required
-                  value={identifier}
-                  onChange={(e) => setIdentifier(e.target.value)}
-                  placeholder="(555) 555-1234 or you@company.com"
-                  className={Icon ? "pr-9" : undefined}
+                  maxLength={6}
+                  pattern="\d{6}"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
+                  placeholder="123456"
+                  className="tracking-[0.4em] text-center text-lg"
                 />
-                {Icon && (
-                  <Icon
-                    aria-hidden="true"
-                    className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400"
-                    strokeWidth={1.75}
-                  />
-                )}
               </div>
-            </div>
+            ) : (
+              <div>
+                <Label htmlFor="identifier">Phone number or email</Label>
+                <div className="relative">
+                  <Input
+                    id="identifier"
+                    type="text"
+                    inputMode={
+                      detected === "email"
+                        ? "email"
+                        : detected === "phone"
+                          ? "tel"
+                          : "text"
+                    }
+                    autoComplete="username"
+                    autoCapitalize="off"
+                    spellCheck={false}
+                    required
+                    value={identifier}
+                    onChange={(e) => setIdentifier(e.target.value)}
+                    placeholder="(555) 555-1234 or you@company.com"
+                    className={Icon ? "pr-9" : undefined}
+                  />
+                  {Icon && (
+                    <Icon
+                      aria-hidden="true"
+                      className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400"
+                      strokeWidth={1.75}
+                    />
+                  )}
+                </div>
+              </div>
+            )}
 
             {mode === "password" && (
               <div>
@@ -324,10 +396,31 @@ export function LoginPage() {
             <Button type="submit" variant="danger" disabled={submitting} className="w-full">
               {submitting && "Working…"}
               {!submitting && mode === "password" && "Sign in"}
-              {!submitting && mode === "magic" && "Send link"}
+              {!submitting && mode === "magic" && !codeSent && "Send code"}
+              {!submitting && mode === "magic" && codeSent && "Verify & sign in"}
               {!submitting && mode === "forgot" && "Send reset link"}
             </Button>
           </form>
+
+          {onCodeStep && (
+            <div className="mt-4 flex items-center justify-between text-xs font-medium text-zinc-500">
+              <button
+                type="button"
+                onClick={resetCodeStep}
+                className="transition hover:text-midnight"
+              >
+                Use a different email
+              </button>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => void handleSubmit()}
+                className="transition hover:text-midnight disabled:opacity-50"
+              >
+                Resend code
+              </button>
+            </div>
+          )}
 
           <div className="mt-6 flex flex-col items-start gap-3 text-xs font-medium text-zinc-500">
             {mode !== "forgot" && (
@@ -335,6 +428,8 @@ export function LoginPage() {
                 type="button"
                 onClick={() => {
                   setMode("forgot");
+                  setCodeSent(false);
+                  setCode("");
                   setError(null);
                   setInfo(null);
                   setPassword("");
@@ -352,12 +447,14 @@ export function LoginPage() {
                 } else {
                   setMode((m) => (m === "password" ? "magic" : "password"));
                 }
+                setCodeSent(false);
+                setCode("");
                 setError(null);
                 setInfo(null);
               }}
               className="transition hover:text-midnight"
             >
-              {mode === "password" && "Use a magic link instead"}
+              {mode === "password" && "Email me a code instead"}
               {mode === "magic" && "Use a password instead"}
               {mode === "forgot" && "Back to sign in"}
             </button>
