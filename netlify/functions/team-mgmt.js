@@ -45,6 +45,17 @@ function admin() {
   });
 }
 
+// After any roster-affecting team mutation, re-sync managed group chats so
+// auto-membership tracks hires / deactivations / transfers / role changes.
+// Best-effort — never blocks the mutation response.
+async function syncManagedGroups(supa, actorId) {
+  try {
+    await supa.rpc("chat_sync_managed_groups", { p_actor: actorId ?? null });
+  } catch (e) {
+    console.warn("[team-mgmt] managed-group sync failed:", e?.message || e);
+  }
+}
+
 async function getSessionUser(event) {
   const header =
     event.headers?.authorization || event.headers?.Authorization;
@@ -1381,11 +1392,15 @@ export const handler = async (event) => {
 
     if (event.httpMethod === "POST") {
       const body = event.body ? JSON.parse(event.body) : {};
-      if (action === "add-user") return unwrap(await addUser(supa, manager, body));
-      if (action === "update-user") return unwrap(await updateUser(supa, manager, body));
+      // Roster-affecting mutations: re-sync managed group chats on success.
+      if (action === "add-user" || action === "update-user" || action === "bulk-import") {
+        const fn = action === "add-user" ? addUser : action === "update-user" ? updateUser : bulkImport;
+        const result = await fn(supa, manager, body);
+        if (!result?.error) await syncManagedGroups(supa, manager.id);
+        return unwrap(result);
+      }
       if (action === "send-reset") return unwrap(await sendReset(supa, manager, body));
       if (action === "bulk-preview") return unwrap(await bulkPreview(supa, manager, body));
-      if (action === "bulk-import") return unwrap(await bulkImport(supa, manager, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
 
