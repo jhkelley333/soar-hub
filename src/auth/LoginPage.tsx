@@ -296,7 +296,7 @@ export function LoginPage() {
           </h2>
           <p className="mt-1 text-sm text-zinc-500">
             {mode === "password" && "Use your phone or email and password."}
-            {mode === "magic" && !codeSent && "We'll email you a 6-digit code."}
+            {mode === "magic" && !codeSent && "We'll email you a sign-in code."}
             {mode === "magic" && codeSent && `Enter the code we sent to ${codeEmail}.`}
             {mode === "forgot" &&
               "Enter your phone or email and we'll send a reset link."}
@@ -318,7 +318,7 @@ export function LoginPage() {
           >
             {onCodeStep ? (
               <div>
-                <Label htmlFor="otp">6-digit code</Label>
+                <Label htmlFor="otp">Verification code</Label>
                 <Input
                   id="otp"
                   type="text"
@@ -326,12 +326,13 @@ export function LoginPage() {
                   autoComplete="one-time-code"
                   autoFocus
                   required
-                  maxLength={6}
-                  pattern="\d{6}"
+                  maxLength={10}
                   value={code}
-                  onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-                  placeholder="123456"
-                  className="tracking-[0.4em] text-center text-lg"
+                  onChange={(e) =>
+                    setCode(e.target.value.replace(/\D/g, "").slice(0, 10))
+                  }
+                  placeholder="Enter code"
+                  className="tracking-[0.3em] text-center text-lg"
                 />
               </div>
             ) : (
