@@ -12,6 +12,8 @@ import {
   BellOff,
   RefreshCw,
   MessageSquare,
+  Phone,
+  UserRound,
   Shield,
   ShieldOff,
   UserMinus,
@@ -21,6 +23,9 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
+import { MemberProfileDrawer } from "@/modules/my-stores/MemberProfileDrawer";
+import type { MyStoreTeamMember } from "@/modules/my-stores/types";
+import type { UserRole } from "@/types/database";
 import {
   fetchGroupInfo,
   fetchAttachments,
@@ -54,6 +59,7 @@ export function GroupInfoPage() {
   const meId = profile?.id ?? "";
 
   const [sheetFor, setSheetFor] = useState<GroupMember | null>(null);
+  const [profileFor, setProfileFor] = useState<MyStoreTeamMember | null>(null);
 
   const q = useQuery({
     queryKey: ["chat", "group-info", threadId],
@@ -296,6 +302,10 @@ export function GroupInfoPage() {
           isMe={sheetFor.userId === meId}
           onClose={() => setSheetFor(null)}
           onMessage={() => dmMut.mutate(sheetFor.userId)}
+          onViewProfile={() => {
+            if (sheetFor.profile) setProfileFor(sheetFor.profile);
+            setSheetFor(null);
+          }}
           onToggleAdmin={() =>
             roleMut.mutate({
               userId: sheetFor.userId,
@@ -306,6 +316,13 @@ export function GroupInfoPage() {
           busy={dmMut.isPending || roleMut.isPending || removeMut.isPending}
         />
       )}
+
+      <MemberProfileDrawer
+        open={!!profileFor}
+        member={profileFor}
+        viewerRole={profile?.role as UserRole | undefined}
+        onClose={() => setProfileFor(null)}
+      />
     </div>
   );
 }
@@ -317,6 +334,7 @@ function MemberSheet({
   isMe,
   onClose,
   onMessage,
+  onViewProfile,
   onToggleAdmin,
   onRemove,
   busy,
@@ -327,6 +345,7 @@ function MemberSheet({
   isMe: boolean;
   onClose: () => void;
   onMessage: () => void;
+  onViewProfile: () => void;
   onToggleAdmin: () => void;
   onRemove: () => void;
   busy: boolean;
@@ -366,6 +385,17 @@ function MemberSheet({
           {!isMe && (
             <SheetRow Icon={MessageSquare} label="Message directly" sub="Opens 1:1 thread" onClick={onMessage} disabled={busy} />
           )}
+          {!isMe && member.phone && (
+            <SheetRow
+              Icon={Phone}
+              label="Call"
+              sub={member.phone}
+              onClick={() => {
+                window.location.href = `tel:${member.phone}`;
+              }}
+            />
+          )}
+          <SheetRow Icon={UserRound} label="View profile" sub="Stores, history, recent submissions" onClick={onViewProfile} />
           {showAdminControls && (
             <SheetRow
               Icon={member.threadRole === "admin" ? ShieldOff : Shield}

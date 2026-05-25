@@ -205,6 +205,20 @@ export function openScopedThread(
   });
 }
 
+export interface GroupMemberProfile {
+  id: string;
+  email: string;
+  phone: string | null;
+  full_name: string | null;
+  preferred_name: string | null;
+  role: string;
+  primary_store_id: string | null;
+  is_active: boolean;
+  birthday: string | null;
+  show_birthday: boolean;
+  profile_photo_url: string | null;
+}
+
 export interface GroupMember {
   userId: string;
   name: string;
@@ -213,6 +227,8 @@ export interface GroupMember {
   orgRole: string;
   storeNumber: string | null;
   joinedAt: string | null;
+  phone: string | null;
+  profile: GroupMemberProfile | null;
 }
 
 export interface GroupInfoResponse {
