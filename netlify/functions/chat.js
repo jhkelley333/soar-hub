@@ -126,7 +126,7 @@ export const handler = async (event) => {
       const memById = new Map((memberships ?? []).map((m) => [m.thread_id, m]));
 
       const [{ data: threads }, { data: members }, { data: msgs }] = await Promise.all([
-        supa.from("chat_threads").select("*").in("id", ids),
+        supa.from("chat_threads").select("*").in("id", ids).is("archived_at", null),
         supa.from("chat_thread_members").select("thread_id, user_id").in("thread_id", ids),
         supa
           .from("chat_messages")
@@ -742,7 +742,7 @@ export const handler = async (event) => {
 
       const { data: t } = await supa
         .from("chat_threads")
-        .select("id, kind, title, description, external, managed, created_by, avatar_url, perm_send, perm_add, perm_edit")
+        .select("id, kind, title, description, external, managed, created_by, avatar_url, perm_send, perm_add, perm_edit, archived_at")
         .eq("id", threadId)
         .maybeSingle();
       if (!t) return respond(404, { ok: false, message: "Thread not found." });
@@ -823,6 +823,7 @@ export const handler = async (event) => {
           permSend: t.perm_send || "everyone",
           permAdd: t.perm_add || "admins",
           permEdit: t.perm_edit || "admins",
+          archived: !!t.archived_at,
           myRole: meRow.role,
           muted: meRow.muted_until ? new Date(meRow.muted_until).getTime() > Date.now() : false,
         },
@@ -935,6 +936,52 @@ export const handler = async (event) => {
       if (Object.keys(patch).length) {
         await supa.from("chat_threads").update(patch).eq("id", threadId);
       }
+      return respond(200, { ok: true });
+    }
+
+    // Archive / unarchive — hides from inboxes but keeps history. Owner/admin.
+    if (action === "archiveThread" && event.httpMethod === "POST") {
+      const { threadId, archived } = JSON.parse(event.body || "{}");
+      if (!threadId) return respond(400, { ok: false, message: "threadId required." });
+      const { data: me } = await supa
+        .from("chat_thread_members")
+        .select("role")
+        .eq("thread_id", threadId)
+        .eq("user_id", uid)
+        .maybeSingle();
+      if (!me || !["owner", "admin"].includes(me.role)) {
+        return respond(403, { ok: false, message: "Only owners and admins can archive." });
+      }
+      await supa
+        .from("chat_threads")
+        .update({ archived_at: archived ? new Date().toISOString() : null })
+        .eq("id", threadId);
+      return respond(200, { ok: true });
+    }
+
+    // Permanently delete a group. Owner only. Blocked on managed teams —
+    // their history is retained for legal hold (archive instead).
+    if (action === "deleteThread" && event.httpMethod === "POST") {
+      const { threadId } = JSON.parse(event.body || "{}");
+      if (!threadId) return respond(400, { ok: false, message: "threadId required." });
+      const { data: t } = await supa
+        .from("chat_threads")
+        .select("managed")
+        .eq("id", threadId)
+        .maybeSingle();
+      if (t?.managed) {
+        return respond(400, { ok: false, message: "Managed teams can't be deleted — archive keeps the history." });
+      }
+      const { data: me } = await supa
+        .from("chat_thread_members")
+        .select("role")
+        .eq("thread_id", threadId)
+        .eq("user_id", uid)
+        .maybeSingle();
+      if (!me || me.role !== "owner") {
+        return respond(403, { ok: false, message: "Only the owner can delete this group." });
+      }
+      await supa.from("chat_threads").delete().eq("id", threadId);
       return respond(200, { ok: true });
     }
 

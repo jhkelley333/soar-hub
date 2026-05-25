@@ -245,11 +245,23 @@ export interface GroupInfoResponse {
     permSend: "everyone" | "admins";
     permAdd: "everyone" | "admins";
     permEdit: "everyone" | "admins";
+    archived: boolean;
     myRole: "owner" | "admin" | "member";
     muted: boolean;
   };
   members: GroupMember[];
   adminsCount: number;
+}
+
+export function archiveThread(threadId: string, archived: boolean): Promise<{ ok: true }> {
+  return req(`${FN}?action=archiveThread`, {
+    method: "POST",
+    body: JSON.stringify({ threadId, archived }),
+  });
+}
+
+export function deleteThread(threadId: string): Promise<{ ok: true }> {
+  return req(`${FN}?action=deleteThread`, { method: "POST", body: JSON.stringify({ threadId }) });
 }
 
 export function updatePermissions(body: {
