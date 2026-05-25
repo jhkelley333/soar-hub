@@ -183,12 +183,16 @@ function TrainingRow({ row }: { row: TrainingCreditRow }) {
 }
 
 function PtoRowItem({ row }: { row: PtoRow }) {
+  const isHourly = row.position === "Associate Manager" || row.position === "First Assistant";
   return (
     <Card>
       <CardBody className="flex flex-wrap items-center justify-between gap-3 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <span className="text-sm font-medium text-zinc-900">{row.gm_name}</span>
+            <span className="text-sm font-medium text-zinc-900">{row.employee_name}</span>
+            {row.position && (
+              <span className="text-xs text-zinc-400">{row.position}</span>
+            )}
             <StatusPill kind="submitted">{row.status}</StatusPill>
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
@@ -196,7 +200,14 @@ function PtoRowItem({ row }: { row: PtoRow }) {
             <span className="text-xs text-zinc-500">
               {row.pto_start_date} → {row.pto_end_date}
             </span>
-            <span className="text-xs text-zinc-500">{row.days_used} day(s)</span>
+            {isHourly ? (
+              <span className="text-xs text-zinc-500">
+                {row.vacation_hours ?? 0} hrs
+                {row.amount != null ? ` · ${fmtMoney(row.amount)}` : ""}
+              </span>
+            ) : (
+              <span className="text-xs text-zinc-500">{row.days_used ?? 0} day(s)</span>
+            )}
           </div>
         </div>
         <div className="text-right text-xs text-zinc-400">

@@ -5,7 +5,7 @@
 import { cn } from "@/lib/cn";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
-import type { MyStore, TrainingDayInput } from "./types";
+import type { MyStore, PtoVacationDayInput, TrainingDayInput } from "./types";
 
 const selectCls =
   "block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent";
@@ -386,5 +386,112 @@ export function CheckboxRow({
       />
       {label}
     </label>
+  );
+}
+
+const MAX_HOURS_PER_DAY = 8;
+
+// Hourly vacation editor (Associate Manager / First Assistant): add date rows,
+// enter hours per day (capped at 8), and see the per-day + total dollar amount
+// (hours x wage). The server recomputes amounts authoritatively.
+export function VacationHoursEditor({
+  label,
+  value,
+  onChange,
+  wage,
+  required,
+  helpText,
+}: {
+  label: string;
+  value: PtoVacationDayInput[];
+  onChange: (v: PtoVacationDayInput[]) => void;
+  wage: number;
+  required?: boolean;
+  helpText?: string;
+}) {
+  function addRow() {
+    onChange([...value, { date: "", hours: "" }]);
+  }
+  function removeRow(idx: number) {
+    onChange(value.filter((_, i) => i !== idx));
+  }
+  function patchRow(idx: number, key: "date" | "hours", v: string) {
+    onChange(value.map((r, i) => (i === idx ? { ...r, [key]: v } : r)));
+  }
+
+  const totalHours = value.reduce((sum, r) => sum + (Number(r.hours) || 0), 0);
+  const totalAmount = totalHours * wage;
+
+  return (
+    <div className="sm:col-span-2 lg:col-span-3">
+      <FieldLabel htmlFor="vacation-hours" label={label} required={required} />
+      <div className="space-y-2">
+        {value.map((r, idx) => {
+          const hrs = Number(r.hours) || 0;
+          const over = hrs > MAX_HOURS_PER_DAY;
+          return (
+            <div
+              key={idx}
+              className="grid grid-cols-1 items-end gap-2 rounded-md border border-zinc-100 bg-zinc-50/60 p-2 sm:grid-cols-[1fr_8rem_6rem_2rem]"
+            >
+              <div>
+                <Label htmlFor={`vac-date-${idx}`}>Date</Label>
+                <Input
+                  id={`vac-date-${idx}`}
+                  type="date"
+                  value={r.date}
+                  onChange={(e) => patchRow(idx, "date", e.target.value)}
+                />
+              </div>
+              <div>
+                <Label htmlFor={`vac-hours-${idx}`}>Hours</Label>
+                <Input
+                  id={`vac-hours-${idx}`}
+                  type="number"
+                  inputMode="decimal"
+                  step="0.5"
+                  min="0"
+                  max={String(MAX_HOURS_PER_DAY)}
+                  value={r.hours}
+                  onChange={(e) => patchRow(idx, "hours", e.target.value)}
+                  className={over ? "ring-red-300 focus:ring-red-400" : undefined}
+                />
+              </div>
+              <div className="text-right text-sm">
+                <div className="text-[11px] text-zinc-400">{over ? "max 8/day" : "amount"}</div>
+                <div className="font-semibold tabular-nums text-midnight">{fmtUSD(hrs * wage)}</div>
+              </div>
+              <button
+                type="button"
+                onClick={() => removeRow(idx)}
+                className="mb-1 justify-self-end rounded-md px-2 py-1 text-xs text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                aria-label="Remove day"
+              >
+                ✕
+              </button>
+            </div>
+          );
+        })}
+      </div>
+
+      <button
+        type="button"
+        onClick={addRow}
+        className="mt-2 rounded-md px-3 py-1 text-xs font-medium text-accent ring-1 ring-inset ring-accent/40 hover:bg-accent/5"
+      >
+        + Add vacation day
+      </button>
+
+      {value.length > 0 && (
+        <div className="mt-3 flex items-center justify-between border-t border-zinc-200 pt-2 text-sm">
+          <span className="text-zinc-500">
+            Total vacation{" "}
+            <span className="tabular-nums text-zinc-700">{totalHours} hrs</span>
+          </span>
+          <span className="font-semibold tabular-nums text-midnight">{fmtUSD(totalAmount)}</span>
+        </div>
+      )}
+      <Help text={helpText} />
+    </div>
   );
 }

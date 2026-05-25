@@ -46,15 +46,30 @@ export interface PtoRow {
   submitter_name: string | null;
   store_number: string;
   store_name?: string | null;
-  gm_name: string;
+  employee_name: string;
+  position: string;
   pto_start_date: string;
   pto_end_date: string;
-  days_used: number;
+  // GM path
+  days_used: number | null;
+  // Hourly path (Associate Manager / First Assistant)
+  hourly_wage: number | null;
+  vacation_hours: number | null;
+  hours_worked: number | null;
+  amount: number | null;
+  vacation_days: PtoVacationDay[];
   send_copy: boolean;
   status: string;
   notes: string | null;
   created_at: string;
   updated_at: string;
+}
+
+// One hourly vacation day. amount = hours x hourly wage (server-computed).
+export interface PtoVacationDay {
+  date: string;
+  hours: number;
+  amount: number;
 }
 
 export interface EmployeeActionListResponse {
@@ -82,11 +97,24 @@ export interface TrainingCreditInput {
   send_copy: boolean;
 }
 
+export interface PtoVacationDayInput {
+  date: string;
+  hours: string;
+}
+
+// The position decides which fields are populated. GM uses date range +
+// days_used; hourly positions use hourly_wage + vacation_days + hours_worked.
 export interface PtoInput {
   store_number: string;
-  gm_name: string;
-  pto_start_date: string;
-  pto_end_date: string;
-  days_used: string;
+  employee_name: string;
+  position: string;
   send_copy: boolean;
+  // GM path
+  pto_start_date?: string;
+  pto_end_date?: string;
+  days_used?: string;
+  // Hourly path
+  hourly_wage?: string;
+  vacation_days?: PtoVacationDayInput[];
+  hours_worked?: string;
 }
