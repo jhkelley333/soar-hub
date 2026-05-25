@@ -453,7 +453,7 @@ export const handler = async (event) => {
       const scopeType = b.scopeType;
       const scopeId = b.scopeId || null;
       const targetRole = b.targetRole;
-      const VALID_SCOPES = ["store", "district", "market", "region", "global"];
+      const VALID_SCOPES = ["store", "district", "area", "region", "global"];
       const VALID_ROLES = ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"];
 
       if (!VALID_SCOPES.includes(scopeType)) {

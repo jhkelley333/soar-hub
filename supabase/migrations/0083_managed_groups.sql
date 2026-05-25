@@ -58,14 +58,14 @@ as $$
   from profiles p
   join stores s    on s.id = p.primary_store_id
   join districts d on d.id = s.district_id
-  join markets m   on m.id = d.market_id
+  join areas a     on a.id = d.area_id
   where p.is_active and p.role = p_role
     and (
       p_scope_type = 'global'
       or (p_scope_type = 'store'    and s.id = p_scope_id)
       or (p_scope_type = 'district' and d.id = p_scope_id)
-      or (p_scope_type = 'market'   and m.id = p_scope_id)
-      or (p_scope_type = 'region'   and m.region_id = p_scope_id)
+      or (p_scope_type = 'area'     and a.id = p_scope_id)
+      or (p_scope_type = 'region'   and a.region_id = p_scope_id)
     )
 
   union
@@ -74,15 +74,15 @@ as $$
   from profiles p
   join user_scopes us on us.user_id = p.id
   left join districts ud on us.scope_type = 'district' and ud.id = us.scope_id
-  left join markets   um on um.id = ud.market_id
-  left join markets   sm on us.scope_type = 'market' and sm.id = us.scope_id
+  left join areas     ua on ua.id = ud.area_id
+  left join areas     sa on us.scope_type = 'area' and sa.id = us.scope_id
   where p.is_active and p.role = p_role
     and (
       p_scope_type = 'global'
       or (us.scope_type = p_scope_type and us.scope_id = p_scope_id)
-      or (p_scope_type = 'market' and us.scope_type = 'district' and ud.market_id  = p_scope_id)
-      or (p_scope_type = 'region' and us.scope_type = 'district' and um.region_id  = p_scope_id)
-      or (p_scope_type = 'region' and us.scope_type = 'market'   and sm.region_id  = p_scope_id)
+      or (p_scope_type = 'area'   and us.scope_type = 'district' and ud.area_id   = p_scope_id)
+      or (p_scope_type = 'region' and us.scope_type = 'district' and ua.region_id = p_scope_id)
+      or (p_scope_type = 'region' and us.scope_type = 'area'     and sa.region_id = p_scope_id)
     );
 $$;
 
@@ -110,7 +110,7 @@ begin
   owner_role := case t.org_scope_type
     when 'store'    then 'gm'
     when 'district' then 'do'
-    when 'market'   then 'sdo'
+    when 'area'     then 'sdo'
     when 'region'   then 'rvp'
     else 'admin'
   end::user_role;
