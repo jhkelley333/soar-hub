@@ -14,6 +14,7 @@ import {
   Flag,
   ClipboardList,
   HardHat,
+  MessageCircle,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -42,6 +43,7 @@ export const NAV: NavItem[] = [
   // Sits at the top right under Dashboard so it's the first
   // operational tool field roles see.
   { to: "/admin/work-orders-v2", label: "Work Orders", icon: Hammer, roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  { to: "/chat",        label: "Chat",        icon: MessageCircle,   roles: null },
   { to: "/ranker",      label: "Ranker",      icon: TrendingUp,      roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
   // Note: design-import preview routes (e.g. /region) are deliberately
   // NOT in the sidebar — they're placeholder UIs while real scoring +
