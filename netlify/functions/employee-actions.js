@@ -641,6 +641,39 @@ async function submitPto(supa, user, body) {
 }
 
 // ----------------------------------------------------------------------------
+// delete (admin only)
+// ----------------------------------------------------------------------------
+async function deleteRequest(supa, user, body) {
+  if (user.role !== "admin") {
+    return { error: "Only an admin can delete requests.", status: 403 };
+  }
+  const type = sanitizeText(body?.type, 20);
+  const id = sanitizeText(body?.id, 64);
+  if (!id) return { error: "Request id is required.", status: 400 };
+  const table =
+    type === "training"
+      ? "training_credit_requests"
+      : type === "pto"
+        ? "pto_requests"
+        : null;
+  if (!table) return { error: "Unknown request type.", status: 400 };
+
+  const { error } = await supa.from(table).delete().eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+
+  await logAudit(supa, {
+    request_type: type,
+    request_id: id,
+    actor_id: user.id,
+    actor_email: user.email,
+    action: "delete",
+    detail: {},
+  });
+
+  return { ok: true };
+}
+
+// ----------------------------------------------------------------------------
 // HTTP handler
 // ----------------------------------------------------------------------------
 function unwrap(result) {
@@ -676,6 +709,7 @@ export const handler = async (event) => {
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "submit-training") return unwrap(await submitTraining(supa, user, body));
       if (action === "submit-pto") return unwrap(await submitPto(supa, user, body));
+      if (action === "delete") return unwrap(await deleteRequest(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
     return respond(405, { error: "method not allowed" });
