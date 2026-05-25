@@ -7,7 +7,10 @@ import { router } from "@/app/router";
 import { queryClient } from "@/lib/queryClient";
 import { ToastProvider } from "@/shared/ui/Toaster";
 import { registerServiceWorker } from "@/lib/registerSW";
+import { perfMark } from "@/lib/perf";
 import "@/styles/globals.css";
+
+perfMark("bundle eval");
 
 // Defensive: Supabase auth emails (recovery + invite) should redirect to
 // purpose-built pages. If URL Configuration is misconfigured Supabase
@@ -27,6 +30,7 @@ if (_hash.includes("type=recovery") && _path !== "/reset-password") {
 const root = document.getElementById("root");
 if (!root) throw new Error("#root element missing from index.html");
 
+perfMark("react mount");
 createRoot(root).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>

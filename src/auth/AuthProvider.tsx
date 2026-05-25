@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { perfMark, perfReport } from "@/lib/perf";
 import type { Profile, UserScope } from "@/types/database";
 
 interface AuthState {
@@ -122,24 +123,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     (async () => {
       try {
+        perfMark("auth: getSession start");
         const { data: { session: initial } } = await Promise.race([
           supabase.auth.getSession(),
           timeout<{ data: { session: Session | null } }>("getSession", AUTH_BOOT_TIMEOUT_MS),
         ]);
         if (cancelled) return;
+        perfMark("auth: session ready");
         setSession(initial);
         if (initial?.user) {
+          perfMark("auth: profile fetch start");
           await Promise.race([
             loadProfile(initial.user.id),
             timeout<void>("loadProfile", AUTH_BOOT_TIMEOUT_MS),
           ]);
+          perfMark("auth: profile ready");
         }
       } catch (e) {
         if (cancelled) return;
         console.warn("[auth] boot failed; purging persisted session and falling through to login", e);
         await clearStaleSession();
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          perfMark("auth: interactive");
+          perfReport();
+        }
       }
     })();
 
