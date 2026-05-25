@@ -2,9 +2,10 @@
 // look of the PAF form (Label + ring-1 inputs, red asterisk for required,
 // 11px helper text) so the new forms match the rest of the app.
 
+import { cn } from "@/lib/cn";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
-import type { MyStore } from "./types";
+import type { MyStore, TrainingDayInput } from "./types";
 
 const selectCls =
   "block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent";
@@ -232,42 +233,132 @@ export function StoreSelect({
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
-// Multi-select day-of-week checkboxes (the "First Three Training Days" field).
-export function DayPicker({
+// Hours between two "HH:MM" times (0 if malformed or non-positive). The
+// server recomputes this authoritatively; this is the live form preview.
+export function calcDayHours(start: string, end: string): number {
+  const re = /^(\d{1,2}):(\d{2})$/;
+  const s = re.exec(start);
+  const e = re.exec(end);
+  if (!s || !e) return 0;
+  const mins =
+    (Number(e[1]) * 60 + Number(e[2])) - (Number(s[1]) * 60 + Number(s[2]));
+  return mins > 0 ? mins / 60 : 0;
+}
+
+function fmtUSD(n: number): string {
+  return (Number(n) || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
+}
+
+// "First Three Training Days" — pick up to 3 day-of-week chips; each selected
+// day gets its own start/end time, and we show the computed (hours x wage)
+// amount per day plus a running total.
+export function TrainingDaysEditor({
   label,
   value,
   onChange,
+  wage,
   required,
   helpText,
 }: {
   label: string;
-  value: string[];
-  onChange: (v: string[]) => void;
+  value: TrainingDayInput[];
+  onChange: (v: TrainingDayInput[]) => void;
+  wage: number;
   required?: boolean;
   helpText?: string;
 }) {
-  function toggle(day: string) {
-    onChange(value.includes(day) ? value.filter((d) => d !== day) : [...value, day]);
+  const selected = new Set(value.map((d) => d.day));
+  const atMax = value.length >= 3;
+
+  function toggleDay(day: string) {
+    if (selected.has(day)) {
+      onChange(value.filter((d) => d.day !== day));
+    } else if (!atMax) {
+      onChange([...value, { day, start_time: "", end_time: "" }]);
+    }
   }
+
+  function patchDay(day: string, key: "start_time" | "end_time", v: string) {
+    onChange(value.map((d) => (d.day === day ? { ...d, [key]: v } : d)));
+  }
+
+  const total = value.reduce(
+    (sum, d) => sum + calcDayHours(d.start_time, d.end_time) * wage,
+    0
+  );
+
   return (
     <div className="sm:col-span-2 lg:col-span-3">
-      <FieldLabel htmlFor="day-picker" label={label} required={required} />
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {DAYS.map((day) => (
-          <label
-            key={day}
-            className="flex cursor-pointer items-center gap-2 rounded-md px-1 py-1 text-sm text-zinc-700"
-          >
-            <input
-              type="checkbox"
-              checked={value.includes(day)}
-              onChange={() => toggle(day)}
-              className="h-4 w-4 rounded border-zinc-300 text-accent focus:ring-accent"
-            />
-            {day}
-          </label>
-        ))}
+      <FieldLabel htmlFor="training-days" label={label} required={required} />
+      <div className="flex flex-wrap gap-2">
+        {DAYS.map((day) => {
+          const on = selected.has(day);
+          const disabled = !on && atMax;
+          return (
+            <button
+              key={day}
+              type="button"
+              onClick={() => toggleDay(day)}
+              disabled={disabled}
+              className={cn(
+                "rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset transition",
+                on
+                  ? "bg-accent text-accent-fg ring-accent"
+                  : "bg-white text-zinc-700 ring-zinc-200 hover:bg-zinc-50",
+                disabled && "cursor-not-allowed opacity-40"
+              )}
+            >
+              {day}
+            </button>
+          );
+        })}
       </div>
+
+      {value.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {value.map((d) => {
+            const hrs = calcDayHours(d.start_time, d.end_time);
+            return (
+              <div
+                key={d.day}
+                className="grid grid-cols-1 items-end gap-2 rounded-md border border-zinc-100 bg-zinc-50/60 p-2 sm:grid-cols-[6rem_1fr_1fr_6rem]"
+              >
+                <div className="text-sm font-medium text-zinc-700">{d.day}</div>
+                <div>
+                  <Label htmlFor={`tt-start-${d.day}`}>Start</Label>
+                  <Input
+                    id={`tt-start-${d.day}`}
+                    type="time"
+                    value={d.start_time}
+                    onChange={(e) => patchDay(d.day, "start_time", e.target.value)}
+                  />
+                </div>
+                <div>
+                  <Label htmlFor={`tt-end-${d.day}`}>End</Label>
+                  <Input
+                    id={`tt-end-${d.day}`}
+                    type="time"
+                    value={d.end_time}
+                    onChange={(e) => patchDay(d.day, "end_time", e.target.value)}
+                  />
+                </div>
+                <div className="text-right text-sm">
+                  <div className="text-[11px] text-zinc-400">
+                    {hrs ? `${hrs.toFixed(2)} hrs` : "—"}
+                  </div>
+                  <div className="font-semibold tabular-nums text-midnight">
+                    {fmtUSD(hrs * wage)}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          <div className="flex items-center justify-between border-t border-zinc-200 pt-2 text-sm">
+            <span className="text-zinc-500">Total requested credit</span>
+            <span className="font-semibold tabular-nums text-midnight">{fmtUSD(total)}</span>
+          </div>
+        </div>
+      )}
       <Help text={helpText} />
     </div>
   );

@@ -35,7 +35,7 @@ create table if not exists training_credit_requests (
   training_other    text,
   start_date        date,
   requested_amount  numeric(10,2) not null default 0,
-  training_days     text[]        not null default '{}',
+  training_days     jsonb         not null default '[]',
   send_copy         boolean       not null default false,
 
   -- Workflow (approvals layered in later)
@@ -52,6 +52,25 @@ create index if not exists training_credit_requests_submitter_idx
   on training_credit_requests (submitter_id);
 create index if not exists training_credit_requests_status_idx
   on training_credit_requests (status);
+
+-- If an earlier run of this migration created training_days as a text[] (the
+-- original day-of-week multi-select), convert it to jsonb so each training day
+-- can carry its own start/end time + computed amount. No-op on a fresh table,
+-- and this brand-new table has no production data to preserve.
+do $$
+begin
+  if exists (
+    select 1 from information_schema.columns
+    where table_schema = 'public'
+      and table_name = 'training_credit_requests'
+      and column_name = 'training_days'
+      and data_type = 'ARRAY'
+  ) then
+    alter table training_credit_requests drop column training_days;
+    alter table training_credit_requests
+      add column training_days jsonb not null default '[]'::jsonb;
+  end if;
+end$$;
 
 -- ----------------------------------------------------------------------------
 -- PTO Request (GM Vacation Request & Approval Tracker)
