@@ -196,7 +196,7 @@ export const handler = async (event) => {
           lastMessage: {
             fromUserId: t.last_message_from || "system",
             text: t.last_message_text || "",
-            at: fmtTime(t.last_message_at),
+            at: t.last_message_at || null,
           },
         };
       });
@@ -275,7 +275,7 @@ export const handler = async (event) => {
           fromUserId: m.system ? "system" : m.from_user_id,
           text: m.text,
           system: m.system,
-          at: fmtTime(m.created_at),
+          at: m.created_at,
           attachments: attByMsg.get(m.id) || [],
         })),
       });
@@ -1097,7 +1097,7 @@ export const handler = async (event) => {
           mime: a.mime_type || "",
           size: a.size_bytes || 0,
           uploadedBy: a.uploaded_by,
-          at: fmtTime(a.created_at),
+          at: a.created_at,
         })),
       });
     }

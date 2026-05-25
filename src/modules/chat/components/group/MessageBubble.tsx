@@ -7,6 +7,7 @@ import { cn } from "@/lib/cn";
 import type { ChatMessage } from "../../types";
 import type { ChatUserLite } from "../../api";
 import { AttachmentView } from "./AttachmentView";
+import { formatChatTime } from "../../time";
 
 function renderText(text: string, sent: boolean) {
   return text.split(/(@\w+)/g).map((part, i) =>
@@ -49,7 +50,7 @@ export function MessageBubble({
             {renderText(message.text, true)}
           </div>
         )}
-        <span className="mr-1 mt-0.5 text-[10.5px] text-midnight-400">{message.at}</span>
+        <span className="mr-1 mt-0.5 text-[10.5px] text-midnight-400">{formatChatTime(message.at)}</span>
       </div>
     );
   }
@@ -81,7 +82,7 @@ export function MessageBubble({
             </div>
           )}
         </div>
-        <span className="ml-1 mt-0.5 block text-[10.5px] text-midnight-400">{message.at}</span>
+        <span className="ml-1 mt-0.5 block text-[10.5px] text-midnight-400">{formatChatTime(message.at)}</span>
       </div>
     </div>
   );

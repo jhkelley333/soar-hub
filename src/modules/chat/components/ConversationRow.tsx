@@ -5,6 +5,7 @@
 import { Megaphone } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { UnreadBubble } from "./UnreadBubble";
+import { formatChatTime } from "../time";
 import type { ChatThread } from "../types";
 
 function Avatar({
@@ -61,7 +62,7 @@ function DirectRow({ thread, onOpen }: { thread: ChatThread; onOpen: () => void 
             {thread.title}
           </span>
           <span className="shrink-0 text-[11px] text-midnight-400">
-            {thread.lastMessage.at}
+            {formatChatTime(thread.lastMessage.at)}
           </span>
         </div>
         <div className="mt-0.5 flex items-center justify-between gap-2">
@@ -85,7 +86,7 @@ function GroupRow({ thread, onOpen }: { thread: ChatThread; onOpen: () => void }
             {thread.title}
           </span>
           <span className="shrink-0 text-[11px] text-midnight-400">
-            {thread.lastMessage.at}
+            {formatChatTime(thread.lastMessage.at)}
           </span>
         </div>
         <div className="text-[11.5px] text-midnight-400">
@@ -114,7 +115,7 @@ function BroadcastRow({ thread, onOpen }: { thread: ChatThread; onOpen: () => vo
             {thread.title}
           </span>
           <span className="shrink-0 text-[11px] text-midnight-400">
-            {thread.lastMessage.at}
+            {formatChatTime(thread.lastMessage.at)}
           </span>
         </div>
         {thread.fromLabel && (
