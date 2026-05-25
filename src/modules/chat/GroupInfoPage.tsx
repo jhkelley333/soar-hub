@@ -45,6 +45,7 @@ import {
   removeMember,
   addMembers,
   updateGroup,
+  updatePermissions,
   uploadGroupAvatar,
   createThread,
   type GroupMember,
@@ -165,6 +166,13 @@ export function GroupInfoPage() {
       toast.push("Removed from group.", "info");
     },
     onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't remove member.", "error"),
+  });
+
+  const permMut = useMutation({
+    mutationFn: (patch: { permSend?: "everyone" | "admins"; permAdd?: "everyone" | "admins"; permEdit?: "everyone" | "admins" }) =>
+      updatePermissions({ threadId, ...patch }),
+    onSuccess: invalidate,
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't update permissions.", "error"),
   });
 
   const addMut = useMutation({
@@ -442,6 +450,39 @@ export function GroupInfoPage() {
           </ul>
         </div>
 
+        {/* Permissions */}
+        <div className="mt-3">
+          <div className="flex items-center justify-between px-5 pb-1 pt-3">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-midnight-400">Permissions</p>
+            {!canManage && <p className="text-[11px] text-midnight-400">Admins only</p>}
+          </div>
+          <div className="bg-surface">
+            <PermRow
+              label="Who can send messages"
+              value={thread.permSend}
+              canEdit={canManage}
+              busy={permMut.isPending}
+              onToggle={() => permMut.mutate({ permSend: thread.permSend === "everyone" ? "admins" : "everyone" })}
+            />
+            {!thread.managed && (
+              <PermRow
+                label="Who can add members"
+                value={thread.permAdd}
+                canEdit={canManage}
+                busy={permMut.isPending}
+                onToggle={() => permMut.mutate({ permAdd: thread.permAdd === "everyone" ? "admins" : "everyone" })}
+              />
+            )}
+            <PermRow
+              label="Who can edit group info"
+              value={thread.permEdit}
+              canEdit={canManage}
+              busy={permMut.isPending}
+              onToggle={() => permMut.mutate({ permEdit: thread.permEdit === "everyone" ? "admins" : "everyone" })}
+            />
+          </div>
+        </div>
+
         {/* Leave — non-managed only */}
         {!thread.managed && (
           <div className="mt-3 bg-surface">
@@ -584,6 +625,35 @@ function AddMembersSheet({
         </div>
       </div>
     </div>
+  );
+}
+
+function PermRow({
+  label,
+  value,
+  canEdit,
+  busy,
+  onToggle,
+}: {
+  label: string;
+  value: "everyone" | "admins";
+  canEdit: boolean;
+  busy: boolean;
+  onToggle: () => void;
+}) {
+  const text = value === "everyone" ? "Everyone" : "Admins only";
+  return (
+    <button
+      type="button"
+      onClick={canEdit ? onToggle : undefined}
+      disabled={!canEdit || busy}
+      className="flex w-full items-center gap-3 border-b border-midnight-50 px-5 py-3 text-left last:border-0 disabled:opacity-100"
+    >
+      <span className="flex-1 text-[14px] text-midnight-900">{label}</span>
+      <span className={cn("text-[13px] font-medium", value === "admins" ? "text-midnight-500" : "text-accent")}>
+        {text}
+      </span>
+    </button>
   );
 }
 

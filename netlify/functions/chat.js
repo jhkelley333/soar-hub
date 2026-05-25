@@ -298,11 +298,14 @@ export const handler = async (event) => {
       // Broadcasts are announce-only: only the owner (poster) can add messages.
       const { data: thr } = await supa
         .from("chat_threads")
-        .select("kind, title")
+        .select("kind, title, perm_send")
         .eq("id", threadId)
         .maybeSingle();
       if (thr?.kind === "broadcast" && mine.role !== "owner") {
         return respond(403, { ok: false, message: "This is an announcement — replies are disabled." });
+      }
+      if (thr?.perm_send === "admins" && !["owner", "admin"].includes(mine.role)) {
+        return respond(403, { ok: false, message: "Only admins can post in this group." });
       }
       const { data, error } = await supa
         .from("chat_messages")
@@ -739,7 +742,7 @@ export const handler = async (event) => {
 
       const { data: t } = await supa
         .from("chat_threads")
-        .select("id, kind, title, description, external, managed, created_by, avatar_url")
+        .select("id, kind, title, description, external, managed, created_by, avatar_url, perm_send, perm_add, perm_edit")
         .eq("id", threadId)
         .maybeSingle();
       if (!t) return respond(404, { ok: false, message: "Thread not found." });
@@ -817,6 +820,9 @@ export const handler = async (event) => {
           managed: t.managed,
           createdByName: t.created_by ? displayName(profById.get(t.created_by)) : null,
           avatarUrl: t.avatar_url || null,
+          permSend: t.perm_send || "everyone",
+          permAdd: t.perm_add || "admins",
+          permEdit: t.perm_edit || "admins",
           myRole: meRow.role,
           muted: meRow.muted_until ? new Date(meRow.muted_until).getTime() > Date.now() : false,
         },
@@ -837,6 +843,30 @@ export const handler = async (event) => {
       return respond(200, { ok: true });
     }
 
+    // Update group permission settings (owner & admins only).
+    if (action === "updatePermissions" && event.httpMethod === "POST") {
+      const { threadId, permSend, permAdd, permEdit } = JSON.parse(event.body || "{}");
+      if (!threadId) return respond(400, { ok: false, message: "threadId required." });
+      const { data: me } = await supa
+        .from("chat_thread_members")
+        .select("role")
+        .eq("thread_id", threadId)
+        .eq("user_id", uid)
+        .maybeSingle();
+      if (!me || !["owner", "admin"].includes(me.role)) {
+        return respond(403, { ok: false, message: "Only owners and admins can change permissions." });
+      }
+      const ok = (v) => v === "everyone" || v === "admins";
+      const patch = {};
+      if (ok(permSend)) patch.perm_send = permSend;
+      if (ok(permAdd)) patch.perm_add = permAdd;
+      if (ok(permEdit)) patch.perm_edit = permEdit;
+      if (Object.keys(patch).length) {
+        await supa.from("chat_threads").update(patch).eq("id", threadId);
+      }
+      return respond(200, { ok: true });
+    }
+
     // Add members to a normal group (owner & admins). Blocked on managed
     // groups — the roster is rule-driven and would drop manual adds.
     if (action === "addMembers" && event.httpMethod === "POST") {
@@ -847,7 +877,7 @@ export const handler = async (event) => {
       }
       const { data: t } = await supa
         .from("chat_threads")
-        .select("managed")
+        .select("managed, perm_add")
         .eq("id", threadId)
         .maybeSingle();
       if (t?.managed) {
@@ -859,8 +889,9 @@ export const handler = async (event) => {
         .eq("thread_id", threadId)
         .eq("user_id", uid)
         .maybeSingle();
-      if (!me || !["owner", "admin"].includes(me.role)) {
-        return respond(403, { ok: false, message: "Only owners and admins can add members." });
+      const mayAdd = me && (t?.perm_add === "everyone" ? true : ["owner", "admin"].includes(me.role));
+      if (!mayAdd) {
+        return respond(403, { ok: false, message: "You don't have permission to add members here." });
       }
 
       await supa.from("chat_thread_members").upsert(
@@ -882,14 +913,20 @@ export const handler = async (event) => {
     if (action === "updateGroup" && event.httpMethod === "POST") {
       const { threadId, title, description, avatarUrl } = JSON.parse(event.body || "{}");
       if (!threadId) return respond(400, { ok: false, message: "threadId required." });
+      const { data: gt } = await supa
+        .from("chat_threads")
+        .select("perm_edit")
+        .eq("id", threadId)
+        .maybeSingle();
       const { data: me } = await supa
         .from("chat_thread_members")
         .select("role")
         .eq("thread_id", threadId)
         .eq("user_id", uid)
         .maybeSingle();
-      if (!me || !["owner", "admin"].includes(me.role)) {
-        return respond(403, { ok: false, message: "Only owners and admins can edit group info." });
+      const mayEdit = me && (gt?.perm_edit === "everyone" ? true : ["owner", "admin"].includes(me.role));
+      if (!mayEdit) {
+        return respond(403, { ok: false, message: "You don't have permission to edit group info." });
       }
       const patch = {};
       if (typeof title === "string" && title.trim()) patch.title = title.trim().slice(0, 200);

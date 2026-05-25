@@ -242,11 +242,23 @@ export interface GroupInfoResponse {
     managed: boolean;
     createdByName: string | null;
     avatarUrl: string | null;
+    permSend: "everyone" | "admins";
+    permAdd: "everyone" | "admins";
+    permEdit: "everyone" | "admins";
     myRole: "owner" | "admin" | "member";
     muted: boolean;
   };
   members: GroupMember[];
   adminsCount: number;
+}
+
+export function updatePermissions(body: {
+  threadId: string;
+  permSend?: "everyone" | "admins";
+  permAdd?: "everyone" | "admins";
+  permEdit?: "everyone" | "admins";
+}): Promise<{ ok: true }> {
+  return req(`${FN}?action=updatePermissions`, { method: "POST", body: JSON.stringify(body) });
 }
 
 export function updateGroup(body: {
