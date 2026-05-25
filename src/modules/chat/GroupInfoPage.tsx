@@ -24,6 +24,7 @@ import {
   Shield,
   ShieldOff,
   UserMinus,
+  UserPlus,
   LogOut,
   type LucideIcon,
 } from "lucide-react";
@@ -37,14 +38,17 @@ import type { UserRole } from "@/types/database";
 import {
   fetchGroupInfo,
   fetchAttachments,
+  fetchContacts,
   setThreadMute,
   leaveThread,
   setMemberRole,
   removeMember,
+  addMembers,
   updateGroup,
   uploadGroupAvatar,
   createThread,
   type GroupMember,
+  type ChatContact,
 } from "./api";
 import { AttachmentView } from "./components/group/AttachmentView";
 
@@ -73,6 +77,7 @@ export function GroupInfoPage() {
   const [editing, setEditing] = useState(false);
   const [nameDraft, setNameDraft] = useState("");
   const [descDraft, setDescDraft] = useState("");
+  const [addOpen, setAddOpen] = useState(false);
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const filesRef = useRef<HTMLDivElement>(null);
 
@@ -160,6 +165,16 @@ export function GroupInfoPage() {
       toast.push("Removed from group.", "info");
     },
     onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't remove member.", "error"),
+  });
+
+  const addMut = useMutation({
+    mutationFn: (userIds: string[]) => addMembers(threadId, userIds),
+    onSuccess: ({ added }) => {
+      invalidate();
+      setAddOpen(false);
+      toast.push(`Added ${added} member${added === 1 ? "" : "s"}.`, "success");
+    },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't add members.", "error"),
   });
 
   const dmMut = useMutation({
@@ -379,6 +394,18 @@ export function GroupInfoPage() {
               <p className="text-[11px] text-midnight-400">{adminsCount} admins</p>
             )}
           </div>
+          {canManage && !thread.managed && (
+            <button
+              type="button"
+              onClick={() => setAddOpen(true)}
+              className="flex w-full items-center gap-3 bg-surface px-5 py-3 text-left text-accent"
+            >
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-frost-100">
+                <UserPlus className="h-5 w-5" strokeWidth={2} />
+              </span>
+              <span className="text-[14.5px] font-semibold">Add members</span>
+            </button>
+          )}
           <ul className="bg-surface">
             {members.map((m) => {
               const isMe = m.userId === meId;
@@ -462,6 +489,100 @@ export function GroupInfoPage() {
         viewerRole={profile?.role as UserRole | undefined}
         onClose={() => setProfileFor(null)}
       />
+
+      {addOpen && (
+        <AddMembersSheet
+          existingIds={members.map((m) => m.userId)}
+          busy={addMut.isPending}
+          onClose={() => setAddOpen(false)}
+          onAdd={(ids) => addMut.mutate(ids)}
+        />
+      )}
+    </div>
+  );
+}
+
+function AddMembersSheet({
+  existingIds,
+  busy,
+  onClose,
+  onAdd,
+}: {
+  existingIds: string[];
+  busy: boolean;
+  onClose: () => void;
+  onAdd: (ids: string[]) => void;
+}) {
+  const [q, setQ] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
+  const contactsQ = useQuery({ queryKey: ["chat", "contacts"], queryFn: fetchContacts, staleTime: 5 * 60_000 });
+  const existing = new Set(existingIds);
+  const all: ChatContact[] = contactsQ.data?.contacts ?? [];
+  const candidates = all
+    .filter((c) => !existing.has(c.id))
+    .filter((c) => (q ? `${c.name} ${c.role}`.toLowerCase().includes(q.toLowerCase()) : true));
+
+  const toggle = (id: string) =>
+    setSelected((s) => (s.includes(id) ? s.filter((x) => x !== id) : [...s, id]));
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col justify-end" role="dialog" aria-modal="true">
+      <div className="absolute inset-0 bg-midnight-900/40" onClick={onClose} aria-hidden />
+      <div className="relative flex max-h-[80vh] flex-col rounded-t-2xl bg-surface pb-[calc(env(safe-area-inset-bottom,0px)+12px)] pt-2">
+        <div className="mx-auto mb-2 h-1 w-9 rounded-full bg-midnight-200" />
+        <div className="flex items-center justify-between px-5 py-2">
+          <p className="text-[16px] font-semibold text-midnight-900">Add members</p>
+          <button type="button" onClick={onClose} aria-label="Close" className="text-midnight-400 hover:text-midnight-700">
+            <X className="h-5 w-5" strokeWidth={2} />
+          </button>
+        </div>
+        <div className="mx-4 mb-2 flex items-center gap-2 rounded-xl bg-surface-sunk px-3 py-2.5">
+          <Search className="h-4 w-4 text-midnight-400" strokeWidth={2} />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search people…"
+            className="min-w-0 flex-1 bg-transparent text-[14px] text-midnight-800 placeholder:text-midnight-400 focus:outline-none"
+          />
+        </div>
+        <ul className="flex-1 divide-y divide-midnight-100 overflow-y-auto px-1">
+          {contactsQ.isLoading && (
+            <li className="py-6 text-center text-[13px] text-midnight-400">Loading people…</li>
+          )}
+          {!contactsQ.isLoading && candidates.length === 0 && (
+            <li className="py-6 text-center text-[13px] text-midnight-400">No one to add.</li>
+          )}
+          {candidates.map((c) => {
+            const sel = selected.includes(c.id);
+            return (
+              <li key={c.id}>
+                <button type="button" onClick={() => toggle(c.id)} className="flex w-full items-center gap-3 px-4 py-2.5 text-left">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-full bg-frost-100 text-[12px] font-semibold text-midnight-700">
+                    {c.initials}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[14px] font-medium text-midnight-900">{c.name}</span>
+                    <span className="block truncate text-[12px] text-midnight-500">{c.role}</span>
+                  </span>
+                  <span className={cn("flex h-5 w-5 items-center justify-center rounded-full border", sel ? "border-accent bg-accent text-white" : "border-midnight-300")}>
+                    {sel && <Check className="h-3 w-3" strokeWidth={3} />}
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        <div className="px-4 pt-2">
+          <button
+            type="button"
+            disabled={selected.length === 0 || busy}
+            onClick={() => onAdd(selected)}
+            className="h-11 w-full rounded-xl bg-accent text-[15px] font-semibold text-white disabled:opacity-40"
+          >
+            {busy ? "Adding…" : `Add ${selected.length || ""}`.trim()}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

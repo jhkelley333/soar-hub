@@ -302,6 +302,13 @@ export function removeMember(threadId: string, userId: string): Promise<{ ok: tr
   });
 }
 
+export function addMembers(threadId: string, userIds: string[]): Promise<{ ok: true; added: number }> {
+  return req(`${FN}?action=addMembers`, {
+    method: "POST",
+    body: JSON.stringify({ threadId, userIds }),
+  });
+}
+
 export function markThreadRead(threadId: string): Promise<{ ok: true }> {
   return req(`${FN}?action=markRead`, {
     method: "POST",
