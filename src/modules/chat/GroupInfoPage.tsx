@@ -3,7 +3,7 @@
 // remove). Managed ("team") groups show their auto-sync note and hide
 // member removal / leave, since the roster is rule-driven.
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -14,6 +14,11 @@ import {
   MessageSquare,
   Phone,
   UserRound,
+  Users,
+  Camera,
+  Pencil,
+  Check,
+  X,
   Shield,
   ShieldOff,
   UserMinus,
@@ -33,6 +38,8 @@ import {
   leaveThread,
   setMemberRole,
   removeMember,
+  updateGroup,
+  uploadGroupAvatar,
   createThread,
   type GroupMember,
 } from "./api";
@@ -60,6 +67,10 @@ export function GroupInfoPage() {
 
   const [sheetFor, setSheetFor] = useState<GroupMember | null>(null);
   const [profileFor, setProfileFor] = useState<MyStoreTeamMember | null>(null);
+  const [editing, setEditing] = useState(false);
+  const [nameDraft, setNameDraft] = useState("");
+  const [descDraft, setDescDraft] = useState("");
+  const avatarInputRef = useRef<HTMLInputElement>(null);
 
   const q = useQuery({
     queryKey: ["chat", "group-info", threadId],
@@ -85,6 +96,37 @@ export function GroupInfoPage() {
     onSuccess: invalidate,
     onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't update mute.", "error"),
   });
+
+  const saveMut = useMutation({
+    mutationFn: () => updateGroup({ threadId, title: nameDraft.trim(), description: descDraft }),
+    onSuccess: () => {
+      invalidate();
+      setEditing(false);
+      toast.push("Group info updated.", "success");
+    },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't save.", "error"),
+  });
+
+  const avatarMut = useMutation({
+    mutationFn: async (file: File) => {
+      const url = await uploadGroupAvatar(threadId, file);
+      await updateGroup({ threadId, avatarUrl: url });
+    },
+    onSuccess: invalidate,
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't update photo.", "error"),
+  });
+
+  const startEdit = () => {
+    setNameDraft(q.data?.thread.title ?? "");
+    setDescDraft(q.data?.thread.description ?? "");
+    setEditing(true);
+  };
+
+  const onPickAvatar = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (file) avatarMut.mutate(file);
+  };
 
   const leaveMut = useMutation({
     mutationFn: () => leaveThread(threadId),
@@ -169,26 +211,112 @@ export function GroupInfoPage() {
           <ChevronLeft className="h-5 w-5" strokeWidth={2} />
         </button>
         <p className="flex-1 text-center text-[15px] font-semibold text-midnight-900">Group info</p>
-        <span className="w-8" />
+        {canManage && !editing ? (
+          <button
+            type="button"
+            onClick={startEdit}
+            className="rounded-full px-2 py-1 text-[14px] font-semibold text-accent hover:bg-surface-muted"
+          >
+            Edit
+          </button>
+        ) : (
+          <span className="w-10" />
+        )}
       </header>
 
       <div className="flex-1 overflow-y-auto">
         {/* Identity */}
         <div className="bg-surface px-5 py-6 text-center">
-          <h1 className="text-[19px] font-semibold text-midnight-900">{thread.title}</h1>
-          {thread.createdByName && (
-            <p className="mt-1 text-[12.5px] text-midnight-500">Created by {thread.createdByName}</p>
-          )}
-          {thread.description && (
-            <p className="mx-auto mt-3 max-w-sm text-[13.5px] leading-relaxed text-midnight-700">
-              {thread.description}
-            </p>
-          )}
-          {thread.managed && (
-            <div className="mx-auto mt-4 inline-flex items-center gap-1.5 rounded-full bg-frost-100 px-3 py-1 text-[12px] font-medium text-midnight-700">
-              <RefreshCw className="h-3.5 w-3.5" strokeWidth={2} />
-              Auto-managed team — membership stays in sync
+          {/* Photo */}
+          <div className="relative mx-auto h-20 w-20">
+            {thread.avatarUrl ? (
+              <img
+                src={thread.avatarUrl}
+                alt={thread.title}
+                className="h-20 w-20 rounded-2xl object-cover ring-1 ring-midnight-100"
+              />
+            ) : (
+              <div className="flex h-20 w-20 items-center justify-center rounded-2xl bg-frost-100 text-midnight-500">
+                <Users className="h-8 w-8" strokeWidth={1.75} />
+              </div>
+            )}
+            {canManage && (
+              <>
+                <input ref={avatarInputRef} type="file" accept="image/*" className="hidden" onChange={onPickAvatar} />
+                <button
+                  type="button"
+                  onClick={() => avatarInputRef.current?.click()}
+                  disabled={avatarMut.isPending}
+                  className="absolute -bottom-1 -right-1 flex h-8 w-8 items-center justify-center rounded-full bg-midnight-900 text-white ring-2 ring-surface disabled:opacity-50"
+                  aria-label="Change group photo"
+                >
+                  <Camera className="h-4 w-4" strokeWidth={2} />
+                </button>
+              </>
+            )}
+          </div>
+
+          {editing ? (
+            <div className="mx-auto mt-4 max-w-sm space-y-2 text-left">
+              <input
+                value={nameDraft}
+                onChange={(e) => setNameDraft(e.target.value)}
+                placeholder="Group name"
+                className="w-full rounded-lg border border-midnight-200 px-3 py-2 text-[15px] font-semibold text-midnight-900 focus:border-accent focus:outline-none"
+              />
+              <textarea
+                value={descDraft}
+                onChange={(e) => setDescDraft(e.target.value)}
+                rows={3}
+                placeholder="Description (optional)"
+                className="w-full resize-none rounded-lg border border-midnight-200 px-3 py-2 text-[14px] text-midnight-800 focus:border-accent focus:outline-none"
+              />
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setEditing(false)}
+                  className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-[13px] font-medium text-midnight-600 hover:bg-surface-muted"
+                >
+                  <X className="h-4 w-4" strokeWidth={2} /> Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => saveMut.mutate()}
+                  disabled={!nameDraft.trim() || saveMut.isPending}
+                  className="inline-flex items-center gap-1 rounded-lg bg-accent px-3 py-1.5 text-[13px] font-semibold text-white disabled:opacity-50"
+                >
+                  <Check className="h-4 w-4" strokeWidth={2.5} /> Save
+                </button>
+              </div>
             </div>
+          ) : (
+            <>
+              <h1 className="mt-4 text-[19px] font-semibold text-midnight-900">{thread.title}</h1>
+              {thread.createdByName && (
+                <p className="mt-1 text-[12.5px] text-midnight-500">Created by {thread.createdByName}</p>
+              )}
+              {thread.description ? (
+                <p className="mx-auto mt-3 max-w-sm text-[13.5px] leading-relaxed text-midnight-700">
+                  {thread.description}
+                </p>
+              ) : (
+                canManage && (
+                  <button
+                    type="button"
+                    onClick={startEdit}
+                    className="mx-auto mt-2 inline-flex items-center gap-1 text-[13px] font-medium text-accent"
+                  >
+                    <Pencil className="h-3.5 w-3.5" strokeWidth={2} /> Add a description
+                  </button>
+                )
+              )}
+              {thread.managed && (
+                <div className="mx-auto mt-4 inline-flex items-center gap-1.5 rounded-full bg-frost-100 px-3 py-1 text-[12px] font-medium text-midnight-700">
+                  <RefreshCw className="h-3.5 w-3.5" strokeWidth={2} />
+                  Auto-managed team — membership stays in sync
+                </div>
+              )}
+            </>
           )}
         </div>
 

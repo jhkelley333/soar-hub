@@ -739,7 +739,7 @@ export const handler = async (event) => {
 
       const { data: t } = await supa
         .from("chat_threads")
-        .select("id, kind, title, description, external, managed, created_by")
+        .select("id, kind, title, description, external, managed, created_by, avatar_url")
         .eq("id", threadId)
         .maybeSingle();
       if (!t) return respond(404, { ok: false, message: "Thread not found." });
@@ -816,6 +816,7 @@ export const handler = async (event) => {
           external: t.external,
           managed: t.managed,
           createdByName: t.created_by ? displayName(profById.get(t.created_by)) : null,
+          avatarUrl: t.avatar_url || null,
           myRole: meRow.role,
           muted: meRow.muted_until ? new Date(meRow.muted_until).getTime() > Date.now() : false,
         },
@@ -833,6 +834,29 @@ export const handler = async (event) => {
         .update({ muted_until: muted ? "2999-01-01T00:00:00Z" : null })
         .eq("thread_id", threadId)
         .eq("user_id", uid);
+      return respond(200, { ok: true });
+    }
+
+    // Edit group identity — name / description / photo. Owner & admins only.
+    if (action === "updateGroup" && event.httpMethod === "POST") {
+      const { threadId, title, description, avatarUrl } = JSON.parse(event.body || "{}");
+      if (!threadId) return respond(400, { ok: false, message: "threadId required." });
+      const { data: me } = await supa
+        .from("chat_thread_members")
+        .select("role")
+        .eq("thread_id", threadId)
+        .eq("user_id", uid)
+        .maybeSingle();
+      if (!me || !["owner", "admin"].includes(me.role)) {
+        return respond(403, { ok: false, message: "Only owners and admins can edit group info." });
+      }
+      const patch = {};
+      if (typeof title === "string" && title.trim()) patch.title = title.trim().slice(0, 200);
+      if (typeof description === "string") patch.description = description.trim().slice(0, 1000) || null;
+      if (typeof avatarUrl === "string") patch.avatar_url = avatarUrl || null;
+      if (Object.keys(patch).length) {
+        await supa.from("chat_threads").update(patch).eq("id", threadId);
+      }
       return respond(200, { ok: true });
     }
 
