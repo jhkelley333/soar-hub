@@ -10,6 +10,8 @@ How to verify:
 - Open Supabase dashboard → top-left project switcher → must read **Soar Hub v2**.
 - Spot-check: `select to_regclass('public.form_config');` returns `form_config` (not null) on the right project.
 
+**ALWAYS render migration SQL on screen.** Whenever a migration is created or changed, print its full SQL inline in the chat (a fenced ```sql block) so the user can copy it straight into the Supabase SQL editor — every time, without being asked. Sending the file too is fine, but the on-screen SQL is required. Follow it with a verification query.
+
 ## Branch convention
 
 Active feature branch: **`claude/paf-form`**. The user merges PRs from this branch into `main` manually via GitHub UI; there is no auto-merge automation.
