@@ -1,10 +1,15 @@
 import { useEffect } from "react";
 import { useAuth } from "./AuthProvider";
 import { useToast } from "@/shared/ui/Toaster";
+import { isStandalone } from "@/lib/push";
 
 // 2 hours of no activity = sign out. Activity = mouse, keyboard, touch,
 // scroll. JWT itself has a 24h cap on the server side, so this layer
 // only matters for "left their phone on the counter" cases.
+//
+// Skipped in the installed PWA: an app on someone's personal device is
+// treated as trusted (like a native app) and stays signed in. The 2-hour
+// rule still applies in browsers (incl. shared/desktop ones).
 const IDLE_MS = 2 * 60 * 60 * 1000;
 // How often to check the idle clock. 60s is plenty — fires within a
 // minute of the threshold.
@@ -24,6 +29,8 @@ export function useIdleLogout() {
 
   useEffect(() => {
     if (!session) return;
+    // Installed app = trusted personal device; no idle logout.
+    if (isStandalone()) return;
 
     let lastActivity = Date.now();
     let signedOut = false;
