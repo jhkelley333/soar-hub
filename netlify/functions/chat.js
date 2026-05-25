@@ -680,6 +680,184 @@ export const handler = async (event) => {
       return respond(200, { ok: true, threadId: thread.id });
     }
 
+    // Group Info payload: thread meta + members enriched with org role +
+    // store number + thread role. Caller must be a member.
+    if (action === "groupInfo" && event.httpMethod === "GET") {
+      const threadId = (event.queryStringParameters || {}).threadId;
+      if (!threadId) return respond(400, { ok: false, message: "threadId required." });
+
+      const { data: meRow } = await supa
+        .from("chat_thread_members")
+        .select("role, muted_until")
+        .eq("thread_id", threadId)
+        .eq("user_id", uid)
+        .maybeSingle();
+      if (!meRow) return respond(403, { ok: false, message: "Not a member of this thread." });
+
+      const { data: t } = await supa
+        .from("chat_threads")
+        .select("id, kind, title, description, external, managed, created_by")
+        .eq("id", threadId)
+        .maybeSingle();
+      if (!t) return respond(404, { ok: false, message: "Thread not found." });
+
+      const { data: memRows } = await supa
+        .from("chat_thread_members")
+        .select("user_id, role, joined_at")
+        .eq("thread_id", threadId);
+
+      const ids = (memRows || []).map((m) => m.user_id);
+      if (t.created_by) ids.push(t.created_by);
+      const { data: profs } = ids.length
+        ? await supa
+            .from("profiles")
+            .select("id, full_name, preferred_name, email, role, primary_store_id")
+            .in("id", Array.from(new Set(ids)))
+        : { data: [] };
+      const profById = new Map((profs || []).map((p) => [p.id, p]));
+
+      const storeIds = Array.from(
+        new Set((profs || []).map((p) => p.primary_store_id).filter(Boolean)),
+      );
+      const { data: stores } = storeIds.length
+        ? await supa.from("stores").select("id, number").in("id", storeIds)
+        : { data: [] };
+      const storeNumById = new Map((stores || []).map((s) => [s.id, s.number]));
+
+      const members = (memRows || [])
+        .map((m) => {
+          const p = profById.get(m.user_id);
+          return {
+            userId: m.user_id,
+            name: displayName(p),
+            initials: initialsOf(displayName(p)),
+            threadRole: m.role,
+            orgRole: p?.role || "",
+            storeNumber: p?.primary_store_id ? storeNumById.get(p.primary_store_id) || null : null,
+            joinedAt: m.joined_at,
+          };
+        })
+        .sort((a, b) => {
+          const rank = { owner: 0, admin: 1, member: 2 };
+          if (rank[a.threadRole] !== rank[b.threadRole]) return rank[a.threadRole] - rank[b.threadRole];
+          return a.name.localeCompare(b.name);
+        });
+
+      return respond(200, {
+        ok: true,
+        thread: {
+          id: t.id,
+          kind: t.kind,
+          title: t.title,
+          description: t.description || "",
+          external: t.external,
+          managed: t.managed,
+          createdByName: t.created_by ? displayName(profById.get(t.created_by)) : null,
+          myRole: meRow.role,
+          muted: meRow.muted_until ? new Date(meRow.muted_until).getTime() > Date.now() : false,
+        },
+        members,
+        adminsCount: members.filter((m) => m.threadRole === "owner" || m.threadRole === "admin").length,
+      });
+    }
+
+    // Mute / unmute the thread for the caller.
+    if (action === "setMute" && event.httpMethod === "POST") {
+      const { threadId, muted } = JSON.parse(event.body || "{}");
+      if (!threadId) return respond(400, { ok: false, message: "threadId required." });
+      await supa
+        .from("chat_thread_members")
+        .update({ muted_until: muted ? "2999-01-01T00:00:00Z" : null })
+        .eq("thread_id", threadId)
+        .eq("user_id", uid);
+      return respond(200, { ok: true });
+    }
+
+    // Leave a thread (caller removes self). Blocked on managed groups — the
+    // roster would just re-add them; they should mute instead.
+    if (action === "leave" && event.httpMethod === "POST") {
+      const { threadId } = JSON.parse(event.body || "{}");
+      if (!threadId) return respond(400, { ok: false, message: "threadId required." });
+      const { data: t } = await supa
+        .from("chat_threads")
+        .select("managed")
+        .eq("id", threadId)
+        .maybeSingle();
+      if (t?.managed) {
+        return respond(400, { ok: false, message: "This is a managed team — mute it instead of leaving." });
+      }
+      await supa.from("chat_thread_members").delete().eq("thread_id", threadId).eq("user_id", uid);
+      return respond(200, { ok: true });
+    }
+
+    // Promote / demote a member (owner & admins only; can't touch the owner).
+    if (action === "setMemberRole" && event.httpMethod === "POST") {
+      const { threadId, userId, role } = JSON.parse(event.body || "{}");
+      if (!threadId || !userId || !["admin", "member"].includes(role)) {
+        return respond(400, { ok: false, message: "threadId, userId, role(admin|member) required." });
+      }
+      const { data: me } = await supa
+        .from("chat_thread_members")
+        .select("role")
+        .eq("thread_id", threadId)
+        .eq("user_id", uid)
+        .maybeSingle();
+      if (!me || !["owner", "admin"].includes(me.role)) {
+        return respond(403, { ok: false, message: "Only owners and admins can change roles." });
+      }
+      const { data: target } = await supa
+        .from("chat_thread_members")
+        .select("role")
+        .eq("thread_id", threadId)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (!target) return respond(404, { ok: false, message: "Member not found." });
+      if (target.role === "owner") {
+        return respond(400, { ok: false, message: "The owner's role can't be changed." });
+      }
+      await supa
+        .from("chat_thread_members")
+        .update({ role })
+        .eq("thread_id", threadId)
+        .eq("user_id", userId);
+      return respond(200, { ok: true });
+    }
+
+    // Remove a member (owner & admins only). Blocked on managed groups —
+    // the roster would re-add them; deactivate/transfer in My Team instead.
+    if (action === "removeMember" && event.httpMethod === "POST") {
+      const { threadId, userId } = JSON.parse(event.body || "{}");
+      if (!threadId || !userId) return respond(400, { ok: false, message: "threadId and userId required." });
+      const { data: t } = await supa
+        .from("chat_threads")
+        .select("managed")
+        .eq("id", threadId)
+        .maybeSingle();
+      if (t?.managed) {
+        return respond(400, { ok: false, message: "Managed-team membership is automatic — change it in My Team." });
+      }
+      const { data: me } = await supa
+        .from("chat_thread_members")
+        .select("role")
+        .eq("thread_id", threadId)
+        .eq("user_id", uid)
+        .maybeSingle();
+      if (!me || !["owner", "admin"].includes(me.role)) {
+        return respond(403, { ok: false, message: "Only owners and admins can remove members." });
+      }
+      const { data: target } = await supa
+        .from("chat_thread_members")
+        .select("role")
+        .eq("thread_id", threadId)
+        .eq("user_id", userId)
+        .maybeSingle();
+      if (target?.role === "owner") {
+        return respond(400, { ok: false, message: "The owner can't be removed." });
+      }
+      await supa.from("chat_thread_members").delete().eq("thread_id", threadId).eq("user_id", userId);
+      return respond(200, { ok: true });
+    }
+
     if (action === "markRead" && event.httpMethod === "POST") {
       const { threadId } = JSON.parse(event.body || "{}");
       if (!threadId) return respond(400, { ok: false, message: "threadId required." });

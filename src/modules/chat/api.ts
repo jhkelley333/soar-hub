@@ -151,6 +151,63 @@ export function openScopedThread(
   });
 }
 
+export interface GroupMember {
+  userId: string;
+  name: string;
+  initials: string;
+  threadRole: "owner" | "admin" | "member";
+  orgRole: string;
+  storeNumber: string | null;
+  joinedAt: string | null;
+}
+
+export interface GroupInfoResponse {
+  ok: true;
+  thread: {
+    id: string;
+    kind: ChatThread["kind"];
+    title: string;
+    description: string;
+    external: boolean;
+    managed: boolean;
+    createdByName: string | null;
+    myRole: "owner" | "admin" | "member";
+    muted: boolean;
+  };
+  members: GroupMember[];
+  adminsCount: number;
+}
+
+export function fetchGroupInfo(threadId: string): Promise<GroupInfoResponse> {
+  return req(`${FN}?action=groupInfo&threadId=${encodeURIComponent(threadId)}`);
+}
+
+export function setThreadMute(threadId: string, muted: boolean): Promise<{ ok: true }> {
+  return req(`${FN}?action=setMute`, { method: "POST", body: JSON.stringify({ threadId, muted }) });
+}
+
+export function leaveThread(threadId: string): Promise<{ ok: true }> {
+  return req(`${FN}?action=leave`, { method: "POST", body: JSON.stringify({ threadId }) });
+}
+
+export function setMemberRole(
+  threadId: string,
+  userId: string,
+  role: "admin" | "member",
+): Promise<{ ok: true }> {
+  return req(`${FN}?action=setMemberRole`, {
+    method: "POST",
+    body: JSON.stringify({ threadId, userId, role }),
+  });
+}
+
+export function removeMember(threadId: string, userId: string): Promise<{ ok: true }> {
+  return req(`${FN}?action=removeMember`, {
+    method: "POST",
+    body: JSON.stringify({ threadId, userId }),
+  });
+}
+
 export function markThreadRead(threadId: string): Promise<{ ok: true }> {
   return req(`${FN}?action=markRead`, {
     method: "POST",

@@ -29,6 +29,7 @@ export function GroupThread({
 
   const { thread, members, users, messages } = data;
   const isGroup = thread.kind === "group";
+  const isGroupy = thread.kind === "group"; // has a Group Info screen
   const myRole = members.find((m) => m.user_id === currentUserId)?.role;
   const readOnly = thread.kind === "broadcast" && myRole !== "owner";
 
@@ -78,16 +79,25 @@ export function GroupThread({
         <button type="button" onClick={() => navigate("/chat")} className="rounded-full p-1.5 text-midnight-600 hover:bg-surface-muted" aria-label="Back to inbox">
           <ChevronLeft className="h-5 w-5" strokeWidth={2} />
         </button>
-        <div className="min-w-0 flex-1 text-center">
+        <button
+          type="button"
+          onClick={() => isGroupy && navigate(`/chat/${threadId}/info`)}
+          disabled={!isGroupy}
+          className="min-w-0 flex-1 text-center disabled:cursor-default"
+        >
           <p className="truncate text-[15px] font-semibold text-midnight-900">{headerTitle}</p>
           <p className="truncate text-[11.5px] text-midnight-500">{headerSubtitle}</p>
-        </div>
+        </button>
         <button type="button" className="rounded-full p-1.5 text-midnight-500 hover:bg-surface-muted" aria-label="Search in thread">
           <Search className="h-[18px] w-[18px]" strokeWidth={2} />
         </button>
-        <button type="button" onClick={() => toast.push("Thread options — coming next.", "info")} className="rounded-full p-1.5 text-midnight-500 hover:bg-surface-muted" aria-label="Thread options">
-          <MoreHorizontal className="h-[18px] w-[18px]" strokeWidth={2} />
-        </button>
+        {isGroupy ? (
+          <button type="button" onClick={() => navigate(`/chat/${threadId}/info`)} className="rounded-full p-1.5 text-midnight-500 hover:bg-surface-muted" aria-label="Group info">
+            <MoreHorizontal className="h-[18px] w-[18px]" strokeWidth={2} />
+          </button>
+        ) : (
+          <span className="w-8" />
+        )}
       </header>
 
       {thread.external && <ExternalBanner />}
