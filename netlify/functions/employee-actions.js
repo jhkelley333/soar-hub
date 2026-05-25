@@ -41,6 +41,12 @@ const VALID_TRAINING_DAYS = new Set([
   "Sunday",
 ]);
 
+// PTO eligibility. GMs are tracked by days (no dollar amount); the hourly
+// positions are tracked by hours with a dollar amount + the weekly cap.
+const VALID_POSITIONS = new Set(["GM", "Associate Manager", "First Assistant"]);
+const MAX_HOURS_PER_DAY = 8;
+const WEEKLY_HOUR_CAP = 40;
+
 function admin() {
   if (!SUPABASE_URL || !SERVICE_KEY) {
     throw new Error("employee-actions env vars not configured");
@@ -485,32 +491,126 @@ async function submitPto(supa, user, body) {
   const scopeErr = await assertStoreInScope(supa, user, storeNumber);
   if (scopeErr) return scopeErr;
 
-  const gmName = sanitizeText(body?.gm_name, 200);
-  if (!gmName) return { error: "GM Name is required.", status: 400 };
+  const employeeName = sanitizeText(body?.employee_name, 200);
+  if (!employeeName) return { error: "Employee Name is required.", status: 400 };
 
-  const startDate = sanitizeDateInput(body?.pto_start_date);
-  if (!startDate) return { error: "PTO Start Date is required (YYYY-MM-DD).", status: 400 };
-  const endDate = sanitizeDateInput(body?.pto_end_date);
-  if (!endDate) return { error: "PTO End Date is required (YYYY-MM-DD).", status: 400 };
-  if (endDate < startDate) {
-    return { error: "PTO End Date cannot be before the Start Date.", status: 400 };
+  const position = sanitizeText(body?.position, 60);
+  if (!VALID_POSITIONS.has(position)) {
+    return {
+      error: "Select a valid position (GM, Associate Manager, or First Assistant).",
+      status: 400,
+    };
   }
 
-  const daysUsed = num(body?.days_used);
-  if (daysUsed <= 0) return { error: "How Many Days PTO Used is required.", status: 400 };
-
-  const insertRow = {
+  const sendCopy = body?.send_copy === true || body?.send_copy === "true";
+  const base = {
     submitter_id: user.id,
     submitter_email: user.email,
     submitter_name: user.full_name ?? null,
     store_number: storeNumber,
-    gm_name: gmName,
-    pto_start_date: startDate,
-    pto_end_date: endDate,
-    days_used: daysUsed,
-    send_copy: body?.send_copy === true || body?.send_copy === "true",
+    employee_name: employeeName,
+    position,
+    send_copy: sendCopy,
     status: "Submitted",
   };
+
+  let insertRow;
+  let emailText;
+  let auditDetail;
+
+  if (position === "GM") {
+    // GM: tracked by days, no dollar amount.
+    const startDate = sanitizeDateInput(body?.pto_start_date);
+    if (!startDate) return { error: "PTO Start Date is required (YYYY-MM-DD).", status: 400 };
+    const endDate = sanitizeDateInput(body?.pto_end_date);
+    if (!endDate) return { error: "PTO End Date is required (YYYY-MM-DD).", status: 400 };
+    if (endDate < startDate) {
+      return { error: "PTO End Date cannot be before the Start Date.", status: 400 };
+    }
+    const daysUsed = num(body?.days_used);
+    if (daysUsed <= 0) return { error: "How Many Days PTO Used is required.", status: 400 };
+
+    insertRow = {
+      ...base,
+      pto_start_date: startDate,
+      pto_end_date: endDate,
+      days_used: daysUsed,
+      vacation_days: [],
+    };
+    auditDetail = { store_number: storeNumber, position, days_used: daysUsed };
+    emailText =
+      `A PTO request was submitted by ${displayName(user)}.\n\n` +
+      `Store: ${storeNumber}\n` +
+      `Employee: ${employeeName} (${position})\n` +
+      `Dates: ${startDate} → ${endDate}\n` +
+      `Days used: ${daysUsed}\n\n`;
+  } else {
+    // Associate Manager / First Assistant: tracked by hours, capped at
+    // MAX_HOURS_PER_DAY per day, with a dollar amount. Vacation hours plus
+    // hours worked cannot exceed WEEKLY_HOUR_CAP in the week (hard block).
+    const wage = num(body?.hourly_wage);
+    if (wage <= 0) return { error: "Hourly Wage is required.", status: 400 };
+
+    const rawDays = Array.isArray(body?.vacation_days) ? body.vacation_days : [];
+    if (!rawDays.length) {
+      return { error: "Add at least one vacation day with hours.", status: 400 };
+    }
+    const vacationDays = [];
+    for (const d of rawDays) {
+      const date = sanitizeDateInput(d?.date);
+      if (!date) return { error: "Each vacation day needs a valid date.", status: 400 };
+      const hours = num(d?.hours);
+      if (hours <= 0) return { error: `Enter hours for ${date}.`, status: 400 };
+      if (hours > MAX_HOURS_PER_DAY) {
+        return {
+          error: `A vacation day can't exceed ${MAX_HOURS_PER_DAY} hours (${date}).`,
+          status: 400,
+        };
+      }
+      vacationDays.push({ date, hours: round2(hours), amount: round2(hours * wage) });
+    }
+    const vacationHours = round2(vacationDays.reduce((s, e) => s + e.hours, 0));
+    const amount = round2(vacationDays.reduce((s, e) => s + e.amount, 0));
+
+    const hoursWorked = num(body?.hours_worked);
+    if (round2(vacationHours + hoursWorked) > WEEKLY_HOUR_CAP) {
+      return {
+        error: `Vacation (${vacationHours}h) + hours worked (${hoursWorked}h) exceeds the ${WEEKLY_HOUR_CAP}-hour weekly limit.`,
+        status: 400,
+      };
+    }
+
+    const dates = vacationDays.map((e) => e.date).sort();
+    insertRow = {
+      ...base,
+      pto_start_date: dates[0],
+      pto_end_date: dates[dates.length - 1],
+      hourly_wage: wage,
+      vacation_days: vacationDays,
+      vacation_hours: vacationHours,
+      hours_worked: hoursWorked,
+      amount,
+    };
+    auditDetail = {
+      store_number: storeNumber,
+      position,
+      vacation_hours: vacationHours,
+      hours_worked: hoursWorked,
+      amount,
+    };
+    emailText =
+      `A PTO request was submitted by ${displayName(user)}.\n\n` +
+      `Store: ${storeNumber}\n` +
+      `Employee: ${employeeName} (${position})\n` +
+      `Hourly wage: $${wage.toFixed(2)}\n` +
+      `Vacation days:\n` +
+      vacationDays
+        .map((e) => `  • ${e.date}: ${e.hours} hrs = $${e.amount.toFixed(2)}`)
+        .join("\n") +
+      `\n\nTotal vacation: ${vacationHours} hrs = $${amount.toFixed(2)}\n` +
+      `Hours worked this week: ${hoursWorked} hrs\n` +
+      `Week total (vacation + worked): ${round2(vacationHours + hoursWorked)} / ${WEEKLY_HOUR_CAP} hrs\n\n`;
+  }
 
   const { data: created, error } = await supa
     .from("pto_requests")
@@ -525,22 +625,16 @@ async function submitPto(supa, user, body) {
     actor_id: user.id,
     actor_email: user.email,
     action: "submit",
-    detail: { store_number: storeNumber, gm_name: gmName, days_used: daysUsed },
+    detail: auditDetail,
   });
 
   const link = `${appBaseUrl()}/employee-actions`;
   await notifyLeadership(supa, {
     storeNumber,
-    sendCopy: insertRow.send_copy,
+    sendCopy,
     submitterEmail: user.email,
-    subject: `PTO Request — ${gmName} (Store ${storeNumber})`,
-    text:
-      `A PTO request was submitted by ${displayName(user)}.\n\n` +
-      `Store: ${storeNumber}\n` +
-      `GM: ${gmName}\n` +
-      `Dates: ${startDate} → ${endDate}\n` +
-      `Days used: ${daysUsed}\n\n` +
-      `Review it here: ${link}`,
+    subject: `PTO Request — ${employeeName} (Store ${storeNumber})`,
+    text: emailText + `Review it here: ${link}`,
   });
 
   return { ok: true, id: created.id, status: insertRow.status };
