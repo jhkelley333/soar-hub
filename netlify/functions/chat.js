@@ -754,7 +754,9 @@ export const handler = async (event) => {
       const { data: profs } = ids.length
         ? await supa
             .from("profiles")
-            .select("id, full_name, preferred_name, email, role, primary_store_id")
+            .select(
+              "id, full_name, preferred_name, email, role, primary_store_id, phone, is_active, birthday, show_birthday, profile_photo_url",
+            )
             .in("id", Array.from(new Set(ids)))
         : { data: [] };
       const profById = new Map((profs || []).map((p) => [p.id, p]));
@@ -778,6 +780,24 @@ export const handler = async (event) => {
             orgRole: p?.role || "",
             storeNumber: p?.primary_store_id ? storeNumById.get(p.primary_store_id) || null : null,
             joinedAt: m.joined_at,
+            phone: p?.phone || null,
+            // Full profile object so the client can open the shared
+            // MemberProfileDrawer (Stores / history / PAFs) without a refetch.
+            profile: p
+              ? {
+                  id: p.id,
+                  email: p.email,
+                  phone: p.phone ?? null,
+                  full_name: p.full_name ?? null,
+                  preferred_name: p.preferred_name ?? null,
+                  role: p.role,
+                  primary_store_id: p.primary_store_id ?? null,
+                  is_active: p.is_active ?? true,
+                  birthday: p.birthday ?? null,
+                  show_birthday: p.show_birthday ?? false,
+                  profile_photo_url: p.profile_photo_url ?? null,
+                }
+              : null,
           };
         })
         .sort((a, b) => {
