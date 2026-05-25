@@ -21,6 +21,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Outlet } from "react-router-dom";
 import { Sidebar } from "@/app/Sidebar";
 import { MobileTabBar } from "@/app/MobileTabBar";
+import { PushPrimer } from "@/app/PushPrimer";
 import { useIdleLogout } from "@/auth/useIdleLogout";
 import { useAuth } from "@/auth/AuthProvider";
 import { LaunchSplash } from "@/auth/LaunchSplash";
@@ -136,6 +137,10 @@ export function AppShell() {
       {/* Bottom-tab nav — mobile only, lives as a real flex row in the
           column above so content can never scroll past it. */}
       <MobileTabBar onMoreClick={() => setMoreOpen(true)} />
+
+      {/* First-run push opt-in. Self-gates on platform + prior dismissal;
+          held back until the launch splash clears. */}
+      {!splash.active && <PushPrimer />}
 
       {/* First-load personalized launch splash, fades into the home. */}
       {splash.active && (
