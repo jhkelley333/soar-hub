@@ -147,6 +147,18 @@ function num(v) {
   const n = parseFloat(String(v ?? "").replace(/[^0-9.\-]/g, ""));
   return Number.isFinite(n) ? Math.max(0, n) : 0;
 }
+function round2(n) {
+  return Math.round((Number(n) || 0) * 100) / 100;
+}
+// "HH:MM" (24h) -> minutes since midnight, or null if malformed.
+function parseTimeToMinutes(v) {
+  const m = /^(\d{1,2}):(\d{2})$/.exec(String(v ?? "").trim());
+  if (!m) return null;
+  const h = parseInt(m[1], 10);
+  const min = parseInt(m[2], 10);
+  if (h > 23 || min > 59) return null;
+  return h * 60 + min;
+}
 function displayName(p) {
   return p?.preferred_name || p?.full_name || p?.email || "";
 }
@@ -361,10 +373,45 @@ async function submitTraining(supa, user, body) {
   const trainingType = sanitizeText(body?.training_type, 120);
   if (!trainingType) return { error: "Training type is required.", status: 400 };
 
-  const days = Array.isArray(body?.training_days)
-    ? body.training_days.map((d) => sanitizeText(d, 12)).filter((d) => VALID_TRAINING_DAYS.has(d))
-    : [];
-  if (!days.length) return { error: "Select at least one of the first three training days.", status: 400 };
+  const wage = num(body?.hourly_wage);
+
+  // First three training days: each entry carries its own start/end time.
+  // Hours and amount are recomputed server-side ((end - start) hours x wage)
+  // so the stored per-day amounts + total are authoritative regardless of
+  // what the client sent.
+  const rawDays = Array.isArray(body?.training_days) ? body.training_days : [];
+  if (!rawDays.length) {
+    return { error: "Add at least one training day with a start and end time.", status: 400 };
+  }
+  if (rawDays.length > 3) {
+    return { error: "Enter at most three training days.", status: 400 };
+  }
+  const trainingDays = [];
+  for (const d of rawDays) {
+    const day = sanitizeText(d?.day, 12);
+    if (!VALID_TRAINING_DAYS.has(day)) {
+      return { error: "Each training day must be a valid day of the week.", status: 400 };
+    }
+    const startMin = parseTimeToMinutes(d?.start_time);
+    const endMin = parseTimeToMinutes(d?.end_time);
+    if (startMin == null || endMin == null) {
+      return { error: `Enter a start and end time for ${day}.`, status: 400 };
+    }
+    if (endMin <= startMin) {
+      return { error: `${day}: end time must be after the start time.`, status: 400 };
+    }
+    const hours = round2((endMin - startMin) / 60);
+    trainingDays.push({
+      day,
+      start_time: sanitizeText(d.start_time, 5),
+      end_time: sanitizeText(d.end_time, 5),
+      hours,
+      amount: round2(hours * wage),
+    });
+  }
+  const requestedAmount = round2(
+    trainingDays.reduce((sum, e) => sum + e.amount, 0)
+  );
 
   const insertRow = {
     submitter_id: user.id,
@@ -372,12 +419,12 @@ async function submitTraining(supa, user, body) {
     submitter_name: user.full_name ?? null,
     store_number: storeNumber,
     employee_name: employeeName,
-    hourly_wage: num(body?.hourly_wage),
+    hourly_wage: wage,
     training_type: trainingType,
     training_other: sanitizeText(body?.training_other, 500) || null,
     start_date: sanitizeDateInput(body?.start_date),
-    requested_amount: num(body?.requested_amount),
-    training_days: days,
+    requested_amount: requestedAmount,
+    training_days: trainingDays,
     send_copy: body?.send_copy === true || body?.send_copy === "true",
     status: "Submitted",
   };
@@ -409,10 +456,16 @@ async function submitTraining(supa, user, body) {
       `Store: ${storeNumber}\n` +
       `Employee: ${employeeName}\n` +
       `Training: ${trainingType}${insertRow.training_other ? ` (${insertRow.training_other})` : ""}\n` +
-      `Hourly wage: $${insertRow.hourly_wage.toFixed(2)}\n` +
-      `Requested credit: $${insertRow.requested_amount.toFixed(2)}\n` +
-      `Start date: ${insertRow.start_date ?? "—"}\n` +
-      `First three training days: ${days.join(", ")}\n\n` +
+      `Hourly wage: $${wage.toFixed(2)}\n` +
+      `Start date: ${insertRow.start_date ?? "—"}\n\n` +
+      `Training days:\n` +
+      trainingDays
+        .map(
+          (e) =>
+            `  • ${e.day}: ${e.start_time}–${e.end_time} (${e.hours} hrs) = $${e.amount.toFixed(2)}`
+        )
+        .join("\n") +
+      `\n\nRequested credit (total): $${requestedAmount.toFixed(2)}\n\n` +
       `Review it here: ${link}`,
   });
 

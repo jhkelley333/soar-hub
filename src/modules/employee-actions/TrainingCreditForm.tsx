@@ -6,15 +6,20 @@ import { Badge } from "@/shared/ui/Badge";
 import { useToast } from "@/shared/ui/Toaster";
 import { fetchMyStores, submitTrainingCredit } from "./api";
 import {
+  calcDayHours,
   CheckboxRow,
   DateField,
-  DayPicker,
   NumberField,
   SelectField,
   StoreSelect,
   TextField,
+  TrainingDaysEditor,
 } from "./formFields";
-import type { TrainingCreditInput } from "./types";
+import type { TrainingCreditInput, TrainingDayInput } from "./types";
+
+function fmtUSD(n: number): string {
+  return (Number(n) || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
+}
 
 const TRAINING_TYPES = [
   "Onboarding / New Hire",
@@ -30,8 +35,7 @@ interface State {
   training_type: string;
   training_other: string;
   start_date: string;
-  requested_amount: string;
-  training_days: string[];
+  training_days: TrainingDayInput[];
   send_copy: boolean;
 }
 
@@ -42,7 +46,6 @@ const EMPTY: State = {
   training_type: "",
   training_other: "",
   start_date: "",
-  requested_amount: "",
   training_days: [],
   send_copy: false,
 };
@@ -85,9 +88,14 @@ export function TrainingCreditForm({ onSubmitted }: { onSubmitted: () => void })
     if (!state.hourly_wage.trim()) return setError("Hourly Wage is required.");
     if (!state.training_type.trim()) return setError("Please pick what the request is for.");
     if (!state.start_date.trim()) return setError("Start Date is required.");
-    if (!state.requested_amount.trim()) return setError("Requested Credit Amount is required.");
     if (!state.training_days.length)
-      return setError("Select the first three training days.");
+      return setError("Add at least one of the first three training days.");
+    for (const d of state.training_days) {
+      if (!d.start_time || !d.end_time)
+        return setError(`Enter a start and end time for ${d.day}.`);
+      if (calcDayHours(d.start_time, d.end_time) <= 0)
+        return setError(`${d.day}: end time must be after the start time.`);
+    }
 
     submit.mutate({
       store_number: state.store_number,
@@ -96,11 +104,16 @@ export function TrainingCreditForm({ onSubmitted }: { onSubmitted: () => void })
       training_type: state.training_type,
       training_other: state.training_other,
       start_date: state.start_date,
-      requested_amount: state.requested_amount,
       training_days: state.training_days,
       send_copy: state.send_copy,
     });
   }
+
+  const wage = Number(state.hourly_wage) || 0;
+  const total = state.training_days.reduce(
+    (sum, d) => sum + calcDayHours(d.start_time, d.end_time) * wage,
+    0
+  );
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
@@ -163,20 +176,13 @@ export function TrainingCreditForm({ onSubmitted }: { onSubmitted: () => void })
               onChange={(v) => set("start_date", v)}
               helpText="Date the team member will complete Day 1 orientation / first position."
             />
-            <NumberField
-              id="tc-amount"
-              label="Requested Credit Amount ($$$)"
-              required
-              prefix="$"
-              value={state.requested_amount}
-              onChange={(v) => set("requested_amount", v)}
-            />
-            <DayPicker
+            <TrainingDaysEditor
               label="First Three Training Days"
               required
               value={state.training_days}
               onChange={(v) => set("training_days", v)}
-              helpText="Choose the first three days of training. Choose all that apply."
+              wage={wage}
+              helpText="Pick up to three days. Enter each day's start and end time — the credit per day is the hours worked times the hourly wage."
             />
           </div>
 
@@ -193,15 +199,25 @@ export function TrainingCreditForm({ onSubmitted }: { onSubmitted: () => void })
 
       <Card>
         <CardBody>
-          <div className="flex flex-wrap items-center justify-end gap-3">
-            {error && (
-              <Badge tone="danger" className="max-w-xs whitespace-normal">
-                {error}
-              </Badge>
-            )}
-            <Button type="submit" disabled={submit.isPending}>
-              {submit.isPending ? "Submitting…" : "Submit request"}
-            </Button>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <div className="text-xs uppercase tracking-wide text-zinc-500">
+                Requested credit amount
+              </div>
+              <div className="text-2xl font-semibold tracking-tight text-midnight tabular-nums">
+                {fmtUSD(total)}
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {error && (
+                <Badge tone="danger" className="max-w-xs whitespace-normal">
+                  {error}
+                </Badge>
+              )}
+              <Button type="submit" disabled={submit.isPending}>
+                {submit.isPending ? "Submitting…" : "Submit request"}
+              </Button>
+            </div>
           </div>
         </CardBody>
       </Card>
