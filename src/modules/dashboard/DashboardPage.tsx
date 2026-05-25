@@ -15,6 +15,7 @@ import { BirthdayCelebration } from "@/modules/my-stores/BirthdayCelebration";
 import { fetchCallerStores, fetchRecentMessages, fetchStats } from "@/modules/work-orders-v2/api";
 import type { RecentMessage } from "@/modules/work-orders-v2/types";
 import { supabase } from "@/lib/supabase";
+import { isStandalone } from "@/lib/push";
 import { formatPhoneForDisplay } from "@/lib/phone";
 import { OpenWorkOrdersWidget } from "./OpenWorkOrdersWidget";
 import { MobileHome } from "./MobileHome";
@@ -124,17 +125,16 @@ export function DashboardPage() {
         ? "warning"
         : "neutral";
 
+  // Installed app (standalone) → the app-style home (Today / Quick
+  // Actions). Browsers — phone or desktop, any width — get the full
+  // responsive dashboard below; it already reflows on narrow screens,
+  // which is the mobile experience that worked well before the PWA.
+  if (isStandalone()) {
+    return <MobileHome />;
+  }
+
   return (
     <>
-      {/* Mobile (< lg): a clean launcher into the four design-import
-          screens. Replaces the desktop grid-of-stats layout when the
-          screen is too narrow to show it without crowding. */}
-      <div className="lg:hidden">
-        <MobileHome />
-      </div>
-
-      {/* Desktop (lg+): the existing dashboard, unchanged. */}
-      <div className="hidden lg:block">
         <PageHeader
           title={greeting}
           description="What needs your attention today."
@@ -186,7 +186,6 @@ export function DashboardPage() {
         {profile && WO_ROLES.has(profile.role) && <RecentTicketMessagesWidget />}
 
         <BirthdayCelebration />
-      </div>
     </>
   );
 }
