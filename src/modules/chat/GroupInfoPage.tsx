@@ -19,10 +19,13 @@ import {
   Pencil,
   Check,
   X,
+  Search,
+  Paperclip,
   Shield,
   ShieldOff,
   UserMinus,
   LogOut,
+  type LucideIcon,
 } from "lucide-react";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
@@ -71,6 +74,7 @@ export function GroupInfoPage() {
   const [nameDraft, setNameDraft] = useState("");
   const [descDraft, setDescDraft] = useState("");
   const avatarInputRef = useRef<HTMLInputElement>(null);
+  const filesRef = useRef<HTMLDivElement>(null);
 
   const q = useQuery({
     queryKey: ["chat", "group-info", threadId],
@@ -320,43 +324,50 @@ export function GroupInfoPage() {
           )}
         </div>
 
-        {/* Mute */}
-        <div className="mt-3 bg-surface">
-          <button
-            type="button"
-            onClick={() => muteMut.mutate(!thread.muted)}
+        {/* Tiles: Mute / Search / Files */}
+        <div className="mt-3 grid grid-cols-3 gap-2 px-4">
+          <Tile
+            Icon={thread.muted ? BellOff : Bell}
+            label="Mute"
+            value={thread.muted ? "On" : "Off"}
+            active={thread.muted}
             disabled={muteMut.isPending}
-            className="flex w-full items-center gap-3 px-5 py-3.5 text-left disabled:opacity-50"
-          >
-            {thread.muted ? (
-              <BellOff className="h-5 w-5 text-midnight-500" strokeWidth={2} />
-            ) : (
-              <Bell className="h-5 w-5 text-midnight-500" strokeWidth={2} />
-            )}
-            <span className="flex-1 text-[14.5px] text-midnight-900">Mute notifications</span>
-            <span className={cn("text-[13px] font-medium", thread.muted ? "text-accent" : "text-midnight-400")}>
-              {thread.muted ? "On" : "Off"}
-            </span>
-          </button>
+            onClick={() => muteMut.mutate(!thread.muted)}
+          />
+          <Tile
+            Icon={Search}
+            label="Search"
+            onClick={() => navigate(`/chat/${threadId}`, { state: { openSearch: true } })}
+          />
+          <Tile
+            Icon={Paperclip}
+            label="Files"
+            value={files.length > 0 ? String(files.length) : undefined}
+            onClick={() =>
+              filesRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })
+            }
+          />
         </div>
 
         {/* Files */}
-        {files.length > 0 && (
-          <div className="mt-3">
-            <p className="px-5 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-midnight-400">
-              Files · {files.length}
-            </p>
-            <div className="space-y-2 bg-surface px-5 py-3">
-              {files.map((f) => (
+        <div ref={filesRef} className="mt-3 scroll-mt-16">
+          <p className="px-5 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-midnight-400">
+            Files{files.length > 0 ? ` · ${files.length}` : ""}
+          </p>
+          <div className="space-y-2 bg-surface px-5 py-3">
+            {files.length === 0 ? (
+              <p className="py-1 text-[13px] text-midnight-400">No files shared yet.</p>
+            ) : (
+              files.map((f) => (
                 <AttachmentView
                   key={f.id}
                   att={{ id: f.id, path: f.path, name: f.name, mime: f.mime, size: f.size }}
                   sent={false}
                 />
-              ))}
-            </div>
+              ))
+            )}
           </div>
-        )}
+        </div>
 
         {/* Members */}
         <div className="mt-3">
@@ -452,6 +463,40 @@ export function GroupInfoPage() {
         onClose={() => setProfileFor(null)}
       />
     </div>
+  );
+}
+
+function Tile({
+  Icon,
+  label,
+  value,
+  active,
+  disabled,
+  onClick,
+}: {
+  Icon: LucideIcon;
+  label: string;
+  value?: string;
+  active?: boolean;
+  disabled?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={cn(
+        "flex flex-col items-center gap-1 rounded-xl bg-surface py-3 ring-1 transition disabled:opacity-50",
+        active ? "ring-accent" : "ring-midnight-100 hover:ring-midnight-300",
+      )}
+    >
+      <Icon className={cn("h-5 w-5", active ? "text-accent" : "text-midnight-600")} strokeWidth={2} />
+      <span className="text-[12px] font-medium text-midnight-700">{label}</span>
+      {value !== undefined && (
+        <span className={cn("text-[11px]", active ? "text-accent" : "text-midnight-400")}>{value}</span>
+      )}
+    </button>
   );
 }
 

@@ -2,11 +2,12 @@
 // Renders from the fetched thread payload; the composer posts via the
 // send mutation and refetches.
 
-import { useRef, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, Search, MoreHorizontal, Paperclip, ArrowUp } from "lucide-react";
+import { ChevronLeft, Search, MoreHorizontal, Paperclip, ArrowUp, X } from "lucide-react";
 import { useToast } from "@/shared/ui/Toaster";
+import { cn } from "@/lib/cn";
 import { MessageBubble } from "./MessageBubble";
 import { SystemMessage } from "./SystemMessage";
 import { MembersStrip, type StripMember } from "./MembersStrip";
@@ -23,10 +24,17 @@ export function GroupThread({
   currentUserId: string;
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
   const toast = useToast();
   const qc = useQueryClient();
   const [draft, setDraft] = useState("");
+  const [searchQ, setSearchQ] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Open search when arrived from the Group Info "Search" tile.
+  useEffect(() => {
+    if ((location.state as { openSearch?: boolean } | null)?.openSearch) setSearchQ("");
+  }, [location.state]);
 
   const { thread, members, users, messages } = data;
   const isGroup = thread.kind === "group";
@@ -109,7 +117,15 @@ export function GroupThread({
           <p className="truncate text-[15px] font-semibold text-midnight-900">{headerTitle}</p>
           <p className="truncate text-[11.5px] text-midnight-500">{headerSubtitle}</p>
         </button>
-        <button type="button" className="rounded-full p-1.5 text-midnight-500 hover:bg-surface-muted" aria-label="Search in thread">
+        <button
+          type="button"
+          onClick={() => setSearchQ((s) => (s === null ? "" : null))}
+          className={cn(
+            "rounded-full p-1.5 hover:bg-surface-muted",
+            searchQ !== null ? "text-accent" : "text-midnight-500",
+          )}
+          aria-label="Search in thread"
+        >
           <Search className="h-[18px] w-[18px]" strokeWidth={2} />
         </button>
         {isGroupy ? (
@@ -121,31 +137,58 @@ export function GroupThread({
         )}
       </header>
 
+      {searchQ !== null && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-midnight-100 bg-surface px-3 py-2">
+          <Search className="h-4 w-4 text-midnight-400" strokeWidth={2} />
+          <input
+            value={searchQ}
+            onChange={(e) => setSearchQ(e.target.value)}
+            autoFocus
+            placeholder="Search this conversation…"
+            className="min-w-0 flex-1 bg-transparent text-[14px] text-midnight-900 placeholder:text-midnight-400 focus:outline-none"
+          />
+          <button type="button" onClick={() => setSearchQ(null)} aria-label="Close search" className="text-midnight-400 hover:text-midnight-700">
+            <X className="h-4 w-4" strokeWidth={2} />
+          </button>
+        </div>
+      )}
+
       {thread.external && <ExternalBanner />}
-      {isGroup && stripMembers.length > 0 && <MembersStrip members={stripMembers} />}
+      {isGroup && stripMembers.length > 0 && searchQ === null && <MembersStrip members={stripMembers} />}
 
       <div className="flex-1 overflow-y-auto px-3 py-3">
-        {messages.length === 0 && (
-          <p className="py-10 text-center text-[13px] text-midnight-400">
-            No messages yet — say hello.
-          </p>
-        )}
-        {messages.map((m, i) => {
-          if (m.system) return <SystemMessage key={m.id} text={m.text} at={m.at} />;
-          const prev = messages[i - 1];
-          const firstOfRun = !prev || prev.system || prev.fromUserId !== m.fromUserId;
-          const sent = m.fromUserId === currentUserId;
-          return (
-            <MessageBubble
-              key={m.id}
-              message={m}
-              sent={sent}
-              user={users[m.fromUserId]}
-              showAvatar={firstOfRun}
-              showName={firstOfRun && !sent}
-            />
-          );
-        })}
+        {(() => {
+          const query = (searchQ || "").trim().toLowerCase();
+          const visible = query
+            ? messages.filter((m) => !m.system && m.text.toLowerCase().includes(query))
+            : messages;
+          if (query && visible.length === 0) {
+            return <p className="py-10 text-center text-[13px] text-midnight-400">No matches.</p>;
+          }
+          if (!query && messages.length === 0) {
+            return (
+              <p className="py-10 text-center text-[13px] text-midnight-400">
+                No messages yet — say hello.
+              </p>
+            );
+          }
+          return visible.map((m, i) => {
+            if (m.system) return <SystemMessage key={m.id} text={m.text} at={m.at} />;
+            const prev = visible[i - 1];
+            const firstOfRun = !prev || prev.system || prev.fromUserId !== m.fromUserId;
+            const sent = m.fromUserId === currentUserId;
+            return (
+              <MessageBubble
+                key={m.id}
+                message={m}
+                sent={sent}
+                user={users[m.fromUserId]}
+                showAvatar={firstOfRun}
+                showName={firstOfRun && !sent}
+              />
+            );
+          });
+        })()}
       </div>
 
       {readOnly ? (
