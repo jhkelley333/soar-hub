@@ -837,6 +837,47 @@ export const handler = async (event) => {
       return respond(200, { ok: true });
     }
 
+    // Add members to a normal group (owner & admins). Blocked on managed
+    // groups — the roster is rule-driven and would drop manual adds.
+    if (action === "addMembers" && event.httpMethod === "POST") {
+      const { threadId, userIds } = JSON.parse(event.body || "{}");
+      const ids = Array.isArray(userIds) ? Array.from(new Set(userIds.filter(Boolean))) : [];
+      if (!threadId || ids.length === 0) {
+        return respond(400, { ok: false, message: "threadId and userIds required." });
+      }
+      const { data: t } = await supa
+        .from("chat_threads")
+        .select("managed")
+        .eq("id", threadId)
+        .maybeSingle();
+      if (t?.managed) {
+        return respond(400, { ok: false, message: "Managed-team membership is automatic — change it in My Team." });
+      }
+      const { data: me } = await supa
+        .from("chat_thread_members")
+        .select("role")
+        .eq("thread_id", threadId)
+        .eq("user_id", uid)
+        .maybeSingle();
+      if (!me || !["owner", "admin"].includes(me.role)) {
+        return respond(403, { ok: false, message: "Only owners and admins can add members." });
+      }
+
+      await supa.from("chat_thread_members").upsert(
+        ids.map((u) => ({ thread_id: threadId, user_id: u, role: "member", last_read_at: null })),
+        { onConflict: "thread_id,user_id", ignoreDuplicates: true },
+      );
+
+      await supa.from("chat_messages").insert({
+        thread_id: threadId,
+        from_user_id: null,
+        text: `${displayName(caller)} added ${ids.length} member${ids.length === 1 ? "" : "s"}.`,
+        system: true,
+      });
+
+      return respond(200, { ok: true, added: ids.length });
+    }
+
     // Edit group identity — name / description / photo. Owner & admins only.
     if (action === "updateGroup" && event.httpMethod === "POST") {
       const { threadId, title, description, avatarUrl } = JSON.parse(event.body || "{}");
