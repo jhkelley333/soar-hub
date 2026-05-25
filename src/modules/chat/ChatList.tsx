@@ -70,7 +70,7 @@ export function ChatList({
   }, [threads, tab, search]);
 
   return (
-    <div className="flex h-full flex-col bg-surface-muted">
+    <div className="relative flex h-full flex-col bg-surface-muted">
       <header className="flex shrink-0 items-center justify-between border-b border-midnight-100 px-4 py-3">
         <h1 className="text-[17px] font-semibold text-midnight-900">Chat</h1>
         <button
@@ -117,7 +117,7 @@ export function ChatList({
         />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto pb-24 lg:pb-0">
         {inboxQ.isLoading ? (
           <div className="p-8 text-center text-[13px] text-midnight-400">Loading chats…</div>
         ) : inboxQ.isError ? (
@@ -144,6 +144,19 @@ export function ChatList({
           </ul>
         )}
       </div>
+
+      {/* Floating compose button — mobile only. Mirrors the top "New"
+          action; desktop keeps just the header button since the list is a
+          narrow pane. Anchored to this container so it floats above the
+          list rows and clears the bottom tab bar (list has pb-24). */}
+      <button
+        type="button"
+        onClick={() => setComposeOpen(true)}
+        aria-label="New chat"
+        className="absolute bottom-5 right-5 z-20 flex h-14 w-14 items-center justify-center rounded-full bg-midnight text-white shadow-lg shadow-midnight/30 transition active:scale-95 lg:hidden"
+      >
+        <Plus className="h-6 w-6" strokeWidth={2.5} />
+      </button>
 
       <ComposeModal open={composeOpen} onClose={() => setComposeOpen(false)} />
 
