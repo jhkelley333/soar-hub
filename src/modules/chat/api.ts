@@ -116,6 +116,28 @@ export function postBroadcast(body: {
   return req(`${FN}?action=broadcast`, { method: "POST", body: JSON.stringify(body) });
 }
 
+export interface ManagedOption {
+  scopeType: string;
+  scopeId: string | null;
+  targetRole: string;
+  label: string;
+  count: number;
+}
+
+// The "team chat" managed groups the caller is allowed to create.
+export function fetchManagedOptions(): Promise<{ ok: true; options: ManagedOption[] }> {
+  return req(`${FN}?action=managedOptions`);
+}
+
+export function createManagedGroup(body: {
+  scopeType: string;
+  scopeId: string | null;
+  targetRole: string;
+  title?: string;
+}): Promise<{ ok: true; threadId: string; existed?: boolean }> {
+  return req(`${FN}?action=createManaged`, { method: "POST", body: JSON.stringify(body) });
+}
+
 export type ScopeKind = "workorder" | "submission";
 
 // Find-or-create the chat thread tied to a work order / PAF and return it.

@@ -444,6 +444,67 @@ export const handler = async (event) => {
       return respond(200, { ok: true, threadId: thread.id });
     }
 
+    // List the managed ("team") groups the caller is allowed to create —
+    // derived from the seats they hold in user_scopes. Each option carries
+    // the scope node, target tier, a label, and a live headcount.
+    if (action === "managedOptions" && event.httpMethod === "GET") {
+      const role = String(caller.role || "").toLowerCase();
+      const CAN_CREATE = ["do", "sdo", "rvp", "vp", "coo", "admin"];
+      if (!CAN_CREATE.includes(role)) return respond(200, { ok: true, options: [] });
+
+      const ROLE_PLURAL = { gm: "GMs", do: "DOs", sdo: "SDOs", rvp: "RVPs", shift_manager: "Shift Managers" };
+      const PLAN = {
+        do: { from: "district", targets: ["gm"] },
+        sdo: { from: "area", targets: ["gm", "do"] },
+        rvp: { from: "region", targets: ["gm", "do", "sdo"] },
+      };
+      const ORG_WIDE = ["vp", "coo", "admin"];
+
+      const nodeName = async (type, id) => {
+        const table = type === "district" ? "districts" : type === "area" ? "areas" : type === "region" ? "regions" : null;
+        if (!table || !id) return type;
+        const { data } = await supa.from(table).select("name").eq("id", id).maybeSingle();
+        return data?.name || type;
+      };
+      const countRoster = async (scopeType, scopeId, targetRole) => {
+        const { data } = await supa.rpc("chat_org_roster", {
+          p_scope_type: scopeType,
+          p_scope_id: scopeId,
+          p_role: targetRole,
+        });
+        return (data || []).length;
+      };
+
+      const options = [];
+
+      if (ORG_WIDE.includes(role)) {
+        for (const tr of ["gm", "do", "sdo", "rvp"]) {
+          const count = await countRoster("global", null, tr);
+          if (count > 0) {
+            options.push({ scopeType: "global", scopeId: null, targetRole: tr, label: `All ${ROLE_PLURAL[tr]} (company-wide)`, count });
+          }
+        }
+      }
+
+      const plan = PLAN[role];
+      if (plan) {
+        const { data: scopeRows } = await supa
+          .from("user_scopes")
+          .select("scope_type, scope_id")
+          .eq("user_id", uid);
+        for (const s of scopeRows || []) {
+          if (s.scope_type !== plan.from) continue;
+          const name = await nodeName(s.scope_type, s.scope_id);
+          for (const tr of plan.targets) {
+            const count = await countRoster(s.scope_type, s.scope_id, tr);
+            options.push({ scopeType: s.scope_type, scopeId: s.scope_id, targetRole: tr, label: `${name} · ${ROLE_PLURAL[tr]}`, count });
+          }
+        }
+      }
+
+      return respond(200, { ok: true, options });
+    }
+
     // Create (or return) a seat-owned managed group for an org node + target
     // role — e.g. (district, 14B, gm) = "all GMs in District 14B". The roster
     // is derived from the org tree and reconciled; the owner is whoever holds
