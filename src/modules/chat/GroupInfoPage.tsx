@@ -26,6 +26,8 @@ import {
   UserMinus,
   UserPlus,
   LogOut,
+  Archive,
+  Trash2,
   type LucideIcon,
 } from "lucide-react";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -46,6 +48,8 @@ import {
   addMembers,
   updateGroup,
   updatePermissions,
+  archiveThread,
+  deleteThread,
   uploadGroupAvatar,
   createThread,
   type GroupMember,
@@ -79,6 +83,7 @@ export function GroupInfoPage() {
   const [nameDraft, setNameDraft] = useState("");
   const [descDraft, setDescDraft] = useState("");
   const [addOpen, setAddOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const filesRef = useRef<HTMLDivElement>(null);
 
@@ -146,6 +151,30 @@ export function GroupInfoPage() {
       navigate("/chat");
     },
     onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't leave.", "error"),
+  });
+
+  const archiveMut = useMutation({
+    mutationFn: (archived: boolean) => archiveThread(threadId, archived),
+    onSuccess: (_d, archived) => {
+      invalidate();
+      if (archived) {
+        toast.push("Group archived.", "info");
+        navigate("/chat");
+      } else {
+        toast.push("Group restored.", "info");
+      }
+    },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't archive.", "error"),
+  });
+
+  const deleteMut = useMutation({
+    mutationFn: () => deleteThread(threadId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["chat", "inbox"] });
+      toast.push("Group deleted.", "info");
+      navigate("/chat");
+    },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't delete.", "error"),
   });
 
   const roleMut = useMutation({
@@ -483,20 +512,45 @@ export function GroupInfoPage() {
           </div>
         </div>
 
-        {/* Leave — non-managed only */}
-        {!thread.managed && (
-          <div className="mt-3 bg-surface">
-            <button
-              type="button"
-              onClick={() => leaveMut.mutate()}
-              disabled={leaveMut.isPending}
-              className="flex w-full items-center gap-3 px-5 py-3.5 text-left text-red-600 disabled:opacity-50"
-            >
-              <LogOut className="h-5 w-5" strokeWidth={2} />
-              <span className="text-[14.5px] font-medium">Leave group</span>
-            </button>
+        {/* Admin actions */}
+        <div className="mt-3">
+          <p className="px-5 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-midnight-400">
+            Admin actions
+          </p>
+          <div className="bg-surface">
+            {!thread.managed && (
+              <ActionRow
+                Icon={LogOut}
+                label="Leave group"
+                sub="You stop receiving updates"
+                onClick={() => leaveMut.mutate()}
+                disabled={leaveMut.isPending}
+              />
+            )}
+            {canManage && (
+              <ActionRow
+                Icon={Archive}
+                label={thread.archived ? "Restore group" : "Archive group"}
+                sub="Keeps history, removes from inboxes"
+                onClick={() => archiveMut.mutate(!thread.archived)}
+                disabled={archiveMut.isPending}
+              />
+            )}
+            {thread.myRole === "owner" && !thread.managed && (
+              <ActionRow
+                Icon={Trash2}
+                label={confirmDelete ? "Tap again to delete permanently" : "Delete group"}
+                sub="Owner only · permanent"
+                danger
+                onClick={() => {
+                  if (confirmDelete) deleteMut.mutate();
+                  else setConfirmDelete(true);
+                }}
+                disabled={deleteMut.isPending}
+              />
+            )}
           </div>
-        )}
+        </div>
 
         <div className="h-10" />
       </div>
@@ -625,6 +679,39 @@ function AddMembersSheet({
         </div>
       </div>
     </div>
+  );
+}
+
+function ActionRow({
+  Icon,
+  label,
+  sub,
+  onClick,
+  danger,
+  disabled,
+}: {
+  Icon: LucideIcon;
+  label: string;
+  sub?: string;
+  onClick: () => void;
+  danger?: boolean;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="flex w-full items-center gap-3 border-b border-midnight-50 px-5 py-3.5 text-left last:border-0 disabled:opacity-50"
+    >
+      <Icon className={cn("h-5 w-5", danger ? "text-red-600" : "text-midnight-500")} strokeWidth={2} />
+      <span className="min-w-0">
+        <span className={cn("block text-[14.5px] font-medium", danger ? "text-red-600" : "text-midnight-900")}>
+          {label}
+        </span>
+        {sub && <span className="block text-[12px] text-midnight-500">{sub}</span>}
+      </span>
+    </button>
   );
 }
 
