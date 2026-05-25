@@ -231,7 +231,7 @@ export function GroupThread({
         >
           {/* Staged attachments — preview before sending. */}
           {pending.length > 0 && (
-            <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
+            <div className="mb-2 flex gap-2 overflow-x-auto px-1.5 pb-1 pt-2.5">
               {pending.map((p) => (
                 <div key={p.id} className="relative shrink-0">
                   {p.isImage ? (
