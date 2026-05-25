@@ -44,11 +44,12 @@ export function MobileTabBar({
     <nav
       className="shrink-0 border-t border-white/10 bg-midnight lg:hidden"
       style={{
-        // Sit the bar near the bottom edge with a small cushion: a
-        // quarter of the home-indicator inset plus ~8px so it lifts just
-        // off the edge. The midnight bg paints the inset, keeping the
-        // bottom a cohesive navy frame.
-        paddingBottom: "calc(env(safe-area-inset-bottom, 0px) / 4 + 8px)",
+        // Anchor the bar low against the bottom edge, native tab-bar
+        // style. We pad only a quarter of the home-indicator inset so the
+        // labels sit just above the gesture area without floating up off
+        // the edge. (An earlier "+8px lift" pushed the whole bar upward;
+        // dropped here to bring it back into the normal native range.)
+        paddingBottom: "calc(env(safe-area-inset-bottom, 0px) / 4)",
       }}
       aria-label="Primary"
     >
