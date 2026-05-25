@@ -5,14 +5,19 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, Search, MoreHorizontal, Paperclip, ArrowUp, X } from "lucide-react";
+import { ChevronLeft, Search, MoreHorizontal, Paperclip, ArrowUp, X, FileText } from "lucide-react";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { MessageBubble } from "./MessageBubble";
 import { SystemMessage } from "./SystemMessage";
 import { MembersStrip, type StripMember } from "./MembersStrip";
 import { ExternalBanner } from "./Banners";
-import { sendChatMessage, uploadChatAttachment, type ThreadResponse } from "../../api";
+import {
+  sendChatMessage,
+  uploadChatAttachment,
+  type ThreadResponse,
+  type AttachmentInput,
+} from "../../api";
 
 export function GroupThread({
   threadId,
@@ -29,6 +34,9 @@ export function GroupThread({
   const qc = useQueryClient();
   const [draft, setDraft] = useState("");
   const [searchQ, setSearchQ] = useState<string | null>(null);
+  const [pending, setPending] = useState<
+    { id: string; file: File; url: string; isImage: boolean }[]
+  >([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Open search when arrived from the Group Info "Search" tile.
@@ -69,9 +77,20 @@ export function GroupThread({
     isYou: m.user_id === currentUserId,
   }));
 
+  // Staged-then-send: picking files adds local previews; nothing uploads
+  // until Send, which uploads everything and posts one message (optional
+  // caption + attachments) — like iMessage / WhatsApp.
   const send = useMutation({
-    mutationFn: (text: string) => sendChatMessage(threadId, text),
+    mutationFn: async () => {
+      let atts: AttachmentInput[] = [];
+      if (pending.length) {
+        atts = await Promise.all(pending.map((p) => uploadChatAttachment(threadId, p.file)));
+      }
+      await sendChatMessage(threadId, draft.trim(), atts);
+    },
     onSuccess: () => {
+      pending.forEach((p) => URL.revokeObjectURL(p.url));
+      setPending([]);
       setDraft("");
       qc.invalidateQueries({ queryKey: ["chat", "thread", threadId] });
       qc.invalidateQueries({ queryKey: ["chat", "inbox"] });
@@ -80,24 +99,31 @@ export function GroupThread({
       toast.push(e instanceof Error ? e.message : "Send failed.", "error"),
   });
 
-  const upload = useMutation({
-    mutationFn: async (file: File) => {
-      const att = await uploadChatAttachment(threadId, file);
-      await sendChatMessage(threadId, draft.trim(), [att]);
-    },
-    onSuccess: () => {
-      setDraft("");
-      qc.invalidateQueries({ queryKey: ["chat", "thread", threadId] });
-      qc.invalidateQueries({ queryKey: ["chat", "inbox"] });
-    },
-    onError: (e: unknown) =>
-      toast.push(e instanceof Error ? e.message : "Upload failed.", "error"),
-  });
+  const canSend = (draft.trim().length > 0 || pending.length > 0) && !send.isPending;
 
   const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+    const files = Array.from(e.target.files ?? []);
     e.target.value = ""; // allow re-picking the same file
-    if (file) upload.mutate(file);
+    setPending((prev) => [
+      ...prev,
+      ...files.map((file) => ({
+        id: crypto.randomUUID(),
+        file,
+        url: URL.createObjectURL(file),
+        isImage: file.type.startsWith("image/"),
+      })),
+    ]);
+  };
+
+  const removePending = (id: string) =>
+    setPending((prev) => {
+      const target = prev.find((p) => p.id === id);
+      if (target) URL.revokeObjectURL(target.url);
+      return prev.filter((p) => p.id !== id);
+    });
+
+  const submit = () => {
+    if (canSend) send.mutate();
   };
 
   return (
@@ -200,38 +226,68 @@ export function GroupThread({
         </div>
       ) : (
         <div
-          className="flex shrink-0 items-end gap-2.5 border-t border-midnight-100 bg-surface px-4 pt-3"
+          className="shrink-0 border-t border-midnight-100 bg-surface px-4 pt-3"
           style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}
         >
-          <input ref={fileInputRef} type="file" className="hidden" onChange={onPickFile} />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={upload.isPending}
-            className="mb-1 shrink-0 text-midnight-400 transition hover:text-midnight-700 disabled:opacity-40"
-            aria-label="Attach"
-          >
-            <Paperclip className="h-[22px] w-[22px]" strokeWidth={2} />
-          </button>
-          <input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && draft.trim()) send.mutate(draft.trim());
-            }}
-            placeholder={upload.isPending ? "Uploading…" : "Message"}
-            disabled={upload.isPending}
-            className="min-w-0 flex-1 rounded-[20px] border border-midnight-200 bg-surface px-4 py-2.5 text-[15px] text-midnight-900 placeholder:text-midnight-400 focus:border-midnight-300 focus:outline-none disabled:opacity-60"
-          />
-          <button
-            type="button"
-            onClick={() => draft.trim() && send.mutate(draft.trim())}
-            disabled={!draft.trim() || send.isPending}
-            className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-white transition disabled:bg-midnight-200"
-            aria-label="Send"
-          >
-            <ArrowUp className="h-[20px] w-[20px]" strokeWidth={2.5} />
-          </button>
+          {/* Staged attachments — preview before sending. */}
+          {pending.length > 0 && (
+            <div className="mb-2 flex gap-2 overflow-x-auto pb-1">
+              {pending.map((p) => (
+                <div key={p.id} className="relative shrink-0">
+                  {p.isImage ? (
+                    <img src={p.url} alt="" className="h-16 w-16 rounded-xl object-cover ring-1 ring-midnight-100" />
+                  ) : (
+                    <div className="flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-xl bg-surface-sunk px-1 text-midnight-500 ring-1 ring-midnight-100">
+                      <FileText className="h-5 w-5" strokeWidth={1.75} />
+                      <span className="w-full truncate text-center text-[9px] leading-none">{p.file.name}</span>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => removePending(p.id)}
+                    aria-label="Remove attachment"
+                    className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-midnight-900 text-white ring-2 ring-surface"
+                  >
+                    <X className="h-3 w-3" strokeWidth={2.5} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="flex items-end gap-2.5">
+            <input ref={fileInputRef} type="file" multiple className="hidden" onChange={onPickFile} />
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={send.isPending}
+              className="mb-1 shrink-0 text-midnight-400 transition hover:text-midnight-700 disabled:opacity-40"
+              aria-label="Attach"
+            >
+              <Paperclip className="h-[22px] w-[22px]" strokeWidth={2} />
+            </button>
+            <input
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") submit();
+              }}
+              placeholder={
+                send.isPending ? "Sending…" : pending.length > 0 ? "Add a caption…" : "Message"
+              }
+              disabled={send.isPending}
+              className="min-w-0 flex-1 rounded-[20px] border border-midnight-200 bg-surface px-4 py-2.5 text-[15px] text-midnight-900 placeholder:text-midnight-400 focus:border-midnight-300 focus:outline-none disabled:opacity-60"
+            />
+            <button
+              type="button"
+              onClick={submit}
+              disabled={!canSend}
+              className="mb-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-accent text-white transition disabled:bg-midnight-200"
+              aria-label="Send"
+            >
+              <ArrowUp className="h-[20px] w-[20px]" strokeWidth={2.5} />
+            </button>
+          </div>
         </div>
       )}
     </div>
