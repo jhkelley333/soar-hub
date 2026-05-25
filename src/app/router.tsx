@@ -14,6 +14,7 @@ import { DashboardPage } from "@/modules/dashboard/DashboardPage";
 import { WorkOrdersPage } from "@/modules/work-orders/WorkOrdersPage";
 import { PafPage } from "@/modules/paf/PafPage";
 import { PafQueuePage } from "@/modules/paf/PafQueuePage";
+import { EmployeeActionsPage } from "@/modules/employee-actions/EmployeeActionsPage";
 import { ResourcesPage } from "@/modules/resources/ResourcesPage";
 import { ContactsPage } from "@/modules/contacts/ContactsPage";
 import { TeamPage } from "@/modules/team/TeamPage";
@@ -80,6 +81,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["payroll", "admin"]}>
             <PafQueuePage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "employee-actions",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <EmployeeActionsPage />
           </ProtectedRoute>
         ),
       },

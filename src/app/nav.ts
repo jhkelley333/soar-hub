@@ -13,6 +13,7 @@ import {
   Hammer,
   Flag,
   ClipboardList,
+  ClipboardCheck,
   HardHat,
   MessageCircle,
   type LucideIcon,
@@ -74,6 +75,9 @@ export const NAV: NavItem[] = [
   // /admin/feature-flags. To return to the previous "DO and up" rule,
   // delete the flagKey here and add the original roles back to roles.
   { to: "/paf",         label: "PAF",         icon: FileSpreadsheet, roles: ["payroll", "admin"], flagKey: "paf_pilot" },
+  // Employee Actions — Training Credit + PTO request forms. GM and up;
+  // submitting notifies the store's DO + RVP. Approvals/tracking land later.
+  { to: "/employee-actions", label: "Employee Actions", icon: ClipboardCheck, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/contacts",    label: "Contacts",    icon: BookUser,        roles: null },
   { to: "/resources",   label: "Resources",   icon: BookOpen,        roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/team",        label: "My Team",     icon: Users,           roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
