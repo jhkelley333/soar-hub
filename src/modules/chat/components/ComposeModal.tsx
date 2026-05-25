@@ -6,7 +6,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { User, Users, ClipboardList, Megaphone, Search, Check, X } from "lucide-react";
+import { User, Users, ClipboardList, Megaphone, Building2, Search, Check, X } from "lucide-react";
 import { Drawer } from "@/shared/ui/Drawer";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
@@ -15,16 +15,20 @@ import {
   fetchContacts,
   createThread,
   postBroadcast,
+  fetchManagedOptions,
+  createManagedGroup,
   type ChatContact,
   type CreateThreadBody,
   type BroadcastAudience,
+  type ManagedOption,
 } from "../api";
 
-type Scope = "direct" | "group" | "tied" | "news";
+type Scope = "direct" | "group" | "tied" | "news" | "team";
 type TiedKind = "submission" | "workorder";
 
 const NEWS_POSTER_ROLES = ["do", "sdo", "rvp", "vp", "coo", "admin"];
 const NEWS_COMPANY_ROLES = ["coo", "admin"];
+const TEAM_CREATE_ROLES = ["do", "sdo", "rvp", "vp", "coo", "admin"];
 
 interface WorkItem {
   id: string;
@@ -56,6 +60,7 @@ export function ComposeModal({
   const role = String(profile?.role || "").toLowerCase();
   const canPostNews = NEWS_POSTER_ROLES.includes(role);
   const canPostCompany = NEWS_COMPANY_ROLES.includes(role);
+  const canCreateTeam = TEAM_CREATE_ROLES.includes(role);
 
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [scope, setScope] = useState<Scope | null>(null);
@@ -74,6 +79,27 @@ export function ComposeModal({
     staleTime: 5 * 60_000,
   });
   const contacts: ChatContact[] = contactsQ.data?.contacts ?? [];
+
+  const teamOptionsQ = useQuery({
+    queryKey: ["chat", "managed-options"],
+    queryFn: fetchManagedOptions,
+    enabled: open && scope === "team",
+    staleTime: 60_000,
+  });
+  const teamOptions: ManagedOption[] = teamOptionsQ.data?.options ?? [];
+
+  const teamMut = useMutation({
+    mutationFn: (o: ManagedOption) =>
+      createManagedGroup({ scopeType: o.scopeType, scopeId: o.scopeId, targetRole: o.targetRole, title: o.label }),
+    onSuccess: ({ threadId }) => {
+      qc.invalidateQueries({ queryKey: ["chat", "inbox"] });
+      onCreated?.();
+      close();
+      navigate(`/chat/${threadId}`);
+    },
+    onError: (e: unknown) =>
+      toast.push(e instanceof Error ? e.message : "Couldn't create the team chat.", "error"),
+  });
 
   const createMut = useMutation({
     mutationFn: (body: CreateThreadBody) => createThread(body),
@@ -180,15 +206,17 @@ export function ComposeModal({
   const title =
     step === 1
       ? "New message"
-      : scope === "news"
-        ? "Post an update"
-        : scope === "group"
-          ? "New group"
-          : scope === "tied"
-            ? "Tie to…"
-            : step === 3
-              ? "Message"
-              : "Direct message";
+      : scope === "team"
+        ? "New team chat"
+        : scope === "news"
+          ? "Post an update"
+          : scope === "group"
+            ? "New group"
+            : scope === "tied"
+              ? "Tie to…"
+              : step === 3
+                ? "Message"
+                : "Direct message";
 
   const footer = (() => {
     if (step === 1) return null;
@@ -201,6 +229,9 @@ export function ComposeModal({
         Back
       </button>
     );
+    if (step === 2 && scope === "team") {
+      return <div className="flex items-center gap-2">{back}</div>;
+    }
     if (step === 2 && scope === "group") {
       return (
         <div className="flex items-center gap-2">
@@ -285,6 +316,9 @@ export function ComposeModal({
             <PickOption Icon={User} tint="frost" title="Direct message" sub="One-on-one with a teammate" onClick={() => { setScope("direct"); setStep(2); }} />
             <PickOption Icon={Users} tint="frost" title="New group" sub="Multiple people · name + member list" onClick={() => { setScope("group"); setStep(2); }} />
             <PickOption Icon={ClipboardList} tint="sonic" title="About a submission, WO, or store" sub="Auto-pulls participants and history" onClick={() => { setScope("tied"); setStep(2); }} />
+            {canCreateTeam && (
+              <PickOption Icon={Building2} tint="frost" title="Team chat" sub="Auto-includes your whole team — stays in sync" onClick={() => { setScope("team"); setStep(2); }} />
+            )}
             {canPostNews && (
               <PickOption Icon={Megaphone} tint="sonic" title="Post an update" sub="Announcement to your team — shows in News" onClick={() => { setScope("news"); setStep(2); }} />
             )}
@@ -318,6 +352,47 @@ export function ComposeModal({
                     <span className="block font-mono text-[10.5px] uppercase tracking-wide text-midnight-400">{w.ref}</span>
                     <span className="block truncate text-[14px] font-medium text-midnight-900">{w.title}</span>
                     <span className="block truncate text-[12px] text-midnight-500">{w.sub}</span>
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {step === 2 && scope === "team" && (
+        <div>
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-midnight-400">
+            Pick a team
+          </p>
+          <p className="mb-3 text-[12.5px] text-midnight-500">
+            Membership auto-updates as people are hired, transferred, or deactivated.
+          </p>
+          {teamOptionsQ.isLoading && (
+            <p className="py-6 text-center text-[13px] text-midnight-400">Loading your teams…</p>
+          )}
+          {!teamOptionsQ.isLoading && teamOptions.length === 0 && (
+            <p className="rounded-lg bg-surface-sunk px-3 py-4 text-center text-[13px] text-midnight-500">
+              No teams available to create from your role.
+            </p>
+          )}
+          <ul className="divide-y divide-midnight-100">
+            {teamOptions.map((o) => (
+              <li key={`${o.scopeType}:${o.scopeId}:${o.targetRole}`}>
+                <button
+                  type="button"
+                  disabled={teamMut.isPending}
+                  onClick={() => teamMut.mutate(o)}
+                  className="flex w-full items-center gap-3 py-3 text-left disabled:opacity-50"
+                >
+                  <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-frost-100 text-midnight-700">
+                    <Building2 className="h-[18px] w-[18px]" strokeWidth={2} />
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[14.5px] font-semibold text-midnight-900">{o.label}</span>
+                    <span className="block text-[12px] text-midnight-500">
+                      {o.count} {o.count === 1 ? "person" : "people"}
+                    </span>
                   </span>
                 </button>
               </li>
