@@ -22,6 +22,7 @@ import { Outlet, useLocation } from "react-router-dom";
 import { Sidebar } from "@/app/Sidebar";
 import { MobileTabBar } from "@/app/MobileTabBar";
 import { PushPrimer } from "@/app/PushPrimer";
+import { InstallPrimer, useInstallPrompt } from "@/app/InstallPrimer";
 import { useIdleLogout } from "@/auth/useIdleLogout";
 import { useChatRealtime } from "@/modules/chat/useChatRealtime";
 import { useAuth } from "@/auth/AuthProvider";
@@ -62,6 +63,10 @@ export function AppShell() {
   const [moreOpen, setMoreOpen] = useState(false);
   const { profile } = useAuth();
   const splash = useLaunchSplash();
+  // Home-screen install nudge. Takes the bottom-card slot ahead of the
+  // push primer so the two never stack; push falls through once install
+  // is handled (or when there's nothing to install).
+  const install = useInstallPrompt();
   // Chat runs full-bleed (its own multi-pane layout fills the content area);
   // every other route keeps the padded, max-width container.
   const fullBleed = useLocation().pathname.startsWith("/chat");
@@ -149,9 +154,11 @@ export function AppShell() {
           column above so content can never scroll past it. */}
       <MobileTabBar onMoreClick={() => setMoreOpen(true)} />
 
-      {/* First-run push opt-in. Self-gates on platform + prior dismissal;
-          held back until the launch splash clears. */}
-      {!splash.active && <PushPrimer />}
+      {/* First-run nudges, held back until the launch splash clears.
+          Install takes priority over push so only one bottom card shows;
+          the push primer appears once install is dismissed or N/A. */}
+      {!splash.active && install.show && <InstallPrimer {...install} />}
+      {!splash.active && !install.show && <PushPrimer />}
 
       {/* First-load personalized launch splash, fades into the home. */}
       {splash.active && (
