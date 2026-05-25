@@ -241,11 +241,35 @@ export interface GroupInfoResponse {
     external: boolean;
     managed: boolean;
     createdByName: string | null;
+    avatarUrl: string | null;
     myRole: "owner" | "admin" | "member";
     muted: boolean;
   };
   members: GroupMember[];
   adminsCount: number;
+}
+
+export function updateGroup(body: {
+  threadId: string;
+  title?: string;
+  description?: string;
+  avatarUrl?: string;
+}): Promise<{ ok: true }> {
+  return req(`${FN}?action=updateGroup`, { method: "POST", body: JSON.stringify(body) });
+}
+
+const CHAT_AVATAR_BUCKET = "chat-avatars";
+
+// Upload a group photo and return its public URL.
+export async function uploadGroupAvatar(threadId: string, file: File): Promise<string> {
+  const ext = (file.name.split(".").pop() || "jpg").toLowerCase().slice(0, 5);
+  const path = `${threadId}/${crypto.randomUUID()}.${ext}`;
+  const { error } = await supabase.storage
+    .from(CHAT_AVATAR_BUCKET)
+    .upload(path, file, { contentType: file.type || "image/jpeg", upsert: true });
+  if (error) throw new Error(error.message || "Upload failed");
+  const { data } = supabase.storage.from(CHAT_AVATAR_BUCKET).getPublicUrl(path);
+  return data.publicUrl;
 }
 
 export function fetchGroupInfo(threadId: string): Promise<GroupInfoResponse> {
