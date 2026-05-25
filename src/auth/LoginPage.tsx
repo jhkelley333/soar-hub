@@ -1,6 +1,6 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { Navigate, useLocation } from "react-router-dom";
-import { Mail, Phone } from "lucide-react";
+import { Mail, Phone, ArrowRight, KeyRound } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/auth/AuthProvider";
 import { defaultLandingPath, visibleNav } from "@/app/nav";
@@ -55,6 +55,11 @@ function safeRedirectTarget(from: string | null | undefined, role: UserRole): st
 }
 
 type Mode = "password" | "magic" | "forgot";
+
+// Per-device "stay signed in" preference, set from the PWA login's
+// checkbox and read by useIdleLogout to decide whether the installed app
+// is exempt from the idle auto-logout. Absent = treated as on.
+export const STAY_SIGNED_IN_KEY = "soar_stay_signed_in";
 
 // Hard ceiling on auth network calls. supabase-js can rarely deadlock
 // on a request that never resolves; without this the sign-in button
@@ -120,6 +125,15 @@ export function LoginPage() {
   const [codeSent, setCodeSent] = useState(false);
   const [codeEmail, setCodeEmail] = useState("");
   const [code, setCode] = useState("");
+  // PWA layout extras.
+  const [showPassword, setShowPassword] = useState(false);
+  // "Stay signed in on this device" — persisted as a per-device pref that
+  // useIdleLogout reads: when ON (default) the installed app is treated as
+  // a trusted device and skips the idle auto-logout; when OFF, the idle
+  // logout applies even in standalone (e.g. a shared store tablet).
+  const [staySignedIn, setStaySignedIn] = useState(
+    () => localStorage.getItem(STAY_SIGNED_IN_KEY) !== "0"
+  );
 
   // Surface AuthProvider's OAuth no-profile bounce (?error=no_profile).
   // Driven via the URL so the redirect can land here cleanly without
@@ -205,7 +219,7 @@ export function LoginPage() {
         if (error) throw error;
         setCodeEmail(email);
         setCodeSent(true);
-        setInfo("We emailed you a 6-digit code. Enter it below to sign in.");
+        setInfo("We emailed you a sign-in code. Enter it below to continue.");
       } else {
         // forgot
         const { error } = await withTimeout(
@@ -264,10 +278,288 @@ export function LoginPage() {
     setInfo(null);
   }
 
+  function updateStaySignedIn(next: boolean) {
+    setStaySignedIn(next);
+    try {
+      localStorage.setItem(STAY_SIGNED_IN_KEY, next ? "1" : "0");
+    } catch {
+      /* storage disabled — pref just won't persist */
+    }
+  }
+
   // Show a phone or envelope icon next to the input as a confidence signal.
   const Icon =
     detected === "email" ? Mail : detected === "phone" ? Phone : null;
   const onCodeStep = mode === "magic" && codeSent;
+
+  // ── Installed-PWA login ─────────────────────────────────────────────
+  // Dark, app-style layout for the installed app. Same handlers/state as
+  // the desktop card below; just a different presentation tuned for a
+  // phone in standalone mode. Google SSO is intentionally absent here —
+  // OAuth bounces out to Safari and never returns to the standalone app,
+  // so the reliable above-store path is the in-app email code.
+  if (standalone) {
+    const darkField =
+      "mt-2 w-full rounded-lg border border-white/10 bg-white/[0.06] px-3.5 py-3 text-[15px] text-white placeholder-white/30 outline-none transition focus:border-sky-400/60 focus:bg-white/[0.09]";
+    const darkLabel =
+      "text-[11px] font-semibold uppercase tracking-wide text-sky-300/80";
+    return (
+      <div
+        className="relative flex min-h-full flex-col px-6 py-10 text-white"
+        style={{
+          background:
+            "radial-gradient(120% 80% at 50% 0%, #34618a 0%, #173049 42%, #0a1726 100%)",
+        }}
+      >
+        <div className="mx-auto flex w-full max-w-sm flex-1 flex-col">
+          {/* Brand */}
+          <div className="mb-8 mt-6 flex flex-col items-center text-center">
+            <CupPlaceholder />
+            <div className="mt-3 text-lg font-bold uppercase tracking-[0.2em]">
+              SOAR <span className="font-light text-sky-200/90">Field App</span>
+            </div>
+            <h1 className="mt-6 text-[26px] font-semibold leading-tight">
+              {mode === "forgot" ? "Reset password" : "Welcome back"}
+            </h1>
+            <p className="mt-1 text-sm text-sky-200/70">
+              {mode === "forgot"
+                ? "We'll email you a reset link."
+                : onCodeStep
+                  ? `Enter the code we sent to ${codeEmail}.`
+                  : mode === "magic"
+                    ? "We'll email you a sign-in code."
+                    : "Sign in to your account"}
+            </p>
+          </div>
+
+          {queryError === "no_profile" && (
+            <div className="mb-5 rounded-lg border border-amber-300/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-100">
+              That Google account isn't authorized yet. Sign in with your work
+              email + password, or ask an admin to invite you.
+            </div>
+          )}
+
+          <form
+            onSubmit={onCodeStep ? handleVerifyCode : handleSubmit}
+            className="space-y-4"
+          >
+            {onCodeStep ? (
+              <div>
+                <label htmlFor="otp-pwa" className={darkLabel}>
+                  Verification code
+                </label>
+                <input
+                  id="otp-pwa"
+                  type="text"
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  autoFocus
+                  required
+                  maxLength={10}
+                  value={code}
+                  onChange={(e) =>
+                    setCode(e.target.value.replace(/\D/g, "").slice(0, 10))
+                  }
+                  placeholder="Enter code"
+                  className={`${darkField} text-center text-lg tracking-[0.4em]`}
+                />
+              </div>
+            ) : (
+              <div>
+                <label htmlFor="id-pwa" className={darkLabel}>
+                  Email
+                </label>
+                <input
+                  id="id-pwa"
+                  type="text"
+                  inputMode={detected === "phone" ? "tel" : "email"}
+                  autoComplete="username"
+                  autoCapitalize="off"
+                  spellCheck={false}
+                  required
+                  value={identifier}
+                  onChange={(e) => setIdentifier(e.target.value)}
+                  placeholder="you@company.com"
+                  className={darkField}
+                />
+              </div>
+            )}
+
+            {mode === "password" && (
+              <div>
+                <div className="flex items-center justify-between">
+                  <label htmlFor="pw-pwa" className={darkLabel}>
+                    Password
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMode("forgot");
+                      setError(null);
+                      setInfo(null);
+                    }}
+                    className="text-xs font-medium text-sky-300 hover:text-sky-200"
+                  >
+                    Forgot?
+                  </button>
+                </div>
+                <div className="relative">
+                  <input
+                    id="pw-pwa"
+                    type={showPassword ? "text" : "password"}
+                    autoComplete="current-password"
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className={`${darkField} pr-16`}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-medium text-sky-300 hover:text-sky-200"
+                  >
+                    {showPassword ? "Hide" : "Show"}
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {mode === "password" && (
+              <label className="flex cursor-pointer items-center gap-2.5 text-sm text-white/80">
+                <input
+                  type="checkbox"
+                  checked={staySignedIn}
+                  onChange={(e) => updateStaySignedIn(e.target.checked)}
+                  className="h-4 w-4 rounded border-white/20 bg-white/10 text-sky-500 focus:ring-sky-400/40"
+                />
+                Stay signed in on this device
+              </label>
+            )}
+
+            {error && (
+              <div className="rounded-lg border border-red-400/30 bg-red-500/10 px-3 py-2 text-sm text-red-200">
+                {error}
+              </div>
+            )}
+            {info && (
+              <div className="rounded-lg border border-white/15 bg-white/5 px-3 py-2 text-sm text-sky-100">
+                {info}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={submitting}
+              className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#2f72e0] py-3.5 text-[15px] font-semibold text-white shadow-lg shadow-sky-950/40 transition hover:bg-[#2864c9] disabled:opacity-60"
+            >
+              {submitting
+                ? "Working…"
+                : mode === "forgot"
+                  ? "Send reset link"
+                  : onCodeStep
+                    ? "Verify & sign in"
+                    : mode === "magic"
+                      ? "Send code"
+                      : "Sign in"}
+              {!submitting && mode === "password" && (
+                <ArrowRight className="h-4 w-4" strokeWidth={2.5} />
+              )}
+            </button>
+          </form>
+
+          {/* Secondary path: in-app email code (stands in for SSO, which
+              can't complete inside the installed app). */}
+          {mode === "password" && (
+            <>
+              <div className="my-6 flex items-center gap-3 text-[11px] font-semibold uppercase tracking-widest text-white/30">
+                <span className="h-px flex-1 bg-white/10" />
+                or
+                <span className="h-px flex-1 bg-white/10" />
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("magic");
+                  setError(null);
+                  setInfo(null);
+                }}
+                className="flex w-full items-center justify-center gap-2 rounded-lg border border-white/15 bg-white/[0.04] py-3.5 text-[15px] font-medium text-white transition hover:bg-white/[0.08]"
+              >
+                <KeyRound className="h-4 w-4" strokeWidth={2} />
+                Email me a sign-in code
+              </button>
+            </>
+          )}
+
+          {onCodeStep && (
+            <div className="mt-4 flex items-center justify-between text-xs font-medium text-sky-300/80">
+              <button
+                type="button"
+                onClick={resetCodeStep}
+                className="hover:text-sky-200"
+              >
+                Use a different email
+              </button>
+              <button
+                type="button"
+                disabled={submitting}
+                onClick={() => void handleSubmit()}
+                className="hover:text-sky-200 disabled:opacity-50"
+              >
+                Resend code
+              </button>
+            </div>
+          )}
+
+          <div className="mt-6 text-center text-sm">
+            {mode === "magic" && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("password");
+                  setCodeSent(false);
+                  setCode("");
+                  setError(null);
+                  setInfo(null);
+                }}
+                className="font-medium text-sky-300 hover:text-sky-200"
+              >
+                Use a password instead
+              </button>
+            )}
+            {mode === "forgot" && (
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("password");
+                  setError(null);
+                  setInfo(null);
+                }}
+                className="font-medium text-sky-300 hover:text-sky-200"
+              >
+                Back to sign in
+              </button>
+            )}
+            {mode === "password" && (
+              <button
+                type="button"
+                onClick={() =>
+                  setInfo("Can't sign in? Contact your administrator for help.")
+                }
+                className="font-medium text-sky-300/80 hover:text-sky-200"
+              >
+                Trouble signing in?
+              </button>
+            )}
+          </div>
+
+          <div className="mt-auto pt-10 text-center text-[11px] font-medium uppercase tracking-[0.2em] text-white/30">
+            SOAR QSR
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="relative flex min-h-full flex-col items-center justify-center overflow-hidden bg-accent px-4 py-12 text-white">
@@ -296,7 +588,7 @@ export function LoginPage() {
           </h2>
           <p className="mt-1 text-sm text-zinc-500">
             {mode === "password" && "Use your phone or email and password."}
-            {mode === "magic" && !codeSent && "We'll email you a 6-digit code."}
+            {mode === "magic" && !codeSent && "We'll email you a sign-in code."}
             {mode === "magic" && codeSent && `Enter the code we sent to ${codeEmail}.`}
             {mode === "forgot" &&
               "Enter your phone or email and we'll send a reset link."}
@@ -318,7 +610,7 @@ export function LoginPage() {
           >
             {onCodeStep ? (
               <div>
-                <Label htmlFor="otp">6-digit code</Label>
+                <Label htmlFor="otp">Verification code</Label>
                 <Input
                   id="otp"
                   type="text"
@@ -326,12 +618,13 @@ export function LoginPage() {
                   autoComplete="one-time-code"
                   autoFocus
                   required
-                  maxLength={6}
-                  pattern="\d{6}"
+                  maxLength={10}
                   value={code}
-                  onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-                  placeholder="123456"
-                  className="tracking-[0.4em] text-center text-lg"
+                  onChange={(e) =>
+                    setCode(e.target.value.replace(/\D/g, "").slice(0, 10))
+                  }
+                  placeholder="Enter code"
+                  className="tracking-[0.3em] text-center text-lg"
                 />
               </div>
             ) : (
