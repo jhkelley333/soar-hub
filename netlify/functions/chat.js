@@ -444,6 +444,80 @@ export const handler = async (event) => {
       return respond(200, { ok: true, threadId: thread.id });
     }
 
+    // Create (or return) a seat-owned managed group for an org node + target
+    // role — e.g. (district, 14B, gm) = "all GMs in District 14B". The roster
+    // is derived from the org tree and reconciled; the owner is whoever holds
+    // the seat. Caller must hold that seat in user_scopes (or be coo/admin).
+    if (action === "createManaged" && event.httpMethod === "POST") {
+      const b = JSON.parse(event.body || "{}");
+      const scopeType = b.scopeType;
+      const scopeId = b.scopeId || null;
+      const targetRole = b.targetRole;
+      const VALID_SCOPES = ["store", "district", "area", "region", "global"];
+      const VALID_ROLES = ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"];
+
+      if (!VALID_SCOPES.includes(scopeType)) {
+        return respond(400, { ok: false, message: "Invalid scopeType." });
+      }
+      if (scopeType !== "global" && !scopeId) {
+        return respond(400, { ok: false, message: "scopeId is required for non-global scopes." });
+      }
+      if (!VALID_ROLES.includes(targetRole)) {
+        return respond(400, { ok: false, message: "Invalid targetRole." });
+      }
+
+      // Authorize: org-wide roles can create anything; everyone else must
+      // actually hold the seat for this scope node.
+      const callerRole = String(caller.role || "").toLowerCase();
+      let authorized = ["coo", "admin"].includes(callerRole);
+      if (!authorized && scopeType !== "global") {
+        const { data: held } = await supa
+          .from("user_scopes")
+          .select("id")
+          .eq("user_id", uid)
+          .eq("scope_type", scopeType)
+          .eq("scope_id", scopeId)
+          .maybeSingle();
+        authorized = Boolean(held);
+      }
+      if (!authorized) {
+        return respond(403, { ok: false, message: "You don't manage this scope." });
+      }
+
+      // Dedup — one managed group per (scope node, target role).
+      let dupQ = supa
+        .from("chat_threads")
+        .select("id")
+        .eq("managed", true)
+        .eq("org_scope_type", scopeType)
+        .eq("target_role", targetRole);
+      dupQ = scopeId ? dupQ.eq("org_scope_id", scopeId) : dupQ.is("org_scope_id", null);
+      const { data: existing } = await dupQ.maybeSingle();
+      if (existing) {
+        await supa.rpc("chat_reconcile_managed_group", { p_thread: existing.id, p_actor: uid });
+        return respond(200, { ok: true, threadId: existing.id, existed: true });
+      }
+
+      const { data: thread, error: tErr } = await supa
+        .from("chat_threads")
+        .insert({
+          kind: "group",
+          managed: true,
+          title: (b.title || "").trim() || `${targetRole.toUpperCase()} team`,
+          description: (b.description || "").trim() || null,
+          org_scope_type: scopeType,
+          org_scope_id: scopeId,
+          target_role: targetRole,
+          created_by: uid,
+        })
+        .select()
+        .single();
+      if (tErr) throw tErr;
+
+      await supa.rpc("chat_reconcile_managed_group", { p_thread: thread.id, p_actor: uid });
+      return respond(200, { ok: true, threadId: thread.id });
+    }
+
     // Find-or-create the chat thread tied to a work order or PAF. Clicking
     // "Discuss" from a WO/PAF lands the caller in the same thread every time;
     // the first click seeds members (requester/submitter/SDO approver + the
