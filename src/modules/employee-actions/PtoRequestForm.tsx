@@ -4,6 +4,7 @@ import { Card, CardBody } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
 import { Badge } from "@/shared/ui/Badge";
 import { useToast } from "@/shared/ui/Toaster";
+import { useAuth } from "@/auth/AuthProvider";
 import { fetchMyStores, submitPto } from "./api";
 import {
   CheckboxRow,
@@ -62,6 +63,8 @@ const EMPTY: State = {
 export function PtoRequestForm({ onSubmitted }: { onSubmitted: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const { profile } = useAuth();
+  const myName = profile?.preferred_name || profile?.full_name || "";
   const [state, setState] = useState<State>(EMPTY);
   const [error, setError] = useState<string | null>(null);
 
@@ -86,6 +89,17 @@ export function PtoRequestForm({ onSubmitted }: { onSubmitted: () => void }) {
 
   function set<K extends keyof State>(key: K, value: State[K]) {
     setState((prev) => ({ ...prev, [key]: value }));
+  }
+
+  // Selecting GM auto-fills the employee name with the signed-in user's name
+  // (the GM is filing for themselves). Still editable afterward.
+  function setPosition(value: string) {
+    setState((prev) => ({
+      ...prev,
+      position: value,
+      employee_name:
+        value === "GM" && !prev.employee_name.trim() ? myName : prev.employee_name,
+    }));
   }
 
   const hourly = isHourlyPosition(state.position);
@@ -171,20 +185,20 @@ export function PtoRequestForm({ onSubmitted }: { onSubmitted: () => void }) {
               onChange={(v) => set("store_number", v)}
               stores={stores}
             />
+            <SelectField
+              id="pto-position"
+              label="Position"
+              required
+              value={state.position}
+              onChange={setPosition}
+              options={POSITIONS}
+            />
             <TextField
               id="pto-employee"
               label="Employee Name"
               required
               value={state.employee_name}
               onChange={(v) => set("employee_name", v)}
-            />
-            <SelectField
-              id="pto-position"
-              label="Position"
-              required
-              value={state.position}
-              onChange={(v) => set("position", v)}
-              options={POSITIONS}
             />
 
             {state.position && !hourly && (

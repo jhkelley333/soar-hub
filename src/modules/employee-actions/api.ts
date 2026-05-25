@@ -61,3 +61,14 @@ export function submitPto(
     body: JSON.stringify(input),
   });
 }
+
+// Admin-only hard delete of a training or PTO request.
+export function deleteEmployeeAction(
+  type: "training" | "pto",
+  id: string
+): Promise<{ ok: true }> {
+  return request(`${FN}?action=delete`, {
+    method: "POST",
+    body: JSON.stringify({ type, id }),
+  });
+}
