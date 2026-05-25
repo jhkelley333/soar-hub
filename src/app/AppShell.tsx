@@ -18,7 +18,7 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Outlet } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
 import { Sidebar } from "@/app/Sidebar";
 import { MobileTabBar } from "@/app/MobileTabBar";
 import { PushPrimer } from "@/app/PushPrimer";
@@ -62,6 +62,9 @@ export function AppShell() {
   const [moreOpen, setMoreOpen] = useState(false);
   const { profile } = useAuth();
   const splash = useLaunchSplash();
+  // Chat runs full-bleed (its own multi-pane layout fills the content area);
+  // every other route keeps the padded, max-width container.
+  const fullBleed = useLocation().pathname.startsWith("/chat");
   // 2-hour idle auto-logout. Only active while a session exists (the
   // hook bails internally otherwise).
   useIdleLogout();
@@ -128,13 +131,17 @@ export function AppShell() {
           // or the MobileTabBar along with it.
           style={{ overscrollBehavior: "contain" }}
         >
-          {/* Container restores the existing padded layout for legacy
-              pages. Mobile-first pages set their own `mx-auto max-w-md`
-              inside, which lives comfortably inside this wrapper at
-              every viewport. */}
-          <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
-            <Outlet />
-          </div>
+          {/* Chat fills the area edge-to-edge + full height; other pages
+              keep the padded, max-width container. */}
+          {fullBleed ? (
+            <div className="h-full">
+              <Outlet />
+            </div>
+          ) : (
+            <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+              <Outlet />
+            </div>
+          )}
         </main>
       </div>
 

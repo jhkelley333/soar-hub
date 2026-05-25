@@ -1,19 +1,15 @@
-// Chat — inbox (the "Inbox D — Combined" design). Home of the Chat tab:
-// sticky header, search, a "Needs you" strip (0–2 action cards), the
-// All / Direct / Groups / News tab bar, and the conversation list.
-//
-// Data comes from the chat Netlify function (see ./api). The compose FAB
-// opens ComposeModal (which navigates to the new thread on create) and the
-// "Needs you" strip opens a drawer of action cards.
+// Chat — conversation list. Shared by the mobile inbox and the desktop
+// two-pane layout. Self-contained: owns the inbox query, search, tabs,
+// the "Needs you" launcher, compose, and row selection. The parent passes
+// the active thread (to highlight it) and an onOpen handler.
 
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
 import { Search, Plus } from "lucide-react";
-import { AppHeader } from "@/shared/ui/AppHeader";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Drawer } from "@/shared/ui/Drawer";
 import { useToast } from "@/shared/ui/Toaster";
+import { useQuery } from "@tanstack/react-query";
+import { cn } from "@/lib/cn";
 import { ChatTabs } from "./components/ChatTabs";
 import { ActionCard } from "./components/ActionCard";
 import { ConversationRow } from "./components/ConversationRow";
@@ -21,9 +17,14 @@ import { ComposeModal } from "./components/ComposeModal";
 import { fetchInbox } from "./api";
 import type { ChatTab } from "./types";
 
-export function ChatInboxPage() {
+export function ChatList({
+  activeThreadId,
+  onOpen,
+}: {
+  activeThreadId?: string;
+  onOpen: (id: string) => void;
+}) {
   const toast = useToast();
-  const navigate = useNavigate();
   const [tab, setTab] = useState<ChatTab>("all");
   const [search, setSearch] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
@@ -57,12 +58,10 @@ export function ChatInboxPage() {
         if (tab === "direct") return t.kind === "direct";
         if (tab === "groups") return t.kind === "group";
         if (tab === "news") return t.kind === "broadcast";
-        return true; // all
+        return true;
       })
       .filter((t) =>
-        q
-          ? `${t.title} ${t.subtitle} ${t.lastMessage.text}`.toLowerCase().includes(q)
-          : true,
+        q ? `${t.title} ${t.subtitle} ${t.lastMessage.text}`.toLowerCase().includes(q) : true,
       )
       .sort((a, b) => {
         if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
@@ -70,27 +69,20 @@ export function ChatInboxPage() {
       });
   }, [threads, tab, search]);
 
-  const openThread = (id: string) => navigate(`/chat/${id}`);
-
   return (
-    <div className="relative mx-auto min-h-full w-full max-w-md bg-surface-muted">
-      <AppHeader
-        title="Chat"
-        subtitle={`${needsYou.length} need you · ${counts.all} unread`}
-        trailing={
-          <button
-            type="button"
-            onClick={() => setComposeOpen(true)}
-            className="text-midnight-600 hover:text-midnight-900"
-            aria-label="New chat"
-          >
-            <Plus className="h-5 w-5" strokeWidth={2} />
-          </button>
-        }
-      />
+    <div className="flex h-full flex-col bg-surface-muted">
+      <header className="flex shrink-0 items-center justify-between border-b border-midnight-100 px-4 py-3">
+        <h1 className="text-[17px] font-semibold text-midnight-900">Chat</h1>
+        <button
+          type="button"
+          onClick={() => setComposeOpen(true)}
+          className="inline-flex items-center gap-1 text-[14px] font-semibold text-accent"
+        >
+          <Plus className="h-4 w-4" strokeWidth={2.25} /> New
+        </button>
+      </header>
 
-      {/* Search */}
-      <div className="sticky top-12 z-10 bg-surface-muted px-4 pb-2 pt-2">
+      <div className="shrink-0 px-3 pb-2 pt-2">
         <div className="flex items-center gap-2 rounded-xl bg-surface-sunk px-3 py-2.5">
           <Search className="h-4 w-4 shrink-0 text-midnight-400" strokeWidth={2} />
           <input
@@ -102,8 +94,7 @@ export function ChatInboxPage() {
         </div>
       </div>
 
-      {/* Tabs + Needs-you launcher */}
-      <div className="sticky top-[5.5rem] z-10 bg-surface-muted">
+      <div className="shrink-0">
         <ChatTabs
           active={tab}
           counts={counts}
@@ -114,7 +105,6 @@ export function ChatInboxPage() {
                 type="button"
                 onClick={() => setNeedsYouOpen(true)}
                 className="my-1.5 inline-flex items-center gap-1.5 rounded-full bg-accent/10 px-2.5 py-1 text-[12.5px] font-semibold text-accent"
-                aria-label={`${needsYou.length} need you`}
               >
                 <span className="h-1.5 w-1.5 rounded-full bg-accent" />
                 Needs you
@@ -127,8 +117,7 @@ export function ChatInboxPage() {
         />
       </div>
 
-      {/* Conversation list */}
-      <div className="overflow-hidden">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         {inboxQ.isLoading ? (
           <div className="p-8 text-center text-[13px] text-midnight-400">Loading chats…</div>
         ) : inboxQ.isError ? (
@@ -142,33 +131,19 @@ export function ChatInboxPage() {
           <div className="p-6">
             <EmptyState
               title={search ? "No threads match" : "Nothing here yet"}
-              description={
-                search
-                  ? "Try a different search."
-                  : "Tap + to start a conversation."
-              }
+              description={search ? "Try a different search." : "Tap New to start a conversation."}
             />
           </div>
         ) : (
           <ul className="divide-y divide-midnight-100">
             {list.map((t) => (
-              <li key={t.id}>
-                <ConversationRow thread={t} onOpen={() => openThread(t.id)} />
+              <li key={t.id} className={cn(t.id === activeThreadId && "bg-frost-100/60")}>
+                <ConversationRow thread={t} onOpen={() => onOpen(t.id)} />
               </li>
             ))}
           </ul>
         )}
       </div>
-
-      {/* Compose FAB */}
-      <button
-        type="button"
-        onClick={() => setComposeOpen(true)}
-        aria-label="New chat"
-        className="fixed bottom-20 right-5 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-midnight-900 text-white shadow-float transition active:scale-95"
-      >
-        <Plus className="h-6 w-6" strokeWidth={2.25} />
-      </button>
 
       <ComposeModal open={composeOpen} onClose={() => setComposeOpen(false)} />
 
@@ -184,11 +159,9 @@ export function ChatInboxPage() {
               thread={t}
               onOpen={() => {
                 setNeedsYouOpen(false);
-                openThread(t.id);
+                onOpen(t.id);
               }}
-              onAction={(a) =>
-                toast.push(`"${a}" — wired to the work flow next.`, "info")
-              }
+              onAction={(a) => toast.push(`"${a}" — wired to the work flow next.`, "info")}
             />
           ))}
         </div>

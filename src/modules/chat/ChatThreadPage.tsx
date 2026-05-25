@@ -6,11 +6,12 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useAuth } from "@/auth/AuthProvider";
+import { cn } from "@/lib/cn";
 import { GroupThread } from "./components/group/GroupThread";
 import { fetchThread, markThreadRead } from "./api";
 import { useChatRealtime } from "./useChatRealtime";
 
-export function ChatThreadPage() {
+export function ChatThreadPage({ embedded = false }: { embedded?: boolean }) {
   const { threadId = "" } = useParams();
   const navigate = useNavigate();
   const { profile } = useAuth();
@@ -29,7 +30,12 @@ export function ChatThreadPage() {
 
   if (q.isLoading) {
     return (
-      <div className="fixed inset-0 z-40 flex items-center justify-center bg-surface-muted text-sm text-midnight-500">
+      <div
+        className={cn(
+          "flex items-center justify-center bg-surface-muted text-sm text-midnight-500",
+          embedded ? "h-full" : "fixed inset-0 z-40",
+        )}
+      >
         Loading…
       </div>
     );
@@ -59,6 +65,11 @@ export function ChatThreadPage() {
   }
 
   return (
-    <GroupThread threadId={threadId} data={q.data} currentUserId={profile?.id ?? ""} />
+    <GroupThread
+      threadId={threadId}
+      data={q.data}
+      currentUserId={profile?.id ?? ""}
+      embedded={embedded}
+    />
   );
 }
