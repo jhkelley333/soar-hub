@@ -9,8 +9,10 @@ export function useChatUnreadCount(): number {
   const q = useQuery({
     queryKey: ["chat", "inbox"],
     queryFn: fetchInbox,
-    staleTime: 30_000,
+    staleTime: 15_000,
     refetchInterval: 60_000,
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
   const threads = q.data?.threads ?? [];
   return threads.reduce((sum, t) => sum + (t.unreadCount || 0), 0);

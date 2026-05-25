@@ -23,6 +23,7 @@ import { Sidebar } from "@/app/Sidebar";
 import { MobileTabBar } from "@/app/MobileTabBar";
 import { PushPrimer } from "@/app/PushPrimer";
 import { useIdleLogout } from "@/auth/useIdleLogout";
+import { useChatRealtime } from "@/modules/chat/useChatRealtime";
 import { useAuth } from "@/auth/AuthProvider";
 import { LaunchSplash } from "@/auth/LaunchSplash";
 import { fetchMyTree, launchScopeLabel, scopeWordForRole } from "@/modules/my-stores/api";
@@ -64,6 +65,9 @@ export function AppShell() {
   // 2-hour idle auto-logout. Only active while a session exists (the
   // hook bails internally otherwise).
   useIdleLogout();
+  // App-wide chat realtime so the unread badge updates live anywhere in the
+  // app (not just on the chat screens).
+  useChatRealtime();
 
   // Personalized splash subline: name the caller's scope + store count.
   // Shares the ["my-stores-tree"] cache the home/region views use, so
