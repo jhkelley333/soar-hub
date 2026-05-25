@@ -8,7 +8,7 @@ import {
 } from "react";
 import { useBlocker } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Bell, Camera, Check, Download, FileText, Trash2 } from "lucide-react";
+import { Bell, BellOff, Camera, Check, Download, FileText, Trash2 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -318,10 +318,24 @@ function NotificationsCard() {
   );
 
   const supported = pushSupported();
-  const iosNeedsInstall = isIOS() && !isStandalone();
+  const ios = isIOS();
+  const iosNeedsInstall = ios && !isStandalone();
 
   useEffect(() => {
     isPushEnabled().then(setEnabled).catch(() => {});
+  }, []);
+
+  // Re-read permission when the app regains focus — covers the case
+  // where the user leaves to iOS Settings to un-block notifications and
+  // comes back, so the card flips from "blocked" to the Enable button.
+  useEffect(() => {
+    const refresh = () => setPerm(notificationPermission());
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("focus", refresh);
+    };
   }, []);
 
   const enable = async () => {
@@ -385,7 +399,7 @@ function NotificationsCard() {
           </div>
         )}
 
-        {supported && !iosNeedsInstall && (
+        {supported && !iosNeedsInstall && perm !== "denied" && (
           <div className="mt-4 flex flex-wrap items-center gap-2">
             {enabled ? (
               <>
@@ -409,9 +423,25 @@ function NotificationsCard() {
         )}
 
         {supported && !iosNeedsInstall && perm === "denied" && (
-          <p className="mt-3 text-xs text-red-600">
-            Notifications are blocked in your settings. Re-allow them for this site, then enable here.
-          </p>
+          <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-xs text-amber-900">
+            <p className="flex items-center gap-1.5 font-semibold">
+              <BellOff className="h-3.5 w-3.5" strokeWidth={2.5} /> Notifications are blocked
+            </p>
+            {ios ? (
+              <ol className="mt-1.5 list-decimal space-y-0.5 pl-4">
+                <li>Open the iPhone <span className="font-medium">Settings</span> app.</li>
+                <li>Tap <span className="font-medium">Apps</span> → <span className="font-medium">SOAR Hub</span> (or <span className="font-medium">Notifications</span> → SOAR Hub).</li>
+                <li>Turn on <span className="font-medium">Allow Notifications</span>.</li>
+                <li>Come back here — this card will switch to <span className="font-medium">Enable</span>.</li>
+              </ol>
+            ) : (
+              <p className="mt-1.5">
+                Click the lock / site-info icon in your browser's address bar, set
+                <span className="font-medium"> Notifications</span> to <span className="font-medium">Allow</span>,
+                then reload this page.
+              </p>
+            )}
+          </div>
         )}
       </CardBody>
     </Card>
