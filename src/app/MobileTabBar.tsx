@@ -15,6 +15,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { useChatUnreadCount } from "@/modules/chat/useChatUnread";
 
 export interface MobileTab {
   to: string;
@@ -38,6 +39,7 @@ export function MobileTabBar({
 }: {
   onMoreClick: () => void;
 }) {
+  const chatUnread = useChatUnreadCount();
   return (
     <nav
       className="shrink-0 border-t border-white/10 bg-midnight lg:hidden"
@@ -67,10 +69,20 @@ export function MobileTabBar({
           >
             {({ isActive }) => (
               <>
-                <t.Icon
-                  className="h-5 w-5"
-                  strokeWidth={isActive ? 2.25 : 1.75}
-                />
+                <span className="relative">
+                  <t.Icon
+                    className="h-5 w-5"
+                    strokeWidth={isActive ? 2.25 : 1.75}
+                  />
+                  {t.to === "/chat" && chatUnread > 0 && (
+                    <span
+                      className="absolute -right-2 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-cherry px-1 text-[9px] font-semibold leading-none text-white"
+                      aria-label={`${chatUnread} unread`}
+                    >
+                      {chatUnread > 99 ? "99+" : chatUnread}
+                    </span>
+                  )}
+                </span>
                 <span>{t.label}</span>
               </>
             )}

@@ -6,6 +6,7 @@ import { visibleNav } from "@/app/nav";
 import { fetchResolvedFlags } from "@/lib/flags";
 import { listPafs, listSdoQueue } from "@/modules/paf/api";
 import { countPendingScopes } from "@/modules/reno-scoping/api";
+import { useChatUnreadCount } from "@/modules/chat/useChatUnread";
 import { ROLE_LABELS, roleLevel, type UserRole } from "@/types/database";
 import { cn } from "@/lib/cn";
 
@@ -80,6 +81,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const items = visibleNav(profile?.role, flagsQ.data?.flags);
   const pafBadge = usePafBadgeCount(profile?.role);
   const renoBadge = useRenoBadgeCount(profile?.role);
+  const chatBadge = useChatUnreadCount();
 
   return (
     <aside className="flex h-full w-60 flex-col border-r border-zinc-200 bg-white shadow-xl lg:shadow-none">
@@ -102,6 +104,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
               renoBadge > 0
             ) {
               badge = renoBadge;
+            } else if (item.to === "/chat" && chatBadge > 0) {
+              badge = chatBadge > 99 ? 99 : chatBadge;
             }
             return (
               <li key={item.to}>
