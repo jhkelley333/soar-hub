@@ -60,7 +60,7 @@ export function AttachmentView({ att, sent }: { att: ChatAttachment; sent: boole
             alt={att.name}
             loading="lazy"
             onError={() => setImgBroke(true)}
-            className="max-h-64 w-auto max-w-full rounded-2xl object-cover ring-1 ring-midnight-100"
+            className="max-h-80 w-auto max-w-full rounded-2xl object-contain ring-1 ring-midnight-100"
           />
         ) : (
           <div className="h-44 w-44 animate-pulse rounded-2xl bg-midnight-100" />
