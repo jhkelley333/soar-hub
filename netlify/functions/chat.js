@@ -244,6 +244,26 @@ export const handler = async (event) => {
         users[p.id] = { name, first: firstNameOf(name), initials: initialsOf(name) };
       }
 
+      const msgIds = (messages ?? []).map((m) => m.id);
+      const { data: atts } = msgIds.length
+        ? await supa
+            .from("chat_attachments")
+            .select("id, message_id, storage_path, file_name, mime_type, size_bytes")
+            .in("message_id", msgIds)
+        : { data: [] };
+      const attByMsg = new Map();
+      for (const a of atts ?? []) {
+        const arr = attByMsg.get(a.message_id) || [];
+        arr.push({
+          id: a.id,
+          path: a.storage_path,
+          name: a.file_name,
+          mime: a.mime_type || "",
+          size: a.size_bytes || 0,
+        });
+        attByMsg.set(a.message_id, arr);
+      }
+
       return respond(200, {
         ok: true,
         thread,
@@ -256,13 +276,17 @@ export const handler = async (event) => {
           text: m.text,
           system: m.system,
           at: fmtTime(m.created_at),
+          attachments: attByMsg.get(m.id) || [],
         })),
       });
     }
 
     if (action === "send" && event.httpMethod === "POST") {
-      const { threadId, text } = JSON.parse(event.body || "{}");
-      if (!threadId || !text?.trim()) return respond(400, { ok: false, message: "threadId and text required." });
+      const { threadId, text, attachments } = JSON.parse(event.body || "{}");
+      const atts = Array.isArray(attachments) ? attachments.filter((a) => a?.path && a?.name) : [];
+      if (!threadId || (!text?.trim() && atts.length === 0)) {
+        return respond(400, { ok: false, message: "threadId and text or an attachment required." });
+      }
       const { data: mine } = await supa
         .from("chat_thread_members")
         .select("user_id, role")
@@ -282,10 +306,29 @@ export const handler = async (event) => {
       }
       const { data, error } = await supa
         .from("chat_messages")
-        .insert({ thread_id: threadId, from_user_id: uid, text: text.trim() })
+        .insert({ thread_id: threadId, from_user_id: uid, text: (text || "").trim() })
         .select()
         .single();
       if (error) throw error;
+
+      if (atts.length) {
+        await supa.from("chat_attachments").insert(
+          atts.map((a) => ({
+            message_id: data.id,
+            thread_id: threadId,
+            storage_path: String(a.path),
+            file_name: String(a.name).slice(0, 300),
+            mime_type: a.mime ? String(a.mime).slice(0, 200) : null,
+            size_bytes: Number.isFinite(a.size) ? a.size : null,
+            uploaded_by: uid,
+          })),
+        );
+        // Keep the inbox preview meaningful for attachment-only messages.
+        if (!text?.trim()) {
+          const label = atts.length === 1 ? `📎 ${atts[0].name}` : `📎 ${atts.length} files`;
+          await supa.from("chat_threads").update({ last_message_text: label }).eq("id", threadId);
+        }
+      }
       await supa
         .from("chat_thread_members")
         .update({ last_read_at: new Date().toISOString() })
@@ -306,7 +349,7 @@ export const handler = async (event) => {
           (mems || []).map((m) => m.user_id),
           {
             title: notifTitle,
-            body: text.trim().slice(0, 180),
+            body: (text?.trim() || (atts.length === 1 ? `📎 ${atts[0].name}` : `📎 ${atts.length} files`)).slice(0, 180),
             url: `/chat/${threadId}`,
             tag: `thread-${threadId}`,
           },
@@ -856,6 +899,38 @@ export const handler = async (event) => {
       }
       await supa.from("chat_thread_members").delete().eq("thread_id", threadId).eq("user_id", userId);
       return respond(200, { ok: true });
+    }
+
+    // All attachments in a thread, newest first (the Files list). Members only.
+    if (action === "attachments" && event.httpMethod === "GET") {
+      const threadId = (event.queryStringParameters || {}).threadId;
+      if (!threadId) return respond(400, { ok: false, message: "threadId required." });
+      const { data: meRow } = await supa
+        .from("chat_thread_members")
+        .select("user_id")
+        .eq("thread_id", threadId)
+        .eq("user_id", uid)
+        .maybeSingle();
+      if (!meRow) return respond(403, { ok: false, message: "Not a member of this thread." });
+
+      const { data: rows } = await supa
+        .from("chat_attachments")
+        .select("id, storage_path, file_name, mime_type, size_bytes, uploaded_by, created_at")
+        .eq("thread_id", threadId)
+        .order("created_at", { ascending: false });
+
+      return respond(200, {
+        ok: true,
+        attachments: (rows || []).map((a) => ({
+          id: a.id,
+          path: a.storage_path,
+          name: a.file_name,
+          mime: a.mime_type || "",
+          size: a.size_bytes || 0,
+          uploadedBy: a.uploaded_by,
+          at: fmtTime(a.created_at),
+        })),
+      });
     }
 
     if (action === "markRead" && event.httpMethod === "POST") {

@@ -52,6 +52,15 @@ export interface ChatThread {
   memberInitials?: string[];
 }
 
+export interface ChatAttachment {
+  id: string;
+  /** Storage path within the chat-attachments bucket. */
+  path: string;
+  name: string;
+  mime: string;
+  size: number;
+}
+
 export interface ChatMessage {
   id: string;
   threadId: string;
@@ -61,4 +70,5 @@ export interface ChatMessage {
   /** Pre-formatted display time, e.g. "Tue 4:18p". */
   at: string;
   system?: boolean;
+  attachments?: ChatAttachment[];
 }
