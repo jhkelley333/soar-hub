@@ -82,11 +82,65 @@ export function fetchContacts(): Promise<{ ok: true; contacts: ChatContact[] }> 
   return req<{ ok: true; contacts: ChatContact[] }>(`${FN}?action=contacts`);
 }
 
-export function sendChatMessage(threadId: string, text: string): Promise<{ ok: true }> {
+export interface AttachmentInput {
+  path: string;
+  name: string;
+  mime: string;
+  size: number;
+}
+
+export function sendChatMessage(
+  threadId: string,
+  text: string,
+  attachments?: AttachmentInput[],
+): Promise<{ ok: true }> {
   return req(`${FN}?action=send`, {
     method: "POST",
-    body: JSON.stringify({ threadId, text }),
+    body: JSON.stringify({ threadId, text, attachments: attachments ?? [] }),
   });
+}
+
+const CHAT_BUCKET = "chat-attachments";
+
+export function isImageMime(mime: string): boolean {
+  return /^image\//.test(mime);
+}
+
+// Upload a file to the thread's storage folder and return its metadata.
+export async function uploadChatAttachment(
+  threadId: string,
+  file: File,
+): Promise<AttachmentInput> {
+  const safe = file.name.replace(/[^\w.\-]+/g, "_").slice(-120);
+  const path = `${threadId}/${crypto.randomUUID()}-${safe}`;
+  const { error } = await supabase.storage
+    .from(CHAT_BUCKET)
+    .upload(path, file, { contentType: file.type || "application/octet-stream", upsert: false });
+  if (error) throw new Error(error.message || "Upload failed");
+  return { path, name: file.name, mime: file.type || "", size: file.size };
+}
+
+// Short-lived signed URL for rendering / downloading an attachment.
+export async function signChatAttachment(path: string, expiresInSec = 3600): Promise<string> {
+  const { data, error } = await supabase.storage
+    .from(CHAT_BUCKET)
+    .createSignedUrl(path, expiresInSec);
+  if (error || !data?.signedUrl) throw new Error(error?.message || "Couldn't sign URL");
+  return data.signedUrl;
+}
+
+export interface ThreadAttachment {
+  id: string;
+  path: string;
+  name: string;
+  mime: string;
+  size: number;
+  uploadedBy: string | null;
+  at: string;
+}
+
+export function fetchAttachments(threadId: string): Promise<{ ok: true; attachments: ThreadAttachment[] }> {
+  return req(`${FN}?action=attachments&threadId=${encodeURIComponent(threadId)}`);
 }
 
 export interface CreateThreadBody {

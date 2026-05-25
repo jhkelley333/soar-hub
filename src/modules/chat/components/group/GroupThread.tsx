@@ -2,7 +2,7 @@
 // Renders from the fetched thread payload; the composer posts via the
 // send mutation and refetches.
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronLeft, Search, MoreHorizontal, Paperclip, ArrowUp } from "lucide-react";
@@ -11,7 +11,7 @@ import { MessageBubble } from "./MessageBubble";
 import { SystemMessage } from "./SystemMessage";
 import { MembersStrip, type StripMember } from "./MembersStrip";
 import { ExternalBanner } from "./Banners";
-import { sendChatMessage, type ThreadResponse } from "../../api";
+import { sendChatMessage, uploadChatAttachment, type ThreadResponse } from "../../api";
 
 export function GroupThread({
   threadId,
@@ -26,6 +26,7 @@ export function GroupThread({
   const toast = useToast();
   const qc = useQueryClient();
   const [draft, setDraft] = useState("");
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { thread, members, users, messages } = data;
   const isGroup = thread.kind === "group";
@@ -70,6 +71,26 @@ export function GroupThread({
     onError: (e: unknown) =>
       toast.push(e instanceof Error ? e.message : "Send failed.", "error"),
   });
+
+  const upload = useMutation({
+    mutationFn: async (file: File) => {
+      const att = await uploadChatAttachment(threadId, file);
+      await sendChatMessage(threadId, draft.trim(), [att]);
+    },
+    onSuccess: () => {
+      setDraft("");
+      qc.invalidateQueries({ queryKey: ["chat", "thread", threadId] });
+      qc.invalidateQueries({ queryKey: ["chat", "inbox"] });
+    },
+    onError: (e: unknown) =>
+      toast.push(e instanceof Error ? e.message : "Upload failed.", "error"),
+  });
+
+  const onPickFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-picking the same file
+    if (file) upload.mutate(file);
+  };
 
   return (
     <div className="fixed inset-0 z-40 flex flex-col bg-surface-muted">
@@ -139,9 +160,12 @@ export function GroupThread({
           className="flex shrink-0 items-end gap-2.5 border-t border-midnight-100 bg-surface px-4 pt-3"
           style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}
         >
+          <input ref={fileInputRef} type="file" className="hidden" onChange={onPickFile} />
           <button
             type="button"
-            className="mb-1 shrink-0 text-midnight-400 transition hover:text-midnight-700"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={upload.isPending}
+            className="mb-1 shrink-0 text-midnight-400 transition hover:text-midnight-700 disabled:opacity-40"
             aria-label="Attach"
           >
             <Paperclip className="h-[22px] w-[22px]" strokeWidth={2} />
@@ -152,8 +176,9 @@ export function GroupThread({
             onKeyDown={(e) => {
               if (e.key === "Enter" && draft.trim()) send.mutate(draft.trim());
             }}
-            placeholder="Message"
-            className="min-w-0 flex-1 rounded-[20px] border border-midnight-200 bg-surface px-4 py-2.5 text-[15px] text-midnight-900 placeholder:text-midnight-400 focus:border-midnight-300 focus:outline-none"
+            placeholder={upload.isPending ? "Uploading…" : "Message"}
+            disabled={upload.isPending}
+            className="min-w-0 flex-1 rounded-[20px] border border-midnight-200 bg-surface px-4 py-2.5 text-[15px] text-midnight-900 placeholder:text-midnight-400 focus:border-midnight-300 focus:outline-none disabled:opacity-60"
           />
           <button
             type="button"
