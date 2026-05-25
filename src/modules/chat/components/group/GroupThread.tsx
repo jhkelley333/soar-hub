@@ -23,10 +23,12 @@ export function GroupThread({
   threadId,
   data,
   currentUserId,
+  embedded = false,
 }: {
   threadId: string;
   data: ThreadResponse;
   currentUserId: string;
+  embedded?: boolean;
 }) {
   const navigate = useNavigate();
   const location = useLocation();
@@ -127,13 +129,22 @@ export function GroupThread({
   };
 
   return (
-    <div className="fixed inset-0 z-40 flex flex-col bg-surface-muted">
-      <div aria-hidden className="shrink-0 bg-midnight" style={{ height: "env(safe-area-inset-top, 0px)" }} />
+    <div
+      className={cn(
+        "flex flex-col bg-surface-muted",
+        embedded ? "relative h-full min-h-0" : "fixed inset-0 z-40",
+      )}
+    >
+      {!embedded && (
+        <div aria-hidden className="shrink-0 bg-midnight" style={{ height: "env(safe-area-inset-top, 0px)" }} />
+      )}
 
       <header className="flex shrink-0 items-center gap-1 border-b border-midnight-100 bg-surface px-2 py-2">
-        <button type="button" onClick={() => navigate("/chat")} className="rounded-full p-1.5 text-midnight-600 hover:bg-surface-muted" aria-label="Back to inbox">
-          <ChevronLeft className="h-5 w-5" strokeWidth={2} />
-        </button>
+        {!embedded && (
+          <button type="button" onClick={() => navigate("/chat")} className="rounded-full p-1.5 text-midnight-600 hover:bg-surface-muted" aria-label="Back to inbox">
+            <ChevronLeft className="h-5 w-5" strokeWidth={2} />
+          </button>
+        )}
         <button
           type="button"
           onClick={() => isGroupy && navigate(`/chat/${threadId}/info`)}

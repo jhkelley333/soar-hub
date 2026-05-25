@@ -47,8 +47,7 @@ import { RegionPage } from "@/modules/region/RegionPage";
 import { ApprovalsPage } from "@/modules/approvals/ApprovalsPage";
 import { WalkthroughPage } from "@/modules/walkthrough/WalkthroughPage";
 import { DirectoryPage } from "@/modules/directory/DirectoryPage";
-import { ChatInboxPage } from "@/modules/chat/ChatInboxPage";
-import { ChatThreadPage } from "@/modules/chat/ChatThreadPage";
+import { ChatLayout } from "@/modules/chat/ChatLayout";
 import { GroupInfoPage } from "@/modules/chat/GroupInfoPage";
 
 export const router = createBrowserRouter([
@@ -85,8 +84,8 @@ export const router = createBrowserRouter([
         ),
       },
       { path: "contacts", element: <ContactsPage /> },
-      { path: "chat", element: <ChatInboxPage /> },
-      { path: "chat/:threadId", element: <ChatThreadPage /> },
+      { path: "chat", element: <ChatLayout /> },
+      { path: "chat/:threadId", element: <ChatLayout /> },
       { path: "chat/:threadId/info", element: <GroupInfoPage /> },
       {
         path: "resources",
