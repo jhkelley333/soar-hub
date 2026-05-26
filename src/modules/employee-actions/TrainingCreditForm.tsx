@@ -37,6 +37,7 @@ interface State {
   training_type: string;
   training_other: string;
   start_date: string;
+  last_day_date: string;
   training_days: TrainingDayInput[];
   send_copy: boolean;
 }
@@ -48,6 +49,7 @@ const EMPTY: State = {
   training_type: "",
   training_other: "",
   start_date: "",
+  last_day_date: "",
   training_days: [],
   send_copy: false,
 };
@@ -60,6 +62,7 @@ function stateFromRow(row: TrainingCreditRow): State {
     training_type: row.training_type,
     training_other: row.training_other ?? "",
     start_date: row.start_date ?? "",
+    last_day_date: row.last_day_date ?? "",
     training_days: row.training_days.map((d) => ({
       day: d.day,
       start_time: d.start_time,
@@ -134,6 +137,9 @@ export function TrainingCreditForm({
     if (!state.hourly_wage.trim()) return setError("Hourly Wage is required.");
     if (!state.training_type.trim()) return setError("Please pick what the request is for.");
     if (!state.start_date.trim()) return setError("Start Date is required.");
+    if (!state.last_day_date.trim()) return setError("Last Training Day is required.");
+    if (state.last_day_date < state.start_date)
+      return setError("Last Training Day can't be before the Start Date.");
     if (!state.training_days.length)
       return setError("Add at least one of the first three training days.");
     for (const d of state.training_days) {
@@ -150,6 +156,7 @@ export function TrainingCreditForm({
       training_type: state.training_type,
       training_other: state.training_other,
       start_date: state.start_date,
+      last_day_date: state.last_day_date,
       training_days: state.training_days,
       send_copy: state.send_copy,
     });
@@ -221,6 +228,14 @@ export function TrainingCreditForm({
               value={state.start_date}
               onChange={(v) => set("start_date", v)}
               helpText="Date the team member will complete Day 1 orientation / first position."
+            />
+            <DateField
+              id="tc-last-day"
+              label="Last Training Day"
+              required
+              value={state.last_day_date}
+              onChange={(v) => set("last_day_date", v)}
+              helpText="Final training day — used to time the DO's closeout."
             />
             <TrainingDaysEditor
               label="First Three Training Days"

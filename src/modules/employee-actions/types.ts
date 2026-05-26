@@ -31,6 +31,7 @@ export interface TrainingCreditRow {
   training_other: string | null;
   start_date: string | null;
   requested_amount: number;
+  last_day_date: string | null;
   training_days: TrainingDayEntry[];
   send_copy: boolean;
   status: string;
@@ -40,8 +41,13 @@ export interface TrainingCreditRow {
   approved_by_email: string | null;
   decision_note: string | null;
   rejection_reason: string | null;
+  // Post-approval tracking
+  entered_at: string | null;
+  closed_out_at: string | null;
   created_at: string;
   updated_at: string;
+  // Stamped by the queue endpoint: the action this caller can take.
+  action_needed?: string | null;
 }
 
 export interface PtoRow {
@@ -73,8 +79,11 @@ export interface PtoRow {
   approved_by_email: string | null;
   decision_note: string | null;
   rejection_reason: string | null;
+  // Post-approval tracking
+  paf_submitted_at: string | null;
   created_at: string;
   updated_at: string;
+  action_needed?: string | null;
 }
 
 // One hourly vacation day. amount = hours x hourly wage (server-computed).
@@ -98,6 +107,14 @@ export interface DecideInput {
   note?: string;
 }
 
+export type ConfirmStep = "entered" | "closed-out" | "paf-submitted";
+
+export interface ConfirmInput {
+  type: "training" | "pto";
+  id: string;
+  step: ConfirmStep;
+}
+
 export interface EmployeeActionListResponse {
   user: { id: string; role: string; can_submit: boolean };
   trainingCredits: TrainingCreditRow[];
@@ -119,6 +136,7 @@ export interface TrainingCreditInput {
   training_type: string;
   training_other?: string;
   start_date?: string;
+  last_day_date: string;
   training_days: TrainingDayInput[];
   send_copy: boolean;
 }

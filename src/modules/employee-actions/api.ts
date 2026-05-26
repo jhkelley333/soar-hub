@@ -2,6 +2,7 @@
 
 import { supabase } from "@/lib/supabase";
 import type {
+  ConfirmInput,
   DecideInput,
   EmployeeActionListResponse,
   EmployeeActionQueueResponse,
@@ -54,6 +55,16 @@ export function decideEmployeeAction(
   input: DecideInput
 ): Promise<{ ok: true; status: string }> {
   return request(`${FN}?action=decide`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+// Post-approval confirmation steps (entered / closed-out / paf-submitted).
+export function confirmEmployeeAction(
+  input: ConfirmInput
+): Promise<{ ok: true; status: string }> {
+  return request(`${FN}?action=confirm`, {
     method: "POST",
     body: JSON.stringify(input),
   });

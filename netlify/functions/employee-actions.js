@@ -102,6 +102,11 @@ function appBaseUrl() {
   return (process.env.URL || process.env.DEPLOY_URL || "").replace(/\/$/, "");
 }
 
+// Google Sheet the DO completes to close out a finished training. Set
+// TRAINING_CLOSEOUT_FORM_URL in Netlify; falls back to a clear placeholder.
+const CLOSEOUT_FORM_URL =
+  process.env.TRAINING_CLOSEOUT_FORM_URL || "(closeout form link not configured)";
+
 async function sendEmailViaResend({ to, subject, text }) {
   const recipients = Array.isArray(to) ? to.filter(Boolean) : to ? [to] : [];
   if (!recipients.length) {
@@ -412,6 +417,11 @@ function buildTrainingFields(body) {
   const requestedAmount = round2(trainingDays.reduce((sum, e) => sum + e.amount, 0));
   const trainingOther = sanitizeText(body?.training_other, 500) || null;
 
+  const lastDayDate = sanitizeDateInput(body?.last_day_date);
+  if (!lastDayDate) {
+    return { error: "Last Training Day date is required (used for closeout).", status: 400 };
+  }
+
   return {
     fields: {
       employee_name: employeeName,
@@ -419,11 +429,12 @@ function buildTrainingFields(body) {
       training_type: trainingType,
       training_other: trainingOther,
       start_date: sanitizeDateInput(body?.start_date),
+      last_day_date: lastDayDate,
       requested_amount: requestedAmount,
       training_days: trainingDays,
       send_copy: body?.send_copy === true || body?.send_copy === "true",
     },
-    meta: { employeeName, trainingType, trainingOther, wage, requestedAmount, trainingDays },
+    meta: { employeeName, trainingType, trainingOther, wage, requestedAmount, trainingDays, lastDayDate },
   };
 }
 
@@ -813,26 +824,37 @@ const AUDIT_TYPE = {
   pto: "pto",
 };
 
-// Which roles may act on a request at its current status, or null if the
-// status is terminal / not awaiting an approver.
-function pendingActorRoles(type, status) {
+// The action a given role can take on a request at its current status, or
+// null. Covers approvals ("decide") and the post-approval confirmations.
+//   training: Submitted→decide(SDO/RVP) Approved→entered(SDO/RVP) Entered→closed-out(DO)
+//   pto:      Submitted→decide(DO) "DO Approved"→decide(SDO/RVP) Approved→paf-submitted(DO)
+function actionableStep(type, status, role) {
+  const isApprover = role === "sdo" || role === "rvp" || role === "admin";
+  const isDo = role === "do" || role === "admin";
   if (type === "training") {
-    return status === "Submitted" ? new Set(["sdo", "rvp", "admin"]) : null;
+    if (status === "Submitted") return isApprover ? "decide" : null;
+    if (status === "Approved") return isApprover ? "entered" : null;
+    if (status === "Entered") return isDo ? "closed-out" : null;
+    return null;
   }
   // pto
-  if (status === "Submitted") return new Set(["do", "admin"]);
-  if (status === "DO Approved") return new Set(["sdo", "rvp", "admin"]);
+  if (status === "Submitted") return isDo ? "decide" : null;
+  if (status === "DO Approved") return isApprover ? "decide" : null;
+  if (status === "Approved") return isDo ? "paf-submitted" : null;
   return null;
 }
 
-// queue — requests awaiting the caller's approval (own submissions excluded).
+// queue — everything awaiting the caller's action: approvals plus the
+// post-approval confirmations (entered / closed-out / PAF submitted). Each
+// row is stamped with `action_needed` so the UI shows the right button. Only
+// the approval ("decide") step excludes the caller's own submissions.
 async function listQueue(supa, user) {
   if (!APPROVER_ROLES.has(user.role)) {
     return { user: { id: user.id, role: user.role }, trainingCredits: [], ptoRequests: [] };
   }
   const numbers = user.role === "admin" ? null : await resolveVisibleStoreNumbers(supa, user.id);
 
-  async function fetchPending(type, statuses) {
+  async function fetchActionable(type, statuses) {
     let q = supa.from(REQUEST_TABLE[type]).select("*").in("status", statuses).limit(500);
     if (numbers !== null) {
       if (!numbers.length) return [];
@@ -840,17 +862,19 @@ async function listQueue(supa, user) {
     }
     const { data, error } = await q;
     if (error) throw new Error(error.message);
-    return (data ?? []).filter((r) => {
-      if (r.submitter_id === user.id) return false; // no self-approval
-      const allowed = pendingActorRoles(type, r.status);
-      return allowed != null && allowed.has(user.role);
-    });
+    return (data ?? [])
+      .map((r) => ({ ...r, action_needed: actionableStep(type, r.status, user.role) }))
+      .filter((r) => {
+        if (!r.action_needed) return false;
+        if (r.action_needed === "decide" && r.submitter_id === user.id) return false;
+        return true;
+      });
   }
 
   try {
     const [training, pto] = await Promise.all([
-      fetchPending("training", ["Submitted"]),
-      fetchPending("pto", ["Submitted", "DO Approved"]),
+      fetchActionable("training", ["Submitted", "Approved", "Entered"]),
+      fetchActionable("pto", ["Submitted", "DO Approved", "Approved"]),
     ]);
     const distinct = Array.from(
       new Set([...training, ...pto].map((r) => r.store_number).filter(Boolean))
@@ -899,12 +923,11 @@ async function decide(supa, user, body) {
   if (existing.submitter_id === user.id) {
     return { error: "You can't approve your own request.", status: 403 };
   }
-  const allowed = pendingActorRoles(type, existing.status);
-  if (!allowed) {
-    return { error: `This request is ${existing.status} and can't be actioned.`, status: 409 };
-  }
-  if (!allowed.has(user.role)) {
-    return { error: "This step isn't yours to approve.", status: 403 };
+  if (actionableStep(type, existing.status, user.role) !== "decide") {
+    return {
+      error: `This request is ${existing.status} and isn't yours to approve.`,
+      status: 409,
+    };
   }
   const scopeErr = await assertStoreInScope(supa, user, existing.store_number);
   if (scopeErr) return scopeErr;
@@ -1049,6 +1072,124 @@ async function decide(supa, user, body) {
   return { ok: true, status: "Approved" };
 }
 
+// confirm — the post-approval steps (no approve/reject): SDO/RVP mark a
+// training "Entered" in the tracking sheet; the DO marks it "Closed Out"
+// after the last day; the DO confirms the vacation PAF was submitted.
+async function confirm(supa, user, body) {
+  const type = sanitizeText(body?.type, 20);
+  const table = REQUEST_TABLE[type];
+  if (!table) return { error: "Unknown request type.", status: 400 };
+  const id = sanitizeText(body?.id, 64);
+  if (!id) return { error: "Request id is required.", status: 400 };
+  const step = sanitizeText(body?.step, 20);
+
+  const { data: existing, error: fetchErr } = await supa
+    .from(table)
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (fetchErr) return { error: fetchErr.message, status: 500 };
+  if (!existing) return { error: "Request not found.", status: 404 };
+
+  const expected = actionableStep(type, existing.status, user.role);
+  if (expected !== step || step === "decide" || !step) {
+    return { error: "That step isn't available to you right now.", status: 409 };
+  }
+  const scopeErr = await assertStoreInScope(supa, user, existing.store_number);
+  if (scopeErr) return scopeErr;
+
+  const employeeName = existing.employee_name ?? "employee";
+  const link = `${appBaseUrl()}/employee-actions`;
+  const nowIso = new Date().toISOString();
+
+  async function transition(patch, fromStatus) {
+    const { data, error } = await supa
+      .from(table)
+      .update(patch)
+      .eq("id", id)
+      .eq("status", fromStatus)
+      .select("id")
+      .maybeSingle();
+    if (error) return { error: error.message, status: 500 };
+    if (!data) return { error: "This request was just updated by someone else.", status: 409 };
+    return null;
+  }
+
+  if (step === "entered") {
+    const err = await transition(
+      { status: "Entered", entered_at: nowIso, entered_by_id: user.id },
+      existing.status
+    );
+    if (err) return err;
+    await logAudit(supa, {
+      request_type: AUDIT_TYPE.training,
+      request_id: id,
+      actor_id: user.id,
+      actor_email: user.email,
+      action: "entered",
+      detail: {},
+    });
+    // Alert the store's DO to close it out after the last training day.
+    const { dos } = await resolveStoreLeadership(supa, existing.store_number);
+    await sendEmailViaResend({
+      to: dos.map((p) => p.email).filter(Boolean),
+      subject: `Close out training — ${employeeName} (Store ${existing.store_number})`,
+      text:
+        `${displayName(user)} entered ${employeeName}'s training credit in the tracking sheet.\n\n` +
+        `After the last training day${existing.last_day_date ? ` (${existing.last_day_date})` : ""}, ` +
+        `please close it out by completing the form:\n${CLOSEOUT_FORM_URL}\n\n` +
+        `Then mark it closed out here: ${link}`,
+    });
+    return { ok: true, status: "Entered" };
+  }
+
+  if (step === "closed-out") {
+    const err = await transition(
+      { status: "Closed Out", closed_out_at: nowIso, closed_out_by_id: user.id },
+      existing.status
+    );
+    if (err) return err;
+    await logAudit(supa, {
+      request_type: AUDIT_TYPE.training,
+      request_id: id,
+      actor_id: user.id,
+      actor_email: user.email,
+      action: "closed-out",
+      detail: {},
+    });
+    await sendEmailViaResend({
+      to: existing.submitter_email,
+      subject: `Training closed out — ${employeeName} (Store ${existing.store_number})`,
+      text: `${displayName(user)} completed the closeout for ${employeeName}'s training.\n\n${link}`,
+    });
+    return { ok: true, status: "Closed Out" };
+  }
+
+  if (step === "paf-submitted") {
+    const err = await transition(
+      { status: "PAF Submitted", paf_submitted_at: nowIso, paf_submitted_by_id: user.id },
+      existing.status
+    );
+    if (err) return err;
+    await logAudit(supa, {
+      request_type: AUDIT_TYPE.pto,
+      request_id: id,
+      actor_id: user.id,
+      actor_email: user.email,
+      action: "paf-submitted",
+      detail: {},
+    });
+    await sendEmailViaResend({
+      to: existing.submitter_email,
+      subject: `Vacation PAF submitted — ${employeeName} (Store ${existing.store_number})`,
+      text: `${displayName(user)} confirmed the PAF was submitted for ${employeeName}'s vacation.\n\n${link}`,
+    });
+    return { ok: true, status: "PAF Submitted" };
+  }
+
+  return { error: "Unknown step.", status: 400 };
+}
+
 // ----------------------------------------------------------------------------
 // delete (admin only)
 // ----------------------------------------------------------------------------
@@ -1122,6 +1263,7 @@ export const handler = async (event) => {
       if (action === "update-training") return unwrap(await updateTraining(supa, user, body));
       if (action === "update-pto") return unwrap(await updatePto(supa, user, body));
       if (action === "decide") return unwrap(await decide(supa, user, body));
+      if (action === "confirm") return unwrap(await confirm(supa, user, body));
       if (action === "delete") return unwrap(await deleteRequest(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
