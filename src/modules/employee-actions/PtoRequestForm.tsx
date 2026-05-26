@@ -5,7 +5,7 @@ import { Button } from "@/shared/ui/Button";
 import { Badge } from "@/shared/ui/Badge";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
-import { fetchMyStores, submitPto } from "./api";
+import { fetchMyStores, submitPto, updatePtoRequest } from "./api";
 import {
   CheckboxRow,
   DateField,
@@ -16,7 +16,7 @@ import {
   TextField,
   VacationHoursEditor,
 } from "./formFields";
-import type { PtoInput, PtoVacationDayInput } from "./types";
+import type { PtoInput, PtoRow, PtoVacationDayInput } from "./types";
 
 const POSITIONS = ["GM", "Associate Manager", "First Assistant"];
 const WEEKLY_HOUR_CAP = 40;
@@ -61,12 +61,38 @@ const EMPTY: State = {
   send_copy: false,
 };
 
-export function PtoRequestForm({ onSubmitted }: { onSubmitted: () => void }) {
+function stateFromRow(row: PtoRow): State {
+  const isGm = row.position === "GM";
+  return {
+    store_number: row.store_number,
+    employee_name: row.employee_name,
+    position: row.position,
+    pto_start_date: isGm ? row.pto_start_date : "",
+    pto_end_date: isGm ? row.pto_end_date : "",
+    days_used: row.days_used != null ? String(row.days_used) : "",
+    hourly_wage: row.hourly_wage != null ? String(row.hourly_wage) : "",
+    vacation_days: (row.vacation_days ?? []).map((d) => ({
+      date: d.date,
+      hours: String(d.hours),
+    })),
+    hours_worked: row.hours_worked != null ? String(row.hours_worked) : "",
+    send_copy: row.send_copy,
+  };
+}
+
+export function PtoRequestForm({
+  onSubmitted,
+  editRow,
+}: {
+  onSubmitted: () => void;
+  editRow?: PtoRow | null;
+}) {
   const qc = useQueryClient();
   const toast = useToast();
   const { profile } = useAuth();
   const myName = profile?.preferred_name || profile?.full_name || "";
-  const [state, setState] = useState<State>(EMPTY);
+  const isEditing = !!editRow;
+  const [state, setState] = useState<State>(editRow ? stateFromRow(editRow) : EMPTY);
   const [error, setError] = useState<string | null>(null);
 
   const storesQuery = useQuery({
@@ -89,10 +115,17 @@ export function PtoRequestForm({ onSubmitted }: { onSubmitted: () => void }) {
   }, [defaultStore]);
 
   const submit = useMutation({
-    mutationFn: (input: PtoInput) => submitPto(input),
+    mutationFn: (input: PtoInput) =>
+      isEditing ? updatePtoRequest(editRow!.id, input) : submitPto(input),
     onSuccess: () => {
-      toast.push("PTO request submitted — DO + RVP notified.", "success");
+      toast.push(
+        isEditing
+          ? "PTO resubmitted for approval."
+          : "PTO request submitted — DO + RVP notified.",
+        "success"
+      );
       qc.invalidateQueries({ queryKey: ["ea-list"] });
+      qc.invalidateQueries({ queryKey: ["ea-queue"] });
       setState({ ...EMPTY, store_number: defaultStore });
       onSubmitted();
     },
@@ -327,7 +360,13 @@ export function PtoRequestForm({ onSubmitted }: { onSubmitted: () => void }) {
                 </Badge>
               )}
               <Button type="submit" disabled={submit.isPending || over40}>
-                {submit.isPending ? "Submitting…" : "Submit request"}
+                {submit.isPending
+                  ? isEditing
+                    ? "Resubmitting…"
+                    : "Submitting…"
+                  : isEditing
+                    ? "Resubmit"
+                    : "Submit request"}
               </Button>
             </div>
           </div>

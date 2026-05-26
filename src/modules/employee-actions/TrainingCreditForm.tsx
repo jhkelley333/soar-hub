@@ -5,7 +5,7 @@ import { Button } from "@/shared/ui/Button";
 import { Badge } from "@/shared/ui/Badge";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
-import { fetchMyStores, submitTrainingCredit } from "./api";
+import { fetchMyStores, submitTrainingCredit, updateTrainingCredit } from "./api";
 import {
   calcDayHours,
   CheckboxRow,
@@ -17,7 +17,7 @@ import {
   TextField,
   TrainingDaysEditor,
 } from "./formFields";
-import type { TrainingCreditInput, TrainingDayInput } from "./types";
+import type { TrainingCreditInput, TrainingCreditRow, TrainingDayInput } from "./types";
 
 function fmtUSD(n: number): string {
   return (Number(n) || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -52,11 +52,35 @@ const EMPTY: State = {
   send_copy: false,
 };
 
-export function TrainingCreditForm({ onSubmitted }: { onSubmitted: () => void }) {
+function stateFromRow(row: TrainingCreditRow): State {
+  return {
+    store_number: row.store_number,
+    employee_name: row.employee_name,
+    hourly_wage: row.hourly_wage != null ? String(row.hourly_wage) : "",
+    training_type: row.training_type,
+    training_other: row.training_other ?? "",
+    start_date: row.start_date ?? "",
+    training_days: row.training_days.map((d) => ({
+      day: d.day,
+      start_time: d.start_time,
+      end_time: d.end_time,
+    })),
+    send_copy: row.send_copy,
+  };
+}
+
+export function TrainingCreditForm({
+  onSubmitted,
+  editRow,
+}: {
+  onSubmitted: () => void;
+  editRow?: TrainingCreditRow | null;
+}) {
   const qc = useQueryClient();
   const toast = useToast();
   const { profile } = useAuth();
-  const [state, setState] = useState<State>(EMPTY);
+  const isEditing = !!editRow;
+  const [state, setState] = useState<State>(editRow ? stateFromRow(editRow) : EMPTY);
   const [error, setError] = useState<string | null>(null);
 
   const storesQuery = useQuery({
@@ -79,10 +103,17 @@ export function TrainingCreditForm({ onSubmitted }: { onSubmitted: () => void })
   }, [defaultStore]);
 
   const submit = useMutation({
-    mutationFn: (input: TrainingCreditInput) => submitTrainingCredit(input),
+    mutationFn: (input: TrainingCreditInput) =>
+      isEditing ? updateTrainingCredit(editRow!.id, input) : submitTrainingCredit(input),
     onSuccess: () => {
-      toast.push("Training credit request submitted — DO + RVP notified.", "success");
+      toast.push(
+        isEditing
+          ? "Training credit resubmitted for approval."
+          : "Training credit request submitted — DO + RVP notified.",
+        "success"
+      );
       qc.invalidateQueries({ queryKey: ["ea-list"] });
+      qc.invalidateQueries({ queryKey: ["ea-queue"] });
       setState({ ...EMPTY, store_number: defaultStore });
       onSubmitted();
     },
@@ -230,7 +261,13 @@ export function TrainingCreditForm({ onSubmitted }: { onSubmitted: () => void })
                 </Badge>
               )}
               <Button type="submit" disabled={submit.isPending}>
-                {submit.isPending ? "Submitting…" : "Submit request"}
+                {submit.isPending
+                  ? isEditing
+                    ? "Resubmitting…"
+                    : "Submitting…"
+                  : isEditing
+                    ? "Resubmit"
+                    : "Submit request"}
               </Button>
             </div>
           </div>

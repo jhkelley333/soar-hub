@@ -77,6 +77,27 @@ export function submitPto(
   });
 }
 
+// Resubmit a "Changes Requested" request after editing.
+export function updateTrainingCredit(
+  id: string,
+  input: TrainingCreditInput
+): Promise<{ ok: true; id: string; status: string }> {
+  return request(`${FN}?action=update-training`, {
+    method: "POST",
+    body: JSON.stringify({ ...input, id }),
+  });
+}
+
+export function updatePtoRequest(
+  id: string,
+  input: PtoInput
+): Promise<{ ok: true; id: string; status: string }> {
+  return request(`${FN}?action=update-pto`, {
+    method: "POST",
+    body: JSON.stringify({ ...input, id }),
+  });
+}
+
 // Admin-only hard delete of a training or PTO request.
 export function deleteEmployeeAction(
   type: "training" | "pto",

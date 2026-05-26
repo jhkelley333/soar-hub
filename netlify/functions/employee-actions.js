@@ -367,16 +367,10 @@ async function notifyLeadership(supa, { storeNumber, sendCopy, submitterEmail, s
 // ----------------------------------------------------------------------------
 // submit-training
 // ----------------------------------------------------------------------------
-async function submitTraining(supa, user, body) {
-  if (!SUBMIT_ROLES.has(user.role)) {
-    return { error: "You don't have permission to submit a training credit request.", status: 403 };
-  }
-
-  const storeNumber = sanitizeText(body?.store_number, 20);
-  if (!storeNumber) return { error: "Store is required.", status: 400 };
-  const scopeErr = await assertStoreInScope(supa, user, storeNumber);
-  if (scopeErr) return scopeErr;
-
+// Validate + normalize the Training Credit form fields (no DB, no provenance).
+// Returns { error, status } or { fields, meta }. Hours + per-day amount + the
+// requested total are recomputed server-side so they're authoritative.
+function buildTrainingFields(body) {
   const employeeName = sanitizeText(body?.employee_name, 200);
   if (!employeeName) return { error: "Employee Full Name is required.", status: 400 };
 
@@ -385,10 +379,6 @@ async function submitTraining(supa, user, body) {
 
   const wage = num(body?.hourly_wage);
 
-  // First three training days: each entry carries its own start/end time.
-  // Hours and amount are recomputed server-side ((end - start) hours x wage)
-  // so the stored per-day amounts + total are authoritative regardless of
-  // what the client sent.
   const rawDays = Array.isArray(body?.training_days) ? body.training_days : [];
   if (!rawDays.length) {
     return { error: "Add at least one training day with a start and end time.", status: 400 };
@@ -419,23 +409,62 @@ async function submitTraining(supa, user, body) {
       amount: round2(hours * wage),
     });
   }
-  const requestedAmount = round2(
-    trainingDays.reduce((sum, e) => sum + e.amount, 0)
+  const requestedAmount = round2(trainingDays.reduce((sum, e) => sum + e.amount, 0));
+  const trainingOther = sanitizeText(body?.training_other, 500) || null;
+
+  return {
+    fields: {
+      employee_name: employeeName,
+      hourly_wage: wage,
+      training_type: trainingType,
+      training_other: trainingOther,
+      start_date: sanitizeDateInput(body?.start_date),
+      requested_amount: requestedAmount,
+      training_days: trainingDays,
+      send_copy: body?.send_copy === true || body?.send_copy === "true",
+    },
+    meta: { employeeName, trainingType, trainingOther, wage, requestedAmount, trainingDays },
+  };
+}
+
+function trainingEmailText(user, storeNumber, fields, meta, link, verb) {
+  return (
+    `A Training Credit Request was ${verb} by ${displayName(user)}.\n\n` +
+    `Store: ${storeNumber}\n` +
+    `Employee: ${meta.employeeName}\n` +
+    `Training: ${meta.trainingType}${meta.trainingOther ? ` (${meta.trainingOther})` : ""}\n` +
+    `Hourly wage: $${meta.wage.toFixed(2)}\n` +
+    `Start date: ${fields.start_date ?? "—"}\n\n` +
+    `Training days:\n` +
+    meta.trainingDays
+      .map(
+        (e) =>
+          `  • ${e.day}: ${e.start_time}–${e.end_time} (${e.hours} hrs) = $${e.amount.toFixed(2)}`
+      )
+      .join("\n") +
+    `\n\nRequested credit (total): $${meta.requestedAmount.toFixed(2)}\n\n` +
+    `Review it here: ${link}`
   );
+}
+
+async function submitTraining(supa, user, body) {
+  if (!SUBMIT_ROLES.has(user.role)) {
+    return { error: "You don't have permission to submit a training credit request.", status: 403 };
+  }
+  const storeNumber = sanitizeText(body?.store_number, 20);
+  if (!storeNumber) return { error: "Store is required.", status: 400 };
+  const scopeErr = await assertStoreInScope(supa, user, storeNumber);
+  if (scopeErr) return scopeErr;
+
+  const built = buildTrainingFields(body);
+  if (built.error) return built;
 
   const insertRow = {
     submitter_id: user.id,
     submitter_email: user.email,
     submitter_name: user.full_name ?? null,
     store_number: storeNumber,
-    employee_name: employeeName,
-    hourly_wage: wage,
-    training_type: trainingType,
-    training_other: sanitizeText(body?.training_other, 500) || null,
-    start_date: sanitizeDateInput(body?.start_date),
-    requested_amount: requestedAmount,
-    training_days: trainingDays,
-    send_copy: body?.send_copy === true || body?.send_copy === "true",
+    ...built.fields,
     status: "Submitted",
   };
 
@@ -452,7 +481,7 @@ async function submitTraining(supa, user, body) {
     actor_id: user.id,
     actor_email: user.email,
     action: "submit",
-    detail: { store_number: storeNumber, employee_name: employeeName, training_type: trainingType },
+    detail: { store_number: storeNumber, employee_name: built.meta.employeeName, training_type: built.meta.trainingType },
   });
 
   const link = `${appBaseUrl()}/employee-actions`;
@@ -460,41 +489,82 @@ async function submitTraining(supa, user, body) {
     storeNumber,
     sendCopy: insertRow.send_copy,
     submitterEmail: user.email,
-    subject: `Training Credit Request — ${employeeName} (Store ${storeNumber})`,
-    text:
-      `A Training Credit Request was submitted by ${displayName(user)}.\n\n` +
-      `Store: ${storeNumber}\n` +
-      `Employee: ${employeeName}\n` +
-      `Training: ${trainingType}${insertRow.training_other ? ` (${insertRow.training_other})` : ""}\n` +
-      `Hourly wage: $${wage.toFixed(2)}\n` +
-      `Start date: ${insertRow.start_date ?? "—"}\n\n` +
-      `Training days:\n` +
-      trainingDays
-        .map(
-          (e) =>
-            `  • ${e.day}: ${e.start_time}–${e.end_time} (${e.hours} hrs) = $${e.amount.toFixed(2)}`
-        )
-        .join("\n") +
-      `\n\nRequested credit (total): $${requestedAmount.toFixed(2)}\n\n` +
-      `Review it here: ${link}`,
+    subject: `Training Credit Request — ${built.meta.employeeName} (Store ${storeNumber})`,
+    text: trainingEmailText(user, storeNumber, built.fields, built.meta, link, "submitted"),
   });
 
   return { ok: true, id: created.id, status: insertRow.status };
 }
 
-// ----------------------------------------------------------------------------
-// submit-pto
-// ----------------------------------------------------------------------------
-async function submitPto(supa, user, body) {
-  if (!SUBMIT_ROLES.has(user.role)) {
-    return { error: "You don't have permission to submit a PTO request.", status: 403 };
+// Resubmit a "Changes Requested" training credit after the submitter edits it.
+async function updateTraining(supa, user, body) {
+  const id = sanitizeText(body?.id, 64);
+  if (!id) return { error: "Request id is required.", status: 400 };
+
+  const { data: existing, error: fetchErr } = await supa
+    .from("training_credit_requests")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (fetchErr) return { error: fetchErr.message, status: 500 };
+  if (!existing) return { error: "Request not found.", status: 404 };
+  if (existing.submitter_id !== user.id && user.role !== "admin") {
+    return { error: "You can only edit your own request.", status: 403 };
+  }
+  if (existing.status !== "Changes Requested") {
+    return { error: "Only a request sent back for changes can be resubmitted.", status: 409 };
   }
 
-  const storeNumber = sanitizeText(body?.store_number, 20);
-  if (!storeNumber) return { error: "Store is required.", status: 400 };
+  const storeNumber = sanitizeText(body?.store_number, 20) || existing.store_number;
   const scopeErr = await assertStoreInScope(supa, user, storeNumber);
   if (scopeErr) return scopeErr;
 
+  const built = buildTrainingFields(body);
+  if (built.error) return built;
+
+  const { error } = await supa
+    .from("training_credit_requests")
+    .update({
+      store_number: storeNumber,
+      ...built.fields,
+      status: "Submitted",
+      rejection_reason: null,
+      approved_at: null,
+      approved_by_id: null,
+      approved_by_email: null,
+      decision_note: null,
+    })
+    .eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+
+  await logAudit(supa, {
+    request_type: "training_credit",
+    request_id: id,
+    actor_id: user.id,
+    actor_email: user.email,
+    action: "resubmit",
+    detail: { store_number: storeNumber, employee_name: built.meta.employeeName },
+  });
+
+  const link = `${appBaseUrl()}/employee-actions`;
+  await notifyLeadership(supa, {
+    storeNumber,
+    sendCopy: built.fields.send_copy,
+    submitterEmail: user.email,
+    subject: `Training Credit Resubmitted — ${built.meta.employeeName} (Store ${storeNumber})`,
+    text: trainingEmailText(user, storeNumber, built.fields, built.meta, link, "resubmitted after changes"),
+  });
+
+  return { ok: true, id, status: "Submitted" };
+}
+
+// ----------------------------------------------------------------------------
+// submit-pto
+// ----------------------------------------------------------------------------
+// Validate + normalize the PTO form fields (no DB, no provenance/workflow).
+// GM = day-based (no dollar); hourly = hour-based (<= 8/day) with a dollar
+// amount and the 40h weekly cap. Returns { error, status } or { fields, meta }.
+function buildPtoFields(body) {
   const employeeName = sanitizeText(body?.employee_name, 200);
   if (!employeeName) return { error: "Employee Name is required.", status: 400 };
 
@@ -505,36 +575,9 @@ async function submitPto(supa, user, body) {
       status: 400,
     };
   }
-
   const sendCopy = body?.send_copy === true || body?.send_copy === "true";
 
-  // A GM's PTO starts at the DO step. Anyone DO-or-above submitting skips the
-  // DO step (it's their own tier) and lands directly in the SDO/RVP queue.
-  const skipsDoStep = user.role !== "gm";
-  const base = {
-    submitter_id: user.id,
-    submitter_email: user.email,
-    submitter_name: user.full_name ?? null,
-    store_number: storeNumber,
-    employee_name: employeeName,
-    position,
-    send_copy: sendCopy,
-    status: skipsDoStep ? "DO Approved" : "Submitted",
-    ...(skipsDoStep
-      ? {
-          do_approved_at: new Date().toISOString(),
-          do_approved_by_id: user.id,
-          do_note: "Auto — submitter is DO or above",
-        }
-      : {}),
-  };
-
-  let insertRow;
-  let emailText;
-  let auditDetail;
-
   if (position === "GM") {
-    // GM: tracked by days, no dollar amount.
     const startDate = sanitizeDateInput(body?.pto_start_date);
     if (!startDate) return { error: "PTO Start Date is required (YYYY-MM-DD).", status: 400 };
     const endDate = sanitizeDateInput(body?.pto_end_date);
@@ -545,87 +588,124 @@ async function submitPto(supa, user, body) {
     const daysUsed = num(body?.days_used);
     if (daysUsed <= 0) return { error: "How Many Days PTO Used is required.", status: 400 };
 
-    insertRow = {
-      ...base,
-      pto_start_date: startDate,
-      pto_end_date: endDate,
-      days_used: daysUsed,
-      vacation_days: [],
+    return {
+      fields: {
+        employee_name: employeeName,
+        position,
+        send_copy: sendCopy,
+        pto_start_date: startDate,
+        pto_end_date: endDate,
+        days_used: daysUsed,
+        vacation_days: [],
+        hourly_wage: null,
+        vacation_hours: null,
+        hours_worked: null,
+        amount: null,
+      },
+      meta: {
+        employeeName,
+        position,
+        auditDetail: { position, days_used: daysUsed },
+        summary:
+          `Employee: ${employeeName} (${position})\n` +
+          `Dates: ${startDate} → ${endDate}\n` +
+          `Days used: ${daysUsed}\n\n`,
+      },
     };
-    auditDetail = { store_number: storeNumber, position, days_used: daysUsed };
-    emailText =
-      `A PTO request was submitted by ${displayName(user)}.\n\n` +
-      `Store: ${storeNumber}\n` +
-      `Employee: ${employeeName} (${position})\n` +
-      `Dates: ${startDate} → ${endDate}\n` +
-      `Days used: ${daysUsed}\n\n`;
-  } else {
-    // Associate Manager / First Assistant: tracked by hours, capped at
-    // MAX_HOURS_PER_DAY per day, with a dollar amount. Vacation hours plus
-    // hours worked cannot exceed WEEKLY_HOUR_CAP in the week (hard block).
-    const wage = num(body?.hourly_wage);
-    if (wage <= 0) return { error: "Hourly Wage is required.", status: 400 };
+  }
 
-    const rawDays = Array.isArray(body?.vacation_days) ? body.vacation_days : [];
-    if (!rawDays.length) {
-      return { error: "Add at least one vacation day with hours.", status: 400 };
-    }
-    const vacationDays = [];
-    for (const d of rawDays) {
-      const date = sanitizeDateInput(d?.date);
-      if (!date) return { error: "Each vacation day needs a valid date.", status: 400 };
-      const hours = num(d?.hours);
-      if (hours <= 0) return { error: `Enter hours for ${date}.`, status: 400 };
-      if (hours > MAX_HOURS_PER_DAY) {
-        return {
-          error: `A vacation day can't exceed ${MAX_HOURS_PER_DAY} hours (${date}).`,
-          status: 400,
-        };
-      }
-      vacationDays.push({ date, hours: round2(hours), amount: round2(hours * wage) });
-    }
-    const vacationHours = round2(vacationDays.reduce((s, e) => s + e.hours, 0));
-    const amount = round2(vacationDays.reduce((s, e) => s + e.amount, 0));
+  // Hourly positions.
+  const wage = num(body?.hourly_wage);
+  if (wage <= 0) return { error: "Hourly Wage is required.", status: 400 };
 
-    const hoursWorked = num(body?.hours_worked);
-    if (round2(vacationHours + hoursWorked) > WEEKLY_HOUR_CAP) {
-      return {
-        error: `Vacation (${vacationHours}h) + hours worked (${hoursWorked}h) exceeds the ${WEEKLY_HOUR_CAP}-hour weekly limit.`,
-        status: 400,
-      };
+  const rawDays = Array.isArray(body?.vacation_days) ? body.vacation_days : [];
+  if (!rawDays.length) return { error: "Add at least one vacation day with hours.", status: 400 };
+  const vacationDays = [];
+  for (const d of rawDays) {
+    const date = sanitizeDateInput(d?.date);
+    if (!date) return { error: "Each vacation day needs a valid date.", status: 400 };
+    const hours = num(d?.hours);
+    if (hours <= 0) return { error: `Enter hours for ${date}.`, status: 400 };
+    if (hours > MAX_HOURS_PER_DAY) {
+      return { error: `A vacation day can't exceed ${MAX_HOURS_PER_DAY} hours (${date}).`, status: 400 };
     }
+    vacationDays.push({ date, hours: round2(hours), amount: round2(hours * wage) });
+  }
+  const vacationHours = round2(vacationDays.reduce((s, e) => s + e.hours, 0));
+  const amount = round2(vacationDays.reduce((s, e) => s + e.amount, 0));
+  const hoursWorked = num(body?.hours_worked);
+  if (round2(vacationHours + hoursWorked) > WEEKLY_HOUR_CAP) {
+    return {
+      error: `Vacation (${vacationHours}h) + hours worked (${hoursWorked}h) exceeds the ${WEEKLY_HOUR_CAP}-hour weekly limit.`,
+      status: 400,
+    };
+  }
+  const dates = vacationDays.map((e) => e.date).sort();
 
-    const dates = vacationDays.map((e) => e.date).sort();
-    insertRow = {
-      ...base,
+  return {
+    fields: {
+      employee_name: employeeName,
+      position,
+      send_copy: sendCopy,
       pto_start_date: dates[0],
       pto_end_date: dates[dates.length - 1],
+      days_used: null,
       hourly_wage: wage,
       vacation_days: vacationDays,
       vacation_hours: vacationHours,
       hours_worked: hoursWorked,
       amount,
-    };
-    auditDetail = {
-      store_number: storeNumber,
+    },
+    meta: {
+      employeeName,
       position,
-      vacation_hours: vacationHours,
-      hours_worked: hoursWorked,
-      amount,
+      auditDetail: { position, vacation_hours: vacationHours, hours_worked: hoursWorked, amount },
+      summary:
+        `Employee: ${employeeName} (${position})\n` +
+        `Hourly wage: $${wage.toFixed(2)}\n` +
+        `Vacation days:\n` +
+        vacationDays.map((e) => `  • ${e.date}: ${e.hours} hrs = $${e.amount.toFixed(2)}`).join("\n") +
+        `\n\nTotal vacation: ${vacationHours} hrs = $${amount.toFixed(2)}\n` +
+        `Hours worked this week: ${hoursWorked} hrs\n` +
+        `Week total (vacation + worked): ${round2(vacationHours + hoursWorked)} / ${WEEKLY_HOUR_CAP} hrs\n\n`,
+    },
+  };
+}
+
+// A GM's PTO starts at the DO step; anyone DO-or-above submitting skips it
+// (their own tier) and lands directly in the SDO/RVP queue.
+function ptoWorkflowFields(user) {
+  if (user.role !== "gm") {
+    return {
+      status: "DO Approved",
+      do_approved_at: new Date().toISOString(),
+      do_approved_by_id: user.id,
+      do_note: "Auto — submitter is DO or above",
     };
-    emailText =
-      `A PTO request was submitted by ${displayName(user)}.\n\n` +
-      `Store: ${storeNumber}\n` +
-      `Employee: ${employeeName} (${position})\n` +
-      `Hourly wage: $${wage.toFixed(2)}\n` +
-      `Vacation days:\n` +
-      vacationDays
-        .map((e) => `  • ${e.date}: ${e.hours} hrs = $${e.amount.toFixed(2)}`)
-        .join("\n") +
-      `\n\nTotal vacation: ${vacationHours} hrs = $${amount.toFixed(2)}\n` +
-      `Hours worked this week: ${hoursWorked} hrs\n` +
-      `Week total (vacation + worked): ${round2(vacationHours + hoursWorked)} / ${WEEKLY_HOUR_CAP} hrs\n\n`;
   }
+  return { status: "Submitted", do_approved_at: null, do_approved_by_id: null, do_note: null };
+}
+
+async function submitPto(supa, user, body) {
+  if (!SUBMIT_ROLES.has(user.role)) {
+    return { error: "You don't have permission to submit a PTO request.", status: 403 };
+  }
+  const storeNumber = sanitizeText(body?.store_number, 20);
+  if (!storeNumber) return { error: "Store is required.", status: 400 };
+  const scopeErr = await assertStoreInScope(supa, user, storeNumber);
+  if (scopeErr) return scopeErr;
+
+  const built = buildPtoFields(body);
+  if (built.error) return built;
+
+  const insertRow = {
+    submitter_id: user.id,
+    submitter_email: user.email,
+    submitter_name: user.full_name ?? null,
+    store_number: storeNumber,
+    ...built.fields,
+    ...ptoWorkflowFields(user),
+  };
 
   const { data: created, error } = await supa
     .from("pto_requests")
@@ -640,19 +720,85 @@ async function submitPto(supa, user, body) {
     actor_id: user.id,
     actor_email: user.email,
     action: "submit",
-    detail: auditDetail,
+    detail: { store_number: storeNumber, ...built.meta.auditDetail },
   });
 
   const link = `${appBaseUrl()}/employee-actions`;
   await notifyLeadership(supa, {
     storeNumber,
-    sendCopy,
+    sendCopy: built.fields.send_copy,
     submitterEmail: user.email,
-    subject: `PTO Request — ${employeeName} (Store ${storeNumber})`,
-    text: emailText + `Review it here: ${link}`,
+    subject: `PTO Request — ${built.meta.employeeName} (Store ${storeNumber})`,
+    text:
+      `A PTO request was submitted by ${displayName(user)}.\n\n` +
+      `Store: ${storeNumber}\n${built.meta.summary}Review it here: ${link}`,
   });
 
   return { ok: true, id: created.id, status: insertRow.status };
+}
+
+// Resubmit a "Changes Requested" PTO request after the submitter edits it.
+async function updatePto(supa, user, body) {
+  const id = sanitizeText(body?.id, 64);
+  if (!id) return { error: "Request id is required.", status: 400 };
+
+  const { data: existing, error: fetchErr } = await supa
+    .from("pto_requests")
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (fetchErr) return { error: fetchErr.message, status: 500 };
+  if (!existing) return { error: "Request not found.", status: 404 };
+  if (existing.submitter_id !== user.id && user.role !== "admin") {
+    return { error: "You can only edit your own request.", status: 403 };
+  }
+  if (existing.status !== "Changes Requested") {
+    return { error: "Only a request sent back for changes can be resubmitted.", status: 409 };
+  }
+
+  const storeNumber = sanitizeText(body?.store_number, 20) || existing.store_number;
+  const scopeErr = await assertStoreInScope(supa, user, storeNumber);
+  if (scopeErr) return scopeErr;
+
+  const built = buildPtoFields(body);
+  if (built.error) return built;
+
+  const { error } = await supa
+    .from("pto_requests")
+    .update({
+      store_number: storeNumber,
+      ...built.fields,
+      ...ptoWorkflowFields(user),
+      approved_at: null,
+      approved_by_id: null,
+      approved_by_email: null,
+      decision_note: null,
+      rejection_reason: null,
+    })
+    .eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+
+  await logAudit(supa, {
+    request_type: "pto",
+    request_id: id,
+    actor_id: user.id,
+    actor_email: user.email,
+    action: "resubmit",
+    detail: { store_number: storeNumber, ...built.meta.auditDetail },
+  });
+
+  const link = `${appBaseUrl()}/employee-actions`;
+  await notifyLeadership(supa, {
+    storeNumber,
+    sendCopy: built.fields.send_copy,
+    submitterEmail: user.email,
+    subject: `PTO Resubmitted — ${built.meta.employeeName} (Store ${storeNumber})`,
+    text:
+      `A PTO request was resubmitted after changes by ${displayName(user)}.\n\n` +
+      `Store: ${storeNumber}\n${built.meta.summary}Review it here: ${link}`,
+  });
+
+  return { ok: true, id, status: "Submitted" };
 }
 
 // ----------------------------------------------------------------------------
@@ -973,6 +1119,8 @@ export const handler = async (event) => {
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "submit-training") return unwrap(await submitTraining(supa, user, body));
       if (action === "submit-pto") return unwrap(await submitPto(supa, user, body));
+      if (action === "update-training") return unwrap(await updateTraining(supa, user, body));
+      if (action === "update-pto") return unwrap(await updatePto(supa, user, body));
       if (action === "decide") return unwrap(await decide(supa, user, body));
       if (action === "delete") return unwrap(await deleteRequest(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });

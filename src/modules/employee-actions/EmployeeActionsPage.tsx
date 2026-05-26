@@ -39,6 +39,8 @@ function statusKind(status: string): StatusPillKind {
 export function EmployeeActionsPage() {
   const { profile } = useAuth();
   const [tab, setTab] = useState<Tab>("training");
+  const [editTraining, setEditTraining] = useState<TrainingCreditRow | null>(null);
+  const [editPto, setEditPto] = useState<PtoRow | null>(null);
 
   const canSubmit = SUBMIT_ROLES.includes(profile?.role ?? "");
   const canApprove = APPROVER_ROLES.includes(profile?.role ?? "");
@@ -50,6 +52,17 @@ export function EmployeeActionsPage() {
     { value: "history" as const, label: "History" },
   ];
 
+  function editTrainingRow(row: TrainingCreditRow) {
+    setEditPto(null);
+    setEditTraining(row);
+    setTab("training");
+  }
+  function editPtoRow(row: PtoRow) {
+    setEditTraining(null);
+    setEditPto(row);
+    setTab("pto");
+  }
+
   return (
     <>
       <PageHeader
@@ -58,26 +71,50 @@ export function EmployeeActionsPage() {
       />
 
       <div className="mb-4">
-        <Segmented<Tab> value={tab} onChange={setTab} options={options} />
+        <Segmented<Tab>
+          value={tab}
+          onChange={(t) => {
+            if (t !== "training") setEditTraining(null);
+            if (t !== "pto") setEditPto(null);
+            setTab(t);
+          }}
+          options={options}
+        />
       </div>
 
       {tab === "training" &&
         (canSubmit ? (
-          <TrainingCreditForm onSubmitted={() => setTab("history")} />
+          <TrainingCreditForm
+            key={editTraining?.id ?? "new"}
+            editRow={editTraining}
+            onSubmitted={() => {
+              setEditTraining(null);
+              setTab("history");
+            }}
+          />
         ) : (
           <NoAccess />
         ))}
 
       {tab === "pto" &&
         (canSubmit ? (
-          <PtoRequestForm onSubmitted={() => setTab("history")} />
+          <PtoRequestForm
+            key={editPto?.id ?? "new"}
+            editRow={editPto}
+            onSubmitted={() => {
+              setEditPto(null);
+              setTab("history");
+            }}
+          />
         ) : (
           <NoAccess />
         ))}
 
       {tab === "approvals" && (canApprove ? <ApprovalQueue /> : <NoAccess />)}
 
-      {tab === "history" && <HistoryList />}
+      {tab === "history" && (
+        <HistoryList onEditTraining={editTrainingRow} onEditPto={editPtoRow} />
+      )}
     </>
   );
 }
@@ -93,12 +130,22 @@ function NoAccess() {
   );
 }
 
-function HistoryList() {
+function HistoryList({
+  onEditTraining,
+  onEditPto,
+}: {
+  onEditTraining: (row: TrainingCreditRow) => void;
+  onEditPto: (row: PtoRow) => void;
+}) {
   const { profile } = useAuth();
   const qc = useQueryClient();
   const toast = useToast();
   const isAdmin = profile?.role === "admin";
+  const myId = profile?.id ?? "";
   const query = useQuery({ queryKey: ["ea-list"], queryFn: listEmployeeActions });
+
+  // Submitters (or an admin) can edit & resubmit a request sent back to them.
+  const canEdit = (submitterId: string) => submitterId === myId || isAdmin;
 
   const del = useMutation({
     mutationFn: ({ type, id }: { type: "training" | "pto"; id: string }) =>
@@ -152,6 +199,11 @@ function HistoryList() {
             row={r}
             onDelete={isAdmin ? () => onDelete("training", r.id, "training credit request") : undefined}
             deleting={del.isPending}
+            onEdit={
+              r.status === "Changes Requested" && canEdit(r.submitter_id)
+                ? () => onEditTraining(r)
+                : undefined
+            }
           />
         ))}
       </Section>
@@ -162,6 +214,11 @@ function HistoryList() {
             row={r}
             onDelete={isAdmin ? () => onDelete("pto", r.id, "PTO request") : undefined}
             deleting={del.isPending}
+            onEdit={
+              r.status === "Changes Requested" && canEdit(r.submitter_id)
+                ? () => onEditPto(r)
+                : undefined
+            }
           />
         ))}
       </Section>
@@ -216,14 +273,28 @@ function DeleteButton({ onDelete, deleting }: { onDelete: () => void; deleting?:
   );
 }
 
+function EditButton({ onEdit }: { onEdit: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onEdit}
+      className="rounded-md px-2 py-1 text-xs font-medium text-accent ring-1 ring-inset ring-accent/40 hover:bg-accent/5"
+    >
+      Edit &amp; Resubmit
+    </button>
+  );
+}
+
 function TrainingRow({
   row,
   onDelete,
   deleting,
+  onEdit,
 }: {
   row: TrainingCreditRow;
   onDelete?: () => void;
   deleting?: boolean;
+  onEdit?: () => void;
 }) {
   return (
     <Card>
@@ -242,10 +313,11 @@ function TrainingRow({
             <p className="mt-1 text-xs text-amber-700">Changes requested: {row.rejection_reason}</p>
           )}
         </div>
-        <div className="flex items-center gap-3">
-          <div className="text-right text-xs text-zinc-400">
+        <div className="flex items-center gap-2">
+          <div className="mr-1 text-right text-xs text-zinc-400">
             {new Date(row.created_at).toLocaleDateString()}
           </div>
+          {onEdit && <EditButton onEdit={onEdit} />}
           {onDelete && <DeleteButton onDelete={onDelete} deleting={deleting} />}
         </div>
       </CardBody>
@@ -257,10 +329,12 @@ function PtoRowItem({
   row,
   onDelete,
   deleting,
+  onEdit,
 }: {
   row: PtoRow;
   onDelete?: () => void;
   deleting?: boolean;
+  onEdit?: () => void;
 }) {
   const isHourly = row.position === "Associate Manager" || row.position === "First Assistant";
   return (
@@ -292,10 +366,11 @@ function PtoRowItem({
             <p className="mt-1 text-xs text-amber-700">Changes requested: {row.rejection_reason}</p>
           )}
         </div>
-        <div className="flex items-center gap-3">
-          <div className="text-right text-xs text-zinc-400">
+        <div className="flex items-center gap-2">
+          <div className="mr-1 text-right text-xs text-zinc-400">
             {new Date(row.created_at).toLocaleDateString()}
           </div>
+          {onEdit && <EditButton onEdit={onEdit} />}
           {onDelete && <DeleteButton onDelete={onDelete} deleting={deleting} />}
         </div>
       </CardBody>
