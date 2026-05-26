@@ -1238,6 +1238,54 @@ async function logAudit(supa, entry) {
 // ----------------------------------------------------------------------------
 // HTTP handler
 // ----------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
+// delete (soft) — admin only. Hides the PAF from every queue/list by setting
+// archived = true (existing list queries already filter archived = false) and
+// records who deleted it and why. The row is kept; the deletion shows up in the
+// audit log as "Deleted by System Admin" with the reason. A reason is required.
+// ----------------------------------------------------------------------------
+async function deletePaf(supa, user, body) {
+  if (user.role !== "admin") {
+    return { error: "Only a System Admin can delete a PAF.", status: 403 };
+  }
+  const id = body?.id;
+  const reason = sanitizeText(body?.reason, 2000);
+  if (!id) return { error: "id is required.", status: 400 };
+  if (!reason) return { error: "A reason is required to delete a PAF.", status: 400 };
+
+  const { data: existing, error: fetchErr } = await supa
+    .from("paf_submissions")
+    .select("id, archived")
+    .eq("id", id)
+    .maybeSingle();
+  if (fetchErr) return { error: fetchErr.message, status: 500 };
+  if (!existing) return { error: "PAF not found.", status: 404 };
+  if (existing.archived) return { error: "This PAF is already deleted.", status: 400 };
+
+  const { error } = await supa
+    .from("paf_submissions")
+    .update({
+      archived: true,
+      archived_at: new Date().toISOString(),
+      archived_reason: reason,
+      archived_by_id: user.id,
+      action_token: null,
+      token_expires_at: null,
+    })
+    .eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+
+  await logAudit(supa, {
+    paf_id: id,
+    actor_id: user.id,
+    actor_email: user.email,
+    action: "delete",
+    detail: { reason },
+  });
+
+  return { ok: true };
+}
+
 function unwrap(result) {
   if (
     result &&
@@ -1290,6 +1338,7 @@ export const handler = async (event) => {
       if (action === "mark-processed") return unwrap(await markProcessed(supa, user, body));
       if (action === "sdo-approve") return unwrap(await sdoApprovePaf(supa, user, body));
       if (action === "sdo-reject") return unwrap(await sdoRejectPaf(supa, user, body));
+      if (action === "delete") return unwrap(await deletePaf(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
     return respond(405, { error: "method not allowed" });

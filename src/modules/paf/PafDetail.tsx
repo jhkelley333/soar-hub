@@ -15,6 +15,7 @@ const AUDIT_LABEL: Record<string, string> = {
   "mark-processed": "Marked Processed",
   "sdo-approved": "Approved by SDO",
   "sdo-rejected": "Rejected by SDO",
+  delete: "Deleted by System Admin",
 };
 
 function formatAuditTime(iso: string): string {
@@ -618,7 +619,7 @@ function renderAuditDetail(
   action: string,
   detail: Record<string, unknown>
 ): string | null {
-  if (action === "reject" || action === "sdo-rejected") {
+  if (action === "reject" || action === "sdo-rejected" || action === "delete") {
     const reason = detail.reason ?? detail.note;
     return reason ? `Reason: ${String(reason)}` : null;
   }

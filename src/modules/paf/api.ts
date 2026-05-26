@@ -128,6 +128,13 @@ export function rejectPaf(id: string, reason: string): Promise<{ ok: true }> {
   });
 }
 
+export function deletePaf(id: string, reason: string): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`${FN}?action=delete`, {
+    method: "POST",
+    body: JSON.stringify({ id, reason }),
+  });
+}
+
 export function needsApprovalPaf(
   id: string,
   approval_email: string,
