@@ -181,27 +181,10 @@ export const handler = async (event) => {
       // otherwise. We don't gate submission on this — see the
       // troubleshooting question on the public form.
       const troubleshootingChecked = body.troubleshooting_checked === true;
-      // Optional vendor preference. If supplied, re-validate that the
-      // vendor exists, is active, and is visible at this store before
-      // writing it onto the ticket — never trust the client.
       const vendorIdInput = body.vendor_id ? String(body.vendor_id).trim() : "";
-      let resolvedVendorId = null;
-      let resolvedVendorName = "";
-      if (vendorIdInput) {
-        const { data: v } = await supabase
-          .from("vendors")
-          .select("id, name, is_active, vendor_scopes(scope_type, scope_id)")
-          .eq("id", vendorIdInput)
-          .maybeSingle();
-        if (v && v.is_active) {
-          const allowedSet = await visibleScopeKeysForStore(supabase, store.number);
-          const strict = await isStrictVendorScopes(supabase);
-          if (allowedSet && isVendorVisibleAtStore(v.vendor_scopes || [], allowedSet, strict)) {
-            resolvedVendorId = v.id;
-            resolvedVendorName = v.name || "";
-          }
-        }
-      }
+      // The store explicitly asked the team to pick a vendor — submits the
+      // ticket flagged for the DO instead of requiring a vendor choice.
+      const needsVendorHelp = body.needs_vendor_help === true;
 
       // Required fields. Be strict here — no anonymous "test"
       // submissions from the public form.
@@ -235,6 +218,37 @@ export const handler = async (event) => {
         return respond(400, { ok: false, message: "Unknown store." });
       }
 
+      // Vendor preference. Re-validate that the chosen vendor exists, is
+      // active, and is visible at this store before writing it onto the
+      // ticket — never trust the client. (Resolved after the store so
+      // scope visibility can be checked against store.number.)
+      let resolvedVendorId = null;
+      let resolvedVendorName = "";
+      if (vendorIdInput && !needsVendorHelp) {
+        const { data: v } = await supabase
+          .from("vendors")
+          .select("id, name, is_active, vendor_scopes(scope_type, scope_id)")
+          .eq("id", vendorIdInput)
+          .maybeSingle();
+        if (v && v.is_active) {
+          const allowedSet = await visibleScopeKeysForStore(supabase, store.number);
+          const strict = await isStrictVendorScopes(supabase);
+          if (allowedSet && isVendorVisibleAtStore(v.vendor_scopes || [], allowedSet, strict)) {
+            resolvedVendorId = v.id;
+            resolvedVendorName = v.name || "";
+          }
+        }
+      }
+
+      // Vendor is required: either a resolved vendor, or the explicit
+      // "need help finding a vendor" escalation that flags it for the DO.
+      if (!resolvedVendorId && !needsVendorHelp) {
+        return respond(400, {
+          ok: false,
+          message: 'Choose a vendor, or select "Need help finding a vendor".',
+        });
+      }
+
       const woNumber = await nextWONumber(supabase, store.number);
       const submittedBy = `Public: ${submitterName} <${submitterEmail}>`
         + (submitterPhone ? ` · ${submitterPhone}` : "");
@@ -263,6 +277,8 @@ export const handler = async (event) => {
           // vendor_contacted stays false — the submitter is suggesting
           // a vendor, not confirming one has been contacted yet.
           vendor_contacted:       false,
+          needs_vendor_help:      needsVendorHelp || false,
+          vendor_help_at:         needsVendorHelp ? new Date().toISOString() : null,
           date_submitted:         new Date().toISOString(),
         })
         .select()
@@ -289,6 +305,20 @@ export const handler = async (event) => {
         visibility: "all",
       });
 
+      if (needsVendorHelp) {
+        await supabase.from("ticket_activities").insert({
+          ticket_id:  ticket.id,
+          user_id:    null,
+          user_name:  submittedBy,
+          user_role:  "public",
+          update_type:"needs_vendor_help",
+          notes:      "Store requested help finding a vendor — flagged for DO.",
+          event_type: "needs_vendor_help",
+          event_data: { wo_number: woNumber, source: "public_submit" },
+          visibility: "all",
+        });
+      }
+
       // Fire the standard "submitted" notification so the right
       // internal recipients get pinged. notifyTicketEvent already
       // handles missing store/DO/SDO emails gracefully.
@@ -296,6 +326,14 @@ export const handler = async (event) => {
         await notifyTicketEvent(supabase, ticket, "submitted");
       } catch (e) {
         console.warn("[public-submit] notifyTicketEvent failed:", e?.message);
+      }
+
+      if (needsVendorHelp) {
+        try {
+          await notifyTicketEvent(supabase, ticket, "vendor_help_needed");
+        } catch (e) {
+          console.warn("[public-submit] notifyTicketEvent vendor_help_needed failed:", e?.message);
+        }
       }
 
       return respond(200, {
@@ -354,30 +392,18 @@ export const handler = async (event) => {
         return respond(400, { ok: false, message: "store_number required" });
       }
 
-      // Pull the columns we need to match against (services +
-      // category) plus scope rows for visibility filtering. Drop
-      // services from the response so it doesn't leak.
-      let query = supabase
+      // Return ALL store-visible vendors — never narrow the list down
+      // with the asset/category filter, because vendor.services tagging
+      // is uneven and an over-strict match leaves the picker empty (the
+      // store then can't choose a vendor at all). The asset_type /
+      // category are used only to FLOAT relevant vendors to the top.
+      // This mirrors WO2's "search all vendors" surface rather than its
+      // top-3 recommendations.
+      const query = supabase
         .from("vendors")
         .select("id, name, category, services, vendor_scopes(scope_type, scope_id)")
-        .eq("is_active", true);
-
-      if (assetType || category) {
-        const orParts = [];
-        const escape = (s) => String(s).replace(/[(),]/g, "");
-        if (assetType) {
-          const a = escape(assetType);
-          orParts.push(`services.ilike.%${a}%`);
-          orParts.push(`category.ilike.%${a}%`);
-        }
-        if (category) {
-          const c = escape(category);
-          orParts.push(`services.ilike.%${c}%`);
-          orParts.push(`category.ilike.%${c}%`);
-        }
-        if (orParts.length) query = query.or(orParts.join(","));
-      }
-      query = query.order("name");
+        .eq("is_active", true)
+        .order("name");
       const { data: vendors, error } = await query;
       if (error) throw error;
 
@@ -387,6 +413,24 @@ export const handler = async (event) => {
         if (!allowedSet) return true;
         return isVendorVisibleAtStore(v.vendor_scopes || [], allowedSet, strict);
       });
+
+      // Float vendors whose services/category match the issue to the top
+      // (alphabetical within each group), so the most relevant options
+      // lead even though the whole store list is shown.
+      const needle = `${assetType} ${category}`.toLowerCase().trim();
+      if (needle) {
+        const matches = (v) => {
+          const hay = `${v.services || ""} ${v.category || ""}`.toLowerCase();
+          return (assetType && hay.includes(assetType.toLowerCase()))
+            || (category && hay.includes(category.toLowerCase()));
+        };
+        visible.sort((a, b) => {
+          const ma = matches(a) ? 0 : 1;
+          const mb = matches(b) ? 0 : 1;
+          if (ma !== mb) return ma - mb;
+          return (a.name || "").localeCompare(b.name || "");
+        });
+      }
 
       // Float store-preferred vendors to the top, same as WO2's
       // searchVendors. Resolves the store_id from the number, pulls

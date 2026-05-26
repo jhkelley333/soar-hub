@@ -84,6 +84,10 @@ const CATEGORIES = [
 const MAX_PHOTOS = 3;
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
 
+// Sentinel vendor-dropdown value: store doesn't know which vendor to use,
+// so the ticket is submitted flagged for the DO to assign one.
+const VENDOR_NEED_HELP = "__need_help__";
+
 async function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const r = new FileReader();
@@ -216,7 +220,10 @@ export function PublicSubmitPage() {
         if (cancelled) return;
         const list = body.ok && Array.isArray(body.vendors) ? body.vendors : [];
         setVendors(list);
-        setVendorId((prev) => (prev && list.some((v: VendorHit) => v.id === prev) ? prev : ""));
+        setVendorId((prev) =>
+          prev === VENDOR_NEED_HELP || (prev && list.some((v: VendorHit) => v.id === prev))
+            ? prev
+            : "");
       } catch {
         if (!cancelled) {
           setVendors([]);
@@ -238,11 +245,15 @@ export function PublicSubmitPage() {
     };
   }, [photos]);
 
+  // Vendor is required: a real pick, or the explicit "need help" option.
+  const vendorChosen = vendorId === VENDOR_NEED_HELP || vendorId.length > 0;
   const canSubmit =
     !!pickedStore
     && name.trim().length > 0
     && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
     && issueDescription.trim().length >= 10
+    && vendorChosen
+    && photos.length > 0
     && !submitting;
 
   function addPhotos(files: FileList | null) {
@@ -305,7 +316,8 @@ export function PublicSubmitPage() {
           issue_description: issueDescription.trim(),
           priority,
           troubleshooting_checked: troubleshooting === "yes",
-          vendor_id: vendorId || null,
+          vendor_id: vendorId && vendorId !== VENDOR_NEED_HELP ? vendorId : null,
+          needs_vendor_help: vendorId === VENDOR_NEED_HELP,
         }),
       });
       const tBody = await tRes.json().catch(() => ({}));
@@ -683,7 +695,9 @@ export function PublicSubmitPage() {
                 )}
 
                 <div>
-                  <Label htmlFor="ps-vendor">Preferred vendor (optional)</Label>
+                  <Label htmlFor="ps-vendor">
+                    Vendor <span className="text-red-500">*</span>
+                  </Label>
                   <select
                     id="ps-vendor"
                     value={vendorId}
@@ -696,18 +710,23 @@ export function PublicSubmitPage() {
                         ? "Pick a store first…"
                         : loadingVendors
                         ? "Loading vendors…"
-                        : vendors.length === 0
-                        ? "No vendors available — let the team pick"
-                        : "Let the team pick"}
+                        : "Select a vendor…"}
                     </option>
                     {vendors.map((v) => (
                       <option key={v.id} value={v.id}>
                         {v.name}{v.category ? ` · ${v.category}` : ""}
                       </option>
                     ))}
+                    {pickedStore && !loadingVendors && (
+                      <option value={VENDOR_NEED_HELP}>
+                        Need help finding a vendor — let the team pick
+                      </option>
+                    )}
                   </select>
                   <div className="mt-1 text-[11px] text-zinc-500">
-                    Pick the vendor you'd like us to send out. If you're not sure, leave it blank — the facilities team will route it.
+                    {vendorId === VENDOR_NEED_HELP
+                      ? "We'll flag this ticket for your DO to assign a vendor."
+                      : "Pick the vendor you'd like us to send out. Not sure? Choose “Need help finding a vendor” and we'll route it."}
                   </div>
                 </div>
 
@@ -738,7 +757,7 @@ export function PublicSubmitPage() {
               <CardBody className="space-y-3">
                 <div className="flex items-center justify-between">
                   <div className="text-sm font-semibold tracking-tight text-midnight">
-                    Photos (up to {MAX_PHOTOS})
+                    Photos <span className="text-red-500">*</span> (at least 1, up to {MAX_PHOTOS})
                   </div>
                   <div className="text-[11px] text-zinc-500">
                     {photos.length} / {MAX_PHOTOS} · 5 MB each
