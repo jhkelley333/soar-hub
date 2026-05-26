@@ -827,7 +827,7 @@ const AUDIT_TYPE = {
 
 // The action a given role can take on a request at its current status, or
 // null. Covers approvals ("decide") and the post-approval confirmations.
-//   training: Submitted→decide(SDO/RVP) Approved→entered(SDO/RVP) Entered→closed-out(DO)
+//   training: Submitted→decide(SDO/RVP) Approved→entered(SDO/RVP) "On Weekly Sheet"→closed-out(DO)
 //   pto:      Submitted→decide(DO) "DO Approved"→decide(SDO/RVP) Approved→paf-submitted(DO)
 function actionableStep(type, status, role) {
   const isApprover = role === "sdo" || role === "rvp" || role === "admin";
@@ -835,7 +835,7 @@ function actionableStep(type, status, role) {
   if (type === "training") {
     if (status === "Submitted") return isApprover ? "decide" : null;
     if (status === "Approved") return isApprover ? "entered" : null;
-    if (status === "Entered") return isDo ? "closed-out" : null;
+    if (status === "On Weekly Sheet") return isDo ? "closed-out" : null;
     return null;
   }
   // pto
@@ -874,7 +874,7 @@ async function listQueue(supa, user) {
 
   try {
     const [training, pto] = await Promise.all([
-      fetchActionable("training", ["Submitted", "Approved", "Entered"]),
+      fetchActionable("training", ["Submitted", "Approved", "On Weekly Sheet"]),
       fetchActionable("pto", ["Submitted", "DO Approved", "Approved"]),
     ]);
     const distinct = Array.from(
@@ -1074,7 +1074,7 @@ async function decide(supa, user, body) {
 }
 
 // confirm — the post-approval steps (no approve/reject): SDO/RVP mark a
-// training "Entered" in the tracking sheet; the DO marks it "Closed Out"
+// training "On Weekly Sheet"; the DO marks it "Completed"
 // after the last day; the DO confirms the vacation PAF was submitted.
 async function confirm(supa, user, body) {
   const type = sanitizeText(body?.type, 20);
@@ -1118,7 +1118,7 @@ async function confirm(supa, user, body) {
 
   if (step === "entered") {
     const err = await transition(
-      { status: "Entered", entered_at: nowIso, entered_by_id: user.id },
+      { status: "On Weekly Sheet", entered_at: nowIso, entered_by_id: user.id },
       existing.status
     );
     if (err) return err;
@@ -1138,15 +1138,15 @@ async function confirm(supa, user, body) {
       text:
         `${displayName(user)} entered ${employeeName}'s training credit in the tracking sheet.\n\n` +
         `After the last training day${existing.last_day_date ? ` (${existing.last_day_date})` : ""}, ` +
-        `please close it out by completing the form:\n${CLOSEOUT_FORM_URL}\n\n` +
-        `Then mark it closed out here: ${link}`,
+        `please complete the closeout form:\n${CLOSEOUT_FORM_URL}\n\n` +
+        `Then mark it completed here: ${link}`,
     });
-    return { ok: true, status: "Entered" };
+    return { ok: true, status: "On Weekly Sheet" };
   }
 
   if (step === "closed-out") {
     const err = await transition(
-      { status: "Closed Out", closed_out_at: nowIso, closed_out_by_id: user.id },
+      { status: "Completed", closed_out_at: nowIso, closed_out_by_id: user.id },
       existing.status
     );
     if (err) return err;
@@ -1160,10 +1160,10 @@ async function confirm(supa, user, body) {
     });
     await sendEmailViaResend({
       to: existing.submitter_email,
-      subject: `Training closed out — ${employeeName} (Store ${existing.store_number})`,
+      subject: `Training completed — ${employeeName} (Store ${existing.store_number})`,
       text: `${displayName(user)} completed the closeout for ${employeeName}'s training.\n\n${link}`,
     });
-    return { ok: true, status: "Closed Out" };
+    return { ok: true, status: "Completed" };
   }
 
   if (step === "paf-submitted") {

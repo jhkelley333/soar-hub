@@ -29,9 +29,9 @@ function fmtMoney(n: number): string {
 }
 
 function statusKind(status: string): StatusPillKind {
-  if (status === "Approved") return "approved";
+  if (status === "Approved" || status === "Completed" || status === "PAF Submitted") return "approved";
   if (status === "Changes Requested") return "revision";
-  if (status === "DO Approved") return "pending";
+  if (status === "DO Approved" || status === "On Weekly Sheet") return "pending";
   return "submitted";
 }
 
