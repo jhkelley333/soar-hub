@@ -5,6 +5,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { visibleNav } from "@/app/nav";
 import { fetchResolvedFlags } from "@/lib/flags";
 import { listPafs, listSdoQueue } from "@/modules/paf/api";
+import { listApprovalQueue } from "@/modules/employee-actions/api";
 import { countPendingScopes } from "@/modules/reno-scoping/api";
 import { useChatUnreadCount } from "@/modules/chat/useChatUnread";
 import { ROLE_LABELS, roleLevel, type UserRole } from "@/types/database";
@@ -69,6 +70,25 @@ function useRenoBadgeCount(role: UserRole | undefined): number | null {
   return q.data ?? null;
 }
 
+// Count of Employee Action requests awaiting the caller's action (approvals
+// plus the post-approval confirmations — entered / closeout / PAF). The
+// endpoint already filters to "needs my action" and scopes by role, so the
+// badge is just the queue size. Reuses the ["ea-queue"] cache shared with the
+// Approvals tab. Submitters who aren't approvers get no badge.
+const EA_BADGE_ROLES = new Set<UserRole>(["do", "sdo", "rvp", "admin"]);
+
+function useEmployeeActionsBadgeCount(role: UserRole | undefined): number | null {
+  const isApprover = role !== undefined && EA_BADGE_ROLES.has(role);
+  const q = useQuery({
+    queryKey: ["ea-queue"],
+    queryFn: listApprovalQueue,
+    enabled: isApprover,
+    staleTime: 30_000,
+  });
+  if (!isApprover || !q.data) return null;
+  return q.data.trainingCredits.length + q.data.ptoRequests.length;
+}
+
 export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { profile, signOut } = useAuth();
   // Reuses the same query key as useFlag() so we don't double-fetch.
@@ -80,6 +100,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   });
   const items = visibleNav(profile?.role, flagsQ.data?.flags);
   const pafBadge = usePafBadgeCount(profile?.role);
+  const eaBadge = useEmployeeActionsBadgeCount(profile?.role);
   const renoBadge = useRenoBadgeCount(profile?.role);
   const chatBadge = useChatUnreadCount();
 
@@ -98,6 +119,12 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
             let badge: number | null = null;
             if (item.to === "/paf" && typeof pafBadge === "number" && pafBadge > 0) {
               badge = pafBadge;
+            } else if (
+              item.to === "/employee-actions" &&
+              typeof eaBadge === "number" &&
+              eaBadge > 0
+            ) {
+              badge = eaBadge;
             } else if (
               item.to === "/reno-scoping" &&
               typeof renoBadge === "number" &&
