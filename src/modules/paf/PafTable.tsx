@@ -7,8 +7,10 @@ import { ArrowDown, ArrowUp, ArrowUpDown, Eye } from "lucide-react";
 import { Badge } from "@/shared/ui/Badge";
 import { Button } from "@/shared/ui/Button";
 import { Drawer } from "@/shared/ui/Drawer";
+import { useAuth } from "@/auth/AuthProvider";
 import { ProcessActions } from "./ProcessActions";
 import { SdoActions } from "./SdoActions";
+import { DeletePafAction } from "./DeletePafAction";
 import { PafDetail } from "./PafDetail";
 import type { PafRow, PafStatus } from "./types";
 import { formatUSD } from "./cost";
@@ -63,6 +65,8 @@ export function PafTable({
   rows: PafRow[];
   actions: "view" | "process" | "sdo";
 }) {
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === "admin";
   const [detail, setDetail] = useState<PafRow | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("created_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -184,9 +188,14 @@ export function PafTable({
         title={detail ? `PAF — ${detail.employee_name}` : ""}
         footer={
           <div className="flex flex-1 flex-wrap items-center justify-between gap-2">
-            <Button variant="ghost" onClick={() => setDetail(null)}>
-              Close
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="ghost" onClick={() => setDetail(null)}>
+                Close
+              </Button>
+              {detail && isAdmin && (
+                <DeletePafAction paf={detail} onComplete={() => setDetail(null)} />
+              )}
+            </div>
             {detail && actions === "process" && (
               <div className="flex flex-wrap items-center gap-1.5">
                 <ProcessActions
