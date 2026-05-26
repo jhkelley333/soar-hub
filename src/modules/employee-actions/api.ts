@@ -2,7 +2,9 @@
 
 import { supabase } from "@/lib/supabase";
 import type {
+  DecideInput,
   EmployeeActionListResponse,
+  EmployeeActionQueueResponse,
   MyStore,
   PtoInput,
   TrainingCreditInput,
@@ -42,6 +44,19 @@ export function fetchMyStores(): Promise<{ stores: MyStore[] }> {
 
 export function listEmployeeActions(): Promise<EmployeeActionListResponse> {
   return request<EmployeeActionListResponse>(`${FN}?action=list`);
+}
+
+export function listApprovalQueue(): Promise<EmployeeActionQueueResponse> {
+  return request<EmployeeActionQueueResponse>(`${FN}?action=queue`);
+}
+
+export function decideEmployeeAction(
+  input: DecideInput
+): Promise<{ ok: true; status: string }> {
+  return request(`${FN}?action=decide`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export function submitTrainingCredit(
