@@ -19,10 +19,15 @@ function fmtMoney(n: number | null | undefined): string {
   return (Number(n) || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
+// Fallback link to the DO closeout Google Form, shown in the drawer in case
+// the alert email isn't handy. Keep in sync with the function default.
+const CLOSEOUT_FORM_URL =
+  "https://docs.google.com/forms/d/e/1FAIpQLSeovlvWNQiJ2UDd5rlIqTkf7UEIVeZ88VkrJgdKUAd9Vso5Xw/viewform";
+
 function statusKind(status: string): StatusPillKind {
-  if (status === "Approved" || status === "Closed Out" || status === "PAF Submitted") return "approved";
+  if (status === "Approved" || status === "Completed" || status === "PAF Submitted") return "approved";
   if (status === "Changes Requested") return "revision";
-  if (status === "DO Approved" || status === "Entered") return "pending";
+  if (status === "DO Approved" || status === "On Weekly Sheet") return "pending";
   return "submitted";
 }
 
@@ -38,7 +43,7 @@ function availableAction(
   if (kind === "training") {
     if (status === "Submitted") return isApprover && !isOwner ? "decide" : null;
     if (status === "Approved") return isApprover ? "entered" : null;
-    if (status === "Entered") return isDo ? "closed-out" : null;
+    if (status === "On Weekly Sheet") return isDo ? "closed-out" : null;
     return null;
   }
   if (status === "Submitted") return isDo && !isOwner ? "decide" : null;
@@ -114,8 +119,8 @@ export function RequestDetailDrawer({
   const busy = decideMut.isPending || confirmMut.isPending || delMut.isPending;
 
   const confirmLabel: Record<ConfirmStep, string> = {
-    entered: "Mark entered in tracking sheet",
-    "closed-out": "Mark closed out",
+    entered: "Mark on weekly sheet",
+    "closed-out": "Mark completed",
     "paf-submitted": "Confirm PAF submitted",
   };
 
@@ -218,7 +223,16 @@ export function RequestDetailDrawer({
 
           {action === "closed-out" && (
             <p className="pt-3 text-xs text-zinc-500">
-              Complete the closeout form (link is in your email), then mark it closed out.
+              Complete the closeout form, then mark it completed.{" "}
+              <a
+                href={CLOSEOUT_FORM_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="font-medium text-accent underline"
+              >
+                Open the closeout form
+              </a>{" "}
+              (also linked in your email).
             </p>
           )}
         </dl>
@@ -256,8 +270,8 @@ function TrainingDetail({ row }: { row: TrainingCreditRow }) {
           {row.decision_note ? ` — ${row.decision_note}` : ""}
         </Field>
       )}
-      {row.entered_at && <Field label="Entered in sheet">{new Date(row.entered_at).toLocaleString()}</Field>}
-      {row.closed_out_at && <Field label="Closed out">{new Date(row.closed_out_at).toLocaleString()}</Field>}
+      {row.entered_at && <Field label="On weekly sheet">{new Date(row.entered_at).toLocaleString()}</Field>}
+      {row.closed_out_at && <Field label="Completed">{new Date(row.closed_out_at).toLocaleString()}</Field>}
     </>
   );
 }

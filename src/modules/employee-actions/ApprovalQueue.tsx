@@ -22,9 +22,9 @@ function actionHint(action: string | null | undefined): string {
     case "decide":
       return "Approve / send back";
     case "entered":
-      return "Enter in sheet";
+      return "Weekly sheet";
     case "closed-out":
-      return "Close out";
+      return "Complete";
     case "paf-submitted":
       return "Confirm PAF";
     default:
