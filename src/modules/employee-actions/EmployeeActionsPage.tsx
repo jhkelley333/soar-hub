@@ -13,17 +13,27 @@ import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
+import type { StatusPillKind } from "@/shared/ui/StatusPill";
 import { deleteEmployeeAction, listEmployeeActions } from "./api";
 import { TrainingCreditForm } from "./TrainingCreditForm";
 import { PtoRequestForm } from "./PtoRequestForm";
+import { ApprovalQueue } from "./ApprovalQueue";
 import type { PtoRow, TrainingCreditRow } from "./types";
 
-type Tab = "training" | "pto" | "history";
+type Tab = "training" | "pto" | "history" | "approvals";
 
 const SUBMIT_ROLES = ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"];
+const APPROVER_ROLES = ["do", "sdo", "rvp", "admin"];
 
 function fmtMoney(n: number): string {
   return (Number(n) || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
+}
+
+function statusKind(status: string): StatusPillKind {
+  if (status === "Approved") return "approved";
+  if (status === "Changes Requested") return "revision";
+  if (status === "DO Approved") return "pending";
+  return "submitted";
 }
 
 export function EmployeeActionsPage() {
@@ -31,6 +41,14 @@ export function EmployeeActionsPage() {
   const [tab, setTab] = useState<Tab>("training");
 
   const canSubmit = SUBMIT_ROLES.includes(profile?.role ?? "");
+  const canApprove = APPROVER_ROLES.includes(profile?.role ?? "");
+
+  const options = [
+    { value: "training" as const, label: "Training Credit" },
+    { value: "pto" as const, label: "PTO Request" },
+    ...(canApprove ? [{ value: "approvals" as const, label: "Approvals" }] : []),
+    { value: "history" as const, label: "History" },
+  ];
 
   return (
     <>
@@ -40,15 +58,7 @@ export function EmployeeActionsPage() {
       />
 
       <div className="mb-4">
-        <Segmented<Tab>
-          value={tab}
-          onChange={setTab}
-          options={[
-            { value: "training", label: "Training Credit" },
-            { value: "pto", label: "PTO Request" },
-            { value: "history", label: "History" },
-          ]}
-        />
+        <Segmented<Tab> value={tab} onChange={setTab} options={options} />
       </div>
 
       {tab === "training" &&
@@ -64,6 +74,8 @@ export function EmployeeActionsPage() {
         ) : (
           <NoAccess />
         ))}
+
+      {tab === "approvals" && (canApprove ? <ApprovalQueue /> : <NoAccess />)}
 
       {tab === "history" && <HistoryList />}
     </>
@@ -219,13 +231,16 @@ function TrainingRow({
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-zinc-900">{row.employee_name}</span>
-            <StatusPill kind="submitted">{row.status}</StatusPill>
+            <StatusPill kind={statusKind(row.status)}>{row.status}</StatusPill>
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
             <StoreLabel number={row.store_number} name={row.store_name} />
             <span className="text-xs text-zinc-500">{row.training_type}</span>
             <span className="text-xs text-zinc-500">{fmtMoney(row.requested_amount)}</span>
           </div>
+          {row.status === "Changes Requested" && row.rejection_reason && (
+            <p className="mt-1 text-xs text-amber-700">Changes requested: {row.rejection_reason}</p>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <div className="text-right text-xs text-zinc-400">
@@ -257,7 +272,7 @@ function PtoRowItem({
             {row.position && (
               <span className="text-xs text-zinc-400">{row.position}</span>
             )}
-            <StatusPill kind="submitted">{row.status}</StatusPill>
+            <StatusPill kind={statusKind(row.status)}>{row.status}</StatusPill>
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
             <StoreLabel number={row.store_number} name={row.store_name} />
@@ -273,6 +288,9 @@ function PtoRowItem({
               <span className="text-xs text-zinc-500">{row.days_used ?? 0} day(s)</span>
             )}
           </div>
+          {row.status === "Changes Requested" && row.rejection_reason && (
+            <p className="mt-1 text-xs text-amber-700">Changes requested: {row.rejection_reason}</p>
+          )}
         </div>
         <div className="flex items-center gap-3">
           <div className="text-right text-xs text-zinc-400">

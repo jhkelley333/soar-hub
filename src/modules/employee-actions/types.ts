@@ -35,6 +35,11 @@ export interface TrainingCreditRow {
   send_copy: boolean;
   status: string;
   notes: string | null;
+  // Approval (SDO/RVP single step)
+  approved_at: string | null;
+  approved_by_email: string | null;
+  decision_note: string | null;
+  rejection_reason: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -61,6 +66,13 @@ export interface PtoRow {
   send_copy: boolean;
   status: string;
   notes: string | null;
+  // Approval (DO step, then SDO/RVP step)
+  do_approved_at: string | null;
+  do_note: string | null;
+  approved_at: string | null;
+  approved_by_email: string | null;
+  decision_note: string | null;
+  rejection_reason: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -70,6 +82,20 @@ export interface PtoVacationDay {
   date: string;
   hours: number;
   amount: number;
+}
+
+// Pending-approval queue for an approver (own submissions excluded).
+export interface EmployeeActionQueueResponse {
+  user: { id: string; role: string };
+  trainingCredits: TrainingCreditRow[];
+  ptoRequests: PtoRow[];
+}
+
+export interface DecideInput {
+  type: "training" | "pto";
+  id: string;
+  action: "approve" | "reject";
+  note?: string;
 }
 
 export interface EmployeeActionListResponse {

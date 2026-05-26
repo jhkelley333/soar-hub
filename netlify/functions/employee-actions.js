@@ -30,6 +30,8 @@ const SUBMIT_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]);
 const READ_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]);
 // Roles that see every request regardless of store scope.
 const ORG_WIDE_READ = new Set(["payroll", "admin", "vp", "coo"]);
+// Roles that can act on an approval step.
+const APPROVER_ROLES = new Set(["do", "sdo", "rvp", "admin"]);
 
 const VALID_TRAINING_DAYS = new Set([
   "Monday",
@@ -220,7 +222,7 @@ async function scopedProfiles(supa, scopeType, scopeId, role) {
 // Given a store number, resolve the DO (district scope) and RVP (region
 // scope) responsible for it. Same scope-walk org.js findManager() uses.
 async function resolveStoreLeadership(supa, storeNumber) {
-  const out = { dos: [], rvps: [] };
+  const out = { dos: [], sdos: [], rvps: [] };
   const { data: store } = await supa
     .from("stores")
     .select("id, district_id")
@@ -236,6 +238,8 @@ async function resolveStoreLeadership(supa, storeNumber) {
     .eq("id", store.district_id)
     .maybeSingle();
   if (!district?.area_id) return out;
+
+  out.sdos = await scopedProfiles(supa, "area", district.area_id, "sdo");
 
   const { data: area } = await supa
     .from("areas")
@@ -503,6 +507,10 @@ async function submitPto(supa, user, body) {
   }
 
   const sendCopy = body?.send_copy === true || body?.send_copy === "true";
+
+  // A GM's PTO starts at the DO step. Anyone DO-or-above submitting skips the
+  // DO step (it's their own tier) and lands directly in the SDO/RVP queue.
+  const skipsDoStep = user.role !== "gm";
   const base = {
     submitter_id: user.id,
     submitter_email: user.email,
@@ -511,7 +519,14 @@ async function submitPto(supa, user, body) {
     employee_name: employeeName,
     position,
     send_copy: sendCopy,
-    status: "Submitted",
+    status: skipsDoStep ? "DO Approved" : "Submitted",
+    ...(skipsDoStep
+      ? {
+          do_approved_at: new Date().toISOString(),
+          do_approved_by_id: user.id,
+          do_note: "Auto — submitter is DO or above",
+        }
+      : {}),
   };
 
   let insertRow;
@@ -641,6 +656,254 @@ async function submitPto(supa, user, body) {
 }
 
 // ----------------------------------------------------------------------------
+// Approval workflow
+// ----------------------------------------------------------------------------
+const REQUEST_TABLE = {
+  training: "training_credit_requests",
+  pto: "pto_requests",
+};
+const AUDIT_TYPE = {
+  training: "training_credit",
+  pto: "pto",
+};
+
+// Which roles may act on a request at its current status, or null if the
+// status is terminal / not awaiting an approver.
+function pendingActorRoles(type, status) {
+  if (type === "training") {
+    return status === "Submitted" ? new Set(["sdo", "rvp", "admin"]) : null;
+  }
+  // pto
+  if (status === "Submitted") return new Set(["do", "admin"]);
+  if (status === "DO Approved") return new Set(["sdo", "rvp", "admin"]);
+  return null;
+}
+
+// queue — requests awaiting the caller's approval (own submissions excluded).
+async function listQueue(supa, user) {
+  if (!APPROVER_ROLES.has(user.role)) {
+    return { user: { id: user.id, role: user.role }, trainingCredits: [], ptoRequests: [] };
+  }
+  const numbers = user.role === "admin" ? null : await resolveVisibleStoreNumbers(supa, user.id);
+
+  async function fetchPending(type, statuses) {
+    let q = supa.from(REQUEST_TABLE[type]).select("*").in("status", statuses).limit(500);
+    if (numbers !== null) {
+      if (!numbers.length) return [];
+      q = q.in("store_number", numbers);
+    }
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    return (data ?? []).filter((r) => {
+      if (r.submitter_id === user.id) return false; // no self-approval
+      const allowed = pendingActorRoles(type, r.status);
+      return allowed != null && allowed.has(user.role);
+    });
+  }
+
+  try {
+    const [training, pto] = await Promise.all([
+      fetchPending("training", ["Submitted"]),
+      fetchPending("pto", ["Submitted", "DO Approved"]),
+    ]);
+    const distinct = Array.from(
+      new Set([...training, ...pto].map((r) => r.store_number).filter(Boolean))
+    );
+    const nameMap = new Map();
+    if (distinct.length) {
+      const { data: storeRows } = await supa
+        .from("stores")
+        .select("number, name")
+        .in("number", distinct);
+      for (const s of storeRows ?? []) nameMap.set(String(s.number), s.name);
+    }
+    const stamp = (r) => ({ ...r, store_name: nameMap.get(String(r.store_number)) ?? null });
+    return {
+      user: { id: user.id, role: user.role },
+      trainingCredits: training.map(stamp),
+      ptoRequests: pto.map(stamp),
+    };
+  } catch (e) {
+    return { error: e.message, status: 500 };
+  }
+}
+
+// decide — approve or reject the current step. First action wins (conditional
+// update on the existing status guards the two-approvers-at-once race).
+async function decide(supa, user, body) {
+  const type = sanitizeText(body?.type, 20);
+  const table = REQUEST_TABLE[type];
+  if (!table) return { error: "Unknown request type.", status: 400 };
+  const id = sanitizeText(body?.id, 64);
+  if (!id) return { error: "Request id is required.", status: 400 };
+  const action = sanitizeText(body?.action, 12);
+  if (action !== "approve" && action !== "reject") {
+    return { error: "action must be 'approve' or 'reject'.", status: 400 };
+  }
+  const note = sanitizeText(body?.note, 2000);
+
+  const { data: existing, error: fetchErr } = await supa
+    .from(table)
+    .select("*")
+    .eq("id", id)
+    .maybeSingle();
+  if (fetchErr) return { error: fetchErr.message, status: 500 };
+  if (!existing) return { error: "Request not found.", status: 404 };
+
+  if (existing.submitter_id === user.id) {
+    return { error: "You can't approve your own request.", status: 403 };
+  }
+  const allowed = pendingActorRoles(type, existing.status);
+  if (!allowed) {
+    return { error: `This request is ${existing.status} and can't be actioned.`, status: 409 };
+  }
+  if (!allowed.has(user.role)) {
+    return { error: "This step isn't yours to approve.", status: 403 };
+  }
+  const scopeErr = await assertStoreInScope(supa, user, existing.store_number);
+  if (scopeErr) return scopeErr;
+
+  const employeeName = existing.employee_name ?? existing.gm_name ?? "employee";
+  const link = `${appBaseUrl()}/employee-actions`;
+  const nowIso = new Date().toISOString();
+
+  // Apply the transition with a status guard so a racing approver loses.
+  async function transition(patch, fromStatus) {
+    const { data, error } = await supa
+      .from(table)
+      .update(patch)
+      .eq("id", id)
+      .eq("status", fromStatus)
+      .select("id")
+      .maybeSingle();
+    if (error) return { error: error.message, status: 500 };
+    if (!data) return { error: "This request was just updated by someone else.", status: 409 };
+    return null;
+  }
+
+  if (action === "reject") {
+    if (!note) return { error: "A reason is required to send it back.", status: 400 };
+    const err = await transition(
+      { status: "Changes Requested", rejection_reason: note },
+      existing.status
+    );
+    if (err) return err;
+    await logAudit(supa, {
+      request_type: AUDIT_TYPE[type],
+      request_id: id,
+      actor_id: user.id,
+      actor_email: user.email,
+      action: "reject",
+      detail: { from: existing.status, reason: note },
+    });
+    await sendEmailViaResend({
+      to: existing.submitter_email,
+      subject: `Changes requested — ${employeeName} (Store ${existing.store_number})`,
+      text:
+        `${displayName(user)} sent your request back for changes.\n\n` +
+        `Reason: ${note}\n\n` +
+        `Edit and resubmit here: ${link}`,
+    });
+    return { ok: true, status: "Changes Requested" };
+  }
+
+  // approve
+  if (type === "training") {
+    const err = await transition(
+      {
+        status: "Approved",
+        approved_at: nowIso,
+        approved_by_id: user.id,
+        approved_by_email: user.email,
+        decision_note: note || null,
+      },
+      existing.status
+    );
+    if (err) return err;
+    await logAudit(supa, {
+      request_type: AUDIT_TYPE.training,
+      request_id: id,
+      actor_id: user.id,
+      actor_email: user.email,
+      action: "approve",
+      detail: { note: note || null },
+    });
+    await sendEmailViaResend({
+      to: existing.submitter_email,
+      subject: `Training credit approved — ${employeeName} (Store ${existing.store_number})`,
+      text:
+        `${displayName(user)} approved the training credit request.\n\n` +
+        `View it here: ${link}`,
+    });
+    return { ok: true, status: "Approved" };
+  }
+
+  // pto
+  if (existing.status === "Submitted") {
+    // DO step → moves to the SDO/RVP queue.
+    const err = await transition(
+      {
+        status: "DO Approved",
+        do_approved_at: nowIso,
+        do_approved_by_id: user.id,
+        do_note: note || null,
+      },
+      existing.status
+    );
+    if (err) return err;
+    await logAudit(supa, {
+      request_type: AUDIT_TYPE.pto,
+      request_id: id,
+      actor_id: user.id,
+      actor_email: user.email,
+      action: "do-approve",
+      detail: { note: note || null },
+    });
+    const { sdos, rvps } = await resolveStoreLeadership(supa, existing.store_number);
+    const to = Array.from(
+      new Set([...sdos, ...rvps].map((p) => p.email).filter(Boolean))
+    );
+    await sendEmailViaResend({
+      to,
+      subject: `PTO needs your approval — ${employeeName} (Store ${existing.store_number})`,
+      text:
+        `${displayName(user)} (DO) approved a PTO request. It now needs SDO/RVP approval.\n\n` +
+        `Employee: ${employeeName}\nStore: ${existing.store_number}\n` +
+        `Dates: ${existing.pto_start_date} → ${existing.pto_end_date}\n\n` +
+        `Review it here: ${link}`,
+    });
+    return { ok: true, status: "DO Approved" };
+  }
+
+  // pto final step (status === "DO Approved")
+  const err = await transition(
+    {
+      status: "Approved",
+      approved_at: nowIso,
+      approved_by_id: user.id,
+      approved_by_email: user.email,
+      decision_note: note || null,
+    },
+    existing.status
+  );
+  if (err) return err;
+  await logAudit(supa, {
+    request_type: AUDIT_TYPE.pto,
+    request_id: id,
+    actor_id: user.id,
+    actor_email: user.email,
+    action: "approve",
+    detail: { note: note || null },
+  });
+  await sendEmailViaResend({
+    to: existing.submitter_email,
+    subject: `PTO approved — ${employeeName} (Store ${existing.store_number})`,
+    text: `${displayName(user)} approved the PTO request.\n\nView it here: ${link}`,
+  });
+  return { ok: true, status: "Approved" };
+}
+
+// ----------------------------------------------------------------------------
 // delete (admin only)
 // ----------------------------------------------------------------------------
 async function deleteRequest(supa, user, body) {
@@ -702,6 +965,7 @@ export const handler = async (event) => {
 
     if (event.httpMethod === "GET") {
       if (action === "list") return unwrap(await listRequests(supa, user));
+      if (action === "queue") return unwrap(await listQueue(supa, user));
       if (action === "my-stores") return unwrap(await listMyStores(supa, user));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
@@ -709,6 +973,7 @@ export const handler = async (event) => {
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "submit-training") return unwrap(await submitTraining(supa, user, body));
       if (action === "submit-pto") return unwrap(await submitPto(supa, user, body));
+      if (action === "decide") return unwrap(await decide(supa, user, body));
       if (action === "delete") return unwrap(await deleteRequest(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
