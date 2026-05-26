@@ -183,6 +183,11 @@ export interface Ticket {
   is_business_critical: boolean;
   vendor_id: string | null;
   vendor_name: string | null;
+  // Raised when a store submits without choosing a vendor ("Need help
+  // finding a vendor") — flags the ticket for the DO to assign one.
+  // Cleared automatically once a vendor name is set.
+  needs_vendor_help: boolean | null;
+  vendor_help_at: string | null;
   // Replacement-equipment fields. Populated when the team decides to
   // replace rather than repair (the Order Replacement action sets
   // them; status transitions to "awaiting_equipment").
@@ -346,6 +351,10 @@ export interface CreateTicketBody {
   troubleshootingChecked?: boolean;
   vendorContacted?: boolean;
   vendorName?: string;
+  // Set when the store submits without a vendor ("Need help finding a
+  // vendor"); flags the ticket for the DO. Mutually exclusive with a
+  // non-empty vendorName.
+  needsVendorHelp?: boolean;
   // Optional cost breakdown. When present the backend sets cost_estimate
   // to the sum, so callers don't send costEstimate separately.
   lineItems?: LineItem[];

@@ -674,6 +674,9 @@ function TicketCard({
               {ticket.unread_message_count}
             </span>
           )}
+          {ticket.needs_vendor_help && (
+            <Badge tone="warning">Needs vendor</Badge>
+          )}
           <Badge tone={STATUS_TONE[ticket.status] ?? "neutral"}>{statusLabel(ticket.status)}</Badge>
           {ticket.priority && ticket.priority !== "Standard" && (
             <Badge tone={PRIORITY_TONE[ticket.priority]}>{ticket.priority}</Badge>

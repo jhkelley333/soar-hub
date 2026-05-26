@@ -1060,13 +1060,21 @@ export const handler = async (event) => {
         storeNumber, storeName, storeEmail, doEmail, sdoEmail,
         category, assetType, modelNumber, issueDescription, workRequested,
         priority, isBusinessCritical, troubleshootingChecked,
-        vendorContacted, vendorName, costEstimate, lineItems, photos,
+        vendorContacted, vendorName, needsVendorHelp, costEstimate, lineItems, photos,
       } = payload;
 
       if (!storeNumber || !issueDescription) {
         return respond(400, {
           ok: false,
           message: "Store number and issue description required.",
+        });
+      }
+      // Vendor is required, unless the store explicitly asked for help
+      // finding one (which flags the ticket for the DO).
+      if (!needsVendorHelp && !(vendorName && String(vendorName).trim())) {
+        return respond(400, {
+          ok: false,
+          message: 'A vendor is required. Choose one, or mark "Need help finding a vendor".',
         });
       }
 
@@ -1103,7 +1111,9 @@ export const handler = async (event) => {
           is_business_critical:   isBusinessCritical || false,
           troubleshooting_checked:troubleshootingChecked || false,
           vendor_contacted:       vendorContacted || false,
-          vendor_name:            vendorName || "",
+          vendor_name:            needsVendorHelp ? "" : (vendorName || ""),
+          needs_vendor_help:      needsVendorHelp || false,
+          vendor_help_at:         needsVendorHelp ? new Date().toISOString() : null,
           cost_estimate:          resolvedCost,
           line_items:             createItems && createItems.length ? createItems : [],
           date_submitted:         new Date().toISOString(),
@@ -1125,6 +1135,20 @@ export const handler = async (event) => {
         visibility:  "all",
       });
 
+      if (needsVendorHelp) {
+        await supabase.from("ticket_activities").insert({
+          ticket_id:   ticket.id,
+          user_id:     userId,
+          user_name:   userName,
+          user_role:   role,
+          update_type: "needs_vendor_help",
+          notes:       "Store requested help finding a vendor — flagged for DO.",
+          event_type:  "needs_vendor_help",
+          event_data:  { wo_number: woNumber },
+          visibility:  "all",
+        });
+      }
+
       if (photos && photos.length) {
         const photoRows = photos.map((p) => ({
           ticket_id:   ticket.id,
@@ -1142,6 +1166,14 @@ export const handler = async (event) => {
         await notifyTicketEvent(supabase, ticket, "submitted");
       } catch (e) {
         console.warn("[facilities-v2] notifyTicketEvent submitted failed", e);
+      }
+
+      if (needsVendorHelp) {
+        try {
+          await notifyTicketEvent(supabase, ticket, "vendor_help_needed");
+        } catch (e) {
+          console.warn("[facilities-v2] notifyTicketEvent vendor_help_needed failed", e);
+        }
       }
 
       return respond(200, { ok: true, ticket, woNumber });
@@ -1289,6 +1321,11 @@ export const handler = async (event) => {
         }
       }
       if (vendorName !== undefined) updates.vendor_name = vendorName;
+      // Assigning a vendor resolves the "needs vendor help" flag.
+      if (vendorName && String(vendorName).trim()) {
+        updates.needs_vendor_help = false;
+        updates.vendor_help_at = null;
+      }
       // null clears the link (free-text vendor entry); undefined
       // leaves it alone; any other value sets it. Lets the typeahead
       // drop a stale vendor_id when the user types over the name.
