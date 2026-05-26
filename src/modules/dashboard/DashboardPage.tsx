@@ -12,6 +12,7 @@ import { listSdoQueue } from "@/modules/paf/api";
 import { PafTable } from "@/modules/paf/PafTable";
 import { BirthdayWidget } from "@/modules/my-stores/BirthdayWidget";
 import { BirthdayCelebration } from "@/modules/my-stores/BirthdayCelebration";
+import { ApprovedPtoWidget } from "@/modules/employee-actions/ApprovedPtoWidget";
 import { fetchCallerStores, fetchRecentMessages, fetchStats } from "@/modules/work-orders-v2/api";
 import type { RecentMessage } from "@/modules/work-orders-v2/types";
 import { supabase } from "@/lib/supabase";
@@ -21,6 +22,10 @@ import { OpenWorkOrdersWidget } from "./OpenWorkOrdersWidget";
 import { MobileHome } from "./MobileHome";
 
 const SDO_REVIEW_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
+
+// Roles that manage a store or group and benefit from a PTO "who's out"
+// look-ahead. Excludes payroll (PAF-focused) and shift managers.
+const PTO_VIEW_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]);
 
 // Roles included in the Work Orders module. Mirrors the route gating in
 // router.tsx and the nav entry in nav.ts. Excludes payroll (focused PAF role).
@@ -178,6 +183,8 @@ export function DashboardPage() {
         <div className="mt-6">
           <BirthdayWidget />
         </div>
+
+        {profile && PTO_VIEW_ROLES.has(profile.role) && <ApprovedPtoWidget />}
 
         {profile && SDO_REVIEW_ROLES.has(profile.role) && <SdoQueueWidget />}
 
