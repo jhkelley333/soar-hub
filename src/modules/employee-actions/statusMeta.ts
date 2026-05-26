@@ -5,15 +5,13 @@
 import type { StatusPillKind } from "@/shared/ui/StatusPill";
 
 export function statusKind(status: string): StatusPillKind {
-  if (
-    status === "Approved" ||
-    status === "SDO/RVP Approved" ||
-    status === "Completed" ||
-    status === "PAF Submitted"
-  )
+  // Green only for terminal / fully-approved states.
+  if (status === "Approved" || status === "SDO/RVP Approved" || status === "Completed" || status === "Closed")
     return "approved";
   if (status === "Changes Requested") return "revision";
-  if (status === "DO Approved" || status === "On Weekly Sheet") return "pending";
+  // Amber for mid-flow states still waiting on someone.
+  if (status === "DO Approved" || status === "On Weekly Sheet" || status === "PAF Submitted")
+    return "pending";
   return "submitted";
 }
 
@@ -30,5 +28,6 @@ export function waitingOn(kind: "training" | "pto", status: string): string | nu
   if (status === "Submitted") return "DO";
   if (status === "DO Approved") return "SDO/RVP";
   if (status === "SDO/RVP Approved") return "DO";
-  return null; // PAF Submitted
+  if (status === "PAF Submitted") return "DO";
+  return null; // Closed
 }

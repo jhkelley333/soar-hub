@@ -828,7 +828,7 @@ const AUDIT_TYPE = {
 // The action a given role can take on a request at its current status, or
 // null. Covers approvals ("decide") and the post-approval confirmations.
 //   training: Submitted→decide(SDO/RVP) Approved→entered(SDO/RVP) "On Weekly Sheet"→closed-out(DO)
-//   pto:      Submitted→decide(DO) "DO Approved"→decide(SDO/RVP) "SDO/RVP Approved"→paf-submitted(DO)
+//   pto:      Submitted→decide(DO) "DO Approved"→decide(SDO/RVP) "SDO/RVP Approved"→paf-submitted(DO) "PAF Submitted"→close(DO)
 function actionableStep(type, status, role) {
   const isApprover = role === "sdo" || role === "rvp" || role === "admin";
   const isDo = role === "do" || role === "admin";
@@ -842,6 +842,7 @@ function actionableStep(type, status, role) {
   if (status === "Submitted") return isDo ? "decide" : null;
   if (status === "DO Approved") return isApprover ? "decide" : null;
   if (status === "SDO/RVP Approved") return isDo ? "paf-submitted" : null;
+  if (status === "PAF Submitted") return isDo ? "close" : null;
   return null;
 }
 
@@ -875,7 +876,7 @@ async function listQueue(supa, user) {
   try {
     const [training, pto] = await Promise.all([
       fetchActionable("training", ["Submitted", "Approved", "On Weekly Sheet"]),
-      fetchActionable("pto", ["Submitted", "DO Approved", "SDO/RVP Approved"]),
+      fetchActionable("pto", ["Submitted", "DO Approved", "SDO/RVP Approved", "PAF Submitted"]),
     ]);
     const distinct = Array.from(
       new Set([...training, ...pto].map((r) => r.store_number).filter(Boolean))
@@ -1186,6 +1187,28 @@ async function confirm(supa, user, body) {
       text: `${displayName(user)} confirmed the PAF was submitted for ${employeeName}'s vacation.\n\n${link}`,
     });
     return { ok: true, status: "PAF Submitted" };
+  }
+
+  if (step === "close") {
+    const err = await transition(
+      { status: "Closed", closed_at: nowIso, closed_by_id: user.id },
+      existing.status
+    );
+    if (err) return err;
+    await logAudit(supa, {
+      request_type: AUDIT_TYPE.pto,
+      request_id: id,
+      actor_id: user.id,
+      actor_email: user.email,
+      action: "closed",
+      detail: {},
+    });
+    await sendEmailViaResend({
+      to: existing.submitter_email,
+      subject: `PTO closed out — ${employeeName} (Store ${existing.store_number})`,
+      text: `${displayName(user)} closed out ${employeeName}'s PTO request.\n\n${link}`,
+    });
+    return { ok: true, status: "Closed" };
   }
 
   return { error: "Unknown step.", status: 400 };

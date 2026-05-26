@@ -43,6 +43,7 @@ function availableAction(
   if (status === "Submitted") return isDo && !isOwner ? "decide" : null;
   if (status === "DO Approved") return isApprover && !isOwner ? "decide" : null;
   if (status === "SDO/RVP Approved") return isDo ? "paf-submitted" : null;
+  if (status === "PAF Submitted") return isDo ? "close" : null;
   return null;
 }
 
@@ -116,6 +117,7 @@ export function RequestDetailDrawer({
     entered: "Mark on weekly sheet",
     "closed-out": "Mark completed",
     "paf-submitted": "Confirm PAF submitted",
+    close: "Mark closed",
   };
 
   const footer = row ? (
@@ -317,6 +319,9 @@ function PtoDetail({ row }: { row: PtoRow }) {
       )}
       {row.paf_submitted_at && (
         <Field label="PAF submitted">{new Date(row.paf_submitted_at).toLocaleString()}</Field>
+      )}
+      {row.closed_at && (
+        <Field label="Closed">{new Date(row.closed_at).toLocaleString()}</Field>
       )}
     </>
   );
