@@ -828,7 +828,7 @@ const AUDIT_TYPE = {
 // The action a given role can take on a request at its current status, or
 // null. Covers approvals ("decide") and the post-approval confirmations.
 //   training: Submitted→decide(SDO/RVP) Approved→entered(SDO/RVP) "On Weekly Sheet"→closed-out(DO)
-//   pto:      Submitted→decide(DO) "DO Approved"→decide(SDO/RVP) Approved→tracked(SDO/RVP) "On Tracking Sheet"→paf-submitted(DO)
+//   pto:      Submitted→decide(DO) "DO Approved"→decide(SDO/RVP) "SDO/RVP Approved"→paf-submitted(DO)
 function actionableStep(type, status, role) {
   const isApprover = role === "sdo" || role === "rvp" || role === "admin";
   const isDo = role === "do" || role === "admin";
@@ -841,8 +841,7 @@ function actionableStep(type, status, role) {
   // pto
   if (status === "Submitted") return isDo ? "decide" : null;
   if (status === "DO Approved") return isApprover ? "decide" : null;
-  if (status === "Approved") return isApprover ? "tracked" : null;
-  if (status === "On Tracking Sheet") return isDo ? "paf-submitted" : null;
+  if (status === "SDO/RVP Approved") return isDo ? "paf-submitted" : null;
   return null;
 }
 
@@ -876,7 +875,7 @@ async function listQueue(supa, user) {
   try {
     const [training, pto] = await Promise.all([
       fetchActionable("training", ["Submitted", "Approved", "On Weekly Sheet"]),
-      fetchActionable("pto", ["Submitted", "DO Approved", "Approved", "On Tracking Sheet"]),
+      fetchActionable("pto", ["Submitted", "DO Approved", "SDO/RVP Approved"]),
     ]);
     const distinct = Array.from(
       new Set([...training, ...pto].map((r) => r.store_number).filter(Boolean))
@@ -1049,7 +1048,7 @@ async function decide(supa, user, body) {
   // pto final step (status === "DO Approved")
   const err = await transition(
     {
-      status: "Approved",
+      status: "SDO/RVP Approved",
       approved_at: nowIso,
       approved_by_id: user.id,
       approved_by_email: user.email,
@@ -1071,13 +1070,12 @@ async function decide(supa, user, body) {
     subject: `PTO approved — ${employeeName} (Store ${existing.store_number})`,
     text: `${displayName(user)} approved the PTO request.\n\nView it here: ${link}`,
   });
-  return { ok: true, status: "Approved" };
+  return { ok: true, status: "SDO/RVP Approved" };
 }
 
 // confirm — the post-approval steps (no approve/reject): SDO/RVP mark a
 // training "On Weekly Sheet"; the DO marks it "Completed" after the last day;
-// SDO/RVP put approved PTO "On Tracking Sheet"; the DO confirms the vacation
-// PAF was submitted.
+// the DO confirms the vacation PAF was submitted.
 async function confirm(supa, user, body) {
   const type = sanitizeText(body?.type, 20);
   const table = REQUEST_TABLE[type];
@@ -1166,32 +1164,6 @@ async function confirm(supa, user, body) {
       text: `${displayName(user)} completed the closeout for ${employeeName}'s training.\n\n${link}`,
     });
     return { ok: true, status: "Completed" };
-  }
-
-  if (step === "tracked") {
-    const err = await transition(
-      { status: "On Tracking Sheet", tracked_at: nowIso, tracked_by_id: user.id },
-      existing.status
-    );
-    if (err) return err;
-    await logAudit(supa, {
-      request_type: AUDIT_TYPE.pto,
-      request_id: id,
-      actor_id: user.id,
-      actor_email: user.email,
-      action: "tracked",
-      detail: {},
-    });
-    // Alert the store's DO to submit the vacation PAF.
-    const { dos } = await resolveStoreLeadership(supa, existing.store_number);
-    await sendEmailViaResend({
-      to: dos.map((p) => p.email).filter(Boolean),
-      subject: `Submit vacation PAF — ${employeeName} (Store ${existing.store_number})`,
-      text:
-        `${displayName(user)} put ${employeeName}'s approved PTO on the tracking sheet.\n\n` +
-        `Please submit the vacation PAF, then confirm it here: ${link}`,
-    });
-    return { ok: true, status: "On Tracking Sheet" };
   }
 
   if (step === "paf-submitted") {

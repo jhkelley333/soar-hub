@@ -42,8 +42,7 @@ function availableAction(
   }
   if (status === "Submitted") return isDo && !isOwner ? "decide" : null;
   if (status === "DO Approved") return isApprover && !isOwner ? "decide" : null;
-  if (status === "Approved") return isApprover ? "tracked" : null;
-  if (status === "On Tracking Sheet") return isDo ? "paf-submitted" : null;
+  if (status === "SDO/RVP Approved") return isDo ? "paf-submitted" : null;
   return null;
 }
 
@@ -116,7 +115,6 @@ export function RequestDetailDrawer({
   const confirmLabel: Record<ConfirmStep, string> = {
     entered: "Mark on weekly sheet",
     "closed-out": "Mark completed",
-    tracked: "Mark on tracking sheet",
     "paf-submitted": "Confirm PAF submitted",
   };
 
@@ -316,9 +314,6 @@ function PtoDetail({ row }: { row: PtoRow }) {
           {row.approved_by_email ? ` · ${row.approved_by_email}` : ""}
           {row.decision_note ? ` — ${row.decision_note}` : ""}
         </Field>
-      )}
-      {row.tracked_at && (
-        <Field label="On tracking sheet">{new Date(row.tracked_at).toLocaleString()}</Field>
       )}
       {row.paf_submitted_at && (
         <Field label="PAF submitted">{new Date(row.paf_submitted_at).toLocaleString()}</Field>

@@ -5,10 +5,15 @@
 import type { StatusPillKind } from "@/shared/ui/StatusPill";
 
 export function statusKind(status: string): StatusPillKind {
-  if (status === "Approved" || status === "Completed" || status === "PAF Submitted") return "approved";
+  if (
+    status === "Approved" ||
+    status === "SDO/RVP Approved" ||
+    status === "Completed" ||
+    status === "PAF Submitted"
+  )
+    return "approved";
   if (status === "Changes Requested") return "revision";
-  if (status === "DO Approved" || status === "On Weekly Sheet" || status === "On Tracking Sheet")
-    return "pending";
+  if (status === "DO Approved" || status === "On Weekly Sheet") return "pending";
   return "submitted";
 }
 
@@ -23,7 +28,7 @@ export function waitingOn(kind: "training" | "pto", status: string): string | nu
   }
   // pto
   if (status === "Submitted") return "DO";
-  if (status === "DO Approved" || status === "Approved") return "SDO/RVP";
-  if (status === "On Tracking Sheet") return "DO";
+  if (status === "DO Approved") return "SDO/RVP";
+  if (status === "SDO/RVP Approved") return "DO";
   return null; // PAF Submitted
 }
