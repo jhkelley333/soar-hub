@@ -288,6 +288,9 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
       if (!needsVendorHelp && !vendorName.trim()) {
         throw new Error('Choose a vendor, or check "Need help finding a vendor".');
       }
+      if (files.length === 0) {
+        throw new Error("Attach at least one photo (one should show the serial number).");
+      }
       const lineItems = rowsToLineItems(lineRows);
       const body: CreateTicketBody = {
         storeNumber: storeNumber.trim(),
@@ -845,7 +848,9 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
           </label>
 
           <div>
-            <Label htmlFor="nt-photos">Photos (up to {MAX_PHOTOS})</Label>
+            <Label htmlFor="nt-photos">
+              Photos <span className="text-red-500">*</span> (at least 1, up to {MAX_PHOTOS})
+            </Label>
             <div className="mb-2 flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-900">
               <Camera className="mt-0.5 h-4 w-4 shrink-0" strokeWidth={1.75} />
               <div>
@@ -890,8 +895,14 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
           <Button
             variant="primary"
             onClick={() => submit.mutate()}
-            disabled={submit.isPending || troubleshooted === ""}
-            title={troubleshooted === "" ? "Answer the troubleshooting question first." : undefined}
+            disabled={submit.isPending || troubleshooted === "" || files.length === 0}
+            title={
+              troubleshooted === ""
+                ? "Answer the troubleshooting question first."
+                : files.length === 0
+                ? "Attach at least one photo first."
+                : undefined
+            }
           >
             {submit.isPending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
             {submit.isPending ? "Submitting…" : "Submit Request"}
