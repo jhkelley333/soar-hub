@@ -27,6 +27,8 @@ function actionHint(action: string | null | undefined): string {
       return "Complete";
     case "paf-submitted":
       return "Confirm PAF";
+    case "close":
+      return "Close out";
     default:
       return "Review";
   }
