@@ -10,6 +10,22 @@ import type { MyStore, PtoVacationDayInput, TrainingDayInput } from "./types";
 const selectCls =
   "block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent";
 
+// Default store for a submitter: prefer their primary store, else the only
+// store they can see (typical single-store GM). Returns "" when ambiguous
+// (DOs/RVPs who see many stores and have no primary). Compares against the
+// store number, which is what the form/select binds to.
+export function pickDefaultStoreNumber(
+  stores: MyStore[],
+  primaryStoreId: string | null | undefined
+): string {
+  if (primaryStoreId) {
+    const match = stores.find((s) => s.id === primaryStoreId);
+    if (match) return String(match.number);
+  }
+  if (stores.length === 1) return String(stores[0].number);
+  return "";
+}
+
 function FieldLabel({
   htmlFor,
   label,
