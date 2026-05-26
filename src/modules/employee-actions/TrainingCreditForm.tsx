@@ -1,15 +1,17 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
 import { Badge } from "@/shared/ui/Badge";
 import { useToast } from "@/shared/ui/Toaster";
+import { useAuth } from "@/auth/AuthProvider";
 import { fetchMyStores, submitTrainingCredit } from "./api";
 import {
   calcDayHours,
   CheckboxRow,
   DateField,
   NumberField,
+  pickDefaultStoreNumber,
   SelectField,
   StoreSelect,
   TextField,
@@ -53,6 +55,7 @@ const EMPTY: State = {
 export function TrainingCreditForm({ onSubmitted }: { onSubmitted: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const { profile } = useAuth();
   const [state, setState] = useState<State>(EMPTY);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,12 +66,24 @@ export function TrainingCreditForm({ onSubmitted }: { onSubmitted: () => void })
   });
   const stores = useMemo(() => storesQuery.data?.stores ?? [], [storesQuery.data]);
 
+  const defaultStore = useMemo(
+    () => pickDefaultStoreNumber(stores, profile?.primary_store_id),
+    [stores, profile?.primary_store_id]
+  );
+  // Pre-fill the store once it can be determined, without clobbering a manual
+  // pick. Re-applies after a submit reset.
+  useEffect(() => {
+    if (defaultStore) {
+      setState((prev) => (prev.store_number ? prev : { ...prev, store_number: defaultStore }));
+    }
+  }, [defaultStore]);
+
   const submit = useMutation({
     mutationFn: (input: TrainingCreditInput) => submitTrainingCredit(input),
     onSuccess: () => {
       toast.push("Training credit request submitted — DO + RVP notified.", "success");
       qc.invalidateQueries({ queryKey: ["ea-list"] });
-      setState(EMPTY);
+      setState({ ...EMPTY, store_number: defaultStore });
       onSubmitted();
     },
     onError: (e: unknown) =>

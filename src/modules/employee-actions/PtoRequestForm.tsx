@@ -1,4 +1,4 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -10,6 +10,7 @@ import {
   CheckboxRow,
   DateField,
   NumberField,
+  pickDefaultStoreNumber,
   SelectField,
   StoreSelect,
   TextField,
@@ -75,12 +76,24 @@ export function PtoRequestForm({ onSubmitted }: { onSubmitted: () => void }) {
   });
   const stores = useMemo(() => storesQuery.data?.stores ?? [], [storesQuery.data]);
 
+  const defaultStore = useMemo(
+    () => pickDefaultStoreNumber(stores, profile?.primary_store_id),
+    [stores, profile?.primary_store_id]
+  );
+  // Pre-fill the store once it can be determined, without clobbering a manual
+  // pick. Re-applies after a submit reset.
+  useEffect(() => {
+    if (defaultStore) {
+      setState((prev) => (prev.store_number ? prev : { ...prev, store_number: defaultStore }));
+    }
+  }, [defaultStore]);
+
   const submit = useMutation({
     mutationFn: (input: PtoInput) => submitPto(input),
     onSuccess: () => {
       toast.push("PTO request submitted — DO + RVP notified.", "success");
       qc.invalidateQueries({ queryKey: ["ea-list"] });
-      setState(EMPTY);
+      setState({ ...EMPTY, store_number: defaultStore });
       onSubmitted();
     },
     onError: (e: unknown) =>
