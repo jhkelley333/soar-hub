@@ -1,9 +1,13 @@
 // Approver queue for Employee Actions. Lists everything awaiting the signed-in
 // user's action — approvals plus the post-approval confirmations (entered /
-// closed out / PAF submitted) — and opens a detail drawer to act.
+// closed out / PAF submitted / closed) — and opens a detail drawer to act.
+//
+// A toolbar on top lets the approver narrow a long queue: a free-text search
+// (employee or store) plus status filter chips that double as live counts.
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Search } from "lucide-react";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Badge } from "@/shared/ui/Badge";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -27,10 +31,22 @@ function actionHint(action: string | null | undefined): string {
       return "Complete";
     case "paf-submitted":
       return "Confirm PAF";
+    case "close":
+      return "Close out";
     default:
       return "Review";
   }
 }
+
+// Preferred chip order; any status not listed is appended in encounter order.
+const STATUS_ORDER = [
+  "Submitted",
+  "DO Approved",
+  "Approved",
+  "SDO/RVP Approved",
+  "On Weekly Sheet",
+  "PAF Submitted",
+];
 
 type Selection =
   | { kind: "training"; row: TrainingCreditRow }
@@ -39,7 +55,48 @@ type Selection =
 
 export function ApprovalQueue() {
   const [selected, setSelected] = useState<Selection>(null);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState<string>("all");
   const query = useQuery({ queryKey: ["ea-queue"], queryFn: listApprovalQueue });
+
+  const trainingCredits = query.data?.trainingCredits ?? [];
+  const ptoRequests = query.data?.ptoRequests ?? [];
+
+  const q = search.trim().toLowerCase();
+  const matchesSearch = useMemo(() => {
+    return (r: { employee_name?: string; store_number?: string; store_name?: string | null }) => {
+      if (!q) return true;
+      return (
+        (r.employee_name ?? "").toLowerCase().includes(q) ||
+        String(r.store_number ?? "").toLowerCase().includes(q) ||
+        (r.store_name ?? "").toLowerCase().includes(q)
+      );
+    };
+  }, [q]);
+
+  const searchedTc = trainingCredits.filter(matchesSearch);
+  const searchedPto = ptoRequests.filter(matchesSearch);
+
+  // Status chip counts reflect the search but not the active status filter, so
+  // each chip always shows how many would match if you picked it.
+  const { chips, searchedTotal } = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const r of [...searchedTc, ...searchedPto]) {
+      counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
+    }
+    const ordered = STATUS_ORDER.filter((s) => counts.has(s));
+    for (const s of counts.keys()) if (!ordered.includes(s)) ordered.push(s);
+    return {
+      chips: ordered.map((s) => ({ status: s, count: counts.get(s) ?? 0 })),
+      searchedTotal: searchedTc.length + searchedPto.length,
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchedTc.length, searchedPto.length, q]);
+
+  const matchesStatus = (r: { status: string }) => statusFilter === "all" || r.status === statusFilter;
+  const tc = searchedTc.filter(matchesStatus);
+  const pto = searchedPto.filter(matchesStatus);
+  const shown = tc.length + pto.length;
 
   if (query.isLoading) return <Skeleton className="h-40 w-full" />;
   if (query.isError || !query.data) {
@@ -53,7 +110,6 @@ export function ApprovalQueue() {
     );
   }
 
-  const { trainingCredits, ptoRequests } = query.data;
   const total = trainingCredits.length + ptoRequests.length;
 
   if (!total) {
@@ -68,46 +124,82 @@ export function ApprovalQueue() {
   }
 
   return (
-    <div className="space-y-6">
-      {trainingCredits.length > 0 && (
-        <Section title="Training Credit" count={trainingCredits.length}>
-          {trainingCredits.map((r) => (
-            <QueueRow
-              key={r.id}
-              title={r.employee_name}
-              hint={actionHint(r.action_needed)}
-              meta={[
-                `Store #${r.store_number}${r.store_name ? ` — ${r.store_name}` : ""}`,
-                r.training_type,
-                fmtMoney(r.requested_amount),
-              ]}
-              onOpen={() => setSelected({ kind: "training", row: r })}
+    <div className="space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="relative w-full sm:max-w-xs">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400" strokeWidth={1.75} />
+          <input
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search employee or store…"
+            className="w-full rounded-md border border-zinc-200 bg-white py-1.5 pl-8 pr-2.5 text-sm text-zinc-900 placeholder:text-zinc-400 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+          />
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <Chip label="All" count={searchedTotal} active={statusFilter === "all"} onClick={() => setStatusFilter("all")} />
+          {chips.map((c) => (
+            <Chip
+              key={c.status}
+              label={c.status}
+              count={c.count}
+              active={statusFilter === c.status}
+              onClick={() => setStatusFilter(c.status)}
             />
           ))}
-        </Section>
-      )}
-      {ptoRequests.length > 0 && (
-        <Section title="PTO" count={ptoRequests.length}>
-          {ptoRequests.map((r) => {
-            const isHourly = r.position === "Associate Manager" || r.position === "First Assistant";
-            return (
-              <QueueRow
-                key={r.id}
-                title={`${r.employee_name}`}
-                subtitle={r.position}
-                hint={actionHint(r.action_needed)}
-                meta={[
-                  `Store #${r.store_number}${r.store_name ? ` — ${r.store_name}` : ""}`,
-                  `${r.pto_start_date} → ${r.pto_end_date}`,
-                  isHourly
-                    ? `${r.vacation_hours ?? 0} hrs${r.amount != null ? ` · ${fmtMoney(r.amount)}` : ""}`
-                    : `${r.days_used ?? 0} day(s)`,
-                ]}
-                onOpen={() => setSelected({ kind: "pto", row: r })}
-              />
-            );
-          })}
-        </Section>
+        </div>
+      </div>
+
+      {shown === 0 ? (
+        <Card>
+          <EmptyState
+            title="No matches"
+            description="Nothing in your queue matches that search or filter."
+          />
+        </Card>
+      ) : (
+        <div className="space-y-6">
+          {tc.length > 0 && (
+            <Section title="Training Credit" count={tc.length}>
+              {tc.map((r) => (
+                <QueueRow
+                  key={r.id}
+                  title={r.employee_name}
+                  hint={actionHint(r.action_needed)}
+                  meta={[
+                    `Store #${r.store_number}${r.store_name ? ` — ${r.store_name}` : ""}`,
+                    r.training_type,
+                    fmtMoney(r.requested_amount),
+                  ]}
+                  onOpen={() => setSelected({ kind: "training", row: r })}
+                />
+              ))}
+            </Section>
+          )}
+          {pto.length > 0 && (
+            <Section title="PTO" count={pto.length}>
+              {pto.map((r) => {
+                const isHourly = r.position === "Associate Manager" || r.position === "First Assistant";
+                return (
+                  <QueueRow
+                    key={r.id}
+                    title={`${r.employee_name}`}
+                    subtitle={r.position}
+                    hint={actionHint(r.action_needed)}
+                    meta={[
+                      `Store #${r.store_number}${r.store_name ? ` — ${r.store_name}` : ""}`,
+                      `${r.pto_start_date} → ${r.pto_end_date}`,
+                      isHourly
+                        ? `${r.vacation_hours ?? 0} hrs${r.amount != null ? ` · ${fmtMoney(r.amount)}` : ""}`
+                        : `${r.days_used ?? 0} day(s)`,
+                    ]}
+                    onOpen={() => setSelected({ kind: "pto", row: r })}
+                  />
+                );
+              })}
+            </Section>
+          )}
+        </div>
       )}
 
       <RequestDetailDrawer
@@ -117,6 +209,32 @@ export function ApprovalQueue() {
         onClose={() => setSelected(null)}
       />
     </div>
+  );
+}
+
+function Chip({
+  label,
+  count,
+  active,
+  onClick,
+}: {
+  label: string;
+  count: number;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        active
+          ? "rounded-full bg-midnight px-2.5 py-1 text-xs font-medium text-white"
+          : "rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-200"
+      }
+    >
+      {label} <span className={active ? "text-white/70" : "text-zinc-400"}>({count})</span>
+    </button>
   );
 }
 
