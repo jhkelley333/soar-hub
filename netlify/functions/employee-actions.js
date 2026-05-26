@@ -102,10 +102,11 @@ function appBaseUrl() {
   return (process.env.URL || process.env.DEPLOY_URL || "").replace(/\/$/, "");
 }
 
-// Google Sheet the DO completes to close out a finished training. Set
-// TRAINING_CLOSEOUT_FORM_URL in Netlify; falls back to a clear placeholder.
+// Google Form the DO completes to close out a finished training. Defaults to
+// the current form; override with TRAINING_CLOSEOUT_FORM_URL in Netlify.
 const CLOSEOUT_FORM_URL =
-  process.env.TRAINING_CLOSEOUT_FORM_URL || "(closeout form link not configured)";
+  process.env.TRAINING_CLOSEOUT_FORM_URL ||
+  "https://docs.google.com/forms/d/e/1FAIpQLSeovlvWNQiJ2UDd5rlIqTkf7UEIVeZ88VkrJgdKUAd9Vso5Xw/viewform";
 
 async function sendEmailViaResend({ to, subject, text }) {
   const recipients = Array.isArray(to) ? to.filter(Boolean) : to ? [to] : [];
