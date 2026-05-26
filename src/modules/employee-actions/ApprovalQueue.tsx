@@ -25,6 +25,8 @@ function actionHint(action: string | null | undefined): string {
       return "Weekly sheet";
     case "closed-out":
       return "Complete";
+    case "tracked":
+      return "Tracking sheet";
     case "paf-submitted":
       return "Confirm PAF";
     default:

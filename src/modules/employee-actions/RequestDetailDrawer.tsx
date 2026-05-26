@@ -7,10 +7,11 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Drawer } from "@/shared/ui/Drawer";
 import { Button } from "@/shared/ui/Button";
-import { StatusPill, type StatusPillKind } from "@/shared/ui/StatusPill";
+import { StatusPill } from "@/shared/ui/StatusPill";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { confirmEmployeeAction, decideEmployeeAction, deleteEmployeeAction } from "./api";
+import { statusKind, waitingOn } from "./statusMeta";
 import type { ConfirmStep, PtoRow, TrainingCreditRow } from "./types";
 
 type Kind = "training" | "pto";
@@ -23,13 +24,6 @@ function fmtMoney(n: number | null | undefined): string {
 // the alert email isn't handy. Keep in sync with the function default.
 const CLOSEOUT_FORM_URL =
   "https://docs.google.com/forms/d/e/1FAIpQLSeovlvWNQiJ2UDd5rlIqTkf7UEIVeZ88VkrJgdKUAd9Vso5Xw/viewform";
-
-function statusKind(status: string): StatusPillKind {
-  if (status === "Approved" || status === "Completed" || status === "PAF Submitted") return "approved";
-  if (status === "Changes Requested") return "revision";
-  if (status === "DO Approved" || status === "On Weekly Sheet") return "pending";
-  return "submitted";
-}
 
 // What the caller can do, mirroring the server's actionableStep + self rule.
 function availableAction(
@@ -48,7 +42,8 @@ function availableAction(
   }
   if (status === "Submitted") return isDo && !isOwner ? "decide" : null;
   if (status === "DO Approved") return isApprover && !isOwner ? "decide" : null;
-  if (status === "Approved") return isDo ? "paf-submitted" : null;
+  if (status === "Approved") return isApprover ? "tracked" : null;
+  if (status === "On Tracking Sheet") return isDo ? "paf-submitted" : null;
   return null;
 }
 
@@ -121,6 +116,7 @@ export function RequestDetailDrawer({
   const confirmLabel: Record<ConfirmStep, string> = {
     entered: "Mark on weekly sheet",
     "closed-out": "Mark completed",
+    tracked: "Mark on tracking sheet",
     "paf-submitted": "Confirm PAF submitted",
   };
 
@@ -185,6 +181,9 @@ export function RequestDetailDrawer({
         <dl className="divide-y divide-zinc-100">
           <div className="flex items-center gap-2 pb-2">
             <StatusPill kind={statusKind(row.status)}>{row.status}</StatusPill>
+            {waitingOn(kind, row.status) && (
+              <span className="text-xs text-zinc-400">→ Waiting on {waitingOn(kind, row.status)}</span>
+            )}
             {kind === "pto" && (row as PtoRow).position && (
               <span className="text-xs text-zinc-400">{(row as PtoRow).position}</span>
             )}
@@ -317,6 +316,9 @@ function PtoDetail({ row }: { row: PtoRow }) {
           {row.approved_by_email ? ` · ${row.approved_by_email}` : ""}
           {row.decision_note ? ` — ${row.decision_note}` : ""}
         </Field>
+      )}
+      {row.tracked_at && (
+        <Field label="On tracking sheet">{new Date(row.tracked_at).toLocaleString()}</Field>
       )}
       {row.paf_submitted_at && (
         <Field label="PAF submitted">{new Date(row.paf_submitted_at).toLocaleString()}</Field>

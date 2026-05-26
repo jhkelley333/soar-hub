@@ -8,7 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Segmented } from "@/shared/ui/Segmented";
-import { StatusPill, type StatusPillKind } from "@/shared/ui/StatusPill";
+import { StatusPill } from "@/shared/ui/StatusPill";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useAuth } from "@/auth/AuthProvider";
@@ -17,6 +17,7 @@ import { TrainingCreditForm } from "./TrainingCreditForm";
 import { PtoRequestForm } from "./PtoRequestForm";
 import { ApprovalQueue } from "./ApprovalQueue";
 import { RequestDetailDrawer } from "./RequestDetailDrawer";
+import { statusKind, waitingOn } from "./statusMeta";
 import type { PtoRow, TrainingCreditRow } from "./types";
 
 type Tab = "training" | "pto" | "history" | "approvals";
@@ -26,13 +27,6 @@ const APPROVER_ROLES = ["do", "sdo", "rvp", "admin"];
 
 function fmtMoney(n: number): string {
   return (Number(n) || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
-}
-
-function statusKind(status: string): StatusPillKind {
-  if (status === "Approved" || status === "Completed" || status === "PAF Submitted") return "approved";
-  if (status === "Changes Requested") return "revision";
-  if (status === "DO Approved" || status === "On Weekly Sheet") return "pending";
-  return "submitted";
 }
 
 export function EmployeeActionsPage() {
@@ -245,6 +239,9 @@ function TrainingRow({ row, onOpen }: { row: TrainingCreditRow; onOpen: () => vo
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-zinc-900">{row.employee_name}</span>
             <StatusPill kind={statusKind(row.status)}>{row.status}</StatusPill>
+            {waitingOn("training", row.status) && (
+              <span className="text-xs text-zinc-400">→ Waiting on {waitingOn("training", row.status)}</span>
+            )}
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
             <StoreLabel number={row.store_number} name={row.store_name} />
@@ -273,6 +270,9 @@ function PtoRowItem({ row, onOpen }: { row: PtoRow; onOpen: () => void }) {
             <span className="text-sm font-medium text-zinc-900">{row.employee_name}</span>
             {row.position && <span className="text-xs text-zinc-400">{row.position}</span>}
             <StatusPill kind={statusKind(row.status)}>{row.status}</StatusPill>
+            {waitingOn("pto", row.status) && (
+              <span className="text-xs text-zinc-400">→ Waiting on {waitingOn("pto", row.status)}</span>
+            )}
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
             <StoreLabel number={row.store_number} name={row.store_name} />

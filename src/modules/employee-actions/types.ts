@@ -80,6 +80,7 @@ export interface PtoRow {
   decision_note: string | null;
   rejection_reason: string | null;
   // Post-approval tracking
+  tracked_at: string | null;
   paf_submitted_at: string | null;
   created_at: string;
   updated_at: string;
@@ -107,7 +108,7 @@ export interface DecideInput {
   note?: string;
 }
 
-export type ConfirmStep = "entered" | "closed-out" | "paf-submitted";
+export type ConfirmStep = "entered" | "closed-out" | "tracked" | "paf-submitted";
 
 export interface ConfirmInput {
   type: "training" | "pto";
