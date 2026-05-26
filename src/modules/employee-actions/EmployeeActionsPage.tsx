@@ -4,20 +4,19 @@
 // Approvals / tracking / sign-offs are a later layer.
 
 import { useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Segmented } from "@/shared/ui/Segmented";
-import { StatusPill } from "@/shared/ui/StatusPill";
+import { StatusPill, type StatusPillKind } from "@/shared/ui/StatusPill";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
-import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
-import type { StatusPillKind } from "@/shared/ui/StatusPill";
-import { deleteEmployeeAction, listEmployeeActions } from "./api";
+import { listEmployeeActions } from "./api";
 import { TrainingCreditForm } from "./TrainingCreditForm";
 import { PtoRequestForm } from "./PtoRequestForm";
 import { ApprovalQueue } from "./ApprovalQueue";
+import { RequestDetailDrawer } from "./RequestDetailDrawer";
 import type { PtoRow, TrainingCreditRow } from "./types";
 
 type Tab = "training" | "pto" | "history" | "approvals";
@@ -130,6 +129,11 @@ function NoAccess() {
   );
 }
 
+type Selection =
+  | { kind: "training"; row: TrainingCreditRow }
+  | { kind: "pto"; row: PtoRow }
+  | null;
+
 function HistoryList({
   onEditTraining,
   onEditPto,
@@ -137,32 +141,8 @@ function HistoryList({
   onEditTraining: (row: TrainingCreditRow) => void;
   onEditPto: (row: PtoRow) => void;
 }) {
-  const { profile } = useAuth();
-  const qc = useQueryClient();
-  const toast = useToast();
-  const isAdmin = profile?.role === "admin";
-  const myId = profile?.id ?? "";
+  const [selected, setSelected] = useState<Selection>(null);
   const query = useQuery({ queryKey: ["ea-list"], queryFn: listEmployeeActions });
-
-  // Submitters (or an admin) can edit & resubmit a request sent back to them.
-  const canEdit = (submitterId: string) => submitterId === myId || isAdmin;
-
-  const del = useMutation({
-    mutationFn: ({ type, id }: { type: "training" | "pto"; id: string }) =>
-      deleteEmployeeAction(type, id),
-    onSuccess: () => {
-      toast.push("Request deleted.", "success");
-      qc.invalidateQueries({ queryKey: ["ea-list"] });
-    },
-    onError: (e: unknown) =>
-      toast.push(e instanceof Error ? e.message : "Delete failed.", "error"),
-  });
-
-  function onDelete(type: "training" | "pto", id: string, label: string) {
-    if (window.confirm(`Delete this ${label}? This can't be undone.`)) {
-      del.mutate({ type, id });
-    }
-  }
 
   if (query.isLoading) return <Skeleton className="h-40 w-full" />;
   if (query.isError || !query.data) {
@@ -194,34 +174,31 @@ function HistoryList({
     <div className="space-y-6">
       <Section title="Training Credit Requests" count={trainingCredits.length}>
         {trainingCredits.map((r) => (
-          <TrainingRow
-            key={r.id}
-            row={r}
-            onDelete={isAdmin ? () => onDelete("training", r.id, "training credit request") : undefined}
-            deleting={del.isPending}
-            onEdit={
-              r.status === "Changes Requested" && canEdit(r.submitter_id)
-                ? () => onEditTraining(r)
-                : undefined
-            }
-          />
+          <TrainingRow key={r.id} row={r} onOpen={() => setSelected({ kind: "training", row: r })} />
         ))}
       </Section>
       <Section title="PTO Requests" count={ptoRequests.length}>
         {ptoRequests.map((r) => (
-          <PtoRowItem
-            key={r.id}
-            row={r}
-            onDelete={isAdmin ? () => onDelete("pto", r.id, "PTO request") : undefined}
-            deleting={del.isPending}
-            onEdit={
-              r.status === "Changes Requested" && canEdit(r.submitter_id)
-                ? () => onEditPto(r)
-                : undefined
-            }
-          />
+          <PtoRowItem key={r.id} row={r} onOpen={() => setSelected({ kind: "pto", row: r })} />
         ))}
       </Section>
+
+      <RequestDetailDrawer
+        kind={selected?.kind ?? "training"}
+        row={selected?.row ?? null}
+        open={!!selected}
+        onClose={() => setSelected(null)}
+        onEdit={
+          selected
+            ? () => {
+                const sel = selected;
+                setSelected(null);
+                if (sel.kind === "training") onEditTraining(sel.row);
+                else onEditPto(sel.row);
+              }
+            : undefined
+        }
+      />
     </div>
   );
 }
@@ -260,44 +237,9 @@ function StoreLabel({ number, name }: { number: string; name?: string | null }) 
   );
 }
 
-function DeleteButton({ onDelete, deleting }: { onDelete: () => void; deleting?: boolean }) {
+function TrainingRow({ row, onOpen }: { row: TrainingCreditRow; onOpen: () => void }) {
   return (
-    <button
-      type="button"
-      onClick={onDelete}
-      disabled={deleting}
-      className="rounded-md px-2 py-1 text-xs font-medium text-red-600 ring-1 ring-inset ring-red-200 hover:bg-red-50 disabled:opacity-50"
-    >
-      Delete
-    </button>
-  );
-}
-
-function EditButton({ onEdit }: { onEdit: () => void }) {
-  return (
-    <button
-      type="button"
-      onClick={onEdit}
-      className="rounded-md px-2 py-1 text-xs font-medium text-accent ring-1 ring-inset ring-accent/40 hover:bg-accent/5"
-    >
-      Edit &amp; Resubmit
-    </button>
-  );
-}
-
-function TrainingRow({
-  row,
-  onDelete,
-  deleting,
-  onEdit,
-}: {
-  row: TrainingCreditRow;
-  onDelete?: () => void;
-  deleting?: boolean;
-  onEdit?: () => void;
-}) {
-  return (
-    <Card>
+    <Card className="cursor-pointer transition hover:ring-2 hover:ring-accent/30" onClick={onOpen}>
       <CardBody className="flex flex-wrap items-center justify-between gap-3 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -313,39 +255,23 @@ function TrainingRow({
             <p className="mt-1 text-xs text-amber-700">Changes requested: {row.rejection_reason}</p>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <div className="mr-1 text-right text-xs text-zinc-400">
-            {new Date(row.created_at).toLocaleDateString()}
-          </div>
-          {onEdit && <EditButton onEdit={onEdit} />}
-          {onDelete && <DeleteButton onDelete={onDelete} deleting={deleting} />}
+        <div className="text-right text-xs text-zinc-400">
+          {new Date(row.created_at).toLocaleDateString()}
         </div>
       </CardBody>
     </Card>
   );
 }
 
-function PtoRowItem({
-  row,
-  onDelete,
-  deleting,
-  onEdit,
-}: {
-  row: PtoRow;
-  onDelete?: () => void;
-  deleting?: boolean;
-  onEdit?: () => void;
-}) {
+function PtoRowItem({ row, onOpen }: { row: PtoRow; onOpen: () => void }) {
   const isHourly = row.position === "Associate Manager" || row.position === "First Assistant";
   return (
-    <Card>
+    <Card className="cursor-pointer transition hover:ring-2 hover:ring-accent/30" onClick={onOpen}>
       <CardBody className="flex flex-wrap items-center justify-between gap-3 py-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-zinc-900">{row.employee_name}</span>
-            {row.position && (
-              <span className="text-xs text-zinc-400">{row.position}</span>
-            )}
+            {row.position && <span className="text-xs text-zinc-400">{row.position}</span>}
             <StatusPill kind={statusKind(row.status)}>{row.status}</StatusPill>
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
@@ -366,12 +292,8 @@ function PtoRowItem({
             <p className="mt-1 text-xs text-amber-700">Changes requested: {row.rejection_reason}</p>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <div className="mr-1 text-right text-xs text-zinc-400">
-            {new Date(row.created_at).toLocaleDateString()}
-          </div>
-          {onEdit && <EditButton onEdit={onEdit} />}
-          {onDelete && <DeleteButton onDelete={onDelete} deleting={deleting} />}
+        <div className="text-right text-xs text-zinc-400">
+          {new Date(row.created_at).toLocaleDateString()}
         </div>
       </CardBody>
     </Card>
