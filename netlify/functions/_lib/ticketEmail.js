@@ -13,9 +13,10 @@
 //                                                + log to ticket_notifications
 //
 // Supported kinds (current):
-//   "submitted"          — new ticket created
-//   "approval_requested" — quote routed to an approver tier
-//   "approval_decided"   — approver clicked approve / reject
+//   "submitted"           — new ticket created
+//   "approval_requested"  — quote routed to an approver tier
+//   "approval_decided"    — approver clicked approve / reject
+//   "vendor_help_needed"  — store submitted without a vendor; routed to the DO
 //
 // Adding a new kind = update findRecipients() below + add a
 // template row (kind, subject, body_html) in email_templates OR
@@ -165,6 +166,11 @@ async function findRecipients(supabase, ticket, kind) {
     // "ETA changed" / "running late" chatter.
     return findUsersForStore(supabase, ticket.store_number, ["gm", "do"]);
   }
+  if (kind === "vendor_help_needed") {
+    // Store submitted without a vendor and asked for help — route to the
+    // DO (district operator) who assigns vendors for the store.
+    return findUsersForStore(supabase, ticket.store_number, ["do"]);
+  }
   return [];
 }
 
@@ -227,6 +233,9 @@ function fallbackSubject(ticket, kind, vars = {}) {
   if (kind === "info_requested") {
     return `[Work Order] More info needed — ${ticket.wo_number}`;
   }
+  if (kind === "vendor_help_needed") {
+    return `[Work Order] Vendor needed — ${ticket.wo_number} (Store ${ticket.store_number})`;
+  }
   return `[Work Order] Update — ${ticket.wo_number}`;
 }
 
@@ -262,6 +271,8 @@ function fallbackHtml(ticket, kind, vars = {}) {
     const vendor = vars.vendor_name || "Vendor";
     const preview = vars.message_preview || "";
     body = `<p><strong>${escapeHtml(vendor)}</strong> posted a message on this work order.</p>${detail}<p><strong>Message:</strong></p><blockquote style="margin:8px 0;padding:8px 12px;border-left:3px solid #2563eb;background:#f1f5f9;color:#222;white-space:pre-wrap;">${escapeHtml(preview)}</blockquote><p style="font-size:12px;color:#666;">Reply directly in the Vendor chat tab on the work order.</p>`;
+  } else if (kind === "vendor_help_needed") {
+    body = `<p>The store submitted this work order but <strong>needs help choosing a vendor</strong>. Please assign one so it can move forward.</p>${detail}<p><strong>Issue:</strong></p><p style="white-space:pre-wrap;color:#333;">${escapeHtml(ticket.issue_description || "—")}</p><p style="font-size:12px;color:#666;">Open the work order and set the vendor — that clears the flag automatically.</p>`;
   }
   return `<!DOCTYPE html><html><body style="font-family:Arial,Helvetica,sans-serif;color:#222;max-width:620px;margin:0 auto;padding:16px;">${body}${linkHtml}<p style="font-size:11px;color:#999;margin-top:24px;border-top:1px solid #eee;padding-top:8px;">Sent automatically by SOAR Facilities V2 (fallback template).</p></body></html>`;
 }

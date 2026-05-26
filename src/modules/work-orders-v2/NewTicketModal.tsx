@@ -101,6 +101,9 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
   const [priority, setPriority] = useState<TicketPriority>("Standard");
   const [businessCritical, setBusinessCritical] = useState(false);
   const [vendorName, setVendorName] = useState("");
+  // "Need help finding a vendor" — submits the ticket flagged for the DO
+  // instead of requiring the store to pick a vendor.
+  const [needsVendorHelp, setNeedsVendorHelp] = useState(false);
   const [files, setFiles] = useState<File[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   // Optional cost breakdown. Inputs stay as strings; converted to the
@@ -133,6 +136,7 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
     setPriority("Standard");
     setBusinessCritical(false);
     setVendorName("");
+    setNeedsVendorHelp(false);
     setFiles([]);
     setLineRows([]);
     setDropdownOpen(false);
@@ -281,6 +285,9 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
       if (troubleshooted === "") {
         throw new Error('Answer "Did you troubleshoot?" before submitting.');
       }
+      if (!needsVendorHelp && !vendorName.trim()) {
+        throw new Error('Choose a vendor, or check "Need help finding a vendor".');
+      }
       const lineItems = rowsToLineItems(lineRows);
       const body: CreateTicketBody = {
         storeNumber: storeNumber.trim(),
@@ -290,8 +297,9 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
         issueDescription: description.trim(),
         priority,
         isBusinessCritical: businessCritical,
-        vendorContacted: !!vendorName.trim(),
-        vendorName: vendorName || undefined,
+        vendorContacted: !needsVendorHelp && !!vendorName.trim(),
+        vendorName: needsVendorHelp ? undefined : vendorName || undefined,
+        needsVendorHelp: needsVendorHelp || undefined,
         troubleshootingChecked: troubleshooted === "yes",
         lineItems: lineItems.length ? lineItems : undefined,
       };
@@ -575,14 +583,17 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
           )}
 
           <div>
-            <Label htmlFor="nt-vendor">Vendor Name</Label>
+            <Label htmlFor="nt-vendor">
+              Vendor Name <span className="text-red-500">*</span>
+            </Label>
             <Input
               id="nt-vendor"
               value={vendorName}
               onChange={(e) => setVendorName(e.target.value)}
-              placeholder="Optional"
+              placeholder={needsVendorHelp ? "Your DO will assign a vendor" : "Search or select a vendor"}
+              disabled={needsVendorHelp}
             />
-            {vendorPickAsset && recommendedVendors.length > 0 && (
+            {!needsVendorHelp && vendorPickAsset && recommendedVendors.length > 0 && (
               <div className="mt-2">
                 <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
                   Suggested vendors for {vendorPickAsset}
@@ -622,6 +633,7 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
                 full vendor list visible to this store (scope-filtered)
                 so a GM can find a vendor the recs missed without
                 leaving the form. */}
+            {!needsVendorHelp && (
             <div className="mt-2">
               {!vendorSearchOpen ? (
                 <button
@@ -719,6 +731,22 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
                 </div>
               )}
             </div>
+            )}
+
+            {/* Escape hatch: store doesn't know which vendor to use. Submits
+                the ticket flagged for the DO to assign one. */}
+            <label className="mt-3 flex items-start gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
+              <input
+                type="checkbox"
+                checked={needsVendorHelp}
+                onChange={(e) => setNeedsVendorHelp(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-zinc-300 text-accent focus:ring-accent"
+              />
+              <span>
+                <span className="font-medium text-midnight">Need help finding a vendor?</span>{" "}
+                We'll submit this ticket and flag it for your DO to assign one.
+              </span>
+            </label>
           </div>
 
           {/* Cost breakdown — optional. When any complete rows are
