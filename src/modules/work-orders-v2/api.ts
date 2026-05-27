@@ -120,6 +120,7 @@ export interface ReplacementRow {
   store_name: string | null;
   status: string | null;
   asset_type: string | null;
+  manufacturer: string | null;
   asset_tag: string | null;
   model: string | null;
   supplier: string | null;
@@ -156,6 +157,7 @@ export interface SaveEquipmentBody {
   store_id: string;
   source?: "manual_legacy" | "manual_direct";
   asset_type?: string;
+  manufacturer?: string;
   asset_tag?: string;
   model: string;
   supplier?: string;

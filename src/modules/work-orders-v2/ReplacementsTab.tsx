@@ -54,13 +54,6 @@ function fmtDate(d: Date | string | null): string {
   return date.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
-function fmtMoney(v: number | string | null): string {
-  if (v == null) return "—";
-  const n = typeof v === "string" ? Number(v) : v;
-  if (!Number.isFinite(n)) return "—";
-  return `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-}
-
 function WarrantyCell({
   installIso,
   days,
@@ -126,12 +119,12 @@ interface Props {
   compact?: boolean;
 }
 
-export function ReplacementsTab({ storeNumber, storeId, hideStoreColumn = false, compact = false }: Props) {
+export function ReplacementsTab({ storeNumber, storeId, hideStoreColumn = false }: Props) {
   const navigate = useNavigate();
   const { profile } = useAuth();
   const canManage = canManageEquipment(profile?.role);
 
-  const [sortKey, setSortKey] = useState<SortKey>("purchased");
+  const [sortKey, setSortKey] = useState<SortKey>("installed");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [storeFilter, setStoreFilter] = useState<string>("");
   const [sourceFilter, setSourceFilter] = useState<"" | ReplacementSource>("");
@@ -265,13 +258,8 @@ export function ReplacementsTab({ storeNumber, storeId, hideStoreColumn = false,
                   <Th>Source</Th>
                   <Th>WO #</Th>
                   {!hideStoreColumn && <SortableTh active={sortKey === "store"} dir={sortDir} onClick={() => toggleSort("store")}>Store</SortableTh>}
-                  <SortableTh active={sortKey === "asset_tag"} dir={sortDir} onClick={() => toggleSort("asset_tag")}>Asset Tag</SortableTh>
-                  <SortableTh active={sortKey === "model"} dir={sortDir} onClick={() => toggleSort("model")}>Model</SortableTh>
                   <Th>Asset Type</Th>
-                  {!compact && <Th>Supplier</Th>}
-                  {!compact && <Th>PO #</Th>}
-                  <SortableTh active={sortKey === "cost"} dir={sortDir} onClick={() => toggleSort("cost")}>Cost</SortableTh>
-                  <SortableTh active={sortKey === "purchased"} dir={sortDir} onClick={() => toggleSort("purchased")}>Purchased</SortableTh>
+                  <SortableTh active={sortKey === "model"} dir={sortDir} onClick={() => toggleSort("model")}>Manufacturer / Model</SortableTh>
                   <SortableTh active={sortKey === "installed"} dir={sortDir} onClick={() => toggleSort("installed")}>Installed</SortableTh>
                   <Th>Warranty</Th>
                   <Th>Status</Th>
@@ -302,17 +290,15 @@ export function ReplacementsTab({ storeNumber, storeId, hideStoreColumn = false,
                           {r.store_name && <div className="text-[11px] text-zinc-500">{r.store_name}</div>}
                         </td>
                       )}
-                      <td className="px-3 py-2 font-mono text-xs">{r.asset_tag || <span className="text-zinc-400">—</span>}</td>
-                      <td className="px-3 py-2">{r.model || <span className="text-zinc-400">—</span>}</td>
                       <td className="px-3 py-2 text-zinc-700">{r.asset_type || <span className="text-zinc-400">—</span>}</td>
-                      {!compact && (
-                        <td className="px-3 py-2 text-zinc-700">{r.supplier || <span className="text-zinc-400">—</span>}</td>
-                      )}
-                      {!compact && (
-                        <td className="px-3 py-2 font-mono text-xs text-zinc-600">{r.po_number || <span className="text-zinc-400">—</span>}</td>
-                      )}
-                      <td className="px-3 py-2 text-sm font-semibold tabular-nums">{fmtMoney(r.cost)}</td>
-                      <td className="px-3 py-2 text-xs text-zinc-600">{fmtDate(r.purchased_at)}</td>
+                      <td className="px-3 py-2">
+                        {r.manufacturer && (
+                          <div className="font-medium text-midnight">{r.manufacturer}</div>
+                        )}
+                        <div className={r.manufacturer ? "text-xs text-zinc-600" : ""}>
+                          {r.model || <span className="text-zinc-400">—</span>}
+                        </div>
+                      </td>
                       <td className="px-3 py-2 text-xs text-zinc-600">{fmtDate(r.installed_at)}</td>
                       <td className="px-3 py-2">
                         <div className="flex flex-col gap-1">
