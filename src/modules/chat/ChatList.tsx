@@ -8,13 +8,13 @@ import { Search, Plus } from "lucide-react";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Drawer } from "@/shared/ui/Drawer";
 import { useToast } from "@/shared/ui/Toaster";
-import { useQuery } from "@tanstack/react-query";
-import { cn } from "@/lib/cn";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChatTabs } from "./components/ChatTabs";
 import { ActionCard } from "./components/ActionCard";
 import { ConversationRow } from "./components/ConversationRow";
+import { SwipeableRow } from "./components/SwipeableRow";
 import { ComposeModal } from "./components/ComposeModal";
-import { fetchInbox } from "./api";
+import { fetchInbox, setThreadArchived, type InboxResponse } from "./api";
 import type { ChatTab } from "./types";
 
 export function ChatList({
@@ -30,12 +30,34 @@ export function ChatList({
   const [composeOpen, setComposeOpen] = useState(false);
   const [needsYouOpen, setNeedsYouOpen] = useState(false);
 
+  const qc = useQueryClient();
   const inboxQ = useQuery({
     queryKey: ["chat", "inbox"],
     queryFn: fetchInbox,
     staleTime: 30_000,
   });
   const threads = inboxQ.data?.threads ?? [];
+
+  // Swipe-to-archive: optimistically drop the row from the inbox, then
+  // sync. The server hides it for this user only and auto-resurfaces it on
+  // a newer message (migration 0100).
+  const archiveMut = useMutation({
+    mutationFn: (threadId: string) => setThreadArchived(threadId, true),
+    onMutate: async (threadId) => {
+      await qc.cancelQueries({ queryKey: ["chat", "inbox"] });
+      const prev = qc.getQueryData<InboxResponse>(["chat", "inbox"]);
+      qc.setQueryData<InboxResponse>(["chat", "inbox"], (old) =>
+        old ? { ...old, threads: old.threads.filter((t) => t.id !== threadId) } : old,
+      );
+      return { prev };
+    },
+    onError: (_e, _id, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["chat", "inbox"], ctx.prev);
+      toast.push("Couldn't archive — try again.", "error");
+    },
+    onSuccess: () => toast.push("Archived", "info"),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["chat", "inbox"] }),
+  });
 
   const needsYou = useMemo(() => threads.filter((t) => t.needsYou), [threads]);
 
@@ -137,8 +159,13 @@ export function ChatList({
         ) : (
           <ul className="divide-y divide-midnight-100">
             {list.map((t) => (
-              <li key={t.id} className={cn(t.id === activeThreadId && "bg-frost-100/60")}>
-                <ConversationRow thread={t} onOpen={() => onOpen(t.id)} />
+              <li key={t.id}>
+                <SwipeableRow
+                  active={t.id === activeThreadId}
+                  onArchive={() => archiveMut.mutate(t.id)}
+                >
+                  <ConversationRow thread={t} onOpen={() => onOpen(t.id)} />
+                </SwipeableRow>
               </li>
             ))}
           </ul>
