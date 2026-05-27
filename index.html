@@ -48,5 +48,40 @@
   <body class="h-full bg-midnight text-zinc-900 antialiased">
     <div id="root" class="h-full"></div>
     <script type="module" src="/src/main.tsx"></script>
+
+    <!-- Boot watchdog. If the JS bundle fails to load or mount (e.g. a stale
+         cached HTML shell pointing at a hashed bundle that was purged by an
+         atomic deploy), the page is left as a blank brand-colored screen.
+         A classic (non-module) script runs even when the module bundle
+         fails, so this can detect the dead boot and self-recover ONCE per
+         session: clear all caches, then reload to fetch the fresh shell +
+         bundle. Guarded against reload loops via sessionStorage. -->
+    <script>
+      (function () {
+        var KEY = "soar_boot_recovery";
+        var TIMEOUT_MS = 10000;
+        window.__SOAR_BOOTED__ = false;
+        setTimeout(function () {
+          var root = document.getElementById("root");
+          var mounted = window.__SOAR_BOOTED__ || (root && root.childElementCount > 0);
+          if (mounted) {
+            sessionStorage.removeItem(KEY);
+            return;
+          }
+          if (sessionStorage.getItem(KEY)) return; // already tried this session
+          sessionStorage.setItem(KEY, "1");
+          var reload = function () { window.location.reload(); };
+          if (window.caches && caches.keys) {
+            caches.keys()
+              .then(function (keys) {
+                return Promise.all(keys.map(function (k) { return caches.delete(k); }));
+              })
+              .then(reload, reload);
+          } else {
+            reload();
+          }
+        }, TIMEOUT_MS);
+      })();
+    </script>
   </body>
 </html>

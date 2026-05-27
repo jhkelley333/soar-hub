@@ -16,7 +16,7 @@
 // Bump the version suffix any time we ship a change users need to
 // pick up immediately (e.g. a stuck-cache fix). The activate handler
 // below purges every cache whose name doesn't match this one.
-const CACHE_NAME = "soar-hub-v7";
+const CACHE_NAME = "soar-hub-v8";
 
 // Precache the bare minimum the app needs to render an offline shell.
 // Vite hashes JS/CSS bundle filenames, so we let runtime caching pick
@@ -112,46 +112,42 @@ self.addEventListener("fetch", (event) => {
   // network every time and any cached response could leak across users.
   if (url.pathname.startsWith("/.netlify/")) return;
 
-  // Stale-while-revalidate for navigation / HTML document requests.
+  // Network-first for navigation / HTML document requests.
   //
-  // The previous strategy was network-first: every load blocked on a
-  // full fetch of index.html before the app could boot. Because the
-  // Netlify header pins index.html to `no-store`, that fetch is a
-  // guaranteed network round-trip on the critical path — measured at
-  // 80ms on a warm connection but ~1000ms on a cold mobile radio,
-  // entirely gating time-to-interactive.
+  // The HTML entry-point references content-hashed bundles
+  // (/assets/index-<hash>.js). Netlify does ATOMIC deploys: after a push,
+  // only the new deploy's assets exist and the previous bundle 404s. So a
+  // cached (stale) index.html can point at a bundle that no longer exists,
+  // the entry script fails to load, and the app white/blue-screens. (A
+  // prior stale-while-revalidate strategy traded this correctness for
+  // faster cold start; the deploy breakage isn't worth it.)
   //
-  // Now we serve the cached shell immediately (single-digit ms, no
-  // network) and revalidate in the background, so the app starts
-  // booting at once and the worst-case cold-radio penalty no longer
-  // sits in front of first paint. The tradeoff: a user lands on the
-  // PREVIOUS entry-point HTML for one load after a deploy, then the
-  // background refresh updates the cache for the next load. That's safe
-  // because /assets/* are content-hashed + immutable (the old shell's
-  // bundle refs still resolve), and the SW's skipWaiting + clients.claim
-  // mean a genuinely breaking shell change still propagates within a
-  // load. Every SPA route is served the same index.html (Netlify SPA
-  // fallback), so we always key the shell on "/".
+  // So: always fetch the freshest index.html when online — it's tiny and
+  // served `no-cache`, so the conditional request settles as a cheap 304 —
+  // guaranteeing the bundle reference matches what's actually deployed.
+  // Fall back to the cached shell only when the network is unavailable
+  // (offline), preserving the installed-app offline-shell goal. Every SPA
+  // route resolves to the same index.html (Netlify SPA fallback), so we
+  // key the cached shell on "/".
   if (request.mode === "navigate" || request.destination === "document") {
     event.respondWith(
-      caches.open(CACHE_NAME).then(async (cache) => {
-        const cachedShell = await cache.match("/");
-        const refresh = fetch("/")
-          .then((response) => {
-            if (response.ok) cache.put("/", response.clone());
-            return response;
-          })
-          .catch(() => undefined);
-        if (cachedShell) {
-          // Don't block the response on the refresh, but keep the SW
-          // alive until it finishes so the cache actually updates.
-          event.waitUntil(refresh);
-          return cachedShell;
+      (async () => {
+        try {
+          const fresh = await fetch("/");
+          if (fresh && fresh.ok) {
+            const cache = await caches.open(CACHE_NAME);
+            cache.put("/", fresh.clone());
+          }
+          return fresh;
+        } catch {
+          const cache = await caches.open(CACHE_NAME);
+          return (
+            (await cache.match("/")) ||
+            (await cache.match(request)) ||
+            Response.error()
+          );
         }
-        // First visit (or shell evicted): nothing cached yet, so wait on
-        // the network and fall back to whatever we can serve.
-        return (await refresh) || (await cache.match(request)) || fetch(request);
-      }),
+      })(),
     );
     return;
   }
