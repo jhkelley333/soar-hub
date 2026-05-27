@@ -253,6 +253,16 @@ export interface GroupInfoResponse {
   adminsCount: number;
 }
 
+// Per-user archive — hides/shows the thread in only the caller's inbox
+// (auto-resurfaces on a newer message). Distinct from archiveThread, which
+// is the global owner/admin archive.
+export function setThreadArchived(threadId: string, archived: boolean): Promise<{ ok: true }> {
+  return req(`${FN}?action=setArchived`, {
+    method: "POST",
+    body: JSON.stringify({ threadId, archived }),
+  });
+}
+
 export function archiveThread(threadId: string, archived: boolean): Promise<{ ok: true }> {
   return req(`${FN}?action=archiveThread`, {
     method: "POST",

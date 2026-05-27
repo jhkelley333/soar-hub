@@ -117,7 +117,7 @@ export const handler = async (event) => {
     if (action === "inbox") {
       const { data: memberships } = await supa
         .from("chat_thread_members")
-        .select("thread_id, pinned, muted_until, last_read_at")
+        .select("thread_id, pinned, muted_until, last_read_at, archived_at")
         .eq("user_id", uid);
       const ids = (memberships ?? []).map((m) => m.thread_id);
       if (!ids.length) {
@@ -192,15 +192,26 @@ export const handler = async (event) => {
         };
       });
 
-      out.sort((a, b) => {
+      // Per-user archive: hide threads the caller archived, but auto-
+      // resurface one as soon as a newer message arrives (see migration
+      // 0100). Mirrors iMessage — archiving declutters now, real activity
+      // brings it back.
+      const visible = out.filter((t) => {
+        const archivedAt = memById.get(t.id)?.archived_at;
+        if (!archivedAt) return true;
+        const lastAt = t.lastMessage.at ? new Date(t.lastMessage.at).getTime() : 0;
+        return lastAt > new Date(archivedAt).getTime();
+      });
+
+      visible.sort((a, b) => {
         if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
         return (b.updatedAt || "").localeCompare(a.updatedAt || "");
       });
 
       return respond(200, {
         ok: true,
-        threads: out,
-        needsYouCount: out.filter((t) => t.needsYou).length,
+        threads: visible,
+        needsYouCount: visible.filter((t) => t.needsYou).length,
       });
     }
 
@@ -933,6 +944,21 @@ export const handler = async (event) => {
     }
 
     // Archive / unarchive — hides from inboxes but keeps history. Owner/admin.
+    // Per-user archive: hide/show a thread in only the caller's inbox by
+    // stamping their own membership row. No permission gate — you can
+    // always manage your own view. Distinct from the global, owner/admin
+    // archiveThread below, which hides a thread for everyone.
+    if (action === "setArchived" && event.httpMethod === "POST") {
+      const { threadId, archived } = JSON.parse(event.body || "{}");
+      if (!threadId) return respond(400, { ok: false, message: "threadId required." });
+      await supa
+        .from("chat_thread_members")
+        .update({ archived_at: archived ? new Date().toISOString() : null })
+        .eq("thread_id", threadId)
+        .eq("user_id", uid);
+      return respond(200, { ok: true });
+    }
+
     if (action === "archiveThread" && event.httpMethod === "POST") {
       const { threadId, archived } = JSON.parse(event.body || "{}");
       if (!threadId) return respond(400, { ok: false, message: "threadId required." });
