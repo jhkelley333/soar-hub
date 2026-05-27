@@ -1,8 +1,8 @@
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Navigate, useLocation } from "react-router-dom";
 import { Mail, Phone, ArrowRight, KeyRound } from "lucide-react";
 import { supabase } from "@/lib/supabase";
-import { useAuth } from "@/auth/AuthProvider";
+import { useAuth, SESSION_EXPIRED_KEY } from "@/auth/AuthProvider";
 import { defaultLandingPath, visibleNav } from "@/app/nav";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
@@ -145,6 +145,20 @@ export function LoginPage() {
 
   const detected = useMemo(() => detectMode(identifier), [identifier]);
   const standalone = useMemo(() => isStandalonePWA(), []);
+
+  // AuthProvider sets this when the user was logged out involuntarily (a
+  // dead token refresh), so explain it once rather than dropping them on
+  // a bare login form. One-shot: clear it as we read it.
+  useEffect(() => {
+    try {
+      if (sessionStorage.getItem(SESSION_EXPIRED_KEY)) {
+        sessionStorage.removeItem(SESSION_EXPIRED_KEY);
+        setInfo("Your session expired. Please sign in again.");
+      }
+    } catch {
+      /* storage unavailable — nothing to surface */
+    }
+  }, []);
 
   async function handleGoogle() {
     setGooglePending(true);
