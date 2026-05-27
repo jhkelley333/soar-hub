@@ -10,25 +10,28 @@ import { useQuery } from "@tanstack/react-query";
 import { Search } from "lucide-react";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Badge } from "@/shared/ui/Badge";
+import { StatusPill } from "@/shared/ui/StatusPill";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { listApprovalQueue } from "./api";
 import { RequestDetailDrawer } from "./RequestDetailDrawer";
+import { statusKind } from "./statusMeta";
 import type { PtoRow, TrainingCreditRow } from "./types";
 
 function fmtMoney(n: number | null | undefined): string {
   return (Number(n) || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
-// Short hint of what the caller needs to do, from the stamped action_needed.
+// The caller's next action, phrased as an imperative so it reads as a to-do —
+// never as a status (e.g. "Mark complete", not "Complete", which looks done).
 function actionHint(action: string | null | undefined): string {
   switch (action) {
     case "decide":
       return "Approve / send back";
     case "entered":
-      return "Weekly sheet";
+      return "Mark on weekly sheet";
     case "closed-out":
-      return "Complete";
+      return "Mark complete";
     case "paf-submitted":
       return "Confirm PAF";
     case "close":
@@ -165,6 +168,7 @@ export function ApprovalQueue() {
                 <QueueRow
                   key={r.id}
                   title={r.employee_name}
+                  status={r.status}
                   hint={actionHint(r.action_needed)}
                   meta={[
                     `Store #${r.store_number}${r.store_name ? ` — ${r.store_name}` : ""}`,
@@ -185,6 +189,7 @@ export function ApprovalQueue() {
                     key={r.id}
                     title={`${r.employee_name}`}
                     subtitle={r.position}
+                    status={r.status}
                     hint={actionHint(r.action_needed)}
                     meta={[
                       `Store #${r.store_number}${r.store_name ? ` — ${r.store_name}` : ""}`,
@@ -260,12 +265,14 @@ function Section({
 function QueueRow({
   title,
   subtitle,
+  status,
   hint,
   meta,
   onOpen,
 }: {
   title: string;
   subtitle?: string;
+  status: string;
   hint: string;
   meta: string[];
   onOpen: () => void;
@@ -277,9 +284,10 @@ function QueueRow({
     >
       <CardBody className="flex flex-wrap items-center justify-between gap-3 py-3">
         <div className="min-w-0">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-zinc-900">{title}</span>
             {subtitle && <span className="text-xs text-zinc-400">{subtitle}</span>}
+            <StatusPill kind={statusKind(status)}>{status}</StatusPill>
             <Badge tone="info">{hint}</Badge>
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-zinc-500">
