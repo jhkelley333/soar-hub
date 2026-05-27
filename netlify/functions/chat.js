@@ -355,6 +355,7 @@ export const handler = async (event) => {
             body: (text?.trim() || (atts.length === 1 ? `📎 ${atts[0].name}` : `📎 ${atts.length} files`)).slice(0, 180),
             url: `/chat/${threadId}`,
             tag: `thread-${threadId}`,
+            badgeIncrement: 1,
           },
           { excludeUserId: uid },
         );
@@ -480,6 +481,7 @@ export const handler = async (event) => {
             body: text.slice(0, 180),
             url: `/chat/${thread.id}`,
             tag: `thread-${thread.id}`,
+            badgeIncrement: 1,
           },
           { excludeUserId: uid },
         );

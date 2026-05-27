@@ -16,7 +16,7 @@
 // Bump the version suffix any time we ship a change users need to
 // pick up immediately (e.g. a stuck-cache fix). The activate handler
 // below purges every cache whose name doesn't match this one.
-const CACHE_NAME = "soar-hub-v7";
+const CACHE_NAME = "soar-hub-v8";
 
 // Precache the bare minimum the app needs to render an offline shell.
 // Vite hashes JS/CSS bundle filenames, so we let runtime caching pick
@@ -58,10 +58,81 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+// ── App-icon badge (Badging API) ─────────────────────────────────────
+// The numeric badge on the installed app icon. The count is persisted in
+// IndexedDB so it survives SW restarts: the foreground app posts the exact
+// unread total (message: "badge:set"), and while the app is closed each
+// chat push increments that stored baseline. No-ops where the API or IDB
+// isn't available (e.g. Android home screens).
+
+const BADGE_DB = "soar-badge";
+const BADGE_STORE = "kv";
+const BADGE_KEY = "count";
+
+function badgeDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(BADGE_DB, 1);
+    req.onupgradeneeded = () => req.result.createObjectStore(BADGE_STORE);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function getStoredBadge() {
+  try {
+    const db = await badgeDb();
+    return await new Promise((resolve) => {
+      const r = db.transaction(BADGE_STORE, "readonly").objectStore(BADGE_STORE).get(BADGE_KEY);
+      r.onsuccess = () => resolve(typeof r.result === "number" ? r.result : 0);
+      r.onerror = () => resolve(0);
+    });
+  } catch {
+    return 0;
+  }
+}
+
+async function putStoredBadge(n) {
+  try {
+    const db = await badgeDb();
+    await new Promise((resolve) => {
+      const tx = db.transaction(BADGE_STORE, "readwrite");
+      tx.objectStore(BADGE_STORE).put(n, BADGE_KEY);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  } catch {
+    /* ignore */
+  }
+}
+
+async function applyBadge(n) {
+  const count = Math.max(0, n | 0);
+  await putStoredBadge(count);
+  try {
+    if (count > 0) {
+      if (self.navigator.setAppBadge) await self.navigator.setAppBadge(count);
+    } else if (self.navigator.clearAppBadge) {
+      await self.navigator.clearAppBadge();
+    }
+  } catch {
+    /* ignore — badge is best-effort */
+  }
+}
+
+// Foreground app keeps the stored baseline exact.
+self.addEventListener("message", (event) => {
+  const msg = event.data;
+  if (msg && msg.type === "badge:set" && typeof msg.count === "number") {
+    event.waitUntil(applyBadge(msg.count));
+  }
+});
+
 // ── Web Push ─────────────────────────────────────────────────────────
-// A push arrives as an encrypted JSON payload { title, body, url?, tag? }.
+// A push arrives as an encrypted JSON payload
+//   { title, body, url?, tag?, badge?, badgeIncrement? }.
 // Show it as a system notification; clicking it focuses an existing app
-// window (or opens one) at the payload's url.
+// window (or opens one) at the payload's url. If the payload carries a
+// badge hint, update the app-icon count too.
 
 self.addEventListener("push", (event) => {
   let data = {};
@@ -78,7 +149,14 @@ self.addEventListener("push", (event) => {
     tag: data.tag || undefined,
     data: { url: data.url || "/" },
   };
-  event.waitUntil(self.registration.showNotification(title, options));
+
+  const tasks = [self.registration.showNotification(title, options)];
+  if (typeof data.badge === "number") {
+    tasks.push(applyBadge(data.badge));
+  } else if (typeof data.badgeIncrement === "number") {
+    tasks.push(getStoredBadge().then((c) => applyBadge(c + data.badgeIncrement)));
+  }
+  event.waitUntil(Promise.all(tasks));
 });
 
 self.addEventListener("notificationclick", (event) => {
