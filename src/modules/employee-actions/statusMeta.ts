@@ -9,10 +9,10 @@ export function statusKind(status: string): StatusPillKind {
   if (status === "Completed" || status === "Closed") return "approved";
   // Sent back to the submitter — its own lane.
   if (status === "Changes Requested") return "revision";
-  // Everything else is still waiting on someone to act — flag it red so it
-  // never reads as done (incl. the interim "Approved" / "SDO/RVP Approved",
-  // which still need the weekly-sheet / PAF step).
-  return "waiting";
+  // Every other status names a stage the request has cleared, so the pill is
+  // sky-blue with a green dot ("this stage done"). What's still pending is
+  // surfaced separately by the red "→ Waiting on {who}" hint via waitingOn().
+  return "stage";
 }
 
 // The role/party the request is currently waiting on, or null when it's done.

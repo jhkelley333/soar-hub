@@ -185,7 +185,7 @@ export function RequestDetailDrawer({
           <div className="flex items-center gap-2 pb-2">
             <StatusPill kind={statusKind(row.status)}>{row.status}</StatusPill>
             {waitingOn(kind, row.status) && (
-              <span className="text-xs text-zinc-400">→ Waiting on {waitingOn(kind, row.status)}</span>
+              <span className="text-xs font-medium text-sonic-700">→ Waiting on {waitingOn(kind, row.status)}</span>
             )}
             {kind === "pto" && (row as PtoRow).position && (
               <span className="text-xs text-zinc-400">{(row as PtoRow).position}</span>
