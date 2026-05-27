@@ -192,16 +192,18 @@ export const handler = async (event) => {
         };
       });
 
-      // Per-user archive: hide threads the caller archived, but auto-
-      // resurface one as soon as a newer message arrives (see migration
-      // 0100). Mirrors iMessage — archiving declutters now, real activity
-      // brings it back.
-      const visible = out.filter((t) => {
+      // Per-user archive: a thread counts as archived for the caller when
+      // they stamped archived_at AND no newer message has arrived since
+      // (auto-resurface — see migration 0100). The default inbox hides
+      // those; ?archived=1 returns only them (the Archived view).
+      const wantArchived = (event.queryStringParameters || {}).archived === "1";
+      const isArchivedFor = (t) => {
         const archivedAt = memById.get(t.id)?.archived_at;
-        if (!archivedAt) return true;
+        if (!archivedAt) return false;
         const lastAt = t.lastMessage.at ? new Date(t.lastMessage.at).getTime() : 0;
-        return lastAt > new Date(archivedAt).getTime();
-      });
+        return lastAt <= new Date(archivedAt).getTime();
+      };
+      const visible = out.filter((t) => (wantArchived ? isArchivedFor(t) : !isArchivedFor(t)));
 
       visible.sort((a, b) => {
         if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;

@@ -8,7 +8,7 @@ import { fetchInbox } from "./api";
 export function useChatUnreadCount(): number {
   const q = useQuery({
     queryKey: ["chat", "inbox"],
-    queryFn: fetchInbox,
+    queryFn: () => fetchInbox(),
     staleTime: 15_000,
     refetchInterval: 60_000,
     refetchOnWindowFocus: true,
