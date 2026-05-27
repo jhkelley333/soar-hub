@@ -9,6 +9,8 @@ import {
 } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { queryClient } from "@/lib/queryClient";
+import { clearPersistedQueryCache } from "@/lib/queryPersister";
 import { perfMark, perfReport } from "@/lib/perf";
 import type { Profile, UserScope } from "@/types/database";
 
@@ -128,6 +130,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // ignore — we just want the local state cleared
     }
     purgeSupabaseStorage();
+    queryClient.clear();
+    void clearPersistedQueryCache();
     // Bump the generation so any in-flight loadProfile resolves to a
     // no-op rather than re-populating the cleared profile.
     generationRef.current++;
@@ -317,6 +321,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // appears "still signed in" after explicitly signing out. Wipe
         // the keys directly so coming back to the URL lands on login.
         purgeSupabaseStorage();
+        // Drop the persisted (IndexedDB) query cache so a shared device
+        // never hydrates this user's chat / data for whoever logs in next.
+        queryClient.clear();
+        void clearPersistedQueryCache();
       },
       refresh: async () => {
         if (session?.user) await loadProfile(session.user.id);
