@@ -23,6 +23,14 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
 
+// One-shot flag set when the user is logged out *involuntarily* (a token
+// refresh hit a terminal auth error and supabase-js cleared the session),
+// read + cleared by LoginPage to show a "session expired" notice instead
+// of a silent bounce. Kept in sessionStorage rather than a context field
+// so it crosses the AuthProvider→Router boundary trivially and clears
+// itself when the tab closes.
+export const SESSION_EXPIRED_KEY = "soar_session_expired";
+
 // Hard ceiling on initial auth resolution. If getSession() or loadProfile
 // hasn't returned in this many ms we wipe persisted Supabase tokens and
 // drop the user on the login screen rather than hanging on "Loading…".
@@ -85,6 +93,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // a background timeout.
   const profileIdRef = useRef<string | null>(null);
   useEffect(() => { profileIdRef.current = profile?.id ?? null; }, [profile]);
+
+  // True while an app-initiated sign-out is in flight (explicit signOut,
+  // or the OAuth no-profile bounce). Lets the auth listener tell a
+  // deliberate sign-out apart from an involuntary one so only the latter
+  // surfaces the "session expired" prompt.
+  const appSignOutRef = useRef(false);
+  // Whether we've held a real authenticated session this load. Guards the
+  // involuntary-logout signal so it never fires at boot for a user who
+  // simply isn't logged in yet.
+  const wasAuthedRef = useRef(false);
 
   async function loadProfile(userId: string): Promise<{ hasProfile: boolean }> {
     const gen = ++generationRef.current;
@@ -164,6 +182,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // mirrors the running token-refresh path, which already preserves
       // the session on a profile-load failure.
       if (initial?.user) {
+        wasAuthedRef.current = true;
         try {
           perfMark("auth: profile fetch start");
           await Promise.race([
@@ -188,8 +207,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         generationRef.current++;
         setProfile(null);
         setScopes([]);
+        // Involuntary logout = a SIGNED_OUT we didn't initiate, after we
+        // were actually signed in. supabase-js only emits this on a
+        // terminal refresh failure (a transient network error keeps the
+        // session); the refresh token is genuinely dead, so there's no
+        // recovery — we just leave a one-shot flag so LoginPage can
+        // explain why. ProtectedRoute handles the redirect + return-to.
+        if (event === "SIGNED_OUT" && !appSignOutRef.current && wasAuthedRef.current) {
+          try { sessionStorage.setItem(SESSION_EXPIRED_KEY, "1"); } catch {}
+        }
+        appSignOutRef.current = false;
+        wasAuthedRef.current = false;
         return;
       }
+      wasAuthedRef.current = true;
       // Skip the reload on routine token refreshes for the same user.
       // Supabase fires onAuthStateChange every ~50 minutes with event
       // TOKEN_REFRESHED — the profile row hasn't changed, so the
@@ -223,6 +254,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // earlier hardening.
         if (event === "SIGNED_IN" && !result.hasProfile) {
           console.warn("[auth] SIGNED_IN with no matching profile; signing out");
+          appSignOutRef.current = true; // app-initiated; not a session expiry
           try { await supabase.auth.signOut(); } catch {}
           purgeSupabaseStorage();
           generationRef.current++;
@@ -269,6 +301,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // next render — don't wait for onAuthStateChange to bounce back.
         // Bump the generation so any in-flight loadProfile bails out
         // instead of re-populating after we just cleared.
+        appSignOutRef.current = true; // deliberate; suppress the expiry prompt
         generationRef.current++;
         setSession(null);
         setProfile(null);
