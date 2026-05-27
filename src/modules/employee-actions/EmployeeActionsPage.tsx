@@ -240,7 +240,7 @@ function TrainingRow({ row, onOpen }: { row: TrainingCreditRow; onOpen: () => vo
             <span className="text-sm font-medium text-zinc-900">{row.employee_name}</span>
             <StatusPill kind={statusKind(row.status)}>{row.status}</StatusPill>
             {waitingOn("training", row.status) && (
-              <span className="text-xs text-zinc-400">→ Waiting on {waitingOn("training", row.status)}</span>
+              <span className="text-xs font-medium text-sonic-700">→ Waiting on {waitingOn("training", row.status)}</span>
             )}
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
@@ -271,7 +271,7 @@ function PtoRowItem({ row, onOpen }: { row: PtoRow; onOpen: () => void }) {
             {row.position && <span className="text-xs text-zinc-400">{row.position}</span>}
             <StatusPill kind={statusKind(row.status)}>{row.status}</StatusPill>
             {waitingOn("pto", row.status) && (
-              <span className="text-xs text-zinc-400">→ Waiting on {waitingOn("pto", row.status)}</span>
+              <span className="text-xs font-medium text-sonic-700">→ Waiting on {waitingOn("pto", row.status)}</span>
             )}
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">

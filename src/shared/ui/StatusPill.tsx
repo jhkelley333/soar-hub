@@ -14,7 +14,7 @@ export type StatusPillKind =
   | "submitted"
   | "approved"
   | "pending"
-  | "waiting"
+  | "stage"
   | "revision";
 
 interface PaletteEntry {
@@ -31,7 +31,7 @@ const PALETTES: Record<StatusPillKind, PaletteEntry> = {
   submitted: { bg: "bg-accent-100",  text: "text-accent-700",   dot: "bg-accent-600" },
   approved:  { bg: "bg-frost-100",   text: "text-midnight-700", dot: "bg-ok" },
   pending:   { bg: "bg-midnight-50", text: "text-midnight-600", dot: "bg-midnight-300" },
-  waiting:   { bg: "bg-sonic-50",    text: "text-sonic-700",    dot: "bg-sonic" },
+  stage:     { bg: "bg-accent-100",  text: "text-accent-700",   dot: "bg-ok" },
   revision:  { bg: "bg-zinc-100",    text: "text-zinc-700",     dot: "bg-warn" },
 };
 
