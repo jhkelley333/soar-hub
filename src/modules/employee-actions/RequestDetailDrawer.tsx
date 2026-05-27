@@ -25,7 +25,9 @@ function fmtMoney(n: number | null | undefined): string {
 const CLOSEOUT_FORM_URL =
   "https://docs.google.com/forms/d/e/1FAIpQLSeovlvWNQiJ2UDd5rlIqTkf7UEIVeZ88VkrJgdKUAd9Vso5Xw/viewform";
 
-// What the caller can do, mirroring the server's actionableStep + self rule.
+// What the caller can do — mirrors the server's actionableStep exactly. A
+// senior submitter (SDO/RVP/admin) may take every step on their OWN request,
+// since they outrank every approver and nothing below can finish it for them.
 function availableAction(
   kind: Kind,
   status: string,
@@ -34,16 +36,17 @@ function availableAction(
 ): "decide" | ConfirmStep | null {
   const isApprover = role === "sdo" || role === "rvp" || role === "admin";
   const isDo = role === "do" || role === "admin";
+  const canOps = isDo || (isOwner && isApprover);
   if (kind === "training") {
-    if (status === "Submitted") return isApprover && !isOwner ? "decide" : null;
+    if (status === "Submitted") return isApprover ? "decide" : null;
     if (status === "Approved") return isApprover ? "entered" : null;
-    if (status === "On Weekly Sheet") return isDo ? "closed-out" : null;
+    if (status === "On Weekly Sheet") return canOps ? "closed-out" : null;
     return null;
   }
-  if (status === "Submitted") return isDo && !isOwner ? "decide" : null;
-  if (status === "DO Approved") return isApprover && !isOwner ? "decide" : null;
-  if (status === "SDO/RVP Approved") return isDo ? "paf-submitted" : null;
-  if (status === "PAF Submitted") return isDo ? "close" : null;
+  if (status === "Submitted") return isDo || (isOwner && isApprover) ? "decide" : null;
+  if (status === "DO Approved") return isApprover ? "decide" : null;
+  if (status === "SDO/RVP Approved") return canOps ? "paf-submitted" : null;
+  if (status === "PAF Submitted") return canOps ? "close" : null;
   return null;
 }
 
