@@ -459,6 +459,26 @@ function trainingEmailText(user, storeNumber, fields, meta, link, verb) {
   );
 }
 
+// A GM's or DO's training credit needs SDO/RVP approval. An SDO/RVP/admin
+// submitting clears their own (only) approval tier — mirroring the PTO
+// skip — so the credit lands Approved, ready for the weekly-sheet step,
+// instead of stalling at "Submitted" with no one able to approve it
+// (they can't approve their own).
+function trainingWorkflowFields(user) {
+  const isApprover = user.role === "sdo" || user.role === "rvp" || user.role === "admin";
+  if (isApprover) {
+    const now = new Date().toISOString();
+    return {
+      status: "Approved",
+      approved_at: now,
+      approved_by_id: user.id,
+      approved_by_email: user.email,
+      decision_note: "Auto — submitter is SDO/RVP or above",
+    };
+  }
+  return { status: "Submitted" };
+}
+
 async function submitTraining(supa, user, body) {
   if (!SUBMIT_ROLES.has(user.role)) {
     return { error: "You don't have permission to submit a training credit request.", status: 403 };
@@ -477,7 +497,7 @@ async function submitTraining(supa, user, body) {
     submitter_name: user.full_name ?? null,
     store_number: storeNumber,
     ...built.fields,
-    status: "Submitted",
+    ...trainingWorkflowFields(user),
   };
 
   const { data: created, error } = await supa
@@ -684,13 +704,31 @@ function buildPtoFields(body) {
   };
 }
 
-// A GM's PTO starts at the DO step; anyone DO-or-above submitting skips it
-// (their own tier) and lands directly in the SDO/RVP queue.
+// PTO approval tiers: DO, then SDO/RVP. A submitter clears every tier they
+// outrank-or-equal (they can't approve their own, so anything left at their
+// tier would dead-end):
+//   GM       → Submitted        (DO approves, then SDO/RVP)
+//   DO       → DO Approved      (skips DO tier; SDO/RVP approves)
+//   SDO/RVP+ → SDO/RVP Approved (skips both tiers; a DO files the PAF next)
 function ptoWorkflowFields(user) {
+  const now = new Date().toISOString();
+  const isApprover = user.role === "sdo" || user.role === "rvp" || user.role === "admin";
+  if (isApprover) {
+    return {
+      status: "SDO/RVP Approved",
+      do_approved_at: now,
+      do_approved_by_id: user.id,
+      do_note: "Auto — submitter is SDO/RVP or above",
+      approved_at: now,
+      approved_by_id: user.id,
+      approved_by_email: user.email,
+      decision_note: "Auto — submitter is SDO/RVP or above",
+    };
+  }
   if (user.role !== "gm") {
     return {
       status: "DO Approved",
-      do_approved_at: new Date().toISOString(),
+      do_approved_at: now,
       do_approved_by_id: user.id,
       do_note: "Auto — submitter is DO or above",
     };
