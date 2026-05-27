@@ -70,8 +70,8 @@ export interface ThreadResponse {
   messages: ChatMessage[];
 }
 
-export function fetchInbox(): Promise<InboxResponse> {
-  return req<InboxResponse>(`${FN}?action=inbox`);
+export function fetchInbox(opts?: { archived?: boolean }): Promise<InboxResponse> {
+  return req<InboxResponse>(`${FN}?action=inbox${opts?.archived ? "&archived=1" : ""}`);
 }
 
 export function fetchThread(threadId: string): Promise<ThreadResponse> {

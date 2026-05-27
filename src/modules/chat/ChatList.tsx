@@ -4,7 +4,7 @@
 // the active thread (to highlight it) and an onOpen handler.
 
 import { useMemo, useState } from "react";
-import { Search, Plus } from "lucide-react";
+import { Search, Plus, Archive } from "lucide-react";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Drawer } from "@/shared/ui/Drawer";
 import { useToast } from "@/shared/ui/Toaster";
@@ -14,8 +14,11 @@ import { ActionCard } from "./components/ActionCard";
 import { ConversationRow } from "./components/ConversationRow";
 import { SwipeableRow } from "./components/SwipeableRow";
 import { ComposeModal } from "./components/ComposeModal";
-import { fetchInbox, setThreadArchived, type InboxResponse } from "./api";
+import { fetchInbox, setThreadArchived, markThreadRead, type InboxResponse } from "./api";
 import type { ChatTab } from "./types";
+
+const INBOX_KEY = ["chat", "inbox"];
+const ARCHIVED_KEY = ["chat", "inbox", "archived"];
 
 export function ChatList({
   activeThreadId,
@@ -29,14 +32,24 @@ export function ChatList({
   const [search, setSearch] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
   const [needsYouOpen, setNeedsYouOpen] = useState(false);
+  const [archivedOpen, setArchivedOpen] = useState(false);
 
   const qc = useQueryClient();
   const inboxQ = useQuery({
-    queryKey: ["chat", "inbox"],
-    queryFn: fetchInbox,
+    queryKey: INBOX_KEY,
+    queryFn: () => fetchInbox(),
     staleTime: 30_000,
   });
   const threads = inboxQ.data?.threads ?? [];
+
+  // Archived threads — fetched lazily when the drawer opens.
+  const archivedQ = useQuery({
+    queryKey: ARCHIVED_KEY,
+    queryFn: () => fetchInbox({ archived: true }),
+    enabled: archivedOpen,
+    staleTime: 30_000,
+  });
+  const archivedThreads = archivedQ.data?.threads ?? [];
 
   // Swipe-to-archive: optimistically drop the row from the inbox, then
   // sync. The server hides it for this user only and auto-resurfaces it on
@@ -44,19 +57,70 @@ export function ChatList({
   const archiveMut = useMutation({
     mutationFn: (threadId: string) => setThreadArchived(threadId, true),
     onMutate: async (threadId) => {
-      await qc.cancelQueries({ queryKey: ["chat", "inbox"] });
-      const prev = qc.getQueryData<InboxResponse>(["chat", "inbox"]);
-      qc.setQueryData<InboxResponse>(["chat", "inbox"], (old) =>
+      await qc.cancelQueries({ queryKey: INBOX_KEY });
+      const prev = qc.getQueryData<InboxResponse>(INBOX_KEY);
+      qc.setQueryData<InboxResponse>(INBOX_KEY, (old) =>
         old ? { ...old, threads: old.threads.filter((t) => t.id !== threadId) } : old,
       );
       return { prev };
     },
     onError: (_e, _id, ctx) => {
-      if (ctx?.prev) qc.setQueryData(["chat", "inbox"], ctx.prev);
+      if (ctx?.prev) qc.setQueryData(INBOX_KEY, ctx.prev);
       toast.push("Couldn't archive — try again.", "error");
     },
     onSuccess: () => toast.push("Archived", "info"),
-    onSettled: () => qc.invalidateQueries({ queryKey: ["chat", "inbox"] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: INBOX_KEY }),
+  });
+
+  // Swipe-right to mark a thread read: optimistically zero its unread, then
+  // sync (last_read_at = now on the server).
+  const markReadMut = useMutation({
+    mutationFn: (threadId: string) => markThreadRead(threadId),
+    onMutate: async (threadId) => {
+      await qc.cancelQueries({ queryKey: INBOX_KEY });
+      const prev = qc.getQueryData<InboxResponse>(INBOX_KEY);
+      qc.setQueryData<InboxResponse>(INBOX_KEY, (old) =>
+        old
+          ? {
+              ...old,
+              threads: old.threads.map((t) =>
+                t.id === threadId
+                  ? { ...t, unreadCount: 0, mentionedCount: 0, needsYou: false }
+                  : t,
+              ),
+            }
+          : old,
+      );
+      return { prev };
+    },
+    onError: (_e, _id, ctx) => {
+      if (ctx?.prev) qc.setQueryData(INBOX_KEY, ctx.prev);
+      toast.push("Couldn't mark read.", "error");
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: INBOX_KEY }),
+  });
+
+  // Unarchive from the Archived drawer — drop it from that list and refresh
+  // the main inbox so it reappears there.
+  const unarchiveMut = useMutation({
+    mutationFn: (threadId: string) => setThreadArchived(threadId, false),
+    onMutate: async (threadId) => {
+      await qc.cancelQueries({ queryKey: ARCHIVED_KEY });
+      const prev = qc.getQueryData<InboxResponse>(ARCHIVED_KEY);
+      qc.setQueryData<InboxResponse>(ARCHIVED_KEY, (old) =>
+        old ? { ...old, threads: old.threads.filter((t) => t.id !== threadId) } : old,
+      );
+      return { prev };
+    },
+    onError: (_e, _id, ctx) => {
+      if (ctx?.prev) qc.setQueryData(ARCHIVED_KEY, ctx.prev);
+      toast.push("Couldn't unarchive — try again.", "error");
+    },
+    onSuccess: () => toast.push("Unarchived", "info"),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ARCHIVED_KEY });
+      qc.invalidateQueries({ queryKey: INBOX_KEY });
+    },
   });
 
   const needsYou = useMemo(() => threads.filter((t) => t.needsYou), [threads]);
@@ -95,13 +159,23 @@ export function ChatList({
     <div className="relative flex h-full flex-col bg-surface-muted">
       <header className="flex shrink-0 items-center justify-between border-b border-midnight-100 px-4 py-3">
         <h1 className="text-[17px] font-semibold text-midnight-900">Chat</h1>
-        <button
-          type="button"
-          onClick={() => setComposeOpen(true)}
-          className="inline-flex items-center gap-1 text-[14px] font-semibold text-accent"
-        >
-          <Plus className="h-4 w-4" strokeWidth={2.25} /> New
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            onClick={() => setArchivedOpen(true)}
+            className="inline-flex items-center gap-1 text-[13.5px] font-medium text-midnight-500"
+            aria-label="Archived conversations"
+          >
+            <Archive className="h-4 w-4" strokeWidth={2} /> Archived
+          </button>
+          <button
+            type="button"
+            onClick={() => setComposeOpen(true)}
+            className="inline-flex items-center gap-1 text-[14px] font-semibold text-accent"
+          >
+            <Plus className="h-4 w-4" strokeWidth={2.25} /> New
+          </button>
+        </div>
       </header>
 
       <div className="shrink-0 px-3 pb-2 pt-2">
@@ -163,6 +237,7 @@ export function ChatList({
                 <SwipeableRow
                   active={t.id === activeThreadId}
                   onArchive={() => archiveMut.mutate(t.id)}
+                  onMarkRead={t.unreadCount > 0 ? () => markReadMut.mutate(t.id) : undefined}
                 >
                   <ConversationRow thread={t} onOpen={() => onOpen(t.id)} />
                 </SwipeableRow>
@@ -205,6 +280,40 @@ export function ChatList({
             />
           ))}
         </div>
+      </Drawer>
+
+      <Drawer open={archivedOpen} onClose={() => setArchivedOpen(false)} title="Archived">
+        {archivedQ.isLoading ? (
+          <p className="py-8 text-center text-[13px] text-midnight-400">Loading…</p>
+        ) : archivedThreads.length === 0 ? (
+          <EmptyState
+            title="No archived chats"
+            description="Swipe a conversation left to archive it. It comes back automatically when there's a new message."
+          />
+        ) : (
+          <ul className="divide-y divide-midnight-100">
+            {archivedThreads.map((t) => (
+              <li key={t.id} className="flex items-center gap-1">
+                <div className="min-w-0 flex-1">
+                  <ConversationRow
+                    thread={t}
+                    onOpen={() => {
+                      setArchivedOpen(false);
+                      onOpen(t.id);
+                    }}
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => unarchiveMut.mutate(t.id)}
+                  className="shrink-0 px-3 py-2 text-[12.5px] font-semibold text-accent"
+                >
+                  Unarchive
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
       </Drawer>
     </div>
   );
