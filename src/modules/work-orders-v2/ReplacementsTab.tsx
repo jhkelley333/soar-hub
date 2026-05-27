@@ -267,6 +267,7 @@ export function ReplacementsTab({ storeNumber, storeId, hideStoreColumn = false,
                   {!hideStoreColumn && <SortableTh active={sortKey === "store"} dir={sortDir} onClick={() => toggleSort("store")}>Store</SortableTh>}
                   <SortableTh active={sortKey === "asset_tag"} dir={sortDir} onClick={() => toggleSort("asset_tag")}>Asset Tag</SortableTh>
                   <SortableTh active={sortKey === "model"} dir={sortDir} onClick={() => toggleSort("model")}>Model</SortableTh>
+                  <Th>Asset Type</Th>
                   {!compact && <Th>Supplier</Th>}
                   {!compact && <Th>PO #</Th>}
                   <SortableTh active={sortKey === "cost"} dir={sortDir} onClick={() => toggleSort("cost")}>Cost</SortableTh>
@@ -303,6 +304,7 @@ export function ReplacementsTab({ storeNumber, storeId, hideStoreColumn = false,
                       )}
                       <td className="px-3 py-2 font-mono text-xs">{r.asset_tag || <span className="text-zinc-400">—</span>}</td>
                       <td className="px-3 py-2">{r.model || <span className="text-zinc-400">—</span>}</td>
+                      <td className="px-3 py-2 text-zinc-700">{r.asset_type || <span className="text-zinc-400">—</span>}</td>
                       {!compact && (
                         <td className="px-3 py-2 text-zinc-700">{r.supplier || <span className="text-zinc-400">—</span>}</td>
                       )}
