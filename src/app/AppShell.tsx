@@ -25,6 +25,7 @@ import { PushPrimer } from "@/app/PushPrimer";
 import { InstallPrimer, useInstallPrompt } from "@/app/InstallPrimer";
 import { useIdleLogout } from "@/auth/useIdleLogout";
 import { useChatRealtime } from "@/modules/chat/useChatRealtime";
+import { useAppBadge } from "@/modules/chat/useAppBadge";
 import { useAuth } from "@/auth/AuthProvider";
 import { LaunchSplash } from "@/auth/LaunchSplash";
 import { fetchMyTree, launchScopeLabel, scopeWordForRole } from "@/modules/my-stores/api";
@@ -76,6 +77,8 @@ export function AppShell() {
   // App-wide chat realtime so the unread badge updates live anywhere in the
   // app (not just on the chat screens).
   useChatRealtime();
+  // Mirror the unread total onto the installed-PWA app-icon badge.
+  useAppBadge();
 
   // Personalized splash subline: name the caller's scope + store count.
   // Shares the ["my-stores-tree"] cache the home/region views use, so
