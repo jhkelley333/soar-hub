@@ -22,6 +22,7 @@ import { Label } from "@/shared/ui/Label";
 import { useToast } from "@/shared/ui/Toaster";
 import {
   fetchCallerStores,
+  fetchIssueLibrary,
   saveEquipment,
   uploadEquipmentReceipt,
   type ReplacementRow,
@@ -68,6 +69,8 @@ export function EquipmentEntryModal({
   const isEdit = !!existing?.equipment_id;
   const [storeId, setStoreId] = useState<string>("");
   const [source, setSource] = useState<"manual_legacy" | "manual_direct">("manual_direct");
+  const [assetType, setAssetType] = useState("");
+  const [assetOpen, setAssetOpen] = useState(false);
   const [assetTag, setAssetTag] = useState("");
   const [model, setModel] = useState("");
   const [supplier, setSupplier] = useState("");
@@ -83,6 +86,8 @@ export function EquipmentEntryModal({
   // picking a file marks it for upload after save.
   const [receiptFile, setReceiptFile] = useState<File | null>(null);
   const [existingReceiptUrl, setExistingReceiptUrl] = useState<string | null>(null);
+  const [warrantyFile, setWarrantyFile] = useState<File | null>(null);
+  const [existingWarrantyUrl, setExistingWarrantyUrl] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -99,13 +104,46 @@ export function EquipmentEntryModal({
     [storesQ.data],
   );
 
+  // Asset-type type-and-search, mirroring the New Ticket flow: the
+  // suggestions are the distinct asset types already in the Issue Library,
+  // filtered by what's typed. Free text is still allowed (an entry may be a
+  // type not yet in the library).
+  const issueLibraryQ = useQuery({
+    queryKey: ["wo2", "issueLibrary"],
+    queryFn: fetchIssueLibrary,
+    enabled: open,
+    staleTime: 5 * 60_000,
+  });
+  const assetSuggestions = useMemo(() => {
+    const items = issueLibraryQ.data?.items ?? [];
+    const seen = new Set<string>();
+    const distinct: { asset_type: string; category: string }[] = [];
+    for (const i of items) {
+      const at = (i.asset_type || "").trim();
+      if (!at) continue;
+      const key = at.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      distinct.push({ asset_type: at, category: i.category });
+    }
+    const q = assetType.trim().toLowerCase();
+    const filtered = q
+      ? distinct.filter(
+          (d) => d.asset_type.toLowerCase().includes(q) || d.category.toLowerCase().includes(q),
+        )
+      : distinct;
+    return filtered.slice(0, 10);
+  }, [issueLibraryQ.data, assetType]);
+
   // Seed / reset the form whenever the modal opens or the existing
   // row changes. Locked store wins over any existing.store mismatch.
   useEffect(() => {
     if (!open) return;
     setError(null);
+    setAssetOpen(false);
     if (existing) {
       setSource((existing.source === "manual_legacy" ? "manual_legacy" : "manual_direct"));
+      setAssetType(existing.asset_type || "");
       setAssetTag(existing.asset_tag || "");
       setModel(existing.model || "");
       setSupplier(existing.supplier || "");
@@ -118,9 +156,12 @@ export function EquipmentEntryModal({
       setWarrSource(existing.warranty_parts_source || "");
       setExistingReceiptUrl(existing.receipt_url || null);
       setReceiptFile(null);
+      setExistingWarrantyUrl(existing.warranty_doc_url || null);
+      setWarrantyFile(null);
       setNotes(existing.notes || "");
     } else {
       setSource("manual_direct");
+      setAssetType("");
       setAssetTag("");
       setModel("");
       setSupplier("");
@@ -133,6 +174,8 @@ export function EquipmentEntryModal({
       setWarrSource("");
       setExistingReceiptUrl(null);
       setReceiptFile(null);
+      setExistingWarrantyUrl(null);
+      setWarrantyFile(null);
       setNotes("");
     }
     if (storeIdLock) {
@@ -163,6 +206,7 @@ export function EquipmentEntryModal({
         model: model.trim(),
       };
       if (existing?.equipment_id) payload.id = existing.equipment_id;
+      if (assetType.trim()) payload.asset_type = assetType.trim();
       if (assetTag.trim()) payload.asset_tag = assetTag.trim();
       if (supplier.trim()) payload.supplier = supplier.trim();
       if (poNumber.trim()) payload.po_number = poNumber.trim();
@@ -197,6 +241,7 @@ export function EquipmentEntryModal({
             fileData: base64,
             fileName: receiptFile.name,
             fileType: receiptFile.type || "application/octet-stream",
+            kind: "receipt",
           });
         } catch (upErr) {
           toast.push(
@@ -204,6 +249,24 @@ export function EquipmentEntryModal({
             "error",
           );
           console.error("equipment receipt upload failed:", upErr);
+        }
+      }
+      if (id && warrantyFile) {
+        try {
+          const base64 = await fileToBase64(warrantyFile);
+          await uploadEquipmentReceipt({
+            id,
+            fileData: base64,
+            fileName: warrantyFile.name,
+            fileType: warrantyFile.type || "application/octet-stream",
+            kind: "warranty",
+          });
+        } catch (upErr) {
+          toast.push(
+            "Equipment saved but warranty document upload failed. Edit the row to retry.",
+            "error",
+          );
+          console.error("equipment warranty doc upload failed:", upErr);
         }
       }
       toast.push(isEdit ? "Equipment updated." : "Equipment added.", "success");
@@ -283,6 +346,43 @@ export function EquipmentEntryModal({
                 <option value="manual_legacy">Legacy (predates SOAR)</option>
                 <option value="manual_direct">Direct purchase (outside work order flow)</option>
               </select>
+            </div>
+          </div>
+
+          <div className="relative">
+            <Label htmlFor="eq-asset-type">Asset type</Label>
+            <Input
+              id="eq-asset-type"
+              value={assetType}
+              autoComplete="off"
+              onChange={(e) => { setAssetType(e.target.value); setAssetOpen(true); }}
+              onFocus={() => setAssetOpen(true)}
+              placeholder="Search: Fryer, Walk-in Cooler, Ice Machine…"
+            />
+            {assetOpen && assetSuggestions.length > 0 && (
+              <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-zinc-200 bg-white py-1 text-sm shadow-lg">
+                {assetSuggestions.map((s) => (
+                  <li key={s.asset_type}>
+                    <button
+                      type="button"
+                      // mousedown (not click) so the option commits before the
+                      // input's blur can close the list.
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        setAssetType(s.asset_type);
+                        setAssetOpen(false);
+                      }}
+                      className="flex w-full items-center justify-between px-3 py-1.5 text-left hover:bg-zinc-50"
+                    >
+                      <span className="text-zinc-800">{s.asset_type}</span>
+                      {s.category && <span className="text-[11px] text-zinc-400">{s.category}</span>}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-1 text-[10px] text-zinc-500">
+              Pick from the issue library or type your own.
             </div>
           </div>
 
@@ -454,6 +554,56 @@ export function EquipmentEntryModal({
             )}
             <div className="mt-1 text-[10px] text-zinc-500">
               PDF or image, up to 10 MB. Uploaded after the save; replaces any existing receipt on this row.
+            </div>
+          </div>
+
+          <div>
+            <Label htmlFor="eq-warranty">Warranty documents (optional)</Label>
+            {existingWarrantyUrl && !warrantyFile && (
+              <div className="mb-2 flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs">
+                <FileText className="h-3.5 w-3.5 text-zinc-500" strokeWidth={1.75} />
+                <a
+                  href={existingWarrantyUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="font-semibold text-accent hover:underline"
+                >
+                  Current warranty doc
+                </a>
+                <span className="text-zinc-500">— attach a new file below to replace.</span>
+              </div>
+            )}
+            <input
+              id="eq-warranty"
+              type="file"
+              accept="image/*,application/pdf"
+              onChange={(e) => {
+                const f = e.target.files?.[0] || null;
+                if (f && f.size > MAX_RECEIPT_BYTES) {
+                  setError(`File too large (${(f.size / 1024 / 1024).toFixed(1)} MB); cap is 10 MB.`);
+                  e.target.value = "";
+                  return;
+                }
+                setError(null);
+                setWarrantyFile(f);
+              }}
+              className="block w-full text-sm text-zinc-700 file:mr-2 file:rounded-md file:border-0 file:bg-accent/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-midnight hover:file:bg-accent/20"
+            />
+            {warrantyFile && (
+              <div className="mt-1 flex items-center gap-2 text-[11px] text-zinc-500">
+                <span className="truncate font-mono">{warrantyFile.name}</span>
+                <span>({(warrantyFile.size / 1024).toFixed(0)} KB)</span>
+                <button
+                  type="button"
+                  onClick={() => setWarrantyFile(null)}
+                  className="text-red-600 hover:underline"
+                >
+                  remove
+                </button>
+              </div>
+            )}
+            <div className="mt-1 text-[10px] text-zinc-500">
+              Warranty card, manufacturer terms, etc. PDF or image, up to 10 MB. Replaces any existing warranty doc on this row.
             </div>
           </div>
 
