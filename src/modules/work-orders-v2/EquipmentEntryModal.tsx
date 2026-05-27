@@ -72,6 +72,7 @@ export function EquipmentEntryModal({
   const [assetType, setAssetType] = useState("");
   const [assetOpen, setAssetOpen] = useState(false);
   const [assetTag, setAssetTag] = useState("");
+  const [manufacturer, setManufacturer] = useState("");
   const [model, setModel] = useState("");
   const [supplier, setSupplier] = useState("");
   const [poNumber, setPoNumber] = useState("");
@@ -139,6 +140,7 @@ export function EquipmentEntryModal({
       setSource((existing.source === "manual_legacy" ? "manual_legacy" : "manual_direct"));
       setAssetType(existing.asset_type || "");
       setAssetTag(existing.asset_tag || "");
+      setManufacturer(existing.manufacturer || "");
       setModel(existing.model || "");
       setSupplier(existing.supplier || "");
       setPoNumber(existing.po_number || "");
@@ -157,6 +159,7 @@ export function EquipmentEntryModal({
       setSource("manual_direct");
       setAssetType("");
       setAssetTag("");
+      setManufacturer("");
       setModel("");
       setSupplier("");
       setPoNumber("");
@@ -201,6 +204,7 @@ export function EquipmentEntryModal({
       };
       if (existing?.equipment_id) payload.id = existing.equipment_id;
       if (assetType.trim()) payload.asset_type = assetType.trim();
+      if (manufacturer.trim()) payload.manufacturer = manufacturer.trim();
       if (assetTag.trim()) payload.asset_tag = assetTag.trim();
       if (supplier.trim()) payload.supplier = supplier.trim();
       if (poNumber.trim()) payload.po_number = poNumber.trim();
@@ -382,14 +386,14 @@ export function EquipmentEntryModal({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div>
-              <Label htmlFor="eq-asset-tag">Asset tag / serial #</Label>
+              <Label htmlFor="eq-manufacturer">Manufacturer</Label>
               <Input
-                id="eq-asset-tag"
-                value={assetTag}
-                onChange={(e) => setAssetTag(e.target.value)}
-                placeholder="From the spec plate or sticker"
+                id="eq-manufacturer"
+                value={manufacturer}
+                onChange={(e) => setManufacturer(e.target.value)}
+                placeholder="e.g. Avantco"
               />
             </div>
             <div>
@@ -398,7 +402,16 @@ export function EquipmentEntryModal({
                 id="eq-model"
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
-                placeholder="e.g. Frymaster FPP255"
+                placeholder="e.g. APT-48M-HC"
+              />
+            </div>
+            <div>
+              <Label htmlFor="eq-asset-tag">Asset tag / serial #</Label>
+              <Input
+                id="eq-asset-tag"
+                value={assetTag}
+                onChange={(e) => setAssetTag(e.target.value)}
+                placeholder="Spec plate / sticker"
               />
             </div>
           </div>

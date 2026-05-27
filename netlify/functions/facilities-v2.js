@@ -775,7 +775,7 @@ export const handler = async (event) => {
       let eq = supabase
         .from("equipment_register")
         .select(`
-          id, store_number, source, asset_type, asset_tag, model, supplier, po_number,
+          id, store_number, source, asset_type, asset_tag, manufacturer, model, supplier, po_number,
           cost, purchased_at, installed_at,
           warranty_labor_days, warranty_parts_days, warranty_parts_source,
           receipt_url, warranty_doc_url, notes, created_by_name, created_at,
@@ -805,6 +805,7 @@ export const handler = async (event) => {
           store_name:       rest.store_name,
           status:           rest.status,
           asset_type:       rest.asset_type,
+          manufacturer:     null,
           asset_tag:        rest.replacement_asset_tag,
           model:            rest.replacement_model,
           supplier:         rest.replacement_supplier,
@@ -832,6 +833,7 @@ export const handler = async (event) => {
         store_name:       r.stores?.name || null,
         status:           null,
         asset_type:       r.asset_type,
+        manufacturer:     r.manufacturer,
         asset_tag:        r.asset_tag,
         model:            r.model,
         supplier:         r.supplier,
