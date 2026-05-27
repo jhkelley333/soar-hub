@@ -119,6 +119,7 @@ export interface ReplacementRow {
   store_number: string;
   store_name: string | null;
   status: string | null;
+  asset_type: string | null;
   asset_tag: string | null;
   model: string | null;
   supplier: string | null;
@@ -131,6 +132,7 @@ export interface ReplacementRow {
   warranty_parts_days: number | null;
   warranty_parts_source: "vendor" | "manufacturer" | "none" | null;
   receipt_url: string | null;
+  warranty_doc_url: string | null;
   notes: string | null;
   created_by_name: string | null;
 }
@@ -153,6 +155,7 @@ export interface SaveEquipmentBody {
   id?: string;
   store_id: string;
   source?: "manual_legacy" | "manual_direct";
+  asset_type?: string;
   asset_tag?: string;
   model: string;
   supplier?: string;
@@ -183,11 +186,14 @@ export interface UploadEquipmentReceiptBody {
   fileData: string;
   fileName: string;
   fileType: string;
+  // Which document slot to fill. Defaults to the receipt; "warranty"
+  // writes warranty_doc_url instead.
+  kind?: "receipt" | "warranty";
 }
 export function uploadEquipmentReceipt(
   payload: UploadEquipmentReceiptBody,
-): Promise<{ ok: true; equipment: { id: string; receipt_url: string } }> {
-  return request<{ ok: true; equipment: { id: string; receipt_url: string } }>(
+): Promise<{ ok: true; equipment: { id: string; receipt_url?: string; warranty_doc_url?: string } }> {
+  return request<{ ok: true; equipment: { id: string; receipt_url?: string; warranty_doc_url?: string } }>(
     `${FN}?action=uploadEquipmentReceipt`,
     { method: "POST", body: JSON.stringify(payload) },
   );

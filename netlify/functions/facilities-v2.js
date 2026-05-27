@@ -753,7 +753,7 @@ export const handler = async (event) => {
       let tq = supabase
         .from("tickets")
         .select(`
-          id, wo_number, store_number, store_name, status,
+          id, wo_number, store_number, store_name, status, asset_type,
           replacement_model, replacement_supplier, replacement_cost,
           replacement_eta, replacement_ordered_at,
           replacement_asset_tag, replacement_po_number,
@@ -775,10 +775,10 @@ export const handler = async (event) => {
       let eq = supabase
         .from("equipment_register")
         .select(`
-          id, store_number, source, asset_tag, model, supplier, po_number,
+          id, store_number, source, asset_type, asset_tag, model, supplier, po_number,
           cost, purchased_at, installed_at,
           warranty_labor_days, warranty_parts_days, warranty_parts_source,
-          receipt_url, notes, created_by_name, created_at,
+          receipt_url, warranty_doc_url, notes, created_by_name, created_at,
           stores(name)
         `)
         .is("archived_at", null)
@@ -804,6 +804,7 @@ export const handler = async (event) => {
           store_number:     rest.store_number,
           store_name:       rest.store_name,
           status:           rest.status,
+          asset_type:       rest.asset_type,
           asset_tag:        rest.replacement_asset_tag,
           model:            rest.replacement_model,
           supplier:         rest.replacement_supplier,
@@ -816,6 +817,7 @@ export const handler = async (event) => {
           warranty_parts_days:   rest.replacement_warranty_parts_days,
           warranty_parts_source: rest.replacement_warranty_parts_source,
           receipt_url:      receipts[0]?.file_url || null,
+          warranty_doc_url: null,
           notes:            null,
           created_by_name:  null,
         };
@@ -829,6 +831,7 @@ export const handler = async (event) => {
         store_number:     r.store_number,
         store_name:       r.stores?.name || null,
         status:           null,
+        asset_type:       r.asset_type,
         asset_tag:        r.asset_tag,
         model:            r.model,
         supplier:         r.supplier,
@@ -841,6 +844,7 @@ export const handler = async (event) => {
         warranty_parts_days:   r.warranty_parts_days,
         warranty_parts_source: r.warranty_parts_source,
         receipt_url:      r.receipt_url,
+        warranty_doc_url: r.warranty_doc_url,
         notes:            r.notes,
         created_by_name:  r.created_by_name,
       }));
@@ -937,6 +941,10 @@ export const handler = async (event) => {
       const fileData = String(body.fileData || "");
       const fileName = String(body.fileName || "receipt");
       const fileType = String(body.fileType || "application/octet-stream");
+      // Which document slot this file fills. Defaults to the receipt for
+      // backward compatibility; "warranty" targets warranty_doc_url.
+      const kind = body.kind === "warranty" ? "warranty" : "receipt";
+      const targetCol = kind === "warranty" ? "warranty_doc_url" : "receipt_url";
       if (!equipId || !fileData) {
         return respond(400, { ok: false, message: "id and fileData required." });
       }
@@ -944,7 +952,7 @@ export const handler = async (event) => {
       // but reject obvious garbage so users aren't surprised when the
       // file fails to render in a browser tab.
       if (!/^(image\/|application\/pdf$)/i.test(fileType)) {
-        return respond(400, { ok: false, message: "Receipt must be an image or PDF." });
+        return respond(400, { ok: false, message: "File must be an image or PDF." });
       }
 
       // Confirm the equipment row exists before we burn storage on it.
@@ -972,7 +980,7 @@ export const handler = async (event) => {
       }
 
       const ext = (fileName.split(".").pop() || "bin").toLowerCase().replace(/[^a-z0-9]/g, "") || "bin";
-      const path = `equipment/${equipId}/${Date.now()}.${ext}`;
+      const path = `equipment/${equipId}/${kind}-${Date.now()}.${ext}`;
       const { error: upErr } = await supabase.storage
         .from(PHOTOS_BUCKET)
         .upload(path, buf, { contentType: fileType, upsert: false });
@@ -986,9 +994,9 @@ export const handler = async (event) => {
 
       const { data: updated, error: updErr } = await supabase
         .from("equipment_register")
-        .update({ receipt_url: publicUrl })
+        .update({ [targetCol]: publicUrl })
         .eq("id", equipId)
-        .select("id, receipt_url")
+        .select(`id, ${targetCol}`)
         .single();
       if (updErr) throw updErr;
 
