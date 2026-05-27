@@ -104,10 +104,11 @@ export function EquipmentEntryModal({
     [storesQ.data],
   );
 
-  // Asset-type type-and-search, mirroring the New Ticket flow: the
-  // suggestions are the distinct asset types already in the Issue Library,
-  // filtered by what's typed. Free text is still allowed (an entry may be a
-  // type not yet in the library).
+  // Asset-type type-and-search, mirroring the New Ticket "Issue / Asset
+  // Type" picker: suggestions are Issue Library items filtered by what's
+  // typed, each shown as "category · asset_type" over its display_name.
+  // Picking stores the display_name (same value tickets store); free text
+  // is still allowed for a type not yet in the library.
   const issueLibraryQ = useQuery({
     queryKey: ["wo2", "issueLibrary"],
     queryFn: fetchIssueLibrary,
@@ -116,23 +117,16 @@ export function EquipmentEntryModal({
   });
   const assetSuggestions = useMemo(() => {
     const items = issueLibraryQ.data?.items ?? [];
-    const seen = new Set<string>();
-    const distinct: { asset_type: string; category: string }[] = [];
-    for (const i of items) {
-      const at = (i.asset_type || "").trim();
-      if (!at) continue;
-      const key = at.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      distinct.push({ asset_type: at, category: i.category });
-    }
     const q = assetType.trim().toLowerCase();
-    const filtered = q
-      ? distinct.filter(
-          (d) => d.asset_type.toLowerCase().includes(q) || d.category.toLowerCase().includes(q),
-        )
-      : distinct;
-    return filtered.slice(0, 10);
+    if (!q) return items.slice(0, 8);
+    return items
+      .filter(
+        (i) =>
+          i.display_name.toLowerCase().includes(q) ||
+          i.category.toLowerCase().includes(q) ||
+          i.asset_type.toLowerCase().includes(q),
+      )
+      .slice(0, 8);
   }, [issueLibraryQ.data, assetType]);
 
   // Seed / reset the form whenever the modal opens or the existing
@@ -360,22 +354,24 @@ export function EquipmentEntryModal({
               placeholder="Search: Fryer, Walk-in Cooler, Ice Machine…"
             />
             {assetOpen && assetSuggestions.length > 0 && (
-              <ul className="absolute z-20 mt-1 max-h-56 w-full overflow-auto rounded-md border border-zinc-200 bg-white py-1 text-sm shadow-lg">
+              <ul className="absolute z-20 mt-1 max-h-60 w-full overflow-y-auto rounded-md border border-zinc-200 bg-white shadow-md">
                 {assetSuggestions.map((s) => (
-                  <li key={s.asset_type}>
+                  <li key={s.id}>
                     <button
                       type="button"
                       // mousedown (not click) so the option commits before the
                       // input's blur can close the list.
                       onMouseDown={(e) => {
                         e.preventDefault();
-                        setAssetType(s.asset_type);
+                        setAssetType(s.display_name);
                         setAssetOpen(false);
                       }}
-                      className="flex w-full items-center justify-between px-3 py-1.5 text-left hover:bg-zinc-50"
+                      className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50"
                     >
-                      <span className="text-zinc-800">{s.asset_type}</span>
-                      {s.category && <span className="text-[11px] text-zinc-400">{s.category}</span>}
+                      <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+                        {s.category} · {s.asset_type}
+                      </div>
+                      <div className="text-midnight">{s.display_name}</div>
                     </button>
                   </li>
                 ))}
