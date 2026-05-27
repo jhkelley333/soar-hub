@@ -18,6 +18,7 @@ import {
   type ThreadResponse,
   type AttachmentInput,
 } from "../../api";
+import type { ChatMessage } from "../../types";
 
 export function GroupThread({
   threadId,
@@ -82,23 +83,55 @@ export function GroupThread({
   // Staged-then-send: picking files adds local previews; nothing uploads
   // until Send, which uploads everything and posts one message (optional
   // caption + attachments) — like iMessage / WhatsApp.
+  const threadKey = ["chat", "thread", threadId];
   const send = useMutation({
-    mutationFn: async () => {
+    // Text + staged files are captured at submit so the instant draft-clear
+    // in onMutate can never race what actually gets sent.
+    mutationFn: async (vars: { text: string; files: typeof pending }) => {
       let atts: AttachmentInput[] = [];
-      if (pending.length) {
-        atts = await Promise.all(pending.map((p) => uploadChatAttachment(threadId, p.file)));
+      if (vars.files.length) {
+        atts = await Promise.all(vars.files.map((p) => uploadChatAttachment(threadId, p.file)));
       }
-      await sendChatMessage(threadId, draft.trim(), atts);
+      await sendChatMessage(threadId, vars.text, atts);
+    },
+    onMutate: async (vars) => {
+      // Optimistic: show the text bubble immediately and empty the composer,
+      // so sending feels instant instead of waiting on the round-trip.
+      // Attachment-only sends fall through to the post-send refetch (their
+      // previews need signed URLs we don't have yet), but stay visible in
+      // the composer until success.
+      await qc.cancelQueries({ queryKey: threadKey });
+      const prev = qc.getQueryData<ThreadResponse>(threadKey);
+      if (vars.text && prev) {
+        const optimistic: ChatMessage = {
+          id: `optimistic-${crypto.randomUUID()}`,
+          threadId,
+          fromUserId: currentUserId,
+          text: vars.text,
+          at: new Date().toISOString(),
+        };
+        qc.setQueryData<ThreadResponse>(threadKey, {
+          ...prev,
+          messages: [...prev.messages, optimistic],
+        });
+      }
+      setDraft("");
+      return { prev, text: vars.text };
+    },
+    onError: (e: unknown, _vars, ctx) => {
+      // Roll back the optimistic bubble and put the text back so nothing is lost.
+      if (ctx?.prev) qc.setQueryData(threadKey, ctx.prev);
+      if (ctx?.text) setDraft(ctx.text);
+      toast.push(e instanceof Error ? e.message : "Send failed.", "error");
     },
     onSuccess: () => {
       pending.forEach((p) => URL.revokeObjectURL(p.url));
       setPending([]);
-      setDraft("");
-      qc.invalidateQueries({ queryKey: ["chat", "thread", threadId] });
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: threadKey });
       qc.invalidateQueries({ queryKey: ["chat", "inbox"] });
     },
-    onError: (e: unknown) =>
-      toast.push(e instanceof Error ? e.message : "Send failed.", "error"),
   });
 
   const canSend = (draft.trim().length > 0 || pending.length > 0) && !send.isPending;
@@ -125,7 +158,7 @@ export function GroupThread({
     });
 
   const submit = () => {
-    if (canSend) send.mutate();
+    if (canSend) send.mutate({ text: draft.trim(), files: pending });
   };
 
   return (
