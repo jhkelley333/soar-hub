@@ -124,22 +124,23 @@ export const handler = async (event) => {
         return respond(200, { ok: true, threads: [], needsYouCount: 0 });
       }
       const memById = new Map((memberships ?? []).map((m) => [m.thread_id, m]));
+      const callerFirst = firstNameOf(displayName(caller)).toLowerCase();
 
-      const [{ data: threads }, { data: members }, { data: msgs }] = await Promise.all([
+      // Unread + mention counts are computed in the database (one small
+      // result per thread) instead of pulling every message across the
+      // wire — see migration 0099_chat_inbox_unread.sql.
+      const [{ data: threads }, { data: members }, { data: counts }] = await Promise.all([
         supa.from("chat_threads").select("*").in("id", ids).is("archived_at", null),
         supa.from("chat_thread_members").select("thread_id, user_id").in("thread_id", ids),
-        supa
-          .from("chat_messages")
-          .select("thread_id, from_user_id, text, created_at, system")
-          .in("thread_id", ids),
+        supa.rpc("chat_inbox_unread", { p_uid: uid, p_first: callerFirst }),
       ]);
+      const countsByThread = new Map((counts ?? []).map((c) => [c.thread_id, c]));
 
       const userIds = Array.from(new Set((members ?? []).map((m) => m.user_id)));
       const { data: profiles } = userIds.length
         ? await supa.from("profiles").select("id, full_name, preferred_name, email").in("id", userIds)
         : { data: [] };
       const profById = new Map((profiles ?? []).map((p) => [p.id, p]));
-      const callerFirst = firstNameOf(displayName(caller)).toLowerCase();
 
       const membersByThread = new Map();
       for (const m of members ?? []) {
@@ -150,19 +151,9 @@ export const handler = async (event) => {
 
       const out = (threads ?? []).map((t) => {
         const mine = memById.get(t.id);
-        const readAt = mine?.last_read_at ? new Date(mine.last_read_at).getTime() : 0;
-        const tMsgs = (msgs ?? []).filter((x) => x.thread_id === t.id);
-        let unread = 0;
-        let mentioned = 0;
-        for (const x of tMsgs) {
-          if (x.system || x.from_user_id === uid) continue;
-          if (new Date(x.created_at).getTime() > readAt) {
-            unread++;
-            if (callerFirst && String(x.text || "").toLowerCase().includes("@" + callerFirst)) {
-              mentioned++;
-            }
-          }
-        }
+        const c = countsByThread.get(t.id);
+        const unread = c?.unread ?? 0;
+        const mentioned = c?.mentioned ?? 0;
         const memberIds = membersByThread.get(t.id) ?? [];
         // Direct thread title = the other participant.
         let title = t.title;
