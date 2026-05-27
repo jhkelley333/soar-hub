@@ -43,6 +43,10 @@ createRoot(root).render(
   </StrictMode>
 );
 
+// Tell the boot watchdog (inline in index.html) the bundle loaded and
+// rendered, so it doesn't trigger a recovery reload.
+(window as unknown as { __SOAR_BOOTED__?: boolean }).__SOAR_BOOTED__ = true;
+
 // Register the service worker after the initial render kicks off so
 // the SW install never competes with first paint. Dev / unsupported
 // browsers no-op.
