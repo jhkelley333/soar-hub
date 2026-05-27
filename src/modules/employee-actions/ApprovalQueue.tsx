@@ -15,7 +15,7 @@ import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { listApprovalQueue } from "./api";
 import { RequestDetailDrawer } from "./RequestDetailDrawer";
-import { statusKind } from "./statusMeta";
+import { statusKind, waitingOn } from "./statusMeta";
 import type { PtoRow, TrainingCreditRow } from "./types";
 
 function fmtMoney(n: number | null | undefined): string {
@@ -169,6 +169,7 @@ export function ApprovalQueue() {
                   key={r.id}
                   title={r.employee_name}
                   status={r.status}
+                  waiting={waitingOn("training", r.status)}
                   hint={actionHint(r.action_needed)}
                   meta={[
                     `Store #${r.store_number}${r.store_name ? ` — ${r.store_name}` : ""}`,
@@ -190,6 +191,7 @@ export function ApprovalQueue() {
                     title={`${r.employee_name}`}
                     subtitle={r.position}
                     status={r.status}
+                    waiting={waitingOn("pto", r.status)}
                     hint={actionHint(r.action_needed)}
                     meta={[
                       `Store #${r.store_number}${r.store_name ? ` — ${r.store_name}` : ""}`,
@@ -266,6 +268,7 @@ function QueueRow({
   title,
   subtitle,
   status,
+  waiting,
   hint,
   meta,
   onOpen,
@@ -273,6 +276,7 @@ function QueueRow({
   title: string;
   subtitle?: string;
   status: string;
+  waiting?: string | null;
   hint: string;
   meta: string[];
   onOpen: () => void;
@@ -288,6 +292,9 @@ function QueueRow({
             <span className="text-sm font-medium text-zinc-900">{title}</span>
             {subtitle && <span className="text-xs text-zinc-400">{subtitle}</span>}
             <StatusPill kind={statusKind(status)}>{status}</StatusPill>
+            {waiting && (
+              <span className="text-xs font-medium text-sonic-700">→ Waiting on {waiting}</span>
+            )}
             <Badge tone="info">{hint}</Badge>
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-zinc-500">
