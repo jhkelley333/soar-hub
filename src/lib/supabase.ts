@@ -18,17 +18,38 @@ if (!url || !anonKey) {
 // orphaned lock, logs a warning, and force-acquires — but during that
 // window getSession() hangs and AuthProvider gets stuck on "Loading…".
 //
-// For this SPA we don't need cross-tab session locking (sessions are
-// just rows in localStorage and are read fresh on each request), so we
-// pass a no-op lock that always proceeds. Kills the orphaned-lock
-// recovery message and the post-deploy hang.
-const noopLock = <R>(_name: string, _acquireTimeout: number, fn: () => Promise<R>) => fn();
+// We don't want that cross-tab lock (it caused the post-deploy boot
+// hang), but we DO need to serialize auth operations *within this page*.
+// supabase-js routes getSession() and every token refresh through this
+// lock; on iOS the installed PWA wakes from suspension and fires several
+// refresh triggers at once (visibilitychange + online + the auto-refresh
+// tick + boot getSession). With no serialization those refreshes race on
+// the single rotating refresh token — the first rotates it, the rest are
+// rejected as "already used", and supabase-js emits SIGNED_OUT, logging
+// the user out on reopen.
+//
+// So instead of a no-op, use an in-page promise queue. It serializes
+// every lock-protected call on one chain (killing the refresh race) but
+// holds no persistent / cross-tab state, so there's nothing to orphan and
+// the boot hang never returns. A fresh page load starts with a resolved
+// chain, so the first acquire runs immediately.
+let authLockChain: Promise<unknown> = Promise.resolve();
+function inPageLock<R>(_name: string, _acquireTimeout: number, fn: () => Promise<R>): Promise<R> {
+  const run = authLockChain.then(fn, fn);
+  // Keep the chain alive regardless of outcome so one rejected operation
+  // doesn't wedge every subsequent acquire.
+  authLockChain = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
 
 export const supabase = createClient(url, anonKey, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
-    lock: noopLock,
+    lock: inPageLock,
   },
 });
