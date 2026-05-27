@@ -867,20 +867,27 @@ const AUDIT_TYPE = {
 // null. Covers approvals ("decide") and the post-approval confirmations.
 //   training: Submitted→decide(SDO/RVP) Approved→entered(SDO/RVP) "On Weekly Sheet"→closed-out(DO)
 //   pto:      Submitted→decide(DO) "DO Approved"→decide(SDO/RVP) "SDO/RVP Approved"→paf-submitted(DO) "PAF Submitted"→close(DO)
-function actionableStep(type, status, role) {
+function actionableStep(type, status, role, isOwner = false) {
   const isApprover = role === "sdo" || role === "rvp" || role === "admin";
   const isDo = role === "do" || role === "admin";
+  // The post-approval operational steps (weekly sheet / PAF filing / closeout)
+  // are normally a DO's job. But a senior submitter (SDO/RVP/admin) must also
+  // be able to run them on their OWN request — they outrank every approver, so
+  // there's no one below to hand the request down to. Without this their
+  // request dead-ends with no actionable button for anyone reachable.
+  const canOps = isDo || (isOwner && isApprover);
   if (type === "training") {
     if (status === "Submitted") return isApprover ? "decide" : null;
     if (status === "Approved") return isApprover ? "entered" : null;
-    if (status === "On Weekly Sheet") return isDo ? "closed-out" : null;
+    if (status === "On Weekly Sheet") return canOps ? "closed-out" : null;
     return null;
   }
-  // pto
-  if (status === "Submitted") return isDo ? "decide" : null;
+  // pto. The DO step is a DO's job for others, but a senior owner clears it on
+  // their own request too (so an SDO/RVP can self-serve from the first step).
+  if (status === "Submitted") return isDo || (isOwner && isApprover) ? "decide" : null;
   if (status === "DO Approved") return isApprover ? "decide" : null;
-  if (status === "SDO/RVP Approved") return isDo ? "paf-submitted" : null;
-  if (status === "PAF Submitted") return isDo ? "close" : null;
+  if (status === "SDO/RVP Approved") return canOps ? "paf-submitted" : null;
+  if (status === "PAF Submitted") return canOps ? "close" : null;
   return null;
 }
 
@@ -903,7 +910,10 @@ async function listQueue(supa, user) {
     const { data, error } = await q;
     if (error) throw new Error(error.message);
     return (data ?? [])
-      .map((r) => ({ ...r, action_needed: actionableStep(type, r.status, user.role) }))
+      .map((r) => ({
+        ...r,
+        action_needed: actionableStep(type, r.status, user.role, r.submitter_id === user.id),
+      }))
       .filter((r) => {
         if (!r.action_needed) return false;
         if (r.action_needed === "decide" && r.submitter_id === user.id) return false;
@@ -960,10 +970,12 @@ async function decide(supa, user, body) {
   if (fetchErr) return { error: fetchErr.message, status: 500 };
   if (!existing) return { error: "Request not found.", status: 404 };
 
-  if (existing.submitter_id === user.id) {
-    return { error: "You can't approve your own request.", status: 403 };
-  }
-  if (actionableStep(type, existing.status, user.role) !== "decide") {
+  // A senior submitter (SDO/RVP/admin) may clear their own request — they
+  // outrank every approver, so the usual "can't approve your own" guard would
+  // strand it. Anyone below the required tier is still rejected by the step
+  // check below (e.g. a GM or DO can't self-approve a tier above them).
+  const isOwner = existing.submitter_id === user.id;
+  if (actionableStep(type, existing.status, user.role, isOwner) !== "decide") {
     return {
       error: `This request is ${existing.status} and isn't yours to approve.`,
       status: 409,
@@ -1131,7 +1143,7 @@ async function confirm(supa, user, body) {
   if (fetchErr) return { error: fetchErr.message, status: 500 };
   if (!existing) return { error: "Request not found.", status: 404 };
 
-  const expected = actionableStep(type, existing.status, user.role);
+  const expected = actionableStep(type, existing.status, user.role, existing.submitter_id === user.id);
   if (expected !== step || step === "decide" || !step) {
     return { error: "That step isn't available to you right now.", status: 409 };
   }
