@@ -9,6 +9,7 @@ import {
 } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase } from "@/lib/supabase";
+import { isStandalone } from "@/lib/push";
 import { queryClient } from "@/lib/queryClient";
 import { clearPersistedQueryCache } from "@/lib/queryPersister";
 import { perfMark, perfReport } from "@/lib/perf";
@@ -143,6 +144,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let cancelled = false;
 
+    // The installed PWA is a trusted personal device that gets cold-launched
+    // after long suspensions, so its boot getSession() often has to refresh
+    // the token over a slow mobile radio. Give it far more patience than a
+    // browser tab, and (below) never purge the stored token on a boot
+    // timeout — a slow refresh must not log the app out.
+    const standalone = isStandalone();
+    const bootMs = standalone ? 25_000 : AUTH_BOOT_TIMEOUT_MS;
+
     (async () => {
       const finish = () => {
         if (cancelled) return;
@@ -162,11 +171,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         perfMark("auth: getSession start");
         const res = await Promise.race([
           supabase.auth.getSession(),
-          timeout<{ data: { session: Session | null } }>("getSession", AUTH_BOOT_TIMEOUT_MS),
+          timeout<{ data: { session: Session | null } }>("getSession", bootMs),
         ]);
         initial = res.data.session;
       } catch (e) {
         if (cancelled) return;
+        if (standalone) {
+          // PWA: a slow/hung cold-launch refresh must NOT wipe the saved
+          // login. Keep the stored token so this launch's autoRefresh — or
+          // the next launch — can recover, and just fall through to the
+          // login screen for now instead of purging. (A genuinely dead
+          // token resolves fast as a null session, not a timeout, so this
+          // only ever catches network hangs.)
+          console.warn("[auth] getSession slow/hung in PWA; preserving token for retry", e);
+          finish();
+          return;
+        }
         console.warn("[auth] getSession failed during boot; clearing stale session", e);
         await clearStaleSession();
         finish();
@@ -191,7 +211,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           perfMark("auth: profile fetch start");
           await Promise.race([
             loadProfile(initial.user.id),
-            timeout<{ hasProfile: boolean }>("loadProfile", AUTH_BOOT_TIMEOUT_MS),
+            timeout<{ hasProfile: boolean }>("loadProfile", bootMs),
           ]);
           perfMark("auth: profile ready");
         } catch (e) {
