@@ -44,6 +44,15 @@ function formatBirthdayShort(iso: string | null): string | null {
   return `${months[m - 1]} ${parseInt(dd, 10)}`;
 }
 
+function formatDateLong(iso: string | null): string | null {
+  if (!iso) return null;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+  const [y, m, d] = iso.split("-").map((n) => parseInt(n, 10));
+  const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+  if (m < 1 || m > 12) return iso;
+  return `${months[m - 1]} ${d}, ${y}`;
+}
+
 const ATTRIBUTE_EDITOR_ROLES = new Set<UserRole>([
   "admin", "payroll", "vp", "coo", "do", "sdo", "rvp",
 ]);
@@ -117,6 +126,28 @@ export function StoreDetail({
                       <div>{[store.city, store.state].filter(Boolean).join(", ")}</div>
                     )}
                   </div>
+                </div>
+              )}
+              {(store.phone || store.email) && (
+                <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-zinc-600">
+                  {store.phone && (
+                    <a
+                      href={`tel:${store.phone.replace(/[^0-9+]/g, "")}`}
+                      className="inline-flex items-center gap-1.5 hover:text-midnight"
+                    >
+                      <Phone className="h-3.5 w-3.5 shrink-0 text-zinc-400" strokeWidth={1.75} />
+                      {formatPhoneForDisplay(store.phone)}
+                    </a>
+                  )}
+                  {store.email && (
+                    <a
+                      href={`mailto:${store.email}`}
+                      className="inline-flex items-center gap-1.5 break-all hover:text-midnight"
+                    >
+                      <Mail className="h-3.5 w-3.5 shrink-0 text-zinc-400" strokeWidth={1.75} />
+                      {store.email}
+                    </a>
+                  )}
                 </div>
               )}
             </div>
@@ -246,6 +277,16 @@ function OperationsCard({ store }: { store: MyStoreNode }) {
   const fields: { label: string; value: string | null; copy?: boolean; href?: string }[] = [
     { label: "Plate IQ Email", value: store.plate_iq_email, copy: true },
     { label: "Soar Company", value: store.soar_company_name },
+    { label: "POS", value: store.pos_provider },
+    { label: "Security Vendor", value: store.security_vendor },
+    {
+      label: "Security Contact",
+      value: store.security_vendor_phone,
+      href: store.security_vendor_phone
+        ? `tel:${store.security_vendor_phone.replace(/[^0-9+]/g, "")}`
+        : undefined,
+    },
+    { label: "Acquisition Date", value: formatDateLong(store.acquisition_date) },
   ];
   const vendor: { label: string; value: string | null; copy?: boolean; href?: string }[] = [
     { label: "Vendor", value: store.food_vendor_name },
@@ -294,7 +335,7 @@ function OperationsCard({ store }: { store: MyStoreNode }) {
         <Card>
           <CardHeader
             title="Operations & vendor"
-            description="Plate IQ, Soar company, food vendor contact."
+            description="Plate IQ, Soar company, POS, security, acquisition, food vendor contact."
             actions={editAction}
           />
           <CardBody>
@@ -339,7 +380,13 @@ function OperationsCard({ store }: { store: MyStoreNode }) {
                     {f.label}
                   </dt>
                   <dd className="mt-0.5 flex items-center gap-2 text-sm text-midnight">
-                    <span className="break-all">{f.value}</span>
+                    {f.href ? (
+                      <a href={f.href} className="text-accent hover:underline">
+                        {f.value}
+                      </a>
+                    ) : (
+                      <span className="break-all">{f.value}</span>
+                    )}
                     {f.copy && (
                       <button
                         type="button"

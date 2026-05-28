@@ -92,8 +92,9 @@ export function EditOrgNodeModal({
   const [plateIqEmail, setPlateIqEmail] = useState("");
   const [soarCompanyName, setSoarCompanyName] = useState("");
   const [acquisitionDate, setAcquisitionDate] = useState("");
-  const [posSystem, setPosSystem] = useState("");
+  const [posProvider, setPosProvider] = useState("");
   const [securityVendor, setSecurityVendor] = useState("");
+  const [securityVendorPhone, setSecurityVendorPhone] = useState("");
   const [foodVendorName, setFoodVendorName] = useState("");
   // Active programs
   const [hasApplePay, setHasApplePay] = useState(false);
@@ -135,8 +136,9 @@ export function EditOrgNodeModal({
       setPlateIqEmail(s.plate_iq_email ?? "");
       setSoarCompanyName(s.soar_company_name ?? "");
       setAcquisitionDate(s.acquisition_date ?? "");
-      setPosSystem(s.pos_system ?? "");
+      setPosProvider(s.pos_provider ?? "");
       setSecurityVendor(s.security_vendor ?? "");
+      setSecurityVendorPhone(s.security_vendor_phone ?? "");
       setFoodVendorName(s.food_vendor_name ?? "");
       setHasApplePay(!!s.has_apple_pay);
       setHasOrderAhead(!!s.has_order_ahead);
@@ -252,8 +254,9 @@ export function EditOrgNodeModal({
       // Empty string clears the column; the backend's "date" validator
       // accepts null but not "" so coalesce here.
       updates.acquisition_date = acquisitionDate.trim() || null;
-      updates.pos_system = posSystem.trim() || null;
+      updates.pos_provider = posProvider.trim() || null;
       updates.security_vendor = securityVendor.trim() || null;
+      updates.security_vendor_phone = securityVendorPhone.trim() || null;
       updates.food_vendor_name = foodVendorName.trim() || null;
       updates.has_apple_pay = hasApplePay;
       updates.has_order_ahead = hasOrderAhead;
@@ -474,8 +477,8 @@ export function EditOrgNodeModal({
                 <Label htmlFor="org-pos">POS</Label>
                 <Input
                   id="org-pos"
-                  value={posSystem}
-                  onChange={(e) => setPosSystem(e.target.value)}
+                  value={posProvider}
+                  onChange={(e) => setPosProvider(e.target.value)}
                   disabled={!isAdmin}
                 />
               </div>
@@ -494,6 +497,17 @@ export function EditOrgNodeModal({
                   id="org-security-vendor"
                   value={securityVendor}
                   onChange={(e) => setSecurityVendor(e.target.value)}
+                  disabled={!isAdmin}
+                />
+              </div>
+              <div>
+                <Label htmlFor="org-security-vendor-phone">Security Vendor Phone</Label>
+                <Input
+                  id="org-security-vendor-phone"
+                  type="tel"
+                  inputMode="tel"
+                  value={securityVendorPhone}
+                  onChange={(e) => setSecurityVendorPhone(e.target.value)}
                   disabled={!isAdmin}
                 />
               </div>

@@ -202,7 +202,7 @@ async function getMyTree(supa, user) {
             "plate_iq_email, soar_company_name, food_vendor_name, " +
             "food_vendor_contact_name, food_vendor_contact_phone, " +
             "food_vendor_contact_email, food_vendor_account_number, " +
-            "acquisition_date, pos_system, security_vendor, " +
+            "acquisition_date, pos_provider, security_vendor, security_vendor_phone, " +
             "has_apple_pay, has_order_ahead, has_outdoor_seating, " +
             "has_drive_thru, has_clearance_bar, drive_thru_lanes, drive_thru_type, " +
             "public_restroom_count, patio_pop_menu_count, patio_pop_stall_numbers, " +

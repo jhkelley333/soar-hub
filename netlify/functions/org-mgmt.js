@@ -126,7 +126,7 @@ async function buildTree(supa) {
       .select(
         "id, number, name, phone, email, address, city, state, zip, district_id, is_active, " +
         "plate_iq_email, soar_company_name, " +
-        "acquisition_date, pos_system, security_vendor, food_vendor_name, " +
+        "acquisition_date, pos_provider, security_vendor, security_vendor_phone, food_vendor_name, " +
         "has_apple_pay, has_order_ahead, has_outdoor_seating, has_drive_thru, has_clearance_bar, " +
         "drive_thru_lanes, drive_thru_type, public_restroom_count, " +
         "patio_pop_menu_count, patio_pop_stall_numbers, " +
@@ -186,8 +186,9 @@ async function buildTree(supa) {
       plate_iq_email: s.plate_iq_email,
       soar_company_name: s.soar_company_name,
       acquisition_date: s.acquisition_date,
-      pos_system: s.pos_system,
+      pos_provider: s.pos_provider,
       security_vendor: s.security_vendor,
+      security_vendor_phone: s.security_vendor_phone,
       food_vendor_name: s.food_vendor_name,
       has_apple_pay: s.has_apple_pay,
       has_order_ahead: s.has_order_ahead,
@@ -302,7 +303,7 @@ const EDITABLE_FIELDS = {
     "phone", "email", "address", "city", "state", "zip",
     "is_active",
     "plate_iq_email", "soar_company_name",
-    "acquisition_date", "pos_system", "security_vendor", "food_vendor_name",
+    "acquisition_date", "pos_provider", "security_vendor", "security_vendor_phone", "food_vendor_name",
     "has_apple_pay", "has_order_ahead", "has_outdoor_seating",
     "has_drive_thru", "has_clearance_bar",
     "drive_thru_lanes", "drive_thru_type",
@@ -337,8 +338,9 @@ const FIELD_RULES = {
   // Acquisition / vendor metadata. Strict ISO date so legacy M/D/Y input
   // doesn't get coerced into the wrong day by the PG date parser.
   acquisition_date:  { type: "date",   nullable: true },
-  pos_system:        { type: "string", maxLen: 100, trim: true, nullable: true },
+  pos_provider:      { type: "string", maxLen: 100, trim: true, nullable: true },
   security_vendor:   { type: "string", maxLen: 100, trim: true, nullable: true },
+  security_vendor_phone: { type: "string", maxLen: 50, trim: true, nullable: true },
   food_vendor_name:  { type: "string", maxLen: 200, trim: true, nullable: true },
   // Active programs (booleans):
   has_apple_pay:        { type: "boolean" },
@@ -1343,8 +1345,9 @@ async function orgBulkValidate(supa, rows) {
       plate_iq_email:            bulkCell(row, "plate_iq_email"),
       soar_company_name:         bulkCell(row, "soar_company_name"),
       acquisition_date:          bulkDateCell(row, "acquisition_date", errors),
-      pos_system:                bulkCell(row, "pos_system"),
+      pos_provider:              bulkCell(row, "pos_provider"),
       security_vendor:           bulkCell(row, "security_vendor"),
+      security_vendor_phone:     bulkCell(row, "security_vendor_phone"),
       food_vendor_name:          bulkCell(row, "food_vendor_name"),
       has_apple_pay:             bulkBoolCell(row, "has_apple_pay"),
       has_order_ahead:           bulkBoolCell(row, "has_order_ahead"),
@@ -1462,7 +1465,7 @@ async function orgBulkImport(supa, user, body) {
     const STORE_FIELDS = [
       "phone", "email", "address", "city", "state", "zip",
       "plate_iq_email", "soar_company_name",
-      "acquisition_date", "pos_system", "security_vendor", "food_vendor_name",
+      "acquisition_date", "pos_provider", "security_vendor", "security_vendor_phone", "food_vendor_name",
       "has_apple_pay", "has_order_ahead", "has_outdoor_seating",
       "has_drive_thru", "has_clearance_bar",
       "drive_thru_lanes", "drive_thru_type",
