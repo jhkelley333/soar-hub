@@ -94,6 +94,7 @@ export function EditOrgNodeModal({
   const [acquisitionDate, setAcquisitionDate] = useState("");
   const [posProvider, setPosProvider] = useState("");
   const [securityVendor, setSecurityVendor] = useState("");
+  const [securityVendorPhone, setSecurityVendorPhone] = useState("");
   const [foodVendorName, setFoodVendorName] = useState("");
   // Active programs
   const [hasApplePay, setHasApplePay] = useState(false);
@@ -137,6 +138,7 @@ export function EditOrgNodeModal({
       setAcquisitionDate(s.acquisition_date ?? "");
       setPosProvider(s.pos_provider ?? "");
       setSecurityVendor(s.security_vendor ?? "");
+      setSecurityVendorPhone(s.security_vendor_phone ?? "");
       setFoodVendorName(s.food_vendor_name ?? "");
       setHasApplePay(!!s.has_apple_pay);
       setHasOrderAhead(!!s.has_order_ahead);
@@ -254,6 +256,7 @@ export function EditOrgNodeModal({
       updates.acquisition_date = acquisitionDate.trim() || null;
       updates.pos_provider = posProvider.trim() || null;
       updates.security_vendor = securityVendor.trim() || null;
+      updates.security_vendor_phone = securityVendorPhone.trim() || null;
       updates.food_vendor_name = foodVendorName.trim() || null;
       updates.has_apple_pay = hasApplePay;
       updates.has_order_ahead = hasOrderAhead;
@@ -494,6 +497,17 @@ export function EditOrgNodeModal({
                   id="org-security-vendor"
                   value={securityVendor}
                   onChange={(e) => setSecurityVendor(e.target.value)}
+                  disabled={!isAdmin}
+                />
+              </div>
+              <div>
+                <Label htmlFor="org-security-vendor-phone">Security Vendor Phone</Label>
+                <Input
+                  id="org-security-vendor-phone"
+                  type="tel"
+                  inputMode="tel"
+                  value={securityVendorPhone}
+                  onChange={(e) => setSecurityVendorPhone(e.target.value)}
                   disabled={!isAdmin}
                 />
               </div>

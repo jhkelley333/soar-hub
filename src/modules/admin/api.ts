@@ -34,6 +34,7 @@ export interface OrgStore {
   acquisition_date: string | null;
   pos_provider: string | null;
   security_vendor: string | null;
+  security_vendor_phone: string | null;
   food_vendor_name: string | null;
   // Active programs
   has_apple_pay: boolean;
@@ -179,6 +180,7 @@ interface CreateStoreInput extends BaseFields {
   acquisition_date?: string | null;
   pos_provider?: string | null;
   security_vendor?: string | null;
+  security_vendor_phone?: string | null;
   food_vendor_name?: string | null;
   has_apple_pay?: boolean;
   has_order_ahead?: boolean;
@@ -224,6 +226,7 @@ export interface UpdateOrgNodeInput {
   acquisition_date?: string | null;
   pos_provider?: string | null;
   security_vendor?: string | null;
+  security_vendor_phone?: string | null;
   food_vendor_name?: string | null;
   has_apple_pay?: boolean;
   has_order_ahead?: boolean;
@@ -329,6 +332,7 @@ export interface OrgBulkRowInput {
   acquisition_date?: string;
   pos_provider?: string;
   security_vendor?: string;
+  security_vendor_phone?: string;
   food_vendor_name?: string;
   has_apple_pay?: string;
   has_order_ahead?: string;
@@ -371,6 +375,7 @@ export interface OrgBulkRowAnnotated {
   acquisition_date?: string | null;
   pos_provider?: string | null;
   security_vendor?: string | null;
+  security_vendor_phone?: string | null;
   food_vendor_name?: string | null;
   has_apple_pay?: boolean | null;
   has_order_ahead?: boolean | null;

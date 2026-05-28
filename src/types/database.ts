@@ -72,6 +72,7 @@ export interface Store {
   acquisition_date: string | null;
   pos_provider: string | null;
   security_vendor: string | null;
+  security_vendor_phone: string | null;
   food_vendor_name: string | null;
   food_vendor_contact_name: string | null;
   food_vendor_contact_phone: string | null;
