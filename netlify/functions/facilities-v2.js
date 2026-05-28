@@ -226,6 +226,73 @@ async function visibleScopeKeysForStore(supabase, storeNumber) {
   return keys;
 }
 
+// Resolve the set of scope keys visible to a CALLER based on their
+// user_scopes — the directory-level analogue of
+// visibleScopeKeysForStore. Used to filter the vendor directory so an
+// Area-06 manager doesn't see Area-07 vendors. Returns null for the
+// national tier (admin/coo/vp = see every vendor, no filtering).
+//
+// Walks the hierarchy both ways: DOWN from each scope (region → area →
+// district → store) so a region/area manager sees vendors scoped to
+// stores inside it, and UP (store → district → area → region) so a
+// store/area manager still sees region-wide vendors that cover them.
+async function visibleScopeKeysForUser(supabase, profile) {
+  const role = String(profile.role || "").toLowerCase();
+  if (["admin", "coo", "vp"].includes(role)) return null;
+
+  const { data: scopes } = await supabase
+    .from("user_scopes")
+    .select("scope_type, scope_id")
+    .eq("user_id", profile.id);
+  if (!scopes?.length) return new Set(["national"]);
+
+  const regionIds = new Set();
+  const areaIds = new Set();
+  const districtIds = new Set();
+  const storeIds = new Set();
+  for (const s of scopes) {
+    if (s.scope_type === "region") regionIds.add(s.scope_id);
+    else if (s.scope_type === "area") areaIds.add(s.scope_id);
+    else if (s.scope_type === "district") districtIds.add(s.scope_id);
+    else if (s.scope_type === "store") storeIds.add(s.scope_id);
+  }
+
+  // Downward expansion.
+  if (regionIds.size) {
+    const { data } = await supabase.from("areas").select("id").in("region_id", [...regionIds]);
+    for (const a of data || []) areaIds.add(a.id);
+  }
+  if (areaIds.size) {
+    const { data } = await supabase.from("districts").select("id").in("area_id", [...areaIds]);
+    for (const d of data || []) districtIds.add(d.id);
+  }
+  if (districtIds.size) {
+    const { data } = await supabase.from("stores").select("id").in("district_id", [...districtIds]);
+    for (const s of data || []) storeIds.add(s.id);
+  }
+
+  // Upward expansion (so region/area-wide vendors stay visible).
+  if (storeIds.size) {
+    const { data } = await supabase.from("stores").select("district_id").in("id", [...storeIds]);
+    for (const s of data || []) if (s.district_id) districtIds.add(s.district_id);
+  }
+  if (districtIds.size) {
+    const { data } = await supabase.from("districts").select("area_id").in("id", [...districtIds]);
+    for (const d of data || []) if (d.area_id) areaIds.add(d.area_id);
+  }
+  if (areaIds.size) {
+    const { data } = await supabase.from("areas").select("region_id").in("id", [...areaIds]);
+    for (const a of data || []) if (a.region_id) regionIds.add(a.region_id);
+  }
+
+  const keys = new Set(["national"]);
+  for (const id of regionIds)   keys.add(`region:${id}`);
+  for (const id of areaIds)     keys.add(`area:${id}`);
+  for (const id of districtIds) keys.add(`district:${id}`);
+  for (const id of storeIds)    keys.add(`store:${id}`);
+  return keys;
+}
+
 // True if any of the vendor's scope rows matches a key in
 // allowedSet. Zero rows behavior depends on the
 // wo2_strict_vendor_scopes feature flag: strict=true → invisible,
@@ -2355,6 +2422,18 @@ export const handler = async (event) => {
           const strict = await isStrictVendorScopes(supabase);
           visibleVendors = (vendors || []).filter((v) =>
             isVendorVisibleAtStore(v.vendor_scopes || [], allowedSet, strict),
+          );
+        }
+      } else {
+        // No specific store → this is the vendor directory (Vendors
+        // tab). Scope it to the caller's own user_scopes so e.g. an
+        // Area-06 manager doesn't see Area-07 vendors. National tier
+        // returns null = unfiltered.
+        const callerKeys = await visibleScopeKeysForUser(supabase, profile);
+        if (callerKeys !== null) {
+          const strict = await isStrictVendorScopes(supabase);
+          visibleVendors = (vendors || []).filter((v) =>
+            isVendorVisibleAtStore(v.vendor_scopes || [], callerKeys, strict),
           );
         }
       }
