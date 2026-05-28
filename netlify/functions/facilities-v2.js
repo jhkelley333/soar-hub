@@ -404,7 +404,10 @@ function emptyAlertGroups() {
 
 async function getStoresForUser(supabase, profile) {
   const role = String(profile.role || "").toLowerCase();
-  if (["admin", "coo", "vp", "sdo", "rvp"].includes(role)) {
+  // National tier sees every store. RVP/SDO (and DO/GM) are regional or
+  // smaller and MUST be scoped to their user_scopes rows — they were
+  // previously lumped in here, which let an SDO see every work order.
+  if (["admin", "coo", "vp"].includes(role)) {
     return { all: true, stores: [] };
   }
   const { data: scopes } = await supabase
@@ -639,9 +642,10 @@ export const handler = async (event) => {
         return respond(200, { ok: true, mode: "list", stores });
       }
 
-      // Non-single roles: admin/coo/vp/sdo/rvp see every active store
-      // (existing v2 contract). DO falls through user_visible_stores.
-      if (["admin", "coo", "vp", "sdo", "rvp"].includes(role)) {
+      // Non-single roles: only the national tier (admin/coo/vp) can file
+      // against every active store. RVP/SDO/DO fall through to the scoped
+      // user_visible_stores list below.
+      if (["admin", "coo", "vp"].includes(role)) {
         const { data: rows, error } = await supabase
           .from("stores")
           .select("id, number, name")
