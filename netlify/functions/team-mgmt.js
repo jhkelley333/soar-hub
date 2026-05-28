@@ -947,6 +947,69 @@ async function sendReset(supa, manager, body) {
 }
 
 // ----------------------------------------------------------------------------
+// delete-user — admin-only PERMANENT delete
+// ----------------------------------------------------------------------------
+//
+// Hard-deletes the auth user, which cascades to profiles → user_scopes.
+// The deletion is logged to team_changes FIRST (while target_id is still a
+// valid FK); the row survives the cascade because migration 0107 made
+// target_id ON DELETE SET NULL. We snapshot email / name / role / scopes
+// into before{} so the org-wide history feed stays meaningful once the
+// profile is gone.
+//
+// Users referenced by ON DELETE RESTRICT FKs elsewhere (e.g. they submitted
+// a PAF) can't be hard-deleted — Supabase returns a FK error and we surface
+// it; those should be deactivated instead.
+
+async function deleteUser(supa, manager, body) {
+  if (manager.role !== "admin") {
+    return { error: "Only Admins can permanently delete users.", status: 403 };
+  }
+  const target_id = body?.user_id;
+  if (!target_id) return { error: "user_id is required.", status: 400 };
+  if (target_id === manager.id) {
+    return { error: "You can't delete your own account.", status: 403 };
+  }
+
+  const { data: target } = await supa
+    .from("profiles")
+    .select("id, email, full_name, role")
+    .eq("id", target_id)
+    .maybeSingle();
+  if (!target) return { error: "User not found.", status: 404 };
+
+  const { data: scopes } = await supa
+    .from("user_scopes")
+    .select("scope_type, scope_id")
+    .eq("user_id", target_id);
+
+  // Log first, while the target FK is still valid. SET NULL preserves the
+  // row; before{} keeps it identifiable after the profile is gone.
+  await logChange(supa, {
+    actor_id: manager.id,
+    target_id,
+    action: "delete",
+    before: {
+      email: target.email,
+      full_name: target.full_name ?? null,
+      role: target.role,
+      scopes: scopes ?? [],
+    },
+    after: null,
+  });
+
+  const { error: delErr } = await supa.auth.admin.deleteUser(target_id);
+  if (delErr) {
+    const msg = /foreign key|violates|constraint/i.test(delErr.message || "")
+      ? "This user has historical records (e.g. submitted forms) and can't be permanently deleted. Deactivate them instead."
+      : `Delete failed: ${delErr.message}`;
+    return { error: msg, status: 409 };
+  }
+
+  return { ok: true };
+}
+
+// ----------------------------------------------------------------------------
 // history — recent audit entries for a user (or any manageable user)
 // ----------------------------------------------------------------------------
 //
@@ -1202,6 +1265,14 @@ async function bulkImport(supa, manager, body) {
         continue;
       }
 
+      // Keep primary_store_id in sync with the scope, same as addUser —
+      // gm / shift_manager at store scope → that store; otherwise null.
+      // Without this, bulk-imported GMs/SMs get a scope but a null primary
+      // store, which breaks the GM home-store features.
+      const bulkPrimary =
+        (r.role === "gm" || r.role === "shift_manager") && r.scope_type === "store"
+          ? r.scope_id
+          : null;
       const { error: profileErr } = await supa
         .from("profiles")
         .update({
@@ -1209,6 +1280,7 @@ async function bulkImport(supa, manager, body) {
           phone: r.phone,
           role: r.role,
           is_active: true,
+          primary_store_id: bulkPrimary,
         })
         .eq("id", newUserId);
       if (profileErr) {
@@ -1393,8 +1465,20 @@ export const handler = async (event) => {
     if (event.httpMethod === "POST") {
       const body = event.body ? JSON.parse(event.body) : {};
       // Roster-affecting mutations: re-sync managed group chats on success.
-      if (action === "add-user" || action === "update-user" || action === "bulk-import") {
-        const fn = action === "add-user" ? addUser : action === "update-user" ? updateUser : bulkImport;
+      if (
+        action === "add-user" ||
+        action === "update-user" ||
+        action === "bulk-import" ||
+        action === "delete-user"
+      ) {
+        const fn =
+          action === "add-user"
+            ? addUser
+            : action === "update-user"
+              ? updateUser
+              : action === "bulk-import"
+                ? bulkImport
+                : deleteUser;
         const result = await fn(supa, manager, body);
         if (!result?.error) await syncManagedGroups(supa, manager.id);
         return unwrap(result);
