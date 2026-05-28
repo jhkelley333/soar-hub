@@ -92,7 +92,7 @@ export function EditOrgNodeModal({
   const [plateIqEmail, setPlateIqEmail] = useState("");
   const [soarCompanyName, setSoarCompanyName] = useState("");
   const [acquisitionDate, setAcquisitionDate] = useState("");
-  const [posSystem, setPosSystem] = useState("");
+  const [posProvider, setPosProvider] = useState("");
   const [securityVendor, setSecurityVendor] = useState("");
   const [foodVendorName, setFoodVendorName] = useState("");
   // Active programs
@@ -135,7 +135,7 @@ export function EditOrgNodeModal({
       setPlateIqEmail(s.plate_iq_email ?? "");
       setSoarCompanyName(s.soar_company_name ?? "");
       setAcquisitionDate(s.acquisition_date ?? "");
-      setPosSystem(s.pos_system ?? "");
+      setPosProvider(s.pos_provider ?? "");
       setSecurityVendor(s.security_vendor ?? "");
       setFoodVendorName(s.food_vendor_name ?? "");
       setHasApplePay(!!s.has_apple_pay);
@@ -252,7 +252,7 @@ export function EditOrgNodeModal({
       // Empty string clears the column; the backend's "date" validator
       // accepts null but not "" so coalesce here.
       updates.acquisition_date = acquisitionDate.trim() || null;
-      updates.pos_system = posSystem.trim() || null;
+      updates.pos_provider = posProvider.trim() || null;
       updates.security_vendor = securityVendor.trim() || null;
       updates.food_vendor_name = foodVendorName.trim() || null;
       updates.has_apple_pay = hasApplePay;
@@ -474,8 +474,8 @@ export function EditOrgNodeModal({
                 <Label htmlFor="org-pos">POS</Label>
                 <Input
                   id="org-pos"
-                  value={posSystem}
-                  onChange={(e) => setPosSystem(e.target.value)}
+                  value={posProvider}
+                  onChange={(e) => setPosProvider(e.target.value)}
                   disabled={!isAdmin}
                 />
               </div>

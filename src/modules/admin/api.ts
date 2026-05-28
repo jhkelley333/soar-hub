@@ -32,7 +32,7 @@ export interface OrgStore {
   plate_iq_email: string | null;
   soar_company_name: string | null;
   acquisition_date: string | null;
-  pos_system: string | null;
+  pos_provider: string | null;
   security_vendor: string | null;
   food_vendor_name: string | null;
   // Active programs
@@ -177,7 +177,7 @@ interface CreateStoreInput extends BaseFields {
   plate_iq_email?: string | null;
   soar_company_name?: string | null;
   acquisition_date?: string | null;
-  pos_system?: string | null;
+  pos_provider?: string | null;
   security_vendor?: string | null;
   food_vendor_name?: string | null;
   has_apple_pay?: boolean;
@@ -222,7 +222,7 @@ export interface UpdateOrgNodeInput {
   plate_iq_email?: string | null;
   soar_company_name?: string | null;
   acquisition_date?: string | null;
-  pos_system?: string | null;
+  pos_provider?: string | null;
   security_vendor?: string | null;
   food_vendor_name?: string | null;
   has_apple_pay?: boolean;
@@ -327,7 +327,7 @@ export interface OrgBulkRowInput {
   plate_iq_email?: string;
   soar_company_name?: string;
   acquisition_date?: string;
-  pos_system?: string;
+  pos_provider?: string;
   security_vendor?: string;
   food_vendor_name?: string;
   has_apple_pay?: string;
@@ -369,7 +369,7 @@ export interface OrgBulkRowAnnotated {
   plate_iq_email?: string | null;
   soar_company_name?: string | null;
   acquisition_date?: string | null;
-  pos_system?: string | null;
+  pos_provider?: string | null;
   security_vendor?: string | null;
   food_vendor_name?: string | null;
   has_apple_pay?: boolean | null;
