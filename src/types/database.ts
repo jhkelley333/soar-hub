@@ -69,6 +69,9 @@ export interface Store {
   is_active: boolean;
   plate_iq_email: string | null;
   soar_company_name: string | null;
+  acquisition_date: string | null;
+  pos_system: string | null;
+  security_vendor: string | null;
   food_vendor_name: string | null;
   food_vendor_contact_name: string | null;
   food_vendor_contact_phone: string | null;

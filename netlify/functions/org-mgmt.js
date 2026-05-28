@@ -126,6 +126,7 @@ async function buildTree(supa) {
       .select(
         "id, number, name, phone, email, address, city, state, zip, district_id, is_active, " +
         "plate_iq_email, soar_company_name, " +
+        "acquisition_date, pos_system, security_vendor, food_vendor_name, " +
         "has_apple_pay, has_order_ahead, has_outdoor_seating, has_drive_thru, has_clearance_bar, " +
         "drive_thru_lanes, drive_thru_type, public_restroom_count, " +
         "patio_pop_menu_count, patio_pop_stall_numbers, " +
@@ -184,6 +185,10 @@ async function buildTree(supa) {
       is_active: s.is_active,
       plate_iq_email: s.plate_iq_email,
       soar_company_name: s.soar_company_name,
+      acquisition_date: s.acquisition_date,
+      pos_system: s.pos_system,
+      security_vendor: s.security_vendor,
+      food_vendor_name: s.food_vendor_name,
       has_apple_pay: s.has_apple_pay,
       has_order_ahead: s.has_order_ahead,
       has_outdoor_seating: s.has_outdoor_seating,
@@ -297,6 +302,7 @@ const EDITABLE_FIELDS = {
     "phone", "email", "address", "city", "state", "zip",
     "is_active",
     "plate_iq_email", "soar_company_name",
+    "acquisition_date", "pos_system", "security_vendor", "food_vendor_name",
     "has_apple_pay", "has_order_ahead", "has_outdoor_seating",
     "has_drive_thru", "has_clearance_bar",
     "drive_thru_lanes", "drive_thru_type",
@@ -328,6 +334,12 @@ const FIELD_RULES = {
   // Operations / vendor (admin-only, edited via Org admin or bulk import):
   plate_iq_email:    { type: "string", maxLen: 200, trim: true, nullable: true },
   soar_company_name: { type: "string", maxLen: 200, trim: true, nullable: true },
+  // Acquisition / vendor metadata. Strict ISO date so legacy M/D/Y input
+  // doesn't get coerced into the wrong day by the PG date parser.
+  acquisition_date:  { type: "date",   nullable: true },
+  pos_system:        { type: "string", maxLen: 100, trim: true, nullable: true },
+  security_vendor:   { type: "string", maxLen: 100, trim: true, nullable: true },
+  food_vendor_name:  { type: "string", maxLen: 200, trim: true, nullable: true },
   // Active programs (booleans):
   has_apple_pay:        { type: "boolean" },
   has_order_ahead:      { type: "boolean" },
@@ -427,6 +439,22 @@ function validateField(key, raw) {
       return { error: `"${key}" must be one of: ${rule.values.join(", ")}.` };
     }
     return { value: n };
+  }
+
+  if (rule.type === "date") {
+    // Strict YYYY-MM-DD only. Anything else (M/D/Y, MM-DD-YY) is
+    // rejected because PG's date parser will silently accept some of
+    // those under the wrong DateStyle and store the wrong day.
+    if (typeof raw !== "string") return { error: `"${key}" must be a date string.` };
+    const s = raw.trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+      return { error: `"${key}" must be a date in YYYY-MM-DD format.` };
+    }
+    const d = new Date(`${s}T00:00:00Z`);
+    if (Number.isNaN(d.getTime())) return { error: `"${key}" is not a valid date.` };
+    // Re-format to canonical YYYY-MM-DD so a value like "2026-2-3"
+    // (which the regex above already rejects) can't sneak through.
+    return { value: s };
   }
 
   if (rule.type === "stringArray") {
@@ -1160,6 +1188,27 @@ function bulkIntCell(row, key) {
   return Number.isFinite(n) ? n : undefined;
 }
 
+// Date cell with strict YYYY-MM-DD parsing. Pushes a per-row error on
+// any other format so the bulk preview surfaces the bad cell to the
+// admin instead of relying on PG's locale-sensitive date parser at
+// insert time.
+function bulkDateCell(row, key, errors) {
+  const raw = bulkCell(row, key);
+  if (raw === undefined) return undefined;
+  if (raw === null) return null;
+  const s = String(raw).trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    errors.push(`"${key}" must be YYYY-MM-DD (got "${s}").`);
+    return undefined;
+  }
+  const d = new Date(`${s}T00:00:00Z`);
+  if (Number.isNaN(d.getTime())) {
+    errors.push(`"${key}" is not a valid date (got "${s}").`);
+    return undefined;
+  }
+  return s;
+}
+
 // JSON-array cell from a comma-separated string. SKIP-IF-EMPTY.
 function bulkArrayCell(row, key) {
   const raw = bulkCell(row, key);
@@ -1293,6 +1342,10 @@ async function orgBulkValidate(supa, rows) {
       zip:                       bulkCell(row, "zip"),
       plate_iq_email:            bulkCell(row, "plate_iq_email"),
       soar_company_name:         bulkCell(row, "soar_company_name"),
+      acquisition_date:          bulkDateCell(row, "acquisition_date", errors),
+      pos_system:                bulkCell(row, "pos_system"),
+      security_vendor:           bulkCell(row, "security_vendor"),
+      food_vendor_name:          bulkCell(row, "food_vendor_name"),
       has_apple_pay:             bulkBoolCell(row, "has_apple_pay"),
       has_order_ahead:           bulkBoolCell(row, "has_order_ahead"),
       has_outdoor_seating:       bulkBoolCell(row, "has_outdoor_seating"),
@@ -1409,6 +1462,7 @@ async function orgBulkImport(supa, user, body) {
     const STORE_FIELDS = [
       "phone", "email", "address", "city", "state", "zip",
       "plate_iq_email", "soar_company_name",
+      "acquisition_date", "pos_system", "security_vendor", "food_vendor_name",
       "has_apple_pay", "has_order_ahead", "has_outdoor_seating",
       "has_drive_thru", "has_clearance_bar",
       "drive_thru_lanes", "drive_thru_type",

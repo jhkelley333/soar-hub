@@ -31,6 +31,10 @@ export interface OrgStore {
   // Operations / vendor
   plate_iq_email: string | null;
   soar_company_name: string | null;
+  acquisition_date: string | null;
+  pos_system: string | null;
+  security_vendor: string | null;
+  food_vendor_name: string | null;
   // Active programs
   has_apple_pay: boolean;
   has_order_ahead: boolean;
@@ -172,6 +176,10 @@ interface CreateStoreInput extends BaseFields {
   zip?: string | null;
   plate_iq_email?: string | null;
   soar_company_name?: string | null;
+  acquisition_date?: string | null;
+  pos_system?: string | null;
+  security_vendor?: string | null;
+  food_vendor_name?: string | null;
   has_apple_pay?: boolean;
   has_order_ahead?: boolean;
   has_outdoor_seating?: boolean;
@@ -213,6 +221,10 @@ export interface UpdateOrgNodeInput {
   is_active?: boolean;
   plate_iq_email?: string | null;
   soar_company_name?: string | null;
+  acquisition_date?: string | null;
+  pos_system?: string | null;
+  security_vendor?: string | null;
+  food_vendor_name?: string | null;
   has_apple_pay?: boolean;
   has_order_ahead?: boolean;
   has_outdoor_seating?: boolean;
@@ -314,6 +326,10 @@ export interface OrgBulkRowInput {
   zip?: string;
   plate_iq_email?: string;
   soar_company_name?: string;
+  acquisition_date?: string;
+  pos_system?: string;
+  security_vendor?: string;
+  food_vendor_name?: string;
   has_apple_pay?: string;
   has_order_ahead?: string;
   has_outdoor_seating?: string;
@@ -352,6 +368,10 @@ export interface OrgBulkRowAnnotated {
   zip?: string | null;
   plate_iq_email?: string | null;
   soar_company_name?: string | null;
+  acquisition_date?: string | null;
+  pos_system?: string | null;
+  security_vendor?: string | null;
+  food_vendor_name?: string | null;
   has_apple_pay?: boolean | null;
   has_order_ahead?: boolean | null;
   has_outdoor_seating?: boolean | null;
