@@ -309,6 +309,11 @@ function MemberCard({
             {member.is_active && !member.email_confirmed_at && (
               <Badge tone="warning">Pending</Badge>
             )}
+            {member.is_active &&
+              member.scopes.length === 0 &&
+              !["vp", "coo", "admin", "payroll"].includes(member.role) && (
+                <Badge tone="warning">Unassigned</Badge>
+              )}
           </div>
 
           <div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-zinc-600">

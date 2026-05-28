@@ -11,6 +11,7 @@ import {
   fetchHistory,
   fetchManageableRoles,
   fetchScopeOptions,
+  permDeleteUser,
   sendPasswordReset,
   updateUser,
   type AuditEntry,
@@ -189,6 +190,16 @@ export function EditMemberModal({
     onError: (e: unknown) => setError((e as Error)?.message ?? "Send reset failed."),
   });
 
+  const permDelete = useMutation({
+    mutationFn: (id: string) => permDeleteUser(id),
+    onSuccess: () => {
+      toast.push("User permanently deleted.", "success");
+      qc.invalidateQueries({ queryKey: ["my-team"] });
+      onClose();
+    },
+    onError: (e: unknown) => setError((e as Error)?.message ?? "Delete failed."),
+  });
+
   if (!member) return null;
 
   function submitEdits() {
@@ -248,13 +259,27 @@ export function EditMemberModal({
     reactivate.mutate(member.id);
   }
 
+  function onPermDelete() {
+    if (!member) return;
+    const label = member.full_name || member.email;
+    if (
+      !window.confirm(
+        `Permanently delete ${label}?\n\nThis erases their account and sign-in for good — it cannot be undone. (A record of the deletion is kept in history.) To keep their records, use Deactivate instead.`
+      )
+    ) {
+      return;
+    }
+    permDelete.mutate(member.id);
+  }
+
   const loading = rolesQuery.isLoading || scopeQuery.isLoading;
   const isAdmin = managerRole === "admin";
   const anyMutationPending =
     update.isPending ||
     deactivate.isPending ||
     reactivate.isPending ||
-    reset.isPending;
+    reset.isPending ||
+    permDelete.isPending;
 
   return (
     <Modal
@@ -433,6 +458,23 @@ export function EditMemberModal({
             )}
           </div>
 
+          {/* Permanent delete — admin only. Destructive + irreversible. */}
+          {isAdmin && (
+            <div className="border-t border-red-100 pt-4">
+              <Button
+                variant="danger"
+                onClick={onPermDelete}
+                disabled={anyMutationPending}
+              >
+                {permDelete.isPending ? "Deleting…" : "Permanently delete"}
+              </Button>
+              <p className="mt-1 text-xs text-zinc-500">
+                Erases the account for good. Prefer Deactivate to keep their
+                records — deletion is blocked for users with historical data.
+              </p>
+            </div>
+          )}
+
           <ActivitySection memberId={member.id} />
         </div>
       )}
@@ -519,10 +561,20 @@ function actionLabel(action: AuditEntry["action"]): string {
       return "Deactivated";
     case "reactivate":
       return "Reactivated";
+    case "delete":
+      return "Permanently deleted";
   }
 }
 
 function DiffSummary({ entry }: { entry: AuditEntry }) {
+  if (entry.action === "delete" && entry.before) {
+    const b = entry.before as Record<string, unknown>;
+    const bits: string[] = [];
+    if (b.email) bits.push(String(b.email));
+    if (b.role) bits.push(`role: ${b.role}`);
+    if (!bits.length) return null;
+    return <div className="mt-1 text-zinc-500">{bits.join(" · ")}</div>;
+  }
   if (entry.action === "create" && entry.after) {
     const a = entry.after as Record<string, unknown>;
     const bits: string[] = [];

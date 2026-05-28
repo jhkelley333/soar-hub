@@ -182,7 +182,12 @@ export function updateUser(input: UpdateUserInput): Promise<{ ok: true }> {
 // History (audit log)
 // ----------------------------------------------------------------------------
 
-export type AuditAction = "create" | "update" | "deactivate" | "reactivate";
+export type AuditAction =
+  | "create"
+  | "update"
+  | "deactivate"
+  | "reactivate"
+  | "delete";
 
 export interface AuditEntry {
   id: string;
@@ -212,6 +217,18 @@ export function fetchHistory(userId: string, limit = 20): Promise<HistoryRespons
 
 export function sendPasswordReset(userId: string): Promise<{ ok: true; sent_to: string }> {
   return request<{ ok: true; sent_to: string }>(`${FN}?action=send-reset`, {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId }),
+  });
+}
+
+// ----------------------------------------------------------------------------
+// Permanent delete (admin only) — hard-deletes the auth user. The deletion
+// is logged to history first; see team-mgmt.js deleteUser + migration 0107.
+// ----------------------------------------------------------------------------
+
+export function permDeleteUser(userId: string): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`${FN}?action=delete-user`, {
     method: "POST",
     body: JSON.stringify({ user_id: userId }),
   });
