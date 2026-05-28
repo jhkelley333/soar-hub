@@ -24,6 +24,7 @@ import {
 //   • drive_thru_type: single_pole_two_menus | split_housing
 //   • third_party_delivery: comma-list of provider keys, e.g.
 //     "doordash,ubereats,grubhub"
+//   • acquisition_date: strict YYYY-MM-DD; any other format errors the row
 const TEMPLATE_HEADERS = [
   "kind",
   "code",
@@ -37,6 +38,10 @@ const TEMPLATE_HEADERS = [
   "zip",
   "plate_iq_email",
   "soar_company_name",
+  "acquisition_date",
+  "pos_system",
+  "security_vendor",
+  "food_vendor_name",
   "has_apple_pay",
   "has_order_ahead",
   "has_outdoor_seating",
@@ -102,6 +107,10 @@ const TEMPLATE_ROWS: Record<string, string>[] = [
     zip: "80202",
     plate_iq_email: "plateiq+9999@example.com",
     soar_company_name: "Soar Holdings LLC",
+    acquisition_date: "2024-06-15",
+    pos_system: "Toast",
+    security_vendor: "ADT",
+    food_vendor_name: "US Foods",
     has_apple_pay: "true",
     has_order_ahead: "true",
     has_outdoor_seating: "false",

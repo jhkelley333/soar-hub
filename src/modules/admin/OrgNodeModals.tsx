@@ -91,6 +91,10 @@ export function EditOrgNodeModal({
   // Operations / vendor (admin-only)
   const [plateIqEmail, setPlateIqEmail] = useState("");
   const [soarCompanyName, setSoarCompanyName] = useState("");
+  const [acquisitionDate, setAcquisitionDate] = useState("");
+  const [posSystem, setPosSystem] = useState("");
+  const [securityVendor, setSecurityVendor] = useState("");
+  const [foodVendorName, setFoodVendorName] = useState("");
   // Active programs
   const [hasApplePay, setHasApplePay] = useState(false);
   const [hasOrderAhead, setHasOrderAhead] = useState(false);
@@ -130,6 +134,10 @@ export function EditOrgNodeModal({
       setParentId(target.district_id);
       setPlateIqEmail(s.plate_iq_email ?? "");
       setSoarCompanyName(s.soar_company_name ?? "");
+      setAcquisitionDate(s.acquisition_date ?? "");
+      setPosSystem(s.pos_system ?? "");
+      setSecurityVendor(s.security_vendor ?? "");
+      setFoodVendorName(s.food_vendor_name ?? "");
       setHasApplePay(!!s.has_apple_pay);
       setHasOrderAhead(!!s.has_order_ahead);
       setHasOutdoorSeating(!!s.has_outdoor_seating);
@@ -240,6 +248,13 @@ export function EditOrgNodeModal({
       updates.zip = zip.trim() || null;
       updates.plate_iq_email = plateIqEmail.trim() || null;
       updates.soar_company_name = soarCompanyName.trim() || null;
+      // Acquisition date — HTML date input already emits YYYY-MM-DD.
+      // Empty string clears the column; the backend's "date" validator
+      // accepts null but not "" so coalesce here.
+      updates.acquisition_date = acquisitionDate.trim() || null;
+      updates.pos_system = posSystem.trim() || null;
+      updates.security_vendor = securityVendor.trim() || null;
+      updates.food_vendor_name = foodVendorName.trim() || null;
       updates.has_apple_pay = hasApplePay;
       updates.has_order_ahead = hasOrderAhead;
       updates.has_outdoor_seating = hasOutdoorSeating;
@@ -442,6 +457,43 @@ export function EditOrgNodeModal({
                   id="org-soar-co"
                   value={soarCompanyName}
                   onChange={(e) => setSoarCompanyName(e.target.value)}
+                  disabled={!isAdmin}
+                />
+              </div>
+              <div>
+                <Label htmlFor="org-acq-date">Acquisition Date</Label>
+                <Input
+                  id="org-acq-date"
+                  type="date"
+                  value={acquisitionDate}
+                  onChange={(e) => setAcquisitionDate(e.target.value)}
+                  disabled={!isAdmin}
+                />
+              </div>
+              <div>
+                <Label htmlFor="org-pos">POS</Label>
+                <Input
+                  id="org-pos"
+                  value={posSystem}
+                  onChange={(e) => setPosSystem(e.target.value)}
+                  disabled={!isAdmin}
+                />
+              </div>
+              <div>
+                <Label htmlFor="org-food-vendor">Food Vendor</Label>
+                <Input
+                  id="org-food-vendor"
+                  value={foodVendorName}
+                  onChange={(e) => setFoodVendorName(e.target.value)}
+                  disabled={!isAdmin}
+                />
+              </div>
+              <div>
+                <Label htmlFor="org-security-vendor">Security Vendor</Label>
+                <Input
+                  id="org-security-vendor"
+                  value={securityVendor}
+                  onChange={(e) => setSecurityVendor(e.target.value)}
                   disabled={!isAdmin}
                 />
               </div>
