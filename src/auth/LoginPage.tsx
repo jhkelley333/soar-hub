@@ -342,7 +342,7 @@ export function LoginPage() {
                   ? `Enter the code we sent to ${codeEmail}.`
                   : mode === "magic"
                     ? "We'll email you a sign-in code."
-                    : "Sign in to your account"}
+                    : "Sign in with your phone or email."}
             </p>
           </div>
 
@@ -381,7 +381,7 @@ export function LoginPage() {
             ) : (
               <div>
                 <label htmlFor="id-pwa" className={darkLabel}>
-                  Email
+                  Phone or email
                 </label>
                 <input
                   id="id-pwa"
@@ -393,7 +393,7 @@ export function LoginPage() {
                   required
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
-                  placeholder="you@company.com"
+                  placeholder="(555) 555-1234 or you@company.com"
                   className={darkField}
                 />
               </div>
