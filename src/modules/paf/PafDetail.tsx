@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { Check, Clock } from "lucide-react";
-import { fetchPafAudit } from "./api";
+import { fetchOfferLetterUrl, fetchPafAudit } from "./api";
 import type { PafAuditEntry, PafRow } from "./types";
 import { formatUSD } from "./cost";
 import { cn } from "@/lib/cn";
+import { useToast } from "@/shared/ui/Toaster";
 import { DiscussButton } from "@/modules/chat/DiscussButton";
 
 // Maps audit log action codes (kept short for storage) to human labels.
@@ -33,6 +34,16 @@ function formatAuditTime(iso: string): string {
 // PAF only shows the sections it actually carries.
 export function PafDetail({ paf }: { paf: PafRow }) {
   const isHourly = paf.pay_basis === "hourly";
+  const toast = useToast();
+
+  async function openOfferLetter() {
+    try {
+      const { url } = await fetchOfferLetterUrl(paf.id);
+      window.open(url, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "Couldn't open offer letter.", "error");
+    }
+  }
 
   return (
     <div className="space-y-4 text-sm">
@@ -173,6 +184,15 @@ export function PafDetail({ paf }: { paf: PafRow }) {
             )}
             {paf.nh_stores && <Field label="Stores" value={paf.nh_stores} />}
           </Grid>
+          {paf.nh_offer_letter_path && (
+            <button
+              type="button"
+              onClick={openOfferLetter}
+              className="mt-3 inline-flex items-center rounded-md bg-white px-3 py-2 text-sm font-medium text-accent ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50"
+            >
+              View offer letter
+            </button>
+          )}
         </Section>
       )}
 

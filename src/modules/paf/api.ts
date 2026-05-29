@@ -61,6 +61,12 @@ export function fetchMyStores(): Promise<{ stores: MyStore[] }> {
   return request<{ stores: MyStore[] }>(`${FN}?action=my-stores`);
 }
 
+export function fetchOfferLetterUrl(id: string): Promise<{ url: string }> {
+  return request<{ url: string }>(
+    `${FN}?action=offer-letter-url&id=${encodeURIComponent(id)}`
+  );
+}
+
 export type PafSubmitInput = Partial<
   Omit<
     PafRow,
