@@ -24,7 +24,10 @@ import { BulkImportPage } from "@/modules/admin/BulkImportPage";
 import { BulkOrgImportPage } from "@/modules/admin/BulkOrgImportPage";
 import { BulkAttributesPage } from "@/modules/admin/BulkAttributesPage";
 import { FeatureFlagsPage } from "@/modules/admin/FeatureFlagsPage";
+import { RoleAccessPage } from "@/modules/admin/RoleAccessPage";
 import { PafConfigPage } from "@/modules/admin/pafConfig/PafConfigPage";
+import { moduleKeyForPath } from "@/app/nav";
+import { useOverrides } from "@/lib/roleAccess";
 import { RankerPage } from "@/modules/ranker/RankerPage";
 import { MyStoresPage } from "@/modules/my-stores/MyStoresPage";
 import { AccountPage } from "@/modules/account/AccountPage";
@@ -209,6 +212,14 @@ export const router = createBrowserRouter([
         ),
       },
       {
+        path: "admin/role-access",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <RoleAccessPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
         path: "admin/paf-config",
         element: (
           <ProtectedRoute requireRoles={["payroll", "admin"]}>
@@ -379,6 +390,7 @@ function FlagOrRoleRoute({
 }) {
   const { session, profile, loading } = useAuth();
   const flagOn = useFlag(flagKey);
+  const { overrides, isLoaded } = useOverrides();
   const location = useLocation();
 
   if (loading) {
@@ -394,7 +406,12 @@ function FlagOrRoleRoute({
   if (!profile) {
     return <Navigate to="/" replace />;
   }
-  if (roles.includes(profile.role) || flagOn) {
+  const role = profile.role;
+  const staticOk = roles.includes(role) || flagOn;
+  const moduleKey = moduleKeyForPath(location.pathname);
+  const ov = isLoaded && moduleKey ? overrides[moduleKey]?.[role] : undefined;
+  const allowed = role === "admin" || (ov !== undefined ? ov : staticOk);
+  if (allowed) {
     return <>{children}</>;
   }
   return <Navigate to="/" replace />;

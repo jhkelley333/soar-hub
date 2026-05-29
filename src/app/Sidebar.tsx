@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthProvider";
 import { visibleNav } from "@/app/nav";
 import { fetchResolvedFlags } from "@/lib/flags";
+import { useOverrides } from "@/lib/roleAccess";
 import { listPafs, listSdoQueue } from "@/modules/paf/api";
 import { listApprovalQueue } from "@/modules/employee-actions/api";
 import { countPendingScopes } from "@/modules/reno-scoping/api";
@@ -98,7 +99,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
     staleTime: 60_000,
     refetchOnWindowFocus: false,
   });
-  const items = visibleNav(profile?.role, flagsQ.data?.flags);
+  const { overrides } = useOverrides();
+  const items = visibleNav(profile?.role, flagsQ.data?.flags, overrides);
   const pafBadge = usePafBadgeCount(profile?.role);
   const eaBadge = useEmployeeActionsBadgeCount(profile?.role);
   const renoBadge = useRenoBadgeCount(profile?.role);

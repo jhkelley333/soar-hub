@@ -12,6 +12,7 @@ import {
   Layers,
   Hammer,
   Flag,
+  KeyRound,
   ClipboardList,
   ClipboardCheck,
   HardHat,
@@ -85,6 +86,7 @@ export const NAV: NavItem[] = [
   { to: "/admin/org",   label: "Org Admin",   icon: Network,         roles: ["vp", "coo", "admin"] },
   { to: "/admin/bulk-attributes", label: "Bulk Attributes", icon: Layers, roles: ["admin"] },
   { to: "/admin/feature-flags",   label: "Feature Flags",   icon: Flag,   roles: ["admin"] },
+  { to: "/admin/role-access",     label: "Role Access",     icon: KeyRound, roles: ["admin"] },
   { to: "/admin/paf-config", label: "PAF Config", icon: Settings,    roles: ["payroll", "admin"] },
   { to: "/account",     label: "Account",     icon: UserCircle,      roles: null },
 ];
@@ -92,14 +94,36 @@ export const NAV: NavItem[] = [
 export function visibleNav(
   role: UserRole | undefined,
   flags: Record<string, boolean> = {},
+  // Per-role module overrides from the Role Access page (keyed by item.to).
+  // An explicit override wins both ways; otherwise the code defaults apply.
+  overrides: Record<string, Partial<Record<UserRole, boolean>>> = {},
 ): NavItem[] {
   if (!role) return [];
   return NAV.filter((item) => {
+    if (role === "admin") return true; // admin always sees everything
+    const ov = overrides[item.to]?.[role];
+    if (ov !== undefined) return ov;
     if (!item.roles) return true;
     if (item.roles.includes(role)) return true;
     if (item.flagKey && flags[item.flagKey]) return true;
     return false;
   });
+}
+
+// Map a pathname to the NAV module key it belongs to (the longest matching
+// `to`), so route guards can apply the same per-role overrides as the nav.
+// Returns null when the path isn't under a managed module.
+export function moduleKeyForPath(pathname: string): string | null {
+  const exact = NAV.find((n) => n.to === pathname);
+  if (exact) return exact.to;
+  let best: string | null = null;
+  for (const n of NAV) {
+    if (n.to === "/") continue; // root would prefix-match everything
+    if (pathname === n.to || pathname.startsWith(n.to + "/")) {
+      if (!best || n.to.length > best.length) best = n.to;
+    }
+  }
+  return best;
 }
 
 // Where to land each role after sign-in. Payroll skips Dashboard
