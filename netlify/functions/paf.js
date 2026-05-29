@@ -53,7 +53,7 @@ const TOKEN_EXPIRY_HOURS = 72;
 // at DO level and above. RVP/VP/COO included so they can submit
 // bonuses for direct reports; their bonus PAFs skip SDO and go
 // straight to Payroll.
-const SUBMIT_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
+const SUBMIT_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]);
 // Roles that can read PAFs at all (also no GM).
 const READ_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]);
 // Roles that can process (reject / needs-approval / mark-processed)
