@@ -58,9 +58,13 @@ export function PafDetail({ paf }: { paf: PafRow }) {
           <Field
             label="Store"
             value={
-              paf.store_name
-                ? `#${paf.drive_in} — ${paf.store_name}`
-                : `#${paf.drive_in}`
+              !paf.drive_in
+                ? paf.drivein_na
+                  ? "N/A (district/area-level)"
+                  : "—"
+                : paf.store_name
+                  ? `#${paf.drive_in} — ${paf.store_name}`
+                  : `#${paf.drive_in}`
             }
           />
           <Field label="Market / DO" value={paf.market_do ?? "—"} />

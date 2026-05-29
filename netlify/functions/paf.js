@@ -60,6 +60,9 @@ const READ_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]
 const PROCESS_ROLES = new Set(["payroll", "admin"]);
 // Org-wide read (sees everything)
 const ORG_WIDE_READ = new Set(["payroll", "admin", "vp", "coo"]);
+// SDO and higher (plus back-office) — may waive the Drive-In # on a
+// Demotion, where the demoted leader doesn't map to a single store.
+const DRIVEIN_OVERRIDE_ROLES = new Set(["sdo", "rvp", "vp", "coo", "payroll", "admin"]);
 // Roles whose own bonus submissions skip SDO and go straight to Payroll.
 const BONUS_BYPASS_ROLES = new Set(["rvp", "vp", "coo", "admin"]);
 
@@ -594,10 +597,22 @@ async function submitPaf(supa, user, body) {
   }
 
   const driveIn = sanitizeText(body?.drive_in, 20);
-  if (!driveIn) return { error: "drive_in is required.", status: 400 };
+
+  // Drive-In # is normally required. It's waived for New Hire (Salary
+  // Leader) — which uses a home store / market instead — and for a
+  // Demotion when an SDO+ submitter marks it not applicable.
+  const submitCategory = sanitizeText(body?.category, 100);
+  const driveInWaived =
+    submitCategory === "New Hire (Salary Leader)" ||
+    (submitCategory === "Demotion" &&
+      DRIVEIN_OVERRIDE_ROLES.has(user.role) &&
+      (body?.drivein_na === "yes" || body?.drivein_na === true));
+
+  if (!driveIn && !driveInWaived) return { error: "drive_in is required.", status: 400 };
 
   // Scope check: caller must have access to this store. Admin bypass.
-  if (user.role !== "admin") {
+  // Skipped when the Drive-In # is legitimately waived.
+  if (driveIn && user.role !== "admin") {
     const numbers = await resolveVisibleStoreNumbers(supa, user.id);
     if (!numbers.includes(driveIn)) {
       return { error: `Store ${driveIn} is outside your scope.`, status: 403 };
@@ -654,7 +669,8 @@ async function submitPaf(supa, user, body) {
     submitter_name: user.full_name ?? null,
 
     pay_period_end: payPeriodEnd,
-    drive_in: driveIn,
+    drive_in: driveIn || null,
+    drivein_na: driveInWaived,
     market_do: sanitizeText(body?.market_do, 200) || null,
     employee_name: employeeName,
     last4_ssn: ssn,

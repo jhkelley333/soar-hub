@@ -23,7 +23,8 @@ export interface PafRow {
   submitter_name: string | null;
 
   pay_period_end: string;
-  drive_in: string;
+  drive_in: string | null;
+  drivein_na: boolean | null;
   /** Store name joined from `stores.name` for display only. Server-side. */
   store_name?: string | null;
   market_do: string | null;

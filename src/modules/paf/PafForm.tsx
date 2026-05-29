@@ -86,6 +86,9 @@ function fieldSections(f: PafFieldDisplay): string[] {
   return [];
 }
 
+// SDO and higher (plus back-office) may waive the Drive-In # on a Demotion.
+const DRIVEIN_OVERRIDE_ROLES = new Set(["sdo", "rvp", "vp", "coo", "payroll", "admin"]);
+
 // New, code-driven category (its fields are custom-rendered, not config).
 const NEW_HIRE_LEADER = "New Hire (Salary Leader)";
 const NH_ROLES = ["GM", "DO", "SDO"];
@@ -142,6 +145,14 @@ function isFieldVisibleForState(fieldKey: string, state: FormState): boolean {
   // except the category picker to avoid duplicate data entry.
   if (state.category === NEW_HIRE_LEADER) {
     return fieldKey === "category";
+  }
+  // Demotion: SDO+ submitters can waive the Drive-In # (hides the field).
+  if (
+    fieldKey === "drive_in" &&
+    state.category === "Demotion" &&
+    state.drivein_na === "yes"
+  ) {
+    return false;
   }
   if (fieldKey === "reg_pay_rate") {
     return state.pay_basis !== "Salary";
@@ -491,6 +502,24 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
           cfg={cfg}
           myStores={myStores}
         />
+        {state.category === "Demotion" &&
+          !!profile &&
+          DRIVEIN_OVERRIDE_ROLES.has(profile.role) && (
+            <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+              <label className="flex items-center gap-2 text-sm text-zinc-700">
+                <input
+                  type="checkbox"
+                  checked={state.drivein_na === "yes"}
+                  onChange={(e) => patch("drivein_na", e.target.checked ? "yes" : "")}
+                  className="h-4 w-4 rounded border-zinc-300 text-accent focus:ring-accent"
+                />
+                No single Drive-In # (district/area-level role)
+              </label>
+              <p className="mt-1 text-[11px] text-zinc-500">
+                SDO and above can submit a demotion without a Drive-In #.
+              </p>
+            </div>
+          )}
       </FormSection>
 
       {/* Conditional sections in their configured order */}
