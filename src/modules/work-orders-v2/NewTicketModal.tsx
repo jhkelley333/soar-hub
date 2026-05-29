@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Camera, Loader2, Plus, Search, Upload, X } from "lucide-react";
+import { Camera, Loader2, Plus, Search, ShieldCheck, Upload, X } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
@@ -15,11 +15,13 @@ import {
   fetchCallerStores,
   fetchIssueLibrary,
   fetchRelatedInWarranty,
+  fetchReplacements,
   fetchVendors,
   fileToBase64,
   searchVendors,
   uploadPhoto,
   type RelatedInWarrantyTicket,
+  type ReplacementRow,
 } from "./api";
 import {
   TICKET_PRIORITIES,
@@ -239,6 +241,43 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
     const all = warrantyHintQ.data?.tickets ?? [];
     return all.filter((t) => !dismissedHints.has(t.id));
   }, [warrantyHintQ.data, dismissedHints]);
+
+  // Equipment-register warranty flag: is there equipment AT THIS STORE,
+  // matching the chosen asset, that's still under a parts/labor warranty?
+  // If so the GM should consider a warranty claim before dispatching a
+  // paid vendor. (Distinct from the callback hint above, which looks at
+  // prior completed *work*.)
+  const equipmentQ = useQuery({
+    queryKey: ["wo2", "equipForWarranty", storeNumber.trim()],
+    queryFn: () => fetchReplacements({ storeNumber: storeNumber.trim() }),
+    enabled: open && !!storeNumber.trim(),
+    staleTime: 60_000,
+  });
+  const equipmentWarranties = useMemo(() => {
+    const rows = equipmentQ.data?.replacements ?? [];
+    const needle = (vendorPickAsset || assetType || "").trim().toLowerCase();
+    const cat = (category || "").trim().toLowerCase();
+    const now = Date.now();
+    const activeDaysLeft = (installIso: string | null, days: number | null): number | null => {
+      if (!installIso || !days || days <= 0) return null;
+      const left = Math.floor((new Date(installIso).getTime() + days * 86400000 - now) / 86400000);
+      return left >= 0 ? left : null;
+    };
+    const assetMatches = (r: ReplacementRow): boolean => {
+      const hay = `${r.asset_type ?? ""} ${r.model ?? ""}`.toLowerCase();
+      const at = (r.asset_type ?? "").toLowerCase();
+      if (needle && (hay.includes(needle) || (at && needle.includes(at)))) return true;
+      if (cat && at && (at.includes(cat) || cat.includes(at))) return true;
+      return false;
+    };
+    return rows
+      .map((r) => {
+        const parts = activeDaysLeft(r.installed_at, r.warranty_parts_days);
+        const labor = activeDaysLeft(r.installed_at, r.warranty_labor_days);
+        return { r, parts, labor };
+      })
+      .filter((x) => (x.parts !== null || x.labor !== null) && assetMatches(x.r));
+  }, [equipmentQ.data, vendorPickAsset, assetType, category]);
 
   // Full visible-to-this-store vendor list, for the "Search all
   // vendors" expandable picker. Lazy — only fetched when the user
@@ -461,6 +500,42 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
                     </li>
                   ))}
               </ul>
+            </div>
+          )}
+
+          {equipmentWarranties.length > 0 && (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-900">
+              <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                <ShieldCheck className="h-3.5 w-3.5" strokeWidth={2} /> Possibly under warranty
+              </div>
+              <ul className="space-y-1">
+                {equipmentWarranties.map(({ r, parts, labor }, i) => {
+                  const partsActive = parts !== null;
+                  const days = partsActive ? r.warranty_parts_days : r.warranty_labor_days;
+                  const which = partsActive
+                    ? `Parts${r.warranty_parts_source ? ` · ${r.warranty_parts_source}` : ""}`
+                    : "Labor";
+                  const left = partsActive ? parts : labor;
+                  const exp =
+                    r.installed_at && days
+                      ? new Date(new Date(r.installed_at).getTime() + days * 86400000)
+                      : null;
+                  return (
+                    <li key={r.equipment_id || r.ticket_id || i}>
+                      <span className="font-medium">
+                        {[r.manufacturer, r.model].filter(Boolean).join(" ") || r.asset_type || "Equipment"}
+                      </span>
+                      {" — "}
+                      {which} warranty
+                      {exp ? ` until ${exp.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}` : ""}
+                      {left !== null ? ` (${left}d left)` : ""}.
+                    </li>
+                  );
+                })}
+              </ul>
+              <div className="mt-1 text-[11px] text-emerald-800">
+                Consider a warranty claim before dispatching a paid vendor.
+              </div>
             </div>
           )}
 
