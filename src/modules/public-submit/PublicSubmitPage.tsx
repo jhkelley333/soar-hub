@@ -150,7 +150,10 @@ export function PublicSubmitPage() {
   const [result, setResult] = useState<SubmitResult | null>(null);
 
   const effectiveCategory = pickedIssue?.category || manualCategory;
-  const effectiveAssetType = pickedIssue?.asset_type || manualAssetType;
+  // Store the SPECIFIC library asset (display_name, e.g. "Ice Machine
+  // (Left)"), not the generic asset_type ("Ice"). Matches the desktop New
+  // Ticket modal so the saved asset reflects the actual library item.
+  const effectiveAssetType = pickedIssue?.display_name || manualAssetType;
 
   // Debounced store typeahead (250ms).
   useEffect(() => {
