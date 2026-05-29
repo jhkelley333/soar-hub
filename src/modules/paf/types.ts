@@ -31,6 +31,12 @@ export interface PafRow {
   last4_ssn: string;
   category: string;
   explanation: string;
+  // New Hire (Salary Leader)
+  nh_role: string | null;
+  nh_start_date: string | null;
+  nh_hours_last_period: number | string | null;
+  nh_home_store: string | null;
+  nh_no_market: boolean | null;
   pay_basis: PayBasis;
 
   job_position: string | null;

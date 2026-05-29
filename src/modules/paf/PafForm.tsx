@@ -52,6 +52,10 @@ function visibleSections(category: string, bonusType: string): Set<string> {
     out.add("term");
     return out;
   }
+  if (c === NEW_HIRE_LEADER) {
+    // Notes only from config; the custom salary-leader block renders the rest.
+    return out;
+  }
   if (c === "Cross Store Work") {
     out.add("tips");
     out.add("store");
@@ -74,6 +78,21 @@ function fieldSections(f: PafFieldDisplay): string[] {
   if (Array.isArray(f.sections) && f.sections.length) return f.sections;
   if (typeof f.section === "string" && f.section) return [f.section];
   return [];
+}
+
+// New, code-driven category (its fields are custom-rendered, not config).
+const NEW_HIRE_LEADER = "New Hire (Salary Leader)";
+const NH_ROLES = ["GM", "DO", "SDO"];
+const NH_INPUT =
+  "block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent";
+
+function NhField({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="mb-1 block text-sm font-medium text-zinc-700">{label}</label>
+      {children}
+    </div>
+  );
 }
 
 // snake_case keys used in the DB / config.
@@ -232,22 +251,45 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
     setError(null);
     if (!cfg) return;
 
-    // Required-field check, gated by section visibility AND field
-    // visibility (so hidden conditional fields don't block submit).
-    for (const [k, f] of Object.entries(cfg.fields)) {
-      if (!f.visible || !f.required) continue;
-      const secs = fieldSections(f);
-      const inVisibleSection =
-        secs.length === 0 ||
-        secs.includes("top") ||
-        secs.includes("notes") ||
-        secs.some((s) => visible.has(s));
-      if (!inVisibleSection) continue;
-      if (!isFieldVisibleForState(k, state)) continue;
-      const v = state[k];
-      if (v === undefined || String(v).trim() === "") {
-        setError(`"${f.label}" is required.`);
+    if (state.category === NEW_HIRE_LEADER) {
+      // This category's fields are custom-rendered, so validate them
+      // directly (bypassing the config-field loop, which would otherwise
+      // enforce unrelated fields like the standard store picker).
+      const req: Array<[string, string]> = [
+        ["nh_role", "Role"],
+        ["employee_name", "Employee name"],
+        ["nh_start_date", "Start date"],
+        ["pay_period_end", "Pay period end"],
+        ["nh_hours_last_period", "Hours worked last pay period"],
+      ];
+      for (const [k, lbl] of req) {
+        if (String(state[k] ?? "").trim() === "") {
+          setError(`"${lbl}" is required.`);
+          return;
+        }
+      }
+      if (state.nh_role === "GM" && String(state.nh_home_store ?? "").trim() === "") {
+        setError('"Home store" is required for a GM.');
         return;
+      }
+    } else {
+      // Required-field check, gated by section visibility AND field
+      // visibility (so hidden conditional fields don't block submit).
+      for (const [k, f] of Object.entries(cfg.fields)) {
+        if (!f.visible || !f.required) continue;
+        const secs = fieldSections(f);
+        const inVisibleSection =
+          secs.length === 0 ||
+          secs.includes("top") ||
+          secs.includes("notes") ||
+          secs.some((s) => visible.has(s));
+        if (!inVisibleSection) continue;
+        if (!isFieldVisibleForState(k, state)) continue;
+        const v = state[k];
+        if (v === undefined || String(v).trim() === "") {
+          setError(`"${f.label}" is required.`);
+          return;
+        }
       }
     }
 
@@ -315,6 +357,115 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
             />
           </FormSection>
         ))}
+
+      {/* New Hire (Salary Leader) — custom, role-conditional section. */}
+      {state.category === NEW_HIRE_LEADER && (
+        <FormSection
+          title="New Hire — Salary Leader"
+          description="Role, identity, and pay-period details for a new salaried leader."
+        >
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <NhField label="Role *">
+              <select
+                value={state.nh_role ?? ""}
+                onChange={(e) => patch("nh_role", e.target.value)}
+                className={NH_INPUT}
+              >
+                <option value="">Select role…</option>
+                {NH_ROLES.map((r) => (
+                  <option key={r}>{r}</option>
+                ))}
+              </select>
+            </NhField>
+
+            <NhField label="Employee name *">
+              <input
+                value={state.employee_name ?? ""}
+                onChange={(e) => patch("employee_name", e.target.value)}
+                className={NH_INPUT}
+                placeholder="Full name"
+              />
+            </NhField>
+
+            <NhField label="Last 4 SSN *">
+              <input
+                value={state.last4_ssn ?? ""}
+                onChange={(e) => patch("last4_ssn", e.target.value.replace(/\D/g, "").slice(0, 4))}
+                inputMode="numeric"
+                maxLength={4}
+                className={NH_INPUT}
+                placeholder="1234"
+              />
+            </NhField>
+
+            <NhField label="Start date *">
+              <input
+                type="date"
+                value={state.nh_start_date ?? ""}
+                onChange={(e) => patch("nh_start_date", e.target.value)}
+                className={NH_INPUT}
+              />
+            </NhField>
+
+            <NhField label="Hours worked last pay period *">
+              <input
+                type="number"
+                min="0"
+                step="0.25"
+                value={state.nh_hours_last_period ?? ""}
+                onChange={(e) => patch("nh_hours_last_period", e.target.value)}
+                className={NH_INPUT}
+                placeholder="e.g. 80"
+              />
+            </NhField>
+
+            <NhField label="Pay period end *">
+              <input
+                type="date"
+                value={state.pay_period_end ?? ""}
+                onChange={(e) => patch("pay_period_end", e.target.value)}
+                className={NH_INPUT}
+              />
+            </NhField>
+
+            {state.nh_role === "GM" && (
+              <NhField label="Home store *">
+                <select
+                  value={state.nh_home_store ?? ""}
+                  onChange={(e) => patch("nh_home_store", e.target.value)}
+                  className={NH_INPUT}
+                >
+                  <option value="">Select store…</option>
+                  {myStores.map((s) => (
+                    <option key={s.id} value={String(s.number)}>
+                      {s.number}{s.name ? ` — ${s.name}` : ""}
+                    </option>
+                  ))}
+                </select>
+              </NhField>
+            )}
+          </div>
+
+          {(state.nh_role === "DO" || state.nh_role === "SDO") && (
+            <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+              <label className="flex items-center gap-2 text-sm text-zinc-700">
+                <input
+                  type="checkbox"
+                  checked={state.nh_no_market === "yes"}
+                  onChange={(e) => patch("nh_no_market", e.target.checked ? "yes" : "")}
+                  className="h-4 w-4 rounded border-zinc-300 text-accent focus:ring-accent"
+                />
+                No market yet (plus-one / in training)
+              </label>
+              <p className="mt-1 text-[11px] text-zinc-500">
+                {state.nh_role === "DO"
+                  ? "Market (district) selection + auto-populated stores is coming in the next update."
+                  : "Area selection + auto-populated stores is coming in the next update."}
+              </p>
+            </div>
+          )}
+        </FormSection>
+      )}
 
       {/* Notes — always shown */}
       <FormSection
@@ -547,7 +698,11 @@ function FieldRender({
         label={label}
         value={value}
         onChange={onChange}
-        options={lists.categories}
+        options={
+          lists.categories.includes(NEW_HIRE_LEADER)
+            ? lists.categories
+            : [...lists.categories, NEW_HIRE_LEADER]
+        }
         placeholder={cfg.placeholder || "Select..."}
         helpText={cfg.helpText}
       />
