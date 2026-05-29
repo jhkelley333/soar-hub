@@ -40,6 +40,7 @@ export interface PafRow {
   nh_market: string | null;
   nh_area: string | null;
   nh_stores: string | null;
+  nh_offer_letter_path: string | null;
   pay_basis: PayBasis;
 
   job_position: string | null;
