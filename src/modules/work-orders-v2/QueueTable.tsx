@@ -7,6 +7,7 @@ import {
   statusLabel,
   isOpenStatus,
 } from "./types";
+import { Pill, statusPillTone, priorityPillTone } from "./liveTheme";
 
 // New work-order queue (flagged: wo2_new_ui). A table-style list matching
 // the redesigned mockup — SLA intentionally omitted (not modeled yet),
@@ -15,35 +16,6 @@ import {
 // detail. Net-new is presentational only.
 
 type TabId = "open" | "mine" | "closed" | "all";
-
-const STATUS_TONE: Record<string, string> = {
-  submitted:          "bg-sky-50 text-sky-700 ring-sky-200",
-  in_progress:        "bg-sky-50 text-sky-700 ring-sky-200",
-  scheduled:          "bg-indigo-50 text-indigo-700 ring-indigo-200",
-  on_site:            "bg-amber-50 text-amber-700 ring-amber-200",
-  awaiting_equipment: "bg-amber-50 text-amber-700 ring-amber-200",
-  completed:          "bg-emerald-50 text-emerald-700 ring-emerald-200",
-  closed:             "bg-zinc-100 text-zinc-600 ring-zinc-200",
-  cancelled:          "bg-zinc-100 text-zinc-500 ring-zinc-200",
-};
-
-const PRIORITY_TONE: Record<string, string> = {
-  Emergency: "bg-red-50 text-red-700 ring-red-200",
-  Urgent:    "bg-orange-50 text-orange-700 ring-orange-200",
-  Standard:  "bg-zinc-100 text-zinc-600 ring-zinc-200",
-  Planned:   "bg-zinc-100 text-zinc-500 ring-zinc-200",
-};
-
-function statusDot(status: TicketStatus | string): string {
-  switch (status) {
-    case "completed": return "bg-emerald-500";
-    case "on_site":
-    case "awaiting_equipment": return "bg-amber-500";
-    case "closed":
-    case "cancelled": return "bg-zinc-400";
-    default: return "bg-sky-500";
-  }
-}
 
 function initials(name: string | null): string {
   if (!name) return "—";
@@ -242,14 +214,7 @@ export function QueueTable({
                   </div>
                 </td>
                 <td className="px-3 py-3 align-top">
-                  <span
-                    className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${
-                      STATUS_TONE[t.status] ?? "bg-zinc-100 text-zinc-600 ring-zinc-200"
-                    }`}
-                  >
-                    <span className={`h-1.5 w-1.5 rounded-full ${statusDot(t.status)}`} />
-                    {statusLabel(t.status)}
-                  </span>
+                  <Pill tone={statusPillTone(t.status)} dot>{statusLabel(t.status)}</Pill>
                 </td>
                 <td className="px-3 py-3 align-top">
                   {t.vendor_name
@@ -265,13 +230,7 @@ export function QueueTable({
                   </span>
                 </td>
                 <td className="px-3 py-3 align-top">
-                  <span
-                    className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${
-                      PRIORITY_TONE[t.priority] ?? "bg-zinc-100 text-zinc-600 ring-zinc-200"
-                    }`}
-                  >
-                    {t.priority}
-                  </span>
+                  <Pill tone={priorityPillTone(t.priority)}>{t.priority}</Pill>
                 </td>
               </tr>
             ))}
