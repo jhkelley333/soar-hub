@@ -8,7 +8,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Layers, Loader2, Mail, Pencil, Phone, Plus, Star, X } from "lucide-react";
+import { CheckCircle2, Download, Layers, Loader2, Mail, Pencil, Phone, Plus, Star, X } from "lucide-react";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
@@ -16,6 +16,7 @@ import { Label } from "@/shared/ui/Label";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
+import { downloadCSV, toCSV } from "@/lib/csv";
 import {
   bulkEditVendors,
   bulkImportVendors,
@@ -952,6 +953,53 @@ const RECOGNIZED_FIELDS = [
 
 type ImportField = typeof RECOGNIZED_FIELDS[number];
 
+// Two example rows shipped in the downloadable template so users see
+// the expected shape for every recognized column — especially the
+// fiddly ones (scope syntax, warranty source values, is_active
+// booleans). The parser ignores unknown columns and these examples
+// are safe to delete/overwrite before importing.
+const TEMPLATE_ROWS: Record<ImportField, string>[] = [
+  {
+    name: "Kniatt Mechanical LLC",
+    category: "HVAC, Ice Machine",
+    services: "Walk-In Cooler, Fryer",
+    service_area: "Dallas Area",
+    contact_person: "Sam Kniatt",
+    email: "service@kniattmech.com",
+    phone: "(940) 453-7404",
+    notes: "Preferred for refrigeration emergencies",
+    website: "https://kniattmech.com",
+    is_active: "true",
+    scope: "district:Dallas Metro | store:1242,1245",
+    labor_warranty_days: "90",
+    parts_warranty_days: "365",
+    parts_warranty_source: "manufacturer",
+    warranty_notes: "Compressor parts carry mfg warranty",
+  },
+  {
+    name: "Lone Star Plumbing",
+    category: "Plumbing",
+    services: "Drains, Water Heaters",
+    service_area: "Statewide",
+    contact_person: "Dana Reyes",
+    email: "dispatch@lonestarplumbing.com",
+    phone: "(800) 555-0142",
+    notes: "",
+    website: "",
+    is_active: "true",
+    scope: "national",
+    labor_warranty_days: "30",
+    parts_warranty_days: "",
+    parts_warranty_source: "vendor",
+    warranty_notes: "",
+  },
+];
+
+function downloadVendorTemplate() {
+  const csv = toCSV([...RECOGNIZED_FIELDS], TEMPLATE_ROWS);
+  downloadCSV("vendor-import-template.csv", csv);
+}
+
 function BulkImportVendorsModal({
   onClose, onDone,
 }: { onClose: () => void; onDone: () => void }) {
@@ -998,13 +1046,21 @@ function BulkImportVendorsModal({
           <div className="text-base font-semibold text-midnight">
             Bulk import vendors
           </div>
-          <button
-            type="button" onClick={onClose} disabled={mut.isPending}
-            className="rounded p-1 text-zinc-400 hover:bg-zinc-100"
-            aria-label="Close"
-          >
-            <X className="h-4 w-4" strokeWidth={1.75} />
-          </button>
+          <div className="flex items-center gap-1">
+            {!showResults && (
+              <Button variant="ghost" size="sm" onClick={downloadVendorTemplate}>
+                <Download className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+                Template
+              </Button>
+            )}
+            <button
+              type="button" onClick={onClose} disabled={mut.isPending}
+              className="rounded p-1 text-zinc-400 hover:bg-zinc-100"
+              aria-label="Close"
+            >
+              <X className="h-4 w-4" strokeWidth={1.75} />
+            </button>
+          </div>
         </div>
 
         {!showResults ? (
@@ -1042,6 +1098,12 @@ function BulkImportVendorsModal({
                   <li>
                     Rows match existing vendors by <strong>name</strong> (unique).
                     Matches are <strong>updated</strong>, new names become new vendors.
+                  </li>
+                  <li>
+                    Not sure where to start? Hit{" "}
+                    <strong>Template</strong> (top right) for a CSV with every
+                    column and two example rows — open it in Excel/Sheets, fill
+                    in your vendors, then paste back here.
                   </li>
                 </ul>
               </div>
