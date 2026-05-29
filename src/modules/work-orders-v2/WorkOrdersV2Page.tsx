@@ -12,6 +12,7 @@ import {
   ChevronUp,
   FileText,
   Image as ImageIcon,
+  Link2,
   Loader2,
   MessageCircle,
   Plus,
@@ -405,30 +406,19 @@ function TicketsTab() {
     return (
       <>
         {selected ? (
-          <div>
-            <button
-              type="button"
-              onClick={() => setDetailId(null)}
-              className="mb-4 inline-flex items-center gap-1 text-sm font-medium text-zinc-500 transition hover:text-midnight"
-            >
-              <ChevronLeft className="h-4 w-4" strokeWidth={2} />
-              Work orders
-            </button>
-            <TicketCard
-              ticket={selected}
-              expanded
-              callerRole={callerRole}
-              initialThread={selected.id === focusTicketId ? focusThread : null}
-              onToggle={() => setDetailId(null)}
-              onUpdated={() => { toast.push("Ticket updated.", "success"); refetchAll(); }}
-              onPhotoUploaded={(count) => {
-                toast.push(`${count} photo${count === 1 ? "" : "s"} uploaded.`, "success");
-                refetchAll();
-              }}
-              onApprovalChanged={() => { toast.push("Approval saved.", "success"); refetchAll(); }}
-              onError={(e) => toast.push(e, "error")}
-            />
-          </div>
+          <NewTicketDetail
+            ticket={selected}
+            callerRole={callerRole}
+            initialThread={selected.id === focusTicketId ? focusThread : null}
+            onBack={() => setDetailId(null)}
+            onUpdated={() => { toast.push("Ticket updated.", "success"); refetchAll(); }}
+            onPhotoUploaded={(count) => {
+              toast.push(`${count} photo${count === 1 ? "" : "s"} uploaded.`, "success");
+              refetchAll();
+            }}
+            onApprovalChanged={() => { toast.push("Approval saved.", "success"); refetchAll(); }}
+            onError={(e) => toast.push(e, "error")}
+          />
         ) : ticketsQ.isLoading ? (
           <div className="space-y-3">
             <Skeleton className="h-24 w-full" />
@@ -850,6 +840,180 @@ function TicketCard({
         </CardBody>
       )}
     </Card>
+  );
+}
+
+// ── Redesigned ticket detail (flagged: wo2_new_ui) ──────────────────
+// Mockup layout built by RE-COMPOSING the same wired pieces the legacy
+// TicketCard uses (StatusBar, TicketActionBar, DetailGrid, PhotoSection,
+// UpdateForm, ApprovalSection, ActivityFeedPanel, TicketChat) — no new
+// ticket logic, just a new arrangement. SLA / asset / AI cards omitted
+// per Phase 1 scope.
+function NewTicketDetail({
+  ticket,
+  callerRole,
+  initialThread,
+  onBack,
+  onUpdated,
+  onPhotoUploaded,
+  onApprovalChanged,
+  onError,
+}: {
+  ticket: Ticket;
+  callerRole: string;
+  initialThread?: ThreadType | null;
+  onBack: () => void;
+  onUpdated: () => void;
+  onPhotoUploaded: (count: number) => void;
+  onApprovalChanged: () => void;
+  onError: (msg: string) => void;
+}) {
+  const { profile } = useAuth();
+  const isSubmitter = !!profile?.id
+    && !!ticket.submitted_by_user_id
+    && profile.id === ticket.submitted_by_user_id;
+  const days = daysOpen(ticket);
+  const open = isOpenStatus(ticket.status);
+  const [copied, setCopied] = useState(false);
+
+  function copyLink() {
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set("ticket", ticket.id);
+      void navigator.clipboard?.writeText(url.toString());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      onError("Couldn't copy the link.");
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <button
+        type="button"
+        onClick={onBack}
+        className="inline-flex items-center gap-1 text-sm font-medium text-zinc-500 transition hover:text-midnight"
+      >
+        <ChevronLeft className="h-4 w-4" strokeWidth={2} />
+        Work orders
+      </button>
+
+      {/* Header */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-xl font-semibold tracking-tight text-midnight sm:text-2xl">
+              {ticket.asset_type || ticket.category || "Work Order"}
+            </h1>
+            {ticket.priority && ticket.priority !== "Standard" && (
+              <Badge tone={PRIORITY_TONE[ticket.priority]}>{ticket.priority}</Badge>
+            )}
+            <Badge tone={STATUS_TONE[ticket.status] ?? "neutral"}>{statusLabel(ticket.status)}</Badge>
+            <Badge tone={open ? "info" : "neutral"}>
+              {days === null ? "—" : `${days} DAY${days === 1 ? "" : "S"} OPEN`}
+            </Badge>
+            {ticket.is_business_critical && (
+              <Badge tone="warning">Critical</Badge>
+            )}
+          </div>
+          <div className="mt-1 font-mono text-xs text-zinc-500">
+            {ticket.wo_number} · Store {ticket.store_number} · {fmtDate(ticket.date_submitted)}
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <DiscussButton scopeKind="workorder" scopeRef={ticket.id} />
+          <Button variant="ghost" onClick={copyLink}>
+            <Link2 className="mr-1.5 h-3.5 w-3.5" strokeWidth={1.75} />
+            {copied ? "Copied" : "Copy link"}
+          </Button>
+        </div>
+      </div>
+
+      {/* Stepper + quick actions */}
+      <Card className="p-4 space-y-3">
+        <StatusBar
+          status={ticket.status}
+          pauseState={ticket.pause_state}
+          closedByStore={ticket.closed_by_store}
+        />
+        <TicketActionBar
+          ticketId={ticket.id}
+          status={ticket.status}
+          closedAt={ticket.closed_at}
+          storeNumber={ticket.store_number}
+          isSubmitter={isSubmitter}
+        />
+      </Card>
+
+      {ticket.status === "completed" && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+          <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-900">
+            Awaiting your confirmation
+          </div>
+          <div className="mt-1 text-sm text-amber-900">
+            The vendor marked this completed{ticket.vendor_name ? ` (${ticket.vendor_name})` : ""}.
+            Confirm the work was done satisfactorily, or reopen it — use{" "}
+            <strong>Confirm Fix</strong> / <strong>Reopen — Not Fixed</strong> in the action bar above.
+          </div>
+        </div>
+      )}
+
+      {/* Body: details + work column, approval rail */}
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="space-y-4 lg:col-span-2">
+          <ReplacementBanner ticket={ticket} />
+          <Card className="p-4">
+            <DetailGrid ticket={ticket} />
+          </Card>
+          <DescriptionBlock label="Issue Description" value={ticket.issue_description} />
+          {ticket.latest_comment && (
+            <DescriptionBlock label="Latest Comment" value={ticket.latest_comment} />
+          )}
+          <Card className="p-4">
+            <PhotoSection ticket={ticket} onUploaded={onPhotoUploaded} onError={onError} />
+          </Card>
+          <Card className="p-4">
+            <UpdateForm ticket={ticket} onUpdated={onUpdated} onError={onError} />
+          </Card>
+        </div>
+
+        <div className="space-y-4">
+          <Card className="p-4">
+            <ApprovalSection
+              ticket={ticket}
+              callerRole={callerRole}
+              onChanged={onApprovalChanged}
+              onError={onError}
+            />
+          </Card>
+          {callerRole === "admin" && (
+            <Card className="p-4">
+              <AdminDeleteTicketRow
+                ticketId={ticket.id}
+                woNumber={ticket.wo_number}
+                onDeleted={onBack}
+                onError={onError}
+              />
+            </Card>
+          )}
+        </div>
+      </div>
+
+      {/* Activity + messages */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card className="p-4">
+          <ActivityFeedPanel ticketId={ticket.id} />
+        </Card>
+        <Card className="p-4">
+          <TicketChat
+            ticketId={ticket.id}
+            onError={onError}
+            initialThread={initialThread || undefined}
+          />
+        </Card>
+      </div>
+    </div>
   );
 }
 
