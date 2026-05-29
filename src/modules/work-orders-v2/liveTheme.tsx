@@ -156,38 +156,75 @@ export function SectionCard({
   );
 }
 
-const STAGES: Array<[string, string]> = [
-  ["submitted", "Submitted"],
-  ["in_progress", "In Progress"],
-  ["scheduled", "Scheduled"],
-  ["on_site", "On Site"],
-  ["completed", "Completed"],
-  ["closed", "Closed"],
+type Stage = { key: string; label: string; tone?: "primary" | "warn" };
+
+// Base linear flow, in the v2 workflow order (Submitted → Scheduled →
+// On Site → In Progress → Completed → Closed). Pending Approval and
+// Parts on Order are CONDITIONAL — they only appear in the strip when
+// the ticket is actually in that state (see buildStages).
+const BASE_STAGES: Stage[] = [
+  { key: "submitted", label: "Submitted" },
+  { key: "scheduled", label: "Scheduled" },
+  { key: "on_site", label: "On Site" },
+  { key: "in_progress", label: "In Progress" },
+  { key: "completed", label: "Completed" },
+  { key: "closed", label: "Closed" },
 ];
 
-function stageIndex(status: string): number {
+function buildStages(approvalPending: boolean, partsOnOrder: boolean): Stage[] {
+  const out: Stage[] = [];
+  for (const s of BASE_STAGES) {
+    if (s.key === "in_progress" && approvalPending) {
+      out.push({ key: "approval", label: "Pending Approval", tone: "warn" });
+    }
+    out.push(s);
+    if (s.key === "in_progress" && partsOnOrder) {
+      out.push({ key: "parts", label: "Parts on Order", tone: "warn" });
+    }
+  }
+  return out;
+}
+
+// Resolve which stage key is "current" for a ticket.
+function currentStageKey(
+  status: string,
+  approvalPending: boolean,
+  partsOnOrder: boolean,
+): string {
+  if (partsOnOrder) return "parts";
+  if (approvalPending) return "approval";
   switch (status) {
-    case "submitted": return 0;
-    case "in_progress": return 1;
-    case "scheduled":
-    case "awaiting_equipment": return 2;
-    case "on_site": return 3;
-    case "completed": return 4;
+    case "submitted": return "submitted";
+    case "scheduled": return "scheduled";
+    case "on_site": return "on_site";
+    case "in_progress":
+    case "awaiting_equipment": return "in_progress";
+    case "completed": return "completed";
     case "closed":
-    case "cancelled": return 5;
-    default: return 0;
+    case "cancelled": return "closed";
+    default: return "submitted";
   }
 }
 
-// Display-only pipeline matching the design. The real transitions still
-// run through TicketActionBar; this just visualizes current status.
-export function StatusPipeline({ status }: { status: string }) {
-  const cur = stageIndex(status);
+// Display-only pipeline. The real transitions run through TicketActionBar;
+// this just visualizes the current status, surfacing Pending Approval /
+// Parts on Order only when the ticket is in those conditional states.
+export function StatusPipeline({
+  status,
+  approvalPending = false,
+  partsOnOrder = false,
+}: {
+  status: string;
+  approvalPending?: boolean;
+  partsOnOrder?: boolean;
+}) {
+  const stages = buildStages(approvalPending, partsOnOrder);
+  const cur = Math.max(0, stages.findIndex((s) => s.key === currentStageKey(status, approvalPending, partsOnOrder)));
   return (
     <div
       style={{
         display: "grid",
-        gridTemplateColumns: `repeat(${STAGES.length}, 1fr)`,
+        gridTemplateColumns: `repeat(${stages.length}, 1fr)`,
         background: WO.surface,
         border: `1px solid ${WO.line}`,
         borderRadius: 10,
@@ -195,17 +232,20 @@ export function StatusPipeline({ status }: { status: string }) {
         boxShadow: WO.cardShadow,
       }}
     >
-      {STAGES.map(([key, label], i) => {
+      {stages.map((s, i) => {
         const done = i < cur;
         const active = i === cur;
+        const isCond = s.tone === "warn";
+        const accent = isCond ? WO.warn : WO.primary;
+        const activeBg = isCond ? WO.warnSoft : WO.primarySoft;
         return (
           <div
-            key={key}
+            key={s.key}
             style={{
               position: "relative",
               padding: "14px 16px",
-              borderRight: i < STAGES.length - 1 ? `1px solid ${WO.line2}` : "none",
-              background: active ? WO.primarySoft : done ? WO.surfaceAlt : WO.surface,
+              borderRight: i < stages.length - 1 ? `1px solid ${WO.line2}` : "none",
+              background: active ? activeBg : done ? WO.surfaceAlt : WO.surface,
             }}
           >
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -215,9 +255,9 @@ export function StatusPipeline({ status }: { status: string }) {
                   height: 18,
                   borderRadius: 18,
                   flex: "0 0 18px",
-                  background: done ? WO.primary : WO.surface,
-                  border: `1.5px solid ${done || active ? WO.primary : WO.line}`,
-                  color: done ? WO.primaryInk : WO.primary,
+                  background: done ? accent : WO.surface,
+                  border: `1.5px solid ${done || active ? accent : WO.line}`,
+                  color: done ? WO.primaryInk : accent,
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
@@ -226,7 +266,7 @@ export function StatusPipeline({ status }: { status: string }) {
                 }}
               >
                 {done ? "✓" : active ? (
-                  <span style={{ width: 6, height: 6, borderRadius: 6, background: WO.primary }} />
+                  <span style={{ width: 6, height: 6, borderRadius: 6, background: accent }} />
                 ) : ""}
               </span>
               <div
@@ -236,7 +276,7 @@ export function StatusPipeline({ status }: { status: string }) {
                   color: done || active ? WO.ink : WO.ink2,
                 }}
               >
-                {label}
+                {s.label}
               </div>
             </div>
             <div
@@ -248,7 +288,7 @@ export function StatusPipeline({ status }: { status: string }) {
                 paddingLeft: 26,
               }}
             >
-              {done ? "✓ complete" : active ? "in progress" : "—"}
+              {done ? "✓ complete" : active ? (isCond ? "current" : "in progress") : "—"}
             </div>
           </div>
         );
