@@ -295,6 +295,8 @@ export interface UpdateTicketBody {
   id: string;
   status?: TicketStatus;
   priority?: TicketPriority;
+  // Corrected asset / issue type (DO+ only in the UI).
+  assetType?: string;
   vendorName?: string;
   vendorId?: string | null;
   notes?: string;

@@ -51,6 +51,7 @@ import {
 } from "./types";
 import { NewTicketModal } from "./NewTicketModal";
 import { QueueTable } from "./QueueTable";
+import { QuotesSection } from "./mobile/QuotesSection";
 import { useFlag } from "@/lib/flags";
 import {
   WO,
@@ -828,7 +829,7 @@ function TicketCard({
           {/* Edit form for the non-status fields (notes / vendor /
               priority / business-critical). Status transitions are
               handled by TicketActionBar at the top of the card. */}
-          <UpdateForm ticket={ticket} onUpdated={onUpdated} onError={onError} />
+          <UpdateForm ticket={ticket} onUpdated={onUpdated} onError={onError} callerRole={callerRole} />
 
           <ActivityFeedPanel ticketId={ticket.id} />
 
@@ -1032,7 +1033,10 @@ function NewTicketDetail({
             <PhotoSection ticket={ticket} onUploaded={onPhotoUploaded} onError={onError} />
           </SectionCard>
           <SectionCard>
-            <UpdateForm ticket={ticket} onUpdated={onUpdated} onError={onError} />
+            <UpdateForm ticket={ticket} onUpdated={onUpdated} onError={onError} callerRole={callerRole} />
+          </SectionCard>
+          <SectionCard>
+            <QuotesSection ticket={ticket} onChanged={onUpdated} />
           </SectionCard>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
             <SectionCard>
@@ -1267,11 +1271,11 @@ function PhotoSection({
                 target="_blank"
                 rel="noopener noreferrer"
                 title={p.file_name || ""}
-                className="block h-16 w-16 overflow-hidden rounded border border-zinc-200 bg-white"
+                className="block h-24 w-24 overflow-hidden rounded border border-zinc-200 bg-white"
               >
                 {isPdf ? (
                   <div className="flex h-full w-full flex-col items-center justify-center gap-0.5 bg-rose-50 px-1 text-rose-700">
-                    <FileText className="h-5 w-5" strokeWidth={1.75} />
+                    <FileText className="h-7 w-7" strokeWidth={1.75} />
                     <span className="text-[9px] font-semibold uppercase tracking-wide">PDF</span>
                   </div>
                 ) : (
@@ -1302,28 +1306,42 @@ function ActivityFeedPanel({ ticketId }: { ticketId: string }) {
   );
 }
 
+// DO and above (role level <= 3) — used to gate asset-type correction.
+const WO2_ROLE_LEVEL: Record<string, number> = {
+  admin: 0, payroll: 1, coo: 2, vp: 2, rvp: 3, sdo: 3, do: 3, gm: 4, am: 4, employee: 5,
+};
+function isDoPlus(role: string | null | undefined): boolean {
+  if (!role) return false;
+  return (WO2_ROLE_LEVEL[role.toLowerCase()] ?? 99) <= 3;
+}
+
 function UpdateForm({
   ticket,
   onUpdated,
   onError,
+  callerRole,
 }: {
   ticket: Ticket;
   onUpdated: () => void;
   onError: (msg: string) => void;
+  callerRole: string;
 }) {
-  const [priority, setPriority] = useState<TicketPriority>(ticket.priority);
+  const canEditAsset = isDoPlus(callerRole);
+  const initialAsset = ticket.asset_type || "";
+  const [assetType, setAssetType] = useState(initialAsset);
   const [vendorName, setVendorName] = useState(ticket.vendor_name || "");
   const [vendorId, setVendorId] = useState<string | null>(ticket.vendor_id || null);
   const [notes, setNotes] = useState("");
 
   const initialVendorName = ticket.vendor_name || "";
   const initialVendorId = ticket.vendor_id || null;
+  const assetChanged = canEditAsset && assetType.trim() !== initialAsset;
 
   const mut = useMutation({
     mutationFn: () =>
       updateTicket({
         id: ticket.id,
-        priority: priority !== ticket.priority ? priority : undefined,
+        assetType: assetChanged ? assetType.trim() : undefined,
         vendorName: vendorName !== initialVendorName ? vendorName : undefined,
         // Send vendorId on any change — including null, which the
         // backend treats as "clear the link" so a typed-over name
@@ -1339,7 +1357,7 @@ function UpdateForm({
   });
 
   const dirty =
-    priority !== ticket.priority ||
+    assetChanged ||
     vendorName !== initialVendorName ||
     vendorId !== initialVendorId ||
     notes.trim().length > 0;
@@ -1349,20 +1367,21 @@ function UpdateForm({
       <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
         Update Ticket
       </div>
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <div>
-          <Label htmlFor={`wo2-priority-${ticket.id}`}>Priority</Label>
-          <select
-            id={`wo2-priority-${ticket.id}`}
-            value={priority}
-            onChange={(e) => setPriority(e.target.value as TicketPriority)}
-            className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-          >
-            {TICKET_PRIORITIES.map((p) => <option key={p}>{p}</option>)}
-          </select>
+      {canEditAsset && (
+        <div className="mb-3">
+          <Label htmlFor={`wo2-asset-${ticket.id}`}>Asset / Issue Type</Label>
+          <Input
+            id={`wo2-asset-${ticket.id}`}
+            value={assetType}
+            onChange={(e) => setAssetType(e.target.value)}
+            placeholder="Correct the asset / issue type…"
+          />
+          <p className="mt-1 text-[11px] text-zinc-500">
+            Fix the asset if it was wrong or missing at submission.
+          </p>
         </div>
-      </div>
-      <div className="mt-3">
+      )}
+      <div>
         <Label htmlFor={`wo2-vendor-${ticket.id}`}>Vendor</Label>
         <VendorSearchInput
           id={`wo2-vendor-${ticket.id}`}

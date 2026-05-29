@@ -1266,6 +1266,7 @@ export const handler = async (event) => {
       const {
         id, status, notes, vendorName, vendorId, vendorEta,
         costEstimate, lineItems, workRequested, priority, isBusinessCritical,
+        assetType,
       } = payload;
       if (!id) return respond(400, { ok: false, message: "id required." });
 
@@ -1421,6 +1422,7 @@ export const handler = async (event) => {
         updates.cost_estimate = items && items.length ? totalCents / 100 : null;
       }
       if (priority) updates.priority = priority;
+      if (assetType !== undefined) updates.asset_type = assetType ? String(assetType).trim() : null;
       if (workRequested !== undefined) updates.work_requested = workRequested || null;
       if (isBusinessCritical !== undefined) {
         updates.is_business_critical = isBusinessCritical;
