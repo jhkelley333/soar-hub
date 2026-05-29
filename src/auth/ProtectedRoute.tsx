@@ -2,6 +2,8 @@ import { Navigate, useLocation } from "react-router-dom";
 import { useAuth } from "@/auth/AuthProvider";
 import type { ReactNode } from "react";
 import type { UserRole } from "@/types/database";
+import { moduleKeyForPath } from "@/app/nav";
+import { useOverrides } from "@/lib/roleAccess";
 
 interface Props {
   children: ReactNode;
@@ -11,6 +13,9 @@ interface Props {
 export function ProtectedRoute({ children, requireRoles }: Props) {
   const { session, profile, loading } = useAuth();
   const location = useLocation();
+  // Role Access overrides can grant/revoke a role's access to a module.
+  // Fail-open to the static requireRoles until the config has loaded.
+  const { overrides, isLoaded } = useOverrides();
 
   if (loading) {
     return (
@@ -34,8 +39,17 @@ export function ProtectedRoute({ children, requireRoles }: Props) {
     return <ProfileLoadFailed />;
   }
 
-  if (requireRoles && profile && !requireRoles.includes(profile.role)) {
-    return <Navigate to="/" replace />;
+  if (profile) {
+    const role = profile.role;
+    // Static decision from the route's requireRoles.
+    const staticOk = !requireRoles || requireRoles.includes(role);
+    // An explicit override for this module + role wins (grant or revoke).
+    const moduleKey = moduleKeyForPath(location.pathname);
+    const ov = isLoaded && moduleKey ? overrides[moduleKey]?.[role] : undefined;
+    const allowed = role === "admin" || (ov !== undefined ? ov : staticOk);
+    if (!allowed) {
+      return <Navigate to="/" replace />;
+    }
   }
 
   return <>{children}</>;
