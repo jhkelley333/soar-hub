@@ -69,6 +69,7 @@ export interface PafRow {
   // Demotion (current/new pay rate also used by Transfer)
   from_role: string | null;
   new_role: string | null;
+  demotion_effective_date: string | null;
   current_pay_rate: number | string | null;
   new_pay_rate: number | string | null;
   location_change: boolean | null;

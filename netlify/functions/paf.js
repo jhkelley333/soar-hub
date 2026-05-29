@@ -693,6 +693,7 @@ async function submitPaf(supa, user, body) {
     new_pay_rate: body?.new_pay_rate === "" || body?.new_pay_rate == null ? null : num(body?.new_pay_rate),
     location_change: locationChange,
     new_location: sanitizeText(body?.new_location, 50) || null,
+    demotion_effective_date: sanitizeDateInput(body?.demotion_effective_date),
 
     // Termination — final_check_hrs + term_demotion intentionally not collected
     last_day_worked: sanitizeDateInput(body?.last_day_worked),
