@@ -410,7 +410,7 @@ export const handler = async (event) => {
       // top-3 recommendations.
       const query = supabase
         .from("vendors")
-        .select("id, name, category, services, vendor_scopes(scope_type, scope_id)")
+        .select("id, name, category, phone, services, vendor_scopes(scope_type, scope_id)")
         .eq("is_active", true)
         .order("name");
       const { data: vendors, error } = await query;
@@ -482,7 +482,12 @@ export const handler = async (event) => {
 
       return respond(200, {
         ok: true,
-        vendors: visible.map((v) => ({ id: v.id, name: v.name, category: v.category || "" })),
+        vendors: visible.map((v) => ({
+          id: v.id,
+          name: v.name,
+          category: v.category || "",
+          phone: v.phone || null,
+        })),
       });
     }
 

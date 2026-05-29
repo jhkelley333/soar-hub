@@ -25,6 +25,7 @@ import {
   MapPin,
   Search,
   Trash2,
+  X,
 } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Card, CardBody } from "@/shared/ui/Card";
@@ -52,6 +53,7 @@ interface VendorHit {
   id: string;
   name: string;
   category: string;
+  phone?: string | null;
 }
 
 interface SubmitResult {
@@ -124,7 +126,8 @@ export function PublicSubmitPage() {
   // type a one-off name. needsHelp flags it for the DO to assign.
   const [vendorId, setVendorId] = useState("");
   const [vendorName, setVendorName] = useState("");
-  const [vendorOpen, setVendorOpen] = useState(false);
+  const [vendorSearchOpen, setVendorSearchOpen] = useState(false);
+  const [vendorSearchQ, setVendorSearchQ] = useState("");
   const [needsHelp, setNeedsHelp] = useState(false);
 
   // ── Photos ──
@@ -143,15 +146,16 @@ export function PublicSubmitPage() {
   const effectiveCategory = pickedIssue?.category || "";
   const effectiveAssetType = pickedIssue?.display_name || "";
 
-  // Recommended vendors (already equipment-filtered server-side),
-  // narrowed by whatever the submitter has typed.
-  const vendorMatches = useMemo(() => {
-    const q = vendorName.trim().toLowerCase();
+  // Top suggestions (the list is already equipment-floated server-side)
+  // shown as cards, plus a searchable "all vendors" list.
+  const recommendedVendors = useMemo(() => vendors.slice(0, 4), [vendors]);
+  const vendorSearchResults = useMemo(() => {
+    const q = vendorSearchQ.trim().toLowerCase();
     const base = q
       ? vendors.filter((v) => `${v.name} ${v.category}`.toLowerCase().includes(q))
       : vendors;
-    return base.slice(0, 20);
-  }, [vendors, vendorName]);
+    return base.slice(0, 30);
+  }, [vendors, vendorSearchQ]);
 
   // Debounced store typeahead (250ms).
   useEffect(() => {
@@ -687,87 +691,152 @@ export function PublicSubmitPage() {
 
                 <div>
                   <Label htmlFor="ps-vendor">
-                    Vendor <span className="text-red-500">*</span>
+                    Vendor Name <span className="text-red-500">*</span>
                   </Label>
-                  {needsHelp ? (
-                    <div className="flex items-center justify-between rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm">
-                      <span className="text-midnight">
-                        Need help finding a vendor — the team will assign one.
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => setNeedsHelp(false)}
-                        className="text-xs font-medium text-accent hover:underline"
-                      >
-                        Change
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="relative">
-                      <Input
-                        id="ps-vendor"
-                        value={vendorName}
-                        onChange={(e) => {
-                          setVendorName(e.target.value);
-                          setVendorId(""); // typing = free-text, drop any picked id
-                          setVendorOpen(true);
-                        }}
-                        onFocus={() => setVendorOpen(true)}
-                        onBlur={() => window.setTimeout(() => setVendorOpen(false), 150)}
-                        disabled={!pickedStore}
-                        placeholder={
-                          !pickedStore
-                            ? "Pick a store first…"
-                            : loadingVendors
-                            ? "Loading vendors…"
-                            : "Search or type a vendor…"
-                        }
-                        autoComplete="off"
-                      />
-                      {vendorOpen && pickedStore && (
-                        <div className="absolute left-0 right-0 z-10 mt-1 max-h-72 overflow-y-auto rounded-md border border-zinc-200 bg-white shadow-lg">
-                          {vendorMatches.map((v) => (
+                  <Input
+                    id="ps-vendor"
+                    value={needsHelp ? "" : vendorName}
+                    onChange={(e) => {
+                      setVendorName(e.target.value);
+                      setVendorId(""); // typing = free text, drop any picked id
+                    }}
+                    disabled={needsHelp || !pickedStore}
+                    placeholder={
+                      needsHelp
+                        ? "Your DO will assign a vendor"
+                        : !pickedStore
+                        ? "Pick a store first…"
+                        : "Search or select a vendor"
+                    }
+                    autoComplete="off"
+                  />
+
+                  {/* Suggested vendor cards — based on the picked equipment. */}
+                  {!needsHelp && pickedIssue && recommendedVendors.length > 0 && (
+                    <div className="mt-2">
+                      <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+                        Suggested vendors for {pickedIssue.display_name}
+                      </div>
+                      <div className="mt-1 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                        {recommendedVendors.map((v) => {
+                          const picked = vendorId === v.id || (!vendorId && vendorName === v.name);
+                          return (
                             <button
                               key={v.id}
                               type="button"
-                              onMouseDown={(e) => {
-                                e.preventDefault();
-                                setVendorId(v.id);
+                              onClick={() => {
                                 setVendorName(v.name);
-                                setVendorOpen(false);
+                                setVendorId(v.id);
                               }}
-                              className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50"
+                              className={cn(
+                                "rounded-md border px-3 py-2 text-left text-xs transition",
+                                picked
+                                  ? "border-accent bg-accent/5 text-midnight"
+                                  : "border-zinc-200 bg-white text-zinc-700 hover:border-accent hover:bg-accent/5",
+                              )}
                             >
-                              <span className="font-medium text-midnight">{v.name}</span>
-                              {v.category && <span className="text-zinc-500"> · {v.category}</span>}
+                              <div className="font-medium text-midnight">{v.name}</div>
+                              {v.category && (
+                                <div className="mt-0.5 text-[10px] uppercase tracking-wide text-zinc-500">
+                                  {v.category}
+                                </div>
+                              )}
+                              {v.phone && (
+                                <div className="mt-0.5 text-[11px] text-zinc-600">{v.phone}</div>
+                              )}
                             </button>
-                          ))}
-                          {vendorMatches.length === 0 && (
-                            <div className="px-3 py-2 text-[11px] text-zinc-500">
-                              {vendorName.trim()
-                                ? "No match — we'll use the name you typed."
-                                : "No recommended vendors. Type a vendor name."}
-                            </div>
-                          )}
-                        </div>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setNeedsHelp(true);
-                          setVendorName("");
-                          setVendorId("");
-                          setVendorOpen(false);
-                        }}
-                        className="mt-1 text-[11px] font-medium text-accent hover:underline"
-                      >
-                        Not sure? Let the team find a vendor
-                      </button>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
-                  <div className="mt-1 text-[11px] text-zinc-500">
-                    Recommended vendors are based on the equipment. Don't see yours? Just type the name.
-                  </div>
+
+                  {/* Search all store-visible vendors. */}
+                  {!needsHelp && pickedStore && (
+                    <div className="mt-2">
+                      {!vendorSearchOpen ? (
+                        <button
+                          type="button"
+                          onClick={() => setVendorSearchOpen(true)}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:border-accent hover:text-midnight"
+                        >
+                          <Search className="h-3.5 w-3.5" strokeWidth={1.75} />
+                          Search all vendors for this store…
+                        </button>
+                      ) : (
+                        <div className="rounded-md border border-zinc-200 bg-white p-2">
+                          <div className="flex items-center gap-2">
+                            <Input
+                              value={vendorSearchQ}
+                              onChange={(e) => setVendorSearchQ(e.target.value)}
+                              placeholder="Search vendor name or category…"
+                              autoFocus
+                              className="h-8 flex-1 text-xs"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => { setVendorSearchOpen(false); setVendorSearchQ(""); }}
+                              className="rounded p-1 text-zinc-400 hover:bg-zinc-100"
+                              aria-label="Close vendor search"
+                            >
+                              <X className="h-3.5 w-3.5" strokeWidth={1.75} />
+                            </button>
+                          </div>
+                          <div className="mt-1 max-h-56 overflow-y-auto">
+                            {loadingVendors && (
+                              <div className="px-1 py-2 text-[11px] text-zinc-500">Loading vendors…</div>
+                            )}
+                            {!loadingVendors && vendorSearchResults.length === 0 && (
+                              <div className="px-1 py-2 text-[11px] text-zinc-500">
+                                No vendors match — type the name above to enter it manually.
+                              </div>
+                            )}
+                            <ul className="divide-y divide-zinc-100">
+                              {vendorSearchResults.map((v) => (
+                                <li key={v.id}>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setVendorName(v.name);
+                                      setVendorId(v.id);
+                                      setVendorSearchOpen(false);
+                                      setVendorSearchQ("");
+                                    }}
+                                    className="block w-full px-1 py-2 text-left text-xs hover:bg-zinc-50"
+                                  >
+                                    <span className="font-medium text-midnight">{v.name}</span>
+                                    {v.category && <span className="text-zinc-500"> · {v.category}</span>}
+                                  </button>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Need help — flag for the DO. */}
+                  <label className="mt-2 flex items-center gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-700">
+                    <input
+                      type="checkbox"
+                      checked={needsHelp}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        setNeedsHelp(on);
+                        if (on) {
+                          setVendorName("");
+                          setVendorId("");
+                          setVendorSearchOpen(false);
+                        }
+                      }}
+                      className="h-4 w-4 rounded border-zinc-300 text-accent focus:ring-accent"
+                    />
+                    <span>
+                      <span className="font-semibold text-midnight">Need help finding a vendor?</span>{" "}
+                      We'll submit this ticket and flag it for your DO to assign one.
+                    </span>
+                  </label>
                 </div>
 
                 <div>
