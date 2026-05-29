@@ -977,7 +977,15 @@ function NewTicketDetail({
         </div>
       </div>
 
-      <StatusPipeline status={ticket.status} />
+      <StatusPipeline
+        status={ticket.status}
+        approvalPending={(ticket.ticket_approvals ?? []).some((a) => a.status === "Pending")}
+        partsOnOrder={
+          ticket.status === "awaiting_equipment" ||
+          ticket.pause_state === "awaiting_parts" ||
+          ticket.pause_state === "awaiting_replacement"
+        }
+      />
 
       {/* Quick actions */}
       <SectionCard>
