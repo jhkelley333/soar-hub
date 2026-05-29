@@ -392,6 +392,27 @@ async function resolveAdminFallback(supa) {
 // Resolve caller's visible store rows (full records, not just numbers).
 // Used by the my-stores action and (indirectly) by listMyStores below.
 // ----------------------------------------------------------------------------
+// Select + flatten stores with their district (DO "market") and area
+// (SDO) names embedded, so the New Hire form can build the market/area
+// pickers + auto-populated store lists from a single fetch.
+const STORE_SELECT =
+  "id, number, name, district_id, is_active, districts(name, area_id, areas(name))";
+
+function flattenStore(s) {
+  const d = s.districts || null;
+  const a = d?.areas || null;
+  return {
+    id: s.id,
+    number: s.number,
+    name: s.name,
+    district_id: s.district_id,
+    district_name: d?.name ?? null,
+    area_id: d?.area_id ?? null,
+    area_name: a?.name ?? null,
+    is_active: s.is_active,
+  };
+}
+
 async function resolveVisibleStoreRows(supa, userId) {
   const { data: visibleIds } = await supa.rpc("user_visible_stores", { uid: userId });
   const ids = (visibleIds ?? [])
@@ -400,11 +421,11 @@ async function resolveVisibleStoreRows(supa, userId) {
   if (!ids.length) return [];
   const { data } = await supa
     .from("stores")
-    .select("id, number, name, district_id, is_active")
+    .select(STORE_SELECT)
     .in("id", ids)
     .eq("is_active", true)
     .order("number");
-  return data ?? [];
+  return (data ?? []).map(flattenStore);
 }
 
 // ----------------------------------------------------------------------------
@@ -416,10 +437,10 @@ async function listMyStores(supa, user) {
   if (user.role === "admin") {
     const { data } = await supa
       .from("stores")
-      .select("id, number, name, district_id, is_active")
+      .select(STORE_SELECT)
       .eq("is_active", true)
       .order("number");
-    return { stores: data ?? [] };
+    return { stores: (data ?? []).map(flattenStore) };
   }
   if (!SUBMIT_ROLES.has(user.role) && !READ_ROLES.has(user.role)) {
     return { stores: [] };
@@ -651,6 +672,9 @@ async function submitPaf(supa, user, body) {
     nh_hours_last_period: num(body?.nh_hours_last_period),
     nh_home_store: sanitizeText(body?.nh_home_store, 20) || null,
     nh_no_market: body?.nh_no_market === "yes" || body?.nh_no_market === true,
+    nh_market: sanitizeText(body?.nh_market, 200) || null,
+    nh_area: sanitizeText(body?.nh_area, 200) || null,
+    nh_stores: sanitizeText(body?.nh_stores, 2000) || null,
 
     // Bonus (sub-fields branch on bonus_type)
     bonus_type: sanitizeText(body?.bonus_type, 100) || null,

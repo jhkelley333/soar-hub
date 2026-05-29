@@ -166,9 +166,12 @@ export function PafDetail({ paf }: { paf: PafRow }) {
               <Field label="Hours (Last Pay Period)" value={String(paf.nh_hours_last_period)} />
             )}
             {paf.nh_home_store && <Field label="Home Store" value={`#${paf.nh_home_store}`} />}
+            {paf.nh_market && <Field label="Market (District)" value={paf.nh_market} />}
+            {paf.nh_area && <Field label="Area" value={paf.nh_area} />}
             {paf.nh_no_market && (
               <Field label="Market" value="No market yet (plus-one / in training)" />
             )}
+            {paf.nh_stores && <Field label="Stores" value={paf.nh_stores} />}
           </Grid>
         </Section>
       )}
