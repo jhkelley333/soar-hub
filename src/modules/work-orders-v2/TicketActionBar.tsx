@@ -9,11 +9,11 @@
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Loader2, Pause, RotateCcw, Truck, XCircle } from "lucide-react";
+import { CheckCircle2, Loader2, Pause, Play, RotateCcw, Truck, XCircle } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
-import { transitionTicket, uploadPhoto } from "./api";
-import type { TicketStatus, TransitionPayload, UploadPhotoBody } from "./types";
+import { setPauseState, transitionTicket, uploadPhoto } from "./api";
+import type { PauseState, TicketStatus, TransitionPayload, UploadPhotoBody } from "./types";
 import { ReasonModal, type ReasonModalConfig } from "./ReasonModal";
 
 // Reads a File into a base64 string (sans the data: prefix) so it
@@ -139,6 +139,12 @@ const ACTIONS_BY_STATE: Record<TicketStatus, ActionDef[]> = {
       icon: "x",
       variant: "ghost",
       modal: { kind: "admin_close", requireResolutionCategory: true } },
+    { key: "back_to_submitted",
+      label: "Back to Submitted",
+      to: "submitted",
+      icon: "rotate",
+      variant: "ghost",
+      payload: {} },
   ],
   scheduled: [
     { key: "on_site",
@@ -160,9 +166,15 @@ const ACTIONS_BY_STATE: Record<TicketStatus, ActionDef[]> = {
       variant: "ghost",
       modal: { kind: "order_replacement" } },
     { key: "back_to_progress",
-      label: "Pause — Back to In Progress",
+      label: "Unschedule — Back to In Progress",
       to: "in_progress",
-      icon: "pause",
+      icon: "rotate",
+      variant: "ghost",
+      payload: {} },
+    { key: "back_to_submitted",
+      label: "Back to Submitted",
+      to: "submitted",
+      icon: "rotate",
       variant: "ghost",
       payload: {} },
   ],
@@ -182,7 +194,13 @@ const ACTIONS_BY_STATE: Record<TicketStatus, ActionDef[]> = {
     { key: "step_away",
       label: "Step Away — Back to In Progress",
       to: "in_progress",
-      icon: "pause",
+      icon: "rotate",
+      variant: "ghost",
+      payload: {} },
+    { key: "back_to_submitted",
+      label: "Back to Submitted",
+      to: "submitted",
+      icon: "rotate",
       variant: "ghost",
       payload: {} },
   ],
@@ -208,6 +226,12 @@ const ACTIONS_BY_STATE: Record<TicketStatus, ActionDef[]> = {
       icon: "x",
       variant: "ghost",
       modal: { kind: "cancellation" } },
+    { key: "back_to_submitted",
+      label: "Back to Submitted",
+      to: "submitted",
+      icon: "rotate",
+      variant: "ghost",
+      payload: {} },
   ],
   completed: [
     { key: "confirm",
@@ -262,6 +286,9 @@ interface Props {
   // Unlocks submitter-only actions (currently: "Cancel my ticket"
   // for submitted state).
   isSubmitter?: boolean;
+  // Current pause state — drives the Pause / Resume button (only
+  // meaningful while in_progress or scheduled).
+  pauseState?: PauseState | null;
 }
 
 // Closed → in_progress is allowed only within the 30-day reopen grace
@@ -274,6 +301,7 @@ export function TicketActionBar({
   storeNumber,
   showAdminCloseFromInProgress = true,
   isSubmitter = false,
+  pauseState = null,
 }: Props) {
   const toast = useToast();
   const qc = useQueryClient();
@@ -320,6 +348,20 @@ export function TicketActionBar({
     },
   });
 
+  const pauseMut = useMutation({
+    mutationFn: (to: PauseState) => setPauseState({ id: ticketId, pause_state: to }),
+    onSuccess: (_d, to) => {
+      toast.push(to === "none" ? "Resumed." : "Paused — on hold.", "success");
+      qc.invalidateQueries({ queryKey: ["wo2", "tickets"] });
+      qc.invalidateQueries({ queryKey: ["wo2", "ticket-activities", ticketId] });
+      qc.invalidateQueries({ queryKey: ["wo2-ticket", ticketId] });
+    },
+    onError: (e: unknown) =>
+      toast.push(e instanceof Error ? e.message : "Pause failed.", "error"),
+  });
+  const canPause = status === "in_progress" || status === "scheduled";
+  const isPaused = !!pauseState && pauseState !== "none";
+
   function trigger(action: ActionDef) {
     if (action.modal) {
       setModalAction(action);
@@ -329,7 +371,7 @@ export function TicketActionBar({
     mut.mutate({ to: action.to, payload: action.payload || {} });
   }
 
-  if (actions.length === 0) return null;
+  if (actions.length === 0 && !canPause) return null;
 
   return (
     <>
@@ -348,6 +390,20 @@ export function TicketActionBar({
             {a.label}
           </Button>
         ))}
+        {canPause && (
+          <Button
+            variant="ghost"
+            onClick={() => pauseMut.mutate(isPaused ? "none" : "on_hold")}
+            disabled={pauseMut.isPending}
+          >
+            {pauseMut.isPending
+              ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />
+              : isPaused
+                ? <Play className="mr-1 h-3.5 w-3.5" strokeWidth={2} />
+                : <Pause className="mr-1 h-3.5 w-3.5" strokeWidth={2} />}
+            {isPaused ? "Resume" : "Pause (On Hold)"}
+          </Button>
+        )}
       </div>
 
       {modalAction && (

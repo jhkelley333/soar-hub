@@ -784,6 +784,7 @@ function TicketCard({
               closedAt={ticket.closed_at}
               storeNumber={ticket.store_number}
               isSubmitter={isSubmitter}
+              pauseState={ticket.pause_state}
             />
           </div>
 
@@ -1001,6 +1002,7 @@ function NewTicketDetail({
           closedAt={ticket.closed_at}
           storeNumber={ticket.store_number}
           isSubmitter={isSubmitter}
+          pauseState={ticket.pause_state}
         />
       </SectionCard>
 

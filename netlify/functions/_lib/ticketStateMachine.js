@@ -193,6 +193,14 @@ const TRANSITIONS = {
                                   closed_at: nowIso(),
                                 }) },
 
+  // "Back to Submitted" — escape hatch when something's wrong (wrong
+  // store, bad routing, needs to restart). Resets the ticket to the
+  // queue without side effects; pause auto-reset is handled below.
+  "in_progress->submitted":   { validate: () => null, sideEffects: () => ({}) },
+  "scheduled->submitted":     { validate: () => null, sideEffects: () => ({}) },
+  "on_site->submitted":       { validate: () => null, sideEffects: () => ({}) },
+  "awaiting_equipment->submitted": { validate: () => null, sideEffects: () => ({}) },
+
   "in_progress->scheduled":   { validate: (p) => validateVendor(p),
                                 sideEffects: (p) => vendorSideEffects(p) },
 
