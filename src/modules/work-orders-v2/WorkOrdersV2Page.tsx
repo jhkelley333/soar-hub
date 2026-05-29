@@ -31,6 +31,7 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
+  fetchIssueLibrary,
   fetchStats,
   fetchTickets,
   fileToBase64,
@@ -44,6 +45,7 @@ import {
   TICKET_STATUSES,
   isOpenStatus,
   statusLabel,
+  type IssueLibraryItem,
   type Ticket,
   type TicketPriority,
   type TicketStatus,
@@ -1329,6 +1331,25 @@ function UpdateForm({
   const canEditAsset = isDoPlus(callerRole);
   const initialAsset = ticket.asset_type || "";
   const [assetType, setAssetType] = useState(initialAsset);
+  const [assetOpen, setAssetOpen] = useState(false);
+  const issueLib = useQuery({
+    queryKey: ["wo2", "issueLibrary"],
+    queryFn: fetchIssueLibrary,
+    enabled: canEditAsset,
+    staleTime: 5 * 60_000,
+  });
+  const assetSuggestions = useMemo(() => {
+    const q = assetType.trim().toLowerCase();
+    if (!q) return [];
+    return (issueLib.data?.items ?? [])
+      .filter(
+        (i) =>
+          i.display_name.toLowerCase().includes(q) ||
+          i.category.toLowerCase().includes(q) ||
+          i.asset_type.toLowerCase().includes(q),
+      )
+      .slice(0, 8);
+  }, [assetType, issueLib.data]);
   const [vendorName, setVendorName] = useState(ticket.vendor_name || "");
   const [vendorId, setVendorId] = useState<string | null>(ticket.vendor_id || null);
   const [notes, setNotes] = useState("");
@@ -1370,14 +1391,41 @@ function UpdateForm({
       {canEditAsset && (
         <div className="mb-3">
           <Label htmlFor={`wo2-asset-${ticket.id}`}>Asset / Issue Type</Label>
-          <Input
-            id={`wo2-asset-${ticket.id}`}
-            value={assetType}
-            onChange={(e) => setAssetType(e.target.value)}
-            placeholder="Correct the asset / issue type…"
-          />
+          <div className="relative">
+            <Input
+              id={`wo2-asset-${ticket.id}`}
+              value={assetType}
+              onChange={(e) => {
+                setAssetType(e.target.value);
+                setAssetOpen(true);
+              }}
+              onFocus={() => setAssetOpen(true)}
+              onBlur={() => window.setTimeout(() => setAssetOpen(false), 150)}
+              placeholder="Start typing — e.g. fryer, ice, HVAC…"
+              autoComplete="off"
+            />
+            {assetOpen && assetSuggestions.length > 0 && (
+              <div className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-md border border-zinc-200 bg-white py-1 shadow-lg">
+                {assetSuggestions.map((s: IssueLibraryItem) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      setAssetType(s.display_name);
+                      setAssetOpen(false);
+                    }}
+                    className="block w-full px-3 py-1.5 text-left hover:bg-zinc-50"
+                  >
+                    <div className="text-sm font-medium text-midnight">{s.display_name}</div>
+                    <div className="text-[11px] text-zinc-500">{s.category} · {s.asset_type}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
           <p className="mt-1 text-[11px] text-zinc-500">
-            Fix the asset if it was wrong or missing at submission.
+            Pick the correct asset if it was wrong or missing at submission.
           </p>
         </div>
       )}
