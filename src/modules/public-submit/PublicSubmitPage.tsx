@@ -69,24 +69,8 @@ interface PhotoSlot {
   previewUrl: string;
 }
 
-const CATEGORIES = [
-  "Facilities & Infrastructure",
-  "Equipment / Cooking",
-  "Refrigeration",
-  "HVAC",
-  "Plumbing",
-  "Electrical",
-  "POS / Tech",
-  "Beverage",
-  "Other",
-];
-
 const MAX_PHOTOS = 3;
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
-
-// Sentinel vendor-dropdown value: store doesn't know which vendor to use,
-// so the ticket is submitted flagged for the DO to assign one.
-const VENDOR_NEED_HELP = "__need_help__";
 
 async function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -120,11 +104,9 @@ export function PublicSubmitPage() {
   const [issueHits, setIssueHits] = useState<IssueLibraryHit[]>([]);
   const [issueSearchOpen, setIssueSearchOpen] = useState(false);
   const [searchingIssue, setSearchingIssue] = useState(false);
+  // Picked from the library, OR a synthetic "Other" entry (id "__other__")
+  // built from the typed text when the issue isn't in the library.
   const [pickedIssue, setPickedIssue] = useState<IssueLibraryHit | null>(null);
-  // Category + assetType come from the library pick OR the manual
-  // fallback fields. Library pick wins if set.
-  const [manualCategory, setManualCategory] = useState("");
-  const [manualAssetType, setManualAssetType] = useState("");
   const [modelNumber, setModelNumber] = useState("");
   const [priority, setPriority] = useState<"Standard" | "Urgent" | "Emergency">("Standard");
   const [issueDescription, setIssueDescription] = useState("");
@@ -137,7 +119,13 @@ export function PublicSubmitPage() {
   // and re-validates the chosen vendor_id at submit time.
   const [vendors, setVendors] = useState<VendorHit[]>([]);
   const [loadingVendors, setLoadingVendors] = useState(false);
+  // Vendor entry mirrors the WO2 New Ticket modal: recommendations
+  // populate from the picked equipment; the submitter can pick one or
+  // type a one-off name. needsHelp flags it for the DO to assign.
   const [vendorId, setVendorId] = useState("");
+  const [vendorName, setVendorName] = useState("");
+  const [vendorOpen, setVendorOpen] = useState(false);
+  const [needsHelp, setNeedsHelp] = useState(false);
 
   // ── Photos ──
   const [photos, setPhotos] = useState<PhotoSlot[]>([]);
@@ -149,11 +137,21 @@ export function PublicSubmitPage() {
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [result, setResult] = useState<SubmitResult | null>(null);
 
-  const effectiveCategory = pickedIssue?.category || manualCategory;
-  // Store the SPECIFIC library asset (display_name, e.g. "Ice Machine
-  // (Left)"), not the generic asset_type ("Ice"). Matches the desktop New
-  // Ticket modal so the saved asset reflects the actual library item.
-  const effectiveAssetType = pickedIssue?.display_name || manualAssetType;
+  // Category + asset come straight from the picked issue (the library
+  // pick or the synthetic "Other"). The standalone Category/Asset fields
+  // were removed — the issue picker already carries that data.
+  const effectiveCategory = pickedIssue?.category || "";
+  const effectiveAssetType = pickedIssue?.display_name || "";
+
+  // Recommended vendors (already equipment-filtered server-side),
+  // narrowed by whatever the submitter has typed.
+  const vendorMatches = useMemo(() => {
+    const q = vendorName.trim().toLowerCase();
+    const base = q
+      ? vendors.filter((v) => `${v.name} ${v.category}`.toLowerCase().includes(q))
+      : vendors;
+    return base.slice(0, 20);
+  }, [vendors, vendorName]);
 
   // Debounced store typeahead (250ms).
   useEffect(() => {
@@ -208,7 +206,6 @@ export function PublicSubmitPage() {
   useEffect(() => {
     if (!pickedStore) {
       setVendors([]);
-      setVendorId("");
       return;
     }
     setLoadingVendors(true);
@@ -223,15 +220,11 @@ export function PublicSubmitPage() {
         if (cancelled) return;
         const list = body.ok && Array.isArray(body.vendors) ? body.vendors : [];
         setVendors(list);
-        setVendorId((prev) =>
-          prev === VENDOR_NEED_HELP || (prev && list.some((v: VendorHit) => v.id === prev))
-            ? prev
-            : "");
+        // Drop a recommended-vendor id that's no longer in the refreshed
+        // list; leave any typed name + the need-help flag alone.
+        setVendorId((prev) => (prev && list.some((v: VendorHit) => v.id === prev) ? prev : ""));
       } catch {
-        if (!cancelled) {
-          setVendors([]);
-          setVendorId("");
-        }
+        if (!cancelled) setVendors([]);
       } finally {
         if (!cancelled) setLoadingVendors(false);
       }
@@ -248,13 +241,15 @@ export function PublicSubmitPage() {
     };
   }, [photos]);
 
-  // Vendor is required: a real pick, or the explicit "need help" option.
-  const vendorChosen = vendorId === VENDOR_NEED_HELP || vendorId.length > 0;
+  // Vendor: a typed/picked name, or the explicit "need help" escalation.
+  const vendorChosen = needsHelp || vendorName.trim().length > 0;
   const canSubmit =
     !!pickedStore
     && name.trim().length > 0
     && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+    && !!pickedIssue
     && issueDescription.trim().length >= 10
+    && troubleshooting !== ""
     && vendorChosen
     && photos.length > 0
     && !submitting;
@@ -319,8 +314,9 @@ export function PublicSubmitPage() {
           issue_description: issueDescription.trim(),
           priority,
           troubleshooting_checked: troubleshooting === "yes",
-          vendor_id: vendorId && vendorId !== VENDOR_NEED_HELP ? vendorId : null,
-          needs_vendor_help: vendorId === VENDOR_NEED_HELP,
+          vendor_id: vendorId || null,
+          vendor_name: vendorId ? undefined : vendorName.trim() || undefined,
+          needs_vendor_help: needsHelp,
         }),
       });
       const tBody = await tRes.json().catch(() => ({}));
@@ -543,13 +539,17 @@ export function PublicSubmitPage() {
                 <div className="text-sm font-semibold tracking-tight text-midnight">What's the issue?</div>
 
                 <div>
-                  <Label htmlFor="ps-issue">Find the issue (recommended)</Label>
+                  <Label htmlFor="ps-issue">
+                    Find the issue <span className="text-red-500">*</span>
+                  </Label>
                   {pickedIssue ? (
                     <div className="flex items-center justify-between rounded-md border border-zinc-200 bg-white px-3 py-2">
                       <div className="text-sm">
                         <div className="font-semibold text-midnight">{pickedIssue.display_name}</div>
                         <div className="text-xs text-zinc-500">
-                          {pickedIssue.category} · {pickedIssue.asset_type}
+                          {pickedIssue.id === "__other__"
+                            ? "Other — not in the list"
+                            : `${pickedIssue.category} · ${pickedIssue.asset_type}`}
                         </div>
                       </div>
                       <button
@@ -590,9 +590,6 @@ export function PublicSubmitPage() {
                               Searching…
                             </div>
                           )}
-                          {!searchingIssue && issueHits.length === 0 && (
-                            <div className="px-3 py-2 text-xs text-zinc-500">No matches. Use the fields below.</div>
-                          )}
                           {issueHits.map((i) => (
                             <button
                               key={i.id}
@@ -607,39 +604,30 @@ export function PublicSubmitPage() {
                               <div className="text-[11px] text-zinc-500">{i.category} · {i.asset_type}</div>
                             </button>
                           ))}
+                          {/* Always offer an "Other" fallback so a submitter
+                              whose issue isn't in the library can still file. */}
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setPickedIssue({
+                                id: "__other__",
+                                display_name: issueQuery.trim(),
+                                category: "Other",
+                                asset_type: issueQuery.trim(),
+                                troubleshooting_tips: null,
+                              });
+                              setIssueSearchOpen(false);
+                            }}
+                            className="block w-full border-t border-zinc-100 px-3 py-2 text-left text-sm hover:bg-zinc-50"
+                          >
+                            <div className="font-semibold text-accent">Other — use “{issueQuery.trim()}”</div>
+                            <div className="text-[11px] text-zinc-500">My issue isn't in the list</div>
+                          </button>
                         </div>
                       )}
                     </div>
                   )}
                 </div>
-
-                {!pickedIssue && (
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <div>
-                      <Label htmlFor="ps-category">Category</Label>
-                      <select
-                        id="ps-category"
-                        value={manualCategory}
-                        onChange={(e) => setManualCategory(e.target.value)}
-                        className="block w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-                      >
-                        <option value="">— Pick a category —</option>
-                        {CATEGORIES.map((c) => (
-                          <option key={c} value={c}>{c}</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div>
-                      <Label htmlFor="ps-asset">Equipment / asset (optional)</Label>
-                      <Input
-                        id="ps-asset"
-                        value={manualAssetType}
-                        onChange={(e) => setManualAssetType(e.target.value)}
-                        placeholder="Walk-in freezer, hood, ice machine, …"
-                      />
-                    </div>
-                  </div>
-                )}
 
                 <div>
                   <Label htmlFor="ps-model">Model number (optional)</Label>
@@ -701,40 +689,91 @@ export function PublicSubmitPage() {
                   <Label htmlFor="ps-vendor">
                     Vendor <span className="text-red-500">*</span>
                   </Label>
-                  <select
-                    id="ps-vendor"
-                    value={vendorId}
-                    onChange={(e) => setVendorId(e.target.value)}
-                    disabled={!pickedStore || loadingVendors}
-                    className="block w-full rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent disabled:bg-zinc-50 disabled:text-zinc-400"
-                  >
-                    <option value="">
-                      {!pickedStore
-                        ? "Pick a store first…"
-                        : loadingVendors
-                        ? "Loading vendors…"
-                        : "Select a vendor…"}
-                    </option>
-                    {vendors.map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.name}{v.category ? ` · ${v.category}` : ""}
-                      </option>
-                    ))}
-                    {pickedStore && !loadingVendors && (
-                      <option value={VENDOR_NEED_HELP}>
-                        Need help finding a vendor — let the team pick
-                      </option>
-                    )}
-                  </select>
+                  {needsHelp ? (
+                    <div className="flex items-center justify-between rounded-md border border-zinc-200 bg-white px-3 py-2 text-sm">
+                      <span className="text-midnight">
+                        Need help finding a vendor — the team will assign one.
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => setNeedsHelp(false)}
+                        className="text-xs font-medium text-accent hover:underline"
+                      >
+                        Change
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <Input
+                        id="ps-vendor"
+                        value={vendorName}
+                        onChange={(e) => {
+                          setVendorName(e.target.value);
+                          setVendorId(""); // typing = free-text, drop any picked id
+                          setVendorOpen(true);
+                        }}
+                        onFocus={() => setVendorOpen(true)}
+                        onBlur={() => window.setTimeout(() => setVendorOpen(false), 150)}
+                        disabled={!pickedStore}
+                        placeholder={
+                          !pickedStore
+                            ? "Pick a store first…"
+                            : loadingVendors
+                            ? "Loading vendors…"
+                            : "Search or type a vendor…"
+                        }
+                        autoComplete="off"
+                      />
+                      {vendorOpen && pickedStore && (
+                        <div className="absolute left-0 right-0 z-10 mt-1 max-h-72 overflow-y-auto rounded-md border border-zinc-200 bg-white shadow-lg">
+                          {vendorMatches.map((v) => (
+                            <button
+                              key={v.id}
+                              type="button"
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                setVendorId(v.id);
+                                setVendorName(v.name);
+                                setVendorOpen(false);
+                              }}
+                              className="block w-full px-3 py-2 text-left text-sm hover:bg-zinc-50"
+                            >
+                              <span className="font-medium text-midnight">{v.name}</span>
+                              {v.category && <span className="text-zinc-500"> · {v.category}</span>}
+                            </button>
+                          ))}
+                          {vendorMatches.length === 0 && (
+                            <div className="px-3 py-2 text-[11px] text-zinc-500">
+                              {vendorName.trim()
+                                ? "No match — we'll use the name you typed."
+                                : "No recommended vendors. Type a vendor name."}
+                            </div>
+                          )}
+                        </div>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setNeedsHelp(true);
+                          setVendorName("");
+                          setVendorId("");
+                          setVendorOpen(false);
+                        }}
+                        className="mt-1 text-[11px] font-medium text-accent hover:underline"
+                      >
+                        Not sure? Let the team find a vendor
+                      </button>
+                    </div>
+                  )}
                   <div className="mt-1 text-[11px] text-zinc-500">
-                    {vendorId === VENDOR_NEED_HELP
-                      ? "We'll flag this ticket for your DO to assign a vendor."
-                      : "Pick the vendor you'd like us to send out. Not sure? Choose “Need help finding a vendor” and we'll route it."}
+                    Recommended vendors are based on the equipment. Don't see yours? Just type the name.
                   </div>
                 </div>
 
                 <div>
-                  <Label>Did you try basic troubleshooting? (optional)</Label>
+                  <Label>
+                    Did you try basic troubleshooting? <span className="text-red-500">*</span>
+                  </Label>
                   <div className="flex gap-2">
                     {(["yes", "no"] as const).map((v) => (
                       <button

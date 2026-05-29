@@ -182,6 +182,9 @@ export const handler = async (event) => {
       // troubleshooting question on the public form.
       const troubleshootingChecked = body.troubleshooting_checked === true;
       const vendorIdInput = body.vendor_id ? String(body.vendor_id).trim() : "";
+      // Free-text vendor name (when the submitter types one not in the
+      // recommended list). Used only if no vendor_id resolves.
+      const vendorNameInput = body.vendor_name ? String(body.vendor_name).trim() : "";
       // The store explicitly asked the team to pick a vendor — submits the
       // ticket flagged for the DO instead of requiring a vendor choice.
       const needsVendorHelp = body.needs_vendor_help === true;
@@ -240,12 +243,18 @@ export const handler = async (event) => {
         }
       }
 
-      // Vendor is required: either a resolved vendor, or the explicit
-      // "need help finding a vendor" escalation that flags it for the DO.
-      if (!resolvedVendorId && !needsVendorHelp) {
+      // Free-text vendor (typed name, no library match). Allowed when no
+      // vendor_id resolved and the submitter isn't asking for help.
+      if (!resolvedVendorId && vendorNameInput && !needsVendorHelp) {
+        resolvedVendorName = vendorNameInput;
+      }
+
+      // Vendor is required: a resolved vendor (id or typed name), or the
+      // explicit "need help finding a vendor" escalation for the DO.
+      if (!resolvedVendorId && !resolvedVendorName && !needsVendorHelp) {
         return respond(400, {
           ok: false,
-          message: 'Choose a vendor, or select "Need help finding a vendor".',
+          message: 'Choose a vendor, type one, or select "Need help finding a vendor".',
         });
       }
 
