@@ -468,6 +468,38 @@ async function resolveVisibleStoreNumbers(supa, userId) {
 }
 
 // ----------------------------------------------------------------------------
+// offer-letter-url — short-lived signed URL for a New Hire offer letter.
+// Gated by the same scope rule as the PAF list: org-wide readers + the
+// submitter; everyone else must reach the PAF's store. Served here (service
+// role) rather than via client storage RLS because the letter carries pay
+// + PII and PAF visibility is role-scoped.
+// ----------------------------------------------------------------------------
+async function offerLetterUrl(supa, user, pafId) {
+  if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  if (!pafId) return { error: "id is required", status: 400 };
+
+  const { data: paf } = await supa
+    .from("paf_submissions")
+    .select("nh_offer_letter_path, drive_in, submitter_id")
+    .eq("id", pafId)
+    .maybeSingle();
+  if (!paf?.nh_offer_letter_path) return { error: "no offer letter on file", status: 404 };
+
+  if (!ORG_WIDE_READ.has(user.role) && paf.submitter_id !== user.id) {
+    const numbers = await resolveVisibleStoreNumbers(supa, user.id);
+    if (!paf.drive_in || !numbers.includes(String(paf.drive_in))) {
+      return { error: "not authorized", status: 403 };
+    }
+  }
+
+  const { data: signed, error } = await supa.storage
+    .from("paf-offer-letters")
+    .createSignedUrl(paf.nh_offer_letter_path, 60);
+  if (error || !signed?.signedUrl) return { error: "could not open offer letter", status: 500 };
+  return { url: signed.signedUrl };
+}
+
+// ----------------------------------------------------------------------------
 // list — PAFs visible to the caller
 // ----------------------------------------------------------------------------
 async function listPafs(supa, user) {
@@ -675,6 +707,7 @@ async function submitPaf(supa, user, body) {
     nh_market: sanitizeText(body?.nh_market, 200) || null,
     nh_area: sanitizeText(body?.nh_area, 200) || null,
     nh_stores: sanitizeText(body?.nh_stores, 2000) || null,
+    nh_offer_letter_path: sanitizeText(body?.nh_offer_letter_path, 500) || null,
 
     // Bonus (sub-fields branch on bonus_type)
     bonus_type: sanitizeText(body?.bonus_type, 100) || null,
@@ -1359,6 +1392,8 @@ export const handler = async (event) => {
       if (action === "config") return unwrap(await getActiveConfig(supa));
       if (action === "audit-log") return unwrap(await listAuditLog(supa, user, params));
       if (action === "my-stores") return unwrap(await listMyStores(supa, user));
+      if (action === "offer-letter-url")
+        return unwrap(await offerLetterUrl(supa, user, params.id));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {

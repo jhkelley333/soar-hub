@@ -11,9 +11,15 @@ import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
 import { Badge } from "@/shared/ui/Badge";
 import { useToast } from "@/shared/ui/Toaster";
+import { useAuth } from "@/auth/AuthProvider";
+import { supabase } from "@/lib/supabase";
 import { fetchMyStores, fetchPafConfig, submitPaf, type PafSubmitInput } from "./api";
 import { calcPafCost, formatUSD } from "./cost";
 import type { MyStore, PafConfigDoc, PafFieldDisplay, ReferralTier } from "./types";
+
+const OFFER_BUCKET = "paf-offer-letters";
+const OFFER_MIME = ["application/pdf", "image/jpeg", "image/png"];
+const OFFER_MAX_BYTES = 10 * 1024 * 1024;
 
 // Mirror of bindCat() — locked logic. Returns the set of section keys
 // visible for the current form state. Branches on category and
@@ -140,8 +146,41 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
   });
   const myStores = storesQuery.data?.stores ?? [];
 
+  const { profile } = useAuth();
   const [state, setState] = useState<FormState>({});
   const [error, setError] = useState<string | null>(null);
+  const [offerName, setOfferName] = useState<string | null>(null);
+  const [offerUploading, setOfferUploading] = useState(false);
+
+  async function handleOfferPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0] ?? null;
+    e.target.value = "";
+    if (!file || !profile) return;
+    if (!OFFER_MIME.includes(file.type)) {
+      setError("Offer letter must be a PDF, JPG, or PNG.");
+      return;
+    }
+    if (file.size > OFFER_MAX_BYTES) {
+      setError("Offer letter must be 10 MB or smaller.");
+      return;
+    }
+    setError(null);
+    setOfferUploading(true);
+    try {
+      const ext = file.name.split(".").pop()?.toLowerCase() || "pdf";
+      const path = `${profile.id}/${crypto.randomUUID()}.${ext}`;
+      const { error: upErr } = await supabase.storage
+        .from(OFFER_BUCKET)
+        .upload(path, file, { contentType: file.type, upsert: false });
+      if (upErr) throw new Error(upErr.message);
+      patch("nh_offer_letter_path", path);
+      setOfferName(file.name);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Upload failed.");
+    } finally {
+      setOfferUploading(false);
+    }
+  }
 
   // Distinct DO "markets" (districts) and SDO areas the submitter can
   // reach, derived from their visible stores. Powers the New Hire pickers.
@@ -325,6 +364,10 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
         String(state.nh_area_id ?? "").trim() === ""
       ) {
         setError('Select an area, or check "No market yet".');
+        return;
+      }
+      if (String(state.nh_offer_letter_path ?? "").trim() === "") {
+        setError("Attach the offer letter before submitting.");
         return;
       }
     } else {
@@ -583,6 +626,31 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
               )}
             </div>
           )}
+          <div className="mt-4">
+            <label className="mb-1 block text-sm font-medium text-zinc-700">
+              Offer letter <span className="text-red-600">*</span>
+            </label>
+            <div className="flex flex-wrap items-center gap-3">
+              <label
+                className={`inline-flex cursor-pointer items-center rounded-md px-3 py-2 text-sm ring-1 ring-inset ring-zinc-200 ${
+                  offerUploading ? "bg-zinc-100 text-zinc-400" : "bg-white text-zinc-700 hover:bg-zinc-50"
+                }`}
+              >
+                <input
+                  type="file"
+                  accept=".pdf,image/jpeg,image/png,application/pdf"
+                  onChange={handleOfferPick}
+                  disabled={offerUploading}
+                  className="hidden"
+                />
+                {offerUploading ? "Uploading…" : state.nh_offer_letter_path ? "Replace file" : "Attach file"}
+              </label>
+              {state.nh_offer_letter_path && offerName && (
+                <span className="text-sm text-zinc-600">{offerName}</span>
+              )}
+            </div>
+            <p className="mt-1 text-[11px] text-zinc-500">PDF, JPG, or PNG — up to 10 MB.</p>
+          </div>
         </FormSection>
       )}
 
