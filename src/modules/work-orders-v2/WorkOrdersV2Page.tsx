@@ -911,8 +911,19 @@ function NewTicketDetail({
     cursor: "pointer",
   };
 
+  // Scope the design's navy palette to this subtree via CSS variables, so
+  // the reused inner components (TicketActionBar, PhotoSection, UpdateForm,
+  // TicketChat, ApprovalSection) — which paint with the app's accent /
+  // midnight tokens — adopt the new primary color to match the redesign,
+  // WITHOUT editing those shared components or affecting the legacy view.
+  const liveVars = {
+    "--color-accent": WO.primary,
+    "--color-accent-hover": WO.primaryHover,
+    "--color-midnight": WO.ink,
+  } as React.CSSProperties;
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14, color: WO.ink }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, color: WO.ink, ...liveVars }}>
       {/* Breadcrumb */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontFamily: WO.mono, color: WO.muted }}>
         <button
