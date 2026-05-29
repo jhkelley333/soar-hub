@@ -1,13 +1,12 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type CSSProperties } from "react";
 import { Search, Plus, Download } from "lucide-react";
-import { Button } from "@/shared/ui/Button";
 import {
   type Ticket,
   type TicketStatus,
   statusLabel,
   isOpenStatus,
 } from "./types";
-import { Pill, statusPillTone, priorityPillTone } from "./liveTheme";
+import { WO, Pill, statusPillTone, priorityPillTone } from "./liveTheme";
 
 // New work-order queue (flagged: wo2_new_ui). A table-style list matching
 // the redesigned mockup — SLA intentionally omitted (not modeled yet),
@@ -22,6 +21,35 @@ function initials(name: string | null): string {
   const parts = name.trim().split(/\s+/).slice(0, 2);
   return parts.map((p) => p[0]?.toUpperCase() ?? "").join("") || "—";
 }
+
+const secBtnStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "7px 12px",
+  borderRadius: 8,
+  background: WO.surface,
+  color: WO.ink,
+  border: `1px solid ${WO.line}`,
+  fontSize: 12,
+  fontWeight: 500,
+  cursor: "pointer",
+};
+
+const primaryBtnStyle: CSSProperties = {
+  display: "inline-flex",
+  alignItems: "center",
+  gap: 6,
+  padding: "7px 12px",
+  borderRadius: 8,
+  background: WO.primary,
+  color: WO.primaryInk,
+  border: `1px solid ${WO.primary}`,
+  fontSize: 12,
+  fontWeight: 600,
+  cursor: "pointer",
+  boxShadow: WO.shadow,
+};
 
 interface QueueStats {
   open: number;
@@ -99,28 +127,39 @@ export function QueueTable({
     { id: "all", label: "All", count: counts.all },
   ];
 
+  const thStyle: CSSProperties = {
+    padding: "8px 12px",
+    fontSize: 10,
+    fontWeight: 600,
+    letterSpacing: ".08em",
+    textTransform: "uppercase",
+    color: WO.muted,
+  };
+
   return (
-    <div>
+    <div style={{ color: WO.ink }}>
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-midnight">Work orders</h1>
-          <p className="mt-1 text-sm text-zinc-500">
+          <h1 style={{ fontSize: 24, fontWeight: 700, letterSpacing: "-.02em", color: WO.ink, margin: 0 }}>
+            Work orders
+          </h1>
+          <p style={{ marginTop: 4, fontSize: 13, color: WO.muted }}>
             {headline.openCount} open across {headline.stores}{" "}
             {headline.stores === 1 ? "store" : "stores"} · {headline.urgent} urgent
           </p>
         </div>
         <div className="flex items-center gap-2">
           {onExport && (
-            <Button variant="ghost" onClick={onExport}>
-              <Download className="mr-1.5 h-3.5 w-3.5" strokeWidth={1.75} />
+            <button type="button" onClick={onExport} style={secBtnStyle}>
+              <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
               Export
-            </Button>
+            </button>
           )}
-          <Button variant="primary" onClick={onNew}>
-            <Plus className="mr-1.5 h-3.5 w-3.5" strokeWidth={1.75} />
+          <button type="button" onClick={onNew} style={primaryBtnStyle}>
+            <Plus className="h-3.5 w-3.5" strokeWidth={2} />
             New work order
-          </Button>
+          </button>
         </div>
       </div>
 
@@ -129,14 +168,17 @@ export function QueueTable({
         {chips.map((c) => (
           <div
             key={c.label}
-            className={`rounded-lg border px-4 py-3 ${
-              c.alert ? "border-red-200 bg-red-50" : "border-zinc-200 bg-white"
-            }`}
+            style={{
+              borderRadius: 10,
+              border: `1px solid ${c.alert ? WO.warnBorder : WO.line}`,
+              background: c.alert ? WO.warnSoft : WO.surface,
+              padding: "12px 16px",
+            }}
           >
-            <div className={`text-2xl font-semibold tabular-nums ${c.alert ? "text-red-700" : "text-midnight"}`}>
+            <div style={{ fontSize: 24, fontWeight: 700, color: c.alert ? WO.warn : WO.ink, fontVariantNumeric: "tabular-nums" }}>
               {c.value}
             </div>
-            <div className="mt-0.5 text-[11px] font-medium uppercase tracking-wide text-zinc-500">
+            <div style={{ marginTop: 2, fontSize: 10, fontWeight: 600, letterSpacing: ".08em", textTransform: "uppercase", color: WO.muted }}>
               {c.label}
             </div>
           </div>
@@ -144,47 +186,67 @@ export function QueueTable({
       </div>
 
       {/* Tabs + search */}
-      <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-b border-zinc-200">
+      <div className="mt-6 flex flex-wrap items-center justify-between gap-3" style={{ borderBottom: `1px solid ${WO.line}` }}>
         <div className="flex items-center gap-1">
-          {tabs.map((t) => (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setTab(t.id)}
-              className={`-mb-px border-b-2 px-3 py-2 text-sm font-medium transition ${
-                tab === t.id
-                  ? "border-accent text-midnight"
-                  : "border-transparent text-zinc-500 hover:text-midnight"
-              }`}
-            >
-              {t.label}
-              <span className="ml-1.5 text-xs text-zinc-400 tabular-nums">{t.count}</span>
-            </button>
-          ))}
+          {tabs.map((t) => {
+            const on = tab === t.id;
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => setTab(t.id)}
+                style={{
+                  marginBottom: -1,
+                  borderBottom: `2px solid ${on ? WO.primary : "transparent"}`,
+                  padding: "8px 12px",
+                  fontSize: 13,
+                  fontWeight: on ? 600 : 500,
+                  color: on ? WO.ink : WO.muted,
+                  background: "none",
+                  cursor: "pointer",
+                }}
+              >
+                {t.label}
+                <span style={{ marginLeft: 6, fontSize: 11, color: WO.muted, fontFamily: WO.mono }}>{t.count}</span>
+              </button>
+            );
+          })}
         </div>
         <div className="relative mb-2 w-full max-w-xs">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" strokeWidth={1.75} />
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2" style={{ color: WO.muted }} strokeWidth={1.75} />
           <input
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search this queue…"
-            className="w-full rounded-md border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm text-zinc-900 placeholder-zinc-400 outline-none focus:border-accent focus:ring-1 focus:ring-accent"
+            style={{
+              width: "100%",
+              borderRadius: 8,
+              border: `1px solid ${WO.line}`,
+              background: WO.surface,
+              padding: "8px 12px 8px 34px",
+              fontSize: 13,
+              color: WO.ink,
+              outline: "none",
+            }}
           />
         </div>
       </div>
 
       {/* Table */}
-      <div className="mt-1 overflow-x-auto">
+      <div
+        className="mt-3 overflow-x-auto"
+        style={{ border: `1px solid ${WO.line}`, borderRadius: 10, background: WO.surface }}
+      >
         <table className="w-full min-w-[720px] border-collapse text-sm">
           <thead>
-            <tr className="text-left text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
-              <th className="px-3 py-2.5">Work order</th>
-              <th className="px-3 py-2.5">Issue</th>
-              <th className="px-3 py-2.5">Status</th>
-              <th className="px-3 py-2.5">Vendor</th>
-              <th className="px-3 py-2.5">Owner</th>
-              <th className="px-3 py-2.5">Priority</th>
+            <tr style={{ textAlign: "left", borderBottom: `1px solid ${WO.line}` }}>
+              <th style={thStyle}>Work order</th>
+              <th style={thStyle}>Issue</th>
+              <th style={thStyle}>Status</th>
+              <th style={thStyle}>Vendor</th>
+              <th style={thStyle}>Owner</th>
+              <th style={thStyle}>Priority</th>
             </tr>
           </thead>
           <tbody>
@@ -192,44 +254,60 @@ export function QueueTable({
               <tr
                 key={t.id}
                 onClick={() => onOpen(t.id)}
-                className="cursor-pointer border-t border-zinc-100 transition hover:bg-zinc-50"
+                style={{ borderTop: `1px solid ${WO.line2}`, cursor: "pointer" }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = WO.surfaceAlt)}
+                onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
               >
-                <td className="px-3 py-3 align-top">
+                <td style={{ padding: "12px", verticalAlign: "top" }}>
                   <div className="flex items-center gap-2">
                     {(t.unread_message_count ?? 0) > 0 && (
-                      <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" aria-label="unread" />
+                      <span style={{ width: 6, height: 6, flex: "0 0 6px", borderRadius: 6, background: WO.primary }} aria-label="unread" />
                     )}
-                    <span className="font-medium tabular-nums text-midnight">{t.wo_number}</span>
+                    <span style={{ fontWeight: 600, color: WO.primary, fontFamily: WO.mono, fontSize: 12 }}>{t.wo_number}</span>
                   </div>
                 </td>
-                <td className="px-3 py-3 align-top">
-                  <div className="font-medium text-zinc-800">
-                    {t.asset_type || t.category || "—"}
-                    {t.issue_description ? ` — ${t.issue_description}` : ""}
-                  </div>
-                  <div className="mt-0.5 text-xs text-zinc-500">
-                    Store {t.store_number}
+                <td style={{ padding: "12px", verticalAlign: "top" }}>
+                  {/* Asset is the title; the free-text issue is the line below. */}
+                  <div style={{ fontWeight: 600, color: WO.ink }}>{t.asset_type || t.category || "—"}</div>
+                  {t.issue_description && (
+                    <div className="line-clamp-1" style={{ marginTop: 2, fontSize: 12.5, color: WO.ink2 }}>
+                      {t.issue_description}
+                    </div>
+                  )}
+                  <div style={{ marginTop: 2, fontSize: 11, color: WO.muted }}>
+                    <span style={{ fontFamily: WO.mono }}>Store {t.store_number}</span>
                     {t.store_name ? ` · ${t.store_name}` : ""}
                     {t.category ? ` · ${t.category}` : ""}
                   </div>
                 </td>
-                <td className="px-3 py-3 align-top">
+                <td style={{ padding: "12px", verticalAlign: "top" }}>
                   <Pill tone={statusPillTone(t.status)} dot>{statusLabel(t.status)}</Pill>
                 </td>
-                <td className="px-3 py-3 align-top">
+                <td style={{ padding: "12px", verticalAlign: "top" }}>
                   {t.vendor_name
-                    ? <span className="text-zinc-700">{t.vendor_name}</span>
-                    : <span className="italic text-zinc-400">Unassigned</span>}
+                    ? <span style={{ color: WO.ink2 }}>{t.vendor_name}</span>
+                    : <span style={{ color: WO.muted, fontStyle: "italic" }}>Unassigned</span>}
                 </td>
-                <td className="px-3 py-3 align-top">
+                <td style={{ padding: "12px", verticalAlign: "top" }}>
                   <span
                     title={t.submitted_by ?? undefined}
-                    className="inline-flex h-7 w-7 items-center justify-center rounded-full bg-midnight/10 text-[11px] font-semibold text-midnight"
+                    style={{
+                      display: "inline-flex",
+                      width: 28,
+                      height: 28,
+                      alignItems: "center",
+                      justifyContent: "center",
+                      borderRadius: 28,
+                      background: WO.avatarBg,
+                      color: WO.avatarFg,
+                      fontSize: 11,
+                      fontWeight: 600,
+                    }}
                   >
                     {initials(t.submitted_by)}
                   </span>
                 </td>
-                <td className="px-3 py-3 align-top">
+                <td style={{ padding: "12px", verticalAlign: "top" }}>
                   <Pill tone={priorityPillTone(t.priority)}>{t.priority}</Pill>
                 </td>
               </tr>
@@ -238,13 +316,13 @@ export function QueueTable({
         </table>
 
         {rows.length === 0 && (
-          <div className="border-t border-zinc-100 py-12 text-center text-sm text-zinc-500">
+          <div style={{ borderTop: `1px solid ${WO.line2}`, padding: "48px 0", textAlign: "center", fontSize: 13, color: WO.muted }}>
             No work orders match this view.
           </div>
         )}
       </div>
 
-      <div className="mt-3 text-xs text-zinc-400">
+      <div style={{ marginTop: 12, fontSize: 11, color: WO.muted }}>
         Showing {rows.length} of {tickets.length}
       </div>
     </div>
