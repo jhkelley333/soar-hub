@@ -71,7 +71,7 @@ export const router = createBrowserRouter([
       {
         path: "paf",
         element: (
-          <FlagOrRoleRoute roles={["payroll", "admin"]} flagKey="paf_pilot">
+          <FlagOrRoleRoute roles={["do", "payroll", "admin"]} flagKey="paf_pilot">
             <PafPage />
           </FlagOrRoleRoute>
         ),
