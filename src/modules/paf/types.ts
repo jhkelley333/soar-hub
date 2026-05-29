@@ -37,6 +37,9 @@ export interface PafRow {
   nh_hours_last_period: number | string | null;
   nh_home_store: string | null;
   nh_no_market: boolean | null;
+  nh_market: string | null;
+  nh_area: string | null;
+  nh_stores: string | null;
   pay_basis: PayBasis;
 
   job_position: string | null;
@@ -185,5 +188,8 @@ export interface MyStore {
   number: string;
   name: string | null;
   district_id: string | null;
+  district_name: string | null;
+  area_id: string | null;
+  area_name: string | null;
   is_active: boolean;
 }

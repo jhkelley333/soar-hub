@@ -108,6 +108,12 @@ function initialState(cfg: PafConfigDoc): FormState {
 //   - reg_pay_rate hides when pay_basis === Salary
 //   - new_location hides when location_change !== Yes
 function isFieldVisibleForState(fieldKey: string, state: FormState): boolean {
+  // New Hire (Salary Leader) has its own custom section that collects
+  // identity + pay-period details, so suppress every standard field
+  // except the category picker to avoid duplicate data entry.
+  if (state.category === NEW_HIRE_LEADER) {
+    return fieldKey === "category";
+  }
   if (fieldKey === "reg_pay_rate") {
     return state.pay_basis !== "Salary";
   }
@@ -136,6 +142,39 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
 
   const [state, setState] = useState<FormState>({});
   const [error, setError] = useState<string | null>(null);
+
+  // Distinct DO "markets" (districts) and SDO areas the submitter can
+  // reach, derived from their visible stores. Powers the New Hire pickers.
+  const nhDistricts = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const s of myStores) {
+      if (s.district_id) m.set(s.district_id, s.district_name ?? s.district_id);
+    }
+    return Array.from(m, ([id, name]) => ({ id, name })).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
+  }, [myStores]);
+
+  const nhAreas = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const s of myStores) {
+      if (s.area_id) m.set(s.area_id, s.area_name ?? s.area_id);
+    }
+    return Array.from(m, ([id, name]) => ({ id, name })).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
+  }, [myStores]);
+
+  // Stores auto-populated by the current market/area selection.
+  const nhSelectedStores = useMemo(() => {
+    if (state.nh_role === "DO" && state.nh_district_id) {
+      return myStores.filter((s) => s.district_id === state.nh_district_id);
+    }
+    if (state.nh_role === "SDO" && state.nh_area_id) {
+      return myStores.filter((s) => s.area_id === state.nh_area_id);
+    }
+    return [];
+  }, [state.nh_role, state.nh_district_id, state.nh_area_id, myStores]);
 
   // Hydrate state once when config first arrives. The previous
   // implementation gated on `Object.keys(state).length === 0` and
@@ -272,6 +311,22 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
         setError('"Home store" is required for a GM.');
         return;
       }
+      if (
+        state.nh_role === "DO" &&
+        state.nh_no_market !== "yes" &&
+        String(state.nh_district_id ?? "").trim() === ""
+      ) {
+        setError('Select a market (district), or check "No market yet".');
+        return;
+      }
+      if (
+        state.nh_role === "SDO" &&
+        state.nh_no_market !== "yes" &&
+        String(state.nh_area_id ?? "").trim() === ""
+      ) {
+        setError('Select an area, or check "No market yet".');
+        return;
+      }
     } else {
       // Required-field check, gated by section visibility AND field
       // visibility (so hidden conditional fields don't block submit).
@@ -302,6 +357,19 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
     // backend expects.
     const payload: FormState = { ...state };
     if (payload.pay_basis) payload.pay_basis = payload.pay_basis.toLowerCase();
+
+    // Snapshot the New Hire market/area + its stores for the record. The
+    // form tracks the selection by id; resolve to names + store numbers so
+    // the PAF carries a permanent record independent of the viewer's scope.
+    if (state.category === NEW_HIRE_LEADER && state.nh_no_market !== "yes") {
+      if (state.nh_role === "DO") {
+        payload.nh_market = nhDistricts.find((d) => d.id === state.nh_district_id)?.name ?? "";
+        payload.nh_stores = nhSelectedStores.map((s) => s.number).join(", ");
+      } else if (state.nh_role === "SDO") {
+        payload.nh_area = nhAreas.find((a) => a.id === state.nh_area_id)?.name ?? "";
+        payload.nh_stores = nhSelectedStores.map((s) => s.number).join(", ");
+      }
+    }
 
     submit.mutate(payload as unknown as PafSubmitInput);
   }
@@ -447,7 +515,7 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
           </div>
 
           {(state.nh_role === "DO" || state.nh_role === "SDO") && (
-            <div className="mt-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+            <div className="mt-4 space-y-3">
               <label className="flex items-center gap-2 text-sm text-zinc-700">
                 <input
                   type="checkbox"
@@ -457,11 +525,62 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
                 />
                 No market yet (plus-one / in training)
               </label>
-              <p className="mt-1 text-[11px] text-zinc-500">
-                {state.nh_role === "DO"
-                  ? "Market (district) selection + auto-populated stores is coming in the next update."
-                  : "Area selection + auto-populated stores is coming in the next update."}
-              </p>
+
+              {state.nh_no_market !== "yes" && (
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  {state.nh_role === "DO" ? (
+                    <NhField label="Market (district) *">
+                      <select
+                        value={state.nh_district_id ?? ""}
+                        onChange={(e) => patch("nh_district_id", e.target.value)}
+                        className={NH_INPUT}
+                      >
+                        <option value="">Select market…</option>
+                        {nhDistricts.map((d) => (
+                          <option key={d.id} value={d.id}>
+                            {d.name}
+                          </option>
+                        ))}
+                      </select>
+                    </NhField>
+                  ) : (
+                    <NhField label="Area *">
+                      <select
+                        value={state.nh_area_id ?? ""}
+                        onChange={(e) => patch("nh_area_id", e.target.value)}
+                        className={NH_INPUT}
+                      >
+                        <option value="">Select area…</option>
+                        {nhAreas.map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name}
+                          </option>
+                        ))}
+                      </select>
+                    </NhField>
+                  )}
+                </div>
+              )}
+
+              {state.nh_no_market !== "yes" && nhSelectedStores.length > 0 && (
+                <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+                  <p className="mb-1 text-xs font-medium text-zinc-600">
+                    Stores in this {state.nh_role === "DO" ? "market" : "area"} (
+                    {nhSelectedStores.length})
+                  </p>
+                  <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-zinc-700">
+                    {nhSelectedStores.map((s) => (
+                      <li key={s.id}>
+                        #{s.number}
+                        {s.name ? ` — ${s.name}` : ""}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="mt-2 text-[11px] text-zinc-500">
+                    Shown for reference — no store access is assigned from this PAF.
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </FormSection>
