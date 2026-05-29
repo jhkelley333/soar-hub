@@ -52,6 +52,15 @@ import {
 import { NewTicketModal } from "./NewTicketModal";
 import { QueueTable } from "./QueueTable";
 import { useFlag } from "@/lib/flags";
+import {
+  WO,
+  Pill,
+  Field,
+  SectionCard,
+  StatusPipeline,
+  statusPillTone,
+  priorityPillTone,
+} from "./liveTheme";
 import { VendorSearchInput } from "./VendorSearchInput";
 import { ApprovalSection } from "./ApprovalSection";
 import { TicketChat } from "./TicketChat";
@@ -888,55 +897,76 @@ function NewTicketDetail({
     }
   }
 
+  const secBtn: React.CSSProperties = {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "7px 12px",
+    borderRadius: 8,
+    background: WO.surface,
+    color: WO.ink,
+    border: `1px solid ${WO.line}`,
+    fontSize: 12,
+    fontWeight: 500,
+    cursor: "pointer",
+  };
+
   return (
-    <div className="space-y-4">
-      <button
-        type="button"
-        onClick={onBack}
-        className="inline-flex items-center gap-1 text-sm font-medium text-zinc-500 transition hover:text-midnight"
-      >
-        <ChevronLeft className="h-4 w-4" strokeWidth={2} />
-        Work orders
-      </button>
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, color: WO.ink }}>
+      {/* Breadcrumb */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontFamily: WO.mono, color: WO.muted }}>
+        <button
+          type="button"
+          onClick={onBack}
+          style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: WO.muted, fontFamily: WO.mono, fontSize: 11 }}
+        >
+          Work Orders
+        </button>
+        <ChevronLeft className="h-3 w-3" style={{ transform: "rotate(180deg)" }} strokeWidth={2} />
+        <span style={{ color: WO.ink2 }}>{ticket.wo_number}</span>
+      </div>
 
       {/* Header */}
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold tracking-tight text-midnight sm:text-2xl">
+      <div style={{ display: "flex", alignItems: "flex-end", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <h1 style={{ fontSize: 24, fontWeight: 700, margin: 0, letterSpacing: "-.02em", color: WO.ink }}>
               {ticket.asset_type || ticket.category || "Work Order"}
             </h1>
             {ticket.priority && ticket.priority !== "Standard" && (
-              <Badge tone={PRIORITY_TONE[ticket.priority]}>{ticket.priority}</Badge>
+              <Pill tone={priorityPillTone(ticket.priority)} dot>{ticket.priority}</Pill>
             )}
-            <Badge tone={STATUS_TONE[ticket.status] ?? "neutral"}>{statusLabel(ticket.status)}</Badge>
-            <Badge tone={open ? "info" : "neutral"}>
-              {days === null ? "—" : `${days} DAY${days === 1 ? "" : "S"} OPEN`}
-            </Badge>
-            {ticket.is_business_critical && (
-              <Badge tone="warning">Critical</Badge>
-            )}
+            <Pill tone={statusPillTone(ticket.status)} dot>{statusLabel(ticket.status)}</Pill>
+            <Pill tone={open ? "ok" : "gray"}>
+              {days === null ? "—" : `${days} day${days === 1 ? "" : "s"} open`}
+            </Pill>
+            {ticket.is_business_critical && <Pill tone="warn" dot>Critical</Pill>}
           </div>
-          <div className="mt-1 font-mono text-xs text-zinc-500">
-            {ticket.wo_number} · Store {ticket.store_number} · {fmtDate(ticket.date_submitted)}
+          <div style={{ fontFamily: WO.mono, fontSize: 11, color: WO.muted, marginTop: 6 }}>
+            {ticket.wo_number} · Store {ticket.store_number}
+            {ticket.store_name ? ` · ${ticket.store_name}` : ""} · {fmtDate(ticket.date_submitted)}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div style={{ flex: 1 }} />
+        <div style={{ display: "flex", gap: 6 }}>
           <DiscussButton scopeKind="workorder" scopeRef={ticket.id} />
-          <Button variant="ghost" onClick={copyLink}>
-            <Link2 className="mr-1.5 h-3.5 w-3.5" strokeWidth={1.75} />
+          <button type="button" onClick={copyLink} style={secBtn}>
+            <Link2 className="h-3.5 w-3.5" strokeWidth={1.75} />
             {copied ? "Copied" : "Copy link"}
-          </Button>
+          </button>
         </div>
       </div>
 
-      {/* Stepper + quick actions */}
-      <Card className="p-4 space-y-3">
-        <StatusBar
-          status={ticket.status}
-          pauseState={ticket.pause_state}
-          closedByStore={ticket.closed_by_store}
-        />
+      <StatusPipeline status={ticket.status} />
+
+      {/* Quick actions */}
+      <SectionCard>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 600, color: WO.muted, textTransform: "uppercase", letterSpacing: ".08em" }}>
+            Quick actions
+          </div>
+          <div style={{ flex: 1, height: 1, background: WO.line2 }} />
+        </div>
         <TicketActionBar
           ticketId={ticket.id}
           status={ticket.status}
@@ -944,74 +974,79 @@ function NewTicketDetail({
           storeNumber={ticket.store_number}
           isSubmitter={isSubmitter}
         />
-      </Card>
+      </SectionCard>
 
       {ticket.status === "completed" && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
-          <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-900">
+        <div style={{ border: `1px solid ${WO.warnBorder}`, background: WO.warnSoft, borderRadius: 10, padding: "12px 14px" }}>
+          <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".06em", color: WO.warn }}>
             Awaiting your confirmation
           </div>
-          <div className="mt-1 text-sm text-amber-900">
-            The vendor marked this completed{ticket.vendor_name ? ` (${ticket.vendor_name})` : ""}.
-            Confirm the work was done satisfactorily, or reopen it — use{" "}
-            <strong>Confirm Fix</strong> / <strong>Reopen — Not Fixed</strong> in the action bar above.
+          <div style={{ fontSize: 13, color: WO.ink2, marginTop: 4, lineHeight: 1.45 }}>
+            The vendor marked this completed{ticket.vendor_name ? ` (${ticket.vendor_name})` : ""}. Confirm the
+            work was done, or reopen it — use <strong>Confirm Fix</strong> / <strong>Reopen — Not Fixed</strong> in
+            the actions above.
           </div>
         </div>
       )}
 
-      {/* Body: details + work column, approval rail */}
-      <div className="grid gap-4 lg:grid-cols-3">
-        <div className="space-y-4 lg:col-span-2">
+      {/* Body: work column + approval rail */}
+      <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 320px", gap: 14, alignItems: "start" }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
           <ReplacementBanner ticket={ticket} />
-          <Card className="p-4">
-            <DetailGrid ticket={ticket} />
-          </Card>
-          <DescriptionBlock label="Issue Description" value={ticket.issue_description} />
-          {ticket.latest_comment && (
-            <DescriptionBlock label="Latest Comment" value={ticket.latest_comment} />
-          )}
-          <Card className="p-4">
+          <SectionCard title="Details">
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: "14px 18px" }}>
+              <Field label="Store">{ticket.store_name || `Store ${ticket.store_number}`}</Field>
+              <Field label="Category">{ticket.category || "—"}</Field>
+              <Field label="Asset" mono>{ticket.asset_type || "—"}</Field>
+              <Field label="Vendor">
+                {ticket.vendor_name || <span style={{ color: WO.muted, fontStyle: "italic" }}>Unassigned</span>}
+              </Field>
+              <Field label="Model #" mono>{ticket.model_number || "—"}</Field>
+              <Field label="Cost est." mono>{fmtMoney(ticket.cost_estimate)}</Field>
+              <div style={{ gridColumn: "span 2" }}>
+                <Field label="Submitted by">{ticket.submitted_by || "—"}</Field>
+              </div>
+              <div style={{ gridColumn: "span 2" }}>
+                <Field label="Issue description">{ticket.issue_description || "—"}</Field>
+              </div>
+            </div>
+          </SectionCard>
+          <SectionCard>
             <PhotoSection ticket={ticket} onUploaded={onPhotoUploaded} onError={onError} />
-          </Card>
-          <Card className="p-4">
+          </SectionCard>
+          <SectionCard>
             <UpdateForm ticket={ticket} onUpdated={onUpdated} onError={onError} />
-          </Card>
+          </SectionCard>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+            <SectionCard>
+              <ActivityFeedPanel ticketId={ticket.id} />
+            </SectionCard>
+            <SectionCard>
+              <TicketChat ticketId={ticket.id} onError={onError} initialThread={initialThread || undefined} />
+            </SectionCard>
+          </div>
         </div>
 
-        <div className="space-y-4">
-          <Card className="p-4">
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          <SectionCard title="Approval">
             <ApprovalSection
               ticket={ticket}
               callerRole={callerRole}
               onChanged={onApprovalChanged}
               onError={onError}
             />
-          </Card>
+          </SectionCard>
           {callerRole === "admin" && (
-            <Card className="p-4">
+            <SectionCard>
               <AdminDeleteTicketRow
                 ticketId={ticket.id}
                 woNumber={ticket.wo_number}
                 onDeleted={onBack}
                 onError={onError}
               />
-            </Card>
+            </SectionCard>
           )}
         </div>
-      </div>
-
-      {/* Activity + messages */}
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="p-4">
-          <ActivityFeedPanel ticketId={ticket.id} />
-        </Card>
-        <Card className="p-4">
-          <TicketChat
-            ticketId={ticket.id}
-            onError={onError}
-            initialThread={initialThread || undefined}
-          />
-        </Card>
       </div>
     </div>
   );
