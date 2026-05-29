@@ -24,11 +24,14 @@ import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import { fetchTicket, markTicketSeen } from "../api";
 import { TicketChat } from "../TicketChat";
+import { TicketActivityFeed } from "../TicketActivityFeed";
+import { TicketActionBar } from "../TicketActionBar";
 import { DiscussButton } from "@/modules/chat/DiscussButton";
 import { ApprovalSection } from "../ApprovalSection";
 import { CostHero } from "./CostHero";
 import { ApprovalChain } from "./ApprovalChain";
 import { ApprovalActionBar } from "./ApprovalActionBar";
+import { MobileStatusStepper } from "./MobileStatusStepper";
 import { QuotesSection } from "./QuotesSection";
 import { relativeTime, isApprover, formatDollars } from "./woMobile";
 
@@ -84,6 +87,15 @@ export function MobileTicketDetail({
       : null;
   const pending = latest?.status === "Pending" ? latest : null;
   const canDecide = !!pending && isApprover(profile?.role);
+
+  // Drives the status stepper's conditional states + the lifecycle bar.
+  const approvalPending = approvals.some((a) => a.status === "Pending");
+  const partsOnOrder =
+    t?.status === "awaiting_equipment" ||
+    t?.pause_state === "awaiting_parts" ||
+    t?.pause_state === "awaiting_replacement";
+  const isSubmitter =
+    !!profile?.id && !!t?.submitted_by_user_id && profile.id === t.submitted_by_user_id;
 
   // The committed/recommended quote — approving commits this one.
   const recommendedQuote =
@@ -158,6 +170,25 @@ export function MobileTicketDetail({
       {t && (
         <div className="flex-1 px-3 pt-3 pb-8 space-y-3">
           <CostHero ticket={t} latest={latest} canDecide={canDecide} />
+
+          {/* Where the ticket is in its lifecycle. */}
+          <MobileStatusStepper
+            status={t.status}
+            approvalPending={approvalPending}
+            partsOnOrder={partsOnOrder}
+          />
+
+          {/* Lifecycle actions — Start / Schedule / On Site / Complete /
+              Order Replacement / Pause / Back to Submitted / Confirm Fix.
+              Renders nothing when no transition is available. */}
+          <TicketActionBar
+            ticketId={t.id}
+            status={t.status}
+            closedAt={t.closed_at}
+            storeNumber={t.store_number}
+            isSubmitter={isSubmitter}
+            pauseState={t.pause_state}
+          />
 
           {t.awaiting_info && (
             <div className="flex items-start gap-2 rounded-xl bg-amber-50 ring-1 ring-amber-200 px-4 py-2.5">
@@ -314,6 +345,14 @@ export function MobileTicketDetail({
               scopeRef={t.id}
               className="flex w-full items-center justify-center gap-1.5 rounded-xl bg-surface px-3 py-2.5 text-[13px] font-semibold text-midnight-700 shadow-card ring-1 ring-midnight-100 disabled:opacity-50"
             />
+          </section>
+
+          {/* History — status changes, assignments, approvals, etc. */}
+          <section>
+            <SectionTitle>History</SectionTitle>
+            <div className="bg-surface rounded-xl ring-1 ring-midnight-100 shadow-card p-3">
+              <TicketActivityFeed ticketId={t.id} />
+            </div>
           </section>
 
           {/* Messages */}
