@@ -185,10 +185,16 @@ export function VendorsTab({ callerRole }: { callerRole: string }) {
         {canManage(callerRole) && (
           <>
             {callerRole === "admin" && (
-              <Button variant="ghost" onClick={() => setBulkOpen(true)}>
-                <Layers className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
-                Bulk import
-              </Button>
+              <>
+                <Button variant="ghost" onClick={downloadVendorTemplate}>
+                  <Download className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+                  Template
+                </Button>
+                <Button variant="ghost" onClick={() => setBulkOpen(true)}>
+                  <Layers className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+                  Bulk import
+                </Button>
+              </>
             )}
             <Button variant="primary" onClick={() => setEditing("new")}>
               <Plus className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
