@@ -206,9 +206,11 @@ export function PafDetail({ paf }: { paf: PafRow }) {
             <Grid>
               {paf.from_role && <Field label="Current Role" value={paf.from_role} />}
               {paf.new_role && <Field label="New Role" value={paf.new_role} />}
-              {paf.demotion_effective_date && (
-                <Field label="New Role Effective Date" value={paf.demotion_effective_date} />
-              )}
+              <Field
+                label="New Role Effective Date"
+                value={paf.demotion_effective_date || "Not set"}
+                highlight
+              />
               {paf.current_pay_rate != null && (
                 <Field
                   label="Current Pay Rate"
@@ -416,11 +418,25 @@ function Field({
   label,
   value,
   mono,
+  highlight,
 }: {
   label: string;
   value: string;
   mono?: boolean;
+  highlight?: boolean;
 }) {
+  if (highlight) {
+    return (
+      <div className="rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1.5">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-amber-700">
+          {label}
+        </div>
+        <div className={`mt-0.5 font-semibold text-amber-900 ${mono ? "font-mono" : ""}`}>
+          {value}
+        </div>
+      </div>
+    );
+  }
   return (
     <div>
       <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">

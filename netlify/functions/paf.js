@@ -597,21 +597,34 @@ async function submitPaf(supa, user, body) {
   }
 
   const driveIn = sanitizeText(body?.drive_in, 20);
+  const submitCategory = sanitizeText(body?.category, 100);
+  const newLocation = sanitizeText(body?.new_location, 50) || null;
+
+  // For a Demotion with a location change, default the store to the new
+  // location when no Drive-In # was entered (e.g. demoting a DO into a GM
+  // store). This keeps the PAF scoped + displayed to the destination store
+  // instead of showing #null.
+  let effectiveDriveIn = driveIn;
+  if (!effectiveDriveIn && submitCategory === "Demotion" && newLocation) {
+    effectiveDriveIn = newLocation;
+  }
 
   // Drive-In # is normally required. It's waived for New Hire (Salary
   // Leader) — which uses a home store / market instead — and for a
   // Demotion when an SDO+ submitter marks it not applicable.
-  const submitCategory = sanitizeText(body?.category, 100);
   const driveInWaived =
     submitCategory === "New Hire (Salary Leader)" ||
     (submitCategory === "Demotion" &&
       DRIVEIN_OVERRIDE_ROLES.has(user.role) &&
       (body?.drivein_na === "yes" || body?.drivein_na === true));
 
-  if (!driveIn && !driveInWaived) return { error: "drive_in is required.", status: 400 };
+  if (!effectiveDriveIn && !driveInWaived) {
+    return { error: "drive_in is required.", status: 400 };
+  }
 
-  // Scope check: caller must have access to this store. Admin bypass.
-  // Skipped when the Drive-In # is legitimately waived.
+  // Scope check: caller must have access to a Drive-In # they typed in.
+  // Skipped when waived or when the store was derived from the new location
+  // (a demotion's destination store may sit outside the submitter's scope).
   if (driveIn && user.role !== "admin") {
     const numbers = await resolveVisibleStoreNumbers(supa, user.id);
     if (!numbers.includes(driveIn)) {
@@ -669,8 +682,8 @@ async function submitPaf(supa, user, body) {
     submitter_name: user.full_name ?? null,
 
     pay_period_end: payPeriodEnd,
-    drive_in: driveIn || null,
-    drivein_na: driveInWaived,
+    drive_in: effectiveDriveIn || null,
+    drivein_na: driveInWaived && !effectiveDriveIn,
     market_do: sanitizeText(body?.market_do, 200) || null,
     employee_name: employeeName,
     last4_ssn: ssn,
@@ -768,7 +781,7 @@ async function submitPaf(supa, user, body) {
     actor_email: user.email,
     action: "submit",
     detail: {
-      drive_in: driveIn,
+      drive_in: effectiveDriveIn || null,
       employee_name: employeeName,
       category,
       routed_to_sdo: insertRow.status === "Pending SDO Approval",
@@ -799,7 +812,7 @@ async function submitPaf(supa, user, body) {
       to: recipients,
       vars: {
         EMPLOYEE: employeeName,
-        STORE: driveIn,
+        STORE: effectiveDriveIn || "N/A",
         DO: submitterDisplay,
         CATEGORY: category,
         AMOUNT: fmtMoney(insertRow.estimated_cost),
