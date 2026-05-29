@@ -233,8 +233,11 @@ export function StatusPipeline({
       }}
     >
       {stages.map((s, i) => {
-        const done = i < cur;
-        const active = i === cur;
+        // Closed is terminal — when it's the current stage the ticket is
+        // finished, so render it as done (✓ complete), never "in progress".
+        const terminal = s.key === "closed";
+        const done = i < cur || (i === cur && terminal);
+        const active = i === cur && !terminal;
         const isCond = s.tone === "warn";
         const accent = isCond ? WO.warn : WO.primary;
         const activeBg = isCond ? WO.warnSoft : WO.primarySoft;
@@ -288,7 +291,15 @@ export function StatusPipeline({
                 paddingLeft: 26,
               }}
             >
-              {done ? "✓ complete" : active ? (isCond ? "current" : "in progress") : "—"}
+              {done
+                ? "✓ complete"
+                : active
+                  ? isCond
+                    ? "current"
+                    : s.key === "completed"
+                      ? "complete"
+                      : "in progress"
+                  : "—"}
             </div>
           </div>
         );
