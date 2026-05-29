@@ -28,6 +28,8 @@ export const WO = {
   avatarBg: "#cfe1ee",
   avatarFg: "#0b3b66",
   shadow: "0 1px 2px rgba(11,59,102,.2)",
+  cardShadow: "0 1px 2px rgba(11,59,102,.05), 0 1px 3px rgba(11,59,102,.04)",
+  bg: "#f6f6f4",
   mono: "var(--font-mono)",
 } as const;
 
@@ -135,6 +137,7 @@ export function SectionCard({
         border: `1px solid ${WO.line}`,
         borderRadius: 10,
         padding: "14px 16px",
+        boxShadow: WO.cardShadow,
         ...style,
       }}
     >
@@ -189,6 +192,7 @@ export function StatusPipeline({ status }: { status: string }) {
         border: `1px solid ${WO.line}`,
         borderRadius: 10,
         overflow: "hidden",
+        boxShadow: WO.cardShadow,
       }}
     >
       {STAGES.map(([key, label], i) => {
