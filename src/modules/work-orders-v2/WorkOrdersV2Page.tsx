@@ -923,7 +923,7 @@ function NewTicketDetail({
   } as React.CSSProperties;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14, color: WO.ink, ...liveVars }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 14, color: WO.ink, background: WO.bg, borderRadius: 12, padding: 16, ...liveVars }}>
       {/* Breadcrumb */}
       <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontFamily: WO.mono, color: WO.muted }}>
         <button
@@ -952,7 +952,13 @@ function NewTicketDetail({
               {days === null ? "—" : `${days} day${days === 1 ? "" : "s"} open`}
             </Pill>
             {ticket.is_business_critical && <Pill tone="warn" dot>Critical</Pill>}
+            {ticket.needs_vendor_help && <Pill tone="warn" dot>Needs vendor help</Pill>}
           </div>
+          {ticket.issue_description && (
+            <div style={{ fontSize: 14, color: WO.ink2, marginTop: 6, lineHeight: 1.4, maxWidth: 720 }}>
+              {ticket.issue_description}
+            </div>
+          )}
           <div style={{ fontFamily: WO.mono, fontSize: 11, color: WO.muted, marginTop: 6 }}>
             {ticket.wo_number} · Store {ticket.store_number}
             {ticket.store_name ? ` · ${ticket.store_name}` : ""} · {fmtDate(ticket.date_submitted)}

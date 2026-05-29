@@ -137,7 +137,7 @@ export function QueueTable({
   };
 
   return (
-    <div style={{ color: WO.ink }}>
+    <div style={{ color: WO.ink, background: WO.bg, borderRadius: 12, padding: 16 }}>
       {/* Header */}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -284,9 +284,13 @@ export function QueueTable({
                   <Pill tone={statusPillTone(t.status)} dot>{statusLabel(t.status)}</Pill>
                 </td>
                 <td style={{ padding: "12px", verticalAlign: "top" }}>
-                  {t.vendor_name
-                    ? <span style={{ color: WO.ink2 }}>{t.vendor_name}</span>
-                    : <span style={{ color: WO.muted, fontStyle: "italic" }}>Unassigned</span>}
+                  {t.vendor_name ? (
+                    <span style={{ color: WO.ink2 }}>{t.vendor_name}</span>
+                  ) : t.needs_vendor_help ? (
+                    <Pill tone="warn" dot>Needs vendor help</Pill>
+                  ) : (
+                    <span style={{ color: WO.muted, fontStyle: "italic" }}>Unassigned</span>
+                  )}
                 </td>
                 <td style={{ padding: "12px", verticalAlign: "top" }}>
                   <span
