@@ -202,6 +202,9 @@ export function PafDetail({ paf }: { paf: PafRow }) {
             <Grid>
               {paf.from_role && <Field label="Current Role" value={paf.from_role} />}
               {paf.new_role && <Field label="New Role" value={paf.new_role} />}
+              {paf.demotion_effective_date && (
+                <Field label="New Role Effective Date" value={paf.demotion_effective_date} />
+              )}
               {paf.current_pay_rate != null && (
                 <Field
                   label="Current Pay Rate"

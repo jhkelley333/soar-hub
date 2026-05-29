@@ -92,6 +92,29 @@ const NH_ROLES = ["GM", "DO", "SDO"];
 const NH_INPUT =
   "block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent";
 
+// Demotion field order is set in code: jsonb normalizes config key order
+// by length, so it can't live in the config. `demotion_effective_date` is
+// a code-only field (no config entry) injected into the section below.
+const DEMOTION_FIELD_ORDER = [
+  "from_role", // Current Role
+  "new_role", // New Role
+  "demotion_effective_date",
+  "current_pay_rate",
+  "new_pay_rate",
+  "location_change",
+  "new_location",
+];
+
+const DEMOTION_EFFECTIVE_FIELD: PafFieldDisplay = {
+  label: "New Role Effective Date",
+  placeholder: "",
+  helpText: "Date the new role takes effect.",
+  required: true,
+  visible: true,
+  locked: false,
+  sections: ["demotion"],
+};
+
 function NhField({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
@@ -259,6 +282,16 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
         (out[sec] ||= []).push([key, f]);
       }
     }
+    // Demotion: inject the code-only effective-date field, then apply the
+    // explicit field order (Current Role before New Role, etc.).
+    if (out.demotion) {
+      out.demotion.push(["demotion_effective_date", DEMOTION_EFFECTIVE_FIELD]);
+      const ord = (k: string) => {
+        const i = DEMOTION_FIELD_ORDER.indexOf(k);
+        return i === -1 ? 999 : i;
+      };
+      out.demotion.sort((a, b) => ord(a[0]) - ord(b[0]));
+    }
     return out;
   }, [cfg]);
 
@@ -393,6 +426,14 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
 
     if (!/^\d{4}$/.test(String(state.last4_ssn ?? ""))) {
       setError("Last 4 SSN must be 4 digits.");
+      return;
+    }
+
+    if (
+      state.category === "Demotion" &&
+      String(state.demotion_effective_date ?? "").trim() === ""
+    ) {
+      setError('"New Role Effective Date" is required.');
       return;
     }
 
@@ -810,6 +851,7 @@ const DATE_KEYS = new Set([
   "pay_period_end",
   "last_day_worked",
   "referral_start_date",
+  "demotion_effective_date",
 ]);
 
 function FieldRender({
