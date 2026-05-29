@@ -366,6 +366,10 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
         setError('Select an area, or check "No market yet".');
         return;
       }
+      if (String(state.nh_offer_letter_path ?? "").trim() === "") {
+        setError("Attach the offer letter before submitting.");
+        return;
+      }
     } else {
       // Required-field check, gated by section visibility AND field
       // visibility (so hidden conditional fields don't block submit).
@@ -624,7 +628,7 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
           )}
           <div className="mt-4">
             <label className="mb-1 block text-sm font-medium text-zinc-700">
-              Offer letter
+              Offer letter <span className="text-red-600">*</span>
             </label>
             <div className="flex flex-wrap items-center gap-3">
               <label
