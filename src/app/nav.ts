@@ -74,7 +74,7 @@ export const NAV: NavItem[] = [
   // RVPs, etc.) without code changes; admins add user IDs from
   // /admin/feature-flags. To return to the previous "DO and up" rule,
   // delete the flagKey here and add the original roles back to roles.
-  { to: "/paf",         label: "PAF",         icon: FileSpreadsheet, roles: ["payroll", "admin"], flagKey: "paf_pilot" },
+  { to: "/paf",         label: "PAF",         icon: FileSpreadsheet, roles: ["do", "payroll", "admin"], flagKey: "paf_pilot" },
   // Employee Actions — Training Credit + PTO request forms. GM and up;
   // submitting notifies the store's DO + RVP. Approvals/tracking land later.
   { to: "/employee-actions", label: "Employee Actions", icon: ClipboardCheck, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
