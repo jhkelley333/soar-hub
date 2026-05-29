@@ -645,6 +645,13 @@ async function submitPaf(supa, user, body) {
     last_day_worked: sanitizeDateInput(body?.last_day_worked),
     termed_in_tr: sanitizeText(body?.termed_in_tr, 10) || null,
 
+    // New Hire (Salary Leader)
+    nh_role: sanitizeText(body?.nh_role, 20) || null,
+    nh_start_date: sanitizeDateInput(body?.nh_start_date),
+    nh_hours_last_period: num(body?.nh_hours_last_period),
+    nh_home_store: sanitizeText(body?.nh_home_store, 20) || null,
+    nh_no_market: body?.nh_no_market === "yes" || body?.nh_no_market === true,
+
     // Bonus (sub-fields branch on bonus_type)
     bonus_type: sanitizeText(body?.bonus_type, 100) || null,
     spot_bonus_amt: num(body?.spot_bonus_amt),

@@ -157,6 +157,22 @@ export function PafDetail({ paf }: { paf: PafRow }) {
           </Section>
         )}
 
+      {paf.category === "New Hire (Salary Leader)" && (
+        <Section title="New Hire — Salary Leader">
+          <Grid>
+            {paf.nh_role && <Field label="Role" value={paf.nh_role} />}
+            {paf.nh_start_date && <Field label="Start Date" value={paf.nh_start_date} />}
+            {paf.nh_hours_last_period != null && Number(paf.nh_hours_last_period) > 0 && (
+              <Field label="Hours (Last Pay Period)" value={String(paf.nh_hours_last_period)} />
+            )}
+            {paf.nh_home_store && <Field label="Home Store" value={`#${paf.nh_home_store}`} />}
+            {paf.nh_no_market && (
+              <Field label="Market" value="No market yet (plus-one / in training)" />
+            )}
+          </Grid>
+        </Section>
+      )}
+
       {paf.category === "Demotion" &&
         (paf.from_role || paf.new_role || paf.location_change != null) && (
           <Section title="Demotion">
