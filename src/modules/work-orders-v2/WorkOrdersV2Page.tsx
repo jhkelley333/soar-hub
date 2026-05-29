@@ -49,6 +49,8 @@ import {
   type ThreadType,
 } from "./types";
 import { NewTicketModal } from "./NewTicketModal";
+import { QueueTable } from "./QueueTable";
+import { useFlag } from "@/lib/flags";
 import { VendorSearchInput } from "./VendorSearchInput";
 import { ApprovalSection } from "./ApprovalSection";
 import { TicketChat } from "./TicketChat";
@@ -313,6 +315,12 @@ function TicketsTab() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [modalOpen, setModalOpen] = useState(false);
 
+  // Redesigned queue view (flagged). When on, the list renders as the new
+  // QueueTable and a single selected ticket opens in detail mode; when off,
+  // the legacy expandable-card list below is used unchanged.
+  const newUi = useFlag("wo2_new_ui");
+  const [detailId, setDetailId] = useState<string | null>(null);
+
   const tickets = ticketsQ.data?.tickets ?? [];
 
   // Once tickets are loaded, if we have a ?ticket= deep-link, make
@@ -328,6 +336,8 @@ function TicketsTab() {
       next.add(focusTicketId);
       return next;
     });
+    // New UI navigates to detail mode for the deep-linked ticket.
+    setDetailId(focusTicketId);
     // Mark seen for the deep-linked ticket so the unread badge
     // clears as the user lands.
     markTicketSeen(focusTicketId)
@@ -381,6 +391,76 @@ function TicketsTab() {
 
   function refetchAll() {
     qc.invalidateQueries({ queryKey: ["wo2"] });
+  }
+
+  // ── Redesigned queue (flagged) ──────────────────────────────────────
+  if (newUi) {
+    const selected = detailId ? tickets.find((t) => t.id === detailId) ?? null : null;
+    const openDetail = (id: string) => {
+      setDetailId(id);
+      markTicketSeen(id)
+        .then(() => qc.invalidateQueries({ queryKey: ["wo2", "tickets"] }))
+        .catch((e) => console.warn("[wo2] markTicketSeen failed", e));
+    };
+    return (
+      <>
+        {selected ? (
+          <div>
+            <button
+              type="button"
+              onClick={() => setDetailId(null)}
+              className="mb-4 inline-flex items-center gap-1 text-sm font-medium text-zinc-500 transition hover:text-midnight"
+            >
+              <ChevronLeft className="h-4 w-4" strokeWidth={2} />
+              Work orders
+            </button>
+            <TicketCard
+              ticket={selected}
+              expanded
+              callerRole={callerRole}
+              initialThread={selected.id === focusTicketId ? focusThread : null}
+              onToggle={() => setDetailId(null)}
+              onUpdated={() => { toast.push("Ticket updated.", "success"); refetchAll(); }}
+              onPhotoUploaded={(count) => {
+                toast.push(`${count} photo${count === 1 ? "" : "s"} uploaded.`, "success");
+                refetchAll();
+              }}
+              onApprovalChanged={() => { toast.push("Approval saved.", "success"); refetchAll(); }}
+              onError={(e) => toast.push(e, "error")}
+            />
+          </div>
+        ) : ticketsQ.isLoading ? (
+          <div className="space-y-3">
+            <Skeleton className="h-24 w-full" />
+            <Skeleton className="h-64 w-full" />
+          </div>
+        ) : ticketsQ.isError ? (
+          <EmptyState
+            title="Couldn't load work orders"
+            description={(ticketsQ.error as Error)?.message ?? "Try again."}
+          />
+        ) : (
+          <QueueTable
+            tickets={tickets}
+            stats={statsQ.data?.stats}
+            currentUserId={profile?.id ?? null}
+            onOpen={openDetail}
+            onNew={() => setModalOpen(true)}
+          />
+        )}
+
+        <NewTicketModal
+          open={modalOpen}
+          onClose={() => setModalOpen(false)}
+          onCreated={(woNumber) => {
+            setModalOpen(false);
+            toast.push(`Ticket ${woNumber} created.`, "success");
+            refetchAll();
+          }}
+          onError={(msg) => toast.push(msg, "error")}
+        />
+      </>
+    );
   }
 
   return (
