@@ -306,6 +306,11 @@ function manageableRoles(role) {
     case "rvp":
       return ["shift_manager", "gm", "do", "sdo"];
     case "sdo":
+      // SDOs oversee a multi-district area, so they staff the DOs who run
+      // those districts (plus the GMs / Shift Managers under them). Mirrors
+      // the SQL manageable_users() SDO arm (migration 0022) so the Add User
+      // role picker + invite validation match what My Team already lists.
+      return ["shift_manager", "gm", "do"];
     case "do":
       return ["shift_manager", "gm"];
     case "gm":
