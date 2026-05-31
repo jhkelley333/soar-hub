@@ -7,6 +7,8 @@ import type {
   LaborDistrict,
   LaborStore,
   ReviewInput,
+  SyncNowResponse,
+  SyncStatusResponse,
 } from "./types";
 
 const FN = "/.netlify/functions/labor";
@@ -71,4 +73,12 @@ export function saveLaborReview(
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+export function fetchSyncStatus(): Promise<SyncStatusResponse> {
+  return request<SyncStatusResponse>(`${FN}?action=sync-status`);
+}
+
+export function triggerSyncNow(): Promise<SyncNowResponse> {
+  return request<SyncNowResponse>(`${FN}?action=sync-now`, { method: "POST" });
 }
