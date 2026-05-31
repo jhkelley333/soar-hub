@@ -4,8 +4,11 @@ import { supabase } from "@/lib/supabase";
 import type {
   DistrictLaborResponse,
   GmLaborResponse,
+  LaborDistrict,
   LaborStore,
   ReviewInput,
+  SyncNowResponse,
+  SyncStatusResponse,
 } from "./types";
 
 const FN = "/.netlify/functions/labor";
@@ -49,6 +52,10 @@ export function fetchGmLabor(
   return request<GmLaborResponse>(`${FN}?${q.toString()}`);
 }
 
+export function fetchLaborDistricts(): Promise<{ districts: LaborDistrict[] }> {
+  return request<{ districts: LaborDistrict[] }>(`${FN}?action=districts`);
+}
+
 export function fetchDistrictLabor(
   date?: string,
   district?: string
@@ -66,4 +73,12 @@ export function saveLaborReview(
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+export function fetchSyncStatus(): Promise<SyncStatusResponse> {
+  return request<SyncStatusResponse>(`${FN}?action=sync-status`);
+}
+
+export function triggerSyncNow(): Promise<SyncNowResponse> {
+  return request<SyncNowResponse>(`${FN}?action=sync-now`, { method: "POST" });
 }

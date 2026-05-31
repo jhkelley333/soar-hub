@@ -27,6 +27,8 @@
 //   GET  ?action=district[&district=ID][&date=YYYY-MM-DD]
 //          -> { rollup, stores[] } the DO district view
 //   GET  ?action=my-stores   -> { stores[] } the caller can view labor for
+//   GET  ?action=districts   -> { districts[] } the caller can pick from
+//          (SDO sees their area's districts, RVP their region's, etc.)
 //   POST ?action=review  { store_number, business_date, note }
 //          -> upsert the GM's explanation for that store/day
 
@@ -38,6 +40,8 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const READ_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]);
 const REVIEW_ROLES = new Set(["gm", "do", "sdo", "rvp", "admin"]);
 const ORG_WIDE = new Set(["payroll", "admin", "vp", "coo"]);
+// Who can see the sync-status panel (the labor pipeline health view).
+const SYNC_ROLES = new Set(["admin", "vp", "coo"]);
 
 // A day is a "miss" (note due) when labor runs over the goal by more than
 // this many points. Tunable without a deploy via env.
@@ -195,6 +199,66 @@ async function listMyStores(supa, user) {
     return { stores: data ?? [] };
   }
   return { stores: await resolveVisibleStoreRows(supa, user.id) };
+}
+
+// ── districts ────────────────────────────────────────────────────────
+// The districts the caller can pick from in the district view. Derived
+// from their visible stores, so an SDO gets every district in their area
+// and an RVP every district in their region. Admin/org-wide get all.
+// Returns [{ id, name, code, store_count }] sorted by name.
+async function listDistricts(supa, user) {
+  if (!READ_ROLES.has(user.role)) return { districts: [] };
+
+  let storeRows;
+  if (user.role === "admin" || ORG_WIDE.has(user.role)) {
+    const { data } = await supa
+      .from("stores")
+      .select("district_id")
+      .eq("is_active", true);
+    storeRows = data ?? [];
+  } else {
+    storeRows = await resolveVisibleStoreRows(supa, user.id);
+  }
+
+  // Count stores per district to surface "18 stores" in the picker.
+  const counts = new Map();
+  for (const s of storeRows) {
+    if (!s.district_id) continue;
+    counts.set(s.district_id, (counts.get(s.district_id) ?? 0) + 1);
+  }
+  const ids = Array.from(counts.keys());
+  if (!ids.length) return { districts: [] };
+
+  const { data: districts } = await supa
+    .from("districts")
+    .select("id, name, code")
+    .in("id", ids);
+
+  const out = (districts ?? [])
+    .map((d) => ({ id: d.id, name: d.name, code: d.code, store_count: counts.get(d.id) ?? 0 }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return { districts: out };
+}
+
+// ── Sync status (pipeline health) ────────────────────────────────────
+// Recent labor_sync_state rows + a snapshot count, so admins can confirm
+// the nightly/poll capture is landing each day. Read-only; the actual
+// "sync now" trigger is the labor-snapshot function (?force=1).
+async function syncStatus(supa, user) {
+  if (!SYNC_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const { data: rows } = await supa
+    .from("labor_sync_state")
+    .select("*")
+    .order("business_date", { ascending: false })
+    .limit(30);
+  const { count } = await supa
+    .from("labor_daily_snapshots")
+    .select("id", { count: "exact", head: true });
+  return {
+    days: rows ?? [],
+    latest: rows?.[0] ?? null,
+    total_snapshot_rows: count ?? 0,
+  };
 }
 
 // Most recent business_date we have any snapshot for (the default "yesterday").
@@ -392,6 +456,27 @@ async function saveReview(supa, user, body) {
   return { ok: true, review: data };
 }
 
+// ── Sync now (manual trigger) ────────────────────────────────────────
+// Auth-gated wrapper that invokes the labor-snapshot function with
+// ?force=1, so an admin can pull the current sheet on demand from the UI
+// instead of hitting the (unauthenticated) snapshot URL by hand. Returns
+// the snapshot summary ({ business_date, upserted, ... }).
+async function syncNow(user) {
+  if (!SYNC_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const base = (process.env.URL || process.env.DEPLOY_URL || "").replace(/\/$/, "");
+  if (!base) return { error: "site URL not configured", status: 500 };
+  try {
+    const res = await fetch(`${base}/.netlify/functions/labor-snapshot?force=1`, {
+      method: "GET",
+    });
+    const detail = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: detail?.error || `snapshot failed (${res.status})`, status: 502 };
+    return { ok: true, ...detail };
+  } catch (e) {
+    return { error: e?.message || "sync failed", status: 502 };
+  }
+}
+
 // ── HTTP handler ─────────────────────────────────────────────────────
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
@@ -413,11 +498,14 @@ export const handler = async (event) => {
       if (action === "gm") return unwrap(await gmView(supa, user, params));
       if (action === "district") return unwrap(await districtView(supa, user, params));
       if (action === "my-stores") return unwrap(await listMyStores(supa, user));
+      if (action === "districts") return unwrap(await listDistricts(supa, user));
+      if (action === "sync-status") return unwrap(await syncStatus(supa, user));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "review") return unwrap(await saveReview(supa, user, body));
+      if (action === "sync-now") return unwrap(await syncNow(user));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
     return respond(405, { error: "method not allowed" });

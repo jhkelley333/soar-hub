@@ -11,7 +11,7 @@ import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Segmented } from "@/shared/ui/Segmented";
 import { cn } from "@/lib/cn";
-import { fetchDistrictLabor } from "./api";
+import { fetchDistrictLabor, fetchLaborDistricts } from "./api";
 import {
   fmtDayLabel,
   fmtPct,
@@ -28,8 +28,18 @@ type Sort = "worst" | "labor" | "store";
 export function DistrictLaborView() {
   const [filter, setFilter] = useState<Filter>("all");
   const [sort, setSort] = useState<Sort>("worst");
+  // "" = all districts the caller can see (the default rollup). SDO/RVP can
+  // narrow to one district; a single-district DO only ever has one.
+  const [district, setDistrict] = useState<string>("");
 
-  const q = useQuery({ queryKey: ["labor-district"], queryFn: () => fetchDistrictLabor() });
+  const districtsQ = useQuery({ queryKey: ["labor-districts"], queryFn: fetchLaborDistricts });
+  const districts = districtsQ.data?.districts ?? [];
+  const multiDistrict = districts.length > 1;
+
+  const q = useQuery({
+    queryKey: ["labor-district", district || "all"],
+    queryFn: () => fetchDistrictLabor(undefined, district || undefined),
+  });
   const data = q.data;
   const rollup = data?.rollup;
 
@@ -52,12 +62,28 @@ export function DistrictLaborView() {
         title="District labor · Yesterday"
         description={data?.date ? `${fmtDayLabel(data.date)} · ${rollup?.store_count ?? 0} stores rolled up` : undefined}
         actions={
-          rollup && rollup.notes_due > 0 ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-sonic-50 px-3 py-1.5 text-xs font-semibold text-sonic-700">
-              <Clock className="h-3.5 w-3.5" />
-              {rollup.notes_due} {rollup.notes_due === 1 ? "note" : "notes"} to review
-            </span>
-          ) : undefined
+          <div className="flex items-center gap-2">
+            {multiDistrict && (
+              <select
+                value={district}
+                onChange={(e) => setDistrict(e.target.value)}
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-midnight focus:border-accent focus:outline-none"
+              >
+                <option value="">All my districts</option>
+                {districts.map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.name} ({d.store_count})
+                  </option>
+                ))}
+              </select>
+            )}
+            {rollup && rollup.notes_due > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-sonic-50 px-3 py-1.5 text-xs font-semibold text-sonic-700">
+                <Clock className="h-3.5 w-3.5" />
+                {rollup.notes_due} {rollup.notes_due === 1 ? "note" : "notes"} to review
+              </span>
+            )}
+          </div>
         }
       />
 
@@ -135,11 +161,24 @@ export function DistrictLaborView() {
             {rows.length === 0 ? (
               <div className="p-8 text-center text-sm text-zinc-500">No stores match this filter.</div>
             ) : (
-              <div className="divide-y divide-zinc-100">
-                {rows.map((s) => (
-                  <StoreRow key={s.store_number} row={s} />
-                ))}
-              </div>
+              <>
+                {/* Column headers — aligned to the StoreRow layout below. */}
+                <div className="flex w-full items-center gap-3 border-b border-zinc-100 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                  <span className="w-1" />
+                  <span className="w-9" />
+                  <span className="min-w-0 flex-1">Store</span>
+                  <span className="w-16 text-right">Labor %</span>
+                  <span className="hidden w-14 text-right sm:block">Var</span>
+                  <span className="hidden w-20 text-right sm:block">$ Over</span>
+                  <span className="hidden w-14 text-right sm:block">Hrs</span>
+                  <span className="ml-2 w-[88px] text-right">Status</span>
+                </div>
+                <div className="divide-y divide-zinc-100">
+                  {rows.map((s) => (
+                    <StoreRow key={s.store_number} row={s} />
+                  ))}
+                </div>
+              </>
             )}
           </div>
         </div>
@@ -193,6 +232,10 @@ function StoreRow({ row }: { row: DistrictStoreRow }) {
       >
         {/* over-chart accent rail */}
         <span className={cn("h-10 w-1 rounded-full", over ? "bg-sonic" : "bg-transparent")} />
+        {/* store badge — leading 2 digits of the DI, matching the design */}
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-xs font-semibold tabular-nums text-zinc-600">
+          {String(row.store_number).slice(0, 2)}
+        </span>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold text-midnight">
             #{row.store_number} · {row.store_name ?? ""}

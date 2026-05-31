@@ -90,3 +90,40 @@ export interface ReviewInput {
   business_date: string;
   note: string;
 }
+
+export interface LaborDistrict {
+  id: string;
+  name: string;
+  code: string;
+  store_count: number;
+}
+
+export interface SyncStateRow {
+  business_date: string;
+  content_hash: string;
+  rows_captured: number;
+  stores_matched: number;
+  stores_orphaned: number;
+  poll_count: number;
+  change_count: number;
+  last_polled_at: string;
+  last_changed_at: string;
+  created_at: string;
+}
+
+export interface SyncStatusResponse {
+  days: SyncStateRow[];
+  latest: SyncStateRow | null;
+  total_snapshot_rows: number;
+}
+
+export interface SyncNowResponse {
+  ok: true;
+  business_date: string;
+  rows_parsed: number;
+  stores_matched: number;
+  stores_orphaned: string[];
+  upserted?: number;
+  skipped?: string;
+  changed: boolean;
+}
