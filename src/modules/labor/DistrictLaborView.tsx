@@ -60,7 +60,16 @@ export function DistrictLaborView() {
     <>
       <PageHeader
         title="District labor · Yesterday"
-        description={data?.date ? `${fmtDayLabel(data.date)} · ${rollup?.store_count ?? 0} stores rolled up` : undefined}
+        description={
+          data?.date
+            ? `${fmtDayLabel(data.date)} · ${rollup?.store_count ?? 0} stores rolled up`
+              + (rollup?.dos?.length === 1
+                  ? ` · DO ${rollup.dos[0]}`
+                  : rollup && rollup.dos.length > 1
+                  ? ` · ${rollup.dos.length} DOs`
+                  : "")
+            : undefined
+        }
         actions={
           <div className="flex items-center gap-2">
             {multiDistrict && (
@@ -240,7 +249,11 @@ function StoreRow({ row }: { row: DistrictStoreRow }) {
           <div className="truncate text-sm font-semibold text-midnight">
             #{row.store_number} · {row.store_name ?? ""}
           </div>
-          <div className="truncate text-xs text-zinc-500">{row.gm_name ? `GM ${row.gm_name}` : "—"}</div>
+          <div className="truncate text-xs text-zinc-500">
+            {[row.gm_name ? `GM ${row.gm_name}` : null, row.do_name ? `DO ${row.do_name}` : null]
+              .filter(Boolean)
+              .join(" · ") || "—"}
+          </div>
         </div>
         <div className={cn("w-16 text-right text-sm font-bold tabular-nums", over ? "text-sonic" : "text-ok")}>
           {fmtPct(row.labor_pct)}

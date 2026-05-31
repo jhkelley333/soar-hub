@@ -59,6 +59,7 @@ export interface DistrictStoreRow {
   store_number: string;
   store_name: string | null;
   gm_name: string | null;
+  do_name: string | null;
   labor_pct: number | null;
   variance_pts: number | null;
   dollars_over_chart: number | null;
@@ -77,6 +78,7 @@ export interface DistrictRollup {
   hours_over_chart: number;
   notes_due: number;
   notes_explained: number;
+  dos: string[];
 }
 
 export interface DistrictLaborResponse {
