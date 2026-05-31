@@ -161,11 +161,24 @@ export function DistrictLaborView() {
             {rows.length === 0 ? (
               <div className="p-8 text-center text-sm text-zinc-500">No stores match this filter.</div>
             ) : (
-              <div className="divide-y divide-zinc-100">
-                {rows.map((s) => (
-                  <StoreRow key={s.store_number} row={s} />
-                ))}
-              </div>
+              <>
+                {/* Column headers — aligned to the StoreRow layout below. */}
+                <div className="flex w-full items-center gap-3 border-b border-zinc-100 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                  <span className="w-1" />
+                  <span className="w-9" />
+                  <span className="min-w-0 flex-1">Store</span>
+                  <span className="w-16 text-right">Labor %</span>
+                  <span className="hidden w-14 text-right sm:block">Var</span>
+                  <span className="hidden w-20 text-right sm:block">$ Over</span>
+                  <span className="hidden w-14 text-right sm:block">Hrs</span>
+                  <span className="ml-2 w-[88px] text-right">Status</span>
+                </div>
+                <div className="divide-y divide-zinc-100">
+                  {rows.map((s) => (
+                    <StoreRow key={s.store_number} row={s} />
+                  ))}
+                </div>
+              </>
             )}
           </div>
         </div>
