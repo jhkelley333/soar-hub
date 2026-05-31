@@ -40,6 +40,8 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const READ_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]);
 const REVIEW_ROLES = new Set(["gm", "do", "sdo", "rvp", "admin"]);
 const ORG_WIDE = new Set(["payroll", "admin", "vp", "coo"]);
+// Who can see the sync-status panel (the labor pipeline health view).
+const SYNC_ROLES = new Set(["admin", "vp", "coo"]);
 
 // A day is a "miss" (note due) when labor runs over the goal by more than
 // this many points. Tunable without a deploy via env.
@@ -238,6 +240,27 @@ async function listDistricts(supa, user) {
   return { districts: out };
 }
 
+// ── Sync status (pipeline health) ────────────────────────────────────
+// Recent labor_sync_state rows + a snapshot count, so admins can confirm
+// the nightly/poll capture is landing each day. Read-only; the actual
+// "sync now" trigger is the labor-snapshot function (?force=1).
+async function syncStatus(supa, user) {
+  if (!SYNC_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const { data: rows } = await supa
+    .from("labor_sync_state")
+    .select("*")
+    .order("business_date", { ascending: false })
+    .limit(30);
+  const { count } = await supa
+    .from("labor_daily_snapshots")
+    .select("id", { count: "exact", head: true });
+  return {
+    days: rows ?? [],
+    latest: rows?.[0] ?? null,
+    total_snapshot_rows: count ?? 0,
+  };
+}
+
 // Most recent business_date we have any snapshot for (the default "yesterday").
 async function latestBusinessDate(supa) {
   const { data } = await supa
@@ -433,6 +456,27 @@ async function saveReview(supa, user, body) {
   return { ok: true, review: data };
 }
 
+// ── Sync now (manual trigger) ────────────────────────────────────────
+// Auth-gated wrapper that invokes the labor-snapshot function with
+// ?force=1, so an admin can pull the current sheet on demand from the UI
+// instead of hitting the (unauthenticated) snapshot URL by hand. Returns
+// the snapshot summary ({ business_date, upserted, ... }).
+async function syncNow(user) {
+  if (!SYNC_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const base = (process.env.URL || process.env.DEPLOY_URL || "").replace(/\/$/, "");
+  if (!base) return { error: "site URL not configured", status: 500 };
+  try {
+    const res = await fetch(`${base}/.netlify/functions/labor-snapshot?force=1`, {
+      method: "GET",
+    });
+    const detail = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: detail?.error || `snapshot failed (${res.status})`, status: 502 };
+    return { ok: true, ...detail };
+  } catch (e) {
+    return { error: e?.message || "sync failed", status: 502 };
+  }
+}
+
 // ── HTTP handler ─────────────────────────────────────────────────────
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
@@ -455,11 +499,13 @@ export const handler = async (event) => {
       if (action === "district") return unwrap(await districtView(supa, user, params));
       if (action === "my-stores") return unwrap(await listMyStores(supa, user));
       if (action === "districts") return unwrap(await listDistricts(supa, user));
+      if (action === "sync-status") return unwrap(await syncStatus(supa, user));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "review") return unwrap(await saveReview(supa, user, body));
+      if (action === "sync-now") return unwrap(await syncNow(user));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
     return respond(405, { error: "method not allowed" });
