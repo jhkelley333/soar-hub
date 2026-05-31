@@ -27,6 +27,8 @@
 //   GET  ?action=district[&district=ID][&date=YYYY-MM-DD]
 //          -> { rollup, stores[] } the DO district view
 //   GET  ?action=my-stores   -> { stores[] } the caller can view labor for
+//   GET  ?action=districts   -> { districts[] } the caller can pick from
+//          (SDO sees their area's districts, RVP their region's, etc.)
 //   POST ?action=review  { store_number, business_date, note }
 //          -> upsert the GM's explanation for that store/day
 
@@ -195,6 +197,45 @@ async function listMyStores(supa, user) {
     return { stores: data ?? [] };
   }
   return { stores: await resolveVisibleStoreRows(supa, user.id) };
+}
+
+// ── districts ────────────────────────────────────────────────────────
+// The districts the caller can pick from in the district view. Derived
+// from their visible stores, so an SDO gets every district in their area
+// and an RVP every district in their region. Admin/org-wide get all.
+// Returns [{ id, name, code, store_count }] sorted by name.
+async function listDistricts(supa, user) {
+  if (!READ_ROLES.has(user.role)) return { districts: [] };
+
+  let storeRows;
+  if (user.role === "admin" || ORG_WIDE.has(user.role)) {
+    const { data } = await supa
+      .from("stores")
+      .select("district_id")
+      .eq("is_active", true);
+    storeRows = data ?? [];
+  } else {
+    storeRows = await resolveVisibleStoreRows(supa, user.id);
+  }
+
+  // Count stores per district to surface "18 stores" in the picker.
+  const counts = new Map();
+  for (const s of storeRows) {
+    if (!s.district_id) continue;
+    counts.set(s.district_id, (counts.get(s.district_id) ?? 0) + 1);
+  }
+  const ids = Array.from(counts.keys());
+  if (!ids.length) return { districts: [] };
+
+  const { data: districts } = await supa
+    .from("districts")
+    .select("id, name, code")
+    .in("id", ids);
+
+  const out = (districts ?? [])
+    .map((d) => ({ id: d.id, name: d.name, code: d.code, store_count: counts.get(d.id) ?? 0 }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return { districts: out };
 }
 
 // Most recent business_date we have any snapshot for (the default "yesterday").
@@ -413,6 +454,7 @@ export const handler = async (event) => {
       if (action === "gm") return unwrap(await gmView(supa, user, params));
       if (action === "district") return unwrap(await districtView(supa, user, params));
       if (action === "my-stores") return unwrap(await listMyStores(supa, user));
+      if (action === "districts") return unwrap(await listDistricts(supa, user));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {

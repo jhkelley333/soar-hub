@@ -90,3 +90,10 @@ export interface ReviewInput {
   business_date: string;
   note: string;
 }
+
+export interface LaborDistrict {
+  id: string;
+  name: string;
+  code: string;
+  store_count: number;
+}

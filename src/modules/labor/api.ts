@@ -4,6 +4,7 @@ import { supabase } from "@/lib/supabase";
 import type {
   DistrictLaborResponse,
   GmLaborResponse,
+  LaborDistrict,
   LaborStore,
   ReviewInput,
 } from "./types";
@@ -47,6 +48,10 @@ export function fetchGmLabor(
   const q = new URLSearchParams({ action: "gm", store });
   if (date) q.set("date", date);
   return request<GmLaborResponse>(`${FN}?${q.toString()}`);
+}
+
+export function fetchLaborDistricts(): Promise<{ districts: LaborDistrict[] }> {
+  return request<{ districts: LaborDistrict[] }>(`${FN}?action=districts`);
 }
 
 export function fetchDistrictLabor(
