@@ -1,14 +1,23 @@
 // netlify/functions/labor-snapshot.js
 //
-// Netlify Scheduled Function — nightly snapshot of the SOAR labor Google
-// Sheet into Supabase, so labor history accrues for trend tracking.
+// Netlify Scheduled Function — change-driven snapshot of the SOAR labor
+// Google Sheet into Supabase, so labor history accrues for trend tracking.
+//
+// Back office fills the "Labor" tab at different times through the day,
+// with no single "done" moment — so a one-shot nightly capture risks
+// snapshotting half-filled data. Instead this polls on a short interval
+// (every 15 min during business hours) and only does the heavy upsert
+// when the sheet's content has actually CHANGED for the current business
+// date. Change detection: we hash the normalized data rows and compare to
+// labor_sync_state.content_hash for that date; an unchanged poll is a
+// cheap read with no write. Because the upsert is idempotent on
+// (store_id, business_date), repeated pulls converge to the final numbers
+// as back office finishes — no need to detect a single completion moment.
 //
 // The "Labor" tab is a single-day overwrite view: one row per store with
 // Daily + WTD + PTD bands side by side, all stamped to the "Sales Date"
-// in the header. Each night we read it, tag every row with that business
-// date, and upsert into labor_daily_snapshots keyed on (store, date).
-// Re-runs and restatements are safe (upsert); the sheet keeps no daily
-// archive, so history only exists from the first snapshot forward.
+// in the header. The sheet keeps no daily archive, so history only exists
+// from the first snapshot forward.
 //
 // Parsing is header-driven (not fixed column letters) because the sheet
 // has spacer columns and the layout can drift — same discipline as
@@ -19,19 +28,24 @@
 // Labor Goal" last.
 //
 // Manual / test invocation (HTTP GET to the function URL):
-//   ?dry=1   parse + return the column map, parsed date, and a sample of
-//            mapped rows WITHOUT writing anything. Run this first to
-//            confirm the mapping before going live.
+//   ?dry=1     parse + return the column map, parsed date, sample rows,
+//              and whether the content changed — WITHOUT writing anything.
+//   ?force=1   bypass the business-hours window AND the no-change skip
+//              (re-upsert even if the hash matches). For backfills/tests.
 //
 // Env:
 //   GOOGLE_SERVICE_ACCOUNT_JSON   service account with read access to the sheet
 //   LABOR_SHEET_ID                spreadsheet id (defaults to the known sheet)
 //   LABOR_SHEET_TAB               tab name (default "Labor")
 //   LABOR_SHEET_RANGE             range (default "A1:AB200")
+//   LABOR_POLL_TZ                 business-hours tz (default America/Chicago)
+//   LABOR_POLL_START_HOUR         first hour to poll, local (default 4)
+//   LABOR_POLL_END_HOUR           last hour to poll, local (default 23)
 //   SUPABASE_* / VITE_SUPABASE_*  standard service-role access
 
 import { createClient } from "@supabase/supabase-js";
 import { google } from "googleapis";
+import { createHash } from "node:crypto";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY =
@@ -41,6 +55,15 @@ const SHEET_ID =
   process.env.LABOR_SHEET_ID || "1gDnirnXocpzA7394kU6J7YrnE2V4SNr2uwJnBsLnwK4";
 const SHEET_TAB = process.env.LABOR_SHEET_TAB || "Labor";
 const SHEET_RANGE = process.env.LABOR_SHEET_RANGE || "A1:AB200";
+
+const POLL_TZ = process.env.LABOR_POLL_TZ || "America/Chicago";
+const POLL_START_HOUR = intEnv(process.env.LABOR_POLL_START_HOUR, 4);
+const POLL_END_HOUR = intEnv(process.env.LABOR_POLL_END_HOUR, 23);
+
+function intEnv(v, dflt) {
+  const n = parseInt(v, 10);
+  return Number.isFinite(n) ? n : dflt;
+}
 
 function admin() {
   return createClient(SUPABASE_URL, SERVICE_KEY, {
@@ -209,6 +232,27 @@ function findBusinessDate(rows, headerIdx) {
   return null;
 }
 
+// Hour-of-day in `tz` for a given instant (for the business-hours gate).
+function hourInTz(date, tz) {
+  const h = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, hour: "2-digit", hour12: false,
+  }).formatToParts(date).find((p) => p.type === "hour")?.value;
+  let n = parseInt(h, 10);
+  if (n === 24) n = 0;
+  return n;
+}
+
+// Stable content hash of the mapped snapshot rows — the change signal.
+// Sort by store so row reordering on the sheet doesn't look like a change;
+// include business_date so a date rollover always counts as a change.
+function hashSnapshots(rows, businessDate) {
+  const canonical = rows
+    .map((r) => JSON.stringify(r))
+    .sort()
+    .join("\n");
+  return createHash("sha256").update(`${businessDate}\n${canonical}`).digest("hex");
+}
+
 function bandFields(row, cols) {
   return {
     labor_pct: pct(row[cols.labor_pct]),
@@ -262,7 +306,21 @@ export const handler = async (event) => {
     console.error("[labor-snapshot] missing Supabase env vars; aborting.");
     return { statusCode: 500, body: "missing env" };
   }
-  const dry = (event?.queryStringParameters || {}).dry === "1";
+  const params = event?.queryStringParameters || {};
+  const dry = params.dry === "1";
+  const force = params.force === "1";
+
+  // Business-hours gate: outside the window there's nothing new to capture,
+  // so skip the sheet read entirely. ?force or ?dry bypasses it.
+  if (!force && !dry) {
+    const localHour = hourInTz(new Date(), POLL_TZ);
+    if (localHour < POLL_START_HOUR || localHour > POLL_END_HOUR) {
+      return {
+        statusCode: 200,
+        body: JSON.stringify({ skipped: true, reason: "outside poll window", localHour }),
+      };
+    }
+  }
 
   let rows;
   try {
@@ -293,6 +351,18 @@ export const handler = async (event) => {
 
   const supa = admin();
 
+  // Change detection: hash the parsed rows and compare to the last hash we
+  // stored for this business date. Unchanged → cheap no-op (just bump the
+  // poll counter). This is what lets us poll frequently while back office
+  // fills the sheet, without re-writing on every poll.
+  const contentHash = hashSnapshots(parsed, businessDate);
+  const { data: prevState } = await supa
+    .from("labor_sync_state")
+    .select("content_hash, poll_count, change_count")
+    .eq("business_date", businessDate)
+    .maybeSingle();
+  const changed = !prevState || prevState.content_hash !== contentHash;
+
   // Resolve store_id from store_number.
   const numbers = Array.from(new Set(parsed.map((p) => p.store_number)));
   const idByNumber = new Map();
@@ -321,7 +391,10 @@ export const handler = async (event) => {
     rows_parsed: parsed.length,
     stores_matched: ready.length,
     stores_orphaned: orphans,
+    content_hash: contentHash,
+    changed,
     dry,
+    force,
   };
 
   if (dry) {
@@ -338,6 +411,16 @@ export const handler = async (event) => {
     return { statusCode: 200, body: JSON.stringify(summary, null, 2) };
   }
 
+  // Unchanged since last poll → record the poll and skip the upsert.
+  if (!changed && !force) {
+    await supa.from("labor_sync_state").update({
+      poll_count: (prevState?.poll_count ?? 0) + 1,
+      last_polled_at: now,
+    }).eq("business_date", businessDate);
+    console.log(`[labor-snapshot] date=${businessDate} no change; skipped upsert.`);
+    return { statusCode: 200, body: JSON.stringify({ ...summary, upserted: 0, skipped: "no change" }) };
+  }
+
   if (!ready.length) {
     console.warn(`[labor-snapshot] no resolvable rows for ${businessDate}.`);
     return { statusCode: 200, body: JSON.stringify(summary) };
@@ -351,20 +434,35 @@ export const handler = async (event) => {
     return { statusCode: 500, body: JSON.stringify({ ...summary, error: error.message }) };
   }
 
+  // Record the new sync state (upsert on the business_date primary key).
+  await supa.from("labor_sync_state").upsert({
+    business_date: businessDate,
+    content_hash: contentHash,
+    rows_captured: parsed.length,
+    stores_matched: ready.length,
+    stores_orphaned: orphans.length,
+    poll_count: (prevState?.poll_count ?? 0) + 1,
+    change_count: (prevState?.change_count ?? 0) + 1,
+    last_polled_at: now,
+    last_changed_at: now,
+  }, { onConflict: "business_date" });
+
   if (orphans.length) {
     console.warn(`[labor-snapshot] ${orphans.length} DI(s) not in stores: ${orphans.join(", ")}`);
   }
   console.log(
-    `[labor-snapshot] date=${businessDate} parsed=${parsed.length} upserted=${ready.length} orphaned=${orphans.length}`
+    `[labor-snapshot] date=${businessDate} parsed=${parsed.length} upserted=${ready.length}`
+    + ` orphaned=${orphans.length} changed=${changed} force=${force}`
   );
   return { statusCode: 200, body: JSON.stringify({ ...summary, upserted: ready.length }) };
 };
 
-// Schedule config — Netlify reads this export. Daily at 11:00 UTC
-// (~5–6 AM US Central), after the sheet's overnight refresh. The snapshot
-// is stamped with whatever Sales Date the sheet carries, so exact timing
-// only needs to land after the refresh; re-runs are idempotent. Tune via
-// the cron here if the refresh window moves.
+// Schedule config — Netlify reads this export. Poll every 15 minutes; the
+// handler gates itself to business hours (LABOR_POLL_START_HOUR..END_HOUR
+// in LABOR_POLL_TZ) and only upserts when the sheet content changed, so
+// off-hours and no-change polls are cheap. This is what lets the snapshot
+// follow back office filling the sheet at different times instead of
+// betting on one nightly capture.
 export const config = {
-  schedule: "0 11 * * *",
+  schedule: "*/15 * * * *",
 };
