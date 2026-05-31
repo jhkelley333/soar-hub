@@ -1,0 +1,69 @@
+// Typed wrappers around netlify/functions/labor.
+
+import { supabase } from "@/lib/supabase";
+import type {
+  DistrictLaborResponse,
+  GmLaborResponse,
+  LaborStore,
+  ReviewInput,
+} from "./types";
+
+const FN = "/.netlify/functions/labor";
+
+async function authHeaders(): Promise<HeadersInit> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Not signed in");
+  return {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = { ...(await authHeaders()), ...(init.headers ?? {}) };
+  const res = await fetch(path, { ...init, headers });
+  if (!res.ok) {
+    let message = `Request failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) message = body.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(message);
+  }
+  return res.json() as Promise<T>;
+}
+
+export function fetchLaborStores(): Promise<{ stores: LaborStore[] }> {
+  return request<{ stores: LaborStore[] }>(`${FN}?action=my-stores`);
+}
+
+export function fetchGmLabor(
+  store: string,
+  date?: string
+): Promise<GmLaborResponse> {
+  const q = new URLSearchParams({ action: "gm", store });
+  if (date) q.set("date", date);
+  return request<GmLaborResponse>(`${FN}?${q.toString()}`);
+}
+
+export function fetchDistrictLabor(
+  date?: string,
+  district?: string
+): Promise<DistrictLaborResponse> {
+  const q = new URLSearchParams({ action: "district" });
+  if (date) q.set("date", date);
+  if (district) q.set("district", district);
+  return request<DistrictLaborResponse>(`${FN}?${q.toString()}`);
+}
+
+export function saveLaborReview(
+  input: ReviewInput
+): Promise<{ ok: true; review: { id: string; note: string } }> {
+  return request(`${FN}?action=review`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}

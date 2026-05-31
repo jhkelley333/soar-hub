@@ -17,6 +17,7 @@ import {
   ClipboardCheck,
   HardHat,
   MessageCircle,
+  Gauge,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -47,6 +48,10 @@ export const NAV: NavItem[] = [
   { to: "/admin/work-orders-v2", label: "Work Orders", icon: Hammer, roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/chat",        label: "Chat",        icon: MessageCircle,   roles: null },
   { to: "/ranker",      label: "Ranker",      icon: TrendingUp,      roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // Labor — daily labor review. GMs review their store's numbers against
+  // chart and explain misses; DO+ get the district rollup. Backend
+  // (labor.js) enforces scope; nav is wide so shift managers see it too.
+  { to: "/labor",       label: "Labor",       icon: Gauge,           roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   // Note: design-import preview routes (e.g. /region) are deliberately
   // NOT in the sidebar — they're placeholder UIs while real scoring +
   // workflows get built out, and they'd add noise to the daily nav.
