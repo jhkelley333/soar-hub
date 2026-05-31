@@ -37,7 +37,7 @@
 //   GOOGLE_SERVICE_ACCOUNT_JSON   service account with read access to the sheet
 //   LABOR_SHEET_ID                spreadsheet id (defaults to the known sheet)
 //   LABOR_SHEET_TAB               tab name (default "Labor")
-//   LABOR_SHEET_RANGE             range (default "A1:AB200")
+//   LABOR_SHEET_RANGE             range (default "A1:AB1000")
 //   LABOR_POLL_TZ                 business-hours tz (default America/Chicago)
 //   LABOR_POLL_START_HOUR         first hour to poll, local (default 4)
 //   LABOR_POLL_END_HOUR           last hour to poll, local (default 23)
@@ -54,7 +54,12 @@ const SERVICE_KEY =
 const SHEET_ID =
   process.env.LABOR_SHEET_ID || "1gDnirnXocpzA7394kU6J7YrnE2V4SNr2uwJnBsLnwK4";
 const SHEET_TAB = process.env.LABOR_SHEET_TAB || "Labor";
-const SHEET_RANGE = process.env.LABOR_SHEET_RANGE || "A1:AB200";
+// Generous row bound: the sheet has ~277 store rows today and the API only
+// returns populated rows, so over-provisioning here costs nothing and
+// leaves headroom as stores are added. (A too-small bound silently
+// truncates the tail — that's how a 200 cap once dropped stores past row
+// 200.) Override with LABOR_SHEET_RANGE if the column span ever changes.
+const SHEET_RANGE = process.env.LABOR_SHEET_RANGE || "A1:AB1000";
 
 const POLL_TZ = process.env.LABOR_POLL_TZ || "America/Chicago";
 const POLL_START_HOUR = intEnv(process.env.LABOR_POLL_START_HOUR, 4);
