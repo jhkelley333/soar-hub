@@ -40,7 +40,7 @@ function sortValue(row: PafRow, key: SortKey): string | number {
     case "created_at":
       return row.created_at;
     case "drive_in":
-      return row.drive_in ?? "";
+      return row.drive_in ?? row.nh_home_store ?? "";
     case "employee_name":
       return row.employee_name.toLowerCase();
     case "category":
@@ -150,7 +150,11 @@ export function PafTable({
                   {p.created_at.slice(0, 10)}
                 </td>
                 <td className="px-3 py-2 font-mono text-midnight">
-                  {p.drive_in ? `#${p.drive_in}` : "—"}
+                  {p.drive_in
+                    ? `#${p.drive_in}`
+                    : p.nh_home_store
+                      ? `#${p.nh_home_store}`
+                      : "—"}
                 </td>
                 <td className="px-3 py-2">{p.employee_name}</td>
                 <td className="px-3 py-2 font-mono">{p.last4_ssn}</td>
