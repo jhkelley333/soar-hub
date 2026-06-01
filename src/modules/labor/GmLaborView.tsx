@@ -44,7 +44,11 @@ export function GmLaborView() {
     <>
       <PageHeader
         title="Yesterday's labor"
-        description="Review your numbers against chart and explain any miss."
+        description={
+          data?.store
+            ? `#${data.store.number} · ${data.store.name}${data.gm_name ? ` · GM ${data.gm_name}` : ""}`
+            : "Review your numbers against chart and explain any miss."
+        }
         actions={
           data && data.notes_due > 0 ? (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-sonic-50 px-3 py-1.5 text-xs font-semibold text-sonic-700">

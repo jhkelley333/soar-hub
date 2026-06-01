@@ -375,6 +375,7 @@ async function districtView(supa, user, params) {
       store_number: s.store_number,
       store_name: storeMeta.get(String(s.store_number))?.name ?? s.location_name ?? null,
       gm_name: s.gm_name,
+      do_name: s.do_name,
       labor_pct: s.daily_labor_pct,
       variance_pts: s.daily_labor_pct != null && goal != null ? round1(s.daily_labor_pct - goal) : null,
       dollars_over_chart: s.daily_dollars_over_chart,
@@ -394,6 +395,9 @@ async function districtView(supa, user, params) {
     const vals = rows.map((r) => r[k]).filter((v) => v != null);
     return vals.length ? round1(vals.reduce((a, b) => a + b, 0) / vals.length) : null;
   };
+  // Distinct DO names across the shown stores — one when scoped to a single
+  // district, several when an RVP views "all my districts".
+  const dos = Array.from(new Set(rows.map((r) => r.do_name).filter(Boolean)));
 
   return {
     date: anchorIso,
@@ -405,6 +409,7 @@ async function districtView(supa, user, params) {
       hours_over_chart: round2(sum("hours_over_chart")),
       notes_due: rows.filter((r) => r.note_due).length,
       notes_explained: rows.filter((r) => r.explained).length,
+      dos,
     },
     stores: rows,
   };
