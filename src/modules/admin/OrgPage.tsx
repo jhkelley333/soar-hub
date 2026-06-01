@@ -124,6 +124,193 @@ function exportTreeCsv(tree: OrgTreeResponse | null) {
   downloadCSV(`org-tree-${date}.csv`, toCSV(EXPORT_HEADERS, rows));
 }
 
+// ---------------------------------------------------------------------------
+// Full export — everything the org tree carries: structure + leaders/people at
+// every level + all store operational fields. NOT import-ready (leaders and
+// store extras aren't round-tripped by Bulk Org Import); this is for
+// reporting / dropping into a spreadsheet.
+// ---------------------------------------------------------------------------
+const FULL_EXPORT_HEADERS = [
+  "kind",
+  "code",
+  "name",
+  "number",
+  "parent_code",
+  "is_active",
+  // People — joined "Name <email> (Role)" for every leader on the node.
+  "leaders",
+  // Store contact / location
+  "phone",
+  "email",
+  "address",
+  "city",
+  "state",
+  "zip",
+  // Store operations / vendor
+  "plate_iq_email",
+  "soar_company_name",
+  "acquisition_date",
+  "pos_provider",
+  "security_vendor",
+  "security_vendor_phone",
+  "food_vendor_name",
+  // Active programs
+  "has_apple_pay",
+  "has_order_ahead",
+  "has_outdoor_seating",
+  "has_drive_thru",
+  "has_clearance_bar",
+  "drive_thru_lanes",
+  "drive_thru_type",
+  "public_restroom_count",
+  // Stall data
+  "patio_pop_menu_count",
+  "patio_pop_stall_numbers",
+  "order_ahead_stall_count",
+  "order_ahead_stall_numbers",
+  "stall_pop_menu_count",
+  "has_trailer_stall",
+  "trailer_stall_number",
+  // Third-party delivery
+  "third_party_delivery",
+];
+
+function leadersCell(managers: OrgManager[]): string {
+  return managers
+    .map((m) => {
+      const role = ROLE_LABELS[m.role] ?? m.role;
+      const name = m.full_name?.trim() || "(no name)";
+      return `${name} <${m.email}> (${role})`;
+    })
+    .join("; ");
+}
+
+function bool(v: boolean): string {
+  return v ? "true" : "false";
+}
+
+function storeFields(s: OrgStore): Record<string, unknown> {
+  return {
+    phone: s.phone ?? "",
+    email: s.email ?? "",
+    address: s.address ?? "",
+    city: s.city ?? "",
+    state: s.state ?? "",
+    zip: s.zip ?? "",
+    plate_iq_email: s.plate_iq_email ?? "",
+    soar_company_name: s.soar_company_name ?? "",
+    acquisition_date: s.acquisition_date ?? "",
+    pos_provider: s.pos_provider ?? "",
+    security_vendor: s.security_vendor ?? "",
+    security_vendor_phone: s.security_vendor_phone ?? "",
+    food_vendor_name: s.food_vendor_name ?? "",
+    has_apple_pay: bool(s.has_apple_pay),
+    has_order_ahead: bool(s.has_order_ahead),
+    has_outdoor_seating: bool(s.has_outdoor_seating),
+    has_drive_thru: bool(s.has_drive_thru),
+    has_clearance_bar: bool(s.has_clearance_bar),
+    drive_thru_lanes: s.drive_thru_lanes ?? "",
+    drive_thru_type: s.drive_thru_type ?? "",
+    public_restroom_count: s.public_restroom_count ?? "",
+    patio_pop_menu_count: s.patio_pop_menu_count ?? "",
+    patio_pop_stall_numbers: s.patio_pop_stall_numbers ?? "",
+    order_ahead_stall_count: s.order_ahead_stall_count ?? "",
+    order_ahead_stall_numbers: s.order_ahead_stall_numbers ?? "",
+    stall_pop_menu_count: s.stall_pop_menu_count ?? "",
+    has_trailer_stall: bool(s.has_trailer_stall),
+    trailer_stall_number: s.trailer_stall_number ?? "",
+    third_party_delivery: (s.third_party_delivery ?? []).join(", "),
+  };
+}
+
+// Blank store-specific cells for non-store rows so columns line up.
+const EMPTY_STORE_FIELDS: Record<string, unknown> = {
+  phone: "",
+  email: "",
+  address: "",
+  city: "",
+  state: "",
+  zip: "",
+  plate_iq_email: "",
+  soar_company_name: "",
+  acquisition_date: "",
+  pos_provider: "",
+  security_vendor: "",
+  security_vendor_phone: "",
+  food_vendor_name: "",
+  has_apple_pay: "",
+  has_order_ahead: "",
+  has_outdoor_seating: "",
+  has_drive_thru: "",
+  has_clearance_bar: "",
+  drive_thru_lanes: "",
+  drive_thru_type: "",
+  public_restroom_count: "",
+  patio_pop_menu_count: "",
+  patio_pop_stall_numbers: "",
+  order_ahead_stall_count: "",
+  order_ahead_stall_numbers: "",
+  stall_pop_menu_count: "",
+  has_trailer_stall: "",
+  trailer_stall_number: "",
+  third_party_delivery: "",
+};
+
+function exportFullCsv(tree: OrgTreeResponse | null) {
+  if (!tree) return;
+  const rows: Record<string, unknown>[] = [];
+  for (const r of tree.regions) {
+    rows.push({
+      kind: "region",
+      code: r.code,
+      name: r.name,
+      number: "",
+      parent_code: "",
+      is_active: bool(r.is_active),
+      leaders: leadersCell(r.managers),
+      ...EMPTY_STORE_FIELDS,
+    });
+    for (const a of r.areas) {
+      rows.push({
+        kind: "area",
+        code: a.code,
+        name: a.name,
+        number: "",
+        parent_code: r.code,
+        is_active: bool(a.is_active),
+        leaders: leadersCell(a.managers),
+        ...EMPTY_STORE_FIELDS,
+      });
+      for (const d of a.districts) {
+        rows.push({
+          kind: "district",
+          code: d.code,
+          name: d.name,
+          number: "",
+          parent_code: a.code,
+          is_active: bool(d.is_active),
+          leaders: leadersCell(d.managers),
+          ...EMPTY_STORE_FIELDS,
+        });
+        for (const s of d.stores) {
+          rows.push({
+            kind: "store",
+            code: "",
+            name: s.name,
+            number: s.number,
+            parent_code: d.code,
+            is_active: bool(s.is_active),
+            leaders: leadersCell(s.managers),
+            ...storeFields(s),
+          });
+        }
+      }
+    }
+  }
+  const date = new Date().toISOString().slice(0, 10);
+  downloadCSV(`org-full-export-${date}.csv`, toCSV(FULL_EXPORT_HEADERS, rows));
+}
+
 export function OrgPage() {
   const { profile } = useAuth();
   const isAdmin = profile?.role === "admin";
@@ -282,7 +469,16 @@ export function OrgPage() {
               disabled={!data || data.regions.length === 0}
             >
               <Download className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
-              Download CSV
+              Download CSV (import)
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => exportFullCsv(data)}
+              disabled={!data || data.regions.length === 0}
+            >
+              <Download className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+              Full export
             </Button>
             <button
               type="button"
