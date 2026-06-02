@@ -19,6 +19,11 @@ type ScopeKind = "store" | "district" | "area" | "region" | "global";
 function scopeKindForRole(role: UserRole): ScopeKind {
   switch (role) {
     case "shift_manager":
+    case "first_assistant_manager":
+    case "associate_manager":
+    case "crew_leader":
+    case "crew_member":
+    case "carhop":
     case "gm":
       return "store";
     case "do":

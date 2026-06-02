@@ -175,8 +175,10 @@ export function BulkImportPage() {
                 {TEMPLATE_HEADERS.join(", ")}
               </p>
               <p className="mt-2 text-xs text-zinc-600">
-                Roles: <code>shift_manager</code>, <code>gm</code>, <code>do</code>,{" "}
-                <code>sdo</code>, <code>rvp</code>, <code>vp</code>,{" "}
+                Roles: <code>shift_manager</code>, <code>first_assistant_manager</code>,{" "}
+                <code>associate_manager</code>, <code>crew_leader</code>,{" "}
+                <code>crew_member</code>, <code>carhop</code>, <code>gm</code>,{" "}
+                <code>do</code>, <code>sdo</code>, <code>rvp</code>, <code>vp</code>,{" "}
                 <code>coo</code>, <code>admin</code>, <code>payroll</code>.
                 <br />
                 Scope types: <code>store</code> (+ store number),{" "}

@@ -18,7 +18,9 @@ const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const ALL_ROLES = [
-  "shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "payroll", "admin",
+  "shift_manager", "first_assistant_manager", "associate_manager",
+  "crew_leader", "crew_member", "carhop",
+  "gm", "do", "sdo", "rvp", "vp", "coo", "payroll", "admin",
 ];
 
 function admin() {

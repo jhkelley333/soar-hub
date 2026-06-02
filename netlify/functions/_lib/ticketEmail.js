@@ -23,6 +23,8 @@
 // extend fallbackSubject/fallbackHtml here so the system has
 // something to send if the template row is missing.
 
+import { isSingleStoreRole } from "./roles.js";
+
 function appBaseUrl() {
   return process.env.APP_URL || process.env.URL || "";
 }
@@ -89,7 +91,7 @@ export async function findUsersForStore(supabase, storeNumber, roleFilter) {
   const { data: users } = await q;
   return (users || []).map((u) => {
     const role = String(u.role || "").toLowerCase();
-    if (role === "gm" || role === "shift_manager") {
+    if (isSingleStoreRole(role)) {
       return { ...u, email: storeEmail };
     }
     return u;
@@ -125,7 +127,7 @@ async function findRecipients(supabase, ticket, kind) {
       .maybeSingle();
     if (!u) return [];
     const submitterRole = String(u.role || "").toLowerCase();
-    if (submitterRole === "gm" || submitterRole === "shift_manager") {
+    if (isSingleStoreRole(submitterRole)) {
       const { data: storeRow } = await supabase
         .from("stores")
         .select("email")
@@ -148,7 +150,7 @@ async function findRecipients(supabase, ticket, kind) {
       .maybeSingle();
     if (!u) return [];
     const submitterRole = String(u.role || "").toLowerCase();
-    if (submitterRole === "gm" || submitterRole === "shift_manager") {
+    if (isSingleStoreRole(submitterRole)) {
       const { data: storeRow } = await supabase
         .from("stores")
         .select("email")

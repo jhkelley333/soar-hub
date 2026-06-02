@@ -27,6 +27,7 @@
 //                                             Netlify exposes URL by default
 
 import { createClient } from "@supabase/supabase-js";
+import { isSingleStoreRole } from "./_lib/roles.js";
 import { can, requireCap, tierFor, activityVisibilityForTier } from "./_lib/permissions.js";
 import { transition, setPause, isWithinReopenGrace, REOPEN_GRACE } from "./_lib/ticketStateMachine.js";
 import { toNewStatus, toLegacyStatus } from "./_lib/statusMapping.js";
@@ -81,6 +82,11 @@ function roleLevel(role) {
     do: 3,
     gm: 4,
     shift_manager: 5,
+    first_assistant_manager: 5,
+    associate_manager: 5,
+    crew_leader: 5,
+    crew_member: 5,
+    carhop: 5,
     payroll: 6,
   };
   return levels[String(role || "").toLowerCase()] || 99;
@@ -561,7 +567,7 @@ async function resolveRequesterEmail(supabase, ticket) {
   if (!sub) return null;
   const r = String(sub.role || "").toLowerCase();
   let email = sub.email;
-  if (r === "gm" || r === "shift_manager") {
+  if (isSingleStoreRole(r)) {
     const { data: st } = await supabase
       .from("stores").select("email")
       .eq("number", String(ticket.store_number)).maybeSingle();
@@ -671,7 +677,7 @@ export const handler = async (event) => {
     // Stores arrive as { id, number, name } so the UI can render either a
     // chip or a dropdown without a second round-trip.
     if (action === "getCallerStores") {
-      const isSingle = role === "gm" || role === "shift_manager";
+      const isSingle = isSingleStoreRole(role);
 
       // Source of truth: user_visible_stores(uid) RPC (migration 0032).
       // Already encodes user_scopes (store/district/area/region/global)
@@ -3303,7 +3309,7 @@ export const handler = async (event) => {
         if (sub) {
           const r = String(sub.role || "").toLowerCase();
           let email = sub.email;
-          if (r === "gm" || r === "shift_manager") {
+          if (isSingleStoreRole(r)) {
             const { data: st } = await supabase
               .from("stores").select("email")
               .eq("number", String(ticket.store_number)).maybeSingle();

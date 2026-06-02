@@ -29,6 +29,11 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const ROLE_LEVEL = {
   shift_manager: 10,
+  first_assistant_manager: 10,
+  associate_manager: 10,
+  crew_leader: 10,
+  crew_member: 10,
+  carhop: 10,
   gm: 20,
   do: 30,
   sdo: 40,

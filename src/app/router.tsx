@@ -100,7 +100,7 @@ export const router = createBrowserRouter([
       {
         path: "labor",
         element: (
-          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <LaborPage />
           </ProtectedRoute>
         ),
@@ -160,7 +160,7 @@ export const router = createBrowserRouter([
         // route, no sidebar entry.
         path: "walkthrough",
         element: (
-          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <WalkthroughPage />
           </ProtectedRoute>
         ),
@@ -175,7 +175,7 @@ export const router = createBrowserRouter([
         // Preview-only route, no sidebar entry.
         path: "directory",
         element: (
-          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <DirectoryPage />
           </ProtectedRoute>
         ),
@@ -248,7 +248,7 @@ export const router = createBrowserRouter([
       {
         path: "admin/work-orders-v2",
         element: (
-          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <WorkOrdersV2Route />
           </ProtectedRoute>
         ),
@@ -288,7 +288,7 @@ export const router = createBrowserRouter([
       {
         path: "assignments",
         element: (
-          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
             <AssignmentsPage />
           </ProtectedRoute>
         ),
@@ -296,7 +296,7 @@ export const router = createBrowserRouter([
       {
         path: "assignments/:id",
         element: (
-          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
             <AssignmentDetailPage />
           </ProtectedRoute>
         ),
@@ -304,7 +304,7 @@ export const router = createBrowserRouter([
       {
         path: "assignments/:id/fill",
         element: (
-          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
             <SubmissionFormPage />
           </ProtectedRoute>
         ),
@@ -312,7 +312,7 @@ export const router = createBrowserRouter([
       {
         path: "submissions/:id",
         element: (
-          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
             <SubmissionViewerPage />
           </ProtectedRoute>
         ),
@@ -328,7 +328,7 @@ export const router = createBrowserRouter([
       {
         path: "caps",
         element: (
-          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
             <MyCapsPage />
           </ProtectedRoute>
         ),
@@ -336,7 +336,7 @@ export const router = createBrowserRouter([
       {
         path: "caps/:id",
         element: (
-          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]}>
             <CapDetailPage />
           </ProtectedRoute>
         ),

@@ -46,7 +46,10 @@ const STATUS_TONE: Record<string, "neutral" | "info" | "warning" | "success" | "
 };
 
 // Roles that act as "Store" — limited status options + photo upload section.
-const STORE_ROLES = new Set(["shift_manager", "gm"]);
+const STORE_ROLES = new Set([
+  "shift_manager", "first_assistant_manager", "associate_manager",
+  "crew_leader", "crew_member", "carhop", "gm",
+]);
 const APPROVER_ROLES = new Set(["rvp", "vp", "coo", "admin"]);
 
 // ----------------------------------------------------------------------------

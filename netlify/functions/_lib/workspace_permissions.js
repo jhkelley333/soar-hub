@@ -19,7 +19,12 @@
 // Mirrors the WO2 tier map but adds an explicit 'do_plus' tier so we
 // can express "DO and above can create workspaces" cleanly.
 const ORG_TIER = {
-  shift_manager: "store",
+  shift_manager:           "store",
+  first_assistant_manager: "store",
+  associate_manager:       "store",
+  crew_leader:             "store",
+  crew_member:             "store",
+  carhop:                  "store",
   gm:            "store",
   do:            "do",
   sdo:           "do_plus",

@@ -30,7 +30,9 @@ const PTO_VIEW_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin"])
 // Roles included in the Work Orders module. Mirrors the route gating in
 // router.tsx and the nav entry in nav.ts. Excludes payroll (focused PAF role).
 const WO_ROLES = new Set([
-  "shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin",
+  "shift_manager", "first_assistant_manager", "associate_manager",
+  "crew_leader", "crew_member", "carhop",
+  "gm", "do", "sdo", "rvp", "vp", "coo", "admin",
 ]);
 
 // Roles that effectively see every store (admin queues, multi-region

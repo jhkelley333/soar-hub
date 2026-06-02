@@ -14,7 +14,12 @@
 // and add a CAPS entry. One file change.
 
 const TIER = {
-  shift_manager: "store",
+  shift_manager:           "store",
+  first_assistant_manager: "store",
+  associate_manager:       "store",
+  crew_leader:             "store",
+  crew_member:             "store",
+  carhop:                  "store",
   gm:            "store",
   do:            "do",
   sdo:           "admin",
