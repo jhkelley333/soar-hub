@@ -146,7 +146,10 @@ function evaluateCondition(cond, ctx) {
     case "tier_at_least": {
       const TIER_RANK = {
         admin: 0, coo: 0, vp: 1, rvp: 1, sdo: 1, do: 2,
-        gm: 3, shift_manager: 4, payroll: 5,
+        gm: 3,
+        shift_manager: 4, first_assistant_manager: 4, associate_manager: 4,
+        crew_leader: 4, crew_member: 4, carhop: 4,
+        payroll: 5,
       };
       const need = TIER_RANK[String(cond.tier || "").toLowerCase()];
       const have = TIER_RANK[String(ctx.submitterRole || "").toLowerCase()];

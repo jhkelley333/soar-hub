@@ -306,21 +306,39 @@ async function listManaged(supa, manager) {
 // Permission rules — encoded once, used by add/change/remove
 // ----------------------------------------------------------------------------
 
+// The hourly store-floor roles, all at the Shift Manager permission tier.
+// Kept in assignable-role lists wherever shift_manager appears so the new
+// titles show up in the Add/Edit member role pickers.
+const HOURLY_STORE_ROLES = [
+  "shift_manager",
+  "first_assistant_manager",
+  "associate_manager",
+  "crew_leader",
+  "crew_member",
+  "carhop",
+];
+
+// Single-store roles: the hourly store roles plus GM. A store-level scope
+// for one of these IS the user's primary store.
+function isSingleStoreRole(role) {
+  return role === "gm" || HOURLY_STORE_ROLES.includes(role);
+}
+
 // Which roles can a manager create / change-to?
 function manageableRoles(role) {
   switch (role) {
     case "admin":
-      return ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"];
+      return [...HOURLY_STORE_ROLES, "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"];
     case "coo":
     case "vp":
-      return ["shift_manager", "gm", "do", "sdo", "rvp"];
+      return [...HOURLY_STORE_ROLES, "gm", "do", "sdo", "rvp"];
     case "rvp":
-      return ["shift_manager", "gm", "do", "sdo"];
+      return [...HOURLY_STORE_ROLES, "gm", "do", "sdo"];
     case "sdo":
     case "do":
-      return ["shift_manager", "gm"];
+      return [...HOURLY_STORE_ROLES, "gm"];
     case "gm":
-      return ["shift_manager"];
+      return [...HOURLY_STORE_ROLES];
     default:
       return [];
   }
@@ -330,6 +348,11 @@ function manageableRoles(role) {
 function scopeForRole(role) {
   switch (role) {
     case "shift_manager":
+    case "first_assistant_manager":
+    case "associate_manager":
+    case "crew_leader":
+    case "crew_member":
+    case "carhop":
     case "gm":
       return "store";
     case "do":
@@ -582,7 +605,7 @@ async function addUser(supa, manager, body) {
   // the same logic) — gm / shift_manager + store scope → that store;
   // anything else → null. Keeps user_visible_stores from double-counting.
   const newPrimary =
-    (role === "gm" || role === "shift_manager") && expectedScope === "store"
+    isSingleStoreRole(role) && expectedScope === "store"
       ? scope_id
       : null;
   const { error: profileErr } = await supa
@@ -828,7 +851,7 @@ async function updateUser(supa, manager, body) {
     // region / global) or non-gm/sm roles, primary_store_id has no
     // defined meaning and must be cleared.
     const primaryFix =
-      (effectiveRole === "gm" || effectiveRole === "shift_manager") &&
+      isSingleStoreRole(effectiveRole) &&
       newScope.scope_type === "store"
         ? { primary_store_id: newScope.scope_id }
         : { primary_store_id: null };
@@ -1082,7 +1105,7 @@ async function fetchHistory(supa, manager, query) {
 // returns annotated rows. The user reviews, then ?action=bulk-import
 // runs invites for valid rows only.
 
-const ALL_ROLES = ["shift_manager","gm","do","sdo","rvp","vp","coo","admin","payroll"];
+const ALL_ROLES = [...HOURLY_STORE_ROLES,"gm","do","sdo","rvp","vp","coo","admin","payroll"];
 
 async function bulkValidate(supa, rows) {
   // Pre-load org maps so we can resolve codes → ids in O(1).
@@ -1270,7 +1293,7 @@ async function bulkImport(supa, manager, body) {
       // Without this, bulk-imported GMs/SMs get a scope but a null primary
       // store, which breaks the GM home-store features.
       const bulkPrimary =
-        (r.role === "gm" || r.role === "shift_manager") && r.scope_type === "store"
+        isSingleStoreRole(r.role) && r.scope_type === "store"
           ? r.scope_id
           : null;
       const { error: profileErr } = await supa
@@ -1372,7 +1395,7 @@ async function cfmExpiring(supa, manager, query) {
 
   // 2. Team — gated to managers only. shift_manager / payroll get no list.
   let team = { count_expiring: 0, count_expired: 0, list: [] };
-  const canManage = !["shift_manager", "payroll"].includes(manager.role);
+  const canManage = !HOURLY_STORE_ROLES.includes(manager.role) && manager.role !== "payroll";
   if (canManage) {
     const { data: managed, error: rpcErr } = await supa.rpc("manageable_users", {
       manager_id: manager.id,

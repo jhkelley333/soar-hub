@@ -6,6 +6,11 @@
 
 export type UserRole =
   | "shift_manager"
+  | "first_assistant_manager"
+  | "associate_manager"
+  | "crew_leader"
+  | "crew_member"
+  | "carhop"
   | "gm"
   | "do"
   | "sdo"
@@ -14,6 +19,23 @@ export type UserRole =
   | "coo"
   | "payroll"
   | "admin";
+
+// Hourly store-level roles that all share Shift Manager's permission tier.
+// Code that gates on "is this a store-floor hourly user" should test
+// membership here rather than comparing to "shift_manager" alone, so the
+// newer titles are never accidentally excluded.
+export const HOURLY_STORE_ROLES: UserRole[] = [
+  "shift_manager",
+  "first_assistant_manager",
+  "associate_manager",
+  "crew_leader",
+  "crew_member",
+  "carhop",
+];
+
+export function isHourlyStoreRole(role: UserRole | null | undefined): boolean {
+  return !!role && (HOURLY_STORE_ROLES as string[]).includes(role);
+}
 
 export type ScopeType = "store" | "district" | "area" | "region" | "global";
 
@@ -105,7 +127,12 @@ export interface Store {
 // misleading comparison result.
 export function roleLevel(role: UserRole): number | null {
   switch (role) {
-    case "shift_manager": return 10;
+    case "shift_manager":           return 10;
+    case "first_assistant_manager": return 10;
+    case "associate_manager":       return 10;
+    case "crew_leader":             return 10;
+    case "crew_member":             return 10;
+    case "carhop":                  return 10;
     case "gm":            return 20;
     case "do":            return 30;
     case "sdo":           return 40;
@@ -119,6 +146,11 @@ export function roleLevel(role: UserRole): number | null {
 
 export const ROLE_LABELS: Record<UserRole, string> = {
   shift_manager: "Shift Manager",
+  first_assistant_manager: "First Assistant Manager",
+  associate_manager: "Associate Manager",
+  crew_leader: "Crew Leader",
+  crew_member: "Crew Member",
+  carhop: "Carhop",
   gm: "General Manager",
   do: "Director of Operations",
   sdo: "Senior Director of Operations",

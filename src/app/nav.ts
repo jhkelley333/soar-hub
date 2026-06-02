@@ -42,17 +42,17 @@ export interface NavItem {
 // is the PAF queue. Hiding everything else keeps that focus and avoids
 // confusion with org-tree or work-order modules they don't operate.
 export const NAV: NavItem[] = [
-  { to: "/",            label: "Dashboard",   icon: LayoutDashboard, roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  { to: "/",            label: "Dashboard",   icon: LayoutDashboard, roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   // Work Orders V2 — now the primary facilities ticketing flow.
   // Sits at the top right under Dashboard so it's the first
   // operational tool field roles see.
-  { to: "/admin/work-orders-v2", label: "Work Orders", icon: Hammer, roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  { to: "/admin/work-orders-v2", label: "Work Orders", icon: Hammer, roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/chat",        label: "Chat",        icon: MessageCircle,   roles: null },
   { to: "/ranker",      label: "Ranker",      icon: TrendingUp,      roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
   // Labor — daily labor review. GMs review their store's numbers against
   // chart and explain misses; DO+ get the district rollup. Backend
   // (labor.js) enforces scope; nav is wide so shift managers see it too.
-  { to: "/labor",       label: "Labor",       icon: Gauge,           roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  { to: "/labor",       label: "Labor",       icon: Gauge,           roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   // Note: design-import preview routes (e.g. /region) are deliberately
   // NOT in the sidebar — they're placeholder UIs while real scoring +
   // workflows get built out, and they'd add noise to the daily nav.
@@ -66,7 +66,7 @@ export const NAV: NavItem[] = [
   // The standalone routes /assignments, /signoffs, /caps still work
   // for deep links (e.g. from the AssignmentDetailPage back-link), but
   // they don't appear in the sidebar — open /workspaces and switch tabs.
-  { to: "/workspaces",  label: "Workspaces",  icon: ClipboardList,   roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
+  { to: "/workspaces",  label: "Workspaces",  icon: ClipboardList,   roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
   // Reno Scoping — Pre-Reskin Scoping for the 2026 Full-to-Bright
   // program. GM+ can scope their own store; DO+ reviews. RLS filters
   // visibility regardless, but we gate the nav link to GM+ so shift

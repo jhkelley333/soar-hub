@@ -567,7 +567,11 @@ export const handler = async (event) => {
       const scopeId = b.scopeId || null;
       const targetRole = b.targetRole;
       const VALID_SCOPES = ["store", "district", "area", "region", "global"];
-      const VALID_ROLES = ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"];
+      const VALID_ROLES = [
+        "shift_manager", "first_assistant_manager", "associate_manager",
+        "crew_leader", "crew_member", "carhop",
+        "gm", "do", "sdo", "rvp", "vp", "coo", "admin",
+      ];
 
       if (!VALID_SCOPES.includes(scopeType)) {
         return respond(400, { ok: false, message: "Invalid scopeType." });

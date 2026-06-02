@@ -17,7 +17,9 @@ import {
 import { ROLE_LABELS, type UserRole } from "@/types/database";
 
 const ROLE_COLS: UserRole[] = [
-  "shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "payroll",
+  "shift_manager", "first_assistant_manager", "associate_manager",
+  "crew_leader", "crew_member", "carhop",
+  "gm", "do", "sdo", "rvp", "vp", "coo", "payroll",
 ];
 
 function defaultVisible(role: UserRole, roles: UserRole[] | null): boolean {

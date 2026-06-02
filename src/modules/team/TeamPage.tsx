@@ -10,7 +10,7 @@ import { Skeleton } from "@/shared/ui/Skeleton";
 import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
-import { ROLE_LABELS, type UserRole } from "@/types/database";
+import { ROLE_LABELS, isHourlyStoreRole, type UserRole } from "@/types/database";
 import { formatPhoneForDisplay } from "@/lib/phone";
 import { cn } from "@/lib/cn";
 import { downloadCSV, toCSV } from "@/lib/csv";
@@ -109,7 +109,7 @@ export function TeamPage() {
 
   const data = query.data!;
   const role = data.user.role;
-  const isHourly = role === "shift_manager";
+  const isHourly = isHourlyStoreRole(role);
   const isPayroll = role === "payroll";
 
   // Hourly Manager / Payroll have no manageable users — show a graceful

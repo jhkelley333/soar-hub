@@ -43,6 +43,11 @@ export function scopeWordForRole(role: UserRole): string {
   switch (role) {
     case "gm":
     case "shift_manager":
+    case "first_assistant_manager":
+    case "associate_manager":
+    case "crew_leader":
+    case "crew_member":
+    case "carhop":
       return "store";
     case "do":
       return "market";
@@ -79,6 +84,11 @@ export function launchScopeLabel(
   switch (role) {
     case "gm":
     case "shift_manager":
+    case "first_assistant_manager":
+    case "associate_manager":
+    case "crew_leader":
+    case "crew_member":
+    case "carhop":
       return stores[0] ? `SDI ${stores[0].number}` : "your store";
     case "do":
       return districts.length === 1

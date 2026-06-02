@@ -66,6 +66,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { google } from "googleapis";
+import { isHourlyStoreRole } from "./_lib/roles.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -178,7 +179,7 @@ function allowedStatusesForRole(role) {
   const hourly = ["Scheduled", "In Progress", "Closed"];
   const gm = [...hourly, "On Hold", "Part on Order", "New Equipment Ordered"];
   const approver = [...gm, "Approved", "Rejected - See Notes"];
-  if (role === "shift_manager") return new Set(hourly);
+  if (isHourlyStoreRole(role)) return new Set(hourly);
   if (role === "gm" || role === "do" || role === "sdo") return new Set(gm);
   if (APPROVER_ROLES.has(role)) return new Set(approver);
   return new Set(); // payroll and any unrecognized role
