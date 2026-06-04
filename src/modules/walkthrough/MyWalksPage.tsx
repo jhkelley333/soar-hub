@@ -85,31 +85,49 @@ export function MyWalksPage() {
 }
 
 function AssignmentCard({ a, onOpen }: { a: LoadedAssignment; onOpen: () => void }) {
-  const { assignment, template, store } = a;
+  const { assignment, template, store, revisionNotes } = a;
+  const returned = !!revisionNotes;
   const overdue =
     assignment.dueAt && new Date(assignment.dueAt) < new Date() && assignment.status !== "submitted";
-  const cta = assignment.status === "in_progress" ? "Continue" : "Start";
+  const cta = returned ? "Revise" : assignment.status === "in_progress" ? "Continue" : "Start";
 
   return (
     <button
       type="button"
       onClick={onOpen}
-      className="flex w-full items-center gap-3 rounded-xl bg-surface p-3.5 text-left shadow-card ring-1 ring-midnight-100 transition active:bg-midnight-50"
+      className={cn(
+        "flex w-full items-start gap-3 rounded-xl bg-surface p-3.5 text-left shadow-card ring-1 transition active:bg-midnight-50",
+        returned ? "ring-warn/40" : "ring-midnight-100",
+      )}
     >
       <div className="min-w-0 flex-1">
-        <div className="text-[15px] font-semibold text-midnight-900 truncate">{template.name}</div>
-        <div className="text-[12.5px] text-midnight-600 truncate">
-          SDI {store.sdi} · {store.name}
-        </div>
-        <div className="mt-1 flex items-center gap-3 text-[11.5px]">
-          <span className="text-midnight-500">{STATUS_LABEL[assignment.status] ?? assignment.status}</span>
-          {assignment.dueAt && (
-            <span className={cn("inline-flex items-center gap-1", overdue ? "font-medium text-bad" : "text-midnight-500")}>
-              <CalendarClock className="h-3 w-3" />
-              {new Date(assignment.dueAt).toLocaleDateString()}
+        <div className="flex items-center gap-2">
+          <span className="text-[15px] font-semibold text-midnight-900 truncate">{template.name}</span>
+          {returned && (
+            <span className="shrink-0 rounded bg-warn/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-midnight-700">
+              Returned
             </span>
           )}
         </div>
+        <div className="text-[12.5px] text-midnight-600 truncate">
+          SDI {store.sdi} · {store.name}
+        </div>
+        {returned ? (
+          <div className="mt-1 text-[11.5px] text-midnight-600">
+            <span className="font-medium text-midnight-700">DO notes: </span>
+            {revisionNotes}
+          </div>
+        ) : (
+          <div className="mt-1 flex items-center gap-3 text-[11.5px]">
+            <span className="text-midnight-500">{STATUS_LABEL[assignment.status] ?? assignment.status}</span>
+            {assignment.dueAt && (
+              <span className={cn("inline-flex items-center gap-1", overdue ? "font-medium text-bad" : "text-midnight-500")}>
+                <CalendarClock className="h-3 w-3" />
+                {new Date(assignment.dueAt).toLocaleDateString()}
+              </span>
+            )}
+          </div>
+        )}
       </div>
       <span className="shrink-0 inline-flex items-center gap-1 rounded-lg bg-midnight-900 px-3 py-2 text-[13px] font-semibold text-white">
         {cta}

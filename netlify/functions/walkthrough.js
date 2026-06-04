@@ -26,10 +26,12 @@ import { randomUUID } from "node:crypto";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY;
 
 const DEFAULT_SCORING = { pass: 1, watch: 0.6, fail: 0 };
 const DEFAULT_TIERS = { green: 85, yellow: 70 };
 const CA_DUE_DAYS = 7;
+const REVIEWER_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
 
 function admin() {
   if (!SUPABASE_URL || !SERVICE_KEY) {
@@ -39,6 +41,26 @@ function admin() {
     auth: { persistSession: false, autoRefreshToken: false },
   });
 }
+
+// User-scoped client (RLS applies) — used so review decisions respect the
+// reviewer's store visibility + the submission immutability trigger, not just
+// their role.
+function userClient(token) {
+  if (!SUPABASE_URL || !ANON_KEY) {
+    throw new Error("walkthrough anon env not configured");
+  }
+  return createClient(SUPABASE_URL, ANON_KEY, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { headers: { Authorization: `Bearer ${token}` } },
+  });
+}
+
+function bearer(event) {
+  const header = event.headers?.authorization || event.headers?.Authorization;
+  if (!header?.startsWith("Bearer ")) return null;
+  return header.slice("Bearer ".length).trim() || null;
+}
+
 
 async function getSessionUser(event) {
   const header = event.headers?.authorization || event.headers?.Authorization;
@@ -236,7 +258,31 @@ async function myAssignments(supa, user) {
     .neq("status", "submitted")
     .order("due_at", { ascending: true });
   if (error) return { error: error.message, status: 500 };
-  return { assignments: data || [] };
+
+  // Attach the most recent return-for-revision note per assignment so the GM
+  // sees why a walk came back, in-app.
+  const rows = data || [];
+  const ids = rows.map((r) => r.id);
+  const revisionByAssignment = {};
+  if (ids.length) {
+    const { data: subs } = await supa
+      .from("walkthrough_submissions")
+      .select("assignment_id, review_notes, reviewed_at")
+      .eq("status", "needs_revision")
+      .in("assignment_id", ids)
+      .order("reviewed_at", { ascending: false });
+    for (const s of subs || []) {
+      if (!(s.assignment_id in revisionByAssignment)) {
+        revisionByAssignment[s.assignment_id] = s.review_notes || null;
+      }
+    }
+  }
+  return {
+    assignments: rows.map((r) => ({
+      ...r,
+      revision_notes: revisionByAssignment[r.id] ?? null,
+    })),
+  };
 }
 
 async function listSubmissions(supa, user) {
@@ -337,6 +383,16 @@ async function submit(supa, user, body) {
   }
   const { score, tier, flagCount } = scoreSections(template, sections);
 
+  // Revision chain: if this assignment already has a submission (e.g. it was
+  // returned for revision), link the new one to the most recent prior.
+  const { data: prior } = await supa
+    .from("walkthrough_submissions")
+    .select("id")
+    .eq("assignment_id", assignmentId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
   // 1) Submission row.
   const { data: sub, error: sErr } = await supa
     .from("walkthrough_submissions")
@@ -351,6 +407,7 @@ async function submit(supa, user, body) {
       tier,
       flag_count: flagCount,
       status: "submitted",
+      prior_submission_id: prior?.id ?? null,
       submitted_by: user.id,
       submitted_at: new Date().toISOString(),
     })
@@ -452,6 +509,98 @@ async function submit(supa, user, body) {
     correctiveActions: correctiveActions.length,
     notified,
   };
+}
+
+// ----------------------------------------------------------------------------
+// Review decision — approve / return-for-revision. The status UPDATE runs
+// through the caller's own (RLS-scoped) client so store visibility + the
+// immutability trigger are enforced; the audit write, assignment reopen, and
+// GM email use the service role. Returning reopens the assignment so the GM
+// can re-walk (a resubmit links as a revision via prior_submission_id).
+// ----------------------------------------------------------------------------
+
+async function review(supa, user, token, body) {
+  const { submissionId, decision, notes } = body || {};
+  if (!submissionId) return { error: "submissionId is required", status: 400 };
+  if (decision !== "approve" && decision !== "needs_revision") {
+    return { error: "decision must be approve or needs_revision", status: 400 };
+  }
+  if (!REVIEWER_ROLES.has(user.role)) return { error: "not a reviewer", status: 403 };
+  if (decision === "needs_revision" && !(notes || "").trim()) {
+    return { error: "notes are required when returning", status: 422 };
+  }
+
+  const status = decision === "approve" ? "approved" : "needs_revision";
+
+  // RLS-scoped update — enforces reviewer policy + can_see_store. 0 rows back
+  // means the caller can't review this submission.
+  const scoped = userClient(token);
+  const { data: updated, error: upErr } = await scoped
+    .from("walkthrough_submissions")
+    .update({
+      status,
+      reviewed_by: user.id,
+      reviewed_at: new Date().toISOString(),
+      review_notes: (notes || "").trim() || null,
+    })
+    .eq("id", submissionId)
+    .select("id, assignment_id, store_id, submitted_by, score, tier")
+    .maybeSingle();
+  if (upErr) return { error: upErr.message, status: 500 };
+  if (!updated) return { error: "not found or not allowed", status: 403 };
+
+  // Reopen the assignment on return so the GM can re-walk.
+  if (decision === "needs_revision") {
+    await supa
+      .from("walkthrough_assignments")
+      .update({ status: "in_progress" })
+      .eq("id", updated.assignment_id);
+  }
+
+  // Audit (service role — clients can't write the audit log).
+  await supa.from("walkthrough_audit_log").insert({
+    submission_id: updated.id,
+    actor_id: user.id,
+    actor_email: user.email,
+    action: decision === "approve" ? "approve" : "needs_revision",
+    from_status: "submitted",
+    to_status: status,
+    detail: { notes: (notes || "").trim() || null },
+  });
+
+  // Notify the GM who submitted.
+  let notified = false;
+  const { data: gm } = await supa
+    .from("profiles")
+    .select("email, full_name, preferred_name")
+    .eq("id", updated.submitted_by)
+    .single();
+  const { data: store } = await supa
+    .from("stores")
+    .select("number, name")
+    .eq("id", updated.store_id)
+    .single();
+  if (gm?.email) {
+    const storeLabel = store ? `${store.number} · ${store.name}` : updated.store_id;
+    const text =
+      decision === "approve"
+        ? `${displayName(user)} approved your walkthrough for ${storeLabel} ` +
+          `(score ${updated.score}, ${updated.tier}). Nice work.`
+        : `${displayName(user)} returned your walkthrough for ${storeLabel} for revision.\n\n` +
+          `Notes: ${(notes || "").trim()}\n\n` +
+          `Open My Walks to redo it: ${appBaseUrl()}/my-walks`;
+    const r = await sendEmail({
+      to: gm.email,
+      subject:
+        decision === "approve"
+          ? `Walkthrough approved — ${storeLabel}`
+          : `Walkthrough returned for revision — ${storeLabel}`,
+      text,
+    });
+    notified = !!r.ok;
+  }
+
+  return { id: updated.id, status, notified };
 }
 
 // ----------------------------------------------------------------------------
@@ -583,6 +732,7 @@ export const handler = async (event) => {
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "save-draft") return unwrap(await saveDraft(supa, user, body));
       if (action === "submit") return unwrap(await submit(supa, user, body));
+      if (action === "review") return unwrap(await review(supa, user, bearer(event), body));
       if (action === "dev-seed") return unwrap(await devSeed(supa, user));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
