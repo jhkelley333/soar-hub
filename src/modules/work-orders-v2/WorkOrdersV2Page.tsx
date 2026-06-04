@@ -1206,7 +1206,8 @@ function StoreOpenWoCard({
 // empty container on every ticket.
 function ReplacementBanner({ ticket }: { ticket: Ticket }) {
   const hasAny =
-    !!ticket.replacement_model
+    !!ticket.replacement_manufacturer
+    || !!ticket.replacement_model
     || !!ticket.replacement_supplier
     || ticket.replacement_cost != null
     || !!ticket.replacement_eta
@@ -1214,10 +1215,13 @@ function ReplacementBanner({ ticket }: { ticket: Ticket }) {
     || !!ticket.replacement_po_number;
   if (!hasAny) return null;
 
-  // The receipt is a ticket_photos row tagged with the dedicated
-  // upload_type so we can link directly from this banner.
+  // Receipt + warranty document are ticket_photos rows tagged with
+  // dedicated upload_types so we can link directly from this banner.
   const receipt = (ticket.ticket_photos || []).find(
     (p) => p.upload_type === "replacement_receipt",
+  );
+  const warrantyDoc = (ticket.ticket_photos || []).find(
+    (p) => p.upload_type === "replacement_warranty",
   );
 
   // Build a warranty summary like "Labor 90d · Parts 365d (manufacturer)".
@@ -1233,6 +1237,7 @@ function ReplacementBanner({ ticket }: { ticket: Ticket }) {
   const warranty = warrantyParts.join(" · ") || "—";
 
   const items: Array<{ label: string; value: string }> = [
+    { label: "Manufacturer",   value: ticket.replacement_manufacturer || "—" },
     { label: "Model / SKU",    value: ticket.replacement_model || "—" },
     { label: "Supplier",       value: ticket.replacement_supplier || "—" },
     { label: "Cost",           value: fmtMoney(ticket.replacement_cost) },
@@ -1255,19 +1260,34 @@ function ReplacementBanner({ ticket }: { ticket: Ticket }) {
         )}>
           {isAwaiting ? "Awaiting replacement equipment" : "Replacement details"}
         </div>
-        {receipt && (
-          <a
-            href={receipt.file_url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className={cn(
-              "text-[11px] font-semibold underline-offset-2 hover:underline",
-              isAwaiting ? "text-indigo-700" : "text-accent",
-            )}
-          >
-            View receipt
-          </a>
-        )}
+        <div className="flex items-center gap-3">
+          {receipt && (
+            <a
+              href={receipt.file_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(
+                "text-[11px] font-semibold underline-offset-2 hover:underline",
+                isAwaiting ? "text-indigo-700" : "text-accent",
+              )}
+            >
+              View receipt
+            </a>
+          )}
+          {warrantyDoc && (
+            <a
+              href={warrantyDoc.file_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(
+                "text-[11px] font-semibold underline-offset-2 hover:underline",
+                isAwaiting ? "text-indigo-700" : "text-accent",
+              )}
+            >
+              View warranty
+            </a>
+          )}
+        </div>
       </div>
       <dl className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
         {items.map((i) => (
