@@ -480,33 +480,39 @@ export function TicketActionBar({
             setModalAction(null);
             setModalError(null);
           }}
-          onSubmit={async (payload, attachment) => {
+          onSubmit={async (payload, attachments) => {
             try {
               await mut.mutateAsync({ to: modalAction.to, payload });
               // Transition succeeded — now best-effort upload any
-              // attachment (currently only Order Replacement attaches
-              // a receipt). A failed upload doesn't roll back the
-              // transition: the ticket has already moved, we just
-              // surface a non-blocking warning and the user can
+              // attachments (Order Replacement can attach a receipt
+              // and/or a warranty document). A failed upload doesn't
+              // roll back the transition: the ticket has already moved,
+              // we surface a non-blocking warning and the user can
               // re-attach via Update Ticket.
-              if (attachment) {
-                try {
-                  const base64 = await fileToBase64(attachment.file);
-                  const body: UploadPhotoBody = {
-                    id: ticketId,
-                    photoData: base64,
-                    photoType: attachment.file.type || "application/octet-stream",
-                    photoName: attachment.file.name,
-                    uploadType: attachment.uploadType as UploadPhotoBody["uploadType"],
-                  };
-                  await uploadPhoto(body);
-                  qc.invalidateQueries({ queryKey: ["wo2", "tickets"] });
-                } catch (upErr) {
+              if (attachments?.length) {
+                let anyFailed = false;
+                for (const attachment of attachments) {
+                  try {
+                    const base64 = await fileToBase64(attachment.file);
+                    const body: UploadPhotoBody = {
+                      id: ticketId,
+                      photoData: base64,
+                      photoType: attachment.file.type || "application/octet-stream",
+                      photoName: attachment.file.name,
+                      uploadType: attachment.uploadType as UploadPhotoBody["uploadType"],
+                    };
+                    await uploadPhoto(body);
+                  } catch (upErr) {
+                    anyFailed = true;
+                    console.error("attachment upload failed:", upErr);
+                  }
+                }
+                qc.invalidateQueries({ queryKey: ["wo2", "tickets"] });
+                if (anyFailed) {
                   toast.push(
-                    "Ticket updated, but receipt upload failed. Re-attach from the ticket.",
+                    "Ticket updated, but a file upload failed. Re-attach from the ticket.",
                     "error",
                   );
-                  console.error("receipt upload failed:", upErr);
                 }
               }
             } catch {

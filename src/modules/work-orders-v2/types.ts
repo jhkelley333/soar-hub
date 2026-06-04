@@ -194,6 +194,7 @@ export interface Ticket {
   // Replacement-equipment fields. Populated when the team decides to
   // replace rather than repair (the Order Replacement action sets
   // them; status transitions to "awaiting_equipment").
+  replacement_manufacturer: string | null;
   replacement_model: string | null;
   replacement_supplier: string | null;
   replacement_cost: number | string | null;
@@ -263,6 +264,7 @@ export type TransitionPayload = Partial<{
   reopen_reason_text: string;
   // Replacement-equipment payload — required when transitioning to
   // awaiting_equipment via the Order Replacement action.
+  replacement_manufacturer: string;
   replacement_model: string;
   replacement_supplier: string;
   replacement_cost: number;
@@ -392,7 +394,7 @@ export interface UploadPhotoBody {
   photoData: string;
   photoType: string;
   photoName: string;
-  uploadType?: "submission" | "update" | "quote" | "replacement_receipt" | "parts_receipt";
+  uploadType?: "submission" | "update" | "quote" | "replacement_receipt" | "replacement_warranty" | "parts_receipt";
 }
 
 export interface UploadPhotoResponse {

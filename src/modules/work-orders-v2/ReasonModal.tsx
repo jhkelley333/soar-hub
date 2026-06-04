@@ -133,7 +133,7 @@ interface Props {
   // instead of a free-text input. Falls back to plain text if absent.
   storeNumber?: string;
   onClose: () => void;
-  onSubmit: (payload: TransitionPayload, attachment?: PendingAttachment) => Promise<void> | void;
+  onSubmit: (payload: TransitionPayload, attachments?: PendingAttachment[]) => Promise<void> | void;
   submitting?: boolean;
   error?: string | null;
 }
@@ -148,6 +148,7 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
   // order_replacement modal kind. Most are optional — the team fills
   // in what's known at order time; the rest can be set later via the
   // Update Ticket panel as the equipment arrives + gets installed.
+  const [replManufacturer, setReplManufacturer] = useState<string>("");
   const [replModel, setReplModel] = useState<string>("");
   const [replSupplier, setReplSupplier] = useState<string>("");
   const [replCost, setReplCost] = useState<string>("");
@@ -158,6 +159,7 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
   const [replWarrParts, setReplWarrParts] = useState<string>("");
   const [replWarrSource, setReplWarrSource] = useState<"" | "vendor" | "manufacturer" | "none">("");
   const [replReceipt, setReplReceipt] = useState<File | null>(null);
+  const [replWarrantyDoc, setReplWarrantyDoc] = useState<File | null>(null);
   // Parts-on-order fields. Only meaningful for the order_parts modal
   // kind. Description, cost, ETA required; supplier + PO optional.
   const [partsDesc, setPartsDesc] = useState<string>("");
@@ -174,6 +176,7 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
     setResolution("");
     setVendorName("");
     setVendorId(null);
+    setReplManufacturer("");
     setReplModel("");
     setReplSupplier("");
     setReplCost("");
@@ -184,6 +187,7 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
     setReplWarrParts("");
     setReplWarrSource("");
     setReplReceipt(null);
+    setReplWarrantyDoc(null);
     setPartsDesc("");
     setPartsSupplier("");
     setPartsCost("");
@@ -243,16 +247,21 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
         return payload;
       }
       case "order_replacement": {
+        const manufacturer = replManufacturer.trim();
         const model = replModel.trim();
+        const supplier = replSupplier.trim();
         const eta = replEta.trim();
         const cost = Number(replCost);
-        if (!model || !eta || !Number.isFinite(cost) || cost < 0) return null;
+        if (!manufacturer || !model || !supplier || !eta || !Number.isFinite(cost) || cost < 0) {
+          return null;
+        }
         const payload: TransitionPayload = {
+          replacement_manufacturer: manufacturer,
           replacement_model: model,
+          replacement_supplier: supplier,
           replacement_cost: cost,
           replacement_eta: eta,
         };
-        if (replSupplier.trim()) payload.replacement_supplier = replSupplier.trim();
         if (replAssetTag.trim()) payload.replacement_asset_tag = replAssetTag.trim();
         if (replPoNumber.trim()) payload.replacement_po_number = replPoNumber.trim();
         if (replWarrLabor.trim()) {
@@ -288,16 +297,17 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
   async function handleSubmit() {
     const payload = buildPayload();
     if (!payload) return;
-    // Receipt PDFs/images live on ticket_photos with a distinct
-    // upload_type so admins can filter / list them. The action bar
-    // does the actual upload after the transition succeeds.
-    let attachment: PendingAttachment | undefined;
-    if (config.kind === "order_replacement" && replReceipt) {
-      attachment = { file: replReceipt, uploadType: "replacement_receipt" };
+    // Receipt / warranty PDFs+images live on ticket_photos with distinct
+    // upload_types so admins can filter / list them. The action bar does
+    // the actual uploads after the transition succeeds.
+    const attachments: PendingAttachment[] = [];
+    if (config.kind === "order_replacement") {
+      if (replReceipt) attachments.push({ file: replReceipt, uploadType: "replacement_receipt" });
+      if (replWarrantyDoc) attachments.push({ file: replWarrantyDoc, uploadType: "replacement_warranty" });
     } else if (config.kind === "order_parts" && partsReceipt) {
-      attachment = { file: partsReceipt, uploadType: "parts_receipt" };
+      attachments.push({ file: partsReceipt, uploadType: "parts_receipt" });
     }
-    await onSubmit(payload, attachment);
+    await onSubmit(payload, attachments.length ? attachments : undefined);
   }
 
   return (
@@ -452,17 +462,26 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
                 install is complete.
               </div>
               <div>
+                <Label htmlFor="repl-manufacturer">Manufacturer *</Label>
+                <Input
+                  id="repl-manufacturer"
+                  value={replManufacturer}
+                  onChange={(e) => setReplManufacturer(e.target.value)}
+                  placeholder="e.g. Frymaster, Hoshizaki, True"
+                  autoFocus
+                />
+              </div>
+              <div>
                 <Label htmlFor="repl-model">Replacement model / SKU *</Label>
                 <Input
                   id="repl-model"
                   value={replModel}
                   onChange={(e) => setReplModel(e.target.value)}
-                  placeholder="e.g. Frymaster FPP255, Hoshizaki KM-901"
-                  autoFocus
+                  placeholder="e.g. FPP255, KM-901"
                 />
               </div>
               <div>
-                <Label htmlFor="repl-supplier">Supplier (optional)</Label>
+                <Label htmlFor="repl-supplier">Supplier *</Label>
                 {storeNumber ? (
                   <VendorSearchInput
                     id="repl-supplier"
@@ -606,6 +625,33 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
                 )}
                 <div className="mt-1 text-[10px] text-zinc-500">
                   PDF or image. Uploaded after the ticket transitions; failures don't block the order.
+                </div>
+              </div>
+
+              <div className="border-t border-zinc-200 pt-3">
+                <Label htmlFor="repl-warranty-doc">Warranty document (optional)</Label>
+                <input
+                  id="repl-warranty-doc"
+                  type="file"
+                  accept="image/*,application/pdf"
+                  onChange={(e) => setReplWarrantyDoc(e.target.files?.[0] || null)}
+                  className="block w-full text-sm text-zinc-700 file:mr-2 file:rounded-md file:border-0 file:bg-accent/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-midnight hover:file:bg-accent/20"
+                />
+                {replWarrantyDoc && (
+                  <div className="mt-1 flex items-center gap-2 text-[11px] text-zinc-500">
+                    <span className="truncate font-mono">{replWarrantyDoc.name}</span>
+                    <span>({(replWarrantyDoc.size / 1024).toFixed(0)} KB)</span>
+                    <button
+                      type="button"
+                      onClick={() => setReplWarrantyDoc(null)}
+                      className="text-red-600 hover:underline"
+                    >
+                      remove
+                    </button>
+                  </div>
+                )}
+                <div className="mt-1 text-[10px] text-zinc-500">
+                  Warranty card, terms, or registration. PDF or image.
                 </div>
               </div>
             </div>

@@ -916,6 +916,7 @@ export const handler = async (event) => {
         .from("tickets")
         .select(`
           id, wo_number, store_number, store_name, status, asset_type,
+          replacement_manufacturer,
           replacement_model, replacement_supplier, replacement_cost,
           replacement_eta, replacement_ordered_at,
           replacement_asset_tag, replacement_po_number,
@@ -957,6 +958,8 @@ export const handler = async (event) => {
       const ticketRows = (tRes.data || []).map((t) => {
         const receipts = (t.ticket_photos || [])
           .filter((p) => p.upload_type === "replacement_receipt");
+        const warrantyDocs = (t.ticket_photos || [])
+          .filter((p) => p.upload_type === "replacement_warranty");
         const { ticket_photos, ...rest } = t;
         return {
           source:           "wo2_ticket",
@@ -967,7 +970,7 @@ export const handler = async (event) => {
           store_name:       rest.store_name,
           status:           rest.status,
           asset_type:       rest.asset_type,
-          manufacturer:     null,
+          manufacturer:     rest.replacement_manufacturer,
           asset_tag:        rest.replacement_asset_tag,
           model:            rest.replacement_model,
           supplier:         rest.replacement_supplier,
@@ -980,7 +983,7 @@ export const handler = async (event) => {
           warranty_parts_days:   rest.replacement_warranty_parts_days,
           warranty_parts_source: rest.replacement_warranty_parts_source,
           receipt_url:      receipts[0]?.file_url || null,
-          warranty_doc_url: null,
+          warranty_doc_url: warrantyDocs[0]?.file_url || null,
           notes:            null,
           created_by_name:  null,
         };

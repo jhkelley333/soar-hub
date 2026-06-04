@@ -81,14 +81,17 @@ function vendorSideEffects(payload) {
 }
 
 // Replacement-equipment validator. Required when transitioning INTO
-// awaiting_equipment: the team is committing to order new equipment
-// so we need at minimum what they're ordering and what it'll cost.
-// supplier + eta are strongly recommended but only enforced softly
-// (eta required so the dashboard can flag past-due replacements;
-// supplier optional because some orders go through corporate).
+// awaiting_equipment: the team is committing to order new equipment so
+// we need the make (manufacturer), what they're ordering (model), who
+// it's coming from (supplier), what it'll cost, and the expected install
+// (eta required so the dashboard can flag past-due replacements).
 function validateReplacement(payload) {
+  const e0 = requireField(payload, "replacement_manufacturer", "order replacement");
+  if (e0) return e0;
   const e1 = requireField(payload, "replacement_model", "order replacement");
   if (e1) return e1;
+  const eS = requireField(payload, "replacement_supplier", "order replacement");
+  if (eS) return eS;
   if (payload?.replacement_cost === undefined
       || payload.replacement_cost === null
       || payload.replacement_cost === "") {
@@ -102,8 +105,9 @@ function validateReplacement(payload) {
 }
 function replacementSideEffects(payload) {
   const out = {
+    replacement_manufacturer: String(payload.replacement_manufacturer).trim(),
     replacement_model:      String(payload.replacement_model).trim(),
-    replacement_supplier:   payload.replacement_supplier ? String(payload.replacement_supplier).trim() : null,
+    replacement_supplier:   String(payload.replacement_supplier).trim(),
     replacement_cost:       Number(payload.replacement_cost),
     replacement_eta:        payload.replacement_eta,
     replacement_ordered_at: nowIso(),
