@@ -7,6 +7,7 @@ import {
   isOpenStatus,
 } from "./types";
 import { WO, Pill, statusPillTone, priorityPillTone } from "./liveTheme";
+import { NotificationBell } from "./NotificationBell";
 
 // New work-order queue (flagged: wo2_new_ui). A table-style list matching
 // the redesigned mockup — SLA intentionally omitted (not modeled yet),
@@ -150,6 +151,7 @@ export function QueueTable({
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <NotificationBell tone="light" align="right" />
           {onExport && (
             <button type="button" onClick={onExport} style={secBtnStyle}>
               <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
