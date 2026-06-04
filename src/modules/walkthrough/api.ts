@@ -76,12 +76,15 @@ interface AssignmentRow {
   status: WalkthroughAssignment["status"];
   template: TemplateRow;
   store: StoreRow;
+  revision_notes?: string | null;
 }
 
 export interface LoadedAssignment {
   assignment: WalkthroughAssignment;
   template: WalkthroughTemplate;
   store: CheckInStore;
+  /** Set when the walk was returned for revision — the DO's notes. */
+  revisionNotes: string | null;
 }
 
 function mapTemplate(row: TemplateRow): WalkthroughTemplate {
@@ -116,6 +119,7 @@ function mapAssignment(row: AssignmentRow): LoadedAssignment {
       lng: row.store?.longitude ?? null,
       radiusM: row.store?.geofence_radius_m ?? undefined,
     },
+    revisionNotes: row.revision_notes ?? null,
   };
 }
 

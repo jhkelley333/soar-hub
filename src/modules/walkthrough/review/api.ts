@@ -175,23 +175,34 @@ async function loadPhotos(ids: string[]): Promise<Record<string, PhotoView[]>> {
 }
 
 // ---- review decision -------------------------------------------------------
+// Goes through the walkthrough function (service role) so the decision also
+// writes the audit log, reopens the assignment on return, and emails the GM —
+// none of which a client-side update can do. The function still enforces the
+// reviewer's store visibility via an RLS-scoped update under the hood.
 
 export async function decideReview(
   submissionId: string,
   decision: "approve" | "needs_revision",
   notes: string,
 ): Promise<void> {
-  const { data: auth } = await supabase.auth.getUser();
-  const { error } = await supabase
-    .from("walkthrough_submissions")
-    .update({
-      status: decision === "approve" ? "approved" : "needs_revision",
-      reviewed_by: auth.user?.id ?? null,
-      reviewed_at: new Date().toISOString(),
-      review_notes: notes.trim() || null,
-    })
-    .eq("id", submissionId);
-  if (error) throw error;
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Not signed in");
+  const res = await fetch("/.netlify/functions/walkthrough?action=review", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ submissionId, decision, notes }),
+  });
+  if (!res.ok) {
+    let message = `Request failed (${res.status})`;
+    try {
+      const body = await res.json();
+      if (body?.error) message = body.error;
+    } catch {
+      /* ignore */
+    }
+    throw new Error(message);
+  }
 }
 
 // ---- corrective actions ----------------------------------------------------
