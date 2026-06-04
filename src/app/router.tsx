@@ -52,6 +52,7 @@ import { ScopeDetailPage } from "@/modules/reno-scoping/ScopeDetailPage";
 import { RegionPage } from "@/modules/region/RegionPage";
 import { ApprovalsPage } from "@/modules/approvals/ApprovalsPage";
 import { WalkthroughPage } from "@/modules/walkthrough/WalkthroughPage";
+import { WalkthroughRunner } from "@/modules/walkthrough/WalkthroughRunner";
 import { DirectoryPage } from "@/modules/directory/DirectoryPage";
 import { ChatLayout } from "@/modules/chat/ChatLayout";
 import { GroupInfoPage } from "@/modules/chat/GroupInfoPage";
@@ -162,6 +163,20 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <WalkthroughPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Walkthrough runner (mobile-first preview). The real GM in-field
+        // flow: GPS check-in gate → sectioned checklist → review. Offline-
+        // first (Dexie) — rate items, add photos, switch sections, refresh
+        // mid-walk with nothing lost. Mounts the SAMPLE_* fixture; the
+        // submit transaction + backend table are the next ticket, so Review
+        // renders Publish disabled. Open via /walkthrough/run.
+        path: "walkthrough/run",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <WalkthroughRunner />
           </ProtectedRoute>
         ),
       },
