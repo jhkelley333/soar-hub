@@ -3206,7 +3206,7 @@ export const handler = async (event) => {
       return respond(200, { ok: true, messages: data, threadType: thread });
     }
     if (action === "sendMessage" && event.httpMethod === "POST") {
-      const { ticketId, message, threadType, ccDo } = JSON.parse(event.body);
+      const { ticketId, message, threadType, ccDo, ccSdo, copyMe } = JSON.parse(event.body);
       if (!ticketId || !message || !message.trim()) {
         return respond(400, {
           ok: false, message: "ticketId and message required.",
@@ -3246,14 +3246,25 @@ export const handler = async (event) => {
             .eq("number", String(ticket.store_number)).maybeSingle();
           to = (st?.email || "").trim() || null;
           if (!to) emailReason = "No store email on file for this store.";
+          // CC the store's leadership when asked. DO and SDO are resolved
+          // independently so either/both can be included.
           if (to && ccDo) {
             const dos = await findUsersForStore(supabase, ticket.store_number, ["do"]);
             for (const d of dos) if (d.email) ccList.push(d.email);
+          }
+          if (to && ccSdo) {
+            const sdos = await findUsersForStore(supabase, ticket.store_number, ["sdo"]);
+            for (const s of sdos) if (s.email) ccList.push(s.email);
           }
         } else {
           to = await resolveRequesterEmail(supabase, ticket);
           if (!to) emailReason = "No requester email on file for this work order.";
         }
+
+        // "Send me a copy" — CC the sender's own inbox so they keep a
+        // record (and get store/requester reply-alls). Works on both
+        // outbound channels.
+        if (to && copyMe && profile.email) ccList.push(profile.email);
 
         if (to) {
           const inboundDomain = process.env.RESEND_INBOUND_DOMAIN || "inbound.mysoarhub.com";

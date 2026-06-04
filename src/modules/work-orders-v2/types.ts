@@ -504,6 +504,10 @@ export interface SendMessageBody {
   threadType?: ThreadType;
   /** On the "store" thread: also CC the store's DO on the outbound email. */
   ccDo?: boolean;
+  /** On the "store" thread: also CC the store's SDO on the outbound email. */
+  ccSdo?: boolean;
+  /** On store/requester threads: CC the sender's own inbox a copy. */
+  copyMe?: boolean;
 }
 
 export interface Vendor {
