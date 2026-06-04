@@ -40,8 +40,11 @@ export function TicketChat({ ticketId, onError, initialThread }: Props) {
   const qc = useQueryClient();
   const [thread, setThread] = useState<ThreadType>(initialThread || "internal");
   const [draft, setDraft] = useState("");
-  // On the Store thread, also CC the store's DO by default (toggleable).
+  // Store-thread CC options. DO defaults on; SDO is opt-in. "Send me a
+  // copy" (store + requester) CCs the sender's own inbox.
   const [ccDo, setCcDo] = useState(true);
+  const [ccSdo, setCcSdo] = useState(false);
+  const [copyMe, setCopyMe] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
 
   const msgsQ = useQuery({
@@ -65,7 +68,8 @@ export function TicketChat({ ticketId, onError, initialThread }: Props) {
         ticketId,
         message: trimmed,
         threadType: thread,
-        ...(thread === "store" ? { ccDo } : {}),
+        ...(thread === "store" ? { ccDo, ccSdo } : {}),
+        ...(thread === "store" || thread === "requester" ? { copyMe } : {}),
       });
     },
     onSuccess: (res) => {
@@ -153,7 +157,18 @@ export function TicketChat({ ticketId, onError, initialThread }: Props) {
         </div>
         {thread === "requester" && (
           <div className="border-t border-amber-100 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-700">
-            Ask the requester anything — a question, a status update, whatever you need. It's emailed to them and their replies post back to this thread.
+            <div>
+              Ask the requester anything — a question, a status update, whatever you need. It's emailed to them and their replies post back to this thread.
+            </div>
+            <label className="mt-1 inline-flex cursor-pointer items-center gap-1.5 font-medium">
+              <input
+                type="checkbox"
+                checked={copyMe}
+                onChange={(e) => setCopyMe(e.target.checked)}
+                className="h-3 w-3 accent-amber-600"
+              />
+              Send me a copy
+            </label>
           </div>
         )}
         {thread === "store" && (
@@ -161,15 +176,35 @@ export function TicketChat({ ticketId, onError, initialThread }: Props) {
             <div>
               Emailed to the store's inbox; replies post back to this thread.
             </div>
-            <label className="mt-1 inline-flex cursor-pointer items-center gap-1.5 font-medium">
-              <input
-                type="checkbox"
-                checked={ccDo}
-                onChange={(e) => setCcDo(e.target.checked)}
-                className="h-3 w-3 accent-sky-600"
-              />
-              CC the store's DO
-            </label>
+            <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 font-medium">
+              <label className="inline-flex cursor-pointer items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={ccDo}
+                  onChange={(e) => setCcDo(e.target.checked)}
+                  className="h-3 w-3 accent-sky-600"
+                />
+                CC the DO
+              </label>
+              <label className="inline-flex cursor-pointer items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={ccSdo}
+                  onChange={(e) => setCcSdo(e.target.checked)}
+                  className="h-3 w-3 accent-sky-600"
+                />
+                CC the SDO
+              </label>
+              <label className="inline-flex cursor-pointer items-center gap-1.5">
+                <input
+                  type="checkbox"
+                  checked={copyMe}
+                  onChange={(e) => setCopyMe(e.target.checked)}
+                  className="h-3 w-3 accent-sky-600"
+                />
+                Send me a copy
+              </label>
+            </div>
           </div>
         )}
         <div className="flex items-end gap-2 border-t border-zinc-100 bg-zinc-50 px-2 py-2">
