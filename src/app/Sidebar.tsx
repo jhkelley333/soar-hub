@@ -9,6 +9,7 @@ import { listPafs, listSdoQueue } from "@/modules/paf/api";
 import { listApprovalQueue } from "@/modules/employee-actions/api";
 import { countPendingScopes } from "@/modules/reno-scoping/api";
 import { useChatUnreadCount } from "@/modules/chat/useChatUnread";
+import { NotificationBell } from "@/modules/work-orders-v2/NotificationBell";
 import { ROLE_LABELS, roleLevel, type UserRole } from "@/types/database";
 import { cn } from "@/lib/cn";
 
@@ -113,6 +114,9 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
           S
         </div>
         <div className="text-sm font-semibold tracking-tight text-midnight">SOAR Hub</div>
+        <div className="ml-auto -mr-1.5">
+          <NotificationBell tone="light" align="left" />
+        </div>
       </div>
 
       <nav className="flex-1 overflow-y-auto px-3 py-4">

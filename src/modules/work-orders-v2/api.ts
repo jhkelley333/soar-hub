@@ -14,6 +14,7 @@ import type {
   EmailTemplate,
   IssueLibraryResponse,
   MessagesResponse,
+  NotificationsResponse,
   PreviewEmailTemplateBody,
   PreviewEmailTemplateResponse,
   RateVendorBody,
@@ -372,6 +373,11 @@ export function markTicketSeen(ticketId: string): Promise<{ ok: true }> {
     method: "POST",
     body: JSON.stringify({ ticketId }),
   });
+}
+
+// Aggregated unread-message feed for the comms notification bell.
+export function fetchNotifications(): Promise<NotificationsResponse> {
+  return request<NotificationsResponse>(`${FN}?action=getNotifications`);
 }
 
 export function fetchVendors(opts?: { storeNumber?: string }): Promise<VendorsResponse> {

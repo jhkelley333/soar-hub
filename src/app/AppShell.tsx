@@ -21,6 +21,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Outlet, useLocation } from "react-router-dom";
 import { Sidebar } from "@/app/Sidebar";
 import { MobileTabBar } from "@/app/MobileTabBar";
+import { NotificationBell } from "@/modules/work-orders-v2/NotificationBell";
 import { PushPrimer } from "@/app/PushPrimer";
 import { InstallPrimer, useInstallPrompt } from "@/app/InstallPrimer";
 import { useIdleLogout } from "@/auth/useIdleLogout";
@@ -108,6 +109,14 @@ export function AppShell() {
         className="shrink-0 bg-midnight lg:hidden"
         style={{ height: "env(safe-area-inset-top, 0px)" }}
       />
+
+      {/* Mobile-only top bar — brand + comms bell. Sits directly under the
+          status-bar strip in the same midnight for a continuous header.
+          Desktop hides it (the bell lives in the sidebar header there). */}
+      <div className="flex h-12 shrink-0 items-center justify-between bg-midnight px-4 lg:hidden">
+        <span className="text-sm font-semibold tracking-tight text-white">SOAR Hub</span>
+        <NotificationBell tone="dark" align="right" />
+      </div>
 
       {/* Body row: sidebar (desktop) + main scroll area. min-h-0 is the
           flex-child trick that lets the inner overflow-y-auto actually

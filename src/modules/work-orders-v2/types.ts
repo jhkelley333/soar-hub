@@ -498,6 +498,27 @@ export interface RecentMessagesResponse {
   count: number;
 }
 
+// One entry in the comms notification bell — a work order with unread
+// messages for the caller, carrying a preview of the newest unread.
+export interface WoNotification {
+  ticket_id: string;
+  wo_number: string | null;
+  store_number: string | null;
+  store_name: string | null;
+  unread_count: number;
+  thread_type: ThreadType;
+  from_name: string;
+  is_reply: boolean;
+  preview: string;
+  at: string;
+}
+
+export interface NotificationsResponse {
+  ok: true;
+  notifications: WoNotification[];
+  total: number;
+}
+
 export interface SendMessageBody {
   ticketId: string;
   message: string;
