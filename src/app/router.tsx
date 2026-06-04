@@ -55,6 +55,7 @@ import { RegionPage } from "@/modules/region/RegionPage";
 import { ApprovalsPage } from "@/modules/approvals/ApprovalsPage";
 import { WalkthroughPage } from "@/modules/walkthrough/WalkthroughPage";
 import { WalkthroughRunner } from "@/modules/walkthrough/WalkthroughRunner";
+import { MyWalksPage } from "@/modules/walkthrough/MyWalksPage";
 import { ReviewDashboardPage } from "@/modules/walkthrough/review/ReviewDashboardPage";
 import { SubmissionDetailPage } from "@/modules/walkthrough/review/SubmissionDetailPage";
 import { AssignmentsPage as WalkthroughAssignmentsPage } from "@/modules/walkthrough/assign/AssignmentsPage";
@@ -182,6 +183,16 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <WalkthroughRunner />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // GM "my walks" landing — assigned walks to start/continue + recent
+        // submissions. Mobile-first; same assignee roles as the runner.
+        path: "my-walks",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <MyWalksPage />
           </ProtectedRoute>
         ),
       },

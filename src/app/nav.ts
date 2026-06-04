@@ -22,6 +22,7 @@ import {
   ListChecks,
   SearchCheck,
   CalendarClock,
+  Footprints,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -75,6 +76,9 @@ export const NAV: NavItem[] = [
   // visibility regardless, but we gate the nav link to GM+ so shift
   // managers don't see a dead link.
   { to: "/reno-scoping", label: "Reno Scoping", icon: HardHat,        roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // My Walks — the GM/assignee home for store walkthroughs (start/continue
+  // assigned walks + recent submissions). Wide assignee allowlist.
+  { to: "/my-walks",    label: "My Walks",    icon: Footprints,      roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   // Legacy Work Orders (Smartsheet-backed) — hidden from the sidebar
   // after the V2 cutover. Route stays alive for archival deep links;
   // admins can still navigate to /work-orders manually if needed.
