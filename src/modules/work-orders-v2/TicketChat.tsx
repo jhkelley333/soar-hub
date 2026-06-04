@@ -40,6 +40,8 @@ export function TicketChat({ ticketId, onError, initialThread }: Props) {
   const qc = useQueryClient();
   const [thread, setThread] = useState<ThreadType>(initialThread || "internal");
   const [draft, setDraft] = useState("");
+  // On the Store thread, also CC the store's DO by default (toggleable).
+  const [ccDo, setCcDo] = useState(true);
   const listRef = useRef<HTMLDivElement>(null);
 
   const msgsQ = useQuery({
@@ -59,15 +61,20 @@ export function TicketChat({ ticketId, onError, initialThread }: Props) {
     mutationFn: () => {
       const trimmed = draft.trim();
       if (!trimmed) return Promise.reject(new Error("Empty message."));
-      return sendMessage({ ticketId, message: trimmed, threadType: thread });
+      return sendMessage({
+        ticketId,
+        message: trimmed,
+        threadType: thread,
+        ...(thread === "store" ? { ccDo } : {}),
+      });
     },
     onSuccess: (res) => {
       setDraft("");
       qc.invalidateQueries({ queryKey: ["wo2", "messages", ticketId, thread] });
-      if (thread === "requester" && res && res.emailed === false) {
+      if ((thread === "requester" || thread === "store") && res && res.emailed === false) {
         onError(
           res.emailReason ||
-            "Message saved, but the email to the requester didn't send.",
+            "Message saved, but the email didn't send.",
         );
       }
     },
@@ -106,7 +113,13 @@ export function TicketChat({ ticketId, onError, initialThread }: Props) {
             label="✉️ Requester"
             active={thread === "requester"}
             onClick={() => setThread("requester")}
-            title="Emails the work order's requester. Their replies post back here."
+            title="Ask the requester anything — emailed to them; their replies post back here."
+          />
+          <ThreadTab
+            label="🏬 Store"
+            active={thread === "store"}
+            onClick={() => setThread("store")}
+            title="Emails the store inbox. Their replies post back here. Optionally CC the DO."
           />
           <button
             type="button"
@@ -140,7 +153,23 @@ export function TicketChat({ ticketId, onError, initialThread }: Props) {
         </div>
         {thread === "requester" && (
           <div className="border-t border-amber-100 bg-amber-50 px-3 py-1.5 text-[11px] text-amber-700">
-            Messages here are emailed to the requester. Their replies post back to this thread.
+            Ask the requester anything — a question, a status update, whatever you need. It's emailed to them and their replies post back to this thread.
+          </div>
+        )}
+        {thread === "store" && (
+          <div className="border-t border-sky-100 bg-sky-50 px-3 py-1.5 text-[11px] text-sky-800">
+            <div>
+              Emailed to the store's inbox; replies post back to this thread.
+            </div>
+            <label className="mt-1 inline-flex cursor-pointer items-center gap-1.5 font-medium">
+              <input
+                type="checkbox"
+                checked={ccDo}
+                onChange={(e) => setCcDo(e.target.checked)}
+                className="h-3 w-3 accent-sky-600"
+              />
+              CC the store's DO
+            </label>
           </div>
         )}
         <div className="flex items-end gap-2 border-t border-zinc-100 bg-zinc-50 px-2 py-2">
@@ -153,8 +182,10 @@ export function TicketChat({ ticketId, onError, initialThread }: Props) {
               thread === "vendor"
                 ? "Message to vendor…"
                 : thread === "requester"
-                  ? "Email the requester…"
-                  : "Internal team message…"
+                  ? "Ask the requester a question…"
+                  : thread === "store"
+                    ? "Email the store…"
+                    : "Internal team message…"
             }
             className="flex-1 resize-none rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           />

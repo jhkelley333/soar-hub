@@ -71,12 +71,24 @@ function verifySignature(headers, rawBody) {
   return { ok: false, reason: "signature mismatch" };
 }
 
-// wo-<ticketId>@inbound.mysoarhub.com → ticketId
-function extractTicketId(to) {
+// wo-<ticketId>@inbound...               → { ticketId, channel: "requester" }
+// wo-<ticketId>--store@inbound...         → { ticketId, channel: "store" }
+// The optional "--<channel>" suffix tells us which thread a reply belongs to.
+// A bare uuid (single hyphens) has no "--", so old addresses stay requester.
+function extractTicketRef(to) {
   const list = Array.isArray(to) ? to : [to];
   for (const entry of list) {
     const m = addrString(entry).match(/wo-([^@\s]+)@/i);
-    if (m) return m[1];
+    if (m) {
+      let token = m[1];
+      let channel = "requester";
+      const sep = token.indexOf("--");
+      if (sep !== -1) {
+        channel = token.slice(sep + 2).toLowerCase() || "requester";
+        token = token.slice(0, sep);
+      }
+      return { ticketId: token, channel };
+    }
   }
   return null;
 }
@@ -155,8 +167,10 @@ export const handler = async (event) => {
   }
 
   const data = payload.data || {};
-  const ticketId = extractTicketId(data.to);
-  if (!ticketId) return resp(200, { ok: true, ignored: "no WO address" });
+  const ref = extractTicketRef(data.to);
+  if (!ref) return resp(200, { ok: true, ignored: "no WO address" });
+  const ticketId = ref.ticketId;
+  const threadType = ref.channel === "store" ? "store" : "requester";
 
   const supabase = getSupabase();
   const { data: ticket } = await supabase
@@ -175,7 +189,7 @@ export const handler = async (event) => {
     user_name: fromName,
     user_role: "REPLY",
     message,
-    thread_type: "requester",
+    thread_type: threadType,
   });
 
   await supabase
