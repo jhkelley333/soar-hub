@@ -133,6 +133,32 @@ export async function fetchAssignment(id: string): Promise<LoadedAssignment | nu
   return all.find((a) => a.assignment.id === id) ?? null;
 }
 
+export interface MySubmissionRow {
+  id: string;
+  templateVersion: string;
+  score: number;
+  tier: "green" | "yellow" | "red";
+  flagCount: number;
+  status: "submitted" | "needs_revision" | "approved" | "draft";
+  submittedAt: string | null;
+}
+
+/** The caller's own recent submissions (for the GM "my walks" landing). */
+export async function fetchMyRecentSubmissions(): Promise<MySubmissionRow[]> {
+  const { submissions } = await request<{ submissions: Record<string, unknown>[] }>(
+    `${FN}?action=list`,
+  );
+  return (submissions ?? []).map((s) => ({
+    id: s.id as string,
+    templateVersion: s.template_version as string,
+    score: s.score as number,
+    tier: s.tier as MySubmissionRow["tier"],
+    flagCount: s.flag_count as number,
+    status: s.status as MySubmissionRow["status"],
+    submittedAt: (s.submitted_at as string) ?? null,
+  }));
+}
+
 // ---- writes ----------------------------------------------------------------
 
 export async function saveDraft(payload: {
