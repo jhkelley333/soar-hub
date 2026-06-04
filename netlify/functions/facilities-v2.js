@@ -3206,7 +3206,7 @@ export const handler = async (event) => {
       return respond(200, { ok: true, messages: data, threadType: thread });
     }
     if (action === "sendMessage" && event.httpMethod === "POST") {
-      const { ticketId, message, threadType } = JSON.parse(event.body);
+      const { ticketId, message, threadType, ccDo } = JSON.parse(event.body);
       if (!ticketId || !message || !message.trim()) {
         return respond(400, {
           ok: false, message: "ticketId and message required.",
@@ -3227,21 +3227,39 @@ export const handler = async (event) => {
         .single();
       if (error) throw error;
 
-      // The requester thread is an outbound email bridge: posting here
-      // emails the work order's requester with a reply-to that routes
-      // their answer back onto this same thread via resend-inbound.
+      // The requester + store threads are outbound email bridges: posting
+      // here emails the recipient with a reply-to that routes their answer
+      // back onto this same thread via resend-inbound. The store thread can
+      // additionally CC the store's DO.
       let emailed = false, emailReason = null;
-      if (thread === "requester") {
+      if (thread === "requester" || thread === "store") {
         const { data: ticket } = await supabase
           .from("tickets")
           .select("id, wo_number, store_number, work_requested, submitted_by_user_id")
           .eq("id", ticketId).single();
-        const to = await resolveRequesterEmail(supabase, ticket);
-        if (!to) {
-          emailReason = "No requester email on file for this work order.";
+
+        let to = null;
+        const ccList = [];
+        if (thread === "store") {
+          const { data: st } = await supabase
+            .from("stores").select("email")
+            .eq("number", String(ticket.store_number)).maybeSingle();
+          to = (st?.email || "").trim() || null;
+          if (!to) emailReason = "No store email on file for this store.";
+          if (to && ccDo) {
+            const dos = await findUsersForStore(supabase, ticket.store_number, ["do"]);
+            for (const d of dos) if (d.email) ccList.push(d.email);
+          }
         } else {
+          to = await resolveRequesterEmail(supabase, ticket);
+          if (!to) emailReason = "No requester email on file for this work order.";
+        }
+
+        if (to) {
           const inboundDomain = process.env.RESEND_INBOUND_DOMAIN || "inbound.mysoarhub.com";
-          const replyTo = `wo-${ticketId}@${inboundDomain}`;
+          // The "--store" suffix tells resend-inbound which thread a reply
+          // belongs to. Requester keeps the bare address (back-compat).
+          const replyTo = `wo-${ticketId}${thread === "store" ? "--store" : ""}@${inboundDomain}`;
           const subject = `Re: ${ticket.wo_number || "your work order"}${ticket.work_requested ? ` — ${ticket.work_requested}` : ""}`;
           const esc = (s) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
           const base = process.env.APP_URL || process.env.URL || "";
@@ -3252,12 +3270,15 @@ export const handler = async (event) => {
             + `<p style="font-size:13px;color:#555;">Just reply to this email — your response posts back onto the work order automatically.</p>`
             + (link ? `<p style="margin-top:16px;"><a href="${link}" style="background:#2563eb;color:#fff;padding:8px 14px;border-radius:6px;text-decoration:none;font-weight:600;">Open the work order →</a></p>` : "")
             + `</body></html>`;
-          const result = await sendEmail({ to, subject, html, replyTo });
+          const ccF = [...new Set(ccList.filter(Boolean))].filter((e) => e !== to);
+          const result = await sendEmail({ to, cc: ccF, subject, html, replyTo });
           emailed = result.sent;
           if (!result.sent) emailReason = result.reason;
           await supabase.from("ticket_notifications").insert({
-            ticket_id: ticketId, recipient_email: to,
-            notification_type: "requester_message", subject, message: html,
+            ticket_id: ticketId,
+            recipient_email: ccF.length ? `${to} (cc: ${ccF.join(", ")})` : to,
+            notification_type: thread === "store" ? "store_message" : "requester_message",
+            subject, message: html,
             status: result.sent ? "sent" : `failed: ${result.reason}`,
           }).then(() => {}).catch(() => {});
         }

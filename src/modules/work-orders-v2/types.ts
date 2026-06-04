@@ -436,7 +436,7 @@ export interface AddQuoteBody {
   fileType?: string;
 }
 
-export type ThreadType = "internal" | "vendor" | "requester";
+export type ThreadType = "internal" | "vendor" | "requester" | "store";
 
 export interface TicketMessage {
   id: string;
@@ -483,6 +483,8 @@ export interface SendMessageBody {
   ticketId: string;
   message: string;
   threadType?: ThreadType;
+  /** On the "store" thread: also CC the store's DO on the outbound email. */
+  ccDo?: boolean;
 }
 
 export interface Vendor {
