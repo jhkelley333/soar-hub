@@ -21,26 +21,22 @@ import {
   type AssignmentRow,
 } from "./api";
 
-export function AssignmentsPage() {
+export function AssignmentsPage({ embedded = false }: { embedded?: boolean } = {}) {
   const qc = useQueryClient();
   const toast = useToast();
   const [showForm, setShowForm] = useState(false);
 
   const assignments = useQuery({ queryKey: ["wt-assignments"], queryFn: listAssignments });
 
-  return (
-    <div className="mx-auto max-w-3xl">
-      <PageHeader
-        title="Walkthrough assignments"
-        description="Assign walks to your GMs and track them through submission."
-        actions={
-          <Button onClick={() => setShowForm((s) => !s)}>
-            <Plus className="mr-1.5 h-4 w-4" />
-            New assignment
-          </Button>
-        }
-      />
+  const newBtn = (
+    <Button onClick={() => setShowForm((s) => !s)}>
+      <Plus className="mr-1.5 h-4 w-4" />
+      New assignment
+    </Button>
+  );
 
+  const content = (
+    <>
       {showForm && (
         <NewAssignmentForm
           onDone={() => {
@@ -73,6 +69,26 @@ export function AssignmentsPage() {
           ))}
         </div>
       )}
+    </>
+  );
+
+  if (embedded) {
+    return (
+      <>
+        <div className="mb-4 flex justify-end">{newBtn}</div>
+        {content}
+      </>
+    );
+  }
+
+  return (
+    <div className="mx-auto max-w-3xl">
+      <PageHeader
+        title="Walkthrough assignments"
+        description="Assign walks to your GMs and track them through submission."
+        actions={newBtn}
+      />
+      {content}
     </div>
   );
 }

@@ -13,15 +13,11 @@ const TABS: { id: TabId; label: string }[] = [
   { id: "capa", label: "Corrective actions" },
 ];
 
-export function ReviewDashboardPage() {
+export function ReviewDashboardPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [tab, setTab] = useState<TabId>("submissions");
-  return (
-    <div className="mx-auto max-w-3xl">
-      <PageHeader
-        title="Walkthrough review"
-        description="Review submitted walkthroughs and track corrective actions across your stores."
-      />
 
+  const content = (
+    <>
       <div className="mb-5 flex gap-1 border-b border-zinc-200">
         {TABS.map((t) => (
           <button
@@ -39,8 +35,19 @@ export function ReviewDashboardPage() {
           </button>
         ))}
       </div>
-
       {tab === "submissions" ? <SubmissionsTab /> : <CorrectiveActionsTab />}
+    </>
+  );
+
+  if (embedded) return content;
+
+  return (
+    <div className="mx-auto max-w-3xl">
+      <PageHeader
+        title="Walkthrough review"
+        description="Review submitted walkthroughs and track corrective actions across your stores."
+      />
+      {content}
     </div>
   );
 }

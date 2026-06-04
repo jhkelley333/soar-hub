@@ -57,6 +57,7 @@ import { WalkthroughPage } from "@/modules/walkthrough/WalkthroughPage";
 import { WalkthroughRunner } from "@/modules/walkthrough/WalkthroughRunner";
 import { MyWalksPage } from "@/modules/walkthrough/MyWalksPage";
 import { StoreGeofencesPage } from "@/modules/walkthrough/storegeo/StoreGeofencesPage";
+import { WalkthroughHubPage } from "@/modules/walkthrough/WalkthroughHubPage";
 import { ReviewDashboardPage } from "@/modules/walkthrough/review/ReviewDashboardPage";
 import { SubmissionDetailPage } from "@/modules/walkthrough/review/SubmissionDetailPage";
 import { AssignmentsPage as WalkthroughAssignmentsPage } from "@/modules/walkthrough/assign/AssignmentsPage";
@@ -209,6 +210,17 @@ export const router = createBrowserRouter([
         ),
       },
       {
+        // Walkthroughs hub (DO+) — Review / Assignments / Templates as tabs,
+        // plus an admin-only Geofences tab. The standalone routes below still
+        // work for deep links (submission detail, builder edit, etc.).
+        path: "walkthroughs",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <WalkthroughHubPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
         // DO walkthrough review + corrective-action tracker. RLS scopes to
         // the caller's stores. DO and up.
         path: "walkthrough-review",
@@ -237,11 +249,11 @@ export const router = createBrowserRouter([
         ),
       },
       {
-        // Store geofence backfill — set check-in coordinates per store. Same
-        // audience as store attribute editing (DO/SDO/RVP + org-wide).
+        // Store geofence backfill — admin-only resource (also a tab in the
+        // Walkthroughs hub for admins).
         path: "admin/store-geofences",
         element: (
-          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+          <ProtectedRoute requireRoles={["admin"]}>
             <StoreGeofencesPage />
           </ProtectedRoute>
         ),
