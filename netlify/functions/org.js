@@ -824,6 +824,94 @@ async function updateStoreAttributes(supa, user, body) {
 }
 
 // ----------------------------------------------------------------------------
+// stores-geo (GET)
+// ----------------------------------------------------------------------------
+//
+// The caller's editable stores with their current walkthrough geofence
+// coordinates. Same audience as the geo editor: org-wide roles, or
+// DO/SDO/RVP scoped to their visible stores.
+
+async function listStoresGeo(supa, user) {
+  const canAny = ORG_WIDE.has(user.role) || ["do", "sdo", "rvp"].includes(user.role);
+  if (!canAny) return { error: "forbidden", status: 403 };
+
+  let q = supa
+    .from("stores")
+    .select("id, number, name, city, state, latitude, longitude, geofence_radius_m")
+    .eq("is_active", true)
+    .order("number");
+  if (!ORG_WIDE.has(user.role)) {
+    const visible = await callerVisibleStoreIds(supa, user);
+    if (!visible.length) return { stores: [] };
+    q = q.in("id", visible);
+  }
+  const { data, error } = await q;
+  if (error) return { error: error.message || "load failed.", status: 500 };
+  return { stores: data ?? [] };
+}
+
+// ----------------------------------------------------------------------------
+// update-store-geo (POST)
+// ----------------------------------------------------------------------------
+//
+// Sets the store's coordinates + geofence radius used by the walkthrough
+// GPS check-in (migration 0121). Same manage rule as attributes: org-wide
+// roles, or DO/SDO/RVP for stores in their scope.
+
+async function updateStoreGeo(supa, user, body) {
+  const storeId = String(body?.store_id || "").trim();
+  if (!storeId) return { error: "store_id required.", status: 400 };
+
+  const allowed = await callerCanEditStoreAttributes(supa, user, storeId);
+  if (!allowed) return { error: "forbidden", status: 403 };
+
+  const updates = {};
+  if (Object.prototype.hasOwnProperty.call(body, "latitude")) {
+    const v = body.latitude;
+    if (v === null) updates.latitude = null;
+    else {
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < -90 || n > 90) {
+        return { error: "latitude must be between -90 and 90.", status: 400 };
+      }
+      updates.latitude = n;
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "longitude")) {
+    const v = body.longitude;
+    if (v === null) updates.longitude = null;
+    else {
+      const n = Number(v);
+      if (!Number.isFinite(n) || n < -180 || n > 180) {
+        return { error: "longitude must be between -180 and 180.", status: 400 };
+      }
+      updates.longitude = n;
+    }
+  }
+  if (Object.prototype.hasOwnProperty.call(body, "geofence_radius_m")) {
+    const n = parseInt(String(body.geofence_radius_m), 10);
+    if (!Number.isFinite(n) || n < 10 || n > 5000) {
+      return { error: "geofence_radius_m must be between 10 and 5000.", status: 400 };
+    }
+    updates.geofence_radius_m = n;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return { error: "no geo fields provided.", status: 400 };
+  }
+
+  const { data: after, error: upErr } = await supa
+    .from("stores")
+    .update(updates)
+    .eq("id", storeId)
+    .select("id, latitude, longitude, geofence_radius_m")
+    .single();
+  if (upErr) return { error: upErr.message || "update failed.", status: 500 };
+
+  return { store: after };
+}
+
+// ----------------------------------------------------------------------------
 // store-vendor-audit (GET)
 // ----------------------------------------------------------------------------
 //
@@ -920,6 +1008,7 @@ export const handler = async (event) => {
       if (action === "birthdays") return unwrap(await getBirthdays(supa, user, params));
       if (action === "store-vendor-audit")
         return unwrap(await getStoreVendorAudit(supa, user, params));
+      if (action === "stores-geo") return unwrap(await listStoresGeo(supa, user));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {
@@ -934,6 +1023,9 @@ export const handler = async (event) => {
       }
       if (action === "update-store-attributes") {
         return unwrap(await updateStoreAttributes(supa, user, body));
+      }
+      if (action === "update-store-geo") {
+        return unwrap(await updateStoreGeo(supa, user, body));
       }
       return respond(400, { error: `unknown POST action: ${action}` });
     }
