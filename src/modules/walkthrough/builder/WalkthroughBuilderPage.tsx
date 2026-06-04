@@ -8,7 +8,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, Check, Loader2, Save } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, Eye, Loader2, Save } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
@@ -21,6 +21,8 @@ import { StepStructure } from "./steps/StepStructure";
 import { StepScoring } from "./steps/StepScoring";
 import { StepRules } from "./steps/StepRules";
 import { StepReview } from "./steps/StepReview";
+import { WalkthroughPreview } from "../WalkthroughPreview";
+import type { WalkthroughTemplate } from "../types";
 
 const STEPS = [
   { id: "details", label: "Details" },
@@ -52,7 +54,24 @@ export function WalkthroughBuilderPage() {
 
   const [step, setStep] = useState(0);
   const [saving, setSaving] = useState(false);
+  const [previewing, setPreviewing] = useState(false);
   const isLast = step === STEPS.length - 1;
+
+  // Map the in-progress draft to the runtime template the field renders.
+  const previewTemplate: WalkthroughTemplate | null = useMemo(() => {
+    const d = store.draft;
+    if (!d) return null;
+    return {
+      id: d.id ?? "preview",
+      name: d.name,
+      type: d.type,
+      version: d.version,
+      sections: d.sections,
+      scoring: d.scoring,
+      tiers: d.tiers,
+      globalRules: d.globalRules,
+    };
+  }, [store.draft]);
 
   if (isEdit && query.isLoading) {
     return (
@@ -102,11 +121,21 @@ export function WalkthroughBuilderPage() {
         title={isEdit ? "Edit template" : "New walkthrough template"}
         description="Build the checklist GMs run in the field."
         actions={
-          <Button variant="ghost" onClick={() => navigate(LIST_PATH)}>
-            Cancel
-          </Button>
+          <>
+            <Button variant="secondary" onClick={() => setPreviewing(true)}>
+              <Eye className="mr-1.5 h-4 w-4" />
+              Preview
+            </Button>
+            <Button variant="ghost" onClick={() => navigate(LIST_PATH)}>
+              Cancel
+            </Button>
+          </>
         }
       />
+
+      {previewing && previewTemplate && (
+        <WalkthroughPreview template={previewTemplate} onClose={() => setPreviewing(false)} />
+      )}
 
       {/* Stepper */}
       <ol className="mb-6 flex items-center gap-2">
