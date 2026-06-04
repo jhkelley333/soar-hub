@@ -92,6 +92,7 @@ export function MobileTicketDetail({
   const approvalPending = approvals.some((a) => a.status === "Pending");
   const partsOnOrder =
     t?.status === "awaiting_equipment" ||
+    t?.status === "parts_on_order" ||
     t?.pause_state === "awaiting_parts" ||
     t?.pause_state === "awaiting_replacement";
   const isSubmitter =

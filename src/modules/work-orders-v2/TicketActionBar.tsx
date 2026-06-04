@@ -9,7 +9,7 @@
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Loader2, Pause, Play, RotateCcw, Truck, XCircle } from "lucide-react";
+import { CheckCircle2, Loader2, Package, Pause, Play, RotateCcw, Truck, XCircle } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
 import { setPauseState, transitionTicket, uploadPhoto } from "./api";
@@ -39,7 +39,7 @@ interface ActionDef {
   label:      string;
   to:         TicketStatus;
   variant?:   "primary" | "ghost" | "danger";
-  icon?:      "check" | "x" | "truck" | "rotate" | "pause";
+  icon?:      "check" | "x" | "truck" | "rotate" | "pause" | "package";
   payload?:   TransitionPayload;
   modal?:     ReasonModalConfig;
   // When true, only show when isSubmitter prop is also true (the
@@ -91,6 +91,14 @@ const ACTIONS_BY_STATE: Record<TicketStatus, ActionDef[]> = {
       icon: "truck",
       variant: "ghost",
       modal: { kind: "order_replacement" } },
+    // Order a repair part (vs. replacing the whole unit). Same set of
+    // entry states as Order Replacement.
+    { key: "order_parts",
+      label: "Order Parts",
+      to: "parts_on_order",
+      icon: "package",
+      variant: "ghost",
+      modal: { kind: "order_parts" } },
     // Submitter cancellation — only the GM who created this ticket
     // sees it. Distinct from "Close — False Alarm" (which a DO can
     // also use); this is "I shouldn't have submitted this" by the
@@ -127,6 +135,14 @@ const ACTIONS_BY_STATE: Record<TicketStatus, ActionDef[]> = {
       icon: "truck",
       variant: "ghost",
       modal: { kind: "order_replacement" } },
+    // Order a repair part (vs. replacing the whole unit). Same set of
+    // entry states as Order Replacement.
+    { key: "order_parts",
+      label: "Order Parts",
+      to: "parts_on_order",
+      icon: "package",
+      variant: "ghost",
+      modal: { kind: "order_parts" } },
     { key: "false_alarm",
       label: "Close — False Alarm",
       to: "closed",
@@ -165,6 +181,14 @@ const ACTIONS_BY_STATE: Record<TicketStatus, ActionDef[]> = {
       icon: "truck",
       variant: "ghost",
       modal: { kind: "order_replacement" } },
+    // Order a repair part (vs. replacing the whole unit). Same set of
+    // entry states as Order Replacement.
+    { key: "order_parts",
+      label: "Order Parts",
+      to: "parts_on_order",
+      icon: "package",
+      variant: "ghost",
+      modal: { kind: "order_parts" } },
     { key: "back_to_progress",
       label: "Unschedule — Back to In Progress",
       to: "in_progress",
@@ -191,6 +215,14 @@ const ACTIONS_BY_STATE: Record<TicketStatus, ActionDef[]> = {
       icon: "truck",
       variant: "ghost",
       modal: { kind: "order_replacement" } },
+    // Order a repair part (vs. replacing the whole unit). Same set of
+    // entry states as Order Replacement.
+    { key: "order_parts",
+      label: "Order Parts",
+      to: "parts_on_order",
+      icon: "package",
+      variant: "ghost",
+      modal: { kind: "order_parts" } },
     { key: "step_away",
       label: "Step Away — Back to In Progress",
       to: "in_progress",
@@ -222,6 +254,35 @@ const ACTIONS_BY_STATE: Record<TicketStatus, ActionDef[]> = {
       payload: {} },
     { key: "cancel_replacement",
       label: "Cancel — Won't Replace",
+      to: "cancelled",
+      icon: "x",
+      variant: "ghost",
+      modal: { kind: "cancellation" } },
+    { key: "back_to_submitted",
+      label: "Back to Submitted",
+      to: "submitted",
+      icon: "rotate",
+      variant: "ghost",
+      payload: {} },
+  ],
+  // The team is waiting on an ordered repair part to arrive. Three
+  // exits: part arrived → in_progress (resume repair), part installed
+  // → completed, or cancel the order.
+  parts_on_order: [
+    { key: "mark_repaired",
+      label: "Mark Complete",
+      to: "completed",
+      icon: "check",
+      variant: "primary",
+      modal: { kind: "resolution_only", optional: true } },
+    { key: "parts_arrived",
+      label: "Part Arrived — Resume",
+      to: "in_progress",
+      icon: "rotate",
+      variant: "ghost",
+      payload: {} },
+    { key: "cancel_parts",
+      label: "Cancel — Won't Order",
       to: "cancelled",
       icon: "x",
       variant: "ghost",
@@ -265,6 +326,7 @@ function iconFor(name: ActionDef["icon"]) {
     case "truck":  return <Truck        className="mr-1 h-3.5 w-3.5" strokeWidth={2} />;
     case "rotate": return <RotateCcw    className="mr-1 h-3.5 w-3.5" strokeWidth={2} />;
     case "pause":  return <Pause        className="mr-1 h-3.5 w-3.5" strokeWidth={2} />;
+    case "package":return <Package      className="mr-1 h-3.5 w-3.5" strokeWidth={2} />;
     default:       return null;
   }
 }

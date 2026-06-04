@@ -12,6 +12,7 @@ export type TicketStatus =
   | "scheduled"
   | "on_site"
   | "awaiting_equipment"
+  | "parts_on_order"
   | "completed"
   | "closed"
   | "cancelled";
@@ -22,6 +23,7 @@ export const TICKET_STATUSES: TicketStatus[] = [
   "scheduled",
   "on_site",
   "awaiting_equipment",
+  "parts_on_order",
   "completed",
   "closed",
   "cancelled",
@@ -74,6 +76,7 @@ export function statusLabel(s: TicketStatus | string | null | undefined): string
     case "scheduled":   return "Scheduled";
     case "on_site":     return "On Site";
     case "awaiting_equipment": return "Awaiting Equipment";
+    case "parts_on_order": return "Parts on Order";
     case "completed":   return "Completed";
     case "closed":      return "Closed";
     case "cancelled":   return "Cancelled";
@@ -204,6 +207,15 @@ export interface Ticket {
   replacement_warranty_labor_days: number | null;
   replacement_warranty_parts_days: number | null;
   replacement_warranty_parts_source: "vendor" | "manufacturer" | "none" | null;
+  // Parts-on-order fields. Populated when the team orders a repair part
+  // (the Order Parts action sets them; status transitions to
+  // "parts_on_order"). Parallel to the replacement_* fields above.
+  parts_description: string | null;
+  parts_supplier: string | null;
+  parts_cost: number | string | null;
+  parts_eta: string | null;
+  parts_po_number: string | null;
+  parts_ordered_at: string | null;
   cost_estimate: number | string | null;
   submitted_by: string | null;
   submitted_by_user_id: string | null;
@@ -260,6 +272,13 @@ export type TransitionPayload = Partial<{
   replacement_warranty_labor_days: number;
   replacement_warranty_parts_days: number;
   replacement_warranty_parts_source: "vendor" | "manufacturer" | "none";
+  // Parts-on-order payload — required when transitioning to
+  // parts_on_order via the Order Parts action.
+  parts_description: string;
+  parts_supplier: string;
+  parts_cost: number;
+  parts_eta: string;
+  parts_po_number: string;
 }>;
 
 export interface TransitionTicketBody {
@@ -373,7 +392,7 @@ export interface UploadPhotoBody {
   photoData: string;
   photoType: string;
   photoName: string;
-  uploadType?: "submission" | "update" | "quote" | "replacement_receipt";
+  uploadType?: "submission" | "update" | "quote" | "replacement_receipt" | "parts_receipt";
 }
 
 export interface UploadPhotoResponse {

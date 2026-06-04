@@ -39,7 +39,8 @@ function currentKey(status: string, approvalPending: boolean, partsOnOrder: bool
     case "scheduled": return "scheduled";
     case "on_site": return "on_site";
     case "in_progress":
-    case "awaiting_equipment": return "in_progress";
+    case "awaiting_equipment":
+    case "parts_on_order": return "in_progress";
     case "completed": return "completed";
     case "closed":
     case "cancelled": return "closed";
