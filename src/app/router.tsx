@@ -55,6 +55,8 @@ import { RegionPage } from "@/modules/region/RegionPage";
 import { ApprovalsPage } from "@/modules/approvals/ApprovalsPage";
 import { WalkthroughPage } from "@/modules/walkthrough/WalkthroughPage";
 import { WalkthroughRunner } from "@/modules/walkthrough/WalkthroughRunner";
+import { ReviewDashboardPage } from "@/modules/walkthrough/review/ReviewDashboardPage";
+import { SubmissionDetailPage } from "@/modules/walkthrough/review/SubmissionDetailPage";
 import { DirectoryPage } from "@/modules/directory/DirectoryPage";
 import { ChatLayout } from "@/modules/chat/ChatLayout";
 import { GroupInfoPage } from "@/modules/chat/GroupInfoPage";
@@ -190,6 +192,24 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <WalkthroughRunner />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // DO walkthrough review + corrective-action tracker. RLS scopes to
+        // the caller's stores. DO and up.
+        path: "walkthrough-review",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <ReviewDashboardPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "walkthrough-review/s/:id",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <SubmissionDetailPage />
           </ProtectedRoute>
         ),
       },
