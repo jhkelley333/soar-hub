@@ -107,6 +107,13 @@ export type ReasonModalConfig =
       kind: "order_replacement";
       title?: string;
       submitLabel?: string;
+    }
+  | {
+      // Order a repair part. Transitions the ticket to parts_on_order
+      // and stamps the parts_* columns. Parallel to order_replacement.
+      kind: "order_parts";
+      title?: string;
+      submitLabel?: string;
     };
 
 // A file the modal collected but doesn't upload itself. Order
@@ -151,6 +158,14 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
   const [replWarrParts, setReplWarrParts] = useState<string>("");
   const [replWarrSource, setReplWarrSource] = useState<"" | "vendor" | "manufacturer" | "none">("");
   const [replReceipt, setReplReceipt] = useState<File | null>(null);
+  // Parts-on-order fields. Only meaningful for the order_parts modal
+  // kind. Description, cost, ETA required; supplier + PO optional.
+  const [partsDesc, setPartsDesc] = useState<string>("");
+  const [partsSupplier, setPartsSupplier] = useState<string>("");
+  const [partsCost, setPartsCost] = useState<string>("");
+  const [partsEta, setPartsEta] = useState<string>("");
+  const [partsPoNumber, setPartsPoNumber] = useState<string>("");
+  const [partsReceipt, setPartsReceipt] = useState<File | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -169,6 +184,12 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
     setReplWarrParts("");
     setReplWarrSource("");
     setReplReceipt(null);
+    setPartsDesc("");
+    setPartsSupplier("");
+    setPartsCost("");
+    setPartsEta("");
+    setPartsPoNumber("");
+    setPartsReceipt(null);
   }, [open, config.kind]);
 
   const title = useMemo(() => config.title || defaultTitle(config.kind), [config]);
@@ -245,6 +266,20 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
         if (replWarrSource) payload.replacement_warranty_parts_source = replWarrSource;
         return payload;
       }
+      case "order_parts": {
+        const desc = partsDesc.trim();
+        const eta = partsEta.trim();
+        const cost = Number(partsCost);
+        if (!desc || !eta || !Number.isFinite(cost) || cost < 0) return null;
+        const payload: TransitionPayload = {
+          parts_description: desc,
+          parts_cost: cost,
+          parts_eta: eta,
+        };
+        if (partsSupplier.trim()) payload.parts_supplier = partsSupplier.trim();
+        if (partsPoNumber.trim()) payload.parts_po_number = partsPoNumber.trim();
+        return payload;
+      }
     }
   }
 
@@ -256,10 +291,12 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
     // Receipt PDFs/images live on ticket_photos with a distinct
     // upload_type so admins can filter / list them. The action bar
     // does the actual upload after the transition succeeds.
-    const attachment: PendingAttachment | undefined =
-      config.kind === "order_replacement" && replReceipt
-        ? { file: replReceipt, uploadType: "replacement_receipt" }
-        : undefined;
+    let attachment: PendingAttachment | undefined;
+    if (config.kind === "order_replacement" && replReceipt) {
+      attachment = { file: replReceipt, uploadType: "replacement_receipt" };
+    } else if (config.kind === "order_parts" && partsReceipt) {
+      attachment = { file: partsReceipt, uploadType: "parts_receipt" };
+    }
     await onSubmit(payload, attachment);
   }
 
@@ -573,6 +610,104 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
               </div>
             </div>
           )}
+          {config.kind === "order_parts" && (
+            <div className="space-y-3">
+              <div className="rounded-md border border-sky-200 bg-sky-50 p-3 text-xs text-sky-900">
+                Records that you're ordering a repair part. The ticket moves to{" "}
+                <strong>Parts on Order</strong> until the part arrives and the
+                repair is done.
+              </div>
+              <div>
+                <Label htmlFor="parts-desc">Part description / number *</Label>
+                <Input
+                  id="parts-desc"
+                  value={partsDesc}
+                  onChange={(e) => setPartsDesc(e.target.value)}
+                  placeholder="e.g. Compressor relay, gas valve #5R-2310"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <Label htmlFor="parts-supplier">Supplier (optional)</Label>
+                {storeNumber ? (
+                  <VendorSearchInput
+                    id="parts-supplier"
+                    storeNumber={storeNumber}
+                    value={partsSupplier}
+                    vendorId={null}
+                    onChange={({ name }) => setPartsSupplier(name)}
+                    placeholder="Search vendors or type a one-off name…"
+                  />
+                ) : (
+                  <Input
+                    id="parts-supplier"
+                    value={partsSupplier}
+                    onChange={(e) => setPartsSupplier(e.target.value)}
+                    placeholder="Who's the part coming from?"
+                  />
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor="parts-cost">Cost *</Label>
+                  <Input
+                    id="parts-cost"
+                    type="number"
+                    inputMode="decimal"
+                    step="0.01"
+                    min="0"
+                    value={partsCost}
+                    onChange={(e) => setPartsCost(e.target.value)}
+                    placeholder="0.00"
+                  />
+                </div>
+                <div>
+                  <Label htmlFor="parts-eta">Expected arrival *</Label>
+                  <Input
+                    id="parts-eta"
+                    type="date"
+                    value={partsEta}
+                    onChange={(e) => setPartsEta(e.target.value)}
+                  />
+                </div>
+              </div>
+              <div>
+                <Label htmlFor="parts-po">PO / order # (optional)</Label>
+                <Input
+                  id="parts-po"
+                  value={partsPoNumber}
+                  onChange={(e) => setPartsPoNumber(e.target.value)}
+                  placeholder="From the supplier"
+                />
+              </div>
+              <div className="border-t border-zinc-200 pt-3">
+                <Label htmlFor="parts-receipt">Receipt / invoice (optional)</Label>
+                <input
+                  id="parts-receipt"
+                  type="file"
+                  accept="image/*,application/pdf"
+                  onChange={(e) => setPartsReceipt(e.target.files?.[0] || null)}
+                  className="block w-full text-sm text-zinc-700 file:mr-2 file:rounded-md file:border-0 file:bg-accent/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-midnight hover:file:bg-accent/20"
+                />
+                {partsReceipt && (
+                  <div className="mt-1 flex items-center gap-2 text-[11px] text-zinc-500">
+                    <span className="truncate font-mono">{partsReceipt.name}</span>
+                    <span>({(partsReceipt.size / 1024).toFixed(0)} KB)</span>
+                    <button
+                      type="button"
+                      onClick={() => setPartsReceipt(null)}
+                      className="text-red-600 hover:underline"
+                    >
+                      remove
+                    </button>
+                  </div>
+                )}
+                <div className="mt-1 text-[10px] text-zinc-500">
+                  PDF or image. Uploaded after the ticket transitions; failures don't block the order.
+                </div>
+              </div>
+            </div>
+          )}
 
           {error && (
             <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
@@ -639,6 +774,7 @@ function defaultTitle(kind: ReasonModalConfig["kind"]): string {
     case "resolution_only":return "Resolution";
     case "vendor_schedule":return "Schedule Vendor";
     case "order_replacement":return "Order Replacement Equipment";
+    case "order_parts":    return "Order Parts";
   }
 }
 function defaultSubmit(kind: ReasonModalConfig["kind"]): string {
@@ -651,5 +787,6 @@ function defaultSubmit(kind: ReasonModalConfig["kind"]): string {
     case "resolution_only":return "Save";
     case "vendor_schedule":return "Schedule";
     case "order_replacement":return "Order Replacement";
+    case "order_parts":    return "Order Parts";
   }
 }

@@ -19,7 +19,7 @@ const REOPEN_GRACE_MS = REOPEN_GRACE_DAYS * 24 * 60 * 60 * 1000;
 
 const ALL_STATUSES = [
   "submitted", "in_progress", "scheduled", "on_site",
-  "awaiting_equipment",
+  "awaiting_equipment", "parts_on_order",
   "completed", "closed", "cancelled",
 ];
 const ALL_PAUSE_STATES = ["none", "on_hold", "awaiting_parts", "awaiting_replacement"];
@@ -131,6 +131,39 @@ function replacementSideEffects(payload) {
   }
   if (payload.replacement_warranty_parts_source) {
     out.replacement_warranty_parts_source = String(payload.replacement_warranty_parts_source);
+  }
+  return out;
+}
+
+// Parts-order validator. Required when transitioning INTO parts_on_order:
+// the team is ordering a repair part, so we need at minimum what they're
+// ordering, the cost, and an ETA (so the dashboard can flag late parts).
+// Supplier + PO number are optional. Parallel to validateReplacement, but
+// for parts rather than whole-equipment replacement.
+function validatePartsOrder(payload) {
+  const e1 = requireField(payload, "parts_description", "order parts");
+  if (e1) return e1;
+  if (payload?.parts_cost === undefined
+      || payload.parts_cost === null
+      || payload.parts_cost === "") {
+    return invalidPayload(
+      "order parts: missing required field \"parts_cost\"",
+      { field: "parts_cost" });
+  }
+  const e3 = requireField(payload, "parts_eta", "order parts");
+  if (e3) return e3;
+  return null;
+}
+function partsOrderSideEffects(payload) {
+  const out = {
+    parts_description: String(payload.parts_description).trim(),
+    parts_supplier:    payload.parts_supplier ? String(payload.parts_supplier).trim() : null,
+    parts_cost:        Number(payload.parts_cost),
+    parts_eta:         payload.parts_eta,
+    parts_ordered_at:  nowIso(),
+  };
+  if (payload.parts_po_number) {
+    out.parts_po_number = String(payload.parts_po_number).trim();
   }
   return out;
 }
@@ -364,6 +397,54 @@ const TRANSITIONS = {
                                          admin_close_reason: p.admin_close_reason,
                                          closed_at: nowIso(),
                                        }) },
+
+  // ── Parts-on-order branch ──
+  // The team is ordering a repair part rather than replacing the whole
+  // unit. Reachable from every active status so the call can be made at
+  // any point. Side-effects capture description + supplier + cost + ETA
+  // + PO so the dashboard can flag late parts. Mirrors the replacement
+  // branch above but lands on its own status.
+  "submitted->parts_on_order":   { validate:    (p) => validatePartsOrder(p),
+                                   sideEffects: (p) => partsOrderSideEffects(p) },
+  "in_progress->parts_on_order": { validate:    (p) => validatePartsOrder(p),
+                                   sideEffects: (p) => partsOrderSideEffects(p) },
+  "scheduled->parts_on_order":   { validate:    (p) => validatePartsOrder(p),
+                                   sideEffects: (p) => partsOrderSideEffects(p) },
+  "on_site->parts_on_order":     { validate:    (p) => validatePartsOrder(p),
+                                   sideEffects: (p) => partsOrderSideEffects(p) },
+
+  // Exits from parts_on_order.
+  //  → in_progress: part arrived, resuming the repair.
+  //  → completed: part installed and working. resolution_category
+  //    defaults to 'repaired' (the part fixed it).
+  //  → closed / cancelled: standard close / cancel rules.
+  //  → submitted: escape hatch, same as the other branches.
+  "parts_on_order->submitted":   { validate: () => null, sideEffects: () => ({}) },
+  "parts_on_order->in_progress": { validate: () => null, sideEffects: () => ({}) },
+  "parts_on_order->completed":   { validate: () => null,
+                                   sideEffects: (p) => ({
+                                     resolution_category: p.resolution_category || "repaired",
+                                     completed_at: nowIso(),
+                                   }) },
+  "parts_on_order->closed":      { validate: (p) => {
+                                     if (p.store_close_reason) return null;
+                                     const e1 = requireField(p, "admin_close_reason", "admin close");
+                                     if (e1) return e1;
+                                     return null;
+                                   },
+                                   sideEffects: (p) => ({
+                                     ...(p.store_close_reason
+                                       ? { store_close_reason: p.store_close_reason, closed_by_store: true }
+                                       : { admin_close_reason: p.admin_close_reason,
+                                           resolution_category: p.resolution_category || "repaired",
+                                           closed_by_store: false }),
+                                     closed_at: nowIso(),
+                                   }) },
+  "parts_on_order->cancelled":   { validate: (p) => requireField(p, "admin_close_reason", "cancellation"),
+                                   sideEffects: (p) => ({
+                                     admin_close_reason: p.admin_close_reason,
+                                     closed_at: nowIso(),
+                                   }) },
 };
 
 function validateReopenReason(payload) {

@@ -89,6 +89,7 @@ const STATUS_TONE: Record<TicketStatus, "info" | "warning" | "success" | "danger
   "scheduled":          "info",
   "on_site":            "warning",
   "awaiting_equipment": "warning",
+  "parts_on_order":     "warning",
   "completed":          "success",
   "closed":             "neutral",
   "cancelled":          "neutral",
@@ -804,6 +805,7 @@ function TicketCard({
           )}
 
           <ReplacementBanner ticket={ticket} />
+          <PartsBanner ticket={ticket} />
 
           <DetailGrid ticket={ticket} />
 
@@ -983,6 +985,7 @@ function NewTicketDetail({
         approvalPending={(ticket.ticket_approvals ?? []).some((a) => a.status === "Pending")}
         partsOnOrder={
           ticket.status === "awaiting_equipment" ||
+          ticket.status === "parts_on_order" ||
           ticket.pause_state === "awaiting_parts" ||
           ticket.pause_state === "awaiting_replacement"
         }
@@ -1023,6 +1026,7 @@ function NewTicketDetail({
       <div style={{ display: "grid", gridTemplateColumns: "minmax(0,1fr) 320px", gap: 14, alignItems: "start" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 14, minWidth: 0 }}>
           <ReplacementBanner ticket={ticket} />
+          <PartsBanner ticket={ticket} />
           <SectionCard title="Details">
             <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0,1fr))", gap: "14px 18px" }}>
               <Field label="Store">{ticket.store_name || `Store ${ticket.store_number}`}</Field>
@@ -1163,6 +1167,74 @@ function ReplacementBanner({ ticket }: { ticket: Ticket }) {
             <dd className={cn(
               "text-sm",
               isAwaiting ? "text-indigo-900" : "text-midnight",
+            )}>
+              {i.value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  );
+}
+
+// Parts-on-order details. Mirrors ReplacementBanner but for the parts_*
+// columns. Renders only when at least one parts field is populated, so it
+// stays hidden on tickets that never ordered a part.
+function PartsBanner({ ticket }: { ticket: Ticket }) {
+  const hasAny =
+    !!ticket.parts_description
+    || !!ticket.parts_supplier
+    || ticket.parts_cost != null
+    || !!ticket.parts_eta
+    || !!ticket.parts_po_number;
+  if (!hasAny) return null;
+
+  const receipt = (ticket.ticket_photos || []).find(
+    (p) => p.upload_type === "parts_receipt",
+  );
+
+  const items: Array<{ label: string; value: string }> = [
+    { label: "Part",          value: ticket.parts_description || "—" },
+    { label: "Supplier",      value: ticket.parts_supplier || "—" },
+    { label: "Cost",          value: fmtMoney(ticket.parts_cost) },
+    { label: "Expected",      value: ticket.parts_eta ? fmtDate(ticket.parts_eta) : "—" },
+    { label: "PO / Order #",  value: ticket.parts_po_number || "—" },
+  ];
+
+  const isAwaiting = ticket.status === "parts_on_order";
+  return (
+    <div className={cn(
+      "mt-3 rounded-md border p-3",
+      isAwaiting ? "border-sky-200 bg-sky-50" : "border-zinc-200 bg-zinc-50",
+    )}>
+      <div className="flex items-center justify-between">
+        <div className={cn(
+          "text-[11px] font-semibold uppercase tracking-wide",
+          isAwaiting ? "text-sky-900" : "text-zinc-700",
+        )}>
+          {isAwaiting ? "Parts on order" : "Parts details"}
+        </div>
+        {receipt && (
+          <a
+            href={receipt.file_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={cn(
+              "text-[11px] font-semibold underline-offset-2 hover:underline",
+              isAwaiting ? "text-sky-700" : "text-accent",
+            )}
+          >
+            View receipt
+          </a>
+        )}
+      </div>
+      <dl className="mt-2 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        {items.map((i) => (
+          <div key={i.label}>
+            <dt className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">{i.label}</dt>
+            <dd className={cn(
+              "text-sm",
+              isAwaiting ? "text-sky-900" : "text-midnight",
             )}>
               {i.value}
             </dd>

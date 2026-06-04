@@ -198,7 +198,8 @@ function currentStageKey(
     case "scheduled": return "scheduled";
     case "on_site": return "on_site";
     case "in_progress":
-    case "awaiting_equipment": return "in_progress";
+    case "awaiting_equipment":
+    case "parts_on_order": return "in_progress";
     case "completed": return "completed";
     case "closed":
     case "cancelled": return "closed";
@@ -311,7 +312,7 @@ export function StatusPipeline({
 export function statusPillTone(status: string): PillTone {
   if (status === "completed" || status === "closed") return "ok";
   if (status === "cancelled") return "gray";
-  if (status === "on_site" || status === "awaiting_equipment") return "warn";
+  if (status === "on_site" || status === "awaiting_equipment" || status === "parts_on_order") return "warn";
   return "blue";
 }
 
