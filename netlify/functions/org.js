@@ -912,6 +912,144 @@ async function updateStoreGeo(supa, user, body) {
 }
 
 // ----------------------------------------------------------------------------
+// Geocoding (POST) — derive store coordinates from the store address via the
+// Google Geocoding API. Same manage rule as the geo editor. Address-level
+// accuracy lands within tens of meters; the geofence radius (default 150 m)
+// absorbs that. On-site "Use my location" stays the gold standard.
+// ----------------------------------------------------------------------------
+
+const GEOCODE_KEY = process.env.GOOGLE_GEOCODING_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
+const GEOCODE_BATCH = 30; // cap per bulk call to stay under the function timeout
+
+function storeAddressString(s) {
+  return [s.address, s.city, s.state]
+    .map((x) => (x || "").trim())
+    .filter(Boolean)
+    .join(", ");
+}
+
+async function geocodeAddress(address) {
+  if (!GEOCODE_KEY) return { error: "geocoding not configured (GOOGLE_GEOCODING_API_KEY)" };
+  const url =
+    "https://maps.googleapis.com/maps/api/geocode/json?address=" +
+    encodeURIComponent(address) +
+    "&key=" +
+    GEOCODE_KEY;
+  let json;
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return { error: `geocoder http ${res.status}` };
+    json = await res.json();
+  } catch (e) {
+    return { error: e?.message || "geocoder request failed" };
+  }
+  if (json.status === "ZERO_RESULTS") return { error: "no match for address" };
+  if (json.status === "OVER_QUERY_LIMIT") return { error: "over query limit" };
+  if (json.status !== "OK") return { error: `geocoder: ${json.status}` };
+  const loc = json.results?.[0]?.geometry?.location;
+  if (!loc || typeof loc.lat !== "number") return { error: "no location in result" };
+  return { lat: loc.lat, lng: loc.lng };
+}
+
+async function geocodeStore(supa, user, body) {
+  const storeId = String(body?.store_id || "").trim();
+  if (!storeId) return { error: "store_id required.", status: 400 };
+  const allowed = await callerCanEditStoreAttributes(supa, user, storeId);
+  if (!allowed) return { error: "forbidden", status: 403 };
+
+  const { data: s } = await supa
+    .from("stores")
+    .select("id, address, city, state, geofence_radius_m")
+    .eq("id", storeId)
+    .single();
+  if (!s) return { error: "store not found.", status: 404 };
+  const addr = storeAddressString(s);
+  if (!addr) return { error: "store has no address to geocode.", status: 422 };
+
+  const geo = await geocodeAddress(addr);
+  if (geo.error) return { error: geo.error, status: 502 };
+
+  const { data: after, error } = await supa
+    .from("stores")
+    .update({ latitude: geo.lat, longitude: geo.lng, geofence_radius_m: s.geofence_radius_m ?? 150 })
+    .eq("id", storeId)
+    .select("id, latitude, longitude, geofence_radius_m")
+    .single();
+  if (error) return { error: error.message || "update failed.", status: 500 };
+  return { store: after };
+}
+
+async function geocodeMissing(supa, user) {
+  const canAny = ORG_WIDE.has(user.role) || ["do", "sdo", "rvp"].includes(user.role);
+  if (!canAny) return { error: "forbidden", status: 403 };
+  if (!GEOCODE_KEY) return { error: "geocoding not configured (GOOGLE_GEOCODING_API_KEY)", status: 500 };
+
+  let q = supa
+    .from("stores")
+    .select("id, number, address, city, state, geofence_radius_m")
+    .eq("is_active", true)
+    .or("latitude.is.null,longitude.is.null")
+    .order("number")
+    .limit(GEOCODE_BATCH);
+  if (!ORG_WIDE.has(user.role)) {
+    const visible = await callerVisibleStoreIds(supa, user);
+    if (!visible.length) return { updated: 0, failed: 0, skipped: 0, remaining: 0, results: [] };
+    q = q.in("id", visible);
+  }
+  const { data: stores, error } = await q;
+  if (error) return { error: error.message || "load failed.", status: 500 };
+
+  let updated = 0;
+  let failed = 0;
+  let skipped = 0;
+  const results = [];
+  for (const s of stores || []) {
+    const addr = storeAddressString(s);
+    if (!addr) {
+      skipped++;
+      results.push({ number: s.number, status: "skipped", reason: "no address" });
+      continue;
+    }
+    const geo = await geocodeAddress(addr);
+    if (geo.error) {
+      failed++;
+      results.push({ number: s.number, status: "failed", reason: geo.error });
+      continue;
+    }
+    const { error: upErr } = await supa
+      .from("stores")
+      .update({ latitude: geo.lat, longitude: geo.lng, geofence_radius_m: s.geofence_radius_m ?? 150 })
+      .eq("id", s.id);
+    if (upErr) {
+      failed++;
+      results.push({ number: s.number, status: "failed", reason: upErr.message });
+      continue;
+    }
+    updated++;
+    results.push({ number: s.number, status: "updated" });
+  }
+
+  // How many still lack coordinates after this batch (so the UI can prompt a
+  // re-run for large fleets).
+  let remaining = 0;
+  {
+    let rq = supa
+      .from("stores")
+      .select("id", { count: "exact", head: true })
+      .eq("is_active", true)
+      .or("latitude.is.null,longitude.is.null");
+    if (!ORG_WIDE.has(user.role)) {
+      const visible = await callerVisibleStoreIds(supa, user);
+      rq = rq.in("id", visible);
+    }
+    const { count } = await rq;
+    remaining = count ?? 0;
+  }
+
+  return { updated, failed, skipped, remaining, results };
+}
+
+// ----------------------------------------------------------------------------
 // store-vendor-audit (GET)
 // ----------------------------------------------------------------------------
 //
@@ -1026,6 +1164,12 @@ export const handler = async (event) => {
       }
       if (action === "update-store-geo") {
         return unwrap(await updateStoreGeo(supa, user, body));
+      }
+      if (action === "geocode-store") {
+        return unwrap(await geocodeStore(supa, user, body));
+      }
+      if (action === "geocode-missing") {
+        return unwrap(await geocodeMissing(supa, user));
       }
       return respond(400, { error: `unknown POST action: ${action}` });
     }
