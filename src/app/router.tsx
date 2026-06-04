@@ -56,6 +56,7 @@ import { ApprovalsPage } from "@/modules/approvals/ApprovalsPage";
 import { WalkthroughPage } from "@/modules/walkthrough/WalkthroughPage";
 import { WalkthroughRunner } from "@/modules/walkthrough/WalkthroughRunner";
 import { MyWalksPage } from "@/modules/walkthrough/MyWalksPage";
+import { StoreGeofencesPage } from "@/modules/walkthrough/storegeo/StoreGeofencesPage";
 import { ReviewDashboardPage } from "@/modules/walkthrough/review/ReviewDashboardPage";
 import { SubmissionDetailPage } from "@/modules/walkthrough/review/SubmissionDetailPage";
 import { AssignmentsPage as WalkthroughAssignmentsPage } from "@/modules/walkthrough/assign/AssignmentsPage";
@@ -232,6 +233,16 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <WalkthroughAssignmentsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Store geofence backfill — set check-in coordinates per store. Same
+        // audience as store attribute editing (DO/SDO/RVP + org-wide).
+        path: "admin/store-geofences",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <StoreGeofencesPage />
           </ProtectedRoute>
         ),
       },

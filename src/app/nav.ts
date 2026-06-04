@@ -23,6 +23,7 @@ import {
   SearchCheck,
   CalendarClock,
   Footprints,
+  MapPin,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -104,6 +105,7 @@ export const NAV: NavItem[] = [
   { to: "/admin/walkthrough-templates", label: "Walkthrough Templates", icon: ListChecks, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/walkthrough-assignments", label: "Walkthrough Assign", icon: CalendarClock, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/walkthrough-review", label: "Walkthrough Review", icon: SearchCheck, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
+  { to: "/admin/store-geofences", label: "Store Geofences", icon: MapPin, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/admin/labor-sync", label: "Labor Sync", icon: RefreshCw,   roles: ["vp", "coo", "admin"] },
   { to: "/account",     label: "Account",     icon: UserCircle,      roles: null },
 ];
