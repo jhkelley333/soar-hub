@@ -57,6 +57,7 @@ import { WalkthroughPage } from "@/modules/walkthrough/WalkthroughPage";
 import { WalkthroughRunner } from "@/modules/walkthrough/WalkthroughRunner";
 import { ReviewDashboardPage } from "@/modules/walkthrough/review/ReviewDashboardPage";
 import { SubmissionDetailPage } from "@/modules/walkthrough/review/SubmissionDetailPage";
+import { AssignmentsPage as WalkthroughAssignmentsPage } from "@/modules/walkthrough/assign/AssignmentsPage";
 import { DirectoryPage } from "@/modules/directory/DirectoryPage";
 import { ChatLayout } from "@/modules/chat/ChatLayout";
 import { GroupInfoPage } from "@/modules/chat/GroupInfoPage";
@@ -210,6 +211,16 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <SubmissionDetailPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // DO assigns walkthroughs to GMs (template + store + assignee + due).
+        // RLS scopes inserts/reads to the caller's stores. DO and up.
+        path: "walkthrough-assignments",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <WalkthroughAssignmentsPage />
           </ProtectedRoute>
         ),
       },
