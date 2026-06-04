@@ -1,9 +1,10 @@
 // Walkthrough builder — template list. Lists every template with quick
 // activate/deactivate and an entry point to the wizard.
 
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus } from "lucide-react";
+import { Eye, Plus } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -11,7 +12,8 @@ import { Badge } from "@/shared/ui/Badge";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
-import { listTemplates, setTemplateActive, type TemplateSummary } from "./api";
+import { getTemplate, listTemplates, setTemplateActive, type TemplateSummary } from "./api";
+import { WalkthroughPreview } from "../WalkthroughPreview";
 
 export function TemplatesListPage() {
   const navigate = useNavigate();
@@ -19,6 +21,14 @@ export function TemplatesListPage() {
   const toast = useToast();
 
   const query = useQuery({ queryKey: ["wt-templates"], queryFn: listTemplates });
+
+  const [previewId, setPreviewId] = useState<string | null>(null);
+  const previewQuery = useQuery({
+    queryKey: ["wt-template-preview", previewId],
+    queryFn: () => getTemplate(previewId!),
+    enabled: !!previewId,
+  });
+  const previewDraft = previewQuery.data;
 
   const toggle = useMutation({
     mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
@@ -72,11 +82,28 @@ export function TemplatesListPage() {
               key={t.id}
               t={t}
               onEdit={() => navigate(`/admin/walkthrough-templates/${t.id}`)}
+              onPreview={() => setPreviewId(t.id)}
               onToggle={() => toggle.mutate({ id: t.id, isActive: !t.isActive })}
               toggling={toggle.isPending}
             />
           ))}
         </div>
+      )}
+
+      {previewId && previewDraft && (
+        <WalkthroughPreview
+          template={{
+            id: previewDraft.id ?? previewId,
+            name: previewDraft.name,
+            type: previewDraft.type,
+            version: previewDraft.version,
+            sections: previewDraft.sections,
+            scoring: previewDraft.scoring,
+            tiers: previewDraft.tiers,
+            globalRules: previewDraft.globalRules,
+          }}
+          onClose={() => setPreviewId(null)}
+        />
       )}
     </div>
   );
@@ -85,11 +112,13 @@ export function TemplatesListPage() {
 function TemplateCard({
   t,
   onEdit,
+  onPreview,
   onToggle,
   toggling,
 }: {
   t: TemplateSummary;
   onEdit: () => void;
+  onPreview: () => void;
   onToggle: () => void;
   toggling: boolean;
 }) {
@@ -110,6 +139,10 @@ function TemplateCard({
           </div>
         </button>
         <div className="flex items-center gap-2">
+          <Button variant="ghost" size="sm" onClick={onPreview}>
+            <Eye className="mr-1 h-4 w-4" />
+            Preview
+          </Button>
           <Button variant="secondary" size="sm" onClick={onToggle} disabled={toggling}>
             {t.isActive ? "Deactivate" : "Activate"}
           </Button>
