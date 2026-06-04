@@ -423,6 +423,8 @@ function TicketsTab() {
             ticket={selected}
             callerRole={callerRole}
             initialThread={selected.id === focusTicketId ? focusThread : null}
+            allTickets={tickets}
+            onOpenTicket={openDetail}
             onBack={() => setDetailId(null)}
             onUpdated={() => { toast.push("Ticket updated.", "success"); refetchAll(); }}
             onPhotoUploaded={(count) => {
@@ -868,6 +870,8 @@ function NewTicketDetail({
   ticket,
   callerRole,
   initialThread,
+  allTickets,
+  onOpenTicket,
   onBack,
   onUpdated,
   onPhotoUploaded,
@@ -877,6 +881,10 @@ function NewTicketDetail({
   ticket: Ticket;
   callerRole: string;
   initialThread?: ThreadType | null;
+  // Full in-scope ticket list (already loaded by the page) — used to
+  // surface the store's other open work orders in the side rail.
+  allTickets: Ticket[];
+  onOpenTicket: (id: string) => void;
   onBack: () => void;
   onUpdated: () => void;
   onPhotoUploaded: (count: number) => void;
@@ -1073,6 +1081,11 @@ function NewTicketDetail({
               onError={onError}
             />
           </SectionCard>
+          <StoreOpenWoCard
+            ticket={ticket}
+            allTickets={allTickets}
+            onOpen={onOpenTicket}
+          />
           {callerRole === "admin" && (
             <SectionCard>
               <AdminDeleteTicketRow
@@ -1086,6 +1099,102 @@ function NewTicketDetail({
         </div>
       </div>
     </div>
+  );
+}
+
+// Side-rail card listing the store's OTHER open work orders (excludes
+// the one being viewed). Gives an approver / DO context — duplicates,
+// chances to bundle a vendor trip, or a sense of how loaded the store
+// is — without leaving the ticket. Sources from the already-loaded list
+// (no extra fetch); clicking a row opens that ticket in place.
+function StoreOpenWoCard({
+  ticket,
+  allTickets,
+  onOpen,
+}: {
+  ticket: Ticket;
+  allTickets: Ticket[];
+  onOpen: (id: string) => void;
+}) {
+  const siblings = useMemo(
+    () =>
+      allTickets
+        .filter(
+          (t) =>
+            t.id !== ticket.id &&
+            String(t.store_number) === String(ticket.store_number) &&
+            isOpenStatus(t.status),
+        )
+        // Business-critical first, then most recently submitted.
+        .sort((a, b) => {
+          if (!!b.is_business_critical !== !!a.is_business_critical) {
+            return a.is_business_critical ? -1 : 1;
+          }
+          return (
+            new Date(b.date_submitted).getTime() -
+            new Date(a.date_submitted).getTime()
+          );
+        }),
+    [allTickets, ticket.id, ticket.store_number],
+  );
+
+  return (
+    <SectionCard
+      title={`Other open at this store${siblings.length ? ` (${siblings.length})` : ""}`}
+    >
+      {siblings.length === 0 ? (
+        <div style={{ fontSize: 12, color: WO.muted }}>
+          No other open work orders at this store.
+        </div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {siblings.map((t) => {
+            const d = daysOpen(t);
+            const meta = [
+              t.priority && t.priority !== "Standard" ? t.priority : null,
+              d !== null ? `${d} day${d === 1 ? "" : "s"} open` : null,
+              t.vendor_name || null,
+            ].filter(Boolean);
+            return (
+              <button
+                key={t.id}
+                type="button"
+                onClick={() => onOpen(t.id)}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 4,
+                  textAlign: "left",
+                  padding: "8px 10px",
+                  borderRadius: 8,
+                  cursor: "pointer",
+                  background: WO.surface,
+                  border: `1px solid ${WO.line}`,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                  <span style={{ fontFamily: WO.mono, fontSize: 11, color: WO.muted }}>
+                    {t.wo_number}
+                  </span>
+                  <Pill tone={statusPillTone(t.status)} dot>
+                    {statusLabel(t.status)}
+                  </Pill>
+                  {t.is_business_critical && <Pill tone="warn" dot>Critical</Pill>}
+                </div>
+                <div style={{ fontSize: 13, fontWeight: 500, lineHeight: 1.3, color: WO.ink }}>
+                  {t.asset_type || t.category || "Work Order"}
+                </div>
+                {meta.length > 0 && (
+                  <div style={{ fontSize: 11, color: WO.muted }}>
+                    {meta.join(" · ")}
+                  </div>
+                )}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </SectionCard>
   );
 }
 
