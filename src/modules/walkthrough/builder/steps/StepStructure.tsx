@@ -135,46 +135,55 @@ function ItemRow({
 
   return (
     <div className="rounded-lg ring-1 ring-zinc-200 bg-zinc-50/50">
-      <div className="flex items-center gap-2 p-2">
-        <GripVertical className="h-4 w-4 shrink-0 text-zinc-300" />
-        <span className="shrink-0 font-mono text-[11px] text-zinc-400">{item.code}</span>
-        <TextInput
-          value={item.label}
-          onChange={(e) => setItem(sectionCode, item.code, { label: e.target.value })}
-          placeholder="Item label"
-          className="h-8 flex-1"
-        />
-        <div className="w-16 shrink-0">
-          <NumberInput
-            value={item.weight}
-            min={0}
-            step={1}
-            onChange={(e) =>
-              setItem(sectionCode, item.code, { weight: Number(e.target.value) || 0 })
-            }
-            className="h-8"
-            aria-label="Weight"
-            title="Weight"
+      {/* Two rows on mobile (label gets full width); one row from sm up. */}
+      <div className="flex flex-col gap-2 p-2 sm:flex-row sm:items-center">
+        {/* Line 1: code + label */}
+        <div className="flex items-center gap-2 sm:flex-1 sm:min-w-0">
+          <GripVertical className="hidden h-4 w-4 shrink-0 text-zinc-300 sm:block" />
+          <span className="shrink-0 font-mono text-[11px] text-zinc-400">{item.code}</span>
+          <TextInput
+            value={item.label}
+            onChange={(e) => setItem(sectionCode, item.code, { label: e.target.value })}
+            placeholder="Item label"
+            className="h-8 flex-1"
           />
         </div>
-        <div className="w-24 shrink-0">
-          <Select
-            value={item.severity ?? "med"}
-            onChange={(v) => setItem(sectionCode, item.code, { severity: v as TemplateItem["severity"] })}
-            options={SEVERITIES.map((s) => ({ value: s, label: s }))}
-            className="h-8"
-          />
+        {/* Line 2 (mobile): weight + severity + actions */}
+        <div className="flex items-center gap-2">
+          <div className="w-16 shrink-0">
+            <NumberInput
+              value={item.weight}
+              min={0}
+              step={1}
+              onChange={(e) =>
+                setItem(sectionCode, item.code, { weight: Number(e.target.value) || 0 })
+              }
+              className="h-8"
+              aria-label="Weight"
+              title="Weight"
+            />
+          </div>
+          <div className="w-24 shrink-0">
+            <Select
+              value={item.severity ?? "med"}
+              onChange={(v) => setItem(sectionCode, item.code, { severity: v as TemplateItem["severity"] })}
+              options={SEVERITIES.map((s) => ({ value: s, label: s }))}
+              className="h-8"
+            />
+          </div>
+          <div className="ml-auto flex items-center sm:ml-0">
+            <IconBtn
+              label="Follow-up rules"
+              active={open || ruleCount > 0}
+              onClick={() => setOpen((o) => !o)}
+            >
+              <Settings2 className="h-4 w-4" />
+            </IconBtn>
+            <IconBtn label="Remove item" danger onClick={() => removeItem(sectionCode, item.code)}>
+              <Trash2 className="h-4 w-4" />
+            </IconBtn>
+          </div>
         </div>
-        <IconBtn
-          label="Follow-up rules"
-          active={open || ruleCount > 0}
-          onClick={() => setOpen((o) => !o)}
-        >
-          <Settings2 className="h-4 w-4" />
-        </IconBtn>
-        <IconBtn label="Remove item" danger onClick={() => removeItem(sectionCode, item.code)}>
-          <Trash2 className="h-4 w-4" />
-        </IconBtn>
       </div>
 
       {open && (
@@ -237,8 +246,8 @@ function RuleEditor({
       />
 
       {on && rule && (
-        <div className="mt-3 space-y-3 pl-12">
-          <div className="grid grid-cols-3 gap-3">
+        <div className="mt-3 space-y-3 sm:pl-12">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <Field label="Photos required">
               <NumberInput
                 value={rule.require.photo ?? 0}
@@ -248,7 +257,7 @@ function RuleEditor({
                 className="h-8"
               />
             </Field>
-            <div className="col-span-2 flex items-end gap-4 pb-1">
+            <div className="flex items-end gap-4 pb-1 sm:col-span-2">
               <Toggle
                 checked={!!rule.require.reason}
                 onChange={(v) => patch({ require: { reason: v } })}
