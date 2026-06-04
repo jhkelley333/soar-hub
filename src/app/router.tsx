@@ -28,6 +28,8 @@ import { BulkAttributesPage } from "@/modules/admin/BulkAttributesPage";
 import { FeatureFlagsPage } from "@/modules/admin/FeatureFlagsPage";
 import { RoleAccessPage } from "@/modules/admin/RoleAccessPage";
 import { PafConfigPage } from "@/modules/admin/pafConfig/PafConfigPage";
+import { TemplatesListPage } from "@/modules/walkthrough/builder/TemplatesListPage";
+import { WalkthroughBuilderPage } from "@/modules/walkthrough/builder/WalkthroughBuilderPage";
 import { moduleKeyForPath } from "@/app/nav";
 import { useOverrides } from "@/lib/roleAccess";
 import { RankerPage } from "@/modules/ranker/RankerPage";
@@ -268,6 +270,32 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["payroll", "admin"]}>
             <PafConfigPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Walkthrough template builder — DO+ author the checklists GMs run.
+        // Direct-to-Supabase writes (walkthrough_templates RLS allows DO+).
+        path: "admin/walkthrough-templates",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <TemplatesListPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/walkthrough-templates/new",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <WalkthroughBuilderPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/walkthrough-templates/:id",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <WalkthroughBuilderPage />
           </ProtectedRoute>
         ),
       },
