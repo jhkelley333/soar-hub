@@ -1,32 +1,45 @@
 // Walkthrough — the GM in-field runner.
 //
 // Orchestrates the whole session against use-walkthrough-store:
-//   GPS check-in gate  →  sectioned checklist  →  review
-// (Submit is the next ticket — the Review step renders it disabled.)
+//   GPS check-in gate  →  sectioned checklist  →  review  →  publish
 //
-// PREVIEW: mounts the SAMPLE_* fixture since the walkthrough backend table
-// doesn't exist yet. The store runs fully offline — rate items, add photos,
-// switch sections, refresh mid-walk; nothing is lost. No server adapter is
-// passed, so the pill settles on "Saved" (locally durable), never "Synced".
+// Two modes:
+//   • /walkthrough/run            — offline PREVIEW on the SAMPLE_* fixture.
+//     No backend, no adapter; the pill settles on "Saved" (locally durable),
+//     Publish is disabled.
+//   • /walkthrough/run/:id        — LIVE against a real assignment. Drafts +
+//     photos flush through the adapter (pill reaches "Synced"); Publish calls
+//     the submit transaction (score + corrective actions + DO notify).
 
-import { useState } from "react";
-import { ArrowLeft, ChevronLeft, ChevronRight, WifiOff } from "lucide-react";
+import { useEffect, useState } from "react";
+import { useParams } from "react-router-dom";
+import {
+  ArrowLeft,
+  CheckCircle2,
+  ChevronLeft,
+  ChevronRight,
+  Loader2,
+  WifiOff,
+} from "lucide-react";
 import { AppHeader } from "@/shared/ui/AppHeader";
 import { BottomBar } from "@/shared/ui/BottomBar";
 import { StatusPill, type StatusPillKind } from "@/shared/ui/StatusPill";
 import { cn } from "@/lib/cn";
-import { useWalkthroughStore } from "./use-walkthrough-store";
-import { CheckIn } from "./CheckIn";
+import { useWalkthroughStore, type WalkthroughAdapter } from "./use-walkthrough-store";
+import { CheckIn, type CheckInStore } from "./CheckIn";
 import { SectionPager } from "./SectionPager";
 import { ChecklistItem } from "./ChecklistItem";
 import { SectionNote } from "./SectionNote";
 import { ReviewStep } from "./ReviewStep";
+import { SAMPLE_ASSIGNMENT, SAMPLE_STORE, SAMPLE_TEMPLATE } from "./sample";
 import {
-  SAMPLE_ASSIGNMENT,
-  SAMPLE_STORE,
-  SAMPLE_TEMPLATE,
-} from "./sample";
-import type { SyncState } from "./types";
+  fetchAssignment,
+  makeWalkthroughAdapter,
+  submitWalkthrough,
+  type LoadedAssignment,
+  type SubmitResult,
+} from "./api";
+import type { SyncState, WalkthroughAssignment, WalkthroughTemplate } from "./types";
 
 function pillFor(sync: SyncState, savedAt: string | null): {
   kind: StatusPillKind;
@@ -50,74 +63,164 @@ function pillFor(sync: SyncState, savedAt: string | null): {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Loader: resolves which mode to run, then mounts the inner runner (which
+// owns the store hook).
+// ---------------------------------------------------------------------------
+
 export function WalkthroughRunner() {
-  const store = useWalkthroughStore(SAMPLE_TEMPLATE, SAMPLE_ASSIGNMENT);
-  const [step, setStep] = useState<"sections" | "review">("sections");
+  const { assignmentId } = useParams<{ assignmentId?: string }>();
 
-  if (!store.ready || !store.draft) {
+  // Preview mode — no id in the URL.
+  if (!assignmentId) {
     return (
-      <div className="mx-auto w-full max-w-md min-h-full grid place-items-center text-midnight-400 text-[13px]">
-        Loading walkthrough…
-      </div>
-    );
-  }
-
-  // Gate: no check-in yet → show the GPS gate first.
-  if (!store.checkIn) {
-    return (
-      <CheckIn
-        assignmentId={SAMPLE_ASSIGNMENT.id}
+      <RunnerInner
+        template={SAMPLE_TEMPLATE}
+        assignment={SAMPLE_ASSIGNMENT}
         store={SAMPLE_STORE}
-        onCheckIn={(ci) => void store.setCheckIn(ci)}
+        live={false}
       />
     );
   }
 
-  const { draft, score, sectionStatuses } = store;
-  const activeIndex = store.activeSectionIndex;
-  const activeSection = draft.sections[activeIndex];
-  const tmplSection = SAMPLE_TEMPLATE.sections[activeIndex];
-  const isLastSection = activeIndex === draft.sections.length - 1;
-  const pill = pillFor(store.syncState, store.savedAt);
+  return <LiveLoader assignmentId={assignmentId} />;
+}
 
-  function goNext() {
-    if (step === "sections" && !isLastSection) {
-      store.setActiveSectionIndex(activeIndex + 1);
-      scrollTop();
-    } else if (step === "sections" && isLastSection) {
-      setStep("review");
-      scrollTop();
-    }
+function LiveLoader({ assignmentId }: { assignmentId: string }) {
+  const [state, setState] = useState<
+    { status: "loading" } | { status: "error"; message: string } | { status: "ready"; data: LoadedAssignment }
+  >({ status: "loading" });
+
+  useEffect(() => {
+    let alive = true;
+    fetchAssignment(assignmentId)
+      .then((data) => {
+        if (!alive) return;
+        if (!data) setState({ status: "error", message: "Assignment not found or not assigned to you." });
+        else setState({ status: "ready", data });
+      })
+      .catch((e) => alive && setState({ status: "error", message: e?.message ?? "Failed to load." }));
+    return () => {
+      alive = false;
+    };
+  }, [assignmentId]);
+
+  if (state.status === "loading") {
+    return (
+      <div className="mx-auto w-full max-w-md min-h-full grid place-items-center text-midnight-400">
+        <Loader2 className="h-5 w-5 animate-spin" />
+      </div>
+    );
+  }
+  if (state.status === "error") {
+    return (
+      <div className="mx-auto w-full max-w-md min-h-full grid place-items-center px-6 text-center text-[13px] text-midnight-500">
+        {state.message}
+      </div>
+    );
+  }
+  return (
+    <RunnerInner
+      template={state.data.template}
+      assignment={state.data.assignment}
+      store={state.data.store}
+      adapter={makeWalkthroughAdapter(assignmentId)}
+      live
+    />
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Inner runner — owns the store hook + all the field UI.
+// ---------------------------------------------------------------------------
+
+interface RunnerInnerProps {
+  template: WalkthroughTemplate;
+  assignment: WalkthroughAssignment;
+  store: CheckInStore;
+  adapter?: WalkthroughAdapter;
+  live: boolean;
+}
+
+function RunnerInner({ template, assignment, store, adapter, live }: RunnerInnerProps) {
+  const wt = useWalkthroughStore(template, assignment, adapter);
+  const [step, setStep] = useState<"sections" | "review">("sections");
+  const [submitState, setSubmitState] = useState<
+    { status: "idle" } | { status: "submitting" } | { status: "done"; result: SubmitResult } | { status: "error"; message: string }
+  >({ status: "idle" });
+
+  if (!wt.ready || !wt.draft) {
+    return (
+      <div className="mx-auto w-full max-w-md min-h-full grid place-items-center text-midnight-400">
+        <Loader2 className="h-5 w-5 animate-spin" />
+      </div>
+    );
   }
 
-  function goBack() {
-    if (step === "review") {
-      setStep("sections");
-    } else if (activeIndex > 0) {
-      store.setActiveSectionIndex(activeIndex - 1);
-    }
+  // Gate: check-in first.
+  if (!wt.checkIn) {
+    return (
+      <CheckIn
+        assignmentId={assignment.id}
+        store={store}
+        onCheckIn={(ci) => void wt.setCheckIn(ci)}
+      />
+    );
+  }
+
+  // Post-submit confirmation.
+  if (submitState.status === "done") {
+    return <SubmittedScreen result={submitState.result} storeName={store.name} />;
+  }
+
+  const { draft, score, sectionStatuses } = wt;
+  const activeIndex = wt.activeSectionIndex;
+  const activeSection = draft.sections[activeIndex];
+  const tmplSection = template.sections[activeIndex];
+  const isLastSection = activeIndex === draft.sections.length - 1;
+  const pill = pillFor(wt.syncState, wt.savedAt);
+  const blockers = sectionStatuses.filter((s) => s.hasUnanswered || s.incomplete).length;
+  const canPublish = live && blockers === 0 && submitState.status !== "submitting";
+
+  function goNext() {
+    if (step === "sections" && !isLastSection) wt.setActiveSectionIndex(activeIndex + 1);
+    else if (step === "sections" && isLastSection) setStep("review");
     scrollTop();
+  }
+  function goBack() {
+    if (step === "review") setStep("sections");
+    else if (activeIndex > 0) wt.setActiveSectionIndex(activeIndex - 1);
+    scrollTop();
+  }
+
+  async function publish() {
+    setSubmitState({ status: "submitting" });
+    try {
+      const result = await submitWalkthrough({
+        assignmentId: assignment.id,
+        checkInId: wt.checkIn?.id ?? null,
+        sections: draft.sections,
+      });
+      setSubmitState({ status: "done", result });
+    } catch (e) {
+      setSubmitState({ status: "error", message: e instanceof Error ? e.message : "Submit failed." });
+    }
   }
 
   return (
     <div className="mx-auto w-full max-w-md bg-surface-muted min-h-full flex flex-col">
       <AppHeader
-        title={SAMPLE_TEMPLATE.name}
-        subtitle={`SDI ${SAMPLE_STORE.sdi} · ${SAMPLE_STORE.name}`}
+        title={template.name}
+        subtitle={`SDI ${store.sdi} · ${store.name}`}
         leading={
-          <button
-            type="button"
-            onClick={goBack}
-            className="-ml-1 p-1 text-midnight-700"
-            aria-label="Back"
-          >
+          <button type="button" onClick={goBack} className="-ml-1 p-1 text-midnight-700" aria-label="Back">
             <ArrowLeft className="h-4 w-4" strokeWidth={2} />
           </button>
         }
         trailing={<StatusPill kind={pill.kind}>{pill.label}</StatusPill>}
       />
 
-      {!store.online && (
+      {!wt.online && (
         <div className="bg-midnight-900 text-white px-4 py-2 text-[12px] flex items-center gap-2">
           <WifiOff className="h-3.5 w-3.5" strokeWidth={2} />
           Offline — saved on this device. Syncs when you're back online.
@@ -130,11 +233,10 @@ export function WalkthroughRunner() {
             sections={sectionStatuses}
             activeIndex={activeIndex}
             onJump={(i) => {
-              store.setActiveSectionIndex(i);
+              wt.setActiveSectionIndex(i);
               scrollTop();
             }}
           />
-
           <div className="flex-1 px-4 pt-4 pb-40 space-y-2.5">
             {activeSection.items.map((resp) => {
               const item = tmplSection.items.find((i) => i.code === resp.itemCode);
@@ -144,22 +246,21 @@ export function WalkthroughRunner() {
                   key={resp.itemCode}
                   item={item}
                   response={resp}
-                  globalRules={SAMPLE_TEMPLATE.globalRules}
-                  photos={store.photos.filter((p) => p.itemCode === resp.itemCode)}
-                  photoUrls={store.photoUrls}
-                  onChange={(v) => store.setItemValue(activeSection.code, resp.itemCode, v)}
-                  onReason={(r) => store.setItemReason(activeSection.code, resp.itemCode, r)}
-                  onNote={(n) => store.setItemNote(activeSection.code, resp.itemCode, n)}
-                  onAddPhoto={(f) => void store.addPhoto(activeSection.code, resp.itemCode, f)}
-                  onRemovePhoto={(id) => void store.removePhoto(activeSection.code, resp.itemCode, id)}
-                  onRetryPhoto={(id) => void store.retryPhoto(id)}
+                  globalRules={template.globalRules}
+                  photos={wt.photos.filter((p) => p.itemCode === resp.itemCode)}
+                  photoUrls={wt.photoUrls}
+                  onChange={(v) => wt.setItemValue(activeSection.code, resp.itemCode, v)}
+                  onReason={(r) => wt.setItemReason(activeSection.code, resp.itemCode, r)}
+                  onNote={(n) => wt.setItemNote(activeSection.code, resp.itemCode, n)}
+                  onAddPhoto={(f) => void wt.addPhoto(activeSection.code, resp.itemCode, f)}
+                  onRemovePhoto={(id) => void wt.removePhoto(activeSection.code, resp.itemCode, id)}
+                  onRetryPhoto={(id) => void wt.retryPhoto(id)}
                 />
               );
             })}
-
             <SectionNote
               value={activeSection.note ?? ""}
-              onChange={(v) => store.setSectionNote(activeSection.code, v)}
+              onChange={(v) => wt.setSectionNote(activeSection.code, v)}
             />
           </div>
         </>
@@ -168,17 +269,20 @@ export function WalkthroughRunner() {
           <div className="flex-1">
             <AppHeader title="Review" subtitle="Before publishing" sticky={false} />
             <ReviewStep
-              template={SAMPLE_TEMPLATE}
+              template={template}
               score={score}
               sections={sectionStatuses}
-              checkIn={store.checkIn}
-              photoCount={store.photos.length}
+              checkIn={wt.checkIn}
+              photoCount={wt.photos.length}
               onGoToSection={(i) => {
-                store.setActiveSectionIndex(i);
+                wt.setActiveSectionIndex(i);
                 setStep("sections");
                 scrollTop();
               }}
             />
+            {submitState.status === "error" && (
+              <div className="px-4 -mt-2 pb-2 text-[12px] text-bad">{submitState.message}</div>
+            )}
           </div>
         )
       )}
@@ -206,23 +310,48 @@ export function WalkthroughRunner() {
               onClick={goNext}
               className="flex-[1.4] h-11 rounded-lg bg-midnight-900 text-white text-[14px] font-semibold inline-flex items-center justify-center gap-1.5 hover:bg-midnight-800 transition"
             >
-              {isLastSection
-                ? "Next: Review"
-                : `Next: ${SAMPLE_TEMPLATE.sections[activeIndex + 1].name}`}
+              {isLastSection ? "Next: Review" : `Next: ${template.sections[activeIndex + 1].name}`}
               <ChevronRight className="h-4 w-4" strokeWidth={2} />
             </button>
           ) : (
             <button
               type="button"
-              disabled
-              title="Submit transaction is the next ticket"
-              className="flex-[1.4] h-11 rounded-lg bg-midnight-200 text-white/80 text-[14px] font-semibold inline-flex items-center justify-center gap-1.5 cursor-not-allowed"
+              disabled={!canPublish}
+              onClick={publish}
+              title={live ? (blockers ? "Resolve blockers first" : "") : "Submit is live only on a real assignment"}
+              className={cn(
+                "flex-[1.4] h-11 rounded-lg text-[14px] font-semibold inline-flex items-center justify-center gap-1.5 transition",
+                canPublish
+                  ? "bg-midnight-900 text-white hover:bg-midnight-800"
+                  : "bg-midnight-200 text-white/80 cursor-not-allowed",
+              )}
             >
-              Publish · wiring next
+              {submitState.status === "submitting" && <Loader2 className="h-4 w-4 animate-spin" />}
+              {live ? "Publish" : "Publish · preview"}
             </button>
           )}
         </div>
       </BottomBar>
+    </div>
+  );
+}
+
+function SubmittedScreen({ result, storeName }: { result: SubmitResult; storeName: string }) {
+  return (
+    <div className="mx-auto w-full max-w-md min-h-full grid place-items-center px-6 text-center">
+      <div>
+        <CheckCircle2 className="h-12 w-12 text-ok mx-auto" strokeWidth={1.75} />
+        <h2 className="mt-3 text-[18px] font-semibold text-midnight-900">Walkthrough submitted</h2>
+        <p className="mt-1 text-[13px] text-midnight-600">
+          {storeName} · score {result.submission.score} ({result.submission.tier})
+        </p>
+        <p className="mt-3 text-[12.5px] text-midnight-500">
+          {result.correctiveActions > 0
+            ? `${result.correctiveActions} corrective action${result.correctiveActions === 1 ? "" : "s"} raised`
+            : "No corrective actions"}
+          {result.notified ? " · DO notified" : ""}
+        </p>
+      </div>
     </div>
   );
 }
