@@ -4,7 +4,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Crosshair, Loader2, MapPin, Search } from "lucide-react";
+import { Crosshair, Loader2, MapPin, Search, Wand2 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -12,11 +12,26 @@ import { Badge } from "@/shared/ui/Badge";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { useToast } from "@/shared/ui/Toaster";
 import { Field, NumberInput, TextInput } from "../builder/controls";
-import { listStoresGeo, updateStoreGeo, type StoreGeo } from "./api";
+import { geocodeMissing, geocodeStore, listStoresGeo, updateStoreGeo, type StoreGeo } from "./api";
 
 export function StoreGeofencesPage() {
   const [q, setQ] = useState("");
+  const qc = useQueryClient();
+  const toast = useToast();
   const query = useQuery({ queryKey: ["stores-geo"], queryFn: listStoresGeo });
+
+  const geocodeAll = useMutation({
+    mutationFn: geocodeMissing,
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["stores-geo"] });
+      const tail = r.remaining > 0 ? ` · ${r.remaining} still missing — run again` : "";
+      toast.push(
+        `Geocoded ${r.updated}${r.failed ? `, ${r.failed} failed` : ""}${r.skipped ? `, ${r.skipped} skipped` : ""}${tail}`,
+        r.failed && !r.updated ? "error" : "success",
+      );
+    },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Geocoding failed", "error"),
+  });
 
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
@@ -37,7 +52,28 @@ export function StoreGeofencesPage() {
       <PageHeader
         title="Store geofences"
         description="Set coordinates for the walkthrough GPS check-in. Stores without coordinates skip the geofence."
-        actions={total > 0 ? <Badge tone={configured === total ? "success" : "warning"}>{configured}/{total} set</Badge> : undefined}
+        actions={
+          <div className="flex items-center gap-2">
+            {total > 0 && (
+              <Badge tone={configured === total ? "success" : "warning"}>
+                {configured}/{total} set
+              </Badge>
+            )}
+            <Button
+              variant="secondary"
+              onClick={() => geocodeAll.mutate()}
+              disabled={geocodeAll.isPending || configured === total}
+              title="Derive coordinates from store addresses"
+            >
+              {geocodeAll.isPending ? (
+                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+              ) : (
+                <Wand2 className="mr-1.5 h-4 w-4" />
+              )}
+              Geocode all missing
+            </Button>
+          </div>
+        }
       />
 
       <div className="mb-4 flex items-center gap-2 rounded-md ring-1 ring-inset ring-zinc-200 bg-white px-3">
@@ -65,7 +101,9 @@ export function StoreGeofencesPage() {
       ) : (
         <div className="space-y-2">
           {filtered.map((s) => (
-            <StoreRow key={s.id} store={s} />
+            // Key includes coords so the row reseeds its inputs after a
+            // geocode / save updates the underlying store.
+            <StoreRow key={`${s.id}:${s.latitude}:${s.longitude}:${s.geofence_radius_m}`} store={s} />
           ))}
           {!filtered.length && <div className="py-10 text-center text-sm text-zinc-400">No stores match.</div>}
         </div>
@@ -100,6 +138,15 @@ function StoreRow({ store }: { store: StoreGeo }) {
       toast.push("Geofence saved", "success");
     },
     onError: (e) => toast.push(e instanceof Error ? e.message : "Save failed", "error"),
+  });
+
+  const geocode = useMutation({
+    mutationFn: () => geocodeStore(store.id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["stores-geo"] });
+      toast.push("Geocoded from address", "success");
+    },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Geocoding failed", "error"),
   });
 
   function useMyLocation() {
@@ -158,7 +205,16 @@ function StoreRow({ store }: { store: StoreGeo }) {
           </div>
         </div>
 
-        <div className="flex justify-end">
+        <div className="flex items-center justify-end gap-2">
+          <Button
+            variant="secondary"
+            onClick={() => geocode.mutate()}
+            disabled={geocode.isPending}
+            title="Derive coordinates from this store's address"
+          >
+            {geocode.isPending ? <Loader2 className="mr-1.5 h-4 w-4 animate-spin" /> : <Wand2 className="mr-1.5 h-4 w-4" />}
+            Geocode from address
+          </Button>
           <Button onClick={() => save.mutate()} disabled={!dirty || save.isPending}>
             {save.isPending ? "Saving…" : "Save"}
           </Button>

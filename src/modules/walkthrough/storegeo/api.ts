@@ -61,3 +61,25 @@ export async function updateStoreGeo(storeId: string, geo: GeoUpdate): Promise<S
   });
   return store;
 }
+
+/** Derive a single store's coordinates from its address (Google geocoding). */
+export async function geocodeStore(storeId: string): Promise<StoreGeo> {
+  const { store } = await request<{ store: StoreGeo }>(`${FN}?action=geocode-store`, {
+    method: "POST",
+    body: JSON.stringify({ store_id: storeId }),
+  });
+  return store;
+}
+
+export interface GeocodeMissingResult {
+  updated: number;
+  failed: number;
+  skipped: number;
+  remaining: number;
+  results: { number: string; status: string; reason?: string }[];
+}
+
+/** Geocode a batch of the caller's stores that have no coordinates yet. */
+export async function geocodeMissing(): Promise<GeocodeMissingResult> {
+  return request<GeocodeMissingResult>(`${FN}?action=geocode-missing`, { method: "POST" });
+}
