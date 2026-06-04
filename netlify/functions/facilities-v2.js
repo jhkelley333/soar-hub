@@ -807,6 +807,91 @@ export const handler = async (event) => {
       return respond(200, { ok: true });
     }
 
+    // ── GET NOTIFICATIONS ──
+    // Aggregated unread-message feed for the comms bell. One entry per
+    // ticket (in the caller's store scope) that has unread messages —
+    // "unread" = a ticket_messages row whose author isn't the caller and
+    // whose created_at is after the caller's ticket_views.last_seen_at.
+    // Newest-first; carries a preview of the latest unread message and a
+    // per-ticket unread count, plus a grand total for the badge.
+    if (action === "getNotifications") {
+      const storeAccess = await getStoresForUser(supabase, profile);
+      // Bound to the most recent tickets so the all-scope (admin/COO/VP)
+      // case doesn't pull the entire message history each poll. Unread
+      // comms live on recently-active tickets anyway.
+      let tq = supabase
+        .from("tickets")
+        .select("id, wo_number, store_number, store_name")
+        .order("date_submitted", { ascending: false })
+        .limit(800);
+      if (!storeAccess.all && storeAccess.stores.length) {
+        tq = tq.in("store_number", storeAccess.stores);
+      } else if (!storeAccess.all) {
+        return respond(200, { ok: true, notifications: [], total: 0 });
+      }
+      const { data: tix, error: tErr } = await tq;
+      if (tErr) throw tErr;
+
+      const ids = (tix || []).map((t) => t.id);
+      if (!ids.length) return respond(200, { ok: true, notifications: [], total: 0 });
+      const ticketById = new Map((tix || []).map((t) => [t.id, t]));
+
+      const [{ data: msgs }, { data: views }] = await Promise.all([
+        supabase
+          .from("ticket_messages")
+          .select("ticket_id, user_id, user_name, user_role, message, thread_type, created_at")
+          .in("ticket_id", ids)
+          .order("created_at", { ascending: true }),
+        supabase
+          .from("ticket_views")
+          .select("ticket_id, last_seen_at")
+          .eq("user_id", userId)
+          .in("ticket_id", ids),
+      ]);
+
+      const seenById = new Map();
+      for (const v of views || []) seenById.set(v.ticket_id, v.last_seen_at);
+
+      // Aggregate unread per ticket; messages arrive ascending so the
+      // last one we keep per ticket is the newest unread.
+      const agg = new Map(); // ticket_id -> { count, latest }
+      for (const m of msgs || []) {
+        if (m.user_id === userId) continue; // ignore my own messages
+        const seen = seenById.get(m.ticket_id);
+        if (seen && new Date(m.created_at).getTime() <= new Date(seen).getTime()) continue;
+        const cur = agg.get(m.ticket_id) || { count: 0, latest: null };
+        cur.count += 1;
+        cur.latest = m;
+        agg.set(m.ticket_id, cur);
+      }
+
+      const trunc = (s, n) => {
+        const t = String(s || "").replace(/\s+/g, " ").trim();
+        return t.length > n ? `${t.slice(0, n - 1)}…` : t;
+      };
+      let total = 0;
+      const notifications = [];
+      for (const [tid, { count, latest }] of agg) {
+        const t = ticketById.get(tid);
+        if (!t || !latest) continue;
+        total += count;
+        notifications.push({
+          ticket_id:    tid,
+          wo_number:    t.wo_number || null,
+          store_number: t.store_number || null,
+          store_name:   t.store_name || null,
+          unread_count: count,
+          thread_type:  latest.thread_type || "internal",
+          from_name:    latest.user_name || (latest.user_role === "REPLY" ? "Reply" : "Someone"),
+          is_reply:     latest.user_role === "REPLY",
+          preview:      trunc(latest.message, 120),
+          at:           latest.created_at,
+        });
+      }
+      notifications.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+      return respond(200, { ok: true, notifications: notifications.slice(0, 50), total });
+    }
+
     // ── GET REPLACEMENTS ──
     // Returns the UNION of:
     //   (a) tickets where replacement_model IS NOT NULL — equipment
