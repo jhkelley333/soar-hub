@@ -1,9 +1,11 @@
 // Walkthrough builder — wizard orchestrator.
 //
-// Five steps: Details → Structure → Scoring → Rules → Review. The draft lives
+// Four steps: Details → Sections → Scoring → Review. The draft lives
 // in useTemplateDraft (localStorage-backed); Save persists to
 // walkthrough_templates. An inactive template saves as a draft even if
 // incomplete; activating it requires a clean validation pass.
+//
+// Global rules (photo-on-fail, allow-N/A) live inside the Scoring step.
 
 import { useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
@@ -19,7 +21,6 @@ import { useTemplateDraft } from "./useTemplateDraft";
 import { StepDetails } from "./steps/StepDetails";
 import { StepStructure } from "./steps/StepStructure";
 import { StepScoring } from "./steps/StepScoring";
-import { StepRules } from "./steps/StepRules";
 import { StepReview } from "./steps/StepReview";
 import { WalkthroughPreview } from "../WalkthroughPreview";
 import type { WalkthroughTemplate } from "../types";
@@ -28,7 +29,6 @@ const STEPS = [
   { id: "details", label: "Details" },
   { id: "structure", label: "Sections" },
   { id: "scoring", label: "Scoring" },
-  { id: "rules", label: "Rules" },
   { id: "review", label: "Review" },
 ] as const;
 
@@ -178,8 +178,7 @@ export function WalkthroughBuilderPage() {
         {step === 0 && <StepDetails store={store} />}
         {step === 1 && <StepStructure store={store} />}
         {step === 2 && <StepScoring store={store} />}
-        {step === 3 && <StepRules store={store} />}
-        {step === 4 && <StepReview store={store} />}
+        {step === 3 && <StepReview store={store} />}
       </div>
 
       {/* Footer nav */}
