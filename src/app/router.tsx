@@ -181,6 +181,17 @@ export const router = createBrowserRouter([
         ),
       },
       {
+        // Live runner for a real assignment (drafts + photos sync; Publish
+        // calls the submit transaction). Get an id from the dev-seed action
+        // until the assignment UI lands.
+        path: "walkthrough/run/:assignmentId",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <WalkthroughRunner />
+          </ProtectedRoute>
+        ),
+      },
+      {
         // Directory (mobile-first preview). Real org data via
         // fetchMyTree() — RLS-scoped to the caller. Pinned section
         // adapts to the caller's role; segmented control switches

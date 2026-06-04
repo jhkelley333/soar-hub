@@ -31,8 +31,9 @@ import type { CheckIn as CheckInRecord, GeofenceResult } from "./types";
 export interface CheckInStore {
   sdi: string;
   name: string;
-  lat: number;
-  lng: number;
+  /** null when the store has no coordinates on file (geofence skipped). */
+  lat: number | null;
+  lng: number | null;
   radiusM?: number;
 }
 
@@ -77,6 +78,7 @@ const RESULT_UI: Record<
 
 export function CheckIn({ assignmentId, store, onCheckIn, onBack }: CheckInProps) {
   const radiusM = store.radiusM ?? DEFAULT_GEOFENCE_RADIUS_M;
+  const hasGeo = store.lat != null && store.lng != null;
   const [phase, setPhase] = useState<Phase>("idle");
   const [fix, setFix] = useState<GeolocationPosition | null>(null);
   const [evalResult, setEvalResult] = useState<GeofenceEval | null>(null);
@@ -92,13 +94,19 @@ export function CheckIn({ assignmentId, store, onCheckIn, onBack }: CheckInProps
     navigator.geolocation.getCurrentPosition(
       (pos) => {
         setFix(pos);
-        setEvalResult(
-          evaluateGeofence(
-            { lat: pos.coords.latitude, lng: pos.coords.longitude },
-            { lat: store.lat, lng: store.lng },
-            radiusM,
-          ),
-        );
+        // No store coordinates on file → can't geofence; let the GM proceed,
+        // recorded as on-site (unverified).
+        if (store.lat != null && store.lng != null) {
+          setEvalResult(
+            evaluateGeofence(
+              { lat: pos.coords.latitude, lng: pos.coords.longitude },
+              { lat: store.lat, lng: store.lng },
+              radiusM,
+            ),
+          );
+        } else {
+          setEvalResult(null);
+        }
         setPhase("located");
       },
       (err) => setPhase(err.code === err.PERMISSION_DENIED ? "denied" : "unavailable"),
@@ -112,7 +120,8 @@ export function CheckIn({ assignmentId, store, onCheckIn, onBack }: CheckInProps
   }, [locate]);
 
   const result = evalResult?.result;
-  const canStartOnSite = result === "on_site";
+  const locatedNoGeo = phase === "located" && !hasGeo && !!fix;
+  const canStartOnSite = result === "on_site" || locatedNoGeo;
   const canStartException =
     result === "nearby" && exceptionReason.trim().length >= 4;
 
@@ -177,6 +186,17 @@ export function CheckIn({ assignmentId, store, onCheckIn, onBack }: CheckInProps
             icon={XCircle}
             title="Couldn't get a fix"
             body="No GPS signal right now. Step outside the cooler and try again."
+          />
+        )}
+
+        {/* Located, but no geofence configured for this store */}
+        {locatedNoGeo && (
+          <StatusCard
+            ring="ring-midnight-100 bg-white"
+            tone="text-accent-600"
+            icon={MapPin}
+            title="Location captured"
+            body="No geofence is set for this store yet, so we can't verify on-site. You can start — the check-in is recorded."
           />
         )}
 
