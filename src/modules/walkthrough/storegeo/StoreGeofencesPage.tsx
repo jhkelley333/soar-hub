@@ -14,7 +14,7 @@ import { useToast } from "@/shared/ui/Toaster";
 import { Field, NumberInput, TextInput } from "../builder/controls";
 import { geocodeMissing, geocodeStore, listStoresGeo, updateStoreGeo, type StoreGeo } from "./api";
 
-export function StoreGeofencesPage() {
+export function StoreGeofencesPage({ embedded = false }: { embedded?: boolean } = {}) {
   const [q, setQ] = useState("");
   const qc = useQueryClient();
   const toast = useToast();
@@ -47,34 +47,40 @@ export function StoreGeofencesPage() {
   const configured = (query.data ?? []).filter((s) => s.latitude != null && s.longitude != null).length;
   const total = query.data?.length ?? 0;
 
+  const actions = (
+    <div className="flex items-center gap-2">
+      {total > 0 && (
+        <Badge tone={configured === total ? "success" : "warning"}>
+          {configured}/{total} set
+        </Badge>
+      )}
+      <Button
+        variant="secondary"
+        onClick={() => geocodeAll.mutate()}
+        disabled={geocodeAll.isPending || configured === total}
+        title="Derive coordinates from store addresses"
+      >
+        {geocodeAll.isPending ? (
+          <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+        ) : (
+          <Wand2 className="mr-1.5 h-4 w-4" />
+        )}
+        Geocode all missing
+      </Button>
+    </div>
+  );
+
   return (
-    <div className="mx-auto max-w-3xl">
-      <PageHeader
-        title="Store geofences"
-        description="Set coordinates for the walkthrough GPS check-in. Stores without coordinates skip the geofence."
-        actions={
-          <div className="flex items-center gap-2">
-            {total > 0 && (
-              <Badge tone={configured === total ? "success" : "warning"}>
-                {configured}/{total} set
-              </Badge>
-            )}
-            <Button
-              variant="secondary"
-              onClick={() => geocodeAll.mutate()}
-              disabled={geocodeAll.isPending || configured === total}
-              title="Derive coordinates from store addresses"
-            >
-              {geocodeAll.isPending ? (
-                <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
-              ) : (
-                <Wand2 className="mr-1.5 h-4 w-4" />
-              )}
-              Geocode all missing
-            </Button>
-          </div>
-        }
-      />
+    <div className={embedded ? undefined : "mx-auto max-w-3xl"}>
+      {embedded ? (
+        <div className="mb-4 flex justify-end">{actions}</div>
+      ) : (
+        <PageHeader
+          title="Store geofences"
+          description="Set coordinates for the walkthrough GPS check-in. Stores without coordinates skip the geofence."
+          actions={actions}
+        />
+      )}
 
       <div className="mb-4 flex items-center gap-2 rounded-md ring-1 ring-inset ring-zinc-200 bg-white px-3">
         <Search className="h-4 w-4 text-zinc-400" />

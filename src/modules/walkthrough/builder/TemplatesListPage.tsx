@@ -15,7 +15,7 @@ import { useToast } from "@/shared/ui/Toaster";
 import { getTemplate, listTemplates, setTemplateActive, type TemplateSummary } from "./api";
 import { WalkthroughPreview } from "../WalkthroughPreview";
 
-export function TemplatesListPage() {
+export function TemplatesListPage({ embedded = false }: { embedded?: boolean } = {}) {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const toast = useToast();
@@ -39,18 +39,24 @@ export function TemplatesListPage() {
     onError: (e) => toast.push(e instanceof Error ? e.message : "Update failed", "error"),
   });
 
+  const newBtn = (
+    <Button onClick={() => navigate("/admin/walkthrough-templates/new")}>
+      <Plus className="mr-1.5 h-4 w-4" />
+      New template
+    </Button>
+  );
+
   return (
-    <div className="mx-auto max-w-4xl">
-      <PageHeader
-        title="Walkthrough templates"
-        description="Checklists GMs run in the field. Build, version, and activate."
-        actions={
-          <Button onClick={() => navigate("/admin/walkthrough-templates/new")}>
-            <Plus className="mr-1.5 h-4 w-4" />
-            New template
-          </Button>
-        }
-      />
+    <div className={embedded ? undefined : "mx-auto max-w-4xl"}>
+      {embedded ? (
+        <div className="mb-4 flex justify-end">{newBtn}</div>
+      ) : (
+        <PageHeader
+          title="Walkthrough templates"
+          description="Checklists GMs run in the field. Build, version, and activate."
+          actions={newBtn}
+        />
+      )}
 
       {query.isLoading ? (
         <div className="space-y-3">
