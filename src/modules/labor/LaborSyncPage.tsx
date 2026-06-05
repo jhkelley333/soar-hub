@@ -63,6 +63,19 @@ export function LaborSyncPage() {
 
   const latest = q.data?.latest ?? null;
 
+  // Staleness guard. The sheet normally lags ~1 day (yesterday's numbers land
+  // today), so we flag when the last successful pull is over a day old OR the
+  // latest captured sales date is more than one full day behind today — the
+  // signature of the scheduled poll not firing.
+  const STALE_HOURS = 24;
+  const lastChangedMs = latest?.last_changed_at ? new Date(latest.last_changed_at).getTime() : NaN;
+  const hoursSince = Number.isFinite(lastChangedMs) ? (Date.now() - lastChangedMs) / 3_600_000 : Infinity;
+  const todayMid = new Date();
+  todayMid.setHours(0, 0, 0, 0);
+  const latestMid = latest ? new Date(`${latest.business_date}T00:00:00`) : null;
+  const lagDays = latestMid ? Math.round((todayMid.getTime() - latestMid.getTime()) / 86_400_000) : Infinity;
+  const stale = !q.isLoading && !q.isError && (!latest || hoursSince > STALE_HOURS || lagDays > 1);
+
   return (
     <>
       <PageHeader
@@ -85,6 +98,30 @@ export function LaborSyncPage() {
         <EmptyState title="Couldn't load sync status" description={(q.error as Error)?.message ?? "Try again."} />
       ) : (
         <div className="space-y-5">
+          {stale && (
+            <div className="flex items-start gap-3 rounded-xl border border-amber-200 bg-amber-50 p-4">
+              <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+              <div className="text-sm">
+                <div className="font-semibold text-amber-900">Labor may not be auto-syncing.</div>
+                <p className="mt-1 leading-relaxed text-amber-800">
+                  Last successful pull <strong>{fmtAgo(latest?.last_changed_at ?? null)}</strong>
+                  {latest ? (
+                    <>
+                      {" "}
+                      ({fmtStamp(latest.last_changed_at)}); latest sales date {fmtDayLabel(latest.business_date)}.
+                    </>
+                  ) : (
+                    "."
+                  )}{" "}
+                  The snapshot is set to poll every 15 minutes during business hours — if it keeps lagging, the scheduled{" "}
+                  <code className="rounded bg-amber-100 px-1">labor-snapshot</code> function in Netlify likely isn't firing.
+                  Hit <strong>Sync now</strong> to capture today, then verify the schedule in Netlify (Functions →
+                  labor-snapshot).
+                </p>
+              </div>
+            </div>
+          )}
+
           {/* Latest-capture summary tiles */}
           <div className="grid gap-4 md:grid-cols-4">
             <Tile label="Latest sales date" value={latest ? fmtDayLabel(latest.business_date) : "—"} />
