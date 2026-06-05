@@ -71,8 +71,14 @@ export function PafTable({
 }) {
   const { profile } = useAuth();
   const isAdmin = profile?.role === "admin";
+  // The owner can always edit & resubmit their own; an SDO/RVP and above can
+  // resubmit on a submitter's behalf (the list is already scope-filtered, so
+  // anything they can see here is in their scope). Server re-checks.
+  const onBehalfRoles = ["sdo", "rvp", "vp", "coo", "admin"];
   const canEditResubmit = (p: PafRow) =>
-    !!onEdit && p.status === "Rejected" && p.submitter_id === profile?.id;
+    !!onEdit &&
+    p.status === "Rejected" &&
+    (p.submitter_id === profile?.id || onBehalfRoles.includes(profile?.role ?? ""));
   const [detail, setDetail] = useState<PafRow | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("created_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");

@@ -84,6 +84,8 @@ export type PafSubmitInput = Partial<
     | "approved_at"
     | "approved_by"
     | "approved_by_email"
+    | "resubmitted_by_id"
+    | "resubmitted_by_email"
     | "payroll_processed_at"
     | "payroll_processed_by"
     | "archived"

@@ -112,6 +112,12 @@ export interface PafRow {
   payroll_processed_at: string | null;
   payroll_processed_by: string | null;
 
+  // On-behalf resubmit: the leader (SDO/RVP+) who edited & resubmitted a
+  // rejected PAF for the original submitter. CC'd on later outcome emails.
+  // Null when the owner resubmits their own.
+  resubmitted_by_id: string | null;
+  resubmitted_by_email: string | null;
+
   // SDO bonus approval workflow
   sdo_approver_id: string | null;
   sdo_decided_at: string | null;

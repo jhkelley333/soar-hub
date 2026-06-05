@@ -261,6 +261,8 @@ export function PafForm({
   const myStores = storesQuery.data?.stores ?? [];
 
   const { profile } = useAuth();
+  // True when a leader is editing a rejected PAF someone else submitted.
+  const onBehalf = isEdit && !!profile && editPaf!.submitter_id !== profile.id;
   const [state, setState] = useState<FormState>({});
   const [error, setError] = useState<string | null>(null);
   const [offerName, setOfferName] = useState<string | null>(null);
@@ -587,11 +589,13 @@ export function PafForm({
       {isEdit && (
         <div className="rounded-md border border-amber-300 bg-amber-50 p-3">
           <div className="text-sm font-semibold text-amber-900">
-            Editing a rejected PAF
+            {onBehalf
+              ? `Editing on behalf of ${editPaf?.submitter_name || editPaf?.submitter_email}`
+              : "Editing a rejected PAF"}
           </div>
           <p className="mt-0.5 text-xs text-amber-800">
             Make your changes and resubmit — it goes back through the normal
-            review flow.
+            review flow{onBehalf ? ", and stays under their name" : ""}.
           </p>
           {editPaf?.rejection_reason && (
             <p className="mt-1.5 text-xs text-amber-900">
