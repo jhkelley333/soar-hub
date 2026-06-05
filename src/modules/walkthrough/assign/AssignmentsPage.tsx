@@ -63,7 +63,7 @@ export function AssignmentsPage({ embedded = false }: { embedded?: boolean } = {
           </CardBody>
         </Card>
       ) : !assignments.data?.length ? (
-        <EmptyState title="No assignments yet" description="Create one to send a walk to a GM." />
+        <EmptyState title="No assignments yet" description="Assign a walk to a GM or DO/SDO — or post a public one anyone in your scope can pick up." />
       ) : (
         <div className="space-y-2">
           {assignments.data.map((a) => (
@@ -87,7 +87,7 @@ export function AssignmentsPage({ embedded = false }: { embedded?: boolean } = {
     <div className="mx-auto max-w-3xl">
       <PageHeader
         title="Walkthrough assignments"
-        description="Assign walks to your GMs and track them through submission."
+        description="Assign walks to GMs or DOs/SDOs — or post a public walk/audit anyone in your scope can pick up."
         actions={newBtn}
       />
       {content}
@@ -100,7 +100,13 @@ type AssignMode = "store" | "leader" | "public";
 const MODE_LABEL: Record<AssignMode, string> = {
   store: "Store team",
   leader: "Leadership",
-  public: "Public",
+  public: "Public · self-serve",
+};
+
+const MODE_HINT: Record<AssignMode, string> = {
+  store: "Assign a specific GM / store-team member at a store.",
+  leader: "Assign a DO or SDO in your scope; they choose the store when they run it.",
+  public: "Anyone in your scope can pick it up from My Walks — no specific assignee. Use this for a public walk or audit.",
 };
 
 function NewAssignmentForm({
@@ -156,20 +162,24 @@ function NewAssignmentForm({
     <Card className="mb-5">
       <CardBody className="space-y-4">
         {/* Who's it for */}
-        <div className="inline-flex rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 text-xs font-medium">
-          {(["store", "leader", "public"] as AssignMode[]).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => setMode(m)}
-              className={cn(
-                "rounded-md px-3 py-1.5 transition",
-                mode === m ? "bg-white text-midnight shadow-sm" : "text-zinc-500 hover:text-midnight",
-              )}
-            >
-              {MODE_LABEL[m]}
-            </button>
-          ))}
+        <div>
+          <div className="mb-1 text-[11px] font-medium uppercase tracking-wide text-zinc-500">Assign to</div>
+          <div className="inline-flex rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 text-xs font-medium">
+            {(["store", "leader", "public"] as AssignMode[]).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => setMode(m)}
+                className={cn(
+                  "rounded-md px-3 py-1.5 transition",
+                  mode === m ? "bg-white text-midnight shadow-sm" : "text-zinc-500 hover:text-midnight",
+                )}
+              >
+                {MODE_LABEL[m]}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1.5 text-[11px] text-zinc-500">{MODE_HINT[mode]}</p>
         </div>
 
         <div className="grid grid-cols-2 gap-4">
