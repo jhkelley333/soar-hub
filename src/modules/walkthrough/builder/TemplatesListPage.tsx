@@ -151,7 +151,10 @@ function TemplateCard({
         <div className="grid h-9 w-9 place-items-center rounded-lg bg-accent/10 text-accent">
           <FileText className="h-4.5 w-4.5" strokeWidth={1.75} />
         </div>
-        <Badge tone={t.isActive ? "success" : "warning"}>{t.isActive ? "Published" : "Draft"}</Badge>
+        <div className="flex items-center gap-1.5">
+          {t.isPublic && <Badge tone="info">Public</Badge>}
+          <Badge tone={t.isActive ? "success" : "warning"}>{t.isActive ? "Published" : "Draft"}</Badge>
+        </div>
       </div>
 
       <button type="button" onClick={onEdit} className="mt-3 text-left">

@@ -15,6 +15,7 @@ export interface TemplateRow {
   type: WalkthroughTemplate["type"];
   version: string;
   is_active: boolean;
+  is_public?: boolean;
   sections: WalkthroughTemplate["sections"];
   scoring: WalkthroughTemplate["scoring"];
   tiers: WalkthroughTemplate["tiers"];
@@ -28,6 +29,7 @@ export interface TemplateSummary {
   type: WalkthroughTemplate["type"];
   version: string;
   isActive: boolean;
+  isPublic: boolean;
   sectionCount: number;
   itemCount: number;
   updatedAt: string;
@@ -44,6 +46,7 @@ function rowToDraft(row: TemplateRow): TemplateDraft {
     tiers: row.tiers,
     globalRules: row.global_rules ?? {},
     isActive: row.is_active,
+    isPublic: row.is_public ?? false,
   };
 }
 
@@ -53,6 +56,7 @@ function draftToRow(draft: TemplateDraft) {
     type: draft.type,
     version: draft.version.trim(),
     is_active: draft.isActive,
+    is_public: draft.isPublic,
     sections: draft.sections,
     scoring: draft.scoring,
     tiers: draft.tiers,
@@ -63,7 +67,7 @@ function draftToRow(draft: TemplateDraft) {
 export async function listTemplates(): Promise<TemplateSummary[]> {
   const { data, error } = await supabase
     .from(TABLE)
-    .select("id, name, type, version, is_active, sections, updated_at")
+    .select("id, name, type, version, is_active, is_public, sections, updated_at")
     .order("updated_at", { ascending: false });
   if (error) throw error;
   return (data ?? []).map((r) => {
@@ -74,6 +78,7 @@ export async function listTemplates(): Promise<TemplateSummary[]> {
       type: r.type,
       version: r.version,
       isActive: r.is_active,
+      isPublic: !!r.is_public,
       sectionCount: sections.length,
       itemCount: sections.reduce((n, s) => n + (s.items?.length ?? 0), 0),
       updatedAt: r.updated_at,

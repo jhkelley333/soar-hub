@@ -1,7 +1,7 @@
 // Builder step 1 — template details.
 
 import { Card, CardBody } from "@/shared/ui/Card";
-import { Field, Select, TextInput } from "../controls";
+import { Field, Select, TextInput, Toggle } from "../controls";
 import { TEMPLATE_TYPES, type TemplateDraftStore } from "../useTemplateDraft";
 
 export function StepDetails({ store }: { store: TemplateDraftStore }) {
@@ -33,6 +33,15 @@ export function StepDetails({ store }: { store: TemplateDraftStore }) {
               placeholder="1.0"
             />
           </Field>
+        </div>
+
+        <div className="border-t border-zinc-100 pt-4">
+          <Toggle
+            checked={draft.isPublic}
+            onChange={(v) => setMeta({ isPublic: v })}
+            label="Public — anyone can self-start this"
+            hint="When published, anyone who runs walkthroughs sees it under My Walks → 'Available to pick up' and can do it at one of their stores, no assignment needed. Great for self-audits."
+          />
         </div>
       </CardBody>
     </Card>

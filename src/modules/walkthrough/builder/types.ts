@@ -22,6 +22,8 @@ export interface TemplateDraft {
   tiers: { green: number; yellow: number };
   globalRules: { photoOnEveryFail?: boolean; allowNa?: boolean };
   isActive: boolean;
+  /** Public/self-serve: anyone can start it from My Walks at their store. */
+  isPublic: boolean;
 }
 
 export const DEFAULT_SCORING: ScoringMap = { pass: 1, watch: 0.6, fail: 0 };
@@ -37,6 +39,7 @@ export function emptyDraft(): TemplateDraft {
     tiers: { ...DEFAULT_TIERS },
     globalRules: { photoOnEveryFail: true, allowNa: false },
     isActive: false,
+    isPublic: false,
   };
 }
 
