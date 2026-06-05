@@ -162,6 +162,8 @@ export interface UpdateUserInput {
   user_id: string;
   full_name?: string | null;
   phone?: string | null;
+  // Email correction (DO+ only, server-enforced). Send only when changing it.
+  email?: string;
   role?: UserRole;
   scope_type?: "store" | "district" | "area" | "region" | "global";
   scope_id?: string | null;
@@ -171,8 +173,15 @@ export interface UpdateUserInput {
   gm_assigned_date?: string | null;
 }
 
-export function updateUser(input: UpdateUserInput): Promise<{ ok: true }> {
-  return request<{ ok: true }>(`${FN}?action=update-user`, {
+export interface UpdateUserResponse {
+  ok: true;
+  // Set to the corrected address when the email change re-issued an invite
+  // (the member hadn't activated yet); null otherwise.
+  email_reissued?: string | null;
+}
+
+export function updateUser(input: UpdateUserInput): Promise<UpdateUserResponse> {
+  return request<UpdateUserResponse>(`${FN}?action=update-user`, {
     method: "POST",
     body: JSON.stringify(input),
   });

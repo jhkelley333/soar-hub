@@ -72,6 +72,7 @@ export function EditMemberModal({
   });
 
   const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [role, setRole] = useState<UserRole>("shift_manager");
   const [scopeId, setScopeId] = useState<string>("");
@@ -90,6 +91,7 @@ export function EditMemberModal({
   useEffect(() => {
     if (open && member) {
       setFullName(member.full_name ?? "");
+      setEmail(member.email ?? "");
       setPhone(member.phone ? formatPhoneForDisplay(member.phone) : "");
       setRole(member.role);
       // Take the first scope as the source of truth (single-scope model)
@@ -161,8 +163,11 @@ export function EditMemberModal({
 
   const update = useMutation({
     mutationFn: (input: UpdateUserInput) => updateUser(input),
-    onSuccess: () => {
+    onSuccess: (data) => {
       toast.push("Saved.", "success");
+      if (data.email_reissued) {
+        toast.push(`Invite re-sent to ${data.email_reissued}.`, "success");
+      }
       qc.invalidateQueries({ queryKey: ["my-team"] });
     },
     onError: (e: unknown) => setError((e as Error)?.message ?? "Save failed."),
@@ -207,6 +212,11 @@ export function EditMemberModal({
 
   if (!member) return null;
 
+  // DO and above may correct a mistyped email; GMs cannot.
+  const canEditEmail = (["do", "sdo", "rvp", "vp", "coo", "admin"] as UserRole[]).includes(
+    managerRole
+  );
+
   function submitEdits() {
     if (!member) return;
     setError(null);
@@ -235,9 +245,23 @@ export function EditMemberModal({
       }
     }
 
+    // Email is sent only when a DO+ actually changed it.
+    let emailField: string | undefined = undefined;
+    if (canEditEmail) {
+      const trimmedEmail = email.trim().toLowerCase();
+      if (trimmedEmail !== (member.email ?? "").toLowerCase()) {
+        if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(trimmedEmail)) {
+          setError("Enter a valid email address.");
+          return;
+        }
+        emailField = trimmedEmail;
+      }
+    }
+
     update.mutate({
       user_id: member.id,
       full_name: fullName.trim(),
+      ...(emailField ? { email: emailField } : {}),
       phone: normalizedPhone,
       role,
       scope_type: scopeKind,
@@ -309,21 +333,43 @@ export function EditMemberModal({
         <div className="py-6 text-center text-sm text-zinc-500">Loading…</div>
       ) : (
         <div className="space-y-4">
-          {/* Read-only header info */}
-          <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
-            <div>
-              <span className="text-zinc-500">Email:</span> {member.email}
+          {/* Read-only header info. Email shows here unless a DO+ can edit
+              it below (active members only). */}
+          {(!(canEditEmail && member.is_active) || !member.is_active) && (
+            <div className="rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs text-zinc-600">
+              {!(canEditEmail && member.is_active) && (
+                <div>
+                  <span className="text-zinc-500">Email:</span> {member.email}
+                </div>
+              )}
+              {!member.is_active && (
+                <div className="mt-1 text-amber-700 font-medium">
+                  This user is currently inactive.
+                </div>
+              )}
             </div>
-            {!member.is_active && (
-              <div className="mt-1 text-amber-700 font-medium">
-                This user is currently inactive.
-              </div>
-            )}
-          </div>
+          )}
 
           {/* Editable fields (only when active) */}
           {member.is_active && (
             <>
+              {canEditEmail && (
+                <div>
+                  <Label htmlFor="edit-email">Email</Label>
+                  <Input
+                    id="edit-email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="name@example.com"
+                  />
+                  <p className="mt-1 text-[11px] text-zinc-500">
+                    Fix a mistyped sign-in address. If they haven't activated
+                    their account yet, a fresh invite is sent to the new email.
+                  </p>
+                </div>
+              )}
+
               <div>
                 <Label htmlFor="edit-name">Full name</Label>
                 <Input
