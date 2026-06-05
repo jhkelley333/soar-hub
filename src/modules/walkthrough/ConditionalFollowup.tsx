@@ -10,9 +10,10 @@
 // reads `response` + emits intent through callbacks.
 
 import { useRef } from "react";
-import { Camera, RotateCw, X, Flag } from "lucide-react";
+import { Camera, Mic, RotateCw, X, Flag } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { requirementStatus } from "./rules";
+import { useDictation } from "./useDictation";
 import type {
   FollowupRule,
   ItemResponse,
@@ -57,6 +58,15 @@ export function ConditionalFollowup({
   const status = requirementStatus(rule, response);
   const tone = rule?.trigger === "fail" ? "bad" : "warn";
 
+  // Voice dictation appends to the current value, so a GM can speak the issue
+  // instead of typing it. Hidden where the Web Speech API isn't available.
+  const reasonVoice = useDictation((t) =>
+    onReason(`${response.reason ?? ""}${response.reason ? " " : ""}${t}`.trim()),
+  );
+  const noteVoice = useDictation((t) =>
+    onNote(`${response.note ?? ""}${response.note ? " " : ""}${t}`.trim()),
+  );
+
   return (
     <div
       className={cn(
@@ -91,8 +101,10 @@ export function ConditionalFollowup({
                           key={opt}
                           type="button"
                           onClick={() => onReason(active ? "" : opt)}
+                          aria-pressed={active}
+                          aria-label={`Reason: ${opt}`}
                           className={cn(
-                            "min-h-[36px] px-3 rounded-full text-[12.5px] font-medium ring-1 transition",
+                            "min-h-[44px] px-3.5 rounded-full text-[13px] font-medium ring-1 transition",
                             active
                               ? "bg-midnight-900 text-white ring-midnight-900"
                               : "bg-white text-midnight-700 ring-midnight-200 hover:ring-midnight-300",
@@ -104,12 +116,16 @@ export function ConditionalFollowup({
                     })}
                   </div>
                 ) : (
-                  <input
-                    value={response.reason ?? ""}
-                    onChange={(e) => onReason(e.target.value)}
-                    placeholder="What's the issue?"
-                    className="w-full h-10 rounded-lg ring-1 ring-midnight-200 bg-white px-3 text-[13px] text-midnight-800 placeholder:text-midnight-300 outline-none focus:ring-accent-500"
-                  />
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={response.reason ?? ""}
+                      onChange={(e) => onReason(e.target.value)}
+                      placeholder="What's the issue?"
+                      aria-label="Reason for the issue"
+                      className="flex-1 h-11 rounded-lg ring-1 ring-midnight-200 bg-white px-3 text-[14px] text-midnight-900 placeholder:text-midnight-400 outline-none focus:ring-accent-500"
+                    />
+                    <MicButton voice={reasonVoice} label="Dictate the reason" />
+                  </div>
                 )}
               </Field>
             )}
@@ -160,13 +176,17 @@ export function ConditionalFollowup({
             {/* Note */}
             {status.needNote && (
               <Field label="Note" required done={status.haveNote}>
-                <textarea
-                  rows={2}
-                  value={response.note ?? ""}
-                  onChange={(e) => onNote(e.target.value)}
-                  placeholder="Add detail for the DO…"
-                  className="w-full rounded-lg ring-1 ring-midnight-200 bg-white px-3 py-2 text-[13px] text-midnight-800 placeholder:text-midnight-300 outline-none resize-none focus:ring-accent-500"
-                />
+                <div className="flex items-start gap-2">
+                  <textarea
+                    rows={2}
+                    value={response.note ?? ""}
+                    onChange={(e) => onNote(e.target.value)}
+                    placeholder="Add detail for the DO…"
+                    aria-label="Note for the DO"
+                    className="flex-1 rounded-lg ring-1 ring-midnight-200 bg-white px-3 py-2 text-[14px] text-midnight-900 placeholder:text-midnight-400 outline-none resize-none focus:ring-accent-500"
+                  />
+                  <MicButton voice={noteVoice} label="Dictate the note" />
+                </div>
               </Field>
             )}
 
@@ -185,6 +205,32 @@ export function ConditionalFollowup({
         )}
       </div>
     </div>
+  );
+}
+
+function MicButton({
+  voice,
+  label,
+}: {
+  voice: ReturnType<typeof useDictation>;
+  label: string;
+}) {
+  if (!voice.supported) return null;
+  return (
+    <button
+      type="button"
+      onClick={voice.toggle}
+      aria-label={voice.listening ? "Stop dictation" : label}
+      aria-pressed={voice.listening}
+      className={cn(
+        "grid h-11 w-11 shrink-0 place-items-center rounded-lg ring-1 transition",
+        voice.listening
+          ? "bg-bad/15 text-bad ring-bad animate-pulse"
+          : "bg-white text-midnight-500 ring-midnight-200 hover:ring-midnight-300 active:bg-midnight-50",
+      )}
+    >
+      <Mic className="h-[18px] w-[18px]" strokeWidth={2} />
+    </button>
   );
 }
 
