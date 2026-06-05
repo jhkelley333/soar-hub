@@ -18,6 +18,9 @@ export type UserRole =
   | "vp"
   | "coo"
   | "payroll"
+  | "accounting"
+  | "facilities"
+  | "human_resources"
   | "admin";
 
 // Hourly store-level roles that all share Shift Manager's permission tier.
@@ -140,7 +143,12 @@ export function roleLevel(role: UserRole): number | null {
     case "vp":            return 60;
     case "coo":           return 70;
     case "admin":         return 100;
+    // Horizontal back-office roles sit outside the hierarchy (null), like
+    // payroll — access is granted per-module, not by tier comparison.
     case "payroll":       return null;
+    case "accounting":    return null;
+    case "facilities":    return null;
+    case "human_resources": return null;
   }
 }
 
@@ -158,6 +166,9 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   vp: "VP",
   coo: "COO",
   payroll: "Payroll",
+  accounting: "Accounting",
+  facilities: "Facilities",
+  human_resources: "Human Resources",
   admin: "Admin",
 };
 

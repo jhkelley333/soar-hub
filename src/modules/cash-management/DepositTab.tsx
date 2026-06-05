@@ -47,6 +47,8 @@ export function DepositTab({ storeId, onDone }: { storeId: string | null; onDone
   const [slipName, setSlipName] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [reason, setReason] = useState("");
+  const [carriedAck, setCarriedAck] = useState(false);
+  const [carriedNote, setCarriedNote] = useState("");
 
   const bankCents = toCents(bankCredit);
   const hasBank = bankCredit !== "";
@@ -54,7 +56,9 @@ export function DepositTab({ storeId, onDone }: { storeId: string | null; onDone
   const matched = hasBank && Math.abs(variance) <= tol;
   const overTol = hasBank && Math.abs(variance) > tol;
   const carried = dep?.dsr_carried_over_cents ?? 0;
-  const canVerify = !!dep && hasBank && !!slipPath && (matched || reason.trim().length >= 8);
+  const hasCarry = Math.abs(carried) > 0;
+  const canVerify =
+    !!dep && hasBank && !!slipPath && (matched || reason.trim().length >= 8) && (!hasCarry || carriedAck);
 
   async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -74,7 +78,14 @@ export function DepositTab({ storeId, onDone }: { storeId: string | null; onDone
 
   const verify = useMutation({
     mutationFn: () =>
-      verifyDeposit({ deposit_id: dep!.id, bank_credited_cents: bankCents, slip_path: slipPath!, reason: reason.trim() }),
+      verifyDeposit({
+        deposit_id: dep!.id,
+        bank_credited_cents: bankCents,
+        slip_path: slipPath!,
+        reason: reason.trim(),
+        carried_ack: hasCarry ? carriedAck : undefined,
+        carried_note: hasCarry ? carriedNote.trim() : undefined,
+      }),
     onSuccess: (res) => {
       toast.push(res.flagged ? "Verified with exception — DO/SDO alerted." : "Deposit validated.", "success");
       qc.invalidateQueries({ queryKey: ["cash-overview"] });
@@ -186,19 +197,45 @@ export function DepositTab({ storeId, onDone }: { storeId: string | null; onDone
               <div
                 className={cn(
                   "flex items-center justify-between rounded-md px-3.5 py-3 ring-1 ring-inset",
-                  carried > 0 ? "bg-amber-50 ring-amber-200" : "bg-zinc-50 ring-zinc-200"
+                  hasCarry ? "bg-amber-50 ring-amber-200" : "bg-zinc-50 ring-zinc-200"
                 )}
               >
-                <span className={cn("inline-flex items-center gap-1.5 text-[13px] font-semibold", carried > 0 ? "text-amber-800" : "text-zinc-400")}>
+                <span className={cn("inline-flex items-center gap-1.5 text-[13px] font-semibold", hasCarry ? "text-amber-800" : "text-zinc-400")}>
                   <TrendingUp className="h-3.5 w-3.5" /> Reported by today's DSR
                 </span>
-                <span className={cn("text-lg font-bold tabular-nums", carried > 0 ? "text-amber-800" : "text-zinc-400")}>
+                <span className={cn("text-lg font-bold tabular-nums", hasCarry ? "text-amber-800" : "text-zinc-400")}>
                   {usd(carried)}
                 </span>
               </div>
               <div className="mt-1.5 text-[11px] text-zinc-400">
-                {carried > 0 ? `${usd(carried)} will roll forward to today's DSR.` : "Nothing rolls forward — full deposit cleared."}
+                {hasCarry
+                  ? `${usd(carried)} ${carried < 0 ? "short" : "over"} keeps rolling forward until a DO/SDO resolves it.`
+                  : "Nothing rolls forward — full deposit cleared."}
               </div>
+
+              {hasCarry && (
+                <div className="mt-3 rounded-md bg-amber-50 p-3 ring-1 ring-inset ring-amber-200">
+                  <label className="flex items-start gap-2.5 text-[13px] text-amber-900">
+                    <input
+                      type="checkbox"
+                      checked={carriedAck}
+                      onChange={(e) => setCarriedAck(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 rounded border-amber-300 text-accent focus:ring-accent"
+                    />
+                    <span>
+                      I've <strong>recorded and addressed</strong> this carried-over balance.{" "}
+                      <span className="font-normal text-amber-700">A discrepancy alert also goes to the DO &amp; SDO to resolve.</span>
+                    </span>
+                  </label>
+                  <textarea
+                    value={carriedNote}
+                    onChange={(e) => setCarriedNote(e.target.value)}
+                    rows={2}
+                    placeholder="Optional — how it was recorded / where it was addressed…"
+                    className="mt-2 block w-full resize-y rounded-md border-0 bg-white px-3 py-2 text-sm ring-1 ring-inset ring-amber-200 focus:outline-none focus:ring-2 focus:ring-accent"
+                  />
+                </div>
+              )}
             </div>
 
             {overTol && (
@@ -227,6 +264,9 @@ export function DepositTab({ storeId, onDone }: { storeId: string | null; onDone
                 sub={overTol ? "Mismatch reason required" : `Within ${usd(tol)} tolerance`}
               />
               <CheckRow done={!!slipPath} label="Deposit slip attached" sub="Stamped slip photo on file" />
+              {hasCarry && (
+                <CheckRow done={carriedAck} label="Carried-over addressed" sub="Recorded; alert raised to DO/SDO" />
+              )}
             </div>
             <Button className="mt-4 w-full" disabled={!canVerify || verify.isPending} onClick={() => verify.mutate()}>
               <Check className="h-4 w-4" />

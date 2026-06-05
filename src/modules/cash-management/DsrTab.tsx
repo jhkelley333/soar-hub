@@ -1,7 +1,8 @@
 // Cash Management — DSR & Carried Over ledger with a running balance.
 
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Check, Lock } from "lucide-react";
+import { AlertTriangle, Check, Eye, Lock } from "lucide-react";
 import { Card } from "@/shared/ui/Card";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -9,9 +10,11 @@ import { cn } from "@/lib/cn";
 import { fetchDsr } from "./api";
 import { usd } from "./money";
 import { Figure, Pill } from "./ui";
+import { DepositDetailDrawer } from "./DepositDetailDrawer";
 
 export function DsrTab({ storeId }: { storeId: string | null }) {
   const query = useQuery({ queryKey: ["cash-dsr", storeId], queryFn: () => fetchDsr(storeId) });
+  const [detailId, setDetailId] = useState<string | null>(null);
 
   if (query.isLoading) return <Skeleton className="h-80 w-full" />;
   if (query.isError) return <EmptyState title="Couldn't load the DSR ledger" description={(query.error as Error)?.message} />;
@@ -82,6 +85,7 @@ export function DsrTab({ storeId }: { storeId: string | null }) {
                 <th className="px-4 py-3 font-bold">Variance</th>
                 <th className="px-4 py-3 font-bold">Carried out</th>
                 <th className="px-5 py-3 text-center font-bold">Deposit</th>
+                <th className="px-5 py-3 text-center font-bold">Review</th>
               </tr>
             </thead>
             <tbody>
@@ -107,6 +111,15 @@ export function DsrTab({ storeId }: { storeId: string | null }) {
                     <td className="px-5 py-3 text-center">
                       {h.deposit_verified ? <Pill tone="green" dot>Verified</Pill> : <Pill tone="amber" dot>Pending</Pill>}
                     </td>
+                    <td className="px-5 py-3 text-center">
+                      <button
+                        type="button"
+                        onClick={() => setDetailId(h.closeout_id)}
+                        className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-zinc-500 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50 hover:text-midnight"
+                      >
+                        <Eye className="h-3.5 w-3.5" /> Detail
+                      </button>
+                    </td>
                   </tr>
                 );
               })}
@@ -114,6 +127,8 @@ export function DsrTab({ storeId }: { storeId: string | null }) {
           </table>
         </div>
       </Card>
+
+      <DepositDetailDrawer closeoutId={detailId} open={!!detailId} onClose={() => setDetailId(null)} />
 
       <div className="mt-4 flex items-center gap-2 text-xs text-zinc-400">
         <Lock className="h-3.5 w-3.5" /> Ledger entries are immutable once a closeout is submitted. Adjustments post as new rows.

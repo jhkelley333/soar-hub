@@ -380,7 +380,7 @@ export const router = createBrowserRouter([
         path: "admin/cash-management",
         element: (
           <FlagOrRoleRoute
-            roles={["gm", "shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "do", "sdo", "rvp", "vp", "coo", "admin"]}
+            roles={["gm", "shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "do", "sdo", "rvp", "vp", "coo", "admin", "accounting"]}
             flagKey="cash_management_pilot"
           >
             <CashManagementHubPage />

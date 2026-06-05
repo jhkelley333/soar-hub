@@ -21,7 +21,7 @@ export function CloseoutTab({ storeId, onDone }: { storeId: string | null; onDon
   const overviewQuery = useQuery({ queryKey: ["cash-overview", storeId], queryFn: () => fetchOverview(storeId) });
 
   const denoms = configQuery.data?.denominations ?? [];
-  const tol = configQuery.data?.toleranceCents ?? 500;
+  const tol = configQuery.data?.closeoutToleranceCents ?? 500;
   const leaders = overviewQuery.data?.leaders;
   const existing = overviewQuery.data?.closeout;
 
