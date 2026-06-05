@@ -223,10 +223,14 @@ export interface CapaRow {
   sourceItemCode: string;
   originPhotoIds: string[];
   resolutionNotes: string | null;
+  /** Linked Work Order spawned from this action, if any. */
+  workOrderTicketId: string | null;
+  workOrderNumber: string | null;
 }
 
 function mapCapa(r: Record<string, unknown>): CapaRow {
   const store = r.store as { number?: string; name?: string } | null;
+  const wo = r.work_order as { id?: string; wo_number?: string } | null;
   return {
     id: r.id as string,
     title: r.title as string,
@@ -239,6 +243,8 @@ function mapCapa(r: Record<string, unknown>): CapaRow {
     sourceItemCode: r.source_item_code as string,
     originPhotoIds: (r.origin_photo_ids as string[]) ?? [],
     resolutionNotes: (r.resolution_notes as string) ?? null,
+    workOrderTicketId: (wo?.id as string) ?? null,
+    workOrderNumber: (wo?.wo_number as string) ?? null,
   };
 }
 
@@ -249,7 +255,8 @@ export async function listCorrectiveActions(
     .from("corrective_actions")
     .select(
       "id, title, due_at, priority, status, source_item_code, origin_photo_ids, resolution_notes, " +
-        "store:stores!store_id(number, name), owner:profiles!owner_id(full_name, preferred_name)",
+        "store:stores!store_id(number, name), owner:profiles!owner_id(full_name, preferred_name), " +
+        "work_order:tickets!work_order_ticket_id(id, wo_number)",
     )
     .order("created_at", { ascending: false })
     .limit(300);
@@ -283,4 +290,22 @@ export async function updateCorrectiveAction(
   if (patch.resolutionNotes !== undefined) row.resolution_notes = patch.resolutionNotes.trim() || null;
   const { error } = await supabase.from("corrective_actions").update(row).eq("id", id);
   if (error) throw error;
+}
+
+// Spawn a Work Order from a corrective action (server-side: WO number,
+// pre-filled fields, photos carried over, two-way link). Returns the new WO.
+export async function createWorkOrderFromCapa(
+  correctiveActionId: string,
+): Promise<{ ticketId: string; woNumber: string }> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Not signed in");
+  const res = await fetch("/.netlify/functions/facilities-v2?action=createTicketFromCapa", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ correctiveActionId }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || body.ok === false) throw new Error(body.message || `Request failed (${res.status})`);
+  return { ticketId: body.ticket.id, woNumber: body.woNumber };
 }
