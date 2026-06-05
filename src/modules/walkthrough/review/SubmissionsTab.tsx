@@ -27,6 +27,14 @@ const TIER_FILTERS: { id: Tier | "all"; label: string }[] = [
   { id: "red", label: "Red" },
 ];
 
+function fmtDuration(s: number | null): string {
+  if (s == null) return "—";
+  const m = Math.round(s / 60);
+  if (m < 1) return "<1m";
+  if (m < 60) return `${m}m`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
 function relTime(ts: string | null): string {
   if (!ts) return "—";
   const d = new Date(ts);
@@ -38,10 +46,10 @@ function relTime(ts: string | null): string {
 }
 
 function exportCsv(rows: ReviewQueueRow[], districtFor: (id: string) => string) {
-  const head = ["Store", "Store name", "District", "GM", "Score", "Tier", "Flags", "Template", "Status", "Submitted"];
+  const head = ["Store", "Store name", "District", "GM", "Score", "Tier", "Flags", "Duration", "Template", "Status", "Submitted"];
   const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
   const lines = rows.map((r) =>
-    [r.storeNumber, r.storeName, districtFor(r.storeId), r.submitterName, r.score, r.tier, r.flagCount, `v${r.templateVersion}`, r.status, r.submittedAt ?? ""]
+    [r.storeNumber, r.storeName, districtFor(r.storeId), r.submitterName, r.score, r.tier, r.flagCount, fmtDuration(r.durationSeconds), `v${r.templateVersion}`, r.status, r.submittedAt ?? ""]
       .map(esc)
       .join(","),
   );
@@ -155,8 +163,8 @@ export function SubmissionsTab() {
         <EmptyState title="Nothing here" description="No walkthroughs match these filters." />
       ) : (
         <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-          <div className="hidden grid-cols-[1.6fr_1.4fr_70px_70px_90px_110px_120px] gap-3 border-b border-zinc-100 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 lg:grid">
-            <span>Store</span><span>GM</span><span>Score</span><span>Flags</span><span>Template</span><span>Submitted</span><span>Status</span>
+          <div className="hidden grid-cols-[1.5fr_1.3fr_60px_56px_72px_80px_92px_104px] gap-3 border-b border-zinc-100 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 lg:grid">
+            <span>Store</span><span>GM</span><span>Score</span><span>Flags</span><span>Duration</span><span>Template</span><span>Submitted</span><span>Status</span>
           </div>
           <div className="divide-y divide-zinc-100">
             {filtered.map((row) => (
@@ -189,7 +197,7 @@ function Row({ row, onOpen }: { row: ReviewQueueRow; onOpen: () => void }) {
     <button
       type="button"
       onClick={onOpen}
-      className="grid w-full grid-cols-1 gap-1 px-4 py-3 text-left hover:bg-zinc-50 lg:grid-cols-[1.6fr_1.4fr_70px_70px_90px_110px_120px] lg:items-center lg:gap-3"
+      className="grid w-full grid-cols-1 gap-1 px-4 py-3 text-left hover:bg-zinc-50 lg:grid-cols-[1.5fr_1.3fr_60px_56px_72px_80px_92px_104px] lg:items-center lg:gap-3"
     >
       <div className="min-w-0">
         <div className="truncate text-sm font-medium text-midnight">Store #{row.storeNumber}</div>
@@ -206,6 +214,7 @@ function Row({ row, onOpen }: { row: ReviewQueueRow; onOpen: () => void }) {
           <span className="text-zinc-300">0</span>
         )}
       </div>
+      <div className="text-xs text-zinc-500">{fmtDuration(row.durationSeconds)}</div>
       <div className="font-mono text-xs text-zinc-500">v{row.templateVersion}</div>
       <div className="text-xs text-zinc-500">{relTime(row.submittedAt)}</div>
       <div className="flex items-center gap-2">

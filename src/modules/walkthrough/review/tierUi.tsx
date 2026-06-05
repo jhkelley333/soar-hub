@@ -31,7 +31,7 @@ const STATUS: Record<string, { label: string; chip: string }> = {
   draft: { label: "Draft", chip: "bg-zinc-100 text-zinc-600" },
   open: { label: "Open", chip: "bg-blue-100 text-blue-700" },
   in_progress: { label: "In progress", chip: "bg-amber-100 text-amber-800" },
-  verified: { label: "Verified", chip: "bg-indigo-100 text-indigo-700" },
+  verified: { label: "Awaiting DO", chip: "bg-indigo-100 text-indigo-700" },
   closed: { label: "Closed", chip: "bg-green-100 text-green-800" },
 };
 

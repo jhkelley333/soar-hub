@@ -84,7 +84,7 @@ export function CorrectiveActionsTab() {
         <StatCard label="Open" value={counts.open} tone="info" active={stat === "open"} onClick={() => setStat((s) => (s === "open" ? null : "open"))} />
         <StatCard label="Overdue" value={counts.overdue} tone="danger" active={stat === "overdue"} onClick={() => setStat((s) => (s === "overdue" ? null : "overdue"))} />
         <StatCard label="In progress" value={counts.in_progress} tone="warning" active={stat === "in_progress"} onClick={() => setStat((s) => (s === "in_progress" ? null : "in_progress"))} />
-        <StatCard label="Verified" value={counts.verified} tone="success" active={stat === "verified"} onClick={() => setStat((s) => (s === "verified" ? null : "verified"))} />
+        <StatCard label="Awaiting DO" value={counts.verified} tone="success" active={stat === "verified"} onClick={() => setStat((s) => (s === "verified" ? null : "verified"))} />
       </div>
 
       {/* Toolbar */}
@@ -268,7 +268,7 @@ function CapaRowItem({ ca }: { ca: CapaRow }) {
 const COLUMNS: { status: CapaStatus; label: string }[] = [
   { status: "open", label: "Open" },
   { status: "in_progress", label: "In progress" },
-  { status: "verified", label: "Verified" },
+  { status: "verified", label: "Awaiting DO" },
   { status: "closed", label: "Closed" },
 ];
 function BoardView({ rows }: { rows: CapaRow[] }) {

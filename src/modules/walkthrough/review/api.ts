@@ -26,6 +26,7 @@ export interface ReviewQueueRow {
   status: "submitted" | "needs_revision" | "approved" | "draft";
   submittedAt: string | null;
   submitterName: string;
+  durationSeconds: number | null;
 }
 
 interface NameRow { full_name: string | null; preferred_name: string | null }
@@ -41,7 +42,7 @@ export async function listReviewQueue(filters: ReviewFilters = {}): Promise<Revi
   let q = supabase
     .from("walkthrough_submissions")
     .select(
-      "id, store_id, template_version, score, tier, flag_count, status, submitted_at, " +
+      "id, store_id, template_version, score, tier, flag_count, status, submitted_at, duration_seconds, " +
         "store:stores!store_id(number, name), submitter:profiles!submitted_by(full_name, preferred_name)",
     )
     .neq("status", "draft")
@@ -66,6 +67,7 @@ export async function listReviewQueue(filters: ReviewFilters = {}): Promise<Revi
       status: r.status as ReviewQueueRow["status"],
       submittedAt: (r.submitted_at as string) ?? null,
       submitterName: name(r.submitter as NameRow),
+      durationSeconds: (r.duration_seconds as number) ?? null,
     };
   });
 }
