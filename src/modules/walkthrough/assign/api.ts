@@ -113,7 +113,7 @@ export async function listAssignments(): Promise<AssignmentRow[]> {
     .from("walkthrough_assignments")
     .select(
       "id, template_version, due_at, status, created_at, is_public, " +
-        "store:stores!store_id(number, name), template:walkthrough_templates(name), " +
+        "store:stores!store_id(number, name), template:walkthrough_templates!template_id(name), " +
         "assignee:profiles!assignee_id(full_name, preferred_name)",
     )
     .order("created_at", { ascending: false })
