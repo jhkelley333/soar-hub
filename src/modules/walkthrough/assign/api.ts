@@ -96,6 +96,8 @@ export interface AssignmentRow {
   id: string;
   /** True when no store was set — the assignee picks one when they run it. */
   selfPickStore: boolean;
+  /** True for an open/self-serve walk anyone in scope can pick up. */
+  isPublic: boolean;
   storeNumber: string;
   storeName: string;
   templateName: string;
@@ -110,7 +112,7 @@ export async function listAssignments(): Promise<AssignmentRow[]> {
   const { data, error } = await supabase
     .from("walkthrough_assignments")
     .select(
-      "id, template_version, due_at, status, created_at, " +
+      "id, template_version, due_at, status, created_at, is_public, " +
         "store:stores!store_id(number, name), template:walkthrough_templates(name), " +
         "assignee:profiles!assignee_id(full_name, preferred_name)",
     )
@@ -122,14 +124,18 @@ export async function listAssignments(): Promise<AssignmentRow[]> {
     const store = r.store as { number?: string; name?: string } | null;
     const tmpl = r.template as { name?: string } | null;
     const assignee = r.assignee as { full_name?: string | null; preferred_name?: string | null } | null;
+    const isPublic = !!r.is_public;
     return {
       id: r.id as string,
       selfPickStore: !store,
+      isPublic,
       storeNumber: store?.number ?? "—",
       storeName: store?.name ?? "—",
       templateName: tmpl?.name ?? "—",
       templateVersion: r.template_version as string,
-      assigneeName: assignee?.preferred_name || assignee?.full_name || "—",
+      assigneeName: isPublic
+        ? "Public — anyone in scope"
+        : assignee?.preferred_name || assignee?.full_name || "—",
       dueAt: (r.due_at as string) ?? null,
       status: r.status as AssignmentRow["status"],
       createdAt: r.created_at as string,
@@ -144,7 +150,10 @@ export interface NewAssignment {
   templateVersion: string;
   /** null = store-less (the assignee picks a store when they run it). */
   storeId: string | null;
+  /** Empty when public (no specific assignee). */
   assigneeId: string;
+  /** Open/self-serve walk anyone in scope can pick up. */
+  isPublic?: boolean;
   dueAt: string | null;
 }
 
@@ -156,7 +165,8 @@ export async function createAssignment(a: NewAssignment): Promise<string> {
       template_id: a.templateId,
       template_version: a.templateVersion,
       store_id: a.storeId || null,
-      assignee_id: a.assigneeId,
+      assignee_id: a.isPublic ? null : a.assigneeId,
+      is_public: !!a.isPublic,
       due_at: a.dueAt,
       assigned_by: auth.user?.id ?? null,
       status: "not_started",
