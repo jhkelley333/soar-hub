@@ -7,7 +7,7 @@
 // standalone routes still work for deep links.
 
 import { useState } from "react";
-import { CalendarClock, ListChecks, MapPin, SearchCheck, type LucideIcon } from "lucide-react";
+import { CalendarClock, ListChecks, MapPin, SearchCheck, TrendingUp, type LucideIcon } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
@@ -15,6 +15,7 @@ import type { UserRole } from "@/types/database";
 import { ReviewDashboardPage } from "./review/ReviewDashboardPage";
 import { AssignmentsPage } from "./assign/AssignmentsPage";
 import { TemplatesListPage } from "./builder/TemplatesListPage";
+import { AnalyticsPage } from "./analytics/AnalyticsPage";
 import { StoreGeofencesPage } from "./storegeo/StoreGeofencesPage";
 
 const DO_PLUS: UserRole[] = ["do", "sdo", "rvp", "vp", "coo", "admin"];
@@ -31,6 +32,7 @@ const TABS: HubTab[] = [
   { id: "review", label: "Review", icon: SearchCheck, roles: DO_PLUS, render: () => <ReviewDashboardPage embedded /> },
   { id: "assignments", label: "Assignments", icon: CalendarClock, roles: DO_PLUS, render: () => <AssignmentsPage embedded /> },
   { id: "templates", label: "Templates", icon: ListChecks, roles: DO_PLUS, render: () => <TemplatesListPage embedded /> },
+  { id: "analytics", label: "Analytics", icon: TrendingUp, roles: DO_PLUS, render: () => <AnalyticsPage embedded /> },
   { id: "geofences", label: "Geofences", icon: MapPin, roles: ["admin"], render: () => <StoreGeofencesPage embedded /> },
 ];
 
