@@ -1,9 +1,11 @@
 // Builder step 2 — sections, items, and per-item follow-up rules.
 //
 // The structural heart of a template. Each section holds items; each item has
-// a label, weight, severity, and an optional N/A escape, plus collapsible
-// Fail / Watch follow-up rules that gate the field flow (require photo / reason
-// / note; raise a corrective action).
+// a label and an optional N/A escape, plus collapsible Fail / Watch follow-up
+// rules that gate the field flow (require photo / reason / note; raise a
+// corrective action). Weight defaults to 1 and severity is unset unless an
+// item carries legacy values — both are no longer edited here (the simplified
+// scoring treats every item equally).
 
 import { useState } from "react";
 import {
@@ -17,8 +19,8 @@ import {
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Badge } from "@/shared/ui/Badge";
 import { cn } from "@/lib/cn";
-import { ChipsEditor, Field, NumberInput, Select, TextInput, Toggle } from "../controls";
-import { SEVERITIES, type TemplateDraftStore } from "../useTemplateDraft";
+import { ChipsEditor, Field, NumberInput, TextInput, Toggle } from "../controls";
+import type { TemplateDraftStore } from "../useTemplateDraft";
 import type { FollowupRule, TemplateItem, TemplateSection } from "../../types";
 
 export function StepStructure({ store }: { store: TemplateDraftStore }) {
@@ -148,41 +150,18 @@ function ItemRow({
             className="h-8 flex-1"
           />
         </div>
-        {/* Line 2 (mobile): weight + severity + actions */}
-        <div className="flex items-center gap-2">
-          <div className="w-16 shrink-0">
-            <NumberInput
-              value={item.weight}
-              min={0}
-              step={1}
-              onChange={(e) =>
-                setItem(sectionCode, item.code, { weight: Number(e.target.value) || 0 })
-              }
-              className="h-8"
-              aria-label="Weight"
-              title="Weight"
-            />
-          </div>
-          <div className="w-24 shrink-0">
-            <Select
-              value={item.severity ?? "med"}
-              onChange={(v) => setItem(sectionCode, item.code, { severity: v as TemplateItem["severity"] })}
-              options={SEVERITIES.map((s) => ({ value: s, label: s }))}
-              className="h-8"
-            />
-          </div>
-          <div className="ml-auto flex items-center sm:ml-0">
-            <IconBtn
-              label="Follow-up rules"
-              active={open || ruleCount > 0}
-              onClick={() => setOpen((o) => !o)}
-            >
-              <Settings2 className="h-4 w-4" />
-            </IconBtn>
-            <IconBtn label="Remove item" danger onClick={() => removeItem(sectionCode, item.code)}>
-              <Trash2 className="h-4 w-4" />
-            </IconBtn>
-          </div>
+        {/* Line 2 (mobile): row actions */}
+        <div className="flex items-center justify-end gap-1 sm:shrink-0">
+          <IconBtn
+            label="Follow-up rules"
+            active={open || ruleCount > 0}
+            onClick={() => setOpen((o) => !o)}
+          >
+            <Settings2 className="h-4 w-4" />
+          </IconBtn>
+          <IconBtn label="Remove item" danger onClick={() => removeItem(sectionCode, item.code)}>
+            <Trash2 className="h-4 w-4" />
+          </IconBtn>
         </div>
       </div>
 
