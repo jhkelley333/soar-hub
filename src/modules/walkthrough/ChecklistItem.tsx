@@ -97,7 +97,7 @@ export function ChecklistItem({
 
       {/* 3-state control — hidden while N/A so the row reads as parked. */}
       {!isNa && (
-        <div className="mt-3 grid grid-cols-3 gap-1.5">
+        <div className="mt-3 grid grid-cols-3 gap-1.5" role="group" aria-label={`Rate: ${item.label}`}>
           {OPTIONS.map((opt) => {
             const active = response.value === opt.value;
             return (
@@ -106,12 +106,13 @@ export function ChecklistItem({
                 type="button"
                 onClick={() => onChange(active ? null : opt.value)}
                 className={cn(
-                  "h-11 rounded-lg text-[14px] font-semibold transition ring-1",
+                  "h-12 rounded-lg text-[14px] font-semibold transition ring-1",
                   active
                     ? opt.on
-                    : "bg-white ring-midnight-200 text-midnight-500 hover:ring-midnight-300 active:bg-midnight-50",
+                    : "bg-white ring-midnight-200 text-midnight-600 hover:ring-midnight-300 active:bg-midnight-50",
                 )}
                 aria-pressed={active}
+                aria-label={`${opt.label} — ${item.label}`}
               >
                 {opt.label}
               </button>
