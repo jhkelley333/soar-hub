@@ -22,10 +22,12 @@ import {
   type QueueFilterState,
 } from "./QueueFilters";
 import { downloadPafsCsv } from "./csv";
+import type { PafRow } from "./types";
 
 export function PafPage() {
   const { profile } = useAuth();
   const [view, setView] = useState<"list" | "submit">("list");
+  const [editing, setEditing] = useState<PafRow | null>(null);
   const [filters, setFilters] = useState<QueueFilterState>({
     status: "ALL",
     query: "",
@@ -97,13 +99,25 @@ export function PafPage() {
               </Button>
             )}
             {canSubmit && view === "list" && (
-              <Button onClick={() => setView("submit")}>
+              <Button
+                onClick={() => {
+                  setEditing(null);
+                  setView("submit");
+                }}
+              >
                 <Plus className="mr-1 h-3.5 w-3.5" strokeWidth={2} />
                 New PAF
               </Button>
             )}
             {view === "submit" && (
-              <Button variant="ghost" size="sm" onClick={() => setView("list")}>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => {
+                  setEditing(null);
+                  setView("list");
+                }}
+              >
                 Back to history
               </Button>
             )}
@@ -112,7 +126,13 @@ export function PafPage() {
       />
 
       {view === "submit" && canSubmit && (
-        <PafForm onSubmitted={() => setView("list")} />
+        <PafForm
+          editPaf={editing ?? undefined}
+          onSubmitted={() => {
+            setEditing(null);
+            setView("list");
+          }}
+        />
       )}
 
       {view === "list" && (
@@ -141,7 +161,14 @@ export function PafPage() {
                   description="Try a different filter or clear the search."
                 />
               ) : (
-                <PafTable rows={filtered} actions="view" />
+                <PafTable
+                  rows={filtered}
+                  actions="view"
+                  onEdit={(p) => {
+                    setEditing(p);
+                    setView("submit");
+                  }}
+                />
               )}
             </>
           )}

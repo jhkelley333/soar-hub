@@ -10,6 +10,7 @@ import { DiscussButton } from "@/modules/chat/DiscussButton";
 // Maps audit log action codes (kept short for storage) to human labels.
 const AUDIT_LABEL: Record<string, string> = {
   submit: "Submitted",
+  resubmit: "Edited & resubmitted",
   reject: "Rejected by Payroll",
   "needs-approval": "Sent for external approval",
   "token-approved": "Approval link clicked",

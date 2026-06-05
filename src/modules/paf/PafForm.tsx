@@ -13,9 +13,9 @@ import { Badge } from "@/shared/ui/Badge";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { supabase } from "@/lib/supabase";
-import { fetchMyStores, fetchPafConfig, submitPaf, type PafSubmitInput } from "./api";
+import { fetchMyStores, fetchPafConfig, resubmitPaf, submitPaf, type PafSubmitInput } from "./api";
 import { calcPafCost, formatUSD } from "./cost";
-import type { MyStore, PafConfigDoc, PafFieldDisplay, ReferralTier } from "./types";
+import type { MyStore, PafConfigDoc, PafFieldDisplay, PafRow, ReferralTier } from "./types";
 
 const OFFER_BUCKET = "paf-offer-letters";
 const OFFER_MIME = ["application/pdf", "image/jpeg", "image/png"];
@@ -136,6 +136,78 @@ function initialState(cfg: PafConfigDoc): FormState {
   return out;
 }
 
+// Convert a stored PAF row back into the form's string-keyed state so a
+// rejected PAF can be re-opened for editing. Zero / null numerics blank
+// out to match the create-form's empty look.
+function s(v: unknown): string {
+  return v == null ? "" : String(v);
+}
+function n(v: unknown): string {
+  if (v == null || v === "") return "";
+  const x = Number(v);
+  return Number.isFinite(x) && x !== 0 ? String(x) : "";
+}
+function pafRowToFormState(p: PafRow): FormState {
+  return {
+    category: s(p.category),
+    bonus_type: s(p.bonus_type),
+    pay_basis:
+      p.pay_basis === "hourly" ? "Hourly" : p.pay_basis === "salary" ? "Salary" : "",
+    drive_in: s(p.drive_in),
+    drivein_na: p.drivein_na ? "yes" : "",
+    market_do: s(p.market_do),
+    employee_name: s(p.employee_name),
+    last4_ssn: s(p.last4_ssn),
+    explanation: s(p.explanation),
+    pay_period_end: s(p.pay_period_end),
+    job_position: s(p.job_position),
+    approving_mgr: s(p.approving_mgr),
+    reg_pay_rate: n(p.reg_pay_rate),
+    reg_hours: n(p.reg_hours),
+    ot_hours: n(p.ot_hours),
+    cc_tips: n(p.cc_tips),
+    declared_tips: n(p.declared_tips),
+    pto_hours: n(p.pto_hours),
+    illness_hours: n(p.illness_hours),
+    original_store: s(p.original_store),
+    temp_new_store: s(p.temp_new_store),
+    store_chrged_ot: s(p.store_chrged_ot),
+    current_store: s(p.current_store),
+    new_store: s(p.new_store),
+    current_position: s(p.current_position),
+    new_position: s(p.new_position),
+    from_role: s(p.from_role),
+    new_role: s(p.new_role),
+    current_pay_rate: n(p.current_pay_rate),
+    new_pay_rate: n(p.new_pay_rate),
+    location_change:
+      p.location_change === true ? "Yes" : p.location_change === false ? "No" : "",
+    new_location: s(p.new_location),
+    demotion_effective_date: s(p.demotion_effective_date),
+    last_day_worked: s(p.last_day_worked),
+    termed_in_tr: s(p.termed_in_tr),
+    spot_bonus_amt: n(p.spot_bonus_amt),
+    spot_bonus_reason: s(p.spot_bonus_reason),
+    training_bonus_amt: n(p.training_bonus_amt),
+    trained_employee_name: s(p.trained_employee_name),
+    trained_at_store: s(p.trained_at_store),
+    training_days: p.training_days != null ? String(p.training_days) : "",
+    referral_bonus_amt: n(p.referral_bonus_amt),
+    referral_tier: s(p.referral_tier),
+    referred_employee_name: s(p.referred_employee_name),
+    referral_start_date: s(p.referral_start_date),
+    nh_role: s(p.nh_role),
+    nh_start_date: s(p.nh_start_date),
+    nh_hours_last_period: n(p.nh_hours_last_period),
+    nh_home_store: s(p.nh_home_store),
+    nh_no_market: p.nh_no_market ? "yes" : "",
+    nh_market: s(p.nh_market),
+    nh_area: s(p.nh_area),
+    nh_stores: s(p.nh_stores),
+    nh_offer_letter_path: s(p.nh_offer_letter_path),
+  };
+}
+
 // Field-level visibility that goes beyond section visibility:
 //   - reg_pay_rate hides when pay_basis === Salary
 //   - new_location hides when location_change !== Yes
@@ -163,9 +235,17 @@ function isFieldVisibleForState(fieldKey: string, state: FormState): boolean {
   return true;
 }
 
-export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
+export function PafForm({
+  onSubmitted,
+  editPaf,
+}: {
+  onSubmitted: () => void;
+  // When set, the form opens pre-filled to edit + resubmit a rejected PAF.
+  editPaf?: PafRow;
+}) {
   const qc = useQueryClient();
   const toast = useToast();
+  const isEdit = !!editPaf;
 
   const cfgQuery = useQuery({
     queryKey: ["paf-config-active"],
@@ -261,8 +341,14 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
   useEffect(() => {
     if (!cfgQuery.data || hydratedRef.current) return;
     hydratedRef.current = true;
-    setState(initialState(cfgQuery.data.config_json));
-  }, [cfgQuery.data]);
+    const base = initialState(cfgQuery.data.config_json);
+    if (editPaf) {
+      setState({ ...base, ...pafRowToFormState(editPaf) });
+      if (editPaf.nh_offer_letter_path) setOfferName("Offer letter on file");
+    } else {
+      setState(base);
+    }
+  }, [cfgQuery.data, editPaf]);
 
   const cfg = cfgQuery.data?.config_json;
 
@@ -323,16 +409,23 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
   }, [state]);
 
   const submit = useMutation({
-    mutationFn: (input: PafSubmitInput) => submitPaf(input),
+    mutationFn: (input: PafSubmitInput) =>
+      editPaf ? resubmitPaf(editPaf.id, input) : submitPaf(input),
     onSuccess: (res) => {
+      const awaitingSdo = res.status === "Pending SDO Approval";
       toast.push(
-        res.status === "Pending SDO Approval"
-          ? "Bonus PAF submitted — awaiting SDO approval."
-          : "PAF submitted to Payroll.",
+        isEdit
+          ? awaitingSdo
+            ? "PAF resubmitted — awaiting SDO approval."
+            : "PAF resubmitted to Payroll."
+          : awaitingSdo
+            ? "Bonus PAF submitted — awaiting SDO approval."
+            : "PAF submitted to Payroll.",
         "success"
       );
       qc.invalidateQueries({ queryKey: ["paf-list"] });
       qc.invalidateQueries({ queryKey: ["paf-sdo-queue"] });
+      if (editPaf) qc.invalidateQueries({ queryKey: ["paf-audit", editPaf.id] });
       if (cfg) setState(initialState(cfg));
       onSubmitted();
     },
@@ -491,8 +584,29 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4 pb-24 sm:pb-4">
+      {isEdit && (
+        <div className="rounded-md border border-amber-300 bg-amber-50 p-3">
+          <div className="text-sm font-semibold text-amber-900">
+            Editing a rejected PAF
+          </div>
+          <p className="mt-0.5 text-xs text-amber-800">
+            Make your changes and resubmit — it goes back through the normal
+            review flow.
+          </p>
+          {editPaf?.rejection_reason && (
+            <p className="mt-1.5 text-xs text-amber-900">
+              <span className="font-semibold">Rejection reason:</span>{" "}
+              {editPaf.rejection_reason}
+            </p>
+          )}
+        </div>
+      )}
+
       {/* Top-of-form fields */}
-      <FormSection title="New Payroll Adjustment" intent="hero">
+      <FormSection
+        title={isEdit ? "Edit Payroll Adjustment" : "New Payroll Adjustment"}
+        intent="hero"
+      >
         <FieldGrid
           fields={(fieldsBySection.top ?? []).filter(([k]) =>
             isFieldVisibleForState(k, state)
@@ -513,10 +627,10 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
                   onChange={(e) => patch("drivein_na", e.target.checked ? "yes" : "")}
                   className="h-4 w-4 rounded border-zinc-300 text-accent focus:ring-accent"
                 />
-                No single Drive-In # (district/area-level role)
+                No single Employee Home Store (district/area-level role)
               </label>
               <p className="mt-1 text-[11px] text-zinc-500">
-                SDO and above can submit a demotion without a Drive-In #.
+                SDO and above can submit a demotion without an Employee Home Store.
               </p>
             </div>
           )}
@@ -760,7 +874,13 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
                   </Badge>
                 )}
                 <Button type="submit" disabled={submit.isPending}>
-                  {submit.isPending ? "Submitting…" : "Submit PAF"}
+                  {submit.isPending
+                    ? isEdit
+                      ? "Resubmitting…"
+                      : "Submitting…"
+                    : isEdit
+                      ? "Resubmit PAF"
+                      : "Submit PAF"}
                 </Button>
               </div>
             </div>
@@ -788,7 +908,13 @@ export function PafForm({ onSubmitted }: { onSubmitted: () => void }) {
             disabled={submit.isPending}
             className="h-11 px-5 text-sm"
           >
-            {submit.isPending ? "Submitting…" : "Submit PAF"}
+            {submit.isPending
+              ? isEdit
+                ? "Resubmitting…"
+                : "Submitting…"
+              : isEdit
+                ? "Resubmit PAF"
+                : "Submit PAF"}
           </Button>
         </div>
       </div>
@@ -901,9 +1027,12 @@ function FieldRender({
   myStores: MyStore[];
 }) {
   const id = `paf-${fieldKey}`;
+  // UI-only label override: the config still stores "Drive-In #", but the
+  // store-number field reads as "Employee Home Store" on screen.
+  const displayLabel = fieldKey === "drive_in" ? "Employee Home Store" : cfg.label;
   const label = (
     <Label htmlFor={id}>
-      {cfg.label}
+      {displayLabel}
       {cfg.required && <span className="ml-0.5 text-red-600">*</span>}
     </Label>
   );
