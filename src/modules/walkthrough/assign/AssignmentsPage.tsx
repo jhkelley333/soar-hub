@@ -95,7 +95,13 @@ export function AssignmentsPage({ embedded = false }: { embedded?: boolean } = {
   );
 }
 
-type AssignMode = "store" | "leader";
+type AssignMode = "store" | "leader" | "public";
+
+const MODE_LABEL: Record<AssignMode, string> = {
+  store: "Store team",
+  leader: "Leadership",
+  public: "Public",
+};
 
 function NewAssignmentForm({
   onDone,
@@ -129,8 +135,11 @@ function NewAssignmentForm({
       return createAssignment({
         templateId,
         templateVersion: tmpl?.version ?? "",
+        // Leader + public both use the optional store field (blank = picked
+        // by whoever runs it).
         storeId: mode === "store" ? storeId : leaderStoreId || null,
-        assigneeId: mode === "store" ? assigneeId : leaderId,
+        assigneeId: mode === "store" ? assigneeId : mode === "leader" ? leaderId : "",
+        isPublic: mode === "public",
         // End-of-day on the chosen date so "due today" isn't already overdue.
         dueAt: due ? new Date(`${due}T23:59:59`).toISOString() : null,
       });
@@ -141,14 +150,14 @@ function NewAssignmentForm({
 
   const ready =
     !!templateId &&
-    (mode === "store" ? !!storeId && !!assigneeId : !!leaderId);
+    (mode === "store" ? !!storeId && !!assigneeId : mode === "leader" ? !!leaderId : true);
 
   return (
     <Card className="mb-5">
       <CardBody className="space-y-4">
         {/* Who's it for */}
         <div className="inline-flex rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 text-xs font-medium">
-          {(["store", "leader"] as AssignMode[]).map((m) => (
+          {(["store", "leader", "public"] as AssignMode[]).map((m) => (
             <button
               key={m}
               type="button"
@@ -158,7 +167,7 @@ function NewAssignmentForm({
                 mode === m ? "bg-white text-midnight shadow-sm" : "text-zinc-500 hover:text-midnight",
               )}
             >
-              {m === "store" ? "Store team" : "Leadership (DO / SDO)"}
+              {MODE_LABEL[m]}
             </button>
           ))}
         </div>
@@ -179,7 +188,7 @@ function NewAssignmentForm({
           </Field>
         </div>
 
-        {mode === "store" ? (
+        {mode === "store" && (
           <div className="grid grid-cols-2 gap-4">
             <Field label="Store">
               <Select
@@ -205,7 +214,9 @@ function NewAssignmentForm({
               />
             </Field>
           </div>
-        ) : (
+        )}
+
+        {mode === "leader" && (
           <div className="grid grid-cols-2 gap-4">
             <Field label="Leader" hint={!leaders.isLoading && !leaders.data?.length ? "No DOs/SDOs in your scope." : undefined}>
               <Select
@@ -230,6 +241,28 @@ function NewAssignmentForm({
           </div>
         )}
 
+        {mode === "public" && (
+          <div className="space-y-3">
+            <div className="rounded-md border border-indigo-200 bg-indigo-50 p-3 text-xs text-indigo-900">
+              Anyone in your scope can pick this walk up from their <strong>My Walks</strong>
+              {" "}and complete it — no specific assignee. Each person who starts it gets their
+              own copy.
+            </div>
+            <div className="grid grid-cols-2 gap-4">
+              <Field label="Store" hint="Optional — blank lets each person choose.">
+                <Select
+                  value={leaderStoreId}
+                  onChange={setLeaderStoreId}
+                  options={[
+                    { value: "", label: "They choose the store" },
+                    ...(stores.data ?? []).map((s) => ({ value: s.id, label: `${s.number} · ${s.name}` })),
+                  ]}
+                />
+              </Field>
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center justify-end gap-2 pt-1">
           <Button onClick={() => create.mutate()} disabled={!ready || create.isPending}>
             {create.isPending ? "Creating…" : "Create assignment"}
@@ -248,14 +281,19 @@ function AssignmentCard({ a }: { a: AssignmentRow }) {
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-midnight">
-              {a.selfPickStore ? a.assigneeName : `${a.storeNumber} · ${a.storeName}`}
+              {a.isPublic
+                ? a.templateName
+                : a.selfPickStore
+                  ? a.assigneeName
+                  : `${a.storeNumber} · ${a.storeName}`}
             </span>
-            <StatusChip status={a.status} />
+            {!a.isPublic && <StatusChip status={a.status} />}
             <Badge tone="info">{a.templateName}</Badge>
-            {a.selfPickStore && <Badge tone="neutral">Store: assignee picks</Badge>}
+            {a.isPublic && <Badge tone="warning">Public</Badge>}
+            {!a.isPublic && a.selfPickStore && <Badge tone="neutral">Store: assignee picks</Badge>}
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
-            <span>{a.selfPickStore ? "Leadership walk" : a.assigneeName}</span>
+            <span>{a.isPublic ? "Anyone in scope" : a.selfPickStore ? "Leadership walk" : a.assigneeName}</span>
             <span>v{a.templateVersion}</span>
             {a.dueAt && (
               <span className={overdue ? "inline-flex items-center gap-1 font-medium text-red-600" : "inline-flex items-center gap-1"}>

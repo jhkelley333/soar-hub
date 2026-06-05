@@ -161,6 +161,39 @@ export async function setAssignmentStore(assignmentId: string, storeId: string):
   if (error) throw error;
 }
 
+// ---- public / self-serve walks ---------------------------------------------
+
+export interface AvailableWalk {
+  id: string;
+  templateName: string;
+  templateVersion: string;
+  storeNumber: string | null;
+  storeName: string | null;
+  dueAt: string | null;
+  /** True when the public walk has no store — the picker chooses one. */
+  needsStore: boolean;
+}
+
+/** Public walks in the caller's scope they can pick up (server-scoped). */
+export async function fetchAvailableWalks(): Promise<AvailableWalk[]> {
+  const { walks } = await request<{ walks: AvailableWalk[] }>(
+    `${FN}?action=available-walks`,
+  );
+  return walks ?? [];
+}
+
+/** Claim a public walk → server creates a personal assignment; returns its id. */
+export async function claimPublicWalk(
+  assignmentId: string,
+  storeId: string | null,
+): Promise<string> {
+  const { id } = await request<{ id: string }>(`${FN}?action=claim-public`, {
+    method: "POST",
+    body: JSON.stringify({ assignmentId, storeId }),
+  });
+  return id;
+}
+
 // ---- reads -----------------------------------------------------------------
 
 export async function fetchMyAssignments(): Promise<LoadedAssignment[]> {

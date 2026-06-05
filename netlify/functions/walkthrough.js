@@ -285,6 +285,105 @@ async function myAssignments(supa, user) {
   };
 }
 
+// Public/self-serve walks the caller is eligible for: is_public walks whose
+// creator manages the caller (manageable_users(assigned_by) includes them),
+// minus any the caller has already claimed (and not yet submitted).
+async function availableWalks(supa, user) {
+  const { data: pubs, error } = await supa
+    .from("walkthrough_assignments")
+    .select(
+      "id, template_version, due_at, store_id, assigned_by, " +
+        "template:walkthrough_templates(name, version), store:stores(number, name)",
+    )
+    .eq("is_public", true)
+    .order("due_at", { ascending: true });
+  if (error) return { error: error.message, status: 500 };
+  const rows = pubs || [];
+  if (!rows.length) return { walks: [] };
+
+  // Resolve scope once per distinct creator.
+  const creators = [...new Set(rows.map((r) => r.assigned_by).filter(Boolean))];
+  const managesCaller = {};
+  for (const c of creators) {
+    const { data: mu } = await supa.rpc("manageable_users", { manager_id: c });
+    managesCaller[c] = (mu || []).some((u) => u.id === user.id);
+  }
+
+  // Hide walks the caller already claimed and hasn't submitted.
+  const { data: mine } = await supa
+    .from("walkthrough_assignments")
+    .select("source_assignment_id")
+    .eq("assignee_id", user.id)
+    .not("source_assignment_id", "is", null);
+  const claimed = new Set((mine || []).map((r) => r.source_assignment_id));
+
+  const walks = rows
+    .filter((r) => r.assigned_by && managesCaller[r.assigned_by] && !claimed.has(r.id))
+    .map((r) => ({
+      id: r.id,
+      templateName: r.template?.name ?? "Walkthrough",
+      templateVersion: r.template_version,
+      storeNumber: r.store?.number ?? null,
+      storeName: r.store?.name ?? null,
+      dueAt: r.due_at ?? null,
+      needsStore: !r.store_id,
+    }));
+  return { walks };
+}
+
+// Claim a public walk: create a personal direct assignment for the caller
+// (so many people can each do the same public walk via the normal flow).
+// Re-entrant: returns the existing claim if one is open.
+async function claimPublic(supa, user, body) {
+  const { assignmentId, storeId } = body || {};
+  if (!assignmentId) return { error: "assignmentId is required", status: 400 };
+
+  const { data: src, error: sErr } = await supa
+    .from("walkthrough_assignments")
+    .select("id, template_id, template_version, store_id, due_at, assigned_by, is_public")
+    .eq("id", assignmentId)
+    .maybeSingle();
+  if (sErr) return { error: sErr.message, status: 500 };
+  if (!src || !src.is_public) return { error: "not a public walk", status: 404 };
+
+  // Scope: the caller must be managed by the walk's creator.
+  const { data: mu } = await supa.rpc("manageable_users", { manager_id: src.assigned_by });
+  if (!(mu || []).some((u) => u.id === user.id)) {
+    return { error: "this walk isn't available to you", status: 403 };
+  }
+
+  const finalStore = src.store_id || storeId || null;
+  if (!finalStore) return { error: "pick a store first", status: 400 };
+
+  // Re-entrant: reuse an open claim instead of duplicating.
+  const { data: existing } = await supa
+    .from("walkthrough_assignments")
+    .select("id")
+    .eq("source_assignment_id", assignmentId)
+    .eq("assignee_id", user.id)
+    .neq("status", "submitted")
+    .maybeSingle();
+  if (existing) return { id: existing.id };
+
+  const { data: ins, error: iErr } = await supa
+    .from("walkthrough_assignments")
+    .insert({
+      template_id: src.template_id,
+      template_version: src.template_version,
+      store_id: finalStore,
+      assignee_id: user.id,
+      due_at: src.due_at,
+      assigned_by: src.assigned_by,
+      is_public: false,
+      source_assignment_id: assignmentId,
+      status: "not_started",
+    })
+    .select("id")
+    .single();
+  if (iErr) return { error: iErr.message, status: 500 };
+  return { id: ins.id };
+}
+
 async function listSubmissions(supa, user) {
   // RLS would scope this for a user-scoped client; with the service client we
   // filter to the caller's own submissions to stay conservative. The DO/admin
@@ -725,6 +824,7 @@ export const handler = async (event) => {
 
     if (event.httpMethod === "GET") {
       if (action === "my-assignments") return unwrap(await myAssignments(supa, user));
+      if (action === "available-walks") return unwrap(await availableWalks(supa, user));
       if (action === "list") return unwrap(await listSubmissions(supa, user));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
@@ -732,6 +832,7 @@ export const handler = async (event) => {
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "save-draft") return unwrap(await saveDraft(supa, user, body));
       if (action === "submit") return unwrap(await submit(supa, user, body));
+      if (action === "claim-public") return unwrap(await claimPublic(supa, user, body));
       if (action === "review") return unwrap(await review(supa, user, bearer(event), body));
       if (action === "dev-seed") return unwrap(await devSeed(supa, user));
       return respond(400, { error: `unknown POST action: ${action}` });
