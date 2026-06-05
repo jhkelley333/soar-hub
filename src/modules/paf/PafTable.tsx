@@ -3,7 +3,7 @@
 // (click headers); newest-first is the default.
 
 import { useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, Eye } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Eye, Pencil } from "lucide-react";
 import { Badge } from "@/shared/ui/Badge";
 import { Button } from "@/shared/ui/Button";
 import { Drawer } from "@/shared/ui/Drawer";
@@ -61,12 +61,18 @@ function cmp(a: string | number, b: string | number): number {
 export function PafTable({
   rows,
   actions,
+  onEdit,
 }: {
   rows: PafRow[];
   actions: "view" | "process" | "sdo";
+  // When provided, a rejected PAF the viewer submitted shows an
+  // "Edit & resubmit" action in the detail drawer.
+  onEdit?: (paf: PafRow) => void;
 }) {
   const { profile } = useAuth();
   const isAdmin = profile?.role === "admin";
+  const canEditResubmit = (p: PafRow) =>
+    !!onEdit && p.status === "Rejected" && p.submitter_id === profile?.id;
   const [detail, setDetail] = useState<PafRow | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("created_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -198,6 +204,18 @@ export function PafTable({
               <Button variant="ghost" onClick={() => setDetail(null)}>
                 Close
               </Button>
+              {detail && canEditResubmit(detail) && (
+                <Button
+                  onClick={() => {
+                    const p = detail;
+                    setDetail(null);
+                    onEdit?.(p);
+                  }}
+                >
+                  <Pencil className="mr-1 h-3.5 w-3.5" strokeWidth={2} />
+                  Edit & resubmit
+                </Button>
+              )}
               {detail && isAdmin && (
                 <DeletePafAction paf={detail} onComplete={() => setDetail(null)} />
               )}

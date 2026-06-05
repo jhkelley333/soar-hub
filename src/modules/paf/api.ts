@@ -109,6 +109,21 @@ export function submitPaf(
   });
 }
 
+// Edit + resubmit a rejected PAF (same record). Server gates this to the
+// original submitter and requires the PAF be in "Rejected" status.
+export function resubmitPaf(
+  id: string,
+  input: PafSubmitInput
+): Promise<{ ok: true; id: string; status: string }> {
+  return request<{ ok: true; id: string; status: string }>(
+    `${FN}?action=resubmit`,
+    {
+      method: "POST",
+      body: JSON.stringify({ ...input, id }),
+    }
+  );
+}
+
 export function listSdoQueue(): Promise<{ pafs: PafRow[] }> {
   return request<{ pafs: PafRow[] }>(`${FN}?action=list-sdo-queue`);
 }

@@ -589,13 +589,12 @@ async function getActiveConfig(supa) {
 }
 
 // ----------------------------------------------------------------------------
-// submit — DO/GM/SDO/admin only; drive_in must be in their reach
+// Shared field validation + row construction for submit AND resubmit.
+// Returns { error, status } on failure, or { row, driveIn, effectiveDriveIn,
+// employeeName, category } on success. The row carries a default
+// status="Pending"; callers apply bonus routing + estimated_cost.
 // ----------------------------------------------------------------------------
-async function submitPaf(supa, user, body) {
-  if (!SUBMIT_ROLES.has(user.role)) {
-    return { error: "Only DO/GM/SDO/Admin can submit a PAF.", status: 403 };
-  }
-
+async function buildPafRowFromBody(supa, user, body) {
   const driveIn = sanitizeText(body?.drive_in, 20);
   const submitCategory = sanitizeText(body?.category, 100);
   const newLocation = sanitizeText(body?.new_location, 50) || null;
@@ -755,17 +754,69 @@ async function submitPaf(supa, user, body) {
     status: "Pending",
   };
 
-  // Bonus routing — non-bypass submitters land in "Pending SDO Approval"
-  // with sdo_approver_id set; bypass roles + non-bonus categories go
-  // straight to "Pending" (Payroll queue).
-  const isBonus = category === "Bonus";
-  if (isBonus && !BONUS_BYPASS_ROLES.has(user.role)) {
+  return { row: insertRow, driveIn, effectiveDriveIn, employeeName, category };
+}
+
+// Apply bonus SDO routing to a freshly-built row (mutates row.status +
+// row.sdo_approver_id). Non-bypass submitters of a Bonus land in
+// "Pending SDO Approval"; everything else stays "Pending".
+async function applyBonusRouting(supa, user, row, driveIn, category) {
+  if (category === "Bonus" && !BONUS_BYPASS_ROLES.has(user.role)) {
     let approverId = await resolveBonusApprover(supa, driveIn, user.role);
     if (!approverId) approverId = await resolveAdminFallback(supa);
-    insertRow.status = "Pending SDO Approval";
-    insertRow.sdo_approver_id = approverId; // may still be null; SDO widget filters by id-match
+    row.status = "Pending SDO Approval";
+    row.sdo_approver_id = approverId; // may still be null; SDO widget filters by id-match
+  } else {
+    row.status = "Pending";
+    row.sdo_approver_id = null;
+  }
+}
+
+// Best-effort routing-aware notification — shared by submit + resubmit.
+async function notifyPafRouted(supa, user, row, ctx) {
+  const submitterDisplay = user.preferred_name || user.full_name || user.email;
+  if (row.status === "Pending SDO Approval") {
+    const approver = await profileById(supa, row.sdo_approver_id);
+    await sendPafEmail(supa, {
+      templateKey: "BONUS_SDO_APPROVAL_REQUEST",
+      to: approver?.email,
+      vars: {
+        EMPLOYEE: ctx.employeeName,
+        STORE: ctx.driveIn,
+        BONUS_TYPE: row.bonus_type ?? "",
+        AMOUNT: fmtMoney(row.estimated_cost),
+        DO: submitterDisplay,
+      },
+    });
+  } else {
+    const recipients = await payrollEmails(supa);
+    await sendPafEmail(supa, {
+      templateKey: "PAF_SUBMITTED",
+      to: recipients,
+      vars: {
+        EMPLOYEE: ctx.employeeName,
+        STORE: ctx.effectiveDriveIn || "N/A",
+        DO: submitterDisplay,
+        CATEGORY: ctx.category,
+        AMOUNT: fmtMoney(row.estimated_cost),
+      },
+    });
+  }
+}
+
+// ----------------------------------------------------------------------------
+// submit — DO/GM/SDO/admin only; drive_in must be in their reach
+// ----------------------------------------------------------------------------
+async function submitPaf(supa, user, body) {
+  if (!SUBMIT_ROLES.has(user.role)) {
+    return { error: "Only DO/GM/SDO/Admin can submit a PAF.", status: 403 };
   }
 
+  const built = await buildPafRowFromBody(supa, user, body);
+  if (built.error) return built;
+  const { row: insertRow, driveIn, effectiveDriveIn, employeeName, category } = built;
+
+  await applyBonusRouting(supa, user, insertRow, driveIn, category);
   insertRow.estimated_cost = calcPafCost(insertRow);
 
   const { data: created, error } = await supa
@@ -789,38 +840,110 @@ async function submitPaf(supa, user, body) {
     },
   });
 
-  // Email notifications (best-effort; don't fail the submit on send error).
-  const submitterDisplay =
-    user.preferred_name || user.full_name || user.email;
-  if (insertRow.status === "Pending SDO Approval") {
-    const approver = await profileById(supa, insertRow.sdo_approver_id);
-    await sendPafEmail(supa, {
-      templateKey: "BONUS_SDO_APPROVAL_REQUEST",
-      to: approver?.email,
-      vars: {
-        EMPLOYEE: employeeName,
-        STORE: driveIn,
-        BONUS_TYPE: insertRow.bonus_type ?? "",
-        AMOUNT: fmtMoney(insertRow.estimated_cost),
-        DO: submitterDisplay,
-      },
-    });
-  } else {
-    const recipients = await payrollEmails(supa);
-    await sendPafEmail(supa, {
-      templateKey: "PAF_SUBMITTED",
-      to: recipients,
-      vars: {
-        EMPLOYEE: employeeName,
-        STORE: effectiveDriveIn || "N/A",
-        DO: submitterDisplay,
-        CATEGORY: category,
-        AMOUNT: fmtMoney(insertRow.estimated_cost),
-      },
-    });
-  }
+  await notifyPafRouted(supa, user, insertRow, {
+    driveIn,
+    effectiveDriveIn,
+    employeeName,
+    category,
+  });
 
   return { ok: true, id: created.id, status: insertRow.status };
+}
+
+// ----------------------------------------------------------------------------
+// resubmit — the ORIGINAL submitter edits a Rejected PAF and sends it back
+// into the workflow. Reuses the same record (id + created_at preserved) so
+// the audit history stays intact. Re-runs the same validation, cost, and
+// bonus routing as a fresh submit, and clears all prior-decision/token state.
+// ----------------------------------------------------------------------------
+async function resubmitPaf(supa, user, body) {
+  if (!SUBMIT_ROLES.has(user.role)) {
+    return { error: "Your role can't submit a PAF.", status: 403 };
+  }
+  const id = body?.id;
+  if (!id) return { error: "id is required.", status: 400 };
+
+  const { data: existing, error: fetchErr } = await supa
+    .from("paf_submissions")
+    .select("id, status, submitter_id, archived")
+    .eq("id", id)
+    .maybeSingle();
+  if (fetchErr) return { error: fetchErr.message, status: 500 };
+  if (!existing) return { error: "PAF not found.", status: 404 };
+  if (existing.archived) return { error: "This PAF was deleted.", status: 400 };
+  if (existing.submitter_id !== user.id) {
+    return {
+      error: "Only the person who submitted this PAF can edit and resubmit it.",
+      status: 403,
+    };
+  }
+  if (existing.status !== "Rejected") {
+    return {
+      error: `Only a rejected PAF can be edited and resubmitted (status: ${existing.status}).`,
+      status: 400,
+    };
+  }
+
+  const built = await buildPafRowFromBody(supa, user, body);
+  if (built.error) return built;
+  const { row, driveIn, effectiveDriveIn, employeeName, category } = built;
+
+  await applyBonusRouting(supa, user, row, driveIn, category);
+  row.estimated_cost = calcPafCost(row);
+
+  // Reset all prior-decision + token state so the PAF re-enters its
+  // workflow cleanly. created_at / archived are left untouched (update,
+  // not insert).
+  const updateRow = {
+    ...row,
+    rejection_reason: null,
+    sdo_decided_at: null,
+    sdo_decision: null,
+    sdo_decision_note: null,
+    action_token: null,
+    token_expires_at: null,
+    approving_email: null,
+    approval_notes: null,
+    approved_at: null,
+    approved_by: null,
+    approved_by_email: null,
+    payroll_processed_at: null,
+    payroll_processed_by: null,
+  };
+
+  // Guard against a concurrent process: only update while still Rejected.
+  const { data: updated, error: updErr } = await supa
+    .from("paf_submissions")
+    .update(updateRow)
+    .eq("id", id)
+    .eq("status", "Rejected")
+    .select("id");
+  if (updErr) return { error: updErr.message, status: 500 };
+  if (!updated || updated.length === 0) {
+    return { error: "This PAF is no longer in a rejected state.", status: 409 };
+  }
+
+  await logAudit(supa, {
+    paf_id: id,
+    actor_id: user.id,
+    actor_email: user.email,
+    action: "resubmit",
+    detail: {
+      drive_in: effectiveDriveIn || null,
+      employee_name: employeeName,
+      category,
+      routed_to_sdo: updateRow.status === "Pending SDO Approval",
+    },
+  });
+
+  await notifyPafRouted(supa, user, updateRow, {
+    driveIn,
+    effectiveDriveIn,
+    employeeName,
+    category,
+  });
+
+  return { ok: true, id, status: updateRow.status };
 }
 
 // ----------------------------------------------------------------------------
@@ -1429,6 +1552,7 @@ export const handler = async (event) => {
     if (event.httpMethod === "POST") {
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "submit") return unwrap(await submitPaf(supa, user, body));
+      if (action === "resubmit") return unwrap(await resubmitPaf(supa, user, body));
       if (action === "reject") return unwrap(await rejectPaf(supa, user, body));
       if (action === "needs-approval") return unwrap(await needsApprovalPaf(supa, user, body));
       if (action === "mark-processed") return unwrap(await markProcessed(supa, user, body));
