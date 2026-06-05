@@ -3,8 +3,9 @@
 // origin photos, advance status, and log resolution notes.
 
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, LayoutGrid, List as ListIcon, Search } from "lucide-react";
+import { ChevronDown, ExternalLink, LayoutGrid, List as ListIcon, Search, Wrench } from "lucide-react";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -12,6 +13,7 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
+  createWorkOrderFromCapa,
   getCapaPhotos,
   listCorrectiveActions,
   updateCorrectiveAction,
@@ -181,8 +183,18 @@ function CapaRowItem({ ca }: { ca: CapaRow }) {
   const [open, setOpen] = useState(false);
   const qc = useQueryClient();
   const toast = useToast();
+  const navigate = useNavigate();
   const [notes, setNotes] = useState(ca.resolutionNotes ?? "");
   const overdue = isOverdue(ca);
+
+  const createWO = useMutation({
+    mutationFn: () => createWorkOrderFromCapa(ca.id),
+    onSuccess: ({ woNumber }) => {
+      qc.invalidateQueries({ queryKey: ["wt-capa"] });
+      toast.push(`Work order ${woNumber} created`, "success");
+    },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't create work order", "error"),
+  });
 
   const photos = useQuery({
     queryKey: ["wt-capa-photos", ca.id],
@@ -250,12 +262,30 @@ function CapaRowItem({ ca }: { ca: CapaRow }) {
               className="mt-1 w-full resize-none rounded-md bg-white px-3 py-2 text-sm text-midnight ring-1 ring-inset ring-zinc-200 outline-none focus:ring-2 focus:ring-accent"
             />
           </label>
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {NEXT[ca.status].map((t) => (
               <Button key={t.to} size="sm" variant={t.to === "closed" ? "primary" : "secondary"} disabled={mutate.isPending} onClick={() => mutate.mutate({ status: t.to })}>
                 {t.label}
               </Button>
             ))}
+            <div className="ml-auto">
+              {ca.workOrderTicketId ? (
+                <button
+                  type="button"
+                  onClick={() => navigate(`/admin/work-orders-v2?ticket=${ca.workOrderTicketId}`)}
+                  className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-semibold text-accent hover:bg-accent/5"
+                >
+                  <Wrench className="h-3.5 w-3.5" />
+                  {ca.workOrderNumber || "Work order"}
+                  <ExternalLink className="h-3 w-3" />
+                </button>
+              ) : (
+                <Button size="sm" variant="secondary" disabled={createWO.isPending} onClick={() => createWO.mutate()}>
+                  <Wrench className="mr-1 h-3.5 w-3.5" />
+                  {createWO.isPending ? "Creating…" : "Create work order"}
+                </Button>
+              )}
+            </div>
           </div>
         </div>
       )}

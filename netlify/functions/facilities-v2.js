@@ -1354,6 +1354,102 @@ export const handler = async (event) => {
       return respond(200, { ok: true, ticket, woNumber });
     }
 
+    // ── CREATE TICKET FROM CORRECTIVE ACTION (walkthrough → work order) ──
+    // Spawns a real WO ticket from a walkthrough corrective action, pre-filled
+    // with the failed-item title + reason + its photos, and links the two so
+    // neither side is re-keyed. Re-entrant: returns the existing WO if already
+    // linked.
+    if (action === "createTicketFromCapa" && event.httpMethod === "POST") {
+      const { correctiveActionId } = JSON.parse(event.body || "{}");
+      if (!correctiveActionId) return respond(400, { ok: false, message: "correctiveActionId required." });
+
+      const { data: ca } = await supabase
+        .from("corrective_actions")
+        .select("id, title, store_id, source_item_code, priority, origin_photo_ids, resolution_notes, work_order_ticket_id")
+        .eq("id", correctiveActionId)
+        .maybeSingle();
+      if (!ca) return respond(404, { ok: false, message: "Corrective action not found." });
+
+      // Already linked → return it (re-entrant).
+      if (ca.work_order_ticket_id) {
+        const { data: existing } = await supabase
+          .from("tickets").select("id, wo_number").eq("id", ca.work_order_ticket_id).maybeSingle();
+        if (existing) return respond(200, { ok: true, ticket: existing, woNumber: existing.wo_number, alreadyLinked: true });
+      }
+
+      const { data: store } = await supabase
+        .from("stores").select("number, name, email").eq("id", ca.store_id).maybeSingle();
+      if (!store) return respond(404, { ok: false, message: "Store not found for this action." });
+      const storeNumber = String(store.number);
+
+      const prMap = { high: "Urgent", med: "Standard", low: "Planned" };
+      const priority = prMap[String(ca.priority || "med").toLowerCase()] || "Standard";
+      const issueDescription =
+        `${ca.title} — flagged during a store walkthrough (${ca.source_item_code}).` +
+        (ca.resolution_notes ? ` Notes: ${ca.resolution_notes}` : "");
+
+      const woNumber = await generateWONumber(supabase, storeNumber);
+      const { data: ticket, error: tErr } = await supabase
+        .from("tickets")
+        .insert({
+          wo_number:            woNumber,
+          store_number:         storeNumber,
+          store_name:           store.name || "",
+          store_email:          store.email || "",
+          submitted_by:         userName,
+          submitted_by_user_id: userId,
+          category:             "Facilities & Infrastructure",
+          issue_description:    issueDescription,
+          work_requested:       ca.title,
+          status:               "submitted",
+          priority,
+          needs_vendor_help:    true,
+          vendor_help_at:       new Date().toISOString(),
+          date_submitted:       new Date().toISOString(),
+        })
+        .select()
+        .single();
+      if (tErr) throw tErr;
+
+      await supabase.from("ticket_activities").insert({
+        ticket_id: ticket.id, user_id: userId, user_name: userName, user_role: role,
+        update_type: "created", new_value: "submitted",
+        notes: "Created from a walkthrough corrective action",
+        event_type: "ticket_created",
+        event_data: { initial_status: "submitted", wo_number: woNumber, from_corrective_action: ca.id },
+        visibility: "all",
+      });
+
+      // Carry the origin photos onto the WO (signed references from the
+      // walkthrough-photos bucket).
+      const photoIds = Array.isArray(ca.origin_photo_ids) ? ca.origin_photo_ids : [];
+      if (photoIds.length) {
+        const { data: wp } = await supabase
+          .from("walkthrough_photos").select("id, storage_path").in("id", photoIds);
+        const rows = [];
+        for (const p of wp || []) {
+          if (!p.storage_path) continue;
+          const { data: signed } = await supabase.storage
+            .from("walkthrough-photos").createSignedUrl(p.storage_path, 60 * 60 * 24 * 365);
+          if (signed?.signedUrl) {
+            rows.push({
+              ticket_id: ticket.id, file_url: signed.signedUrl,
+              file_name: p.storage_path.split("/").pop() || "photo",
+              uploaded_by: userName, upload_type: "walkthrough",
+            });
+          }
+        }
+        if (rows.length) await supabase.from("ticket_photos").insert(rows);
+      }
+
+      await supabase.from("corrective_actions").update({ work_order_ticket_id: ticket.id }).eq("id", ca.id);
+
+      try { await notifyTicketEvent(supabase, ticket, "vendor_help_needed"); }
+      catch (e) { console.warn("[facilities-v2] notify from-capa failed", e); }
+
+      return respond(200, { ok: true, ticket, woNumber });
+    }
+
     // ── UPDATE TICKET ──
     if (action === "updateTicket" && event.httpMethod === "POST") {
       const payload = JSON.parse(event.body);
