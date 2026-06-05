@@ -44,7 +44,7 @@ export function WalkthroughHubPage() {
   const current = tabs.find((t) => t.id === active) ?? tabs[0];
 
   return (
-    <div className="mx-auto max-w-4xl">
+    <div className="mx-auto max-w-[1600px]">
       <PageHeader
         title="Walkthroughs"
         description="Review submissions, assign walks, manage templates, and set store geofences."
