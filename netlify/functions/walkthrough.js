@@ -317,9 +317,10 @@ async function availableWalks(supa, user) {
     .not("source_assignment_id", "is", null);
   const claimed = new Set((mine || []).map((r) => r.source_assignment_id));
 
-  const walks = rows
+  const assignmentWalks = rows
     .filter((r) => r.assigned_by && managesCaller[r.assigned_by] && !claimed.has(r.id))
     .map((r) => ({
+      kind: "assignment",
       id: r.id,
       templateName: r.template?.name ?? "Walkthrough",
       templateVersion: r.template_version,
@@ -328,15 +329,85 @@ async function availableWalks(supa, user) {
       dueAt: r.due_at ?? null,
       needsStore: !r.store_id,
     }));
-  return { walks };
+
+  // Public TEMPLATES — standing self-serve, available to anyone; they run it
+  // at one of their own stores. Hide any the caller already has an open run of.
+  const { data: pubTemplates } = await supa
+    .from("walkthrough_templates")
+    .select("id, name, version")
+    .eq("is_public", true)
+    .eq("is_active", true)
+    .order("name", { ascending: true });
+  const { data: tplClaims } = await supa
+    .from("walkthrough_assignments")
+    .select("source_template_id")
+    .eq("assignee_id", user.id)
+    .neq("status", "submitted")
+    .not("source_template_id", "is", null);
+  const openTplClaims = new Set((tplClaims || []).map((r) => r.source_template_id));
+  const templateWalks = (pubTemplates || [])
+    .filter((t) => !openTplClaims.has(t.id))
+    .map((t) => ({
+      kind: "template",
+      id: t.id,
+      templateName: t.name,
+      templateVersion: t.version,
+      storeNumber: null,
+      storeName: null,
+      dueAt: null,
+      needsStore: true,
+    }));
+
+  return { walks: [...assignmentWalks, ...templateWalks] };
 }
 
 // Claim a public walk: create a personal direct assignment for the caller
 // (so many people can each do the same public walk via the normal flow).
 // Re-entrant: returns the existing claim if one is open.
 async function claimPublic(supa, user, body) {
-  const { assignmentId, storeId } = body || {};
-  if (!assignmentId) return { error: "assignmentId is required", status: 400 };
+  const { assignmentId, templateId, storeId } = body || {};
+  if (!assignmentId && !templateId) {
+    return { error: "assignmentId or templateId is required", status: 400 };
+  }
+
+  // Claim from a public TEMPLATE (standing self-serve).
+  if (templateId) {
+    const { data: tmpl } = await supa
+      .from("walkthrough_templates")
+      .select("id, version, is_public, is_active")
+      .eq("id", templateId)
+      .maybeSingle();
+    if (!tmpl || !tmpl.is_public || !tmpl.is_active) {
+      return { error: "not a public template", status: 404 };
+    }
+    if (!storeId) return { error: "pick a store first", status: 400 };
+    // Re-entrant: reuse an open run of this template.
+    const { data: existing } = await supa
+      .from("walkthrough_assignments")
+      .select("id")
+      .eq("source_template_id", templateId)
+      .eq("assignee_id", user.id)
+      .neq("status", "submitted")
+      .maybeSingle();
+    if (existing) return { id: existing.id };
+    const { data: ins, error: iErr } = await supa
+      .from("walkthrough_assignments")
+      .insert({
+        template_id: templateId,
+        template_version: tmpl.version,
+        store_id: storeId,
+        assignee_id: user.id,
+        due_at: null,
+        assigned_by: user.id,
+        is_public: false,
+        source_template_id: templateId,
+        status: "not_started",
+      })
+      .select("id")
+      .single();
+    if (iErr) return { error: iErr.message, status: 500 };
+    return { id: ins.id };
+  }
 
   const { data: src, error: sErr } = await supa
     .from("walkthrough_assignments")

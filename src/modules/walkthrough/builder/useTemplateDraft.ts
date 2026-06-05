@@ -85,7 +85,7 @@ export function useTemplateDraft(initial: TemplateDraft | null, id?: string) {
 
   // ---- meta ----
   const setMeta = useCallback(
-    (patch: Partial<Pick<TemplateDraft, "name" | "type" | "version" | "isActive">>) =>
+    (patch: Partial<Pick<TemplateDraft, "name" | "type" | "version" | "isActive" | "isPublic">>) =>
       update((d) => ({ ...d, ...patch })),
     [update],
   );

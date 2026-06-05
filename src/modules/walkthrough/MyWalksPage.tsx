@@ -265,7 +265,7 @@ function AvailableWalkCard({
   const [pickedStore, setPickedStore] = useState("");
   const overdue = w.dueAt && new Date(w.dueAt) < new Date();
   const start = useMutation({
-    mutationFn: () => claimPublicWalk(w.id, w.needsStore ? pickedStore : null),
+    mutationFn: () => claimPublicWalk(w, w.needsStore ? pickedStore : null),
     onSuccess: async (newId) => {
       await Promise.all([
         qc.invalidateQueries({ queryKey: ["my-walk-available"] }),

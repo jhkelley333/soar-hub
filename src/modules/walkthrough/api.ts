@@ -164,6 +164,8 @@ export async function setAssignmentStore(assignmentId: string, storeId: string):
 // ---- public / self-serve walks ---------------------------------------------
 
 export interface AvailableWalk {
+  /** "assignment" = a posted open walk; "template" = a standing self-serve template. */
+  kind: "assignment" | "template";
   id: string;
   templateName: string;
   templateVersion: string;
@@ -184,12 +186,15 @@ export async function fetchAvailableWalks(): Promise<AvailableWalk[]> {
 
 /** Claim a public walk → server creates a personal assignment; returns its id. */
 export async function claimPublicWalk(
-  assignmentId: string,
+  walk: Pick<AvailableWalk, "kind" | "id">,
   storeId: string | null,
 ): Promise<string> {
+  const body = walk.kind === "template"
+    ? { templateId: walk.id, storeId }
+    : { assignmentId: walk.id, storeId };
   const { id } = await request<{ id: string }>(`${FN}?action=claim-public`, {
     method: "POST",
-    body: JSON.stringify({ assignmentId, storeId }),
+    body: JSON.stringify(body),
   });
   return id;
 }
