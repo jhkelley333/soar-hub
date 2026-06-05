@@ -4,8 +4,9 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Banknote, Bell, Home, Moon, Settings, TrendingUp, type LucideIcon } from "lucide-react";
+import { Banknote, Bell, HelpCircle, Home, Moon, Settings, TrendingUp, type LucideIcon } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
+import { Button } from "@/shared/ui/Button";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useAuth } from "@/auth/AuthProvider";
@@ -17,6 +18,7 @@ import { DepositTab } from "./DepositTab";
 import { AlertsTab } from "./AlertsTab";
 import { DsrTab } from "./DsrTab";
 import { SettingsTab } from "./SettingsTab";
+import { CashGuideDrawer } from "./CashGuideDrawer";
 
 type TabId = "dashboard" | "closeout" | "deposit" | "alerts" | "dsr" | "settings";
 
@@ -38,6 +40,7 @@ export function CashManagementHubPage() {
   const isAdmin = profile?.role === "admin";
   const [storeId, setStoreId] = useState<string | null>(null);
   const [active, setActive] = useState<TabId>("dashboard");
+  const [guideOpen, setGuideOpen] = useState(false);
 
   const overviewQuery = useQuery({
     queryKey: ["cash-overview", storeId],
@@ -127,25 +130,30 @@ export function CashManagementHubPage() {
         title="Cash Management"
         description="Night closeout, next-day deposit validation, and the DSR carried-over ledger."
         actions={
-          stores.length > 1 ? (
-            <select
-              value={effectiveStoreId ?? ""}
-              onChange={(e) => setStoreId(e.target.value)}
-              className="rounded-md border-0 bg-white px-3 py-2 text-sm ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
-            >
-              {stores.map((s) => (
-                <option key={s.id} value={s.id}>
-                  #{s.number}
-                  {s.name ? ` — ${s.name}` : ""}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <div className="rounded-md bg-zinc-50 px-3 py-2 text-sm font-medium text-zinc-600 ring-1 ring-inset ring-zinc-200">
-              #{overview.store.number}
-              {overview.store.name ? ` · ${overview.store.name}` : ""}
-            </div>
-          )
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setGuideOpen(true)}>
+              <HelpCircle className="h-4 w-4" /> Guide
+            </Button>
+            {stores.length > 1 ? (
+              <select
+                value={effectiveStoreId ?? ""}
+                onChange={(e) => setStoreId(e.target.value)}
+                className="rounded-md border-0 bg-white px-3 py-2 text-sm ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+              >
+                {stores.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    #{s.number}
+                    {s.name ? ` — ${s.name}` : ""}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div className="rounded-md bg-zinc-50 px-3 py-2 text-sm font-medium text-zinc-600 ring-1 ring-inset ring-zinc-200">
+                #{overview.store.number}
+                {overview.store.name ? ` · ${overview.store.name}` : ""}
+              </div>
+            )}
+          </div>
         }
       />
 
@@ -157,6 +165,8 @@ export function CashManagementHubPage() {
       {active === "alerts" && <AlertsTab storeId={effectiveStoreId} />}
       {active === "dsr" && <DsrTab storeId={effectiveStoreId} />}
       {active === "settings" && isAdmin && <SettingsTab />}
+
+      <CashGuideDrawer open={guideOpen} onClose={() => setGuideOpen(false)} />
     </div>
   );
 }
