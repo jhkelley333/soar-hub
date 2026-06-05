@@ -105,3 +105,27 @@ export async function setTemplateActive(id: string, isActive: boolean): Promise<
   const { error } = await supabase.from(TABLE).update({ is_active: isActive }).eq("id", id);
   if (error) throw error;
 }
+
+/** Clone a template as a new inactive draft ("… (copy)"). Returns its id. */
+export async function duplicateTemplate(id: string): Promise<string> {
+  const draft = await getTemplate(id);
+  return saveTemplate({ ...draft, id: undefined, name: `${draft.name} (copy)`, isActive: false });
+}
+
+/** Distinct stores that have run each template (from submissions). Used for
+ *  the "Used by N stores" card stat. RLS scopes to the caller's stores. */
+export async function templateStoreUsage(): Promise<Record<string, number>> {
+  const { data, error } = await supabase
+    .from("walkthrough_submissions")
+    .select("template_id, store_id")
+    .neq("status", "draft");
+  if (error) throw error;
+  const byTemplate = new Map<string, Set<string>>();
+  for (const r of (data ?? []) as { template_id: string; store_id: string }[]) {
+    if (!byTemplate.has(r.template_id)) byTemplate.set(r.template_id, new Set());
+    byTemplate.get(r.template_id)!.add(r.store_id);
+  }
+  const out: Record<string, number> = {};
+  for (const [tid, stores] of byTemplate) out[tid] = stores.size;
+  return out;
+}
