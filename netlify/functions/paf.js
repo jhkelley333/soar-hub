@@ -65,6 +65,9 @@ const ORG_WIDE_READ = new Set(["payroll", "admin", "vp", "coo"]);
 const DRIVEIN_OVERRIDE_ROLES = new Set(["sdo", "rvp", "vp", "coo", "payroll", "admin"]);
 // Roles whose own bonus submissions skip SDO and go straight to Payroll.
 const BONUS_BYPASS_ROLES = new Set(["rvp", "vp", "coo", "admin"]);
+// Roles that may edit + resubmit a REJECTED PAF on behalf of someone else
+// (still scope-checked). The original submitter can always resubmit their own.
+const ON_BEHALF_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
 
 // Allowed status values (mirrors form_config.lists.statuses).
 const STATUSES = new Set([
@@ -274,6 +277,21 @@ async function profileById(supa, id) {
 function fmtMoney(n) {
   const v = Number(n) || 0;
   return v.toLocaleString("en-US", { style: "currency", currency: "USD" });
+}
+
+// Outcome emails go to the PAF owner, plus the leader who resubmitted it on
+// their behalf (if any). De-duped case-insensitively.
+function outcomeRecipients(submitterEmail, resubmittedByEmail) {
+  const out = [];
+  const seen = new Set();
+  for (const e of [submitterEmail, resubmittedByEmail]) {
+    if (!e) continue;
+    const k = String(e).toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(e);
+  }
+  return out;
 }
 
 // ----------------------------------------------------------------------------
@@ -758,11 +776,12 @@ async function buildPafRowFromBody(supa, user, body) {
 }
 
 // Apply bonus SDO routing to a freshly-built row (mutates row.status +
-// row.sdo_approver_id). Non-bypass submitters of a Bonus land in
-// "Pending SDO Approval"; everything else stays "Pending".
-async function applyBonusRouting(supa, user, row, driveIn, category) {
-  if (category === "Bonus" && !BONUS_BYPASS_ROLES.has(user.role)) {
-    let approverId = await resolveBonusApprover(supa, driveIn, user.role);
+// row.sdo_approver_id). Routing keys off the ORIGINAL submitter's role,
+// not whoever is editing — so a DO's bonus still routes to the SDO even
+// when an SDO resubmits it on the DO's behalf.
+async function applyBonusRouting(supa, submitterRole, row, driveIn, category) {
+  if (category === "Bonus" && !BONUS_BYPASS_ROLES.has(submitterRole)) {
+    let approverId = await resolveBonusApprover(supa, driveIn, submitterRole);
     if (!approverId) approverId = await resolveAdminFallback(supa);
     row.status = "Pending SDO Approval";
     row.sdo_approver_id = approverId; // may still be null; SDO widget filters by id-match
@@ -773,8 +792,9 @@ async function applyBonusRouting(supa, user, row, driveIn, category) {
 }
 
 // Best-effort routing-aware notification — shared by submit + resubmit.
-async function notifyPafRouted(supa, user, row, ctx) {
-  const submitterDisplay = user.preferred_name || user.full_name || user.email;
+// `submitterDisplay` is the PAF's OWNER (not the editor) so the "from"
+// person in the email reads correctly on an on-behalf resubmit.
+async function notifyPafRouted(supa, submitterDisplay, row, ctx) {
   if (row.status === "Pending SDO Approval") {
     const approver = await profileById(supa, row.sdo_approver_id);
     await sendPafEmail(supa, {
@@ -816,7 +836,7 @@ async function submitPaf(supa, user, body) {
   if (built.error) return built;
   const { row: insertRow, driveIn, effectiveDriveIn, employeeName, category } = built;
 
-  await applyBonusRouting(supa, user, insertRow, driveIn, category);
+  await applyBonusRouting(supa, user.role, insertRow, driveIn, category);
   insertRow.estimated_cost = calcPafCost(insertRow);
 
   const { data: created, error } = await supa
@@ -840,7 +860,8 @@ async function submitPaf(supa, user, body) {
     },
   });
 
-  await notifyPafRouted(supa, user, insertRow, {
+  const submitterDisplay = user.preferred_name || user.full_name || user.email;
+  await notifyPafRouted(supa, submitterDisplay, insertRow, {
     driveIn,
     effectiveDriveIn,
     employeeName,
@@ -851,32 +872,30 @@ async function submitPaf(supa, user, body) {
 }
 
 // ----------------------------------------------------------------------------
-// resubmit — the ORIGINAL submitter edits a Rejected PAF and sends it back
-// into the workflow. Reuses the same record (id + created_at preserved) so
-// the audit history stays intact. Re-runs the same validation, cost, and
-// bonus routing as a fresh submit, and clears all prior-decision/token state.
+// resubmit — edit a Rejected PAF and send it back into the workflow. Reuses
+// the same record (id + created_at + owner preserved) so the audit history
+// stays intact. The original submitter can always resubmit their own; an
+// SDO/RVP (or above) within scope can resubmit on the submitter's behalf,
+// in which case we record who did the edit so later outcome emails CC them.
+// Re-runs the same validation, cost, and bonus routing as a fresh submit
+// (routing follows the ORIGINAL submitter's role) and clears prior
+// decision/token state.
 // ----------------------------------------------------------------------------
 async function resubmitPaf(supa, user, body) {
-  if (!SUBMIT_ROLES.has(user.role)) {
-    return { error: "Your role can't submit a PAF.", status: 403 };
+  if (!SUBMIT_ROLES.has(user.role) && !ON_BEHALF_ROLES.has(user.role)) {
+    return { error: "Your role can't resubmit a PAF.", status: 403 };
   }
   const id = body?.id;
   if (!id) return { error: "id is required.", status: 400 };
 
   const { data: existing, error: fetchErr } = await supa
     .from("paf_submissions")
-    .select("id, status, submitter_id, archived")
+    .select("id, status, submitter_id, submitter_email, submitter_name, archived")
     .eq("id", id)
     .maybeSingle();
   if (fetchErr) return { error: fetchErr.message, status: 500 };
   if (!existing) return { error: "PAF not found.", status: 404 };
   if (existing.archived) return { error: "This PAF was deleted.", status: 400 };
-  if (existing.submitter_id !== user.id) {
-    return {
-      error: "Only the person who submitted this PAF can edit and resubmit it.",
-      status: 403,
-    };
-  }
   if (existing.status !== "Rejected") {
     return {
       error: `Only a rejected PAF can be edited and resubmitted (status: ${existing.status}).`,
@@ -884,16 +903,47 @@ async function resubmitPaf(supa, user, body) {
     };
   }
 
+  const onBehalf = existing.submitter_id !== user.id;
+  if (onBehalf && !ON_BEHALF_ROLES.has(user.role)) {
+    return {
+      error: "Only the submitter, or an SDO/RVP and above, can resubmit this PAF.",
+      status: 403,
+    };
+  }
+
   const built = await buildPafRowFromBody(supa, user, body);
   if (built.error) return built;
   const { row, driveIn, effectiveDriveIn, employeeName, category } = built;
 
-  await applyBonusRouting(supa, user, row, driveIn, category);
+  // Preserve the original owner — an on-behalf edit doesn't change who the
+  // PAF belongs to. (buildPafRowFromBody stamps the caller as submitter.)
+  row.submitter_id = existing.submitter_id;
+  row.submitter_email = existing.submitter_email;
+  row.submitter_name = existing.submitter_name;
+
+  // Routing + the email "from" person follow the original submitter.
+  let submitterRole = user.role;
+  let submitterDisplay = user.preferred_name || user.full_name || user.email;
+  if (onBehalf) {
+    const { data: owner } = await supa
+      .from("profiles")
+      .select("role, full_name, preferred_name, email")
+      .eq("id", existing.submitter_id)
+      .maybeSingle();
+    if (owner) {
+      submitterRole = owner.role;
+      submitterDisplay =
+        owner.preferred_name || owner.full_name || owner.email || submitterDisplay;
+    }
+  }
+
+  await applyBonusRouting(supa, submitterRole, row, driveIn, category);
   row.estimated_cost = calcPafCost(row);
 
   // Reset all prior-decision + token state so the PAF re-enters its
   // workflow cleanly. created_at / archived are left untouched (update,
-  // not insert).
+  // not insert). resubmitted_by tracks an on-behalf editor for the CC, and
+  // is cleared when the owner resubmits their own PAF.
   const updateRow = {
     ...row,
     rejection_reason: null,
@@ -909,6 +959,8 @@ async function resubmitPaf(supa, user, body) {
     approved_by_email: null,
     payroll_processed_at: null,
     payroll_processed_by: null,
+    resubmitted_by_id: onBehalf ? user.id : null,
+    resubmitted_by_email: onBehalf ? user.email : null,
   };
 
   // Guard against a concurrent process: only update while still Rejected.
@@ -933,10 +985,11 @@ async function resubmitPaf(supa, user, body) {
       employee_name: employeeName,
       category,
       routed_to_sdo: updateRow.status === "Pending SDO Approval",
+      on_behalf: onBehalf,
     },
   });
 
-  await notifyPafRouted(supa, user, updateRow, {
+  await notifyPafRouted(supa, submitterDisplay, updateRow, {
     driveIn,
     effectiveDriveIn,
     employeeName,
@@ -960,7 +1013,7 @@ async function rejectPaf(supa, user, body) {
 
   const { data: existing, error: fetchErr } = await supa
     .from("paf_submissions")
-    .select("id, status, employee_name, drive_in, submitter_email")
+    .select("id, status, employee_name, drive_in, submitter_email, resubmitted_by_email")
     .eq("id", id)
     .maybeSingle();
   if (fetchErr) return { error: fetchErr.message, status: 500 };
@@ -993,7 +1046,7 @@ async function rejectPaf(supa, user, body) {
 
   await sendPafEmail(supa, {
     templateKey: "PAF_REJECTED",
-    to: existing.submitter_email,
+    to: outcomeRecipients(existing.submitter_email, existing.resubmitted_by_email),
     vars: {
       EMPLOYEE: existing.employee_name,
       STORE: existing.drive_in,
@@ -1248,7 +1301,7 @@ async function sdoApprovePaf(supa, user, body) {
 
   const { data: existing, error: fetchErr } = await supa
     .from("paf_submissions")
-    .select("id, status, sdo_approver_id, employee_name, drive_in, bonus_type, submitter_email")
+    .select("id, status, sdo_approver_id, employee_name, drive_in, bonus_type, submitter_email, resubmitted_by_email")
     .eq("id", id)
     .maybeSingle();
   if (fetchErr) return { error: fetchErr.message, status: 500 };
@@ -1288,7 +1341,7 @@ async function sdoApprovePaf(supa, user, body) {
   const approver = user.preferred_name || user.full_name || user.email;
   await sendPafEmail(supa, {
     templateKey: "BONUS_SDO_APPROVED",
-    to: existing.submitter_email,
+    to: outcomeRecipients(existing.submitter_email, existing.resubmitted_by_email),
     vars: {
       EMPLOYEE: existing.employee_name,
       STORE: existing.drive_in,
@@ -1322,7 +1375,7 @@ async function sdoRejectPaf(supa, user, body) {
 
   const { data: existing, error: fetchErr } = await supa
     .from("paf_submissions")
-    .select("id, status, sdo_approver_id, employee_name, drive_in, bonus_type, submitter_email")
+    .select("id, status, sdo_approver_id, employee_name, drive_in, bonus_type, submitter_email, resubmitted_by_email")
     .eq("id", id)
     .maybeSingle();
   if (fetchErr) return { error: fetchErr.message, status: 500 };
@@ -1363,7 +1416,7 @@ async function sdoRejectPaf(supa, user, body) {
   const approver = user.preferred_name || user.full_name || user.email;
   await sendPafEmail(supa, {
     templateKey: "BONUS_SDO_REJECTED",
-    to: existing.submitter_email,
+    to: outcomeRecipients(existing.submitter_email, existing.resubmitted_by_email),
     vars: {
       EMPLOYEE: existing.employee_name,
       STORE: existing.drive_in,
@@ -1386,7 +1439,7 @@ async function markProcessed(supa, user, body) {
 
   const { data: existing, error: fetchErr } = await supa
     .from("paf_submissions")
-    .select("id, status, employee_name, drive_in, submitter_email, estimated_cost")
+    .select("id, status, employee_name, drive_in, submitter_email, resubmitted_by_email, estimated_cost")
     .eq("id", id)
     .maybeSingle();
   if (fetchErr) return { error: fetchErr.message, status: 500 };
@@ -1424,7 +1477,7 @@ async function markProcessed(supa, user, body) {
 
   await sendPafEmail(supa, {
     templateKey: "PAF_PROCESSED",
-    to: existing.submitter_email,
+    to: outcomeRecipients(existing.submitter_email, existing.resubmitted_by_email),
     vars: {
       EMPLOYEE: existing.employee_name,
       STORE: existing.drive_in,
