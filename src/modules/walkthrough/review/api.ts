@@ -14,6 +14,20 @@ const PHOTO_BUCKET = "walkthrough-photos";
 
 // ---- list types ------------------------------------------------------------
 
+/** Server-derived trust signals stamped at submit (migration 0127). */
+export interface SubmissionIntegrity {
+  durationSeconds: number | null;
+  secondsPerItem: number | null;
+  itemsAnswered: number;
+  rushed: boolean;
+  onSite: boolean | null;
+  geofenceResult: string | null;
+  exceptionReason: string | null;
+  photoCount: number;
+  photoTimeMismatch: number;
+  photoGeoMismatch: number;
+}
+
 export interface ReviewQueueRow {
   id: string;
   storeId: string;
@@ -27,6 +41,7 @@ export interface ReviewQueueRow {
   submittedAt: string | null;
   submitterName: string;
   durationSeconds: number | null;
+  integrity: SubmissionIntegrity | null;
 }
 
 interface NameRow { full_name: string | null; preferred_name: string | null }
@@ -42,7 +57,7 @@ export async function listReviewQueue(filters: ReviewFilters = {}): Promise<Revi
   let q = supabase
     .from("walkthrough_submissions")
     .select(
-      "id, store_id, template_version, score, tier, flag_count, status, submitted_at, duration_seconds, " +
+      "id, store_id, template_version, score, tier, flag_count, status, submitted_at, duration_seconds, integrity, " +
         "store:stores!store_id(number, name), submitter:profiles!submitted_by(full_name, preferred_name)",
     )
     .neq("status", "draft")
@@ -68,6 +83,7 @@ export async function listReviewQueue(filters: ReviewFilters = {}): Promise<Revi
       submittedAt: (r.submitted_at as string) ?? null,
       submitterName: name(r.submitter as NameRow),
       durationSeconds: (r.duration_seconds as number) ?? null,
+      integrity: (r.integrity as SubmissionIntegrity) ?? null,
     };
   });
 }
@@ -101,6 +117,7 @@ export interface SubmissionDetail {
     exceptionReason: string | null;
     at: string;
   } | null;
+  integrity: SubmissionIntegrity | null;
   photosByItem: Record<string, PhotoView[]>;
 }
 
@@ -144,6 +161,7 @@ export async function getSubmissionDetail(id: string): Promise<SubmissionDetail>
     checkIn: checkin
       ? { geofenceResult: checkin.geofence_result, exceptionReason: checkin.exception_reason, at: checkin.at }
       : null,
+    integrity: (r.integrity as SubmissionIntegrity) ?? null,
     photosByItem,
   };
 }

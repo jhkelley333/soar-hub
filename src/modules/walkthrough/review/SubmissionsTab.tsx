@@ -11,7 +11,7 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { cn } from "@/lib/cn";
 import { fetchMyTree } from "@/modules/my-stores/api";
 import { listReviewQueue, type ReviewFilters, type ReviewQueueRow } from "./api";
-import { ScoreBadge, StatusChip } from "./tierUi";
+import { IntegrityChips, ScoreBadge, StatusChip } from "./tierUi";
 import type { Tier } from "../types";
 
 const STATUS_FILTERS: { id: NonNullable<ReviewFilters["status"]>; label: string }[] = [
@@ -202,6 +202,7 @@ function Row({ row, onOpen }: { row: ReviewQueueRow; onOpen: () => void }) {
       <div className="min-w-0">
         <div className="truncate text-sm font-medium text-midnight">Store #{row.storeNumber}</div>
         <div className="truncate text-[11px] text-zinc-400">{row.storeName}</div>
+        <IntegrityChips integrity={row.integrity} compact />
       </div>
       <div className="truncate text-sm text-zinc-600">{row.submitterName}</div>
       <div><ScoreBadge score={row.score} tier={row.tier} /></div>

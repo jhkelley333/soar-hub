@@ -124,6 +124,17 @@ function tierFor(score, tiers) {
   return "red";
 }
 
+// Distance between two lat/lng points in meters (for photo geo sanity).
+function haversineMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
 /** The fail rule in effect for an item, with photoOnEveryFail folded in. */
 function effectiveFailRule(item, globalRules) {
   const base = (item.rules || []).find((r) => r.trigger === "fail");
@@ -568,9 +579,13 @@ async function submit(supa, user, body) {
   // doctored client-side.
   const submittedAt = new Date().toISOString();
   let startedAt = null;
+  let checkin = null;
   if (checkInId) {
     const { data: ci } = await supa
-      .from("walkthrough_checkins").select("at").eq("id", checkInId).maybeSingle();
+      .from("walkthrough_checkins")
+      .select("at, geofence_result, exception_reason, lat, lng")
+      .eq("id", checkInId).maybeSingle();
+    checkin = ci || null;
     startedAt = ci?.at ?? null;
   }
   if (!startedAt) {
@@ -589,6 +604,42 @@ async function submit(supa, user, body) {
     ? Math.max(0, Math.round((Date.parse(submittedAt) - Date.parse(startedAt)) / 1000))
     : null;
 
+  // Integrity signals — server-derived so they can't be doctored.
+  let itemsAnswered = 0;
+  for (const sec of sections || []) {
+    for (const it of sec.items || []) {
+      if (it.value === "pass" || it.value === "watch" || it.value === "fail") itemsAnswered++;
+    }
+  }
+  const secondsPerItem = itemsAnswered && durationSeconds != null ? Math.round(durationSeconds / itemsAnswered) : null;
+  const rushed = itemsAnswered >= 5 && secondsPerItem != null && secondsPerItem < 4;
+  const onSite = checkin ? checkin.geofence_result === "on_site" && !checkin.exception_reason : null;
+
+  // Photo geo/time sanity vs the check-in window + the store location.
+  let photoCount = 0, photoTimeMismatch = 0, photoGeoMismatch = 0;
+  const { data: storeGeo } = await supa
+    .from("stores").select("latitude, longitude, geofence_radius_m").eq("id", asg.store_id).maybeSingle();
+  const { data: photoRows } = await supa
+    .from("walkthrough_photos").select("taken_at, lat, lng").eq("assignment_id", assignmentId);
+  const winStart = startedAt ? Date.parse(startedAt) - 5 * 60_000 : null;
+  const winEnd = Date.parse(submittedAt) + 5 * 60_000;
+  const slackRadius = (Number(storeGeo?.geofence_radius_m) || 150) + 150;
+  for (const p of photoRows || []) {
+    photoCount++;
+    if (p.taken_at) {
+      const t = Date.parse(p.taken_at);
+      if ((winStart != null && t < winStart) || t > winEnd) photoTimeMismatch++;
+    }
+    if (storeGeo?.latitude != null && storeGeo?.longitude != null && p.lat != null && p.lng != null) {
+      if (haversineMeters(storeGeo.latitude, storeGeo.longitude, p.lat, p.lng) > slackRadius) photoGeoMismatch++;
+    }
+  }
+  const integrity = {
+    durationSeconds, secondsPerItem, itemsAnswered, rushed,
+    onSite, geofenceResult: checkin?.geofence_result || null, exceptionReason: checkin?.exception_reason || null,
+    photoCount, photoTimeMismatch, photoGeoMismatch,
+  };
+
   // 1) Submission row.
   const { data: sub, error: sErr } = await supa
     .from("walkthrough_submissions")
@@ -603,6 +654,7 @@ async function submit(supa, user, body) {
       tier,
       flag_count: flagCount,
       duration_seconds: durationSeconds,
+      integrity,
       status: "submitted",
       prior_submission_id: prior?.id ?? null,
       submitted_by: user.id,

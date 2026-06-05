@@ -2,6 +2,7 @@
 
 import { cn } from "@/lib/cn";
 import type { Tier } from "../types";
+import type { SubmissionIntegrity } from "./api";
 
 const TIER: Record<Tier, { label: string; chip: string; text: string }> = {
   green: { label: "Green", chip: "bg-green-100 text-green-800", text: "text-green-700" },
@@ -55,6 +56,41 @@ export function PriorityChip({ priority }: { priority: string }) {
   return (
     <span className={cn("inline-flex items-center rounded px-1.5 py-0.5 text-[11px] font-medium", p.chip)}>
       {p.label}
+    </span>
+  );
+}
+
+// Trust / integrity chips from a submission's server-derived signals.
+// `compact` (list rows) shows only the warning chips; the detail view
+// also surfaces the reassuring "On-site" badge.
+export function IntegrityChips({
+  integrity,
+  compact = false,
+}: {
+  integrity: SubmissionIntegrity | null;
+  compact?: boolean;
+}) {
+  if (!integrity) return null;
+  const chips: { label: string; cls: string }[] = [];
+  if (integrity.onSite === false) {
+    chips.push({
+      label: integrity.exceptionReason ? "Off-site (exception)" : "Off-site",
+      cls: "bg-amber-100 text-amber-800",
+    });
+  } else if (integrity.onSite === true && !compact) {
+    chips.push({ label: "On-site", cls: "bg-emerald-100 text-emerald-700" });
+  }
+  if (integrity.rushed) chips.push({ label: "Rushed", cls: "bg-rose-100 text-rose-700" });
+  const photoIssues = integrity.photoGeoMismatch + integrity.photoTimeMismatch;
+  if (photoIssues > 0) chips.push({ label: `Photo ⚠ ${photoIssues}`, cls: "bg-rose-100 text-rose-700" });
+  if (!chips.length) return null;
+  return (
+    <span className="inline-flex flex-wrap gap-1">
+      {chips.map((c) => (
+        <span key={c.label} className={cn("rounded px-1.5 py-0.5 text-[10px] font-semibold", c.cls)}>
+          {c.label}
+        </span>
+      ))}
     </span>
   );
 }
