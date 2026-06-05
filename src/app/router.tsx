@@ -36,6 +36,7 @@ import { RankerPage } from "@/modules/ranker/RankerPage";
 import { MyStoresPage } from "@/modules/my-stores/MyStoresPage";
 import { AccountPage } from "@/modules/account/AccountPage";
 import { WorkOrdersV2Route } from "@/modules/work-orders-v2/WorkOrdersV2Route";
+import { CashManagementHubPage } from "@/modules/cash-management/CashManagementHubPage";
 import { VendorPortalPage } from "@/modules/vendor-portal/VendorPortalPage";
 import { PublicSubmitPage } from "@/modules/public-submit/PublicSubmitPage";
 import { WorkspacesPage } from "@/modules/workspaces/WorkspacesPage";
@@ -370,6 +371,20 @@ export const router = createBrowserRouter([
           <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <WorkOrdersV2Route />
           </ProtectedRoute>
+        ),
+      },
+      {
+        // Cash Management — night-close → next-day deposit cycle, in pilot.
+        // Store-leaders run closeouts/deposits; DO+ act on alerts (enforced
+        // in cash-management.js). Pilot-flagged like PAF.
+        path: "admin/cash-management",
+        element: (
+          <FlagOrRoleRoute
+            roles={["gm", "shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "do", "sdo", "rvp", "vp", "coo", "admin"]}
+            flagKey="cash_management_pilot"
+          >
+            <CashManagementHubPage />
+          </FlagOrRoleRoute>
         ),
       },
       {
