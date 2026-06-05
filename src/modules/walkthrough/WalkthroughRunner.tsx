@@ -18,7 +18,9 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
+  CloudOff,
   Loader2,
+  UploadCloud,
   WifiOff,
 } from "lucide-react";
 import { AppHeader } from "@/shared/ui/AppHeader";
@@ -106,11 +108,7 @@ function LiveLoader({ assignmentId }: { assignmentId: string }) {
   }, [assignmentId]);
 
   if (state.status === "loading") {
-    return (
-      <div className="mx-auto w-full max-w-md min-h-full grid place-items-center text-midnight-400">
-        <Loader2 className="h-5 w-5 animate-spin" />
-      </div>
-    );
+    return <RunnerSkeleton />;
   }
   if (state.status === "error") {
     return (
@@ -149,12 +147,24 @@ function RunnerInner({ template, assignment, store, adapter, live }: RunnerInner
     { status: "idle" } | { status: "submitting" } | { status: "done"; result: SubmitResult } | { status: "error"; message: string }
   >({ status: "idle" });
 
+  // Don't let a GM close the tab while photos are still uploading or the draft
+  // hasn't flushed — the whole point is they're never anxious about losing work.
+  useEffect(() => {
+    if (!live) return;
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      const uploading = wt.photos.some((p) => p.uploadStatus === "uploading" || p.uploadStatus === "pending");
+      const busy = wt.syncState === "saving" || wt.syncState === "queued" || wt.syncState === "syncing" || wt.syncState === "error";
+      if (uploading || busy) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [live, wt.photos, wt.syncState]);
+
   if (!wt.ready || !wt.draft) {
-    return (
-      <div className="mx-auto w-full max-w-md min-h-full grid place-items-center text-midnight-400">
-        <Loader2 className="h-5 w-5 animate-spin" />
-      </div>
-    );
+    return <RunnerSkeleton />;
   }
 
   // Gate: check-in first.
@@ -179,6 +189,9 @@ function RunnerInner({ template, assignment, store, adapter, live }: RunnerInner
   const tmplSection = template.sections[activeIndex];
   const isLastSection = activeIndex === draft.sections.length - 1;
   const pill = pillFor(wt.syncState, wt.savedAt);
+  const uploadingPhotos = wt.photos.filter((p) => p.uploadStatus === "uploading" || p.uploadStatus === "pending").length;
+  const failedPhotos = wt.photos.filter((p) => p.uploadStatus === "error").length;
+  const syncBusy = wt.syncState === "saving" || wt.syncState === "queued" || wt.syncState === "syncing";
   const blockers = sectionStatuses.filter((s) => s.hasUnanswered || s.incomplete).length;
   const canPublish = live && blockers === 0 && submitState.status !== "submitting";
 
@@ -224,6 +237,45 @@ function RunnerInner({ template, assignment, store, adapter, live }: RunnerInner
         <div className="bg-midnight-900 text-white px-4 py-2 text-[12px] flex items-center gap-2">
           <WifiOff className="h-3.5 w-3.5" strokeWidth={2} />
           Offline — saved on this device. Syncs when you're back online.
+        </div>
+      )}
+
+      {/* Offline transparency — a blunt, always-honest "is my work safe?" line. */}
+      {live && (
+        <div
+          className={cn(
+            "px-4 py-1.5 text-[12px] font-medium flex items-center gap-2 border-b",
+            uploadingPhotos > 0
+              ? "bg-amber-50 text-amber-800 border-amber-100"
+              : failedPhotos > 0
+                ? "bg-rose-50 text-rose-700 border-rose-100"
+                : syncBusy
+                  ? "bg-midnight-50 text-midnight-600 border-midnight-100"
+                  : "bg-emerald-50 text-emerald-700 border-emerald-100",
+          )}
+          aria-live="polite"
+        >
+          {uploadingPhotos > 0 ? (
+            <>
+              <UploadCloud className="h-3.5 w-3.5 animate-pulse" strokeWidth={2} />
+              {uploadingPhotos} photo{uploadingPhotos === 1 ? "" : "s"} uploading — keep the app open
+            </>
+          ) : failedPhotos > 0 ? (
+            <>
+              <CloudOff className="h-3.5 w-3.5" strokeWidth={2} />
+              {failedPhotos} photo{failedPhotos === 1 ? "" : "s"} didn't upload — tap a photo to retry
+            </>
+          ) : syncBusy ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" strokeWidth={2} />
+              Saving…
+            </>
+          ) : (
+            <>
+              <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={2} />
+              All saved — safe to close
+            </>
+          )}
         </div>
       )}
 
@@ -351,6 +403,30 @@ function SubmittedScreen({ result, storeName }: { result: SubmitResult; storeNam
             : "No corrective actions"}
           {result.notified ? " · DO notified" : ""}
         </p>
+      </div>
+    </div>
+  );
+}
+
+function RunnerSkeleton() {
+  return (
+    <div className="mx-auto w-full max-w-md min-h-full bg-surface-muted" aria-busy="true" aria-label="Loading walkthrough">
+      <div className="h-14 bg-white border-b border-midnight-100 flex items-center px-4">
+        <div className="h-4 w-40 rounded bg-midnight-100 animate-pulse" />
+      </div>
+      <div className="px-4 pt-3 flex gap-1.5">
+        {[0, 1, 2, 3].map((i) => (
+          <div key={i} className="h-7 flex-1 rounded-md bg-midnight-100 animate-pulse" />
+        ))}
+      </div>
+      <div className="px-4 pt-4 space-y-2.5">
+        {[0, 1, 2].map((i) => (
+          <div key={i} className="rounded-xl bg-white p-3.5 ring-1 ring-midnight-100">
+            <div className="h-3 w-24 rounded bg-midnight-100 animate-pulse" />
+            <div className="mt-2 h-4 w-3/4 rounded bg-midnight-100 animate-pulse" />
+            <div className="mt-3 h-11 rounded-lg bg-midnight-50 animate-pulse" />
+          </div>
+        ))}
       </div>
     </div>
   );
