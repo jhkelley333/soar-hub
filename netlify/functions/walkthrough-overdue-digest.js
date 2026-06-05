@@ -109,7 +109,7 @@ export const handler = async (event) => {
   const [asgRes, caRes] = await Promise.all([
     supa
       .from("walkthrough_assignments")
-      .select("id, due_at, store:stores(number, name), template:walkthrough_templates(name), assignee:profiles!assignee_id(id, email, full_name, preferred_name)")
+      .select("id, due_at, store:stores(number, name), template:walkthrough_templates!template_id(name), assignee:profiles!assignee_id(id, email, full_name, preferred_name)")
       .lt("due_at", nowIso)
       .neq("status", "submitted")
       .not("assignee_id", "is", null),

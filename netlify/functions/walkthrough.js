@@ -252,7 +252,7 @@ async function myAssignments(supa, user) {
     .from("walkthrough_assignments")
     .select(
       "id, template_id, template_version, store_id, assignee_id, due_at, status, " +
-        "template:walkthrough_templates(*), store:stores(id, number, name, city, state, latitude, longitude, geofence_radius_m)",
+        "template:walkthrough_templates!template_id(*), store:stores(id, number, name, city, state, latitude, longitude, geofence_radius_m)",
     )
     .eq("assignee_id", user.id)
     .neq("status", "submitted")
@@ -293,7 +293,7 @@ async function availableWalks(supa, user) {
     .from("walkthrough_assignments")
     .select(
       "id, template_version, due_at, store_id, assigned_by, " +
-        "template:walkthrough_templates(name, version), store:stores(number, name)",
+        "template:walkthrough_templates!template_id(name, version), store:stores(number, name)",
     )
     .eq("is_public", true)
     .order("due_at", { ascending: true });
@@ -535,7 +535,7 @@ async function submit(supa, user, body) {
     .from("walkthrough_assignments")
     .select(
       "id, store_id, template_id, template_version, assignee_id, assigned_by, status, " +
-        "template:walkthrough_templates(*)",
+        "template:walkthrough_templates!template_id(*)",
     )
     .eq("id", assignmentId)
     .single();
