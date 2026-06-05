@@ -35,14 +35,14 @@ create policy walkthrough_assignments_write_leader on public.walkthrough_assignm
     (role_level(walkthrough_caller_role()) >= role_level('do') or is_admin())
     and (
       can_see_store(store_id)
-      or (store_id is null and assignee_id in (select manageable_users(auth.uid())))
+      or (store_id is null and assignee_id in (select id from manageable_users(auth.uid())))
     )
   )
   with check (
     (role_level(walkthrough_caller_role()) >= role_level('do') or is_admin())
     and (
       can_see_store(store_id)
-      or (store_id is null and assignee_id in (select manageable_users(auth.uid())))
+      or (store_id is null and assignee_id in (select id from manageable_users(auth.uid())))
     )
   );
 
