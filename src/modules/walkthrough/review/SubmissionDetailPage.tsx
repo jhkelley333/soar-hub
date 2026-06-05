@@ -15,7 +15,15 @@ import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { decideReview, getSubmissionDetail, type SubmissionDetail } from "./api";
-import { ScoreBadge, StatusChip, TierChip } from "./tierUi";
+import { IntegrityChips, ScoreBadge, StatusChip, TierChip } from "./tierUi";
+
+function fmtDur(s: number | null): string {
+  if (s == null) return "—";
+  const m = Math.round(s / 60);
+  if (m < 1) return "<1m";
+  if (m < 60) return `${m}m`;
+  return `${Math.floor(m / 60)}h ${m % 60}m`;
+}
 import type { ItemResponse, ItemValue } from "../types";
 
 const VALUE_UI: Record<string, { label: string; cls: string }> = {
@@ -109,6 +117,29 @@ export function SubmissionDetailPage() {
           <CardBody className="text-sm">
             <span className="font-medium text-amber-700">Off-site exception: </span>
             <span className="text-zinc-600">{d.checkIn.exceptionReason}</span>
+          </CardBody>
+        </Card>
+      )}
+
+      {/* Integrity — server-derived trust signals */}
+      {d.integrity && (
+        <Card className="mb-4">
+          <CardBody className="space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">Integrity</span>
+              <IntegrityChips integrity={d.integrity} />
+            </div>
+            <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-zinc-600">
+              <span>Duration: {fmtDur(d.integrity.durationSeconds)}</span>
+              {d.integrity.secondsPerItem != null && <span>{d.integrity.secondsPerItem}s / item</span>}
+              <span>{d.integrity.itemsAnswered} answered</span>
+              <span>
+                {d.integrity.photoCount} photo{d.integrity.photoCount === 1 ? "" : "s"}
+                {d.integrity.photoGeoMismatch + d.integrity.photoTimeMismatch > 0
+                  ? ` · ${d.integrity.photoGeoMismatch + d.integrity.photoTimeMismatch} flagged`
+                  : ""}
+              </span>
+            </div>
           </CardBody>
         </Card>
       )}
