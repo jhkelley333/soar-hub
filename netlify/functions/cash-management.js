@@ -411,29 +411,54 @@ async function verifyDeposit(supa, user, body) {
   const reason = String(body?.reason || "").trim();
   if (flagged && reason.length < 8) return { error: "A mismatch reason (min 8 chars) is required.", status: 400 };
 
+  // Carried-over from the DSR must be explicitly recorded + addressed before
+  // a deposit with a nonzero carry can be validated.
+  const carried = dep.dsr_carried_over_cents || 0;
+  const carriedAck = body?.carried_ack === true || body?.carried_ack === "true";
+  const carriedNote = String(body?.carried_note || "").trim() || null;
+  if (carried !== 0 && !carriedAck) {
+    return { error: "Record and address the carried-over balance before verifying.", status: 400 };
+  }
+  const nowIso = new Date().toISOString();
+
   const { error } = await supa.from("cash_deposits").update({
     bank_credited_cents: bank, variance_cents: variance, flagged, reason: flagged ? reason : null,
     slip_path: slipPath, carried_fwd_cents: dep.dsr_carried_over_cents,
+    carried_ack: carried !== 0, carried_note: carried !== 0 ? carriedNote : null,
+    carried_ack_by: carried !== 0 ? user.id : null, carried_ack_at: carried !== 0 ? nowIso : null,
     status: flagged ? "flagged" : "verified",
-    verified_by: user.id, verified_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    verified_by: user.id, verified_at: nowIso, updated_at: nowIso,
   }).eq("id", depId);
   if (error) return { error: error.message, status: 500 };
 
   // Mark the closeout verified when the deposit clears within tolerance.
   await supa.from("cash_closeouts").update({
-    status: flagged ? "flagged" : "verified", updated_at: new Date().toISOString(),
+    status: flagged ? "flagged" : "verified", updated_at: nowIso,
   }).eq("id", dep.closeout_id);
 
+  const mgr = user.preferred_name || user.full_name || user.email;
+  let storeRow = null;
+  if (flagged || carried !== 0) {
+    const { data } = await supa.from("stores").select("id, number, name").eq("id", dep.store_id).maybeSingle();
+    storeRow = data || { id: dep.store_id, number: dep.store_number, name: null };
+  }
+  // Bank-credit mismatch over tolerance → DO/SDO alert.
   if (flagged) {
-    const { data: store } = await supa.from("stores").select("id, number, name").eq("id", dep.store_id).maybeSingle();
     await escalate(supa, {
-      store: store || { id: dep.store_id, number: dep.store_number, name: null },
-      variancecents: variance, type: variance < 0 ? "short" : "over",
-      reason, managerName: user.preferred_name || user.full_name || user.email,
-      source: "deposit", closeoutId: dep.closeout_id,
+      store: storeRow, variancecents: variance, type: variance < 0 ? "short" : "over",
+      reason, managerName: mgr, source: "deposit", closeoutId: dep.closeout_id,
     });
   }
-  return { ok: true, flagged, carried_fwd_cents: dep.dsr_carried_over_cents };
+  // Carried-over balance → DO/SDO alert to formally resolve (it keeps rolling
+  // until they do), even though the closer acknowledged it here.
+  if (carried !== 0) {
+    await escalate(supa, {
+      store: storeRow, variancecents: carried, type: carried < 0 ? "short" : "over",
+      reason: `Carried-over balance of ${fmtMoney(carried)} acknowledged at deposit validation by ${mgr}.${carriedNote ? ` Note: ${carriedNote}` : ""}`,
+      managerName: mgr, source: "carryover", closeoutId: dep.closeout_id,
+    });
+  }
+  return { ok: true, flagged, carried_acknowledged: carried !== 0, carried_fwd_cents: dep.dsr_carried_over_cents };
 }
 
 // ============================================================================

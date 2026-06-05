@@ -72,8 +72,13 @@ export interface VerifyDepositInput {
   bank_credited_cents: number;
   slip_path: string;
   reason?: string;
+  // Required when the deposit carries a nonzero balance from the DSR.
+  carried_ack?: boolean;
+  carried_note?: string;
 }
-export function verifyDeposit(input: VerifyDepositInput): Promise<{ ok: true; flagged: boolean; carried_fwd_cents: number }> {
+export function verifyDeposit(
+  input: VerifyDepositInput
+): Promise<{ ok: true; flagged: boolean; carried_acknowledged?: boolean; carried_fwd_cents: number }> {
   return request(`${FN}?action=verify-deposit`, { method: "POST", body: JSON.stringify(input) });
 }
 
