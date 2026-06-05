@@ -492,6 +492,32 @@ async function submit(supa, user, body) {
     .limit(1)
     .maybeSingle();
 
+  // Duration — from the check-in (when they arrived) or, failing that, the
+  // draft's start, to the submit timestamp. Server-stamped so it can't be
+  // doctored client-side.
+  const submittedAt = new Date().toISOString();
+  let startedAt = null;
+  if (checkInId) {
+    const { data: ci } = await supa
+      .from("walkthrough_checkins").select("at").eq("id", checkInId).maybeSingle();
+    startedAt = ci?.at ?? null;
+  }
+  if (!startedAt) {
+    const { data: draft } = await supa
+      .from("walkthrough_submissions")
+      .select("created_at")
+      .eq("assignment_id", assignmentId)
+      .eq("submitted_by", user.id)
+      .eq("status", "draft")
+      .order("created_at", { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    startedAt = draft?.created_at ?? null;
+  }
+  const durationSeconds = startedAt
+    ? Math.max(0, Math.round((Date.parse(submittedAt) - Date.parse(startedAt)) / 1000))
+    : null;
+
   // 1) Submission row.
   const { data: sub, error: sErr } = await supa
     .from("walkthrough_submissions")
@@ -505,10 +531,11 @@ async function submit(supa, user, body) {
       score,
       tier,
       flag_count: flagCount,
+      duration_seconds: durationSeconds,
       status: "submitted",
       prior_submission_id: prior?.id ?? null,
       submitted_by: user.id,
-      submitted_at: new Date().toISOString(),
+      submitted_at: submittedAt,
     })
     .select("*")
     .single();
