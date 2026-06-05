@@ -565,11 +565,13 @@ async function listPafs(supa, user) {
     }
   }
 
-  // Mask SSN for non-payroll/admin viewers.
-  const showSSN = user.role === "payroll" || user.role === "admin";
+  // SSN last-4 is returned to every reader that reaches here. This list is
+  // already scope-filtered to PAFs the leader is allowed to see, and those
+  // leaders have access to the same last-4 in other systems — so there's no
+  // value in masking it for in-scope DO/SDO/RVP. (Previously payroll/admin
+  // only.)
   const rows = (data ?? []).map((r) => ({
     ...r,
-    last4_ssn: showSSN ? r.last4_ssn : "****",
     store_name: storeNameMap.get(String(r.drive_in)) ?? null,
   }));
 
