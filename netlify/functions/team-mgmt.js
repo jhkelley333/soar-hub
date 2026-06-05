@@ -324,6 +324,10 @@ function isSingleStoreRole(role) {
   return role === "gm" || HOURLY_STORE_ROLES.includes(role);
 }
 
+// Who can correct a team member's email address? DO and above only — it
+// rewrites the sign-in credential, so it's held above the GM tier.
+const EMAIL_EDIT_ROLES = ["do", "sdo", "rvp", "vp", "coo", "admin"];
+
 // Which roles can a manager create / change-to?
 function manageableRoles(role) {
   switch (role) {
@@ -733,6 +737,85 @@ async function updateUser(supa, manager, body) {
     updates.full_name = trimmed || null;
   }
 
+  // Email correction — DO+ only. Used to fix a mistyped invite address.
+  // Rewrites both the auth.users credential and profiles.email, then (if the
+  // account hasn't been activated yet) re-issues an invite/recovery link to
+  // the corrected inbox so the original wrong-email link isn't the only way in.
+  let reissuedTo = null;
+  if (
+    body.email !== undefined &&
+    body.email !== null &&
+    String(body.email).trim() !== ""
+  ) {
+    if (!EMAIL_EDIT_ROLES.includes(manager.role)) {
+      return {
+        error: "Only a DO or above can change a team member's email.",
+        status: 403,
+      };
+    }
+    const newEmail = String(body.email).trim().toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(newEmail)) {
+      return { error: "Enter a valid email address.", status: 400 };
+    }
+    const currentEmail = (target.email ?? "").toLowerCase();
+    if (newEmail !== currentEmail) {
+      // Don't collide with another account's email.
+      const { data: clash } = await supa
+        .from("profiles")
+        .select("id")
+        .ilike("email", newEmail)
+        .neq("id", target_id)
+        .maybeSingle();
+      if (clash) {
+        return { error: "Another user already has that email.", status: 409 };
+      }
+
+      // Update the credential first — this is what surfaces a dup the
+      // profiles check above might miss.
+      const { error: authErr } = await supa.auth.admin.updateUserById(
+        target_id,
+        { email: newEmail }
+      );
+      if (authErr) {
+        const dup = /already|registered|exists|duplicate/i.test(
+          authErr.message || ""
+        );
+        return {
+          error: dup
+            ? "Another user already has that email."
+            : `Couldn't update email: ${authErr.message}`,
+          status: dup ? 409 : 500,
+        };
+      }
+      updates.email = newEmail;
+
+      // If they haven't activated yet, send a fresh link to the new inbox.
+      // Mirrors send-reset: a recovery link lets an un-activated user set
+      // their password and confirms the corrected address in one step.
+      let confirmed = false;
+      try {
+        const { data: au } = await supa.auth.admin.getUserById(target_id);
+        confirmed = !!au?.user?.email_confirmed_at;
+      } catch {
+        /* treat as un-activated — re-issuing is the safer default */
+      }
+      if (!confirmed) {
+        const redirectTo =
+          (process.env.URL || process.env.DEPLOY_URL || "").replace(/\/$/, "") +
+          "/reset-password";
+        const { error: linkErr } = await supa.auth.resetPasswordForEmail(
+          newEmail,
+          { redirectTo: redirectTo || undefined }
+        );
+        if (linkErr) {
+          console.warn("[team-mgmt] email change: re-invite failed", linkErr);
+        } else {
+          reissuedTo = newEmail;
+        }
+      }
+    }
+  }
+
   // Start date / GM-assigned date — leadership-managed HR fields. Empty
   // string clears to null; otherwise must look like YYYY-MM-DD so a
   // bad client can't poison the column with garbage that breaks date
@@ -885,6 +968,10 @@ async function updateUser(supa, manager, body) {
     before.full_name = target.full_name ?? null;
     after.full_name = updates.full_name;
   }
+  if ("email" in updates) {
+    before.email = target.email ?? null;
+    after.email = updates.email;
+  }
   if ("phone" in updates) {
     before.phone = target.phone ?? null;
     after.phone = updates.phone;
@@ -913,7 +1000,7 @@ async function updateUser(supa, manager, body) {
     });
   }
 
-  return { ok: true };
+  return { ok: true, email_reissued: reissuedTo };
 }
 
 // ----------------------------------------------------------------------------
