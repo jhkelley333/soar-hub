@@ -57,7 +57,7 @@ export function PafDetail({ paf }: { paf: PafRow }) {
       <Section title="Submission">
         <Grid>
           <Field
-            label="Store"
+            label="Home Store"
             value={
               !paf.drive_in
                 ? paf.drivein_na
