@@ -44,6 +44,25 @@ function personName(p: { preferred_name?: string | null; full_name?: string | nu
   return p.preferred_name || p.full_name || p.email || "—";
 }
 
+// Leadership (DOs / SDOs) the caller manages — sourced from the scoped org
+// tree's per-store leadership, de-duped, excluding the caller themselves.
+// Valid assignees for a store-less walk: they choose the store when they run
+// it. Mirrors the RLS manageable_users() gate on store-less inserts.
+export async function loadAssignLeaders(): Promise<AssignPerson[]> {
+  const { data: auth } = await supabase.auth.getUser();
+  const meId = auth.user?.id ?? null;
+  const tree = await fetchMyTree();
+  const byId = new Map<string, AssignPerson>();
+  for (const lead of Object.values(tree.leadership)) {
+    for (const p of [lead.do, lead.sdo]) {
+      if (p && p.id !== meId) {
+        byId.set(p.id, { id: p.id, name: personName(p), role: p.role });
+      }
+    }
+  }
+  return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export async function loadAssignStores(): Promise<AssignStore[]> {
   const tree = await fetchMyTree();
   const out: AssignStore[] = [];
@@ -75,6 +94,8 @@ export async function loadAssignStores(): Promise<AssignStore[]> {
 
 export interface AssignmentRow {
   id: string;
+  /** True when no store was set — the assignee picks one when they run it. */
+  selfPickStore: boolean;
   storeNumber: string;
   storeName: string;
   templateName: string;
@@ -103,6 +124,7 @@ export async function listAssignments(): Promise<AssignmentRow[]> {
     const assignee = r.assignee as { full_name?: string | null; preferred_name?: string | null } | null;
     return {
       id: r.id as string,
+      selfPickStore: !store,
       storeNumber: store?.number ?? "—",
       storeName: store?.name ?? "—",
       templateName: tmpl?.name ?? "—",
@@ -120,7 +142,8 @@ export async function listAssignments(): Promise<AssignmentRow[]> {
 export interface NewAssignment {
   templateId: string;
   templateVersion: string;
-  storeId: string;
+  /** null = store-less (the assignee picks a store when they run it). */
+  storeId: string | null;
   assigneeId: string;
   dueAt: string | null;
 }
@@ -132,7 +155,7 @@ export async function createAssignment(a: NewAssignment): Promise<string> {
     .insert({
       template_id: a.templateId,
       template_version: a.templateVersion,
-      store_id: a.storeId,
+      store_id: a.storeId || null,
       assignee_id: a.assigneeId,
       due_at: a.dueAt,
       assigned_by: auth.user?.id ?? null,

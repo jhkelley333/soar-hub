@@ -70,7 +70,7 @@ interface AssignmentRow {
   id: string;
   template_id: string;
   template_version: string;
-  store_id: string;
+  store_id: string | null;
   assignee_id: string;
   due_at: string | null;
   status: WalkthroughAssignment["status"];
@@ -83,6 +83,9 @@ export interface LoadedAssignment {
   assignment: WalkthroughAssignment;
   template: WalkthroughTemplate;
   store: CheckInStore;
+  /** True when the assignment has no store yet — the assignee picks one
+   *  before running (leadership / self-pick walks). */
+  needsStore: boolean;
   /** Set when the walk was returned for revision — the DO's notes. */
   revisionNotes: string | null;
 }
@@ -119,8 +122,43 @@ function mapAssignment(row: AssignmentRow): LoadedAssignment {
       lng: row.store?.longitude ?? null,
       radiusM: row.store?.geofence_radius_m ?? undefined,
     },
+    needsStore: !row.store_id,
     revisionNotes: row.revision_notes ?? null,
   };
+}
+
+// Stores the assignee can pick from when running a store-less walk — their
+// own scoped org tree, flattened. Reused for the My Walks store picker.
+export interface PickStore {
+  id: string;
+  number: string;
+  name: string;
+}
+
+export async function fetchMyPickStores(): Promise<PickStore[]> {
+  const { fetchMyTree } = await import("@/modules/my-stores/api");
+  const tree = await fetchMyTree();
+  const out: PickStore[] = [];
+  for (const r of tree.regions ?? []) {
+    for (const a of r.areas ?? []) {
+      for (const d of a.districts ?? []) {
+        for (const s of d.stores ?? []) {
+          out.push({ id: s.id, number: s.number, name: s.name ?? "" });
+        }
+      }
+    }
+  }
+  return out.sort((a, b) => a.number.localeCompare(b.number));
+}
+
+// Stamp the chosen store onto a store-less assignment. Allowed by the
+// walkthrough_assignments_update_assignee RLS policy (assignee_id = uid).
+export async function setAssignmentStore(assignmentId: string, storeId: string): Promise<void> {
+  const { error } = await supabase
+    .from("walkthrough_assignments")
+    .update({ store_id: storeId })
+    .eq("id", assignmentId);
+  if (error) throw error;
 }
 
 // ---- reads -----------------------------------------------------------------

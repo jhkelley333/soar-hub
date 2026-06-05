@@ -11,12 +11,14 @@ import { Badge } from "@/shared/ui/Badge";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
+import { cn } from "@/lib/cn";
 import { Field, Select, TextInput } from "../builder/controls";
 import { StatusChip } from "../review/tierUi";
 import {
   createAssignment,
   listActiveTemplates,
   listAssignments,
+  loadAssignLeaders,
   loadAssignStores,
   type AssignmentRow,
 } from "./api";
@@ -93,6 +95,8 @@ export function AssignmentsPage({ embedded = false }: { embedded?: boolean } = {
   );
 }
 
+type AssignMode = "store" | "leader";
+
 function NewAssignmentForm({
   onDone,
   onError,
@@ -102,10 +106,16 @@ function NewAssignmentForm({
 }) {
   const templates = useQuery({ queryKey: ["wt-active-templates"], queryFn: listActiveTemplates });
   const stores = useQuery({ queryKey: ["wt-assign-stores"], queryFn: loadAssignStores });
+  const leaders = useQuery({ queryKey: ["wt-assign-leaders"], queryFn: loadAssignLeaders });
 
+  const [mode, setMode] = useState<AssignMode>("store");
   const [templateId, setTemplateId] = useState("");
   const [storeId, setStoreId] = useState("");
   const [assigneeId, setAssigneeId] = useState("");
+  // Leadership path: assignee is a DO/SDO; the store is optional (blank =
+  // they choose when they run it).
+  const [leaderId, setLeaderId] = useState("");
+  const [leaderStoreId, setLeaderStoreId] = useState("");
   const [due, setDue] = useState("");
 
   const store = useMemo(
@@ -119,8 +129,8 @@ function NewAssignmentForm({
       return createAssignment({
         templateId,
         templateVersion: tmpl?.version ?? "",
-        storeId,
-        assigneeId,
+        storeId: mode === "store" ? storeId : leaderStoreId || null,
+        assigneeId: mode === "store" ? assigneeId : leaderId,
         // End-of-day on the chosen date so "due today" isn't already overdue.
         dueAt: due ? new Date(`${due}T23:59:59`).toISOString() : null,
       });
@@ -129,11 +139,30 @@ function NewAssignmentForm({
     onError: (e) => onError(e instanceof Error ? e.message : "Create failed"),
   });
 
-  const ready = templateId && storeId && assigneeId;
+  const ready =
+    !!templateId &&
+    (mode === "store" ? !!storeId && !!assigneeId : !!leaderId);
 
   return (
     <Card className="mb-5">
       <CardBody className="space-y-4">
+        {/* Who's it for */}
+        <div className="inline-flex rounded-lg border border-zinc-200 bg-zinc-50 p-0.5 text-xs font-medium">
+          {(["store", "leader"] as AssignMode[]).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setMode(m)}
+              className={cn(
+                "rounded-md px-3 py-1.5 transition",
+                mode === m ? "bg-white text-midnight shadow-sm" : "text-zinc-500 hover:text-midnight",
+              )}
+            >
+              {m === "store" ? "Store team" : "Leadership (DO / SDO)"}
+            </button>
+          ))}
+        </div>
+
         <div className="grid grid-cols-2 gap-4">
           <Field label="Template">
             <Select
@@ -150,31 +179,56 @@ function NewAssignmentForm({
           </Field>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Store">
-            <Select
-              value={storeId}
-              onChange={(v) => {
-                setStoreId(v);
-                setAssigneeId("");
-              }}
-              options={[
-                { value: "", label: stores.isLoading ? "Loading…" : "Select a store" },
-                ...(stores.data ?? []).map((s) => ({ value: s.id, label: `${s.number} · ${s.name}` })),
-              ]}
-            />
-          </Field>
-          <Field label="Assignee" hint={store && !store.assignees.length ? "No team on file for this store." : undefined}>
-            <Select
-              value={assigneeId}
-              onChange={setAssigneeId}
-              options={[
-                { value: "", label: !store ? "Pick a store first" : "Select an assignee" },
-                ...(store?.assignees ?? []).map((p) => ({ value: p.id, label: `${p.name} (${p.role})` })),
-              ]}
-            />
-          </Field>
-        </div>
+        {mode === "store" ? (
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Store">
+              <Select
+                value={storeId}
+                onChange={(v) => {
+                  setStoreId(v);
+                  setAssigneeId("");
+                }}
+                options={[
+                  { value: "", label: stores.isLoading ? "Loading…" : "Select a store" },
+                  ...(stores.data ?? []).map((s) => ({ value: s.id, label: `${s.number} · ${s.name}` })),
+                ]}
+              />
+            </Field>
+            <Field label="Assignee" hint={store && !store.assignees.length ? "No team on file for this store." : undefined}>
+              <Select
+                value={assigneeId}
+                onChange={setAssigneeId}
+                options={[
+                  { value: "", label: !store ? "Pick a store first" : "Select an assignee" },
+                  ...(store?.assignees ?? []).map((p) => ({ value: p.id, label: `${p.name} (${p.role})` })),
+                ]}
+              />
+            </Field>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Leader" hint={!leaders.isLoading && !leaders.data?.length ? "No DOs/SDOs in your scope." : undefined}>
+              <Select
+                value={leaderId}
+                onChange={setLeaderId}
+                options={[
+                  { value: "", label: leaders.isLoading ? "Loading…" : "Select a DO / SDO" },
+                  ...(leaders.data ?? []).map((p) => ({ value: p.id, label: `${p.name} (${p.role.toUpperCase()})` })),
+                ]}
+              />
+            </Field>
+            <Field label="Store" hint="Optional — blank lets them choose.">
+              <Select
+                value={leaderStoreId}
+                onChange={setLeaderStoreId}
+                options={[
+                  { value: "", label: "They choose the store" },
+                  ...(stores.data ?? []).map((s) => ({ value: s.id, label: `${s.number} · ${s.name}` })),
+                ]}
+              />
+            </Field>
+          </div>
+        )}
 
         <div className="flex items-center justify-end gap-2 pt-1">
           <Button onClick={() => create.mutate()} disabled={!ready || create.isPending}>
@@ -194,13 +248,14 @@ function AssignmentCard({ a }: { a: AssignmentRow }) {
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-midnight">
-              {a.storeNumber} · {a.storeName}
+              {a.selfPickStore ? a.assigneeName : `${a.storeNumber} · ${a.storeName}`}
             </span>
             <StatusChip status={a.status} />
             <Badge tone="info">{a.templateName}</Badge>
+            {a.selfPickStore && <Badge tone="neutral">Store: assignee picks</Badge>}
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-3 text-xs text-zinc-500">
-            <span>{a.assigneeName}</span>
+            <span>{a.selfPickStore ? "Leadership walk" : a.assigneeName}</span>
             <span>v{a.templateVersion}</span>
             {a.dueAt && (
               <span className={overdue ? "inline-flex items-center gap-1 font-medium text-red-600" : "inline-flex items-center gap-1"}>
