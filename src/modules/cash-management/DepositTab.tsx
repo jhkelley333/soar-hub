@@ -3,7 +3,7 @@
 
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Banknote, Camera, Check, TrendingUp } from "lucide-react";
+import { Banknote, Camera, Check } from "lucide-react";
 import { Card } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -12,7 +12,7 @@ import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { fetchDeposit, uploadSlip, verifyDeposit } from "./api";
 import { toCents, usd } from "./money";
-import { MoneyInput, Pill } from "./ui";
+import { InfoDot, MoneyInput, Pill } from "./ui";
 
 function CheckRow({ done, label, sub }: { done: boolean; label: string; sub: string }) {
   return (
@@ -47,6 +47,8 @@ export function DepositTab({ storeId, onDone }: { storeId: string | null; onDone
   const [slipName, setSlipName] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [reason, setReason] = useState("");
+  const [carriedCount, setCarriedCount] = useState("");
+  const [carriedDollars, setCarriedDollars] = useState("");
   const [carriedAck, setCarriedAck] = useState(false);
   const [carriedNote, setCarriedNote] = useState("");
 
@@ -55,8 +57,9 @@ export function DepositTab({ storeId, onDone }: { storeId: string | null; onDone
   const variance = dep ? bankCents - dep.expected_cents : 0;
   const matched = hasBank && Math.abs(variance) <= tol;
   const overTol = hasBank && Math.abs(variance) > tol;
-  const carried = dep?.dsr_carried_over_cents ?? 0;
-  const hasCarry = Math.abs(carried) > 0;
+  const carriedCountN = parseInt(carriedCount || "0", 10) || 0;
+  const carriedCents = toCents(carriedDollars);
+  const hasCarry = carriedCountN > 0 || carriedCents !== 0;
   const canVerify =
     !!dep && hasBank && !!slipPath && (matched || reason.trim().length >= 8) && (!hasCarry || carriedAck);
 
@@ -83,6 +86,8 @@ export function DepositTab({ storeId, onDone }: { storeId: string | null; onDone
         bank_credited_cents: bankCents,
         slip_path: slipPath!,
         reason: reason.trim(),
+        carried_over_count: carriedCountN,
+        carried_over_cents: carriedCents,
         carried_ack: hasCarry ? carriedAck : undefined,
         carried_note: hasCarry ? carriedNote.trim() : undefined,
       }),
@@ -193,24 +198,35 @@ export function DepositTab({ storeId, onDone }: { storeId: string | null; onDone
             )}
 
             <div>
-              <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-zinc-400">Carried over from DSR</div>
-              <div
-                className={cn(
-                  "flex items-center justify-between rounded-md px-3.5 py-3 ring-1 ring-inset",
-                  hasCarry ? "bg-amber-50 ring-amber-200" : "bg-zinc-50 ring-zinc-200"
-                )}
-              >
-                <span className={cn("inline-flex items-center gap-1.5 text-[13px] font-semibold", hasCarry ? "text-amber-800" : "text-zinc-400")}>
-                  <TrendingUp className="h-3.5 w-3.5" /> Reported by today's DSR
-                </span>
-                <span className={cn("text-lg font-bold tabular-nums", hasCarry ? "text-amber-800" : "text-zinc-400")}>
-                  {usd(carried)}
-                </span>
+              <div className="mb-1.5 flex items-center gap-1.5">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Carried over from DSR</span>
+                <InfoDot label="What is carried over?">
+                  <strong className="font-semibold text-zinc-700">Carried Over (Micros DSR)</strong> — open guest checks/tabs
+                  from the prior business day still open when today began: a <em>count</em> and their <em>dollar value</em>.
+                  High carryover can flag checks left open (drive-thru voids not completed, training/system issues) and
+                  shrinkage exposure. Carried-over dollars aren't new sales, so they're reconciled separately.
+                </InfoDot>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <div className="mb-1 text-[11px] text-zinc-500">Open checks (count)</div>
+                  <input
+                    type="number"
+                    min={0}
+                    inputMode="numeric"
+                    value={carriedCount}
+                    placeholder="0"
+                    onChange={(e) => setCarriedCount(e.target.value)}
+                    className="block w-full rounded-md border-0 bg-white px-3 py-2.5 text-lg font-semibold tabular-nums ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+                  />
+                </div>
+                <div>
+                  <div className="mb-1 text-[11px] text-zinc-500">Open-check dollars</div>
+                  <MoneyInput value={carriedDollars} onChange={setCarriedDollars} placeholder="0.00" />
+                </div>
               </div>
               <div className="mt-1.5 text-[11px] text-zinc-400">
-                {hasCarry
-                  ? `${usd(carried)} ${carried < 0 ? "short" : "over"} keeps rolling forward until a DO/SDO resolves it.`
-                  : "Nothing rolls forward — full deposit cleared."}
+                Enter the open checks carried over from yesterday's DSR — leave at 0 if none.
               </div>
 
               {hasCarry && (
@@ -223,15 +239,15 @@ export function DepositTab({ storeId, onDone }: { storeId: string | null; onDone
                       className="mt-0.5 h-4 w-4 rounded border-amber-300 text-accent focus:ring-accent"
                     />
                     <span>
-                      I've <strong>recorded and addressed</strong> this carried-over balance.{" "}
-                      <span className="font-normal text-amber-700">A discrepancy alert also goes to the DO &amp; SDO to resolve.</span>
+                      I've <strong>recorded and addressed</strong> these carried-over open checks.{" "}
+                      <span className="font-normal text-amber-700">A discrepancy alert also goes to the DO &amp; SDO to review.</span>
                     </span>
                   </label>
                   <textarea
                     value={carriedNote}
                     onChange={(e) => setCarriedNote(e.target.value)}
                     rows={2}
-                    placeholder="Optional — how it was recorded / where it was addressed…"
+                    placeholder="Optional — checks involved / how it was addressed…"
                     className="mt-2 block w-full resize-y rounded-md border-0 bg-white px-3 py-2 text-sm ring-1 ring-inset ring-amber-200 focus:outline-none focus:ring-2 focus:ring-accent"
                   />
                 </div>

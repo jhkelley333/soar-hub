@@ -110,11 +110,15 @@ export function DepositDetailDrawer({
                     value={<span className={d.deposit.flagged ? "font-bold text-red-700" : ""}>{usd(d.deposit.variance_cents, { signed: true })}</span>}
                   />
                 )}
-                <Row label="Carried over (DSR)" value={usd(d.deposit.dsr_carried_over_cents)} />
+                <Row
+                  label="Carried over (DSR)"
+                  value={`${d.deposit.carried_over_count} check(s) · ${usd(d.deposit.dsr_carried_over_cents)}`}
+                  mono={false}
+                />
                 <Row label="Verified" value={d.deposit.verified_at ? d.deposit.verified_at.slice(0, 10) : "—"} mono={false} />
               </div>
 
-              {Math.abs(d.deposit.dsr_carried_over_cents) > 0 && (
+              {(d.deposit.carried_over_count > 0 || Math.abs(d.deposit.dsr_carried_over_cents) > 0) && (
                 <div className="mt-3 rounded-md bg-amber-50 p-3 ring-1 ring-inset ring-amber-200">
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700">Carried-over</span>

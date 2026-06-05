@@ -96,11 +96,12 @@ export interface DsrRow {
   deposit_id: string | null;
   has_slip: boolean;
   business_date: string;
-  carried_in_cents: number;
   cash_due_cents: number;
   deposit_cents: number;
   variance_cents: number;
-  carried_out_cents: number;
+  // Open guest checks carried over from the prior-day DSR (entered at validation).
+  carried_over_count: number;
+  carried_over_cents: number;
   deposit_verified: boolean;
   status: string;
 }
@@ -129,6 +130,7 @@ export interface DepositDetail {
     expected_cents: number;
     bank_credited_cents: number | null;
     dsr_carried_over_cents: number;
+    carried_over_count: number;
     carried_fwd_cents: number;
     variance_cents: number | null;
     flagged: boolean;
@@ -144,7 +146,9 @@ export interface DepositDetail {
 export interface DsrResponse {
   store: CmgStore;
   toleranceCents: number;
-  current_carry_cents: number;
+  // Open-check carryover totals across the period.
+  open_check_count: number;
+  open_check_cents: number;
   total_deposited_cents: number;
   flagged_days: number;
   clean_days: number;
