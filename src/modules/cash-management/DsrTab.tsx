@@ -21,8 +21,9 @@ export function DsrTab({ storeId }: { storeId: string | null }) {
 
   const data = query.data!;
   const tol = data.toleranceCents;
-  const carry = data.current_carry_cents;
-  const carrying = Math.abs(carry) > 0;
+  const openCents = data.open_check_cents;
+  const openCount = data.open_check_count;
+  const hasOpen = openCount > 0 || openCents !== 0;
 
   if (data.ledger.length === 0)
     return <EmptyState title="No DSR history yet" description="Submit a night closeout to start the carried-over ledger." />;
@@ -39,7 +40,7 @@ export function DsrTab({ storeId }: { storeId: string | null }) {
 
       <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Card className="p-5">
-          <Figure label="Carried over now" value={usd(carry)} tone={carrying ? "red" : undefined} sub={carrying ? "Rolling forward" : "Fully reconciled"} />
+          <Figure label="Carried over (open checks)" value={usd(openCents)} tone={hasOpen ? "red" : undefined} sub={`${openCount} open check(s)`} />
         </Card>
         <Card className="p-5">
           <Figure label={`Deposited (${data.days}d)`} value={usd(data.total_deposited_cents)} sub="Across the period" />
@@ -55,19 +56,19 @@ export function DsrTab({ storeId }: { storeId: string | null }) {
       <div
         className={cn(
           "mb-5 flex gap-3 rounded-lg p-4 ring-1 ring-inset",
-          carrying ? "bg-amber-50 ring-amber-200" : "bg-emerald-50 ring-emerald-200"
+          hasOpen ? "bg-amber-50 ring-amber-200" : "bg-emerald-50 ring-emerald-200"
         )}
       >
-        {carrying ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" /> : <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />}
-        <div className={cn("text-[13px] leading-relaxed", carrying ? "text-amber-800" : "text-emerald-700")}>
-          {carrying ? (
+        {hasOpen ? <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" /> : <Check className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />}
+        <div className={cn("text-[13px] leading-relaxed", hasOpen ? "text-amber-800" : "text-emerald-700")}>
+          {hasOpen ? (
             <>
-              <strong>{usd(carry)} is carrying forward.</strong> An unresolved variance keeps rolling into the next DSR until a DO or SDO
-              resolves it.
+              <strong>{openCount} open check(s) ({usd(openCents)}) carried over</strong> this period — flagged for review.
+              Open checks from a prior day aren't new sales and can signal checks left open.
             </>
           ) : (
             <>
-              <strong>Nothing is carrying forward.</strong> Every deposit reconciled within tolerance — the ledger is square.
+              <strong>No open checks carried over.</strong> Every day's deposit closed clean against the DSR.
             </>
           )}
         </div>
@@ -79,11 +80,10 @@ export function DsrTab({ storeId }: { storeId: string | null }) {
             <thead className="bg-zinc-50 text-right text-[11px] uppercase tracking-wider text-zinc-400">
               <tr>
                 <th className="px-5 py-3 text-left font-bold">Business day</th>
-                <th className="px-4 py-3 font-bold">Carried in</th>
                 <th className="px-4 py-3 font-bold">Cash due</th>
                 <th className="px-4 py-3 font-bold">Deposit</th>
                 <th className="px-4 py-3 font-bold">Variance</th>
-                <th className="px-4 py-3 font-bold">Carried out</th>
+                <th className="px-4 py-3 font-bold">Carried over</th>
                 <th className="px-5 py-3 text-center font-bold">Deposit</th>
                 <th className="px-5 py-3 text-center font-bold">Review</th>
               </tr>
@@ -97,16 +97,15 @@ export function DsrTab({ storeId }: { storeId: string | null }) {
                       <div className="font-medium text-midnight">{h.business_date.slice(5)}</div>
                       <div className="font-mono text-[11px] text-zinc-400">{h.id}</div>
                     </td>
-                    <td className={cn("px-4 py-3 tabular-nums", h.carried_in_cents ? "text-amber-800" : "text-zinc-300")}>
-                      {h.carried_in_cents ? usd(h.carried_in_cents, { signed: true }) : "—"}
-                    </td>
                     <td className="px-4 py-3 tabular-nums text-zinc-600">{usd(h.cash_due_cents)}</td>
                     <td className="px-4 py-3 font-semibold tabular-nums">{usd(h.deposit_cents)}</td>
                     <td className={cn("px-4 py-3 font-bold tabular-nums", h.variance_cents === 0 ? "text-zinc-400" : over ? "text-red-700" : "text-zinc-600")}>
                       {h.variance_cents === 0 ? "—" : usd(h.variance_cents, { signed: true })}
                     </td>
-                    <td className={cn("px-4 py-3 font-bold tabular-nums", Math.abs(h.carried_out_cents) > 0 ? "text-amber-800" : "text-zinc-300")}>
-                      {Math.abs(h.carried_out_cents) > 0 ? usd(h.carried_out_cents, { signed: true }) : usd(0)}
+                    <td className={cn("px-4 py-3 tabular-nums", h.carried_over_count > 0 || h.carried_over_cents !== 0 ? "text-amber-800" : "text-zinc-300")}>
+                      {h.carried_over_count > 0 || h.carried_over_cents !== 0
+                        ? `${h.carried_over_count} · ${usd(h.carried_over_cents)}`
+                        : "—"}
                     </td>
                     <td className="px-5 py-3 text-center">
                       {h.deposit_verified ? <Pill tone="green" dot>Verified</Pill> : <Pill tone="amber" dot>Pending</Pill>}

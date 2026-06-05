@@ -557,38 +557,43 @@ async function dsr(supa, user, params) {
     .from("cash_closeouts").select("*").eq("store_id", active.id)
     .order("business_date", { ascending: true }).limit(30);
 
-  // closeout_id -> deposit (verified? + id + slip presence) for the review drawer.
+  // closeout_id -> deposit (verified? + id + slip + entered open-check carryover).
   const ids = (rows || []).map((r) => r.id);
   const depByCloseout = {};
   if (ids.length) {
     const { data: deps } = await supa
-      .from("cash_deposits").select("closeout_id, id, status, slip_path").in("closeout_id", ids);
+      .from("cash_deposits")
+      .select("closeout_id, id, status, slip_path, carried_over_count, dsr_carried_over_cents")
+      .in("closeout_id", ids);
     for (const d of deps || []) depByCloseout[d.closeout_id] = d;
   }
   const settings = await getSettings(supa);
 
-  let running = 0;
-  const asc = (rows || []).map((h) => {
-    const carriedIn = running;
-    const carriedOut = h.status === "verified" ? 0 : running + (h.variance_cents || 0);
-    running = carriedOut;
-    const d = depByCloseout[h.id];
-    return {
-      id: coCode(h.business_date), closeout_id: h.id, deposit_id: d?.id || null,
-      has_slip: !!d?.slip_path, business_date: h.business_date,
-      carried_in_cents: carriedIn, cash_due_cents: h.cash_due_cents, deposit_cents: h.deposit_cents,
-      variance_cents: h.variance_cents, carried_out_cents: carriedOut,
-      deposit_verified: d?.status === "verified", status: h.status,
-    };
-  });
-  const ledger = asc.slice().reverse();
+  // newest first for display (rows are ascending by date)
+  const ledger = (rows || [])
+    .map((h) => {
+      const d = depByCloseout[h.id];
+      return {
+        id: coCode(h.business_date), closeout_id: h.id, deposit_id: d?.id || null, has_slip: !!d?.slip_path,
+        business_date: h.business_date, cash_due_cents: h.cash_due_cents, deposit_cents: h.deposit_cents,
+        variance_cents: h.variance_cents,
+        carried_over_count: d?.carried_over_count || 0, carried_over_cents: d?.dsr_carried_over_cents || 0,
+        deposit_verified: d?.status === "verified", status: h.status,
+      };
+    })
+    .reverse();
+
   const flaggedCount = (rows || []).filter((h) => Math.abs(h.variance_cents) > settings.closeout).length;
   const totalDeposited = (rows || []).reduce((s, h) => s + (h.deposit_cents || 0), 0);
+  const depList = Object.values(depByCloseout);
+  const openCheckCount = depList.reduce((s, d) => s + (d.carried_over_count || 0), 0);
+  const openCheckCents = depList.reduce((s, d) => s + (d.dsr_carried_over_cents || 0), 0);
 
   return {
     store: { id: active.id, number: String(active.number), name: active.name },
     toleranceCents: settings.closeout,
-    current_carry_cents: ledger[0] ? ledger[0].carried_out_cents : 0,
+    open_check_count: openCheckCount,
+    open_check_cents: openCheckCents,
     total_deposited_cents: totalDeposited,
     flagged_days: flaggedCount,
     clean_days: (rows || []).length - flaggedCount,
