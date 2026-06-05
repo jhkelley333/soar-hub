@@ -3,16 +3,20 @@
 // Mobile-first: GMs live on phones. Reads the scoped my-assignments + list
 // endpoints (the function filters to the caller).
 
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
-import { CalendarClock, ChevronRight, ClipboardList, Flag } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CalendarClock, ChevronRight, ClipboardList, Flag, Loader2, MapPin } from "lucide-react";
 import { AppHeader } from "@/shared/ui/AppHeader";
 import { cn } from "@/lib/cn";
 import {
   fetchMyAssignments,
+  fetchMyPickStores,
   fetchMyRecentSubmissions,
+  setAssignmentStore,
   type LoadedAssignment,
   type MySubmissionRow,
+  type PickStore,
 } from "./api";
 
 const TIER_TEXT: Record<string, string> = {
@@ -32,6 +36,14 @@ export function MyWalksPage() {
   const navigate = useNavigate();
   const assignments = useQuery({ queryKey: ["my-walk-assignments"], queryFn: fetchMyAssignments });
   const submissions = useQuery({ queryKey: ["my-walk-submissions"], queryFn: fetchMyRecentSubmissions });
+  // Stores the assignee can pick for a store-less walk — only fetched when
+  // at least one assignment needs it.
+  const hasStoreless = !!assignments.data?.some((a) => a.needsStore);
+  const pickStores = useQuery({
+    queryKey: ["my-walk-pick-stores"],
+    queryFn: fetchMyPickStores,
+    enabled: hasStoreless,
+  });
 
   return (
     <div className="mx-auto w-full max-w-md bg-surface-muted min-h-full flex flex-col">
@@ -55,6 +67,7 @@ export function MyWalksPage() {
                 <AssignmentCard
                   key={a.assignment.id}
                   a={a}
+                  pickStores={pickStores.data ?? []}
                   onOpen={() => navigate(`/walkthrough/run/${a.assignment.id}`)}
                 />
               ))}
@@ -84,12 +97,88 @@ export function MyWalksPage() {
   );
 }
 
-function AssignmentCard({ a, onOpen }: { a: LoadedAssignment; onOpen: () => void }) {
-  const { assignment, template, store, revisionNotes } = a;
+function AssignmentCard({
+  a,
+  pickStores,
+  onOpen,
+}: {
+  a: LoadedAssignment;
+  pickStores: PickStore[];
+  onOpen: () => void;
+}) {
+  const { assignment, template, store, revisionNotes, needsStore } = a;
   const returned = !!revisionNotes;
   const overdue =
     assignment.dueAt && new Date(assignment.dueAt) < new Date() && assignment.status !== "submitted";
   const cta = returned ? "Revise" : assignment.status === "in_progress" ? "Continue" : "Start";
+
+  // Store-less walk: the assignee picks a store, which is stamped onto the
+  // assignment before the runner opens.
+  const qc = useQueryClient();
+  const [pickedStore, setPickedStore] = useState("");
+  const start = useMutation({
+    mutationFn: () => setAssignmentStore(assignment.id, pickedStore),
+    onSuccess: async () => {
+      await qc.invalidateQueries({ queryKey: ["my-walk-assignments"] });
+      onOpen();
+    },
+  });
+
+  if (needsStore) {
+    return (
+      <div
+        className={cn(
+          "rounded-xl bg-surface p-3.5 shadow-card ring-1",
+          returned ? "ring-warn/40" : "ring-midnight-100",
+        )}
+      >
+        <div className="flex items-center gap-2">
+          <span className="text-[15px] font-semibold text-midnight-900 truncate">{template.name}</span>
+          <span className="shrink-0 rounded bg-midnight-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-midnight-600">
+            Pick store
+          </span>
+        </div>
+        <div className="mt-1 flex items-center gap-1 text-[11.5px] text-midnight-500">
+          <MapPin className="h-3 w-3" />
+          Choose which store you're walking
+          {assignment.dueAt && (
+            <span className={cn("ml-2 inline-flex items-center gap-1", overdue ? "font-medium text-bad" : "")}>
+              <CalendarClock className="h-3 w-3" />
+              {new Date(assignment.dueAt).toLocaleDateString()}
+            </span>
+          )}
+        </div>
+        <div className="mt-2.5 flex items-center gap-2">
+          <select
+            value={pickedStore}
+            onChange={(e) => setPickedStore(e.target.value)}
+            className="h-9 flex-1 rounded-lg border border-midnight-200 bg-white px-2 text-[13px] text-midnight-900 focus:border-accent focus:outline-none"
+          >
+            <option value="">Select a store…</option>
+            {pickStores.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.number} · {s.name}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => start.mutate()}
+            disabled={!pickedStore || start.isPending}
+            className="inline-flex items-center gap-1 rounded-lg bg-midnight-900 px-3 py-2 text-[13px] font-semibold text-white disabled:opacity-50"
+          >
+            {start.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "Start"}
+            {!start.isPending && <ChevronRight className="h-4 w-4" strokeWidth={2} />}
+          </button>
+        </div>
+        {start.isError && (
+          <div className="mt-1.5 text-[11px] text-bad">
+            {start.error instanceof Error ? start.error.message : "Couldn't start. Try again."}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <button
