@@ -86,7 +86,10 @@ export interface VerifyDepositInput {
   bank_credited_cents: number;
   slip_path: string;
   reason?: string;
-  // Required when the deposit carries a nonzero balance from the DSR.
+  // Carried-over open checks from the DSR, entered by the validator.
+  carried_over_count?: number;
+  carried_over_cents?: number;
+  // Required when a nonzero carried-over is entered.
   carried_ack?: boolean;
   carried_note?: string;
 }

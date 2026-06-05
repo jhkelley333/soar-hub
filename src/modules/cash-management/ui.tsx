@@ -2,8 +2,32 @@
 // Tailwind-native (cash-green = emerald, warn = amber, breach = red) so the
 // module sits "under one roof" with the rest of the hub.
 
-import { Minus, Plus } from "lucide-react";
+import { useState } from "react";
+import { Info, Minus, Plus } from "lucide-react";
 import { cn } from "@/lib/cn";
+
+// Click-to-toggle info popover (a little "i"). Body text passed as children.
+export function InfoDot({ children, label = "More info" }: { children: React.ReactNode; label?: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative inline-flex">
+      <button
+        type="button"
+        aria-label={label}
+        onClick={() => setOpen((v) => !v)}
+        onBlur={() => setOpen(false)}
+        className="grid h-4 w-4 place-items-center rounded-full text-zinc-400 transition hover:text-zinc-600"
+      >
+        <Info className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <div className="absolute left-5 top-0 z-20 w-72 rounded-md border border-zinc-200 bg-white p-3 text-left text-xs font-normal normal-case leading-relaxed tracking-normal text-zinc-600 shadow-lg">
+          {children}
+        </div>
+      )}
+    </span>
+  );
+}
 
 type Tone = "neutral" | "green" | "red" | "amber" | "blue";
 

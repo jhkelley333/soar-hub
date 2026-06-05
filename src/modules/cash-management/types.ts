@@ -129,6 +129,7 @@ export interface DepositDetail {
     expected_cents: number;
     bank_credited_cents: number | null;
     dsr_carried_over_cents: number;
+    carried_over_count: number;
     carried_fwd_cents: number;
     variance_cents: number | null;
     flagged: boolean;

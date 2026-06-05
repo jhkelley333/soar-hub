@@ -249,21 +249,6 @@ async function escalate(supa, { store, variancecents, type, reason, managerName,
   await sendEmail(emails, subject, body);
 }
 
-// Compute the carried-over balance rolling forward from closeouts BEFORE a date.
-async function computeCarry(supa, storeId, beforeDate) {
-  const { data: rows } = await supa
-    .from("cash_closeouts")
-    .select("business_date, variance_cents, status")
-    .eq("store_id", storeId)
-    .lt("business_date", beforeDate)
-    .order("business_date", { ascending: true });
-  let running = 0;
-  for (const h of rows || []) {
-    running = h.status === "verified" ? 0 : running + (h.variance_cents || 0);
-  }
-  return running;
-}
-
 // ---- closeout row -> display shape for tables ----
 function closeoutCard(co) {
   return {
@@ -349,12 +334,11 @@ async function submitCloseout(supa, user, body) {
   }
 
   const managerName = user.preferred_name || user.full_name || user.email;
-  const carry = await computeCarry(supa, active.id, businessDate);
 
   const row = {
     store_id: active.id, store_number: String(active.number), business_date: businessDate,
     cash_due_cents: cashDue, counted_cents: counted, deposit_cents: deposit,
-    denominations: body?.denominations || {}, variance_cents: variance, carried_over_cents: carry,
+    denominations: body?.denominations || {}, variance_cents: variance, carried_over_cents: 0,
     flagged, reason: flagged ? reason : null, status: flagged ? "flagged" : "awaiting-deposit",
     submitted_by: user.id, submitted_by_name: managerName, submitted_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -367,7 +351,7 @@ async function submitCloseout(supa, user, body) {
   await supa.from("cash_deposits").upsert(
     {
       closeout_id: co.id, store_id: active.id, store_number: String(active.number),
-      for_date: businessDate, expected_cents: deposit, dsr_carried_over_cents: carry,
+      for_date: businessDate, expected_cents: deposit, dsr_carried_over_cents: 0,
       status: "pending", updated_at: new Date().toISOString(),
     },
     { onConflict: "closeout_id" }
@@ -435,21 +419,24 @@ async function verifyDeposit(supa, user, body) {
   const reason = String(body?.reason || "").trim();
   if (flagged && reason.length < 8) return { error: "A mismatch reason (min 8 chars) is required.", status: 400 };
 
-  // Carried-over from the DSR must be explicitly recorded + addressed before
-  // a deposit with a nonzero carry can be validated.
-  const carried = dep.dsr_carried_over_cents || 0;
+  // Carried-over open checks (Micros DSR): a COUNT + DOLLAR value the validator
+  // enters from the prior-day DSR. A nonzero carry must be recorded + addressed.
+  const carriedCents = Math.round(Number(body?.carried_over_cents)) || 0;
+  const carriedCount = parseInt(String(body?.carried_over_count ?? "0"), 10) || 0;
+  const hasCarry = carriedCount > 0 || carriedCents !== 0;
   const carriedAck = body?.carried_ack === true || body?.carried_ack === "true";
   const carriedNote = String(body?.carried_note || "").trim() || null;
-  if (carried !== 0 && !carriedAck) {
-    return { error: "Record and address the carried-over balance before verifying.", status: 400 };
+  if (hasCarry && !carriedAck) {
+    return { error: "Record and address the carried-over open checks before verifying.", status: 400 };
   }
   const nowIso = new Date().toISOString();
 
   const { error } = await supa.from("cash_deposits").update({
     bank_credited_cents: bank, variance_cents: variance, flagged, reason: flagged ? reason : null,
-    slip_path: slipPath, carried_fwd_cents: dep.dsr_carried_over_cents,
-    carried_ack: carried !== 0, carried_note: carried !== 0 ? carriedNote : null,
-    carried_ack_by: carried !== 0 ? user.id : null, carried_ack_at: carried !== 0 ? nowIso : null,
+    slip_path: slipPath,
+    dsr_carried_over_cents: carriedCents, carried_over_count: carriedCount, carried_fwd_cents: carriedCents,
+    carried_ack: hasCarry, carried_note: hasCarry ? carriedNote : null,
+    carried_ack_by: hasCarry ? user.id : null, carried_ack_at: hasCarry ? nowIso : null,
     status: flagged ? "flagged" : "verified",
     verified_by: user.id, verified_at: nowIso, updated_at: nowIso,
   }).eq("id", depId);
@@ -462,7 +449,7 @@ async function verifyDeposit(supa, user, body) {
 
   const mgr = user.preferred_name || user.full_name || user.email;
   let storeRow = null;
-  if (flagged || carried !== 0) {
+  if (flagged || hasCarry) {
     const { data } = await supa.from("stores").select("id, number, name").eq("id", dep.store_id).maybeSingle();
     storeRow = data || { id: dep.store_id, number: dep.store_number, name: null };
   }
@@ -473,16 +460,16 @@ async function verifyDeposit(supa, user, body) {
       reason, managerName: mgr, source: "deposit", closeoutId: dep.closeout_id,
     });
   }
-  // Carried-over balance → DO/SDO alert to formally resolve (it keeps rolling
-  // until they do), even though the closer acknowledged it here.
-  if (carried !== 0) {
+  // Carried-over open checks → DO/SDO alert (shrinkage exposure), even though
+  // the validator acknowledged it here.
+  if (hasCarry) {
     await escalate(supa, {
-      store: storeRow, variancecents: carried, type: carried < 0 ? "short" : "over",
-      reason: `Carried-over balance of ${fmtMoney(carried)} acknowledged at deposit validation by ${mgr}.${carriedNote ? ` Note: ${carriedNote}` : ""}`,
+      store: storeRow, variancecents: carriedCents, type: carriedCents < 0 ? "short" : "over",
+      reason: `Carried-over: ${carriedCount} open check(s), ${fmtMoney(carriedCents)} — recorded at deposit validation by ${mgr}.${carriedNote ? ` Note: ${carriedNote}` : ""}`,
       managerName: mgr, source: "carryover", closeoutId: dep.closeout_id,
     });
   }
-  return { ok: true, flagged, carried_acknowledged: carried !== 0, carried_fwd_cents: dep.dsr_carried_over_cents };
+  return { ok: true, flagged, carried_acknowledged: hasCarry, carried_fwd_cents: carriedCents };
 }
 
 // ============================================================================
@@ -660,7 +647,8 @@ async function detail(supa, user, params) {
       ? {
           id: dep.id, code: `DEP-${coCode(dep.for_date).slice(3)}`, for_date: dep.for_date,
           expected_cents: dep.expected_cents, bank_credited_cents: dep.bank_credited_cents,
-          dsr_carried_over_cents: dep.dsr_carried_over_cents, carried_fwd_cents: dep.carried_fwd_cents,
+          dsr_carried_over_cents: dep.dsr_carried_over_cents, carried_over_count: dep.carried_over_count,
+          carried_fwd_cents: dep.carried_fwd_cents,
           variance_cents: dep.variance_cents, flagged: dep.flagged, reason: dep.reason,
           carried_ack: dep.carried_ack, carried_note: dep.carried_note, has_slip: !!dep.slip_path,
           status: dep.status, verified_at: dep.verified_at,
