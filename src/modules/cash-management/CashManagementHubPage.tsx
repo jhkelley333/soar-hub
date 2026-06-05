@@ -4,10 +4,11 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Banknote, Bell, Home, Moon, TrendingUp, type LucideIcon } from "lucide-react";
+import { Banknote, Bell, Home, Moon, Settings, TrendingUp, type LucideIcon } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
+import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import { fetchOverview } from "./api";
 import { DashboardTab } from "./DashboardTab";
@@ -15,8 +16,9 @@ import { CloseoutTab } from "./CloseoutTab";
 import { DepositTab } from "./DepositTab";
 import { AlertsTab } from "./AlertsTab";
 import { DsrTab } from "./DsrTab";
+import { SettingsTab } from "./SettingsTab";
 
-type TabId = "dashboard" | "closeout" | "deposit" | "alerts" | "dsr";
+type TabId = "dashboard" | "closeout" | "deposit" | "alerts" | "dsr" | "settings";
 
 const TABS: { id: TabId; label: string; icon: LucideIcon }[] = [
   { id: "dashboard", label: "Dashboard", icon: Home },
@@ -25,8 +27,15 @@ const TABS: { id: TabId; label: string; icon: LucideIcon }[] = [
   { id: "alerts", label: "Discrepancy Alerts", icon: Bell },
   { id: "dsr", label: "DSR & Carried Over", icon: TrendingUp },
 ];
+const SETTINGS_TAB: { id: TabId; label: string; icon: LucideIcon } = {
+  id: "settings",
+  label: "Settings",
+  icon: Settings,
+};
 
 export function CashManagementHubPage() {
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === "admin";
   const [storeId, setStoreId] = useState<string | null>(null);
   const [active, setActive] = useState<TabId>("dashboard");
 
@@ -44,7 +53,7 @@ export function CashManagementHubPage() {
   const tabNav = useMemo(
     () => (
       <div className="mb-5 flex flex-wrap gap-1 border-b border-zinc-200">
-        {TABS.map((t) => {
+        {(isAdmin ? [...TABS, SETTINGS_TAB] : TABS).map((t) => {
           const Icon = t.icon;
           const badge =
             t.id === "deposit" && overview?.pending_deposit
@@ -79,7 +88,7 @@ export function CashManagementHubPage() {
         })}
       </div>
     ),
-    [active, overview]
+    [active, overview, isAdmin]
   );
 
   if (overviewQuery.isLoading) {
@@ -147,6 +156,7 @@ export function CashManagementHubPage() {
       {active === "deposit" && <DepositTab storeId={effectiveStoreId} onDone={() => goto("dsr")} />}
       {active === "alerts" && <AlertsTab storeId={effectiveStoreId} />}
       {active === "dsr" && <DsrTab storeId={effectiveStoreId} />}
+      {active === "settings" && isAdmin && <SettingsTab />}
     </div>
   );
 }

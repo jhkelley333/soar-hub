@@ -332,7 +332,7 @@ const EMAIL_EDIT_ROLES = ["do", "sdo", "rvp", "vp", "coo", "admin"];
 function manageableRoles(role) {
   switch (role) {
     case "admin":
-      return [...HOURLY_STORE_ROLES, "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"];
+      return [...HOURLY_STORE_ROLES, "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll", "accounting", "facilities", "human_resources"];
     case "coo":
     case "vp":
       return [...HOURLY_STORE_ROLES, "gm", "do", "sdo", "rvp"];
@@ -371,6 +371,9 @@ function scopeForRole(role) {
     case "coo":
     case "admin":
     case "payroll":
+    case "accounting":
+    case "facilities":
+    case "human_resources":
       return "global";
     default:
       return null;
@@ -1192,7 +1195,7 @@ async function fetchHistory(supa, manager, query) {
 // returns annotated rows. The user reviews, then ?action=bulk-import
 // runs invites for valid rows only.
 
-const ALL_ROLES = [...HOURLY_STORE_ROLES,"gm","do","sdo","rvp","vp","coo","admin","payroll"];
+const ALL_ROLES = [...HOURLY_STORE_ROLES,"gm","do","sdo","rvp","vp","coo","admin","payroll","accounting","facilities","human_resources"];
 
 async function bulkValidate(supa, rows) {
   // Pre-load org maps so we can resolve codes → ids in O(1).

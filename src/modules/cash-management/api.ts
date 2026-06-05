@@ -3,7 +3,9 @@
 import { supabase } from "@/lib/supabase";
 import type {
   AlertsResponse,
+  CashSettings,
   CmgConfig,
+  DepositDetail,
   DsrResponse,
   Overview,
   PendingDeposit,
@@ -53,6 +55,18 @@ export function fetchDsr(storeId?: string | null): Promise<DsrResponse> {
 }
 export function fetchSlipUrl(depositId: string): Promise<{ url: string }> {
   return request<{ url: string }>(`${FN}?action=slip-url&deposit_id=${encodeURIComponent(depositId)}`);
+}
+export function fetchDetail(closeoutId: string): Promise<DepositDetail> {
+  return request<DepositDetail>(`${FN}?action=detail&closeout_id=${encodeURIComponent(closeoutId)}`);
+}
+export function fetchSettings(): Promise<CashSettings> {
+  return request<CashSettings>(`${FN}?action=settings`);
+}
+export function updateSettings(input: {
+  closeout_tolerance_cents: number;
+  deposit_tolerance_cents: number;
+}): Promise<{ ok: true; closeoutToleranceCents: number; depositToleranceCents: number }> {
+  return request(`${FN}?action=update-settings`, { method: "POST", body: JSON.stringify(input) });
 }
 
 export interface SubmitCloseoutInput {

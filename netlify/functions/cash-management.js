@@ -96,9 +96,26 @@ function todayISO() {
 }
 
 // ---- store scoping (mirrors facilities-v2 getStoresForUser, returns rows) ----
+// Org-wide readers see every store. Accounting is added so they can review
+// deposits + slips across the company (read-only — they're not in
+// CLOSEOUT_ROLES or ACT_ROLES, so they can't close/validate/resolve).
+const ORG_WIDE_READ = new Set(["admin", "coo", "vp", "accounting"]);
+
+async function getSettings(supa) {
+  const { data } = await supa
+    .from("cash_settings")
+    .select("closeout_tolerance_cents, deposit_tolerance_cents")
+    .eq("id", "global")
+    .maybeSingle();
+  return {
+    closeout: data?.closeout_tolerance_cents ?? TOLERANCE_CENTS,
+    deposit: data?.deposit_tolerance_cents ?? TOLERANCE_CENTS,
+  };
+}
+
 async function storeRowsForUser(supa, profile) {
   const role = String(profile.role || "").toLowerCase();
-  if (["admin", "coo", "vp"].includes(role)) {
+  if (ORG_WIDE_READ.has(role)) {
     const { data } = await supa
       .from("stores")
       .select("id, number, name, district_id")
@@ -220,10 +237,11 @@ async function escalate(supa, { store, variancecents, type, reason, managerName,
   });
 
   const emails = [leaders.do?.email, leaders.sdo?.email].filter(Boolean);
+  const sourceLabel = source === "deposit" ? "deposit validation" : source === "carryover" ? "carried-over balance" : "night closeout";
   const subject = `[Cash MGT] ${type === "short" ? "Cash short" : "Cash over"} at Store ${store.number} — ${fmtMoney(variancecents)}`;
   const body =
-    `A ${source === "deposit" ? "deposit validation" : "night closeout"} at Store ${store.number}` +
-    `${store.name ? ` (${store.name})` : ""} breached the $${TOLERANCE_CENTS / 100} tolerance.\n\n` +
+    `A ${sourceLabel} at Store ${store.number}` +
+    `${store.name ? ` (${store.name})` : ""} breached the cash variance tolerance.\n\n` +
     `Variance: ${fmtMoney(variancecents)} (${type})\n` +
     `Submitted by: ${managerName || "—"}\n` +
     `Reason: ${reason || "—"}\n\n` +
@@ -281,13 +299,16 @@ async function overview(supa, user, params) {
         .eq("store_id", active.id).eq("status", "open"),
       resolveStoreLeaders(supa, active.id),
     ]);
+  const settings = await getSettings(supa);
 
   return {
     stores: stores.map((s) => ({ id: s.id, number: String(s.number), name: s.name })),
     active_store_id: active.id,
     store: { id: active.id, number: String(active.number), name: active.name },
     business_date: today,
-    toleranceCents: TOLERANCE_CENTS,
+    toleranceCents: settings.closeout,
+    closeoutToleranceCents: settings.closeout,
+    depositToleranceCents: settings.deposit,
     can_act_alerts: ACT_ROLES.has(String(user.role)),
     leaders: { do_name: leaders.do?.name || null, sdo_name: leaders.sdo?.name || null },
     closeout: todayCo ? closeoutCard(todayCo) : null,
@@ -319,8 +340,9 @@ async function submitCloseout(supa, user, body) {
   if (!Number.isFinite(cashDue) || !Number.isFinite(deposit) || !Number.isFinite(counted)) {
     return { error: "cash_due, deposit and counted amounts are required.", status: 400 };
   }
+  const settings = await getSettings(supa);
   const variance = deposit - cashDue;
-  const flagged = Math.abs(variance) > TOLERANCE_CENTS;
+  const flagged = Math.abs(variance) > settings.closeout;
   const reason = String(body?.reason || "").trim();
   if (flagged && reason.length < 8) {
     return { error: "A reason (min 8 chars) is required to escalate.", status: 400 };
@@ -372,13 +394,14 @@ async function getDeposit(supa, user, params) {
   if (!dep) return { deposit: null };
   const { data: co } = await supa
     .from("cash_closeouts").select("submitted_by_name").eq("id", dep.closeout_id).maybeSingle();
+  const settings = await getSettings(supa);
   return {
     deposit: {
       id: dep.id, code: `DEP-${coCode(dep.for_date).slice(3)}`, for_date: dep.for_date,
       closed_by: co?.submitted_by_name || "—", expected_cents: dep.expected_cents,
       dsr_carried_over_cents: dep.dsr_carried_over_cents, status: dep.status,
     },
-    toleranceCents: TOLERANCE_CENTS,
+    toleranceCents: settings.deposit,
   };
 }
 
@@ -406,8 +429,9 @@ async function verifyDeposit(supa, user, body) {
   const slipPath = String(body?.slip_path || "").trim();
   if (!slipPath) return { error: "A stamped deposit-slip photo is required.", status: 400 };
 
+  const settings = await getSettings(supa);
   const variance = bank - dep.expected_cents;
-  const flagged = Math.abs(variance) > TOLERANCE_CENTS;
+  const flagged = Math.abs(variance) > settings.deposit;
   const reason = String(body?.reason || "").trim();
   if (flagged && reason.length < 8) return { error: "A mismatch reason (min 8 chars) is required.", status: 400 };
 
@@ -546,39 +570,102 @@ async function dsr(supa, user, params) {
     .from("cash_closeouts").select("*").eq("store_id", active.id)
     .order("business_date", { ascending: true }).limit(30);
 
-  // closeout_id -> deposit verified?
+  // closeout_id -> deposit (verified? + id + slip presence) for the review drawer.
   const ids = (rows || []).map((r) => r.id);
-  const verifiedByCloseout = {};
+  const depByCloseout = {};
   if (ids.length) {
-    const { data: deps } = await supa.from("cash_deposits").select("closeout_id, status").in("closeout_id", ids);
-    for (const d of deps || []) verifiedByCloseout[d.closeout_id] = d.status === "verified";
+    const { data: deps } = await supa
+      .from("cash_deposits").select("closeout_id, id, status, slip_path").in("closeout_id", ids);
+    for (const d of deps || []) depByCloseout[d.closeout_id] = d;
   }
+  const settings = await getSettings(supa);
 
   let running = 0;
   const asc = (rows || []).map((h) => {
     const carriedIn = running;
     const carriedOut = h.status === "verified" ? 0 : running + (h.variance_cents || 0);
     running = carriedOut;
+    const d = depByCloseout[h.id];
     return {
-      id: coCode(h.business_date), business_date: h.business_date,
+      id: coCode(h.business_date), closeout_id: h.id, deposit_id: d?.id || null,
+      has_slip: !!d?.slip_path, business_date: h.business_date,
       carried_in_cents: carriedIn, cash_due_cents: h.cash_due_cents, deposit_cents: h.deposit_cents,
       variance_cents: h.variance_cents, carried_out_cents: carriedOut,
-      deposit_verified: !!verifiedByCloseout[h.id], status: h.status,
+      deposit_verified: d?.status === "verified", status: h.status,
     };
   });
   const ledger = asc.slice().reverse();
-  const flaggedCount = (rows || []).filter((h) => Math.abs(h.variance_cents) > TOLERANCE_CENTS).length;
+  const flaggedCount = (rows || []).filter((h) => Math.abs(h.variance_cents) > settings.closeout).length;
   const totalDeposited = (rows || []).reduce((s, h) => s + (h.deposit_cents || 0), 0);
 
   return {
     store: { id: active.id, number: String(active.number), name: active.name },
-    toleranceCents: TOLERANCE_CENTS,
+    toleranceCents: settings.closeout,
     current_carry_cents: ledger[0] ? ledger[0].carried_out_cents : 0,
     total_deposited_cents: totalDeposited,
     flagged_days: flaggedCount,
     clean_days: (rows || []).length - flaggedCount,
     days: (rows || []).length,
     ledger,
+  };
+}
+
+// ============================================================================
+// settings — read both tolerances; update is admin-only
+// ============================================================================
+async function getSettingsAction(supa, user) {
+  const s = await getSettings(supa);
+  return {
+    closeoutToleranceCents: s.closeout,
+    depositToleranceCents: s.deposit,
+    can_edit: String(user.role) === "admin",
+  };
+}
+async function updateSettings(supa, user, body) {
+  if (String(user.role) !== "admin") return { error: "Only an admin can change tolerances.", status: 403 };
+  const co = Math.round(Number(body?.closeout_tolerance_cents));
+  const dep = Math.round(Number(body?.deposit_tolerance_cents));
+  if (!Number.isFinite(co) || co < 0 || !Number.isFinite(dep) || dep < 0) {
+    return { error: "Both tolerances must be valid non-negative amounts.", status: 400 };
+  }
+  const { error } = await supa.from("cash_settings").upsert(
+    { id: "global", closeout_tolerance_cents: co, deposit_tolerance_cents: dep, updated_by: user.id, updated_at: new Date().toISOString() },
+    { onConflict: "id" }
+  );
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, closeoutToleranceCents: co, depositToleranceCents: dep };
+}
+
+// ============================================================================
+// detail — full closeout + deposit for the review drawer (accounting / DO+)
+// ============================================================================
+async function detail(supa, user, params) {
+  const closeoutId = params.closeout_id;
+  if (!closeoutId) return { error: "closeout_id is required.", status: 400 };
+  const { data: co } = await supa.from("cash_closeouts").select("*").eq("id", closeoutId).maybeSingle();
+  if (!co) return { error: "Closeout not found.", status: 404 };
+  const access = await storeRowsForUser(supa, user);
+  if (!access.all && !access.rows.some((r) => r.id === co.store_id)) {
+    return { error: "Not in your scope.", status: 403 };
+  }
+  const { data: dep } = await supa.from("cash_deposits").select("*").eq("closeout_id", closeoutId).maybeSingle();
+  return {
+    closeout: {
+      id: co.id, code: coCode(co.business_date), business_date: co.business_date, store_number: co.store_number,
+      cash_due_cents: co.cash_due_cents, counted_cents: co.counted_cents, deposit_cents: co.deposit_cents,
+      variance_cents: co.variance_cents, denominations: co.denominations || {}, flagged: co.flagged,
+      reason: co.reason, status: co.status, submitted_by_name: co.submitted_by_name, submitted_at: co.submitted_at,
+    },
+    deposit: dep
+      ? {
+          id: dep.id, code: `DEP-${coCode(dep.for_date).slice(3)}`, for_date: dep.for_date,
+          expected_cents: dep.expected_cents, bank_credited_cents: dep.bank_credited_cents,
+          dsr_carried_over_cents: dep.dsr_carried_over_cents, carried_fwd_cents: dep.carried_fwd_cents,
+          variance_cents: dep.variance_cents, flagged: dep.flagged, reason: dep.reason,
+          carried_ack: dep.carried_ack, carried_note: dep.carried_note, has_slip: !!dep.slip_path,
+          status: dep.status, verified_at: dep.verified_at,
+        }
+      : null,
   };
 }
 
@@ -601,11 +688,21 @@ export const handler = async (event) => {
     const supa = admin();
     if (event.httpMethod === "GET") {
       if (action === "overview") return unwrap(await overview(supa, user, params));
-      if (action === "config") return respond(200, { denominations: DENOMS, toleranceCents: TOLERANCE_CENTS });
+      if (action === "config") {
+        const s = await getSettings(supa);
+        return respond(200, {
+          denominations: DENOMS,
+          toleranceCents: s.closeout,
+          closeoutToleranceCents: s.closeout,
+          depositToleranceCents: s.deposit,
+        });
+      }
       if (action === "deposit") return unwrap(await getDeposit(supa, user, params));
       if (action === "alerts") return unwrap(await listAlerts(supa, user, params));
       if (action === "dsr") return unwrap(await dsr(supa, user, params));
       if (action === "slip-url") return unwrap(await slipUrl(supa, user, params));
+      if (action === "settings") return unwrap(await getSettingsAction(supa, user));
+      if (action === "detail") return unwrap(await detail(supa, user, params));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {
@@ -613,6 +710,7 @@ export const handler = async (event) => {
       if (action === "submit-closeout") return unwrap(await submitCloseout(supa, user, body));
       if (action === "verify-deposit") return unwrap(await verifyDeposit(supa, user, body));
       if (action === "alert-decide") return unwrap(await decideAlert(supa, user, body));
+      if (action === "update-settings") return unwrap(await updateSettings(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
     return respond(405, { error: "method not allowed" });

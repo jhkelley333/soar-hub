@@ -36,6 +36,9 @@ function scopeKindForRole(role: UserRole): ScopeKind {
     case "coo":
     case "admin":
     case "payroll":
+    case "accounting":
+    case "facilities":
+    case "human_resources":
       return "global";
   }
 }

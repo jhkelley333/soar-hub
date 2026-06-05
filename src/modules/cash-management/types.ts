@@ -23,6 +23,8 @@ export interface Overview {
   store: CmgStore | null;
   business_date: string;
   toleranceCents: number;
+  closeoutToleranceCents: number;
+  depositToleranceCents: number;
   can_act_alerts: boolean;
   leaders: { do_name: string | null; sdo_name: string | null };
   closeout: CloseoutCard | null;
@@ -47,6 +49,14 @@ export interface Denom {
 export interface CmgConfig {
   denominations: Denom[];
   toleranceCents: number;
+  closeoutToleranceCents: number;
+  depositToleranceCents: number;
+}
+
+export interface CashSettings {
+  closeoutToleranceCents: number;
+  depositToleranceCents: number;
+  can_edit: boolean;
 }
 
 export interface PendingDeposit {
@@ -82,6 +92,9 @@ export interface AlertsResponse {
 
 export interface DsrRow {
   id: string;
+  closeout_id: string;
+  deposit_id: string | null;
+  has_slip: boolean;
   business_date: string;
   carried_in_cents: number;
   cash_due_cents: number;
@@ -90,6 +103,42 @@ export interface DsrRow {
   carried_out_cents: number;
   deposit_verified: boolean;
   status: string;
+}
+
+export interface DepositDetail {
+  closeout: {
+    id: string;
+    code: string;
+    business_date: string;
+    store_number: string;
+    cash_due_cents: number;
+    counted_cents: number;
+    deposit_cents: number;
+    variance_cents: number;
+    denominations: Record<string, number>;
+    flagged: boolean;
+    reason: string | null;
+    status: string;
+    submitted_by_name: string | null;
+    submitted_at: string;
+  };
+  deposit: {
+    id: string;
+    code: string;
+    for_date: string;
+    expected_cents: number;
+    bank_credited_cents: number | null;
+    dsr_carried_over_cents: number;
+    carried_fwd_cents: number;
+    variance_cents: number | null;
+    flagged: boolean;
+    reason: string | null;
+    carried_ack: boolean;
+    carried_note: string | null;
+    has_slip: boolean;
+    status: string;
+    verified_at: string | null;
+  } | null;
 }
 
 export interface DsrResponse {
