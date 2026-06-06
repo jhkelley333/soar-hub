@@ -252,7 +252,6 @@ function PersonCard({ person }: { person: LeadershipPerson }) {
     <div className="mt-1">
       <div className="flex items-center gap-2">
         {person.profile_photo_url ? (
-          // eslint-disable-next-line @next/next/no-img-element
           <img
             src={person.profile_photo_url}
             alt=""
