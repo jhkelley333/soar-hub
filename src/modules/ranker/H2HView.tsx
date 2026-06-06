@@ -53,14 +53,10 @@ function marginOfVictory(
 }
 
 export function H2HView({ week, storeA, storeB }: Props) {
-  if (!storeA || !storeB || storeA === storeB) {
-    return (
-      <EmptyState
-        title="Pick two different stores"
-        description="Choose Store A and Store B from the toolbar above to compare."
-      />
-    );
-  }
+  // Hook runs unconditionally (react-hooks/rules-of-hooks); it's just
+  // disabled until two distinct stores are picked. The empty state returns
+  // below, after the hook.
+  const ready = !!storeA && !!storeB && storeA !== storeB;
 
   const results = useQueries({
     queries: [
@@ -69,9 +65,10 @@ export function H2HView({ week, storeA, storeB }: Props) {
         queryFn: () =>
           fetchStoreDashboard({
             week,
-            store: storeA,
+            store: storeA!,
             trendWeeks: 8,
           }),
+        enabled: ready,
         staleTime: 60_000,
       },
       {
@@ -79,14 +76,24 @@ export function H2HView({ week, storeA, storeB }: Props) {
         queryFn: () =>
           fetchStoreDashboard({
             week,
-            store: storeB,
+            store: storeB!,
             trendWeeks: 8,
           }),
+        enabled: ready,
         staleTime: 60_000,
       },
     ],
   });
   const [qA, qB] = results;
+
+  if (!ready) {
+    return (
+      <EmptyState
+        title="Pick two different stores"
+        description="Choose Store A and Store B from the toolbar above to compare."
+      />
+    );
+  }
 
   if (qA.isLoading || qB.isLoading) {
     return (

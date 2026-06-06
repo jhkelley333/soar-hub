@@ -76,13 +76,6 @@ function actionQueueCopy(role: UserRole | undefined): string {
 export function DashboardPage() {
   const { profile } = useAuth();
 
-  // Payroll's workday is the PAF queue; the dashboard isn't surfaced in
-  // their sidebar at all. If they land here via a stale link or the
-  // root URL, send them straight to the queue.
-  if (profile?.role === "payroll") {
-    return <Navigate to="/paf/queue" replace />;
-  }
-
   const greetingName =
     profile?.preferred_name?.trim() ||
     profile?.full_name?.split(" ")[0] ||
@@ -131,6 +124,13 @@ export function DashboardPage() {
       : cfmTotal > 0
         ? "warning"
         : "neutral";
+
+  // Conditional returns live BELOW all hooks so hook order is stable
+  // (react-hooks/rules-of-hooks). Payroll's workday is the PAF queue and the
+  // dashboard isn't in their sidebar — send them there if they land here.
+  if (profile?.role === "payroll") {
+    return <Navigate to="/paf/queue" replace />;
+  }
 
   // Installed app (standalone) → the app-style home (Today / Quick
   // Actions). Browsers — phone or desktop, any width — get the full
