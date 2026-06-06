@@ -1,0 +1,67 @@
+# Labor auto-pull — external trigger for the labor-snapshot function.
+#
+# Netlify's native scheduled-function trigger has been unreliable in this
+# project (the */15 schedule wasn't firing — captures were all manual). This
+# workflow drives the same snapshot from GitHub's scheduler instead, which is
+# reliable and gives a visible run history in the Actions tab.
+#
+# It just pings the (unauthenticated, idempotent) labor-snapshot function.
+# The function itself still:
+#   - gates to business hours (LABOR_POLL_START_HOUR..END_HOUR, America/Chicago),
+#     so off-hours pings return instantly without writing, and
+#   - only upserts when the sheet content changed for the current sales date.
+# So running every 15 minutes all day is cheap and safe.
+#
+# SETUP (one-time):
+#   1. Repo → Settings → Secrets and variables → Actions → New repository secret
+#        Name:  SITE_URL
+#        Value: your production base URL, e.g. https://mysoarhub.com
+#   2. Make sure Actions is enabled for the repo (Settings → Actions).
+#   3. Merge this file to the default branch (scheduled workflows only run from
+#      the default branch).
+#
+# Verify: the Actions tab shows a run every ~15 min, and /admin/labor-sync's
+# "Polls" count climbs through the day. (You can also run it on demand here via
+# "Run workflow".)
+
+name: Labor auto-pull
+
+on:
+  schedule:
+    # Every 15 minutes. GitHub cron is UTC; the function applies its own
+    # business-hours window, so we don't restrict hours here.
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+# Don't pile up overlapping runs if one is slow.
+concurrency:
+  group: labor-auto-pull
+  cancel-in-progress: false
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping labor-snapshot
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SITE_URL:-}" ]; then
+            echo "::error::SITE_URL secret is not set. Add it under Settings → Secrets and variables → Actions."
+            exit 1
+          fi
+          base="${SITE_URL%/}"
+          url="${base}/.netlify/functions/labor-snapshot"
+          echo "Pinging ${url}"
+          code=$(curl -fsS --max-time 120 -o /tmp/labor.json -w "%{http_code}" "${url}" || true)
+          echo "HTTP ${code}"
+          echo "--- response ---"
+          cat /tmp/labor.json 2>/dev/null || echo "(no body)"
+          echo
+          # Treat any non-2xx as a failure so a broken pull shows red here.
+          case "${code}" in
+            2*) echo "OK" ;;
+            *) echo "::error::labor-snapshot returned HTTP ${code}"; exit 1 ;;
+          esac
