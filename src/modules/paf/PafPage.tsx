@@ -5,7 +5,7 @@
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Download, Plus } from "lucide-react";
+import { Download, HelpCircle, Plus } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -15,6 +15,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { listPafs } from "./api";
 import { PafForm } from "./PafForm";
 import { PafTable } from "./PafTable";
+import { PafGuideDrawer } from "./PafGuideDrawer";
 import {
   applyFilters,
   QueueFilters,
@@ -28,6 +29,7 @@ export function PafPage() {
   const { profile } = useAuth();
   const [view, setView] = useState<"list" | "submit">("list");
   const [editing, setEditing] = useState<PafRow | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
   const [filters, setFilters] = useState<QueueFilterState>({
     status: "ALL",
     query: "",
@@ -80,6 +82,10 @@ export function PafPage() {
         description={`${data.pafs.length} PAF${data.pafs.length === 1 ? "" : "s"} in your scope.`}
         actions={
           <div className="flex flex-wrap gap-2">
+            <Button variant="ghost" size="sm" onClick={() => setGuideOpen(true)}>
+              <HelpCircle className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+              Guide
+            </Button>
             {canProcess && (
               <Link to="/paf/queue">
                 <Button variant="ghost" size="sm">
@@ -174,6 +180,8 @@ export function PafPage() {
           )}
         </Card>
       )}
+
+      <PafGuideDrawer open={guideOpen} onClose={() => setGuideOpen(false)} />
     </>
   );
 }
