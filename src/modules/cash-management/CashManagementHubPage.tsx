@@ -55,7 +55,7 @@ export function CashManagementHubPage() {
 
   const tabNav = useMemo(
     () => (
-      <div className="-mx-4 mb-5 flex gap-1 overflow-x-auto border-b border-zinc-200 px-4 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 [&::-webkit-scrollbar]:hidden">
+      <div className="mb-5 flex gap-1 overflow-x-auto border-b border-zinc-200 [scrollbar-width:none] sm:flex-wrap sm:overflow-visible [&::-webkit-scrollbar]:hidden">
         {(isAdmin ? [...TABS, SETTINGS_TAB] : TABS).map((t) => {
           const Icon = t.icon;
           const badge =
@@ -126,36 +126,40 @@ export function CashManagementHubPage() {
 
   return (
     <div className="mx-auto max-w-[1120px]">
-      <PageHeader
-        title="Cash Management"
-        description="Night closeout, next-day deposit validation, and the DSR carried-over ledger."
-        actions={
-          <div className="flex items-center gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setGuideOpen(true)}>
-              <HelpCircle className="h-4 w-4" /> Guide
-            </Button>
-            {stores.length > 1 ? (
-              <select
-                value={effectiveStoreId ?? ""}
-                onChange={(e) => setStoreId(e.target.value)}
-                className="rounded-md border-0 bg-white px-3 py-2 text-sm ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
-              >
-                {stores.map((s) => (
-                  <option key={s.id} value={s.id}>
-                    #{s.number}
-                    {s.name ? ` — ${s.name}` : ""}
-                  </option>
-                ))}
-              </select>
-            ) : (
-              <div className="rounded-md bg-zinc-50 px-3 py-2 text-sm font-medium text-zinc-600 ring-1 ring-inset ring-zinc-200">
-                #{overview.store.number}
-                {overview.store.name ? ` · ${overview.store.name}` : ""}
-              </div>
-            )}
-          </div>
-        }
-      />
+      {/* Responsive header: stacks on mobile so a long store name can't push
+          the page wider than the viewport (which caused horizontal panning). */}
+      <header className="mb-7 flex flex-col gap-3 sm:mb-8 sm:flex-row sm:items-end sm:justify-between sm:gap-4">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold tracking-tight text-midnight">Cash Management</h1>
+          <p className="mt-1 max-w-2xl text-sm text-zinc-500">
+            Night closeout, next-day deposit validation, and the DSR carried-over ledger.
+          </p>
+        </div>
+        <div className="flex min-w-0 items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={() => setGuideOpen(true)} className="shrink-0">
+            <HelpCircle className="h-4 w-4" /> Guide
+          </Button>
+          {stores.length > 1 ? (
+            <select
+              value={effectiveStoreId ?? ""}
+              onChange={(e) => setStoreId(e.target.value)}
+              className="min-w-0 flex-1 truncate rounded-md border-0 bg-white px-3 py-2 text-sm ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent sm:flex-none"
+            >
+              {stores.map((s) => (
+                <option key={s.id} value={s.id}>
+                  #{s.number}
+                  {s.name ? ` — ${s.name}` : ""}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <div className="min-w-0 flex-1 truncate rounded-md bg-zinc-50 px-3 py-2 text-sm font-medium text-zinc-600 ring-1 ring-inset ring-zinc-200 sm:flex-none">
+              #{overview.store.number}
+              {overview.store.name ? ` · ${overview.store.name}` : ""}
+            </div>
+          )}
+        </div>
+      </header>
 
       {tabNav}
 
