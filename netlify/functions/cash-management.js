@@ -761,16 +761,27 @@ async function editCloseout(supa, user, body) {
 // ============================================================================
 async function badges(supa, user) {
   const access = await storeRowsForUser(supa, user);
+  // Start of today (UTC) — good enough for a dashboard "verified today" tally.
+  const todayStart = new Date();
+  todayStart.setUTCHours(0, 0, 0, 0);
+  const todayIso = todayStart.toISOString();
+
   let depQ = supa.from("cash_deposits").select("id", { count: "exact", head: true }).eq("status", "pending");
   let altQ = supa.from("cash_alerts").select("id", { count: "exact", head: true }).eq("status", "open");
+  let verQ = supa
+    .from("cash_deposits")
+    .select("id", { count: "exact", head: true })
+    .eq("status", "verified")
+    .gte("verified_at", todayIso);
   if (!access.all) {
     const ids = access.rows.map((r) => r.id);
-    if (!ids.length) return { pending_deposits: 0, open_alerts: 0 };
+    if (!ids.length) return { pending_deposits: 0, open_alerts: 0, deposits_verified_today: 0 };
     depQ = depQ.in("store_id", ids);
     altQ = altQ.in("store_id", ids);
+    verQ = verQ.in("store_id", ids);
   }
-  const [{ count: dep }, { count: alt }] = await Promise.all([depQ, altQ]);
-  return { pending_deposits: dep || 0, open_alerts: alt || 0 };
+  const [{ count: dep }, { count: alt }, { count: ver }] = await Promise.all([depQ, altQ, verQ]);
+  return { pending_deposits: dep || 0, open_alerts: alt || 0, deposits_verified_today: ver || 0 };
 }
 
 // ============================================================================

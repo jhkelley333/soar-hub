@@ -1,9 +1,10 @@
-// Desktop dashboard — redesigned landing (Claude Code handoff, phase 2).
+// Desktop dashboard — redesigned landing (Claude Code handoff, phases 2-3).
 // Dark-native layout: greeting → KPI row (hero + 4 stat cards) → Action Queue
 // → secondary grid (Cash / Birthdays / Who's Out) → recent work-order
-// messages. Wired to the existing scoped data hooks; a few genuinely-new
-// signals (sparkline trend %, deposits-verified-today, richer escalation
-// feed) are marked for phase 3.
+// messages. Wired to the existing scoped data hooks. Phase 3 added the real
+// hero sparkline + week-over-week trend (from the tickets list), the merged
+// Action Queue (escalated WOs + cash alerts + bonus PAFs + EA approvals), and
+// "deposits verified today".
 //
 // The installed PWA (standalone) keeps its app-style MobileHome; payroll is
 // redirected to their PAF queue. Both guards live BELOW all hooks so hook
@@ -21,19 +22,24 @@ import {
   ChevronRight,
   FileText,
   Gift,
+  Hammer,
   MessageSquare,
   Plus,
   ShieldCheck,
+  TrendingDown,
+  TrendingUp,
   Wallet,
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import type { UserRole } from "@/types/database";
-import { fetchCallerStores, fetchRecentMessages, fetchStats } from "@/modules/work-orders-v2/api";
-import type { RecentMessage } from "@/modules/work-orders-v2/types";
+import { fetchCallerStores, fetchRecentMessages, fetchStats, fetchTickets } from "@/modules/work-orders-v2/api";
+import { isOpenStatus } from "@/modules/work-orders-v2/types";
+import type { RecentMessage, Ticket } from "@/modules/work-orders-v2/types";
 import { fetchCfmExpiring } from "@/modules/team/api";
 import { listSdoQueue } from "@/modules/paf/api";
 import type { PafRow } from "@/modules/paf/types";
 import { fetchCashBadges } from "@/modules/cash-management/api";
+import { listApprovalQueue } from "@/modules/employee-actions/api";
 import { fetchBirthdays } from "@/modules/my-stores/api";
 import { thisAndNextWeekRange, formatMonthDay } from "@/modules/my-stores/dateRange";
 import type { BirthdayEntry } from "@/modules/my-stores/types";
@@ -51,7 +57,45 @@ const CASH_ROLES = new Set<UserRole>([
   "crew_leader", "do", "sdo", "rvp", "vp", "coo", "admin", "accounting",
 ]);
 const WALK_ROLES = new Set<UserRole>(["do", "sdo", "rvp", "vp", "coo", "admin"]);
+const WO_ROLES = new Set<UserRole>([
+  "shift_manager", "first_assistant_manager", "associate_manager", "crew_leader",
+  "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin",
+]);
+const EA_APPROVER_ROLES = new Set<UserRole>(["do", "sdo", "rvp", "admin"]);
 const PTO_APPROVED = new Set(["SDO/RVP Approved", "PAF Submitted", "Closed"]);
+
+// A ticket counts as "escalated" when it's open AND either business-critical
+// or aged past the 15-day line — the same threshold the WO queue flags red.
+function ticketDaysOpen(t: Ticket): number {
+  const d = new Date(t.date_submitted);
+  if (Number.isNaN(d.getTime())) return 0;
+  return Math.max(0, Math.floor((Date.now() - d.getTime()) / 86_400_000));
+}
+function isEscalated(t: Ticket): boolean {
+  return isOpenStatus(t.status) && (t.is_business_critical || ticketDaysOpen(t) >= 15);
+}
+
+// 7-point daily-submitted sparkline + week-over-week % change, computed from
+// the in-scope tickets list (no extra endpoint). Returns null trend when the
+// prior week had no submissions (can't express a %).
+function woTrend(tickets: Ticket[]): { points: number[]; trendPct: number | null } {
+  const dayMs = 86_400_000;
+  const startOfToday = new Date();
+  startOfToday.setHours(0, 0, 0, 0);
+  const buckets = new Array(7).fill(0);
+  let thisWeek = 0;
+  let priorWeek = 0;
+  for (const t of tickets) {
+    const d = new Date(t.date_submitted);
+    if (Number.isNaN(d.getTime())) continue;
+    const ageDays = Math.floor((startOfToday.getTime() - d.getTime()) / dayMs);
+    if (ageDays >= 0 && ageDays < 7) buckets[6 - ageDays]++;
+    if (ageDays >= 0 && ageDays < 7) thisWeek++;
+    else if (ageDays >= 7 && ageDays < 14) priorWeek++;
+  }
+  const trendPct = priorWeek === 0 ? null : Math.round(((thisWeek - priorWeek) / priorWeek) * 100);
+  return { points: buckets, trendPct };
+}
 
 // Shared card chrome — white in light, night-raised in dark.
 const PANEL =
@@ -87,8 +131,12 @@ export function DashboardPage() {
   const canCash = !!role && CASH_ROLES.has(role);
   const isSdoReviewer = !!role && SDO_REVIEW_ROLES.has(role);
   const canPto = !!role && PTO_VIEW_ROLES.has(role);
+  const canWo = !!role && WO_ROLES.has(role);
+  const isEaApprover = !!role && EA_APPROVER_ROLES.has(role);
 
   const woStatsQ = useQuery({ queryKey: ["wo2", "stats"], queryFn: fetchStats, staleTime: 30_000 });
+  const ticketsQ = useQuery({ queryKey: ["wo2", "tickets"], queryFn: fetchTickets, enabled: canWo, staleTime: 30_000 });
+  const eaQ = useQuery({ queryKey: ["ea-queue"], queryFn: listApprovalQueue, enabled: isEaApprover, staleTime: 30_000 });
   const storesQ = useQuery({ queryKey: ["wo2", "caller-stores"], queryFn: fetchCallerStores, staleTime: 60_000 });
   const cfmQ = useQuery({ queryKey: ["cfm-expiring", 60], queryFn: () => fetchCfmExpiring(60), staleTime: 60_000 });
   const cashQ = useQuery({ queryKey: ["cash", "badges"], queryFn: fetchCashBadges, enabled: canCash, staleTime: 30_000 });
@@ -116,14 +164,20 @@ export function DashboardPage() {
     profile?.preferred_name?.trim() || profile?.full_name?.split(" ")[0] || "there";
   const storeCount = storesQ.data?.stores.length ?? null;
 
+  const tickets = ticketsQ.data?.tickets ?? [];
+  const escalatedTickets = tickets.filter(isEscalated);
+  const { points: sparkPoints, trendPct } = woTrend(tickets);
+
   const openWo = woStatsQ.data?.stats.open ?? 0;
-  const escalated = woStatsQ.data?.stats.critical ?? 0;
+  const escalated = escalatedTickets.length || (woStatsQ.data?.stats.critical ?? 0);
   const cfmTotal =
     (cfmQ.data?.team.count_expired ?? 0) + (cfmQ.data?.team.count_expiring ?? 0);
   const cfmExpired = cfmQ.data?.team.count_expired ?? 0;
   const cashAlerts = cashQ.data?.open_alerts ?? 0;
   const closeoutsToValidate = cashQ.data?.pending_deposits ?? 0;
+  const depositsVerifiedToday = cashQ.data?.deposits_verified_today ?? 0;
   const bonusPafs = sdoQ.data?.pafs ?? [];
+  const eaCount = (eaQ.data?.trainingCredits.length ?? 0) + (eaQ.data?.ptoRequests.length ?? 0);
 
   return (
     <div className="space-y-6">
@@ -141,6 +195,8 @@ export function DashboardPage() {
           error={woStatsQ.isError}
           open={openWo}
           escalated={escalated}
+          points={sparkPoints}
+          trendPct={trendPct}
         />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:col-span-7">
           <KpiCard
@@ -183,9 +239,16 @@ export function DashboardPage() {
       </div>
 
       <ActionQueue
+        escalatedWos={escalatedTickets}
         bonusPafs={bonusPafs}
         cashAlerts={canCash ? cashAlerts : 0}
-        loading={(isSdoReviewer && sdoQ.isLoading) || (canCash && cashQ.isLoading)}
+        eaCount={isEaApprover ? eaCount : 0}
+        loading={
+          (canWo && ticketsQ.isLoading) ||
+          (isSdoReviewer && sdoQ.isLoading) ||
+          (canCash && cashQ.isLoading) ||
+          (isEaApprover && eaQ.isLoading)
+        }
       />
 
       {/* Secondary grid */}
@@ -195,6 +258,7 @@ export function DashboardPage() {
             loading={cashQ.isLoading}
             closeouts={closeoutsToValidate}
             alerts={cashAlerts}
+            verifiedToday={depositsVerifiedToday}
           />
         )}
         <BirthdaysCard
@@ -276,12 +340,29 @@ function KpiHero({
   error,
   open,
   escalated,
+  points,
+  trendPct,
 }: {
   loading: boolean;
   error: boolean;
   open: number;
   escalated: number;
+  // 7-point daily-submitted series + week-over-week % (null = no prior week).
+  points: number[];
+  trendPct: number | null;
 }) {
+  // Map the 7 daily counts onto the 280×48 viewBox. Flat series → a flat line.
+  const max = Math.max(1, ...points);
+  const spark = points
+    .map((v, i) => {
+      const x = points.length > 1 ? (i / (points.length - 1)) * 280 : 0;
+      const y = 44 - (v / max) * 40;
+      return `${Math.round(x)},${Math.round(y)}`;
+    })
+    .join(" ");
+  const trendUp = trendPct !== null && trendPct > 0;
+  const trendFlat = trendPct === null || trendPct === 0;
+
   return (
     <Link
       to="/admin/work-orders-v2"
@@ -301,20 +382,38 @@ function KpiHero({
         </span>
       </div>
 
-      <div className="mt-4 text-6xl font-bold tracking-tight tabular-nums">
-        {loading ? "…" : error ? "—" : open}
+      <div className="mt-4 flex items-end gap-3">
+        <div className="text-6xl font-bold tracking-tight tabular-nums">
+          {loading ? "…" : error ? "—" : open}
+        </div>
+        {!loading && !error && !trendFlat && (
+          <span
+            className={cn(
+              "mb-2 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums",
+              trendUp ? "bg-cherry/20 text-frost" : "bg-success/20 text-frost",
+            )}
+            title="New work orders this week vs last week"
+          >
+            {trendUp ? (
+              <TrendingUp className="h-3.5 w-3.5" strokeWidth={2} />
+            ) : (
+              <TrendingDown className="h-3.5 w-3.5" strokeWidth={2} />
+            )}
+            {trendPct! > 0 ? "+" : ""}{trendPct}% wk
+          </span>
+        )}
       </div>
 
-      {/* Decorative baseline (real sparkline data lands in phase 3) */}
-      <svg viewBox="0 0 280 48" className="mt-4 h-12 w-full" preserveAspectRatio="none" aria-hidden>
+      {/* Real sparkline — work orders submitted per day over the last 7 days. */}
+      <svg viewBox="0 0 280 48" className="mt-3 h-12 w-full" preserveAspectRatio="none" aria-hidden>
         <polyline
-          points="0,38 40,30 80,34 120,22 160,26 200,14 240,20 280,10"
+          points={spark}
           fill="none"
           stroke="#74D2E7"
           strokeWidth="2"
           strokeLinecap="round"
           strokeLinejoin="round"
-          opacity="0.85"
+          opacity="0.9"
         />
       </svg>
 
@@ -390,15 +489,38 @@ function KpiCard({
 
 // ── Action Queue ────────────────────────────────────────────────────
 function ActionQueue({
+  escalatedWos,
   bonusPafs,
   cashAlerts,
+  eaCount,
   loading,
 }: {
+  escalatedWos: Ticket[];
   bonusPafs: PafRow[];
   cashAlerts: number;
+  eaCount: number;
   loading: boolean;
 }) {
   const items: ActionRowData[] = [];
+
+  // Escalated work orders first — business-critical or aged-out open tickets.
+  for (const t of escalatedWos.slice(0, 5)) {
+    const days = ticketDaysOpen(t);
+    items.push({
+      id: `wo-${t.id}`,
+      icon: Hammer,
+      tone: "err",
+      title: `Escalated · ${t.asset_type || t.category || "Work order"}`,
+      meta: [
+        `Store ${t.store_number}`,
+        t.is_business_critical ? "Business critical" : `${days} days open`,
+      ].join(" · "),
+      action: { label: "Review", tone: "err" },
+      to: `/admin/work-orders-v2?ticket=${encodeURIComponent(t.id)}`,
+      time: relativeTime(t.date_submitted),
+    });
+  }
+
   if (cashAlerts > 0) {
     items.push({
       id: "cash-alerts",
@@ -411,7 +533,7 @@ function ActionQueue({
       time: "",
     });
   }
-  for (const p of bonusPafs.slice(0, 6)) {
+  for (const p of bonusPafs.slice(0, 5)) {
     items.push({
       id: `paf-${p.id}`,
       icon: FileText,
@@ -421,6 +543,18 @@ function ActionQueue({
       action: { label: "Review", tone: "sky" },
       to: "/paf",
       time: relativeTime(p.created_at),
+    });
+  }
+  if (eaCount > 0) {
+    items.push({
+      id: "ea-approvals",
+      icon: CalendarOff,
+      tone: "sky",
+      title: `${eaCount} employee action${eaCount === 1 ? "" : "s"} to approve`,
+      meta: "Training credits & PTO requests",
+      action: { label: "Review", tone: "sky" },
+      to: "/employee-actions",
+      time: "",
     });
   }
 
@@ -512,14 +646,24 @@ function SecondaryHeader({ icon: Icon, title, hint }: { icon: typeof Gift; title
   );
 }
 
-function CashSnapshot({ loading, closeouts, alerts }: { loading: boolean; closeouts: number; alerts: number }) {
+function CashSnapshot({
+  loading,
+  closeouts,
+  alerts,
+  verifiedToday,
+}: {
+  loading: boolean;
+  closeouts: number;
+  alerts: number;
+  verifiedToday: number;
+}) {
   return (
     <div className={cn(PANEL, "flex flex-col p-4")}>
       <SecondaryHeader icon={Banknote} title="Cash Management" />
       <dl className="space-y-2 text-sm">
         <SnapRow label="Closeouts to validate" value={loading ? "…" : closeouts} tone={closeouts > 0 ? "warn" : "muted"} />
         <SnapRow label="Open alerts" value={loading ? "…" : alerts} tone={alerts > 0 ? "warn" : "muted"} />
-        <SnapRow label="Deposits verified today" value="—" tone="muted" />
+        <SnapRow label="Deposits verified today" value={loading ? "…" : verifiedToday} tone="muted" />
       </dl>
       <Link
         to="/admin/cash-management"
