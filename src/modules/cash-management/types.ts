@@ -106,7 +106,18 @@ export interface DsrRow {
   status: string;
 }
 
+export interface CashAuditEntry {
+  id: string;
+  scope: string;
+  action: string;
+  detail: Record<string, unknown> | null;
+  actor_name: string | null;
+  created_at: string;
+}
+
 export interface DepositDetail {
+  history: CashAuditEntry[];
+  can_edit: boolean;
   closeout: {
     id: string;
     code: string;

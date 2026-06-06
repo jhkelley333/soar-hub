@@ -76,6 +76,8 @@ export interface SubmitCloseoutInput {
   counted_cents: number;
   denominations: Record<string, number>;
   reason?: string;
+  // The closer confirmed the business date shown.
+  acknowledged?: boolean;
 }
 export function submitCloseout(input: SubmitCloseoutInput): Promise<{ ok: true; id: string; flagged: boolean; status: string }> {
   return request(`${FN}?action=submit-closeout`, { method: "POST", body: JSON.stringify(input) });
@@ -97,6 +99,19 @@ export function verifyDeposit(
   input: VerifyDepositInput
 ): Promise<{ ok: true; flagged: boolean; carried_acknowledged?: boolean; carried_fwd_cents: number }> {
   return request(`${FN}?action=verify-deposit`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export interface EditCloseoutInput {
+  closeout_id: string;
+  business_date?: string;
+  cash_due_cents?: number;
+  deposit_cents?: number;
+  counted_cents?: number;
+  reason?: string;
+}
+// Admin-only: fix a closeout (e.g. wrong business date).
+export function editCloseout(input: EditCloseoutInput): Promise<{ ok: true }> {
+  return request(`${FN}?action=edit-closeout`, { method: "POST", body: JSON.stringify(input) });
 }
 
 export function decideAlert(id: string, decision: "acknowledged" | "resolved"): Promise<{ ok: true }> {
