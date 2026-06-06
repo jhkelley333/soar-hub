@@ -12,13 +12,12 @@
 #   - only upserts when the sheet content changed for the current sales date.
 # So running every 15 minutes all day is cheap and safe.
 #
-# SETUP (one-time):
-#   1. Repo → Settings → Secrets and variables → Actions → New repository secret
-#        Name:  SITE_URL
-#        Value: your production base URL, e.g. https://mysoarhub.com
-#   2. Make sure Actions is enabled for the repo (Settings → Actions).
-#   3. Merge this file to the default branch (scheduled workflows only run from
-#      the default branch).
+# SETUP:
+#   - Nothing required beyond merging this to the default branch and having
+#     Actions enabled. It defaults to https://mysoarhub.com.
+#   - Optional: set a SITE_URL repo secret to override the target (e.g. if the
+#     domain changes) — Settings → Secrets and variables → Actions.
+#   - Scheduled workflows only run from the default branch.
 #
 # Verify: the Actions tab shows a run every ~15 min, and /admin/labor-sync's
 # "Polls" count climbs through the day. (You can also run it on demand here via
@@ -48,11 +47,8 @@ jobs:
           SITE_URL: ${{ secrets.SITE_URL }}
         run: |
           set -euo pipefail
-          if [ -z "${SITE_URL:-}" ]; then
-            echo "::error::SITE_URL secret is not set. Add it under Settings → Secrets and variables → Actions."
-            exit 1
-          fi
-          base="${SITE_URL%/}"
+          base="${SITE_URL:-https://mysoarhub.com}"
+          base="${base%/}"
           url="${base}/.netlify/functions/labor-snapshot"
           echo "Pinging ${url}"
           code=$(curl -fsS --max-time 120 -o /tmp/labor.json -w "%{http_code}" "${url}" || true)
