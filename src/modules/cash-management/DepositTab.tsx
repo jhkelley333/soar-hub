@@ -2,6 +2,7 @@
 // slip photo + carried-over (read-only from DSR) + 3-point verify checklist.
 
 import { useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Banknote, Camera, Check } from "lucide-react";
 import { Card } from "@/shared/ui/Card";
@@ -33,7 +34,16 @@ function CheckRow({ done, label, sub }: { done: boolean; label: string; sub: str
   );
 }
 
-export function DepositTab({ storeId, onDone }: { storeId: string | null; onDone: () => void }) {
+export function DepositTab({
+  storeId,
+  onDone,
+  actionSlot,
+}: {
+  storeId: string | null;
+  onDone: () => void;
+  // When set (mobile shell), the verify button renders into this sticky footer.
+  actionSlot?: HTMLElement | null;
+}) {
   const qc = useQueryClient();
   const toast = useToast();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -109,6 +119,17 @@ export function DepositTab({ storeId, onDone }: { storeId: string | null; onDone
         description="Once tonight's closeout is submitted, its deposit shows up here the next day."
       />
     );
+
+  // Verify control — inline on desktop, portaled to the mobile sticky footer.
+  const verifyAction = (
+    <>
+      <Button className="w-full" disabled={!canVerify || verify.isPending} onClick={() => verify.mutate()}>
+        <Check className="h-4 w-4" />
+        {verify.isPending ? "Verifying…" : overTol ? "Verify with exception" : "Verify deposit"}
+      </Button>
+      {!canVerify && <div className="mt-2 text-center text-[11px] text-zinc-400">Complete all three items to verify.</div>}
+    </>
+  );
 
   return (
     <div>
@@ -284,14 +305,11 @@ export function DepositTab({ storeId, onDone }: { storeId: string | null; onDone
                 <CheckRow done={carriedAck} label="Carried-over addressed" sub="Recorded; alert raised to DO/SDO" />
               )}
             </div>
-            <Button className="mt-4 w-full" disabled={!canVerify || verify.isPending} onClick={() => verify.mutate()}>
-              <Check className="h-4 w-4" />
-              {verify.isPending ? "Verifying…" : overTol ? "Verify with exception" : "Verify deposit"}
-            </Button>
-            {!canVerify && <div className="mt-2 text-center text-[11px] text-zinc-400">Complete all three items to verify.</div>}
+            {!actionSlot && <div className="mt-4">{verifyAction}</div>}
           </Card>
         </div>
       </div>
+      {actionSlot ? createPortal(verifyAction, actionSlot) : null}
     </div>
   );
 }

@@ -36,7 +36,7 @@ import { RankerPage } from "@/modules/ranker/RankerPage";
 import { MyStoresPage } from "@/modules/my-stores/MyStoresPage";
 import { AccountPage } from "@/modules/account/AccountPage";
 import { WorkOrdersV2Route } from "@/modules/work-orders-v2/WorkOrdersV2Route";
-import { CashManagementHubPage } from "@/modules/cash-management/CashManagementHubPage";
+import { CashManagementRoute } from "@/modules/cash-management/CashManagementRoute";
 import { VendorPortalPage } from "@/modules/vendor-portal/VendorPortalPage";
 import { PublicSubmitPage } from "@/modules/public-submit/PublicSubmitPage";
 import { WorkspacesPage } from "@/modules/workspaces/WorkspacesPage";
@@ -383,7 +383,7 @@ export const router = createBrowserRouter([
             roles={["gm", "shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "do", "sdo", "rvp", "vp", "coo", "admin", "accounting"]}
             flagKey="cash_management_pilot"
           >
-            <CashManagementHubPage />
+            <CashManagementRoute />
           </FlagOrRoleRoute>
         ),
       },
