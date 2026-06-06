@@ -24,6 +24,10 @@ export function CloseoutTab({ storeId, onDone }: { storeId: string | null; onDon
   const tol = configQuery.data?.closeoutToleranceCents ?? 500;
   const leaders = overviewQuery.data?.leaders;
   const existing = overviewQuery.data?.closeout;
+  const businessDate = overviewQuery.data?.business_date ?? null;
+  const bizLabel = businessDate
+    ? new Date(`${businessDate}T00:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })
+    : "today";
 
   const [count, setCount] = useState<Record<string, number>>({});
   const [cashDue, setCashDue] = useState("");
@@ -31,6 +35,7 @@ export function CloseoutTab({ storeId, onDone }: { storeId: string | null; onDon
   const [synced, setSynced] = useState(true);
   const [reason, setReason] = useState("");
   const [confirming, setConfirming] = useState(false);
+  const [ackDate, setAckDate] = useState(false);
 
   // Seed cash-due from an existing closeout for the day, once.
   useEffect(() => {
@@ -51,7 +56,7 @@ export function CloseoutTab({ storeId, onDone }: { storeId: string | null; onDon
   const balanced = Math.abs(variance) < 1;
   const overTol = Math.abs(variance) > tol;
   const isShort = variance < 0;
-  const canSubmit = cashDue !== "" && (!overTol || reason.trim().length >= 8);
+  const canSubmit = cashDue !== "" && (!overTol || reason.trim().length >= 8) && ackDate;
 
   const submit = useMutation({
     mutationFn: () =>
@@ -62,6 +67,7 @@ export function CloseoutTab({ storeId, onDone }: { storeId: string | null; onDon
         counted_cents: countedCents,
         denominations: count,
         reason: reason.trim(),
+        acknowledged: ackDate,
       }),
     onSuccess: (res) => {
       toast.push(res.flagged ? "Submitted & escalated to DO/SDO." : "Closeout submitted.", "success");
@@ -93,7 +99,12 @@ export function CloseoutTab({ storeId, onDone }: { storeId: string | null; onDon
             your DO and SDO automatically.
           </p>
         </div>
-        <Pill tone="neutral">±{usd(tol)} tolerance</Pill>
+        <div className="flex flex-wrap items-center gap-2">
+          <Pill tone="amber" dot>
+            {bizLabel}
+          </Pill>
+          <Pill tone="neutral">±{usd(tol)} tolerance</Pill>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.35fr_1fr]">
@@ -212,6 +223,18 @@ export function CloseoutTab({ storeId, onDone }: { storeId: string | null; onDon
               </div>
             )}
 
+            <label className="mt-4 flex items-start gap-2.5 rounded-md bg-zinc-50 p-3 text-[13px] text-zinc-700 ring-1 ring-inset ring-zinc-200">
+              <input
+                type="checkbox"
+                checked={ackDate}
+                onChange={(e) => setAckDate(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-zinc-300 text-accent focus:ring-accent"
+              />
+              <span>
+                I confirm this closeout is for <strong>{bizLabel}</strong>.
+              </span>
+            </label>
+
             <div className="mt-4">
               {!confirming ? (
                 <Button
@@ -245,7 +268,13 @@ export function CloseoutTab({ storeId, onDone }: { storeId: string | null; onDon
                 </div>
               )}
               {!canSubmit && cashDue !== "" && (
-                <div className="mt-2 text-center text-[11px] text-red-600">A reason is required to escalate.</div>
+                <div className="mt-2 text-center text-[11px] text-red-600">
+                  {overTol && reason.trim().length < 8
+                    ? "A reason is required to escalate."
+                    : !ackDate
+                      ? "Confirm the closeout date to submit."
+                      : ""}
+                </div>
               )}
             </div>
           </Card>

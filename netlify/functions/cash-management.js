@@ -113,6 +113,16 @@ async function getSettings(supa) {
   };
 }
 
+// Append an action-history row (best-effort — never fails the user action).
+async function logCash(supa, entry) {
+  try {
+    const { error } = await supa.from("cash_audit_log").insert(entry);
+    if (error) console.warn("[cash] audit insert failed", error.message);
+  } catch (e) {
+    console.warn("[cash] audit insert threw", e?.message || e);
+  }
+}
+
 async function storeRowsForUser(supa, profile) {
   const role = String(profile.role || "").toLowerCase();
   if (ORG_WIDE_READ.has(role)) {
@@ -363,6 +373,14 @@ async function submitCloseout(supa, user, body) {
       reason, managerName, source: "closeout", closeoutId: co.id,
     });
   }
+  await logCash(supa, {
+    scope: "closeout", action: "submit", store_id: active.id, closeout_id: co.id,
+    detail: {
+      business_date: businessDate, cash_due_cents: cashDue, deposit_cents: deposit,
+      counted_cents: counted, variance_cents: variance, flagged, acknowledged: body?.acknowledged === true,
+    },
+    actor_id: user.id, actor_name: managerName,
+  });
   return { ok: true, id: co.id, flagged, status: co.status };
 }
 
@@ -469,6 +487,14 @@ async function verifyDeposit(supa, user, body) {
       managerName: mgr, source: "carryover", closeoutId: dep.closeout_id,
     });
   }
+  await logCash(supa, {
+    scope: "deposit", action: "verify-deposit", store_id: dep.store_id, closeout_id: dep.closeout_id, deposit_id: dep.id,
+    detail: {
+      bank_credited_cents: bank, variance_cents: variance, flagged,
+      carried_over_count: carriedCount, carried_over_cents: carriedCents,
+    },
+    actor_id: user.id, actor_name: mgr,
+  });
   return { ok: true, flagged, carried_acknowledged: hasCarry, carried_fwd_cents: carriedCents };
 }
 
@@ -532,7 +558,7 @@ async function decideAlert(supa, user, body) {
   if (!id || !["acknowledged", "resolved"].includes(decision)) {
     return { error: "id and a valid decision are required.", status: 400 };
   }
-  const { data: alert } = await supa.from("cash_alerts").select("store_id, status").eq("id", id).maybeSingle();
+  const { data: alert } = await supa.from("cash_alerts").select("store_id, status, closeout_id, acked_at").eq("id", id).maybeSingle();
   if (!alert) return { error: "Alert not found.", status: 404 };
   const access = await storeRowsForUser(supa, user);
   if (!access.all && !access.rows.some((r) => r.id === alert.store_id)) {
@@ -544,6 +570,11 @@ async function decideAlert(supa, user, body) {
   if (decision === "resolved") patch.resolved_at = new Date().toISOString();
   const { error } = await supa.from("cash_alerts").update(patch).eq("id", id);
   if (error) return { error: error.message, status: 500 };
+  await logCash(supa, {
+    scope: "alert", action: decision === "resolved" ? "alert-resolve" : "alert-ack",
+    store_id: alert.store_id, closeout_id: alert.closeout_id ?? null, alert_id: id,
+    detail: null, actor_id: user.id, actor_name: name,
+  });
   return { ok: true };
 }
 
@@ -659,7 +690,70 @@ async function detail(supa, user, params) {
           status: dep.status, verified_at: dep.verified_at,
         }
       : null,
+    history: ((await supa
+      .from("cash_audit_log")
+      .select("id, scope, action, detail, actor_name, created_at")
+      .eq("closeout_id", closeoutId)
+      .order("created_at", { ascending: true })
+      .limit(50)).data ?? []),
+    can_edit: String(user.role) === "admin",
   };
+}
+
+// ============================================================================
+// edit-closeout — admin fix for a closeout (e.g. wrong business date)
+// ============================================================================
+async function editCloseout(supa, user, body) {
+  if (String(user.role) !== "admin") {
+    return { error: "Only an admin can edit a closeout.", status: 403 };
+  }
+  const id = body?.closeout_id;
+  if (!id) return { error: "closeout_id is required.", status: 400 };
+  const { data: co } = await supa.from("cash_closeouts").select("*").eq("id", id).maybeSingle();
+  if (!co) return { error: "Closeout not found.", status: 404 };
+
+  const settings = await getSettings(supa);
+  const businessDate = /^\d{4}-\d{2}-\d{2}$/.test(body?.business_date || "") ? body.business_date : co.business_date;
+  const cashDue = body?.cash_due_cents != null ? Math.round(Number(body.cash_due_cents)) : co.cash_due_cents;
+  const deposit = body?.deposit_cents != null ? Math.round(Number(body.deposit_cents)) : co.deposit_cents;
+  const counted = body?.counted_cents != null ? Math.round(Number(body.counted_cents)) : co.counted_cents;
+  if (![cashDue, deposit, counted].every(Number.isFinite)) {
+    return { error: "Amounts must be valid numbers.", status: 400 };
+  }
+  const reason = body?.reason != null ? String(body.reason).trim() : co.reason;
+
+  // Moving to another date can collide with that day's closeout (unique store+date).
+  if (businessDate !== co.business_date) {
+    const { data: clash } = await supa
+      .from("cash_closeouts").select("id")
+      .eq("store_id", co.store_id).eq("business_date", businessDate).neq("id", id).maybeSingle();
+    if (clash) return { error: `A closeout already exists for ${businessDate} at this store.`, status: 409 };
+  }
+
+  const variance = deposit - cashDue;
+  const flagged = Math.abs(variance) > settings.closeout;
+  const nowIso = new Date().toISOString();
+
+  const { error } = await supa.from("cash_closeouts").update({
+    business_date: businessDate, cash_due_cents: cashDue, deposit_cents: deposit, counted_cents: counted,
+    variance_cents: variance, flagged, reason, updated_at: nowIso,
+  }).eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+
+  // Keep the linked deposit consistent with the corrected closeout.
+  await supa.from("cash_deposits").update({
+    expected_cents: deposit, for_date: businessDate, updated_at: nowIso,
+  }).eq("closeout_id", id);
+
+  await logCash(supa, {
+    scope: "closeout", action: "edit", store_id: co.store_id, closeout_id: id,
+    detail: {
+      before: { business_date: co.business_date, cash_due_cents: co.cash_due_cents, deposit_cents: co.deposit_cents, counted_cents: co.counted_cents },
+      after: { business_date: businessDate, cash_due_cents: cashDue, deposit_cents: deposit, counted_cents: counted },
+    },
+    actor_id: user.id, actor_name: user.preferred_name || user.full_name || user.email,
+  });
+  return { ok: true };
 }
 
 // ============================================================================
@@ -704,6 +798,7 @@ export const handler = async (event) => {
       if (action === "verify-deposit") return unwrap(await verifyDeposit(supa, user, body));
       if (action === "alert-decide") return unwrap(await decideAlert(supa, user, body));
       if (action === "update-settings") return unwrap(await updateSettings(supa, user, body));
+      if (action === "edit-closeout") return unwrap(await editCloseout(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
     return respond(405, { error: "method not allowed" });
