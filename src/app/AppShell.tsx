@@ -20,6 +20,7 @@ import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Outlet, useLocation } from "react-router-dom";
 import { Sidebar } from "@/app/Sidebar";
+import { Topbar } from "@/app/Topbar";
 import { MobileTabBar } from "@/app/MobileTabBar";
 import { PushPrimer } from "@/app/PushPrimer";
 import { InstallPrimer, useInstallPrompt } from "@/app/InstallPrimer";
@@ -101,7 +102,7 @@ export function AppShell() {
       : `Loading your ${scopeWordForRole(role)}…`;
 
   return (
-    <div className="flex h-dvh flex-col bg-surface-muted">
+    <div className="flex h-dvh flex-col bg-surface-muted dark:bg-night">
       {/* Mobile-only status-bar backdrop. Height equals the iPhone's
           safe-area-inset-top (notch / Dynamic Island), so the system
           status bar paints on a midnight brand strip instead of on
@@ -143,15 +144,18 @@ export function AppShell() {
           style={{ overscrollBehavior: "contain" }}
         >
           {/* Chat fills the area edge-to-edge + full height; other pages
-              keep the padded, max-width container. */}
+              keep the padded, max-width container under the desktop topbar. */}
           {fullBleed ? (
             <div className="h-full">
               <Outlet />
             </div>
           ) : (
-            <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
-              <Outlet />
-            </div>
+            <>
+              <Topbar />
+              <div className="mx-auto max-w-[1600px] px-4 py-6 sm:px-6 sm:py-8 lg:px-8 lg:py-10">
+                <Outlet />
+              </div>
+            </>
           )}
         </main>
       </div>
