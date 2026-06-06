@@ -56,10 +56,10 @@ export const NAV: NavItem[] = [
   // chart and explain misses; DO+ get the district rollup. Backend
   // (labor.js) enforces scope; nav is wide so shift managers see it too.
   { to: "/labor",       label: "Labor",       icon: Gauge,           roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
-  // Cash Management — night-close + next-day deposit cycle, in pilot. Store
-  // leaders run it; DO+ act on alerts. Pilot-flagged (cash_management_pilot)
-  // so testers get access without widening the role list.
-  { to: "/admin/cash-management", label: "Cash Management", icon: Banknote, roles: ["gm", "shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "do", "sdo", "rvp", "vp", "coo", "admin", "accounting"], flagKey: "cash_management_pilot" },
+  // Cash Management — night-close + next-day deposit cycle. Store leaders
+  // run it; DO+ act on alerts. Rolled out by role now (the pilot flag was
+  // retired once it shipped to all store leaders).
+  { to: "/admin/cash-management", label: "Cash Management", icon: Banknote, roles: ["gm", "shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "do", "sdo", "rvp", "vp", "coo", "admin", "accounting"] },
   // Note: design-import preview routes (e.g. /region) are deliberately
   // NOT in the sidebar — they're placeholder UIs while real scoring +
   // workflows get built out, and they'd add noise to the daily nav.
