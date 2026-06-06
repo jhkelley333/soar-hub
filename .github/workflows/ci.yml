@@ -28,5 +28,7 @@ jobs:
         run: npm run typecheck
       - name: Lint
         run: npm run lint
+      - name: Migration tracking
+        run: npm run check:migrations
       - name: Build
         run: npm run build
