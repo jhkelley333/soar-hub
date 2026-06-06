@@ -153,8 +153,9 @@ export function DashboardTab({ overview, onNav }: { overview: Overview; onNav: (
         {history.length === 0 ? (
           <div className="px-5 py-10 text-center text-sm text-zinc-400">No closeouts yet — run tonight's to start the ledger.</div>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="text-left text-[11px] uppercase tracking-wider text-zinc-400">
+          <>
+            <table className="hidden w-full text-sm sm:table">
+              <thead className="text-left text-[11px] uppercase tracking-wider text-zinc-400">
               <tr>
                 <th className="px-5 py-3 font-bold">Closeout</th>
                 <th className="px-4 py-3 text-right font-bold">Cash due</th>
@@ -189,7 +190,33 @@ export function DashboardTab({ overview, onNav }: { overview: Overview; onNav: (
                 );
               })}
             </tbody>
-          </table>
+            </table>
+
+            <ul className="divide-y divide-zinc-100 sm:hidden">
+              {history.map((h) => {
+                const over = Math.abs(h.variance_cents) > tol;
+                return (
+                  <li key={h.closeout_id} className="px-4 py-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <div className="font-medium text-midnight">{h.business_date.slice(5)}</div>
+                        <div className="font-mono text-[11px] text-zinc-400">{h.id}</div>
+                      </div>
+                      <StatusPill status={h.status} />
+                    </div>
+                    <div className="mt-2 flex items-center justify-between text-[13px]">
+                      <span className="text-zinc-500">
+                        Deposit <span className="font-semibold tabular-nums text-midnight">{usd(h.deposit_cents)}</span>
+                      </span>
+                      <span className={cn("font-bold tabular-nums", h.variance_cents === 0 ? "text-zinc-400" : over ? "text-red-700" : "text-zinc-600")}>
+                        {h.variance_cents === 0 ? "—" : usd(h.variance_cents, { signed: true })}
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
         )}
       </Card>
     </div>
