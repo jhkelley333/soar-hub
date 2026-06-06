@@ -152,3 +152,54 @@ export function defaultLandingPath(role: UserRole | undefined): string {
   if (role === "payroll") return "/paf/queue";
   return "/";
 }
+
+// ── Sidebar grouping ────────────────────────────────────────────────
+// The redesigned sidebar buckets nav items into labelled sections. Order
+// here is the render order; a path not listed falls into "Admin".
+export const NAV_GROUP_ORDER = ["MAIN", "OPERATIONS", "PEOPLE", "WORKSPACE", "ADMIN"] as const;
+export type NavGroup = (typeof NAV_GROUP_ORDER)[number];
+
+export const NAV_GROUP_LABELS: Record<NavGroup, string> = {
+  MAIN: "Main",
+  OPERATIONS: "Operations",
+  PEOPLE: "People",
+  WORKSPACE: "Workspace",
+  ADMIN: "Admin",
+};
+
+const GROUP_OF: Record<string, NavGroup> = {
+  "/": "MAIN",
+  "/admin/work-orders-v2": "MAIN",
+  "/chat": "MAIN",
+  "/ranker": "OPERATIONS",
+  "/labor": "OPERATIONS",
+  "/admin/cash-management": "OPERATIONS",
+  "/reno-scoping": "OPERATIONS",
+  "/my-walks": "OPERATIONS",
+  "/walkthroughs": "OPERATIONS",
+  "/paf": "PEOPLE",
+  "/employee-actions": "PEOPLE",
+  "/contacts": "PEOPLE",
+  "/team": "PEOPLE",
+  "/resources": "WORKSPACE",
+  "/my-stores": "WORKSPACE",
+  "/account": "WORKSPACE",
+  "/admin/org": "ADMIN",
+  "/admin/bulk-attributes": "ADMIN",
+  "/admin/feature-flags": "ADMIN",
+  "/admin/role-access": "ADMIN",
+  "/admin/paf-config": "ADMIN",
+  "/admin/labor-sync": "ADMIN",
+};
+
+// Bucket already-filtered nav items into ordered, labelled groups. Empty
+// groups are dropped so a role only sees the sections it has items in.
+export function groupedNav(
+  items: NavItem[],
+): { group: NavGroup; label: string; items: NavItem[] }[] {
+  return NAV_GROUP_ORDER.map((group) => ({
+    group,
+    label: NAV_GROUP_LABELS[group],
+    items: items.filter((it) => (GROUP_OF[it.to] ?? "ADMIN") === group),
+  })).filter((section) => section.items.length > 0);
+}

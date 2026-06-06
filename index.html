@@ -41,9 +41,22 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=DM+Sans:wght@400;500;600;700&family=Poppins:wght@500;600;700&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Sora:wght@400;600;700;800&family=DM+Sans:wght@400;500;600;700&family=Poppins:wght@500;600;700&display=swap"
       rel="stylesheet"
     />
+
+    <!-- No-flash theme. Apply the stored light/dark choice to <html> BEFORE
+         first paint so the redesigned shell doesn't flash the wrong theme on
+         reload. Kept in sync afterwards by src/lib/theme.ts. Default light
+         (other module pages aren't dark-themed yet). -->
+    <script>
+      (function () {
+        try {
+          var t = localStorage.getItem("soar-theme");
+          if (t === "dark") document.documentElement.classList.add("dark");
+        } catch (e) {}
+      })();
+    </script>
   </head>
   <body class="h-full bg-midnight text-zinc-900 antialiased">
     <div id="root" class="h-full"></div>

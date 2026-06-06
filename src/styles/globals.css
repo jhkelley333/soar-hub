@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* Class-based dark mode. `dark:` utilities activate when <html> (or any
+ * ancestor) carries the `.dark` class — toggled by src/lib/theme.ts and the
+ * no-flash boot script in index.html. Scoped to the redesigned shell +
+ * dashboard for now; other module pages have no `dark:` classes so they're
+ * unaffected. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* -----------------------------------------------------------------------------
  * Design tokens
  * Tailwind v4 uses CSS-first theme config. Keep this list intentional —
@@ -68,6 +75,29 @@
   --color-frost-100: oklch(94% 0.025 220);
   --color-frost-200: oklch(88% 0.04 220);
   --color-frost-300: oklch(82% 0.07 220);
+
+  /* ---------------------------------------------------------------------------
+   * Dashboard redesign tokens (Claude Code handoff). Exact hexes from the
+   * design's token table — brand blues are identity, status colors are flags.
+   * These add design-named utilities (bg-midnight-deep, text-sky-300,
+   * bg-frost-soft, …) without disturbing the OKLCH scales above.
+   * ------------------------------------------------------------------------ */
+  --color-midnight-deep: #1C3D5C;   /* darker brand surface / hero base */
+  --color-midnight-hero: #15324B;   /* hero gradient deep stop */
+  --color-sky-700: #005C94;
+  --color-sky-600: #0072B5;
+  --color-sky-300: #5BB4E8;
+  --color-frost-soft: #E6F6FB;
+  --color-frost-bright: #A5E2F0;
+  --color-cherry-600: #C30040;
+
+  /* Dark-theme neutrals for the shell + dashboard surfaces. Consumed via the
+   * `dark:` variant (e.g. dark:bg-night, dark:border-night-line). */
+  --color-night:        #0B1B2B;    /* app canvas in dark mode */
+  --color-night-raised: #102A40;    /* card surface in dark mode */
+  --color-night-line:   #1E3A52;    /* hairline / border in dark mode */
+  --color-night-ink:    #E8F1F8;    /* primary text in dark mode */
+  --color-night-muted:  #8FB0C7;    /* muted text in dark mode */
 
   /* Sonic scale — Sonic red. sonic ≡ cherry (#E40046). 700 is a slightly
    * darker variant for text-on-light-pink situations. */
