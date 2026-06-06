@@ -757,6 +757,23 @@ async function editCloseout(supa, user, body) {
 }
 
 // ============================================================================
+// badges — scope-wide counts for the dashboard Cash quick-link card
+// ============================================================================
+async function badges(supa, user) {
+  const access = await storeRowsForUser(supa, user);
+  let depQ = supa.from("cash_deposits").select("id", { count: "exact", head: true }).eq("status", "pending");
+  let altQ = supa.from("cash_alerts").select("id", { count: "exact", head: true }).eq("status", "open");
+  if (!access.all) {
+    const ids = access.rows.map((r) => r.id);
+    if (!ids.length) return { pending_deposits: 0, open_alerts: 0 };
+    depQ = depQ.in("store_id", ids);
+    altQ = altQ.in("store_id", ids);
+  }
+  const [{ count: dep }, { count: alt }] = await Promise.all([depQ, altQ]);
+  return { pending_deposits: dep || 0, open_alerts: alt || 0 };
+}
+
+// ============================================================================
 // handler
 // ============================================================================
 export const handler = async (event) => {
@@ -788,6 +805,7 @@ export const handler = async (event) => {
       if (action === "alerts") return unwrap(await listAlerts(supa, user, params));
       if (action === "dsr") return unwrap(await dsr(supa, user, params));
       if (action === "slip-url") return unwrap(await slipUrl(supa, user, params));
+      if (action === "badges") return unwrap(await badges(supa, user));
       if (action === "settings") return unwrap(await getSettingsAction(supa, user));
       if (action === "detail") return unwrap(await detail(supa, user, params));
       return respond(400, { error: `unknown GET action: ${action}` });

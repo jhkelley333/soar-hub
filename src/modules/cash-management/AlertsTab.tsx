@@ -59,6 +59,7 @@ export function AlertsTab({ storeId }: { storeId: string | null }) {
   const toast = useToast();
   const query = useQuery({ queryKey: ["cash-alerts", storeId], queryFn: () => fetchAlerts(storeId) });
   const [selId, setSelId] = useState<string | null>(null);
+  const [filter, setFilter] = useState<"open" | "acknowledged" | "resolved" | "all">("open");
 
   const decide = useMutation({
     mutationFn: ({ id, decision }: { id: string; decision: "acknowledged" | "resolved" }) => decideAlert(id, decision),
@@ -80,7 +81,15 @@ export function AlertsTab({ storeId }: { storeId: string | null }) {
       <EmptyState title="No discrepancy alerts" description="Closeouts and deposits that breach the tolerance show up here for review." />
     );
 
-  const sel: CmgAlert = alerts.find((a) => a.id === selId) ?? alerts[0];
+  const visible = filter === "all" ? alerts : alerts.filter((a) => a.status === filter);
+  const sel: CmgAlert = visible.find((a) => a.id === selId) ?? visible[0] ?? alerts[0];
+
+  const CHIPS: { id: typeof filter; label: string; count: number }[] = [
+    { id: "open", label: "Open", count: data.counts.open },
+    { id: "acknowledged", label: "Acknowledged", count: data.counts.acknowledged },
+    { id: "resolved", label: "Resolved", count: data.counts.resolved },
+    { id: "all", label: "All", count: alerts.length },
+  ];
 
   return (
     <div>
@@ -99,7 +108,7 @@ export function AlertsTab({ storeId }: { storeId: string | null }) {
         )}
       </div>
 
-      <Card className="mb-5 grid grid-cols-3 divide-x divide-zinc-200">
+      <Card className="mb-5 hidden grid-cols-3 divide-x divide-zinc-200 sm:grid">
         <div className="px-5 py-4">
           <Figure label="Open" value={data.counts.open} tone={data.counts.open ? "red" : undefined} mono={false} sub="Need acknowledgement" />
         </div>
@@ -111,9 +120,32 @@ export function AlertsTab({ storeId }: { storeId: string | null }) {
         </div>
       </Card>
 
+      {/* status filter chips */}
+      <div className="mb-5 flex flex-wrap gap-2">
+        {CHIPS.map((c) => (
+          <button
+            key={c.id}
+            type="button"
+            onClick={() => setFilter(c.id)}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[13px] font-semibold ring-1 ring-inset transition",
+              filter === c.id ? "bg-midnight text-white ring-midnight" : "bg-white text-zinc-600 ring-zinc-200"
+            )}
+          >
+            {c.label}
+            <span className={cn("rounded-full px-1.5 text-[11px]", filter === c.id ? "bg-white/20" : "bg-zinc-100 text-zinc-500")}>
+              {c.count}
+            </span>
+          </button>
+        ))}
+      </div>
+
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[340px_1fr]">
         <Card className="overflow-hidden">
-          {alerts.map((a, i) => {
+          {visible.length === 0 && (
+            <div className="px-4 py-8 text-center text-[13px] text-zinc-400">No {filter} alerts.</div>
+          )}
+          {visible.map((a, i) => {
             const on = a.id === sel.id;
             return (
               <button
