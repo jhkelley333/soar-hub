@@ -55,7 +55,7 @@ export function CashManagementHubPage() {
 
   const tabNav = useMemo(
     () => (
-      <div className="mb-5 flex flex-wrap gap-1 border-b border-zinc-200">
+      <div className="-mx-4 mb-5 flex gap-1 overflow-x-auto border-b border-zinc-200 px-4 [scrollbar-width:none] sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0 [&::-webkit-scrollbar]:hidden">
         {(isAdmin ? [...TABS, SETTINGS_TAB] : TABS).map((t) => {
           const Icon = t.icon;
           const badge =
@@ -70,7 +70,7 @@ export function CashManagementHubPage() {
               type="button"
               onClick={() => setActive(t.id)}
               className={cn(
-                "-mb-px inline-flex items-center gap-1.5 border-b-2 px-4 py-2 text-sm font-medium transition",
+                "-mb-px inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-medium transition sm:py-2",
                 active === t.id ? "border-accent text-midnight" : "border-transparent text-zinc-500 hover:text-zinc-700"
               )}
             >

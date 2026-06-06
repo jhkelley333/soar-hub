@@ -75,7 +75,7 @@ export function DsrTab({ storeId }: { storeId: string | null }) {
       </div>
 
       <Card className="overflow-hidden">
-        <div className="overflow-x-auto">
+        <div className="hidden overflow-x-auto sm:block">
           <table className="w-full min-w-[720px] text-sm">
             <thead className="bg-zinc-50 text-right text-[11px] uppercase tracking-wider text-zinc-400">
               <tr>
@@ -125,6 +125,53 @@ export function DsrTab({ storeId }: { storeId: string | null }) {
             </tbody>
           </table>
         </div>
+
+        {/* mobile cards */}
+        <ul className="divide-y divide-zinc-100 sm:hidden">
+          {data.ledger.map((h) => {
+            const over = Math.abs(h.variance_cents) > tol;
+            const carried = h.carried_over_count > 0 || h.carried_over_cents !== 0;
+            return (
+              <li key={h.business_date} className="px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-medium text-midnight">{h.business_date.slice(5)}</div>
+                    <div className="font-mono text-[11px] text-zinc-400">{h.id}</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {h.deposit_verified ? <Pill tone="green" dot>Verified</Pill> : <Pill tone="amber" dot>Pending</Pill>}
+                    <button
+                      type="button"
+                      onClick={() => setDetailId(h.closeout_id)}
+                      aria-label="Detail"
+                      className="grid h-8 w-8 place-items-center rounded-md text-zinc-500 ring-1 ring-inset ring-zinc-200 active:bg-zinc-50"
+                    >
+                      <Eye className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-2 grid grid-cols-3 gap-2 text-[12px]">
+                  <div>
+                    <div className="text-zinc-400">Deposit</div>
+                    <div className="font-semibold tabular-nums text-midnight">{usd(h.deposit_cents)}</div>
+                  </div>
+                  <div>
+                    <div className="text-zinc-400">Variance</div>
+                    <div className={cn("font-bold tabular-nums", h.variance_cents === 0 ? "text-zinc-400" : over ? "text-red-700" : "text-zinc-600")}>
+                      {h.variance_cents === 0 ? "—" : usd(h.variance_cents, { signed: true })}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-zinc-400">Carried</div>
+                    <div className={cn("tabular-nums", carried ? "text-amber-800" : "text-zinc-300")}>
+                      {carried ? `${h.carried_over_count} · ${usd(h.carried_over_cents)}` : "—"}
+                    </div>
+                  </div>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
       </Card>
 
       <DepositDetailDrawer closeoutId={detailId} open={!!detailId} onClose={() => setDetailId(null)} />

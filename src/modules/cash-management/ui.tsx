@@ -133,23 +133,23 @@ export function Stepper({ value, onChange }: { value: number; onChange: (v: numb
       <button
         type="button"
         onClick={() => set(value - 1)}
-        className="grid h-8 w-8 place-items-center bg-zinc-50 text-zinc-600 hover:bg-zinc-100"
+        className="grid h-10 w-10 place-items-center bg-zinc-50 text-zinc-600 hover:bg-zinc-100 active:bg-zinc-200 sm:h-8 sm:w-8"
       >
-        <Minus className="h-3.5 w-3.5" />
+        <Minus className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
       </button>
       <input
         type="number"
         min={0}
         value={value}
         onChange={(e) => set(parseInt(e.target.value || "0", 10))}
-        className="h-8 w-12 border-x border-zinc-200 text-center text-sm font-semibold tabular-nums focus:outline-none"
+        className="h-10 w-12 border-x border-zinc-200 text-center text-sm font-semibold tabular-nums focus:outline-none sm:h-8"
       />
       <button
         type="button"
         onClick={() => set(value + 1)}
-        className="grid h-8 w-8 place-items-center bg-zinc-50 text-zinc-600 hover:bg-zinc-100"
+        className="grid h-10 w-10 place-items-center bg-zinc-50 text-zinc-600 hover:bg-zinc-100 active:bg-zinc-200 sm:h-8 sm:w-8"
       >
-        <Plus className="h-3.5 w-3.5" />
+        <Plus className="h-4 w-4 sm:h-3.5 sm:w-3.5" />
       </button>
     </div>
   );
