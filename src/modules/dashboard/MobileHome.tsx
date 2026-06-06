@@ -18,6 +18,7 @@ import {
   Wrench,
   Trophy,
   Route,
+  Banknote,
   ChevronRight,
   type LucideIcon,
 } from "lucide-react";
@@ -33,6 +34,12 @@ import {
   formatMonthDay,
 } from "@/modules/my-stores/dateRange";
 import { fetchRecentMessages } from "@/modules/work-orders-v2/api";
+import { fetchCashBadges } from "@/modules/cash-management/api";
+
+const CASH_ROLES = new Set([
+  "gm", "shift_manager", "first_assistant_manager", "associate_manager",
+  "crew_leader", "do", "sdo", "rvp", "vp", "coo", "admin", "accounting",
+]);
 
 function greetingFor(d = new Date()): string {
   const h = d.getHours();
@@ -83,6 +90,13 @@ export function MobileHome() {
   const approvalsQ = useQuery({
     queryKey: ["approvals-queue", role],
     queryFn: () => fetchApprovalsQueue(role),
+    staleTime: 60_000,
+  });
+  const canCash = !!role && CASH_ROLES.has(role);
+  const cashBadgesQ = useQuery({
+    queryKey: ["cash-badges"],
+    queryFn: fetchCashBadges,
+    enabled: canCash,
     staleTime: 60_000,
   });
   const treeQ = useQuery({
@@ -250,6 +264,37 @@ export function MobileHome() {
           sub={`${woReview} awaiting`}
         />
       </div>
+
+      {canCash && (
+        <Link
+          to="/admin/cash-management"
+          className="mt-3 flex items-center gap-3 rounded-2xl bg-surface p-4 shadow-card ring-1 ring-midnight-100 transition active:scale-[0.99]"
+        >
+          <div
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-white"
+            style={{ background: "linear-gradient(135deg,#16a34a,#0f7a37)" }}
+          >
+            <Banknote className="h-[19px] w-[19px]" strokeWidth={2} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-[14px] font-semibold text-midnight-900">Cash management</p>
+            <p className="truncate text-[12.5px] text-midnight-500">
+              {(() => {
+                const p = cashBadgesQ.data?.pending_deposits ?? 0;
+                const a = cashBadgesQ.data?.open_alerts ?? 0;
+                if (p === 0 && a === 0) return "All clear for the cycle";
+                return [
+                  p > 0 ? `${p} closeout${p === 1 ? "" : "s"} to validate` : null,
+                  a > 0 ? `${a} open alert${a === 1 ? "" : "s"}` : null,
+                ]
+                  .filter(Boolean)
+                  .join(" · ");
+              })()}
+            </p>
+          </div>
+          <ChevronRight className="h-5 w-5 shrink-0 text-midnight-300" />
+        </Link>
+      )}
 
       {/* Recent */}
       <h2 className="mt-7 mb-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-midnight-400">
