@@ -39,6 +39,9 @@ result. See `docs/architecture/0001-roles-and-scopes.md`.
 
 - **`docs/ENV.md`** — every environment variable, where it's set, and
   whether it's required. Mirror of `.env.example` with full notes.
+- **`docs/MODULE_GUIDE.md`** — how a feature/module is built: folder layout,
+  the api.ts ↔ Netlify-function bridge, role × scope auth, nav/route
+  registration, flags, guides, and the conventions checklist.
 - **`docs/MIGRATIONS.md`** — migration conventions + the
   `schema_migrations` tracking table / `npm run check:migrations` guard.
 - **`docs/cash-management-guide.md`** — Cash Management user guide
