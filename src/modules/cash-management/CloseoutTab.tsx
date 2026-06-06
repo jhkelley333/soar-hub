@@ -2,6 +2,7 @@
 // → $5 tolerance gate that forces a reason and escalates to DO & SDO.
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ArrowRight, Bell, Check } from "lucide-react";
 import { Card } from "@/shared/ui/Card";
@@ -13,7 +14,16 @@ import { fetchConfig, fetchOverview, submitCloseout } from "./api";
 import { centsToInput, toCents, usd } from "./money";
 import { MoneyInput, Pill, Stepper } from "./ui";
 
-export function CloseoutTab({ storeId, onDone }: { storeId: string | null; onDone: () => void }) {
+export function CloseoutTab({
+  storeId,
+  onDone,
+  actionSlot,
+}: {
+  storeId: string | null;
+  onDone: () => void;
+  // When set (mobile shell), the submit button renders into this sticky footer.
+  actionSlot?: HTMLElement | null;
+}) {
   const qc = useQueryClient();
   const toast = useToast();
 
@@ -87,6 +97,53 @@ export function CloseoutTab({ storeId, onDone }: { storeId: string | null; onDon
     amber: "bg-amber-50 ring-amber-200 text-amber-800",
     red: "bg-red-50 ring-red-200 text-red-700",
   }[varTone];
+
+  // The submit control — rendered inline on desktop, or portaled into the
+  // mobile shell's sticky footer when actionSlot is provided.
+  const actionContent = (
+    <>
+      {!confirming ? (
+        <Button
+          className="w-full"
+          variant={overTol ? "danger" : "primary"}
+          disabled={!canSubmit || submit.isPending}
+          onClick={() => setConfirming(true)}
+        >
+          {overTol ? "Submit & escalate" : "Submit closeout"}
+          <ArrowRight className="h-4 w-4" />
+        </Button>
+      ) : (
+        <div className="space-y-2.5">
+          <div className="text-center text-[13px] text-zinc-600">
+            Lock in deposit of <strong className="tabular-nums">{usd(depositCents)}</strong>?
+          </div>
+          <div className="flex gap-2.5">
+            <Button variant="secondary" className="w-full" onClick={() => setConfirming(false)} disabled={submit.isPending}>
+              Back
+            </Button>
+            <Button
+              variant={overTol ? "danger" : "primary"}
+              className="w-full"
+              onClick={() => submit.mutate()}
+              disabled={submit.isPending}
+            >
+              <Check className="h-4 w-4" />
+              {submit.isPending ? "Submitting…" : "Confirm"}
+            </Button>
+          </div>
+        </div>
+      )}
+      {!canSubmit && cashDue !== "" && (
+        <div className="mt-2 text-center text-[11px] text-red-600">
+          {overTol && reason.trim().length < 8
+            ? "A reason is required to escalate."
+            : !ackDate
+              ? "Confirm the closeout date to submit."
+              : ""}
+        </div>
+      )}
+    </>
+  );
 
   return (
     <div>
@@ -235,51 +292,11 @@ export function CloseoutTab({ storeId, onDone }: { storeId: string | null; onDon
               </span>
             </label>
 
-            <div className="mt-4">
-              {!confirming ? (
-                <Button
-                  className="w-full"
-                  variant={overTol ? "danger" : "primary"}
-                  disabled={!canSubmit || submit.isPending}
-                  onClick={() => setConfirming(true)}
-                >
-                  {overTol ? "Submit & escalate" : "Submit closeout"}
-                  <ArrowRight className="h-4 w-4" />
-                </Button>
-              ) : (
-                <div className="space-y-2.5">
-                  <div className="text-center text-[13px] text-zinc-600">
-                    Lock in deposit of <strong className="tabular-nums">{usd(depositCents)}</strong>?
-                  </div>
-                  <div className="flex gap-2.5">
-                    <Button variant="secondary" className="w-full" onClick={() => setConfirming(false)} disabled={submit.isPending}>
-                      Back
-                    </Button>
-                    <Button
-                      variant={overTol ? "danger" : "primary"}
-                      className="w-full"
-                      onClick={() => submit.mutate()}
-                      disabled={submit.isPending}
-                    >
-                      <Check className="h-4 w-4" />
-                      {submit.isPending ? "Submitting…" : "Confirm"}
-                    </Button>
-                  </div>
-                </div>
-              )}
-              {!canSubmit && cashDue !== "" && (
-                <div className="mt-2 text-center text-[11px] text-red-600">
-                  {overTol && reason.trim().length < 8
-                    ? "A reason is required to escalate."
-                    : !ackDate
-                      ? "Confirm the closeout date to submit."
-                      : ""}
-                </div>
-              )}
-            </div>
+            {!actionSlot && <div className="mt-4">{actionContent}</div>}
           </Card>
         </div>
       </div>
+      {actionSlot ? createPortal(actionContent, actionSlot) : null}
     </div>
   );
 }

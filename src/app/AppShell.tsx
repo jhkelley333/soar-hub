@@ -68,9 +68,12 @@ export function AppShell() {
   // push primer so the two never stack; push falls through once install
   // is handled (or when there's nothing to install).
   const install = useInstallPrompt();
-  // Chat runs full-bleed (its own multi-pane layout fills the content area);
-  // every other route keeps the padded, max-width container.
-  const fullBleed = useLocation().pathname.startsWith("/chat");
+  // Chat + Cash Management run full-bleed (each owns its own layout — Cash so
+  // the mobile shell can manage its header/bottom-nav/scroll); every other
+  // route keeps the padded, max-width container.
+  const pathname = useLocation().pathname;
+  const isCash = pathname.startsWith("/admin/cash-management");
+  const fullBleed = pathname.startsWith("/chat") || isCash;
   // 2-hour idle auto-logout. Only active while a session exists (the
   // hook bails internally otherwise).
   useIdleLogout();
@@ -153,9 +156,9 @@ export function AppShell() {
         </main>
       </div>
 
-      {/* Bottom-tab nav — mobile only, lives as a real flex row in the
-          column above so content can never scroll past it. */}
-      <MobileTabBar onMoreClick={() => setMoreOpen(true)} />
+      {/* Bottom-tab nav — mobile only. Hidden inside Cash Management, which
+          takes over the bottom bar with its own section nav. */}
+      {!isCash && <MobileTabBar onMoreClick={() => setMoreOpen(true)} />}
 
       {/* First-run nudges, held back until the launch splash clears.
           Install takes priority over push so only one bottom card shows;
