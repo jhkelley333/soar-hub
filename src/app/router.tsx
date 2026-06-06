@@ -374,17 +374,14 @@ export const router = createBrowserRouter([
         ),
       },
       {
-        // Cash Management — night-close → next-day deposit cycle, in pilot.
-        // Store-leaders run closeouts/deposits; DO+ act on alerts (enforced
-        // in cash-management.js). Pilot-flagged like PAF.
+        // Cash Management — night-close → next-day deposit cycle. Store
+        // leaders run closeouts/deposits; DO+ act on alerts (enforced in
+        // cash-management.js). Rolled out by role now (pilot flag retired).
         path: "admin/cash-management",
         element: (
-          <FlagOrRoleRoute
-            roles={["gm", "shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "do", "sdo", "rvp", "vp", "coo", "admin", "accounting"]}
-            flagKey="cash_management_pilot"
-          >
+          <ProtectedRoute requireRoles={["gm", "shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "do", "sdo", "rvp", "vp", "coo", "admin", "accounting"]}>
             <CashManagementRoute />
-          </FlagOrRoleRoute>
+          </ProtectedRoute>
         ),
       },
       {

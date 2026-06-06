@@ -145,6 +145,7 @@ soar-hub/
   functions.
 - **Feature flags** (`/admin/feature-flags`) widen access to a module for
   hand-picked pilot testers without editing the role allowlist in
-  `src/app/nav.ts` (e.g. `paf_pilot`, `cash_management_pilot`).
+  `src/app/nav.ts` (e.g. `paf_pilot`). Retire the flag once a module ships
+  to its full role set.
 - **Money is stored and computed in integer cents**, formatted only at the
   edges.
