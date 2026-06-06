@@ -45,8 +45,8 @@ export function fetchConfig(): Promise<CmgConfig> {
   return request<CmgConfig>(`${FN}?action=config`);
 }
 // Scope-wide counts for the dashboard quick-link card.
-export function fetchCashBadges(): Promise<{ pending_deposits: number; open_alerts: number }> {
-  return request<{ pending_deposits: number; open_alerts: number }>(`${FN}?action=badges`);
+export function fetchCashBadges(): Promise<{ pending_deposits: number; open_alerts: number; deposits_verified_today: number }> {
+  return request<{ pending_deposits: number; open_alerts: number; deposits_verified_today: number }>(`${FN}?action=badges`);
 }
 export function fetchDeposit(storeId?: string | null): Promise<{ deposit: PendingDeposit | null; toleranceCents: number }> {
   return request<{ deposit: PendingDeposit | null; toleranceCents: number }>(`${FN}?action=deposit${sp(storeId)}`);
