@@ -8,6 +8,7 @@
 // table) and is read-only here — managed at /admin/work-orders-v2.
 
 import { useMemo, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Download, PhoneOutgoing, Pin, PinOff, Plus, Search, X } from "lucide-react";
 import { jsPDF } from "jspdf";
@@ -105,7 +106,8 @@ export function ContactsPage() {
   const toast = useToast();
 
   const [view, setView] = useState<ViewMode>("contacts");
-  const [search, setSearch] = useState("");
+  const [searchParams] = useSearchParams();
+  const [search, setSearch] = useState(() => searchParams.get("q") ?? "");
   const [tierFilter, setTierFilter] = useState<TierFilter>("all");
   const [openId, setOpenId] = useState<string | null>(null);
   const [editing, setEditing] = useState<Contact | "new" | null>(null);

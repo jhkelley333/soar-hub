@@ -2,6 +2,7 @@
 // + breadcrumb + debounced search, all in the app design system.
 
 import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { ChevronRight, ExternalLink, Loader2, Search, X } from "lucide-react";
 import { supabase } from "@/lib/supabase";
@@ -71,9 +72,10 @@ export function ResourcesPage() {
   // Breadcrumb-as-history: pushing into a folder appends a crumb;
   // clicking a crumb slices back to that depth. Beats wiring router
   // state for a single screen.
+  const [searchParams] = useSearchParams();
   const [nav, setNav] = useState<NavCrumb[]>([ROOT]);
-  const [searchInput, setSearchInput] = useState("");
-  const [debounced, setDebounced] = useState("");
+  const [searchInput, setSearchInput] = useState(() => searchParams.get("q") ?? "");
+  const [debounced, setDebounced] = useState(() => (searchParams.get("q") ?? "").trim());
 
   // Same 400ms debounce the old HTML used. Avoids hammering Drive on
   // every keystroke.

@@ -22,6 +22,11 @@
   --color-surface-muted: #fafafa;
   --color-surface-sunk: #f4f4f5;
 
+  /* App canvas — the soft blue behind the cards in light mode. Distinct from
+     surface-muted so neutral muted chips/rows stay grey. Dark mode uses the
+     night surface (see AppShell). */
+  --color-canvas: #E8F1F8;
+
   --color-border: #e4e4e7;
   --color-border-strong: #d4d4d8;
 
