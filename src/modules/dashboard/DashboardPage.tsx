@@ -134,25 +134,37 @@ export function DashboardPage() {
   const canWo = !!role && WO_ROLES.has(role);
   const isEaApprover = !!role && EA_APPROVER_ROLES.has(role);
 
-  const woStatsQ = useQuery({ queryKey: ["wo2", "stats"], queryFn: fetchStats, staleTime: 30_000 });
-  const ticketsQ = useQuery({ queryKey: ["wo2", "tickets"], queryFn: fetchTickets, enabled: canWo, staleTime: 30_000 });
-  const eaQ = useQuery({ queryKey: ["ea-queue"], queryFn: listApprovalQueue, enabled: isEaApprover, staleTime: 30_000 });
-  const storesQ = useQuery({ queryKey: ["wo2", "caller-stores"], queryFn: fetchCallerStores, staleTime: 60_000 });
-  const cfmQ = useQuery({ queryKey: ["cfm-expiring", 60], queryFn: () => fetchCfmExpiring(60), staleTime: 60_000 });
-  const cashQ = useQuery({ queryKey: ["cash", "badges"], queryFn: fetchCashBadges, enabled: canCash, staleTime: 30_000 });
-  const sdoQ = useQuery({ queryKey: ["paf-sdo-queue"], queryFn: listSdoQueue, enabled: isSdoReviewer, staleTime: 30_000 });
-  const msgQ = useQuery({ queryKey: ["wo2", "recent-messages", 48], queryFn: () => fetchRecentMessages(48), staleTime: 30_000 });
+  // Dashboard cards are summary data — they don't need second-by-second
+  // freshness, and they shouldn't fan out a fresh wave of queries every
+  // time the tab regains focus. On a small DB instance the expensive case
+  // is a refetch storm across many stores at login; caching for a few
+  // minutes and skipping the focus refetch keeps baseline load low.
+  const dashQ = {
+    staleTime: 3 * 60_000,
+    refetchOnWindowFocus: false as const,
+  };
+
+  const woStatsQ = useQuery({ queryKey: ["wo2", "stats"], queryFn: fetchStats, ...dashQ });
+  const ticketsQ = useQuery({ queryKey: ["wo2", "tickets"], queryFn: fetchTickets, enabled: canWo, ...dashQ });
+  const eaQ = useQuery({ queryKey: ["ea-queue"], queryFn: listApprovalQueue, enabled: isEaApprover, ...dashQ });
+  const storesQ = useQuery({ queryKey: ["wo2", "caller-stores"], queryFn: fetchCallerStores, ...dashQ });
+  const cfmQ = useQuery({ queryKey: ["cfm-expiring", 60], queryFn: () => fetchCfmExpiring(60), ...dashQ });
+  const cashQ = useQuery({ queryKey: ["cash", "badges"], queryFn: fetchCashBadges, enabled: canCash, ...dashQ });
+  const sdoQ = useQuery({ queryKey: ["paf-sdo-queue"], queryFn: listSdoQueue, enabled: isSdoReviewer, ...dashQ });
+  const msgQ = useQuery({ queryKey: ["wo2", "recent-messages", 48], queryFn: () => fetchRecentMessages(48), ...dashQ });
 
   const bdayRange = useMemo(() => thisAndNextWeekRange(), []);
   const bdayQ = useQuery({
     queryKey: ["birthdays", bdayRange.start, bdayRange.end],
     queryFn: () => fetchBirthdays(bdayRange.start, bdayRange.end),
+    ...dashQ,
     staleTime: 5 * 60_000,
   });
   const ptoQ = useQuery({
     queryKey: ["ea-list", "approved-pto-widget"],
     queryFn: listEmployeeActions,
     enabled: canPto,
+    ...dashQ,
     staleTime: 5 * 60_000,
   });
 
