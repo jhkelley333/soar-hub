@@ -104,12 +104,12 @@ export function Modal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="modal-title"
-        className={`relative w-full ${maxWidth} overflow-hidden rounded-xl bg-white shadow-2xl ring-1 ring-black/5`}
+        className={`relative w-full ${maxWidth} overflow-hidden rounded-xl bg-surface shadow-2xl ring-1 ring-black/5`}
       >
-        <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-3">
+        <div className="flex items-center justify-between border-b border-border px-5 py-3">
           <h2
             id="modal-title"
-            className="text-base font-semibold tracking-tight text-midnight"
+            className="text-base font-semibold tracking-tight text-heading"
           >
             {title}
           </h2>
@@ -117,14 +117,14 @@ export function Modal({
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 transition hover:bg-zinc-100 hover:text-midnight"
+            className="flex h-8 w-8 items-center justify-center rounded-md text-ink-muted transition hover:bg-surface-muted hover:text-heading"
           >
             <X className="h-4 w-4" strokeWidth={1.75} />
           </button>
         </div>
         <div className="max-h-[70vh] overflow-y-auto px-5 py-4">{children}</div>
         {footer && (
-          <div className="flex items-center justify-end gap-2 border-t border-zinc-100 bg-zinc-50 px-5 py-3">
+          <div className="flex items-center justify-end gap-2 border-t border-border bg-surface-muted px-5 py-3">
             {footer}
           </div>
         )}

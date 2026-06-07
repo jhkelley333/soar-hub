@@ -1,7 +1,7 @@
 // Topbar — desktop-only sticky header for the redesigned shell. Holds the
-// global search (stores + work orders), the light/dark theme toggle, and the
-// notifications bell (live chat-unread count). Hidden under lg (mobile keeps
-// its own status strip + MobileTabBar).
+// global search (stores, work orders, contacts, resources), the light/dark
+// theme toggle, and the notifications bell (live chat-unread count). Hidden
+// under lg (mobile keeps its own status strip + MobileTabBar).
 //
 // The region/scope filter from the design is intentionally not here yet — it
 // needs a scoped region param threaded through every dashboard query. It
@@ -11,13 +11,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Search, Sun, Moon, Bell, Building2, Hammer } from "lucide-react";
+import { Search, Sun, Moon, Bell, Building2, Hammer, BookUser, BookOpen } from "lucide-react";
 import { useTheme } from "@/lib/theme";
 import { useAuth } from "@/auth/AuthProvider";
 import { useChatUnreadCount } from "@/modules/chat/useChatUnread";
 import { fetchCallerStores, fetchTickets } from "@/modules/work-orders-v2/api";
 import { isOpenStatus } from "@/modules/work-orders-v2/types";
 import type { CallerStore, Ticket } from "@/modules/work-orders-v2/types";
+import { listContacts } from "@/modules/contacts/api";
+import type { Contact } from "@/types/database";
 import { cn } from "@/lib/cn";
 
 const WO_ROLES = new Set([
@@ -58,6 +60,12 @@ export function Topbar() {
     queryFn: fetchTickets,
     enabled: open && canWo,
     staleTime: 30_000,
+  });
+  const contactsQ = useQuery({
+    queryKey: ["contacts-list"],
+    queryFn: listContacts,
+    enabled: open,
+    staleTime: 60_000,
   });
 
   const hits = useMemo<Hit[]>(() => {
@@ -103,8 +111,41 @@ export function Topbar() {
         to: `/admin/work-orders-v2?ticket=${encodeURIComponent(t.id)}`,
       });
     }
+
+    const contacts = (contactsQ.data?.contacts ?? []) as Contact[];
+    const contactHits = contacts
+      .filter((c) => {
+        const hay = [c.display_name, c.category, c.phone, c.email]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return hay.includes(term);
+      })
+      .slice(0, 5);
+    for (const c of contactHits) {
+      out.push({
+        key: `contact-${c.id}`,
+        icon: BookUser,
+        label: c.display_name,
+        sub: c.category || c.phone || c.email || "Contact",
+        to: `/contacts?q=${encodeURIComponent(c.display_name)}`,
+      });
+    }
+
+    // Resources are folder/Drive-backed (no single cached list), so deep-link
+    // into the library's own search instead of duplicating it inline.
+    if (term.length >= 2) {
+      out.push({
+        key: "resources-search",
+        icon: BookOpen,
+        label: `Search Resources for “${q.trim()}”`,
+        sub: "Open the resource library",
+        to: `/resources?q=${encodeURIComponent(q.trim())}`,
+      });
+    }
+
     return out;
-  }, [q, storesQ.data, ticketsQ.data]);
+  }, [q, storesQ.data, ticketsQ.data, contactsQ.data]);
 
   // Close on click-outside.
   useEffect(() => {

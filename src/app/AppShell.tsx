@@ -102,7 +102,7 @@ export function AppShell() {
       : `Loading your ${scopeWordForRole(role)}…`;
 
   return (
-    <div className="flex h-dvh flex-col bg-surface-muted dark:bg-night">
+    <div className="flex h-dvh flex-col bg-canvas dark:bg-night">
       {/* Mobile-only status-bar backdrop. Height equals the iPhone's
           safe-area-inset-top (notch / Dynamic Island), so the system
           status bar paints on a midnight brand strip instead of on
