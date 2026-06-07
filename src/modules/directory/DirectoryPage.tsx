@@ -13,6 +13,7 @@
 
 import { useCallback, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "react-router-dom";
 import {
   Search,
   Mail,
@@ -58,7 +59,11 @@ export function DirectoryPage() {
 
   const [tab, setTab] = useState<Tab>("team");
   const [teamScope, setTeamScope] = useState<TeamScope>("district");
-  const [query, setQuery] = useState("");
+  // Seed the search box from `?q=` so global-search deep-links land already
+  // filtered (e.g. clicking a person from the Topbar search drops you here
+  // with their name pre-populated).
+  const [searchParams] = useSearchParams();
+  const [query, setQuery] = useState(() => searchParams.get("q") ?? "");
   const [sheetOpen, setSheetOpen] = useState(false);
   const [editing, setEditing] = useState<PersonalContact | null>(null);
 
