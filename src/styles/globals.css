@@ -34,6 +34,11 @@
   --color-ink-muted: #52525b;
   --color-ink-subtle: #a1a1aa;
 
+  /* Heading ink — brand navy in light, flips to light ink in dark (see the
+     .dark block). Use text-heading for card/section titles so they read in
+     both themes without pinning text-midnight (which is also the brand mark). */
+  --color-heading: #285780;
+
   /* Sonic brand palette — change once and the whole app rebrands */
   --color-accent: #008AD8;          /* Sky — primary actions, active nav */
   --color-accent-hover: #1A99DD;    /* Sky tinted lighter for hover */
@@ -125,6 +130,29 @@
   --shadow-card:  0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.06);
   --shadow-bar:   0 -2px 8px rgba(15, 23, 42, 0.04);
   --shadow-float: 0 12px 32px rgba(15, 23, 42, 0.18);
+}
+
+/* -----------------------------------------------------------------------------
+ * Dark theme — flip the SEMANTIC tokens under .dark so every utility built on
+ * them (bg-surface, bg-canvas, text-ink, text-heading, border-border, …) turns
+ * dark automatically. This is what lets pages go dark-capable by migrating raw
+ * colors (bg-white, text-zinc-900, …) onto these tokens instead of hand-adding
+ * `dark:` to each. Brand scales (accent/midnight/cherry) intentionally do NOT
+ * flip — they're identity, not surface. Values reuse the night-* palette above.
+ * -------------------------------------------------------------------------- */
+.dark {
+  --color-canvas:        #0B1B2B;  /* night            — app background */
+  --color-surface:       #102A40;  /* night-raised     — cards */
+  --color-surface-muted: #0E2334;  /* muted rows/chips */
+  --color-surface-sunk:  #0A1826;  /* sunk wells */
+
+  --color-border:        #1E3A52;  /* night-line */
+  --color-border-strong: #2A4D6A;
+
+  --color-ink:           #E8F1F8;  /* night-ink */
+  --color-ink-muted:     #8FB0C7;  /* night-muted */
+  --color-ink-subtle:    #5E7E96;
+  --color-heading:       #E8F1F8;
 }
 
 html, body, #root { height: 100%; }

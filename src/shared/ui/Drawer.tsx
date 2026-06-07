@@ -139,24 +139,24 @@ export function Drawer({
         role="dialog"
         aria-modal="true"
         aria-labelledby="drawer-title"
-        className={`absolute right-0 top-0 flex h-full ${width} flex-col bg-white shadow-2xl ring-1 ring-black/5 transition-transform duration-200 ${
+        className={`absolute right-0 top-0 flex h-full ${width} flex-col bg-surface shadow-2xl ring-1 ring-black/5 transition-transform duration-200 ${
           open ? "translate-x-0" : "translate-x-full"
         }`}
       >
         <div
-          className="flex items-center justify-between border-b border-zinc-100 px-5 pb-3"
+          className="flex items-center justify-between border-b border-border px-5 pb-3"
           style={{ paddingTop: "calc(0.75rem + env(safe-area-inset-top, 0px))" }}
         >
           <h2
             id="drawer-title"
-            className="text-base font-semibold tracking-tight text-midnight"
+            className="text-base font-semibold tracking-tight text-heading"
           >
             {title}
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="rounded p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-midnight"
+            className="rounded p-1 text-ink-subtle transition hover:bg-surface-muted hover:text-heading"
             aria-label="Close"
           >
             <X className="h-4 w-4" strokeWidth={2} />
@@ -170,7 +170,7 @@ export function Drawer({
         </div>
         {footer && (
           <div
-            className="flex justify-end gap-2 border-t border-zinc-100 bg-zinc-50 px-5 pt-3"
+            className="flex justify-end gap-2 border-t border-border bg-surface-muted px-5 pt-3"
             style={{ paddingBottom: "calc(0.75rem + env(safe-area-inset-bottom, 0px))" }}
           >
             {footer}
