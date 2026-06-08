@@ -82,9 +82,19 @@ export interface SubmitCloseoutInput {
   reason?: string;
   // The closer confirmed the business date shown.
   acknowledged?: boolean;
+  // Retro/late close: a prior business date (YYYY-MM-DD) being backfilled, plus
+  // an optional note on why it's late. Omitted ⇒ the server uses today.
+  business_date?: string;
+  late_note?: string;
 }
-export function submitCloseout(input: SubmitCloseoutInput): Promise<{ ok: true; id: string; flagged: boolean; status: string }> {
+export function submitCloseout(input: SubmitCloseoutInput): Promise<{ ok: true; id: string; flagged: boolean; status: string; is_late?: boolean }> {
   return request(`${FN}?action=submit-closeout`, { method: "POST", body: JSON.stringify(input) });
+}
+
+// Dates in the last 7 days (excluding today) with no closeout yet — the options
+// for a retro/late close.
+export function fetchMissedDays(storeId?: string | null): Promise<{ missed: string[]; window_days: number }> {
+  return request<{ missed: string[]; window_days: number }>(`${FN}?action=missed-days${sp(storeId)}`);
 }
 
 export interface VerifyDepositInput {

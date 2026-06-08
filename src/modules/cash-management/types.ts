@@ -15,6 +15,8 @@ export interface CloseoutCard {
   variance_cents: number;
   status: "awaiting-deposit" | "flagged" | "verified";
   flagged: boolean;
+  // True when this day was backfilled after its business date (a missed close).
+  is_late: boolean;
 }
 
 export interface Overview {
@@ -104,6 +106,7 @@ export interface DsrRow {
   carried_over_cents: number;
   deposit_verified: boolean;
   status: string;
+  is_late?: boolean;
 }
 
 export interface CashAuditEntry {

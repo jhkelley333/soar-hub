@@ -94,6 +94,14 @@ function coCode(businessDate) {
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
 }
+// ISO date N days before today (UTC), used for the retro/late closeout window.
+function isoDaysAgo(n) {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - n);
+  return d.toISOString().slice(0, 10);
+}
+// How far back a missed day can be backfilled.
+const LATE_WINDOW_DAYS = 7;
 
 // ---- store scoping (mirrors facilities-v2 getStoresForUser, returns rows) ----
 // Org-wide readers see every store. Accounting is added so they can review
@@ -270,6 +278,7 @@ function closeoutCard(co) {
     variance_cents: co.variance_cents,
     status: co.status,
     flagged: co.flagged,
+    is_late: !!co.is_late,
   };
 }
 
@@ -329,6 +338,30 @@ async function submitCloseout(supa, user, body) {
   if (!active) return { error: "No store in your scope.", status: 403 };
 
   const businessDate = /^\d{4}-\d{2}-\d{2}$/.test(body?.business_date || "") ? body.business_date : todayISO();
+
+  // Retro / late closeout guard rails. A back-dated entry (a missed day being
+  // backfilled) must fall inside the 7-day window and land on a day with no
+  // closeout yet — we never silently overwrite a day that already balanced.
+  // Future dates are never valid.
+  const today = todayISO();
+  if (businessDate > today) {
+    return { error: "Can't close out a future date.", status: 400 };
+  }
+  const isLate = businessDate < today;
+  if (isLate) {
+    if (businessDate < isoDaysAgo(LATE_WINDOW_DAYS)) {
+      return {
+        error: `Late closeouts are limited to the last ${LATE_WINDOW_DAYS} days. ${businessDate} is too far back — contact your DO.`,
+        status: 422,
+      };
+    }
+    const { data: clash } = await supa
+      .from("cash_closeouts").select("id").eq("store_id", active.id).eq("business_date", businessDate).maybeSingle();
+    if (clash) {
+      return { error: `A closeout already exists for ${businessDate} at this store.`, status: 409 };
+    }
+  }
+
   const cashDue = Math.round(Number(body?.cash_due_cents));
   const deposit = Math.round(Number(body?.deposit_cents));
   const counted = Math.round(Number(body?.counted_cents));
@@ -342,6 +375,7 @@ async function submitCloseout(supa, user, body) {
   if (flagged && reason.length < 8) {
     return { error: "A reason (min 8 chars) is required to escalate.", status: 400 };
   }
+  const lateNote = isLate ? String(body?.late_note || "").trim().slice(0, 500) || null : null;
 
   const managerName = user.preferred_name || user.full_name || user.email;
 
@@ -350,6 +384,7 @@ async function submitCloseout(supa, user, body) {
     cash_due_cents: cashDue, counted_cents: counted, deposit_cents: deposit,
     denominations: body?.denominations || {}, variance_cents: variance, carried_over_cents: 0,
     flagged, reason: flagged ? reason : null, status: flagged ? "flagged" : "awaiting-deposit",
+    is_late: isLate, late_note: lateNote,
     submitted_by: user.id, submitted_by_name: managerName, submitted_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
   };
@@ -373,15 +408,65 @@ async function submitCloseout(supa, user, body) {
       reason, managerName, source: "closeout", closeoutId: co.id,
     });
   }
+  // A late closeout isn't a discrepancy, so it doesn't open a cash_alert — but
+  // the DO/SDO are emailed for visibility that a missed day was backfilled.
+  if (isLate) {
+    await notifyLateCloseout(supa, { store: active, businessDate, managerName, lateNote, variance });
+  }
   await logCash(supa, {
-    scope: "closeout", action: "submit", store_id: active.id, closeout_id: co.id,
+    scope: "closeout", action: isLate ? "submit-late" : "submit", store_id: active.id, closeout_id: co.id,
     detail: {
       business_date: businessDate, cash_due_cents: cashDue, deposit_cents: deposit,
-      counted_cents: counted, variance_cents: variance, flagged, acknowledged: body?.acknowledged === true,
+      counted_cents: counted, variance_cents: variance, flagged, is_late: isLate,
+      late_note: lateNote, acknowledged: body?.acknowledged === true,
     },
     actor_id: user.id, actor_name: managerName,
   });
-  return { ok: true, id: co.id, flagged, status: co.status };
+  return { ok: true, id: co.id, flagged, status: co.status, is_late: isLate };
+}
+
+// Email the store's DO/SDO that a missed day was backfilled. Best-effort —
+// never blocks the closeout. Mirrors escalate()'s leader resolution.
+async function notifyLateCloseout(supa, { store, businessDate, managerName, lateNote, variance }) {
+  try {
+    const leaders = await resolveStoreLeaders(supa, store.id);
+    const emails = [leaders.do?.email, leaders.sdo?.email].filter(Boolean);
+    if (!emails.length) return;
+    const subject = `[Cash MGT] Late closeout backfilled — Store ${store.number} for ${businessDate}`;
+    const body =
+      `A missed night closeout at Store ${store.number}` +
+      `${store.name ? ` (${store.name})` : ""} was completed after the fact.\n\n` +
+      `Business date: ${businessDate}\n` +
+      `Completed by: ${managerName || "—"}\n` +
+      `Variance: ${fmtMoney(variance)}\n` +
+      `Note: ${lateNote || "—"}\n\n` +
+      `Review it in the hub: ${appBaseUrl()}/admin/cash-management`;
+    await sendEmail(emails, subject, body);
+  } catch (e) {
+    console.warn("[cash] late-closeout notify failed", e?.message || e);
+  }
+}
+
+// ============================================================================
+// missed-days — dates in the last LATE_WINDOW_DAYS (excluding today) that have
+// no closeout yet, so the UI can offer them for a retro/late close.
+// ============================================================================
+async function getMissedDays(supa, user, params) {
+  if (!CLOSEOUT_ROLES.has(String(user.role))) return { missed: [] };
+  const { active } = await resolveActiveStore(supa, user, params.store_id);
+  if (!active) return { missed: [] };
+  const today = todayISO();
+  const since = isoDaysAgo(LATE_WINDOW_DAYS);
+  const { data: existing } = await supa
+    .from("cash_closeouts").select("business_date")
+    .eq("store_id", active.id).gte("business_date", since).lt("business_date", today);
+  const have = new Set((existing || []).map((r) => r.business_date));
+  const missed = [];
+  for (let n = 1; n <= LATE_WINDOW_DAYS; n++) {
+    const d = isoDaysAgo(n);
+    if (!have.has(d)) missed.push(d);
+  }
+  return { missed, window_days: LATE_WINDOW_DAYS };
 }
 
 // ============================================================================
@@ -609,7 +694,7 @@ async function dsr(supa, user, params) {
         business_date: h.business_date, cash_due_cents: h.cash_due_cents, deposit_cents: h.deposit_cents,
         variance_cents: h.variance_cents,
         carried_over_count: d?.carried_over_count || 0, carried_over_cents: d?.dsr_carried_over_cents || 0,
-        deposit_verified: d?.status === "verified", status: h.status,
+        deposit_verified: d?.status === "verified", status: h.status, is_late: !!h.is_late,
       };
     })
     .reverse();
@@ -813,6 +898,7 @@ export const handler = async (event) => {
         });
       }
       if (action === "deposit") return unwrap(await getDeposit(supa, user, params));
+      if (action === "missed-days") return unwrap(await getMissedDays(supa, user, params));
       if (action === "alerts") return unwrap(await listAlerts(supa, user, params));
       if (action === "dsr") return unwrap(await dsr(supa, user, params));
       if (action === "slip-url") return unwrap(await slipUrl(supa, user, params));
