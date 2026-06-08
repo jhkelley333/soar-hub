@@ -41,6 +41,15 @@ export const SESSION_EXPIRED_KEY = "soar_session_expired";
 // users don't sit staring at a spinner.
 const AUTH_BOOT_TIMEOUT_MS = 8000;
 
+// Profile-fetch retry. A transient network/DNS/PostgREST blip makes the
+// profiles query return { data: null, error } — which must never be read as
+// "no profile" (that wipes a loaded profile and bounces the user to the
+// "Couldn't load your profile" screen). Retry a couple times; if it still
+// errors, the caller keeps the existing profile. Backoffs sum well under the
+// 8s boot ceiling above.
+const PROFILE_MAX_ATTEMPTS = 3;
+const PROFILE_BACKOFF_MS = [600, 1500];
+
 function timeout<T>(label: string, ms: number): Promise<T> {
   return new Promise((_, reject) => {
     setTimeout(() => reject(new Error(`[auth] ${label} timed out after ${ms}ms`)), ms);
@@ -109,13 +118,38 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function loadProfile(userId: string): Promise<{ hasProfile: boolean }> {
     const gen = ++generationRef.current;
-    const [{ data: profileData }, { data: scopesData }] = await Promise.all([
-      supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
-      supabase.from("user_scopes").select("*").eq("user_id", userId),
-    ]);
-    if (gen !== generationRef.current) return { hasProfile: false }; // superseded — bail
-    setProfile((profileData as Profile) ?? null);
-    setScopes((scopesData as UserScope[]) ?? []);
+
+    // The profiles + scopes queries resolve to { data, error }; supabase-js
+    // does NOT throw on a network failure — it returns error with data:null.
+    // Reading that as "no profile" is the bug behind the "logged in, then
+    // minutes later kicked to Couldn't load your profile" reports: a transient
+    // re-fetch wiped a perfectly good profile. So: retry transient errors, and
+    // if they persist, THROW — the caller keeps the existing profile (same
+    // user) rather than nulling it.
+    let profileData: Profile | null = null;
+    let scopesData: UserScope[] = [];
+    let lastErr: unknown = null;
+    for (let attempt = 1; attempt <= PROFILE_MAX_ATTEMPTS; attempt++) {
+      const [profileRes, scopesRes] = await Promise.all([
+        supabase.from("profiles").select("*").eq("id", userId).maybeSingle(),
+        supabase.from("user_scopes").select("*").eq("user_id", userId),
+      ]);
+      if (gen !== generationRef.current) return { hasProfile: false }; // superseded — bail
+      if (!profileRes.error && !scopesRes.error) {
+        profileData = (profileRes.data as Profile) ?? null;
+        scopesData = (scopesRes.data as UserScope[]) ?? [];
+        lastErr = null;
+        break;
+      }
+      lastErr = profileRes.error ?? scopesRes.error;
+      if (attempt < PROFILE_MAX_ATTEMPTS) {
+        await new Promise((r) => setTimeout(r, PROFILE_BACKOFF_MS[attempt - 1] ?? 1500));
+      }
+    }
+    if (lastErr) throw lastErr; // exhausted retries — let the caller keep the existing profile
+
+    setProfile(profileData);
+    setScopes(scopesData);
     return { hasProfile: !!profileData };
   }
 
