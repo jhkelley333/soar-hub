@@ -476,7 +476,7 @@ export function LoginPage() {
                 <input
                   id="id-pwa"
                   type="text"
-                  inputMode={detected === "phone" ? "tel" : "email"}
+                  inputMode="email"
                   autoComplete="username"
                   autoCapitalize="off"
                   spellCheck={false}
@@ -740,13 +740,13 @@ export function LoginPage() {
                   <Input
                     id="identifier"
                     type="text"
-                    inputMode={
-                      detected === "email"
-                        ? "email"
-                        : detected === "phone"
-                          ? "tel"
-                          : "text"
-                    }
+                    // Always the email keyboard — it has letters, "@", ".",
+                    // AND a 123 toggle for digits, so it handles an email OR a
+                    // phone. We must NOT switch to inputMode="tel" based on
+                    // digit count: an email with digits (brooke.davidson9889@…)
+                    // would flip the phone to a numeric keypad mid-typing and
+                    // trap the user — they can't type the rest of their email.
+                    inputMode="email"
                     autoComplete="username"
                     autoCapitalize="off"
                     spellCheck={false}
