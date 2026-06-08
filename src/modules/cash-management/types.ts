@@ -112,6 +112,43 @@ export interface DsrRow {
   is_late?: boolean;
 }
 
+// ── Leader roll-up (multi-store, DO/SDO/RVP/VP/COO/admin) ─────────────────
+export type LeaderIssue = "not_closed" | "over_tolerance" | "deposit_overdue" | "open_alerts";
+
+export interface LeaderStoreRow {
+  store: CmgStore;
+  closed_today: boolean;
+  today_variance_cents: number | null;
+  today_flagged: boolean;
+  today_is_late: boolean;
+  last_close_date: string | null;
+  pending_deposits: number;
+  oldest_pending_for_date: string | null;
+  deposit_overdue_days: number;
+  deposit_overdue: boolean;
+  open_alerts: number;
+  issues: LeaderIssue[];
+}
+
+export interface LeaderSummary {
+  stores_total: number;
+  closed_today: number;
+  not_closed_today: number;
+  over_tolerance: number;
+  deposits_pending: number;
+  deposits_overdue: number;
+  open_alerts: number;
+  needs_attention: number;
+}
+
+export interface LeaderOverview {
+  business_date: string | null;
+  tolerance_cents: number;
+  scope_all: boolean;
+  summary: LeaderSummary;
+  stores: LeaderStoreRow[];
+}
+
 export interface CashAuditEntry {
   id: string;
   scope: string;
