@@ -45,6 +45,9 @@ const CLOSEOUT_ROLES = new Set([
 ]);
 // DO/SDO and above may acknowledge / resolve discrepancy alerts.
 const ACT_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
+// A pending deposit older than this many days is "overdue" — banks usually
+// credit within 2–3 days, so beyond that it's worth a leader chasing.
+const DEPOSIT_OVERDUE_DAYS = 3;
 
 function admin() {
   if (!SUPABASE_URL || !SERVICE_KEY) throw new Error("cash-management env vars not configured");
@@ -939,6 +942,109 @@ async function badges(supa, user) {
 }
 
 // ============================================================================
+// leader-overview — multi-store roll-up for DO/SDO/RVP/VP/COO/admin. Scoped to
+// the caller's stores (org-wide roles see all). Per store: today's close
+// status + variance, pending/overdue deposits, open alerts, last close — plus
+// the exceptions that need attention. The cutoff-aware business date keeps
+// "closed today" honest for stores that close after midnight.
+// ============================================================================
+async function leaderOverview(supa, user) {
+  if (!ACT_ROLES.has(String(user.role))) {
+    return { error: "The leader roll-up is for district leaders and above.", status: 403 };
+  }
+  const access = await storeRowsForUser(supa, user);
+  const stores = access.rows;
+  const emptySummary = {
+    stores_total: 0, closed_today: 0, not_closed_today: 0, over_tolerance: 0,
+    deposits_pending: 0, deposits_overdue: 0, open_alerts: 0, needs_attention: 0,
+  };
+  if (!stores.length) {
+    return { business_date: null, tolerance_cents: TOLERANCE_CENTS, scope_all: access.all, summary: emptySummary, stores: [] };
+  }
+
+  const settings = await getSettings(supa);
+  const today = currentBusinessDateCT(settings.cutoffHour);
+  const tol = settings.closeout;
+  const ids = stores.map((s) => s.id);
+  const since = isoBusinessDaysBefore(today, 14);
+
+  const [{ data: closeouts }, { data: deposits }, { data: alerts }] = await Promise.all([
+    supa.from("cash_closeouts")
+      .select("store_id, business_date, variance_cents, is_late")
+      .in("store_id", ids).gte("business_date", since).order("business_date", { ascending: false }),
+    supa.from("cash_deposits")
+      .select("store_id, for_date, expected_cents").in("store_id", ids).eq("status", "pending"),
+    supa.from("cash_alerts")
+      .select("store_id").in("store_id", ids).eq("status", "open"),
+  ]);
+
+  // Latest close per store (rows arrive newest-first) + today's close per store.
+  const latestByStore = new Map();
+  const todayByStore = new Map();
+  for (const c of closeouts || []) {
+    if (!latestByStore.has(c.store_id)) latestByStore.set(c.store_id, c);
+    if (c.business_date === today) todayByStore.set(c.store_id, c);
+  }
+  // Oldest pending deposit per store + count.
+  const depByStore = new Map();
+  for (const d of deposits || []) {
+    const cur = depByStore.get(d.store_id);
+    if (!cur) depByStore.set(d.store_id, { count: 1, oldest: d });
+    else { cur.count++; if (d.for_date < cur.oldest.for_date) cur.oldest = d; }
+  }
+  const alertByStore = new Map();
+  for (const a of alerts || []) alertByStore.set(a.store_id, (alertByStore.get(a.store_id) || 0) + 1);
+
+  const daysBetween = (fromIso, toIso) =>
+    Math.round((Date.parse(`${toIso}T00:00:00Z`) - Date.parse(`${fromIso}T00:00:00Z`)) / 86400000);
+
+  const rows = stores.map((s) => {
+    const co = todayByStore.get(s.id) || null;
+    const latest = latestByStore.get(s.id) || null;
+    const dep = depByStore.get(s.id) || null;
+    const openAlerts = alertByStore.get(s.id) || 0;
+    const closedToday = !!co;
+    const overTol = co ? Math.abs(co.variance_cents) > tol : false;
+    const depOverdueDays = dep ? daysBetween(dep.oldest.for_date, today) : 0;
+    const depOverdue = dep ? depOverdueDays > DEPOSIT_OVERDUE_DAYS : false;
+
+    const issues = [];
+    if (!closedToday) issues.push("not_closed");
+    if (overTol) issues.push("over_tolerance");
+    if (depOverdue) issues.push("deposit_overdue");
+    if (openAlerts > 0) issues.push("open_alerts");
+
+    return {
+      store: { id: s.id, number: String(s.number), name: s.name },
+      closed_today: closedToday,
+      today_variance_cents: co ? co.variance_cents : null,
+      today_flagged: overTol,
+      today_is_late: co ? !!co.is_late : false,
+      last_close_date: latest ? latest.business_date : null,
+      pending_deposits: dep ? dep.count : 0,
+      oldest_pending_for_date: dep ? dep.oldest.for_date : null,
+      deposit_overdue_days: depOverdueDays,
+      deposit_overdue: depOverdue,
+      open_alerts: openAlerts,
+      issues,
+    };
+  });
+
+  const summary = {
+    stores_total: rows.length,
+    closed_today: rows.filter((r) => r.closed_today).length,
+    not_closed_today: rows.filter((r) => !r.closed_today).length,
+    over_tolerance: rows.filter((r) => r.today_flagged).length,
+    deposits_pending: rows.filter((r) => r.pending_deposits > 0).length,
+    deposits_overdue: rows.filter((r) => r.deposit_overdue).length,
+    open_alerts: rows.reduce((acc, r) => acc + r.open_alerts, 0),
+    needs_attention: rows.filter((r) => r.issues.length > 0).length,
+  };
+
+  return { business_date: today, tolerance_cents: tol, scope_all: access.all, summary, stores: rows };
+}
+
+// ============================================================================
 // handler
 // ============================================================================
 export const handler = async (event) => {
@@ -967,6 +1073,7 @@ export const handler = async (event) => {
         });
       }
       if (action === "deposit") return unwrap(await getDeposit(supa, user, params));
+      if (action === "leader-overview") return unwrap(await leaderOverview(supa, user));
       if (action === "missed-days") return unwrap(await getMissedDays(supa, user, params));
       if (action === "alerts") return unwrap(await listAlerts(supa, user, params));
       if (action === "dsr") return unwrap(await dsr(supa, user, params));

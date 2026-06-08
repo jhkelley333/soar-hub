@@ -7,6 +7,7 @@ import type {
   CmgConfig,
   DepositDetail,
   DsrResponse,
+  LeaderOverview,
   Overview,
   PendingDeposit,
 } from "./types";
@@ -43,6 +44,10 @@ export function fetchOverview(storeId?: string | null): Promise<Overview> {
 }
 export function fetchConfig(): Promise<CmgConfig> {
   return request<CmgConfig>(`${FN}?action=config`);
+}
+// Multi-store leader roll-up — scoped server-side to the caller's stores.
+export function fetchLeaderOverview(): Promise<LeaderOverview> {
+  return request<LeaderOverview>(`${FN}?action=leader-overview`);
 }
 // Scope-wide counts for the dashboard quick-link card.
 export function fetchCashBadges(): Promise<{ pending_deposits: number; open_alerts: number; deposits_verified_today: number }> {
