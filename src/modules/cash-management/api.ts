@@ -48,8 +48,11 @@ export function fetchConfig(): Promise<CmgConfig> {
 export function fetchCashBadges(): Promise<{ pending_deposits: number; open_alerts: number; deposits_verified_today: number }> {
   return request<{ pending_deposits: number; open_alerts: number; deposits_verified_today: number }>(`${FN}?action=badges`);
 }
-export function fetchDeposit(storeId?: string | null): Promise<{ deposit: PendingDeposit | null; toleranceCents: number }> {
-  return request<{ deposit: PendingDeposit | null; toleranceCents: number }>(`${FN}?action=deposit${sp(storeId)}`);
+// `deposits` is the full pending list (oldest first). `deposit` is kept on the
+// shape for back-compat but always equals deposits[0] when there's at least
+// one — callers should prefer `deposits` going forward.
+export function fetchDeposit(storeId?: string | null): Promise<{ deposits: PendingDeposit[]; deposit: PendingDeposit | null; toleranceCents: number }> {
+  return request<{ deposits: PendingDeposit[]; deposit: PendingDeposit | null; toleranceCents: number }>(`${FN}?action=deposit${sp(storeId)}`);
 }
 export function fetchAlerts(storeId?: string | null): Promise<AlertsResponse> {
   return request<AlertsResponse>(`${FN}?action=alerts${sp(storeId)}`);
@@ -69,7 +72,10 @@ export function fetchSettings(): Promise<CashSettings> {
 export function updateSettings(input: {
   closeout_tolerance_cents: number;
   deposit_tolerance_cents: number;
-}): Promise<{ ok: true; closeoutToleranceCents: number; depositToleranceCents: number }> {
+  // 0–23, Central Time. Closes submitted before this hour count as the
+  // prior business day. Optional — omit to leave unchanged.
+  business_day_cutoff_hour?: number;
+}): Promise<{ ok: true; closeoutToleranceCents: number; depositToleranceCents: number; businessDayCutoffHour: number }> {
   return request(`${FN}?action=update-settings`, { method: "POST", body: JSON.stringify(input) });
 }
 

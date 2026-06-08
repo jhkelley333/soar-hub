@@ -58,6 +58,9 @@ export interface CmgConfig {
 export interface CashSettings {
   closeoutToleranceCents: number;
   depositToleranceCents: number;
+  // 0–23 hour, Central Time. Closeouts submitted before this hour count as
+  // the prior business day.
+  businessDayCutoffHour: number;
   can_edit: boolean;
 }
 
