@@ -15,6 +15,8 @@ export interface CloseoutCard {
   variance_cents: number;
   status: "awaiting-deposit" | "flagged" | "verified";
   flagged: boolean;
+  // True when this day was backfilled after its business date (a missed close).
+  is_late: boolean;
 }
 
 export interface Overview {
@@ -56,6 +58,9 @@ export interface CmgConfig {
 export interface CashSettings {
   closeoutToleranceCents: number;
   depositToleranceCents: number;
+  // 0–23 hour, Central Time. Closeouts submitted before this hour count as
+  // the prior business day.
+  businessDayCutoffHour: number;
   can_edit: boolean;
 }
 
@@ -104,6 +109,7 @@ export interface DsrRow {
   carried_over_cents: number;
   deposit_verified: boolean;
   status: string;
+  is_late?: boolean;
 }
 
 export interface CashAuditEntry {

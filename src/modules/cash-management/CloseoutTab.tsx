@@ -4,13 +4,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, Bell, Check } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bell, Check, CalendarClock } from "lucide-react";
 import { Card } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { fetchConfig, fetchOverview, submitCloseout } from "./api";
+import { fetchConfig, fetchMissedDays, fetchOverview, submitCloseout } from "./api";
 import { centsToInput, toCents, usd } from "./money";
 import { MoneyInput, Pill, Stepper } from "./ui";
 
@@ -29,12 +29,20 @@ export function CloseoutTab({
 
   const configQuery = useQuery({ queryKey: ["cash-config"], queryFn: fetchConfig, staleTime: 5 * 60_000 });
   const overviewQuery = useQuery({ queryKey: ["cash-overview", storeId], queryFn: () => fetchOverview(storeId) });
+  const missedQuery = useQuery({ queryKey: ["cash-missed-days", storeId], queryFn: () => fetchMissedDays(storeId) });
 
   const denoms = configQuery.data?.denominations ?? [];
   const tol = configQuery.data?.closeoutToleranceCents ?? 500;
   const leaders = overviewQuery.data?.leaders;
   const existing = overviewQuery.data?.closeout;
-  const businessDate = overviewQuery.data?.business_date ?? null;
+  const today = overviewQuery.data?.business_date ?? null;
+  const missedDays = missedQuery.data?.missed ?? [];
+
+  // null target = closing for today (the normal path). A missed-day string puts
+  // the tab in retro/late mode for that prior business date.
+  const [targetDate, setTargetDate] = useState<string | null>(null);
+  const isLate = targetDate !== null;
+  const businessDate = targetDate ?? today;
   const bizLabel = businessDate
     ? new Date(`${businessDate}T00:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "short", day: "numeric" })
     : "today";
@@ -44,13 +52,28 @@ export function CloseoutTab({
   const [deposit, setDeposit] = useState("0.00");
   const [synced, setSynced] = useState(true);
   const [reason, setReason] = useState("");
+  const [lateNote, setLateNote] = useState("");
   const [confirming, setConfirming] = useState(false);
   const [ackDate, setAckDate] = useState(false);
 
-  // Seed cash-due from an existing closeout for the day, once.
+  // Seed cash-due from an existing closeout — only when closing today. A late
+  // entry targets a different, by-definition-missing day, so it starts blank.
   useEffect(() => {
-    if (existing && cashDue === "") setCashDue(centsToInput(existing.cash_due_cents));
-  }, [existing, cashDue]);
+    if (!isLate && existing && cashDue === "") setCashDue(centsToInput(existing.cash_due_cents));
+  }, [isLate, existing, cashDue]);
+
+  // Switching the target day resets the form so today's numbers never bleed
+  // into a back-dated entry (and vice-versa).
+  useEffect(() => {
+    setCount({});
+    setCashDue("");
+    setDeposit("0.00");
+    setSynced(true);
+    setReason("");
+    setLateNote("");
+    setAckDate(false);
+    setConfirming(false);
+  }, [targetDate]);
 
   const countedCents = useMemo(
     () => denoms.reduce((s, d) => s + d.cents * (count[d.id] || 0), 0),
@@ -78,10 +101,19 @@ export function CloseoutTab({
         denominations: count,
         reason: reason.trim(),
         acknowledged: ackDate,
+        ...(isLate ? { business_date: targetDate!, late_note: lateNote.trim() || undefined } : {}),
       }),
     onSuccess: (res) => {
-      toast.push(res.flagged ? "Submitted & escalated to DO/SDO." : "Closeout submitted.", "success");
+      toast.push(
+        res.flagged
+          ? "Submitted & escalated to DO/SDO."
+          : isLate
+            ? "Late closeout recorded — DO/SDO notified."
+            : "Closeout submitted.",
+        "success"
+      );
       qc.invalidateQueries({ queryKey: ["cash-overview"] });
+      qc.invalidateQueries({ queryKey: ["cash-missed-days", storeId] });
       qc.invalidateQueries({ queryKey: ["cash-deposit", storeId] });
       qc.invalidateQueries({ queryKey: ["cash-dsr", storeId] });
       onDone();
@@ -109,7 +141,7 @@ export function CloseoutTab({
           disabled={!canSubmit || submit.isPending}
           onClick={() => setConfirming(true)}
         >
-          {overTol ? "Submit & escalate" : "Submit closeout"}
+          {overTol ? "Submit & escalate" : isLate ? "Submit late closeout" : "Submit closeout"}
           <ArrowRight className="h-4 w-4" />
         </Button>
       ) : (
@@ -157,12 +189,65 @@ export function CloseoutTab({
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Pill tone="amber" dot>
-            {bizLabel}
+          <Pill tone={isLate ? "red" : "amber"} dot>
+            {isLate ? `Late · ${bizLabel}` : bizLabel}
           </Pill>
           <Pill tone="neutral">±{usd(tol)} tolerance</Pill>
         </div>
       </div>
+
+      {/* Retro / late close — pick a missed prior day to backfill. Only shown
+          when there are missed days in the last 7. */}
+      {(missedDays.length > 0 || isLate) && (
+        <div
+          className={cn(
+            "mb-5 rounded-md p-4 ring-1 ring-inset",
+            isLate ? "bg-red-50 ring-red-200" : "bg-amber-50 ring-amber-200"
+          )}
+        >
+          <div className="flex flex-wrap items-center gap-3">
+            <CalendarClock className={cn("h-5 w-5 shrink-0", isLate ? "text-red-600" : "text-amber-700")} />
+            <div className="min-w-0 flex-1">
+              <div className={cn("text-sm font-semibold", isLate ? "text-red-800" : "text-amber-900")}>
+                {isLate ? "Backfilling a missed closeout" : "Forgot to close a prior day?"}
+              </div>
+              <div className={cn("text-xs", isLate ? "text-red-700" : "text-amber-800")}>
+                {isLate
+                  ? "This will be recorded as a late closeout and your DO & SDO will be notified."
+                  : `${missedDays.length} day${missedDays.length > 1 ? "s" : ""} in the last week ${missedDays.length > 1 ? "have" : "has"} no closeout.`}
+              </div>
+            </div>
+            <select
+              value={targetDate ?? ""}
+              onChange={(e) => setTargetDate(e.target.value || null)}
+              className="rounded-md border-0 bg-white px-3 py-2 text-sm font-medium text-midnight ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+            >
+              <option value="">Today{today ? ` · ${new Date(`${today}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}</option>
+              {missedDays.map((d) => (
+                <option key={d} value={d}>
+                  {new Date(`${d}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })} — missed
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {isLate && (
+            <div className="mt-3">
+              <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-red-700">
+                Why is this late? <span className="font-normal normal-case text-red-500">(optional)</span>
+              </div>
+              <input
+                type="text"
+                value={lateNote}
+                onChange={(e) => setLateNote(e.target.value)}
+                maxLength={500}
+                placeholder="e.g. Closer clocked out before counting the drawer"
+                className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm ring-1 ring-inset ring-red-200 focus:outline-none focus:ring-2 focus:ring-accent"
+              />
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.35fr_1fr]">
         {/* drawer count */}
@@ -280,7 +365,12 @@ export function CloseoutTab({
               </div>
             )}
 
-            <label className="mt-4 flex items-start gap-2.5 rounded-md bg-zinc-50 p-3 text-[13px] text-zinc-700 ring-1 ring-inset ring-zinc-200">
+            <label
+              className={cn(
+                "mt-4 flex items-start gap-2.5 rounded-md p-3 text-[13px] ring-1 ring-inset",
+                isLate ? "bg-red-50 text-red-800 ring-red-200" : "bg-zinc-50 text-zinc-700 ring-zinc-200"
+              )}
+            >
               <input
                 type="checkbox"
                 checked={ackDate}
@@ -288,7 +378,15 @@ export function CloseoutTab({
                 className="mt-0.5 h-4 w-4 rounded border-zinc-300 text-accent focus:ring-accent"
               />
               <span>
-                I confirm this closeout is for <strong>{bizLabel}</strong>.
+                {isLate ? (
+                  <>
+                    I confirm this is a <strong>late closeout</strong> for <strong>{bizLabel}</strong>.
+                  </>
+                ) : (
+                  <>
+                    I confirm this closeout is for <strong>{bizLabel}</strong>.
+                  </>
+                )}
               </span>
             </label>
 

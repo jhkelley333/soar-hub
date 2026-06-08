@@ -1,5 +1,6 @@
 // Topbar — desktop-only sticky header for the redesigned shell. Holds the
-// global search (stores, work orders, contacts, resources), the light/dark
+// global search (stores, work orders, contacts, directory people, resources),
+// the light/dark
 // theme toggle, and the notifications bell (live chat-unread count). Hidden
 // under lg (mobile keeps its own status strip + MobileTabBar).
 //
@@ -11,7 +12,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { Search, Sun, Moon, Bell, Building2, Hammer, BookUser, BookOpen } from "lucide-react";
+import { Search, Sun, Moon, Bell, Building2, Hammer, BookUser, BookOpen, Users } from "lucide-react";
 import { useTheme } from "@/lib/theme";
 import { useAuth } from "@/auth/AuthProvider";
 import { useChatUnreadCount } from "@/modules/chat/useChatUnread";
@@ -19,6 +20,8 @@ import { fetchCallerStores, fetchTickets } from "@/modules/work-orders-v2/api";
 import { isOpenStatus } from "@/modules/work-orders-v2/types";
 import type { CallerStore, Ticket } from "@/modules/work-orders-v2/types";
 import { listContacts } from "@/modules/contacts/api";
+import { fetchDirectory } from "@/modules/directory/api";
+import type { DirectoryPerson } from "@/modules/directory/api";
 import type { Contact } from "@/types/database";
 import { cn } from "@/lib/cn";
 
@@ -65,6 +68,15 @@ export function Topbar() {
     queryKey: ["contacts-list"],
     queryFn: listContacts,
     enabled: open,
+    staleTime: 60_000,
+  });
+  // Directory (people) — shares the cache key DirectoryPage uses so opening
+  // search after visiting /directory is instant. RLS scopes the list on the
+  // server via manageable_users().
+  const directoryQ = useQuery({
+    queryKey: ["directory", profile?.id],
+    queryFn: () => fetchDirectory(profile?.role ?? null, profile?.id ?? null),
+    enabled: open && !!profile,
     staleTime: 60_000,
   });
 
@@ -132,6 +144,42 @@ export function Topbar() {
       });
     }
 
+    // Directory people — search across district + region + above-store +
+    // pinned. Dedupe because pinned mirrors a row that already lives in one
+    // of the other lists. The deep-link seeds the directory page's filter.
+    const dir = directoryQ.data;
+    if (dir) {
+      const pool: DirectoryPerson[] = [
+        ...dir.pinned.people,
+        ...dir.district,
+        ...dir.region,
+        ...dir.aboveStore,
+      ];
+      const seen = new Set<string>();
+      const peopleHits: DirectoryPerson[] = [];
+      for (const p of pool) {
+        if (seen.has(p.id)) continue;
+        const hay = [p.name, p.email, p.subtitle, p.districtCode]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (hay.includes(term)) {
+          seen.add(p.id);
+          peopleHits.push(p);
+          if (peopleHits.length >= 5) break;
+        }
+      }
+      for (const p of peopleHits) {
+        out.push({
+          key: `person-${p.id}`,
+          icon: Users,
+          label: p.name,
+          sub: p.subtitle || p.email || "Team",
+          to: `/directory?q=${encodeURIComponent(p.name)}`,
+        });
+      }
+    }
+
     // Resources are folder/Drive-backed (no single cached list), so deep-link
     // into the library's own search instead of duplicating it inline.
     if (term.length >= 2) {
@@ -145,7 +193,7 @@ export function Topbar() {
     }
 
     return out;
-  }, [q, storesQ.data, ticketsQ.data, contactsQ.data]);
+  }, [q, storesQ.data, ticketsQ.data, contactsQ.data, directoryQ.data]);
 
   // Close on click-outside.
   useEffect(() => {
