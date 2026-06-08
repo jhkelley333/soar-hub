@@ -16,7 +16,7 @@
 // Bump the version suffix any time we ship a change users need to
 // pick up immediately (e.g. a stuck-cache fix). The activate handler
 // below purges every cache whose name doesn't match this one.
-const CACHE_NAME = "soar-hub-v9";
+const CACHE_NAME = "soar-hub-v10";
 
 // Precache the bare minimum the app needs to render an offline shell.
 // Vite hashes JS/CSS bundle filenames, so we let runtime caching pick
@@ -246,7 +246,10 @@ self.addEventListener("fetch", (event) => {
           }
           return response;
         })
-        .catch(() => cached);
+        // If the network fails and nothing is cached, `cached` is undefined —
+        // returning that to respondWith throws "Failed to convert value to
+        // 'Response'". Fall back to a real network-error Response instead.
+        .catch(() => cached || Response.error());
       return cached || networkFetch;
     }),
   );
