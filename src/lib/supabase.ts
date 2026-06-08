@@ -51,5 +51,14 @@ export const supabase = createClient(url, anonKey, {
     autoRefreshToken: true,
     detectSessionInUrl: true,
     lock: inPageLock,
+    // Pin the session storage key to the project ref. supabase-js otherwise
+    // derives it from the URL hostname's first label, so moving the client off
+    // the raw `<ref>.supabase.co` URL onto the `api.mysoarhub.com` custom
+    // domain (done to dodge ISP-level *.supabase.co DNS blocklisting) would
+    // change the key from `sb-mebzvovvdugkwjypwepg-auth-token` to
+    // `sb-api-auth-token` and silently log everyone out on cutover. Pinning it
+    // keeps existing sessions valid across the domain swap. The AuthProvider
+    // purge matches `sb-*-auth-token` by pattern, so it still clears this key.
+    storageKey: "sb-mebzvovvdugkwjypwepg-auth-token",
   },
 });
