@@ -5,7 +5,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, ChevronLeft, ChevronRight, Clock, Plus, Repeat, SlidersHorizontal } from "lucide-react";
+import { ArrowUpRight, CalendarRange, ChevronLeft, ChevronRight, Clock, Plus, Repeat, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Drawer } from "@/shared/ui/Drawer";
 import { Modal } from "@/shared/ui/Modal";
@@ -19,6 +19,7 @@ import { EventModal } from "./EventModal";
 import { OrgTreeFilter } from "./OrgTreeFilter";
 import { TimeGrid } from "./TimeGrid";
 import { eventColor, type ColorBy } from "./colors";
+import { FISCAL, closeOn, fiscalInfo, holidayOn, paydayOn } from "./fiscal";
 import { EVENT_TYPE_ORDER, TYPE_META, type EventType, type ScheduleEvent } from "./types";
 
 // ── date helpers ─────────────────────────────────────────────────────────
@@ -78,6 +79,7 @@ export function SchedulePage() {
   const [view, setView] = useState<View>("month");
   const [hidden, setHidden] = useState<Set<EventType>>(new Set());
   const [colorBy, setColorBy] = useState<ColorBy>("type");
+  const [showFiscal, setShowFiscal] = useState(false);
   const [dayHours, setDayHours] = useState<DayHours>(loadDayHours);
   const [hoursOpen, setHoursOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
@@ -112,6 +114,7 @@ export function SchedulePage() {
   const rangeFrom = days[0].toISOString();
   const rangeTo = addDays(days[days.length - 1], 1).toISOString();
   const todayKey = ymd(new Date());
+  const fiscalToday = useMemo(() => fiscalInfo(new Date()), []);
 
   // Navigation step depends on the view.
   function go(delta: number) {
@@ -244,6 +247,19 @@ export function SchedulePage() {
             </button>
           ))}
         </div>
+        {view === "month" && (
+          <button
+            onClick={() => setShowFiscal((v) => !v)}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium ring-1 ring-inset transition",
+              showFiscal ? "bg-midnight text-white ring-midnight" : "text-zinc-600 ring-zinc-200 hover:bg-zinc-50"
+            )}
+            aria-pressed={showFiscal}
+          >
+            <CalendarRange className="h-4 w-4" />
+            Fiscal
+          </button>
+        )}
         {(view === "week" || view === "day") && (
           <div className="relative">
             <button
@@ -331,6 +347,26 @@ export function SchedulePage() {
         </div>
       </div>
 
+      {/* Fiscal context + marker legend (month view, when enabled) */}
+      {view === "month" && showFiscal && (
+        <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1.5 rounded-lg border border-zinc-200 bg-zinc-50/60 px-3 py-2 text-xs text-zinc-600">
+          <span className="font-semibold text-midnight">{FISCAL.label}</span>
+          <span className="text-zinc-300">·</span>
+          <span>{FISCAL.totalWeeks} weeks · 4-4-5</span>
+          {fiscalToday && (
+            <span className="rounded-full bg-accent/10 px-2 py-0.5 font-semibold text-accent">
+              Today: P{fiscalToday.period} · W{fiscalToday.weekInPeriod} of period · Q{fiscalToday.quarter}
+            </span>
+          )}
+          <span className="ml-auto inline-flex flex-wrap items-center gap-x-3 gap-y-1">
+            <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-emerald-600" />Payday A</span>
+            <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full border-2 border-emerald-600 bg-white" />Payday B</span>
+            <span className="inline-flex items-center gap-1.5"><span className="h-2 w-4 border-t-2 border-zinc-900" />Period close</span>
+            <span className="inline-flex items-center gap-1.5"><span className="h-3 w-3 rounded-sm bg-red-50 ring-1 ring-red-200" />Closed holiday</span>
+          </span>
+        </div>
+      )}
+
       {eventsQ.isLoading ? (
         <Skeleton className="h-[560px] w-full" />
       ) : eventsQ.isError ? (
@@ -343,6 +379,7 @@ export function SchedulePage() {
           todayKey={todayKey}
           canWrite={canWrite}
           colorBy={colorBy}
+          showFiscal={showFiscal}
           onDay={(key) => canWrite && setModal({ event: null, date: key })}
           onEvent={openEvent}
           onMore={setPeek}
@@ -423,7 +460,7 @@ function EventBar({ e, colorBy, onClick }: { e: ScheduleEvent; colorBy: ColorBy;
 }
 
 function MonthGrid({
-  days, anchorMonth, byDate, todayKey, canWrite, colorBy, onDay, onEvent, onMore,
+  days, anchorMonth, byDate, todayKey, canWrite, colorBy, showFiscal, onDay, onEvent, onMore,
 }: {
   days: Date[];
   anchorMonth: number;
@@ -431,55 +468,102 @@ function MonthGrid({
   todayKey: string;
   canWrite: boolean;
   colorBy: ColorBy;
+  showFiscal: boolean;
   onDay: (key: string) => void;
   onEvent: (e: ScheduleEvent) => void;
   onMore: (key: string) => void;
 }) {
+  // Chunk the flat 42-day grid into week rows so we can hang a fiscal
+  // period/week rail off the left of each row.
+  const weeks: Date[][] = [];
+  for (let i = 0; i < days.length; i += 7) weeks.push(days.slice(i, i + 7));
+  const cols = showFiscal ? "grid-cols-[46px_repeat(7,minmax(0,1fr))]" : "grid-cols-7";
+
   return (
     <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
-      <div className="grid grid-cols-7 border-b border-zinc-200 bg-zinc-50 text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+      <div className={cn("grid border-b border-zinc-200 bg-zinc-50 text-[11px] font-bold uppercase tracking-wider text-zinc-400", cols)}>
+        {showFiscal && <div className="px-2 py-2 text-center text-zinc-400">FP</div>}
         {WEEKDAYS.map((d) => <div key={d} className="px-2 py-2">{d}</div>)}
       </div>
-      <div className="grid grid-cols-7">
-        {days.map((d, i) => {
-          const key = ymd(d);
-          const inMonth = d.getMonth() === anchorMonth;
-          const list = byDate.get(key) ?? [];
-          const isToday = key === todayKey;
-          return (
-            <div
-              key={key}
-              onClick={() => onDay(key)}
-              className={cn(
-                "min-h-[124px] border-b border-r border-zinc-100 p-1.5 align-top",
-                i % 7 === 6 && "border-r-0",
-                !inMonth && "bg-zinc-50/60",
-                canWrite && "cursor-pointer hover:bg-accent/[0.03]"
-              )}
-            >
-              <div className="mb-1 flex items-center justify-between">
-                <span className={cn(
-                  "grid h-5 min-w-5 place-items-center rounded-full px-1 text-xs font-semibold",
-                  isToday ? "bg-accent text-white" : inMonth ? "text-midnight" : "text-zinc-300"
-                )}>
-                  {d.getDate()}
-                </span>
-              </div>
-              <div className="space-y-1">
-                {list.slice(0, 3).map((e) => <EventBar key={e.id} e={e} colorBy={colorBy} onClick={() => onEvent(e)} />)}
-                {list.length > 3 && (
-                  <button
-                    onClick={(ev) => { ev.stopPropagation(); onMore(key); }}
-                    className="w-full rounded px-1 py-0.5 text-left text-[11px] font-medium text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600"
-                  >
-                    +{list.length - 3} more
-                  </button>
+      {weeks.map((week, wi) => {
+        // Rail labels by the row's Monday (index 1) — Mon–Sat of a Sun-start
+        // row share one fiscal week; Sunday belongs to the previous one.
+        const info = showFiscal ? fiscalInfo(week[1] ?? week[0]) : null;
+        return (
+          <div key={wi} className={cn("grid border-b border-zinc-100 last:border-b-0", cols)}>
+            {showFiscal && (
+              <div className="flex flex-col items-center justify-center border-r border-zinc-100 bg-zinc-50/60 py-1">
+                {info ? (
+                  <>
+                    <span className="text-xs font-bold leading-none text-zinc-700">P{info.period}</span>
+                    <span className="mt-0.5 text-[10px] font-medium leading-none text-zinc-400">W{info.fiscalWeek}</span>
+                  </>
+                ) : (
+                  <span className="text-[10px] text-zinc-300">—</span>
                 )}
               </div>
-            </div>
-          );
-        })}
-      </div>
+            )}
+            {week.map((d, di) => {
+              const key = ymd(d);
+              const inMonth = d.getMonth() === anchorMonth;
+              const list = byDate.get(key) ?? [];
+              const isToday = key === todayKey;
+              const close = showFiscal ? closeOn(key) : null;
+              const pay = showFiscal ? paydayOn(key) : null;
+              const holiday = showFiscal ? holidayOn(key) : null;
+              return (
+                <div
+                  key={key}
+                  onClick={() => onDay(key)}
+                  className={cn(
+                    "relative min-h-[124px] border-r border-zinc-100 p-1.5 align-top",
+                    di === 6 && "border-r-0",
+                    holiday ? "bg-red-50/70" : !inMonth && "bg-zinc-50/60",
+                    canWrite && "cursor-pointer hover:bg-accent/[0.03]"
+                  )}
+                >
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className={cn(
+                      "grid h-5 min-w-5 place-items-center rounded-full px-1 text-xs font-semibold",
+                      isToday ? "bg-accent text-white" : holiday ? "text-red-700" : inMonth ? "text-midnight" : "text-zinc-300"
+                    )}>
+                      {d.getDate()}
+                    </span>
+                    {pay && (
+                      <span
+                        title={`Payday ${pay.cycle}${pay.moved ? " (moved earlier — holiday)" : ""}`}
+                        className={cn(
+                          "h-2.5 w-2.5 shrink-0 rounded-full",
+                          pay.cycle === "A" ? "bg-emerald-600" : "border-2 border-emerald-600 bg-white"
+                        )}
+                      />
+                    )}
+                  </div>
+                  {holiday && (
+                    <div className="mb-1 truncate text-[10px] font-semibold text-red-700">{holiday} · closed</div>
+                  )}
+                  <div className="space-y-1">
+                    {list.slice(0, 3).map((e) => <EventBar key={e.id} e={e} colorBy={colorBy} onClick={() => onEvent(e)} />)}
+                    {list.length > 3 && (
+                      <button
+                        onClick={(ev) => { ev.stopPropagation(); onMore(key); }}
+                        className="w-full rounded px-1 py-0.5 text-left text-[11px] font-medium text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600"
+                      >
+                        +{list.length - 3} more
+                      </button>
+                    )}
+                  </div>
+                  {close && (
+                    <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-1 border-t-2 border-zinc-900 px-1.5 py-0.5">
+                      <span className="text-[10px] font-bold text-zinc-900">P{close} close</span>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        );
+      })}
     </div>
   );
 }
