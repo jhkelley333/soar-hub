@@ -277,7 +277,8 @@ async function fetchFeeds(supa, scope, fromDate, toDate) {
   for (const t of trainings || []) {
     if (!t.start_date || t.status === "Withdrawn" || t.status === "Rejected") continue;
     out.push({
-      id: `training:${t.id}`, source: "training", editable: false, link: "/employee-actions",
+      id: `training:${t.id}`, source: "training", editable: false,
+      link: `/employee-actions?tab=history&type=training&id=${t.id}`,
       title: `Training — ${t.employee_name}`, type: "training",
       starts_at: `${t.start_date}T09:00:00`, ends_at: null, all_day: true,
       scope_type: "store", scope_id: null, store_number: t.store_number,
@@ -295,7 +296,8 @@ async function fetchFeeds(supa, scope, fromDate, toDate) {
   for (const p of ptos || []) {
     if (p.status === "Withdrawn" || p.status === "Rejected") continue;
     out.push({
-      id: `pto:${p.id}`, source: "pto", editable: false, link: "/employee-actions",
+      id: `pto:${p.id}`, source: "pto", editable: false,
+      link: `/employee-actions?tab=history&type=pto&id=${p.id}`,
       title: `${p.employee_name} — PTO`, type: "pto",
       starts_at: `${p.pto_start_date}T09:00:00`,
       ends_at: p.pto_end_date ? `${p.pto_end_date}T17:00:00` : null, all_day: true,
