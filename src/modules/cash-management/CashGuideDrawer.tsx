@@ -30,7 +30,7 @@ export function CashGuideDrawer({ open, onClose }: { open: boolean; onClose: () 
       <div className="space-y-1">
         <P>
           Cash Management runs the nightly cash cycle: <strong>count the drawer → validate the next-day bank deposit →
-          reconcile against the DSR.</strong> Any variance over the tolerance is automatically escalated to the store's
+          reconcile against the POS.</strong> Any variance over the tolerance is automatically escalated to the store's
           DO &amp; SDO.
         </P>
 
@@ -67,7 +67,7 @@ export function CashGuideDrawer({ open, onClose }: { open: boolean; onClose: () 
         <H>1) Night Closeout</H>
         <ol className="mt-2 list-decimal space-y-1 pl-5">
           <Li><strong>Count the drawer</strong> — enter the quantity per denomination; the Counted total adds up live.</Li>
-          <Li><strong>Cash due</strong> — the amount expected per today's DSR (type it in).</Li>
+          <Li><strong>Cash due</strong> — the amount expected per today's POS (type it in).</Li>
           <Li><strong>Deposit amount</strong> — auto-matches the counted total; override if the deposit differs.</Li>
           <Li><strong>Variance</strong> shows live — green balanced, amber within tolerance, <span className="font-semibold text-red-700">red over tolerance</span>.</Li>
           <Li>Over the tolerance → a <strong>reason is required</strong> and submitting <strong>alerts your DO &amp; SDO</strong>.</Li>
