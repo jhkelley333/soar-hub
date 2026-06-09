@@ -5,7 +5,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, ChevronLeft, ChevronRight, Plus, SlidersHorizontal } from "lucide-react";
+import { ArrowUpRight, ChevronLeft, ChevronRight, Clock, Plus, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Drawer } from "@/shared/ui/Drawer";
 import { Modal } from "@/shared/ui/Modal";
@@ -54,12 +54,38 @@ function startOfWeek(d: Date): Date {
 const WEEKDAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 type View = "month" | "week" | "day" | "agenda";
 
+// Configurable Week/Day time window, persisted per browser so stores with
+// late closes (e.g. 3 AM) can widen it once and have it stick.
+const HOURS_KEY = "soar.schedule.dayHours";
+type DayHours = { start: number; end: number };
+function loadDayHours(): DayHours {
+  try {
+    const v = JSON.parse(localStorage.getItem(HOURS_KEY) || "");
+    if (typeof v?.start === "number" && typeof v?.end === "number" && v.end > v.start) {
+      return { start: v.start, end: v.end };
+    }
+  } catch { /* fall through to default */ }
+  return { start: 6, end: 20 };
+}
+function fmtHour(h: number): string {
+  const x = ((h % 24) + 24) % 24;
+  const hr = x % 12 === 0 ? 12 : x % 12;
+  return `${hr}${x < 12 ? "a" : "p"}`;
+}
+
 export function SchedulePage() {
   const [anchor, setAnchor] = useState(() => new Date());
   const [view, setView] = useState<View>("month");
   const [hidden, setHidden] = useState<Set<EventType>>(new Set());
   const [colorBy, setColorBy] = useState<ColorBy>("type");
+  const [dayHours, setDayHours] = useState<DayHours>(loadDayHours);
+  const [hoursOpen, setHoursOpen] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
+
+  function updateHours(next: DayHours) {
+    setDayHours(next);
+    try { localStorage.setItem(HOURS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
+  }
   const [peek, setPeek] = useState<string | null>(null); // day-key for the "+N more" peek
   const [modal, setModal] = useState<{ event: ScheduleEvent | null; date: string | null } | null>(null);
   const navigate = useNavigate();
@@ -218,6 +244,49 @@ export function SchedulePage() {
             </button>
           ))}
         </div>
+        {(view === "week" || view === "day") && (
+          <div className="relative">
+            <button
+              onClick={() => setHoursOpen((v) => !v)}
+              className="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium text-zinc-600 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50"
+              aria-label="Day hours"
+            >
+              <Clock className="h-4 w-4" />
+              {fmtHour(dayHours.start)}–{fmtHour(dayHours.end)}
+            </button>
+            {hoursOpen && (
+              <>
+                <div className="fixed inset-0 z-10" onClick={() => setHoursOpen(false)} aria-hidden="true" />
+                <div className="absolute right-0 z-20 mt-1 w-60 rounded-lg border border-zinc-200 bg-white p-3 shadow-lg">
+                  <div className="mb-2 text-[11px] font-bold uppercase tracking-wider text-zinc-400">Day hours</div>
+                  <div className="flex items-center gap-2">
+                    <select
+                      value={dayHours.start}
+                      onChange={(e) => { const s = Number(e.target.value); updateHours({ start: s, end: Math.max(s + 1, dayHours.end) }); }}
+                      className="h-9 flex-1 rounded-md border border-zinc-200 bg-white px-2 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                    >
+                      {Array.from({ length: 24 }, (_, h) => h).map((h) => <option key={h} value={h}>{fmtHour(h)}</option>)}
+                    </select>
+                    <span className="text-xs text-zinc-400">to</span>
+                    <select
+                      value={dayHours.end}
+                      onChange={(e) => { const en = Number(e.target.value); updateHours({ start: Math.min(dayHours.start, en - 1), end: en }); }}
+                      className="h-9 flex-1 rounded-md border border-zinc-200 bg-white px-2 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+                    >
+                      {Array.from({ length: 24 }, (_, h) => h + 1).map((h) => <option key={h} value={h}>{fmtHour(h)}</option>)}
+                    </select>
+                  </div>
+                  <button
+                    onClick={() => updateHours({ start: 6, end: 20 })}
+                    className="mt-2 text-xs font-medium text-accent hover:underline"
+                  >
+                    Reset to 6a–8p
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        )}
         {canWrite && (
           <Button size="sm" onClick={() => setModal({ event: null, date: todayKey })}>
             <Plus className="h-4 w-4" /> New event
@@ -285,6 +354,8 @@ export function SchedulePage() {
           todayKey={todayKey}
           canWrite={canWrite}
           colorBy={colorBy}
+          dayStart={dayHours.start}
+          dayEnd={dayHours.end}
           onDay={(key) => canWrite && setModal({ event: null, date: key })}
           onEvent={openEvent}
         />
