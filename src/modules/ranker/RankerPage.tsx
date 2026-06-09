@@ -12,6 +12,7 @@ import { Card } from "@/shared/ui/Card";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { cn } from "@/lib/cn";
+import { fiscalWeekLabel } from "@/lib/fiscal";
 import { fetchInit } from "./api";
 import { money } from "./format";
 import { PortfolioView } from "./PortfolioView";
@@ -165,11 +166,14 @@ export function RankerPage() {
             onChange={(e) => setWeek(e.target.value)}
             className="h-9 rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
           >
-            {init.data.availableWeeks.map((w) => (
-              <option key={w} value={String(w)}>
-                Week {w}
-              </option>
-            ))}
+            {init.data.availableWeeks.map((w) => {
+              const range = fiscalWeekLabel(Number(w));
+              return (
+                <option key={w} value={String(w)}>
+                  {range || `Week ${w}`}
+                </option>
+              );
+            })}
           </select>
         </Field>
 

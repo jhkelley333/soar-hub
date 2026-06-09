@@ -47,6 +47,7 @@ import { listEmployeeActions } from "@/modules/employee-actions/api";
 import type { PtoRow } from "@/modules/employee-actions/types";
 import { isStandalone } from "@/lib/push";
 import { cn } from "@/lib/cn";
+import { FISCAL, fiscalInfo, fiscalWeekLabel } from "@/lib/fiscal";
 import { BirthdayCelebration } from "@/modules/my-stores/BirthdayCelebration";
 import { MobileHome } from "./MobileHome";
 
@@ -305,12 +306,21 @@ function Greeting({
   storeCount: number | null;
   showWalkActions: boolean;
 }) {
+  const fInfo = fiscalInfo(new Date());
   return (
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div>
-        <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-accent">
+        <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-accent">
           <span className="h-px w-6 bg-accent" />
           {kicker}
+          {fInfo && (
+            <span
+              className="rounded-full bg-accent/10 px-2 py-0.5 text-[10px] font-semibold normal-case tracking-normal text-accent"
+              title={`${FISCAL.label} · Period ${fInfo.period}, week ${fInfo.weekInPeriod} · Quarter ${fInfo.quarter}`}
+            >
+              {FISCAL.label} · P{fInfo.period} W{fInfo.weekInPeriod} · {fiscalWeekLabel(fInfo.fiscalWeek)}
+            </span>
+          )}
         </div>
         <h1 className="mt-2 text-3xl font-bold tracking-tight text-ink dark:text-night-ink">
           {title}

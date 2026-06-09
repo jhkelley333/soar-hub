@@ -20,7 +20,7 @@ import { OrgTreeFilter } from "./OrgTreeFilter";
 import { LinkedCalendars } from "./LinkedCalendars";
 import { TimeGrid } from "./TimeGrid";
 import { eventColor, type ColorBy } from "./colors";
-import { FISCAL, closeOn, fiscalInfo, holidayOn, paydayOn } from "./fiscal";
+import { FISCAL, closeOn, fiscalInfo, holidayOn, paydayOn } from "@/lib/fiscal";
 import { EVENT_TYPE_ORDER, TYPE_META, type EventType, type ScheduleEvent } from "./types";
 
 // ── date helpers ─────────────────────────────────────────────────────────
