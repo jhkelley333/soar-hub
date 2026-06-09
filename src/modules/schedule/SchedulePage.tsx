@@ -8,6 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, ChevronLeft, ChevronRight, Plus, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Drawer } from "@/shared/ui/Drawer";
+import { Modal } from "@/shared/ui/Modal";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { cn } from "@/lib/cn";
@@ -57,6 +58,7 @@ export function SchedulePage() {
   const [view, setView] = useState<View>("month");
   const [hidden, setHidden] = useState<Set<EventType>>(new Set());
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [peek, setPeek] = useState<string | null>(null); // day-key for the "+N more" peek
   const [modal, setModal] = useState<{ event: ScheduleEvent | null; date: string | null } | null>(null);
   const navigate = useNavigate();
   const { profile } = useAuth();
@@ -255,6 +257,7 @@ export function SchedulePage() {
           canWrite={canWrite}
           onDay={(key) => canWrite && setModal({ event: null, date: key })}
           onEvent={openEvent}
+          onMore={setPeek}
         />
       ) : view === "week" || view === "day" ? (
         <TimeGrid
@@ -275,6 +278,27 @@ export function SchedulePage() {
       <Drawer open={filtersOpen} onClose={() => setFiltersOpen(false)} title="Calendar filters" width="w-full sm:max-w-sm">
         {railContent}
       </Drawer>
+
+      {/* "+N more" day peek — the full event list for one day */}
+      <Modal
+        open={peek != null}
+        onClose={() => setPeek(null)}
+        title={peek ? new Date(`${peek}T12:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }) : ""}
+        maxWidth="max-w-sm"
+        footer={
+          canWrite && peek ? (
+            <Button size="sm" onClick={() => { const d = peek; setPeek(null); setModal({ event: null, date: d }); }}>
+              <Plus className="h-4 w-4" /> New event
+            </Button>
+          ) : undefined
+        }
+      >
+        <div className="space-y-1">
+          {(peek ? byDate.get(peek) ?? [] : []).map((e) => (
+            <EventBar key={e.id} e={e} onClick={() => { setPeek(null); openEvent(e); }} />
+          ))}
+        </div>
+      </Modal>
 
       {modal && (
         <EventModal
@@ -307,7 +331,7 @@ function EventBar({ e, onClick }: { e: ScheduleEvent; onClick: () => void }) {
 }
 
 function MonthGrid({
-  days, anchorMonth, byDate, todayKey, canWrite, onDay, onEvent,
+  days, anchorMonth, byDate, todayKey, canWrite, onDay, onEvent, onMore,
 }: {
   days: Date[];
   anchorMonth: number;
@@ -316,6 +340,7 @@ function MonthGrid({
   canWrite: boolean;
   onDay: (key: string) => void;
   onEvent: (e: ScheduleEvent) => void;
+  onMore: (key: string) => void;
 }) {
   return (
     <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
@@ -349,7 +374,14 @@ function MonthGrid({
               </div>
               <div className="space-y-1">
                 {list.slice(0, 3).map((e) => <EventBar key={e.id} e={e} onClick={() => onEvent(e)} />)}
-                {list.length > 3 && <div className="px-1 text-[11px] font-medium text-zinc-400">+{list.length - 3} more</div>}
+                {list.length > 3 && (
+                  <button
+                    onClick={(ev) => { ev.stopPropagation(); onMore(key); }}
+                    className="w-full rounded px-1 py-0.5 text-left text-[11px] font-medium text-zinc-400 hover:bg-zinc-100 hover:text-zinc-600"
+                  >
+                    +{list.length - 3} more
+                  </button>
+                )}
               </div>
             </div>
           );
