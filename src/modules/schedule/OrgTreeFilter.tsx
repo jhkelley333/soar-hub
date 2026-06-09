@@ -6,6 +6,7 @@
 import { useMemo, useState } from "react";
 import { Building2, ChevronDown, ChevronRight, Columns3, Eye, EyeOff, Map, Shield } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { orgSwatch } from "./colors";
 import type { RegionGroup, YouMarker } from "./types";
 
 type Kind = "region" | "area" | "district" | "store";
@@ -15,20 +16,9 @@ interface TreeNode {
   kind: Kind;
   name: string;
   scopeId: string | null; // for YOU matching
+  colorSeed: string;      // store→number, others→key (matches event org-color)
   storeNumbers: string[]; // every descendant store number (leaf: its own)
   children: TreeNode[];
-}
-
-// A small fixed palette; each node gets a stable swatch from a hash of its key.
-const SWATCHES = [
-  "bg-sky-500", "bg-violet-500", "bg-emerald-500", "bg-amber-500",
-  "bg-rose-500", "bg-teal-500", "bg-indigo-500", "bg-pink-500",
-  "bg-cyan-500", "bg-lime-500",
-];
-function swatchFor(key: string): string {
-  let h = 0;
-  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i)) >>> 0;
-  return SWATCHES[h % SWATCHES.length];
 }
 
 const GLYPH: Record<Kind, typeof Map> = {
@@ -47,6 +37,7 @@ function buildTree(tree: RegionGroup[]): TreeNode[] {
           kind: "store" as const,
           name: `#${s.number}${s.name ? ` ${s.name}` : ""}`,
           scopeId: s.id,
+          colorSeed: s.number,
           storeNumbers: [s.number],
           children: [],
         }));
@@ -55,6 +46,7 @@ function buildTree(tree: RegionGroup[]): TreeNode[] {
           kind: "district" as const,
           name: `${d.district_name || "Stores"}${d.district_code ? ` · ${d.district_code}` : ""}`,
           scopeId: d.district_id,
+          colorSeed: `district:${d.district_id ?? "none"}`,
           storeNumbers: stores.flatMap((s) => s.storeNumbers),
           children: stores,
         };
@@ -64,6 +56,7 @@ function buildTree(tree: RegionGroup[]): TreeNode[] {
         kind: "area" as const,
         name: a.area_name || "Area",
         scopeId: a.area_id,
+        colorSeed: `area:${a.area_id ?? "none"}`,
         storeNumbers: districts.flatMap((d) => d.storeNumbers),
         children: districts,
       };
@@ -73,6 +66,7 @@ function buildTree(tree: RegionGroup[]): TreeNode[] {
       kind: "region" as const,
       name: r.region_name || "Region",
       scopeId: r.region_id,
+      colorSeed: `region:${r.region_id ?? "none"}`,
       storeNumbers: areas.flatMap((a) => a.storeNumbers),
       children: areas,
     };
@@ -187,7 +181,7 @@ function Row({
         )}
 
         {/* Color swatch */}
-        <span className={cn("h-3 w-3 shrink-0 rounded-[3px]", swatchFor(node.key))} />
+        <span className={cn("h-3 w-3 shrink-0 rounded-[3px]", orgSwatch(node.colorSeed))} />
 
         {/* Node-type glyph */}
         <Glyph className="h-3.5 w-3.5 shrink-0 text-zinc-400" />

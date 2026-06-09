@@ -5,7 +5,8 @@
 
 import { useMemo } from "react";
 import { cn } from "@/lib/cn";
-import { TYPE_META, type ScheduleEvent } from "./types";
+import { eventColor, type ColorBy } from "./colors";
+import { type ScheduleEvent } from "./types";
 
 // ── geometry (the load-bearing numbers) ──────────────────────────────────
 const ROW_H = 48;        // px per hour
@@ -81,8 +82,8 @@ function packDay(events: ScheduleEvent[]): Placed[] {
   return out;
 }
 
-function TimedEvent({ p, onClick }: { p: Placed; onClick: () => void }) {
-  const m = TYPE_META[p.e.type];
+function TimedEvent({ p, colorBy, onClick }: { p: Placed; colorBy: ColorBy; onClick: () => void }) {
+  const c = eventColor(p.e, colorBy);
   const top = p.start * ROW_H;
   const height = Math.max(CHIP_MIN, (p.end - p.start) * ROW_H);
   const widthPct = 100 / p.total;
@@ -93,12 +94,12 @@ function TimedEvent({ p, onClick }: { p: Placed; onClick: () => void }) {
       style={{ top, height, left: `${p.col * widthPct}%`, width: `calc(${widthPct}% - 2px)` }}
       className={cn(
         "absolute overflow-hidden rounded border-l-[3px] bg-white px-1.5 py-0.5 text-left text-[11px] leading-tight text-zinc-700 ring-1 ring-inset ring-zinc-100 hover:z-10 hover:bg-zinc-50",
-        m.bar
+        c.bar
       )}
       title={p.e.title}
     >
       <div className="flex items-center gap-1 truncate">
-        <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", m.dot)} />
+        <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", c.dot)} />
         <span className="truncate font-medium">{p.e.title}</span>
       </div>
       {height > 30 && <div className="truncate text-[10px] text-zinc-400">{time}</div>}
@@ -113,6 +114,7 @@ export function TimeGrid({
   onEvent,
   onDay,
   canWrite,
+  colorBy,
 }: {
   days: Date[];
   byDate: Map<string, ScheduleEvent[]>;
@@ -120,6 +122,7 @@ export function TimeGrid({
   onEvent: (e: ScheduleEvent) => void;
   onDay: (key: string) => void;
   canWrite: boolean;
+  colorBy: ColorBy;
 }) {
   const now = new Date();
   const nowOffset = now.getHours() + now.getMinutes() / 60 - DAY_START;
@@ -163,15 +166,15 @@ export function TimeGrid({
         {days.map((d, i) => (
           <div key={ymd(d)} className="min-h-[28px] flex-1 space-y-0.5 border-l border-zinc-100 p-1">
             {perDay[i].allDay.map((e) => {
-              const m = TYPE_META[e.type];
+              const c = eventColor(e, colorBy);
               return (
                 <button
                   key={e.id}
                   onClick={() => onEvent(e)}
-                  className={cn("flex w-full items-center gap-1 truncate rounded border-l-[3px] bg-white px-1.5 py-0.5 text-left text-[11px] text-zinc-700 ring-1 ring-inset ring-zinc-100 hover:bg-zinc-50", m.bar)}
+                  className={cn("flex w-full items-center gap-1 truncate rounded border-l-[3px] bg-white px-1.5 py-0.5 text-left text-[11px] text-zinc-700 ring-1 ring-inset ring-zinc-100 hover:bg-zinc-50", c.bar)}
                   title={e.title}
                 >
-                  <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", m.dot)} />
+                  <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", c.dot)} />
                   <span className="truncate">{e.title}</span>
                 </button>
               );
@@ -214,7 +217,7 @@ export function TimeGrid({
               )}
               {/* events */}
               {perDay[i].packed.map((p) => (
-                <TimedEvent key={p.e.id} p={p} onClick={() => onEvent(p.e)} />
+                <TimedEvent key={p.e.id} p={p} colorBy={colorBy} onClick={() => onEvent(p.e)} />
               ))}
             </div>
           );
