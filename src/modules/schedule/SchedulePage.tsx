@@ -5,7 +5,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, ChevronLeft, ChevronRight, Clock, Plus, SlidersHorizontal } from "lucide-react";
+import { ArrowUpRight, ChevronLeft, ChevronRight, Clock, Plus, Repeat, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Drawer } from "@/shared/ui/Drawer";
 import { Modal } from "@/shared/ui/Modal";
@@ -416,7 +416,8 @@ function EventBar({ e, colorBy, onClick }: { e: ScheduleEvent; colorBy: ColorBy;
     >
       <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", c.dot)} />
       <span className="truncate">{time && <span className="text-zinc-400">{time} </span>}{e.title}</span>
-      {e.source !== "soar" && <ArrowUpRight className="ml-auto h-3 w-3 shrink-0 text-zinc-300" />}
+      {e.recurrence && e.recurrence !== "none" && <Repeat className="ml-auto h-3 w-3 shrink-0 text-zinc-300" />}
+      {e.source !== "soar" && <ArrowUpRight className={cn("h-3 w-3 shrink-0 text-zinc-300", !(e.recurrence && e.recurrence !== "none") && "ml-auto")} />}
     </button>
   );
 }

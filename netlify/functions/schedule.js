@@ -29,6 +29,8 @@ const EVENT_TYPES = new Set([
   "manager_meeting", "pto", "delivery", "deadline", "other",
 ]);
 const SCOPE_TYPES = new Set(["store", "district", "area", "region", "org"]);
+const RECURRENCE_TYPES = new Set(["none", "daily", "weekly", "biweekly", "monthly"]);
+const DAY_MS = 86400000;
 
 function admin() {
   if (!SUPABASE_URL || !SERVICE_KEY) throw new Error("schedule env vars not configured");
@@ -178,7 +180,77 @@ function eventCard(e) {
     notes: e.notes,
     color: e.color,
     created_by_name: e.created_by_name,
+    recurrence: e.recurrence || "none",
+    recurrence_until: e.recurrence_until || null,
   };
+}
+
+// The i-th occurrence of a recurring master, computed in UTC so the stored
+// wall-clock is preserved (events are stored as UTC instants of a local time).
+function nthOccurrence(start, recurrence, i) {
+  const y = start.getUTCFullYear(), m = start.getUTCMonth(), d = start.getUTCDate();
+  const h = start.getUTCHours(), min = start.getUTCMinutes(), s = start.getUTCSeconds();
+  if (recurrence === "daily") return new Date(Date.UTC(y, m, d + i, h, min, s));
+  if (recurrence === "weekly") return new Date(Date.UTC(y, m, d + i * 7, h, min, s));
+  if (recurrence === "biweekly") return new Date(Date.UTC(y, m, d + i * 14, h, min, s));
+  if (recurrence === "monthly") {
+    const tm = m + i;
+    const ty = y + Math.floor(tm / 12);
+    const tmo = ((tm % 12) + 12) % 12;
+    const lastDay = new Date(Date.UTC(ty, tmo + 1, 0)).getUTCDate();
+    return new Date(Date.UTC(ty, tmo, Math.min(d, lastDay), h, min, s));
+  }
+  return null;
+}
+
+// Expand a recurring master into occurrence cards that fall inside [from, to).
+// `from`/`to` are ISO strings; the master's own start is the first occurrence.
+function expandRecurring(master, from, to) {
+  const rec = master.recurrence;
+  if (!rec || rec === "none" || !from || !to) return [];
+  const start = new Date(master.starts_at);
+  if (Number.isNaN(start.getTime())) return [];
+  const winFrom = new Date(from);
+  const winTo = new Date(to);
+  const until = master.recurrence_until ? new Date(`${master.recurrence_until}T23:59:59Z`) : null;
+  const end = master.ends_at ? new Date(master.ends_at) : null;
+  const durationMs = end && !Number.isNaN(end.getTime()) ? end.getTime() - start.getTime() : null;
+
+  // Jump close to the window instead of iterating from occurrence 0.
+  let i0 = 0;
+  const lead = winFrom.getTime() - start.getTime();
+  if (lead > 0) {
+    if (rec === "daily") i0 = Math.floor(lead / DAY_MS) - 1;
+    else if (rec === "weekly") i0 = Math.floor(lead / (7 * DAY_MS)) - 1;
+    else if (rec === "biweekly") i0 = Math.floor(lead / (14 * DAY_MS)) - 1;
+    else if (rec === "monthly") {
+      i0 = (winFrom.getUTCFullYear() - start.getUTCFullYear()) * 12 +
+        (winFrom.getUTCMonth() - start.getUTCMonth()) - 1;
+    }
+    if (i0 < 0) i0 = 0;
+  }
+
+  const out = [];
+  const base = eventCard(master);
+  for (let i = i0, guard = 0; guard < 1000; i++, guard++) {
+    const occ = nthOccurrence(start, rec, i);
+    if (!occ) break;
+    if (occ >= winTo) break;
+    if (until && occ > until) break;
+    if (occ >= winFrom) {
+      const occEnd = durationMs != null ? new Date(occ.getTime() + durationMs) : null;
+      out.push({
+        ...base,
+        id: master.id, // edit/delete act on the series master
+        starts_at: occ.toISOString(),
+        ends_at: occEnd ? occEnd.toISOString() : null,
+        series_start: master.starts_at,
+        series_end: master.ends_at || null,
+        is_occurrence: true,
+      });
+    }
+  }
+  return out;
 }
 
 // Read-only feed events derived from other modules. v1b: Training Credits +
@@ -283,20 +355,35 @@ async function listEvents(supa, user, params) {
   const scope = await resolveScope(supa, user);
   const from = sanitize(params.from, 40);
   const to = sanitize(params.to, 40);
-  let q = supa.from("schedule_events").select("*");
-  // Overlap [from, to): event starts before `to` and (ends after `from` or
-  // starts after `from`). Keep it simple: starts within the window OR an
-  // open-ended event that started earlier. We pull a slightly wide range and
-  // trust the client to render the visible weeks.
-  if (from) q = q.gte("starts_at", from);
-  if (to) q = q.lt("starts_at", to);
-  q = q.order("starts_at", { ascending: true }).limit(2000);
-  const { data, error } = await q;
-  if (error) return { error: error.message, status: 500 };
-  const visible = (data || []).filter((e) => nodeInScope(scope, e.scope_type, e.scope_id));
+
+  // One-off events whose start falls in the window.
+  let oneOffQ = supa.from("schedule_events").select("*").eq("recurrence", "none");
+  if (from) oneOffQ = oneOffQ.gte("starts_at", from);
+  if (to) oneOffQ = oneOffQ.lt("starts_at", to);
+  oneOffQ = oneOffQ.order("starts_at", { ascending: true }).limit(2000);
+
+  // Recurring masters that could project into the window: anything that
+  // starts before `to` and whose series hasn't ended before `from`. The
+  // expander does the precise per-occurrence windowing.
+  let masterQ = supa.from("schedule_events").select("*").neq("recurrence", "none");
+  if (to) masterQ = masterQ.lt("starts_at", to);
+  if (from) masterQ = masterQ.or(`recurrence_until.is.null,recurrence_until.gte.${from.slice(0, 10)}`);
+  masterQ = masterQ.limit(2000);
+
+  const [oneOff, masters] = await Promise.all([oneOffQ, masterQ]);
+  if (oneOff.error) return { error: oneOff.error.message, status: 500 };
+  if (masters.error) return { error: masters.error.message, status: 500 };
+
+  const visible = (oneOff.data || []).filter((e) => nodeInScope(scope, e.scope_type, e.scope_id));
+  const occurrences = [];
+  for (const m of masters.data || []) {
+    if (!nodeInScope(scope, m.scope_type, m.scope_id)) continue;
+    occurrences.push(...expandRecurring(m, from, to));
+  }
+
   const feeds = await fetchFeeds(supa, scope, from ? from.slice(0, 10) : null, to ? to.slice(0, 10) : null);
   return {
-    events: [...visible.map(eventCard), ...feeds],
+    events: [...visible.map(eventCard), ...occurrences, ...feeds],
     can_write: WRITE_ROLES.has(String(user.role)),
   };
 }
@@ -367,6 +454,13 @@ function validateEventBody(body) {
   if (!SCOPE_TYPES.has(scopeType)) return { error: "Invalid scope.", status: 400 };
   const scopeId = scopeType === "org" ? null : sanitize(body?.scope_id, 64) || null;
   if (scopeType !== "org" && !scopeId) return { error: "Pick where this event belongs.", status: 400 };
+  const recurrence = RECURRENCE_TYPES.has(body?.recurrence) ? body.recurrence : "none";
+  const recurrenceUntil =
+    recurrence !== "none" &&
+    typeof body?.recurrence_until === "string" &&
+    /^\d{4}-\d{2}-\d{2}$/.test(body.recurrence_until)
+      ? body.recurrence_until
+      : null;
   return {
     fields: {
       title,
@@ -379,6 +473,8 @@ function validateEventBody(body) {
       store_number: sanitize(body?.store_number, 20) || null,
       notes: sanitize(body?.notes, 2000) || null,
       color: sanitize(body?.color, 20) || null,
+      recurrence,
+      recurrence_until: recurrenceUntil,
     },
   };
 }
