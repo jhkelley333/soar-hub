@@ -45,6 +45,12 @@ export function updateEvent(input: EventInput): Promise<{ ok: true; event: Sched
   return request(`${FN}?action=update`, { method: "POST", body: JSON.stringify(input) });
 }
 
-export function deleteEvent(id: string): Promise<{ ok: true }> {
-  return request(`${FN}?action=delete`, { method: "POST", body: JSON.stringify({ id }) });
+export function deleteEvent(
+  id: string,
+  opts?: { mode?: "all" | "occurrence" | "following"; occurrenceDate?: string }
+): Promise<{ ok: true }> {
+  return request(`${FN}?action=delete`, {
+    method: "POST",
+    body: JSON.stringify({ id, mode: opts?.mode, occurrence_date: opts?.occurrenceDate }),
+  });
 }

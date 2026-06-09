@@ -232,12 +232,14 @@ function expandRecurring(master, from, to) {
 
   const out = [];
   const base = eventCard(master);
+  const exceptions = new Set(Array.isArray(master.recurrence_exceptions) ? master.recurrence_exceptions : []);
   for (let i = i0, guard = 0; guard < 1000; i++, guard++) {
     const occ = nthOccurrence(start, rec, i);
     if (!occ) break;
     if (occ >= winTo) break;
     if (until && occ > until) break;
     if (occ >= winFrom) {
+      if (exceptions.has(occ.toISOString().slice(0, 10))) continue; // cancelled instance
       const occEnd = durationMs != null ? new Date(occ.getTime() + durationMs) : null;
       out.push({
         ...base,
@@ -525,6 +527,13 @@ async function updateEvent(supa, user, body) {
   return { ok: true, event: eventCard(data) };
 }
 
+// Shift a YYYY-MM-DD date string by whole days (UTC), returning YYYY-MM-DD.
+function shiftYmd(ymdStr, deltaDays) {
+  const [y, m, d] = ymdStr.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d + deltaDays));
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+}
+
 async function deleteEvent(supa, user, body) {
   const id = sanitize(body?.id, 64);
   if (!id) return { error: "Event id is required.", status: 400 };
@@ -532,7 +541,44 @@ async function deleteEvent(supa, user, body) {
   if (!existing) return { error: "Event not found.", status: 404 };
   const permErr = await assertCanWriteNode(supa, user, existing.scope_type, existing.scope_id);
   if (permErr) return permErr;
-  const { error } = await supa.from("schedule_events").delete().eq("id", id);
+
+  const mode = body?.mode === "occurrence" || body?.mode === "following" ? body.mode : "all";
+  const occ = typeof body?.occurrence_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.occurrence_date)
+    ? body.occurrence_date
+    : null;
+  const recurring = existing.recurrence && existing.recurrence !== "none";
+
+  // Whole series (or any non-recurring event): hard delete.
+  if (mode === "all" || !recurring || !occ) {
+    const { error } = await supa.from("schedule_events").delete().eq("id", id);
+    if (error) return { error: error.message, status: 500 };
+    return { ok: true };
+  }
+
+  // Cancel a single instance: add its date to the exception list.
+  if (mode === "occurrence") {
+    const ex = Array.isArray(existing.recurrence_exceptions) ? existing.recurrence_exceptions.slice() : [];
+    if (!ex.includes(occ)) ex.push(occ);
+    const { error } = await supa
+      .from("schedule_events")
+      .update({ recurrence_exceptions: ex, updated_at: new Date().toISOString() })
+      .eq("id", id);
+    if (error) return { error: error.message, status: 500 };
+    return { ok: true };
+  }
+
+  // This & following: cap the series the day before this occurrence. If that
+  // lands on/before the series start, the whole series goes.
+  const startDate = String(existing.starts_at).slice(0, 10);
+  if (occ <= startDate) {
+    const { error } = await supa.from("schedule_events").delete().eq("id", id);
+    if (error) return { error: error.message, status: 500 };
+    return { ok: true };
+  }
+  const { error } = await supa
+    .from("schedule_events")
+    .update({ recurrence_until: shiftYmd(occ, -1), updated_at: new Date().toISOString() })
+    .eq("id", id);
   if (error) return { error: error.message, status: 500 };
   return { ok: true };
 }
