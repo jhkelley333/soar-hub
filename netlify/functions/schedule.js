@@ -210,6 +210,55 @@ async function fetchFeeds(supa, scope, fromDate, toDate) {
     });
   }
 
+  // Store_id-keyed feeds (walkthroughs + reno) — resolve number/name for display.
+  const storeById = new Map((scope.storeRows || []).map((s) => [s.id, s]));
+  const storeIds = Array.from(scope.storeIdSet || []);
+
+  // Walkthroughs — assignment due dates.
+  let wq = supa
+    .from("walkthrough_assignments")
+    .select("id, store_id, due_at, template_id")
+    .gte("due_at", fromDate).lt("due_at", toDate);
+  if (!scope.all) wq = wq.in("store_id", storeIds);
+  const { data: walks } = await wq;
+  let tplName = new Map();
+  if (walks && walks.length) {
+    const tids = [...new Set(walks.map((w) => w.template_id).filter(Boolean))];
+    if (tids.length) {
+      const { data: tpls } = await supa.from("walkthrough_templates").select("id, name").in("id", tids);
+      tplName = new Map((tpls || []).map((t) => [t.id, t.name]));
+    }
+  }
+  for (const w of walks || []) {
+    if (!w.due_at) continue;
+    const st = storeById.get(w.store_id);
+    out.push({
+      id: `walkthrough:${w.id}`, source: "walkthrough", editable: false, link: "/walkthroughs",
+      title: tplName.get(w.template_id) || "Walkthrough", type: "audit",
+      starts_at: w.due_at, ends_at: null, all_day: true,
+      scope_type: "store", scope_id: null, store_number: st ? String(st.number) : null,
+      notes: null, color: null, created_by_name: null,
+    });
+  }
+
+  // Reno scoping — one row per store visit (scope_date).
+  let rq = supa
+    .from("reno_scopes")
+    .select("id, store_id, scope_date")
+    .gte("scope_date", fromDate).lt("scope_date", toDate);
+  if (!scope.all) rq = rq.in("store_id", storeIds);
+  const { data: renos } = await rq;
+  for (const r of renos || []) {
+    const st = storeById.get(r.store_id);
+    out.push({
+      id: `reno:${r.id}`, source: "reno", editable: false, link: "/reno-scoping",
+      title: st?.name ? `Reno scoping — ${st.name}` : "Reno scoping", type: "renovation",
+      starts_at: `${r.scope_date}T09:00:00`, ends_at: null, all_day: true,
+      scope_type: "store", scope_id: null, store_number: st ? String(st.number) : null,
+      notes: null, color: null, created_by_name: null,
+    });
+  }
+
   return out;
 }
 
