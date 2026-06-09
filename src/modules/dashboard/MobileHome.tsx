@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
+import { FISCAL, fiscalInfo, fiscalWeekLabel } from "@/lib/fiscal";
 import { Drawer } from "@/shared/ui/Drawer";
 import { fetchApprovalsQueue, relativeTime } from "@/modules/approvals/api";
 import { fetchBirthdays, fetchMyTree, launchScopeLabel } from "@/modules/my-stores/api";
@@ -121,6 +122,7 @@ export function MobileHome() {
   const birthdayCount = birthdaysQ.data?.entries.length ?? 0;
 
   const scopeFull = role && treeQ.data ? launchScopeLabel(treeQ.data, role) : null;
+  const fInfo = fiscalInfo(new Date());
 
   const num = (q: { isLoading: boolean }, v: number) => (q.isLoading ? "—" : String(v));
 
@@ -168,6 +170,11 @@ export function MobileHome() {
               {role.toUpperCase()}
               {scopeFull ? ` · ${scopeFull}` : ""}
             </p>
+          )}
+          {fInfo && (
+            <span className="mt-1.5 inline-flex items-center rounded-full bg-accent/10 px-2 py-0.5 text-[10.5px] font-semibold text-accent">
+              {FISCAL.label} · P{fInfo.period} W{fInfo.weekInPeriod} · {fiscalWeekLabel(fInfo.fiscalWeek)}
+            </span>
           )}
         </div>
         <div className="ml-3 flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-frost-100 text-[13px] font-semibold text-midnight-700 ring-1 ring-midnight-100">

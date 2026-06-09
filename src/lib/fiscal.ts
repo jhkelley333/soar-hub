@@ -122,3 +122,19 @@ export const dateKey = fkey;
 export const closeOn = (key: string): number | null => MODEL.closes[key] ?? null;
 export const paydayOn = (key: string): Payday | null => MODEL.paydays[key] ?? null;
 export const holidayOn = (key: string): string | null => FY.holidays[key] ?? null;
+
+// Mon–Sun calendar range for a 1-based fiscal week of the FY (null if out of
+// range). Week 1 starts on FY.start.
+export function fiscalWeekRange(weekNum: number): { start: Date; end: Date } | null {
+  if (!Number.isFinite(weekNum) || weekNum < 1 || weekNum > MODEL.totalWeeks) return null;
+  const start = addDays(FY.start, (weekNum - 1) * 7);
+  return { start, end: addDays(start, 6) };
+}
+
+// "Jan 5 – Jan 11" for a fiscal week, or "" if the week is out of range.
+export function fiscalWeekLabel(weekNum: number): string {
+  const r = fiscalWeekRange(weekNum);
+  if (!r) return "";
+  const fmt = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return `${fmt(r.start)} – ${fmt(r.end)}`;
+}
