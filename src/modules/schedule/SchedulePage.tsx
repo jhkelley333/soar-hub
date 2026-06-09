@@ -6,11 +6,12 @@ import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, ChevronLeft, ChevronRight, Plus } from "lucide-react";
-import { PageHeader } from "@/shared/ui/PageHeader";
 import { Button } from "@/shared/ui/Button";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { cn } from "@/lib/cn";
+import { useAuth } from "@/auth/AuthProvider";
+import { ROLE_LABELS } from "@/types/database";
 import { fetchEvents, fetchScheduleStores } from "./api";
 import { EventModal } from "./EventModal";
 import { OrgTreeFilter } from "./OrgTreeFilter";
@@ -55,6 +56,7 @@ export function SchedulePage() {
   const [hidden, setHidden] = useState<Set<EventType>>(new Set());
   const [modal, setModal] = useState<{ event: ScheduleEvent | null; date: string | null } | null>(null);
   const navigate = useNavigate();
+  const { profile } = useAuth();
 
   // Native events open the editor; feed events (training/PTO/…) are read-only
   // here, so they deep-link into their source module.
@@ -130,6 +132,10 @@ export function SchedulePage() {
     });
   }
 
+  const storeCount = allStoreNumbers.size;
+  const roleLabel = profile?.role ? ROLE_LABELS[profile.role] ?? profile.role : "";
+  const viewerName = profile?.full_name || profile?.email || "";
+
   const label =
     view === "day"
       ? anchor.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
@@ -138,26 +144,26 @@ export function SchedulePage() {
         : anchor.toLocaleDateString("en-US", { month: "long", year: "numeric" });
 
   return (
-    <div className="mx-auto max-w-[1200px]">
-      <PageHeader
-        title="Schedule"
-        description="Store visits, audits, training, deliveries, and deadlines across your stores."
-        actions={
-          canWrite ? (
-            <Button onClick={() => setModal({ event: null, date: todayKey })}>
-              <Plus className="h-4 w-4" /> New event
-            </Button>
-          ) : undefined
-        }
-      />
-
-      <div className="lg:flex lg:gap-5">
-        <aside className="mb-4 hidden shrink-0 lg:block lg:w-56">
-          <OrgTreeFilter tree={tree} active={effectiveActive} onChange={setActiveStores} />
+    <div className="w-full">
+      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white lg:flex">
+        {/* Left rail — scope card + org tree */}
+        <aside className="hidden shrink-0 border-r border-zinc-200 bg-zinc-50/60 p-4 lg:block lg:w-[280px]">
+          <div className="rounded-lg bg-midnight px-4 py-3 text-white">
+            <div className="text-[10px] font-bold uppercase tracking-wider text-white/60">Viewing as</div>
+            <div className="mt-0.5 text-sm font-semibold leading-tight">
+              {roleLabel}{viewerName ? ` · ${viewerName}` : ""}
+            </div>
+            <div className="mt-0.5 text-xs text-white/70">{storeCount} store{storeCount === 1 ? "" : "s"} in scope</div>
+          </div>
+          <div className="mt-4">
+            <OrgTreeFilter tree={tree} active={effectiveActive} onChange={setActiveStores} />
+          </div>
         </aside>
-        <div className="min-w-0 flex-1">
 
-      {/* Controls */}
+        {/* Main */}
+        <div className="min-w-0 flex-1 p-4">
+
+      {/* Top bar */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         <Button variant="secondary" size="sm" onClick={() => setAnchor(new Date())}>Today</Button>
         <button onClick={() => go(-1)} className="rounded-md p-1.5 text-zinc-500 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50" aria-label="Previous">
@@ -181,6 +187,11 @@ export function SchedulePage() {
             </button>
           ))}
         </div>
+        {canWrite && (
+          <Button size="sm" onClick={() => setModal({ event: null, date: todayKey })}>
+            <Plus className="h-4 w-4" /> New event
+          </Button>
+        )}
       </div>
 
       {/* Type filter legend */}
@@ -290,7 +301,7 @@ function MonthGrid({
               key={key}
               onClick={() => onDay(key)}
               className={cn(
-                "min-h-[104px] border-b border-r border-zinc-100 p-1.5 align-top",
+                "min-h-[124px] border-b border-r border-zinc-100 p-1.5 align-top",
                 i % 7 === 6 && "border-r-0",
                 !inMonth && "bg-zinc-50/60",
                 canWrite && "cursor-pointer hover:bg-accent/[0.03]"
