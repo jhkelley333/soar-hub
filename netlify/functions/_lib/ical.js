@@ -27,6 +27,40 @@ function unescapeText(v) {
     .trim()
     .slice(0, 4000);
 }
+
+// Decode the common HTML entities that show up in calendar bodies.
+function decodeEntities(s) {
+  return s
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&#(\d+);/g, (_, n) => { try { return String.fromCodePoint(+n); } catch { return ""; } })
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => { try { return String.fromCodePoint(parseInt(n, 16)); } catch { return ""; } });
+}
+
+// Google/Outlook often put HTML in DESCRIPTION. Convert it to readable plain
+// text: block tags → newlines, list items → bullets, strip remaining tags,
+// decode entities, and tidy whitespace. Plain text passes through untouched.
+function htmlToText(s) {
+  if (!s) return s;
+  if (!/[<&]/.test(s)) return s;
+  let t = s
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|h[1-6]|tr|ul|ol|blockquote)>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "• ")
+    .replace(/<[^>]+>/g, "");
+  t = decodeEntities(t);
+  return t
+    .replace(/\r/g, "")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim()
+    .slice(0, 4000);
+}
 const WD = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
 
 // Guard against obvious SSRF targets. Callers are authenticated leaders, so
@@ -212,34 +246,58 @@ export async function fetchCalendarEvents(url, cal, fromIso, toIso) {
   const winTo = new Date(toIso);
   const events = parseEvents(text);
   const out = [];
+  const color = cal.color || "blue";
+
   for (const ev of events) {
     if (!ev.start) continue;
     const dateOnly = ev.start.dateOnly;
     const durationMs = ev.end ? ev.end.date.getTime() - ev.start.date.getTime() : null;
-    for (const occ of expandEvent(ev, winFrom, winTo)) {
-      const startDt = { date: occ, dateOnly, utc: ev.start.utc };
-      let endsIso = null;
-      if (!dateOnly && durationMs && durationMs > 0) {
-        endsIso = emitIso({ date: new Date(occ.getTime() + durationMs), dateOnly: false, utc: ev.start.utc });
+    // All-day DTEND is exclusive — spanDays is how many calendar days it covers.
+    const spanDays = dateOnly && durationMs && durationMs > 0 ? Math.max(1, Math.round(durationMs / DAY_MS)) : 1;
+    const notes = htmlToText(ev.description) || null;
+    const location = htmlToText(ev.location) || null;
+    const title = ev.summary || "(no title)";
+
+    const card = (occ, endsIso, allDay) => ({
+      id: `ext:${cal.id}:${ev.uid || ev.summary || "?"}:${occ.toISOString()}`,
+      source: "external",
+      editable: false,
+      title,
+      type: "other",
+      starts_at: emitIso({ date: occ, dateOnly: allDay, utc: ev.start.utc }),
+      ends_at: endsIso,
+      all_day: !!allDay,
+      scope_type: "external",
+      scope_id: cal.id,
+      store_number: null,
+      notes,
+      location,
+      color,
+      created_by_name: cal.label,
+    });
+
+    // Recurring events window themselves; non-recurring use their own start so
+    // a multi-day all-day event can be fanned out even if it began before the
+    // window.
+    const occStarts = ev.rrule ? expandEvent(ev, winFrom, winTo) : [ev.start.date];
+
+    for (const occStart of occStarts) {
+      if (dateOnly && spanDays > 1) {
+        // Multi-day all-day → one chip per day, each filtered to the window.
+        for (let i = 0; i < spanDays; i++) {
+          const day = new Date(occStart.getTime() + i * DAY_MS);
+          if (day < winFrom || day >= winTo) continue;
+          out.push(card(day, null, true));
+          if (out.length >= MAX_EVENTS) return out;
+        }
+      } else {
+        if (occStart < winFrom || occStart >= winTo) continue;
+        const endsIso = !dateOnly && durationMs && durationMs > 0
+          ? emitIso({ date: new Date(occStart.getTime() + durationMs), dateOnly: false, utc: ev.start.utc })
+          : null;
+        out.push(card(occStart, endsIso, dateOnly));
+        if (out.length >= MAX_EVENTS) return out;
       }
-      out.push({
-        id: `ext:${cal.id}:${ev.uid || ev.summary || "?"}:${occ.toISOString()}`,
-        source: "external",
-        editable: false,
-        title: ev.summary || "(no title)",
-        type: "other",
-        starts_at: emitIso(startDt),
-        ends_at: endsIso,
-        all_day: !!dateOnly,
-        scope_type: "external",
-        scope_id: cal.id,
-        store_number: null,
-        notes: ev.description || null,
-        location: ev.location || null,
-        color: cal.color || "blue",
-        created_by_name: cal.label,
-      });
-      if (out.length >= MAX_EVENTS) return out;
     }
   }
   return out;
