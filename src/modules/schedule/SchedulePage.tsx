@@ -18,6 +18,7 @@ import { fetchEvents, fetchScheduleStores } from "./api";
 import { EventModal } from "./EventModal";
 import { OrgTreeFilter } from "./OrgTreeFilter";
 import { TimeGrid } from "./TimeGrid";
+import { eventColor, type ColorBy } from "./colors";
 import { EVENT_TYPE_ORDER, TYPE_META, type EventType, type ScheduleEvent } from "./types";
 
 // ── date helpers ─────────────────────────────────────────────────────────
@@ -57,6 +58,7 @@ export function SchedulePage() {
   const [anchor, setAnchor] = useState(() => new Date());
   const [view, setView] = useState<View>("month");
   const [hidden, setHidden] = useState<Set<EventType>>(new Set());
+  const [colorBy, setColorBy] = useState<ColorBy>("type");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [peek, setPeek] = useState<string | null>(null); // day-key for the "+N more" peek
   const [modal, setModal] = useState<{ event: ScheduleEvent | null; date: string | null } | null>(null);
@@ -223,11 +225,12 @@ export function SchedulePage() {
         )}
       </div>
 
-      {/* Type filter legend */}
-      <div className="mb-4 flex flex-wrap gap-1.5">
+      {/* Type filter legend + color-by toggle */}
+      <div className="mb-4 flex flex-wrap items-center gap-1.5">
         {EVENT_TYPE_ORDER.map((t) => {
           const off = hidden.has(t);
           const m = TYPE_META[t];
+          const dim = off || colorBy === "org"; // org-mode: legend is reference only
           return (
             <button
               key={t}
@@ -237,11 +240,26 @@ export function SchedulePage() {
                 off ? "bg-white text-zinc-400 ring-zinc-200" : m.chip
               )}
             >
-              <span className={cn("h-2 w-2 rounded-full", off ? "bg-zinc-300" : m.dot)} />
+              <span className={cn("h-2 w-2 rounded-full", dim && off ? "bg-zinc-300" : m.dot)} />
               {m.label}
             </button>
           );
         })}
+        <div className="ml-auto inline-flex items-center gap-1 rounded-md bg-zinc-100 p-0.5 text-xs">
+          <span className="px-1.5 text-[11px] font-medium text-zinc-400">Color</span>
+          {(["type", "org"] as const).map((c) => (
+            <button
+              key={c}
+              onClick={() => setColorBy(c)}
+              className={cn(
+                "rounded px-2 py-1 font-medium capitalize transition",
+                colorBy === c ? "bg-white text-midnight shadow-sm" : "text-zinc-500 hover:text-zinc-700"
+              )}
+            >
+              {c === "org" ? "Store" : "Type"}
+            </button>
+          ))}
+        </div>
       </div>
 
       {eventsQ.isLoading ? (
@@ -255,6 +273,7 @@ export function SchedulePage() {
           byDate={byDate}
           todayKey={todayKey}
           canWrite={canWrite}
+          colorBy={colorBy}
           onDay={(key) => canWrite && setModal({ event: null, date: key })}
           onEvent={openEvent}
           onMore={setPeek}
@@ -265,11 +284,12 @@ export function SchedulePage() {
           byDate={byDate}
           todayKey={todayKey}
           canWrite={canWrite}
+          colorBy={colorBy}
           onDay={(key) => canWrite && setModal({ event: null, date: key })}
           onEvent={openEvent}
         />
       ) : (
-        <Agenda events={visible} onEvent={openEvent} />
+        <Agenda events={visible} colorBy={colorBy} onEvent={openEvent} />
       )}
         </div>
       </div>
@@ -295,7 +315,7 @@ export function SchedulePage() {
       >
         <div className="space-y-1">
           {(peek ? byDate.get(peek) ?? [] : []).map((e) => (
-            <EventBar key={e.id} e={e} onClick={() => { setPeek(null); openEvent(e); }} />
+            <EventBar key={e.id} e={e} colorBy={colorBy} onClick={() => { setPeek(null); openEvent(e); }} />
           ))}
         </div>
       </Modal>
@@ -314,16 +334,16 @@ export function SchedulePage() {
   );
 }
 
-function EventBar({ e, onClick }: { e: ScheduleEvent; onClick: () => void }) {
-  const m = TYPE_META[e.type];
+function EventBar({ e, colorBy, onClick }: { e: ScheduleEvent; colorBy: ColorBy; onClick: () => void }) {
+  const c = eventColor(e, colorBy);
   const time = e.all_day ? "" : new Date(e.starts_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }).replace(":00", "");
   return (
     <button
       onClick={(ev) => { ev.stopPropagation(); onClick(); }}
-      className={cn("flex w-full items-center gap-1 truncate rounded border-l-[3px] bg-white px-1.5 py-0.5 text-left text-[11px] text-zinc-700 ring-1 ring-inset ring-zinc-100 hover:bg-zinc-50", m.bar)}
+      className={cn("flex w-full items-center gap-1 truncate rounded border-l-[3px] bg-white px-1.5 py-0.5 text-left text-[11px] text-zinc-700 ring-1 ring-inset ring-zinc-100 hover:bg-zinc-50", c.bar)}
       title={e.title}
     >
-      <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", m.dot)} />
+      <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", c.dot)} />
       <span className="truncate">{time && <span className="text-zinc-400">{time} </span>}{e.title}</span>
       {e.source !== "soar" && <ArrowUpRight className="ml-auto h-3 w-3 shrink-0 text-zinc-300" />}
     </button>
@@ -331,13 +351,14 @@ function EventBar({ e, onClick }: { e: ScheduleEvent; onClick: () => void }) {
 }
 
 function MonthGrid({
-  days, anchorMonth, byDate, todayKey, canWrite, onDay, onEvent, onMore,
+  days, anchorMonth, byDate, todayKey, canWrite, colorBy, onDay, onEvent, onMore,
 }: {
   days: Date[];
   anchorMonth: number;
   byDate: Map<string, ScheduleEvent[]>;
   todayKey: string;
   canWrite: boolean;
+  colorBy: ColorBy;
   onDay: (key: string) => void;
   onEvent: (e: ScheduleEvent) => void;
   onMore: (key: string) => void;
@@ -373,7 +394,7 @@ function MonthGrid({
                 </span>
               </div>
               <div className="space-y-1">
-                {list.slice(0, 3).map((e) => <EventBar key={e.id} e={e} onClick={() => onEvent(e)} />)}
+                {list.slice(0, 3).map((e) => <EventBar key={e.id} e={e} colorBy={colorBy} onClick={() => onEvent(e)} />)}
                 {list.length > 3 && (
                   <button
                     onClick={(ev) => { ev.stopPropagation(); onMore(key); }}
@@ -391,7 +412,7 @@ function MonthGrid({
   );
 }
 
-function Agenda({ events, onEvent }: { events: ScheduleEvent[]; onEvent: (e: ScheduleEvent) => void }) {
+function Agenda({ events, colorBy, onEvent }: { events: ScheduleEvent[]; colorBy: ColorBy; onEvent: (e: ScheduleEvent) => void }) {
   const groups = useMemo(() => {
     const m = new Map<string, ScheduleEvent[]>();
     for (const e of [...events].sort((a, b) => a.starts_at.localeCompare(b.starts_at))) {
@@ -413,11 +434,11 @@ function Agenda({ events, onEvent }: { events: ScheduleEvent[]; onEvent: (e: Sch
           </div>
           <ul className="divide-y divide-zinc-100">
             {list.map((e) => {
-              const m = TYPE_META[e.type];
+              const c = eventColor(e, colorBy);
               return (
                 <li key={e.id}>
-                  <button onClick={() => onEvent(e)} className={cn("flex w-full items-center gap-3 border-l-[3px] px-4 py-2.5 text-left hover:bg-zinc-50", m.bar)}>
-                    <span className={cn("h-2 w-2 shrink-0 rounded-full", m.dot)} />
+                  <button onClick={() => onEvent(e)} className={cn("flex w-full items-center gap-3 border-l-[3px] px-4 py-2.5 text-left hover:bg-zinc-50", c.bar)}>
+                    <span className={cn("h-2 w-2 shrink-0 rounded-full", c.dot)} />
                     <span className="w-20 shrink-0 text-xs text-zinc-500">
                       {e.all_day ? "All day" : new Date(e.starts_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
                     </span>
