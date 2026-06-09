@@ -111,7 +111,8 @@ export function EventModal({
     onError: (e: unknown) => toast.push((e as Error)?.message ?? "Save failed.", "error"),
   });
   const delMut = useMutation({
-    mutationFn: () => deleteEvent(event!.id),
+    mutationFn: (opts?: { mode?: "all" | "occurrence" | "following"; occurrenceDate?: string }) =>
+      deleteEvent(event!.id, opts),
     onSuccess: () => {
       toast.push("Event deleted.", "success");
       invalidate();
@@ -121,6 +122,13 @@ export function EventModal({
   });
 
   const busy = saveMut.isPending || delMut.isPending;
+
+  // A repeating event opened from any instance can be deleted three ways.
+  // The clicked occurrence's date (UTC, matching the backend's keying) drives
+  // the single-instance + this-and-following modes.
+  const isRecurring = editing && !!event?.recurrence && event.recurrence !== "none";
+  const occurrenceDate = event ? event.starts_at.slice(0, 10) : "";
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   function onSave() {
     const input = buildInput();
@@ -137,7 +145,10 @@ export function EventModal({
         <button
           type="button"
           disabled={busy}
-          onClick={() => { if (window.confirm("Delete this event?")) delMut.mutate(); }}
+          onClick={() => {
+            if (isRecurring) { setConfirmDelete((v) => !v); return; }
+            if (window.confirm("Delete this event?")) delMut.mutate(undefined);
+          }}
           className="mr-auto rounded-md px-2.5 py-1.5 text-sm font-medium text-red-600 ring-1 ring-inset ring-red-200 hover:bg-red-50 disabled:opacity-50"
         >
           Delete
@@ -151,6 +162,45 @@ export function EventModal({
   return (
     <Modal open={open} onClose={onClose} title={editing ? "Edit event" : "New event"} footer={footer}>
       <div className="space-y-4">
+        {isRecurring && confirmDelete && (
+          <div className="rounded-md border border-red-200 bg-red-50 p-3">
+            <div className="mb-2 text-sm font-semibold text-red-800">Delete repeating event</div>
+            <div className="space-y-1.5">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => delMut.mutate({ mode: "occurrence", occurrenceDate })}
+                className="block w-full rounded-md bg-white px-3 py-2 text-left text-sm font-medium text-zinc-800 ring-1 ring-inset ring-red-200 hover:bg-red-100 disabled:opacity-50"
+              >
+                This occurrence only
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => delMut.mutate({ mode: "following", occurrenceDate })}
+                className="block w-full rounded-md bg-white px-3 py-2 text-left text-sm font-medium text-zinc-800 ring-1 ring-inset ring-red-200 hover:bg-red-100 disabled:opacity-50"
+              >
+                This &amp; all following
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => delMut.mutate({ mode: "all" })}
+                className="block w-full rounded-md bg-white px-3 py-2 text-left text-sm font-medium text-red-700 ring-1 ring-inset ring-red-200 hover:bg-red-100 disabled:opacity-50"
+              >
+                Entire series
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => setConfirmDelete(false)}
+                className="block w-full px-3 py-1.5 text-center text-xs font-medium text-zinc-500 hover:text-zinc-700"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
         <label className="block">
           <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-zinc-500">Title</div>
           <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Mansfield store visit" autoFocus />
@@ -235,7 +285,7 @@ export function EventModal({
 
         {editing && event?.recurrence && event.recurrence !== "none" && (
           <div className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-inset ring-amber-200">
-            This is a repeating event — saving or deleting applies to the whole series.
+            This is a repeating event — saving applies to the whole series. Delete lets you remove just this occurrence, this and all following, or the entire series.
           </div>
         )}
 
