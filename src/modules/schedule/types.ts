@@ -13,9 +13,15 @@ export type EventType =
 
 export type ScopeType = "store" | "district" | "area" | "region" | "org";
 
+export type EventSource = "soar" | "training" | "pto" | "walkthrough" | "reno";
+
 export interface ScheduleEvent {
   id: string;
-  source: "soar"; // (feeds + google add their own sources later)
+  source: EventSource;
+  // Feed events (training/pto/…) are read-only here; clicking deep-links into
+  // the source module instead of opening the editor.
+  editable?: boolean;
+  link?: string;
   title: string;
   type: EventType;
   starts_at: string;
