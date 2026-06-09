@@ -38,11 +38,20 @@ function addDays(d: Date, n: number): Date {
   x.setDate(d.getDate() + n);
   return x;
 }
+function startOfDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+function startOfWeek(d: Date): Date {
+  const x = startOfDay(d);
+  x.setDate(x.getDate() - x.getDay());
+  return x;
+}
 const WEEKDAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+type View = "month" | "week" | "day" | "agenda";
 
 export function SchedulePage() {
-  const [anchor, setAnchor] = useState(() => startOfMonth(new Date()));
-  const [view, setView] = useState<"month" | "agenda">("month");
+  const [anchor, setAnchor] = useState(() => new Date());
+  const [view, setView] = useState<View>("month");
   const [hidden, setHidden] = useState<Set<EventType>>(new Set());
   const [modal, setModal] = useState<{ event: ScheduleEvent | null; date: string | null } | null>(null);
   const navigate = useNavigate();
@@ -54,11 +63,27 @@ export function SchedulePage() {
     setModal({ event: e, date: null });
   }
 
-  const gridStart = useMemo(() => startOfGrid(anchor), [anchor]);
-  const days = useMemo(() => Array.from({ length: 42 }, (_, i) => addDays(gridStart, i)), [gridStart]);
+  // Visible days depend on the view. Month + Agenda use the 6-week grid; Week
+  // is the 7 days of the anchor's week; Day is a single day.
+  const days = useMemo(() => {
+    if (view === "day") return [startOfDay(anchor)];
+    if (view === "week") {
+      const s = startOfWeek(anchor);
+      return Array.from({ length: 7 }, (_, i) => addDays(s, i));
+    }
+    const g = startOfGrid(anchor);
+    return Array.from({ length: 42 }, (_, i) => addDays(g, i));
+  }, [anchor, view]);
   const rangeFrom = days[0].toISOString();
-  const rangeTo = addDays(days[41], 1).toISOString();
+  const rangeTo = addDays(days[days.length - 1], 1).toISOString();
   const todayKey = ymd(new Date());
+
+  // Navigation step depends on the view.
+  function go(delta: number) {
+    setAnchor((prev) =>
+      view === "day" ? addDays(prev, delta) : view === "week" ? addDays(prev, delta * 7) : addMonths(prev, delta)
+    );
+  }
 
   const eventsQ = useQuery({
     queryKey: ["schedule-events", rangeFrom, rangeTo],
@@ -105,7 +130,12 @@ export function SchedulePage() {
     });
   }
 
-  const monthLabel = anchor.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+  const label =
+    view === "day"
+      ? anchor.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })
+      : view === "week"
+        ? `${days[0].toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${days[6].toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
+        : anchor.toLocaleDateString("en-US", { month: "long", year: "numeric" });
 
   return (
     <div className="mx-auto max-w-[1200px]">
@@ -129,16 +159,16 @@ export function SchedulePage() {
 
       {/* Controls */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
-        <Button variant="secondary" size="sm" onClick={() => setAnchor(startOfMonth(new Date()))}>Today</Button>
-        <button onClick={() => setAnchor(addMonths(anchor, -1))} className="rounded-md p-1.5 text-zinc-500 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50" aria-label="Previous month">
+        <Button variant="secondary" size="sm" onClick={() => setAnchor(new Date())}>Today</Button>
+        <button onClick={() => go(-1)} className="rounded-md p-1.5 text-zinc-500 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50" aria-label="Previous">
           <ChevronLeft className="h-4 w-4" />
         </button>
-        <button onClick={() => setAnchor(addMonths(anchor, 1))} className="rounded-md p-1.5 text-zinc-500 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50" aria-label="Next month">
+        <button onClick={() => go(1)} className="rounded-md p-1.5 text-zinc-500 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50" aria-label="Next">
           <ChevronRight className="h-4 w-4" />
         </button>
-        <div className="text-lg font-semibold tracking-tight text-midnight">{monthLabel}</div>
+        <div className="text-lg font-semibold tracking-tight text-midnight">{label}</div>
         <div className="ml-auto inline-flex rounded-md ring-1 ring-inset ring-zinc-200">
-          {(["month", "agenda"] as const).map((v) => (
+          {(["month", "week", "day", "agenda"] as const).map((v) => (
             <button
               key={v}
               onClick={() => setView(v)}
@@ -182,6 +212,15 @@ export function SchedulePage() {
         <MonthGrid
           days={days}
           anchorMonth={anchor.getMonth()}
+          byDate={byDate}
+          todayKey={todayKey}
+          canWrite={canWrite}
+          onDay={(key) => canWrite && setModal({ event: null, date: key })}
+          onEvent={openEvent}
+        />
+      ) : view === "week" ? (
+        <WeekGrid
+          days={days}
           byDate={byDate}
           todayKey={todayKey}
           canWrite={canWrite}
@@ -268,6 +307,54 @@ function MonthGrid({
               <div className="space-y-1">
                 {list.slice(0, 3).map((e) => <EventBar key={e.id} e={e} onClick={() => onEvent(e)} />)}
                 {list.length > 3 && <div className="px-1 text-[11px] font-medium text-zinc-400">+{list.length - 3} more</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function WeekGrid({
+  days, byDate, todayKey, canWrite, onDay, onEvent,
+}: {
+  days: Date[];
+  byDate: Map<string, ScheduleEvent[]>;
+  todayKey: string;
+  canWrite: boolean;
+  onDay: (key: string) => void;
+  onEvent: (e: ScheduleEvent) => void;
+}) {
+  return (
+    <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
+      <div className="grid grid-cols-7">
+        {days.map((d, i) => {
+          const key = ymd(d);
+          const list = byDate.get(key) ?? [];
+          const isToday = key === todayKey;
+          return (
+            <div
+              key={key}
+              onClick={() => onDay(key)}
+              className={cn(
+                "min-h-[440px] border-r border-zinc-100 p-2",
+                i === 6 && "border-r-0",
+                canWrite && "cursor-pointer hover:bg-accent/[0.03]"
+              )}
+            >
+              <div className="mb-2 text-center">
+                <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">{WEEKDAYS[d.getDay()]}</div>
+                <div className={cn(
+                  "mx-auto mt-0.5 grid h-7 w-7 place-items-center rounded-full text-sm font-semibold",
+                  isToday ? "bg-accent text-white" : "text-midnight"
+                )}>
+                  {d.getDate()}
+                </div>
+              </div>
+              <div className="space-y-1">
+                {list.map((e) => <EventBar key={e.id} e={e} onClick={() => onEvent(e)} />)}
+                {list.length === 0 && <div className="pt-2 text-center text-[11px] text-zinc-300">—</div>}
               </div>
             </div>
           );
