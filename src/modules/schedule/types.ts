@@ -49,10 +49,17 @@ export interface DistrictGroup {
   district_id: string | null;
   district_name: string | null;
   district_code: string | null;
+  area_id?: string | null;
   stores: StorePick[];
+}
+export interface AreaGroup {
+  area_id: string | null;
+  area_name: string | null;
+  districts: DistrictGroup[];
 }
 export interface StoresResponse {
   districts: DistrictGroup[];
+  tree: AreaGroup[];
   can_org_wide: boolean;
   can_write: boolean;
 }

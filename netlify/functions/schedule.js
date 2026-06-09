@@ -125,9 +125,10 @@ async function resolveScope(supa, profile) {
       areas = data || [];
       for (const a of areas) if (a.region_id) regionIdSet.add(a.region_id);
     }
-    return { all, storeRows, storeIdSet, storeNumberSet, districtIdSet, areaIdSet, regionIdSet, districtById };
+    const areaById = new Map(areas.map((a) => [a.id, a]));
+    return { all, storeRows, storeIdSet, storeNumberSet, districtIdSet, areaIdSet, regionIdSet, districtById, areaById };
   }
-  return { all, storeRows, storeIdSet, storeNumberSet, districtIdSet, areaIdSet, regionIdSet, districtById: new Map() };
+  return { all, storeRows, storeIdSet, storeNumberSet, districtIdSet, areaIdSet, regionIdSet, districtById: new Map(), areaById: new Map() };
 }
 
 // Is the given (scope_type, scope_id) node within the caller's scope?
@@ -286,18 +287,33 @@ async function listEvents(supa, user, params) {
 
 async function listStores(supa, user) {
   const scope = await resolveScope(supa, user);
-  // Group stores by district for the picker + tree filter.
-  const groups = new Map();
+  // Group stores by district.
+  const distMap = new Map();
   for (const s of scope.storeRows) {
-    const d = scope.districtById.get(s.district_id);
     const key = s.district_id || "none";
-    if (!groups.has(key)) {
-      groups.set(key, { district_id: s.district_id, district_name: d?.name || null, district_code: d?.code || null, stores: [] });
+    if (!distMap.has(key)) {
+      const d = scope.districtById.get(s.district_id);
+      distMap.set(key, {
+        district_id: s.district_id, district_name: d?.name || null,
+        district_code: d?.code || null, area_id: d?.area_id || null, stores: [],
+      });
     }
-    groups.get(key).stores.push({ id: s.id, number: String(s.number), name: s.name });
+    distMap.get(key).stores.push({ id: s.id, number: String(s.number), name: s.name });
+  }
+  const districts = Array.from(distMap.values());
+  // Group districts into areas for the nested filter tree.
+  const areaMap = new Map();
+  for (const d of districts) {
+    const key = d.area_id || "none";
+    if (!areaMap.has(key)) {
+      const a = scope.areaById?.get(d.area_id);
+      areaMap.set(key, { area_id: d.area_id, area_name: a?.name || (d.area_id ? null : "Stores"), districts: [] });
+    }
+    areaMap.get(key).districts.push(d);
   }
   return {
-    districts: Array.from(groups.values()),
+    districts, // flat — used by the event picker
+    tree: Array.from(areaMap.values()), // nested areas → districts → stores — filter sidebar
     can_org_wide: ORG_WIDE.has(String(user.role)),
     can_write: WRITE_ROLES.has(String(user.role)),
   };
