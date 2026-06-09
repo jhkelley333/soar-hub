@@ -22,6 +22,7 @@ import {
   ListChecks,
   Footprints,
   Banknote,
+  CalendarDays,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -98,6 +99,7 @@ export const NAV: NavItem[] = [
   // Employee Actions — Training Credit + PTO request forms. GM and up;
   // submitting notifies the store's DO + RVP. Approvals/tracking land later.
   { to: "/employee-actions", label: "Employee Actions", icon: ClipboardCheck, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  { to: "/schedule",    label: "Schedule",    icon: CalendarDays,    roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/contacts",    label: "Contacts",    icon: BookUser,        roles: null },
   { to: "/resources",   label: "Resources",   icon: BookOpen,        roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/team",        label: "My Team",     icon: Users,           roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
@@ -175,6 +177,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/labor": "OPERATIONS",
   "/admin/cash-management": "OPERATIONS",
   "/reno-scoping": "OPERATIONS",
+  "/schedule": "OPERATIONS",
   "/my-walks": "OPERATIONS",
   "/walkthroughs": "OPERATIONS",
   "/paf": "PEOPLE",

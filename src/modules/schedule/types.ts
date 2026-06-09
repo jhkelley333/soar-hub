@@ -1,0 +1,84 @@
+// Schedule module — shared types (mirrors netlify/functions/schedule.js).
+
+export type EventType =
+  | "store_visit"
+  | "audit"
+  | "renovation"
+  | "training"
+  | "manager_meeting"
+  | "pto"
+  | "delivery"
+  | "deadline"
+  | "other";
+
+export type ScopeType = "store" | "district" | "area" | "region" | "org";
+
+export interface ScheduleEvent {
+  id: string;
+  source: "soar"; // (feeds + google add their own sources later)
+  title: string;
+  type: EventType;
+  starts_at: string;
+  ends_at: string | null;
+  all_day: boolean;
+  scope_type: ScopeType;
+  scope_id: string | null;
+  store_number: string | null;
+  notes: string | null;
+  color: string | null;
+  created_by_name: string | null;
+}
+
+export interface ScheduleListResponse {
+  events: ScheduleEvent[];
+  can_write: boolean;
+}
+
+export interface StorePick {
+  id: string;
+  number: string;
+  name: string | null;
+}
+export interface DistrictGroup {
+  district_id: string | null;
+  district_name: string | null;
+  district_code: string | null;
+  stores: StorePick[];
+}
+export interface StoresResponse {
+  districts: DistrictGroup[];
+  can_org_wide: boolean;
+  can_write: boolean;
+}
+
+export interface EventInput {
+  id?: string;
+  title: string;
+  type: EventType;
+  starts_at: string;
+  ends_at?: string | null;
+  all_day?: boolean;
+  scope_type: ScopeType;
+  scope_id?: string | null;
+  store_number?: string | null;
+  notes?: string | null;
+  color?: string | null;
+}
+
+// Per-type label + Tailwind palette (matches the design legend).
+export const TYPE_META: Record<EventType, { label: string; dot: string; chip: string; bar: string }> = {
+  store_visit:     { label: "Store visit",        dot: "bg-sky-500",     chip: "bg-sky-50 text-sky-700 ring-sky-200",        bar: "border-l-sky-500" },
+  audit:           { label: "Audit / inspection", dot: "bg-rose-500",    chip: "bg-rose-50 text-rose-700 ring-rose-200",     bar: "border-l-rose-500" },
+  renovation:      { label: "Renovation / scoping", dot: "bg-violet-500", chip: "bg-violet-50 text-violet-700 ring-violet-200", bar: "border-l-violet-500" },
+  training:        { label: "Training",           dot: "bg-teal-500",    chip: "bg-teal-50 text-teal-700 ring-teal-200",     bar: "border-l-teal-500" },
+  manager_meeting: { label: "Manager meeting",    dot: "bg-slate-600",   chip: "bg-slate-100 text-slate-700 ring-slate-300", bar: "border-l-slate-600" },
+  pto:             { label: "PTO / time-off",     dot: "bg-emerald-500", chip: "bg-emerald-50 text-emerald-700 ring-emerald-200", bar: "border-l-emerald-500" },
+  delivery:        { label: "Delivery",           dot: "bg-amber-500",   chip: "bg-amber-50 text-amber-800 ring-amber-200",  bar: "border-l-amber-500" },
+  deadline:        { label: "Deadline / compliance", dot: "bg-pink-500", chip: "bg-pink-50 text-pink-700 ring-pink-200",     bar: "border-l-pink-500" },
+  other:           { label: "Other",              dot: "bg-zinc-400",    chip: "bg-zinc-100 text-zinc-600 ring-zinc-200",    bar: "border-l-zinc-400" },
+};
+
+export const EVENT_TYPE_ORDER: EventType[] = [
+  "store_visit", "audit", "renovation", "training",
+  "manager_meeting", "pto", "delivery", "deadline", "other",
+];
