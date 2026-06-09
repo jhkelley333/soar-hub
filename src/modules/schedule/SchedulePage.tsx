@@ -13,6 +13,7 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { cn } from "@/lib/cn";
 import { fetchEvents, fetchScheduleStores } from "./api";
 import { EventModal } from "./EventModal";
+import { OrgTreeFilter } from "./OrgTreeFilter";
 import { EVENT_TYPE_ORDER, TYPE_META, type EventType, type ScheduleEvent } from "./types";
 
 // ── date helpers ─────────────────────────────────────────────────────────
@@ -67,7 +68,24 @@ export function SchedulePage() {
 
   const canWrite = eventsQ.data?.can_write ?? false;
   const events = eventsQ.data?.events ?? [];
-  const visible = useMemo(() => events.filter((e) => !hidden.has(e.type)), [events, hidden]);
+
+  // Org-tree filter — a Set of active store numbers. null = all (default).
+  const [activeStores, setActiveStores] = useState<Set<string> | null>(null);
+  const tree = storesQ.data?.tree ?? [];
+  const allStoreNumbers = useMemo(() => {
+    const s = new Set<string>();
+    for (const a of tree) for (const d of a.districts) for (const st of d.stores) s.add(st.number);
+    return s;
+  }, [tree]);
+  const effectiveActive = activeStores ?? allStoreNumbers;
+
+  const visible = useMemo(
+    () =>
+      events.filter(
+        (e) => !hidden.has(e.type) && (!e.store_number || effectiveActive.has(e.store_number))
+      ),
+    [events, hidden, effectiveActive]
+  );
 
   const byDate = useMemo(() => {
     const m = new Map<string, ScheduleEvent[]>();
@@ -102,6 +120,12 @@ export function SchedulePage() {
           ) : undefined
         }
       />
+
+      <div className="lg:flex lg:gap-5">
+        <aside className="mb-4 hidden shrink-0 lg:block lg:w-56">
+          <OrgTreeFilter tree={tree} active={effectiveActive} onChange={setActiveStores} />
+        </aside>
+        <div className="min-w-0 flex-1">
 
       {/* Controls */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
@@ -167,6 +191,8 @@ export function SchedulePage() {
       ) : (
         <Agenda events={visible} onEvent={openEvent} />
       )}
+        </div>
+      </div>
 
       {modal && (
         <EventModal
