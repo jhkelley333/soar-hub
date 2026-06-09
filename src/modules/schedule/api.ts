@@ -78,3 +78,14 @@ export function updateCalendar(
 export function unlinkCalendar(id: string): Promise<{ ok: true }> {
   return request(`${FN}?action=unlink-calendar`, { method: "POST", body: JSON.stringify({ id }) });
 }
+// Hide a calendar — scope_type 'user' (just me) or a market node (store…org).
+export function muteCalendar(
+  input: { id: string; scope_type: "user" | "store" | "district" | "area" | "region" | "org"; scope_id?: string | null }
+): Promise<{ ok: true }> {
+  return request(`${FN}?action=mute-calendar`, { method: "POST", body: JSON.stringify(input) });
+}
+export function unmuteCalendar(
+  input: { id: string; scope_type: "user" | "store" | "district" | "area" | "region" | "org"; scope_id?: string | null }
+): Promise<{ ok: true }> {
+  return request(`${FN}?action=unmute-calendar`, { method: "POST", body: JSON.stringify(input) });
+}

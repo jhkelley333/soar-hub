@@ -15,6 +15,18 @@ const FETCH_TIMEOUT_MS = 6000;
 
 const pad = (n) => String(n).padStart(2, "0");
 const DAY_MS = 86400000;
+
+// Unescape RFC-5545 TEXT values (\\n → newline, \\, \\; \\\\ literals) and cap
+// length so a giant body can't bloat the payload.
+function unescapeText(v) {
+  return String(v)
+    .replace(/\\n/gi, "\n")
+    .replace(/\\,/g, ",")
+    .replace(/\\;/g, ";")
+    .replace(/\\\\/g, "\\")
+    .trim()
+    .slice(0, 4000);
+}
 const WD = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
 
 // Guard against obvious SSRF targets. Callers are authenticated leaders, so
@@ -180,7 +192,9 @@ function parseEvents(text) {
     if (!p) continue;
     if (p.name === "DTSTART") { const dt = parseDt(p.value, p.params); if (dt) cur.start = dt; }
     else if (p.name === "DTEND") { const dt = parseDt(p.value, p.params); if (dt) cur.end = dt; }
-    else if (p.name === "SUMMARY") cur.summary = p.value.replace(/\\,/g, ",").replace(/\\n/gi, " ").replace(/\\;/g, ";").trim();
+    else if (p.name === "SUMMARY") cur.summary = unescapeText(p.value);
+    else if (p.name === "DESCRIPTION") cur.description = unescapeText(p.value);
+    else if (p.name === "LOCATION") cur.location = unescapeText(p.value);
     else if (p.name === "RRULE") cur.rrule = parseRrule(p.value);
     else if (p.name === "EXDATE") { const dt = parseDt(p.value, p.params); if (dt) cur.exdates.add(dayKey(dt.date)); }
     else if (p.name === "UID") cur.uid = p.value;
@@ -220,7 +234,8 @@ export async function fetchCalendarEvents(url, cal, fromIso, toIso) {
         scope_type: "external",
         scope_id: cal.id,
         store_number: null,
-        notes: cal.label,
+        notes: ev.description || null,
+        location: ev.location || null,
         color: cal.color || "blue",
         created_by_name: cal.label,
       });

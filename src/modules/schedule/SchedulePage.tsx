@@ -90,6 +90,7 @@ export function SchedulePage() {
     try { localStorage.setItem(HOURS_KEY, JSON.stringify(next)); } catch { /* ignore */ }
   }
   const [peek, setPeek] = useState<string | null>(null); // day-key for the "+N more" peek
+  const [detail, setDetail] = useState<ScheduleEvent | null>(null); // external event read-only view
   const [modal, setModal] = useState<{ event: ScheduleEvent | null; date: string | null } | null>(null);
   const navigate = useNavigate();
   const { profile } = useAuth();
@@ -97,8 +98,9 @@ export function SchedulePage() {
   // Native events open the editor; feed events (training/PTO/…) are read-only
   // here, so they deep-link into their source module.
   function openEvent(e: ScheduleEvent) {
-    // Read-only events (module feeds, external calendars) don't open the
-    // editor: feeds deep-link to their source; externals just no-op.
+    // External calendar events open a read-only detail view (with the body).
+    if (e.source === "external") { setDetail(e); return; }
+    // Other read-only events (module feeds) deep-link to their source module.
     if (e.editable === false) { if (e.link) navigate(e.link); return; }
     setModal({ event: e, date: null });
   }
@@ -204,7 +206,7 @@ export function SchedulePage() {
         />
       </div>
       <div className="mt-5 border-t border-zinc-200 pt-4">
-        <LinkedCalendars />
+        <LinkedCalendars you={storesQ.data?.you} canOrgWide={storesQ.data?.can_org_wide ?? false} />
       </div>
     </>
   );
@@ -432,6 +434,47 @@ export function SchedulePage() {
             <EventBar key={e.id} e={e} colorBy={colorBy} onClick={() => { setPeek(null); openEvent(e); }} />
           ))}
         </div>
+      </Modal>
+
+      {/* External calendar event — read-only detail (with the body). */}
+      <Modal
+        open={detail != null}
+        onClose={() => setDetail(null)}
+        title={detail?.title ?? ""}
+        maxWidth="max-w-md"
+      >
+        {detail && (
+          <div className="space-y-3 text-sm">
+            <div className="flex flex-wrap items-center gap-2 text-zinc-500">
+              {detail.created_by_name && (
+                <span className="inline-flex items-center gap-1.5">
+                  <span className={cn("h-2.5 w-2.5 rounded-full", eventColor(detail, "type").dot)} />
+                  {detail.created_by_name}
+                </span>
+              )}
+            </div>
+            <div className="text-zinc-700">
+              {detail.all_day
+                ? new Date(detail.starts_at).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }) + " · All day"
+                : `${new Date(detail.starts_at).toLocaleString("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}${detail.ends_at ? ` – ${new Date(detail.ends_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}` : ""}`}
+            </div>
+            {detail.location && (
+              <div>
+                <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">Location</div>
+                <div className="whitespace-pre-wrap text-zinc-700">{detail.location}</div>
+              </div>
+            )}
+            {detail.notes && (
+              <div>
+                <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">Details</div>
+                <div className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words text-zinc-700">{detail.notes}</div>
+              </div>
+            )}
+            {!detail.location && !detail.notes && (
+              <div className="text-xs text-zinc-400">No additional details on this event.</div>
+            )}
+          </div>
+        )}
       </Modal>
 
       {modal && (
