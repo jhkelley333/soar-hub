@@ -405,6 +405,19 @@ async function submitCloseout(supa, user, body) {
     }
   }
 
+  // Wrong-day fail-safe. Closing for "today" while the immediately-prior
+  // business day has NO closeout usually means a forgotten night whose date
+  // defaulted forward after the cutoff. Make the closer confirm which day this
+  // deposit is really for before we silently record it as today.
+  if (!isLate && body?.confirm_today !== true) {
+    const prev = isoBusinessDaysBefore(today, 1);
+    const { data: prevCo } = await supa
+      .from("cash_closeouts").select("id").eq("store_id", active.id).eq("business_date", prev).maybeSingle();
+    if (!prevCo && prev >= isoBusinessDaysBefore(today, LATE_WINDOW_DAYS)) {
+      return { confirm_business_date: true, today, suggested_date: prev };
+    }
+  }
+
   const cashDue = Math.round(Number(body?.cash_due_cents));
   const deposit = Math.round(Number(body?.deposit_cents));
   const counted = Math.round(Number(body?.counted_cents));
