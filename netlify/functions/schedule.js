@@ -579,7 +579,11 @@ async function fetchLinkedOverlay(supa, user, scope, from, to) {
   if (!from || !to) return [];
   const cals = await loadCallerCalendars(supa, user, scope);
   const active = cals.filter(
-    ({ row, mutes }) => row.is_enabled && !mutes.some((m) => muteCoversCaller(user, scope, m)),
+    ({ row, mutes }) =>
+      row.is_enabled &&
+      // Never fetch a SOAR ics feed linked back into SOAR — it would recurse.
+      !/[?&]action=ics\b/i.test(String(row.url || "")) &&
+      !mutes.some((m) => muteCoversCaller(user, scope, m)),
   );
   if (active.length === 0) return [];
   const results = await Promise.all(
@@ -600,8 +604,8 @@ async function fetchLinkedOverlay(supa, user, scope, from, to) {
 }
 
 // Native SOAR events (one-off + recurring, scoped) plus module feeds, for the
-// window. Excludes external linked-calendar overlays — used by both the events
-// list and the outbound .ics feed (which must not re-export others' calendars).
+// window. Excludes external linked-calendar overlays; callers that want those
+// (the events list and the outbound .ics feed) add fetchLinkedOverlay on top.
 async function gatherOwnedEvents(supa, scope, from, to) {
   let oneOffQ = supa.from("schedule_events").select("*").eq("recurrence", "none");
   if (from) oneOffQ = oneOffQ.gte("starts_at", from);
@@ -892,7 +896,6 @@ function buildIcs(events, name) {
   ];
   const stamp = icsDate(new Date().toISOString(), false).v;
   for (const e of events) {
-    if (e.source === "external") continue;
     const start = icsDate(e.starts_at, e.all_day);
     let endLine = null;
     if (e.all_day) {
@@ -935,7 +938,15 @@ async function serveIcsFeed(supa, token) {
   const from = new Date(now.getTime() - 30 * DAY_MS).toISOString();
   const to = new Date(now.getTime() + 180 * DAY_MS).toISOString();
   const scope = await resolveScope(supa, profile);
-  const events = await gatherOwnedEvents(supa, scope, from, to);
+  // Include the linked calendars the user sees (e.g. their Store Calendar) so
+  // the subscription is a complete, seamless mirror of their SOAR schedule.
+  // Self-referential feeds (a SOAR ics link linked back in) are skipped to
+  // avoid a subscribe loop.
+  const [owned, linked] = await Promise.all([
+    gatherOwnedEvents(supa, scope, from, to),
+    fetchLinkedOverlay(supa, profile, scope, from, to),
+  ]);
+  const events = [...owned, ...linked];
   supa.from("schedule_feed_tokens").update({ last_accessed_at: new Date().toISOString() }).eq("token", token).then(() => {}, () => {});
   const ics = buildIcs(events, `SOAR — ${displayName(profile)}`);
   return {
