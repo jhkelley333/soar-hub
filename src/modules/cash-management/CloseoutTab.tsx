@@ -182,9 +182,9 @@ export function CloseoutTab({
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
           <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Night Closeout</div>
-          <h2 className="mt-1 text-2xl font-bold tracking-tight text-midnight">Close out the drawer</h2>
+          <h2 className="mt-1 text-2xl font-bold tracking-tight text-midnight">Close out the deposit</h2>
           <p className="mt-1.5 max-w-xl text-sm text-zinc-500">
-            Count the cash, confirm the deposit, and reconcile against the DSR. Variances over {usd(tol)} are escalated to
+            Count the cash, confirm the deposit, and reconcile against the POS. Variances over {usd(tol)} are escalated to
             your DO and SDO automatically.
           </p>
         </div>
@@ -298,7 +298,7 @@ export function CloseoutTab({
             <label className="mb-3.5 block">
               <div className="mb-1.5 text-[11px] font-bold uppercase tracking-wider text-zinc-400">Cash due</div>
               <MoneyInput value={cashDue} onChange={setCashDue} placeholder="0.00" />
-              <div className="mt-1.5 text-[11px] text-zinc-400">Expected deposit — pulled from today's DSR.</div>
+              <div className="mt-1.5 text-[11px] text-zinc-400">Expected deposit — pulled from today's POS.</div>
             </label>
 
             <label className="mb-1.5 block">
@@ -335,7 +335,7 @@ export function CloseoutTab({
               </div>
               <div className="mt-1.5 text-xs opacity-90">
                 {balanced
-                  ? "Drawer matches the DSR exactly."
+                  ? "Drawer matches the POS exactly."
                   : overTol
                     ? `Exceeds the ${usd(tol)} tolerance — escalation required.`
                     : `Within the ${usd(tol)} tolerance.`}
