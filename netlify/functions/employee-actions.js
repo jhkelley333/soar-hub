@@ -32,6 +32,8 @@ const READ_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "pay
 const ORG_WIDE_READ = new Set(["payroll", "admin", "vp", "coo"]);
 // Roles that can act on an approval step.
 const APPROVER_ROLES = new Set(["do", "sdo", "rvp", "admin"]);
+// Finished states — can't be corrected or withdrawn.
+const TERMINAL_STATUSES = new Set(["Completed", "Closed", "Withdrawn"]);
 
 const VALID_TRAINING_DAYS = new Set([
   "Monday",
@@ -540,12 +542,29 @@ async function updateTraining(supa, user, body) {
     .maybeSingle();
   if (fetchErr) return { error: fetchErr.message, status: 500 };
   if (!existing) return { error: "Request not found.", status: 404 };
-  if (existing.submitter_id !== user.id && user.role !== "admin") {
-    return { error: "You can only edit your own request.", status: 403 };
+
+  // Two edit paths share this endpoint:
+  //   • the submitter (a GM) fixing a request that was sent back ("Changes
+  //     Requested"), and
+  //   • a DO and above directly CORRECTING an in-flight request (e.g. a wrong
+  //     store #). A correction resets the request to "Submitted" below, so it
+  //     re-runs the approval chain — chosen behavior for material edits.
+  const isApprover = APPROVER_ROLES.has(user.role);
+  const isOwner = existing.submitter_id === user.id;
+  if (!isOwner && !isApprover) {
+    return { error: "Only the submitter, or a DO and above, can edit this request.", status: 403 };
   }
-  if (existing.status !== "Changes Requested") {
+  if (TERMINAL_STATUSES.has(existing.status)) {
+    return { error: `A ${existing.status} request can't be edited.`, status: 409 };
+  }
+  if (!isApprover && existing.status !== "Changes Requested") {
     return { error: "Only a request sent back for changes can be resubmitted.", status: 409 };
   }
+  // A DO+ correcting must also have scope over the request's current store,
+  // not just the (possibly new) store they're moving it to.
+  const curScopeErr = await assertStoreInScope(supa, user, existing.store_number);
+  if (curScopeErr) return curScopeErr;
+  const isCorrection = isApprover && existing.status !== "Changes Requested";
 
   const storeNumber = sanitizeText(body?.store_number, 20) || existing.store_number;
   const scopeErr = await assertStoreInScope(supa, user, storeNumber);
@@ -574,8 +593,13 @@ async function updateTraining(supa, user, body) {
     request_id: id,
     actor_id: user.id,
     actor_email: user.email,
-    action: "resubmit",
-    detail: { store_number: storeNumber, employee_name: built.meta.employeeName },
+    action: isCorrection ? "correct" : "resubmit",
+    detail: {
+      store_number: storeNumber,
+      employee_name: built.meta.employeeName,
+      from_status: existing.status,
+      ...(existing.store_number !== storeNumber ? { prev_store_number: existing.store_number } : {}),
+    },
   });
 
   const link = `${appBaseUrl()}/employee-actions`;
@@ -1267,6 +1291,53 @@ async function confirm(supa, user, body) {
 // ----------------------------------------------------------------------------
 // delete (admin only)
 // ----------------------------------------------------------------------------
+// Withdraw a request that's no longer needed (e.g. the employee quit). Unlike
+// reject (a decision sent back to the submitter) or delete (admin-only hard
+// delete), this records a 'Withdrawn' status that stays for reporting and
+// drops out of the active queue. DO and above, in scope, on a non-terminal
+// request. Reason is optional.
+async function withdrawRequest(supa, user, body) {
+  if (!APPROVER_ROLES.has(user.role)) {
+    return { error: "Only a DO and above can withdraw a request.", status: 403 };
+  }
+  const type = sanitizeText(body?.type, 20);
+  const id = sanitizeText(body?.id, 64);
+  if (!id) return { error: "Request id is required.", status: 400 };
+  const table =
+    type === "training"
+      ? "training_credit_requests"
+      : type === "pto"
+        ? "pto_requests"
+        : null;
+  if (!table) return { error: "Unknown request type.", status: 400 };
+
+  const { data: existing, error: fetchErr } = await supa
+    .from(table).select("*").eq("id", id).maybeSingle();
+  if (fetchErr) return { error: fetchErr.message, status: 500 };
+  if (!existing) return { error: "Request not found.", status: 404 };
+  const scopeErr = await assertStoreInScope(supa, user, existing.store_number);
+  if (scopeErr) return scopeErr;
+  if (TERMINAL_STATUSES.has(existing.status)) {
+    return { error: `A ${existing.status} request can't be withdrawn.`, status: 409 };
+  }
+
+  const reason = sanitizeText(body?.reason, 500) || null;
+  const { error } = await supa
+    .from(table).update({ status: "Withdrawn", withdrawn_reason: reason }).eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+
+  await logAudit(supa, {
+    request_type: type === "training" ? "training_credit" : "pto",
+    request_id: id,
+    actor_id: user.id,
+    actor_email: user.email,
+    action: "withdraw",
+    detail: { reason, from_status: existing.status },
+  });
+
+  return { ok: true, status: "Withdrawn" };
+}
+
 async function deleteRequest(supa, user, body) {
   if (user.role !== "admin") {
     return { error: "Only an admin can delete requests.", status: 403 };
@@ -1338,6 +1409,7 @@ export const handler = async (event) => {
       if (action === "update-pto") return unwrap(await updatePto(supa, user, body));
       if (action === "decide") return unwrap(await decide(supa, user, body));
       if (action === "confirm") return unwrap(await confirm(supa, user, body));
+      if (action === "withdraw") return unwrap(await withdrawRequest(supa, user, body));
       if (action === "delete") return unwrap(await deleteRequest(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }

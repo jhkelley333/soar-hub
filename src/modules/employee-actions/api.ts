@@ -119,3 +119,16 @@ export function deleteEmployeeAction(
     body: JSON.stringify({ type, id }),
   });
 }
+
+// DO+ withdraws a request that's no longer needed (e.g. employee quit).
+// Sets status 'Withdrawn'; reason is optional.
+export function withdrawEmployeeAction(
+  type: "training" | "pto",
+  id: string,
+  reason?: string
+): Promise<{ ok: true; status: string }> {
+  return request(`${FN}?action=withdraw`, {
+    method: "POST",
+    body: JSON.stringify({ type, id, reason: reason || undefined }),
+  });
+}
