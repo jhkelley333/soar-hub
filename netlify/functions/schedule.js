@@ -357,8 +357,18 @@ async function fetchFeeds(supa, scope, fromDate, toDate) {
 }
 
 // ----------------------------------------------------------------------------
-// Linked (external) calendars — read-only iCal overlays, owned per user.
+// Linked (external) calendars — read-only iCal overlays. A calendar is either
+// personal (owner-only) or scoped to an org node (store/district/area/region/
+// org), in which case everyone in/under that node inherits it. Inherited
+// calendars can be muted for a whole market (a scope mute) or for one viewer.
 // ----------------------------------------------------------------------------
+const CAL_SCOPES = new Set(["personal", "store", "district", "area", "region", "org"]);
+const MUTE_SCOPES = new Set(["user", "store", "district", "area", "region", "org"]);
+const SCOPE_LABEL = {
+  personal: "Personal", org: "Company", region: "Region",
+  area: "Area", district: "District", store: "Store",
+};
+
 function calendarCard(c) {
   return {
     id: c.id,
@@ -366,17 +376,74 @@ function calendarCard(c) {
     url: c.url,
     color: c.color,
     is_enabled: c.is_enabled,
+    scope_type: c.scope_type || "personal",
+    scope_id: c.scope_id || null,
     last_synced_at: c.last_synced_at,
     last_error: c.last_error,
   };
 }
 
-async function listCalendars(supa, user) {
-  const { data, error } = await supa
+// Can this caller manage (edit/delete/scope-mute) a node at scope_type/scope_id?
+// Personal scope is creator-only (handled separately). Org needs org-wide role.
+function canManageScope(user, scope, scopeType, scopeId) {
+  if (!WRITE_ROLES.has(String(user.role))) return false;
+  if (scopeType === "personal") return false;
+  if (scopeType === "org") return ORG_WIDE.has(String(user.role));
+  return nodeInScope(scope, scopeType, scopeId);
+}
+
+// Is a calendar visible to the caller (ignoring mutes)?
+function calendarVisible(user, scope, c) {
+  if ((c.scope_type || "personal") === "personal") return c.user_id === user.id;
+  return nodeInScope(scope, c.scope_type, c.scope_id);
+}
+
+// Does a mute row suppress this calendar for the caller?
+function muteCoversCaller(user, scope, m) {
+  if (m.scope_type === "user") return m.scope_id === user.id;
+  return nodeInScope(scope, m.scope_type, m.scope_id);
+}
+
+// Calendars the caller can see, with their mutes attached. `scope` is the
+// caller's resolved org scope.
+async function loadCallerCalendars(supa, user, scope) {
+  // Personal-owned OR any shared (non-personal) calendar; filter to visible.
+  const { data: rows } = await supa
     .from("schedule_linked_calendars")
-    .select("*").eq("user_id", user.id).order("created_at", { ascending: true });
-  if (error) return { error: error.message, status: 500 };
-  return { calendars: (data || []).map(calendarCard) };
+    .select("*")
+    .or(`user_id.eq.${user.id},scope_type.neq.personal`)
+    .order("created_at", { ascending: true });
+  const visible = (rows || []).filter((c) => calendarVisible(user, scope, c));
+  if (visible.length === 0) return [];
+  const ids = visible.map((c) => c.id);
+  const { data: mutes } = await supa
+    .from("schedule_calendar_mutes").select("*").in("calendar_id", ids);
+  const muteByCal = new Map();
+  for (const m of mutes || []) {
+    if (!muteByCal.has(m.calendar_id)) muteByCal.set(m.calendar_id, []);
+    muteByCal.get(m.calendar_id).push(m);
+  }
+  return visible.map((c) => ({ row: c, mutes: muteByCal.get(c.id) || [] }));
+}
+
+async function listCalendars(supa, user) {
+  const scope = await resolveScope(supa, user);
+  const cals = await loadCallerCalendars(supa, user, scope);
+  return {
+    calendars: cals.map(({ row, mutes }) => {
+      const covering = mutes.filter((m) => muteCoversCaller(user, scope, m));
+      const userMute = covering.find((m) => m.scope_type === "user");
+      const marketMute = covering.find((m) => m.scope_type !== "user");
+      return {
+        ...calendarCard(row),
+        scope_label: SCOPE_LABEL[row.scope_type || "personal"] || "Personal",
+        is_owner: row.user_id === user.id,
+        can_manage: row.user_id === user.id || canManageScope(user, scope, row.scope_type, row.scope_id),
+        muted_for_me: !!userMute,
+        muted_for_market: !!marketMute,
+      };
+    }),
+  };
 }
 
 function validateCalendarBody(body) {
@@ -387,12 +454,24 @@ function validateCalendarBody(body) {
     return { error: "Enter a valid iCal URL (https:// or webcal://).", status: 400 };
   }
   const color = CAL_COLORS.has(body?.color) ? body.color : "blue";
-  return { fields: { label, url, color } };
+  const scopeType = CAL_SCOPES.has(body?.scope_type) ? body.scope_type : "personal";
+  const scopeId = scopeType === "personal" || scopeType === "org" ? null : sanitize(body?.scope_id, 64) || null;
+  if (scopeType !== "personal" && scopeType !== "org" && !scopeId) {
+    return { error: "Pick which market this calendar is for.", status: 400 };
+  }
+  return { fields: { label, url, color, scope_type: scopeType, scope_id: scopeId } };
 }
 
 async function linkCalendar(supa, user, body) {
   const v = validateCalendarBody(body);
   if (v.error) return v;
+  // Scoped (shared) calendars require authority at that node.
+  if (v.fields.scope_type !== "personal") {
+    const scope = await resolveScope(supa, user);
+    if (!canManageScope(user, scope, v.fields.scope_type, v.fields.scope_id)) {
+      return { error: "You can only add a shared calendar within a market you lead.", status: 403 };
+    }
+  }
   const { data, error } = await supa
     .from("schedule_linked_calendars")
     .insert({ ...v.fields, user_id: user.id })
@@ -401,12 +480,22 @@ async function linkCalendar(supa, user, body) {
   return { ok: true, calendar: calendarCard(data) };
 }
 
+// Manage rights for an existing calendar row (owner or scope authority).
+async function assertCanManageCalendar(supa, user, id) {
+  const { data: existing } = await supa
+    .from("schedule_linked_calendars").select("*").eq("id", id).maybeSingle();
+  if (!existing) return { error: { error: "Calendar not found.", status: 404 } };
+  if (existing.user_id === user.id) return { existing };
+  const scope = await resolveScope(supa, user);
+  if (canManageScope(user, scope, existing.scope_type, existing.scope_id)) return { existing };
+  return { error: { error: "You can't manage this calendar.", status: 403 } };
+}
+
 async function updateCalendar(supa, user, body) {
   const id = sanitize(body?.id, 64);
   if (!id) return { error: "Calendar id is required.", status: 400 };
-  const { data: existing } = await supa
-    .from("schedule_linked_calendars").select("id").eq("id", id).eq("user_id", user.id).maybeSingle();
-  if (!existing) return { error: "Calendar not found.", status: 404 };
+  const mgr = await assertCanManageCalendar(supa, user, id);
+  if (mgr.error) return mgr.error;
   const patch = { updated_at: new Date().toISOString() };
   if (typeof body?.label === "string") patch.label = sanitize(body.label, 80) || undefined;
   if (typeof body?.url === "string") {
@@ -416,8 +505,7 @@ async function updateCalendar(supa, user, body) {
   if (CAL_COLORS.has(body?.color)) patch.color = body.color;
   if (typeof body?.is_enabled === "boolean") patch.is_enabled = body.is_enabled;
   const { data, error } = await supa
-    .from("schedule_linked_calendars").update(patch).eq("id", id).eq("user_id", user.id)
-    .select("*").single();
+    .from("schedule_linked_calendars").update(patch).eq("id", id).select("*").single();
   if (error) return { error: error.message, status: 500 };
   return { ok: true, calendar: calendarCard(data) };
 }
@@ -425,23 +513,69 @@ async function updateCalendar(supa, user, body) {
 async function unlinkCalendar(supa, user, body) {
   const id = sanitize(body?.id, 64);
   if (!id) return { error: "Calendar id is required.", status: 400 };
-  const { error } = await supa
-    .from("schedule_linked_calendars").delete().eq("id", id).eq("user_id", user.id);
+  const mgr = await assertCanManageCalendar(supa, user, id);
+  if (mgr.error) return mgr.error;
+  const { error } = await supa.from("schedule_linked_calendars").delete().eq("id", id);
   if (error) return { error: error.message, status: 500 };
   return { ok: true };
 }
 
-// Fetch + parse every enabled linked calendar for the caller, within the
-// window. Each calendar is isolated: a fetch/parse failure records last_error
-// and yields no events rather than breaking the whole list.
-async function fetchLinkedOverlay(supa, user, from, to) {
+// Mute (hide) a calendar — for one viewer ('user') or a whole market.
+async function muteCalendar(supa, user, body) {
+  const id = sanitize(body?.id, 64);
+  if (!id) return { error: "Calendar id is required.", status: 400 };
+  const scopeType = MUTE_SCOPES.has(body?.scope_type) ? body.scope_type : "user";
+  const scope = await resolveScope(supa, user);
+  // Must be able to see the calendar at all.
+  const { data: cal } = await supa.from("schedule_linked_calendars").select("*").eq("id", id).maybeSingle();
+  if (!cal || !calendarVisible(user, scope, cal)) return { error: "Calendar not found.", status: 404 };
+  let scopeId = null;
+  if (scopeType === "user") {
+    scopeId = user.id;
+  } else if (scopeType !== "org") {
+    scopeId = sanitize(body?.scope_id, 64) || null;
+    if (!scopeId) return { error: "Pick a market to mute for.", status: 400 };
+  }
+  // Market-level mutes require authority at that node.
+  if (scopeType !== "user" && !canManageScope(user, scope, scopeType, scopeId)) {
+    return { error: "You can only mute for a market you lead.", status: 403 };
+  }
+  const { error } = await supa.from("schedule_calendar_mutes")
+    .upsert({ calendar_id: id, scope_type: scopeType, scope_id: scopeId, muted_by: user.id },
+            { onConflict: "calendar_id,scope_type,scope_id" });
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
+async function unmuteCalendar(supa, user, body) {
+  const id = sanitize(body?.id, 64);
+  if (!id) return { error: "Calendar id is required.", status: 400 };
+  const scopeType = MUTE_SCOPES.has(body?.scope_type) ? body.scope_type : "user";
+  const scope = await resolveScope(supa, user);
+  let scopeId = scopeType === "user" ? user.id : (scopeType === "org" ? null : sanitize(body?.scope_id, 64) || null);
+  if (scopeType !== "user" && scopeType !== "org" && !scopeId) return { error: "Pick a market.", status: 400 };
+  if (scopeType !== "user" && !canManageScope(user, scope, scopeType, scopeId)) {
+    return { error: "You can only unmute for a market you lead.", status: 403 };
+  }
+  let q = supa.from("schedule_calendar_mutes").delete().eq("calendar_id", id).eq("scope_type", scopeType);
+  q = scopeId ? q.eq("scope_id", scopeId) : q.is("scope_id", null);
+  const { error } = await q;
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
+// Fetch + parse every visible, enabled, un-muted calendar for the caller,
+// within the window. Each calendar is isolated: a fetch/parse failure records
+// last_error and yields no events rather than breaking the whole list.
+async function fetchLinkedOverlay(supa, user, scope, from, to) {
   if (!from || !to) return [];
-  const { data: cals } = await supa
-    .from("schedule_linked_calendars")
-    .select("*").eq("user_id", user.id).eq("is_enabled", true);
-  if (!cals || cals.length === 0) return [];
+  const cals = await loadCallerCalendars(supa, user, scope);
+  const active = cals.filter(
+    ({ row, mutes }) => row.is_enabled && !mutes.some((m) => muteCoversCaller(user, scope, m)),
+  );
+  if (active.length === 0) return [];
   const results = await Promise.all(
-    cals.map(async (c) => {
+    active.map(async ({ row: c }) => {
       try {
         const events = await fetchCalendarEvents(c.url, c, from, to);
         await supa.from("schedule_linked_calendars")
@@ -489,7 +623,7 @@ async function listEvents(supa, user, params) {
 
   const [feeds, linked] = await Promise.all([
     fetchFeeds(supa, scope, from ? from.slice(0, 10) : null, to ? to.slice(0, 10) : null),
-    fetchLinkedOverlay(supa, user, from, to),
+    fetchLinkedOverlay(supa, user, scope, from, to),
   ]);
   return {
     events: [...visible.map(eventCard), ...occurrences, ...feeds, ...linked],
@@ -720,6 +854,8 @@ export const handler = async (event) => {
     if (action === "link-calendar") return unwrap(await linkCalendar(supa, user, body));
     if (action === "update-calendar") return unwrap(await updateCalendar(supa, user, body));
     if (action === "unlink-calendar") return unwrap(await unlinkCalendar(supa, user, body));
+    if (action === "mute-calendar") return unwrap(await muteCalendar(supa, user, body));
+    if (action === "unmute-calendar") return unwrap(await unmuteCalendar(supa, user, body));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });

@@ -25,12 +25,20 @@ export const CAL_COLOR_OPTIONS: { value: CalColor; dot: string }[] = [
   { value: "red", dot: "bg-rose-500" },
   { value: "gray", dot: "bg-zinc-400" },
 ];
+export type CalScope = "personal" | "store" | "district" | "area" | "region" | "org";
 export interface LinkedCalendar {
   id: string;
   label: string;
   url: string;
   color: CalColor;
   is_enabled: boolean;
+  scope_type: CalScope;
+  scope_id: string | null;
+  scope_label: string;
+  is_owner: boolean;
+  can_manage: boolean;
+  muted_for_me: boolean;
+  muted_for_market: boolean;
   last_synced_at: string | null;
   last_error: string | null;
 }
@@ -41,6 +49,8 @@ export interface LinkCalendarInput {
   label: string;
   url: string;
   color: CalColor;
+  scope_type: CalScope;
+  scope_id: string | null;
 }
 
 export type Recurrence = "none" | "daily" | "weekly" | "biweekly" | "monthly";
@@ -69,6 +79,7 @@ export interface ScheduleEvent {
   scope_id: string | null;
   store_number: string | null;
   notes: string | null;
+  location?: string | null;
   color: string | null;
   created_by_name: string | null;
   // Recurrence. A projected occurrence carries is_occurrence + series_start/
