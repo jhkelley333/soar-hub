@@ -542,9 +542,15 @@ async function muteCalendar(supa, user, body) {
   if (scopeType !== "user" && !canManageScope(user, scope, scopeType, scopeId)) {
     return { error: "You can only mute for a market you lead.", status: 403 };
   }
+  // Idempotent insert. (The mutes unique index is on a coalesce(scope_id)
+  // expression, which ON CONFLICT can't target — so check-then-insert.)
+  let existsQ = supa.from("schedule_calendar_mutes")
+    .select("id").eq("calendar_id", id).eq("scope_type", scopeType);
+  existsQ = scopeId ? existsQ.eq("scope_id", scopeId) : existsQ.is("scope_id", null);
+  const { data: already } = await existsQ.maybeSingle();
+  if (already) return { ok: true };
   const { error } = await supa.from("schedule_calendar_mutes")
-    .upsert({ calendar_id: id, scope_type: scopeType, scope_id: scopeId, muted_by: user.id },
-            { onConflict: "calendar_id,scope_type,scope_id" });
+    .insert({ calendar_id: id, scope_type: scopeType, scope_id: scopeId, muted_by: user.id });
   if (error) return { error: error.message, status: 500 };
   return { ok: true };
 }
