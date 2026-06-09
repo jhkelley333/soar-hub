@@ -4,7 +4,18 @@
 // so a higher tier always covers a lower amount (RVP clears an SDO-band
 // quote). Above the top active tier it's verbal/Owner territory.
 
-import type { ApprovalThreshold } from "./types";
+import type { ApprovalThreshold, ApprovalTier } from "./types";
+
+// Auto-route a dollar amount to an approval tier, so the store-side approval
+// request picks the approver the same way the vendor side does. Boundaries
+// intentionally mirror vendor-portal.js `tierForCost` exactly:
+//   < $500 → DO,  $500–$1000 → SDO,  > $1000 → RVP.
+export function tierForAmount(amount: number): ApprovalTier | null {
+  if (!Number.isFinite(amount) || amount <= 0) return null;
+  if (amount < 500) return "DO < $500";
+  if (amount <= 1000) return "SDO $501-$1000";
+  return "RVP $1001-$1750";
+}
 
 export function activeThresholds(thr: ApprovalThreshold[]): ApprovalThreshold[] {
   return thr.filter((t) => t.is_active).sort((a, b) => a.sort_order - b.sort_order);
