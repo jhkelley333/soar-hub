@@ -102,7 +102,7 @@ export function SchedulePage() {
   const tree = storesQ.data?.tree ?? [];
   const allStoreNumbers = useMemo(() => {
     const s = new Set<string>();
-    for (const a of tree) for (const d of a.districts) for (const st of d.stores) s.add(st.number);
+    for (const r of tree) for (const a of r.areas) for (const d of a.districts) for (const st of d.stores) s.add(st.number);
     return s;
   }, [tree]);
   const effectiveActive = activeStores ?? allStoreNumbers;
@@ -157,7 +157,12 @@ export function SchedulePage() {
             <div className="mt-0.5 text-xs text-white/70">{storeCount} store{storeCount === 1 ? "" : "s"} in scope</div>
           </div>
           <div className="mt-4">
-            <OrgTreeFilter tree={tree} active={effectiveActive} onChange={setActiveStores} />
+            <OrgTreeFilter
+              tree={tree}
+              active={effectiveActive}
+              onChange={setActiveStores}
+              you={storesQ.data?.you}
+            />
           </div>
         </aside>
 

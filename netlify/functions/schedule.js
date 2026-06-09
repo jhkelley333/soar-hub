@@ -75,6 +75,9 @@ async function resolveScope(supa, profile) {
   const role = String(profile.role || "").toLowerCase();
   let storeRows;
   let all = false;
+  // The viewer's "home" node — the broadest org node they own explicitly.
+  // Drives the "YOU" badge on the org tree. Org-wide roles sit at "org".
+  let primaryScope = { scope_type: "org", scope_id: null };
   if (ORG_WIDE.has(role) || role === "accounting" || role === "payroll") {
     const { data } = await supa
       .from("stores").select("id, number, name, district_id").eq("is_active", true).order("number").limit(2000);
@@ -83,6 +86,14 @@ async function resolveScope(supa, profile) {
   } else {
     const { data: scopes } = await supa
       .from("user_scopes").select("scope_type, scope_id").eq("user_id", profile.id);
+    // Broadest explicit scope wins (region > area > district > store).
+    const BREADTH = { region: 4, area: 3, district: 2, store: 1 };
+    for (const s of scopes || []) {
+      if ((BREADTH[s.scope_type] || 0) > (BREADTH[primaryScope.scope_type] || 0)) {
+        primaryScope = { scope_type: s.scope_type, scope_id: s.scope_id };
+      }
+    }
+    if (primaryScope.scope_type === "org") primaryScope = { scope_type: null, scope_id: null };
     const storeIds = new Set(scopes?.filter((s) => s.scope_type === "store").map((s) => s.scope_id) || []);
     const districtIds = new Set(scopes?.filter((s) => s.scope_type === "district").map((s) => s.scope_id) || []);
     const areaIds = new Set(scopes?.filter((s) => s.scope_type === "area").map((s) => s.scope_id) || []);
@@ -126,9 +137,14 @@ async function resolveScope(supa, profile) {
       for (const a of areas) if (a.region_id) regionIdSet.add(a.region_id);
     }
     const areaById = new Map(areas.map((a) => [a.id, a]));
-    return { all, storeRows, storeIdSet, storeNumberSet, districtIdSet, areaIdSet, regionIdSet, districtById, areaById };
+    let regionById = new Map();
+    if (regionIdSet.size) {
+      const { data: regs } = await supa.from("regions").select("id, name, code").in("id", Array.from(regionIdSet));
+      regionById = new Map((regs || []).map((r) => [r.id, r]));
+    }
+    return { all, storeRows, storeIdSet, storeNumberSet, districtIdSet, areaIdSet, regionIdSet, districtById, areaById, regionById, primaryScope };
   }
-  return { all, storeRows, storeIdSet, storeNumberSet, districtIdSet, areaIdSet, regionIdSet, districtById: new Map(), areaById: new Map() };
+  return { all, storeRows, storeIdSet, storeNumberSet, districtIdSet, areaIdSet, regionIdSet, districtById: new Map(), areaById: new Map(), regionById: new Map(), primaryScope };
 }
 
 // Is the given (scope_type, scope_id) node within the caller's scope?
@@ -301,19 +317,39 @@ async function listStores(supa, user) {
     distMap.get(key).stores.push({ id: s.id, number: String(s.number), name: s.name });
   }
   const districts = Array.from(distMap.values());
-  // Group districts into areas for the nested filter tree.
+  // Group districts into areas, then areas into regions, for the nested filter
+  // tree (region → area → district → store).
   const areaMap = new Map();
   for (const d of districts) {
     const key = d.area_id || "none";
     if (!areaMap.has(key)) {
       const a = scope.areaById?.get(d.area_id);
-      areaMap.set(key, { area_id: d.area_id, area_name: a?.name || (d.area_id ? null : "Stores"), districts: [] });
+      areaMap.set(key, {
+        area_id: d.area_id,
+        area_name: a?.name || (d.area_id ? null : "Stores"),
+        region_id: a?.region_id || null,
+        districts: [],
+      });
     }
     areaMap.get(key).districts.push(d);
   }
+  const regionMap = new Map();
+  for (const a of areaMap.values()) {
+    const key = a.region_id || "none";
+    if (!regionMap.has(key)) {
+      const r = scope.regionById?.get(a.region_id);
+      regionMap.set(key, {
+        region_id: a.region_id,
+        region_name: r?.name || r?.code || (a.region_id ? null : "Stores"),
+        areas: [],
+      });
+    }
+    regionMap.get(key).areas.push(a);
+  }
   return {
     districts, // flat — used by the event picker
-    tree: Array.from(areaMap.values()), // nested areas → districts → stores — filter sidebar
+    tree: Array.from(regionMap.values()), // region → area → district → store — filter sidebar
+    you: scope.primaryScope || { scope_type: null, scope_id: null }, // node to badge "YOU"
     can_org_wide: ORG_WIDE.has(String(user.role)),
     can_write: WRITE_ROLES.has(String(user.role)),
   };
