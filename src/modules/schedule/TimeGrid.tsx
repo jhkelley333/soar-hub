@@ -9,13 +9,12 @@ import { eventColor, type ColorBy } from "./colors";
 import { type ScheduleEvent } from "./types";
 
 // ── geometry (the load-bearing numbers) ──────────────────────────────────
+// The visible day window (DAY_START / DAY_END) is configurable per the design
+// handoff — stores with late closes (e.g. 3 AM) can widen it. ROW_H / GUTTER /
+// CHIP_MIN are fixed. Positions are derived from time, never stored.
 const ROW_H = 48;        // px per hour
-const DAY_START = 6;     // 6 AM
-const DAY_END = 20;      // 8 PM
-const HOURS = DAY_END - DAY_START;
 const GUTTER = 56;       // hour-label column width
 const CHIP_MIN = 22;     // min event height
-const GRID_H = HOURS * ROW_H;
 
 const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -28,31 +27,31 @@ function hourLabel(h24: number): string {
   return `${h} ${ampm}`;
 }
 
-// Fractional hours-from-DAY_START for a timed event, clamped to the window.
-function span(e: ScheduleEvent): { start: number; end: number } | null {
+// Fractional hours-from-dayStart for a timed event, clamped to the window.
+function span(e: ScheduleEvent, dayStart: number, hours: number): { start: number; end: number } | null {
   const s = new Date(e.starts_at);
-  const startH = s.getHours() + s.getMinutes() / 60 - DAY_START;
+  const startH = s.getHours() + s.getMinutes() / 60 - dayStart;
   let endH: number;
   if (e.ends_at) {
     const en = new Date(e.ends_at);
-    endH = en.getHours() + en.getMinutes() / 60 - DAY_START;
-    if (en.toDateString() !== s.toDateString()) endH = HOURS; // runs past today
+    endH = en.getHours() + en.getMinutes() / 60 - dayStart;
+    if (en.toDateString() !== s.toDateString()) endH = hours; // runs past today
     if (endH <= startH) endH = startH + 0.5;
   } else {
     endH = startH + 1;
   }
   const start = Math.max(0, startH);
-  const end = Math.min(HOURS, endH);
-  if (end <= 0 || start >= HOURS || end <= start) return null;
+  const end = Math.min(hours, endH);
+  if (end <= 0 || start >= hours || end <= start) return null;
   return { start, end };
 }
 
 type Placed = { e: ScheduleEvent; start: number; end: number; col: number; total: number };
 
 // Greedy column packing within clusters of continuously-overlapping events.
-function packDay(events: ScheduleEvent[]): Placed[] {
+function packDay(events: ScheduleEvent[], dayStart: number, hours: number): Placed[] {
   const items = events
-    .map((e) => ({ e, ...(span(e) ?? { start: -1, end: -1 }) }))
+    .map((e) => ({ e, ...(span(e, dayStart, hours) ?? { start: -1, end: -1 }) }))
     .filter((x) => x.start >= 0)
     .sort((a, b) => a.start - b.start || a.end - b.end);
 
@@ -115,6 +114,8 @@ export function TimeGrid({
   onDay,
   canWrite,
   colorBy,
+  dayStart = 6,
+  dayEnd = 20,
 }: {
   days: Date[];
   byDate: Map<string, ScheduleEvent[]>;
@@ -123,9 +124,13 @@ export function TimeGrid({
   onDay: (key: string) => void;
   canWrite: boolean;
   colorBy: ColorBy;
+  dayStart?: number;
+  dayEnd?: number;
 }) {
+  const HOURS = Math.max(1, dayEnd - dayStart);
+  const GRID_H = HOURS * ROW_H;
   const now = new Date();
-  const nowOffset = now.getHours() + now.getMinutes() / 60 - DAY_START;
+  const nowOffset = now.getHours() + now.getMinutes() / 60 - dayStart;
 
   const perDay = useMemo(
     () =>
@@ -133,10 +138,10 @@ export function TimeGrid({
         const list = byDate.get(ymd(d)) ?? [];
         return {
           allDay: list.filter((e) => e.all_day),
-          packed: packDay(list.filter((e) => !e.all_day)),
+          packed: packDay(list.filter((e) => !e.all_day), dayStart, HOURS),
         };
       }),
-    [days, byDate]
+    [days, byDate, dayStart, HOURS]
   );
 
   return (
@@ -189,7 +194,7 @@ export function TimeGrid({
         <div style={{ width: GUTTER }} className="relative shrink-0">
           {Array.from({ length: HOURS + 1 }).map((_, h) => (
             <div key={h} className="absolute right-2 -translate-y-1/2 text-[10px] text-zinc-400" style={{ top: h * ROW_H }}>
-              {h < HOURS + 1 ? hourLabel(DAY_START + h) : ""}
+              {h < HOURS + 1 ? hourLabel(dayStart + h) : ""}
             </div>
           ))}
         </div>
