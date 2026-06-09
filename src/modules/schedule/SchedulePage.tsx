@@ -5,8 +5,9 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowUpRight, ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { ArrowUpRight, ChevronLeft, ChevronRight, Plus, SlidersHorizontal } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
+import { Drawer } from "@/shared/ui/Drawer";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { cn } from "@/lib/cn";
@@ -55,6 +56,7 @@ export function SchedulePage() {
   const [anchor, setAnchor] = useState(() => new Date());
   const [view, setView] = useState<View>("month");
   const [hidden, setHidden] = useState<Set<EventType>>(new Set());
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [modal, setModal] = useState<{ event: ScheduleEvent | null; date: string | null } | null>(null);
   const navigate = useNavigate();
   const { profile } = useAuth();
@@ -144,26 +146,36 @@ export function SchedulePage() {
         ? `${days[0].toLocaleDateString("en-US", { month: "short", day: "numeric" })} – ${days[6].toLocaleDateString("en-US", { month: "short", day: "numeric" })}`
         : anchor.toLocaleDateString("en-US", { month: "long", year: "numeric" });
 
+  // True when the org filter is narrowing the view (some stores hidden).
+  const filterActive = storeCount > 0 && effectiveActive.size < storeCount;
+
+  // Scope card + org tree — shared by the lg rail and the mobile drawer.
+  const railContent = (
+    <>
+      <div className="rounded-lg bg-midnight px-4 py-3 text-white">
+        <div className="text-[10px] font-bold uppercase tracking-wider text-white/60">Viewing as</div>
+        <div className="mt-0.5 text-sm font-semibold leading-tight">
+          {roleLabel}{viewerName ? ` · ${viewerName}` : ""}
+        </div>
+        <div className="mt-0.5 text-xs text-white/70">{storeCount} store{storeCount === 1 ? "" : "s"} in scope</div>
+      </div>
+      <div className="mt-4">
+        <OrgTreeFilter
+          tree={tree}
+          active={effectiveActive}
+          onChange={setActiveStores}
+          you={storesQ.data?.you}
+        />
+      </div>
+    </>
+  );
+
   return (
     <div className="w-full">
       <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white lg:flex">
         {/* Left rail — scope card + org tree */}
         <aside className="hidden shrink-0 border-r border-zinc-200 bg-zinc-50/60 p-4 lg:block lg:w-[280px]">
-          <div className="rounded-lg bg-midnight px-4 py-3 text-white">
-            <div className="text-[10px] font-bold uppercase tracking-wider text-white/60">Viewing as</div>
-            <div className="mt-0.5 text-sm font-semibold leading-tight">
-              {roleLabel}{viewerName ? ` · ${viewerName}` : ""}
-            </div>
-            <div className="mt-0.5 text-xs text-white/70">{storeCount} store{storeCount === 1 ? "" : "s"} in scope</div>
-          </div>
-          <div className="mt-4">
-            <OrgTreeFilter
-              tree={tree}
-              active={effectiveActive}
-              onChange={setActiveStores}
-              you={storesQ.data?.you}
-            />
-          </div>
+          {railContent}
         </aside>
 
         {/* Main */}
@@ -171,6 +183,15 @@ export function SchedulePage() {
 
       {/* Top bar */}
       <div className="mb-4 flex flex-wrap items-center gap-2">
+        <button
+          onClick={() => setFiltersOpen(true)}
+          className="relative inline-flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm font-medium text-zinc-600 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50 lg:hidden"
+          aria-label="Filters"
+        >
+          <SlidersHorizontal className="h-4 w-4" />
+          Filters
+          {filterActive && <span className="absolute -right-0.5 -top-0.5 h-2 w-2 rounded-full bg-accent ring-2 ring-white" />}
+        </button>
         <Button variant="secondary" size="sm" onClick={() => setAnchor(new Date())}>Today</Button>
         <button onClick={() => go(-1)} className="rounded-md p-1.5 text-zinc-500 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50" aria-label="Previous">
           <ChevronLeft className="h-4 w-4" />
@@ -249,6 +270,11 @@ export function SchedulePage() {
       )}
         </div>
       </div>
+
+      {/* Mobile / tablet filter drawer — same scope card + org tree as the rail */}
+      <Drawer open={filtersOpen} onClose={() => setFiltersOpen(false)} title="Calendar filters" width="w-full sm:max-w-sm">
+        {railContent}
+      </Drawer>
 
       {modal && (
         <EventModal
