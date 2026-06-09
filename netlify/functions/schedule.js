@@ -15,6 +15,7 @@
 //   POST ?action=delete          -> delete a native event in scope
 
 import { createClient } from "@supabase/supabase-js";
+import { fetchCalendarEvents } from "./_lib/ical.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -31,6 +32,8 @@ const EVENT_TYPES = new Set([
 const SCOPE_TYPES = new Set(["store", "district", "area", "region", "org"]);
 const RECURRENCE_TYPES = new Set(["none", "daily", "weekly", "biweekly", "monthly"]);
 const DAY_MS = 86400000;
+// Preset colors a user can tag a linked calendar with (mirrors the client).
+const CAL_COLORS = new Set(["blue", "green", "purple", "orange", "red", "gray"]);
 
 function admin() {
   if (!SUPABASE_URL || !SERVICE_KEY) throw new Error("schedule env vars not configured");
@@ -353,6 +356,107 @@ async function fetchFeeds(supa, scope, fromDate, toDate) {
   return out;
 }
 
+// ----------------------------------------------------------------------------
+// Linked (external) calendars — read-only iCal overlays, owned per user.
+// ----------------------------------------------------------------------------
+function calendarCard(c) {
+  return {
+    id: c.id,
+    label: c.label,
+    url: c.url,
+    color: c.color,
+    is_enabled: c.is_enabled,
+    last_synced_at: c.last_synced_at,
+    last_error: c.last_error,
+  };
+}
+
+async function listCalendars(supa, user) {
+  const { data, error } = await supa
+    .from("schedule_linked_calendars")
+    .select("*").eq("user_id", user.id).order("created_at", { ascending: true });
+  if (error) return { error: error.message, status: 500 };
+  return { calendars: (data || []).map(calendarCard) };
+}
+
+function validateCalendarBody(body) {
+  const label = sanitize(body?.label, 80);
+  if (!label) return { error: "Give the calendar a name.", status: 400 };
+  const url = sanitize(body?.url, 2000);
+  if (!url || !/^(https?:\/\/|webcal:\/\/)/i.test(url)) {
+    return { error: "Enter a valid iCal URL (https:// or webcal://).", status: 400 };
+  }
+  const color = CAL_COLORS.has(body?.color) ? body.color : "blue";
+  return { fields: { label, url, color } };
+}
+
+async function linkCalendar(supa, user, body) {
+  const v = validateCalendarBody(body);
+  if (v.error) return v;
+  const { data, error } = await supa
+    .from("schedule_linked_calendars")
+    .insert({ ...v.fields, user_id: user.id })
+    .select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, calendar: calendarCard(data) };
+}
+
+async function updateCalendar(supa, user, body) {
+  const id = sanitize(body?.id, 64);
+  if (!id) return { error: "Calendar id is required.", status: 400 };
+  const { data: existing } = await supa
+    .from("schedule_linked_calendars").select("id").eq("id", id).eq("user_id", user.id).maybeSingle();
+  if (!existing) return { error: "Calendar not found.", status: 404 };
+  const patch = { updated_at: new Date().toISOString() };
+  if (typeof body?.label === "string") patch.label = sanitize(body.label, 80) || undefined;
+  if (typeof body?.url === "string") {
+    if (!/^(https?:\/\/|webcal:\/\/)/i.test(body.url.trim())) return { error: "Invalid iCal URL.", status: 400 };
+    patch.url = sanitize(body.url, 2000);
+  }
+  if (CAL_COLORS.has(body?.color)) patch.color = body.color;
+  if (typeof body?.is_enabled === "boolean") patch.is_enabled = body.is_enabled;
+  const { data, error } = await supa
+    .from("schedule_linked_calendars").update(patch).eq("id", id).eq("user_id", user.id)
+    .select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, calendar: calendarCard(data) };
+}
+
+async function unlinkCalendar(supa, user, body) {
+  const id = sanitize(body?.id, 64);
+  if (!id) return { error: "Calendar id is required.", status: 400 };
+  const { error } = await supa
+    .from("schedule_linked_calendars").delete().eq("id", id).eq("user_id", user.id);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
+// Fetch + parse every enabled linked calendar for the caller, within the
+// window. Each calendar is isolated: a fetch/parse failure records last_error
+// and yields no events rather than breaking the whole list.
+async function fetchLinkedOverlay(supa, user, from, to) {
+  if (!from || !to) return [];
+  const { data: cals } = await supa
+    .from("schedule_linked_calendars")
+    .select("*").eq("user_id", user.id).eq("is_enabled", true);
+  if (!cals || cals.length === 0) return [];
+  const results = await Promise.all(
+    cals.map(async (c) => {
+      try {
+        const events = await fetchCalendarEvents(c.url, c, from, to);
+        await supa.from("schedule_linked_calendars")
+          .update({ last_synced_at: new Date().toISOString(), last_error: null }).eq("id", c.id);
+        return events;
+      } catch (e) {
+        await supa.from("schedule_linked_calendars")
+          .update({ last_error: String(e?.message || e).slice(0, 300) }).eq("id", c.id);
+        return [];
+      }
+    }),
+  );
+  return results.flat();
+}
+
 async function listEvents(supa, user, params) {
   const scope = await resolveScope(supa, user);
   const from = sanitize(params.from, 40);
@@ -383,9 +487,12 @@ async function listEvents(supa, user, params) {
     occurrences.push(...expandRecurring(m, from, to));
   }
 
-  const feeds = await fetchFeeds(supa, scope, from ? from.slice(0, 10) : null, to ? to.slice(0, 10) : null);
+  const [feeds, linked] = await Promise.all([
+    fetchFeeds(supa, scope, from ? from.slice(0, 10) : null, to ? to.slice(0, 10) : null),
+    fetchLinkedOverlay(supa, user, from, to),
+  ]);
   return {
-    events: [...visible.map(eventCard), ...occurrences, ...feeds],
+    events: [...visible.map(eventCard), ...occurrences, ...feeds, ...linked],
     can_write: WRITE_ROLES.has(String(user.role)),
   };
 }
@@ -604,11 +711,15 @@ export const handler = async (event) => {
     if (event.httpMethod === "GET") {
       if (action === "list") return unwrap(await listEvents(supa, user, params));
       if (action === "stores") return unwrap(await listStores(supa, user));
+      if (action === "calendars") return unwrap(await listCalendars(supa, user));
       return respond(400, { error: `Unknown action: ${action}` });
     }
     if (action === "create") return unwrap(await createEvent(supa, user, body));
     if (action === "update") return unwrap(await updateEvent(supa, user, body));
     if (action === "delete") return unwrap(await deleteEvent(supa, user, body));
+    if (action === "link-calendar") return unwrap(await linkCalendar(supa, user, body));
+    if (action === "update-calendar") return unwrap(await updateCalendar(supa, user, body));
+    if (action === "unlink-calendar") return unwrap(await unlinkCalendar(supa, user, body));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });

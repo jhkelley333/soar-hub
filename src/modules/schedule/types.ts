@@ -11,9 +11,37 @@ export type EventType =
   | "deadline"
   | "other";
 
-export type ScopeType = "store" | "district" | "area" | "region" | "org";
+export type ScopeType = "store" | "district" | "area" | "region" | "org" | "external";
 
-export type EventSource = "soar" | "training" | "pto" | "walkthrough" | "reno";
+export type EventSource = "soar" | "training" | "pto" | "walkthrough" | "reno" | "external";
+
+// Linked (read-only) external iCal calendars.
+export type CalColor = "blue" | "green" | "purple" | "orange" | "red" | "gray";
+export const CAL_COLOR_OPTIONS: { value: CalColor; dot: string }[] = [
+  { value: "blue", dot: "bg-blue-500" },
+  { value: "green", dot: "bg-emerald-500" },
+  { value: "purple", dot: "bg-violet-500" },
+  { value: "orange", dot: "bg-amber-500" },
+  { value: "red", dot: "bg-rose-500" },
+  { value: "gray", dot: "bg-zinc-400" },
+];
+export interface LinkedCalendar {
+  id: string;
+  label: string;
+  url: string;
+  color: CalColor;
+  is_enabled: boolean;
+  last_synced_at: string | null;
+  last_error: string | null;
+}
+export interface CalendarsResponse {
+  calendars: LinkedCalendar[];
+}
+export interface LinkCalendarInput {
+  label: string;
+  url: string;
+  color: CalColor;
+}
 
 export type Recurrence = "none" | "daily" | "weekly" | "biweekly" | "monthly";
 
