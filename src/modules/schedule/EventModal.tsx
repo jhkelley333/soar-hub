@@ -6,7 +6,16 @@ import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { useToast } from "@/shared/ui/Toaster";
 import { createEvent, deleteEvent, updateEvent } from "./api";
-import { EVENT_TYPE_ORDER, TYPE_META, type DistrictGroup, type EventInput, type EventType, type ScheduleEvent } from "./types";
+import {
+  EVENT_TYPE_ORDER,
+  RECURRENCE_OPTIONS,
+  TYPE_META,
+  type DistrictGroup,
+  type EventInput,
+  type EventType,
+  type Recurrence,
+  type ScheduleEvent,
+} from "./types";
 
 // ISO date (YYYY-MM-DD) + time (HH:MM) → ISO timestamp in the user's tz. All-day
 // events anchor at 09:00 local so a tz shift can't bump them to the wrong day.
@@ -41,13 +50,21 @@ export function EventModal({
   const toast = useToast();
   const editing = !!event;
 
+  // When editing a recurring occurrence, anchor the form on the series master
+  // (series_start/series_end) so a save never re-anchors the series to a
+  // mid-series instance. Falls back to the event's own times otherwise.
+  const seriesStart = event?.series_start ?? event?.starts_at;
+  const seriesEnd = event?.series_end ?? event?.ends_at ?? null;
+
   const [title, setTitle] = useState(event?.title ?? "");
   const [type, setType] = useState<EventType>(event?.type ?? "store_visit");
-  const [date, setDate] = useState(event ? localDate(event.starts_at) : defaultDate ?? localDate(new Date().toISOString()));
+  const [date, setDate] = useState(seriesStart ? localDate(seriesStart) : defaultDate ?? localDate(new Date().toISOString()));
   const [allDay, setAllDay] = useState(event?.all_day ?? false);
-  const [startTime, setStartTime] = useState(event && !event.all_day ? localTime(event.starts_at) : "09:00");
-  const [endTime, setEndTime] = useState(event?.ends_at && !event.all_day ? localTime(event.ends_at) : "");
+  const [startTime, setStartTime] = useState(seriesStart && !event?.all_day ? localTime(seriesStart) : "09:00");
+  const [endTime, setEndTime] = useState(seriesEnd && !event?.all_day ? localTime(seriesEnd) : "");
   const [notes, setNotes] = useState(event?.notes ?? "");
+  const [recurrence, setRecurrence] = useState<Recurrence>(event?.recurrence ?? "none");
+  const [recurrenceUntil, setRecurrenceUntil] = useState(event?.recurrence_until ?? "");
   // Scope: "org" or a store id.
   const [scopeValue, setScopeValue] = useState<string>(
     event ? (event.scope_type === "org" ? "org" : event.scope_id ?? "") : ""
@@ -75,6 +92,8 @@ export function EventModal({
       scope_id: isOrg ? null : scopeValue,
       store_number: isOrg ? null : storeIndex.get(scopeValue)?.number ?? null,
       notes: notes.trim() || null,
+      recurrence,
+      recurrence_until: recurrence !== "none" && recurrenceUntil ? recurrenceUntil : null,
     };
   }
 
@@ -192,6 +211,33 @@ export function EventModal({
             ))}
           </select>
         </label>
+
+        <div className="grid grid-cols-2 gap-3">
+          <label className="block">
+            <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-zinc-500">Repeats</div>
+            <select
+              value={recurrence}
+              onChange={(e) => setRecurrence(e.target.value as Recurrence)}
+              className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+            >
+              {RECURRENCE_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </select>
+          </label>
+          {recurrence !== "none" && (
+            <label className="block">
+              <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-zinc-500">Until <span className="font-normal normal-case text-zinc-400">(optional)</span></div>
+              <Input type="date" value={recurrenceUntil} min={date} onChange={(e) => setRecurrenceUntil(e.target.value)} />
+            </label>
+          )}
+        </div>
+
+        {editing && event?.recurrence && event.recurrence !== "none" && (
+          <div className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-inset ring-amber-200">
+            This is a repeating event — saving or deleting applies to the whole series.
+          </div>
+        )}
 
         <label className="block">
           <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-zinc-500">Notes <span className="font-normal normal-case text-zinc-400">(optional)</span></div>

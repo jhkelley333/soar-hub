@@ -15,6 +15,16 @@ export type ScopeType = "store" | "district" | "area" | "region" | "org";
 
 export type EventSource = "soar" | "training" | "pto" | "walkthrough" | "reno";
 
+export type Recurrence = "none" | "daily" | "weekly" | "biweekly" | "monthly";
+
+export const RECURRENCE_OPTIONS: { value: Recurrence; label: string }[] = [
+  { value: "none", label: "Does not repeat" },
+  { value: "daily", label: "Daily" },
+  { value: "weekly", label: "Weekly" },
+  { value: "biweekly", label: "Every 2 weeks" },
+  { value: "monthly", label: "Monthly" },
+];
+
 export interface ScheduleEvent {
   id: string;
   source: EventSource;
@@ -33,6 +43,14 @@ export interface ScheduleEvent {
   notes: string | null;
   color: string | null;
   created_by_name: string | null;
+  // Recurrence. A projected occurrence carries is_occurrence + series_start/
+  // series_end (the master's true anchor); editing/deleting acts on the master
+  // via `id`, which is the master's id on every occurrence.
+  recurrence?: Recurrence;
+  recurrence_until?: string | null;
+  series_start?: string;
+  series_end?: string | null;
+  is_occurrence?: boolean;
 }
 
 export interface ScheduleListResponse {
@@ -88,6 +106,8 @@ export interface EventInput {
   store_number?: string | null;
   notes?: string | null;
   color?: string | null;
+  recurrence?: Recurrence;
+  recurrence_until?: string | null;
 }
 
 // Per-type label + Tailwind palette (matches the design legend).
