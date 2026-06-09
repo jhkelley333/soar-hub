@@ -55,11 +55,23 @@ export interface DistrictGroup {
 export interface AreaGroup {
   area_id: string | null;
   area_name: string | null;
+  region_id?: string | null;
   districts: DistrictGroup[];
+}
+export interface RegionGroup {
+  region_id: string | null;
+  region_name: string | null;
+  areas: AreaGroup[];
+}
+// Which org node is the viewer's own — gets the "YOU" badge in the tree.
+export interface YouMarker {
+  scope_type: "region" | "area" | "district" | "store" | "org" | null;
+  scope_id: string | null;
 }
 export interface StoresResponse {
   districts: DistrictGroup[];
-  tree: AreaGroup[];
+  tree: RegionGroup[];
+  you?: YouMarker;
   can_org_wide: boolean;
   can_write: boolean;
 }

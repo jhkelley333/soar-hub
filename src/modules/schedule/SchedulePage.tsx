@@ -15,6 +15,7 @@ import { ROLE_LABELS } from "@/types/database";
 import { fetchEvents, fetchScheduleStores } from "./api";
 import { EventModal } from "./EventModal";
 import { OrgTreeFilter } from "./OrgTreeFilter";
+import { TimeGrid } from "./TimeGrid";
 import { EVENT_TYPE_ORDER, TYPE_META, type EventType, type ScheduleEvent } from "./types";
 
 // ── date helpers ─────────────────────────────────────────────────────────
@@ -101,7 +102,7 @@ export function SchedulePage() {
   const tree = storesQ.data?.tree ?? [];
   const allStoreNumbers = useMemo(() => {
     const s = new Set<string>();
-    for (const a of tree) for (const d of a.districts) for (const st of d.stores) s.add(st.number);
+    for (const r of tree) for (const a of r.areas) for (const d of a.districts) for (const st of d.stores) s.add(st.number);
     return s;
   }, [tree]);
   const effectiveActive = activeStores ?? allStoreNumbers;
@@ -156,7 +157,12 @@ export function SchedulePage() {
             <div className="mt-0.5 text-xs text-white/70">{storeCount} store{storeCount === 1 ? "" : "s"} in scope</div>
           </div>
           <div className="mt-4">
-            <OrgTreeFilter tree={tree} active={effectiveActive} onChange={setActiveStores} />
+            <OrgTreeFilter
+              tree={tree}
+              active={effectiveActive}
+              onChange={setActiveStores}
+              you={storesQ.data?.you}
+            />
           </div>
         </aside>
 
@@ -229,8 +235,8 @@ export function SchedulePage() {
           onDay={(key) => canWrite && setModal({ event: null, date: key })}
           onEvent={openEvent}
         />
-      ) : view === "week" ? (
-        <WeekGrid
+      ) : view === "week" || view === "day" ? (
+        <TimeGrid
           days={days}
           byDate={byDate}
           todayKey={todayKey}
@@ -318,54 +324,6 @@ function MonthGrid({
               <div className="space-y-1">
                 {list.slice(0, 3).map((e) => <EventBar key={e.id} e={e} onClick={() => onEvent(e)} />)}
                 {list.length > 3 && <div className="px-1 text-[11px] font-medium text-zinc-400">+{list.length - 3} more</div>}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function WeekGrid({
-  days, byDate, todayKey, canWrite, onDay, onEvent,
-}: {
-  days: Date[];
-  byDate: Map<string, ScheduleEvent[]>;
-  todayKey: string;
-  canWrite: boolean;
-  onDay: (key: string) => void;
-  onEvent: (e: ScheduleEvent) => void;
-}) {
-  return (
-    <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
-      <div className="grid grid-cols-7">
-        {days.map((d, i) => {
-          const key = ymd(d);
-          const list = byDate.get(key) ?? [];
-          const isToday = key === todayKey;
-          return (
-            <div
-              key={key}
-              onClick={() => onDay(key)}
-              className={cn(
-                "min-h-[440px] border-r border-zinc-100 p-2",
-                i === 6 && "border-r-0",
-                canWrite && "cursor-pointer hover:bg-accent/[0.03]"
-              )}
-            >
-              <div className="mb-2 text-center">
-                <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">{WEEKDAYS[d.getDay()]}</div>
-                <div className={cn(
-                  "mx-auto mt-0.5 grid h-7 w-7 place-items-center rounded-full text-sm font-semibold",
-                  isToday ? "bg-accent text-white" : "text-midnight"
-                )}>
-                  {d.getDate()}
-                </div>
-              </div>
-              <div className="space-y-1">
-                {list.map((e) => <EventBar key={e.id} e={e} onClick={() => onEvent(e)} />)}
-                {list.length === 0 && <div className="pt-2 text-center text-[11px] text-zinc-300">—</div>}
               </div>
             </div>
           );
