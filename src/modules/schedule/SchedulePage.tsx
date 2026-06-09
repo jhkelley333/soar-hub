@@ -1,0 +1,285 @@
+// Schedule — SOAR-native calendar (v1a): Month + Agenda views, type filters,
+// create/edit events. Events are server-scoped to the stores the caller can
+// see. Read-only module feeds + Google come in later phases.
+
+import { useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { PageHeader } from "@/shared/ui/PageHeader";
+import { Button } from "@/shared/ui/Button";
+import { Skeleton } from "@/shared/ui/Skeleton";
+import { EmptyState } from "@/shared/ui/EmptyState";
+import { cn } from "@/lib/cn";
+import { fetchEvents, fetchScheduleStores } from "./api";
+import { EventModal } from "./EventModal";
+import { EVENT_TYPE_ORDER, TYPE_META, type EventType, type ScheduleEvent } from "./types";
+
+// ── date helpers ─────────────────────────────────────────────────────────
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+function startOfMonth(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), 1);
+}
+function addMonths(d: Date, n: number): Date {
+  return new Date(d.getFullYear(), d.getMonth() + n, 1);
+}
+// First Sunday on/before the 1st of the anchor month.
+function startOfGrid(anchor: Date): Date {
+  const first = startOfMonth(anchor);
+  const g = new Date(first);
+  g.setDate(first.getDate() - first.getDay());
+  return g;
+}
+function addDays(d: Date, n: number): Date {
+  const x = new Date(d);
+  x.setDate(d.getDate() + n);
+  return x;
+}
+const WEEKDAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+
+export function SchedulePage() {
+  const [anchor, setAnchor] = useState(() => startOfMonth(new Date()));
+  const [view, setView] = useState<"month" | "agenda">("month");
+  const [hidden, setHidden] = useState<Set<EventType>>(new Set());
+  const [modal, setModal] = useState<{ event: ScheduleEvent | null; date: string | null } | null>(null);
+
+  const gridStart = useMemo(() => startOfGrid(anchor), [anchor]);
+  const days = useMemo(() => Array.from({ length: 42 }, (_, i) => addDays(gridStart, i)), [gridStart]);
+  const rangeFrom = days[0].toISOString();
+  const rangeTo = addDays(days[41], 1).toISOString();
+  const todayKey = ymd(new Date());
+
+  const eventsQ = useQuery({
+    queryKey: ["schedule-events", rangeFrom, rangeTo],
+    queryFn: () => fetchEvents(rangeFrom, rangeTo),
+  });
+  const storesQ = useQuery({ queryKey: ["schedule-stores"], queryFn: fetchScheduleStores });
+
+  const canWrite = eventsQ.data?.can_write ?? false;
+  const events = eventsQ.data?.events ?? [];
+  const visible = useMemo(() => events.filter((e) => !hidden.has(e.type)), [events, hidden]);
+
+  const byDate = useMemo(() => {
+    const m = new Map<string, ScheduleEvent[]>();
+    for (const e of visible) {
+      const key = ymd(new Date(e.starts_at));
+      (m.get(key) ?? m.set(key, []).get(key)!).push(e);
+    }
+    for (const list of m.values()) list.sort((a, b) => (a.all_day === b.all_day ? a.starts_at.localeCompare(b.starts_at) : a.all_day ? -1 : 1));
+    return m;
+  }, [visible]);
+
+  function toggleType(t: EventType) {
+    setHidden((prev) => {
+      const next = new Set(prev);
+      next.has(t) ? next.delete(t) : next.add(t);
+      return next;
+    });
+  }
+
+  const monthLabel = anchor.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+
+  return (
+    <div className="mx-auto max-w-[1200px]">
+      <PageHeader
+        title="Schedule"
+        description="Store visits, audits, training, deliveries, and deadlines across your stores."
+        actions={
+          canWrite ? (
+            <Button onClick={() => setModal({ event: null, date: todayKey })}>
+              <Plus className="h-4 w-4" /> New event
+            </Button>
+          ) : undefined
+        }
+      />
+
+      {/* Controls */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <Button variant="secondary" size="sm" onClick={() => setAnchor(startOfMonth(new Date()))}>Today</Button>
+        <button onClick={() => setAnchor(addMonths(anchor, -1))} className="rounded-md p-1.5 text-zinc-500 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50" aria-label="Previous month">
+          <ChevronLeft className="h-4 w-4" />
+        </button>
+        <button onClick={() => setAnchor(addMonths(anchor, 1))} className="rounded-md p-1.5 text-zinc-500 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50" aria-label="Next month">
+          <ChevronRight className="h-4 w-4" />
+        </button>
+        <div className="text-lg font-semibold tracking-tight text-midnight">{monthLabel}</div>
+        <div className="ml-auto inline-flex rounded-md ring-1 ring-inset ring-zinc-200">
+          {(["month", "agenda"] as const).map((v) => (
+            <button
+              key={v}
+              onClick={() => setView(v)}
+              className={cn(
+                "px-3 py-1.5 text-sm font-medium capitalize transition first:rounded-l-md last:rounded-r-md",
+                view === v ? "bg-midnight text-white" : "text-zinc-600 hover:bg-zinc-50"
+              )}
+            >
+              {v}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Type filter legend */}
+      <div className="mb-4 flex flex-wrap gap-1.5">
+        {EVENT_TYPE_ORDER.map((t) => {
+          const off = hidden.has(t);
+          const m = TYPE_META[t];
+          return (
+            <button
+              key={t}
+              onClick={() => toggleType(t)}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ring-1 ring-inset transition",
+                off ? "bg-white text-zinc-400 ring-zinc-200" : m.chip
+              )}
+            >
+              <span className={cn("h-2 w-2 rounded-full", off ? "bg-zinc-300" : m.dot)} />
+              {m.label}
+            </button>
+          );
+        })}
+      </div>
+
+      {eventsQ.isLoading ? (
+        <Skeleton className="h-[560px] w-full" />
+      ) : eventsQ.isError ? (
+        <EmptyState title="Couldn't load the schedule" description={(eventsQ.error as Error)?.message ?? "Make sure migration 0139 has run."} />
+      ) : view === "month" ? (
+        <MonthGrid
+          days={days}
+          anchorMonth={anchor.getMonth()}
+          byDate={byDate}
+          todayKey={todayKey}
+          canWrite={canWrite}
+          onDay={(key) => canWrite && setModal({ event: null, date: key })}
+          onEvent={(e) => setModal({ event: e, date: null })}
+        />
+      ) : (
+        <Agenda events={visible} onEvent={(e) => setModal({ event: e, date: null })} />
+      )}
+
+      {modal && (
+        <EventModal
+          open
+          onClose={() => setModal(null)}
+          event={modal.event}
+          defaultDate={modal.date}
+          districts={storesQ.data?.districts ?? []}
+          canOrgWide={storesQ.data?.can_org_wide ?? false}
+        />
+      )}
+    </div>
+  );
+}
+
+function EventBar({ e, onClick }: { e: ScheduleEvent; onClick: () => void }) {
+  const m = TYPE_META[e.type];
+  const time = e.all_day ? "" : new Date(e.starts_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }).replace(":00", "");
+  return (
+    <button
+      onClick={(ev) => { ev.stopPropagation(); onClick(); }}
+      className={cn("flex w-full items-center gap-1 truncate rounded border-l-[3px] bg-white px-1.5 py-0.5 text-left text-[11px] text-zinc-700 ring-1 ring-inset ring-zinc-100 hover:bg-zinc-50", m.bar)}
+      title={e.title}
+    >
+      <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", m.dot)} />
+      <span className="truncate">{time && <span className="text-zinc-400">{time} </span>}{e.title}</span>
+    </button>
+  );
+}
+
+function MonthGrid({
+  days, anchorMonth, byDate, todayKey, canWrite, onDay, onEvent,
+}: {
+  days: Date[];
+  anchorMonth: number;
+  byDate: Map<string, ScheduleEvent[]>;
+  todayKey: string;
+  canWrite: boolean;
+  onDay: (key: string) => void;
+  onEvent: (e: ScheduleEvent) => void;
+}) {
+  return (
+    <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
+      <div className="grid grid-cols-7 border-b border-zinc-200 bg-zinc-50 text-[11px] font-bold uppercase tracking-wider text-zinc-400">
+        {WEEKDAYS.map((d) => <div key={d} className="px-2 py-2">{d}</div>)}
+      </div>
+      <div className="grid grid-cols-7">
+        {days.map((d, i) => {
+          const key = ymd(d);
+          const inMonth = d.getMonth() === anchorMonth;
+          const list = byDate.get(key) ?? [];
+          const isToday = key === todayKey;
+          return (
+            <div
+              key={key}
+              onClick={() => onDay(key)}
+              className={cn(
+                "min-h-[104px] border-b border-r border-zinc-100 p-1.5 align-top",
+                i % 7 === 6 && "border-r-0",
+                !inMonth && "bg-zinc-50/60",
+                canWrite && "cursor-pointer hover:bg-accent/[0.03]"
+              )}
+            >
+              <div className="mb-1 flex items-center justify-between">
+                <span className={cn(
+                  "grid h-5 min-w-5 place-items-center rounded-full px-1 text-xs font-semibold",
+                  isToday ? "bg-accent text-white" : inMonth ? "text-midnight" : "text-zinc-300"
+                )}>
+                  {d.getDate()}
+                </span>
+              </div>
+              <div className="space-y-1">
+                {list.slice(0, 3).map((e) => <EventBar key={e.id} e={e} onClick={() => onEvent(e)} />)}
+                {list.length > 3 && <div className="px-1 text-[11px] font-medium text-zinc-400">+{list.length - 3} more</div>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function Agenda({ events, onEvent }: { events: ScheduleEvent[]; onEvent: (e: ScheduleEvent) => void }) {
+  const groups = useMemo(() => {
+    const m = new Map<string, ScheduleEvent[]>();
+    for (const e of [...events].sort((a, b) => a.starts_at.localeCompare(b.starts_at))) {
+      const key = ymd(new Date(e.starts_at));
+      (m.get(key) ?? m.set(key, []).get(key)!).push(e);
+    }
+    return Array.from(m.entries());
+  }, [events]);
+
+  if (groups.length === 0) {
+    return <EmptyState title="Nothing on the calendar" description="No events in this month for your stores." />;
+  }
+  return (
+    <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
+      {groups.map(([key, list]) => (
+        <div key={key} className="border-b border-zinc-100 last:border-b-0">
+          <div className="bg-zinc-50 px-4 py-2 text-xs font-semibold text-zinc-500">
+            {new Date(`${key}T12:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+          </div>
+          <ul className="divide-y divide-zinc-100">
+            {list.map((e) => {
+              const m = TYPE_META[e.type];
+              return (
+                <li key={e.id}>
+                  <button onClick={() => onEvent(e)} className={cn("flex w-full items-center gap-3 border-l-[3px] px-4 py-2.5 text-left hover:bg-zinc-50", m.bar)}>
+                    <span className={cn("h-2 w-2 shrink-0 rounded-full", m.dot)} />
+                    <span className="w-20 shrink-0 text-xs text-zinc-500">
+                      {e.all_day ? "All day" : new Date(e.starts_at).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                    </span>
+                    <span className="flex-1 truncate text-sm font-medium text-midnight">{e.title}</span>
+                    {e.store_number && <span className="shrink-0 text-xs text-zinc-400">#{e.store_number}</span>}
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
