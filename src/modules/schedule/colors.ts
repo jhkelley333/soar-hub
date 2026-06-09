@@ -27,6 +27,20 @@ function hashIndex(seed: string): number {
 
 export type ColorBy = "type" | "org";
 
+// Linked-calendar colors — external events always use their calendar's color,
+// independent of the type/org toggle.
+const EXTERNAL_COLORS: Record<string, { dot: string; bar: string }> = {
+  blue: { dot: "bg-blue-500", bar: "border-l-blue-500" },
+  green: { dot: "bg-emerald-500", bar: "border-l-emerald-500" },
+  purple: { dot: "bg-violet-500", bar: "border-l-violet-500" },
+  orange: { dot: "bg-amber-500", bar: "border-l-amber-500" },
+  red: { dot: "bg-rose-500", bar: "border-l-rose-500" },
+  gray: { dot: "bg-zinc-400", bar: "border-l-zinc-400" },
+};
+export function externalColor(color: string | null | undefined): { dot: string; bar: string } {
+  return EXTERNAL_COLORS[color || "blue"] || EXTERNAL_COLORS.blue;
+}
+
 // Swatch bg-class for an org node in the tree. Store rows seed on their
 // number so the row color matches the event color in "color by org" mode.
 export function orgSwatch(seed: string): string {
@@ -35,6 +49,7 @@ export function orgSwatch(seed: string): string {
 
 // {dot, bar} classes for an event under the active coloring mode.
 export function eventColor(e: ScheduleEvent, colorBy: ColorBy): { dot: string; bar: string } {
+  if (e.source === "external") return externalColor(e.color);
   if (colorBy === "org") {
     const seed = e.store_number || e.scope_id || "org";
     const c = ORG_PALETTE[hashIndex(seed)];

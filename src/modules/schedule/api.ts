@@ -1,7 +1,15 @@
 // Typed wrappers around netlify/functions/schedule.
 
 import { supabase } from "@/lib/supabase";
-import type { EventInput, ScheduleEvent, ScheduleListResponse, StoresResponse } from "./types";
+import type {
+  CalendarsResponse,
+  EventInput,
+  LinkCalendarInput,
+  LinkedCalendar,
+  ScheduleEvent,
+  ScheduleListResponse,
+  StoresResponse,
+} from "./types";
 
 const FN = "/.netlify/functions/schedule";
 
@@ -53,4 +61,20 @@ export function deleteEvent(
     method: "POST",
     body: JSON.stringify({ id, mode: opts?.mode, occurrence_date: opts?.occurrenceDate }),
   });
+}
+
+// ── Linked (external) calendars ───────────────────────────────────────────
+export function fetchCalendars(): Promise<CalendarsResponse> {
+  return request<CalendarsResponse>(`${FN}?action=calendars`);
+}
+export function linkCalendar(input: LinkCalendarInput): Promise<{ ok: true; calendar: LinkedCalendar }> {
+  return request(`${FN}?action=link-calendar`, { method: "POST", body: JSON.stringify(input) });
+}
+export function updateCalendar(
+  input: { id: string; label?: string; url?: string; color?: string; is_enabled?: boolean }
+): Promise<{ ok: true; calendar: LinkedCalendar }> {
+  return request(`${FN}?action=update-calendar`, { method: "POST", body: JSON.stringify(input) });
+}
+export function unlinkCalendar(id: string): Promise<{ ok: true }> {
+  return request(`${FN}?action=unlink-calendar`, { method: "POST", body: JSON.stringify({ id }) });
 }

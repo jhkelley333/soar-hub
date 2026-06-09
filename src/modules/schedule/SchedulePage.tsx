@@ -17,6 +17,7 @@ import { ROLE_LABELS } from "@/types/database";
 import { fetchEvents, fetchScheduleStores } from "./api";
 import { EventModal } from "./EventModal";
 import { OrgTreeFilter } from "./OrgTreeFilter";
+import { LinkedCalendars } from "./LinkedCalendars";
 import { TimeGrid } from "./TimeGrid";
 import { eventColor, type ColorBy } from "./colors";
 import { FISCAL, closeOn, fiscalInfo, holidayOn, paydayOn } from "./fiscal";
@@ -96,7 +97,9 @@ export function SchedulePage() {
   // Native events open the editor; feed events (training/PTO/…) are read-only
   // here, so they deep-link into their source module.
   function openEvent(e: ScheduleEvent) {
-    if (e.editable === false && e.link) { navigate(e.link); return; }
+    // Read-only events (module feeds, external calendars) don't open the
+    // editor: feeds deep-link to their source; externals just no-op.
+    if (e.editable === false) { if (e.link) navigate(e.link); return; }
     setModal({ event: e, date: null });
   }
 
@@ -199,6 +202,9 @@ export function SchedulePage() {
           onChange={setActiveStores}
           you={storesQ.data?.you}
         />
+      </div>
+      <div className="mt-5 border-t border-zinc-200 pt-4">
+        <LinkedCalendars />
       </div>
     </>
   );
