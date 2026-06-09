@@ -593,28 +593,23 @@ async function fetchLinkedOverlay(supa, user, scope, from, to) {
   return results.flat();
 }
 
-async function listEvents(supa, user, params) {
-  const scope = await resolveScope(supa, user);
-  const from = sanitize(params.from, 40);
-  const to = sanitize(params.to, 40);
-
-  // One-off events whose start falls in the window.
+// Native SOAR events (one-off + recurring, scoped) plus module feeds, for the
+// window. Excludes external linked-calendar overlays — used by both the events
+// list and the outbound .ics feed (which must not re-export others' calendars).
+async function gatherOwnedEvents(supa, scope, from, to) {
   let oneOffQ = supa.from("schedule_events").select("*").eq("recurrence", "none");
   if (from) oneOffQ = oneOffQ.gte("starts_at", from);
   if (to) oneOffQ = oneOffQ.lt("starts_at", to);
   oneOffQ = oneOffQ.order("starts_at", { ascending: true }).limit(2000);
 
-  // Recurring masters that could project into the window: anything that
-  // starts before `to` and whose series hasn't ended before `from`. The
-  // expander does the precise per-occurrence windowing.
   let masterQ = supa.from("schedule_events").select("*").neq("recurrence", "none");
   if (to) masterQ = masterQ.lt("starts_at", to);
   if (from) masterQ = masterQ.or(`recurrence_until.is.null,recurrence_until.gte.${from.slice(0, 10)}`);
   masterQ = masterQ.limit(2000);
 
   const [oneOff, masters] = await Promise.all([oneOffQ, masterQ]);
-  if (oneOff.error) return { error: oneOff.error.message, status: 500 };
-  if (masters.error) return { error: masters.error.message, status: 500 };
+  if (oneOff.error) throw new Error(oneOff.error.message);
+  if (masters.error) throw new Error(masters.error.message);
 
   const visible = (oneOff.data || []).filter((e) => nodeInScope(scope, e.scope_type, e.scope_id));
   const occurrences = [];
@@ -622,15 +617,26 @@ async function listEvents(supa, user, params) {
     if (!nodeInScope(scope, m.scope_type, m.scope_id)) continue;
     occurrences.push(...expandRecurring(m, from, to));
   }
+  const feeds = await fetchFeeds(supa, scope, from ? from.slice(0, 10) : null, to ? to.slice(0, 10) : null);
+  return [...visible.map(eventCard), ...occurrences, ...feeds];
+}
 
-  const [feeds, linked] = await Promise.all([
-    fetchFeeds(supa, scope, from ? from.slice(0, 10) : null, to ? to.slice(0, 10) : null),
-    fetchLinkedOverlay(supa, user, scope, from, to),
-  ]);
-  return {
-    events: [...visible.map(eventCard), ...occurrences, ...feeds, ...linked],
-    can_write: WRITE_ROLES.has(String(user.role)),
-  };
+async function listEvents(supa, user, params) {
+  const scope = await resolveScope(supa, user);
+  const from = sanitize(params.from, 40);
+  const to = sanitize(params.to, 40);
+  try {
+    const [owned, linked] = await Promise.all([
+      gatherOwnedEvents(supa, scope, from, to),
+      fetchLinkedOverlay(supa, user, scope, from, to),
+    ]);
+    return {
+      events: [...owned, ...linked],
+      can_write: WRITE_ROLES.has(String(user.role)),
+    };
+  } catch (e) {
+    return { error: e.message || "list failed", status: 500 };
+  }
 }
 
 async function listStores(supa, user) {
@@ -826,8 +832,132 @@ async function deleteEvent(supa, user, body) {
   return { ok: true };
 }
 
+// ----------------------------------------------------------------------------
+// Outbound subscribe feed — a per-user secret token + an unauthenticated .ics
+// endpoint, so leaders can subscribe to their SOAR schedule from their phone.
+// ----------------------------------------------------------------------------
+function newToken() {
+  const rnd = () => globalThis.crypto.randomUUID().replace(/-/g, "");
+  return `${rnd()}${rnd()}`.slice(0, 48);
+}
+
+async function getFeedToken(supa, user) {
+  const { data } = await supa
+    .from("schedule_feed_tokens").select("token").eq("user_id", user.id).maybeSingle();
+  if (data?.token) return { token: data.token };
+  const token = newToken();
+  const { error } = await supa
+    .from("schedule_feed_tokens").insert({ user_id: user.id, token });
+  if (error) return { error: error.message, status: 500 };
+  return { token };
+}
+
+async function rotateFeedToken(supa, user) {
+  const token = newToken();
+  const { error } = await supa
+    .from("schedule_feed_tokens")
+    .upsert({ user_id: user.id, token, created_at: new Date().toISOString() }, { onConflict: "user_id" });
+  if (error) return { error: error.message, status: 500 };
+  return { token };
+}
+
+const icsPad = (n) => String(n).padStart(2, "0");
+function icsEscape(s) {
+  return String(s || "").replace(/\\/g, "\\\\").replace(/\n/g, "\\n").replace(/,/g, "\\,").replace(/;/g, "\\;");
+}
+function icsDate(iso, allDay) {
+  if (allDay) return { v: iso.slice(0, 10).replace(/-/g, ""), dateOnly: true };
+  const d = new Date(iso);
+  const v = `${d.getUTCFullYear()}${icsPad(d.getUTCMonth() + 1)}${icsPad(d.getUTCDate())}T${icsPad(d.getUTCHours())}${icsPad(d.getUTCMinutes())}${icsPad(d.getUTCSeconds())}Z`;
+  return { v, dateOnly: false };
+}
+// Fold lines to ≤75 octets per RFC 5545, CRLF-joined.
+function icsFold(line) {
+  let out = "";
+  let s = line;
+  while (s.length > 73) { out += s.slice(0, 73) + "\r\n "; s = s.slice(73); }
+  return out + s;
+}
+function buildIcs(events, name) {
+  const lines = [
+    "BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//SOAR Hub//Schedule//EN",
+    "CALSCALE:GREGORIAN", "METHOD:PUBLISH",
+    `X-WR-CALNAME:${icsEscape(name)}`, "X-PUBLISHED-TTL:PT1H",
+  ];
+  const stamp = icsDate(new Date().toISOString(), false).v;
+  for (const e of events) {
+    if (e.source === "external") continue;
+    const start = icsDate(e.starts_at, e.all_day);
+    let endLine = null;
+    if (e.all_day) {
+      // All-day DTEND is exclusive — next day.
+      const d = new Date(`${e.starts_at.slice(0, 10)}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + 1);
+      endLine = `DTEND;VALUE=DATE:${d.getUTCFullYear()}${icsPad(d.getUTCMonth() + 1)}${icsPad(d.getUTCDate())}`;
+    } else if (e.ends_at) {
+      endLine = `DTEND:${icsDate(e.ends_at, false).v}`;
+    }
+    lines.push("BEGIN:VEVENT");
+    lines.push(`UID:${icsEscape(e.id)}-${start.v}@mysoarhub.com`);
+    lines.push(`DTSTAMP:${stamp}`);
+    lines.push(start.dateOnly ? `DTSTART;VALUE=DATE:${start.v}` : `DTSTART:${start.v}`);
+    if (endLine) lines.push(endLine);
+    lines.push(icsFold(`SUMMARY:${icsEscape(e.title)}`));
+    const descParts = [];
+    if (e.location) descParts.push(`Location: ${e.location}`);
+    if (e.notes) descParts.push(e.notes);
+    if (e.store_number) descParts.push(`Store #${e.store_number}`);
+    if (descParts.length) lines.push(icsFold(`DESCRIPTION:${icsEscape(descParts.join("\n"))}`));
+    lines.push("END:VEVENT");
+  }
+  lines.push("END:VCALENDAR");
+  return lines.map(icsFold).join("\r\n") + "\r\n";
+}
+
+// Serve the .ics feed for a token (no Bearer auth — the token IS the credential).
+async function serveIcsFeed(supa, token) {
+  const { data: row } = await supa
+    .from("schedule_feed_tokens").select("user_id").eq("token", token).maybeSingle();
+  if (!row) return { statusCode: 404, headers: { "Content-Type": "text/plain" }, body: "Not found" };
+  const { data: profile } = await supa
+    .from("profiles").select("id, email, full_name, preferred_name, role, is_active, primary_store_id")
+    .eq("id", row.user_id).single();
+  if (!profile || !profile.is_active) {
+    return { statusCode: 404, headers: { "Content-Type": "text/plain" }, body: "Not found" };
+  }
+  const now = new Date();
+  const from = new Date(now.getTime() - 30 * DAY_MS).toISOString();
+  const to = new Date(now.getTime() + 180 * DAY_MS).toISOString();
+  const scope = await resolveScope(supa, profile);
+  const events = await gatherOwnedEvents(supa, scope, from, to);
+  supa.from("schedule_feed_tokens").update({ last_accessed_at: new Date().toISOString() }).eq("token", token).then(() => {}, () => {});
+  const ics = buildIcs(events, `SOAR — ${displayName(profile)}`);
+  return {
+    statusCode: 200,
+    headers: {
+      "Content-Type": "text/calendar; charset=utf-8",
+      "Content-Disposition": 'inline; filename="soar-schedule.ics"',
+      "Cache-Control": "no-cache",
+    },
+    body: ics,
+  };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
+  const earlyParams = event.queryStringParameters || {};
+
+  // Public, unauthenticated .ics subscription feed (token in the URL).
+  if (event.httpMethod === "GET" && earlyParams.action === "ics") {
+    const token = sanitize(earlyParams.token, 64);
+    if (!token) return { statusCode: 400, headers: { "Content-Type": "text/plain" }, body: "Missing token" };
+    try {
+      return await serveIcsFeed(admin(), token);
+    } catch (e) {
+      return { statusCode: 500, headers: { "Content-Type": "text/plain" }, body: e.message || "feed error" };
+    }
+  }
+
   let user;
   try {
     user = await getSessionUser(event);
@@ -848,8 +978,10 @@ export const handler = async (event) => {
       if (action === "list") return unwrap(await listEvents(supa, user, params));
       if (action === "stores") return unwrap(await listStores(supa, user));
       if (action === "calendars") return unwrap(await listCalendars(supa, user));
+      if (action === "feed-token") return unwrap(await getFeedToken(supa, user));
       return respond(400, { error: `Unknown action: ${action}` });
     }
+    if (action === "feed-token-rotate") return unwrap(await rotateFeedToken(supa, user));
     if (action === "create") return unwrap(await createEvent(supa, user, body));
     if (action === "update") return unwrap(await updateEvent(supa, user, body));
     if (action === "delete") return unwrap(await deleteEvent(supa, user, body));

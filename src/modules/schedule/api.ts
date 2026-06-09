@@ -89,3 +89,11 @@ export function unmuteCalendar(
 ): Promise<{ ok: true }> {
   return request(`${FN}?action=unmute-calendar`, { method: "POST", body: JSON.stringify(input) });
 }
+
+// Outbound subscribe feed — the per-user secret token for the .ics URL.
+export function fetchFeedToken(): Promise<{ token: string }> {
+  return request(`${FN}?action=feed-token`);
+}
+export function rotateFeedToken(): Promise<{ token: string }> {
+  return request(`${FN}?action=feed-token-rotate`, { method: "POST", body: "{}" });
+}

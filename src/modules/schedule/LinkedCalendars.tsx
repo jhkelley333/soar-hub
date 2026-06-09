@@ -3,10 +3,11 @@
 // Inherited calendars can be hidden for just you or muted for your market.
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Building2, Eye, EyeOff, Link2, Loader2, Plus, Trash2, TriangleAlert } from "lucide-react";
+import { Building2, Check, Copy, Eye, EyeOff, Link2, Loader2, Plus, Smartphone, Trash2, TriangleAlert } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
-import { fetchCalendars, linkCalendar, muteCalendar, unlinkCalendar, unmuteCalendar, updateCalendar } from "./api";
+import { fetchCalendars, fetchFeedToken, linkCalendar, muteCalendar, rotateFeedToken, unlinkCalendar, unmuteCalendar, updateCalendar } from "./api";
 import { CAL_COLOR_OPTIONS, type CalColor, type CalScope, type YouMarker } from "./types";
 
 const MARKET_NAME: Record<string, string> = { store: "Store", district: "District", area: "Area", region: "Region" };
@@ -24,6 +25,7 @@ export function LinkedCalendars({ you, canOrgWide }: { you?: YouMarker; canOrgWi
   const marketName = market ? MARKET_NAME[market] : "";
 
   const [adding, setAdding] = useState(false);
+  const [subOpen, setSubOpen] = useState(false);
   const [label, setLabel] = useState("");
   const [url, setUrl] = useState("");
   const [color, setColor] = useState<CalColor>("blue");
@@ -92,17 +94,22 @@ export function LinkedCalendars({ you, canOrgWide }: { you?: YouMarker; canOrgWi
             const dim = c.muted_for_me || c.muted_for_market;
             return (
               <li key={c.id} className={cn("group flex items-center gap-1.5 rounded-md py-1 pr-1 hover:bg-zinc-100", dim && "opacity-50")}>
-                {c.can_manage && (
-                  <select
-                    value={c.color}
-                    onChange={(e) => colorMut.mutate({ id: c.id, color: e.target.value as CalColor })}
-                    className="h-4 w-4 shrink-0 cursor-pointer appearance-none rounded-full border-0 bg-transparent p-0"
-                    title="Color"
-                  >
-                    {CAL_COLOR_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.value}</option>)}
-                  </select>
-                )}
-                <span className={cn("h-3 w-3 shrink-0 rounded-full", dot)} />
+                {/* Color dot — for managers, an invisible native select overlays
+                    it so tapping opens a color menu without showing its text. */}
+                <span className="relative inline-flex h-3 w-3 shrink-0 items-center justify-center">
+                  <span className={cn("h-3 w-3 rounded-full", dot)} />
+                  {c.can_manage && (
+                    <select
+                      value={c.color}
+                      onChange={(e) => colorMut.mutate({ id: c.id, color: e.target.value as CalColor })}
+                      className="absolute inset-0 cursor-pointer opacity-0"
+                      title="Change color"
+                      aria-label="Calendar color"
+                    >
+                      {CAL_COLOR_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.value}</option>)}
+                    </select>
+                  )}
+                </span>
                 <span className="min-w-0 flex-1 truncate text-zinc-700" title={c.url}>{c.label}</span>
                 {shared && (
                   <span className="shrink-0 rounded bg-zinc-200/70 px-1 py-px text-[9px] font-semibold uppercase tracking-wide text-zinc-500">
@@ -202,6 +209,94 @@ export function LinkedCalendars({ you, canOrgWide }: { you?: YouMarker; canOrgWi
           </p>
         </div>
       )}
+
+      <button
+        onClick={() => setSubOpen(true)}
+        className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-accent hover:underline"
+      >
+        <Smartphone className="h-3.5 w-3.5" /> Subscribe on your phone
+      </button>
+      <SubscribeModal open={subOpen} onClose={() => setSubOpen(false)} />
     </div>
+  );
+}
+
+// "Subscribe on your phone" — shows the user's private .ics URL with copy +
+// an Apple/iOS one-tap (webcal://) and a way to regenerate the link.
+function SubscribeModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [copied, setCopied] = useState(false);
+  const tokenQ = useQuery({ queryKey: ["schedule-feed-token"], queryFn: fetchFeedToken, enabled: open });
+  const token = tokenQ.data?.token;
+
+  const httpsUrl = token ? `${window.location.origin}/.netlify/functions/schedule?action=ics&token=${token}` : "";
+  const webcalUrl = httpsUrl.replace(/^https?:/i, "webcal:");
+
+  const rotateMut = useMutation({
+    mutationFn: rotateFeedToken,
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["schedule-feed-token"] });
+      toast.push("New link generated — update it on your devices.", "success");
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't regenerate.", "error"),
+  });
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(httpsUrl);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast.push("Copy failed — select and copy the link.", "error");
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Subscribe to your SOAR calendar" maxWidth="max-w-md">
+      <div className="space-y-4 text-sm">
+        <p className="text-zinc-600">
+          Add your SOAR schedule to your phone’s calendar. It stays in sync automatically and is read-only.
+          Keep this link private — anyone with it can see your calendar.
+        </p>
+
+        {tokenQ.isLoading ? (
+          <div className="flex items-center gap-2 text-zinc-400"><Loader2 className="h-4 w-4 animate-spin" /> Preparing your link…</div>
+        ) : (
+          <>
+            <div>
+              <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-zinc-500">Your subscribe link</div>
+              <div className="flex items-center gap-2">
+                <input readOnly value={httpsUrl} onFocus={(e) => e.currentTarget.select()}
+                  className="min-w-0 flex-1 rounded-md border border-zinc-200 bg-zinc-50 px-2 py-1.5 text-xs text-zinc-700" />
+                <button onClick={copy} className="inline-flex shrink-0 items-center gap-1 rounded-md bg-midnight px-2.5 py-1.5 text-xs font-semibold text-white hover:bg-midnight/90">
+                  {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                  {copied ? "Copied" : "Copy"}
+                </button>
+              </div>
+            </div>
+
+            <a href={webcalUrl} className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-2 text-xs font-semibold text-white hover:bg-accent/90">
+              <Smartphone className="h-4 w-4" /> Add to Apple / iPhone Calendar
+            </a>
+
+            <div className="rounded-md bg-zinc-50 p-3 text-xs leading-relaxed text-zinc-600">
+              <div className="font-semibold text-zinc-700">How to add it</div>
+              <p className="mt-1"><span className="font-medium">iPhone / Mac:</span> tap “Add to Apple Calendar” above, then confirm.</p>
+              <p className="mt-1"><span className="font-medium">Google Calendar:</span> on a computer, go to Other calendars → <span className="font-medium">From URL</span>, and paste the link.</p>
+              <p className="mt-1"><span className="font-medium">Outlook:</span> Add calendar → Subscribe from web, paste the link.</p>
+            </div>
+
+            <button
+              onClick={() => { if (window.confirm("Generate a new link? Your current subscription links will stop working until you update them.")) rotateMut.mutate(); }}
+              disabled={rotateMut.isPending}
+              className="text-xs font-medium text-rose-600 hover:underline disabled:opacity-50"
+            >
+              {rotateMut.isPending ? "Regenerating…" : "Regenerate link (revoke the old one)"}
+            </button>
+          </>
+        )}
+      </div>
+    </Modal>
   );
 }
