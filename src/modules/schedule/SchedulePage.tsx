@@ -3,8 +3,9 @@
 // see. Read-only module feeds + Google come in later phases.
 
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { ArrowUpRight, ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Button } from "@/shared/ui/Button";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -43,6 +44,14 @@ export function SchedulePage() {
   const [view, setView] = useState<"month" | "agenda">("month");
   const [hidden, setHidden] = useState<Set<EventType>>(new Set());
   const [modal, setModal] = useState<{ event: ScheduleEvent | null; date: string | null } | null>(null);
+  const navigate = useNavigate();
+
+  // Native events open the editor; feed events (training/PTO/…) are read-only
+  // here, so they deep-link into their source module.
+  function openEvent(e: ScheduleEvent) {
+    if (e.editable === false && e.link) { navigate(e.link); return; }
+    setModal({ event: e, date: null });
+  }
 
   const gridStart = useMemo(() => startOfGrid(anchor), [anchor]);
   const days = useMemo(() => Array.from({ length: 42 }, (_, i) => addDays(gridStart, i)), [gridStart]);
@@ -153,10 +162,10 @@ export function SchedulePage() {
           todayKey={todayKey}
           canWrite={canWrite}
           onDay={(key) => canWrite && setModal({ event: null, date: key })}
-          onEvent={(e) => setModal({ event: e, date: null })}
+          onEvent={openEvent}
         />
       ) : (
-        <Agenda events={visible} onEvent={(e) => setModal({ event: e, date: null })} />
+        <Agenda events={visible} onEvent={openEvent} />
       )}
 
       {modal && (
@@ -184,6 +193,7 @@ function EventBar({ e, onClick }: { e: ScheduleEvent; onClick: () => void }) {
     >
       <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", m.dot)} />
       <span className="truncate">{time && <span className="text-zinc-400">{time} </span>}{e.title}</span>
+      {e.source !== "soar" && <ArrowUpRight className="ml-auto h-3 w-3 shrink-0 text-zinc-300" />}
     </button>
   );
 }

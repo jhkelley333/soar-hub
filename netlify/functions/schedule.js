@@ -110,6 +110,7 @@ async function resolveScope(supa, profile) {
 
   // Roll the visible stores up to their district / area / region ids.
   const storeIdSet = new Set(storeRows.map((s) => s.id));
+  const storeNumberSet = new Set(storeRows.map((s) => String(s.number)));
   const districtIdSet = new Set(storeRows.map((s) => s.district_id).filter(Boolean));
   const areaIdSet = new Set();
   const regionIdSet = new Set();
@@ -124,9 +125,9 @@ async function resolveScope(supa, profile) {
       areas = data || [];
       for (const a of areas) if (a.region_id) regionIdSet.add(a.region_id);
     }
-    return { all, storeRows, storeIdSet, districtIdSet, areaIdSet, regionIdSet, districtById };
+    return { all, storeRows, storeIdSet, storeNumberSet, districtIdSet, areaIdSet, regionIdSet, districtById };
   }
-  return { all, storeRows, storeIdSet, districtIdSet, areaIdSet, regionIdSet, districtById: new Map() };
+  return { all, storeRows, storeIdSet, storeNumberSet, districtIdSet, areaIdSet, regionIdSet, districtById: new Map() };
 }
 
 // Is the given (scope_type, scope_id) node within the caller's scope?
@@ -163,6 +164,55 @@ function eventCard(e) {
   };
 }
 
+// Read-only feed events derived from other modules. v1b: Training Credits +
+// PTO (both keyed by store_number). Walkthroughs + Reno follow. Feed events
+// aren't editable here — clicking them deep-links into the source module.
+async function fetchFeeds(supa, scope, fromDate, toDate) {
+  if (!fromDate || !toDate) return [];
+  const numbers = Array.from(scope.storeNumberSet || []);
+  if (!scope.all && numbers.length === 0) return [];
+  const out = [];
+
+  // Training Credits — pinned to start_date.
+  let tq = supa
+    .from("training_credit_requests")
+    .select("id, employee_name, training_type, start_date, store_number, status")
+    .gte("start_date", fromDate).lt("start_date", toDate);
+  if (!scope.all) tq = tq.in("store_number", numbers);
+  const { data: trainings } = await tq;
+  for (const t of trainings || []) {
+    if (!t.start_date || t.status === "Withdrawn" || t.status === "Rejected") continue;
+    out.push({
+      id: `training:${t.id}`, source: "training", editable: false, link: "/employee-actions",
+      title: `Training — ${t.employee_name}`, type: "training",
+      starts_at: `${t.start_date}T09:00:00`, ends_at: null, all_day: true,
+      scope_type: "store", scope_id: null, store_number: t.store_number,
+      notes: t.training_type || null, color: null, created_by_name: null,
+    });
+  }
+
+  // PTO — date range; overlap with the window.
+  let pq = supa
+    .from("pto_requests")
+    .select("id, employee_name, pto_start_date, pto_end_date, store_number, status")
+    .lte("pto_start_date", toDate).gte("pto_end_date", fromDate);
+  if (!scope.all) pq = pq.in("store_number", numbers);
+  const { data: ptos } = await pq;
+  for (const p of ptos || []) {
+    if (p.status === "Withdrawn" || p.status === "Rejected") continue;
+    out.push({
+      id: `pto:${p.id}`, source: "pto", editable: false, link: "/employee-actions",
+      title: `${p.employee_name} — PTO`, type: "pto",
+      starts_at: `${p.pto_start_date}T09:00:00`,
+      ends_at: p.pto_end_date ? `${p.pto_end_date}T17:00:00` : null, all_day: true,
+      scope_type: "store", scope_id: null, store_number: p.store_number,
+      notes: null, color: null, created_by_name: null,
+    });
+  }
+
+  return out;
+}
+
 async function listEvents(supa, user, params) {
   const scope = await resolveScope(supa, user);
   const from = sanitize(params.from, 40);
@@ -178,7 +228,11 @@ async function listEvents(supa, user, params) {
   const { data, error } = await q;
   if (error) return { error: error.message, status: 500 };
   const visible = (data || []).filter((e) => nodeInScope(scope, e.scope_type, e.scope_id));
-  return { events: visible.map(eventCard), can_write: WRITE_ROLES.has(String(user.role)) };
+  const feeds = await fetchFeeds(supa, scope, from ? from.slice(0, 10) : null, to ? to.slice(0, 10) : null);
+  return {
+    events: [...visible.map(eventCard), ...feeds],
+    can_write: WRITE_ROLES.has(String(user.role)),
+  };
 }
 
 async function listStores(supa, user) {
