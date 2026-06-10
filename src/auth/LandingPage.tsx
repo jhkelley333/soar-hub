@@ -14,11 +14,14 @@
 // Keep this page lean: no auth state, no API calls, no fetch
 // dependencies. The point is "renders fast, looks legitimate".
 
+import { useState } from "react";
 import { Link } from "react-router-dom";
-import { ArrowRight, ClipboardList, ShieldCheck, Users } from "lucide-react";
+import { ArrowRight, ClipboardList, Gamepad2, ShieldCheck, Users } from "lucide-react";
 import { RollerBuddy } from "./RollerBuddy";
+import { RollerGame } from "./RollerGame";
 
 export function LandingPage() {
+  const [gameOpen, setGameOpen] = useState(false);
   return (
     <div className="relative min-h-full overflow-hidden bg-accent text-white">
       <div
@@ -119,6 +122,21 @@ export function LandingPage() {
       </div>
 
       <RollerBuddy />
+
+      {/* Hidden easter egg — a little red arcade button. Tap to play. */}
+      <button
+        type="button"
+        onClick={() => setGameOpen(true)}
+        aria-label="Play"
+        title="Psst… tap to play"
+        className="group fixed bottom-5 right-5 z-50 grid h-11 w-11 place-items-center rounded-full bg-[oklch(0.55_0.22_25)] text-white shadow-lg ring-2 ring-white/40 transition hover:scale-110 active:scale-95"
+        style={{ marginBottom: "env(safe-area-inset-bottom, 0px)" }}
+      >
+        <span className="absolute inset-0 animate-ping rounded-full bg-[oklch(0.55_0.22_25)] opacity-40 group-hover:opacity-60" />
+        <Gamepad2 className="relative h-5 w-5" strokeWidth={2} />
+      </button>
+
+      {gameOpen && <RollerGame onClose={() => setGameOpen(false)} />}
     </div>
   );
 }
