@@ -316,6 +316,8 @@ function closeoutCard(co) {
     status: co.status,
     flagged: co.flagged,
     is_late: !!co.is_late,
+    submitted_by: co.submitted_by || null,
+    submitted_by_name: co.submitted_by_name || null,
   };
 }
 
@@ -391,30 +393,49 @@ async function submitCloseout(supa, user, body) {
     return { error: "Can't close out a future date.", status: 400 };
   }
   const isLate = businessDate < today;
-  if (isLate) {
-    if (businessDate < isoBusinessDaysBefore(today, LATE_WINDOW_DAYS)) {
-      return {
-        error: `Late closeouts are limited to the last ${LATE_WINDOW_DAYS} days. ${businessDate} is too far back — contact your DO.`,
-        status: 422,
-      };
-    }
-    const { data: clash } = await supa
-      .from("cash_closeouts").select("id").eq("store_id", active.id).eq("business_date", businessDate).maybeSingle();
-    if (clash) {
-      return { error: `A closeout already exists for ${businessDate} at this store.`, status: 409 };
-    }
+  if (isLate && businessDate < isoBusinessDaysBefore(today, LATE_WINDOW_DAYS)) {
+    return {
+      error: `Late closeouts are limited to the last ${LATE_WINDOW_DAYS} days. ${businessDate} is too far back — contact your DO.`,
+      status: 422,
+    };
   }
 
-  // Wrong-day fail-safe. Closing for "today" while the immediately-prior
-  // business day has NO closeout usually means a forgotten night whose date
-  // defaulted forward after the cutoff. Make the closer confirm which day this
-  // deposit is really for before we silently record it as today.
-  if (!isLate && body?.confirm_today !== true) {
+  // Is there already a submitted closeout for this store + business day? If so,
+  // this submit is a CORRECTION to a locked day — gated below.
+  const { data: existing } = await supa
+    .from("cash_closeouts")
+    .select("id, status, submitted_by, submitted_by_name, cash_due_cents, deposit_cents, counted_cents, variance_cents")
+    .eq("store_id", active.id).eq("business_date", businessDate).maybeSingle();
+
+  // Wrong-day fail-safe — only on a brand-new "today" closeout. Closing for
+  // "today" while the immediately-prior business day has NO closeout usually
+  // means a forgotten night whose date defaulted forward after the cutoff.
+  if (!existing && !isLate && body?.confirm_today !== true) {
     const prev = isoBusinessDaysBefore(today, 1);
     const { data: prevCo } = await supa
       .from("cash_closeouts").select("id").eq("store_id", active.id).eq("business_date", prev).maybeSingle();
     if (!prevCo && prev >= isoBusinessDaysBefore(today, LATE_WINDOW_DAYS)) {
       return { confirm_business_date: true, today, suggested_date: prev };
+    }
+  }
+
+  // Correction gate — a submitted day is locked. Editing it needs an unlock
+  // reason and the right authority: a verified day requires a DO/SDO+; an
+  // unverified day can be corrected by the original closer or a leader.
+  let correctionReason = null;
+  if (existing) {
+    const wasVerified = existing.status === "verified";
+    const isLeader = ACT_ROLES.has(String(user.role));
+    const isSubmitter = existing.submitted_by === user.id;
+    if (wasVerified && !isLeader) {
+      return { error: "This day is verified and locked. A DO or SDO must unlock it to make a correction.", status: 403 };
+    }
+    if (!wasVerified && !isSubmitter && !isLeader) {
+      return { error: "Only the closer or a DO/SDO can correct this closeout.", status: 403 };
+    }
+    correctionReason = String(body?.correction_reason || "").trim();
+    if (correctionReason.length < 8) {
+      return { error: "Unlock & give a reason (min 8 chars) to correct a submitted closeout.", status: 422, needs_unlock: true };
     }
   }
 
@@ -469,15 +490,56 @@ async function submitCloseout(supa, user, body) {
     await notifyLateCloseout(supa, { store: active, businessDate, managerName, lateNote, variance });
   }
   await logCash(supa, {
-    scope: "closeout", action: isLate ? "submit-late" : "submit", store_id: active.id, closeout_id: co.id,
+    scope: "closeout", action: existing ? "correct" : (isLate ? "submit-late" : "submit"), store_id: active.id, closeout_id: co.id,
     detail: {
       business_date: businessDate, cash_due_cents: cashDue, deposit_cents: deposit,
       counted_cents: counted, variance_cents: variance, flagged, is_late: isLate,
       late_note: lateNote, acknowledged: body?.acknowledged === true,
+      ...(existing
+        ? {
+            correction_reason: correctionReason,
+            was_verified: existing.status === "verified",
+            prev_cash_due_cents: existing.cash_due_cents,
+            prev_deposit_cents: existing.deposit_cents,
+            prev_counted_cents: existing.counted_cents,
+            prev_variance_cents: existing.variance_cents,
+          }
+        : {}),
     },
     actor_id: user.id, actor_name: managerName,
   });
-  return { ok: true, id: co.id, flagged, status: co.status, is_late: isLate };
+  // A correction to a day that had already been verified is a control event —
+  // notify the DO/SDO so the change to a closed-out figure has eyes on it.
+  if (existing && existing.status === "verified") {
+    await notifyCloseoutCorrection(supa, {
+      store: active, businessDate, managerName, correctionReason,
+      prev: existing, next: { cash_due_cents: cashDue, deposit_cents: deposit, variance_cents: variance },
+    });
+  }
+  return { ok: true, id: co.id, flagged, status: co.status, is_late: isLate, corrected: !!existing };
+}
+
+// Email the store's DO/SDO that a previously-verified closeout was corrected.
+// Best-effort; never blocks the save. Mirrors notifyLateCloseout.
+async function notifyCloseoutCorrection(supa, { store, businessDate, managerName, correctionReason, prev, next }) {
+  try {
+    const leaders = await resolveStoreLeaders(supa, store.id);
+    const emails = [leaders.do?.email, leaders.sdo?.email].filter(Boolean);
+    if (!emails.length) return;
+    const fmt = (c) => `$${((c || 0) / 100).toFixed(2)}`;
+    const subject = `[Cash MGT] Verified closeout corrected — Store ${store.number} for ${businessDate}`;
+    const body =
+      `A previously-verified closeout at Store ${store.number}` +
+      `${store.name ? ` (${store.name})` : ""} was unlocked and corrected by ${managerName}.\n\n` +
+      `Business date: ${businessDate}\n` +
+      `Deposit: ${fmt(prev.deposit_cents)} → ${fmt(next.deposit_cents)}\n` +
+      `Cash due: ${fmt(prev.cash_due_cents)} → ${fmt(next.cash_due_cents)}\n` +
+      `Reason: ${correctionReason}\n\n` +
+      `The day was re-opened for deposit re-verification.`;
+    await sendEmail(emails, subject, body);
+  } catch {
+    /* best-effort */
+  }
 }
 
 // Email the store's DO/SDO that a missed day was backfilled. Best-effort —

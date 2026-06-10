@@ -100,6 +100,8 @@ export interface SubmitCloseoutInput {
   // Set true to confirm "yes, this really is for today" past the wrong-day
   // fail-safe (the prior business day has no closeout yet).
   confirm_today?: boolean;
+  // Required to correct an already-submitted (locked) closeout.
+  correction_reason?: string;
 }
 // On a normal success the server returns { ok, id, … }. When the wrong-day
 // fail-safe trips it instead returns { confirm_business_date, today,
@@ -113,6 +115,8 @@ export interface SubmitCloseoutResult {
   confirm_business_date?: boolean;
   today?: string;
   suggested_date?: string;
+  corrected?: boolean;
+  needs_unlock?: boolean;
 }
 export function submitCloseout(input: SubmitCloseoutInput): Promise<SubmitCloseoutResult> {
   return request(`${FN}?action=submit-closeout`, { method: "POST", body: JSON.stringify(input) });

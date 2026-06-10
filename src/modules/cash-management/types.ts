@@ -17,6 +17,9 @@ export interface CloseoutCard {
   flagged: boolean;
   // True when this day was backfilled after its business date (a missed close).
   is_late: boolean;
+  // Who submitted it — drives the lock/unlock authority on the client.
+  submitted_by?: string | null;
+  submitted_by_name?: string | null;
 }
 
 export interface Overview {

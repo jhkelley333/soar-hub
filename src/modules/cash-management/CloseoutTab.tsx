@@ -4,11 +4,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, Bell, Check, CalendarClock } from "lucide-react";
+import { ArrowLeft, ArrowRight, Bell, Check, CalendarClock, Lock, Unlock } from "lucide-react";
 import { Card } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { useToast } from "@/shared/ui/Toaster";
+import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import { fetchConfig, fetchMissedDays, fetchOverview, submitCloseout } from "./api";
 import { centsToInput, toCents, usd } from "./money";
@@ -26,6 +27,8 @@ export function CloseoutTab({
 }) {
   const qc = useQueryClient();
   const toast = useToast();
+  const { profile } = useAuth();
+  const LEADER_ROLES = ["do", "sdo", "rvp", "vp", "coo", "admin"];
 
   const configQuery = useQuery({ queryKey: ["cash-config"], queryFn: fetchConfig, staleTime: 5 * 60_000 });
   const overviewQuery = useQuery({ queryKey: ["cash-overview", storeId], queryFn: () => fetchOverview(storeId) });
@@ -74,6 +77,8 @@ export function CloseoutTab({
     setAckDate(false);
     setConfirming(false);
     setDayConfirm(null);
+    setUnlocked(false);
+    setCorrectionReason("");
   }, [targetDate]);
 
   const countedCents = useMemo(
@@ -90,10 +95,36 @@ export function CloseoutTab({
   const balanced = Math.abs(variance) < 1;
   const overTol = Math.abs(variance) > tol;
   const isShort = variance < 0;
-  const canSubmit = cashDue !== "" && (!overTol || reason.trim().length >= 8) && ackDate;
 
   // null target = closing for today; a missed-day string = retro/late mode.
   const [dayConfirm, setDayConfirm] = useState<{ today: string; suggested: string } | null>(null);
+
+  // Lock: a submitted closeout for today is read-only until unlocked. Who can
+  // unlock depends on lifecycle — a verified day needs a DO/SDO+; an
+  // unverified day, its original closer or a leader.
+  const [unlocked, setUnlocked] = useState(false);
+  const [correctionReason, setCorrectionReason] = useState("");
+  const isLeader = LEADER_ROLES.includes(profile?.role ?? "");
+  const isSubmitter = !!existing?.submitted_by && existing.submitted_by === profile?.id;
+  const verified = existing?.status === "verified";
+  const locked = !isLate && !!existing;
+  const canUnlock = locked && (verified ? isLeader : (isSubmitter || isLeader));
+  const isCorrecting = locked && unlocked;
+  const showForm = !locked || unlocked;
+
+  function unlock() {
+    if (existing) {
+      setCashDue(centsToInput(existing.cash_due_cents));
+      setDeposit(centsToInput(existing.deposit_cents));
+      setSynced(false);
+    }
+    setUnlocked(true);
+  }
+
+  const canSubmit =
+    cashDue !== "" &&
+    (!overTol || reason.trim().length >= 8) &&
+    (isCorrecting ? correctionReason.trim().length >= 8 : ackDate);
 
   const submit = useMutation({
     mutationFn: (vars: { confirmToday?: boolean; businessDate?: string } = {}) => {
@@ -115,6 +146,7 @@ export function CloseoutTab({
         reason: reason.trim(),
         acknowledged: ackDate,
         ...(vars.confirmToday ? { confirm_today: true } : {}),
+        ...(isCorrecting ? { correction_reason: correctionReason.trim() } : {}),
         ...dateField,
       });
     },
@@ -127,11 +159,13 @@ export function CloseoutTab({
       }
       setDayConfirm(null);
       toast.push(
-        res.flagged
-          ? "Submitted & escalated to DO/SDO."
-          : res.is_late
-            ? "Late closeout recorded — DO/SDO notified."
-            : "Closeout submitted.",
+        res.corrected
+          ? "Correction saved — logged for your DO/SDO."
+          : res.flagged
+            ? "Submitted & escalated to DO/SDO."
+            : res.is_late
+              ? "Late closeout recorded — DO/SDO notified."
+              : "Closeout submitted.",
         "success"
       );
       qc.invalidateQueries({ queryKey: ["cash-overview"] });
@@ -296,6 +330,59 @@ export function CloseoutTab({
         </div>
       )}
 
+      {/* Locked — a submitted day is read-only until deliberately unlocked. */}
+      {locked && !unlocked && (
+        <div className="mb-5 rounded-md bg-zinc-50 p-4 ring-1 ring-inset ring-zinc-200">
+          <div className="flex flex-wrap items-center gap-3">
+            <Lock className="h-5 w-5 shrink-0 text-zinc-500" />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-midnight">
+                {bizLabel} is closed out{verified ? " & verified" : ""} — locked
+              </div>
+              <div className="mt-0.5 text-xs text-zinc-500">
+                Deposit {usd(existing!.deposit_cents)}
+                {existing!.submitted_by_name ? ` · by ${existing!.submitted_by_name}` : ""}.
+                {canUnlock
+                  ? " Unlock to correct an error — you'll add a reason and it's logged."
+                  : verified
+                    ? " Verified days can only be corrected by a DO/SDO."
+                    : " Only the closer or a DO/SDO can correct this."}
+              </div>
+            </div>
+            {canUnlock && (
+              <Button variant="secondary" size="sm" onClick={unlock}>
+                <Unlock className="h-4 w-4" /> Unlock to correct
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Unlocked — correcting a submitted day; a reason is required. */}
+      {isCorrecting && (
+        <div className="mb-5 rounded-md bg-amber-50 p-4 ring-1 ring-inset ring-amber-200">
+          <div className="text-sm font-semibold text-amber-900">Correcting {bizLabel}</div>
+          <p className="mt-0.5 text-xs text-amber-800">
+            {verified
+              ? "This day was verified — your DO/SDO will be notified and the deposit re-opened for re-verification."
+              : "Adjust the figures below, then give a reason for the change."}
+          </p>
+          <textarea
+            value={correctionReason}
+            onChange={(e) => setCorrectionReason(e.target.value)}
+            maxLength={500}
+            rows={2}
+            placeholder="Reason for correction (e.g. miscounted the $20 strap; recounted to $1,240)"
+            className="mt-2 block w-full rounded-md border-0 bg-white px-3 py-2 text-sm ring-1 ring-inset ring-amber-200 focus:outline-none focus:ring-2 focus:ring-accent"
+          />
+          <button type="button" onClick={() => setUnlocked(false)}
+            className="mt-1.5 text-[11px] font-medium text-zinc-500 hover:text-zinc-700">
+            Cancel correction
+          </button>
+        </div>
+      )}
+
+      {showForm && (
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[1.35fr_1fr]">
         {/* drawer count */}
         <Card className="overflow-hidden">
@@ -441,7 +528,8 @@ export function CloseoutTab({
           </Card>
         </div>
       </div>
-      {actionSlot ? createPortal(actionContent, actionSlot) : null}
+      )}
+      {actionSlot && showForm ? createPortal(actionContent, actionSlot) : null}
     </div>
   );
 }
