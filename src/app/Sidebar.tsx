@@ -1,7 +1,10 @@
+import { useState } from "react";
+import { createPortal } from "react-dom";
 import { NavLink } from "react-router-dom";
 import { LogOut } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthProvider";
+import { RollerGame } from "@/auth/RollerGame";
 import { groupedNav, visibleNav } from "@/app/nav";
 import { fetchResolvedFlags } from "@/lib/flags";
 import { useOverrides } from "@/lib/roleAccess";
@@ -106,6 +109,8 @@ function initialsOf(name: string | null | undefined, email: string | null | unde
 // with fixed dark-on-navy colors rather than `dark:` variants.
 export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { profile, signOut } = useAuth();
+  // Hidden easter egg — tapping the red brand mark opens RollerBuddy's runner.
+  const [gameOpen, setGameOpen] = useState(false);
   // Reuses the same query key as useFlag() so we don't double-fetch.
   const flagsQ = useQuery({
     queryKey: ["feature-flags"],
@@ -129,17 +134,22 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   }
 
   return (
+    <>
     <aside
       className="flex h-full w-64 flex-col text-white shadow-xl lg:shadow-none"
       style={{ background: "linear-gradient(180deg, #1C3D5C 0%, #15324B 100%)" }}
     >
-      {/* Brand */}
+      {/* Brand — the red mark is a secret button: tap it to play. */}
       <div className="flex h-16 items-center gap-3 px-5">
-        <img
-          src="/app-icon.png"
-          alt=""
-          className="h-9 w-9 shrink-0 rounded-full object-cover ring-1 ring-white/15"
-        />
+        <button
+          type="button"
+          onClick={() => setGameOpen(true)}
+          aria-label="Play"
+          title="Psst… tap to play"
+          className="h-9 w-9 shrink-0 rounded-full ring-1 ring-white/15 transition hover:scale-105 hover:ring-frost/60 active:scale-95"
+        >
+          <img src="/app-icon.png" alt="" className="h-full w-full rounded-full object-cover" />
+        </button>
         <div className="min-w-0">
           <div className="text-sm font-semibold leading-tight tracking-tight">SOAR Hub</div>
           <div className="text-[10px] font-medium uppercase tracking-wider text-frost/70">
@@ -225,5 +235,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
         </div>
       </div>
     </aside>
+    {gameOpen && createPortal(<RollerGame onClose={() => setGameOpen(false)} />, document.body)}
+    </>
   );
 }
