@@ -73,6 +73,7 @@ export function CloseoutTab({
     setLateNote("");
     setAckDate(false);
     setConfirming(false);
+    setDayConfirm(null);
   }, [targetDate]);
 
   const countedCents = useMemo(
@@ -91,9 +92,21 @@ export function CloseoutTab({
   const isShort = variance < 0;
   const canSubmit = cashDue !== "" && (!overTol || reason.trim().length >= 8) && ackDate;
 
+  // null target = closing for today; a missed-day string = retro/late mode.
+  const [dayConfirm, setDayConfirm] = useState<{ today: string; suggested: string } | null>(null);
+
   const submit = useMutation({
-    mutationFn: () =>
-      submitCloseout({
+    mutationFn: (vars: { confirmToday?: boolean; businessDate?: string } = {}) => {
+      const dateField: { business_date?: string; late_note?: string } = {};
+      if (vars.businessDate) {
+        // Closer corrected the day to the missed prior date — records as late.
+        dateField.business_date = vars.businessDate;
+        dateField.late_note = lateNote.trim() || "Date corrected at closeout to the missed day.";
+      } else if (isLate) {
+        dateField.business_date = targetDate!;
+        if (lateNote.trim()) dateField.late_note = lateNote.trim();
+      }
+      return submitCloseout({
         store_id: storeId!,
         cash_due_cents: cashDueCents,
         deposit_cents: depositCents,
@@ -101,13 +114,22 @@ export function CloseoutTab({
         denominations: count,
         reason: reason.trim(),
         acknowledged: ackDate,
-        ...(isLate ? { business_date: targetDate!, late_note: lateNote.trim() || undefined } : {}),
-      }),
+        ...(vars.confirmToday ? { confirm_today: true } : {}),
+        ...dateField,
+      });
+    },
     onSuccess: (res) => {
+      // Wrong-day fail-safe tripped — ask which day before recording.
+      if (res.confirm_business_date && res.today && res.suggested_date) {
+        setConfirming(false);
+        setDayConfirm({ today: res.today, suggested: res.suggested_date });
+        return;
+      }
+      setDayConfirm(null);
       toast.push(
         res.flagged
           ? "Submitted & escalated to DO/SDO."
-          : isLate
+          : res.is_late
             ? "Late closeout recorded — DO/SDO notified."
             : "Closeout submitted.",
         "success"
@@ -132,9 +154,34 @@ export function CloseoutTab({
 
   // The submit control — rendered inline on desktop, or portaled into the
   // mobile shell's sticky footer when actionSlot is provided.
+  const fmtDay = (iso: string) =>
+    new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+
   const actionContent = (
     <>
-      {!confirming ? (
+      {dayConfirm ? (
+        <div className="space-y-2.5 rounded-md bg-amber-50 p-3 ring-1 ring-inset ring-amber-200">
+          <div className="text-[13px] font-semibold text-amber-900">Which day is this deposit for?</div>
+          <div className="text-xs leading-snug text-amber-800">
+            There's no closeout yet for <strong>{fmtDay(dayConfirm.suggested)}</strong>. If last night was missed,
+            this deposit is probably for that day — pick it so it lands on the right date.
+          </div>
+          <div className="grid gap-2">
+            <Button variant="primary" className="w-full" disabled={submit.isPending}
+              onClick={() => submit.mutate({ businessDate: dayConfirm.suggested })}>
+              It's for {fmtDay(dayConfirm.suggested)} (the missed day)
+            </Button>
+            <Button variant="secondary" className="w-full" disabled={submit.isPending}
+              onClick={() => submit.mutate({ confirmToday: true })}>
+              No — it's for today, {fmtDay(dayConfirm.today)}
+            </Button>
+            <button type="button" className="text-center text-[11px] font-medium text-zinc-500 hover:text-zinc-700"
+              onClick={() => setDayConfirm(null)} disabled={submit.isPending}>
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : !confirming ? (
         <Button
           className="w-full"
           variant={overTol ? "danger" : "primary"}
@@ -156,7 +203,7 @@ export function CloseoutTab({
             <Button
               variant={overTol ? "danger" : "primary"}
               className="w-full"
-              onClick={() => submit.mutate()}
+              onClick={() => submit.mutate({})}
               disabled={submit.isPending}
             >
               <Check className="h-4 w-4" />

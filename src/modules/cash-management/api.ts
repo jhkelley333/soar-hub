@@ -97,8 +97,24 @@ export interface SubmitCloseoutInput {
   // an optional note on why it's late. Omitted ⇒ the server uses today.
   business_date?: string;
   late_note?: string;
+  // Set true to confirm "yes, this really is for today" past the wrong-day
+  // fail-safe (the prior business day has no closeout yet).
+  confirm_today?: boolean;
 }
-export function submitCloseout(input: SubmitCloseoutInput): Promise<{ ok: true; id: string; flagged: boolean; status: string; is_late?: boolean }> {
+// On a normal success the server returns { ok, id, … }. When the wrong-day
+// fail-safe trips it instead returns { confirm_business_date, today,
+// suggested_date } so the UI can ask which day this deposit is for.
+export interface SubmitCloseoutResult {
+  ok?: true;
+  id?: string;
+  flagged?: boolean;
+  status?: string;
+  is_late?: boolean;
+  confirm_business_date?: boolean;
+  today?: string;
+  suggested_date?: string;
+}
+export function submitCloseout(input: SubmitCloseoutInput): Promise<SubmitCloseoutResult> {
   return request(`${FN}?action=submit-closeout`, { method: "POST", body: JSON.stringify(input) });
 }
 
