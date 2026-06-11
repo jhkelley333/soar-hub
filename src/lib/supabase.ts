@@ -50,6 +50,17 @@ export const supabase = createClient(url, anonKey, {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
+    // Implicit flow: recovery/invite links carry the session tokens directly
+    // in the URL hash, which detectSessionInUrl consumes on landing. supabase-js
+    // v2 defaults to PKCE, which instead returns a `?code=` that must be
+    // exchanged using a `code_verifier` stored in localStorage when the flow
+    // was *started* — so a new user accepting an invite (no verifier anywhere),
+    // or anyone clicking a reset link on a different device/browser, or an email
+    // security scanner that pre-fetches the one-time link, all fail with
+    // "Auth session missing!" when they try to set a password. The
+    // AcceptInvite/ResetPassword pages are built to read the hash tokens, so we
+    // pin implicit to match. (Email/password sign-in is unaffected.)
+    flowType: "implicit",
     lock: inPageLock,
     // Pin the session storage key to the project ref. supabase-js otherwise
     // derives it from the URL hostname's first label, so moving the client off
