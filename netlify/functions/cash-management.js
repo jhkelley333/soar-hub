@@ -928,7 +928,9 @@ async function detail(supa, user, params) {
       .eq("closeout_id", closeoutId)
       .order("created_at", { ascending: true })
       .limit(50)).data ?? []),
-    can_edit: String(user.role) === "admin",
+    // DOs and above can correct a prior-day deposit (scope already enforced
+    // above); editCloseout re-checks role + scope + requires a reason.
+    can_edit: ACT_ROLES.has(String(user.role)),
   };
 }
 
@@ -936,13 +938,26 @@ async function detail(supa, user, params) {
 // edit-closeout — admin fix for a closeout (e.g. wrong business date)
 // ============================================================================
 async function editCloseout(supa, user, body) {
-  if (String(user.role) !== "admin") {
-    return { error: "Only an admin can edit a closeout.", status: 403 };
+  if (!ACT_ROLES.has(String(user.role))) {
+    return { error: "Only a DO or above can edit a closeout.", status: 403 };
   }
   const id = body?.closeout_id;
   if (!id) return { error: "closeout_id is required.", status: 400 };
   const { data: co } = await supa.from("cash_closeouts").select("*").eq("id", id).maybeSingle();
   if (!co) return { error: "Closeout not found.", status: 404 };
+
+  // Scope: a DO/SDO/RVP can only edit closeouts at stores they oversee
+  // (org-wide roles see everything).
+  const access = await storeRowsForUser(supa, user);
+  if (!access.all && !access.rows.some((r) => r.id === co.store_id)) {
+    return { error: "That store is outside your scope.", status: 403 };
+  }
+
+  // Editing a prior-day deposit is a control event — a reason is required.
+  const editReason = String(body?.reason || "").trim();
+  if (editReason.length < 4) {
+    return { error: "Add a short reason for the edit.", status: 422 };
+  }
 
   const settings = await getSettings(supa);
   const businessDate = /^\d{4}-\d{2}-\d{2}$/.test(body?.business_date || "") ? body.business_date : co.business_date;
@@ -952,7 +967,7 @@ async function editCloseout(supa, user, body) {
   if (![cashDue, deposit, counted].every(Number.isFinite)) {
     return { error: "Amounts must be valid numbers.", status: 400 };
   }
-  const reason = body?.reason != null ? String(body.reason).trim() : co.reason;
+  const reason = editReason;
 
   // Moving to another date can collide with that day's closeout (unique store+date).
   if (businessDate !== co.business_date) {
@@ -980,6 +995,7 @@ async function editCloseout(supa, user, body) {
   await logCash(supa, {
     scope: "closeout", action: "edit", store_id: co.store_id, closeout_id: id,
     detail: {
+      reason: editReason,
       before: { business_date: co.business_date, cash_due_cents: co.cash_due_cents, deposit_cents: co.deposit_cents, counted_cents: co.counted_cents },
       after: { business_date: businessDate, cash_due_cents: cashDue, deposit_cents: deposit, counted_cents: counted },
     },
