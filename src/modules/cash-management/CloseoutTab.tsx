@@ -59,11 +59,9 @@ export function CloseoutTab({
   const [confirming, setConfirming] = useState(false);
   const [ackDate, setAckDate] = useState(false);
 
-  // Seed cash-due from an existing closeout — only when closing today. A late
-  // entry targets a different, by-definition-missing day, so it starts blank.
-  useEffect(() => {
-    if (!isLate && existing && cashDue === "") setCashDue(centsToInput(existing.cash_due_cents));
-  }, [isLate, existing, cashDue]);
+  // (Cash-due prefill for an existing day is handled by unlock() below. We
+  // deliberately do NOT reactively re-seed it: a correcting user who clears
+  // the field to retype would otherwise have it snap back to the old value.)
 
   // Switching the target day resets the form so today's numbers never bleed
   // into a back-dated entry (and vice-versa).
