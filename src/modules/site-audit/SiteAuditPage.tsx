@@ -22,6 +22,7 @@ import {
   fileToPhoto, resolveIssue, updateIssue, type PhotoPayload,
 } from "./api";
 import { AREAS, SEVERITY_META, type AuditIssue, type ProofKind, type Severity, type SiteAudit } from "./types";
+import { SiteAuditCommand } from "./SiteAuditCommand";
 
 type Nav = { screen: "list" | "audit" | "capture" | "issue"; auditId?: string; issueId?: string };
 
@@ -80,35 +81,41 @@ export function SiteAuditPage() {
   const audit = useMemo(() => audits.find((a) => a.id === nav.auditId) ?? null, [audits, nav.auditId]);
   const issue = useMemo(() => audit?.issues.find((i) => i.id === nav.issueId) ?? null, [audit, nav.issueId]);
 
+  if (auditsQ.isLoading) {
+    return <div className="mx-auto w-full max-w-md space-y-3"><Skeleton className="h-24 w-full" /><Skeleton className="h-24 w-full" /></div>;
+  }
+  if (auditsQ.isError) {
+    return <EmptyState title="Couldn't load audits" description={(auditsQ.error as Error)?.message ?? "Make sure migration 0145 has run."} />;
+  }
+
+  // Field (mobile) — the GM's capture/resolve stack.
+  const field =
+    nav.screen === "audit" && audit ? (
+      <AuditSummary audit={audit} canWrite={canWrite}
+        onBack={() => setNav({ screen: "list" })}
+        onCapture={() => setNav({ screen: "capture", auditId: audit.id })}
+        onIssue={(iid) => setNav({ screen: "issue", auditId: audit.id, issueId: iid })}
+        onDeleted={() => { invalidate(); setNav({ screen: "list" }); }} />
+    ) : nav.screen === "capture" && audit ? (
+      <CaptureIssue audit={audit}
+        onBack={() => setNav({ screen: "audit", auditId: audit.id })}
+        onSaved={() => { invalidate(); toast.push("Issue captured.", "success"); setNav({ screen: "audit", auditId: audit.id }); }} />
+    ) : nav.screen === "issue" && audit && issue ? (
+      <IssueDetail audit={audit} issue={issue} canWrite={canWrite}
+        onBack={() => setNav({ screen: "audit", auditId: audit.id })}
+        onChanged={invalidate}
+        onDeleted={() => { invalidate(); setNav({ screen: "audit", auditId: audit.id }); }} />
+    ) : (
+      <AuditList audits={audits} canWrite={canWrite} onOpen={(id) => setNav({ screen: "audit", auditId: id })}
+        onCreated={(id) => { invalidate(); setNav({ screen: "audit", auditId: id }); }} />
+    );
+
   return (
-    <div className="mx-auto w-full max-w-md">
-      {auditsQ.isLoading ? (
-        <div className="space-y-3"><Skeleton className="h-24 w-full" /><Skeleton className="h-24 w-full" /></div>
-      ) : auditsQ.isError ? (
-        <EmptyState title="Couldn't load audits" description={(auditsQ.error as Error)?.message ?? "Make sure migration 0145 has run."} />
-      ) : nav.screen === "list" ? (
-        <AuditList audits={audits} canWrite={canWrite} onOpen={(id) => setNav({ screen: "audit", auditId: id })}
-          onCreated={(id) => { invalidate(); setNav({ screen: "audit", auditId: id }); }} />
-      ) : nav.screen === "audit" && audit ? (
-        <AuditSummary audit={audit} canWrite={canWrite}
-          onBack={() => setNav({ screen: "list" })}
-          onCapture={() => setNav({ screen: "capture", auditId: audit.id })}
-          onIssue={(iid) => setNav({ screen: "issue", auditId: audit.id, issueId: iid })}
-          onDeleted={() => { invalidate(); setNav({ screen: "list" }); }} />
-      ) : nav.screen === "capture" && audit ? (
-        <CaptureIssue audit={audit}
-          onBack={() => setNav({ screen: "audit", auditId: audit.id })}
-          onSaved={() => { invalidate(); toast.push("Issue captured.", "success"); setNav({ screen: "audit", auditId: audit.id }); }} />
-      ) : nav.screen === "issue" && audit && issue ? (
-        <IssueDetail audit={audit} issue={issue} canWrite={canWrite}
-          onBack={() => setNav({ screen: "audit", auditId: audit.id })}
-          onChanged={invalidate}
-          onDeleted={() => { invalidate(); setNav({ screen: "audit", auditId: audit.id }); }} />
-      ) : (
-        <AuditList audits={audits} canWrite={canWrite} onOpen={(id) => setNav({ screen: "audit", auditId: id })}
-          onCreated={(id) => { invalidate(); setNav({ screen: "audit", auditId: id }); }} />
-      )}
-    </div>
+    <>
+      {/* Field on phones/tablets; Command desktop dashboard on lg+. */}
+      <div className="mx-auto w-full max-w-md lg:hidden">{field}</div>
+      <div className="hidden lg:block"><SiteAuditCommand audits={audits} canWrite={canWrite} /></div>
+    </>
   );
 }
 
