@@ -555,15 +555,25 @@ function IssueDetail({ audit, issue, canWrite, onBack, onChanged, onDeleted }: {
 // ── Share + signature ───────────────────────────────────────────────────────
 function ShareReport({ audit, onBack, onSent }: { audit: SiteAudit; onBack: () => void; onSent: () => void }) {
   const toast = useToast();
-  const s = audit.stats;
   const [toDo, setToDo] = useState(true);
   const [toSdo, setToSdo] = useState(true);
   const [toSelf, setToSelf] = useState(true);
   const [extra, setExtra] = useState("");
+  const [message, setMessage] = useState("");
+  const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [signed, setSigned] = useState(false);
   const [sent, setSent] = useState(false);
   const cv = useRef<HTMLCanvasElement>(null);
   const drawing = useRef(false);
+
+  const toggleIssue = (id: string) =>
+    setExcluded((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  // The report reflects only the included issues, so the summary recomputes.
+  const included = audit.issues.filter((i) => !excluded.has(i.id));
+  const done = included.filter((i) => i.completed).length;
+  const high = included.filter((i) => i.severity === "high" && !i.completed).length;
+  const s = { total: included.length, done, open: included.length - done, high, pct: included.length ? Math.round((done / included.length) * 100) : 0 };
 
   useEffect(() => {
     const c = cv.current; if (!c) return;
@@ -590,7 +600,10 @@ function ShareReport({ audit, onBack, onSent }: { audit: SiteAudit; onBack: () =
     mutationFn: () => {
       const sig = cv.current!.toDataURL("image/png");
       const extras = extra.split(/[,\s]+/).map((e) => e.trim()).filter(Boolean);
-      return shareReport({ audit_id: audit.id, signature: sig, to_do: toDo, to_sdo: toSdo, to_self: toSelf, extra_emails: extras });
+      return shareReport({
+        audit_id: audit.id, signature: sig, to_do: toDo, to_sdo: toSdo, to_self: toSelf, extra_emails: extras,
+        message: message.trim() || undefined, issue_ids: included.map((i) => i.id),
+      });
     },
     onSuccess: () => { setSent(true); onSent(); },
     onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't share.", "error"),
@@ -619,13 +632,44 @@ function ShareReport({ audit, onBack, onSent }: { audit: SiteAudit; onBack: () =
           <Ring pct={s.pct} />
           <div>
             <div className="font-semibold text-midnight">{audit.store_name || `Store #${audit.store_number}`}</div>
-            <div className="text-xs text-zinc-500">{fmtDate(audit.date)} · {s.total} issue{s.total === 1 ? "" : "s"} logged</div>
+            <div className="text-xs text-zinc-500">{fmtDate(audit.date)} · {s.total} issue{s.total === 1 ? "" : "s"} included</div>
           </div>
         </div>
         <div className="flex gap-2">
           <MiniStat n={s.high} label="High" tone="red" /><MiniStat n={s.open} label="Open" tone="accent" /><MiniStat n={s.done} label="Resolved" tone="emerald" />
         </div>
       </div>
+
+      <L label="Message" className="mb-4">
+        <div className="relative">
+          <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={3}
+            placeholder="Add a note for the recipients (optional) — or dictate with the mic…"
+            className={cn(inputCls, "resize-y pr-12")} />
+          <div className="absolute bottom-2 right-2"><MicButton onText={(t) => setMessage((m) => (m ? m + " " : "") + t)} /></div>
+        </div>
+      </L>
+
+      {audit.issues.length > 0 && (
+        <L label={`Issues in report · ${included.length}/${audit.issues.length}`} className="mb-4">
+          <div className="space-y-2">
+            {audit.issues.map((i) => {
+              const on = !excluded.has(i.id);
+              return (
+                <button key={i.id} onClick={() => toggleIssue(i.id)}
+                  className={cn("flex w-full items-center gap-3 rounded-xl border px-3 py-2.5 text-left transition",
+                    on ? "border-zinc-200 bg-white" : "border-dashed border-zinc-200 bg-zinc-50 opacity-60")}>
+                  <span className={cn("grid h-5 w-5 shrink-0 place-items-center rounded-md border-2",
+                    on ? "border-accent bg-accent text-white" : "border-zinc-300")}>
+                    {on && <Check className="h-3 w-3" strokeWidth={3} />}
+                  </span>
+                  <span className={cn("min-w-0 flex-1 truncate text-sm", on ? "text-midnight" : "text-zinc-500 line-through")}>{i.title}</span>
+                  <SevChip s={i.severity} />
+                </button>
+              );
+            })}
+          </div>
+        </L>
+      )}
 
       <L label="Send to">
         <div className="space-y-2">

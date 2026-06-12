@@ -82,6 +82,8 @@ export interface ShareReportInput {
   to_sdo: boolean;
   to_self: boolean;
   extra_emails: string[];
+  message?: string;        // optional cover note to recipients
+  issue_ids?: string[];    // which issues to include (omit = all)
 }
 export function shareReport(input: ShareReportInput): Promise<{ ok: true; recipients: number; sent: boolean }> {
   return request(`${FN}?action=share-report`, { method: "POST", body: JSON.stringify(input) });
