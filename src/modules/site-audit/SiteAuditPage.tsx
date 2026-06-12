@@ -364,7 +364,7 @@ function CaptureIssue({ audit, onBack, onSaved }: { audit: SiteAudit; onBack: ()
   });
 
   return (
-    <div className="pb-24">
+    <div className="pb-8">
       <button onClick={onBack} className="mb-3 inline-flex items-center gap-1 text-sm font-medium text-zinc-500 hover:text-midnight"><ArrowLeft className="h-4 w-4" /> {audit.store_name || `#${audit.store_number}`}</button>
       <h1 className="mb-4 text-xl font-bold tracking-tight text-midnight">Capture issue</h1>
 
@@ -420,7 +420,7 @@ function CaptureIssue({ audit, onBack, onSaved }: { audit: SiteAudit; onBack: ()
         </L>
       </div>
 
-      <div className="fixed inset-x-0 bottom-0 mx-auto max-w-md bg-gradient-to-t from-white via-white to-transparent p-4">
+      <div className="sticky bottom-4 mt-6 bg-gradient-to-t from-white via-white to-transparent pt-3">
         <Button className="w-full" disabled={!title.trim() || save.isPending} onClick={() => save.mutate()}>
           {save.isPending ? "Saving…" : "Save issue"}
         </Button>
