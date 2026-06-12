@@ -89,15 +89,22 @@ async function storesForUser(supa, profile) {
   return { all: false, ids: storeIds, rows: rows || [] };
 }
 
-// Decode a base64 (or data-URL) image and upload it; returns the storage path.
+// Decode a base64 / data-URL image and upload it; returns the storage path.
+// Accepts either a raw data-URL string (e.g. the signature canvas) or a
+// { data, type, name } object (captured photos).
 async function uploadImage(supa, photo, prefix) {
-  if (!photo?.data) return null;
-  let b64 = String(photo.data);
+  const raw = typeof photo === "string" ? photo : photo?.data;
+  if (!raw) return null;
+  let b64 = String(raw);
+  let type = typeof photo === "object" && photo ? sanitize(photo.type, 40) : "";
   const comma = b64.indexOf(",");
-  if (b64.startsWith("data:") && comma > -1) b64 = b64.slice(comma + 1);
+  if (b64.startsWith("data:") && comma > -1) {
+    if (!type) type = b64.slice(5, comma).split(";")[0] || ""; // sniff mime from the data URL
+    b64 = b64.slice(comma + 1);
+  }
   const buf = Buffer.from(b64, "base64");
   if (!buf.length || buf.length > 10 * 1024 * 1024) return null; // 10 MB cap
-  const type = sanitize(photo.type, 40) || "image/jpeg";
+  type = type || "image/jpeg";
   const ext = type.includes("png") ? "png" : type.includes("webp") ? "webp" : "jpg";
   const path = `${prefix}/${globalThis.crypto.randomUUID()}.${ext}`;
   const { error } = await supa.storage.from(BUCKET).upload(path, buf, { contentType: type, upsert: false });
