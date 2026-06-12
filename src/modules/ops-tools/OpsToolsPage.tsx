@@ -30,7 +30,7 @@ const TOOLS: Tool[] = [
     desc: "Walk a store, capture issues with a photo + note, set severity & due dates, and track every gap to completion with required proof.",
     icon: ClipboardCheck,
     roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"],
-    comingSoon: true,
+    to: () => "/site-audits",
   },
   {
     key: "walkthroughs",
