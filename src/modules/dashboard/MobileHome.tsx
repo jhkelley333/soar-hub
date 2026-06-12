@@ -17,8 +17,9 @@ import {
   BadgeCheck,
   Wrench,
   Trophy,
-  Route,
   Banknote,
+  LayoutGrid,
+  GraduationCap,
   ChevronRight,
   type LucideIcon,
 } from "lucide-react";
@@ -40,6 +41,12 @@ import { fetchCashBadges } from "@/modules/cash-management/api";
 const CASH_ROLES = new Set([
   "gm", "shift_manager", "first_assistant_manager", "associate_manager",
   "crew_leader", "do", "sdo", "rvp", "vp", "coo", "admin", "accounting",
+]);
+
+// Coaching Tool Kit — hourly managers and above (mirrors the nav/route gate).
+const COACH_ROLES = new Set([
+  "shift_manager", "first_assistant_manager", "associate_manager",
+  "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin",
 ]);
 
 function greetingFor(d = new Date()): string {
@@ -94,6 +101,7 @@ export function MobileHome() {
     staleTime: 60_000,
   });
   const canCash = !!role && CASH_ROLES.has(role);
+  const canCoach = !!role && COACH_ROLES.has(role);
   const cashBadgesQ = useQuery({
     queryKey: ["cash-badges"],
     queryFn: fetchCashBadges,
@@ -250,11 +258,11 @@ export function MobileHome() {
           sub={`${itemsNeedYou} pending`}
         />
         <QuickAction
-          to="/walkthrough"
-          Icon={Route}
+          to="/operations"
+          Icon={LayoutGrid}
           gradient="linear-gradient(135deg,#3f6d97,#21496f)"
-          title="Walkthrough"
-          sub="Start new"
+          title="Operations Tools"
+          sub="Audits & walks"
         />
         <QuickAction
           to="/ranker"
@@ -297,6 +305,27 @@ export function MobileHome() {
                   .filter(Boolean)
                   .join(" · ");
               })()}
+            </p>
+          </div>
+          <ChevronRight className="h-5 w-5 shrink-0 text-midnight-300" />
+        </Link>
+      )}
+
+      {canCoach && (
+        <Link
+          to="/coaching"
+          className="mt-3 flex items-center gap-3 rounded-2xl bg-surface p-4 shadow-card ring-1 ring-midnight-100 transition active:scale-[0.99]"
+        >
+          <div
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-white"
+            style={{ background: "linear-gradient(135deg,#7c5cd6,#5b3fb0)" }}
+          >
+            <GraduationCap className="h-[19px] w-[19px]" strokeWidth={2} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-[14px] font-semibold text-midnight-900">Coaching Tool Kit</p>
+            <p className="truncate text-[12.5px] text-midnight-500">
+              Coaching cards for the moment
             </p>
           </div>
           <ChevronRight className="h-5 w-5 shrink-0 text-midnight-300" />
