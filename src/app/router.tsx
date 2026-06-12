@@ -17,6 +17,7 @@ import { PafQueuePage } from "@/modules/paf/PafQueuePage";
 import { EmployeeActionsPage } from "@/modules/employee-actions/EmployeeActionsPage";
 import { SchedulePage } from "@/modules/schedule/SchedulePage";
 import { OpsToolsPage } from "@/modules/ops-tools/OpsToolsPage";
+import { SiteAuditPage } from "@/modules/site-audit/SiteAuditPage";
 import { LaborPage } from "@/modules/labor/LaborPage";
 import { LaborSyncPage } from "@/modules/labor/LaborSyncPage";
 import { ResourcesPage } from "@/modules/resources/ResourcesPage";
@@ -122,6 +123,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <OpsToolsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "site-audits",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <SiteAuditPage />
           </ProtectedRoute>
         ),
       },
