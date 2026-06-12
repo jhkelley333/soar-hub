@@ -34,6 +34,13 @@ export interface AuditStats {
   pct: number;
 }
 
+export interface LastReport {
+  signed_by_name: string | null;
+  sent_at: string;
+  status: string;
+  recipient_count: number;
+}
+
 export interface SiteAudit {
   id: string;
   store_id: string;
@@ -45,6 +52,7 @@ export interface SiteAudit {
   date: string;
   created_at: string;
   stats: AuditStats;
+  last_report: LastReport | null;
   issues: AuditIssue[];
 }
 

@@ -155,14 +155,23 @@ async function listAudits(supa, user) {
     if (!byAudit.has(i.audit_id)) byAudit.set(i.audit_id, []);
     byAudit.get(i.audit_id).push(i);
   }
+  // Latest shared report per audit (for the "Shared" indicator).
+  const { data: reports } = ids.length
+    ? await supa.from("site_audit_reports").select("audit_id, signed_by_name, recipients, status, sent_at").in("audit_id", ids).order("sent_at", { ascending: false })
+    : { data: [] };
+  const lastReport = new Map();
+  for (const rep of reports || []) if (!lastReport.has(rep.audit_id)) lastReport.set(rep.audit_id, rep);
+
   const storeName = new Map(scope.rows.map((s) => [s.id, s.name]));
   const out = [];
   for (const a of audits || []) {
     const issues = byAudit.get(a.id) || [];
+    const rep = lastReport.get(a.id);
     out.push({
       id: a.id, store_id: a.store_id, store_number: a.store_number, store_name: storeName.get(a.store_id) || null,
       created_by_name: a.created_by_name, status: a.status, note: a.note, date: a.date, created_at: a.created_at,
       stats: auditStats(issues),
+      last_report: rep ? { signed_by_name: rep.signed_by_name, sent_at: rep.sent_at, status: rep.status, recipient_count: (rep.recipients || []).length } : null,
       issues: await Promise.all(issues.map((i) => issueCard(supa, i))),
     });
   }

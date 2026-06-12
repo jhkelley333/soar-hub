@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, ArrowLeft, Camera, Check, ChevronRight, Image as ImageIcon,
-  Plus, Send, Trash2,
+  Mic, Plus, Send, Trash2,
 } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
@@ -219,6 +219,11 @@ function AuditSummary({ audit, canWrite, onBack, onCapture, onShare, onIssue, on
       <div className="mb-4">
         <h1 className="text-xl font-bold tracking-tight text-midnight">{audit.store_name || `Store #${audit.store_number}`}</h1>
         <div className="text-xs text-zinc-500">#{audit.store_number} · {fmtDate(audit.date)} · {audit.created_by_name || "—"}</div>
+        {audit.last_report && (
+          <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+            <Check className="h-3 w-3" strokeWidth={2.5} /> Report shared · {new Date(audit.last_report.sent_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+          </span>
+        )}
       </div>
 
       <div className="mb-3 flex items-center gap-4 rounded-2xl border border-zinc-200 bg-white p-4 shadow-card">
@@ -383,7 +388,10 @@ function CaptureIssue({ audit, onBack, onSaved }: { audit: SiteAudit; onBack: ()
           </div>
         </L>
         <L label="Note">
-          <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="Add detail…" className={cn(inputCls, "resize-y")} />
+          <div className="relative">
+            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="Add detail, or dictate with the mic…" className={cn(inputCls, "resize-y pr-12")} />
+            <div className="absolute bottom-2 right-2"><MicButton onText={(t) => setNote((n) => (n ? n + " " : "") + t)} /></div>
+          </div>
         </L>
         <L label="Require proof to resolve">
           <div className="-mt-1 mb-2 text-xs text-zinc-500">Whoever closes this must attach what you select.</div>
@@ -483,7 +491,12 @@ function IssueDetail({ audit, issue, canWrite, onBack, onChanged, onDeleted }: {
             ) : (
               <div className="mt-3 space-y-3">
                 {needPhoto && <PhotoInput photo={proofPhoto} onPick={setProofPhoto} label="Photo of the fix" />}
-                {needNote && <textarea value={proofNote} onChange={(e) => setProofNote(e.target.value)} rows={3} placeholder="What was done to fix it?" className={cn(inputCls, "resize-y")} />}
+                {needNote && (
+                  <div className="relative">
+                    <textarea value={proofNote} onChange={(e) => setProofNote(e.target.value)} rows={3} placeholder="What was done to fix it?" className={cn(inputCls, "resize-y pr-12")} />
+                    <div className="absolute bottom-2 right-2"><MicButton onText={(t) => setProofNote((n) => (n ? n + " " : "") + t)} /></div>
+                  </div>
+                )}
                 <div className="flex gap-2">
                   <Button variant="secondary" className="w-full" onClick={() => setResolving(false)} disabled={resolve.isPending}>Cancel</Button>
                   <Button className="w-full" disabled={!proofOk || resolve.isPending} onClick={() => resolve.mutate({})}><Check className="h-4 w-4" /> {resolve.isPending ? "Saving…" : "Confirm resolved"}</Button>
@@ -642,6 +655,41 @@ function RecipientRow({ label, sub, on, onToggle }: { label: string; sub: string
       <span className={cn("relative h-6 w-10 shrink-0 rounded-full transition", on ? "bg-accent" : "bg-zinc-300")}>
         <span className={cn("absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition", on ? "left-[18px]" : "left-0.5")} />
       </span>
+    </button>
+  );
+}
+
+// ── voice-to-text dictation (Web Speech API; graceful when unsupported) ──────
+function MicButton({ onText }: { onText: (t: string) => void }) {
+  const toast = useToast();
+  const [listening, setListening] = useState(false);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const SR = typeof window !== "undefined" ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition : null;
+  useEffect(() => () => { try { recRef.current?.stop(); } catch { /* ignore */ } }, []);
+  function toggle() {
+    if (!SR) { toast.push("Voice input isn't supported on this device.", "error"); return; }
+    if (listening) { try { recRef.current?.stop(); } catch { /* ignore */ } setListening(false); return; }
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const rec: any = new SR();
+    rec.lang = "en-US"; rec.interimResults = false; rec.continuous = true;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    rec.onresult = (e: any) => {
+      let t = "";
+      for (let i = e.resultIndex; i < e.results.length; i++) t += e.results[i][0].transcript;
+      if (t.trim()) onText(t.trim());
+    };
+    rec.onend = () => setListening(false);
+    rec.onerror = () => setListening(false);
+    recRef.current = rec;
+    try { rec.start(); setListening(true); } catch { setListening(false); }
+  }
+  if (!SR) return null;
+  return (
+    <button type="button" onClick={toggle} aria-label="Dictate"
+      className={cn("grid h-9 w-9 place-items-center rounded-full transition", listening ? "animate-pulse bg-red-500 text-white" : "bg-accent text-white")}>
+      <Mic className="h-4 w-4" />
     </button>
   );
 }

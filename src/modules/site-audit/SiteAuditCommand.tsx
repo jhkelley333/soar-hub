@@ -150,6 +150,13 @@ function AuditDetail({ audit, canWrite, onBack }: { audit: SiteAudit; canWrite: 
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-midnight">{audit.store_name || `Store #${audit.store_number}`}</h1>
           <div className="mt-1 text-sm text-zinc-500">#{audit.store_number} · {audit.created_by_name || "—"} · {fmtDate(audit.date)}</div>
+          {audit.last_report && (
+            <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+              <Check className="h-3.5 w-3.5" strokeWidth={2.5} /> Report shared {new Date(audit.last_report.sent_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+              {audit.last_report.signed_by_name ? ` · signed by ${audit.last_report.signed_by_name}` : ""}
+              {audit.last_report.recipient_count ? ` · ${audit.last_report.recipient_count} recipient${audit.last_report.recipient_count === 1 ? "" : "s"}` : ""}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-4 rounded-2xl border border-zinc-200 bg-white px-5 py-3 shadow-card">
           <Ring pct={s.pct} />
