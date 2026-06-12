@@ -9,7 +9,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, ArrowLeft, Camera, Check, ChevronRight, Image as ImageIcon,
-  Mic, Plus, Send, Trash2,
+  Plus, Send, Trash2,
 } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
@@ -19,9 +19,17 @@ import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
   captureIssue, createAudit, deleteAudit, deleteIssue, fetchAuditStores, fetchAudits,
-  fileToPhoto, resolveIssue, shareReport, updateIssue, type PhotoPayload,
+  fileToPhoto, resolveIssue, shareReport, updateIssue, type CaptureIssueInput, type PhotoPayload,
 } from "./api";
-import { AREAS, SEVERITY_META, type AuditIssue, type ProofKind, type Severity, type SiteAudit } from "./types";
+import { AREAS, SEVERITY_META, type AuditIssue, type AuditStats, type AuditsResponse, type ProofKind, type Severity, type SiteAudit } from "./types";
+
+// Recompute an audit's stats from its issues (for optimistic capture updates).
+function statsOf(issues: AuditIssue[]): AuditStats {
+  const total = issues.length;
+  const done = issues.filter((i) => i.completed).length;
+  const high = issues.filter((i) => i.severity === "high" && !i.completed).length;
+  return { total, done, open: total - done, high, pct: total ? Math.round((done / total) * 100) : 0 };
+}
 import { SiteAuditCommand } from "./SiteAuditCommand";
 
 type Nav = { screen: "list" | "audit" | "capture" | "issue" | "share"; auditId?: string; issueId?: string };
@@ -81,6 +89,41 @@ export function SiteAuditPage() {
   const audit = useMemo(() => audits.find((a) => a.id === nav.auditId) ?? null, [audits, nav.auditId]);
   const issue = useMemo(() => audit?.issues.find((i) => i.id === nav.issueId) ?? null, [audit, nav.issueId]);
 
+  // Optimistic capture: the issue (with its compressed photo) appears in the
+  // audit immediately while the upload finishes in the background, so the GM
+  // isn't held on the capture screen waiting on the network. Lives on the page
+  // (not the capture screen) so it survives the screen switch back to the audit.
+  const captureMut = useMutation({
+    mutationFn: (payload: CaptureIssueInput) => captureIssue(payload),
+    onMutate: async (payload) => {
+      await qc.cancelQueries({ queryKey: ["site-audits"] });
+      const prev = qc.getQueryData<AuditsResponse>(["site-audits"]);
+      qc.setQueryData<AuditsResponse>(["site-audits"], (old) => {
+        if (!old) return old;
+        const temp: AuditIssue = {
+          id: `temp-${Date.now()}`, audit_id: payload.audit_id, title: payload.title,
+          area: payload.area, severity: payload.severity, comment: payload.comment ?? null,
+          photo_url: payload.photo?.data ?? null, due: payload.due ?? null,
+          proof_required: payload.proof_required, completed: false, completion: null,
+          created_at: new Date().toISOString(),
+        };
+        return {
+          ...old,
+          audits: old.audits.map((a) =>
+            a.id === payload.audit_id
+              ? { ...a, issues: [...a.issues, temp], stats: statsOf([...a.issues, temp]) }
+              : a),
+        };
+      });
+      return { prev };
+    },
+    onError: (e: unknown, _p, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["site-audits"], ctx.prev);
+      toast.push((e as Error)?.message ?? "Couldn't save the issue.", "error");
+    },
+    onSettled: () => invalidate(),
+  });
+
   if (auditsQ.isLoading) {
     return <div className="mx-auto w-full max-w-md space-y-3"><Skeleton className="h-24 w-full" /><Skeleton className="h-24 w-full" /></div>;
   }
@@ -104,7 +147,7 @@ export function SiteAuditPage() {
     ) : nav.screen === "capture" && audit ? (
       <CaptureIssue audit={audit}
         onBack={() => setNav({ screen: "audit", auditId: audit.id })}
-        onSaved={() => { invalidate(); toast.push("Issue captured.", "success"); setNav({ screen: "audit", auditId: audit.id }); }} />
+        onSubmit={(payload) => { captureMut.mutate(payload); setNav({ screen: "audit", auditId: audit.id }); }} />
     ) : nav.screen === "issue" && audit && issue ? (
       <IssueDetail audit={audit} issue={issue} canWrite={canWrite}
         onBack={() => setNav({ screen: "audit", auditId: audit.id })}
@@ -339,8 +382,7 @@ function PhotoInput({ photo, onPick, label }: { photo: PhotoPayload | null; onPi
     </div>
   );
 }
-function CaptureIssue({ audit, onBack, onSaved }: { audit: SiteAudit; onBack: () => void; onSaved: () => void }) {
-  const toast = useToast();
+function CaptureIssue({ audit, onBack, onSubmit }: { audit: SiteAudit; onBack: () => void; onSubmit: (payload: CaptureIssueInput) => void }) {
   const [photo, setPhoto] = useState<PhotoPayload | null>(null);
   const [title, setTitle] = useState("");
   const [area, setArea] = useState<string>(AREAS[0]);
@@ -350,18 +392,14 @@ function CaptureIssue({ audit, onBack, onSaved }: { audit: SiteAudit; onBack: ()
   const [proof, setProof] = useState<ProofKind[]>([]);
   const toggleProof = (k: ProofKind) => setProof((p) => p.includes(k) ? p.filter((x) => x !== k) : [...p, k]);
 
-  const save = useMutation({
-    mutationFn: () => {
-      const d = new Date(); d.setDate(d.getDate() + dueDays);
-      return captureIssue({
-        audit_id: audit.id, title: title.trim(), area, severity: sev,
-        comment: note.trim() || undefined, due: d.toISOString().slice(0, 10),
-        proof_required: proof, photo,
-      });
-    },
-    onSuccess: onSaved,
-    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Save failed.", "error"),
-  });
+  function submit() {
+    const d = new Date(); d.setDate(d.getDate() + dueDays);
+    onSubmit({
+      audit_id: audit.id, title: title.trim(), area, severity: sev,
+      comment: note.trim() || undefined, due: d.toISOString().slice(0, 10),
+      proof_required: proof, photo,
+    });
+  }
 
   return (
     <div className="pb-8">
@@ -399,10 +437,7 @@ function CaptureIssue({ audit, onBack, onSaved }: { audit: SiteAudit; onBack: ()
           </div>
         </L>
         <L label="Note">
-          <div className="relative">
-            <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="Add detail, or dictate with the mic…" className={cn(inputCls, "resize-y pr-12")} />
-            <div className="absolute bottom-2 right-2"><MicButton onText={(t) => setNote((n) => (n ? n + " " : "") + t)} /></div>
-          </div>
+          <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={3} placeholder="Add detail…" className={cn(inputCls, "resize-y")} />
         </L>
         <L label="Require proof to resolve">
           <div className="-mt-1 mb-2 text-xs text-zinc-500">Whoever closes this must attach what you select.</div>
@@ -421,9 +456,7 @@ function CaptureIssue({ audit, onBack, onSaved }: { audit: SiteAudit; onBack: ()
       </div>
 
       <div className="sticky bottom-4 mt-6 bg-gradient-to-t from-white via-white to-transparent pt-3">
-        <Button className="w-full" disabled={!title.trim() || save.isPending} onClick={() => save.mutate()}>
-          {save.isPending ? "Saving…" : "Save issue"}
-        </Button>
+        <Button className="w-full" disabled={!title.trim()} onClick={submit}>Save issue</Button>
       </div>
     </div>
   );
@@ -503,10 +536,7 @@ function IssueDetail({ audit, issue, canWrite, onBack, onChanged, onDeleted }: {
               <div className="mt-3 space-y-3">
                 {needPhoto && <PhotoInput photo={proofPhoto} onPick={setProofPhoto} label="Photo of the fix" />}
                 {needNote && (
-                  <div className="relative">
-                    <textarea value={proofNote} onChange={(e) => setProofNote(e.target.value)} rows={3} placeholder="What was done to fix it?" className={cn(inputCls, "resize-y pr-12")} />
-                    <div className="absolute bottom-2 right-2"><MicButton onText={(t) => setProofNote((n) => (n ? n + " " : "") + t)} /></div>
-                  </div>
+                  <textarea value={proofNote} onChange={(e) => setProofNote(e.target.value)} rows={3} placeholder="What was done to fix it?" className={cn(inputCls, "resize-y")} />
                 )}
                 <div className="flex gap-2">
                   <Button variant="secondary" className="w-full" onClick={() => setResolving(false)} disabled={resolve.isPending}>Cancel</Button>
@@ -641,12 +671,9 @@ function ShareReport({ audit, onBack, onSent }: { audit: SiteAudit; onBack: () =
       </div>
 
       <L label="Message" className="mb-4">
-        <div className="relative">
-          <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={3}
-            placeholder="Add a note for the recipients (optional) — or dictate with the mic…"
-            className={cn(inputCls, "resize-y pr-12")} />
-          <div className="absolute bottom-2 right-2"><MicButton onText={(t) => setMessage((m) => (m ? m + " " : "") + t)} /></div>
-        </div>
+        <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={3}
+          placeholder="Add a note for the recipients (optional)…"
+          className={cn(inputCls, "resize-y")} />
       </L>
 
       {audit.issues.length > 0 && (
@@ -710,41 +737,6 @@ function RecipientRow({ label, sub, on, onToggle }: { label: string; sub: string
       <span className={cn("relative h-6 w-10 shrink-0 rounded-full transition", on ? "bg-accent" : "bg-zinc-300")}>
         <span className={cn("absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition", on ? "left-[18px]" : "left-0.5")} />
       </span>
-    </button>
-  );
-}
-
-// ── voice-to-text dictation (Web Speech API; graceful when unsupported) ──────
-function MicButton({ onText }: { onText: (t: string) => void }) {
-  const toast = useToast();
-  const [listening, setListening] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recRef = useRef<any>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const SR = typeof window !== "undefined" ? (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition : null;
-  useEffect(() => () => { try { recRef.current?.stop(); } catch { /* ignore */ } }, []);
-  function toggle() {
-    if (!SR) { toast.push("Voice input isn't supported on this device.", "error"); return; }
-    if (listening) { try { recRef.current?.stop(); } catch { /* ignore */ } setListening(false); return; }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rec: any = new SR();
-    rec.lang = "en-US"; rec.interimResults = false; rec.continuous = true;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    rec.onresult = (e: any) => {
-      let t = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) t += e.results[i][0].transcript;
-      if (t.trim()) onText(t.trim());
-    };
-    rec.onend = () => setListening(false);
-    rec.onerror = () => setListening(false);
-    recRef.current = rec;
-    try { rec.start(); setListening(true); } catch { setListening(false); }
-  }
-  if (!SR) return null;
-  return (
-    <button type="button" onClick={toggle} aria-label="Dictate"
-      className={cn("grid h-9 w-9 place-items-center rounded-full transition", listening ? "animate-pulse bg-red-500 text-white" : "bg-accent text-white")}>
-      <Mic className="h-4 w-4" />
     </button>
   );
 }
