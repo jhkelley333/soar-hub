@@ -5,11 +5,11 @@
 //
 // The prototype's dark/amber field look is adapted to SOAR's light tokens.
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, ArrowLeft, Camera, Check, ChevronRight, Image as ImageIcon,
-  Plus, Trash2,
+  Plus, Send, Trash2,
 } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
@@ -19,12 +19,12 @@ import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
   captureIssue, createAudit, deleteAudit, deleteIssue, fetchAuditStores, fetchAudits,
-  fileToPhoto, resolveIssue, updateIssue, type PhotoPayload,
+  fileToPhoto, resolveIssue, shareReport, updateIssue, type PhotoPayload,
 } from "./api";
 import { AREAS, SEVERITY_META, type AuditIssue, type ProofKind, type Severity, type SiteAudit } from "./types";
 import { SiteAuditCommand } from "./SiteAuditCommand";
 
-type Nav = { screen: "list" | "audit" | "capture" | "issue"; auditId?: string; issueId?: string };
+type Nav = { screen: "list" | "audit" | "capture" | "issue" | "share"; auditId?: string; issueId?: string };
 
 function fmtDate(d: string) {
   return new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
@@ -94,8 +94,13 @@ export function SiteAuditPage() {
       <AuditSummary audit={audit} canWrite={canWrite}
         onBack={() => setNav({ screen: "list" })}
         onCapture={() => setNav({ screen: "capture", auditId: audit.id })}
+        onShare={() => setNav({ screen: "share", auditId: audit.id })}
         onIssue={(iid) => setNav({ screen: "issue", auditId: audit.id, issueId: iid })}
         onDeleted={() => { invalidate(); setNav({ screen: "list" }); }} />
+    ) : nav.screen === "share" && audit ? (
+      <ShareReport audit={audit}
+        onBack={() => setNav({ screen: "audit", auditId: audit.id })}
+        onSent={() => { invalidate(); }} />
     ) : nav.screen === "capture" && audit ? (
       <CaptureIssue audit={audit}
         onBack={() => setNav({ screen: "audit", auditId: audit.id })}
@@ -195,8 +200,8 @@ function AuditList({ audits, canWrite, onOpen, onCreated }: {
 }
 
 // ── Audit summary ───────────────────────────────────────────────────────────
-function AuditSummary({ audit, canWrite, onBack, onCapture, onIssue, onDeleted }: {
-  audit: SiteAudit; canWrite: boolean; onBack: () => void; onCapture: () => void; onIssue: (id: string) => void; onDeleted: () => void;
+function AuditSummary({ audit, canWrite, onBack, onCapture, onShare, onIssue, onDeleted }: {
+  audit: SiteAudit; canWrite: boolean; onBack: () => void; onCapture: () => void; onShare: () => void; onIssue: (id: string) => void; onDeleted: () => void;
 }) {
   const toast = useToast();
   const [tab, setTab] = useState<"open" | "done" | "all">("open");
@@ -216,7 +221,7 @@ function AuditSummary({ audit, canWrite, onBack, onCapture, onIssue, onDeleted }
         <div className="text-xs text-zinc-500">#{audit.store_number} · {fmtDate(audit.date)} · {audit.created_by_name || "—"}</div>
       </div>
 
-      <div className="mb-4 flex items-center gap-4 rounded-2xl border border-zinc-200 bg-white p-4 shadow-card">
+      <div className="mb-3 flex items-center gap-4 rounded-2xl border border-zinc-200 bg-white p-4 shadow-card">
         <Ring pct={s.pct} />
         <div className="flex flex-1 justify-around">
           <Stat n={s.open} label="Open" />
@@ -224,6 +229,13 @@ function AuditSummary({ audit, canWrite, onBack, onCapture, onIssue, onDeleted }
           <Stat n={s.high} label="High" tone={s.high ? "red" : "muted"} />
         </div>
       </div>
+
+      {canWrite && (
+        <button onClick={onShare}
+          className="mb-4 flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white py-2.5 text-sm font-semibold text-midnight shadow-card transition hover:border-accent hover:text-accent">
+          <Send className="h-4 w-4" /> Share &amp; sign off report
+        </button>
+      )}
 
       <div className="mb-3 inline-flex rounded-md ring-1 ring-inset ring-zinc-200">
         {(["open", "done", "all"] as const).map((t) => (
@@ -513,6 +525,124 @@ function IssueDetail({ audit, issue, canWrite, onBack, onChanged, onDeleted }: {
         </button>
       )}
     </div>
+  );
+}
+
+// ── Share + signature ───────────────────────────────────────────────────────
+function ShareReport({ audit, onBack, onSent }: { audit: SiteAudit; onBack: () => void; onSent: () => void }) {
+  const toast = useToast();
+  const s = audit.stats;
+  const [toDo, setToDo] = useState(true);
+  const [toSdo, setToSdo] = useState(true);
+  const [toSelf, setToSelf] = useState(true);
+  const [extra, setExtra] = useState("");
+  const [signed, setSigned] = useState(false);
+  const [sent, setSent] = useState(false);
+  const cv = useRef<HTMLCanvasElement>(null);
+  const drawing = useRef(false);
+
+  useEffect(() => {
+    const c = cv.current; if (!c) return;
+    const ctx = c.getContext("2d")!;
+    ctx.strokeStyle = "#15324B"; ctx.lineWidth = 2.4; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    const pos = (e: MouseEvent | TouchEvent) => {
+      const r = c.getBoundingClientRect();
+      const t = "touches" in e ? e.touches[0] : (e as MouseEvent);
+      return [(t.clientX - r.left) * (c.width / r.width), (t.clientY - r.top) * (c.height / r.height)] as const;
+    };
+    const down = (e: MouseEvent | TouchEvent) => { drawing.current = true; const [x, y] = pos(e); ctx.beginPath(); ctx.moveTo(x, y); e.preventDefault(); };
+    const move = (e: MouseEvent | TouchEvent) => { if (!drawing.current) return; const [x, y] = pos(e); ctx.lineTo(x, y); ctx.stroke(); setSigned(true); e.preventDefault(); };
+    const up = () => { drawing.current = false; };
+    c.addEventListener("mousedown", down); c.addEventListener("mousemove", move); window.addEventListener("mouseup", up);
+    c.addEventListener("touchstart", down, { passive: false }); c.addEventListener("touchmove", move, { passive: false }); c.addEventListener("touchend", up);
+    return () => {
+      c.removeEventListener("mousedown", down); c.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up);
+      c.removeEventListener("touchstart", down); c.removeEventListener("touchmove", move); c.removeEventListener("touchend", up);
+    };
+  }, []);
+  function clearSig() { const c = cv.current; if (c) c.getContext("2d")!.clearRect(0, 0, c.width, c.height); setSigned(false); }
+
+  const share = useMutation({
+    mutationFn: () => {
+      const sig = cv.current!.toDataURL("image/png");
+      const extras = extra.split(/[,\s]+/).map((e) => e.trim()).filter(Boolean);
+      return shareReport({ audit_id: audit.id, signature: sig, to_do: toDo, to_sdo: toSdo, to_self: toSelf, extra_emails: extras });
+    },
+    onSuccess: () => { setSent(true); onSent(); },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't share.", "error"),
+  });
+
+  if (sent) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-4 px-6 py-16 text-center">
+        <span className="grid h-20 w-20 place-items-center rounded-full bg-emerald-100 text-emerald-600"><Check className="h-10 w-10" strokeWidth={2.5} /></span>
+        <div>
+          <div className="text-xl font-bold text-midnight">Report shared</div>
+          <div className="mt-1 max-w-xs text-sm text-zinc-500">Signed off and sent. The recipients can track every issue to completion.</div>
+        </div>
+        <Button onClick={onBack}>Back to audit</Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="pb-8">
+      <button onClick={onBack} className="mb-3 inline-flex items-center gap-1 text-sm font-medium text-zinc-500 hover:text-midnight"><ArrowLeft className="h-4 w-4" /> Audit</button>
+      <h1 className="mb-4 text-xl font-bold tracking-tight text-midnight">Share report</h1>
+
+      <div className="mb-4 rounded-2xl border border-zinc-200 bg-white p-4 shadow-card">
+        <div className="mb-3 flex items-center gap-3">
+          <Ring pct={s.pct} />
+          <div>
+            <div className="font-semibold text-midnight">{audit.store_name || `Store #${audit.store_number}`}</div>
+            <div className="text-xs text-zinc-500">{fmtDate(audit.date)} · {s.total} issue{s.total === 1 ? "" : "s"} logged</div>
+          </div>
+        </div>
+        <div className="flex gap-2">
+          <MiniStat n={s.high} label="High" tone="red" /><MiniStat n={s.open} label="Open" tone="accent" /><MiniStat n={s.done} label="Resolved" tone="emerald" />
+        </div>
+      </div>
+
+      <L label="Send to">
+        <div className="space-y-2">
+          <RecipientRow label="District Operator" sub="The store's DO" on={toDo} onToggle={() => setToDo((v) => !v)} />
+          <RecipientRow label="Above-store (SDO)" sub="The store's SDO" on={toSdo} onToggle={() => setToSdo((v) => !v)} />
+          <RecipientRow label="Me" sub="A copy for your records" on={toSelf} onToggle={() => setToSelf((v) => !v)} />
+          <input value={extra} onChange={(e) => setExtra(e.target.value)} placeholder="Add other emails (comma-separated)" className={inputCls} />
+        </div>
+      </L>
+
+      <L label="Sign off" className="mt-4">
+        <div className={cn("overflow-hidden rounded-xl border bg-white", signed ? "border-emerald-300" : "border-zinc-200")}>
+          <canvas ref={cv} width={640} height={200} className="block h-32 w-full cursor-crosshair touch-none" />
+          <div className="flex items-center justify-between border-t border-zinc-100 px-3 py-2">
+            <span className={cn("text-xs", signed ? "text-emerald-600" : "text-zinc-400")}>{signed ? "✓ Signed" : "Sign with your finger"}</span>
+            <button onClick={clearSig} className="text-xs font-semibold text-accent">Clear</button>
+          </div>
+        </div>
+      </L>
+
+      <Button className="mt-5 w-full" disabled={!signed || share.isPending} onClick={() => share.mutate()}>
+        <Send className="h-4 w-4" /> {share.isPending ? "Sending…" : "Sign & share report"}
+      </Button>
+    </div>
+  );
+}
+function MiniStat({ n, label, tone }: { n: number; label: string; tone: "red" | "accent" | "emerald" }) {
+  const c = { red: "text-red-600", accent: "text-accent", emerald: "text-emerald-600" }[tone];
+  return <div className="flex-1 rounded-xl bg-zinc-50 py-2.5 text-center"><div className={cn("text-xl font-bold tabular-nums leading-none", c)}>{n}</div><div className="mt-1 text-[11px] text-zinc-500">{label}</div></div>;
+}
+function RecipientRow({ label, sub, on, onToggle }: { label: string; sub: string; on: boolean; onToggle: () => void }) {
+  return (
+    <button onClick={onToggle} className="flex w-full items-center gap-3 rounded-xl border border-zinc-200 bg-white px-3.5 py-2.5 text-left">
+      <div className="min-w-0 flex-1">
+        <div className="text-sm font-medium text-midnight">{label}</div>
+        <div className="text-[11px] text-zinc-400">{sub}</div>
+      </div>
+      <span className={cn("relative h-6 w-10 shrink-0 rounded-full transition", on ? "bg-accent" : "bg-zinc-300")}>
+        <span className={cn("absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition", on ? "left-[18px]" : "left-0.5")} />
+      </span>
+    </button>
   );
 }
 

@@ -60,3 +60,14 @@ export function deleteIssue(input: { audit_id: string; issue_id: string }): Prom
 export function deleteAudit(audit_id: string): Promise<{ ok: true }> {
   return request(`${FN}?action=delete-audit`, { method: "POST", body: JSON.stringify({ audit_id }) });
 }
+export interface ShareReportInput {
+  audit_id: string;
+  signature: string; // base64 data URL of the signature canvas
+  to_do: boolean;
+  to_sdo: boolean;
+  to_self: boolean;
+  extra_emails: string[];
+}
+export function shareReport(input: ShareReportInput): Promise<{ ok: true; recipients: number; sent: boolean }> {
+  return request(`${FN}?action=share-report`, { method: "POST", body: JSON.stringify(input) });
+}
