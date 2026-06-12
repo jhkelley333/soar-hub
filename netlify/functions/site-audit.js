@@ -9,6 +9,7 @@
 // read/write to the caller's stores. One audit = one dated walk.
 
 import { createClient } from "@supabase/supabase-js";
+import { findUsersForStore, sendEmail } from "./_lib/ticketEmail.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -288,6 +289,74 @@ async function deleteAudit(supa, user, body) {
   return { ok: true };
 }
 
+function esc(s) {
+  return String(s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+function reportHtml(audit, issues, stats, auditor) {
+  const rows = issues.map((i) => `
+    <tr>
+      <td style="padding:8px;border-bottom:1px solid #eee;">${esc(i.title)}</td>
+      <td style="padding:8px;border-bottom:1px solid #eee;text-transform:capitalize;">${esc(i.severity)}</td>
+      <td style="padding:8px;border-bottom:1px solid #eee;">${esc(i.area || "")}</td>
+      <td style="padding:8px;border-bottom:1px solid #eee;color:${i.completed ? "#16a34a" : "#b45309"};">${i.completed ? "Resolved" : (i.due ? "Due " + i.due : "Open")}</td>
+    </tr>`).join("");
+  return `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#15324B;max-width:640px;margin:0 auto;">
+    <h2 style="margin:0 0 4px;">Site Audit — Store #${esc(audit.store_number)}</h2>
+    <div style="color:#64748b;font-size:14px;">${esc(audit.date)} · by ${esc(auditor)}</div>
+    <div style="margin:16px 0;font-size:15px;"><strong>${stats.done}/${stats.total}</strong> resolved · <strong>${stats.high}</strong> high · <strong>${stats.open}</strong> open</div>
+    <table style="width:100%;border-collapse:collapse;font-size:14px;">
+      <thead><tr style="text-align:left;color:#64748b;font-size:12px;text-transform:uppercase;">
+        <th style="padding:8px;">Issue</th><th style="padding:8px;">Severity</th><th style="padding:8px;">Area</th><th style="padding:8px;">Status</th></tr></thead>
+      <tbody>${rows || '<tr><td style="padding:8px;color:#999;">No issues logged.</td></tr>'}</tbody>
+    </table>
+    <div style="margin-top:20px;color:#94a3b8;font-size:12px;">Signed off by ${esc(auditor)} · SOAR Hub Site Audits</div>
+  </div>`;
+}
+
+async function shareReport(supa, user, body) {
+  const auditId = sanitize(body?.audit_id, 64);
+  const r = await loadAudit(supa, user, auditId);
+  if (r.error) return r;
+  if (!CAPTURE_ROLES.has(String(user.role))) return { error: "Your role can't share a report.", status: 403 };
+  const audit = r.audit;
+
+  let sigPath = null;
+  try { sigPath = await uploadImage(supa, body?.signature, `${auditId}/signatures`); }
+  catch (e) { return { error: `Signature upload failed: ${e.message}`, status: 500 }; }
+  if (!sigPath) return { error: "A signature is required to share the report.", status: 422 };
+
+  const emails = new Set();
+  if (body?.to_do === true) for (const u of await findUsersForStore(supa, audit.store_number, ["do"])) if (u.email) emails.add(u.email);
+  if (body?.to_sdo === true) for (const u of await findUsersForStore(supa, audit.store_number, ["sdo"])) if (u.email) emails.add(u.email);
+  if (body?.to_self === true && user.email) emails.add(user.email);
+  for (const e of Array.isArray(body?.extra_emails) ? body.extra_emails : []) {
+    const em = sanitize(e, 200);
+    if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) emails.add(em);
+  }
+
+  const { data: issues } = await supa.from("site_audit_issues").select("*").eq("audit_id", auditId).order("created_at");
+  const stats = auditStats(issues || []);
+  const recipients = Array.from(emails);
+  let sent = false;
+  if (recipients.length) {
+    try {
+      const res = await sendEmail({
+        to: recipients,
+        subject: `Site Audit — Store #${audit.store_number} · ${audit.date}`,
+        html: reportHtml(audit, issues || [], stats, displayName(user)),
+      });
+      sent = res?.sent !== false;
+    } catch { /* best-effort — still record the report */ }
+  }
+
+  await supa.from("site_audit_reports").insert({
+    audit_id: auditId, signature_url: sigPath, signed_by: user.id, signed_by_name: displayName(user),
+    recipients: recipients.map((email) => ({ email })), status: sent ? "sent" : "queued",
+  });
+  await supa.from("site_audits").update({ status: "shared", updated_at: new Date().toISOString() }).eq("id", auditId);
+  return { ok: true, recipients: recipients.length, sent };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   let user;
@@ -313,6 +382,7 @@ export const handler = async (event) => {
     if (action === "resolve-issue") return unwrap(await resolveIssue(supa, user, body));
     if (action === "delete-issue") return unwrap(await deleteIssue(supa, user, body));
     if (action === "delete-audit") return unwrap(await deleteAudit(supa, user, body));
+    if (action === "share-report") return unwrap(await shareReport(supa, user, body));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });
