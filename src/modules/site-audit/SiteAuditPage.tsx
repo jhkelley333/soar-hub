@@ -343,7 +343,7 @@ function CaptureIssue({ audit, onBack, onSaved }: { audit: SiteAudit; onBack: ()
   const toast = useToast();
   const [photo, setPhoto] = useState<PhotoPayload | null>(null);
   const [title, setTitle] = useState("");
-  const [area, setArea] = useState("Sales Floor");
+  const [area, setArea] = useState<string>(AREAS[0]);
   const [sev, setSev] = useState<Severity>("medium");
   const [dueDays, setDueDays] = useState(7);
   const [note, setNote] = useState("");

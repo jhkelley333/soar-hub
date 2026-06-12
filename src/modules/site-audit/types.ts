@@ -68,8 +68,8 @@ export interface StorePick {
 }
 
 export const AREAS = [
-  "Exterior", "Entrance", "Sales Floor", "Restroom", "Stockroom",
-  "Restaurant", "Kitchen", "Parking Lot", "General", "Other",
+  "FOH", "BOH", "Restroom", "Stock Room", "Roof", "Parking Lot", "Stall",
+  "Landscaping", "Managers Desk", "Patio", "Trash Enclosure", "Kitchen", "Misc.",
 ] as const;
 
 export const SEVERITY_META: Record<Severity, { label: string; dot: string; chip: string; bar: string }> = {

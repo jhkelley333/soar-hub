@@ -18,7 +18,7 @@ const BUCKET = "site-audit-photos";
 // GM and above may create audits, capture issues, set proof, resolve, share.
 const CAPTURE_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]);
 const ORG_WIDE = new Set(["vp", "coo", "admin"]);
-const AREAS = new Set(["Exterior", "Entrance", "Sales Floor", "Restroom", "Stockroom", "Restaurant", "Kitchen", "Parking Lot", "General", "Other"]);
+const AREAS = new Set(["FOH", "BOH", "Restroom", "Stock Room", "Roof", "Parking Lot", "Stall", "Landscaping", "Managers Desk", "Patio", "Trash Enclosure", "Kitchen", "Misc."]);
 const SEVERITIES = new Set(["high", "medium", "low"]);
 
 function admin() {
@@ -200,7 +200,7 @@ async function captureIssue(supa, user, body) {
   if (r.error) return r;
   const title = sanitize(body?.title, 200);
   if (!title) return { error: "Add a short title for the issue.", status: 400 };
-  const area = AREAS.has(body?.area) ? body.area : "General";
+  const area = AREAS.has(body?.area) ? body.area : "Misc.";
   const severity = SEVERITIES.has(body?.severity) ? body.severity : "medium";
   const proofRequired = Array.isArray(body?.proof_required)
     ? body.proof_required.filter((p) => p === "photo" || p === "note")
