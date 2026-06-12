@@ -115,11 +115,22 @@ export function SiteAuditPage() {
         onCreated={(id) => { invalidate(); setNav({ screen: "audit", auditId: id }); }} />
     );
 
+  // Capture & share have no desktop-specific layout — render the Field screen
+  // centered at any width so DO+ can run a full walk from the Command surface too.
+  if ((nav.screen === "capture" || nav.screen === "share") && audit) {
+    return <div className="mx-auto w-full max-w-md">{field}</div>;
+  }
+
   return (
     <>
       {/* Field on phones/tablets; Command desktop dashboard on lg+. */}
       <div className="mx-auto w-full max-w-md lg:hidden">{field}</div>
-      <div className="hidden lg:block"><SiteAuditCommand audits={audits} canWrite={canWrite} /></div>
+      <div className="hidden lg:block">
+        <SiteAuditCommand audits={audits} canWrite={canWrite}
+          focusAuditId={nav.auditId ?? null}
+          onStartCapture={(id) => setNav({ screen: "capture", auditId: id })}
+          onStartShare={(id) => setNav({ screen: "share", auditId: id })} />
+      </div>
     </>
   );
 }

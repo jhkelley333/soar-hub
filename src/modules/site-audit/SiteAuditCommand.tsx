@@ -5,16 +5,17 @@
 // Shares the same data + mutations as the Field surface; this is just the
 // desktop layout the prototype's "Command" describes.
 
-import { useRef, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, ArrowLeft, Camera, Check, ChevronRight, Clock, Image as ImageIcon,
+  Plus, Send,
 } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { fileToPhoto, resolveIssue, type PhotoPayload } from "./api";
+import { createAudit, fetchAuditStores, fileToPhoto, resolveIssue, type PhotoPayload } from "./api";
 import { SEVERITY_META, type AuditIssue, type SiteAudit } from "./types";
 
 function fmtDate(d: string) {
@@ -49,15 +50,23 @@ function Bar({ pct }: { pct: number }) {
   return <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-200"><div className={cn("h-full rounded-full", pct >= 100 ? "bg-emerald-500" : "bg-accent")} style={{ width: `${pct}%` }} /></div>;
 }
 
-export function SiteAuditCommand({ audits, canWrite }: { audits: SiteAudit[]; canWrite: boolean }) {
-  const [sel, setSel] = useState<string | null>(null);
+export function SiteAuditCommand({ audits, canWrite, focusAuditId, onStartCapture, onStartShare }: {
+  audits: SiteAudit[]; canWrite: boolean;
+  focusAuditId?: string | null;
+  onStartCapture: (auditId: string) => void;
+  onStartShare: (auditId: string) => void;
+}) {
+  const [sel, setSel] = useState<string | null>(focusAuditId ?? null);
+  // Re-open an audit when the parent points us at one (e.g. after capturing on
+  // the centered Field screen, return to this audit's detail rather than the list).
+  useEffect(() => { if (focusAuditId) setSel(focusAuditId); }, [focusAuditId]);
   const audit = audits.find((a) => a.id === sel) ?? null;
   return audit
-    ? <AuditDetail audit={audit} canWrite={canWrite} onBack={() => setSel(null)} />
-    : <Overview audits={audits} onOpen={setSel} />;
+    ? <AuditDetail audit={audit} canWrite={canWrite} onBack={() => setSel(null)} onCapture={() => onStartCapture(audit.id)} onShare={() => onStartShare(audit.id)} />
+    : <Overview audits={audits} canWrite={canWrite} onOpen={setSel} onStartCapture={onStartCapture} />;
 }
 
-function Overview({ audits, onOpen }: { audits: SiteAudit[]; onOpen: (id: string) => void }) {
+function Overview({ audits, canWrite, onOpen, onStartCapture }: { audits: SiteAudit[]; canWrite: boolean; onOpen: (id: string) => void; onStartCapture: (id: string) => void }) {
   const all = audits.flatMap((a) => a.issues);
   const done = all.filter((i) => i.completed).length;
   const open = all.length - done;
@@ -67,8 +76,13 @@ function Overview({ audits, onOpen }: { audits: SiteAudit[]; onOpen: (id: string
 
   return (
     <div className="mx-auto max-w-[1100px]">
-      <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-zinc-400">Site Audits · Command</div>
-      <h1 className="mb-5 text-2xl font-bold tracking-tight text-midnight">Operations overview</h1>
+      <div className="mb-5 flex items-end justify-between gap-4">
+        <div>
+          <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-zinc-400">Site Audits · Command</div>
+          <h1 className="text-2xl font-bold tracking-tight text-midnight">Operations overview</h1>
+        </div>
+        {canWrite && <NewWalkButton onCreated={onStartCapture} />}
+      </div>
 
       <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <Kpi label="Completion rate" value={`${pct}%`} sub={`${done} of ${all.length} resolved`} ring={pct} />
@@ -83,7 +97,10 @@ function Overview({ audits, onOpen }: { audits: SiteAudit[]; onOpen: (id: string
           <span>Store</span><span>GM · Date</span><span>Progress</span><span>Status</span><span />
         </div>
         {audits.length === 0 ? (
-          <div className="px-5 py-10 text-center text-sm text-zinc-400">No audits in your scope yet.</div>
+          <div className="px-5 py-12 text-center">
+            <div className="text-sm text-zinc-400">No audits in your scope yet.</div>
+            {canWrite && <div className="mt-3"><NewWalkButton onCreated={onStartCapture} label="Start your first walk" /></div>}
+          </div>
         ) : audits.map((a) => {
           const s = a.stats;
           return (
@@ -128,7 +145,7 @@ function Kpi({ label, value, sub, ring, tone = "midnight", icon: Icon }: { label
   );
 }
 
-function AuditDetail({ audit, canWrite, onBack }: { audit: SiteAudit; canWrite: boolean; onBack: () => void }) {
+function AuditDetail({ audit, canWrite, onBack, onCapture, onShare }: { audit: SiteAudit; canWrite: boolean; onBack: () => void; onCapture: () => void; onShare: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [filter, setFilter] = useState<"all" | "open" | "high" | "done">("all");
@@ -158,10 +175,18 @@ function AuditDetail({ audit, canWrite, onBack }: { audit: SiteAudit; canWrite: 
             </span>
           )}
         </div>
-        <div className="flex items-center gap-4 rounded-2xl border border-zinc-200 bg-white px-5 py-3 shadow-card">
-          <Ring pct={s.pct} />
-          <div className="flex gap-5">
-            <St n={s.open} label="Open" /><St n={s.done} label="Resolved" tone="emerald" /><St n={s.high} label="High" tone={s.high ? "red" : "muted"} />
+        <div className="flex flex-col items-end gap-3">
+          {canWrite && (
+            <div className="flex gap-2">
+              <Button size="sm" onClick={onCapture}><Camera className="h-4 w-4" /> Capture issue</Button>
+              <Button size="sm" variant="secondary" onClick={onShare}><Send className="h-4 w-4" /> Share &amp; sign</Button>
+            </div>
+          )}
+          <div className="flex items-center gap-4 rounded-2xl border border-zinc-200 bg-white px-5 py-3 shadow-card">
+            <Ring pct={s.pct} />
+            <div className="flex gap-5">
+              <St n={s.open} label="Open" /><St n={s.done} label="Resolved" tone="emerald" /><St n={s.high} label="High" tone={s.high ? "red" : "muted"} />
+            </div>
           </div>
         </div>
       </div>
@@ -230,6 +255,40 @@ function AuditDetail({ audit, canWrite, onBack }: { audit: SiteAudit; canWrite: 
 function St({ n, label, tone = "midnight" }: { n: number; label: string; tone?: "midnight" | "emerald" | "red" | "muted" }) {
   const c = { midnight: "text-midnight", emerald: "text-emerald-600", red: "text-red-600", muted: "text-zinc-400" }[tone];
   return <div className="text-center"><div className={cn("text-xl font-bold tabular-nums leading-none", c)}>{n}</div><div className="mt-1 text-[11px] text-zinc-500">{label}</div></div>;
+}
+
+// Start a walk from the desktop Command surface: pick a store, then drop the
+// auditor straight into capturing the first issue (the centered Field screen).
+function NewWalkButton({ onCreated, label = "New walk" }: { onCreated: (auditId: string) => void; label?: string }) {
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [storeId, setStoreId] = useState("");
+  const storesQ = useQuery({ queryKey: ["site-audit-stores"], queryFn: fetchAuditStores, enabled: open });
+  const create = useMutation({
+    mutationFn: () => createAudit({ store_id: storeId }),
+    onSuccess: (r) => { setOpen(false); setStoreId(""); onCreated(r.audit_id); },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't start the walk.", "error"),
+  });
+  return (
+    <>
+      <Button size="sm" onClick={() => setOpen(true)}><Plus className="h-4 w-4" /> {label}</Button>
+      <Modal open={open} onClose={() => setOpen(false)} title="Start a walk" maxWidth="max-w-sm"
+        footer={<><Button variant="secondary" onClick={() => setOpen(false)}>Cancel</Button>
+          <Button disabled={!storeId || create.isPending} onClick={() => create.mutate()}>{create.isPending ? "Starting…" : "Start walk"}</Button></>}>
+        <div className="space-y-2">
+          <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-500">Store</div>
+          <select value={storeId} onChange={(e) => setStoreId(e.target.value)}
+            className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent">
+            <option value="" disabled>{storesQ.isLoading ? "Loading…" : "Pick a store…"}</option>
+            {(storesQ.data?.stores ?? []).map((st) => (
+              <option key={st.id} value={st.id}>#{st.number}{st.name ? ` — ${st.name}` : ""}</option>
+            ))}
+          </select>
+          <p className="text-xs text-zinc-400">Today's date is used for the walk. You'll capture issues on the next screen.</p>
+        </div>
+      </Modal>
+    </>
+  );
 }
 
 function ProofModal({ issue, pending, onClose, onConfirm }: { issue: AuditIssue; pending: boolean; onClose: () => void; onConfirm: (c: { note?: string; photo?: PhotoPayload | null }) => void }) {
