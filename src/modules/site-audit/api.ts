@@ -1,5 +1,6 @@
 // Typed wrappers around netlify/functions/site-audit.
 import { supabase } from "@/lib/supabase";
+import { compressPhoto } from "@/modules/reno-scoping/photoCompress";
 import type { AuditsResponse, ProofKind, Severity, StorePick } from "./types";
 
 const FN = "/.netlify/functions/site-audit";
@@ -23,12 +24,26 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export interface PhotoPayload { data: string; type: string; name: string }
 
 // Read a File as a base64 data URL for upload through the function.
-export function fileToPhoto(file: File): Promise<PhotoPayload> {
+//
+// Photos are downscaled/compressed first (≈1600px JPEG, ~0.6–1 MB). A full-res
+// phone photo base64-encodes past Netlify's ~6 MB function payload limit, which
+// the platform rejects with a bare 500 — so capture/proof uploads silently
+// failed. Compressing keeps every payload well under the limit.
+export async function fileToPhoto(file: File): Promise<PhotoPayload> {
+  let blob: Blob = file;
+  let name = file.name;
+  try {
+    const c = await compressPhoto(file);
+    blob = c.blob;
+    name = c.filename;
+  } catch {
+    /* fall back to the original file if canvas decode fails */
+  }
   return new Promise((resolve, reject) => {
     const r = new FileReader();
-    r.onload = () => resolve({ data: String(r.result), type: file.type || "image/jpeg", name: file.name });
+    r.onload = () => resolve({ data: String(r.result), type: blob.type || "image/jpeg", name });
     r.onerror = () => reject(new Error("Couldn't read the photo."));
-    r.readAsDataURL(file);
+    r.readAsDataURL(blob);
   });
 }
 
