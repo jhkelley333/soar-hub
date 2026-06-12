@@ -9,11 +9,14 @@
 // read/write to the caller's stores. One audit = one dated walk.
 
 import { createClient } from "@supabase/supabase-js";
+import { jsPDF } from "jspdf";
+import autoTable from "jspdf-autotable";
 import { findUsersForStore, sendEmail } from "./_lib/ticketEmail.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const BUCKET = "site-audit-photos";
+const MAX_PDF_PHOTOS = 40; // bound PDF size + generation time on big audits
 
 // GM and above may create audits, capture issues, set proof, resolve, share.
 const CAPTURE_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]);
@@ -332,8 +335,112 @@ function reportHtml(audit, issues, stats, auditor, message) {
         <th style="padding:8px;">Issue</th><th style="padding:8px;">Severity</th><th style="padding:8px;">Area</th><th style="padding:8px;">Status</th></tr></thead>
       <tbody>${rows || '<tr><td style="padding:8px;color:#999;">No issues logged.</td></tr>'}</tbody>
     </table>
-    <div style="margin-top:20px;color:#94a3b8;font-size:12px;">Signed off by ${esc(auditor)} · SOAR Hub Site Audits</div>
+    <div style="margin-top:16px;color:#64748b;font-size:13px;">📎 A printable PDF with the issues and photos is attached.</div>
+    <div style="margin-top:16px;color:#94a3b8;font-size:12px;">Signed off by ${esc(auditor)} · SOAR Hub Site Audits</div>
   </div>`;
+}
+
+function capWord(s) { s = String(s || ""); return s.charAt(0).toUpperCase() + s.slice(1); }
+function withTimeout(promise, ms) {
+  return Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error("pdf timeout")), ms))]);
+}
+
+// Download a stored photo as base64 + a jsPDF-embeddable format (JPEG/PNG only).
+async function fetchImageData(supa, path) {
+  try {
+    const { data, error } = await supa.storage.from(BUCKET).download(path);
+    if (error || !data) return null;
+    const buf = Buffer.from(await data.arrayBuffer());
+    if (!buf.length) return null;
+    const lower = String(path).toLowerCase();
+    const fmt = lower.endsWith(".png") ? "PNG" : (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) ? "JPEG" : null;
+    if (!fmt) return null;
+    return { dataUrl: `data:image/${fmt.toLowerCase()};base64,${buf.toString("base64")}`, fmt };
+  } catch { return null; }
+}
+
+// A printable report: header + stats + optional message + issues table + a
+// photo gallery (each photo captioned with its issue). Returns a Buffer.
+async function buildReportPdf(supa, audit, issues, stats, auditor, message) {
+  const doc = new jsPDF({ unit: "pt", format: "letter", compress: true });
+  const W = doc.internal.pageSize.getWidth();
+  const H = doc.internal.pageSize.getHeight();
+  const M = 40;
+  let y = M;
+
+  doc.setFont("helvetica", "bold"); doc.setFontSize(18); doc.setTextColor(21, 50, 75);
+  doc.text(`Site Audit — Store #${audit.store_number}`, M, y); y += 20;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(11); doc.setTextColor(110);
+  doc.text(`${audit.date}   ·   by ${auditor}`, M, y); y += 16;
+  doc.setTextColor(40);
+  doc.text(`${stats.done}/${stats.total} resolved    ·    ${stats.high} high    ·    ${stats.open} open`, M, y);
+
+  if (message) {
+    y += 22;
+    doc.setFontSize(10.5); doc.setTextColor(40);
+    const lines = doc.splitTextToSize(message, W - 2 * M);
+    doc.text(lines, M, y); y += lines.length * 13;
+  }
+
+  autoTable(doc, {
+    startY: y + 14,
+    head: [["#", "Issue", "Severity", "Area", "Status"]],
+    body: issues.map((i, idx) => [
+      String(idx + 1), i.title || "", capWord(i.severity), i.area || "",
+      i.completed ? "Resolved" : (i.due ? "Due " + i.due : "Open"),
+    ]),
+    styles: { fontSize: 9, cellPadding: 4, valign: "middle" },
+    headStyles: { fillColor: [40, 87, 128], halign: "left" },
+    columnStyles: { 0: { cellWidth: 22 }, 2: { cellWidth: 64 }, 3: { cellWidth: 86 }, 4: { cellWidth: 66 } },
+    margin: { left: M, right: M },
+  });
+  y = (doc.lastAutoTable?.finalY || y) + 26;
+
+  const photoIssues = issues.map((i, idx) => ({ i, idx })).filter((x) => x.i.photo_url);
+  const shown = photoIssues.slice(0, MAX_PDF_PHOTOS);
+  if (shown.length) {
+    const imgs = await Promise.all(shown.map((x) => fetchImageData(supa, x.i.photo_url)));
+    if (y > H - 60) { doc.addPage(); y = M; }
+    doc.setFont("helvetica", "bold"); doc.setFontSize(13); doc.setTextColor(21, 50, 75);
+    doc.text("Photos", M, y); y += 16;
+    const colW = W - 2 * M;
+
+    for (let k = 0; k < shown.length; k++) {
+      const { i, idx } = shown[k];
+      const img = imgs[k];
+      doc.setFont("helvetica", "bold"); doc.setFontSize(10); doc.setTextColor(40);
+      const capLines = doc.splitTextToSize(`${idx + 1}. ${i.title || ""}  —  ${capWord(i.severity)}${i.area ? " · " + i.area : ""}`, colW);
+      const capH = capLines.length * 12 + 4;
+
+      let drawW = 0, drawH = 0;
+      if (img) {
+        try {
+          const p = doc.getImageProperties(img.dataUrl);
+          const r = Math.min(Math.min(colW, 320) / p.width, 240 / p.height);
+          drawW = p.width * r; drawH = p.height * r;
+        } catch { /* fall to placeholder */ }
+      }
+      const blockH = capH + (drawH || 54) + 16;
+      if (y + blockH > H - M) { doc.addPage(); y = M; }
+      doc.text(capLines, M, y + 10);
+      const imgY = y + capH + 2;
+      if (img && drawW > 0) {
+        try { doc.addImage(img.dataUrl, img.fmt, M, imgY, drawW, drawH); }
+        catch { doc.setDrawColor(210); doc.rect(M, imgY, 200, 50); }
+      } else {
+        doc.setDrawColor(210); doc.rect(M, imgY, 200, 50);
+        doc.setTextColor(150); doc.setFontSize(9); doc.text("Photo unavailable", M + 8, imgY + 28);
+      }
+      y += blockH;
+    }
+    if (photoIssues.length > shown.length) {
+      if (y > H - 40) { doc.addPage(); y = M; }
+      doc.setFontSize(9); doc.setTextColor(120);
+      doc.text(`+ ${photoIssues.length - shown.length} more photo(s) not shown`, M, y + 12);
+    }
+  }
+
+  return Buffer.from(doc.output("arraybuffer"));
 }
 
 async function shareReport(supa, user, body) {
@@ -371,11 +478,19 @@ async function shareReport(supa, user, body) {
   const recipients = Array.from(emails);
   let sent = false;
   if (recipients.length) {
+    // Build a PDF of the issues + photos and attach it. Best-effort and
+    // time-boxed: a slow/failed build never blocks the email itself.
+    let attachments;
+    try {
+      const pdf = await withTimeout(buildReportPdf(supa, audit, issues, stats, displayName(user), message), 9000);
+      if (pdf?.length) attachments = [{ filename: `Site-Audit-${audit.store_number}-${audit.date}.pdf`, content: pdf.toString("base64") }];
+    } catch { /* send without the PDF rather than fail */ }
     try {
       const res = await sendEmail({
         to: recipients,
         subject: `Site Audit — Store #${audit.store_number} · ${audit.date}`,
         html: reportHtml(audit, issues, stats, displayName(user), message),
+        attachments,
       });
       sent = res?.sent !== false;
     } catch { /* best-effort — still record the report */ }
