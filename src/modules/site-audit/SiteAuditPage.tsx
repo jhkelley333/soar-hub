@@ -220,6 +220,11 @@ function AuditList({ audits, canWrite, onOpen, onCreated }: {
                   <div className="flex items-center gap-2">
                     <span className="truncate font-semibold text-midnight">{a.store_name || `Store #${a.store_number}`}</span>
                     {s.high > 0 && <span className="shrink-0 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-700">{s.high} high</span>}
+                    {a.last_report && (
+                      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
+                        <Send className="h-2.5 w-2.5" strokeWidth={2.5} /> Shared
+                      </span>
+                    )}
                   </div>
                   <div className="mt-0.5 text-xs text-zinc-500">{fmtDate(a.date)} · {a.created_by_name || "—"}</div>
                   <div className="mt-2 flex items-center gap-2">
