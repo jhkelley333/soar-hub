@@ -23,6 +23,7 @@ import {
   Footprints,
   Banknote,
   CalendarDays,
+  LayoutGrid,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -52,6 +53,10 @@ export const NAV: NavItem[] = [
   // operational tool field roles see.
   { to: "/admin/work-orders-v2", label: "Work Orders", icon: Hammer, roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/chat",        label: "Chat",        icon: MessageCircle,   roles: null },
+  // Operations Tools — a card hub for the field/store-ops tools (Site Audits,
+  // Walkthroughs, Reno Scoping). The individual tools keep their own routes;
+  // this is the consolidated entry point.
+  { to: "/operations",  label: "Operations Tools", icon: LayoutGrid, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/ranker",      label: "Ranker",      icon: TrendingUp,      roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
   // Labor — daily labor review. GMs review their store's numbers against
   // chart and explain misses; DO+ get the district rollup. Backend
@@ -173,6 +178,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/": "MAIN",
   "/admin/work-orders-v2": "MAIN",
   "/chat": "MAIN",
+  "/operations": "OPERATIONS",
   "/ranker": "OPERATIONS",
   "/labor": "OPERATIONS",
   "/admin/cash-management": "OPERATIONS",
