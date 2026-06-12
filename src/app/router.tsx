@@ -68,6 +68,8 @@ import { AssignmentsPage as WalkthroughAssignmentsPage } from "@/modules/walkthr
 import { DirectoryPage } from "@/modules/directory/DirectoryPage";
 import { ChatLayout } from "@/modules/chat/ChatLayout";
 import { GroupInfoPage } from "@/modules/chat/GroupInfoPage";
+import { CoachingToolkitPage } from "@/modules/coaching/CoachingToolkitPage";
+import { ToolDetailPage } from "@/modules/coaching/ToolDetailPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -310,6 +312,24 @@ export const router = createBrowserRouter([
         ),
       },
       { path: "cfm-expiring", element: <CfmExpiringPage /> },
+      {
+        // Coaching for Performance Tool Kit — a reference card chooser for
+        // hourly managers and above. Home chooser + per-tool detail routes.
+        path: "coaching",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <CoachingToolkitPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "coaching/:toolId",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <ToolDetailPage />
+          </ProtectedRoute>
+        ),
+      },
       {
         path: "admin/org",
         element: (

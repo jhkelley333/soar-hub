@@ -24,6 +24,7 @@ import {
   Banknote,
   CalendarDays,
   LayoutGrid,
+  GraduationCap,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -104,6 +105,9 @@ export const NAV: NavItem[] = [
   // Employee Actions — Training Credit + PTO request forms. GM and up;
   // submitting notifies the store's DO + RVP. Approvals/tracking land later.
   { to: "/employee-actions", label: "Employee Actions", icon: ClipboardCheck, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // Coaching Tool Kit — coaching-for-performance reference cards for hourly
+  // managers and above. Lives under People.
+  { to: "/coaching",    label: "Coaching Tool Kit", icon: GraduationCap, roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/schedule",    label: "Schedule",    icon: CalendarDays,    roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/contacts",    label: "Contacts",    icon: BookUser,        roles: null },
   { to: "/resources",   label: "Resources",   icon: BookOpen,        roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
@@ -188,6 +192,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/walkthroughs": "OPERATIONS",
   "/paf": "PEOPLE",
   "/employee-actions": "PEOPLE",
+  "/coaching": "PEOPLE",
   "/contacts": "PEOPLE",
   "/team": "PEOPLE",
   "/resources": "WORKSPACE",
