@@ -301,7 +301,7 @@ async function deleteAudit(supa, user, body) {
 function esc(s) {
   return String(s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 }
-function reportHtml(audit, issues, stats, auditor) {
+function reportHtml(audit, issues, stats, auditor, message) {
   const rows = issues.map((i) => `
     <tr>
       <td style="padding:8px;border-bottom:1px solid #eee;">${esc(i.title)}</td>
@@ -309,9 +309,13 @@ function reportHtml(audit, issues, stats, auditor) {
       <td style="padding:8px;border-bottom:1px solid #eee;">${esc(i.area || "")}</td>
       <td style="padding:8px;border-bottom:1px solid #eee;color:${i.completed ? "#16a34a" : "#b45309"};">${i.completed ? "Resolved" : (i.due ? "Due " + i.due : "Open")}</td>
     </tr>`).join("");
+  const note = message
+    ? `<div style="margin:16px 0;padding:14px 16px;background:#f1f5f9;border-radius:10px;font-size:14px;line-height:1.5;white-space:pre-wrap;">${esc(message).replace(/\n/g, "<br>")}</div>`
+    : "";
   return `<div style="font-family:-apple-system,Segoe UI,Roboto,sans-serif;color:#15324B;max-width:640px;margin:0 auto;">
     <h2 style="margin:0 0 4px;">Site Audit — Store #${esc(audit.store_number)}</h2>
     <div style="color:#64748b;font-size:14px;">${esc(audit.date)} · by ${esc(auditor)}</div>
+    ${note}
     <div style="margin:16px 0;font-size:15px;"><strong>${stats.done}/${stats.total}</strong> resolved · <strong>${stats.high}</strong> high · <strong>${stats.open}</strong> open</div>
     <table style="width:100%;border-collapse:collapse;font-size:14px;">
       <thead><tr style="text-align:left;color:#64748b;font-size:12px;text-transform:uppercase;">
@@ -343,8 +347,17 @@ async function shareReport(supa, user, body) {
     if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em)) emails.add(em);
   }
 
-  const { data: issues } = await supa.from("site_audit_issues").select("*").eq("audit_id", auditId).order("created_at");
-  const stats = auditStats(issues || []);
+  const { data: allIssues } = await supa.from("site_audit_issues").select("*").eq("audit_id", auditId).order("created_at");
+  // The auditor can edit the report before sending: an optional cover message
+  // and a chosen subset of issues to include. When issue_ids is present we
+  // honor it exactly (even an empty selection); otherwise all issues go.
+  let issues = allIssues || [];
+  if (Array.isArray(body?.issue_ids)) {
+    const keep = new Set(body.issue_ids.map((x) => String(x)));
+    issues = issues.filter((i) => keep.has(String(i.id)));
+  }
+  const message = sanitize(body?.message, 4000);
+  const stats = auditStats(issues);
   const recipients = Array.from(emails);
   let sent = false;
   if (recipients.length) {
@@ -352,7 +365,7 @@ async function shareReport(supa, user, body) {
       const res = await sendEmail({
         to: recipients,
         subject: `Site Audit — Store #${audit.store_number} · ${audit.date}`,
-        html: reportHtml(audit, issues || [], stats, displayName(user)),
+        html: reportHtml(audit, issues, stats, displayName(user), message),
       });
       sent = res?.sent !== false;
     } catch { /* best-effort — still record the report */ }
