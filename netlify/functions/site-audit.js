@@ -113,7 +113,10 @@ async function uploadImage(supa, photo, prefix) {
 }
 async function signed(supa, path) {
   if (!path) return null;
-  const { data } = await supa.storage.from(BUCKET).createSignedUrl(path, 3600);
+  // 7-day TTL: an audit is captured + reviewed over a full work day (sometimes
+  // 30+ issues in one sitting). A short TTL expires while the list sits cached
+  // in the PWA (refetchOnWindowFocus is off), which silently breaks every photo.
+  const { data } = await supa.storage.from(BUCKET).createSignedUrl(path, 60 * 60 * 24 * 7);
   return data?.signedUrl || null;
 }
 
