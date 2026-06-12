@@ -109,6 +109,11 @@ function Overview({ audits, canWrite, onOpen, onStartCapture }: { audits: SiteAu
               <div className="flex items-center gap-3">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-accent/10 text-[11px] font-bold text-accent">#{a.store_number}</span>
                 <span className="truncate text-sm font-semibold text-midnight">{a.store_name || `Store #${a.store_number}`}</span>
+                {a.last_report && (
+                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
+                    <Send className="h-2.5 w-2.5" strokeWidth={2.5} /> Shared
+                  </span>
+                )}
               </div>
               <div className="min-w-0">
                 <div className="truncate text-sm text-zinc-700">{a.created_by_name || "—"}</div>
