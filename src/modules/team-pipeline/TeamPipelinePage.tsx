@@ -13,6 +13,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Button } from "@/shared/ui/Button";
+import { Segmented } from "@/shared/ui/Segmented";
 import { useToast } from "@/shared/ui/Toaster";
 import { fetchMyTree } from "@/modules/my-stores/api";
 import type { MyDistrictNode, MyStoreNode } from "@/modules/my-stores/types";
@@ -296,17 +297,24 @@ function RiskPill({ risk }: { risk: TeamMember["flight_risk"] }) {
   return <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset", m.chip)}><span className={cn("h-1.5 w-1.5 rounded-full", m.dot)} />{m.short}</span>;
 }
 
-// ── Store (roster) ──────────────────────────────────────────────────────────
+// ── Store (layouts) ──────────────────────────────────────────────────────────
+type Layout = "ladder" | "roster" | "ninebox";
 function Store({ store }: { store: MyStoreNode }) {
+  const [layout, setLayout] = useState<Layout>("ladder");
   const rosterQ = useQuery({ queryKey: ["tp-store-roster", store.id], queryFn: () => fetchStoreRoster(store.id) });
   const roster = rosterQ.data?.roster ?? [];
-  const order = Object.fromEntries(LADDER.map((r, i) => [r.key, i]));
-  const sorted = [...roster].sort((a, b) => (order[b.role] - order[a.role]) || a.full_name.localeCompare(b.full_name));
 
   return (
     <>
-      <h1 className="mb-1 text-2xl font-bold tracking-tight text-heading">{store.name || `Store #${store.number}`}</h1>
-      <div className="mb-5 text-sm text-ink-muted">Store #{store.number} · {roster.length} team member{roster.length === 1 ? "" : "s"}</div>
+      <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight text-heading">{store.name || `Store #${store.number}`}</h1>
+          <div className="text-sm text-ink-muted">Store #{store.number} · {roster.length} team member{roster.length === 1 ? "" : "s"}</div>
+        </div>
+        <Segmented<Layout>
+          options={[{ value: "ladder", label: "Bench ladder" }, { value: "roster", label: "Roster" }, { value: "ninebox", label: "9-box" }]}
+          value={layout} onChange={setLayout} />
+      </div>
 
       {rosterQ.isLoading ? (
         <Skeleton className="h-48 w-full" />
@@ -314,18 +322,167 @@ function Store({ store }: { store: MyStoreNode }) {
         <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border bg-surface-muted px-6 py-14 text-center">
           <span className="grid h-12 w-12 place-items-center rounded-full bg-accent/10 text-accent"><Users className="h-6 w-6" /></span>
           <div className="text-base font-semibold text-heading">No team members yet</div>
-          <p className="max-w-md text-sm text-ink-muted">This store's roster is empty. It will fill from the ATS import (or the admin "Seed from profiles" action). The bench ladder, 9-box, and staffing planner layouts build on this in the next slices.</p>
+          <p className="max-w-md text-sm text-ink-muted">This store's roster is empty. It fills from the ATS import (or the admin "Seed from profiles" action).</p>
         </div>
+      ) : layout === "ladder" ? (
+        <BenchLadder roster={roster} />
+      ) : layout === "roster" ? (
+        <RosterTable roster={roster} />
       ) : (
-        <div className="overflow-hidden rounded-2xl border border-border bg-surface shadow-card">
-          <div className="grid grid-cols-[1.6fr_1fr_1fr_0.8fr] gap-3 border-b border-border px-4 py-2.5 text-[11px] font-bold uppercase tracking-wide text-ink-subtle">
-            <span>Team member</span><span>Flight risk</span><span>Aspiration</span><span>Perf</span>
-          </div>
-          {sorted.map((m) => <RosterRow key={m.id} m={m} />)}
-        </div>
+        <NineBox roster={roster} />
       )}
     </>
   );
+}
+
+// ── Bench ladder ─────────────────────────────────────────────────────────────
+function BenchLadder({ roster }: { roster: TeamMember[] }) {
+  const byRole = (key: TeamMember["role"]) => roster.filter((m) => m.role === key);
+  const mgrRoles = [...LADDER].filter((r) => r.mgr).reverse(); // GM → Shift
+  const entryRoles = [...LADDER].filter((r) => !r.mgr).reverse(); // CL → CM → CH
+
+  return (
+    <div className="flex flex-col gap-3">
+      {mgrRoles.map((r) => {
+        const people = byRole(r.key);
+        return (
+          <div key={r.key} className="grid grid-cols-1 gap-3 rounded-2xl border border-border bg-surface p-4 shadow-card sm:grid-cols-[180px_1fr]">
+            <div>
+              <div className="text-sm font-bold text-heading">{r.label}</div>
+              <div className="text-xs text-ink-muted">{people.length} on bench</div>
+            </div>
+            <div className="flex flex-wrap gap-2.5">
+              {people.length === 0 ? (
+                <span className="text-sm text-ink-subtle">— no one in this seat</span>
+              ) : people.map((m) => (
+                <div key={m.id} className="flex items-center gap-2.5 rounded-xl border border-border bg-surface px-3 py-2">
+                  <Avatar name={m.full_name} risk={m.flight_risk} />
+                  <div className="min-w-0">
+                    <div className="truncate text-sm font-semibold text-heading">{m.full_name}</div>
+                    <div className="mt-0.5 flex gap-1.5">
+                      <RiskPill risk={m.flight_risk} />
+                      <span className={cn("inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset", ASPIRATION_META[m.aspiration].chip)}>{ASPIRATION_META[m.aspiration].label}</span>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+
+      <div className="mt-2 text-[11px] font-bold uppercase tracking-wider text-ink-subtle">Crew &amp; Carhops</div>
+      <div className="rounded-2xl border border-border bg-surface p-4 shadow-card">
+        {entryRoles.map((r) => {
+          const people = byRole(r.key);
+          return (
+            <div key={r.key} className="mb-3 last:mb-0">
+              <div className="mb-1.5 text-xs font-semibold text-ink-muted">{r.label} · {people.length}</div>
+              <div className="flex flex-wrap gap-2">
+                {people.length === 0 ? <span className="text-xs text-ink-subtle">—</span> : people.map((m) => (
+                  <span key={m.id} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2 py-1 text-xs font-medium text-heading">
+                    {m.flight_risk === "immediate" && <span className="h-1.5 w-1.5 rounded-full bg-red-500" />}
+                    {m.full_name.split(" ")[0]} {m.full_name.split(" ").slice(-1)[0]?.[0] ?? ""}.
+                  </span>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Roster table ─────────────────────────────────────────────────────────────
+function RosterTable({ roster }: { roster: TeamMember[] }) {
+  const [filter, setFilter] = useState<TeamMember["role"] | "all">("all");
+  const present = [...LADDER].filter((r) => roster.some((m) => m.role === r.key));
+  const order = Object.fromEntries(LADDER.map((r, i) => [r.key, i]));
+  const rows = roster
+    .filter((m) => filter === "all" || m.role === filter)
+    .sort((a, b) => (order[b.role] - order[a.role]) || (RISK_RANK[b.flight_risk] - RISK_RANK[a.flight_risk]) || a.full_name.localeCompare(b.full_name));
+
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap gap-2">
+        <FilterChip on={filter === "all"} onClick={() => setFilter("all")}>All</FilterChip>
+        {present.map((r) => <FilterChip key={r.key} on={filter === r.key} onClick={() => setFilter(r.key)}>{r.label}</FilterChip>)}
+      </div>
+      <div className="overflow-hidden rounded-2xl border border-border bg-surface shadow-card">
+        <div className="grid grid-cols-[1.6fr_1fr_1fr_0.8fr] gap-3 border-b border-border px-4 py-2.5 text-[11px] font-bold uppercase tracking-wide text-ink-subtle">
+          <span>Team member</span><span>Flight risk</span><span>Aspiration</span><span>Perf</span>
+        </div>
+        {rows.map((m) => <RosterRow key={m.id} m={m} />)}
+      </div>
+    </div>
+  );
+}
+function FilterChip({ on, onClick, children }: { on: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button onClick={onClick} className={cn("rounded-full px-3 py-1.5 text-xs font-semibold transition",
+      on ? "bg-midnight text-white" : "bg-surface-sunk text-ink-muted hover:text-heading")}>{children}</button>
+  );
+}
+
+// ── 9-box ────────────────────────────────────────────────────────────────────
+const NB_COLS = ["Low", "Solid", "Top"];        // performance →
+const NB_ROWS = ["High", "Moderate", "Lower"];  // potential ↓ (high at top)
+const perfCol = (p: number) => (p >= 4 ? 2 : p === 3 ? 1 : 0);
+const potRow = (p: number) => (p >= 4 ? 0 : p === 3 ? 1 : 2);
+function cellTone(col: number, row: number): "star" | "good" | "mid" | "watch" {
+  if (col === 2 && row === 0) return "star";
+  if (col === 0 && row === 2) return "watch";
+  if (col + (2 - row) >= 3) return "good";
+  return "mid";
+}
+const TONE_BG: Record<string, string> = {
+  star: "bg-emerald-50 border-emerald-200", good: "bg-emerald-50/50 border-emerald-100",
+  mid: "bg-surface-muted border-border", watch: "bg-red-50/60 border-red-100",
+};
+function NineBox({ roster }: { roster: TeamMember[] }) {
+  const rated = roster.filter((m) => m.perf != null && m.potential != null);
+  const cellOf = (col: number, row: number) => rated.filter((m) => perfCol(m.perf!) === col && potRow(m.potential!) === row);
+  const unrated = roster.length - rated.length;
+
+  return (
+    <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
+      <div className="flex gap-2">
+        <div className="grid w-5 grid-rows-3">
+          {NB_ROWS.map((l) => <div key={l} className="flex items-center justify-center [writing-mode:vertical-rl] rotate-180 text-[11px] font-bold uppercase tracking-wide text-ink-subtle">{l}</div>)}
+        </div>
+        <div>
+          <div className="grid grid-cols-3 gap-2" style={{ gridTemplateRows: "repeat(3, 116px)" }}>
+            {NB_ROWS.map((_, row) => NB_COLS.map((_, col) => {
+              const people = cellOf(col, row);
+              return (
+                <div key={`${row}-${col}`} className={cn("flex flex-col gap-1 overflow-hidden rounded-xl border p-2", TONE_BG[cellTone(col, row)])}>
+                  <div className="flex flex-wrap content-start gap-1">
+                    {people.map((m) => <span key={m.id} title={`${m.full_name} · ${LADDER_BY_KEY[m.role]?.abbr}`}><Avatar name={m.full_name} risk={m.flight_risk} /></span>)}
+                  </div>
+                </div>
+              );
+            }))}
+          </div>
+          <div className="mt-2 grid grid-cols-3 gap-2">
+            {NB_COLS.map((l) => <div key={l} className="text-center text-[11px] font-bold uppercase tracking-wide text-ink-subtle">{l}</div>)}
+          </div>
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-2 text-sm text-ink-2">
+        <div className="text-[11px] font-bold uppercase tracking-wide text-ink-subtle">Legend</div>
+        <Legend sw="bg-emerald-200" label="Star — top perf + high potential" />
+        <Legend sw="bg-emerald-100" label="Strong" />
+        <Legend sw="bg-zinc-200" label="Core" />
+        <Legend sw="bg-red-100" label="Watch — low perf + lower potential" />
+        <div className="mt-2 max-w-[230px] text-xs text-ink-muted">Axes: performance (→) × potential (↓). Avatar ring color = flight risk.{unrated > 0 ? ` ${unrated} not yet rated.` : ""}</div>
+      </div>
+    </div>
+  );
+}
+function Legend({ sw, label }: { sw: string; label: string }) {
+  return <div className="flex items-center gap-2"><span className={cn("h-3.5 w-3.5 rounded", sw)} />{label}</div>;
 }
 
 function RosterRow({ m }: { m: TeamMember }) {
