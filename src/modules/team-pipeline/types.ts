@@ -85,3 +85,19 @@ export const ASPIRATION_META: Record<Aspiration, { label: string; chip: string }
   next: { label: "Next Level", chip: "bg-blue-50 text-blue-700 ring-blue-200" },
   looking: { label: "Looking", chip: "bg-red-50 text-red-700 ring-red-200" },
 };
+
+// Sales-tier headcount model. PLACEHOLDER numbers from the prototype — replace
+// with the operator's real per-role/per-tier matrix. Until a real per-store tier
+// source exists, every store is treated as DEFAULT_TIER.
+export type Tier = "A" | "B" | "C" | "D";
+export const TIERS: Record<Tier, { label: string; vol: string; rec: Record<LadderKey, number> }> = {
+  A: { label: "Tier A", vol: "$60K+/wk", rec: { carhop: 14, crew: 10, lead: 4, shift: 4, assoc: 2, fam: 1, gm: 1 } },
+  B: { label: "Tier B", vol: "$42–60K/wk", rec: { carhop: 11, crew: 8, lead: 3, shift: 3, assoc: 1, fam: 1, gm: 1 } },
+  C: { label: "Tier C", vol: "$28–42K/wk", rec: { carhop: 8, crew: 6, lead: 2, shift: 2, assoc: 1, fam: 1, gm: 1 } },
+  D: { label: "Tier D", vol: "<$28K/wk", rec: { carhop: 6, crew: 4, lead: 2, shift: 2, assoc: 0, fam: 1, gm: 1 } },
+};
+export const DEFAULT_TIER: Tier = "C";
+export const roleBelow = (k: LadderKey): LadderKey | null => {
+  const i = LADDER.findIndex((r) => r.key === k);
+  return i > 0 ? LADDER[i - 1].key : null;
+};
