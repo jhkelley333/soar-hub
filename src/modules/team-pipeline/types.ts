@@ -10,13 +10,17 @@ export interface RiskCounts { immediate: number; medium: number; low: number; na
 export interface StoreRollup {
   risk: RiskCounts;
   roster: number;
+  non_gm: number;
   open_reqs: number;
   gm_risk: FlightRisk | null;
+  sales: number | null;   // latest weekly sales (Ranker), null if unavailable
+  target: number | null;  // team members needed, excl GM = ceil(sales / divisor)
 }
 export interface RollupResponse {
   stores: Record<string, StoreRollup>; // keyed by store id
   can_write: boolean;
   role_edit: boolean;
+  sales_per_member: number;
 }
 
 export interface TeamMember {
@@ -66,6 +70,14 @@ export interface StoreRosterResponse {
   reqs: Requisition[];
   can_write: boolean;
   role_edit: boolean; // role promote/demote toggle (Admin → Feature Flags)
+  weekly_sales: number | null;
+  sales_per_member: number;
+  target: number | null; // team members needed, excl GM
+}
+
+export interface TpSettings {
+  sales_per_member: number;
+  can_edit: boolean;
 }
 
 // Performance / Potential rating ramp — red (low) → green (high).
@@ -206,3 +218,13 @@ export const roleBelow = (k: LadderKey): LadderKey | null => {
   const i = LADDER.findIndex((r) => r.key === k);
   return i > 0 ? LADDER[i - 1].key : null;
 };
+
+// Suggested distribution of the sales-driven total target across the non-GM
+// roles (weights sum to 1). The store target itself comes from sales ÷ divisor;
+// this is just a starting split for the per-role rows, and each row is still
+// adjustable. GM is excluded (always its own seat).
+const MIX_WEIGHTS: Record<Exclude<LadderKey, "gm">, number> = { carhop: 8, crew: 6, lead: 2, shift: 2, assoc: 1, fam: 1 };
+const MIX_TOTAL = Object.values(MIX_WEIGHTS).reduce((a, b) => a + b, 0);
+export const ROLE_MIX = Object.fromEntries(
+  Object.entries(MIX_WEIGHTS).map(([k, v]) => [k, v / MIX_TOTAL]),
+) as Record<Exclude<LadderKey, "gm">, number>;

@@ -6,6 +6,10 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { getFlag } from "./_lib/flags.js";
+import {
+  getSheetsClient, getAvailableWeeks, batchGetWeeks,
+  findRowByStore, getMetricRaw, parseNum,
+} from "./_lib/ranker-sheets.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -100,12 +104,44 @@ async function annotateAccounts(supa, members) {
 }
 const roleEditOn = (supa, user) => getFlag(supa, "team_pipeline_role_edit", { userId: user.id });
 
+// Admin-tunable staffing model. target (excl GM) = ceil(weekly_sales / divisor).
+async function tpSettings(supa) {
+  const { data } = await supa.from("tp_settings").select("sales_per_member").eq("id", "global").maybeSingle();
+  return { sales_per_member: data?.sales_per_member || 1200 };
+}
+
+// Latest-week weekly sales per store number, read live from the Ranker sheet.
+// Returns Map<numberStr, sales>. Best-effort: if the sheet is unavailable
+// (e.g. dev without Google creds) the targets simply fall back to null.
+async function salesForStoreNumbers(storeNumbers) {
+  const out = new Map();
+  const nums = [...new Set((storeNumbers || []).map((n) => String(n)).filter(Boolean))];
+  if (!nums.length) return out;
+  try {
+    const sheets = await getSheetsClient();
+    const weeks = await getAvailableWeeks(sheets);
+    if (!weeks.length) return out;
+    const wk = String(weeks[weeks.length - 1]);
+    const data = (await batchGetWeeks(sheets, [wk])).get(wk);
+    if (!data) return out;
+    for (const num of nums) {
+      const row = findRowByStore(data.rows, num);
+      const s = row ? parseNum(getMetricRaw(row, data.idx, "weeklySales")) : null;
+      if (s !== null) out.set(num, s);
+    }
+  } catch { /* sheet unavailable — leave targets null */ }
+  return out;
+}
+const targetFromSales = (sales, divisor) => (sales != null && divisor > 0 ? Math.ceil(sales / divisor) : null);
+
 // Per-store talent aggregates, keyed by store id. The client overlays these
 // onto its (already RLS-scoped) org tree, so we don't re-ship the org here.
 async function rollup(supa, user) {
   const scope = await storesForUser(supa, user);
   const ids = scope.all ? null : Array.from(scope.ids);
-  if (ids && ids.length === 0) return { stores: {}, can_write: VIEW_ROLES.has(String(user.role)) };
+  if (ids && ids.length === 0) {
+    return { stores: {}, can_write: VIEW_ROLES.has(String(user.role)), role_edit: await roleEditOn(supa, user), sales_per_member: (await tpSettings(supa)).sales_per_member };
+  }
 
   // Terminated members are out of the pipeline — excluded from every aggregate.
   let mq = supa.from("tp_team_members").select("store_id, role, flight_risk").neq("status", "terminated");
@@ -117,16 +153,32 @@ async function rollup(supa, user) {
   const { data: reqs } = await rq;
 
   const stores = {};
-  const slot = (id) => (stores[id] ||= { risk: emptyRisk(), roster: 0, open_reqs: 0, gm_risk: null });
+  const slot = (id) => (stores[id] ||= { risk: emptyRisk(), roster: 0, non_gm: 0, open_reqs: 0, gm_risk: null, sales: null, target: null });
+  // Pre-create a slot for every scoped store so even an empty store shows its
+  // sales-driven target.
+  const idList = ids || Array.from(scope.ids);
+  for (const id of idList) slot(id);
   for (const m of members || []) {
     const s = slot(m.store_id);
     s.roster++;
+    if (m.role !== "gm") s.non_gm++;
     s.risk[m.flight_risk] = (s.risk[m.flight_risk] || 0) + 1;
     if (m.role === "gm") s.gm_risk = m.flight_risk;
   }
   for (const r of reqs || []) if (r.status !== "filled") slot(r.store_id).open_reqs++;
 
-  return { stores, can_write: VIEW_ROLES.has(String(user.role)), role_edit: await roleEditOn(supa, user) };
+  // Overlay each store's sales-driven target (excl GM).
+  const settings = await tpSettings(supa);
+  const { data: srows } = idList.length ? await supa.from("stores").select("id, number").in("id", idList) : { data: [] };
+  const numById = new Map((srows || []).map((s) => [s.id, String(s.number)]));
+  const salesMap = await salesForStoreNumbers([...numById.values()]);
+  for (const [id, s] of Object.entries(stores)) {
+    const sales = salesMap.get(numById.get(id)) ?? null;
+    s.sales = sales;
+    s.target = targetFromSales(sales, settings.sales_per_member);
+  }
+
+  return { stores, can_write: VIEW_ROLES.has(String(user.role)), role_edit: await roleEditOn(supa, user), sales_per_member: settings.sales_per_member };
 }
 
 async function storeRoster(supa, user, storeId) {
@@ -136,6 +188,9 @@ async function storeRoster(supa, user, storeId) {
   const { data: all } = await supa.from("tp_team_members").select("*").eq("store_id", storeId).order("created_at", { ascending: true });
   const { data: reqs } = await supa.from("tp_requisitions").select("*").eq("store_id", storeId).neq("status", "filled").order("created_at", { ascending: false });
   const annotated = await annotateAccounts(supa, all);
+  const settings = await tpSettings(supa);
+  const { data: srow } = await supa.from("stores").select("number").eq("id", storeId).maybeSingle();
+  const sales = srow ? (await salesForStoreNumbers([srow.number])).get(String(srow.number)) ?? null : null;
   return {
     // Terminated members drop out of the active pipeline but stay accessible
     // in their own list (rehire / history).
@@ -144,6 +199,9 @@ async function storeRoster(supa, user, storeId) {
     reqs: reqs || [],
     can_write: VIEW_ROLES.has(String(user.role)),
     role_edit: await roleEditOn(supa, user),
+    weekly_sales: sales,
+    sales_per_member: settings.sales_per_member,
+    target: targetFromSales(sales, settings.sales_per_member), // total team members (excl GM)
   };
 }
 
@@ -580,6 +638,21 @@ async function inviteMember(supa, user, body) {
   return { ok: true, profile_id: newId, email };
 }
 
+async function getSettings(supa, user) {
+  const s = await tpSettings(supa);
+  return { ...s, can_edit: String(user.role) === "admin" };
+}
+async function updateSettings(supa, user, body) {
+  if (String(user.role) !== "admin") return { error: "Only admins can change the staffing model.", status: 403 };
+  const n = parseInt(body?.sales_per_member, 10);
+  if (Number.isNaN(n) || n < 1) return { error: "Enter a positive dollar amount.", status: 400 };
+  const sales_per_member = Math.min(1000000, n);
+  const { error } = await supa.from("tp_settings")
+    .update({ sales_per_member, updated_by: user.id, updated_at: new Date().toISOString() }).eq("id", "global");
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, sales_per_member };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   let user;
@@ -601,6 +674,7 @@ export const handler = async (event) => {
       if (action === "store-roster") return unwrap(await storeRoster(supa, user, params.store_id));
       if (action === "notes") return unwrap(await listNotes(supa, user, params.member_id));
       if (action === "corrective-actions") return unwrap(await listCorrectiveActions(supa, user, params.member_id));
+      if (action === "settings") return unwrap(await getSettings(supa, user));
       return respond(400, { error: `Unknown action: ${action}` });
     }
     if (action === "seed-from-profiles") return unwrap(await seedFromProfiles(supa, user));
@@ -614,6 +688,7 @@ export const handler = async (event) => {
     if (action === "import-roster") return unwrap(await importRoster(supa, user, body));
     if (action === "merge-members") return unwrap(await mergeMembers(supa, user, body));
     if (action === "invite-member") return unwrap(await inviteMember(supa, user, body));
+    if (action === "update-settings") return unwrap(await updateSettings(supa, user, body));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });
