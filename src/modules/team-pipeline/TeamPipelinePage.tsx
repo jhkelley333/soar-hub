@@ -121,13 +121,13 @@ function Company({ districts, roll, canWrite, onOpen }: { districts: MyDistrictN
   const allStores = districts.flatMap((d) => d.stores);
   const totals = sumRisk(allStores, roll);
 
-  if (importing) return <RosterImport onDone={() => setImporting(false)} />;
-
   const seed = useMutation({
     mutationFn: seedFromProfiles,
     onSuccess: (r) => { toast.push(`Seeded ${r.created} team member${r.created === 1 ? "" : "s"} from profiles.`, "success"); qc.invalidateQueries({ queryKey: ["tp-rollup"] }); },
     onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't seed.", "error"),
   });
+
+  if (importing) return <RosterImport onDone={() => setImporting(false)} />;
 
   return (
     <>
