@@ -457,12 +457,17 @@ async function previewImport(supa, user, body) {
 async function importRoster(supa, user, body) {
   const rows = importRows(body);
   if (!rows.length) return { error: "No rows to import.", status: 400 };
+  // mode: all (default) | new (creates only) | update (matches only)
+  const mode = ["all", "new", "update"].includes(body?.mode) ? body.mode : "all";
   const ctx = await importContext(supa, user);
   const results = [];
-  let created = 0, updated = 0, errors = 0;
+  let created = 0, updated = 0, skipped = 0, errors = 0;
   for (let i = 0; i < rows.length; i++) {
     const a = annotateImportRow(i, rows[i], ctx);
     if (a.action === "error") { results.push({ row: a.row, status: "error", full_name: a.full_name, message: a.errors.join("; ") }); errors++; continue; }
+    if ((mode === "new" && a.action === "update") || (mode === "update" && a.action === "create")) {
+      results.push({ row: a.row, status: "skipped", full_name: a.full_name, message: `${mode} only` }); skipped++; continue;
+    }
     const fields = {
       store_id: a.store_id, full_name: a.full_name, role: a.role,
       email: a.email, phone: a.phone, status: a.status, hire_date: a.hire_date, external_id: a.external_id,
@@ -482,7 +487,7 @@ async function importRoster(supa, user, body) {
       }
     }
   }
-  return { ok: true, results, summary: { created, updated, errors } };
+  return { ok: true, results, summary: { created, updated, skipped, errors } };
 }
 
 // Merge two roster records for the same person (seed vs. bulk dup). Reassign
