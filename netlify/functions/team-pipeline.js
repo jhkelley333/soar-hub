@@ -271,6 +271,61 @@ async function updateReq(supa, user, body) {
   return { ok: true, req: data };
 }
 
+// Corrective-action documents (progressive discipline) on a roster member.
+const CA_LEVELS = new Set(["verbal", "written", "final", "pip"]);
+const CA_STATUS = new Set(["active", "acknowledged", "closed"]);
+
+async function listCorrectiveActions(supa, user, memberId) {
+  if (!memberId) return { error: "Missing team member.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  if (!(await memberInScope(supa, scope, memberId))) return { error: "That team member is outside your scope.", status: 403 };
+  const { data } = await supa.from("tp_corrective_actions").select("*").eq("team_member_id", memberId).order("created_at", { ascending: false });
+  return { actions: data || [] };
+}
+
+async function addCorrectiveAction(supa, user, body) {
+  const id = body?.member_id;
+  const level = String(body?.level || "");
+  const summary = String(body?.summary || "").trim();
+  if (!id) return { error: "Missing team member.", status: 400 };
+  if (!CA_LEVELS.has(level)) return { error: "Pick a corrective-action level.", status: 400 };
+  if (!summary) return { error: "Describe the incident.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  const m = await memberInScope(supa, scope, id);
+  if (!m) return { error: "That team member is outside your scope.", status: 403 };
+  const clip = (v, n) => (v == null || v === "" ? null : String(v).slice(0, n));
+  const row = {
+    team_member_id: id, store_id: m.store_id, level,
+    category: clip(body?.category, 40),
+    incident_date: body?.incident_date || null,
+    summary: summary.slice(0, 4000),
+    expectations: clip(body?.expectations, 4000),
+    consequence: clip(body?.consequence, 4000),
+    issued_by: user.preferred_name || user.full_name || user.email || "Someone",
+    issued_by_id: user.id,
+  };
+  const { data, error } = await supa.from("tp_corrective_actions").insert(row).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, action: data };
+}
+
+async function setCorrectiveActionStatus(supa, user, body) {
+  const id = body?.action_id;
+  const status = String(body?.status || "");
+  if (!id || !CA_STATUS.has(status)) return { error: "Missing or invalid status.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  const { data: ca } = await supa.from("tp_corrective_actions").select("id, store_id").eq("id", id).maybeSingle();
+  if (!ca || (!scope.all && !scope.ids.has(ca.store_id))) return { error: "That document is outside your scope.", status: 403 };
+  const patch = { status };
+  if (status === "acknowledged") {
+    patch.acknowledged_at = new Date().toISOString();
+    patch.acknowledged_by = user.preferred_name || user.full_name || user.email || "Someone";
+  }
+  const { data, error } = await supa.from("tp_corrective_actions").update(patch).eq("id", id).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, action: data };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   let user;
@@ -291,6 +346,7 @@ export const handler = async (event) => {
       if (action === "gms") return unwrap(await gms(supa, user));
       if (action === "store-roster") return unwrap(await storeRoster(supa, user, params.store_id));
       if (action === "notes") return unwrap(await listNotes(supa, user, params.member_id));
+      if (action === "corrective-actions") return unwrap(await listCorrectiveActions(supa, user, params.member_id));
       return respond(400, { error: `Unknown action: ${action}` });
     }
     if (action === "seed-from-profiles") return unwrap(await seedFromProfiles(supa, user));
@@ -298,6 +354,8 @@ export const handler = async (event) => {
     if (action === "update-member") return unwrap(await updateMember(supa, user, body));
     if (action === "add-note") return unwrap(await addNote(supa, user, body));
     if (action === "update-req") return unwrap(await updateReq(supa, user, body));
+    if (action === "add-corrective-action") return unwrap(await addCorrectiveAction(supa, user, body));
+    if (action === "corrective-action-status") return unwrap(await setCorrectiveActionStatus(supa, user, body));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });

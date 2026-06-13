@@ -5,15 +5,16 @@
 // open it without prop-drilling.
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, Phone, Star } from "lucide-react";
+import { Copy, FileWarning, Phone, Plus, Star } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Drawer } from "@/shared/ui/Drawer";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { useToast } from "@/shared/ui/Toaster";
-import { addNote, fetchNotes, updateMember } from "./api";
+import { addCorrectiveAction, addNote, fetchCorrectiveActions, fetchNotes, setCorrectiveActionStatus, updateMember } from "./api";
 import {
-  ASPIRATION_META, LADDER_BY_KEY, RISK_META, RISK_REASONS,
-  type Aspiration, type FlightRisk, type MemberPatch, type TeamMember,
+  ASPIRATION_META, CA_CATEGORIES, CA_LEVEL_META, CA_LEVELS, CA_STATUS_META, CA_TEMPLATES,
+  LADDER_BY_KEY, RISK_META, RISK_REASONS,
+  type Aspiration, type CaLevel, type CorrectiveAction, type FlightRisk, type MemberPatch, type TeamMember,
 } from "./types";
 
 type Ctx = { open: (m: TeamMember) => void; canWrite: boolean };
@@ -141,8 +142,135 @@ function MemberBody({ member, canWrite }: { member: TeamMember; canWrite: boolea
       )}
 
       <NotesThread memberId={member.id} canWrite={canWrite} />
+      <CorrectiveActions memberId={member.id} canWrite={canWrite} />
     </div>
   );
+}
+
+function CorrectiveActions({ memberId, canWrite }: { memberId: string; canWrite: boolean }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [adding, setAdding] = useState(false);
+  const q = useQuery({ queryKey: ["tp-ca", memberId], queryFn: () => fetchCorrectiveActions(memberId) });
+  const actions = q.data?.actions ?? [];
+
+  const setStatus = useMutation({
+    mutationFn: ({ id, status }: { id: string; status: CorrectiveAction["status"] }) => setCorrectiveActionStatus(id, status),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["tp-ca", memberId] }),
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't update.", "error"),
+  });
+
+  return (
+    <Field label="Corrective actions">
+      {canWrite && !adding && (
+        <button onClick={() => setAdding(true)}
+          className="mb-3 inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-ink-2 transition hover:bg-surface-sunk">
+          <Plus className="h-3.5 w-3.5" />New write-up
+        </button>
+      )}
+      {adding && <CaForm memberId={memberId} onDone={() => setAdding(false)} />}
+
+      {q.isLoading ? <Skeleton className="h-16 w-full" /> : actions.length === 0 ? (
+        !adding && <div className="text-sm text-ink-subtle">No corrective actions on file.</div>
+      ) : (
+        <ol className="mt-1 flex flex-col gap-2.5">
+          {actions.map((a) => {
+            const lm = CA_LEVEL_META[a.level];
+            const sm = CA_STATUS_META[a.status];
+            return (
+              <li key={a.id} className="rounded-xl border border-border bg-surface-muted px-3 py-2.5">
+                <div className="mb-1 flex flex-wrap items-center gap-2">
+                  <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold ring-1 ring-inset", lm.chip)}>
+                    <FileWarning className="h-3 w-3" />{lm.short}
+                  </span>
+                  <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-semibold", sm.chip)}>{sm.label}</span>
+                  {a.category && <span className="text-[11px] text-ink-muted">{a.category}</span>}
+                  <span className="ml-auto text-[11px] text-ink-subtle">{a.incident_date ? new Date(a.incident_date).toLocaleDateString() : new Date(a.created_at).toLocaleDateString()}</span>
+                </div>
+                <p className="whitespace-pre-wrap text-sm text-heading">{a.summary}</p>
+                {a.expectations && <p className="mt-1.5 text-xs text-ink-2"><span className="font-semibold">Expectations:</span> {a.expectations}</p>}
+                {a.consequence && <p className="mt-1 text-xs text-ink-2"><span className="font-semibold">Consequence:</span> {a.consequence}</p>}
+                <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-ink-subtle">
+                  <span>Issued by {a.issued_by ?? "—"}{a.acknowledged_by ? ` · ack’d by ${a.acknowledged_by}` : ""}</span>
+                  {canWrite && (
+                    <span className="ml-auto flex gap-1.5">
+                      {a.status === "active" && <CaBtn onClick={() => setStatus.mutate({ id: a.id, status: "acknowledged" })}>Mark acknowledged</CaBtn>}
+                      {a.status !== "closed" && <CaBtn onClick={() => setStatus.mutate({ id: a.id, status: "closed" })}>Close</CaBtn>}
+                    </span>
+                  )}
+                </div>
+              </li>
+            );
+          })}
+        </ol>
+      )}
+    </Field>
+  );
+}
+
+function CaForm({ memberId, onDone }: { memberId: string; onDone: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [level, setLevel] = useState<CaLevel>("verbal");
+  const [category, setCategory] = useState<string | null>(null);
+  const [incidentDate, setIncidentDate] = useState("");
+  const [summary, setSummary] = useState("");
+  const [expectations, setExpectations] = useState(CA_TEMPLATES.verbal.expectations);
+  const [consequence, setConsequence] = useState(CA_TEMPLATES.verbal.consequence);
+
+  // Picking a level swaps in that level's boilerplate.
+  const pickLevel = (l: CaLevel) => {
+    setLevel(l);
+    setExpectations(CA_TEMPLATES[l].expectations);
+    setConsequence(CA_TEMPLATES[l].consequence);
+  };
+
+  const create = useMutation({
+    mutationFn: () => addCorrectiveAction(memberId, {
+      level, category, incident_date: incidentDate || null, summary: summary.trim(),
+      expectations: expectations.trim() || null, consequence: consequence.trim() || null,
+    }),
+    onSuccess: () => {
+      toast.push("Corrective action recorded.", "success");
+      qc.invalidateQueries({ queryKey: ["tp-ca", memberId] });
+      onDone();
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't save.", "error"),
+  });
+
+  const ta = "w-full resize-none rounded-lg border border-border bg-surface px-3 py-2 text-sm text-heading placeholder:text-ink-subtle focus:border-accent focus:outline-none";
+
+  return (
+    <div className="mb-3 flex flex-col gap-3 rounded-xl border border-border bg-surface-muted p-3">
+      <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
+        {CA_LEVELS.map((l) => <SegBtn key={l} on={level === l} onClick={() => pickLevel(l)}>{CA_LEVEL_META[l].short}</SegBtn>)}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {CA_CATEGORIES.map((c) => (
+          <button key={c} onClick={() => setCategory(category === c ? null : c)}
+            className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold transition",
+              category === c ? "bg-midnight text-white" : "bg-surface-sunk text-ink-muted hover:text-heading")}>{c}</button>
+        ))}
+      </div>
+      <label className="text-[11px] font-semibold text-ink-muted">Incident date
+        <input type="date" value={incidentDate} onChange={(e) => setIncidentDate(e.target.value)}
+          className="mt-1 block w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-heading focus:border-accent focus:outline-none" />
+      </label>
+      <textarea value={summary} onChange={(e) => setSummary(e.target.value)} rows={3} placeholder="What happened? (required)" className={ta} />
+      <textarea value={expectations} onChange={(e) => setExpectations(e.target.value)} rows={2} placeholder="Expectations going forward" className={ta} />
+      <textarea value={consequence} onChange={(e) => setConsequence(e.target.value)} rows={2} placeholder="Consequence if it recurs" className={ta} />
+      <div className="flex justify-end gap-2">
+        <button onClick={onDone} className="rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-ink-2 hover:bg-surface-sunk">Cancel</button>
+        <button disabled={!summary.trim() || create.isPending} onClick={() => create.mutate()}
+          className="rounded-lg bg-midnight px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-midnight/90 disabled:opacity-40">
+          {create.isPending ? "Saving…" : "Record write-up"}
+        </button>
+      </div>
+    </div>
+  );
+}
+function CaBtn({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+  return <button onClick={onClick} className="rounded-md border border-border bg-surface px-2 py-1 font-semibold text-ink-2 transition hover:bg-surface-sunk">{children}</button>;
 }
 
 function NotesThread({ memberId, canWrite }: { memberId: string; canWrite: boolean }) {
