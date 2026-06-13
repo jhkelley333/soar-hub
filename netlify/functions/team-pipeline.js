@@ -183,6 +183,149 @@ async function commitPlan(supa, user, body) {
   return { ok: true, promoted, reqs_opened: reqsOpened };
 }
 
+// Resolve a roster member and confirm it falls inside the caller's scope.
+async function memberInScope(supa, scope, memberId) {
+  const { data: m } = await supa.from("tp_team_members").select("id, store_id").eq("id", memberId).maybeSingle();
+  if (!m) return null;
+  if (!scope.all && !scope.ids.has(m.store_id)) return null;
+  return m;
+}
+function clampRating(v) {
+  if (v == null || v === "") return null;
+  const n = parseInt(v, 10);
+  return Number.isNaN(n) ? null : Math.max(1, Math.min(5, n));
+}
+const RISK_VALS = new Set(["na", "low", "medium", "immediate"]);
+const ASPIRATION_VALS = new Set(["current", "next", "looking"]);
+const STATUS_VALS = new Set(["active", "loa"]);
+
+// Patch a roster member's talent overlay (risk, aspiration, ratings, backfill,
+// status). Only known fields with valid values are written.
+async function updateMember(supa, user, body) {
+  const id = body?.member_id;
+  if (!id) return { error: "Missing team member.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  if (!(await memberInScope(supa, scope, id))) return { error: "That team member is outside your scope.", status: 403 };
+  const p = body?.patch && typeof body.patch === "object" ? body.patch : {};
+  const patch = {};
+  if ("flight_risk" in p && RISK_VALS.has(p.flight_risk)) patch.flight_risk = p.flight_risk;
+  if ("aspiration" in p && ASPIRATION_VALS.has(p.aspiration)) patch.aspiration = p.aspiration;
+  if ("status" in p && STATUS_VALS.has(p.status)) patch.status = p.status;
+  if ("perf" in p) patch.perf = clampRating(p.perf);
+  if ("potential" in p) patch.potential = clampRating(p.potential);
+  if ("backfill" in p) patch.backfill = p.backfill == null ? null : String(p.backfill).slice(0, 300);
+  if ("risk_reasons" in p && Array.isArray(p.risk_reasons)) {
+    patch.risk_reasons = p.risk_reasons.filter((x) => typeof x === "string").map((x) => x.slice(0, 60)).slice(0, 12);
+  }
+  if (Object.keys(patch).length === 0) return { error: "Nothing to update.", status: 400 };
+  const { data, error } = await supa.from("tp_team_members").update(patch).eq("id", id).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, member: data };
+}
+
+async function listNotes(supa, user, memberId) {
+  if (!memberId) return { error: "Missing team member.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  if (!(await memberInScope(supa, scope, memberId))) return { error: "That team member is outside your scope.", status: 403 };
+  const { data } = await supa.from("tp_notes").select("*").eq("team_member_id", memberId).order("created_at", { ascending: false });
+  return { notes: data || [] };
+}
+
+// Append a note to the member's thread; also mirror it onto comment/comment_by
+// so the GM bench "latest comment" column stays current.
+async function addNote(supa, user, body) {
+  const id = body?.member_id;
+  const text = String(body?.body || "").trim();
+  if (!id) return { error: "Missing team member.", status: 400 };
+  if (!text) return { error: "A note needs some text.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  if (!(await memberInScope(supa, scope, id))) return { error: "That team member is outside your scope.", status: 403 };
+  const author = user.preferred_name || user.full_name || user.email || "Someone";
+  const clipped = text.slice(0, 2000);
+  const { data, error } = await supa.from("tp_notes")
+    .insert({ team_member_id: id, body: clipped, author, author_id: user.id }).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  await supa.from("tp_team_members").update({ comment: clipped, comment_by: author }).eq("id", id);
+  return { ok: true, note: data };
+}
+
+const REQ_STATUS = new Set(["sourcing", "interviewing", "offer", "filled"]);
+async function updateReq(supa, user, body) {
+  const id = body?.req_id;
+  if (!id) return { error: "Missing requisition.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  const { data: r } = await supa.from("tp_requisitions").select("id, store_id").eq("id", id).maybeSingle();
+  if (!r || (!scope.all && !scope.ids.has(r.store_id))) return { error: "That requisition is outside your scope.", status: 403 };
+  const patch = {};
+  if ("status" in (body || {}) && REQ_STATUS.has(body.status)) {
+    patch.status = body.status;
+    patch.filled_at = body.status === "filled" ? new Date().toISOString() : null;
+  }
+  if ("candidates" in (body || {})) {
+    const n = parseInt(body.candidates, 10);
+    if (!Number.isNaN(n)) patch.candidates = Math.max(0, Math.min(99, n));
+  }
+  if (Object.keys(patch).length === 0) return { error: "Nothing to update.", status: 400 };
+  const { data, error } = await supa.from("tp_requisitions").update(patch).eq("id", id).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, req: data };
+}
+
+// Corrective-action documents (progressive discipline) on a roster member.
+const CA_LEVELS = new Set(["verbal", "written", "final", "pip"]);
+const CA_STATUS = new Set(["active", "acknowledged", "closed"]);
+
+async function listCorrectiveActions(supa, user, memberId) {
+  if (!memberId) return { error: "Missing team member.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  if (!(await memberInScope(supa, scope, memberId))) return { error: "That team member is outside your scope.", status: 403 };
+  const { data } = await supa.from("tp_corrective_actions").select("*").eq("team_member_id", memberId).order("created_at", { ascending: false });
+  return { actions: data || [] };
+}
+
+async function addCorrectiveAction(supa, user, body) {
+  const id = body?.member_id;
+  const level = String(body?.level || "");
+  const summary = String(body?.summary || "").trim();
+  if (!id) return { error: "Missing team member.", status: 400 };
+  if (!CA_LEVELS.has(level)) return { error: "Pick a corrective-action level.", status: 400 };
+  if (!summary) return { error: "Describe the incident.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  const m = await memberInScope(supa, scope, id);
+  if (!m) return { error: "That team member is outside your scope.", status: 403 };
+  const clip = (v, n) => (v == null || v === "" ? null : String(v).slice(0, n));
+  const row = {
+    team_member_id: id, store_id: m.store_id, level,
+    category: clip(body?.category, 40),
+    incident_date: body?.incident_date || null,
+    summary: summary.slice(0, 4000),
+    expectations: clip(body?.expectations, 4000),
+    consequence: clip(body?.consequence, 4000),
+    issued_by: user.preferred_name || user.full_name || user.email || "Someone",
+    issued_by_id: user.id,
+  };
+  const { data, error } = await supa.from("tp_corrective_actions").insert(row).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, action: data };
+}
+
+async function setCorrectiveActionStatus(supa, user, body) {
+  const id = body?.action_id;
+  const status = String(body?.status || "");
+  if (!id || !CA_STATUS.has(status)) return { error: "Missing or invalid status.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  const { data: ca } = await supa.from("tp_corrective_actions").select("id, store_id").eq("id", id).maybeSingle();
+  if (!ca || (!scope.all && !scope.ids.has(ca.store_id))) return { error: "That document is outside your scope.", status: 403 };
+  const patch = { status };
+  if (status === "acknowledged") {
+    patch.acknowledged_at = new Date().toISOString();
+    patch.acknowledged_by = user.preferred_name || user.full_name || user.email || "Someone";
+  }
+  const { data, error } = await supa.from("tp_corrective_actions").update(patch).eq("id", id).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, action: data };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   let user;
@@ -202,10 +345,17 @@ export const handler = async (event) => {
       if (action === "rollup") return unwrap(await rollup(supa, user));
       if (action === "gms") return unwrap(await gms(supa, user));
       if (action === "store-roster") return unwrap(await storeRoster(supa, user, params.store_id));
+      if (action === "notes") return unwrap(await listNotes(supa, user, params.member_id));
+      if (action === "corrective-actions") return unwrap(await listCorrectiveActions(supa, user, params.member_id));
       return respond(400, { error: `Unknown action: ${action}` });
     }
     if (action === "seed-from-profiles") return unwrap(await seedFromProfiles(supa, user));
     if (action === "commit-plan") return unwrap(await commitPlan(supa, user, body));
+    if (action === "update-member") return unwrap(await updateMember(supa, user, body));
+    if (action === "add-note") return unwrap(await addNote(supa, user, body));
+    if (action === "update-req") return unwrap(await updateReq(supa, user, body));
+    if (action === "add-corrective-action") return unwrap(await addCorrectiveAction(supa, user, body));
+    if (action === "corrective-action-status") return unwrap(await setCorrectiveActionStatus(supa, user, body));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });

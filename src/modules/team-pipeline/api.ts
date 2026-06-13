@@ -1,6 +1,9 @@
 // Typed wrappers around netlify/functions/team-pipeline.
 import { supabase } from "@/lib/supabase";
-import type { GmsResponse, RollupResponse, StoreRosterResponse } from "./types";
+import type {
+  CaLevel, CaStatus, CorrectiveAction, GmsResponse, MemberPatch, Note,
+  Requisition, RollupResponse, StoreRosterResponse, TeamMember,
+} from "./types";
 
 const FN = "/.netlify/functions/team-pipeline";
 
@@ -39,4 +42,33 @@ export interface CommitPlanInput {
 }
 export function commitPlan(input: CommitPlanInput): Promise<{ ok: true; promoted: number; reqs_opened: number }> {
   return request(`${FN}?action=commit-plan`, { method: "POST", body: JSON.stringify(input) });
+}
+export function updateMember(memberId: string, patch: MemberPatch): Promise<{ ok: true; member: TeamMember }> {
+  return request(`${FN}?action=update-member`, { method: "POST", body: JSON.stringify({ member_id: memberId, patch }) });
+}
+export function fetchNotes(memberId: string): Promise<{ notes: Note[] }> {
+  return request(`${FN}?action=notes&member_id=${encodeURIComponent(memberId)}`);
+}
+export function addNote(memberId: string, body: string): Promise<{ ok: true; note: Note }> {
+  return request(`${FN}?action=add-note`, { method: "POST", body: JSON.stringify({ member_id: memberId, body }) });
+}
+export function updateReq(reqId: string, patch: { status?: Requisition["status"]; candidates?: number }): Promise<{ ok: true; req: Requisition }> {
+  return request(`${FN}?action=update-req`, { method: "POST", body: JSON.stringify({ req_id: reqId, ...patch }) });
+}
+export function fetchCorrectiveActions(memberId: string): Promise<{ actions: CorrectiveAction[] }> {
+  return request(`${FN}?action=corrective-actions&member_id=${encodeURIComponent(memberId)}`);
+}
+export interface NewCorrectiveAction {
+  level: CaLevel;
+  category?: string | null;
+  incident_date?: string | null;
+  summary: string;
+  expectations?: string | null;
+  consequence?: string | null;
+}
+export function addCorrectiveAction(memberId: string, doc: NewCorrectiveAction): Promise<{ ok: true; action: CorrectiveAction }> {
+  return request(`${FN}?action=add-corrective-action`, { method: "POST", body: JSON.stringify({ member_id: memberId, ...doc }) });
+}
+export function setCorrectiveActionStatus(actionId: string, status: CaStatus): Promise<{ ok: true; action: CorrectiveAction }> {
+  return request(`${FN}?action=corrective-action-status`, { method: "POST", body: JSON.stringify({ action_id: actionId, status }) });
 }

@@ -61,6 +61,93 @@ export interface StoreRosterResponse {
   can_write: boolean;
 }
 
+export interface Note {
+  id: string;
+  team_member_id: string;
+  body: string;
+  author: string | null;
+  author_id: string | null;
+  created_at: string;
+}
+
+// Talent fields a viewer can edit from the profile drawer.
+export type MemberPatch = Partial<{
+  flight_risk: FlightRisk;
+  aspiration: Aspiration;
+  status: MemberStatus;
+  perf: number | null;
+  potential: number | null;
+  backfill: string | null;
+  risk_reasons: string[];
+}>;
+
+// Preset flight-risk drivers (toggle chips); freeform notes go in the thread.
+export const RISK_REASONS = ["Pay", "Commute", "Growth", "Manager fit", "Schedule", "Personal"];
+
+export const REQ_STATUS_META: Record<Requisition["status"], { label: string; chip: string }> = {
+  sourcing: { label: "Sourcing", chip: "bg-zinc-100 text-zinc-600" },
+  interviewing: { label: "Interviewing", chip: "bg-blue-50 text-blue-700" },
+  offer: { label: "Offer out", chip: "bg-amber-50 text-amber-800" },
+  filled: { label: "Filled", chip: "bg-emerald-50 text-emerald-700" },
+};
+
+// ── Corrective-action documents (progressive discipline) ──────────────────────
+export type CaLevel = "verbal" | "written" | "final" | "pip";
+export type CaStatus = "active" | "acknowledged" | "closed";
+
+export interface CorrectiveAction {
+  id: string;
+  team_member_id: string;
+  store_id: string;
+  level: CaLevel;
+  category: string | null;
+  incident_date: string | null;
+  summary: string;
+  expectations: string | null;
+  consequence: string | null;
+  status: CaStatus;
+  issued_by: string | null;
+  issued_by_id: string | null;
+  acknowledged_at: string | null;
+  acknowledged_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const CA_LEVELS: CaLevel[] = ["verbal", "written", "final", "pip"];
+export const CA_LEVEL_META: Record<CaLevel, { label: string; short: string; chip: string }> = {
+  verbal: { label: "Verbal warning", short: "Verbal", chip: "bg-amber-50 text-amber-800 ring-amber-200" },
+  written: { label: "Written warning", short: "Written", chip: "bg-orange-50 text-orange-700 ring-orange-200" },
+  final: { label: "Final written warning", short: "Final", chip: "bg-red-50 text-red-700 ring-red-200" },
+  pip: { label: "Performance Improvement Plan", short: "PIP", chip: "bg-purple-50 text-purple-700 ring-purple-200" },
+};
+export const CA_STATUS_META: Record<CaStatus, { label: string; chip: string }> = {
+  active: { label: "Active", chip: "bg-zinc-100 text-zinc-600" },
+  acknowledged: { label: "Acknowledged", chip: "bg-blue-50 text-blue-700" },
+  closed: { label: "Closed", chip: "bg-emerald-50 text-emerald-700" },
+};
+export const CA_CATEGORIES = ["Attendance", "Performance", "Conduct", "Policy", "Safety"];
+
+// Per-level boilerplate that prefills the expectations + consequence fields.
+export const CA_TEMPLATES: Record<CaLevel, { expectations: string; consequence: string }> = {
+  verbal: {
+    expectations: "Meet the expected standard going forward, effective immediately.",
+    consequence: "Continued or repeated issues may result in a written warning.",
+  },
+  written: {
+    expectations: "Immediate and sustained correction of the behavior described above.",
+    consequence: "Further occurrences may lead to a final written warning.",
+  },
+  final: {
+    expectations: "Immediate and sustained correction. No further occurrences will be tolerated.",
+    consequence: "Any further occurrence may result in termination of employment.",
+  },
+  pip: {
+    expectations: "Meet the measurable goals outlined in this plan within the review period.",
+    consequence: "Failure to meet this plan may result in further action up to and including termination.",
+  },
+};
+
 // Career ladder (bottom → top); `mgr` seats have named succession.
 export const LADDER: { key: LadderKey; label: string; abbr: string; mgr: boolean }[] = [
   { key: "carhop", label: "Carhop", abbr: "CH", mgr: false },
