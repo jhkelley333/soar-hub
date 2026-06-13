@@ -46,6 +46,22 @@ function unwrap(result) {
   return respond(200, result);
 }
 
+// PostgREST caps a single response at ~1000 rows. Page through with range()
+// so big reads (a 5k-member roster, every member in scope) come back whole —
+// otherwise dedupe + roll-up counts silently miss everything past row 1000.
+async function fetchAll(makeQuery) {
+  const PAGE = 1000;
+  let out = [], from = 0;
+  for (;;) {
+    const { data, error } = await makeQuery().range(from, from + PAGE - 1);
+    if (error || !data || data.length === 0) break;
+    out = out.concat(data);
+    if (data.length < PAGE) break;
+    from += PAGE;
+  }
+  return out;
+}
+
 async function getSessionUser(event) {
   const header = event.headers?.authorization || event.headers?.Authorization;
   if (!header?.startsWith("Bearer ")) return null;
@@ -144,13 +160,17 @@ async function rollup(supa, user) {
   }
 
   // Terminated members are out of the pipeline — excluded from every aggregate.
-  let mq = supa.from("tp_team_members").select("store_id, role, flight_risk").neq("status", "terminated");
-  if (ids) mq = mq.in("store_id", ids);
-  const { data: members } = await mq;
+  const members = await fetchAll(() => {
+    let mq = supa.from("tp_team_members").select("store_id, role, flight_risk").neq("status", "terminated");
+    if (ids) mq = mq.in("store_id", ids);
+    return mq;
+  });
 
-  let rq = supa.from("tp_requisitions").select("store_id, status");
-  if (ids) rq = rq.in("store_id", ids);
-  const { data: reqs } = await rq;
+  const reqs = await fetchAll(() => {
+    let rq = supa.from("tp_requisitions").select("store_id, status");
+    if (ids) rq = rq.in("store_id", ids);
+    return rq;
+  });
 
   const stores = {};
   const slot = (id) => (stores[id] ||= { risk: emptyRisk(), roster: 0, non_gm: 0, open_reqs: 0, gm_risk: null, sales: null, target: null });
@@ -185,7 +205,7 @@ async function storeRoster(supa, user, storeId) {
   if (!storeId) return { error: "Missing store.", status: 400 };
   const scope = await storesForUser(supa, user);
   if (!scope.all && !scope.ids.has(storeId)) return { error: "That store is outside your scope.", status: 403 };
-  const { data: all } = await supa.from("tp_team_members").select("*").eq("store_id", storeId).order("created_at", { ascending: true });
+  const all = await fetchAll(() => supa.from("tp_team_members").select("*").eq("store_id", storeId).order("created_at", { ascending: true }));
   const { data: reqs } = await supa.from("tp_requisitions").select("*").eq("store_id", storeId).neq("status", "filled").order("created_at", { ascending: false });
   const annotated = await annotateAccounts(supa, all);
   const settings = await tpSettings(supa);
@@ -458,8 +478,8 @@ async function importContext(supa, user) {
   const existingExt = new Map();
   const existingName = new Map();
   if (storeIds.length) {
-    const { data: mem } = await supa.from("tp_team_members").select("id, external_id, full_name, store_id").in("store_id", storeIds);
-    for (const m of mem || []) {
+    const mem = await fetchAll(() => supa.from("tp_team_members").select("id, external_id, full_name, store_id").in("store_id", storeIds));
+    for (const m of mem) {
       if (m.external_id) existingExt.set(String(m.external_id), m.id);
       existingName.set(`${m.store_id}|${(m.full_name || "").trim().toLowerCase()}`, m.id);
     }
