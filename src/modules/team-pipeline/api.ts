@@ -72,3 +72,39 @@ export function addCorrectiveAction(memberId: string, doc: NewCorrectiveAction):
 export function setCorrectiveActionStatus(actionId: string, status: CaStatus): Promise<{ ok: true; action: CorrectiveAction }> {
   return request(`${FN}?action=corrective-action-status`, { method: "POST", body: JSON.stringify({ action_id: actionId, status }) });
 }
+
+// ATS roster import. Rows are the raw CSV cells; the backend resolves stores,
+// maps roles, and dedupes.
+export type ImportRowInput = Record<string, string>;
+export interface ImportRowAnnotated {
+  row: number;
+  full_name: string;
+  store_number: string;
+  role: string | null;
+  status: string;
+  hire_date: string | null;
+  email: string | null;
+  phone: string | null;
+  external_id: string | null;
+  store_id: string | null;
+  existing_id: string | null;
+  action: "create" | "update" | "error";
+  errors: string[];
+  warnings: string[];
+}
+export interface ImportPreviewResponse {
+  rows: ImportRowAnnotated[];
+  summary: { create: number; update: number; error: number };
+}
+export interface ImportResultRow { row: number; status: "created" | "updated" | "error"; full_name: string; message?: string }
+export interface ImportRosterResponse {
+  ok: true;
+  results: ImportResultRow[];
+  summary: { created: number; updated: number; errors: number };
+}
+export function importPreview(rows: ImportRowInput[]): Promise<ImportPreviewResponse> {
+  return request(`${FN}?action=import-preview`, { method: "POST", body: JSON.stringify({ rows }) });
+}
+export function importRoster(rows: ImportRowInput[]): Promise<ImportRosterResponse> {
+  return request(`${FN}?action=import-roster`, { method: "POST", body: JSON.stringify({ rows }) });
+}
