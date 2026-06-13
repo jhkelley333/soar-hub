@@ -4,7 +4,7 @@
 // talent overlay. Replaces the admin "Seed from profiles" stop-gap.
 import { useRef, useState, type ChangeEvent } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Download, Upload } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Download, Upload } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
@@ -136,14 +136,16 @@ export function RosterImport({ onDone }: { onDone: () => void }) {
                   className={cn("rounded-md px-2.5 py-1 text-xs font-semibold transition", mode === m ? "bg-surface text-heading shadow-sm" : "text-ink-muted hover:text-heading")}>{label}</button>
               ))}
             </div>
-            <div className="ml-auto flex gap-2">
-              <Button variant="ghost" size="sm" onClick={reset}>Start over</Button>
+            <div className="ml-auto flex items-center gap-2">
+              {importMut.isPending && <span className="text-xs text-ink-muted">Writing {willApply} record{willApply === 1 ? "" : "s"}…</span>}
+              <Button variant="ghost" size="sm" disabled={importMut.isPending} onClick={reset}>Start over</Button>
               <Button variant="primary" size="sm" disabled={importMut.isPending || willApply === 0}
                 onClick={() => importMut.mutate(parsed)}>
                 {importMut.isPending ? "Importing…" : `Apply ${willApply} change${willApply === 1 ? "" : "s"}`}
               </Button>
             </div>
           </div>
+          {error && <div className="border-b border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{error}</div>}
           <div className="max-h-[420px] overflow-auto">
             <table className="w-full text-xs">
               <thead className="sticky top-0 bg-surface-muted text-left text-ink-subtle">
@@ -172,8 +174,16 @@ export function RosterImport({ onDone }: { onDone: () => void }) {
 
       {result && (
         <div className="overflow-hidden rounded-2xl border border-border bg-surface shadow-card">
-          <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-            <span className="text-sm font-semibold text-heading">{result.summary.created} created · {result.summary.updated} updated{result.summary.skipped ? ` · ${result.summary.skipped} skipped` : ""} · <span className={result.summary.errors ? "text-red-600" : ""}>{result.summary.errors} error</span></span>
+          <div className="flex flex-wrap items-center gap-3 border-b border-border bg-emerald-50/60 px-4 py-3">
+            <span className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-emerald-100 text-emerald-700"><CheckCircle2 className="h-5 w-5" /></span>
+            <div>
+              <div className="text-sm font-bold text-heading">Import complete</div>
+              <div className="text-xs text-ink-muted">
+                <strong className="text-emerald-700">{result.summary.created}</strong> created · <strong className="text-blue-700">{result.summary.updated}</strong> updated
+                {result.summary.skipped ? <> · {result.summary.skipped} skipped</> : null}
+                {result.summary.errors ? <> · <strong className="text-red-600">{result.summary.errors}</strong> error{result.summary.errors === 1 ? "" : "s"}</> : null}
+              </div>
+            </div>
             <Button variant="primary" size="sm" className="ml-auto" onClick={reset}>Import another</Button>
           </div>
           <div className="max-h-[420px] overflow-auto">

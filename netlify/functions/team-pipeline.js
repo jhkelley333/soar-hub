@@ -442,7 +442,20 @@ function annotateImportRow(idx, raw, ctx) {
   return { row: idx + 1, full_name, store_number, role, status, hire_date, email, phone, external_id, store_id, existing_id: existingId, action, errors, warnings };
 }
 
-function importRows(body) { return Array.isArray(body?.rows) ? body.rows.slice(0, 2000) : []; }
+function importRows(body) { return Array.isArray(body?.rows) ? body.rows.slice(0, 5000) : []; }
+
+// Run async work over a list with bounded concurrency so a few thousand rows
+// don't take a few thousand sequential round-trips (which would time the
+// function out). Preserves input order in the result array.
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  async function worker() {
+    while (next < items.length) { const i = next++; out[i] = await fn(items[i], i); }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
+}
 
 async function previewImport(supa, user, body) {
   const rows = importRows(body);
@@ -454,40 +467,46 @@ async function previewImport(supa, user, body) {
   return { rows: annotated, summary };
 }
 
+const importFields = (a) => ({
+  store_id: a.store_id, full_name: a.full_name, role: a.role,
+  email: a.email, phone: a.phone, status: a.status, hire_date: a.hire_date, external_id: a.external_id,
+});
+
 async function importRoster(supa, user, body) {
   const rows = importRows(body);
   if (!rows.length) return { error: "No rows to import.", status: 400 };
   // mode: all (default) | new (creates only) | update (matches only)
   const mode = ["all", "new", "update"].includes(body?.mode) ? body.mode : "all";
   const ctx = await importContext(supa, user);
-  const results = [];
-  let created = 0, updated = 0, skipped = 0, errors = 0;
-  for (let i = 0; i < rows.length; i++) {
-    const a = annotateImportRow(i, rows[i], ctx);
-    if (a.action === "error") { results.push({ row: a.row, status: "error", full_name: a.full_name, message: a.errors.join("; ") }); errors++; continue; }
+  const annotated = rows.map((r, i) => annotateImportRow(i, r, ctx));
+
+  // Process each row with bounded concurrency rather than one-at-a-time, so
+  // a 2k-row import finishes in seconds instead of timing out.
+  const results = await mapLimit(annotated, 24, async (a) => {
+    if (a.action === "error") return { row: a.row, status: "error", full_name: a.full_name, message: a.errors.join("; ") };
     if ((mode === "new" && a.action === "update") || (mode === "update" && a.action === "create")) {
-      results.push({ row: a.row, status: "skipped", full_name: a.full_name, message: `${mode} only` }); skipped++; continue;
+      return { row: a.row, status: "skipped", full_name: a.full_name, message: `${mode} only` };
     }
-    const fields = {
-      store_id: a.store_id, full_name: a.full_name, role: a.role,
-      email: a.email, phone: a.phone, status: a.status, hire_date: a.hire_date, external_id: a.external_id,
-    };
     if (a.existing_id) {
-      const { error } = await supa.from("tp_team_members").update(fields).eq("id", a.existing_id);
-      if (error) { results.push({ row: a.row, status: "error", full_name: a.full_name, message: error.message }); errors++; }
-      else { results.push({ row: a.row, status: "updated", full_name: a.full_name }); updated++; }
-    } else {
-      const { data, error } = await supa.from("tp_team_members").insert(fields).select("id").single();
-      if (error) { results.push({ row: a.row, status: "error", full_name: a.full_name, message: error.message }); errors++; }
-      else {
-        results.push({ row: a.row, status: "created", full_name: a.full_name }); created++;
-        // Register so a later duplicate row in the same batch updates, not re-inserts.
-        if (a.external_id) ctx.existingExt.set(a.external_id, data.id);
-        ctx.existingName.set(`${a.store_id}|${a.full_name.toLowerCase()}`, data.id);
-      }
+      const { error } = await supa.from("tp_team_members").update(importFields(a)).eq("id", a.existing_id);
+      return error
+        ? { row: a.row, status: "error", full_name: a.full_name, message: error.message }
+        : { row: a.row, status: "updated", full_name: a.full_name };
     }
+    const { error } = await supa.from("tp_team_members").insert(importFields(a));
+    return error
+      ? { row: a.row, status: "error", full_name: a.full_name, message: error.message }
+      : { row: a.row, status: "created", full_name: a.full_name };
+  });
+
+  const summary = { created: 0, updated: 0, skipped: 0, errors: 0 };
+  for (const r of results) {
+    if (r.status === "created") summary.created++;
+    else if (r.status === "updated") summary.updated++;
+    else if (r.status === "skipped") summary.skipped++;
+    else summary.errors++;
   }
-  return { ok: true, results, summary: { created, updated, skipped, errors } };
+  return { ok: true, results, summary };
 }
 
 // Merge two roster records for the same person (seed vs. bulk dup). Reassign
