@@ -107,7 +107,8 @@ async function rollup(supa, user) {
   const ids = scope.all ? null : Array.from(scope.ids);
   if (ids && ids.length === 0) return { stores: {}, can_write: VIEW_ROLES.has(String(user.role)) };
 
-  let mq = supa.from("tp_team_members").select("store_id, role, flight_risk");
+  // Terminated members are out of the pipeline — excluded from every aggregate.
+  let mq = supa.from("tp_team_members").select("store_id, role, flight_risk").neq("status", "terminated");
   if (ids) mq = mq.in("store_id", ids);
   const { data: members } = await mq;
 
@@ -132,10 +133,14 @@ async function storeRoster(supa, user, storeId) {
   if (!storeId) return { error: "Missing store.", status: 400 };
   const scope = await storesForUser(supa, user);
   if (!scope.all && !scope.ids.has(storeId)) return { error: "That store is outside your scope.", status: 403 };
-  const { data: roster } = await supa.from("tp_team_members").select("*").eq("store_id", storeId).order("created_at", { ascending: true });
+  const { data: all } = await supa.from("tp_team_members").select("*").eq("store_id", storeId).order("created_at", { ascending: true });
   const { data: reqs } = await supa.from("tp_requisitions").select("*").eq("store_id", storeId).neq("status", "filled").order("created_at", { ascending: false });
+  const annotated = await annotateAccounts(supa, all);
   return {
-    roster: await annotateAccounts(supa, roster),
+    // Terminated members drop out of the active pipeline but stay accessible
+    // in their own list (rehire / history).
+    roster: annotated.filter((m) => m.status !== "terminated"),
+    terminated: annotated.filter((m) => m.status === "terminated"),
     reqs: reqs || [],
     can_write: VIEW_ROLES.has(String(user.role)),
     role_edit: await roleEditOn(supa, user),
@@ -148,7 +153,7 @@ async function gms(supa, user) {
   const scope = await storesForUser(supa, user);
   const ids = scope.all ? null : Array.from(scope.ids);
   if (ids && ids.length === 0) return { gms: [] };
-  let q = supa.from("tp_team_members").select("*").eq("role", "gm");
+  let q = supa.from("tp_team_members").select("*").eq("role", "gm").neq("status", "terminated");
   if (ids) q = q.in("store_id", ids);
   const { data } = await q;
   return { gms: await annotateAccounts(supa, data) };
@@ -224,7 +229,7 @@ function clampRating(v) {
 }
 const RISK_VALS = new Set(["na", "low", "medium", "immediate"]);
 const ASPIRATION_VALS = new Set(["current", "next", "looking"]);
-const STATUS_VALS = new Set(["active", "loa"]);
+const STATUS_VALS = new Set(["active", "loa", "terminated"]);
 
 // Patch a roster member's talent overlay (risk, aspiration, ratings, backfill,
 // status). Only known fields with valid values are written.

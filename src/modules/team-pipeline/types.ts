@@ -3,7 +3,7 @@
 export type LadderKey = "carhop" | "crew" | "lead" | "shift" | "assoc" | "fam" | "gm";
 export type FlightRisk = "na" | "low" | "medium" | "immediate";
 export type Aspiration = "current" | "next" | "looking";
-export type MemberStatus = "active" | "loa";
+export type MemberStatus = "active" | "loa" | "terminated";
 
 export interface RiskCounts { immediate: number; medium: number; low: number; na: number }
 
@@ -62,10 +62,20 @@ export interface Requisition {
 
 export interface StoreRosterResponse {
   roster: TeamMember[];
+  terminated: TeamMember[]; // out of the pipeline, kept for rehire/history
   reqs: Requisition[];
   can_write: boolean;
   role_edit: boolean; // role promote/demote toggle (Admin → Feature Flags)
 }
+
+// Performance / Potential rating ramp — red (low) → green (high).
+export const RATING_COLOR: Record<number, { star: string; bg: string }> = {
+  1: { star: "text-red-500", bg: "bg-red-100" },
+  2: { star: "text-orange-500", bg: "bg-orange-100" },
+  3: { star: "text-amber-500", bg: "bg-amber-100" },
+  4: { star: "text-lime-600", bg: "bg-lime-100" },
+  5: { star: "text-emerald-600", bg: "bg-emerald-100" },
+};
 
 export interface Note {
   id: string;
