@@ -13,7 +13,7 @@ import { useToast } from "@/shared/ui/Toaster";
 import { addCorrectiveAction, addNote, fetchCorrectiveActions, fetchNotes, inviteMember, setCorrectiveActionStatus, updateMember } from "./api";
 import {
   ASPIRATION_META, CA_CATEGORIES, CA_LEVEL_META, CA_LEVELS, CA_STATUS_META, CA_TEMPLATES,
-  INVITE_ROLES, LADDER, LADDER_BY_KEY, RISK_META, RISK_REASONS,
+  INVITE_ROLES, LADDER, LADDER_BY_KEY, RATING_COLOR, RISK_META, RISK_REASONS,
   type Aspiration, type CaLevel, type CorrectiveAction, type FlightRisk, type LadderKey, type MemberPatch, type TeamMember,
 } from "./types";
 
@@ -70,6 +70,7 @@ function MemberBody({ member, canWrite, roleEdit }: { member: TeamMember; canWri
             <h3 className="truncate text-lg font-bold text-heading">{member.full_name}</h3>
             <AccountBadge has={member.has_account} />
             {draft.status === "loa" && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200">On LOA</span>}
+            {draft.status === "terminated" && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700 ring-1 ring-red-200">Terminated</span>}
           </div>
           <div className="text-sm text-ink-muted">{role?.label}{member.hire_date && ` · since ${new Date(member.hire_date).toLocaleDateString(undefined, { month: "short", year: "numeric" })}`}</div>
           <div className="mt-2 flex flex-wrap gap-2">
@@ -151,10 +152,16 @@ function MemberBody({ member, canWrite, roleEdit }: { member: TeamMember; canWri
       {/* status */}
       {canWrite && (
         <Field label="Status">
-          <div className="grid grid-cols-2 gap-1.5">
+          <div className="grid grid-cols-3 gap-1.5">
             <SegBtn on={draft.status === "active"} onClick={() => set({ status: "active" })}>Active</SegBtn>
             <SegBtn on={draft.status === "loa"} onClick={() => set({ status: "loa" })}>On LOA</SegBtn>
+            <button onClick={() => set({ status: "terminated" })}
+              className={cn("rounded-lg px-2 py-1.5 text-xs font-semibold transition",
+                draft.status === "terminated" ? "bg-red-600 text-white" : "bg-surface-sunk text-ink-muted hover:text-red-600")}>
+              Terminated
+            </button>
           </div>
+          {draft.status === "terminated" && <p className="mt-1 text-[11px] text-ink-subtle">Removed from the active pipeline. Find them in the store's Terminated list to rehire.</p>}
         </Field>
       )}
 
@@ -396,15 +403,21 @@ function SegBtn({ on, disabled, onClick, children }: { on: boolean; disabled?: b
   );
 }
 function Rating({ value, disabled, onPick }: { value: number | null; disabled?: boolean; onPick: (n: number) => void }) {
+  // Filled stars take the colour of the *selected* value, so the rating reads
+  // red (low) → green (high) at a glance.
+  const tone = value != null ? RATING_COLOR[value] : null;
   return (
     <div className="flex gap-1">
-      {[1, 2, 3, 4, 5].map((n) => (
-        <button key={n} disabled={disabled} onClick={() => onPick(n)} aria-label={`${n} of 5`}
-          className={cn("grid h-8 w-8 place-items-center rounded-lg transition disabled:opacity-50",
-            value != null && n <= value ? "bg-amber-100 text-amber-600" : "bg-surface-sunk text-ink-subtle hover:text-ink-muted")}>
-          <Star className="h-4 w-4" fill={value != null && n <= value ? "currentColor" : "none"} />
-        </button>
-      ))}
+      {[1, 2, 3, 4, 5].map((n) => {
+        const on = value != null && n <= value;
+        return (
+          <button key={n} disabled={disabled} onClick={() => onPick(n)} aria-label={`${n} of 5`}
+            className={cn("grid h-8 w-8 place-items-center rounded-lg transition disabled:opacity-50",
+              on && tone ? `${tone.bg} ${tone.star}` : "bg-surface-sunk text-ink-subtle hover:text-ink-muted")}>
+            <Star className="h-4 w-4" fill={on ? "currentColor" : "none"} />
+          </button>
+        );
+      })}
     </div>
   );
 }

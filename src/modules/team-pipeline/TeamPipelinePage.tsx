@@ -7,7 +7,7 @@
 // Gated behind the `team_pipeline` feature flag (see router + nav).
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Building2, ChevronRight, Lock, Upload, Users } from "lucide-react";
+import { Archive, Building2, ChevronRight, Lock, Upload, Users } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/auth/AuthProvider";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -17,7 +17,7 @@ import { Segmented } from "@/shared/ui/Segmented";
 import { useToast } from "@/shared/ui/Toaster";
 import { fetchMyTree } from "@/modules/my-stores/api";
 import type { MyDistrictNode, MyStoreNode } from "@/modules/my-stores/types";
-import { fetchGms, fetchRollup, fetchStoreRoster, seedFromProfiles, commitPlan, updateReq, mergeMembers } from "./api";
+import { fetchGms, fetchRollup, fetchStoreRoster, seedFromProfiles, commitPlan, updateReq, updateMember, mergeMembers } from "./api";
 import { AccountBadge, MemberDrawerProvider, useMemberDrawer } from "./MemberDrawer";
 import { RosterImport } from "./RosterImport";
 import {
@@ -319,6 +319,7 @@ function Store({ store }: { store: MyStoreNode }) {
   const [layout, setLayout] = useState<Layout>("ladder");
   const rosterQ = useQuery({ queryKey: ["tp-store-roster", store.id], queryFn: () => fetchStoreRoster(store.id) });
   const roster = rosterQ.data?.roster ?? [];
+  const terminated = rosterQ.data?.terminated ?? [];
   const reqs = rosterQ.data?.reqs ?? [];
   const canWrite = rosterQ.data?.can_write ?? false;
 
@@ -354,7 +355,54 @@ function Store({ store }: { store: MyStoreNode }) {
       ) : (
         <NineBox roster={roster} />
       )}
+
+      {terminated.length > 0 && <TerminatedPanel storeId={store.id} members={terminated} canWrite={canWrite} />}
     </>
+  );
+}
+
+// ── Terminated (out of pipeline, kept for rehire/history) ─────────────────────
+function TerminatedPanel({ storeId, members, canWrite }: { storeId: string; members: TeamMember[]; canWrite: boolean }) {
+  const { open } = useMemberDrawer();
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [show, setShow] = useState(false);
+  const reactivate = useMutation({
+    mutationFn: (id: string) => updateMember(id, { status: "active" }),
+    onSuccess: () => {
+      toast.push("Reactivated — back in the pipeline.", "success");
+      qc.invalidateQueries({ queryKey: ["tp-store-roster", storeId] });
+      qc.invalidateQueries({ queryKey: ["tp-rollup"] });
+      qc.invalidateQueries({ queryKey: ["tp-gms"] });
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't reactivate.", "error"),
+  });
+
+  return (
+    <div className="mt-4 overflow-hidden rounded-2xl border border-border bg-surface shadow-card">
+      <button onClick={() => setShow((s) => !s)} className="flex w-full items-center gap-2 px-4 py-2.5 text-left">
+        <Archive className="h-4 w-4 text-ink-subtle" />
+        <span className="text-[11px] font-bold uppercase tracking-wide text-ink-subtle">Terminated · {members.length}</span>
+        <ChevronRight className={cn("ml-auto h-4 w-4 text-ink-subtle transition", show && "rotate-90")} />
+      </button>
+      {show && (
+        <ul className="divide-y divide-border border-t border-border">
+          {members.map((m) => (
+            <li key={m.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5">
+              <button onClick={() => open(m)} className="text-left text-sm font-semibold text-heading hover:underline">{m.full_name}</button>
+              <span className="text-xs text-ink-muted">{LADDER_BY_KEY[m.role]?.label ?? m.role}</span>
+              {!m.has_account && <span className="h-1.5 w-1.5 rounded-full bg-zinc-300" title="No account" />}
+              {canWrite && (
+                <button disabled={reactivate.isPending} onClick={() => reactivate.mutate(m.id)}
+                  className="ml-auto rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-semibold text-ink-2 transition hover:bg-surface-sunk disabled:opacity-40">
+                  Reactivate
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 
