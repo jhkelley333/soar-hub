@@ -96,17 +96,18 @@ export interface ImportPreviewResponse {
   rows: ImportRowAnnotated[];
   summary: { create: number; update: number; error: number };
 }
-export interface ImportResultRow { row: number; status: "created" | "updated" | "error"; full_name: string; message?: string }
+export type ImportMode = "all" | "new" | "update";
+export interface ImportResultRow { row: number; status: "created" | "updated" | "skipped" | "error"; full_name: string; message?: string }
 export interface ImportRosterResponse {
   ok: true;
   results: ImportResultRow[];
-  summary: { created: number; updated: number; errors: number };
+  summary: { created: number; updated: number; skipped: number; errors: number };
 }
 export function importPreview(rows: ImportRowInput[]): Promise<ImportPreviewResponse> {
   return request(`${FN}?action=import-preview`, { method: "POST", body: JSON.stringify({ rows }) });
 }
-export function importRoster(rows: ImportRowInput[]): Promise<ImportRosterResponse> {
-  return request(`${FN}?action=import-roster`, { method: "POST", body: JSON.stringify({ rows }) });
+export function importRoster(rows: ImportRowInput[], mode: ImportMode = "all"): Promise<ImportRosterResponse> {
+  return request(`${FN}?action=import-roster`, { method: "POST", body: JSON.stringify({ rows, mode }) });
 }
 export function mergeMembers(keepId: string, dropId: string): Promise<{ ok: true; kept: string }> {
   return request(`${FN}?action=merge-members`, { method: "POST", body: JSON.stringify({ keep_id: keepId, drop_id: dropId }) });

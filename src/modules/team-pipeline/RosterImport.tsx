@@ -11,7 +11,7 @@ import { useToast } from "@/shared/ui/Toaster";
 import { downloadCSV, parseCSVWithHeader, toCSV } from "@/lib/csv";
 import {
   importPreview, importRoster,
-  type ImportPreviewResponse, type ImportRosterResponse, type ImportRowInput,
+  type ImportMode, type ImportPreviewResponse, type ImportRosterResponse, type ImportRowInput,
 } from "./api";
 
 const HEADERS = ["external_id", "full_name", "store_number", "role", "email", "phone", "status", "hire_date"];
@@ -30,6 +30,7 @@ export function RosterImport({ onDone }: { onDone: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [preview, setPreview] = useState<ImportPreviewResponse | null>(null);
   const [result, setResult] = useState<ImportRosterResponse | null>(null);
+  const [mode, setMode] = useState<ImportMode>("all");
 
   const previewMut = useMutation({
     mutationFn: importPreview,
@@ -37,13 +38,13 @@ export function RosterImport({ onDone }: { onDone: () => void }) {
     onError: (e: unknown) => setError((e as Error)?.message ?? "Validation failed."),
   });
   const importMut = useMutation({
-    mutationFn: importRoster,
+    mutationFn: (rows: ImportRowInput[]) => importRoster(rows, mode),
     onSuccess: (d) => {
       setResult(d);
       qc.invalidateQueries({ queryKey: ["tp-rollup"] });
       qc.invalidateQueries({ queryKey: ["tp-gms"] });
       qc.invalidateQueries({ queryKey: ["tp-store-roster"] });
-      toast.push(`Imported: ${d.summary.created} created, ${d.summary.updated} updated.`, "success");
+      toast.push(`Imported: ${d.summary.created} created, ${d.summary.updated} updated${d.summary.skipped ? `, ${d.summary.skipped} skipped` : ""}.`, "success");
     },
     onError: (e: unknown) => setError((e as Error)?.message ?? "Import failed."),
   });
@@ -121,17 +122,25 @@ export function RosterImport({ onDone }: { onDone: () => void }) {
 
       {previewMut.isPending && <p className="text-sm text-ink-muted">Validating…</p>}
 
-      {parsed && preview && !result && (
+      {parsed && preview && !result && (() => {
+        const willApply = mode === "new" ? preview.summary.create : mode === "update" ? preview.summary.update : preview.summary.create + preview.summary.update;
+        return (
         <div className="overflow-hidden rounded-2xl border border-border bg-surface shadow-card">
-          <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
+          <div className="flex flex-wrap items-center gap-3 border-b border-border px-4 py-3">
             <span className="text-sm font-semibold text-heading">
               {preview.summary.create} new · {preview.summary.update} update · <span className={preview.summary.error ? "text-red-600" : ""}>{preview.summary.error} error</span>
             </span>
+            <div className="flex items-center gap-1.5 rounded-lg bg-surface-sunk p-0.5">
+              {([["all", "All"], ["new", "Only new"], ["update", "Only update"]] as [ImportMode, string][]).map(([m, label]) => (
+                <button key={m} onClick={() => setMode(m)}
+                  className={cn("rounded-md px-2.5 py-1 text-xs font-semibold transition", mode === m ? "bg-surface text-heading shadow-sm" : "text-ink-muted hover:text-heading")}>{label}</button>
+              ))}
+            </div>
             <div className="ml-auto flex gap-2">
               <Button variant="ghost" size="sm" onClick={reset}>Start over</Button>
-              <Button variant="primary" size="sm" disabled={importMut.isPending || preview.summary.create + preview.summary.update === 0}
+              <Button variant="primary" size="sm" disabled={importMut.isPending || willApply === 0}
                 onClick={() => importMut.mutate(parsed)}>
-                {importMut.isPending ? "Importing…" : `Apply ${preview.summary.create + preview.summary.update} change${preview.summary.create + preview.summary.update === 1 ? "" : "s"}`}
+                {importMut.isPending ? "Importing…" : `Apply ${willApply} change${willApply === 1 ? "" : "s"}`}
               </Button>
             </div>
           </div>
@@ -158,12 +167,13 @@ export function RosterImport({ onDone }: { onDone: () => void }) {
             </table>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {result && (
         <div className="overflow-hidden rounded-2xl border border-border bg-surface shadow-card">
           <div className="flex items-center gap-2 border-b border-border px-4 py-3">
-            <span className="text-sm font-semibold text-heading">{result.summary.created} created · {result.summary.updated} updated · <span className={result.summary.errors ? "text-red-600" : ""}>{result.summary.errors} error</span></span>
+            <span className="text-sm font-semibold text-heading">{result.summary.created} created · {result.summary.updated} updated{result.summary.skipped ? ` · ${result.summary.skipped} skipped` : ""} · <span className={result.summary.errors ? "text-red-600" : ""}>{result.summary.errors} error</span></span>
             <Button variant="primary" size="sm" className="ml-auto" onClick={reset}>Import another</Button>
           </div>
           <div className="max-h-[420px] overflow-auto">
@@ -194,8 +204,8 @@ function ActionPill({ action }: { action: "create" | "update" | "error" }) {
   const label = { create: "New", update: "Update", error: "Error" }[action];
   return <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", m)}>{label}</span>;
 }
-function ResultPill({ status }: { status: "created" | "updated" | "error" }) {
-  const m = { created: "bg-emerald-50 text-emerald-700", updated: "bg-blue-50 text-blue-700", error: "bg-red-50 text-red-700" }[status];
-  const label = { created: "Created", updated: "Updated", error: "Error" }[status];
+function ResultPill({ status }: { status: "created" | "updated" | "skipped" | "error" }) {
+  const m = { created: "bg-emerald-50 text-emerald-700", updated: "bg-blue-50 text-blue-700", skipped: "bg-zinc-100 text-zinc-500", error: "bg-red-50 text-red-700" }[status];
+  const label = { created: "Created", updated: "Updated", skipped: "Skipped", error: "Error" }[status];
   return <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold", m)}>{label}</span>;
 }
