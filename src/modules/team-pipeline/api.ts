@@ -32,3 +32,11 @@ export function fetchStoreRoster(storeId: string): Promise<StoreRosterResponse> 
 export function seedFromProfiles(): Promise<{ ok: true; created: number }> {
   return request(`${FN}?action=seed-from-profiles`, { method: "POST", body: "{}" });
 }
+export interface CommitPlanInput {
+  store_id: string;
+  hires: Record<string, number>;
+  promotions: { member_id: string; to_role: string }[];
+}
+export function commitPlan(input: CommitPlanInput): Promise<{ ok: true; promoted: number; reqs_opened: number }> {
+  return request(`${FN}?action=commit-plan`, { method: "POST", body: JSON.stringify(input) });
+}

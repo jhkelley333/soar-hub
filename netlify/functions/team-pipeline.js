@@ -16,6 +16,7 @@ const ROLE_MAP = {
   gm: "gm", first_assistant_manager: "fam", associate_manager: "assoc",
   crew_leader: "lead", shift_manager: "shift", crew_member: "crew", carhop: "carhop",
 };
+const ROLE_KEYS = new Set(["carhop", "crew", "lead", "shift", "assoc", "fam", "gm"]);
 
 function admin() {
   if (!SUPABASE_URL || !SERVICE_KEY) throw new Error("team-pipeline env vars not configured");
@@ -149,6 +150,39 @@ async function seedFromProfiles(supa, user) {
   return { ok: true, created };
 }
 
+// Commit a staffing plan: apply promotions (role changes) and open one
+// requisition per queued hire. Scoped to the caller's store.
+function reqRef() { return "REQ-" + Math.floor(1000 + Math.random() * 9000); }
+async function commitPlan(supa, user, body) {
+  const storeId = body?.store_id;
+  if (!storeId) return { error: "Missing store.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  if (!scope.all && !scope.ids.has(storeId)) return { error: "That store is outside your scope.", status: 403 };
+  const name = user.preferred_name || user.full_name || user.email || "Someone";
+
+  let promoted = 0, reqsOpened = 0;
+  const promotions = Array.isArray(body?.promotions) ? body.promotions : [];
+  for (const p of promotions) {
+    if (!p?.member_id || !p?.to_role || !ROLE_KEYS.has(String(p.to_role))) continue;
+    const { error } = await supa.from("tp_team_members")
+      .update({ role: String(p.to_role) }).eq("id", p.member_id).eq("store_id", storeId);
+    if (!error) promoted++;
+  }
+  const hires = body?.hires && typeof body.hires === "object" ? body.hires : {};
+  for (const [role, count] of Object.entries(hires)) {
+    if (!ROLE_KEYS.has(role)) continue;
+    const n = Math.max(0, Math.min(20, parseInt(count, 10) || 0));
+    for (let i = 0; i < n; i++) {
+      const { error } = await supa.from("tp_requisitions").insert({
+        store_id: storeId, role, ref: reqRef(), reason: "Staffing gap vs. sales tier",
+        status: "sourcing", opened_by: name, opened_by_id: user.id,
+      });
+      if (!error) reqsOpened++;
+    }
+  }
+  return { ok: true, promoted, reqs_opened: reqsOpened };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   let user;
@@ -171,6 +205,7 @@ export const handler = async (event) => {
       return respond(400, { error: `Unknown action: ${action}` });
     }
     if (action === "seed-from-profiles") return unwrap(await seedFromProfiles(supa, user));
+    if (action === "commit-plan") return unwrap(await commitPlan(supa, user, body));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });

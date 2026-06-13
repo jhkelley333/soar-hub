@@ -17,10 +17,10 @@ import { Segmented } from "@/shared/ui/Segmented";
 import { useToast } from "@/shared/ui/Toaster";
 import { fetchMyTree } from "@/modules/my-stores/api";
 import type { MyDistrictNode, MyStoreNode } from "@/modules/my-stores/types";
-import { fetchGms, fetchRollup, fetchStoreRoster, seedFromProfiles } from "./api";
+import { fetchGms, fetchRollup, fetchStoreRoster, seedFromProfiles, commitPlan } from "./api";
 import {
-  ASPIRATION_META, LADDER, LADDER_BY_KEY, RISK_META,
-  type RollupResponse, type StoreRollup, type TeamMember,
+  ASPIRATION_META, DEFAULT_TIER, LADDER, LADDER_BY_KEY, RISK_META, TIERS, roleBelow,
+  type LadderKey, type RollupResponse, type StoreRollup, type TeamMember,
 } from "./types";
 
 type Nav =
@@ -298,7 +298,7 @@ function RiskPill({ risk }: { risk: TeamMember["flight_risk"] }) {
 }
 
 // ── Store (layouts) ──────────────────────────────────────────────────────────
-type Layout = "ladder" | "roster" | "ninebox";
+type Layout = "ladder" | "roster" | "ninebox" | "plan";
 function Store({ store }: { store: MyStoreNode }) {
   const [layout, setLayout] = useState<Layout>("ladder");
   const rosterQ = useQuery({ queryKey: ["tp-store-roster", store.id], queryFn: () => fetchStoreRoster(store.id) });
@@ -312,12 +312,14 @@ function Store({ store }: { store: MyStoreNode }) {
           <div className="text-sm text-ink-muted">Store #{store.number} · {roster.length} team member{roster.length === 1 ? "" : "s"}</div>
         </div>
         <Segmented<Layout>
-          options={[{ value: "ladder", label: "Bench ladder" }, { value: "roster", label: "Roster" }, { value: "ninebox", label: "9-box" }]}
+          options={[{ value: "ladder", label: "Bench ladder" }, { value: "roster", label: "Roster" }, { value: "ninebox", label: "9-box" }, { value: "plan", label: "Staffing plan" }]}
           value={layout} onChange={setLayout} />
       </div>
 
       {rosterQ.isLoading ? (
         <Skeleton className="h-48 w-full" />
+      ) : layout === "plan" ? (
+        <StaffingPlanner storeId={store.id} roster={roster} />
       ) : roster.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border bg-surface-muted px-6 py-14 text-center">
           <span className="grid h-12 w-12 place-items-center rounded-full bg-accent/10 text-accent"><Users className="h-6 w-6" /></span>
@@ -483,6 +485,178 @@ function NineBox({ roster }: { roster: TeamMember[] }) {
 }
 function Legend({ sw, label }: { sw: string; label: string }) {
   return <div className="flex items-center gap-2"><span className={cn("h-3.5 w-3.5 rounded", sw)} />{label}</div>;
+}
+
+// ── Staffing planner ─────────────────────────────────────────────────────────
+type Promo = { member: TeamMember; toRole: LadderKey };
+function StaffingPlanner({ storeId, roster }: { storeId: string; roster: TeamMember[] }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const tier = DEFAULT_TIER; // placeholder until a real per-store tier source exists
+  const rec = TIERS[tier].rec;
+
+  const [targets, setTargets] = useState<Partial<Record<LadderKey, number>>>({});
+  const [hires, setHires] = useState<Record<string, number>>({});
+  const [promos, setPromos] = useState<Promo[]>([]);
+  const [holds, setHolds] = useState<Record<string, boolean>>({});
+  const [adjust, setAdjust] = useState<Record<string, boolean>>({});
+  const [picking, setPicking] = useState<LadderKey | null>(null);
+
+  const active = roster.filter((m) => m.status !== "loa");
+  const have = (k: LadderKey) => active.filter((m) => m.role === k).length;
+  const target = (k: LadderKey) => targets[k] ?? rec[k];
+  const promoIn = (k: LadderKey) => promos.filter((p) => p.toRole === k).length;
+  const promoOut = (k: LadderKey) => promos.filter((p) => p.member.role === k).length;
+  const projected = (k: LadderKey) => have(k) + (hires[k] || 0) + promoIn(k) - promoOut(k);
+  const stateOf = (k: LadderKey): "short" | "ok" | "over" | "hold" => {
+    if (holds[k]) return "hold";
+    const g = projected(k) - target(k);
+    return g < 0 ? "short" : g > 0 ? "over" : "ok";
+  };
+
+  const rolesTopDown = [...LADDER].reverse();
+  const openNow = LADDER.reduce((n, r) => n + Math.max(0, rec[r.key] - have(r.key)), 0);
+  const openAfter = LADDER.reduce((n, r) => n + (holds[r.key] ? 0 : Math.max(0, target(r.key) - projected(r.key))), 0);
+  const reqsToOpen = Object.values(hires).reduce((a, b) => a + b, 0);
+  const hasActions = reqsToOpen > 0 || promos.length > 0;
+
+  const commit = useMutation({
+    mutationFn: () => commitPlan({ store_id: storeId, hires, promotions: promos.map((p) => ({ member_id: p.member.id, to_role: p.toRole })) }),
+    onSuccess: (r) => {
+      toast.push(`Plan committed — ${r.promoted} promoted, ${r.reqs_opened} req${r.reqs_opened === 1 ? "" : "s"} opened.`, "success");
+      setHires({}); setPromos([]); setHolds({}); setAdjust({}); setPicking(null); setTargets({});
+      qc.invalidateQueries({ queryKey: ["tp-store-roster", storeId] });
+      qc.invalidateQueries({ queryKey: ["tp-rollup"] });
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't commit the plan.", "error"),
+  });
+
+  const setHire = (k: LadderKey, d: number) => setHires((h) => ({ ...h, [k]: Math.max(0, (h[k] || 0) + d) }));
+  const addPromo = (member: TeamMember, toRole: LadderKey) => { setPromos((p) => [...p, { member, toRole }]); setPicking(null); };
+  const removePromo = (id: string) => setPromos((p) => p.filter((x) => x.member.id !== id));
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2 text-[12.5px] font-medium text-amber-800">
+        Tier &amp; headcount targets are placeholders ({TIERS[tier].label} · {TIERS[tier].vol}). Swap in the real per-store tier + matrix later.
+      </div>
+
+      {/* summary */}
+      <div className="flex flex-wrap items-center gap-x-8 gap-y-3 rounded-2xl border border-border bg-surface p-4 shadow-card">
+        <div>
+          <div className="text-sm font-bold text-heading">{TIERS[tier].label} · model target {LADDER.reduce((n, r) => n + rec[r.key], 0)}</div>
+          <div className="text-xs text-ink-muted">{active.length} on staff today</div>
+        </div>
+        <div className="flex items-center gap-5">
+          <Metric n={openNow} label="Open now" />
+          <span className="text-ink-subtle">→</span>
+          <Metric n={openAfter} label="After plan" tone={openAfter < openNow ? "good" : undefined} />
+          <Metric n={reqsToOpen} label="Reqs to open" />
+          <Metric n={promos.length} label="Promotions" />
+        </div>
+        <Button className="ml-auto" disabled={!hasActions || commit.isPending} onClick={() => commit.mutate()}>
+          {commit.isPending ? "Committing…" : "Commit plan"}
+        </Button>
+      </div>
+
+      {/* per-role rows */}
+      {rolesTopDown.map((r) => {
+        const k = r.key as LadderKey;
+        const st = stateOf(k);
+        const below = roleBelow(k);
+        const candidates = below ? active.filter((m) => m.role === below && !promos.some((p) => p.member.id === m.id)) : [];
+        const atRisk = active.filter((m) => m.role === k && m.flight_risk === "immediate").length;
+        const gap = projected(k) - target(k);
+        const border = { short: "border-l-red-500", ok: "border-l-emerald-500", over: "border-l-blue-500", hold: "border-l-zinc-400" }[st];
+        return (
+          <div key={k} className={cn("rounded-2xl border border-l-[3px] border-border bg-surface p-4 shadow-card", border)}>
+            <div className="flex flex-wrap items-center gap-x-6 gap-y-3">
+              <div className="min-w-[150px]">
+                <div className="text-sm font-bold text-heading">{r.label}</div>
+                <div className="mt-0.5 flex items-center gap-2 text-xs text-ink-muted">
+                  {r.abbr}{atRisk > 0 && <span className="rounded bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-700">{atRisk} at risk</span>}
+                </div>
+              </div>
+
+              <div className="flex items-center gap-5">
+                <NumCell label="Target">
+                  {adjust[k] ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      <Stepper onClick={() => setTargets((t) => ({ ...t, [k]: Math.max(0, target(k) - 1) }))}>−</Stepper>
+                      <span className="min-w-5 text-center text-lg font-bold tabular-nums">{target(k)}</span>
+                      <Stepper onClick={() => setTargets((t) => ({ ...t, [k]: target(k) + 1 }))}>+</Stepper>
+                    </span>
+                  ) : <span className="text-lg font-bold tabular-nums">{target(k)}{targets[k] != null && <span className="text-amber-500">*</span>}</span>}
+                </NumCell>
+                <NumCell label="Have"><span className="text-lg font-bold tabular-nums text-heading">{have(k)}</span></NumCell>
+                <NumCell label="Projected">
+                  <span className={cn("text-lg font-bold tabular-nums", st === "short" ? "text-red-600" : st === "over" ? "text-blue-600" : st === "ok" ? "text-emerald-600" : "text-ink-muted")}>{projected(k)}</span>
+                </NumCell>
+                <GapBadge state={st} gap={gap} />
+              </div>
+
+              <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
+                {(hires[k] || 0) > 0 && <Chip tone="hire">{hires[k]} new req{hires[k] === 1 ? "" : "s"}<X onClick={() => setHires((h) => ({ ...h, [k]: 0 }))} /></Chip>}
+                {promos.filter((p) => p.toRole === k).map((p) => <Chip key={p.member.id} tone="promo">↑ {p.member.full_name.split(" ")[0]}<X onClick={() => removePromo(p.member.id)} /></Chip>)}
+                {promos.filter((p) => p.member.role === k).map((p) => <Chip key={p.member.id} tone="out">→ {p.member.full_name.split(" ")[0]} to {LADDER_BY_KEY[p.toRole].abbr}<X onClick={() => removePromo(p.member.id)} /></Chip>)}
+                <PlanBtn onClick={() => setHire(k, 1)}>+ Open req</PlanBtn>
+                {below && <PlanBtn disabled={candidates.length === 0} on={picking === k} onClick={() => setPicking(picking === k ? null : k)}>↑ Promote {LADDER_BY_KEY[below].abbr}</PlanBtn>}
+                <PlanBtn on={!!adjust[k]} onClick={() => setAdjust((a) => ({ ...a, [k]: !a[k] }))}>Adjust target</PlanBtn>
+                <PlanBtn on={!!holds[k]} onClick={() => setHolds((h) => ({ ...h, [k]: !h[k] }))}>Hold</PlanBtn>
+              </div>
+            </div>
+
+            {picking === k && below && (
+              <div className="mt-3 rounded-xl border border-border bg-surface-muted p-3">
+                <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-ink-muted">Promote from {LADDER_BY_KEY[below].label}</div>
+                {candidates.length === 0 ? <div className="text-sm text-ink-subtle">No eligible candidates in the role below.</div> : (
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {candidates.map((m) => (
+                      <button key={m.id} onClick={() => addPromo(m, k)} className="flex items-center gap-2.5 rounded-lg border border-border bg-surface p-2.5 text-left transition hover:border-accent/60">
+                        <Avatar name={m.full_name} risk={m.flight_risk} />
+                        <div className="min-w-0">
+                          <div className="truncate text-sm font-semibold text-heading">{m.full_name}</div>
+                          <div className="text-xs text-ink-muted">{m.perf ? `Perf ${m.perf}/5` : "Unrated"} · {ASPIRATION_META[m.aspiration].label}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+function Metric({ n, label, tone }: { n: number; label: string; tone?: "good" }) {
+  return <div className="text-center"><div className={cn("text-xl font-bold tabular-nums leading-none", tone === "good" ? "text-emerald-600" : "text-heading")}>{n}</div><div className="mt-1 text-[10px] font-semibold uppercase tracking-wide text-ink-subtle">{label}</div></div>;
+}
+function NumCell({ label, children }: { label: string; children: React.ReactNode }) {
+  return <div className="text-center"><div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-ink-subtle">{label}</div>{children}</div>;
+}
+function Stepper({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  return <button onClick={onClick} className="grid h-6 w-6 place-items-center rounded-md border border-border bg-surface text-ink-muted hover:bg-surface-sunk">{children}</button>;
+}
+function GapBadge({ state, gap }: { state: "short" | "ok" | "over" | "hold"; gap: number }) {
+  const map = {
+    short: { c: "bg-red-50 text-red-700", t: `short ${-gap}` },
+    ok: { c: "bg-emerald-50 text-emerald-700", t: "on target ✓" },
+    over: { c: "bg-blue-50 text-blue-700", t: `+${gap} over` },
+    hold: { c: "bg-zinc-100 text-zinc-600", t: "On hold" },
+  }[state];
+  return <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-bold", map.c)}>{map.t}</span>;
+}
+function PlanBtn({ children, onClick, on, disabled }: { children: React.ReactNode; onClick: () => void; on?: boolean; disabled?: boolean }) {
+  return <button disabled={disabled} onClick={onClick} className={cn("rounded-lg border px-2.5 py-1.5 text-xs font-semibold transition disabled:opacity-40", on ? "border-accent bg-accent/10 text-accent" : "border-border bg-surface text-ink-2 hover:bg-surface-sunk")}>{children}</button>;
+}
+function Chip({ tone, children }: { tone: "hire" | "promo" | "out"; children: React.ReactNode }) {
+  const c = { hire: "bg-blue-50 text-blue-700", promo: "bg-emerald-50 text-emerald-700", out: "bg-zinc-100 text-zinc-600" }[tone];
+  return <span className={cn("inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold", c)}>{children}</span>;
+}
+function X({ onClick }: { onClick: () => void }) {
+  return <button onClick={onClick} className="ml-0.5 opacity-60 hover:opacity-100">×</button>;
 }
 
 function RosterRow({ m }: { m: TeamMember }) {
