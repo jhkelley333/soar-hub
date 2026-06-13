@@ -115,3 +115,9 @@ export function mergeMembers(keepId: string, dropId: string): Promise<{ ok: true
 export function inviteMember(memberId: string, email: string): Promise<{ ok: true; profile_id: string; email: string }> {
   return request(`${FN}?action=invite-member`, { method: "POST", body: JSON.stringify({ member_id: memberId, email }) });
 }
+export function fetchSettings(): Promise<import("./types").TpSettings> {
+  return request(`${FN}?action=settings`);
+}
+export function updateSettings(salesPerMember: number): Promise<{ ok: true; sales_per_member: number }> {
+  return request(`${FN}?action=update-settings`, { method: "POST", body: JSON.stringify({ sales_per_member: salesPerMember }) });
+}

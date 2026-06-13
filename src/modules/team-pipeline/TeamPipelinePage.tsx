@@ -5,9 +5,9 @@
 // GM bench / corrective-action documents build out in later slices.
 //
 // Gated behind the `team_pipeline` feature flag (see router + nav).
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Building2, ChevronRight, Lock, Upload, Users } from "lucide-react";
+import { Archive, Building2, ChevronRight, Lock, SlidersHorizontal, Upload, Users } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/auth/AuthProvider";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -17,11 +17,11 @@ import { Segmented } from "@/shared/ui/Segmented";
 import { useToast } from "@/shared/ui/Toaster";
 import { fetchMyTree } from "@/modules/my-stores/api";
 import type { MyDistrictNode, MyStoreNode } from "@/modules/my-stores/types";
-import { fetchGms, fetchRollup, fetchStoreRoster, seedFromProfiles, commitPlan, updateReq, updateMember, mergeMembers } from "./api";
+import { fetchGms, fetchRollup, fetchStoreRoster, seedFromProfiles, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings } from "./api";
 import { AccountBadge, MemberDrawerProvider, useMemberDrawer } from "./MemberDrawer";
 import { RosterImport } from "./RosterImport";
 import {
-  ASPIRATION_META, DEFAULT_TIER, LADDER, LADDER_BY_KEY, REQ_STATUS_META, RISK_META, TIERS, roleBelow,
+  ASPIRATION_META, LADDER, LADDER_BY_KEY, REQ_STATUS_META, RISK_META, ROLE_MIX, roleBelow,
   type LadderKey, type Requisition, type RollupResponse, type StoreRollup, type TeamMember,
 } from "./types";
 
@@ -30,7 +30,7 @@ type Nav =
   | { level: "district"; districtId: string }
   | { level: "store"; districtId: string; storeId: string };
 
-const ZERO: StoreRollup = { risk: { immediate: 0, medium: 0, low: 0, na: 0 }, roster: 0, open_reqs: 0, gm_risk: null };
+const ZERO: StoreRollup = { risk: { immediate: 0, medium: 0, low: 0, na: 0 }, roster: 0, non_gm: 0, open_reqs: 0, gm_risk: null, sales: null, target: null };
 const RISK_RANK: Record<TeamMember["flight_risk"], number> = { na: 0, low: 1, medium: 2, immediate: 3 };
 
 export function TeamPipelinePage() {
@@ -78,13 +78,14 @@ export function TeamPipelinePage() {
 
 // ── shared ──────────────────────────────────────────────────────────────────
 function sumRisk(stores: MyStoreNode[], roll: RollupResponse["stores"]) {
-  let immediate = 0, medium = 0, reqs = 0, roster = 0, gmRisk = 0;
+  let immediate = 0, medium = 0, reqs = 0, roster = 0, gmRisk = 0, short = 0;
   for (const s of stores) {
     const r = roll[s.id] ?? ZERO;
     immediate += r.risk.immediate; medium += r.risk.medium; reqs += r.open_reqs; roster += r.roster;
     if (r.gm_risk === "immediate" || r.gm_risk === "medium") gmRisk += 1;
+    if (r.target != null) short += Math.max(0, r.target - r.non_gm); // team members below sales target (excl GM)
   }
-  return { immediate, medium, reqs, roster, gmRisk };
+  return { immediate, medium, reqs, roster, gmRisk, short };
 }
 
 function Breadcrumb({ nav, district, store, onGo }: { nav: Nav; district: MyDistrictNode | null; store: MyStoreNode | null; onGo: (n: Nav) => void }) {
@@ -150,12 +151,15 @@ function Company({ districts, roll, canWrite, onOpen }: { districts: MyDistrictN
         </div>
       </div>
 
-      <div className="my-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div className="my-5 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         <Kpi label="Districts" value={districts.length} />
         <Kpi label="Stores" value={allStores.length} />
         <Kpi label="GM seats at risk" value={totals.gmRisk} tone={totals.gmRisk ? "red" : undefined} />
+        <Kpi label="Team short vs sales" value={totals.short} tone={totals.short ? "red" : undefined} />
         <Kpi label="Open requisitions" value={totals.reqs} />
       </div>
+
+      {profile?.role === "admin" && <StaffingModelSettings />}
 
       <div className="mb-3 text-[11px] font-bold uppercase tracking-wider text-ink-subtle">Districts</div>
       {districts.length === 0 ? (
@@ -175,6 +179,7 @@ function Company({ districts, roll, canWrite, onOpen }: { districts: MyDistrictN
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink-muted">
                   <span>{d.stores.length} store{d.stores.length === 1 ? "" : "s"}</span>
                   {t.immediate > 0 && <span className="font-semibold text-red-600">{t.immediate} immediate</span>}
+                  {t.short > 0 && <span className="font-semibold text-red-600">{t.short} short</span>}
                   {t.reqs > 0 && <span className="font-semibold text-amber-600">{t.reqs} open req{t.reqs === 1 ? "" : "s"}</span>}
                 </div>
               </button>
@@ -183,6 +188,47 @@ function Company({ districts, roll, canWrite, onOpen }: { districts: MyDistrictN
         </div>
       )}
     </>
+  );
+}
+
+// ── Staffing model (admin) ────────────────────────────────────────────────────
+function StaffingModelSettings() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const q = useQuery({ queryKey: ["tp-settings"], queryFn: fetchSettings });
+  const [val, setVal] = useState("");
+  useEffect(() => { if (q.data) setVal(String(q.data.sales_per_member)); }, [q.data]);
+  const save = useMutation({
+    mutationFn: () => updateSettings(parseInt(val, 10)),
+    onSuccess: (r) => {
+      toast.push(`Staffing model updated — 1 team member per $${r.sales_per_member.toLocaleString()}.`, "success");
+      qc.invalidateQueries({ queryKey: ["tp-settings"] });
+      qc.invalidateQueries({ queryKey: ["tp-rollup"] });
+      qc.invalidateQueries({ queryKey: ["tp-store-roster"] });
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't save.", "error"),
+  });
+  if (!q.data?.can_edit) return null;
+  const dirty = val !== String(q.data.sales_per_member) && /^\d+$/.test(val) && Number(val) >= 1;
+  return (
+    <div className="mb-6 rounded-2xl border border-border bg-surface p-4 shadow-card">
+      <div className="flex items-center gap-2">
+        <SlidersHorizontal className="h-4 w-4 text-accent" />
+        <span className="text-sm font-bold text-heading">Staffing model</span>
+        <span className="rounded-full bg-surface-sunk px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-ink-subtle">Admin</span>
+      </div>
+      <p className="mt-1 text-xs text-ink-muted">Team members a store needs = weekly sales ÷ this amount, <strong>excluding the GM</strong>. Sales come from Ranker (latest week).</p>
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+        <span className="font-semibold text-ink-2">1 team member per</span>
+        <span className="text-ink-muted">$</span>
+        <input value={val} inputMode="numeric" onChange={(e) => setVal(e.target.value.replace(/[^\d]/g, ""))}
+          className="w-28 rounded-lg border border-border bg-surface px-3 py-1.5 font-semibold text-heading focus:border-accent focus:outline-none" />
+        <span className="text-ink-muted">in weekly sales</span>
+        <Button size="sm" className="ml-1" disabled={!dirty || save.isPending} onClick={() => save.mutate()}>
+          {save.isPending ? "Saving…" : "Save"}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -322,13 +368,24 @@ function Store({ store }: { store: MyStoreNode }) {
   const terminated = rosterQ.data?.terminated ?? [];
   const reqs = rosterQ.data?.reqs ?? [];
   const canWrite = rosterQ.data?.can_write ?? false;
+  const salesTarget = rosterQ.data?.target ?? null;
+  const weeklySales = rosterQ.data?.weekly_sales ?? null;
+  const salesPerMember = rosterQ.data?.sales_per_member ?? 1200;
+  const nonGmHave = roster.filter((m) => m.role !== "gm").length;
 
   return (
     <>
       <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-heading">{store.name || `Store #${store.number}`}</h1>
-          <div className="text-sm text-ink-muted">Store #{store.number} · {roster.length} team member{roster.length === 1 ? "" : "s"}</div>
+          <div className="text-sm text-ink-muted">
+            Store #{store.number} · {roster.length} team member{roster.length === 1 ? "" : "s"}
+            {salesTarget != null && (
+              <> · <span className={cn("font-semibold", nonGmHave < salesTarget ? "text-red-600" : "text-emerald-600")}>
+                {nonGmHave}/{salesTarget} staffed{nonGmHave < salesTarget ? ` (${salesTarget - nonGmHave} short)` : ""}
+              </span> <span className="text-ink-subtle">excl GM</span></>
+            )}
+          </div>
         </div>
         <Segmented<Layout>
           options={[{ value: "ladder", label: "Bench ladder" }, { value: "roster", label: "Roster" }, { value: "ninebox", label: "9-box" }, { value: "plan", label: "Staffing plan" }]}
@@ -341,7 +398,7 @@ function Store({ store }: { store: MyStoreNode }) {
       {rosterQ.isLoading ? (
         <Skeleton className="h-48 w-full" />
       ) : layout === "plan" ? (
-        <StaffingPlanner storeId={store.id} roster={roster} />
+        <StaffingPlanner storeId={store.id} roster={roster} salesTarget={salesTarget} weeklySales={weeklySales} salesPerMember={salesPerMember} />
       ) : roster.length === 0 ? (
         <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border bg-surface-muted px-6 py-14 text-center">
           <span className="grid h-12 w-12 place-items-center rounded-full bg-accent/10 text-accent"><Users className="h-6 w-6" /></span>
@@ -678,11 +735,14 @@ function Legend({ sw, label }: { sw: string; label: string }) {
 
 // ── Staffing planner ─────────────────────────────────────────────────────────
 type Promo = { member: TeamMember; toRole: LadderKey };
-function StaffingPlanner({ storeId, roster }: { storeId: string; roster: TeamMember[] }) {
+function StaffingPlanner({ storeId, roster, salesTarget, weeklySales, salesPerMember }: { storeId: string; roster: TeamMember[]; salesTarget: number | null; weeklySales: number | null; salesPerMember: number }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const tier = DEFAULT_TIER; // placeholder until a real per-store tier source exists
-  const rec = TIERS[tier].rec;
+  // Sales-driven model: total team target (excl GM) = ceil(sales / divisor),
+  // distributed across non-GM roles by ROLE_MIX. GM is its own seat (1). Each
+  // per-role row is still adjustable.
+  const totalTarget = salesTarget ?? 0;
+  const baseTarget = (k: LadderKey) => (k === "gm" ? 1 : Math.round(totalTarget * (ROLE_MIX[k as Exclude<LadderKey, "gm">] ?? 0)));
 
   const [targets, setTargets] = useState<Partial<Record<LadderKey, number>>>({});
   const [hires, setHires] = useState<Record<string, number>>({});
@@ -693,7 +753,8 @@ function StaffingPlanner({ storeId, roster }: { storeId: string; roster: TeamMem
 
   const active = roster.filter((m) => m.status !== "loa");
   const have = (k: LadderKey) => active.filter((m) => m.role === k).length;
-  const target = (k: LadderKey) => targets[k] ?? rec[k];
+  const nonGmHave = active.filter((m) => m.role !== "gm").length;
+  const target = (k: LadderKey) => targets[k] ?? baseTarget(k);
   const promoIn = (k: LadderKey) => promos.filter((p) => p.toRole === k).length;
   const promoOut = (k: LadderKey) => promos.filter((p) => p.member.role === k).length;
   const projected = (k: LadderKey) => have(k) + (hires[k] || 0) + promoIn(k) - promoOut(k);
@@ -704,7 +765,7 @@ function StaffingPlanner({ storeId, roster }: { storeId: string; roster: TeamMem
   };
 
   const rolesTopDown = [...LADDER].reverse();
-  const openNow = LADDER.reduce((n, r) => n + Math.max(0, rec[r.key] - have(r.key)), 0);
+  const openNow = LADDER.reduce((n, r) => n + Math.max(0, baseTarget(r.key) - have(r.key)), 0);
   const openAfter = LADDER.reduce((n, r) => n + (holds[r.key] ? 0 : Math.max(0, target(r.key) - projected(r.key))), 0);
   const reqsToOpen = Object.values(hires).reduce((a, b) => a + b, 0);
   const hasActions = reqsToOpen > 0 || promos.length > 0;
@@ -726,15 +787,17 @@ function StaffingPlanner({ storeId, roster }: { storeId: string; roster: TeamMem
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="rounded-xl border border-amber-200 bg-amber-50 px-3.5 py-2 text-[12.5px] font-medium text-amber-800">
-        Tier &amp; headcount targets are placeholders ({TIERS[tier].label} · {TIERS[tier].vol}). Swap in the real per-store tier + matrix later.
+      <div className="rounded-xl border border-border bg-surface-muted px-3.5 py-2 text-[12.5px] font-medium text-ink-2">
+        {weeklySales != null
+          ? <>Target = weekly sales <strong>${weeklySales.toLocaleString()}</strong> ÷ <strong>${salesPerMember.toLocaleString()}</strong> per team member = <strong>{totalTarget}</strong> needed <span className="text-ink-muted">(excludes GM)</span>. Per-role split is a starting point — adjust any row.</>
+          : <>Sales data isn't available from Ranker for this store, so the target is 0. Targets come from weekly sales ÷ ${salesPerMember.toLocaleString()} per team member (excl GM).</>}
       </div>
 
       {/* summary */}
       <div className="flex flex-wrap items-center gap-x-8 gap-y-3 rounded-2xl border border-border bg-surface p-4 shadow-card">
         <div>
-          <div className="text-sm font-bold text-heading">{TIERS[tier].label} · model target {LADDER.reduce((n, r) => n + rec[r.key], 0)}</div>
-          <div className="text-xs text-ink-muted">{active.length} on staff today</div>
+          <div className="text-sm font-bold text-heading">Needs {totalTarget} team member{totalTarget === 1 ? "" : "s"} <span className="font-medium text-ink-muted">(excl GM)</span></div>
+          <div className="text-xs text-ink-muted">{nonGmHave} on staff today{nonGmHave < totalTarget ? ` · ${totalTarget - nonGmHave} short` : nonGmHave > totalTarget ? ` · ${nonGmHave - totalTarget} over` : " · on target"}</div>
         </div>
         <div className="flex items-center gap-5">
           <Metric n={openNow} label="Open now" />
