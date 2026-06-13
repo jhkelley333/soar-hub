@@ -16,7 +16,7 @@ import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
 import { fetchMyTree } from "@/modules/my-stores/api";
 import type { MyDistrictNode, MyStoreNode } from "@/modules/my-stores/types";
-import { fetchRollup, fetchStoreRoster, seedFromProfiles } from "./api";
+import { fetchGms, fetchRollup, fetchStoreRoster, seedFromProfiles } from "./api";
 import {
   ASPIRATION_META, LADDER, LADDER_BY_KEY, RISK_META,
   type RollupResponse, type StoreRollup, type TeamMember,
@@ -28,6 +28,7 @@ type Nav =
   | { level: "store"; districtId: string; storeId: string };
 
 const ZERO: StoreRollup = { risk: { immediate: 0, medium: 0, low: 0, na: 0 }, roster: 0, open_reqs: 0, gm_risk: null };
+const RISK_RANK: Record<TeamMember["flight_risk"], number> = { na: 0, low: 1, medium: 2, immediate: 3 };
 
 export function TeamPipelinePage() {
   const [nav, setNav] = useState<Nav>({ level: "company" });
@@ -63,7 +64,7 @@ export function TeamPipelinePage() {
         <Company districts={districts} roll={roll} onOpen={(id) => setNav({ level: "district", districtId: id })} />
       )}
       {nav.level === "district" && district && (
-        <District district={district} roll={roll} onOpen={(sid) => setNav({ level: "store", districtId: district.id, storeId: sid })} />
+        <District district={district} onOpen={(sid) => setNav({ level: "store", districtId: district.id, storeId: sid })} />
       )}
       {nav.level === "store" && store && <Store store={store} />}
     </div>
@@ -170,36 +171,129 @@ function Company({ districts, roll, onOpen }: { districts: MyDistrictNode[]; rol
   );
 }
 
-// ── District ────────────────────────────────────────────────────────────────
-function District({ district, roll, onOpen }: { district: MyDistrictNode; roll: RollupResponse["stores"]; onOpen: (storeId: string) => void }) {
+// ── District / GM Bench ──────────────────────────────────────────────────────
+type BenchSort = "risk" | "store" | "name";
+function District({ district, onOpen }: { district: MyDistrictNode; onOpen: (storeId: string) => void }) {
+  const [sort, setSort] = useState<BenchSort>("risk");
+  const gmsQ = useQuery({ queryKey: ["tp-gms"], queryFn: fetchGms, staleTime: 60_000 });
+  const gmByStore = useMemo(() => {
+    const m = new Map<string, TeamMember>();
+    for (const g of gmsQ.data?.gms ?? []) m.set(g.store_id, g);
+    return m;
+  }, [gmsQ.data]);
+
+  // One bench row per store, joined to its GM (if on file).
+  const rows = district.stores.map((s) => ({ store: s, gm: gmByStore.get(s.id) ?? null }));
+  rows.sort((a, b) => {
+    if (sort === "store") return (a.store.name || a.store.number).localeCompare(b.store.name || b.store.number);
+    if (sort === "name") return (a.gm?.full_name || "~").localeCompare(b.gm?.full_name || "~");
+    return (RISK_RANK[b.gm?.flight_risk ?? "na"] - RISK_RANK[a.gm?.flight_risk ?? "na"]);
+  });
+
+  const gmList = rows.map((r) => r.gm).filter(Boolean) as TeamMember[];
+  const immediate = gmList.filter((g) => g.flight_risk === "immediate").length;
+  const medium = gmList.filter((g) => g.flight_risk === "medium").length;
+  const plans = gmList.filter((g) => (g.backfill ?? "").trim().length > 0).length;
+
   return (
     <>
       <h1 className="mb-1 text-2xl font-bold tracking-tight text-heading">{district.name || "District"}</h1>
-      <div className="mb-5 text-sm text-ink-muted">{district.stores.length} store{district.stores.length === 1 ? "" : "s"} · GM bench &amp; flight-risk view coming next slice</div>
+      <div className="mb-5 text-sm text-ink-muted">GM Bench · flight risk &amp; succession</div>
 
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        {district.stores.map((s) => {
-          const r = roll[s.id] ?? ZERO;
-          return (
-            <button key={s.id} onClick={() => onOpen(s.id)}
-              className="group flex items-center gap-3 rounded-2xl border border-border bg-surface p-4 text-left shadow-card transition hover:border-accent/60">
-              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent/10 text-[12px] font-bold text-accent">#{s.number}</span>
-              <div className="min-w-0 flex-1">
-                <div className="truncate font-semibold text-heading">{s.name || `Store #${s.number}`}</div>
-                <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-ink-muted">
-                  <span>{r.roster} on team</span>
-                  {r.risk.immediate > 0 && <span className="font-semibold text-red-600">{r.risk.immediate} immediate</span>}
-                  {r.risk.medium > 0 && <span className="font-semibold text-amber-600">{r.risk.medium} medium</span>}
-                  {r.open_reqs > 0 && <span className="font-semibold text-accent">{r.open_reqs} open</span>}
-                </div>
-              </div>
-              <ChevronRight className="h-4 w-4 shrink-0 text-zinc-300 transition group-hover:text-accent" />
-            </button>
-          );
-        })}
+      <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <Kpi label="Stores" value={district.stores.length} />
+        <Kpi label="GMs immediate risk" value={immediate} tone={immediate ? "red" : undefined} />
+        <Kpi label="GMs medium risk" value={medium} />
+        <Kpi label="Backfill plans noted" value={plans} />
+      </div>
+
+      <div className="overflow-hidden rounded-2xl border border-border bg-surface shadow-card">
+        <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-3">
+          <span className="text-xs font-semibold text-ink-muted">Sort</span>
+          {(["risk", "store", "name"] as const).map((k) => (
+            <button key={k} onClick={() => setSort(k)}
+              className={cn("rounded-full px-3 py-1 text-xs font-semibold capitalize transition",
+                sort === k ? "bg-midnight text-white" : "bg-surface-sunk text-ink-muted hover:text-heading")}>{k}</button>
+          ))}
+        </div>
+
+        {gmsQ.isLoading ? (
+          <div className="p-4"><Skeleton className="h-40 w-full" /></div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full border-collapse text-sm">
+              <thead>
+                <tr className="text-left text-[11px] font-bold uppercase tracking-wide text-ink-subtle">
+                  <Th>General Manager</Th><Th>Store</Th><Th>Flight risk</Th><Th>Reason</Th><Th>Aspiration</Th><Th>Latest comment</Th><Th>Identified backfill</Th><Th />
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(({ store, gm }) => (
+                  <BenchRow key={store.id} store={store} gm={gm} onOpen={() => onOpen(store.id)} />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </>
   );
+}
+
+function Th({ children }: { children?: React.ReactNode }) {
+  return <th className="border-b border-border bg-surface-muted px-3 py-2.5 font-bold">{children}</th>;
+}
+
+function BenchRow({ store, gm, onOpen }: { store: MyStoreNode; gm: TeamMember | null; onOpen: () => void }) {
+  const needsPlan = gm && (gm.flight_risk === "immediate" || gm.flight_risk === "medium") && !(gm.backfill ?? "").trim();
+  return (
+    <tr className="cursor-pointer transition hover:bg-surface-muted" onClick={onOpen}>
+      <td className="border-b border-border px-3 py-3">
+        {gm ? (
+          <div className="flex items-center gap-2.5">
+            <Avatar name={gm.full_name} risk={gm.flight_risk} />
+            <div className="min-w-0">
+              <div className="truncate font-semibold text-heading">{gm.full_name}</div>
+              {gm.phone && <div className="text-xs text-ink-muted">{gm.phone}</div>}
+            </div>
+          </div>
+        ) : <span className="text-ink-subtle">No GM on file</span>}
+      </td>
+      <td className="border-b border-border px-3 py-3">
+        <div className="font-medium text-heading">{store.name || `Store #${store.number}`}</div>
+        <div className="text-xs text-ink-muted">#{store.number}</div>
+      </td>
+      <td className="border-b border-border px-3 py-3"><RiskPill risk={gm?.flight_risk ?? "na"} /></td>
+      <td className="border-b border-border px-3 py-3">
+        <div className="flex flex-wrap gap-1">
+          {(gm?.risk_reasons ?? []).map((r) => <span key={r} className="rounded border border-border bg-surface-sunk px-1.5 py-0.5 text-[11px] font-medium text-ink-2">{r}</span>)}
+        </div>
+      </td>
+      <td className="border-b border-border px-3 py-3">
+        <span className={cn("inline-flex rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset", ASPIRATION_META[gm?.aspiration ?? "current"].chip)}>{ASPIRATION_META[gm?.aspiration ?? "current"].label}</span>
+      </td>
+      <td className="max-w-[240px] border-b border-border px-3 py-3">
+        <div className="line-clamp-2 text-xs text-ink-2">{gm?.comment || <span className="text-ink-subtle">—</span>}</div>
+      </td>
+      <td className="max-w-[200px] border-b border-border px-3 py-3">
+        {needsPlan
+          ? <span className="rounded bg-red-50 px-2 py-0.5 text-[11px] font-bold text-red-700">No plan — needs one</span>
+          : <div className="text-xs text-ink-2">{gm?.backfill || <span className="text-ink-subtle">—</span>}</div>}
+      </td>
+      <td className="border-b border-border px-3 py-3"><ChevronRight className="h-4 w-4 text-zinc-300" /></td>
+    </tr>
+  );
+}
+
+function Avatar({ name, risk }: { name: string; risk: TeamMember["flight_risk"] }) {
+  const initials = name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
+  const ring = { immediate: "ring-red-400", medium: "ring-amber-400", low: "ring-emerald-400", na: "ring-zinc-300" }[risk];
+  return <span className={cn("grid h-8 w-8 shrink-0 place-items-center rounded-full bg-accent/10 text-[11px] font-bold text-accent ring-2", ring)}>{initials}</span>;
+}
+
+function RiskPill({ risk }: { risk: TeamMember["flight_risk"] }) {
+  const m = RISK_META[risk];
+  return <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset", m.chip)}><span className={cn("h-1.5 w-1.5 rounded-full", m.dot)} />{m.short}</span>;
 }
 
 // ── Store (roster) ──────────────────────────────────────────────────────────
