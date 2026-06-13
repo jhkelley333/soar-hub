@@ -7,7 +7,7 @@
 // Gated behind the `team_pipeline` feature flag (see router + nav).
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Building2, ChevronRight, Lock, Users } from "lucide-react";
+import { Building2, ChevronRight, Lock, Upload, Users } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/auth/AuthProvider";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -19,6 +19,7 @@ import { fetchMyTree } from "@/modules/my-stores/api";
 import type { MyDistrictNode, MyStoreNode } from "@/modules/my-stores/types";
 import { fetchGms, fetchRollup, fetchStoreRoster, seedFromProfiles, commitPlan, updateReq } from "./api";
 import { MemberDrawerProvider, useMemberDrawer } from "./MemberDrawer";
+import { RosterImport } from "./RosterImport";
 import {
   ASPIRATION_META, DEFAULT_TIER, LADDER, LADDER_BY_KEY, REQ_STATUS_META, RISK_META, TIERS, roleBelow,
   type LadderKey, type Requisition, type RollupResponse, type StoreRollup, type TeamMember,
@@ -64,7 +65,7 @@ export function TeamPipelinePage() {
         </div>
 
         {nav.level === "company" && (
-          <Company districts={districts} roll={roll} onOpen={(id) => setNav({ level: "district", districtId: id })} />
+          <Company districts={districts} roll={roll} canWrite={rollupQ.data?.can_write ?? false} onOpen={(id) => setNav({ level: "district", districtId: id })} />
         )}
         {nav.level === "district" && district && (
           <District district={district} onOpen={(sid) => setNav({ level: "store", districtId: district.id, storeId: sid })} />
@@ -112,12 +113,15 @@ function Breadcrumb({ nav, district, store, onGo }: { nav: Nav; district: MyDist
 }
 
 // ── Company ─────────────────────────────────────────────────────────────────
-function Company({ districts, roll, onOpen }: { districts: MyDistrictNode[]; roll: RollupResponse["stores"]; onOpen: (id: string) => void }) {
+function Company({ districts, roll, canWrite, onOpen }: { districts: MyDistrictNode[]; roll: RollupResponse["stores"]; canWrite: boolean; onOpen: (id: string) => void }) {
   const { profile } = useAuth();
   const qc = useQueryClient();
   const toast = useToast();
+  const [importing, setImporting] = useState(false);
   const allStores = districts.flatMap((d) => d.stores);
   const totals = sumRisk(allStores, roll);
+
+  if (importing) return <RosterImport onDone={() => setImporting(false)} />;
 
   const seed = useMutation({
     mutationFn: seedFromProfiles,
@@ -132,11 +136,18 @@ function Company({ districts, roll, onOpen }: { districts: MyDistrictNode[]; rol
           <div className="text-[11px] font-bold uppercase tracking-wider text-ink-subtle">Team Pipeline</div>
           <h1 className="text-2xl font-bold tracking-tight text-heading">Talent Planning</h1>
         </div>
-        {profile?.role === "admin" && (
-          <Button size="sm" variant="secondary" disabled={seed.isPending} onClick={() => seed.mutate()}>
-            {seed.isPending ? "Seeding…" : "Seed from profiles"}
-          </Button>
-        )}
+        <div className="flex gap-2">
+          {canWrite && (
+            <Button size="sm" variant="primary" onClick={() => setImporting(true)}>
+              <Upload className="mr-1 h-3.5 w-3.5" />Import roster
+            </Button>
+          )}
+          {profile?.role === "admin" && (
+            <Button size="sm" variant="secondary" disabled={seed.isPending} onClick={() => seed.mutate()}>
+              {seed.isPending ? "Seeding…" : "Seed from profiles"}
+            </Button>
+          )}
+        </div>
       </div>
 
       <div className="my-5 grid grid-cols-2 gap-4 sm:grid-cols-4">

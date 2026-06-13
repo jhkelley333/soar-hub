@@ -326,6 +326,128 @@ async function setCorrectiveActionStatus(supa, user, body) {
   return { ok: true, action: data };
 }
 
+// ── ATS roster bulk import ────────────────────────────────────────────────────
+// Replaces the seed-from-profiles stop-gap. Rows carry an employee + store
+// number + role; we map the ATS role title onto a ladder key, resolve the
+// store within the caller's scope, dedupe on external_id (else store+name),
+// and upsert. The talent overlay (flight risk, ratings, notes) is never
+// touched — only the HR fields the ATS owns.
+const ATS_ROLE_MAP = {
+  "gm": "gm", "general manager": "gm",
+  "fam": "fam", "first assistant manager": "fam", "1st assistant manager": "fam", "first assistant": "fam",
+  "am": "assoc", "associate manager": "assoc", "assoc manager": "assoc", "asst manager": "assoc",
+  "sm": "shift", "shift manager": "shift", "shift lead": "shift", "shift leader": "shift",
+  "cl": "lead", "crew leader": "lead", "lead": "lead", "team lead": "lead",
+  "cm": "crew", "crew member": "crew", "crew": "crew", "team member": "crew",
+  "ch": "carhop", "carhop": "carhop", "car hop": "carhop", "skating carhop": "carhop",
+};
+function normalizeRole(raw) {
+  const k = String(raw || "").trim().toLowerCase().replace(/\s+/g, " ");
+  if (ROLE_KEYS.has(k)) return k;
+  return ATS_ROLE_MAP[k] || null;
+}
+
+// Build the lookup context once per request: in-scope store-number → id, plus
+// existing roster members for dedupe (by external_id and by store+name).
+async function importContext(supa, user) {
+  const scope = await storesForUser(supa, user);
+  const ids = scope.all ? null : Array.from(scope.ids);
+  let sq = supa.from("stores").select("id, number").eq("is_active", true);
+  if (ids) {
+    if (ids.length === 0) return { byNumber: new Map(), existingExt: new Map(), existingName: new Map() };
+    sq = sq.in("id", ids);
+  }
+  const { data: stores } = await sq;
+  const byNumber = new Map((stores || []).map((s) => [String(s.number), s.id]));
+  const storeIds = (stores || []).map((s) => s.id);
+  const existingExt = new Map();
+  const existingName = new Map();
+  if (storeIds.length) {
+    const { data: mem } = await supa.from("tp_team_members").select("id, external_id, full_name, store_id").in("store_id", storeIds);
+    for (const m of mem || []) {
+      if (m.external_id) existingExt.set(String(m.external_id), m.id);
+      existingName.set(`${m.store_id}|${(m.full_name || "").trim().toLowerCase()}`, m.id);
+    }
+  }
+  return { byNumber, existingExt, existingName };
+}
+
+function annotateImportRow(idx, raw, ctx) {
+  const errors = [], warnings = [];
+  const full_name = String(raw?.full_name || "").trim();
+  const store_number = String(raw?.store_number || "").trim();
+  const roleRaw = String(raw?.role || "").trim();
+  const external_id = String(raw?.external_id || "").trim() || null;
+  const email = String(raw?.email || "").trim() || null;
+  const phone = String(raw?.phone || "").trim() || null;
+
+  if (!full_name) errors.push("Missing full_name");
+  if (!store_number) errors.push("Missing store_number");
+  const store_id = store_number ? (ctx.byNumber.get(store_number) || null) : null;
+  if (store_number && !store_id) errors.push(`Store #${store_number} not found or out of scope`);
+  const role = normalizeRole(roleRaw);
+  if (!roleRaw) errors.push("Missing role");
+  else if (!role) errors.push(`Unrecognized role "${roleRaw}"`);
+
+  let status = String(raw?.status || "").trim().toLowerCase();
+  if (status && !STATUS_VALS.has(status)) { warnings.push(`Unknown status "${status}" → active`); status = "active"; }
+  if (!status) status = "active";
+
+  let hire_date = String(raw?.hire_date || "").trim() || null;
+  if (hire_date && !/^\d{4}-\d{2}-\d{2}$/.test(hire_date)) { warnings.push("hire_date not YYYY-MM-DD → skipped"); hire_date = null; }
+
+  let existingId = null;
+  const nameKey = store_id ? `${store_id}|${full_name.toLowerCase()}` : null;
+  if (external_id && ctx.existingExt.has(external_id)) existingId = ctx.existingExt.get(external_id);
+  else if (nameKey && ctx.existingName.has(nameKey)) existingId = ctx.existingName.get(nameKey);
+
+  const action = errors.length ? "error" : existingId ? "update" : "create";
+  return { row: idx + 1, full_name, store_number, role, status, hire_date, email, phone, external_id, store_id, existing_id: existingId, action, errors, warnings };
+}
+
+function importRows(body) { return Array.isArray(body?.rows) ? body.rows.slice(0, 2000) : []; }
+
+async function previewImport(supa, user, body) {
+  const rows = importRows(body);
+  if (!rows.length) return { error: "No rows to preview.", status: 400 };
+  const ctx = await importContext(supa, user);
+  const annotated = rows.map((r, i) => annotateImportRow(i, r, ctx));
+  const summary = { create: 0, update: 0, error: 0 };
+  for (const a of annotated) summary[a.action]++;
+  return { rows: annotated, summary };
+}
+
+async function importRoster(supa, user, body) {
+  const rows = importRows(body);
+  if (!rows.length) return { error: "No rows to import.", status: 400 };
+  const ctx = await importContext(supa, user);
+  const results = [];
+  let created = 0, updated = 0, errors = 0;
+  for (let i = 0; i < rows.length; i++) {
+    const a = annotateImportRow(i, rows[i], ctx);
+    if (a.action === "error") { results.push({ row: a.row, status: "error", full_name: a.full_name, message: a.errors.join("; ") }); errors++; continue; }
+    const fields = {
+      store_id: a.store_id, full_name: a.full_name, role: a.role,
+      email: a.email, phone: a.phone, status: a.status, hire_date: a.hire_date, external_id: a.external_id,
+    };
+    if (a.existing_id) {
+      const { error } = await supa.from("tp_team_members").update(fields).eq("id", a.existing_id);
+      if (error) { results.push({ row: a.row, status: "error", full_name: a.full_name, message: error.message }); errors++; }
+      else { results.push({ row: a.row, status: "updated", full_name: a.full_name }); updated++; }
+    } else {
+      const { data, error } = await supa.from("tp_team_members").insert(fields).select("id").single();
+      if (error) { results.push({ row: a.row, status: "error", full_name: a.full_name, message: error.message }); errors++; }
+      else {
+        results.push({ row: a.row, status: "created", full_name: a.full_name }); created++;
+        // Register so a later duplicate row in the same batch updates, not re-inserts.
+        if (a.external_id) ctx.existingExt.set(a.external_id, data.id);
+        ctx.existingName.set(`${a.store_id}|${a.full_name.toLowerCase()}`, data.id);
+      }
+    }
+  }
+  return { ok: true, results, summary: { created, updated, errors } };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   let user;
@@ -356,6 +478,8 @@ export const handler = async (event) => {
     if (action === "update-req") return unwrap(await updateReq(supa, user, body));
     if (action === "add-corrective-action") return unwrap(await addCorrectiveAction(supa, user, body));
     if (action === "corrective-action-status") return unwrap(await setCorrectiveActionStatus(supa, user, body));
+    if (action === "import-preview") return unwrap(await previewImport(supa, user, body));
+    if (action === "import-roster") return unwrap(await importRoster(supa, user, body));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });
