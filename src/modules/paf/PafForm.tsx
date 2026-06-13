@@ -127,6 +127,51 @@ function NhField({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
+// Pre-submit gate: the submitter must click to confirm the entered home store.
+// Warns (but still allows) when it doesn't match their primary store.
+function HomeStoreVerify({
+  verified,
+  onVerify,
+  storeNum,
+  storeName,
+  primaryMismatch,
+  primary,
+}: {
+  verified: boolean;
+  onVerify: () => void;
+  storeNum: string;
+  storeName: string | null;
+  primaryMismatch: boolean;
+  primary: MyStore | null;
+}) {
+  const labelFor = (num: string, name: string | null) => `#${num}${name ? ` — ${name}` : ""}`;
+  if (verified) {
+    return (
+      <div className="mt-3 flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+        <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-emerald-600 text-[10px] font-bold text-white">✓</span>
+        Home store verified: <strong>{labelFor(storeNum, storeName)}</strong>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          Confirm the home store before submitting: <strong>{labelFor(storeNum, storeName)}</strong>
+        </div>
+        <Button type="button" size="sm" variant="secondary" onClick={onVerify}>
+          Verify home store
+        </Button>
+      </div>
+      {primaryMismatch && primary && (
+        <div className="mt-1.5 text-xs text-amber-800">
+          Heads up — this isn't your primary store ({labelFor(String(primary.number), primary.name)}). Verify only if this PAF is intentionally for a different store.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // snake_case keys used in the DB / config.
 type FormState = Record<string, string>;
 
@@ -270,6 +315,9 @@ export function PafForm({
   const [state, setState] = useState<FormState>({});
   const [error, setError] = useState<string | null>(null);
   const [offerName, setOfferName] = useState<string | null>(null);
+  // Home-store verification: the submitter must confirm the entered home store
+  // before submitting. Resets whenever the store changes.
+  const [homeVerified, setHomeVerified] = useState(false);
   const [offerUploading, setOfferUploading] = useState(false);
 
   async function handleOfferPick(e: React.ChangeEvent<HTMLInputElement>) {
@@ -418,6 +466,23 @@ export function PafForm({
     });
   }, [state]);
 
+  // Home-store verification state.
+  const homeStoreNum = (state.drive_in ?? "").trim();
+  const primaryStore = useMemo(
+    () => myStores.find((s) => s.id === profile?.primary_store_id) ?? null,
+    [myStores, profile?.primary_store_id],
+  );
+  const enteredStore = useMemo(
+    () => myStores.find((s) => String(s.number) === homeStoreNum) ?? null,
+    [myStores, homeStoreNum],
+  );
+  const primaryMismatch = !!(primaryStore && homeStoreNum && String(primaryStore.number) !== homeStoreNum);
+  // Verify only when an actual home store was entered (the Salary-Leader new
+  // hire uses its own multi-store picker, not the home-store field).
+  const needsHomeVerify = homeStoreNum !== "" && state.category !== NEW_HIRE_LEADER;
+  // Any change to the entered home store clears a prior verification.
+  useEffect(() => { setHomeVerified(false); }, [homeStoreNum]);
+
   const submit = useMutation({
     mutationFn: (input: PafSubmitInput) =>
       editPaf ? resubmitPaf(editPaf.id, input) : submitPaf(input),
@@ -486,6 +551,12 @@ export function PafForm({
     e.preventDefault();
     setError(null);
     if (!cfg) return;
+
+    // Require an explicit home-store verification when a store was entered.
+    if (needsHomeVerify && !homeVerified) {
+      setError("Please verify the home store before submitting.");
+      return;
+    }
 
     if (state.category === NEW_HIRE_LEADER) {
       // This category's fields are custom-rendered, so validate them
@@ -935,6 +1006,19 @@ export function PafForm({
         />
       </FormSection>
 
+      {/* Home-store verification — shared across breakpoints so mobile can
+          confirm too (the desktop cost card below is hidden on small screens). */}
+      {needsHomeVerify && (
+        <HomeStoreVerify
+          verified={homeVerified}
+          onVerify={() => setHomeVerified(true)}
+          storeNum={homeStoreNum}
+          storeName={enteredStore?.name ?? null}
+          primaryMismatch={primaryMismatch}
+          primary={primaryStore}
+        />
+      )}
+
       {/* Cost + submit. Inline on desktop; sticky bottom bar on mobile so
           the user never has to scroll to find Submit on a long form. */}
       <div className="hidden sm:block">
@@ -955,7 +1039,7 @@ export function PafForm({
                     {error}
                   </Badge>
                 )}
-                <Button type="submit" disabled={submit.isPending}>
+                <Button type="submit" disabled={submit.isPending || (needsHomeVerify && !homeVerified)}>
                   {submit.isPending
                     ? isEdit
                       ? "Resubmitting…"
@@ -987,7 +1071,7 @@ export function PafForm({
           </div>
           <Button
             type="submit"
-            disabled={submit.isPending}
+            disabled={submit.isPending || (needsHomeVerify && !homeVerified)}
             className="h-11 px-5 text-sm"
           >
             {submit.isPending
