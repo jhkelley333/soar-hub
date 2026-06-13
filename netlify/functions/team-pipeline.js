@@ -114,6 +114,18 @@ async function storeRoster(supa, user, storeId) {
   return { roster: roster || [], reqs: reqs || [], can_write: VIEW_ROLES.has(String(user.role)) };
 }
 
+// Every GM (role=gm) in the caller's scope — the GM bench. The client keys
+// these by store_id against its org tree to render the district bench.
+async function gms(supa, user) {
+  const scope = await storesForUser(supa, user);
+  const ids = scope.all ? null : Array.from(scope.ids);
+  if (ids && ids.length === 0) return { gms: [] };
+  let q = supa.from("tp_team_members").select("*").eq("role", "gm");
+  if (ids) q = q.in("store_id", ids);
+  const { data } = await q;
+  return { gms: data || [] };
+}
+
 // Admin-only: bootstrap the roster from existing SOAR profiles that have a
 // home store + a store-floor/GM role. Idempotent (skips already-linked
 // profiles). A stop-gap so the views have real data before the ATS import.
@@ -154,6 +166,7 @@ export const handler = async (event) => {
     const supa = admin();
     if (event.httpMethod === "GET") {
       if (action === "rollup") return unwrap(await rollup(supa, user));
+      if (action === "gms") return unwrap(await gms(supa, user));
       if (action === "store-roster") return unwrap(await storeRoster(supa, user, params.store_id));
       return respond(400, { error: `Unknown action: ${action}` });
     }

@@ -1,6 +1,6 @@
 // Typed wrappers around netlify/functions/team-pipeline.
 import { supabase } from "@/lib/supabase";
-import type { RollupResponse, StoreRosterResponse } from "./types";
+import type { GmsResponse, RollupResponse, StoreRosterResponse } from "./types";
 
 const FN = "/.netlify/functions/team-pipeline";
 
@@ -22,6 +22,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export function fetchRollup(): Promise<RollupResponse> {
   return request<RollupResponse>(`${FN}?action=rollup`);
+}
+export function fetchGms(): Promise<GmsResponse> {
+  return request<GmsResponse>(`${FN}?action=gms`);
 }
 export function fetchStoreRoster(storeId: string): Promise<StoreRosterResponse> {
   return request<StoreRosterResponse>(`${FN}?action=store-roster&store_id=${encodeURIComponent(storeId)}`);

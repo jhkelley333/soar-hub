@@ -36,9 +36,12 @@ export interface TeamMember {
   potential: number | null;
   comment: string | null;
   comment_by: string | null;
+  backfill: string | null;
   created_at: string;
   updated_at: string;
 }
+
+export interface GmsResponse { gms: TeamMember[] }
 
 export interface Requisition {
   id: string;
