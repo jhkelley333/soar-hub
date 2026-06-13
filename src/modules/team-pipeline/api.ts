@@ -1,6 +1,6 @@
 // Typed wrappers around netlify/functions/team-pipeline.
 import { supabase } from "@/lib/supabase";
-import type { GmsResponse, RollupResponse, StoreRosterResponse } from "./types";
+import type { GmsResponse, MemberPatch, Note, Requisition, RollupResponse, StoreRosterResponse, TeamMember } from "./types";
 
 const FN = "/.netlify/functions/team-pipeline";
 
@@ -39,4 +39,16 @@ export interface CommitPlanInput {
 }
 export function commitPlan(input: CommitPlanInput): Promise<{ ok: true; promoted: number; reqs_opened: number }> {
   return request(`${FN}?action=commit-plan`, { method: "POST", body: JSON.stringify(input) });
+}
+export function updateMember(memberId: string, patch: MemberPatch): Promise<{ ok: true; member: TeamMember }> {
+  return request(`${FN}?action=update-member`, { method: "POST", body: JSON.stringify({ member_id: memberId, patch }) });
+}
+export function fetchNotes(memberId: string): Promise<{ notes: Note[] }> {
+  return request(`${FN}?action=notes&member_id=${encodeURIComponent(memberId)}`);
+}
+export function addNote(memberId: string, body: string): Promise<{ ok: true; note: Note }> {
+  return request(`${FN}?action=add-note`, { method: "POST", body: JSON.stringify({ member_id: memberId, body }) });
+}
+export function updateReq(reqId: string, patch: { status?: Requisition["status"]; candidates?: number }): Promise<{ ok: true; req: Requisition }> {
+  return request(`${FN}?action=update-req`, { method: "POST", body: JSON.stringify({ req_id: reqId, ...patch }) });
 }

@@ -61,6 +61,36 @@ export interface StoreRosterResponse {
   can_write: boolean;
 }
 
+export interface Note {
+  id: string;
+  team_member_id: string;
+  body: string;
+  author: string | null;
+  author_id: string | null;
+  created_at: string;
+}
+
+// Talent fields a viewer can edit from the profile drawer.
+export type MemberPatch = Partial<{
+  flight_risk: FlightRisk;
+  aspiration: Aspiration;
+  status: MemberStatus;
+  perf: number | null;
+  potential: number | null;
+  backfill: string | null;
+  risk_reasons: string[];
+}>;
+
+// Preset flight-risk drivers (toggle chips); freeform notes go in the thread.
+export const RISK_REASONS = ["Pay", "Commute", "Growth", "Manager fit", "Schedule", "Personal"];
+
+export const REQ_STATUS_META: Record<Requisition["status"], { label: string; chip: string }> = {
+  sourcing: { label: "Sourcing", chip: "bg-zinc-100 text-zinc-600" },
+  interviewing: { label: "Interviewing", chip: "bg-blue-50 text-blue-700" },
+  offer: { label: "Offer out", chip: "bg-amber-50 text-amber-800" },
+  filled: { label: "Filled", chip: "bg-emerald-50 text-emerald-700" },
+};
+
 // Career ladder (bottom → top); `mgr` seats have named succession.
 export const LADDER: { key: LadderKey; label: string; abbr: string; mgr: boolean }[] = [
   { key: "carhop", label: "Carhop", abbr: "CH", mgr: false },

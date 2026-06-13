@@ -17,10 +17,11 @@ import { Segmented } from "@/shared/ui/Segmented";
 import { useToast } from "@/shared/ui/Toaster";
 import { fetchMyTree } from "@/modules/my-stores/api";
 import type { MyDistrictNode, MyStoreNode } from "@/modules/my-stores/types";
-import { fetchGms, fetchRollup, fetchStoreRoster, seedFromProfiles, commitPlan } from "./api";
+import { fetchGms, fetchRollup, fetchStoreRoster, seedFromProfiles, commitPlan, updateReq } from "./api";
+import { MemberDrawerProvider, useMemberDrawer } from "./MemberDrawer";
 import {
-  ASPIRATION_META, DEFAULT_TIER, LADDER, LADDER_BY_KEY, RISK_META, TIERS, roleBelow,
-  type LadderKey, type RollupResponse, type StoreRollup, type TeamMember,
+  ASPIRATION_META, DEFAULT_TIER, LADDER, LADDER_BY_KEY, REQ_STATUS_META, RISK_META, TIERS, roleBelow,
+  type LadderKey, type Requisition, type RollupResponse, type StoreRollup, type TeamMember,
 } from "./types";
 
 type Nav =
@@ -53,22 +54,24 @@ export function TeamPipelinePage() {
   }
 
   return (
-    <div className="mx-auto max-w-[1100px]">
-      <Breadcrumb nav={nav} district={district} store={store} onGo={setNav} />
+    <MemberDrawerProvider canWrite={rollupQ.data?.can_write ?? false}>
+      <div className="mx-auto max-w-[1100px]">
+        <Breadcrumb nav={nav} district={district} store={store} onGo={setNav} />
 
-      <div className="mb-5 flex items-center gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[13px] font-medium text-amber-800">
-        <Lock className="h-4 w-4 shrink-0" />
-        Talent Planning pilot — gated by the <code className="rounded bg-amber-100 px-1 font-mono text-[12px]">team_pipeline</code> flag. The GM bench, store layouts &amp; corrective-action documents are building out in slices.
+        <div className="mb-5 flex items-center gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[13px] font-medium text-amber-800">
+          <Lock className="h-4 w-4 shrink-0" />
+          Talent Planning pilot — gated by the <code className="rounded bg-amber-100 px-1 font-mono text-[12px]">team_pipeline</code> flag. The GM bench, store layouts &amp; corrective-action documents are building out in slices.
+        </div>
+
+        {nav.level === "company" && (
+          <Company districts={districts} roll={roll} onOpen={(id) => setNav({ level: "district", districtId: id })} />
+        )}
+        {nav.level === "district" && district && (
+          <District district={district} onOpen={(sid) => setNav({ level: "store", districtId: district.id, storeId: sid })} />
+        )}
+        {nav.level === "store" && store && <Store store={store} />}
       </div>
-
-      {nav.level === "company" && (
-        <Company districts={districts} roll={roll} onOpen={(id) => setNav({ level: "district", districtId: id })} />
-      )}
-      {nav.level === "district" && district && (
-        <District district={district} onOpen={(sid) => setNav({ level: "store", districtId: district.id, storeId: sid })} />
-      )}
-      {nav.level === "store" && store && <Store store={store} />}
-    </div>
+    </MemberDrawerProvider>
   );
 }
 
@@ -246,18 +249,20 @@ function Th({ children }: { children?: React.ReactNode }) {
 }
 
 function BenchRow({ store, gm, onOpen }: { store: MyStoreNode; gm: TeamMember | null; onOpen: () => void }) {
+  const { open } = useMemberDrawer();
   const needsPlan = gm && (gm.flight_risk === "immediate" || gm.flight_risk === "medium") && !(gm.backfill ?? "").trim();
   return (
     <tr className="cursor-pointer transition hover:bg-surface-muted" onClick={onOpen}>
       <td className="border-b border-border px-3 py-3">
         {gm ? (
-          <div className="flex items-center gap-2.5">
+          <button onClick={(e) => { e.stopPropagation(); open(gm); }}
+            className="flex items-center gap-2.5 rounded-lg text-left transition hover:opacity-80" title="Open profile">
             <Avatar name={gm.full_name} risk={gm.flight_risk} />
             <div className="min-w-0">
-              <div className="truncate font-semibold text-heading">{gm.full_name}</div>
+              <div className="truncate font-semibold text-heading underline-offset-2 hover:underline">{gm.full_name}</div>
               {gm.phone && <div className="text-xs text-ink-muted">{gm.phone}</div>}
             </div>
-          </div>
+          </button>
         ) : <span className="text-ink-subtle">No GM on file</span>}
       </td>
       <td className="border-b border-border px-3 py-3">
@@ -303,6 +308,8 @@ function Store({ store }: { store: MyStoreNode }) {
   const [layout, setLayout] = useState<Layout>("ladder");
   const rosterQ = useQuery({ queryKey: ["tp-store-roster", store.id], queryFn: () => fetchStoreRoster(store.id) });
   const roster = rosterQ.data?.roster ?? [];
+  const reqs = rosterQ.data?.reqs ?? [];
+  const canWrite = rosterQ.data?.can_write ?? false;
 
   return (
     <>
@@ -315,6 +322,8 @@ function Store({ store }: { store: MyStoreNode }) {
           options={[{ value: "ladder", label: "Bench ladder" }, { value: "roster", label: "Roster" }, { value: "ninebox", label: "9-box" }, { value: "plan", label: "Staffing plan" }]}
           value={layout} onChange={setLayout} />
       </div>
+
+      {reqs.length > 0 && <ReqsPanel storeId={store.id} reqs={reqs} canWrite={canWrite} />}
 
       {rosterQ.isLoading ? (
         <Skeleton className="h-48 w-full" />
@@ -337,8 +346,72 @@ function Store({ store }: { store: MyStoreNode }) {
   );
 }
 
+// ── Open requisitions ─────────────────────────────────────────────────────────
+const REQ_FLOW: Requisition["status"][] = ["sourcing", "interviewing", "offer", "filled"];
+function ReqsPanel({ storeId, reqs, canWrite }: { storeId: string; reqs: Requisition[]; canWrite: boolean }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const mut = useMutation({
+    mutationFn: ({ id, patch }: { id: string; patch: { status?: Requisition["status"]; candidates?: number } }) => updateReq(id, patch),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["tp-store-roster", storeId] });
+      qc.invalidateQueries({ queryKey: ["tp-rollup"] });
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't update req.", "error"),
+  });
+  const advance = (r: Requisition) => {
+    const next = REQ_FLOW[Math.min(REQ_FLOW.indexOf(r.status) + 1, REQ_FLOW.length - 1)];
+    if (next !== r.status) mut.mutate({ id: r.id, patch: { status: next } });
+  };
+
+  return (
+    <div className="mb-4 overflow-hidden rounded-2xl border border-border bg-surface shadow-card">
+      <div className="border-b border-border px-4 py-2.5 text-[11px] font-bold uppercase tracking-wide text-ink-subtle">
+        Open requisitions · {reqs.length}
+      </div>
+      <ul className="divide-y divide-border">
+        {reqs.map((r) => {
+          const meta = REQ_STATUS_META[r.status];
+          return (
+            <li key={r.id} className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
+              <div className="min-w-[140px]">
+                <div className="text-sm font-semibold text-heading">{LADDER_BY_KEY[r.role]?.label ?? r.role}</div>
+                <div className="text-xs text-ink-muted">{r.ref ?? "—"}{r.reason ? ` · ${r.reason}` : ""}</div>
+              </div>
+              <span className={cn("rounded-full px-2.5 py-1 text-[11px] font-bold", meta.chip)}>{meta.label}</span>
+              <div className="flex items-center gap-1.5 text-xs text-ink-muted">
+                <span className="font-semibold tabular-nums text-heading">{r.candidates}</span> candidate{r.candidates === 1 ? "" : "s"}
+                {canWrite && (
+                  <span className="ml-1 inline-flex gap-1">
+                    <Mini onClick={() => mut.mutate({ id: r.id, patch: { candidates: Math.max(0, r.candidates - 1) } })}>−</Mini>
+                    <Mini onClick={() => mut.mutate({ id: r.id, patch: { candidates: r.candidates + 1 } })}>+</Mini>
+                  </span>
+                )}
+              </div>
+              {canWrite && r.status !== "filled" && (
+                <div className="ml-auto flex gap-2">
+                  <button onClick={() => advance(r)} className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-semibold text-ink-2 transition hover:bg-surface-sunk">
+                    Advance → {REQ_STATUS_META[REQ_FLOW[Math.min(REQ_FLOW.indexOf(r.status) + 1, 3)]].label}
+                  </button>
+                  <button onClick={() => mut.mutate({ id: r.id, patch: { status: "filled" } })} className="rounded-lg bg-emerald-600 px-2.5 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-700">
+                    Mark filled
+                  </button>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+function Mini({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  return <button onClick={onClick} className="grid h-5 w-5 place-items-center rounded border border-border bg-surface text-ink-muted hover:bg-surface-sunk">{children}</button>;
+}
+
 // ── Bench ladder ─────────────────────────────────────────────────────────────
 function BenchLadder({ roster }: { roster: TeamMember[] }) {
+  const { open } = useMemberDrawer();
   const byRole = (key: TeamMember["role"]) => roster.filter((m) => m.role === key);
   const mgrRoles = [...LADDER].filter((r) => r.mgr).reverse(); // GM → Shift
   const entryRoles = [...LADDER].filter((r) => !r.mgr).reverse(); // CL → CM → CH
@@ -357,7 +430,7 @@ function BenchLadder({ roster }: { roster: TeamMember[] }) {
               {people.length === 0 ? (
                 <span className="text-sm text-ink-subtle">— no one in this seat</span>
               ) : people.map((m) => (
-                <div key={m.id} className="flex items-center gap-2.5 rounded-xl border border-border bg-surface px-3 py-2">
+                <button key={m.id} onClick={() => open(m)} className="flex items-center gap-2.5 rounded-xl border border-border bg-surface px-3 py-2 text-left transition hover:border-accent/60 hover:bg-surface-muted">
                   <Avatar name={m.full_name} risk={m.flight_risk} />
                   <div className="min-w-0">
                     <div className="truncate text-sm font-semibold text-heading">{m.full_name}</div>
@@ -366,7 +439,7 @@ function BenchLadder({ roster }: { roster: TeamMember[] }) {
                       <span className={cn("inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ring-inset", ASPIRATION_META[m.aspiration].chip)}>{ASPIRATION_META[m.aspiration].label}</span>
                     </div>
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </div>
@@ -382,10 +455,10 @@ function BenchLadder({ roster }: { roster: TeamMember[] }) {
               <div className="mb-1.5 text-xs font-semibold text-ink-muted">{r.label} · {people.length}</div>
               <div className="flex flex-wrap gap-2">
                 {people.length === 0 ? <span className="text-xs text-ink-subtle">—</span> : people.map((m) => (
-                  <span key={m.id} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2 py-1 text-xs font-medium text-heading">
+                  <button key={m.id} onClick={() => open(m)} className="inline-flex items-center gap-1.5 rounded-full border border-border bg-surface px-2 py-1 text-xs font-medium text-heading transition hover:border-accent/60 hover:bg-surface-muted">
                     {m.flight_risk === "immediate" && <span className="h-1.5 w-1.5 rounded-full bg-red-500" />}
                     {m.full_name.split(" ")[0]} {m.full_name.split(" ").slice(-1)[0]?.[0] ?? ""}.
-                  </span>
+                  </button>
                 ))}
               </div>
             </div>
@@ -443,6 +516,7 @@ const TONE_BG: Record<string, string> = {
   mid: "bg-surface-muted border-border", watch: "bg-red-50/60 border-red-100",
 };
 function NineBox({ roster }: { roster: TeamMember[] }) {
+  const { open } = useMemberDrawer();
   const rated = roster.filter((m) => m.perf != null && m.potential != null);
   const cellOf = (col: number, row: number) => rated.filter((m) => perfCol(m.perf!) === col && potRow(m.potential!) === row);
   const unrated = roster.length - rated.length;
@@ -460,7 +534,7 @@ function NineBox({ roster }: { roster: TeamMember[] }) {
               return (
                 <div key={`${row}-${col}`} className={cn("flex flex-col gap-1 overflow-hidden rounded-xl border p-2", TONE_BG[cellTone(col, row)])}>
                   <div className="flex flex-wrap content-start gap-1">
-                    {people.map((m) => <span key={m.id} title={`${m.full_name} · ${LADDER_BY_KEY[m.role]?.abbr}`}><Avatar name={m.full_name} risk={m.flight_risk} /></span>)}
+                    {people.map((m) => <button key={m.id} onClick={() => open(m)} title={`${m.full_name} · ${LADDER_BY_KEY[m.role]?.abbr}`} className="rounded-full transition hover:ring-2 hover:ring-accent/40"><Avatar name={m.full_name} risk={m.flight_risk} /></button>)}
                   </div>
                 </div>
               );
@@ -660,10 +734,12 @@ function X({ onClick }: { onClick: () => void }) {
 }
 
 function RosterRow({ m }: { m: TeamMember }) {
+  const { open } = useMemberDrawer();
   const risk = RISK_META[m.flight_risk];
   const asp = ASPIRATION_META[m.aspiration];
   return (
-    <div className="grid grid-cols-[1.6fr_1fr_1fr_0.8fr] items-center gap-3 border-b border-border px-4 py-3 last:border-b-0">
+    <div role="button" tabIndex={0} onClick={() => open(m)} onKeyDown={(e) => { if (e.key === "Enter") open(m); }}
+      className="grid cursor-pointer grid-cols-[1.6fr_1fr_1fr_0.8fr] items-center gap-3 border-b border-border px-4 py-3 transition last:border-b-0 hover:bg-surface-muted">
       <div className="min-w-0">
         <div className="truncate text-sm font-semibold text-heading">{m.full_name}{m.status === "loa" && <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-zinc-500">LOA</span>}</div>
         <div className="text-xs text-ink-muted">{LADDER_BY_KEY[m.role]?.label ?? m.role}</div>
