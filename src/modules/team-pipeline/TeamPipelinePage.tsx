@@ -17,8 +17,8 @@ import { Segmented } from "@/shared/ui/Segmented";
 import { useToast } from "@/shared/ui/Toaster";
 import { fetchMyTree } from "@/modules/my-stores/api";
 import type { MyDistrictNode, MyStoreNode } from "@/modules/my-stores/types";
-import { fetchGms, fetchRollup, fetchStoreRoster, seedFromProfiles, commitPlan, updateReq } from "./api";
-import { MemberDrawerProvider, useMemberDrawer } from "./MemberDrawer";
+import { fetchGms, fetchRollup, fetchStoreRoster, seedFromProfiles, commitPlan, updateReq, mergeMembers } from "./api";
+import { AccountBadge, MemberDrawerProvider, useMemberDrawer } from "./MemberDrawer";
 import { RosterImport } from "./RosterImport";
 import {
   ASPIRATION_META, DEFAULT_TIER, LADDER, LADDER_BY_KEY, REQ_STATUS_META, RISK_META, TIERS, roleBelow,
@@ -55,7 +55,7 @@ export function TeamPipelinePage() {
   }
 
   return (
-    <MemberDrawerProvider canWrite={rollupQ.data?.can_write ?? false}>
+    <MemberDrawerProvider canWrite={rollupQ.data?.can_write ?? false} roleEdit={rollupQ.data?.role_edit ?? false}>
       <div className="mx-auto max-w-[1100px]">
         <Breadcrumb nav={nav} district={district} store={store} onGo={setNav} />
 
@@ -334,6 +334,7 @@ function Store({ store }: { store: MyStoreNode }) {
           value={layout} onChange={setLayout} />
       </div>
 
+      {canWrite && <DuplicatesBanner storeId={store.id} roster={roster} />}
       {reqs.length > 0 && <ReqsPanel storeId={store.id} reqs={reqs} canWrite={canWrite} />}
 
       {rosterQ.isLoading ? (
@@ -354,6 +355,61 @@ function Store({ store }: { store: MyStoreNode }) {
         <NineBox roster={roster} />
       )}
     </>
+  );
+}
+
+// ── Duplicate records (seed vs. bulk import) ──────────────────────────────────
+function DuplicatesBanner({ storeId, roster }: { storeId: string; roster: TeamMember[] }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const groups = useMemo(() => {
+    const map = new Map<string, TeamMember[]>();
+    for (const m of roster) {
+      const k = m.full_name.trim().toLowerCase().replace(/\s+/g, " ");
+      if (!k) continue;
+      (map.get(k) ?? map.set(k, []).get(k)!).push(m);
+    }
+    return [...map.values()].filter((g) => g.length > 1);
+  }, [roster]);
+
+  const merge = useMutation({
+    mutationFn: async (group: TeamMember[]) => {
+      const keep = group.find((m) => m.has_account) ?? group[0];
+      for (const d of group) if (d.id !== keep.id) await mergeMembers(keep.id, d.id);
+    },
+    onSuccess: () => {
+      toast.push("Records merged.", "success");
+      qc.invalidateQueries({ queryKey: ["tp-store-roster", storeId] });
+      qc.invalidateQueries({ queryKey: ["tp-rollup"] });
+      qc.invalidateQueries({ queryKey: ["tp-gms"] });
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't merge.", "error"),
+  });
+
+  if (groups.length === 0) return null;
+  return (
+    <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+      <div className="mb-2 flex items-center gap-2 text-sm font-bold text-amber-900">
+        <Users className="h-4 w-4" />Possible duplicate{groups.length === 1 ? "" : "s"} · {groups.length}
+      </div>
+      <p className="mb-3 text-xs text-amber-800">Same name from both the profile seed and the bulk import. Merging keeps the record with an account and folds in the other's ATS data, notes, and write-ups.</p>
+      <ul className="flex flex-col gap-2">
+        {groups.map((g) => {
+          const keep = g.find((m) => m.has_account) ?? g[0];
+          return (
+            <li key={keep.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-amber-200 bg-surface px-3 py-2">
+              <span className="text-sm font-semibold text-heading">{keep.full_name}</span>
+              <span className="text-xs text-ink-muted">{g.length} records · {g.map((m) => LADDER_BY_KEY[m.role]?.abbr ?? m.role).join(" / ")}</span>
+              <AccountBadge has={g.some((m) => m.has_account)} />
+              <button disabled={merge.isPending} onClick={() => merge.mutate(g)}
+                className="ml-auto rounded-lg bg-amber-600 px-2.5 py-1.5 text-xs font-semibold text-white transition hover:bg-amber-700 disabled:opacity-40">
+                {merge.isPending ? "Merging…" : "Merge"}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }
 
@@ -752,7 +808,11 @@ function RosterRow({ m }: { m: TeamMember }) {
     <div role="button" tabIndex={0} onClick={() => open(m)} onKeyDown={(e) => { if (e.key === "Enter") open(m); }}
       className="grid cursor-pointer grid-cols-[1.6fr_1fr_1fr_0.8fr] items-center gap-3 border-b border-border px-4 py-3 transition last:border-b-0 hover:bg-surface-muted">
       <div className="min-w-0">
-        <div className="truncate text-sm font-semibold text-heading">{m.full_name}{m.status === "loa" && <span className="ml-2 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-zinc-500">LOA</span>}</div>
+        <div className="flex items-center gap-2">
+          <span className="truncate text-sm font-semibold text-heading">{m.full_name}</span>
+          {m.status === "loa" && <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-zinc-500">LOA</span>}
+          {!m.has_account && <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-300" title="No account" />}
+        </div>
         <div className="text-xs text-ink-muted">{LADDER_BY_KEY[m.role]?.label ?? m.role}</div>
       </div>
       <div>

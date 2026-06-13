@@ -16,6 +16,7 @@ export interface StoreRollup {
 export interface RollupResponse {
   stores: Record<string, StoreRollup>; // keyed by store id
   can_write: boolean;
+  role_edit: boolean;
 }
 
 export interface TeamMember {
@@ -39,7 +40,11 @@ export interface TeamMember {
   backfill: string | null;
   created_at: string;
   updated_at: string;
+  has_account?: boolean; // linked to an active app profile (server-computed)
 }
+
+// Crew Leader and up can be invited to an app login.
+export const INVITE_ROLES: LadderKey[] = ["lead", "shift", "assoc", "fam", "gm"];
 
 export interface GmsResponse { gms: TeamMember[] }
 
@@ -59,6 +64,7 @@ export interface StoreRosterResponse {
   roster: TeamMember[];
   reqs: Requisition[];
   can_write: boolean;
+  role_edit: boolean; // role promote/demote toggle (Admin → Feature Flags)
 }
 
 export interface Note {
@@ -70,8 +76,10 @@ export interface Note {
   created_at: string;
 }
 
-// Talent fields a viewer can edit from the profile drawer.
+// Fields a viewer can edit from the profile drawer. `role` is only honored
+// while the team_pipeline_role_edit flag is on (onboarding).
 export type MemberPatch = Partial<{
+  role: LadderKey;
   flight_risk: FlightRisk;
   aspiration: Aspiration;
   status: MemberStatus;

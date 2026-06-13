@@ -108,3 +108,9 @@ export function importPreview(rows: ImportRowInput[]): Promise<ImportPreviewResp
 export function importRoster(rows: ImportRowInput[]): Promise<ImportRosterResponse> {
   return request(`${FN}?action=import-roster`, { method: "POST", body: JSON.stringify({ rows }) });
 }
+export function mergeMembers(keepId: string, dropId: string): Promise<{ ok: true; kept: string }> {
+  return request(`${FN}?action=merge-members`, { method: "POST", body: JSON.stringify({ keep_id: keepId, drop_id: dropId }) });
+}
+export function inviteMember(memberId: string, email: string): Promise<{ ok: true; profile_id: string; email: string }> {
+  return request(`${FN}?action=invite-member`, { method: "POST", body: JSON.stringify({ member_id: memberId, email }) });
+}

@@ -5,37 +5,37 @@
 // open it without prop-drilling.
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, FileWarning, Phone, Plus, Star } from "lucide-react";
+import { BadgeCheck, Copy, FileWarning, Phone, Plus, Star, UserPlus } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Drawer } from "@/shared/ui/Drawer";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { useToast } from "@/shared/ui/Toaster";
-import { addCorrectiveAction, addNote, fetchCorrectiveActions, fetchNotes, setCorrectiveActionStatus, updateMember } from "./api";
+import { addCorrectiveAction, addNote, fetchCorrectiveActions, fetchNotes, inviteMember, setCorrectiveActionStatus, updateMember } from "./api";
 import {
   ASPIRATION_META, CA_CATEGORIES, CA_LEVEL_META, CA_LEVELS, CA_STATUS_META, CA_TEMPLATES,
-  LADDER_BY_KEY, RISK_META, RISK_REASONS,
-  type Aspiration, type CaLevel, type CorrectiveAction, type FlightRisk, type MemberPatch, type TeamMember,
+  INVITE_ROLES, LADDER, LADDER_BY_KEY, RISK_META, RISK_REASONS,
+  type Aspiration, type CaLevel, type CorrectiveAction, type FlightRisk, type LadderKey, type MemberPatch, type TeamMember,
 } from "./types";
 
-type Ctx = { open: (m: TeamMember) => void; canWrite: boolean };
-const MemberDrawerCtx = createContext<Ctx>({ open: () => {}, canWrite: false });
+type Ctx = { open: (m: TeamMember) => void; canWrite: boolean; roleEdit: boolean };
+const MemberDrawerCtx = createContext<Ctx>({ open: () => {}, canWrite: false, roleEdit: false });
 export const useMemberDrawer = () => useContext(MemberDrawerCtx);
 
-export function MemberDrawerProvider({ canWrite, children }: { canWrite: boolean; children: ReactNode }) {
+export function MemberDrawerProvider({ canWrite, roleEdit, children }: { canWrite: boolean; roleEdit: boolean; children: ReactNode }) {
   const [member, setMember] = useState<TeamMember | null>(null);
   const [isOpen, setIsOpen] = useState(false);
   const open = (m: TeamMember) => { setMember(m); setIsOpen(true); };
   return (
-    <MemberDrawerCtx.Provider value={{ open, canWrite }}>
+    <MemberDrawerCtx.Provider value={{ open, canWrite, roleEdit }}>
       {children}
       <Drawer open={isOpen} onClose={() => setIsOpen(false)} title="Team member" width="w-full sm:max-w-lg">
-        {member && <MemberBody key={member.id} member={member} canWrite={canWrite} />}
+        {member && <MemberBody key={member.id} member={member} canWrite={canWrite} roleEdit={roleEdit} />}
       </Drawer>
     </MemberDrawerCtx.Provider>
   );
 }
 
-function MemberBody({ member, canWrite }: { member: TeamMember; canWrite: boolean }) {
+function MemberBody({ member, canWrite, roleEdit }: { member: TeamMember; canWrite: boolean; roleEdit: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [draft, setDraft] = useState<TeamMember>(member);
@@ -66,8 +66,9 @@ function MemberBody({ member, canWrite }: { member: TeamMember; canWrite: boolea
           {member.full_name.split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase()}
         </span>
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <h3 className="truncate text-lg font-bold text-heading">{member.full_name}</h3>
+            <AccountBadge has={member.has_account} />
             {draft.status === "loa" && <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700 ring-1 ring-amber-200">On LOA</span>}
           </div>
           <div className="text-sm text-ink-muted">{role?.label}{member.hire_date && ` · since ${new Date(member.hire_date).toLocaleDateString(undefined, { month: "short", year: "numeric" })}`}</div>
@@ -88,6 +89,22 @@ function MemberBody({ member, canWrite }: { member: TeamMember; canWrite: boolea
       </div>
 
       {!canWrite && <div className="rounded-lg bg-surface-muted px-3 py-2 text-xs text-ink-muted">Read-only — talent edits are for DO and above.</div>}
+
+      {/* role (onboarding) */}
+      {canWrite && roleEdit && (
+        <Field label="Role">
+          <select value={draft.role} onChange={(e) => set({ role: e.target.value as LadderKey })}
+            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm font-semibold text-heading focus:border-accent focus:outline-none">
+            {LADDER.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
+          </select>
+          <p className="mt-1 text-[11px] text-ink-subtle">Promote or demote into the right seat. Turn this off in Admin → Feature Flags once onboarding is done.</p>
+        </Field>
+      )}
+
+      {/* invite (Crew Leader and up, no account yet) */}
+      {canWrite && !member.has_account && INVITE_ROLES.includes(draft.role) && (
+        <InviteBlock member={member} />
+      )}
 
       {/* flight risk */}
       <Field label="Flight risk">
@@ -315,6 +332,56 @@ function NotesThread({ memberId, canWrite }: { memberId: string; canWrite: boole
         </ol>
       )}
     </Field>
+  );
+}
+
+export function AccountBadge({ has }: { has?: boolean }) {
+  return has ? (
+    <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-emerald-200">
+      <BadgeCheck className="h-3 w-3" />Account
+    </span>
+  ) : (
+    <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-500 ring-1 ring-zinc-200">No account</span>
+  );
+}
+
+function InviteBlock({ member }: { member: TeamMember }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState(member.email ?? "");
+  const invite = useMutation({
+    mutationFn: () => inviteMember(member.id, email.trim()),
+    onSuccess: () => {
+      toast.push(`Invite sent to ${email.trim()}.`, "success");
+      setOpen(false);
+      qc.invalidateQueries({ queryKey: ["tp-store-roster"] });
+      qc.invalidateQueries({ queryKey: ["tp-gms"] });
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't send invite.", "error"),
+  });
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-accent/40 bg-accent/5 px-3 py-1.5 text-xs font-semibold text-accent transition hover:bg-accent/10">
+        <UserPlus className="h-3.5 w-3.5" />Invite to set up account
+      </button>
+    );
+  }
+  return (
+    <div className="flex flex-col gap-2 rounded-xl border border-border bg-surface-muted p-3">
+      <div className="text-[11px] font-bold uppercase tracking-wide text-ink-subtle">Invite {member.full_name}</div>
+      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="name@example.com" autoFocus
+        className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-heading placeholder:text-ink-subtle focus:border-accent focus:outline-none" />
+      <p className="text-[11px] text-ink-subtle">Creates a store-scoped login as {LADDER_BY_KEY[member.role]?.label}. They'll get an email to set a password.</p>
+      <div className="flex justify-end gap-2">
+        <button onClick={() => setOpen(false)} className="rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-ink-2 hover:bg-surface-sunk">Cancel</button>
+        <button disabled={!email.includes("@") || invite.isPending} onClick={() => invite.mutate()}
+          className="rounded-lg bg-midnight px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-midnight/90 disabled:opacity-40">
+          {invite.isPending ? "Sending…" : "Send invite"}
+        </button>
+      </div>
+    </div>
   );
 }
 
