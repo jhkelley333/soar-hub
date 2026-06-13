@@ -7,7 +7,7 @@
 // Gated behind the `team_pipeline` feature flag (see router + nav).
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, Building2, ChevronRight, Lock, SlidersHorizontal, Upload, Users } from "lucide-react";
+import { Archive, ChevronRight, Lock, SlidersHorizontal, Upload, Users } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/auth/AuthProvider";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -22,7 +22,7 @@ import { AccountBadge, MemberDrawerProvider, useMemberDrawer } from "./MemberDra
 import { RosterImport } from "./RosterImport";
 import {
   ASPIRATION_META, LADDER, LADDER_BY_KEY, REQ_STATUS_META, RISK_META, ROLE_MIX, roleBelow,
-  type LadderKey, type Requisition, type RollupResponse, type StoreRollup, type TeamMember,
+  type LadderKey, type Requisition, type RiskCounts, type RollupResponse, type StoreRollup, type TeamMember,
 } from "./types";
 
 type Nav =
@@ -44,6 +44,25 @@ export function TeamPipelinePage() {
     return regions.flatMap((r) => r.areas ?? []).flatMap((a) => a.districts ?? []);
   }, [treeQ.data]);
 
+  // Region name + DO name per district, for the upgraded district cards. DO is
+  // shared across a district's stores, so the first store's leadership wins.
+  const districtMeta = useMemo(() => {
+    const meta = new Map<string, { regionName: string | null; doName: string | null }>();
+    const leadership = treeQ.data?.leadership ?? {};
+    for (const region of treeQ.data?.regions ?? []) {
+      for (const area of region.areas ?? []) {
+        for (const d of area.districts ?? []) {
+          const doPerson = d.stores.map((s) => leadership[s.id]?.do).find(Boolean) ?? null;
+          meta.set(d.id, {
+            regionName: region.name || area.name || null,
+            doName: doPerson ? (doPerson.preferred_name || doPerson.full_name || null) : null,
+          });
+        }
+      }
+    }
+    return meta;
+  }, [treeQ.data]);
+
   const district = districts.find((d) => d.id === (nav as { districtId?: string }).districtId) ?? null;
   const store = district?.stores.find((s) => s.id === (nav as { storeId?: string }).storeId) ?? null;
 
@@ -61,11 +80,11 @@ export function TeamPipelinePage() {
 
         <div className="mb-5 flex items-center gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[13px] font-medium text-amber-800">
           <Lock className="h-4 w-4 shrink-0" />
-          Talent Planning pilot — gated by the <code className="rounded bg-amber-100 px-1 font-mono text-[12px]">team_pipeline</code> flag. The GM bench, store layouts &amp; corrective-action documents are building out in slices.
+          Talent Planning pilot — gated by the <code className="rounded bg-amber-100 px-1 font-mono text-[12px]">team_pipeline</code> flag.
         </div>
 
         {nav.level === "company" && (
-          <Company districts={districts} roll={roll} canWrite={rollupQ.data?.can_write ?? false} onOpen={(id) => setNav({ level: "district", districtId: id })} />
+          <Company districts={districts} roll={roll} meta={districtMeta} canWrite={rollupQ.data?.can_write ?? false} onOpen={(id) => setNav({ level: "district", districtId: id })} />
         )}
         {nav.level === "district" && district && (
           <District district={district} onOpen={(sid) => setNav({ level: "store", districtId: district.id, storeId: sid })} />
@@ -79,13 +98,44 @@ export function TeamPipelinePage() {
 // ── shared ──────────────────────────────────────────────────────────────────
 function sumRisk(stores: MyStoreNode[], roll: RollupResponse["stores"]) {
   let immediate = 0, medium = 0, reqs = 0, roster = 0, gmRisk = 0, short = 0;
+  const risk: RiskCounts = { immediate: 0, medium: 0, low: 0, na: 0 };
   for (const s of stores) {
     const r = roll[s.id] ?? ZERO;
     immediate += r.risk.immediate; medium += r.risk.medium; reqs += r.open_reqs; roster += r.roster;
+    risk.immediate += r.risk.immediate; risk.medium += r.risk.medium; risk.low += r.risk.low; risk.na += r.risk.na;
     if (r.gm_risk === "immediate" || r.gm_risk === "medium") gmRisk += 1;
     if (r.target != null) short += Math.max(0, r.target - r.non_gm); // team members below sales target (excl GM)
   }
-  return { immediate, medium, reqs, roster, gmRisk, short };
+  return { immediate, medium, reqs, roster, gmRisk, short, risk };
+}
+
+// Risk-distribution donut (immediate=red, medium=amber, low=green, na=grey).
+function RiskDonut({ risk, size = 56, stroke = 7 }: { risk: RiskCounts; size?: number; stroke?: number }) {
+  const total = risk.immediate + risk.medium + risk.low + risk.na || 1;
+  const r = (size - stroke) / 2;
+  const circ = 2 * Math.PI * r;
+  const segs = [
+    { v: risk.immediate, color: "#ef4444" },
+    { v: risk.medium, color: "#f59e0b" },
+    { v: risk.low, color: "#10b981" },
+    { v: risk.na, color: "#d4d4d8" },
+  ];
+  let acc = 0;
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#f1f1f4" strokeWidth={stroke} />
+      {segs.map((s, i) => {
+        if (s.v <= 0) return null;
+        const len = (s.v / total) * circ;
+        const el = (
+          <circle key={i} cx={size / 2} cy={size / 2} r={r} fill="none" stroke={s.color} strokeWidth={stroke}
+            strokeDasharray={`${len} ${circ - len}`} strokeDashoffset={-acc} strokeLinecap="butt" />
+        );
+        acc += len;
+        return el;
+      })}
+    </svg>
+  );
 }
 
 function Breadcrumb({ nav, district, store, onGo }: { nav: Nav; district: MyDistrictNode | null; store: MyStoreNode | null; onGo: (n: Nav) => void }) {
@@ -114,7 +164,8 @@ function Breadcrumb({ nav, district, store, onGo }: { nav: Nav; district: MyDist
 }
 
 // ── Company ─────────────────────────────────────────────────────────────────
-function Company({ districts, roll, canWrite, onOpen }: { districts: MyDistrictNode[]; roll: RollupResponse["stores"]; canWrite: boolean; onOpen: (id: string) => void }) {
+type DistrictMeta = Map<string, { regionName: string | null; doName: string | null }>;
+function Company({ districts, roll, meta, canWrite, onOpen }: { districts: MyDistrictNode[]; roll: RollupResponse["stores"]; meta: DistrictMeta; canWrite: boolean; onOpen: (id: string) => void }) {
   const { profile } = useAuth();
   const qc = useQueryClient();
   const toast = useToast();
@@ -132,10 +183,12 @@ function Company({ districts, roll, canWrite, onOpen }: { districts: MyDistrictN
 
   return (
     <>
-      <div className="mb-1 flex items-end justify-between gap-3">
+      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
-          <div className="text-[11px] font-bold uppercase tracking-wider text-ink-subtle">Team Pipeline</div>
-          <h1 className="text-2xl font-bold tracking-tight text-heading">Talent Planning</h1>
+          <h1 className="text-[28px] font-bold leading-tight tracking-tight text-heading">Drive-In Operations</h1>
+          <div className="mt-1 text-sm text-ink-muted">
+            {allStores.length} store{allStores.length === 1 ? "" : "s"} · {totals.roster.toLocaleString()} team member{totals.roster === 1 ? "" : "s"} · {districts.length} district{districts.length === 1 ? "" : "s"}
+          </div>
         </div>
         <div className="flex gap-2">
           {canWrite && (
@@ -151,12 +204,17 @@ function Company({ districts, roll, canWrite, onOpen }: { districts: MyDistrictN
         </div>
       </div>
 
-      <div className="my-5 grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
-        <Kpi label="Districts" value={districts.length} />
-        <Kpi label="Stores" value={allStores.length} />
-        <Kpi label="GM seats at risk" value={totals.gmRisk} tone={totals.gmRisk ? "red" : undefined} />
-        <Kpi label="Team short vs sales" value={totals.short} tone={totals.short ? "red" : undefined} />
-        <Kpi label="Open requisitions" value={totals.reqs} />
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="flex items-center gap-4 rounded-2xl border border-border bg-surface p-5 shadow-card">
+          <RiskDonut risk={totals.risk} />
+          <div>
+            <div className="text-3xl font-bold leading-none text-heading">{totals.immediate}</div>
+            <div className="mt-1.5 text-[11px] font-bold uppercase tracking-wide text-ink-subtle">Immediate flight risk</div>
+          </div>
+        </div>
+        <StatCard value={totals.gmRisk} label="GM seats at risk" tone={totals.gmRisk ? "red" : undefined} />
+        <StatCard value={totals.short} label="Open seats vs. sales model" tone={totals.short ? "amber" : undefined} />
+        <StatCard value={totals.reqs} label="Open requisitions" />
       </div>
 
       {profile?.role === "admin" && <StaffingModelSettings />}
@@ -165,22 +223,26 @@ function Company({ districts, roll, canWrite, onOpen }: { districts: MyDistrictN
       {districts.length === 0 ? (
         <EmptyState title="No districts in your scope" description="Talent Planning shows the districts and stores you oversee." />
       ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           {districts.map((d) => {
             const t = sumRisk(d.stores, roll);
+            const m = meta.get(d.id);
+            const sub = [m?.regionName, m?.doName ? `DO ${m.doName}` : null].filter(Boolean).join(" · ");
             return (
               <button key={d.id} onClick={() => onOpen(d.id)}
                 className="group rounded-2xl border border-border bg-surface p-5 text-left shadow-card transition hover:border-accent/60 hover:shadow-float">
-                <div className="flex items-start justify-between">
-                  <span className="grid h-11 w-11 place-items-center rounded-xl bg-accent/10 text-accent"><Building2 className="h-5 w-5" strokeWidth={1.75} /></span>
-                  <ChevronRight className="h-4 w-4 text-zinc-300 transition group-hover:translate-x-0.5 group-hover:text-accent" />
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-base font-bold tracking-tight text-heading">{d.name || d.code || "District"}</div>
+                    {sub && <div className="mt-0.5 truncate text-xs text-ink-muted">{sub}</div>}
+                  </div>
+                  <RiskDonut risk={t.risk} size={48} stroke={6} />
                 </div>
-                <div className="mt-4 text-base font-semibold tracking-tight text-heading">{d.name || "District"}</div>
-                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-ink-muted">
-                  <span>{d.stores.length} store{d.stores.length === 1 ? "" : "s"}</span>
-                  {t.immediate > 0 && <span className="font-semibold text-red-600">{t.immediate} immediate</span>}
-                  {t.short > 0 && <span className="font-semibold text-red-600">{t.short} short</span>}
-                  {t.reqs > 0 && <span className="font-semibold text-amber-600">{t.reqs} open req{t.reqs === 1 ? "" : "s"}</span>}
+                <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                  <span className="font-semibold text-heading">{d.stores.length}</span><span className="-ml-3 text-ink-muted">stores</span>
+                  <span className="font-semibold text-heading">{t.roster}</span><span className="-ml-3 text-ink-muted">team</span>
+                  {t.immediate > 0 && <><span className="font-semibold text-red-600">{t.immediate}</span><span className="-ml-3 text-red-600/80">immediate</span></>}
+                  {t.reqs > 0 && <><span className="font-semibold text-amber-600">{t.reqs}</span><span className="-ml-3 text-amber-600/80">open</span></>}
                 </div>
               </button>
             );
@@ -188,6 +250,14 @@ function Company({ districts, roll, canWrite, onOpen }: { districts: MyDistrictN
         </div>
       )}
     </>
+  );
+}
+function StatCard({ value, label, tone }: { value: number | string; label: string; tone?: "red" | "amber" }) {
+  return (
+    <div className="rounded-2xl border border-border bg-surface p-5 shadow-card">
+      <div className={cn("text-3xl font-bold leading-none", tone === "red" ? "text-red-600" : tone === "amber" ? "text-amber-600" : "text-heading")}>{value}</div>
+      <div className="mt-1.5 text-[11px] font-bold uppercase tracking-wide text-ink-subtle">{label}</div>
+    </div>
   );
 }
 
