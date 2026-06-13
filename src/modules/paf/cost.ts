@@ -21,6 +21,12 @@ export function calcPafCost(p: {
   training_bonus_amt?: unknown;
   referral_bonus_amt?: unknown;
   pay_basis?: unknown;
+  // Partial back pay: the form's amount is the remaining owed, so subtract
+  // what the team member already received.
+  backpay_type?: unknown;
+  backpay_paid_reg?: unknown;
+  backpay_paid_cc_tips?: unknown;
+  backpay_paid_declared_tips?: unknown;
 }): number {
   const r = num(p.reg_pay_rate);
   const hourly = String(p.pay_basis ?? "").toLowerCase() === "hourly";
@@ -28,15 +34,19 @@ export function calcPafCost(p: {
     num(p.spot_bonus_amt) +
     num(p.training_bonus_amt) +
     num(p.referral_bonus_amt);
-  return (
+  const gross =
     num(p.reg_hours) * r +
     num(p.ot_hours) * r * 1.5 +
     num(p.cc_tips) +
     num(p.declared_tips) +
     (hourly ? num(p.pto_hours) * r : 0) +
     (hourly ? num(p.illness_hours) * r : 0) +
-    bonusAmt
-  );
+    bonusAmt;
+  const alreadyPaid =
+    String(p.backpay_type ?? "").toLowerCase() === "partial"
+      ? num(p.backpay_paid_reg) + num(p.backpay_paid_cc_tips) + num(p.backpay_paid_declared_tips)
+      : 0;
+  return Math.max(0, gross - alreadyPaid);
 }
 
 export function formatUSD(n: number): string {

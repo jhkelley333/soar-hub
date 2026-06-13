@@ -111,6 +111,21 @@ export function PafDetail({ paf }: { paf: PafRow }) {
         </Section>
       )}
 
+      {paf.category === "Backpay" && (
+        <Section title="Back Pay">
+          <Grid>
+            <Field label="Type" value={paf.backpay_type === "partial" ? "Partial — netted to remaining owed" : "Full"} />
+            {paf.backpay_type === "partial" && (
+              <>
+                <Field label="Already Paid — Regular" value={formatUSD(Number(paf.backpay_paid_reg ?? 0))} />
+                <Field label="Already Paid — CC Tips" value={formatUSD(Number(paf.backpay_paid_cc_tips ?? 0))} />
+                <Field label="Already Paid — Declared Tips" value={formatUSD(Number(paf.backpay_paid_declared_tips ?? 0))} />
+              </>
+            )}
+          </Grid>
+        </Section>
+      )}
+
       {(Number(paf.pto_hours) > 0 || Number(paf.illness_hours) > 0) && (
         <Section title="Leave">
           <Grid>
