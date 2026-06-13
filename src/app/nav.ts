@@ -25,6 +25,7 @@ import {
   CalendarDays,
   LayoutGrid,
   GraduationCap,
+  GitBranch,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -108,6 +109,10 @@ export const NAV: NavItem[] = [
   // Coaching Tool Kit — coaching-for-performance reference cards for hourly
   // managers and above. Lives under People.
   { to: "/coaching",    label: "Coaching Tool Kit", icon: GraduationCap, roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // Team Pipeline — Talent Planning. Gated behind the team_pipeline flag:
+  // roles:[] means it stays dark until the flag resolves true for the user
+  // (admins always see it). Scoped to the viewer's org tree in-app.
+  { to: "/team-pipeline", label: "Team Pipeline", icon: GitBranch, roles: [], flagKey: "team_pipeline" },
   { to: "/schedule",    label: "Schedule",    icon: CalendarDays,    roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/contacts",    label: "Contacts",    icon: BookUser,        roles: null },
   { to: "/resources",   label: "Resources",   icon: BookOpen,        roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
@@ -193,6 +198,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/paf": "PEOPLE",
   "/employee-actions": "PEOPLE",
   "/coaching": "PEOPLE",
+  "/team-pipeline": "PEOPLE",
   "/contacts": "PEOPLE",
   "/team": "PEOPLE",
   "/resources": "WORKSPACE",

@@ -70,6 +70,7 @@ import { ChatLayout } from "@/modules/chat/ChatLayout";
 import { GroupInfoPage } from "@/modules/chat/GroupInfoPage";
 import { CoachingToolkitPage } from "@/modules/coaching/CoachingToolkitPage";
 import { ToolDetailPage } from "@/modules/coaching/ToolDetailPage";
+import { TeamPipelinePage } from "@/modules/team-pipeline/TeamPipelinePage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -328,6 +329,17 @@ export const router = createBrowserRouter([
           <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <ToolDetailPage />
           </ProtectedRoute>
+        ),
+      },
+      {
+        // Team Pipeline (Talent Planning) — gated behind the team_pipeline
+        // feature flag. roles:[] means access comes only from the flag
+        // (global enable or per-user/store allowlist) — admin always in.
+        path: "team-pipeline",
+        element: (
+          <FlagOrRoleRoute roles={[]} flagKey="team_pipeline">
+            <TeamPipelinePage />
+          </FlagOrRoleRoute>
         ),
       },
       {
