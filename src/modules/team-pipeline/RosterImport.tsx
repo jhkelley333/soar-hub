@@ -15,6 +15,8 @@ import {
 } from "./api";
 
 const HEADERS = ["external_id", "full_name", "store_number", "role", "email", "phone", "status", "hire_date"];
+// Rows per request when applying — small enough that one chunk never times out.
+const IMPORT_CHUNK = 400;
 const SAMPLE: Record<string, string>[] = [
   { external_id: "ATS-1001", full_name: "Jordan Rivera", store_number: "9999", role: "General Manager", email: "jordan@example.com", phone: "5551234567", status: "active", hire_date: "2023-04-10" },
   { external_id: "ATS-1002", full_name: "Sam Lee", store_number: "9999", role: "Shift Manager", email: "", phone: "", status: "active", hire_date: "2024-01-15" },
@@ -31,22 +33,40 @@ export function RosterImport({ onDone }: { onDone: () => void }) {
   const [preview, setPreview] = useState<ImportPreviewResponse | null>(null);
   const [result, setResult] = useState<ImportRosterResponse | null>(null);
   const [mode, setMode] = useState<ImportMode>("all");
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
 
   const previewMut = useMutation({
     mutationFn: importPreview,
     onSuccess: setPreview,
     onError: (e: unknown) => setError((e as Error)?.message ?? "Validation failed."),
   });
+  // Apply in chunks so any file size goes through in one click without timing
+  // out the function. Each request re-reads existing members, so a row created
+  // in an earlier chunk is matched (not duplicated) by a later one.
   const importMut = useMutation({
-    mutationFn: (rows: ImportRowInput[]) => importRoster(rows, mode),
+    mutationFn: async (rows: ImportRowInput[]) => {
+      const merged: ImportRosterResponse = { ok: true, results: [], summary: { created: 0, updated: 0, skipped: 0, errors: 0 } };
+      setProgress({ done: 0, total: rows.length });
+      for (let i = 0; i < rows.length; i += IMPORT_CHUNK) {
+        const r = await importRoster(rows.slice(i, i + IMPORT_CHUNK), mode);
+        merged.results.push(...r.results);
+        merged.summary.created += r.summary.created;
+        merged.summary.updated += r.summary.updated;
+        merged.summary.skipped += r.summary.skipped;
+        merged.summary.errors += r.summary.errors;
+        setProgress({ done: Math.min(i + IMPORT_CHUNK, rows.length), total: rows.length });
+      }
+      return merged;
+    },
     onSuccess: (d) => {
+      setProgress(null);
       setResult(d);
       qc.invalidateQueries({ queryKey: ["tp-rollup"] });
       qc.invalidateQueries({ queryKey: ["tp-gms"] });
       qc.invalidateQueries({ queryKey: ["tp-store-roster"] });
       toast.push(`Imported: ${d.summary.created} created, ${d.summary.updated} updated${d.summary.skipped ? `, ${d.summary.skipped} skipped` : ""}.`, "success");
     },
-    onError: (e: unknown) => setError((e as Error)?.message ?? "Import failed."),
+    onError: (e: unknown) => { setProgress(null); setError((e as Error)?.message ?? "Import failed."); },
   });
 
   function ingest(text: string) {
@@ -137,7 +157,7 @@ export function RosterImport({ onDone }: { onDone: () => void }) {
               ))}
             </div>
             <div className="ml-auto flex items-center gap-2">
-              {importMut.isPending && <span className="text-xs text-ink-muted">Writing {willApply} record{willApply === 1 ? "" : "s"}…</span>}
+              {importMut.isPending && <span className="text-xs text-ink-muted">{progress ? `Writing ${progress.done.toLocaleString()} / ${progress.total.toLocaleString()}…` : "Writing…"}</span>}
               <Button variant="ghost" size="sm" disabled={importMut.isPending} onClick={reset}>Start over</Button>
               <Button variant="primary" size="sm" disabled={importMut.isPending || willApply === 0}
                 onClick={() => importMut.mutate(parsed)}>
