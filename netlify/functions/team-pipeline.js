@@ -5,17 +5,27 @@
 // Talent-planning data (flight risk, succession, reqs) is DO-and-above.
 
 import { createClient } from "@supabase/supabase-js";
+import { getFlag } from "./_lib/flags.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 const ORG_WIDE = new Set(["vp", "coo", "admin"]);
-const VIEW_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]); // talent data audience
+// Talent-data audience. GMs are in for their own store (granted for onboarding
+// role cleanup); storesForUser still scopes them to their store via user_scopes.
+const VIEW_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]);
 // SOAR auth role → ladder role key
 const ROLE_MAP = {
   gm: "gm", first_assistant_manager: "fam", associate_manager: "assoc",
   crew_leader: "lead", shift_manager: "shift", crew_member: "crew", carhop: "carhop",
 };
+// Inverse: ladder key → SOAR auth role (for inviting a roster member).
+const LADDER_TO_AUTH = {
+  gm: "gm", fam: "first_assistant_manager", assoc: "associate_manager",
+  shift: "shift_manager", lead: "crew_leader", crew: "crew_member", carhop: "carhop",
+};
+// Invite eligibility: Crew Leader and up get an app login.
+const INVITE_ROLES = new Set(["lead", "shift", "assoc", "fam", "gm"]);
 const ROLE_KEYS = new Set(["carhop", "crew", "lead", "shift", "assoc", "fam", "gm"]);
 
 function admin() {
@@ -78,6 +88,18 @@ async function storesForUser(supa, profile) {
 
 const emptyRisk = () => ({ immediate: 0, medium: 0, low: 0, na: 0 });
 
+// Tag each roster member with whether it's linked to an *active* app profile.
+// Seed-from-profiles links a profile_id; the bulk ATS import doesn't — so this
+// is what the "Account / No account" badge keys off.
+async function annotateAccounts(supa, members) {
+  const ids = [...new Set((members || []).map((m) => m.profile_id).filter(Boolean))];
+  if (!ids.length) return (members || []).map((m) => ({ ...m, has_account: false }));
+  const { data } = await supa.from("profiles").select("id, is_active").in("id", ids);
+  const active = new Set((data || []).filter((p) => p.is_active !== false).map((p) => p.id));
+  return (members || []).map((m) => ({ ...m, has_account: !!(m.profile_id && active.has(m.profile_id)) }));
+}
+const roleEditOn = (supa, user) => getFlag(supa, "team_pipeline_role_edit", { userId: user.id });
+
 // Per-store talent aggregates, keyed by store id. The client overlays these
 // onto its (already RLS-scoped) org tree, so we don't re-ship the org here.
 async function rollup(supa, user) {
@@ -103,7 +125,7 @@ async function rollup(supa, user) {
   }
   for (const r of reqs || []) if (r.status !== "filled") slot(r.store_id).open_reqs++;
 
-  return { stores, can_write: VIEW_ROLES.has(String(user.role)) };
+  return { stores, can_write: VIEW_ROLES.has(String(user.role)), role_edit: await roleEditOn(supa, user) };
 }
 
 async function storeRoster(supa, user, storeId) {
@@ -112,7 +134,12 @@ async function storeRoster(supa, user, storeId) {
   if (!scope.all && !scope.ids.has(storeId)) return { error: "That store is outside your scope.", status: 403 };
   const { data: roster } = await supa.from("tp_team_members").select("*").eq("store_id", storeId).order("created_at", { ascending: true });
   const { data: reqs } = await supa.from("tp_requisitions").select("*").eq("store_id", storeId).neq("status", "filled").order("created_at", { ascending: false });
-  return { roster: roster || [], reqs: reqs || [], can_write: VIEW_ROLES.has(String(user.role)) };
+  return {
+    roster: await annotateAccounts(supa, roster),
+    reqs: reqs || [],
+    can_write: VIEW_ROLES.has(String(user.role)),
+    role_edit: await roleEditOn(supa, user),
+  };
 }
 
 // Every GM (role=gm) in the caller's scope — the GM bench. The client keys
@@ -124,7 +151,7 @@ async function gms(supa, user) {
   let q = supa.from("tp_team_members").select("*").eq("role", "gm");
   if (ids) q = q.in("store_id", ids);
   const { data } = await q;
-  return { gms: data || [] };
+  return { gms: await annotateAccounts(supa, data) };
 }
 
 // Admin-only: bootstrap the roster from existing SOAR profiles that have a
@@ -208,6 +235,11 @@ async function updateMember(supa, user, body) {
   if (!(await memberInScope(supa, scope, id))) return { error: "That team member is outside your scope.", status: 403 };
   const p = body?.patch && typeof body.patch === "object" ? body.patch : {};
   const patch = {};
+  if ("role" in p) {
+    if (!ROLE_KEYS.has(p.role)) return { error: "Unknown role.", status: 400 };
+    if (!(await roleEditOn(supa, user))) return { error: "Role editing is turned off in settings.", status: 403 };
+    patch.role = p.role;
+  }
   if ("flight_risk" in p && RISK_VALS.has(p.flight_risk)) patch.flight_risk = p.flight_risk;
   if ("aspiration" in p && ASPIRATION_VALS.has(p.aspiration)) patch.aspiration = p.aspiration;
   if ("status" in p && STATUS_VALS.has(p.status)) patch.status = p.status;
@@ -448,6 +480,77 @@ async function importRoster(supa, user, body) {
   return { ok: true, results, summary: { created, updated, errors } };
 }
 
+// Merge two roster records for the same person (seed vs. bulk dup). Reassign
+// notes + corrective actions to the keeper, fill its blanks from the loser,
+// then delete the loser. Children move BEFORE the delete (FK cascades); the
+// blank-fill runs AFTER (so a unique external_id never collides mid-merge).
+async function mergeMembers(supa, user, body) {
+  const keepId = body?.keep_id, dropId = body?.drop_id;
+  if (!keepId || !dropId || keepId === dropId) return { error: "Pick two different records to merge.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  const { data: keep } = await supa.from("tp_team_members").select("*").eq("id", keepId).maybeSingle();
+  const { data: drop } = await supa.from("tp_team_members").select("*").eq("id", dropId).maybeSingle();
+  if (!keep || !drop) return { error: "One of those records no longer exists.", status: 404 };
+  for (const m of [keep, drop]) if (!scope.all && !scope.ids.has(m.store_id)) return { error: "Those records are outside your scope.", status: 403 };
+  if (keep.store_id !== drop.store_id) return { error: "Those records are at different stores.", status: 400 };
+
+  const fill = {};
+  for (const f of ["profile_id", "external_id", "email", "phone", "hire_date", "backfill", "comment", "comment_by", "perf", "potential"]) {
+    if ((keep[f] == null || keep[f] === "") && drop[f] != null && drop[f] !== "") fill[f] = drop[f];
+  }
+  if (keep.flight_risk === "na" && drop.flight_risk && drop.flight_risk !== "na") fill.flight_risk = drop.flight_risk;
+  if (keep.aspiration === "current" && drop.aspiration && drop.aspiration !== "current") fill.aspiration = drop.aspiration;
+  const reasons = [...new Set([...(keep.risk_reasons || []), ...(drop.risk_reasons || [])])];
+  if (reasons.length) fill.risk_reasons = reasons;
+
+  await supa.from("tp_notes").update({ team_member_id: keepId }).eq("team_member_id", dropId);
+  await supa.from("tp_corrective_actions").update({ team_member_id: keepId }).eq("team_member_id", dropId);
+  const { error: delErr } = await supa.from("tp_team_members").delete().eq("id", dropId);
+  if (delErr) return { error: delErr.message, status: 500 };
+  if (Object.keys(fill).length) {
+    const { error } = await supa.from("tp_team_members").update(fill).eq("id", keepId);
+    if (error) return { error: error.message, status: 500 };
+  }
+  return { ok: true, kept: keepId };
+}
+
+// Invite a roster member (Crew Leader and up) to create their app account.
+// Creates the auth user, leans on the profiles trigger, sets role/scope from
+// the member's ladder tier + store, and links profile_id back to the roster.
+async function inviteMember(supa, user, body) {
+  const id = body?.member_id;
+  const email = String(body?.email || "").trim().toLowerCase();
+  if (!id) return { error: "Missing team member.", status: 400 };
+  if (!email || !email.includes("@")) return { error: "A valid email is required.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  const { data: m } = await supa.from("tp_team_members").select("*").eq("id", id).maybeSingle();
+  if (!m || (!scope.all && !scope.ids.has(m.store_id))) return { error: "That team member is outside your scope.", status: 403 };
+  if (m.profile_id) return { error: "This person already has an account.", status: 409 };
+  if (!INVITE_ROLES.has(m.role)) return { error: "Invites are for Crew Leader and up.", status: 400 };
+  const authRole = LADDER_TO_AUTH[m.role];
+
+  const redirect = (process.env.URL || process.env.DEPLOY_URL || "").replace(/\/$/, "") + "/accept-invite";
+  const { data: inv, error: invErr } = await supa.auth.admin.inviteUserByEmail(email, {
+    data: m.full_name ? { full_name: m.full_name } : undefined,
+    redirectTo: redirect || undefined,
+  });
+  if (invErr) {
+    if (/already|registered/i.test(invErr.message || "")) return { error: "A user with that email already exists.", status: 409 };
+    return { error: `Invite failed: ${invErr.message}`, status: 500 };
+  }
+  const newId = inv?.user?.id;
+  if (!newId) return { error: "Invite returned no user id.", status: 500 };
+
+  const { error: pErr } = await supa.from("profiles")
+    .update({ full_name: m.full_name, phone: m.phone, role: authRole, is_active: true, primary_store_id: m.store_id })
+    .eq("id", newId);
+  if (pErr) { await supa.auth.admin.deleteUser(newId).catch(() => {}); return { error: `Profile setup failed: ${pErr.message}`, status: 500 }; }
+  const { error: sErr } = await supa.from("user_scopes").insert({ user_id: newId, scope_type: "store", scope_id: m.store_id });
+  if (sErr) { await supa.auth.admin.deleteUser(newId).catch(() => {}); return { error: `Scope assignment failed: ${sErr.message}`, status: 500 }; }
+  await supa.from("tp_team_members").update({ profile_id: newId, email }).eq("id", id);
+  return { ok: true, profile_id: newId, email };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   let user;
@@ -480,6 +583,8 @@ export const handler = async (event) => {
     if (action === "corrective-action-status") return unwrap(await setCorrectiveActionStatus(supa, user, body));
     if (action === "import-preview") return unwrap(await previewImport(supa, user, body));
     if (action === "import-roster") return unwrap(await importRoster(supa, user, body));
+    if (action === "merge-members") return unwrap(await mergeMembers(supa, user, body));
+    if (action === "invite-member") return unwrap(await inviteMember(supa, user, body));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });
