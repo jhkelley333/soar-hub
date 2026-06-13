@@ -167,6 +167,10 @@ function pafRowToFormState(p: PafRow): FormState {
     ot_hours: n(p.ot_hours),
     cc_tips: n(p.cc_tips),
     declared_tips: n(p.declared_tips),
+    backpay_type: p.backpay_type === "partial" ? "partial" : "",
+    backpay_paid_reg: n(p.backpay_paid_reg),
+    backpay_paid_cc_tips: n(p.backpay_paid_cc_tips),
+    backpay_paid_declared_tips: n(p.backpay_paid_declared_tips),
     pto_hours: n(p.pto_hours),
     illness_hours: n(p.illness_hours),
     original_store: s(p.original_store),
@@ -407,6 +411,10 @@ export function PafForm({
       training_bonus_amt: state.training_bonus_amt,
       referral_bonus_amt: state.referral_bonus_amt,
       pay_basis: (state.pay_basis ?? "").toLowerCase(),
+      backpay_type: state.backpay_type,
+      backpay_paid_reg: state.backpay_paid_reg,
+      backpay_paid_cc_tips: state.backpay_paid_cc_tips,
+      backpay_paid_declared_tips: state.backpay_paid_declared_tips,
     });
   }, [state]);
 
@@ -452,6 +460,17 @@ export function PafForm({
       if (key === "category") {
         // Reset bonus_type so picking Bonus shows an empty sub-form.
         next.bonus_type = "";
+        // Drop back-pay sub-state so it can't ship when not on Backpay.
+        next.backpay_type = "";
+        next.backpay_paid_reg = "";
+        next.backpay_paid_cc_tips = "";
+        next.backpay_paid_declared_tips = "";
+      }
+      // Switching back to Full clears the already-paid amounts.
+      if (key === "backpay_type" && value !== "partial") {
+        next.backpay_paid_reg = "";
+        next.backpay_paid_cc_tips = "";
+        next.backpay_paid_declared_tips = "";
       }
       // Referral Tier auto-fill — picking a tier writes the tier's amount
       // into referral_bonus_amt. Editable afterward.
@@ -656,6 +675,65 @@ export function PafForm({
             />
           </FormSection>
         ))}
+
+      {/* Back pay type — custom block. Full = the form as-is; Partial nets out
+          what the team member already received (reg pay / CC tips / declared). */}
+      {state.category === "Backpay" && (
+        <FormSection
+          title="Back pay type"
+          description="Full pays the entire amount above. Partial records what was already paid and nets the cost down to what's still owed."
+        >
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap gap-2">
+              {([["full", "Full back pay"], ["partial", "Partial back pay"]] as [string, string][]).map(([val, label]) => {
+                const on = val === "partial" ? state.backpay_type === "partial" : state.backpay_type !== "partial";
+                return (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => patch("backpay_type", val)}
+                    className={`rounded-md px-3 py-1.5 text-sm font-semibold ring-1 ring-inset transition ${
+                      on ? "bg-midnight text-white ring-midnight" : "bg-white text-zinc-600 ring-zinc-200 hover:text-midnight"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            {state.backpay_type === "partial" && (
+              <>
+                <p className="text-xs text-zinc-500">
+                  Enter what was already paid in each bucket. The estimated cost above is the remaining amount owed.
+                </p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  {([
+                    ["backpay_paid_reg", "Regular pay already paid"],
+                    ["backpay_paid_cc_tips", "CC tips already paid"],
+                    ["backpay_paid_declared_tips", "Declared tips already paid"],
+                  ] as [string, string][]).map(([k, label]) => (
+                    <NhField key={k} label={label}>
+                      <div className="relative">
+                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">$</span>
+                        <input
+                          inputMode="decimal"
+                          value={state[k] ?? ""}
+                          onChange={(e) => patch(k, e.target.value.replace(/[^0-9.]/g, ""))}
+                          placeholder="0.00"
+                          className={`${NH_INPUT} pl-6`}
+                        />
+                      </div>
+                    </NhField>
+                  ))}
+                </div>
+                <div className="rounded-md bg-zinc-50 px-3 py-2 text-sm text-zinc-700 ring-1 ring-inset ring-zinc-100">
+                  Remaining owed after partial payment: <strong className="text-midnight">{formatUSD(liveCost)}</strong>
+                </div>
+              </>
+            )}
+          </div>
+        </FormSection>
+      )}
 
       {/* New Hire (Salary Leader) — custom, role-conditional section. */}
       {state.category === NEW_HIRE_LEADER && (
