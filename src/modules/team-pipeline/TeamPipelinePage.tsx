@@ -111,29 +111,34 @@ function sumRisk(stores: MyStoreNode[], roll: RollupResponse["stores"]) {
 
 // Risk-distribution donut (immediate=red, medium=amber, low=green, na=grey).
 function RiskDonut({ risk, size = 56, stroke = 7 }: { risk: RiskCounts; size?: number; stroke?: number }) {
-  const total = risk.immediate + risk.medium + risk.low + risk.na || 1;
+  const total = risk.immediate + risk.medium + risk.low + risk.na;
   const r = (size - stroke) / 2;
-  const circ = 2 * Math.PI * r;
+  const c = size / 2;
   const segs = [
     { v: risk.immediate, color: "#ef4444" },
     { v: risk.medium, color: "#f59e0b" },
     { v: risk.low, color: "#10b981" },
-    { v: risk.na, color: "#d4d4d8" },
+    { v: risk.na, color: "#e4e4e7" },
   ];
+  // pathLength=100 makes the dash math exact (percentages, no circumference
+  // rounding); the <g> rotates around the true center so arcs start at 12
+  // o'clock and sit on the ring.
   let acc = 0;
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#f1f1f4" strokeWidth={stroke} />
-      {segs.map((s, i) => {
-        if (s.v <= 0) return null;
-        const len = (s.v / total) * circ;
-        const el = (
-          <circle key={i} cx={size / 2} cy={size / 2} r={r} fill="none" stroke={s.color} strokeWidth={stroke}
-            strokeDasharray={`${len} ${circ - len}`} strokeDashoffset={-acc} strokeLinecap="butt" />
-        );
-        acc += len;
-        return el;
-      })}
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0">
+      <g transform={`rotate(-90 ${c} ${c})`}>
+        <circle cx={c} cy={c} r={r} fill="none" stroke="#f1f1f4" strokeWidth={stroke} />
+        {total > 0 && segs.map((s, i) => {
+          if (s.v <= 0) return null;
+          const pct = (s.v / total) * 100;
+          const el = (
+            <circle key={i} cx={c} cy={c} r={r} fill="none" stroke={s.color} strokeWidth={stroke}
+              pathLength={100} strokeDasharray={`${pct} ${100 - pct}`} strokeDashoffset={-acc} />
+          );
+          acc += pct;
+          return el;
+        })}
+      </g>
     </svg>
   );
 }
