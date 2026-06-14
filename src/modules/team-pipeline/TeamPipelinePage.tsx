@@ -247,7 +247,7 @@ function Company({ districts, roll, meta, canWrite, onOpen }: { districts: MyDis
                   <span className="font-semibold text-heading">{d.stores.length}</span><span className="-ml-3 text-ink-muted">stores</span>
                   <span className="font-semibold text-heading">{t.roster}</span><span className="-ml-3 text-ink-muted">team</span>
                   <span className={cn("font-semibold", t.immediate > 0 ? "text-red-600" : "text-heading")}>{t.immediate}</span><span className={cn("-ml-3", t.immediate > 0 ? "text-red-600/80" : "text-ink-muted")}>immediate</span>
-                  <span className={cn("font-semibold", t.reqs > 0 ? "text-amber-600" : "text-heading")}>{t.reqs}</span><span className={cn("-ml-3", t.reqs > 0 ? "text-amber-600/80" : "text-ink-muted")}>open</span>
+                  <span className={cn("font-semibold", t.short > 0 ? "text-amber-600" : "text-heading")}>{t.short}</span><span className={cn("-ml-3", t.short > 0 ? "text-amber-600/80" : "text-ink-muted")}>open seats</span>
                 </div>
               </button>
             );
