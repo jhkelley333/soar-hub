@@ -71,6 +71,8 @@ import { GroupInfoPage } from "@/modules/chat/GroupInfoPage";
 import { CoachingToolkitPage } from "@/modules/coaching/CoachingToolkitPage";
 import { ToolDetailPage } from "@/modules/coaching/ToolDetailPage";
 import { TeamPipelinePage } from "@/modules/team-pipeline/TeamPipelinePage";
+import { ManualSearchPage } from "@/modules/manuals/ManualSearchPage";
+import { ManualAdminPage } from "@/modules/manuals/ManualAdminPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -154,6 +156,15 @@ export const router = createBrowserRouter([
         ),
       },
       { path: "contacts", element: <ContactsPage /> },
+      { path: "manuals", element: <ManualSearchPage /> },
+      {
+        path: "admin/manuals",
+        element: (
+          <ProtectedRoute requireRoles={["rvp", "vp", "coo", "admin"]}>
+            <ManualAdminPage />
+          </ProtectedRoute>
+        ),
+      },
       { path: "chat", element: <ChatLayout /> },
       { path: "chat/:threadId", element: <ChatLayout /> },
       { path: "chat/:threadId/info", element: <GroupInfoPage /> },

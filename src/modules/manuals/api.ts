@@ -1,0 +1,135 @@
+// Manual & Guide Search — client API. Calls the search_manuals RPC, which is
+// SECURITY INVOKER, so results are already RLS-scoped to the caller.
+import { supabase } from "@/lib/supabase";
+
+export interface ManualSearchHit {
+  chunk_id: string;
+  manual_id: string;
+  manual_title: string;
+  section_path: string | null;
+  version_label: string;
+  snippet: string; // ts_headline output: matches wrapped in <mark>…</mark>
+  rank: number;
+}
+
+export async function searchManuals(
+  q: string,
+  manualId: string | null = null,
+  maxResults = 20,
+): Promise<ManualSearchHit[]> {
+  const { data, error } = await supabase.rpc("search_manuals", {
+    q,
+    manual_id: manualId,
+    max_results: maxResults,
+  });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ManualSearchHit[];
+}
+
+// ── Admin (RVP+/admin) ────────────────────────────────────────────────────────
+export type ManualScope = "company" | "region" | "area" | "district" | "store";
+
+export interface Manual {
+  id: string;
+  title: string;
+  slug: string;
+  description: string | null;
+  scope: ManualScope;
+  scope_ref: string | null;
+  created_at: string;
+}
+export interface DocVersion {
+  id: string;
+  manual_id: string;
+  version_label: string;
+  storage_path: string;
+  is_active: boolean;
+  uploaded_by: string | null;
+  uploaded_at: string;
+  indexed_at: string | null;
+}
+
+export async function listManualsAdmin(): Promise<{ manuals: Manual[]; versions: DocVersion[] }> {
+  const [m, v] = await Promise.all([
+    supabase.from("manuals").select("*").order("title"),
+    supabase.from("doc_versions").select("*").order("uploaded_at", { ascending: false }),
+  ]);
+  if (m.error) throw new Error(m.error.message);
+  if (v.error) throw new Error(v.error.message);
+  return { manuals: (m.data ?? []) as Manual[], versions: (v.data ?? []) as DocVersion[] };
+}
+
+const slugify = (s: string) =>
+  s.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "manual";
+
+export async function createManual(input: {
+  title: string;
+  description?: string;
+  scope: ManualScope;
+  scope_ref?: string | null;
+}): Promise<Manual> {
+  const slug = `${slugify(input.title)}-${Math.random().toString(36).slice(2, 6)}`;
+  const { data, error } = await supabase
+    .from("manuals")
+    .insert({
+      title: input.title.trim(),
+      slug,
+      description: input.description?.trim() || null,
+      scope: input.scope,
+      scope_ref: input.scope === "company" ? null : (input.scope_ref?.trim() || null),
+    })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+  return data as Manual;
+}
+
+// Upload a file to the `manuals` bucket, insert the doc_version row, then index
+// it (chunks). Does NOT activate — that's a separate explicit step.
+export async function uploadVersion(manualId: string, versionLabel: string, file: File): Promise<DocVersion> {
+  const ext = (file.name.split(".").pop() || "pdf").toLowerCase();
+  const path = `${manualId}/${crypto.randomUUID()}.${ext}`;
+  const up = await supabase.storage.from("manuals").upload(path, file, {
+    contentType: file.type || "application/pdf",
+    upsert: false,
+  });
+  if (up.error) throw new Error(up.error.message);
+
+  const { data: userRes } = await supabase.auth.getUser();
+  const { data, error } = await supabase
+    .from("doc_versions")
+    .insert({
+      manual_id: manualId,
+      version_label: versionLabel.trim(),
+      storage_path: path,
+      uploaded_by: userRes?.user?.id ?? null,
+    })
+    .select()
+    .single();
+  if (error) throw new Error(error.message);
+
+  await ingestVersion(data.id);
+  return data as DocVersion;
+}
+
+// ── ingest-manual Netlify function ────────────────────────────────────────────
+async function fnPost<T>(action: "ingest" | "activate", body: Record<string, unknown>): Promise<T> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Not signed in");
+  const res = await fetch(`/.netlify/functions/ingest-manual?action=${action}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) {
+    let message = `Request failed (${res.status})`;
+    try { const b = await res.json(); if (b?.error) message = b.error; } catch { /* ignore */ }
+    throw new Error(message);
+  }
+  return res.json() as Promise<T>;
+}
+export const ingestVersion = (docVersionId: string) =>
+  fnPost<{ ok: true; chunks: number }>("ingest", { doc_version_id: docVersionId });
+export const activateVersion = (docVersionId: string) =>
+  fnPost<{ ok: true }>("activate", { doc_version_id: docVersionId });

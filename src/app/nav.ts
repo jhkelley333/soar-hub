@@ -26,6 +26,7 @@ import {
   LayoutGrid,
   GraduationCap,
   GitBranch,
+  BookMarked,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -115,6 +116,8 @@ export const NAV: NavItem[] = [
   { to: "/team-pipeline", label: "Team Pipeline", icon: GitBranch, roles: [], flagKey: "team_pipeline" },
   { to: "/schedule",    label: "Schedule",    icon: CalendarDays,    roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/contacts",    label: "Contacts",    icon: BookUser,        roles: null },
+  { to: "/manuals",     label: "Manual Search", icon: BookMarked,    roles: null },
+  { to: "/admin/manuals", label: "Manuals Admin", icon: BookMarked,  roles: ["rvp", "vp", "coo", "admin"] },
   { to: "/resources",   label: "Resources",   icon: BookOpen,        roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/team",        label: "My Team",     icon: Users,           roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/my-stores",   label: "My Stores",   icon: Building2,       roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
@@ -202,6 +205,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/contacts": "PEOPLE",
   "/team": "PEOPLE",
   "/resources": "WORKSPACE",
+  "/manuals": "WORKSPACE",
   "/my-stores": "WORKSPACE",
   "/account": "WORKSPACE",
   "/admin/org": "ADMIN",
@@ -209,6 +213,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/admin/feature-flags": "ADMIN",
   "/admin/role-access": "ADMIN",
   "/admin/paf-config": "ADMIN",
+  "/admin/manuals": "ADMIN",
   "/admin/labor-sync": "ADMIN",
 };
 
