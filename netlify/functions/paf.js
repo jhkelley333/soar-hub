@@ -96,6 +96,14 @@ const REJECTABLE_STATUSES = new Set([
   "Needs Info",
 ]);
 
+// Statuses a PAF can be edited from: rejected (the original flow), or still
+// awaiting a decision (pending). Once Approved/Processed it's locked.
+const EDITABLE_STATUSES = new Set(["Rejected", "Pending", "Pending SDO Approval"]);
+
+// Statuses from which the submitter may delete their OWN PAF (before anyone
+// has actioned it). Admins can delete any non-archived PAF.
+const SUBMITTER_DELETABLE_STATUSES = new Set(["Pending", "Pending SDO Approval"]);
+
 // Light in-process cache for the form config so list/submit don't hit
 // the DB every call. Same TTL as paf-config.js.
 const CACHE_TTL_MS = 60 * 1000;
@@ -910,9 +918,9 @@ async function resubmitPaf(supa, user, body) {
   if (fetchErr) return { error: fetchErr.message, status: 500 };
   if (!existing) return { error: "PAF not found.", status: 404 };
   if (existing.archived) return { error: "This PAF was deleted.", status: 400 };
-  if (existing.status !== "Rejected") {
+  if (!EDITABLE_STATUSES.has(existing.status)) {
     return {
-      error: `Only a rejected PAF can be edited and resubmitted (status: ${existing.status}).`,
+      error: `This PAF can no longer be edited (status: ${existing.status}). Only pending or rejected PAFs can be edited.`,
       status: 400,
     };
   }
@@ -977,16 +985,17 @@ async function resubmitPaf(supa, user, body) {
     resubmitted_by_email: onBehalf ? user.email : null,
   };
 
-  // Guard against a concurrent process: only update while still Rejected.
+  // Guard against a concurrent decision: only update while still in the same
+  // editable status it was when we fetched it.
   const { data: updated, error: updErr } = await supa
     .from("paf_submissions")
     .update(updateRow)
     .eq("id", id)
-    .eq("status", "Rejected")
+    .eq("status", existing.status)
     .select("id");
   if (updErr) return { error: updErr.message, status: 500 };
   if (!updated || updated.length === 0) {
-    return { error: "This PAF is no longer in a rejected state.", status: 409 };
+    return { error: "This PAF was just actioned and can no longer be edited.", status: 409 };
   }
 
   await logAudit(supa, {
@@ -1529,9 +1538,6 @@ async function logAudit(supa, entry) {
 // audit log as "Deleted by System Admin" with the reason. A reason is required.
 // ----------------------------------------------------------------------------
 async function deletePaf(supa, user, body) {
-  if (user.role !== "admin") {
-    return { error: "Only a System Admin can delete a PAF.", status: 403 };
-  }
   const id = body?.id;
   const reason = sanitizeText(body?.reason, 2000);
   if (!id) return { error: "id is required.", status: 400 };
@@ -1539,12 +1545,24 @@ async function deletePaf(supa, user, body) {
 
   const { data: existing, error: fetchErr } = await supa
     .from("paf_submissions")
-    .select("id, archived")
+    .select("id, archived, status, submitter_id")
     .eq("id", id)
     .maybeSingle();
   if (fetchErr) return { error: fetchErr.message, status: 500 };
   if (!existing) return { error: "PAF not found.", status: 404 };
   if (existing.archived) return { error: "This PAF is already deleted.", status: 400 };
+
+  // Admins can delete any PAF; the submitter can delete their OWN PAF only
+  // while it's still pending (before anyone has approved/processed it).
+  const isAdmin = user.role === "admin";
+  const ownPending =
+    existing.submitter_id === user.id && SUBMITTER_DELETABLE_STATUSES.has(existing.status);
+  if (!isAdmin && !ownPending) {
+    return {
+      error: "You can only delete your own PAF while it's still pending. Ask an admin to remove an actioned one.",
+      status: 403,
+    };
+  }
 
   const { error } = await supa
     .from("paf_submissions")

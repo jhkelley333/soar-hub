@@ -75,10 +75,16 @@ export function PafTable({
   // resubmit on a submitter's behalf (the list is already scope-filtered, so
   // anything they can see here is in their scope). Server re-checks.
   const onBehalfRoles = ["sdo", "rvp", "vp", "coo", "admin"];
+  // Editable while rejected (the original flow) or still pending a decision.
+  const editableStatuses = ["Rejected", "Pending", "Pending SDO Approval"];
   const canEditResubmit = (p: PafRow) =>
     !!onEdit &&
-    p.status === "Rejected" &&
+    editableStatuses.includes(p.status) &&
     (p.submitter_id === profile?.id || onBehalfRoles.includes(profile?.role ?? ""));
+  // Admins can delete any PAF; the submitter can delete their own while pending.
+  const pendingStatuses = ["Pending", "Pending SDO Approval"];
+  const canDelete = (p: PafRow) =>
+    isAdmin || (p.submitter_id === profile?.id && pendingStatuses.includes(p.status));
   const [detail, setDetail] = useState<PafRow | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("created_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -219,10 +225,10 @@ export function PafTable({
                   }}
                 >
                   <Pencil className="mr-1 h-3.5 w-3.5" strokeWidth={2} />
-                  Edit & resubmit
+                  {detail.status === "Rejected" ? "Edit & resubmit" : "Edit"}
                 </Button>
               )}
-              {detail && isAdmin && (
+              {detail && canDelete(detail) && (
                 <DeletePafAction paf={detail} onComplete={() => setDetail(null)} />
               )}
             </div>
