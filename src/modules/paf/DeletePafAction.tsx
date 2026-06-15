@@ -78,9 +78,7 @@ export function DeletePafAction({
         <div className="space-y-3">
           <p className="text-sm text-zinc-700">
             This removes the PAF from every queue. The record is kept and the
-            deletion is logged in the PAF's history as{" "}
-            <span className="font-medium">Deleted by System Admin</span> with
-            your reason.
+            deletion is logged in the PAF's history with your name and reason.
           </p>
           <div>
             <Label htmlFor="del-reason">Reason *</Label>
