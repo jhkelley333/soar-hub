@@ -118,11 +118,12 @@ function ManualCard({ manual, versions, onChange }: { manual: Manual; versions: 
   const fileRef = useRef<HTMLInputElement>(null);
   const [label, setLabel] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [pct, setPct] = useState<number | null>(null);
 
   const upload = useMutation({
-    mutationFn: () => uploadVersion(manual.id, label, file!),
-    onSuccess: (v) => { toast.push(`Version ${v.version_label} uploaded & indexed.`, "success"); setLabel(""); setFile(null); if (fileRef.current) fileRef.current.value = ""; onChange(); },
-    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Upload failed.", "error"),
+    mutationFn: () => uploadVersion(manual.id, label, file!, (f) => setPct(Math.round(f * 100))),
+    onSuccess: (v) => { toast.push(`Version ${v.version_label} uploaded & indexed.`, "success"); setLabel(""); setFile(null); setPct(null); if (fileRef.current) fileRef.current.value = ""; onChange(); },
+    onError: (e: unknown) => { setPct(null); toast.push((e as Error)?.message ?? "Upload failed.", "error"); },
   });
   const activate = useMutation({
     mutationFn: (id: string) => activateVersion(id),
@@ -186,10 +187,16 @@ function ManualCard({ manual, versions, onChange }: { manual: Manual; versions: 
             <Input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Version label, e.g. 2026.2" className="w-40" />
             <input ref={fileRef} type="file" accept=".pdf,application/pdf" onChange={onPick} className="text-sm text-ink-2" />
             <Button size="sm" className="ml-auto" disabled={!label.trim() || !file || upload.isPending} onClick={() => upload.mutate()}>
-              <Upload className="mr-1 h-3.5 w-3.5" />{upload.isPending ? "Uploading…" : "Upload & index"}
+              <Upload className="mr-1 h-3.5 w-3.5" />
+              {upload.isPending ? (pct !== null && pct < 100 ? `Uploading ${pct}%…` : "Indexing…") : "Upload & index"}
             </Button>
           </div>
-          <p className="mt-1.5 text-[11px] text-ink-subtle">PDF. Uploading indexes the version (does not make it live). Hit Activate when ready.</p>
+          {upload.isPending && pct !== null && (
+            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-surface-sunk">
+              <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${pct}%` }} />
+            </div>
+          )}
+          <p className="mt-1.5 text-[11px] text-ink-subtle">PDF. Uploading indexes the version (does not make it live). Hit Activate when ready. Large files upload in chunks and resume on a dropped connection.</p>
         </div>
       </CardBody>
     </Card>
