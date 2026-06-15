@@ -84,16 +84,51 @@ export async function createManual(input: {
   return data as Manual;
 }
 
+// Resumable (TUS) upload to Supabase Storage — required for large files
+// (operations manuals can be ~100MB; the standard one-shot upload is
+// unreliable at that size). Reports progress 0..1.
+async function resumableUpload(path: string, file: File, onProgress?: (frac: number) => void): Promise<void> {
+  const { Upload } = await import("tus-js-client");
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Not signed in");
+  const projectUrl = import.meta.env.VITE_SUPABASE_URL as string;
+  await new Promise<void>((resolve, reject) => {
+    const upload = new Upload(file, {
+      endpoint: `${projectUrl}/storage/v1/upload/resumable`,
+      retryDelays: [0, 3000, 5000, 10000, 20000],
+      headers: { authorization: `Bearer ${token}`, "x-upsert": "false" },
+      uploadDataDuringCreation: true,
+      removeFingerprintOnSuccess: true,
+      chunkSize: 6 * 1024 * 1024, // Supabase requires 6MB chunks
+      metadata: {
+        bucketName: "manuals",
+        objectName: path,
+        contentType: file.type || "application/pdf",
+        cacheControl: "3600",
+      },
+      onError: (e) => reject(e instanceof Error ? e : new Error(String(e))),
+      onProgress: (sent, total) => onProgress?.(total ? sent / total : 0),
+      onSuccess: () => resolve(),
+    });
+    upload.findPreviousUploads().then((prev) => {
+      if (prev.length) upload.resumeFromPreviousUpload(prev[0]);
+      upload.start();
+    });
+  });
+}
+
 // Upload a file to the `manuals` bucket, insert the doc_version row, then index
 // it (chunks). Does NOT activate — that's a separate explicit step.
-export async function uploadVersion(manualId: string, versionLabel: string, file: File): Promise<DocVersion> {
+export async function uploadVersion(
+  manualId: string,
+  versionLabel: string,
+  file: File,
+  onProgress?: (frac: number) => void,
+): Promise<DocVersion> {
   const ext = (file.name.split(".").pop() || "pdf").toLowerCase();
   const path = `${manualId}/${crypto.randomUUID()}.${ext}`;
-  const up = await supabase.storage.from("manuals").upload(path, file, {
-    contentType: file.type || "application/pdf",
-    upsert: false,
-  });
-  if (up.error) throw new Error(up.error.message);
+  await resumableUpload(path, file, onProgress);
 
   const { data: userRes } = await supabase.auth.getUser();
   const { data, error } = await supabase
