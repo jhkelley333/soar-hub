@@ -47,6 +47,20 @@ export function fetchWeatherForStore(storeId: string): Promise<WeatherForStore> 
   return authGet<WeatherForStore>(`${FN}?action=for-store&store_id=${encodeURIComponent(storeId)}`);
 }
 
+export interface WeatherHistoryPoint {
+  date: string;
+  temp_f: number | null;
+  hi_f: number | null;
+  lo_f: number | null;
+}
+export interface WeatherHistory {
+  location: { id: string; city: string; state: string; label: string | null } | null;
+  points: WeatherHistoryPoint[];
+}
+export function fetchWeatherHistory(storeId: string, days: number): Promise<WeatherHistory> {
+  return authGet<WeatherHistory>(`${FN}?action=history&store_id=${encodeURIComponent(storeId)}&days=${days}`);
+}
+
 async function authPost<T>(path: string, body?: unknown): Promise<T> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;

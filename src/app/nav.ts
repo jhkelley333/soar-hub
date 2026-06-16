@@ -27,6 +27,7 @@ import {
   GraduationCap,
   GitBranch,
   BookMarked,
+  CloudSun,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -88,6 +89,7 @@ export const NAV: NavItem[] = [
   // visibility regardless, but we gate the nav link to GM+ so shift
   // managers don't see a dead link.
   { to: "/reno-scoping", label: "Reno Scoping", icon: HardHat,        roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  { to: "/weather",     label: "Weather",     icon: CloudSun,        roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
   // My Walks — the GM/assignee home for store walkthroughs (start/continue
   // assigned walks + recent submissions). Wide assignee allowlist.
   { to: "/my-walks",    label: "My Walks",    icon: Footprints,      roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
@@ -195,6 +197,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/labor": "OPERATIONS",
   "/admin/cash-management": "OPERATIONS",
   "/reno-scoping": "OPERATIONS",
+  "/weather": "OPERATIONS",
   "/schedule": "OPERATIONS",
   "/my-walks": "OPERATIONS",
   "/walkthroughs": "OPERATIONS",

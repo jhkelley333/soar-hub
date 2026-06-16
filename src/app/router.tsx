@@ -73,6 +73,7 @@ import { ToolDetailPage } from "@/modules/coaching/ToolDetailPage";
 import { TeamPipelinePage } from "@/modules/team-pipeline/TeamPipelinePage";
 import { ManualSearchPage } from "@/modules/manuals/ManualSearchPage";
 import { ManualAdminPage } from "@/modules/manuals/ManualAdminPage";
+import { WeatherPage } from "@/modules/weather/WeatherPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -157,6 +158,14 @@ export const router = createBrowserRouter([
       },
       { path: "contacts", element: <ContactsPage /> },
       { path: "manuals", element: <ManualSearchPage /> },
+      {
+        path: "weather",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <WeatherPage />
+          </ProtectedRoute>
+        ),
+      },
       {
         path: "admin/manuals",
         element: (
