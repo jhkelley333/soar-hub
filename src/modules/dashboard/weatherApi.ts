@@ -46,3 +46,17 @@ export interface WeatherForStore {
 export function fetchWeatherForStore(storeId: string): Promise<WeatherForStore> {
   return authGet<WeatherForStore>(`${FN}?action=for-store&store_id=${encodeURIComponent(storeId)}`);
 }
+
+// Admin-only: run a manual pull now (same core as the schedule).
+export async function triggerWeatherSync(): Promise<{ ok: boolean; locations: number; recorded: number; failed: number }> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Not signed in");
+  const res = await fetch(`${FN}?action=sync`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) {
+    let message = `Request failed (${res.status})`;
+    try { const b = await res.json(); if (b?.error) message = b.error; } catch { /* ignore */ }
+    throw new Error(message);
+  }
+  return res.json();
+}

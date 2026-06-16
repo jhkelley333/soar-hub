@@ -1,11 +1,14 @@
 // Dashboard weather card. Reads the latest recorded observation for the user's
 // store city (populated by the weather-sync schedule). Shows current conditions
-// + a short forecast strip. Self-hides if there's no data yet (e.g. before the
-// first sync, or the Weather API key isn't set).
-import { useQuery } from "@tanstack/react-query";
-import { CloudSun } from "lucide-react";
+// + a short forecast strip. Admins get a "Sync now" button (and still see the
+// card before any data exists, so they can seed it). Non-admins see nothing
+// until there's data.
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { CloudSun, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { fetchWeatherForStore, type WeatherForecastDay } from "./weatherApi";
+import { useAuth } from "@/auth/AuthProvider";
+import { useToast } from "@/shared/ui/Toaster";
+import { fetchWeatherForStore, triggerWeatherSync, type WeatherForecastDay } from "./weatherApi";
 
 const PANEL =
   "rounded-2xl border border-zinc-200 bg-white shadow-card dark:border-night-line dark:bg-night-raised dark:shadow-none";
@@ -15,6 +18,11 @@ const dayLabel = (d: string | null) =>
   d ? new Date(`${d}T00:00:00`).toLocaleDateString("en-US", { weekday: "short" }) : "";
 
 export function WeatherWidget({ storeId }: { storeId: string }) {
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === "admin";
+  const qc = useQueryClient();
+  const toast = useToast();
+
   const q = useQuery({
     queryKey: ["weather", storeId],
     queryFn: () => fetchWeatherForStore(storeId),
@@ -22,12 +30,36 @@ export function WeatherWidget({ storeId }: { storeId: string }) {
     refetchOnWindowFocus: false,
   });
 
-  // No data yet (pre-first-sync / no key) — don't clutter the dashboard.
-  if (q.isError || (q.data && !q.data.current && q.data.forecast.length === 0)) return null;
+  const sync = useMutation({
+    mutationFn: triggerWeatherSync,
+    onSuccess: (r) => {
+      toast.push(`Weather sync complete — ${r.recorded} location${r.recorded === 1 ? "" : "s"} recorded.`, "success");
+      qc.invalidateQueries({ queryKey: ["weather"] });
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Sync failed.", "error"),
+  });
 
   const cur = q.data?.current;
   const loc = q.data?.location;
   const days: WeatherForecastDay[] = (q.data?.forecast ?? []).slice(0, 5);
+  const hasData = !!(cur || days.length);
+
+  // No data yet: hide for everyone except admins (who can seed it).
+  if (!q.isLoading && !hasData && !isAdmin) return null;
+  if (q.isError && !isAdmin) return null;
+
+  const SyncBtn = isAdmin ? (
+    <button
+      type="button"
+      onClick={() => sync.mutate()}
+      disabled={sync.isPending}
+      title="Pull weather now (all cities)"
+      className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-accent hover:bg-accent/10 disabled:opacity-50"
+    >
+      <RefreshCw className={cn("h-3.5 w-3.5", sync.isPending && "animate-spin")} />
+      {sync.isPending ? "Syncing…" : "Sync now"}
+    </button>
+  ) : null;
 
   return (
     <section className={cn(PANEL, "p-4")}>
@@ -35,12 +67,17 @@ export function WeatherWidget({ storeId }: { storeId: string }) {
         <div className="flex items-center gap-2 text-sm font-semibold text-zinc-700 dark:text-night-text">
           <CloudSun className="h-4 w-4 text-accent" />
           Weather
+          {loc?.label && <span className="truncate text-xs font-normal text-zinc-400">· {loc.label}</span>}
         </div>
-        {loc?.label && <span className="truncate text-xs text-zinc-400">{loc.label}</span>}
+        {SyncBtn}
       </div>
 
       {q.isLoading ? (
         <div className="h-20 animate-pulse rounded-lg bg-zinc-100 dark:bg-night-line" />
+      ) : !hasData ? (
+        <div className="rounded-lg bg-zinc-50 px-3 py-3 text-xs text-zinc-500 dark:bg-night-line">
+          No weather recorded yet. {isAdmin ? "Use Sync now to pull it (needs the Weather API key set)." : ""}
+        </div>
       ) : (
         <>
           <div className="flex items-center gap-3">

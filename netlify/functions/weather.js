@@ -6,6 +6,7 @@
 //   GET ?action=history&store_id=…&days=30 -> { location, points: [{date, temp_f, hi_f, lo_f}] }
 
 import { createClient } from "@supabase/supabase-js";
+import { syncWeather, weatherKeyConfigured } from "./_lib/weather-core.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -83,6 +84,14 @@ export const handler = async (event) => {
   const params = event.queryStringParameters || {};
   const action = params.action || "for-store";
   try {
+    // Admin-triggered manual sync (same core the schedule runs).
+    if (event.httpMethod === "POST" && action === "sync") {
+      const { data: prof } = await supa.from("profiles").select("role").eq("id", user.id).maybeSingle();
+      if (prof?.role !== "admin") return respond(403, { error: "Only an admin can trigger a weather sync." });
+      if (!weatherKeyConfigured()) return respond(400, { error: "Weather API key isn't configured yet (GOOGLE_WEATHER_API_KEY)." });
+      const result = await syncWeather(supa);
+      return respond(200, result);
+    }
     if (action === "for-store") return respond(200, await forStore(supa, params.store_id));
     if (action === "history") return respond(200, await history(supa, params.store_id, parseInt(params.days, 10) || 30));
     return respond(400, { error: `Unknown action: ${action}` });
