@@ -158,6 +158,14 @@ export function deletePaf(id: string, reason: string): Promise<{ ok: true }> {
   });
 }
 
+// Manually text the assigned approver a heads-up (when a quick response is needed).
+export function textPafApprover(id: string): Promise<{ ok: true; to: string }> {
+  return request<{ ok: true; to: string }>(`${FN}?action=text-approver`, {
+    method: "POST",
+    body: JSON.stringify({ id }),
+  });
+}
+
 export function needsApprovalPaf(
   id: string,
   approval_email: string,

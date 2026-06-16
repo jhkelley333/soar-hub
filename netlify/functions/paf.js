@@ -43,6 +43,8 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
+import { sendSms, telnyxConfigured } from "./_lib/telnyx.js";
+import { getFlag } from "./_lib/flags.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -1588,6 +1590,50 @@ async function deletePaf(supa, user, body) {
   return { ok: true };
 }
 
+// text-approver — manual SMS nudge to the assigned approver when a quick
+// response is needed. Heads-up + a link to the PAF queue (not a magic link).
+const TEXTABLE_STATUSES = new Set(["Pending", "Pending SDO Approval"]);
+const PAF_TEXT_FLAG = "paf_text_approver";
+async function textApprover(supa, user, body) {
+  if (!SUBMIT_ROLES.has(user.role)) return { error: "Your role can't send PAF texts.", status: 403 };
+  if (!(await getFlag(supa, PAF_TEXT_FLAG, { userId: user.id }))) {
+    return { error: "Texting the approver isn't turned on yet.", status: 403 };
+  }
+  if (!telnyxConfigured()) return { error: "SMS isn't set up yet (needs TELNYX_API_KEY + a sender number).", status: 400 };
+  const id = body?.id;
+  if (!id) return { error: "id is required.", status: 400 };
+
+  const { data: paf, error } = await supa
+    .from("paf_submissions")
+    .select("id, status, employee_name, category, estimated_cost, sdo_approver_id, submitter_name, archived")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) return { error: error.message, status: 500 };
+  if (!paf || paf.archived) return { error: "PAF not found.", status: 404 };
+  if (!TEXTABLE_STATUSES.has(paf.status)) {
+    return { error: `This PAF is ${paf.status} — there's no pending approval to nudge.`, status: 409 };
+  }
+  if (!paf.sdo_approver_id) {
+    return { error: "This PAF has no assigned approver to text (it may be with Payroll).", status: 400 };
+  }
+
+  const { data: appr } = await supa
+    .from("profiles").select("full_name, preferred_name, phone").eq("id", paf.sdo_approver_id).maybeSingle();
+  if (!appr?.phone) return { error: "The assigned approver has no phone number on file.", status: 400 };
+
+  const who = appr.preferred_name || appr.full_name || "the approver";
+  const amount = paf.estimated_cost != null ? fmtMoney(paf.estimated_cost) : null;
+  const detail = [paf.category, amount].filter(Boolean).join(", ");
+  const link = `${appBaseUrl()}/paf`;
+  const text = `SOAR PAF needs your review: ${paf.employee_name}${detail ? ` (${detail})` : ""}${paf.submitter_name ? ` from ${paf.submitter_name}` : ""}. ${link}`;
+
+  const sent = await sendSms(appr.phone, text);
+  if (!sent.ok) return { error: sent.error || "Couldn't send the text.", status: 502 };
+
+  await logAudit(supa, { paf_id: id, actor_id: user.id, actor_email: user.email, action: "text-approver", detail: { to: who } });
+  return { ok: true, to: who };
+}
+
 function unwrap(result) {
   if (
     result &&
@@ -1644,6 +1690,7 @@ export const handler = async (event) => {
       if (action === "sdo-approve") return unwrap(await sdoApprovePaf(supa, user, body));
       if (action === "sdo-reject") return unwrap(await sdoRejectPaf(supa, user, body));
       if (action === "delete") return unwrap(await deletePaf(supa, user, body));
+      if (action === "text-approver") return unwrap(await textApprover(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
     return respond(405, { error: "method not allowed" });
