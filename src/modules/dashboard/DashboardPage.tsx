@@ -50,6 +50,7 @@ import { cn } from "@/lib/cn";
 import { FISCAL, fiscalInfo, fiscalWeekLabel } from "@/lib/fiscal";
 import { BirthdayCelebration } from "@/modules/my-stores/BirthdayCelebration";
 import { MobileHome } from "./MobileHome";
+import { WeatherWidget } from "./WeatherWidget";
 
 const SDO_REVIEW_ROLES = new Set<UserRole>(["sdo", "rvp", "vp", "coo", "admin"]);
 const PTO_VIEW_ROLES = new Set<UserRole>(["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]);
@@ -149,6 +150,7 @@ export function DashboardPage() {
   const ticketsQ = useQuery({ queryKey: ["wo2", "tickets"], queryFn: fetchTickets, enabled: canWo, ...dashQ });
   const eaQ = useQuery({ queryKey: ["ea-queue"], queryFn: listApprovalQueue, enabled: isEaApprover, ...dashQ });
   const storesQ = useQuery({ queryKey: ["wo2", "caller-stores"], queryFn: fetchCallerStores, ...dashQ });
+  const weatherStoreId = profile?.primary_store_id ?? storesQ.data?.stores?.[0]?.id ?? null;
   const cfmQ = useQuery({ queryKey: ["cfm-expiring", 60], queryFn: () => fetchCfmExpiring(60), ...dashQ });
   const cashQ = useQuery({ queryKey: ["cash", "badges"], queryFn: fetchCashBadges, enabled: canCash, ...dashQ });
   const sdoQ = useQuery({ queryKey: ["paf-sdo-queue"], queryFn: listSdoQueue, enabled: isSdoReviewer, ...dashQ });
@@ -266,6 +268,7 @@ export function DashboardPage() {
 
       {/* Secondary grid */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+        {weatherStoreId && <WeatherWidget storeId={weatherStoreId} />}
         {canCash && (
           <CashSnapshot
             loading={cashQ.isLoading}
