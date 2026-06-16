@@ -1138,6 +1138,53 @@ async function leaderOverview(supa, user) {
   return { business_date: reviewDay, tolerance_cents: tol, scope_all: access.all, summary, stores: rows };
 }
 
+// search-deposits — find deposits across the caller's scope by any of: date
+// (for_date), store number, and amount (matches the expected or bank-credited
+// amount). At least one filter is required.
+async function searchDeposits(supa, user, params) {
+  const access = await storeRowsForUser(supa, user);
+  const ids = access.all ? null : access.rows.map((r) => r.id);
+  if (ids && ids.length === 0) return { deposits: [] };
+
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(String(params?.date || "")) ? params.date : null;
+  const storeNumber = String(params?.store_number || "").trim() || null;
+  const amountRaw = String(params?.amount || "").trim();
+  const amountCents = amountRaw ? Math.round(parseFloat(amountRaw.replace(/[^0-9.]/g, "")) * 100) : null;
+  const hasAmount = amountCents != null && Number.isFinite(amountCents);
+
+  if (!date && !storeNumber && !hasAmount) {
+    return { error: "Enter a date, store number, or amount to search.", status: 400 };
+  }
+
+  let q = supa
+    .from("cash_deposits")
+    .select("id, closeout_id, store_id, store_number, for_date, expected_cents, bank_credited_cents, variance_cents, status, flagged, verified_at");
+  if (ids) q = q.in("store_id", ids);
+  if (date) q = q.eq("for_date", date);
+  if (storeNumber) q = q.eq("store_number", storeNumber);
+  if (hasAmount) q = q.or(`expected_cents.eq.${amountCents},bank_credited_cents.eq.${amountCents}`);
+  q = q.order("for_date", { ascending: false }).limit(200);
+
+  const { data, error } = await q;
+  if (error) return { error: error.message, status: 500 };
+
+  const nameByNum = new Map(access.rows.map((r) => [String(r.number), r.name]));
+  const deposits = (data || []).map((d) => ({
+    id: d.id,
+    closeout_id: d.closeout_id,
+    store_number: d.store_number,
+    store_name: nameByNum.get(String(d.store_number)) ?? null,
+    for_date: d.for_date,
+    expected_cents: d.expected_cents,
+    bank_credited_cents: d.bank_credited_cents,
+    variance_cents: d.variance_cents,
+    status: d.status,
+    flagged: !!d.flagged,
+    verified_at: d.verified_at,
+  }));
+  return { deposits, count: deposits.length };
+}
+
 // ============================================================================
 // handler
 // ============================================================================
@@ -1168,6 +1215,7 @@ export const handler = async (event) => {
       }
       if (action === "deposit") return unwrap(await getDeposit(supa, user, params));
       if (action === "leader-overview") return unwrap(await leaderOverview(supa, user));
+      if (action === "search-deposits") return unwrap(await searchDeposits(supa, user, params));
       if (action === "missed-days") return unwrap(await getMissedDays(supa, user, params));
       if (action === "alerts") return unwrap(await listAlerts(supa, user, params));
       if (action === "dsr") return unwrap(await dsr(supa, user, params));
