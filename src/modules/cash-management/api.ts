@@ -6,6 +6,8 @@ import type {
   CashSettings,
   CmgConfig,
   DepositDetail,
+  DepositSearchFilters,
+  DepositSearchResponse,
   DsrResponse,
   LeaderOverview,
   Overview,
@@ -161,6 +163,15 @@ export function editCloseout(input: EditCloseoutInput): Promise<{ ok: true }> {
 
 export function decideAlert(id: string, decision: "acknowledged" | "resolved"): Promise<{ ok: true }> {
   return request(`${FN}?action=alert-decide`, { method: "POST", body: JSON.stringify({ id, decision }) });
+}
+
+// Search deposits across the caller's scope by date / store # / amount.
+export function searchDeposits(filters: DepositSearchFilters): Promise<DepositSearchResponse> {
+  const qs = new URLSearchParams();
+  if (filters.date) qs.set("date", filters.date);
+  if (filters.store_number) qs.set("store_number", filters.store_number);
+  if (filters.amount) qs.set("amount", filters.amount);
+  return request<DepositSearchResponse>(`${FN}?action=search-deposits&${qs.toString()}`);
 }
 
 // Upload a slip photo to the private bucket; returns the storage path.

@@ -212,3 +212,26 @@ export interface DsrResponse {
   days: number;
   ledger: DsrRow[];
 }
+
+export interface DepositSearchResult {
+  id: string;
+  closeout_id: string;
+  store_number: string;
+  store_name: string | null;
+  for_date: string;
+  expected_cents: number;
+  bank_credited_cents: number | null;
+  variance_cents: number | null;
+  status: string;
+  flagged: boolean;
+  verified_at: string | null;
+}
+export interface DepositSearchResponse {
+  deposits: DepositSearchResult[];
+  count: number;
+}
+export interface DepositSearchFilters {
+  date?: string;
+  store_number?: string;
+  amount?: string;
+}
