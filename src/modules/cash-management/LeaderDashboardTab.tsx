@@ -124,7 +124,7 @@ export function LeaderDashboardTab({ onOpenStore }: { onOpenStore: (storeId: str
           {data.scope_all ? "All stores" : "My stores"} — cash status
         </h2>
         <p className="mt-1.5 max-w-xl text-sm text-zinc-500">
-          Today's close status across {s.stores_total} store{s.stores_total === 1 ? "" : "s"}
+          Prior business day close status across {s.stores_total} store{s.stores_total === 1 ? "" : "s"}
           {data.business_date ? ` · business day ${fmtDate(data.business_date)}` : ""}. Tap a store to drill in.
         </p>
       </div>
@@ -132,7 +132,7 @@ export function LeaderDashboardTab({ onOpenStore }: { onOpenStore: (storeId: str
       {/* KPI strip */}
       <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <Kpi
-          label="Closed today"
+          label="Closed"
           value={`${s.closed_today}/${s.stores_total}`}
           sub={s.not_closed_today > 0 ? `${s.not_closed_today} not closed` : "all closed"}
           tone={s.not_closed_today > 0 ? "warn" : "ok"}
@@ -197,7 +197,7 @@ export function LeaderDashboardTab({ onOpenStore }: { onOpenStore: (storeId: str
             <thead>
               <tr className="border-b border-zinc-200 text-left text-[11px] font-bold uppercase tracking-wider text-zinc-400">
                 <th className="px-5 py-3">Store</th>
-                <th className="px-4 py-3">Today</th>
+                <th className="px-4 py-3">Close</th>
                 <th className="px-4 py-3 text-right">Variance</th>
                 <th className="px-4 py-3">Deposit</th>
                 <th className="px-4 py-3 text-center">Alerts</th>

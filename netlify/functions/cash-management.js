@@ -1055,6 +1055,9 @@ async function leaderOverview(supa, user) {
 
   const settings = await getSettings(supa);
   const today = currentBusinessDateCT(settings.cutoffHour);
+  // Leaders review the PRIOR business day's closeouts (a store closes after its
+  // day ends, so "today" hasn't closed yet when the DO checks in the morning).
+  const reviewDay = isoBusinessDaysBefore(today, 1);
   const tol = settings.closeout;
   const ids = stores.map((s) => s.id);
   const since = isoBusinessDaysBefore(today, 14);
@@ -1069,12 +1072,12 @@ async function leaderOverview(supa, user) {
       .select("store_id").in("store_id", ids).eq("status", "open"),
   ]);
 
-  // Latest close per store (rows arrive newest-first) + today's close per store.
+  // Latest close per store (rows arrive newest-first) + the review-day close.
   const latestByStore = new Map();
-  const todayByStore = new Map();
+  const reviewByStore = new Map();
   for (const c of closeouts || []) {
     if (!latestByStore.has(c.store_id)) latestByStore.set(c.store_id, c);
-    if (c.business_date === today) todayByStore.set(c.store_id, c);
+    if (c.business_date === reviewDay) reviewByStore.set(c.store_id, c);
   }
   // Oldest pending deposit per store + count.
   const depByStore = new Map();
@@ -1090,7 +1093,7 @@ async function leaderOverview(supa, user) {
     Math.round((Date.parse(`${toIso}T00:00:00Z`) - Date.parse(`${fromIso}T00:00:00Z`)) / 86400000);
 
   const rows = stores.map((s) => {
-    const co = todayByStore.get(s.id) || null;
+    const co = reviewByStore.get(s.id) || null;
     const latest = latestByStore.get(s.id) || null;
     const dep = depByStore.get(s.id) || null;
     const openAlerts = alertByStore.get(s.id) || 0;
@@ -1132,7 +1135,7 @@ async function leaderOverview(supa, user) {
     needs_attention: rows.filter((r) => r.issues.length > 0).length,
   };
 
-  return { business_date: today, tolerance_cents: tol, scope_all: access.all, summary, stores: rows };
+  return { business_date: reviewDay, tolerance_cents: tol, scope_all: access.all, summary, stores: rows };
 }
 
 // ============================================================================
