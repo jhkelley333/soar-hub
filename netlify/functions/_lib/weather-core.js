@@ -146,3 +146,63 @@ export async function syncWeather(supa) {
 
   return { ok: true, locations: locations.length, recorded, failed, error: recorded === 0 ? firstError : null };
 }
+
+// Backfill historical daily weather from Open-Meteo's free archive (no key) into
+// weather_observations — one row per (city, past date). Processes a slice of
+// weather_locations per call (offset/limit) so the client can loop without
+// hitting the function timeout. Idempotent: skips dates already recorded.
+const ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive";
+const arr = (a) => (Array.isArray(a) ? a : []);
+
+export async function backfillHistory(supa, { startDate, endDate, offset = 0, limit = 12 }) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate || "") || !/^\d{4}-\d{2}-\d{2}$/.test(endDate || "")) {
+    return { ok: false, error: "start_date and end_date (YYYY-MM-DD) are required." };
+  }
+  const { count: total } = await supa.from("weather_locations").select("id", { count: "exact", head: true });
+  const { data: locs, error } = await supa
+    .from("weather_locations").select("id, latitude, longitude")
+    .order("id").range(offset, offset + limit - 1);
+  if (error) return { ok: false, error: error.message };
+
+  let inserted = 0, failed = 0, firstError = null;
+  await mapLimit(locs || [], 6, async (l) => {
+    try {
+      const url = `${ARCHIVE_URL}?latitude=${l.latitude}&longitude=${l.longitude}&start_date=${startDate}&end_date=${endDate}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&temperature_unit=fahrenheit&timezone=auto`;
+      const res = await fetch(url);
+      if (!res.ok) { failed++; if (!firstError) firstError = `Archive API ${res.status}: ${(await res.text().catch(() => "")).slice(0, 140)}`; return; }
+      const j = await res.json();
+      const time = arr(j?.daily?.time), hi = arr(j?.daily?.temperature_2m_max), lo = arr(j?.daily?.temperature_2m_min), pr = arr(j?.daily?.precipitation_sum);
+      if (!time.length) return;
+
+      const { data: existing } = await supa
+        .from("weather_observations").select("business_date")
+        .eq("location_id", l.id).gte("business_date", startDate).lte("business_date", endDate);
+      const have = new Set((existing || []).map((r) => r.business_date));
+
+      const rows = [];
+      for (let i = 0; i < time.length; i++) {
+        const date = time[i];
+        if (have.has(date)) continue;
+        const hiF = num(hi[i]), loF = num(lo[i]);
+        rows.push({
+          location_id: l.id,
+          business_date: date,
+          observed_at: `${date}T12:00:00Z`,
+          temp_f: hiF,
+          forecast: [{ date, hi_f: hiF, lo_f: loF, precip_in: num(pr[i]) }],
+          raw: { source: "open-meteo-archive" },
+        });
+      }
+      for (let i = 0; i < rows.length; i += 500) {
+        const { error: insErr } = await supa.from("weather_observations").insert(rows.slice(i, i + 500));
+        if (insErr) { failed++; if (!firstError) firstError = insErr.message; break; }
+        inserted += Math.min(500, rows.length - i);
+      }
+    } catch (e) {
+      failed++; if (!firstError) firstError = e.message;
+    }
+  });
+
+  const processed = offset + (locs?.length || 0);
+  return { ok: true, total: total || 0, processed, inserted, failed, done: processed >= (total || 0), error: inserted === 0 && failed ? firstError : null };
+}

@@ -4,11 +4,12 @@
 // card before any data exists, so they can seed it). Non-admins see nothing
 // until there's data.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CloudSun, RefreshCw } from "lucide-react";
+import { useState } from "react";
+import { CloudSun, History, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/auth/AuthProvider";
 import { useToast } from "@/shared/ui/Toaster";
-import { fetchWeatherForStore, triggerWeatherSync, type WeatherForecastDay } from "./weatherApi";
+import { backfillWeatherHistory, fetchWeatherForStore, triggerWeatherSync, type WeatherForecastDay } from "./weatherApi";
 
 const PANEL =
   "rounded-2xl border border-zinc-200 bg-white shadow-card dark:border-night-line dark:bg-night-raised dark:shadow-none";
@@ -43,6 +44,32 @@ export function WeatherWidget({ storeId }: { storeId: string }) {
     onError: (e: unknown) => toast.push((e as Error)?.message ?? "Sync failed.", "error"),
   });
 
+  // Historical backfill (Open-Meteo archive), chunked from the client.
+  const [backfill, setBackfill] = useState<{ done: number; total: number } | null>(null);
+  async function runBackfill() {
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const iso = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const end = new Date(); end.setDate(end.getDate() - 1);
+    const start = new Date(); start.setFullYear(start.getFullYear() - 2);
+    if (!window.confirm("Backfill ~2 years of daily weather history for every city? This runs once.")) return;
+    let offset = 0, inserted = 0;
+    setBackfill({ done: 0, total: 0 });
+    try {
+      for (;;) {
+        const r = await backfillWeatherHistory({ start_date: iso(start), end_date: iso(end), offset, limit: 12 });
+        if (!r.ok) { toast.push(r.error ?? "Backfill failed.", "error"); break; }
+        inserted += r.inserted; offset = r.processed;
+        setBackfill({ done: r.processed, total: r.total });
+        if (r.done) { toast.push(`Backfill complete — ${inserted.toLocaleString()} day-records added.`, "success"); break; }
+      }
+    } catch (e) {
+      toast.push((e as Error)?.message ?? "Backfill failed.", "error");
+    } finally {
+      setBackfill(null);
+      qc.invalidateQueries({ queryKey: ["weather"] });
+    }
+  }
+
   const cur = q.data?.current;
   const loc = q.data?.location;
   const days: WeatherForecastDay[] = (q.data?.forecast ?? []).slice(0, 5);
@@ -52,17 +79,29 @@ export function WeatherWidget({ storeId }: { storeId: string }) {
   if (!q.isLoading && !hasData && !isAdmin) return null;
   if (q.isError && !isAdmin) return null;
 
-  const SyncBtn = isAdmin ? (
-    <button
-      type="button"
-      onClick={() => sync.mutate()}
-      disabled={sync.isPending}
-      title="Pull weather now (all cities)"
-      className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-accent hover:bg-accent/10 disabled:opacity-50"
-    >
-      <RefreshCw className={cn("h-3.5 w-3.5", sync.isPending && "animate-spin")} />
-      {sync.isPending ? "Syncing…" : "Sync now"}
-    </button>
+  const adminControls = isAdmin ? (
+    <div className="flex items-center gap-1">
+      <button
+        type="button"
+        onClick={runBackfill}
+        disabled={!!backfill || sync.isPending}
+        title="Backfill ~2 years of historical daily weather (Open-Meteo)"
+        className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-zinc-500 hover:bg-zinc-100 disabled:opacity-50"
+      >
+        <History className="h-3.5 w-3.5" />
+        {backfill ? `Backfilling ${backfill.done}/${backfill.total}…` : "Backfill"}
+      </button>
+      <button
+        type="button"
+        onClick={() => sync.mutate()}
+        disabled={sync.isPending || !!backfill}
+        title="Pull weather now (all cities)"
+        className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium text-accent hover:bg-accent/10 disabled:opacity-50"
+      >
+        <RefreshCw className={cn("h-3.5 w-3.5", sync.isPending && "animate-spin")} />
+        {sync.isPending ? "Syncing…" : "Sync now"}
+      </button>
+    </div>
   ) : null;
 
   return (
@@ -73,7 +112,7 @@ export function WeatherWidget({ storeId }: { storeId: string }) {
           Weather
           {loc?.label && <span className="truncate text-xs font-normal text-zinc-400">· {loc.label}</span>}
         </div>
-        {SyncBtn}
+        {adminControls}
       </div>
 
       {q.isLoading ? (
