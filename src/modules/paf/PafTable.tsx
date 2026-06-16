@@ -8,6 +8,7 @@ import { Badge } from "@/shared/ui/Badge";
 import { Button } from "@/shared/ui/Button";
 import { Drawer } from "@/shared/ui/Drawer";
 import { useAuth } from "@/auth/AuthProvider";
+import { useFlag } from "@/lib/flags";
 import { ProcessActions } from "./ProcessActions";
 import { SdoActions } from "./SdoActions";
 import { DeletePafAction } from "./DeletePafAction";
@@ -72,6 +73,8 @@ export function PafTable({
 }) {
   const { profile } = useAuth();
   const isAdmin = profile?.role === "admin";
+  // Behind a feature flag until Telnyx is fully set up. Server re-checks.
+  const textApproverOn = useFlag("paf_text_approver");
   // The owner can always edit & resubmit their own; an SDO/RVP and above can
   // resubmit on a submitter's behalf (the list is already scope-filtered, so
   // anything they can see here is in their scope). Server re-checks.
@@ -90,6 +93,7 @@ export function PafTable({
   // assigned approver. Same audience as edit/delete (submitter or on-behalf
   // roles); server re-checks role + that an approver phone is on file.
   const canText = (p: PafRow) =>
+    textApproverOn &&
     pendingStatuses.includes(p.status) &&
     !!p.sdo_approver_id &&
     (p.submitter_id === profile?.id || onBehalfRoles.includes(profile?.role ?? ""));

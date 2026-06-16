@@ -44,6 +44,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import { sendSms, telnyxConfigured } from "./_lib/telnyx.js";
+import { getFlag } from "./_lib/flags.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -1592,8 +1593,12 @@ async function deletePaf(supa, user, body) {
 // text-approver — manual SMS nudge to the assigned approver when a quick
 // response is needed. Heads-up + a link to the PAF queue (not a magic link).
 const TEXTABLE_STATUSES = new Set(["Pending", "Pending SDO Approval"]);
+const PAF_TEXT_FLAG = "paf_text_approver";
 async function textApprover(supa, user, body) {
   if (!SUBMIT_ROLES.has(user.role)) return { error: "Your role can't send PAF texts.", status: 403 };
+  if (!(await getFlag(supa, PAF_TEXT_FLAG, { userId: user.id }))) {
+    return { error: "Texting the approver isn't turned on yet.", status: 403 };
+  }
   if (!telnyxConfigured()) return { error: "SMS isn't set up yet (needs TELNYX_API_KEY + a sender number).", status: 400 };
   const id = body?.id;
   if (!id) return { error: "id is required.", status: 400 };
