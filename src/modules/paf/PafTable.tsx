@@ -11,6 +11,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { ProcessActions } from "./ProcessActions";
 import { SdoActions } from "./SdoActions";
 import { DeletePafAction } from "./DeletePafAction";
+import { TextApproverAction } from "./TextApproverAction";
 import { PafDetail } from "./PafDetail";
 import type { PafRow, PafStatus } from "./types";
 import { formatUSD } from "./cost";
@@ -85,6 +86,13 @@ export function PafTable({
   const pendingStatuses = ["Pending", "Pending SDO Approval"];
   const canDelete = (p: PafRow) =>
     isAdmin || (p.submitter_id === profile?.id && pendingStatuses.includes(p.status));
+  // A heads-up text only makes sense while the PAF is still awaiting its
+  // assigned approver. Same audience as edit/delete (submitter or on-behalf
+  // roles); server re-checks role + that an approver phone is on file.
+  const canText = (p: PafRow) =>
+    pendingStatuses.includes(p.status) &&
+    !!p.sdo_approver_id &&
+    (p.submitter_id === profile?.id || onBehalfRoles.includes(profile?.role ?? ""));
   const [detail, setDetail] = useState<PafRow | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("created_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
@@ -228,6 +236,7 @@ export function PafTable({
                   {detail.status === "Rejected" ? "Edit & resubmit" : "Edit"}
                 </Button>
               )}
+              {detail && canText(detail) && <TextApproverAction paf={detail} />}
               {detail && canDelete(detail) && (
                 <DeletePafAction paf={detail} onComplete={() => setDetail(null)} />
               )}
