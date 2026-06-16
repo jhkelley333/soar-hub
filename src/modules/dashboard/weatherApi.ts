@@ -48,7 +48,7 @@ export function fetchWeatherForStore(storeId: string): Promise<WeatherForStore> 
 }
 
 // Admin-only: run a manual pull now (same core as the schedule).
-export async function triggerWeatherSync(): Promise<{ ok: boolean; locations: number; recorded: number; failed: number }> {
+export async function triggerWeatherSync(): Promise<{ ok: boolean; locations: number; recorded: number; failed: number; error?: string | null; reason?: string }> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error("Not signed in");

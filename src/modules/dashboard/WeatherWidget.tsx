@@ -33,7 +33,11 @@ export function WeatherWidget({ storeId }: { storeId: string }) {
   const sync = useMutation({
     mutationFn: triggerWeatherSync,
     onSuccess: (r) => {
-      toast.push(`Weather sync complete — ${r.recorded} location${r.recorded === 1 ? "" : "s"} recorded.`, "success");
+      if (r.recorded > 0) {
+        toast.push(`Weather sync complete — ${r.recorded} location${r.recorded === 1 ? "" : "s"} recorded${r.failed ? `, ${r.failed} failed` : ""}.`, "success");
+      } else {
+        toast.push(r.error ? `Recorded nothing — ${r.error}` : "Recorded nothing. Check the Weather API is enabled and the key is authorized.", "error");
+      }
       qc.invalidateQueries({ queryKey: ["weather"] });
     },
     onError: (e: unknown) => toast.push((e as Error)?.message ?? "Sync failed.", "error"),

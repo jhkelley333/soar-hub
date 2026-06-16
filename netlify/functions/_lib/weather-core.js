@@ -110,35 +110,39 @@ export async function syncWeather(supa) {
   }
 
   if (locations.length) {
-    await supa.from("weather_locations").upsert(
+    const { error: upErr } = await supa.from("weather_locations").upsert(
       locations.map((l) => ({ ...l, is_active: true })),
       { onConflict: "city,state" },
     );
+    if (upErr) return { ok: false, reason: "db", error: `weather_locations write failed: ${upErr.message}`, locations: 0, recorded: 0, failed: 0 };
   }
-  const { data: locRows } = await supa.from("weather_locations").select("id, city, state, latitude, longitude");
+  const { data: locRows, error: selErr } = await supa.from("weather_locations").select("id, city, state, latitude, longitude");
+  if (selErr) return { ok: false, reason: "db", error: `weather_locations read failed: ${selErr.message}`, locations: 0, recorded: 0, failed: 0 };
   const locById = new Map((locRows || []).map((r) => [`${r.city}|${r.state}`, r]));
 
   const businessDate = new Date().toISOString().slice(0, 10);
-  let recorded = 0, failed = 0;
+  let recorded = 0, failed = 0, firstError = null;
   await mapLimit(locations, 12, async (l) => {
     const row = locById.get(`${l.city}|${l.state}`);
     if (!row) { failed++; return; }
     try {
       const { current, forecast } = await pullWeather(row.latitude, row.longitude);
-      await supa.from("weather_observations").insert({
+      const { error: insErr } = await supa.from("weather_observations").insert({
         location_id: row.id,
         business_date: businessDate,
         ...parseCurrent(current),
         forecast: parseForecast(forecast),
         raw: { current, forecast },
       });
+      if (insErr) { failed++; if (!firstError) firstError = insErr.message; return; }
       await supa.from("weather_locations").update({ last_synced_at: new Date().toISOString() }).eq("id", row.id);
       recorded++;
     } catch (e) {
       console.warn(`[weather] ${l.label}: ${e.message}`);
       failed++;
+      if (!firstError) firstError = e.message;
     }
   });
 
-  return { ok: true, locations: locations.length, recorded, failed };
+  return { ok: true, locations: locations.length, recorded, failed, error: recorded === 0 ? firstError : null };
 }
