@@ -8,6 +8,7 @@ import { queryClient } from "@/lib/queryClient";
 import { persistOptions } from "@/lib/queryPersister";
 import { ToastProvider } from "@/shared/ui/Toaster";
 import { registerServiceWorker } from "@/lib/registerSW";
+import { requestPersistentStorage } from "@/lib/persistStorage";
 import { perfMark } from "@/lib/perf";
 import "@/styles/globals.css";
 
@@ -55,3 +56,7 @@ createRoot(root).render(
 // the SW install never competes with first paint. Dev / unsupported
 // browsers no-op.
 registerServiceWorker();
+
+// Ask the OS to keep our storage durable so the saved login (and offline
+// cache) survives storage eviction — the main reason the PWA "forgets" people.
+void requestPersistentStorage();
