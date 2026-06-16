@@ -47,16 +47,32 @@ export function fetchWeatherForStore(storeId: string): Promise<WeatherForStore> 
   return authGet<WeatherForStore>(`${FN}?action=for-store&store_id=${encodeURIComponent(storeId)}`);
 }
 
-// Admin-only: run a manual pull now (same core as the schedule).
-export async function triggerWeatherSync(): Promise<{ ok: boolean; locations: number; recorded: number; failed: number; error?: string | null; reason?: string }> {
+async function authPost<T>(path: string, body?: unknown): Promise<T> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error("Not signed in");
-  const res = await fetch(`${FN}?action=sync`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
     try { const b = await res.json(); if (b?.error) message = b.error; } catch { /* ignore */ }
     throw new Error(message);
   }
-  return res.json();
+  return res.json() as Promise<T>;
+}
+
+// Admin-only: run a manual pull now (same core as the schedule).
+export function triggerWeatherSync(): Promise<{ ok: boolean; locations: number; recorded: number; failed: number; error?: string | null; reason?: string }> {
+  return authPost(`${FN}?action=sync`);
+}
+
+// Admin-only: backfill historical daily weather (Open-Meteo archive) one slice
+// of cities per call — the caller loops until `done`.
+export function backfillWeatherHistory(input: { start_date: string; end_date: string; offset: number; limit?: number }): Promise<{
+  ok: boolean; total: number; processed: number; inserted: number; failed: number; done: boolean; error?: string | null;
+}> {
+  return authPost(`${FN}?action=backfill`, input);
 }
