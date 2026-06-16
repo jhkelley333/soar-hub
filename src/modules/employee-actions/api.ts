@@ -60,6 +60,16 @@ export function decideEmployeeAction(
   });
 }
 
+// Approve several requests in one call (approve only).
+export function bulkApproveEmployeeActions(
+  items: { type: "training" | "pto"; id: string }[]
+): Promise<{ ok: true; approved: number; failed: number; results: { id: string | null; ok: boolean; error?: string }[] }> {
+  return request(`${FN}?action=decide-bulk`, {
+    method: "POST",
+    body: JSON.stringify({ items, action: "approve" }),
+  });
+}
+
 // Post-approval confirmation steps (entered / closed-out / paf-submitted).
 export function confirmEmployeeAction(
   input: ConfirmInput

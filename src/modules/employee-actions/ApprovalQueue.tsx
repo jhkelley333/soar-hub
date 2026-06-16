@@ -6,14 +6,16 @@
 // (employee or store) plus status filter chips that double as live counts.
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Search } from "lucide-react";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Badge } from "@/shared/ui/Badge";
+import { Button } from "@/shared/ui/Button";
 import { StatusPill } from "@/shared/ui/StatusPill";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
-import { listApprovalQueue } from "./api";
+import { useToast } from "@/shared/ui/Toaster";
+import { bulkApproveEmployeeActions, listApprovalQueue } from "./api";
 import { RequestDetailDrawer } from "./RequestDetailDrawer";
 import { statusKind, waitingOn } from "./statusMeta";
 import type { PtoRow, TrainingCreditRow } from "./types";
@@ -21,6 +23,31 @@ import type { PtoRow, TrainingCreditRow } from "./types";
 function fmtMoney(n: number | null | undefined): string {
   return (Number(n) || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
+
+// ── Week filter helpers (date-only, local; Mon–Sun) ───────────────────────────
+function parseDate(s?: string | null): Date | null {
+  if (!s) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  const d = new Date(s);
+  return Number.isNaN(+d) ? null : d;
+}
+function weekRange(anchor: Date): [Date, Date] {
+  const d = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate());
+  const dow = (d.getDay() + 6) % 7; // 0 = Monday
+  const mon = new Date(d); mon.setDate(d.getDate() - dow);
+  const sun = new Date(mon); sun.setDate(mon.getDate() + 6);
+  return [mon, sun];
+}
+// True if [start,end] overlaps the week range. end defaults to start.
+function inWeek(startStr: string | null | undefined, endStr: string | null | undefined, range: [Date, Date]): boolean {
+  const s = parseDate(startStr);
+  if (!s) return false;
+  const e = parseDate(endStr) ?? s;
+  return s <= range[1] && e >= range[0];
+}
+const fmtDay = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+const toISO = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 // The caller's next action, phrased as an imperative so it reads as a to-do —
 // never as a status (e.g. "Mark complete", not "Complete", which looks done).
@@ -60,7 +87,26 @@ export function ApprovalQueue() {
   const [selected, setSelected] = useState<Selection>(null);
   const [search, setSearch] = useState("");
   const [statusFilter, setStatusFilter] = useState<string>("all");
+  const [weekAnchor, setWeekAnchor] = useState<Date | null>(null);
+  const [picked, setPicked] = useState<Set<string>>(new Set()); // keys: `${kind}:${id}`
+  const qc = useQueryClient();
+  const toast = useToast();
   const query = useQuery({ queryKey: ["ea-queue"], queryFn: listApprovalQueue });
+
+  const range = weekAnchor ? weekRange(weekAnchor) : null;
+
+  const bulk = useMutation({
+    mutationFn: (items: { type: "training" | "pto"; id: string }[]) => bulkApproveEmployeeActions(items),
+    onSuccess: (r) => {
+      toast.push(
+        `Approved ${r.approved}${r.failed ? ` · ${r.failed} couldn't be approved` : ""}.`,
+        r.failed ? "info" : "success",
+      );
+      setPicked(new Set());
+      qc.invalidateQueries({ queryKey: ["ea-queue"] });
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Bulk approve failed.", "error"),
+  });
 
   const trainingCredits = query.data?.trainingCredits ?? [];
   const ptoRequests = query.data?.ptoRequests ?? [];
@@ -97,9 +143,26 @@ export function ApprovalQueue() {
   }, [searchedTc.length, searchedPto.length, q]);
 
   const matchesStatus = (r: { status: string }) => statusFilter === "all" || r.status === statusFilter;
-  const tc = searchedTc.filter(matchesStatus);
-  const pto = searchedPto.filter(matchesStatus);
+  const tc = searchedTc
+    .filter(matchesStatus)
+    .filter((r) => !range || inWeek(r.start_date, r.last_day_date, range));
+  const pto = searchedPto
+    .filter(matchesStatus)
+    .filter((r) => !range || inWeek(r.pto_start_date, r.pto_end_date, range));
   const shown = tc.length + pto.length;
+
+  // Bulk selection — only rows the caller can approve right now.
+  const key = (kind: "training" | "pto", id: string) => `${kind}:${id}`;
+  const togglePick = (k: string) =>
+    setPicked((prev) => { const next = new Set(prev); next.has(k) ? next.delete(k) : next.add(k); return next; });
+  const approvable = [
+    ...tc.filter((r) => r.action_needed === "decide").map((r) => ({ kind: "training" as const, id: r.id })),
+    ...pto.filter((r) => r.action_needed === "decide").map((r) => ({ kind: "pto" as const, id: r.id })),
+  ];
+  const pickedItems = approvable.filter((a) => picked.has(key(a.kind, a.id))).map((a) => ({ type: a.kind, id: a.id }));
+  const allApprovableSelected = approvable.length > 0 && approvable.every((a) => picked.has(key(a.kind, a.id)));
+  const toggleSelectAll = () =>
+    setPicked(allApprovableSelected ? new Set() : new Set(approvable.map((a) => key(a.kind, a.id))));
 
   if (query.isLoading) return <Skeleton className="h-40 w-full" />;
   if (query.isError || !query.data) {
@@ -153,6 +216,49 @@ export function ApprovalQueue() {
         </div>
       </div>
 
+      {/* Week filter */}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs font-medium text-zinc-500">Week</span>
+        {(() => {
+          const thisMon = toISO(weekRange(new Date())[0]);
+          const next = new Date(); next.setDate(next.getDate() + 7);
+          const nextMon = toISO(weekRange(next)[0]);
+          const anchorMon = weekAnchor ? toISO(weekRange(weekAnchor)[0]) : null;
+          return (
+            <>
+              <WeekBtn active={!weekAnchor} onClick={() => setWeekAnchor(null)}>All</WeekBtn>
+              <WeekBtn active={anchorMon === thisMon} onClick={() => setWeekAnchor(new Date())}>This week</WeekBtn>
+              <WeekBtn active={anchorMon === nextMon} onClick={() => setWeekAnchor(next)}>Next week</WeekBtn>
+            </>
+          );
+        })()}
+        <input
+          type="date"
+          value={weekAnchor ? toISO(weekAnchor) : ""}
+          onChange={(e) => setWeekAnchor(e.target.value ? parseDate(e.target.value) : null)}
+          className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs text-zinc-700 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+          aria-label="Pick any date in the week"
+        />
+        {range && <span className="text-xs text-zinc-500">{fmtDay(range[0])} – {fmtDay(range[1])}</span>}
+      </div>
+
+      {/* Bulk approve */}
+      {approvable.length > 0 && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2">
+          <label className="flex items-center gap-2 text-sm text-zinc-700">
+            <input type="checkbox" className="h-4 w-4 accent-accent" checked={allApprovableSelected} onChange={toggleSelectAll} />
+            Select all approvable ({approvable.length})
+          </label>
+          <span className="ml-auto text-sm text-zinc-600">{pickedItems.length} selected</span>
+          {picked.size > 0 && (
+            <Button size="sm" variant="ghost" onClick={() => setPicked(new Set())}>Clear</Button>
+          )}
+          <Button size="sm" disabled={!pickedItems.length || bulk.isPending} onClick={() => bulk.mutate(pickedItems)}>
+            {bulk.isPending ? "Approving…" : `Approve ${pickedItems.length || ""}`.trim()}
+          </Button>
+        </div>
+      )}
+
       {shown === 0 ? (
         <Card>
           <EmptyState
@@ -176,6 +282,9 @@ export function ApprovalQueue() {
                     r.training_type,
                     fmtMoney(r.requested_amount),
                   ]}
+                  selectable={r.action_needed === "decide"}
+                  selected={picked.has(key("training", r.id))}
+                  onToggleSelect={() => togglePick(key("training", r.id))}
                   onOpen={() => setSelected({ kind: "training", row: r })}
                 />
               ))}
@@ -200,6 +309,9 @@ export function ApprovalQueue() {
                         ? `${r.vacation_hours ?? 0} hrs${r.amount != null ? ` · ${fmtMoney(r.amount)}` : ""}`
                         : `${r.days_used ?? 0} day(s)`,
                     ]}
+                    selectable={r.action_needed === "decide"}
+                    selected={picked.has(key("pto", r.id))}
+                    onToggleSelect={() => togglePick(key("pto", r.id))}
                     onOpen={() => setSelected({ kind: "pto", row: r })}
                   />
                 );
@@ -264,6 +376,22 @@ function Section({
   );
 }
 
+function WeekBtn({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        active
+          ? "rounded-full bg-midnight px-2.5 py-1 text-xs font-medium text-white"
+          : "rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-medium text-zinc-600 hover:bg-zinc-200"
+      }
+    >
+      {children}
+    </button>
+  );
+}
+
 function QueueRow({
   title,
   subtitle,
@@ -272,6 +400,9 @@ function QueueRow({
   hint,
   meta,
   onOpen,
+  selectable,
+  selected,
+  onToggleSelect,
 }: {
   title: string;
   subtitle?: string;
@@ -280,14 +411,26 @@ function QueueRow({
   hint: string;
   meta: string[];
   onOpen: () => void;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: () => void;
 }) {
   return (
     <Card
-      className="cursor-pointer transition hover:ring-2 hover:ring-accent/30"
-      onClick={onOpen}
+      className={`transition hover:ring-2 hover:ring-accent/30 ${selected ? "ring-2 ring-accent/50" : ""}`}
     >
       <CardBody className="flex flex-wrap items-center justify-between gap-3 py-3">
-        <div className="min-w-0">
+        {selectable && (
+          <input
+            type="checkbox"
+            className="h-4 w-4 shrink-0 accent-accent"
+            checked={!!selected}
+            onChange={onToggleSelect}
+            onClick={(e) => e.stopPropagation()}
+            aria-label="Select for bulk approve"
+          />
+        )}
+        <div className="min-w-0 flex-1 cursor-pointer" onClick={onOpen}>
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm font-medium text-zinc-900">{title}</span>
             {subtitle && <span className="text-xs text-zinc-400">{subtitle}</span>}
@@ -303,7 +446,7 @@ function QueueRow({
             ))}
           </div>
         </div>
-        <span className="text-xs font-medium text-accent">Open →</span>
+        <button type="button" onClick={onOpen} className="shrink-0 text-xs font-medium text-accent hover:underline">Open →</button>
       </CardBody>
     </Card>
   );

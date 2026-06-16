@@ -1369,6 +1369,25 @@ async function deleteRequest(supa, user, body) {
 }
 
 // ----------------------------------------------------------------------------
+// decide-bulk — approve several requests at once. Reuses decide() per item so
+// each goes through the same step/scope checks, transition guard, audit, and
+// notification. Approve only; rejections need a per-request reason.
+async function decideBulk(supa, user, body) {
+  const items = Array.isArray(body?.items) ? body.items.slice(0, 200) : [];
+  if (!items.length) return { error: "No requests selected.", status: 400 };
+  let approved = 0, failed = 0;
+  const results = [];
+  for (const it of items) {
+    const type = sanitizeText(it?.type, 20);
+    const id = sanitizeText(it?.id, 64);
+    if (!type || !id) { results.push({ id: id || null, ok: false, error: "Missing type or id." }); failed++; continue; }
+    const r = await decide(supa, user, { type, id, action: "approve" });
+    if (r && typeof r === "object" && "error" in r) { results.push({ id, ok: false, error: r.error }); failed++; }
+    else { results.push({ id, ok: true }); approved++; }
+  }
+  return { ok: true, approved, failed, results };
+}
+
 // HTTP handler
 // ----------------------------------------------------------------------------
 function unwrap(result) {
@@ -1408,6 +1427,7 @@ export const handler = async (event) => {
       if (action === "update-training") return unwrap(await updateTraining(supa, user, body));
       if (action === "update-pto") return unwrap(await updatePto(supa, user, body));
       if (action === "decide") return unwrap(await decide(supa, user, body));
+      if (action === "decide-bulk") return unwrap(await decideBulk(supa, user, body));
       if (action === "confirm") return unwrap(await confirm(supa, user, body));
       if (action === "withdraw") return unwrap(await withdrawRequest(supa, user, body));
       if (action === "delete") return unwrap(await deleteRequest(supa, user, body));
