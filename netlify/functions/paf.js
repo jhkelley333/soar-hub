@@ -1590,16 +1590,16 @@ async function deletePaf(supa, user, body) {
   return { ok: true };
 }
 
-// text-approver — manual SMS nudge to the assigned approver when a quick
-// response is needed. Heads-up + a link to the PAF queue (not a magic link).
+// notify-approver — manual nudge to the assigned approver when a quick
+// response is needed. Emails them (reliable) and, when Telnyx is set up,
+// also texts a heads-up + a link to the PAF queue (not a magic link).
 const TEXTABLE_STATUSES = new Set(["Pending", "Pending SDO Approval"]);
-const PAF_TEXT_FLAG = "paf_text_approver";
+const PAF_NOTIFY_FLAG = "paf_text_approver";
 async function textApprover(supa, user, body) {
-  if (!SUBMIT_ROLES.has(user.role)) return { error: "Your role can't send PAF texts.", status: 403 };
-  if (!(await getFlag(supa, PAF_TEXT_FLAG, { userId: user.id }))) {
-    return { error: "Texting the approver isn't turned on yet.", status: 403 };
+  if (!SUBMIT_ROLES.has(user.role)) return { error: "Your role can't notify PAF approvers.", status: 403 };
+  if (!(await getFlag(supa, PAF_NOTIFY_FLAG, { userId: user.id }))) {
+    return { error: "Notifying the approver isn't turned on yet.", status: 403 };
   }
-  if (!telnyxConfigured()) return { error: "SMS isn't set up yet (needs TELNYX_API_KEY + a sender number).", status: 400 };
   const id = body?.id;
   if (!id) return { error: "id is required.", status: 400 };
 
@@ -1614,24 +1614,58 @@ async function textApprover(supa, user, body) {
     return { error: `This PAF is ${paf.status} — there's no pending approval to nudge.`, status: 409 };
   }
   if (!paf.sdo_approver_id) {
-    return { error: "This PAF has no assigned approver to text (it may be with Payroll).", status: 400 };
+    return { error: "This PAF has no assigned approver to notify (it may be with Payroll).", status: 400 };
   }
 
   const { data: appr } = await supa
-    .from("profiles").select("full_name, preferred_name, phone").eq("id", paf.sdo_approver_id).maybeSingle();
-  if (!appr?.phone) return { error: "The assigned approver has no phone number on file.", status: 400 };
+    .from("profiles").select("full_name, preferred_name, phone, email").eq("id", paf.sdo_approver_id).maybeSingle();
+  if (!appr?.phone && !appr?.email) {
+    return { error: "The assigned approver has no phone or email on file.", status: 400 };
+  }
 
   const who = appr.preferred_name || appr.full_name || "the approver";
   const amount = paf.estimated_cost != null ? fmtMoney(paf.estimated_cost) : null;
   const detail = [paf.category, amount].filter(Boolean).join(", ");
   const link = `${appBaseUrl()}/paf`;
-  const text = `SOAR PAF needs your review: ${paf.employee_name}${detail ? ` (${detail})` : ""}${paf.submitter_name ? ` from ${paf.submitter_name}` : ""}. ${link}`;
+  const summary = `${paf.employee_name}${detail ? ` (${detail})` : ""}${paf.submitter_name ? ` from ${paf.submitter_name}` : ""}`;
 
-  const sent = await sendSms(appr.phone, text);
-  if (!sent.ok) return { error: sent.error || "Couldn't send the text.", status: 502 };
+  const channels = [];
+  let lastError = null;
 
-  await logAudit(supa, { paf_id: id, actor_id: user.id, actor_email: user.email, action: "text-approver", detail: { to: who } });
-  return { ok: true, to: who };
+  // SMS — best-effort. Only when Telnyx is configured and we have a number;
+  // a failure here never blocks the email below.
+  if (telnyxConfigured() && appr.phone) {
+    const smsText = `SOAR PAF needs your review: ${summary}. ${link}`;
+    const sent = await sendSms(appr.phone, smsText);
+    if (sent.ok) channels.push("text");
+    else lastError = sent.error;
+  }
+
+  // Email — the reliable channel (and the only one while 10DLC is pending).
+  if (appr.email) {
+    const emailRes = await sendEmailViaResend({
+      to: appr.email,
+      subject: `PAF needs your review — ${paf.employee_name}`,
+      text:
+        `Hi ${who},\n\n` +
+        `A Personnel Action Form needs your review:\n\n` +
+        `  ${summary}\n\n` +
+        `Please review and respond here:\n${link}\n\n` +
+        `— SOAR PAF`,
+    });
+    if (emailRes.ok) channels.push("email");
+    else if (!emailRes.skipped) lastError = "Couldn't send the email.";
+  }
+
+  if (channels.length === 0) {
+    return { error: lastError || "Couldn't reach the approver (no channel succeeded).", status: 502 };
+  }
+
+  await logAudit(supa, {
+    paf_id: id, actor_id: user.id, actor_email: user.email,
+    action: "notify-approver", detail: { to: who, channels },
+  });
+  return { ok: true, to: who, channels };
 }
 
 function unwrap(result) {

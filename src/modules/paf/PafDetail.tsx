@@ -17,6 +17,7 @@ const AUDIT_LABEL: Record<string, string> = {
   "mark-processed": "Marked Processed",
   "sdo-approved": "Approved by SDO",
   "sdo-rejected": "Rejected by SDO",
+  "notify-approver": "Approver notified",
   delete: "Deleted by System Admin",
 };
 
