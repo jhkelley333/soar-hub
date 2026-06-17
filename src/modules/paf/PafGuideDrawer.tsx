@@ -29,7 +29,7 @@ export function PafGuideDrawer({ open, onClose }: { open: boolean; onClose: () =
     >
       <div className="space-y-1">
         <P>
-          A <strong>Personnel Action Form (PAF)</strong> is how leaders submit pay/personnel changes — adjustments, time
+          A <strong>Payroll Action Form (PAF)</strong> is how leaders submit pay/personnel changes — adjustments, time
           off, terminations, transfers, demotions, bonuses, and salary-leader new hires — for Payroll to process.
         </P>
 

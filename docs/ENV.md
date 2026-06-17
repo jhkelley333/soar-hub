@@ -64,6 +64,17 @@ Legend: **R** required · **O** optional (has a default / feature-specific) ·
 | `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` | O | VAPID keypair for push. **Private is secret.** |
 | `VAPID_SUBJECT` | O | `mailto:` contact for push. |
 
+## SMS — Telnyx (PAF "Text approver")
+| Var | | Notes |
+|---|---|---|
+| `TELNYX_API_KEY` | O | API V2 key. Required for any outbound SMS. **Secret.** |
+| `TELNYX_FROM_NUMBER` | O | Sender number in E.164 (e.g. `+14695551234`). Use this **or** `TELNYX_MESSAGING_PROFILE_ID`. |
+| `TELNYX_MESSAGING_PROFILE_ID` | O | Messaging profile id — lets Telnyx pick a number on the profile. Alternative to `TELNYX_FROM_NUMBER`. |
+
+Outbound only — no inbound webhook is used. Also gated behind the
+`paf_text_approver` feature flag, and the approver's profile must have a
+phone number on file.
+
 ## Legacy / misc
 | Var | | Notes |
 |---|---|---|

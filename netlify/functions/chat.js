@@ -84,6 +84,48 @@ function fmtTime(iso) {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+function appBaseUrl() {
+  return (process.env.URL || process.env.DEPLOY_URL || "").replace(/\/$/, "");
+}
+
+function fmtMoney(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "";
+  return v.toLocaleString("en-US", { style: "currency", currency: "USD" });
+}
+
+// Minimal Resend send for PAF-discussion alert emails. Mirrors the inline
+// pattern used by the other functions; best-effort, never throws.
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "notifications@mysoarhub.com";
+const RESEND_FROM_NAME = process.env.PAF_FROM_NAME || process.env.RESEND_FROM_NAME || "SOAR PAF";
+
+async function sendPafChatEmail({ to, subject, text }) {
+  if (!RESEND_API_KEY) {
+    console.warn("[chat] RESEND_API_KEY not set; skipping email", { to, subject });
+    return { skipped: true };
+  }
+  const recipients = Array.isArray(to) ? to.filter(Boolean) : to ? [to] : [];
+  if (!recipients.length) return { skipped: true };
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`, to: recipients, subject, text }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      console.warn("[chat] Resend send failed", res.status, detail);
+      return { ok: false };
+    }
+    const json = await res.json().catch(() => ({}));
+    return { ok: true, id: json?.id };
+  } catch (e) {
+    console.warn("[chat] Resend send threw", e);
+    return { ok: false };
+  }
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   if (!SUPABASE_URL || !SERVICE_KEY) return respond(500, { ok: false, message: "Supabase not configured." });
@@ -676,6 +718,7 @@ export const handler = async (event) => {
       let title = "";
       let subtitle = "";
       let systemText = "";
+      let pafForAlert = null;
       const participants = [uid];
 
       if (scopeKind === "workorder") {
@@ -693,7 +736,7 @@ export const handler = async (event) => {
       } else {
         const { data: paf } = await supa
           .from("paf_submissions")
-          .select("employee_name, submitter_id, sdo_approver_id, status")
+          .select("employee_name, category, estimated_cost, submitter_id, submitter_name, sdo_approver_id, status")
           .eq("id", scopeRef)
           .maybeSingle();
         if (!paf) return respond(404, { ok: false, message: "PAF not found." });
@@ -702,6 +745,7 @@ export const handler = async (event) => {
         systemText = `Discussion started for ${paf.employee_name || "this"} PAF.`;
         if (paf.submitter_id) participants.push(paf.submitter_id);
         if (paf.sdo_approver_id) participants.push(paf.sdo_approver_id);
+        pafForAlert = paf;
       }
 
       const uniqueParticipants = Array.from(new Set(participants.filter(Boolean)));
@@ -732,6 +776,38 @@ export const handler = async (event) => {
       await supa
         .from("chat_messages")
         .insert({ thread_id: thread.id, from_user_id: null, text: systemText, system: true });
+
+      // Fallback alert: when someone other than the submitter starts a PAF
+      // discussion (e.g. Payroll asking a question), email the submitter so
+      // they don't miss it — chat push alone may not reach them.
+      if (pafForAlert?.submitter_id && pafForAlert.submitter_id !== uid) {
+        try {
+          const { data: sub } = await supa
+            .from("profiles")
+            .select("email, full_name, preferred_name")
+            .eq("id", pafForAlert.submitter_id)
+            .maybeSingle();
+          if (sub?.email) {
+            const who = sub.preferred_name || sub.full_name || "there";
+            const amount = pafForAlert.estimated_cost != null ? fmtMoney(pafForAlert.estimated_cost) : "";
+            const detail = [pafForAlert.category, amount].filter(Boolean).join(", ");
+            const starter = displayName(caller);
+            const link = `${appBaseUrl()}/chat/${thread.id}`;
+            await sendPafChatEmail({
+              to: sub.email,
+              subject: `A question on your PAF — ${pafForAlert.employee_name || "submission"}`,
+              text:
+                `Hi ${who},\n\n` +
+                `${starter} started a discussion on your Payroll Action Form and may need a response:\n\n` +
+                `  ${pafForAlert.employee_name || "PAF"}${detail ? ` (${detail})` : ""}\n\n` +
+                `Open the conversation to reply:\n${link}\n\n` +
+                `— SOAR PAF`,
+            });
+          }
+        } catch (e) {
+          console.warn("[chat] PAF submitter alert email failed", e?.message || e);
+        }
+      }
 
       return respond(200, { ok: true, threadId: thread.id });
     }

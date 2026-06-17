@@ -158,12 +158,19 @@ export function deletePaf(id: string, reason: string): Promise<{ ok: true }> {
   });
 }
 
-// Manually text the assigned approver a heads-up (when a quick response is needed).
-export function textPafApprover(id: string): Promise<{ ok: true; to: string }> {
-  return request<{ ok: true; to: string }>(`${FN}?action=text-approver`, {
-    method: "POST",
-    body: JSON.stringify({ id }),
-  });
+// Manually nudge the assigned approver (when a quick response is needed).
+// Emails them, and also texts when Telnyx is configured. `channels` reports
+// which actually went out.
+export function textPafApprover(
+  id: string
+): Promise<{ ok: true; to: string; channels: ("email" | "text")[] }> {
+  return request<{ ok: true; to: string; channels: ("email" | "text")[] }>(
+    `${FN}?action=text-approver`,
+    {
+      method: "POST",
+      body: JSON.stringify({ id }),
+    }
+  );
 }
 
 export function needsApprovalPaf(
