@@ -1648,7 +1648,7 @@ async function textApprover(supa, user, body) {
       subject: `PAF needs your review — ${paf.employee_name}`,
       text:
         `Hi ${who},\n\n` +
-        `A Personnel Action Form needs your review:\n\n` +
+        `A Payroll Action Form needs your review:\n\n` +
         `  ${summary}\n\n` +
         `Please review and respond here:\n${link}\n\n` +
         `— SOAR PAF`,

@@ -798,7 +798,7 @@ export const handler = async (event) => {
               subject: `A question on your PAF — ${pafForAlert.employee_name || "submission"}`,
               text:
                 `Hi ${who},\n\n` +
-                `${starter} started a discussion on your Personnel Action Form and may need a response:\n\n` +
+                `${starter} started a discussion on your Payroll Action Form and may need a response:\n\n` +
                 `  ${pafForAlert.employee_name || "PAF"}${detail ? ` (${detail})` : ""}\n\n` +
                 `Open the conversation to reply:\n${link}\n\n` +
                 `— SOAR PAF`,
