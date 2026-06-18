@@ -52,6 +52,20 @@ async function activate(supa, docVersionId) {
   return { ok: true, doc_version_id: docVersionId, active: true };
 }
 
+// Synchronous, authenticated pre-flight for background indexing: stamps the
+// row 'queued' so the client can confirm the kickoff actually authenticated
+// (a stale token returns a visible 401 here, instead of failing silently
+// behind the background function's always-202 response).
+async function queue(supa, docVersionId) {
+  if (!docVersionId) return { error: "doc_version_id is required.", status: 400 };
+  const { error } = await supa
+    .from("doc_versions")
+    .update({ index_status: "queued", index_error: null })
+    .eq("id", docVersionId);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, doc_version_id: docVersionId, queued: true };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   if (event.httpMethod !== "POST") return respond(405, { error: "POST only." });
@@ -69,6 +83,7 @@ export const handler = async (event) => {
   try {
     const supa = admin();
     if (action === "ingest") return unwrap(await runIngest(supa, body?.doc_version_id));
+    if (action === "queue") return unwrap(await queue(supa, body?.doc_version_id));
     if (action === "activate") return unwrap(await activate(supa, body?.doc_version_id));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
