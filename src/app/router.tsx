@@ -33,6 +33,8 @@ import { RoleAccessPage } from "@/modules/admin/RoleAccessPage";
 import { RegionAccessPage } from "@/modules/admin/RegionAccessPage";
 import { QsrHomePage } from "@/modules/qsr/QsrHomePage";
 import { LessonPlayer } from "@/modules/qsr/player/LessonPlayer";
+import { BuilderCoursesPage } from "@/modules/qsr/builder/BuilderCoursesPage";
+import { CourseEditorPage } from "@/modules/qsr/builder/CourseEditorPage";
 import { PafConfigPage } from "@/modules/admin/pafConfig/PafConfigPage";
 import { TemplatesListPage } from "@/modules/walkthrough/builder/TemplatesListPage";
 import { WalkthroughBuilderPage } from "@/modules/walkthrough/builder/WalkthroughBuilderPage";
@@ -444,6 +446,22 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <LessonPlayer />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "qsr/builder",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <BuilderCoursesPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "qsr/builder/:courseId",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <CourseEditorPage />
           </ProtectedRoute>
         ),
       },
