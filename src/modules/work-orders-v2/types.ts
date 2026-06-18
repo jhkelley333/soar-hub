@@ -118,6 +118,7 @@ export interface TicketApproval {
   approved_by: string | null;
   notes: string | null;
   quote_url: string | null;
+  approved_via_whatsapp?: boolean;
 }
 
 // Activity feed entry — one row per state-changing action on a ticket
@@ -381,6 +382,10 @@ export interface CreateTicketBody {
   // Optional cost breakdown. When present the backend sets cost_estimate
   // to the sum, so callers don't send costEstimate separately.
   lineItems?: LineItem[];
+  // The first (required) photo, base64, bound to creation server-side so a
+  // ticket can never be created without a photo. Additional photos upload
+  // after via uploadPhoto.
+  photos?: { data: string; name: string; type: string }[];
 }
 
 export interface CreateTicketResponse {

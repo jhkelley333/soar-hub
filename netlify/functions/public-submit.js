@@ -257,6 +257,12 @@ export const handler = async (event) => {
           message: 'Choose a vendor, type one, or select "Need help finding a vendor".',
         });
       }
+      // A photo is required. The first photo is bound to creation here so a
+      // public ticket can't exist without one; any others upload after.
+      const firstPhoto = body.photo && body.photo.photoData ? body.photo : null;
+      if (!firstPhoto) {
+        return respond(400, { ok: false, message: "Please attach at least one photo of the issue." });
+      }
 
       const woNumber = await nextWONumber(supabase, store.number);
       const submittedBy = `Public: ${submitterName} <${submitterEmail}>`
@@ -293,6 +299,32 @@ export const handler = async (event) => {
         .select()
         .single();
       if (tErr) throw tErr;
+
+      // Store the required first photo bound to creation; roll the ticket back
+      // on failure so we never leave a photo-less public submission.
+      try {
+        const buf = Buffer.from(firstPhoto.photoData, "base64");
+        if (!buf.length || buf.length > 5 * 1024 * 1024) {
+          await supabase.from("tickets").delete().eq("id", ticket.id);
+          return respond(400, { ok: false, message: "Photo is empty or larger than 5 MB." });
+        }
+        const ext = (firstPhoto.photoName || "photo.jpg").split(".").pop().toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+        const path = `${ticket.id}/public-${Date.now()}.${ext}`;
+        const { error: upErr } = await supabase.storage
+          .from(PHOTOS_BUCKET)
+          .upload(path, buf, { contentType: firstPhoto.photoType || "image/jpeg", upsert: false });
+        if (upErr) throw upErr;
+        const url = supabase.storage.from(PHOTOS_BUCKET).getPublicUrl(path).data.publicUrl || path;
+        await supabase.from("ticket_photos").insert({
+          ticket_id: ticket.id, file_url: url, file_name: firstPhoto.photoName || "photo.jpg",
+          file_size: buf.length, mime_type: firstPhoto.photoType || "image/jpeg",
+          uploaded_by: submittedBy, upload_type: "submission",
+        });
+      } catch (e) {
+        await supabase.from("tickets").delete().eq("id", ticket.id);
+        console.warn("[public-submit] required photo store failed:", e?.message);
+        return respond(500, { ok: false, message: "Couldn't store the photo — please retry." });
+      }
 
       // Audit row so the ticket's timeline shows where it came from.
       await supabase.from("ticket_activities").insert({
