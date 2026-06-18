@@ -22,6 +22,17 @@
          list only the PNG here to force the new mark). -->
     <link rel="icon" type="image/png" href="/app-icon.png" />
 
+    <!-- SOAR QSR Learning Platform brand fonts (Bricolage Grotesque /
+         Hanken Grotesk / JetBrains Mono). Only applied via the font-qsr-*
+         utilities inside the admin-gated /qsr module; the rest of the app
+         keeps Inter. Falls back to system-ui if the CDN is unreachable. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400..600&display=swap"
+      rel="stylesheet"
+    />
+
     <!-- iOS PWA install hints. apple-mobile-web-app-capable lets the
          installed app render fullscreen (no Safari chrome) on iOS
          13+ when added to the home screen. status-bar-style
