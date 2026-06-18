@@ -10,6 +10,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
 import { qsrBrand } from "./brand";
 import { listQsrCourses } from "./api";
+import { GamificationPanel } from "./GamificationPanel";
 
 const SURFACES = [
   {
@@ -73,6 +74,9 @@ export function QsrHomePage() {
           </div>
         ))}
       </div>
+
+      {/* Gamification — points, streak, badges, store leaderboard (Milestone 3). */}
+      <GamificationPanel />
 
       {/* Real seeded content — proves the Milestone 1 data model end-to-end. */}
       <div className="mt-8">
