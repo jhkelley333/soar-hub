@@ -12,6 +12,15 @@ How to verify:
 
 **ALWAYS render migration SQL on screen.** Whenever a migration is created or changed, print its full SQL inline in the chat (a fenced ```sql block) so the user can copy it straight into the Supabase SQL editor — every time, without being asked. Sending the file too is fine, but the on-screen SQL is required. Follow it with a verification query.
 
+**ALWAYS include the migration number + title as a header comment** — in both the file AND the on-screen SQL block, so whatever the user pastes into Supabase carries its identity. The first two lines of every migration must be:
+
+```sql
+-- NNNN_short_title.sql
+-- One-line description of what this migration does.
+```
+
+Do not strip this header when rendering the SQL in chat — paste the file verbatim, header included. (Migrations 0166/0167 were rendered without it; don't repeat that.)
+
 ## Branch convention
 
 Active feature branch: **`claude/paf-form`**. The user merges PRs from this branch into `main` manually via GitHub UI; there is no auto-merge automation.

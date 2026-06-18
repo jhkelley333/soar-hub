@@ -3,7 +3,7 @@
 // Server-authoritative actions (scoring, progress) get Netlify functions in
 // later milestones.
 import { supabase } from "@/lib/supabase";
-import type { LessonPayload } from "./types";
+import type { CardType, LessonPayload } from "./types";
 
 export interface QsrCourseSummary {
   id: string;
@@ -95,4 +95,81 @@ export interface QsrLeaderboardEntry { user_id: string; name: string; points: nu
 export interface QsrLeaderboard { storeId: string | null; entries: QsrLeaderboardEntry[] }
 export function fetchQsrLeaderboard(): Promise<QsrLeaderboard> {
   return learnFetch<QsrLeaderboard>(`${LEARN_FN}?action=leaderboard`);
+}
+
+// ── Authoring (Milestone 4 — Course Builder) ─────────────────────────────────
+const AUTHOR_FN = "/.netlify/functions/qsr-author";
+
+export interface BuilderCourse {
+  id: string;
+  title: string;
+  category: string | null;
+  description: string | null;
+  status: "draft" | "published";
+  est_minutes: number | null;
+  points: number;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  lesson_count: number;
+  card_count: number;
+}
+export interface BuilderCard {
+  id: string;
+  lesson_id: string;
+  ord: number;
+  type: CardType;
+  data: Record<string, unknown>;
+}
+export interface BuilderLesson {
+  id: string;
+  course_id: string;
+  title: string;
+  module: string | null;
+  ord: number;
+  cards: BuilderCard[];
+}
+export interface CourseTree {
+  course: BuilderCourse;
+  lessons: BuilderLesson[];
+}
+
+export function listBuilderCourses(): Promise<{ courses: BuilderCourse[] }> {
+  return learnFetch(`${AUTHOR_FN}?action=courses`);
+}
+export function getCourseTree(courseId: string): Promise<CourseTree> {
+  return learnFetch(`${AUTHOR_FN}?action=course&course_id=${encodeURIComponent(courseId)}`);
+}
+export function saveCourse(
+  input: Partial<BuilderCourse> & { title: string },
+): Promise<{ course: BuilderCourse }> {
+  return learnFetch(`${AUTHOR_FN}?action=saveCourse`, { method: "POST", body: JSON.stringify(input) });
+}
+export function setCoursePublish(id: string, publish: boolean): Promise<{ course: BuilderCourse }> {
+  return learnFetch(`${AUTHOR_FN}?action=setPublish`, { method: "POST", body: JSON.stringify({ id, publish }) });
+}
+export function deleteBuilderCourse(id: string): Promise<{ ok: true }> {
+  return learnFetch(`${AUTHOR_FN}?action=deleteCourse`, { method: "POST", body: JSON.stringify({ id }) });
+}
+export function saveLesson(
+  input: { id?: string; course_id?: string; title: string; module?: string | null; ord?: number },
+): Promise<{ lesson: BuilderLesson }> {
+  return learnFetch(`${AUTHOR_FN}?action=saveLesson`, { method: "POST", body: JSON.stringify(input) });
+}
+export function deleteLesson(id: string): Promise<{ ok: true }> {
+  return learnFetch(`${AUTHOR_FN}?action=deleteLesson`, { method: "POST", body: JSON.stringify({ id }) });
+}
+export function saveCard(
+  input: { id?: string; lesson_id?: string; type: CardType; data: Record<string, unknown>; ord?: number },
+): Promise<{ card: BuilderCard }> {
+  return learnFetch(`${AUTHOR_FN}?action=saveCard`, { method: "POST", body: JSON.stringify(input) });
+}
+export function deleteCard(id: string): Promise<{ ok: true }> {
+  return learnFetch(`${AUTHOR_FN}?action=deleteCard`, { method: "POST", body: JSON.stringify({ id }) });
+}
+export function reorderBuilder(
+  table: "cards" | "lessons",
+  items: { id: string; ord: number }[],
+): Promise<{ ok: true }> {
+  return learnFetch(`${AUTHOR_FN}?action=reorder`, { method: "POST", body: JSON.stringify({ table, items }) });
 }

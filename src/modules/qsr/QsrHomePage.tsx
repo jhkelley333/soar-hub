@@ -17,21 +17,22 @@ const SURFACES = [
     title: "Learn",
     icon: GraduationCap,
     blurb: "Mobile, thumb-driven microlessons crew actually want to open — 60-second cards, streaks, daily review.",
-    milestone: "Milestone 2 — Learner core + Player",
+    milestone: "Live — Player + gamification",
   },
   {
     title: "Build",
     icon: PencilRuler,
-    blurb: "The Course Builder: author on-brand lessons card by card with a live phone preview, then publish.",
-    milestone: "Milestone 3 — Authoring",
+    blurb: "The Course Builder: author on-brand lessons card by card, reorder, then publish.",
+    milestone: "Live — open the builder",
+    to: "/qsr/builder",
   },
   {
     title: "Manage",
     icon: BarChart3,
     blurb: "Above-store cockpit: org → region → district → store rollups, assignments, certs, and audit-ready reports.",
-    milestone: "Milestone 4 — Manager dashboard",
+    milestone: "Next — Manager dashboard",
   },
-];
+] as const;
 
 export function QsrHomePage() {
   const coursesQ = useQuery({ queryKey: ["qsr", "courses"], queryFn: listQsrCourses, staleTime: 60_000 });
@@ -56,23 +57,27 @@ export function QsrHomePage() {
         </div>
       </div>
 
-      {/* Three surfaces — roadmap */}
+      {/* Three surfaces — Build links straight into the Course Builder. */}
       <div className="mt-6 grid gap-4 sm:grid-cols-3">
-        {SURFACES.map((s) => (
-          <div key={s.title} className="rounded-2xl border border-border bg-surface p-5">
-            <div
-              className="flex h-10 w-10 items-center justify-center rounded-xl"
-              style={{ background: `${qsrBrand.azure}14` }}
-            >
-              <s.icon className="h-5 w-5 text-qsr-azure" />
-            </div>
-            <h2 className="mt-3 font-qsr-display text-lg font-semibold text-ink">{s.title}</h2>
-            <p className="mt-1.5 font-qsr-ui text-sm leading-relaxed text-ink-muted">{s.blurb}</p>
-            <span className="mt-3 inline-block rounded-full bg-surface-sunk px-2.5 py-1 text-[11px] font-medium text-ink-subtle">
-              {s.milestone}
-            </span>
-          </div>
-        ))}
+        {SURFACES.map((s) => {
+          const inner = (
+            <>
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl" style={{ background: `${qsrBrand.azure}14` }}>
+                <s.icon className="h-5 w-5 text-qsr-azure" />
+              </div>
+              <h2 className="mt-3 font-qsr-display text-lg font-semibold text-ink">{s.title}</h2>
+              <p className="mt-1.5 font-qsr-ui text-sm leading-relaxed text-ink-muted">{s.blurb}</p>
+              <span className="mt-3 inline-block rounded-full bg-surface-sunk px-2.5 py-1 text-[11px] font-medium text-ink-subtle">{s.milestone}</span>
+            </>
+          );
+          return "to" in s && s.to ? (
+            <Link key={s.title} to={s.to} className="rounded-2xl border border-border bg-surface p-5 transition hover:border-qsr-azure hover:shadow-sm">
+              {inner}
+            </Link>
+          ) : (
+            <div key={s.title} className="rounded-2xl border border-border bg-surface p-5">{inner}</div>
+          );
+        })}
       </div>
 
       {/* Gamification — points, streak, badges, store leaderboard (Milestone 3). */}
