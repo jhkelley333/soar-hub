@@ -172,20 +172,33 @@ const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 // poll the version's index_status until it flips to done/error. The mutation
 // stays pending for the duration, so the existing "Indexing…" UI just works.
 export async function ingestVersion(docVersionId: string): Promise<{ ok: true; chunks: number }> {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Not signed in");
+  // Refresh first so a long upload doesn't leave us holding a stale token.
+  await supabase.auth.getSession();
+  const { data } = await supabase.auth.refreshSession();
+  const token = data.session?.access_token ?? (await supabase.auth.getSession()).data.session?.access_token;
+  if (!token) throw new Error("Your session has expired — sign in again, then retry.");
 
-  // Fire the background job (returns 202 immediately). Non-2xx = auth/role
-  // failure we should surface now rather than poll on.
-  const res = await fetch(`/.netlify/functions/ingest-manual-background?action=ingest`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ doc_version_id: docVersionId }),
-  });
-  if (!res.ok && res.status !== 202) {
-    throw new Error(res.status === 403 ? "Manuals are managed by RVP and above." : `Couldn't start indexing (${res.status}).`);
+  const authPost = (path: string) =>
+    fetch(path, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ doc_version_id: docVersionId }),
+    });
+
+  // 1) Synchronous, authenticated pre-flight. This is where a stale session or
+  // wrong role surfaces a real error (the background worker always 202s and
+  // can't report auth failures back to the browser).
+  const pre = await authPost(`/.netlify/functions/ingest-manual?action=queue`);
+  if (!pre.ok) {
+    if (pre.status === 401) throw new Error("Your session has expired — sign in again, then retry.");
+    if (pre.status === 403) throw new Error("Manuals are managed by RVP and above.");
+    let message = `Couldn't start indexing (${pre.status}).`;
+    try { const b = await pre.json(); if (b?.error) message = b.error; } catch { /* ignore */ }
+    throw new Error(message);
   }
+
+  // 2) Fire the background worker (returns 202 immediately).
+  await authPost(`/.netlify/functions/ingest-manual-background?action=ingest`);
 
   // Poll for up to ~6 minutes; large PDFs take a while but well under the
   // function's 15-min budget.
