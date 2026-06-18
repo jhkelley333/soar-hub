@@ -148,7 +148,7 @@ export async function uploadVersion(
 }
 
 // ── ingest-manual Netlify function ────────────────────────────────────────────
-async function fnPost<T>(action: "ingest" | "activate", body: Record<string, unknown>): Promise<T> {
+async function fnPost<T>(action: "activate", body: Record<string, unknown>): Promise<T> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error("Not signed in");
@@ -164,7 +164,44 @@ async function fnPost<T>(action: "ingest" | "activate", body: Record<string, unk
   }
   return res.json() as Promise<T>;
 }
-export const ingestVersion = (docVersionId: string) =>
-  fnPost<{ ok: true; chunks: number }>("ingest", { doc_version_id: docVersionId });
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+// Indexing runs in a Netlify *background* function (15-min budget) so large
+// manuals don't hit the ~10s synchronous timeout (→ 502). We kick it off, then
+// poll the version's index_status until it flips to done/error. The mutation
+// stays pending for the duration, so the existing "Indexing…" UI just works.
+export async function ingestVersion(docVersionId: string): Promise<{ ok: true; chunks: number }> {
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
+  if (!token) throw new Error("Not signed in");
+
+  // Fire the background job (returns 202 immediately). Non-2xx = auth/role
+  // failure we should surface now rather than poll on.
+  const res = await fetch(`/.netlify/functions/ingest-manual-background?action=ingest`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ doc_version_id: docVersionId }),
+  });
+  if (!res.ok && res.status !== 202) {
+    throw new Error(res.status === 403 ? "Manuals are managed by RVP and above." : `Couldn't start indexing (${res.status}).`);
+  }
+
+  // Poll for up to ~6 minutes; large PDFs take a while but well under the
+  // function's 15-min budget.
+  const deadline = Date.now() + 6 * 60_000;
+  while (Date.now() < deadline) {
+    await sleep(3000);
+    const { data: row } = await supabase
+      .from("doc_versions")
+      .select("index_status, index_error, index_chunks")
+      .eq("id", docVersionId)
+      .maybeSingle();
+    if (row?.index_status === "done") return { ok: true, chunks: row.index_chunks ?? 0 };
+    if (row?.index_status === "error") throw new Error(row.index_error || "Indexing failed.");
+  }
+  throw new Error("Indexing is still running in the background — refresh in a minute to check its status.");
+}
+
 export const activateVersion = (docVersionId: string) =>
   fnPost<{ ok: true }>("activate", { doc_version_id: docVersionId });

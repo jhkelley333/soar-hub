@@ -13,8 +13,7 @@
 // Ingestion does NOT activate — activation is the explicit "old steps aside" step.
 
 import { createClient } from "@supabase/supabase-js";
-import { PDFParse } from "pdf-parse";
-import { chunkSections } from "./_lib/manual-chunker.js";
+import { runIngest } from "./_lib/manual-ingest.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -42,55 +41,8 @@ async function getSessionUser(event) {
   return profile;
 }
 
-// Chunk one version: download → extract text → split → replace chunks.
-async function ingest(supa, docVersionId) {
-  if (!docVersionId) return { error: "doc_version_id is required.", status: 400 };
-  const { data: ver, error: vErr } = await supa
-    .from("doc_versions").select("id, manual_id, storage_path").eq("id", docVersionId).maybeSingle();
-  if (vErr) return { error: vErr.message, status: 500 };
-  if (!ver) return { error: "doc_version not found.", status: 404 };
-
-  const { data: file, error: dErr } = await supa.storage.from("manuals").download(ver.storage_path);
-  if (dErr || !file) return { error: `Couldn't download source file: ${dErr?.message || "missing"}`, status: 502 };
-
-  let text;
-  try {
-    const buf = Buffer.from(await file.arrayBuffer());
-    const parser = new PDFParse({ data: buf });
-    try {
-      text = (await parser.getText()).text || "";
-    } finally {
-      await parser.destroy?.();
-    }
-  } catch (e) {
-    return { error: `PDF parse failed: ${e.message}`, status: 422 };
-  }
-
-  const sections = chunkSections(text);
-  if (!sections.length) return { error: "No sections detected in the document.", status: 422 };
-
-  // Idempotent: replace this version's chunks rather than appending.
-  const { error: delErr } = await supa.from("manual_chunks").delete().eq("doc_version_id", docVersionId);
-  if (delErr) return { error: delErr.message, status: 500 };
-
-  const rows = sections.map((s) => ({
-    manual_id: ver.manual_id,
-    doc_version_id: docVersionId,
-    section_path: s.section_path,
-    heading: s.heading,
-    content: s.content,
-    ordinal: s.ordinal,
-    // embedding intentionally left NULL (reserved for pgvector).
-  }));
-  // Insert in chunks of 500 to stay well under payload limits.
-  for (let i = 0; i < rows.length; i += 500) {
-    const { error } = await supa.from("manual_chunks").insert(rows.slice(i, i + 500));
-    if (error) return { error: error.message, status: 500 };
-  }
-
-  await supa.from("doc_versions").update({ indexed_at: new Date().toISOString() }).eq("id", docVersionId);
-  return { ok: true, doc_version_id: docVersionId, chunks: rows.length };
-}
+// Synchronous chunking path (small files / fallback). Large manuals go
+// through ingest-manual-background instead — see runIngest in _lib.
 
 // Flip a version live (others for that manual go inactive) — atomic in the RPC.
 async function activate(supa, docVersionId) {
@@ -116,7 +68,7 @@ export const handler = async (event) => {
 
   try {
     const supa = admin();
-    if (action === "ingest") return unwrap(await ingest(supa, body?.doc_version_id));
+    if (action === "ingest") return unwrap(await runIngest(supa, body?.doc_version_id));
     if (action === "activate") return unwrap(await activate(supa, body?.doc_version_id));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
