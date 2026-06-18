@@ -736,7 +736,7 @@ export const handler = async (event) => {
       } else {
         const { data: paf } = await supa
           .from("paf_submissions")
-          .select("employee_name, category, estimated_cost, submitter_id, submitter_name, sdo_approver_id, status")
+          .select("employee_name, category, estimated_cost, submitter_id, submitter_name, status")
           .eq("id", scopeRef)
           .maybeSingle();
         if (!paf) return respond(404, { ok: false, message: "PAF not found." });
@@ -744,7 +744,9 @@ export const handler = async (event) => {
         subtitle = paf.status || "";
         systemText = `Discussion started for ${paf.employee_name || "this"} PAF.`;
         if (paf.submitter_id) participants.push(paf.submitter_id);
-        if (paf.sdo_approver_id) participants.push(paf.sdo_approver_id);
+        // Note: the SDO approver is intentionally NOT auto-added — starting a
+        // discussion shouldn't feel like routing the PAF to them for approval.
+        // Add them manually via Group Info if their input is needed.
         pafForAlert = paf;
       }
 
