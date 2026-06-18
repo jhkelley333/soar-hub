@@ -29,8 +29,9 @@ const SURFACES = [
   {
     title: "Manage",
     icon: BarChart3,
-    blurb: "Above-store cockpit: org → region → district → store rollups, assignments, certs, and audit-ready reports.",
-    milestone: "Next — Manager dashboard",
+    blurb: "Above-store cockpit: completion rollups by course and store/region, course assignments, and audit CSV export.",
+    milestone: "Live — open the dashboard",
+    to: "/qsr/manage",
   },
 ] as const;
 
