@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import type { UserRole } from "@/types/database";
 import { moduleKeyForPath } from "@/app/nav";
 import { useOverrides } from "@/lib/roleAccess";
+import { useRegionAccess, regionVisible } from "@/lib/regionAccess";
 
 interface Props {
   children: ReactNode;
@@ -16,6 +17,8 @@ export function ProtectedRoute({ children, requireRoles }: Props) {
   // Role Access overrides can grant/revoke a role's access to a module.
   // Fail-open to the static requireRoles until the config has loaded.
   const { overrides, isLoaded } = useOverrides();
+  // Region Access can additionally hide a module from a region's users.
+  const { overrides: regionOverrides, myRegionIds } = useRegionAccess();
 
   if (loading) {
     return (
@@ -46,7 +49,10 @@ export function ProtectedRoute({ children, requireRoles }: Props) {
     // An explicit override for this module + role wins (grant or revoke).
     const moduleKey = moduleKeyForPath(location.pathname);
     const ov = isLoaded && moduleKey ? overrides[moduleKey]?.[role] : undefined;
-    const allowed = role === "admin" || (ov !== undefined ? ov : staticOk);
+    // Effective = role allows AND region allows. Region gate is skipped for
+    // admins and for paths not under a managed module.
+    const regionOk = role === "admin" || !moduleKey || regionVisible(moduleKey, myRegionIds, regionOverrides);
+    const allowed = role === "admin" || ((ov !== undefined ? ov : staticOk) && regionOk);
     if (!allowed) {
       return <Navigate to="/" replace />;
     }

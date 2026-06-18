@@ -8,6 +8,7 @@ import { RollerGame } from "@/auth/RollerGame";
 import { groupedNav, visibleNav } from "@/app/nav";
 import { fetchResolvedFlags } from "@/lib/flags";
 import { useOverrides } from "@/lib/roleAccess";
+import { useRegionAccess, regionVisible } from "@/lib/regionAccess";
 import { listPafs, listSdoQueue } from "@/modules/paf/api";
 import { listApprovalQueue } from "@/modules/employee-actions/api";
 import { countPendingScopes } from "@/modules/reno-scoping/api";
@@ -119,7 +120,11 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
     refetchOnWindowFocus: false,
   });
   const { overrides } = useOverrides();
-  const sections = groupedNav(visibleNav(profile?.role, flagsQ.data?.flags, overrides));
+  const { overrides: regionOverrides, myRegionIds } = useRegionAccess();
+  const navItems = visibleNav(profile?.role, flagsQ.data?.flags, overrides).filter(
+    (item) => profile?.role === "admin" || regionVisible(item.to, myRegionIds, regionOverrides),
+  );
+  const sections = groupedNav(navItems);
   const pafBadge = usePafBadgeCount(profile?.role);
   const eaBadge = useEmployeeActionsBadgeCount(profile?.role);
   const renoBadge = useRenoBadgeCount(profile?.role);

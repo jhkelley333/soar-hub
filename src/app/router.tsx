@@ -30,6 +30,7 @@ import { BulkOrgImportPage } from "@/modules/admin/BulkOrgImportPage";
 import { BulkAttributesPage } from "@/modules/admin/BulkAttributesPage";
 import { FeatureFlagsPage } from "@/modules/admin/FeatureFlagsPage";
 import { RoleAccessPage } from "@/modules/admin/RoleAccessPage";
+import { RegionAccessPage } from "@/modules/admin/RegionAccessPage";
 import { PafConfigPage } from "@/modules/admin/pafConfig/PafConfigPage";
 import { TemplatesListPage } from "@/modules/walkthrough/builder/TemplatesListPage";
 import { WalkthroughBuilderPage } from "@/modules/walkthrough/builder/WalkthroughBuilderPage";
@@ -416,6 +417,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <RoleAccessPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/region-access",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <RegionAccessPage />
           </ProtectedRoute>
         ),
       },
