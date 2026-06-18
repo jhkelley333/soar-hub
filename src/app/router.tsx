@@ -31,6 +31,7 @@ import { BulkAttributesPage } from "@/modules/admin/BulkAttributesPage";
 import { FeatureFlagsPage } from "@/modules/admin/FeatureFlagsPage";
 import { RoleAccessPage } from "@/modules/admin/RoleAccessPage";
 import { RegionAccessPage } from "@/modules/admin/RegionAccessPage";
+import { QsrHomePage } from "@/modules/qsr/QsrHomePage";
 import { PafConfigPage } from "@/modules/admin/pafConfig/PafConfigPage";
 import { TemplatesListPage } from "@/modules/walkthrough/builder/TemplatesListPage";
 import { WalkthroughBuilderPage } from "@/modules/walkthrough/builder/WalkthroughBuilderPage";
@@ -425,6 +426,15 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <RegionAccessPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // SOAR QSR Learning Platform — admin-only during the build.
+        path: "qsr",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <QsrHomePage />
           </ProtectedRoute>
         ),
       },

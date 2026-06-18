@@ -14,6 +14,7 @@ import {
   Flag,
   KeyRound,
   Globe,
+  Sparkles,
   ClipboardList,
   ClipboardCheck,
   HardHat,
@@ -124,6 +125,9 @@ export const NAV: NavItem[] = [
   { to: "/admin/feature-flags",   label: "Feature Flags",   icon: Flag,   roles: ["admin"] },
   { to: "/admin/role-access",     label: "Role Access",     icon: KeyRound, roles: ["admin"] },
   { to: "/admin/region-access",   label: "Region Access",   icon: Globe,    roles: ["admin"] },
+  // SOAR QSR Learning Platform — admin-only during the build. The qsr_platform
+  // flag broadens access to a pilot cohort at launch (combined with role).
+  { to: "/qsr",         label: "SOAR QSR",    icon: Sparkles,        roles: ["admin"], flagKey: "qsr_platform" },
   { to: "/admin/paf-config", label: "PAF Config", icon: Settings,    roles: ["payroll", "admin"] },
   { to: "/admin/labor-sync", label: "Labor Sync", icon: RefreshCw,   roles: ["vp", "coo", "admin"] },
   { to: "/admin/weather-sync", label: "Weather Sync", icon: CloudSun, roles: ["admin"] },
