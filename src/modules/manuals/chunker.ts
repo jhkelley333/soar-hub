@@ -1,16 +1,20 @@
-// Manual chunker — splits a manual's extracted text into per-section chunks.
-//
-// Kept deliberately separate from the ingest function shell so the
-// heading-detection heuristics can be tuned without touching the handler.
+// Manual chunker — browser port of netlify/functions/_lib/manual-chunker.js.
+// Splits a manual's extracted text into per-section chunks for manual_chunks.
 // v1 keys off numbered section headings ("4.2 Fryer Procedures"); everything
-// before the first heading becomes an intro chunk. Returns rows ready for
-// manual_chunks: { section_path, heading, content, ordinal }.
+// before the first heading becomes an intro chunk.
 
-// A heading looks like: optional indent, a dotted section number (4 / 4.2 /
-// 4.2.1), an optional separator, then a short Title (not a full sentence).
+export interface ManualSection {
+  section_path: string | null;
+  heading: string | null;
+  content: string;
+  ordinal: number;
+}
+
+// A heading: optional indent, a dotted section number (4 / 4.2 / 4.2.1), an
+// optional separator, then a short Title (not a full sentence).
 const HEADING_RE = /^\s*(\d+(?:\.\d+){0,4})[.)]?\s+(\S.{0,78}?)\s*$/;
 
-function asHeading(line) {
+function asHeading(line: string): { num: string; title: string } | null {
   const m = line.match(HEADING_RE);
   if (!m) return null;
   const title = m[2].trim();
@@ -21,10 +25,10 @@ function asHeading(line) {
   return { num: m[1], title };
 }
 
-export function chunkSections(rawText) {
+export function chunkSections(rawText: string): ManualSection[] {
   const lines = String(rawText || "").replace(/\r/g, "").split("\n");
-  const sections = [];
-  let cur = null;
+  const sections: ManualSection[] = [];
+  let cur: ManualSection | null = null;
   let ordinal = 0;
   const flush = () => { if (cur) sections.push(cur); };
 

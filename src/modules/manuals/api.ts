@@ -1,6 +1,8 @@
 // Manual & Guide Search — client API. Calls the search_manuals RPC, which is
 // SECURITY INVOKER, so results are already RLS-scoped to the caller.
 import { supabase } from "@/lib/supabase";
+import { chunkSections } from "./chunker";
+import { extractPdfText } from "./pdfText";
 
 export interface ManualSearchHit {
   chunk_id: string;
@@ -143,11 +145,11 @@ export async function uploadVersion(
     .single();
   if (error) throw new Error(error.message);
 
-  await ingestVersion(data.id);
+  await ingestVersion(data.id, file);
   return data as DocVersion;
 }
 
-// ── ingest-manual Netlify function ────────────────────────────────────────────
+// ── Activation (Netlify function — fast RPC) ─────────────────────────────────
 async function fnPost<T>(action: "activate", body: Record<string, unknown>): Promise<T> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
@@ -165,55 +167,61 @@ async function fnPost<T>(action: "activate", body: Record<string, unknown>): Pro
   return res.json() as Promise<T>;
 }
 
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+// ── Indexing (entirely client-side) ──────────────────────────────────────────
+// Parsing a 25–100 MB PDF blew past Netlify's function time/memory budget
+// (→ 502), and background functions didn't help. Since RLS lets a manual
+// manager write manual_chunks + doc_versions directly, we do the whole job in
+// the browser — parse the PDF, chunk it, replace the version's chunks, stamp
+// it indexed — with no server time limit. Pass the just-uploaded File to skip
+// a re-download; Re-index downloads the stored file instead.
+export async function ingestVersion(docVersionId: string, file?: Blob): Promise<{ ok: true; chunks: number }> {
+  const { data: ver, error: vErr } = await supabase
+    .from("doc_versions")
+    .select("manual_id, storage_path")
+    .eq("id", docVersionId)
+    .single();
+  if (vErr || !ver) throw new Error("Couldn't load the version to index.");
 
-// Indexing runs in a Netlify *background* function (15-min budget) so large
-// manuals don't hit the ~10s synchronous timeout (→ 502). We kick it off, then
-// poll the version's index_status until it flips to done/error. The mutation
-// stays pending for the duration, so the existing "Indexing…" UI just works.
-export async function ingestVersion(docVersionId: string): Promise<{ ok: true; chunks: number }> {
-  // Refresh first so a long upload doesn't leave us holding a stale token.
-  await supabase.auth.getSession();
-  const { data } = await supabase.auth.refreshSession();
-  const token = data.session?.access_token ?? (await supabase.auth.getSession()).data.session?.access_token;
-  if (!token) throw new Error("Your session has expired — sign in again, then retry.");
-
-  const authPost = (path: string) =>
-    fetch(path, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ doc_version_id: docVersionId }),
-    });
-
-  // 1) Synchronous, authenticated pre-flight. This is where a stale session or
-  // wrong role surfaces a real error (the background worker always 202s and
-  // can't report auth failures back to the browser).
-  const pre = await authPost(`/.netlify/functions/ingest-manual?action=queue`);
-  if (!pre.ok) {
-    if (pre.status === 401) throw new Error("Your session has expired — sign in again, then retry.");
-    if (pre.status === 403) throw new Error("Manuals are managed by RVP and above.");
-    let message = `Couldn't start indexing (${pre.status}).`;
-    try { const b = await pre.json(); if (b?.error) message = b.error; } catch { /* ignore */ }
-    throw new Error(message);
+  let blob = file;
+  if (!blob) {
+    const { data, error } = await supabase.storage.from("manuals").download(ver.storage_path);
+    if (error || !data) throw new Error("Couldn't download the file to index.");
+    blob = data;
   }
 
-  // 2) Fire the background worker (returns 202 immediately).
-  await authPost(`/.netlify/functions/ingest-manual-background?action=ingest`);
-
-  // Poll for up to ~6 minutes; large PDFs take a while but well under the
-  // function's 15-min budget.
-  const deadline = Date.now() + 6 * 60_000;
-  while (Date.now() < deadline) {
-    await sleep(3000);
-    const { data: row } = await supabase
-      .from("doc_versions")
-      .select("index_status, index_error, index_chunks")
-      .eq("id", docVersionId)
-      .maybeSingle();
-    if (row?.index_status === "done") return { ok: true, chunks: row.index_chunks ?? 0 };
-    if (row?.index_status === "error") throw new Error(row.index_error || "Indexing failed.");
+  const text = await extractPdfText(blob);
+  const sections = chunkSections(text);
+  if (!sections.length) {
+    await supabase.from("doc_versions")
+      .update({ index_status: "error", index_error: "No sections detected — is this a text PDF (not a scan)?" })
+      .eq("id", docVersionId);
+    throw new Error("No sections detected — is this a text PDF, not a scanned image?");
   }
-  throw new Error("Indexing is still running in the background — refresh in a minute to check its status.");
+
+  // Replace this version's chunks, then stamp it indexed (RLS: manual_can_manage).
+  const { error: delErr } = await supabase.from("manual_chunks").delete().eq("doc_version_id", docVersionId);
+  if (delErr) throw new Error(delErr.message);
+
+  const rows = sections.map((s) => ({
+    manual_id: ver.manual_id,
+    doc_version_id: docVersionId,
+    section_path: s.section_path,
+    heading: s.heading,
+    content: s.content,
+    ordinal: s.ordinal,
+  }));
+  for (let i = 0; i < rows.length; i += 500) {
+    const { error } = await supabase.from("manual_chunks").insert(rows.slice(i, i + 500));
+    if (error) throw new Error(error.message);
+  }
+
+  const { error: upErr } = await supabase
+    .from("doc_versions")
+    .update({ indexed_at: new Date().toISOString(), index_status: "done", index_chunks: rows.length, index_error: null })
+    .eq("id", docVersionId);
+  if (upErr) throw new Error(upErr.message);
+
+  return { ok: true, chunks: rows.length };
 }
 
 export const activateVersion = (docVersionId: string) =>
