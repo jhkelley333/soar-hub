@@ -5,8 +5,9 @@
 // the three surfaces from the spec — Learn / Build / Manage — as a roadmap.
 // No fake numbers: real data + flows arrive with Milestones 2+ once the
 // production spec and prototypes are in hand.
-import { Sparkles, GraduationCap, PencilRuler, BarChart3, Lock, BookOpen } from "lucide-react";
+import { Sparkles, GraduationCap, PencilRuler, BarChart3, Lock, BookOpen, Play } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { qsrBrand } from "./brand";
 import { listQsrCourses } from "./api";
 
@@ -88,7 +89,11 @@ export function QsrHomePage() {
         ) : (
           <div className="grid gap-3 sm:grid-cols-2">
             {courses.map((c) => (
-              <div key={c.id} className="rounded-2xl border border-border bg-surface p-4">
+              <Link
+                key={c.id}
+                to={`/qsr/course/${c.id}`}
+                className="group rounded-2xl border border-border bg-surface p-4 transition hover:border-qsr-azure hover:shadow-sm"
+              >
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     {c.category && (
@@ -109,7 +114,10 @@ export function QsrHomePage() {
                   {c.est_minutes != null && <span>{c.est_minutes} min</span>}
                   <span>+{c.points} pts</span>
                 </div>
-              </div>
+                <div className="mt-3 inline-flex items-center gap-1.5 font-qsr-ui text-sm font-semibold text-qsr-azure">
+                  <Play className="h-3.5 w-3.5 fill-qsr-azure" /> Start lesson
+                </div>
+              </Link>
             ))}
           </div>
         )}
