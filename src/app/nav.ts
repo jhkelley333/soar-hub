@@ -20,8 +20,6 @@ import {
   MessageCircle,
   Gauge,
   RefreshCw,
-  ListChecks,
-  Footprints,
   Banknote,
   CalendarDays,
   LayoutGrid,
@@ -91,12 +89,9 @@ export const NAV: NavItem[] = [
   // managers don't see a dead link.
   { to: "/reno-scoping", label: "Reno Scoping", icon: HardHat,        roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/weather",     label: "Weather",     icon: CloudSun,        roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
-  // My Walks — the GM/assignee home for store walkthroughs (start/continue
-  // assigned walks + recent submissions). Wide assignee allowlist.
-  { to: "/my-walks",    label: "My Walks",    icon: Footprints,      roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
-  // Walkthroughs hub (DO+) — Review / Assignments / Templates / Geofences as
-  // tabs, so they don't sprawl across the sidebar. Geofences tab is admin-only.
-  { to: "/walkthroughs", label: "Walkthroughs", icon: ListChecks,     roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // My Walks + Walkthroughs are reached through the Operations Tools hub
+  // (/operations), so they're kept out of the sidebar to reduce clutter.
+  // Their routes stay live for deep links and the hub's card.
   // Legacy Work Orders (Smartsheet-backed) — hidden from the sidebar
   // after the V2 cutover. Route stays alive for archival deep links;
   // admins can still navigate to /work-orders manually if needed.
@@ -117,7 +112,7 @@ export const NAV: NavItem[] = [
   // roles:[] means it stays dark until the flag resolves true for the user
   // (admins always see it). Scoped to the viewer's org tree in-app.
   { to: "/team-pipeline", label: "Team Pipeline", icon: GitBranch, roles: [], flagKey: "team_pipeline" },
-  { to: "/schedule",    label: "Schedule",    icon: CalendarDays,    roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  { to: "/schedule",    label: "Calendar",    icon: CalendarDays,    roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/contacts",    label: "Contacts",    icon: BookUser,        roles: null },
   { to: "/manuals",     label: "Manual Search", icon: BookMarked,    roles: null },
   { to: "/admin/manuals", label: "Manuals Admin", icon: BookMarked,  roles: ["rvp", "vp", "coo", "admin"] },
