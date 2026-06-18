@@ -73,9 +73,26 @@ export function votePoll(cardId: string, optionIndex: number): Promise<{ ok: tru
 
 export function completeLesson(
   courseId: string,
-): Promise<{ ok: true; points: number; score: string; streak: number }> {
+): Promise<{ ok: true; points: number; score: string; streak: number; longest: number; newBadges: string[] }> {
   return learnFetch(`${LEARN_FN}?action=complete`, {
     method: "POST",
     body: JSON.stringify({ course_id: courseId }),
   });
+}
+
+// ── Gamification (Milestone 3) ───────────────────────────────────────────────
+export interface QsrBadge { key?: string; name?: string; icon?: string | null; earned_at: string }
+export interface QsrStats {
+  points: number;
+  streak: { current: number; longest: number; atRisk: boolean };
+  badges: QsrBadge[];
+}
+export function fetchQsrStats(): Promise<QsrStats> {
+  return learnFetch<QsrStats>(`${LEARN_FN}?action=stats`);
+}
+
+export interface QsrLeaderboardEntry { user_id: string; name: string; points: number; isMe: boolean }
+export interface QsrLeaderboard { storeId: string | null; entries: QsrLeaderboardEntry[] }
+export function fetchQsrLeaderboard(): Promise<QsrLeaderboard> {
+  return learnFetch<QsrLeaderboard>(`${LEARN_FN}?action=leaderboard`);
 }

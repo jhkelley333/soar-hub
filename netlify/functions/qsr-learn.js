@@ -159,6 +159,13 @@ async function answerQuiz(supa, user, body) {
   const enrollment = await ensureEnrollment(supa, user.id, ctx.courseId);
   await upsertProgressUpgrade(supa, enrollment.id, card_id, correct ? "passed" : "answered", { answer_index, correct });
 
+  // Points ledger is the source of truth (§8). First correct attempt only.
+  if (pointsAwarded > 0) {
+    await supa.from("qsr_points_ledger")
+      .insert({ user_id: user.id, delta: pointsAwarded, reason: "quiz_correct", card_id, course_id: ctx.courseId })
+      .then(() => {}, () => {});
+  }
+
   return { ok: true, correct, pointsAwarded, answer: correctIndex, explain: card.data?.explain ?? null };
 }
 
@@ -176,6 +183,61 @@ async function votePoll(supa, user, body) {
   return { ok: true, results: await pollCounts(supa, card_id, optionCount) };
 }
 
+// ── Gamification (§8) — ledger is the source of truth ─────────────────────
+function todayStr() { return new Date().toISOString().slice(0, 10); }
+
+async function totalPoints(supa, userId) {
+  const { data } = await supa.from("qsr_points_ledger").select("delta").eq("user_id", userId);
+  return (data || []).reduce((s, r) => s + (r.delta || 0), 0);
+}
+
+// +1 on a new local day, +1 more if yesterday was active, else reset to 1.
+async function bumpStreak(supa, userId) {
+  const today = todayStr();
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const { data: row } = await supa
+    .from("qsr_streaks").select("current, longest, last_active_date").eq("user_id", userId).maybeSingle();
+  let current = 1, longest = 1;
+  if (row) {
+    if (row.last_active_date === today) { current = row.current || 1; longest = row.longest || current; }
+    else {
+      current = row.last_active_date === yesterday ? (row.current || 0) + 1 : 1;
+      longest = Math.max(row.longest || 0, current);
+    }
+  }
+  await supa.from("qsr_streaks")
+    .upsert({ user_id: userId, current, longest, last_active_date: today, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+  return { current, longest };
+}
+
+// Rule-based, idempotent. Returns the keys newly earned.
+async function evaluateBadges(supa, userId, ctx) {
+  const { data: badges } = await supa.from("qsr_badges").select("id, key");
+  const { data: earned } = await supa.from("qsr_user_badges").select("badge_id").eq("user_id", userId);
+  const earnedIds = new Set((earned || []).map((e) => e.badge_id));
+  const byKey = new Map((badges || []).map((b) => [b.key, b]));
+  const { count: completedCount } = await supa
+    .from("qsr_enrollments").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("status", "completed");
+
+  const want = [
+    ["first_lesson", (completedCount || 0) >= 1],
+    ["perfect_score", !!ctx.perfect],
+    ["streak_3", (ctx.streakCurrent || 0) >= 3],
+    ["streak_7", (ctx.streakCurrent || 0) >= 7],
+  ];
+  const toAward = [];
+  for (const [key, ok] of want) {
+    const b = byKey.get(key);
+    if (ok && b && !earnedIds.has(b.id)) toAward.push({ user_id: userId, badge_id: b.id, key });
+  }
+  if (toAward.length) {
+    await supa.from("qsr_user_badges")
+      .insert(toAward.map(({ user_id, badge_id }) => ({ user_id, badge_id })))
+      .then(() => {}, () => {}); // ignore unique conflicts
+  }
+  return toAward.map((t) => t.key);
+}
+
 async function completeLesson(supa, user, body) {
   const { course_id } = body || {};
   if (!course_id) return { error: "course_id is required.", status: 400 };
@@ -186,39 +248,80 @@ async function completeLesson(supa, user, body) {
   await supa.from("qsr_enrollments")
     .update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", enrollment.id);
 
-  // Real score + points (server-computed), never the seeded static values.
+  // Completion bonus → ledger, once per (user, course) via the unique index.
+  if (course.points) {
+    await supa.from("qsr_points_ledger")
+      .insert({ user_id: user.id, delta: course.points, reason: "lesson_complete", course_id })
+      .then(() => {}, () => {});
+  }
+
+  // Real score: correct quiz cards / total quiz cards.
   const { data: lessons } = await supa.from("qsr_lessons").select("id").eq("course_id", course_id);
   const lessonIds = (lessons || []).map((l) => l.id);
   const { data: quizCards } = lessonIds.length
     ? await supa.from("qsr_cards").select("id").eq("type", "quiz").in("lesson_id", lessonIds)
     : { data: [] };
   const quizIds = (quizCards || []).map((c) => c.id);
-
   let correctCount = 0;
-  let pointsFromQuiz = 0;
   if (quizIds.length) {
     const { data: attempts } = await supa
-      .from("qsr_quiz_attempts").select("card_id, correct, points_awarded").eq("user_id", user.id).in("card_id", quizIds);
+      .from("qsr_quiz_attempts").select("card_id, correct").eq("user_id", user.id).in("card_id", quizIds);
     const correctByCard = new Set();
-    for (const a of attempts || []) {
-      pointsFromQuiz += a.points_awarded || 0;
-      if (a.correct) correctByCard.add(a.card_id);
-    }
+    for (const a of attempts || []) if (a.correct) correctByCard.add(a.card_id);
     correctCount = correctByCard.size;
   }
+  const perfect = quizIds.length > 0 && correctCount === quizIds.length;
 
-  // Streak = distinct local days with a completed lesson (refined to
-  // consecutive-day logic in Milestone 3; this is a real value, not a stub).
-  const { data: completed } = await supa
-    .from("qsr_enrollments").select("completed_at").eq("user_id", user.id).not("completed_at", "is", null);
-  const streak = new Set((completed || []).map((e) => (e.completed_at || "").slice(0, 10))).size;
+  const streak = await bumpStreak(supa, user.id);
+  const points = await totalPoints(supa, user.id);
+  const newBadges = await evaluateBadges(supa, user.id, { perfect, streakCurrent: streak.current });
 
   return {
     ok: true,
-    points: pointsFromQuiz + (course.points || 0),
+    points,
     score: `${correctCount}/${quizIds.length}`,
-    streak,
+    streak: streak.current,
+    longest: streak.longest,
+    newBadges,
   };
+}
+
+// Caller's points + streak + badges (for the Hub stats strip).
+async function getStats(supa, user) {
+  const points = await totalPoints(supa, user.id);
+  const { data: streak } = await supa
+    .from("qsr_streaks").select("current, longest, last_active_date").eq("user_id", user.id).maybeSingle();
+  const { data: ub } = await supa.from("qsr_user_badges").select("badge_id, earned_at").eq("user_id", user.id);
+  const ids = (ub || []).map((x) => x.badge_id);
+  const { data: cat } = ids.length
+    ? await supa.from("qsr_badges").select("id, key, name, icon").in("id", ids)
+    : { data: [] };
+  const catById = new Map((cat || []).map((c) => [c.id, c]));
+  const badges = (ub || []).map((x) => ({ ...(catById.get(x.badge_id) || {}), earned_at: x.earned_at }));
+  const atRisk = !!streak && (streak.current || 0) > 0 && streak.last_active_date !== todayStr();
+  return { points, streak: { current: streak?.current || 0, longest: streak?.longest || 0, atRisk }, badges };
+}
+
+// Weekly leaderboard for the caller's store (sum of ledger over 7 days).
+async function getLeaderboard(supa, user) {
+  const { data: me } = await supa.from("profiles").select("primary_store_id").eq("id", user.id).maybeSingle();
+  const storeId = me?.primary_store_id;
+  if (!storeId) return { storeId: null, entries: [] };
+  const { data: mates } = await supa
+    .from("profiles").select("id, full_name, preferred_name").eq("primary_store_id", storeId).eq("is_active", true);
+  const ids = (mates || []).map((m) => m.id);
+  if (!ids.length) return { storeId, entries: [] };
+  const since = new Date(Date.now() - 7 * 86400000).toISOString();
+  const { data: ledger } = await supa
+    .from("qsr_points_ledger").select("user_id, delta, at").in("user_id", ids).gte("at", since);
+  const sums = new Map();
+  for (const r of ledger || []) sums.set(r.user_id, (sums.get(r.user_id) || 0) + (r.delta || 0));
+  const nameById = new Map((mates || []).map((m) => [m.id, m.preferred_name || m.full_name || "Crew"]));
+  const entries = ids
+    .map((id) => ({ user_id: id, name: nameById.get(id), points: sums.get(id) || 0, isMe: id === user.id }))
+    .sort((a, b) => b.points - a.points)
+    .slice(0, 20);
+  return { storeId, entries };
 }
 
 function unwrap(result) {
@@ -246,6 +349,8 @@ export const handler = async (event) => {
     if (action === "quiz") return unwrap(await answerQuiz(supa, user, body));
     if (action === "poll") return unwrap(await votePoll(supa, user, body));
     if (action === "complete") return unwrap(await completeLesson(supa, user, body));
+    if (action === "stats") return unwrap(await getStats(supa, user));
+    if (action === "leaderboard") return unwrap(await getLeaderboard(supa, user));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });
