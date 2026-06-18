@@ -331,6 +331,10 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
         throw new Error("Attach at least one photo (one should show the serial number).");
       }
       const lineItems = rowsToLineItems(lineRows);
+      // The first photo is sent with creation so the server binds it to the
+      // ticket (no work order can exist without a photo). The rest upload after.
+      const [firstFile, ...restFiles] = files;
+      const firstData = await fileToBase64(firstFile);
       const body: CreateTicketBody = {
         storeNumber: storeNumber.trim(),
         category: category || undefined,
@@ -344,10 +348,11 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
         needsVendorHelp: needsVendorHelp || undefined,
         troubleshootingChecked: troubleshooted === "yes",
         lineItems: lineItems.length ? lineItems : undefined,
+        photos: [{ data: firstData, name: firstFile.name, type: firstFile.type || "image/jpeg" }],
       };
       const created = await createTicket(body);
-      // Upload any attached photos sequentially so failures are obvious.
-      for (const f of files) {
+      // Upload any additional photos sequentially so failures are obvious.
+      for (const f of restFiles) {
         const photoData = await fileToBase64(f);
         await uploadPhoto({
           id: created.ticket.id,

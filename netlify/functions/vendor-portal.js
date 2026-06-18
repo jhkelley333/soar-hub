@@ -820,8 +820,12 @@ export const handler = async (event) => {
       if (!tier) {
         return respond(400, { ok: false, error: "invalid_amount" });
       }
+      // A quote must include its document.
+      if (!body.photo || !body.photo.photoData) {
+        return respond(400, { ok: false, error: "quote_attachment_required", message: "Attach the quote document (PDF or image)." });
+      }
 
-      // Optional PDF attachment.
+      // Quote document.
       let quoteUrl = null;
       if (body.photo && body.photo.photoData) {
         const buf = Buffer.from(body.photo.photoData, "base64");

@@ -95,6 +95,17 @@ export function ApprovalSection({
 
   const derivedTier = tierForAmount(Number(amount));
 
+  // Above the top approval tier ($1,750), an approval must be recorded as a
+  // WhatsApp / Owner sign-off. The backend enforces this (verbal=true); here
+  // we surface the required checkbox so the approver can confirm it.
+  const WHATSAPP_THRESHOLD_CENTS = 175000;
+  const approvalAmountCents =
+    recommendedQuote?.amount_cents ?? Math.round((Number(ticket.cost_estimate) || 0) * 100);
+  const needsWhatsapp = approvalAmountCents > WHATSAPP_THRESHOLD_CENTS;
+  const [approvingWhatsapp, setApprovingWhatsapp] = useState(false);
+  const [whatsappChecked, setWhatsappChecked] = useState(false);
+  const [approveNotes, setApproveNotes] = useState("");
+
   // Open the request form, prefilling the amount from the recommended quote
   // when there is one so the approver is pre-routed.
   function openRequest() {
@@ -146,7 +157,7 @@ export function ApprovalSection({
   });
 
   const decide = useMutation({
-    mutationFn: (vars: { decision: "Approved" | "Rejected"; notes: string }) => {
+    mutationFn: (vars: { decision: "Approved" | "Rejected"; notes: string; verbal?: boolean }) => {
       if (!latest) return Promise.reject(new Error("No pending approval."));
       if (vars.decision === "Rejected" && !vars.notes.trim()) {
         return Promise.reject(new Error("A reason is required to reject."));
@@ -156,9 +167,15 @@ export function ApprovalSection({
         approvalId: latest.id,
         decision: vars.decision,
         notes: vars.notes.trim() || undefined,
+        verbal: vars.verbal,
       });
     },
-    onSuccess: onChanged,
+    onSuccess: () => {
+      setApprovingWhatsapp(false);
+      setWhatsappChecked(false);
+      setApproveNotes("");
+      onChanged();
+    },
     onError: (e: unknown) =>
       onError(e instanceof Error ? e.message : "Decision failed."),
   });
@@ -238,6 +255,9 @@ export function ApprovalSection({
                 by <span className="font-medium text-zinc-700">{latest.approved_by}</span>
               </span>
             )}
+            {latest.approved_via_whatsapp && (
+              <Badge tone="success">WhatsApp ✓</Badge>
+            )}
             {latest.quote_url && (
               <a
                 href={latest.quote_url}
@@ -264,7 +284,7 @@ export function ApprovalSection({
             <div className="mt-2 flex flex-wrap gap-2">
               <Button
                 variant="primary"
-                onClick={() => handleDecide("Approved")}
+                onClick={() => (needsWhatsapp ? setApprovingWhatsapp((v) => !v) : handleDecide("Approved"))}
                 disabled={decide.isPending}
               >
                 <CheckCircle2 className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
@@ -289,6 +309,44 @@ export function ApprovalSection({
               {decide.isPending && (
                 <Loader2 className="my-auto h-3.5 w-3.5 animate-spin text-zinc-400" />
               )}
+            </div>
+          )}
+
+          {/* Over $1,750 → record the WhatsApp / Owner approval explicitly. */}
+          {latest.status === "Pending" && isApprover(callerRole) && needsWhatsapp && approvingWhatsapp && (
+            <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-2.5">
+              <div className="text-[11px] font-semibold text-emerald-900">
+                ${(approvalAmountCents / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })} is over $1,750 — record the out-of-system approval.
+              </div>
+              <textarea
+                value={approveNotes}
+                onChange={(e) => setApproveNotes(e.target.value.slice(0, 2000))}
+                rows={2}
+                placeholder="Approval notes (optional)…"
+                className="mt-1.5 block w-full rounded-md border border-emerald-200 bg-white px-2.5 py-2 text-sm"
+              />
+              <label className="mt-1.5 flex items-center gap-2 text-[12px] font-medium text-emerald-900">
+                <input
+                  type="checkbox"
+                  checked={whatsappChecked}
+                  onChange={(e) => setWhatsappChecked(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-emerald-600"
+                />
+                Approved in WhatsApp (Owner / above top tier)
+              </label>
+              <div className="mt-2 flex gap-2">
+                <Button
+                  variant="primary"
+                  onClick={() => decide.mutate({ decision: "Approved", notes: approveNotes, verbal: true })}
+                  disabled={decide.isPending || !whatsappChecked}
+                >
+                  {decide.isPending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+                  Confirm approval
+                </Button>
+                <Button variant="ghost" onClick={() => setApprovingWhatsapp(false)} disabled={decide.isPending}>
+                  Cancel
+                </Button>
+              </div>
             </div>
           )}
 

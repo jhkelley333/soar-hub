@@ -304,6 +304,9 @@ export function PublicSubmitPage() {
     setSubmitError(null);
     setSubmitPhase("ticket");
     try {
+      // The first photo is required and sent with creation so the server
+      // binds it to the ticket; the rest upload after.
+      const firstB64 = await fileToBase64(photos[0].file);
       const tRes = await fetch(`${FN}?action=createTicket`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -321,6 +324,7 @@ export function PublicSubmitPage() {
           vendor_id: vendorId || null,
           vendor_name: vendorId ? undefined : vendorName.trim() || undefined,
           needs_vendor_help: needsHelp,
+          photo: { photoData: firstB64, photoName: photos[0].file.name, photoType: photos[0].file.type },
         }),
       });
       const tBody = await tRes.json().catch(() => ({}));
@@ -329,15 +333,12 @@ export function PublicSubmitPage() {
       }
       const created = tBody.ticket;
 
-      // Upload photos sequentially. Each upload guards itself against
-      // the per-ticket count + window caps server-side, so racing
-      // them in parallel could surface partial-failure noise; one
-      // at a time is plenty fast for at most 3 files.
-      let uploaded = 0;
+      // The first photo was stored with creation; upload any others.
+      let uploaded = 1;
       let failed = 0;
-      if (photos.length > 0) {
+      if (photos.length > 1) {
         setSubmitPhase("photos");
-        for (const slot of photos) {
+        for (const slot of photos.slice(1)) {
           try {
             const b64 = await fileToBase64(slot.file);
             const pRes = await fetch(`${FN}?action=uploadPhoto`, {
