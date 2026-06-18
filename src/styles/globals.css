@@ -292,3 +292,13 @@ body {
 .phone-scroll::-webkit-scrollbar {
   display: none;
 }
+
+/* SOAR QSR lesson-player card slide-in. */
+@keyframes qsr-card-in {
+  from { opacity: 0; transform: translateX(18px); }
+  to   { opacity: 1; transform: none; }
+}
+.qsr-card-in { animation: qsr-card-in 240ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .qsr-card-in { animation: none; }
+}
