@@ -10,8 +10,27 @@ import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useAuth } from "@/auth/AuthProvider";
 import { fetchCallerStores } from "@/modules/work-orders-v2/api";
-import { fetchWeatherForStore, fetchWeatherHistory } from "@/modules/dashboard/weatherApi";
+import { fetchWeatherForStore, fetchWeatherHistory, fetchWeatherRange } from "@/modules/dashboard/weatherApi";
 import { WeatherTrendChart } from "./WeatherTrendChart";
+
+// Local YYYY-MM-DD.
+const ymd = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+// The current Mon–Sun week, shifted back 52 weeks (364 days) so it lands on
+// the same weekdays one year ago.
+function thisWeekLastYear(): { start: string; end: string; year: number } {
+  const now = new Date();
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  monday.setDate(monday.getDate() - 364);
+  sunday.setDate(sunday.getDate() - 364);
+  return { start: ymd(monday), end: ymd(sunday), year: monday.getFullYear() };
+}
+const fullDay = (d: string) =>
+  new Date(`${d}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 
 const RANGES = [
   { label: "30 days", days: 30 },
@@ -49,6 +68,14 @@ export function WeatherPage() {
     enabled: !!storeId,
     staleTime: 15 * 60_000,
   });
+  const lastYear = useMemo(() => thisWeekLastYear(), []);
+  const lyQ = useQuery({
+    queryKey: ["weather-range", storeId, lastYear.start, lastYear.end],
+    queryFn: () => fetchWeatherRange(storeId, lastYear.start, lastYear.end),
+    enabled: !!storeId,
+    staleTime: 15 * 60_000,
+  });
+  const lyPoints = lyQ.data?.points ?? [];
 
   const cur = curQ.data?.current;
   const forecast = (curQ.data?.forecast ?? []).slice(0, 5);
@@ -125,6 +152,38 @@ export function WeatherPage() {
                       ))}
                     </div>
                   )}
+                </div>
+              )}
+            </CardBody>
+          </Card>
+
+          {/* this week, last year */}
+          <Card>
+            <CardBody>
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <span className="text-sm font-semibold text-zinc-700">This week, last year</span>
+                <span className="text-xs text-zinc-400">
+                  {fullDay(lastYear.start)} – {fullDay(lastYear.end)}
+                </span>
+              </div>
+              {lyQ.isLoading ? (
+                <div className="h-20 animate-pulse rounded-lg bg-zinc-100" />
+              ) : lyPoints.length === 0 ? (
+                <div className="rounded-lg bg-zinc-50 px-3 py-3 text-sm text-zinc-500">
+                  No weather recorded for this week last year. Backfill {lastYear.year} from Admin → Weather Sync to fill it in.
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-4">
+                  {lyPoints.map((p) => (
+                    <div key={p.date} className="flex min-w-[3.5rem] flex-col items-center gap-0.5 rounded-lg bg-zinc-50 px-2 py-2 text-center">
+                      <span className="text-[11px] font-medium text-zinc-500">{dayLabel(p.date)}</span>
+                      <span className="text-sm font-semibold text-red-500">{fmtTemp(p.hi_f)}</span>
+                      <span className="text-xs text-blue-500">{fmtTemp(p.lo_f)}</span>
+                      {p.precip_in != null && p.precip_in > 0 && (
+                        <span className="text-[10px] text-zinc-400">{p.precip_in.toFixed(2)}&quot;</span>
+                      )}
+                    </div>
+                  ))}
                 </div>
               )}
             </CardBody>

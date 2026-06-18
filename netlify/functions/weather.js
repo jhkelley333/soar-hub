@@ -74,6 +74,35 @@ async function history(supa, storeId, days) {
   return { location: loc, points: [...byDay.values()] };
 }
 
+// One point per day across an explicit date range (used for "this week, last
+// year"). business_date filter so we can reach beyond the 365-day history cap.
+async function rangeHistory(supa, storeId, startDate, endDate) {
+  const loc = await locationForStore(supa, storeId);
+  if (!loc) return { location: null, points: [] };
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate || "") || !/^\d{4}-\d{2}-\d{2}$/.test(endDate || "")) {
+    return { location: loc, points: [], error: "start and end (YYYY-MM-DD) are required." };
+  }
+  const { data } = await supa
+    .from("weather_observations")
+    .select("business_date, temp_f, forecast")
+    .eq("location_id", loc.id)
+    .gte("business_date", startDate)
+    .lte("business_date", endDate)
+    .order("business_date", { ascending: true });
+  const byDay = new Map();
+  for (const o of data || []) {
+    const fcToday = (o.forecast || []).find((f) => f.date === o.business_date);
+    byDay.set(o.business_date, {
+      date: o.business_date,
+      temp_f: o.temp_f,
+      hi_f: fcToday?.hi_f ?? null,
+      lo_f: fcToday?.lo_f ?? null,
+      precip_in: fcToday?.precip_in ?? null,
+    });
+  }
+  return { location: loc, points: [...byDay.values()] };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   let supa;
@@ -102,6 +131,7 @@ export const handler = async (event) => {
     }
     if (action === "for-store") return respond(200, await forStore(supa, params.store_id));
     if (action === "history") return respond(200, await history(supa, params.store_id, parseInt(params.days, 10) || 30));
+    if (action === "range") return respond(200, await rangeHistory(supa, params.store_id, params.start, params.end));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });
