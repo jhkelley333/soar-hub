@@ -149,25 +149,16 @@ export async function uploadVersion(
   return data as DocVersion;
 }
 
-// ── Activation (Netlify function — fast RPC) ─────────────────────────────────
-async function fnPost<T>(action: "activate", body: Record<string, unknown>): Promise<T> {
-  const { data } = await supabase.auth.getSession();
-  const token = data.session?.access_token;
-  if (!token) throw new Error("Not signed in");
-  const res = await fetch(`/.netlify/functions/ingest-manual?action=${action}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    let message = `Request failed (${res.status})`;
-    try { const b = await res.json(); if (b?.error) message = b.error; } catch { /* ignore */ }
-    throw new Error(message);
-  }
-  return res.json() as Promise<T>;
+// ── Activation (client-side) ─────────────────────────────────────────────────
+// activate_doc_version is SECURITY DEFINER and self-gates with
+// manual_can_manage(), so it's called directly with the user's session. (Going
+// through a service-role function broke the gate: auth.uid() is null there, so
+// manual_can_manage() returned false → "Not authorized to activate.")
+export async function activateVersion(docVersionId: string): Promise<{ ok: true }> {
+  const { error } = await supabase.rpc("activate_doc_version", { p_version_id: docVersionId });
+  if (error) throw new Error(error.message);
+  return { ok: true };
 }
-
-// ── Indexing (entirely client-side) ──────────────────────────────────────────
 // Parsing a 25–100 MB PDF blew past Netlify's function time/memory budget
 // (→ 502), and background functions didn't help. Since RLS lets a manual
 // manager write manual_chunks + doc_versions directly, we do the whole job in
@@ -223,6 +214,3 @@ export async function ingestVersion(docVersionId: string, file?: Blob): Promise<
 
   return { ok: true, chunks: rows.length };
 }
-
-export const activateVersion = (docVersionId: string) =>
-  fnPost<{ ok: true }>("activate", { doc_version_id: docVersionId });
