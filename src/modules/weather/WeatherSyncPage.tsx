@@ -39,6 +39,7 @@ interface Progress {
   total: number;
   inserted: number;
   failed: number;
+  reason?: string | null;
 }
 
 export function WeatherSyncPage() {
@@ -75,6 +76,7 @@ export function WeatherSyncPage() {
       let inserted = 0;
       let failed = 0;
       let total = 0;
+      let reason: string | null = null;
       // Loop a slice of cities per request until the backend says it's done.
       for (;;) {
         const r = await backfillWeatherHistory({ start_date: startDate, end_date: endDate, offset, limit: LIMIT });
@@ -82,13 +84,14 @@ export function WeatherSyncPage() {
         total = r.total;
         inserted += r.inserted;
         failed += r.failed;
+        if (r.error) reason = r.error;
         offset += LIMIT;
-        setProgress({ label, processed: Math.min(offset, total), total, inserted, failed });
+        setProgress({ label, processed: Math.min(offset, total), total, inserted, failed, reason });
         if (r.done) break;
       }
       toast.push(
-        `Backfilled ${label}: ${inserted} day-row${inserted === 1 ? "" : "s"} across ${total} cit${total === 1 ? "y" : "ies"}${failed ? `, ${failed} failed` : ""}.`,
-        "success"
+        `Backfilled ${label}: ${inserted} day-row${inserted === 1 ? "" : "s"} across ${total} cit${total === 1 ? "y" : "ies"}${failed ? `, ${failed} failed — ${reason ?? "see details"}` : ""}.`,
+        failed ? "info" : "success"
       );
       qc.invalidateQueries({ queryKey: ["weather"] });
     } catch (e) {
@@ -210,6 +213,9 @@ export function WeatherSyncPage() {
                 {progress.inserted} day-rows written
                 {progress.failed > 0 && <span className="text-warn"> · {progress.failed} failed</span>}
               </div>
+              {progress.failed > 0 && progress.reason && (
+                <div className="mt-1 text-xs text-warn">{progress.reason}</div>
+              )}
             </div>
           )}
         </div>
