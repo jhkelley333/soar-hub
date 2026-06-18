@@ -129,6 +129,7 @@ export const NAV: NavItem[] = [
   { to: "/admin/role-access",     label: "Role Access",     icon: KeyRound, roles: ["admin"] },
   { to: "/admin/paf-config", label: "PAF Config", icon: Settings,    roles: ["payroll", "admin"] },
   { to: "/admin/labor-sync", label: "Labor Sync", icon: RefreshCw,   roles: ["vp", "coo", "admin"] },
+  { to: "/admin/weather-sync", label: "Weather Sync", icon: CloudSun, roles: ["admin"] },
   { to: "/account",     label: "Account",     icon: UserCircle,      roles: null },
 ];
 
@@ -218,6 +219,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/admin/paf-config": "ADMIN",
   "/admin/manuals": "ADMIN",
   "/admin/labor-sync": "ADMIN",
+  "/admin/weather-sync": "ADMIN",
 };
 
 // Bucket already-filtered nav items into ordered, labelled groups. Empty
