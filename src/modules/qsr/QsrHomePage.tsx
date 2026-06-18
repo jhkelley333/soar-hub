@@ -5,8 +5,10 @@
 // the three surfaces from the spec — Learn / Build / Manage — as a roadmap.
 // No fake numbers: real data + flows arrive with Milestones 2+ once the
 // production spec and prototypes are in hand.
-import { Sparkles, GraduationCap, PencilRuler, BarChart3, Lock } from "lucide-react";
+import { Sparkles, GraduationCap, PencilRuler, BarChart3, Lock, BookOpen } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import { qsrBrand } from "./brand";
+import { listQsrCourses } from "./api";
 
 const SURFACES = [
   {
@@ -30,6 +32,9 @@ const SURFACES = [
 ];
 
 export function QsrHomePage() {
+  const coursesQ = useQuery({ queryKey: ["qsr", "courses"], queryFn: listQsrCourses, staleTime: 60_000 });
+  const courses = coursesQ.data ?? [];
+
   return (
     <div className="mx-auto max-w-5xl">
       {/* Brand hero */}
@@ -66,6 +71,48 @@ export function QsrHomePage() {
             </span>
           </div>
         ))}
+      </div>
+
+      {/* Real seeded content — proves the Milestone 1 data model end-to-end. */}
+      <div className="mt-8">
+        <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-ink">
+          <BookOpen className="h-4 w-4 text-qsr-azure" /> Content in the platform
+        </div>
+        {coursesQ.isLoading ? (
+          <div className="h-20 animate-pulse rounded-2xl bg-surface-sunk" />
+        ) : courses.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-border bg-surface px-4 py-5 text-sm text-ink-muted">
+            No courses yet. Run migrations <span className="font-qsr-mono">0164</span> +{" "}
+            <span className="font-qsr-mono">0165</span> on Soar Hub v2 to seed the demo lesson.
+          </div>
+        ) : (
+          <div className="grid gap-3 sm:grid-cols-2">
+            {courses.map((c) => (
+              <div key={c.id} className="rounded-2xl border border-border bg-surface p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div>
+                    {c.category && (
+                      <div className="text-[11px] font-semibold uppercase tracking-wider text-qsr-crimson">{c.category}</div>
+                    )}
+                    <h3 className="mt-0.5 font-qsr-display text-base font-semibold text-ink">{c.title}</h3>
+                  </div>
+                  <span
+                    className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase ${
+                      c.status === "published" ? "bg-qsr-azure/10 text-qsr-azure" : "bg-surface-sunk text-ink-subtle"
+                    }`}
+                  >
+                    {c.status}
+                  </span>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-qsr-mono text-[11px] text-ink-muted">
+                  <span>{c.card_count} cards</span>
+                  {c.est_minutes != null && <span>{c.est_minutes} min</span>}
+                  <span>+{c.points} pts</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <p className="mt-6 max-w-2xl text-xs leading-relaxed text-ink-subtle">
