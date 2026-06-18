@@ -61,6 +61,26 @@ export function fetchWeatherHistory(storeId: string, days: number): Promise<Weat
   return authGet<WeatherHistory>(`${FN}?action=history&store_id=${encodeURIComponent(storeId)}&days=${days}`);
 }
 
+export interface WeatherRangePoint {
+  date: string;
+  temp_f: number | null;
+  hi_f: number | null;
+  lo_f: number | null;
+  precip_in: number | null;
+}
+export interface WeatherRange {
+  location: { id: string; city: string; state: string; label: string | null } | null;
+  points: WeatherRangePoint[];
+  error?: string;
+}
+// Daily weather across an explicit date range (reaches past the 365-day
+// history cap — used for "this week, last year").
+export function fetchWeatherRange(storeId: string, start: string, end: string): Promise<WeatherRange> {
+  return authGet<WeatherRange>(
+    `${FN}?action=range&store_id=${encodeURIComponent(storeId)}&start=${start}&end=${end}`
+  );
+}
+
 async function authPost<T>(path: string, body?: unknown): Promise<T> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;

@@ -154,6 +154,24 @@ export async function syncWeather(supa) {
 const ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive";
 const arr = (a) => (Array.isArray(a) ? a : []);
 
+// Open-Meteo's free archive rate-limits bursts (429) and occasionally 5xxs.
+// Retry with backoff so a large multi-city backfill doesn't shed cities to a
+// transient per-minute limit. Non-retryable errors (e.g. 400 bad coords)
+// return immediately.
+async function fetchArchiveWithRetry(url, tries = 4) {
+  let lastStatus = 0;
+  let lastBody = "";
+  for (let attempt = 0; attempt < tries; attempt++) {
+    const res = await fetch(url);
+    if (res.ok) return { ok: true, res };
+    lastStatus = res.status;
+    lastBody = (await res.text().catch(() => "")).slice(0, 140);
+    if (res.status !== 429 && res.status < 500) break; // only retry rate-limit / server errors
+    await new Promise((r) => setTimeout(r, 500 * 2 ** attempt + Math.random() * 250));
+  }
+  return { ok: false, status: lastStatus, body: lastBody };
+}
+
 export async function backfillHistory(supa, { startDate, endDate, offset = 0, limit = 12 }) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate || "") || !/^\d{4}-\d{2}-\d{2}$/.test(endDate || "")) {
     return { ok: false, error: "start_date and end_date (YYYY-MM-DD) are required." };
@@ -165,11 +183,27 @@ export async function backfillHistory(supa, { startDate, endDate, offset = 0, li
   if (error) return { ok: false, error: error.message };
 
   let inserted = 0, failed = 0, firstError = null;
-  await mapLimit(locs || [], 6, async (l) => {
+  await mapLimit(locs || [], 4, async (l) => {
     try {
+      // A city with no geocode can't be looked up — surface it plainly rather
+      // than firing a guaranteed-400 request that no retry can fix.
+      if (l.latitude == null || l.longitude == null) {
+        failed++;
+        if (!firstError) firstError = "One or more cities have no coordinates (lat/long) on file.";
+        return;
+      }
       const url = `${ARCHIVE_URL}?latitude=${l.latitude}&longitude=${l.longitude}&start_date=${startDate}&end_date=${endDate}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&temperature_unit=fahrenheit&timezone=auto`;
-      const res = await fetch(url);
-      if (!res.ok) { failed++; if (!firstError) firstError = `Archive API ${res.status}: ${(await res.text().catch(() => "")).slice(0, 140)}`; return; }
+      const fetched = await fetchArchiveWithRetry(url);
+      if (!fetched.ok) {
+        failed++;
+        if (!firstError) {
+          firstError = fetched.status === 429
+            ? "Open-Meteo rate limit (429) — re-run to fill the gaps; existing days are skipped."
+            : `Archive API ${fetched.status}: ${fetched.body}`;
+        }
+        return;
+      }
+      const res = fetched.res;
       const j = await res.json();
       const time = arr(j?.daily?.time), hi = arr(j?.daily?.temperature_2m_max), lo = arr(j?.daily?.temperature_2m_min), pr = arr(j?.daily?.precipitation_sum);
       if (!time.length) return;
@@ -204,5 +238,7 @@ export async function backfillHistory(supa, { startDate, endDate, offset = 0, li
   });
 
   const processed = offset + (locs?.length || 0);
-  return { ok: true, total: total || 0, processed, inserted, failed, done: processed >= (total || 0), error: inserted === 0 && failed ? firstError : null };
+  // Surface the first failure reason whenever anything failed — not only when
+  // every row failed — so the caller can tell rate-limits from bad data.
+  return { ok: true, total: total || 0, processed, inserted, failed, done: processed >= (total || 0), error: failed ? firstError : null };
 }
