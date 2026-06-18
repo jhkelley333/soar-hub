@@ -2030,7 +2030,10 @@ export const handler = async (event) => {
         }
       }
 
-      await supabase
+      // Throw on failure so the decision can't half-apply — a silent failure
+      // here (e.g. a pending migration) previously left the approval row
+      // Pending while the ticket + activity log showed Approved.
+      const { error: apprUpdErr } = await supabase
         .from("ticket_approvals")
         .update({
           status:                decision,
@@ -2040,6 +2043,7 @@ export const handler = async (event) => {
           approved_via_whatsapp: approvedViaWhatsapp,
         })
         .eq("id", approvalId);
+      if (apprUpdErr) throw apprUpdErr;
 
       // Approving against a specific quote commits it: that quote becomes
       // the recommended one and its total becomes the ticket's cost.
