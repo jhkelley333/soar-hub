@@ -386,7 +386,7 @@ export function CloseoutTab({
         <Card className="overflow-hidden">
           <div className="flex items-center justify-between border-b border-zinc-200 px-5 py-4">
             <div>
-              <div className="text-sm font-semibold text-midnight">Drawer count</div>
+              <div className="text-sm font-semibold text-midnight">Deposit count</div>
               <div className="mt-0.5 text-xs text-zinc-500">Enter quantity per denomination</div>
             </div>
             <Button variant="ghost" size="sm" onClick={() => setCount({})}>
