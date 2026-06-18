@@ -173,3 +173,61 @@ export function reorderBuilder(
 ): Promise<{ ok: true }> {
   return learnFetch(`${AUTHOR_FN}?action=reorder`, { method: "POST", body: JSON.stringify({ table, items }) });
 }
+
+// ── Manager dashboard (Milestone 5) ──────────────────────────────────────────
+const MANAGE_FN = "/.netlify/functions/qsr-manage";
+
+export interface ManageOverview {
+  learners: number;
+  publishedCourses: number;
+  enrollments: number;
+  completions: number;
+  completionRate: number;
+  totalPoints: number;
+}
+export interface CourseStat { id: string; title: string; status: string; enrolled: number; completed: number; rate: number }
+export interface StoreStat { store_id: string; number: string; name: string; region: string; learners: number; enrolled: number; completed: number; rate: number }
+export interface AssignTargets {
+  courses: { id: string; title: string; status: string }[];
+  stores: { id: string; number: string; name: string; region: string }[];
+}
+export interface Assignment {
+  id: string;
+  course_id: string;
+  course_title: string;
+  scope_type: "all" | "region" | "district" | "store" | "user";
+  scope_id: string | null;
+  scope_label: string | null;
+  due_at: string | null;
+  created_at: string;
+  total: number;
+  completed: number;
+}
+export interface CompletionRow { learner: string; store: string; region: string; course: string; completed_at: string }
+
+export function fetchManageOverview(): Promise<ManageOverview> {
+  return learnFetch(`${MANAGE_FN}?action=overview`);
+}
+export function fetchByCourse(): Promise<{ courses: CourseStat[] }> {
+  return learnFetch(`${MANAGE_FN}?action=byCourse`);
+}
+export function fetchByStore(): Promise<{ stores: StoreStat[] }> {
+  return learnFetch(`${MANAGE_FN}?action=byStore`);
+}
+export function fetchAssignTargets(): Promise<AssignTargets> {
+  return learnFetch(`${MANAGE_FN}?action=targets`);
+}
+export function fetchAssignments(): Promise<{ assignments: Assignment[] }> {
+  return learnFetch(`${MANAGE_FN}?action=assignments`);
+}
+export function createAssignment(input: {
+  course_id: string; scope_type: Assignment["scope_type"]; scope_id?: string | null; scope_label?: string | null; due_at?: string | null;
+}): Promise<{ assignment: Assignment }> {
+  return learnFetch(`${MANAGE_FN}?action=assign`, { method: "POST", body: JSON.stringify(input) });
+}
+export function deleteAssignment(id: string): Promise<{ ok: true }> {
+  return learnFetch(`${MANAGE_FN}?action=unassign`, { method: "POST", body: JSON.stringify({ id }) });
+}
+export function fetchCompletions(): Promise<{ rows: CompletionRow[] }> {
+  return learnFetch(`${MANAGE_FN}?action=completions`);
+}
