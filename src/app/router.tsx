@@ -74,6 +74,7 @@ import { TeamPipelinePage } from "@/modules/team-pipeline/TeamPipelinePage";
 import { ManualSearchPage } from "@/modules/manuals/ManualSearchPage";
 import { ManualAdminPage } from "@/modules/manuals/ManualAdminPage";
 import { WeatherPage } from "@/modules/weather/WeatherPage";
+import { WeatherSyncPage } from "@/modules/weather/WeatherSyncPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -153,6 +154,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
             <LaborSyncPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/weather-sync",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <WeatherSyncPage />
           </ProtectedRoute>
         ),
       },
