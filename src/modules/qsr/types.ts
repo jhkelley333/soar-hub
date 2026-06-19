@@ -17,6 +17,8 @@ export interface ImageData {
 }
 export interface VideoData {
   kicker?: string; title: string; body?: string;
+  videoUrl?: string | null;      // YouTube / Vimeo link or a direct .mp4 URL
+  lengthSec?: number;            // approx length, used to time-gate embeds
   muxPlaybackId?: string | null; gate?: boolean; threshold?: number;
 }
 export interface QuizData {
