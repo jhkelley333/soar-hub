@@ -380,6 +380,12 @@ async function districtView(supa, user, params) {
       variance_pts: s.daily_labor_pct != null && goal != null ? round1(s.daily_labor_pct - goal) : null,
       dollars_over_chart: s.daily_dollars_over_chart,
       hours_over_chart: s.daily_hours_over_chart,
+      // Cumulative bands through the anchor date (WTD = Mon-to-date; PTD =
+      // SONIC's 4-week period-to-date, the operational "month-to-date").
+      wtd_labor_pct: s.wtd_labor_pct,
+      ptd_labor_pct: s.ptd_labor_pct,
+      wtd_dollars_over_chart: s.wtd_dollars_over_chart,
+      ptd_dollars_over_chart: s.ptd_dollars_over_chart,
       status,                                          // on | over | unknown
       explained: !!review,
       note_due: status === "over" && !review,
@@ -404,8 +410,12 @@ async function districtView(supa, user, params) {
     rollup: {
       store_count: rows.length,
       district_labor_pct: avg("labor_pct"),
+      wtd_labor_pct: avg("wtd_labor_pct"),
+      ptd_labor_pct: avg("ptd_labor_pct"),
       stores_over_chart: over.length,
       dollars_over_chart: round2(sum("dollars_over_chart")),
+      wtd_dollars_over_chart: round2(sum("wtd_dollars_over_chart")),
+      ptd_dollars_over_chart: round2(sum("ptd_dollars_over_chart")),
       hours_over_chart: round2(sum("hours_over_chart")),
       notes_due: rows.filter((r) => r.note_due).length,
       notes_explained: rows.filter((r) => r.explained).length,
