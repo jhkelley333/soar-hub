@@ -101,6 +101,14 @@ export function fetchQsrLeaderboard(): Promise<QsrLeaderboard> {
 // ── Authoring (Milestone 4 — Course Builder) ─────────────────────────────────
 const AUTHOR_FN = "/.netlify/functions/qsr-author";
 
+// AI course authoring — drafts a course from a topic / pasted source (qsr-ai).
+export function generateCourse(
+  input: { topic: string; sourceText?: string; lessons?: number },
+): Promise<{ course_id: string; title: string }> {
+  return learnFetch("/.netlify/functions/qsr-ai?action=generate", { method: "POST", body: JSON.stringify(input) });
+}
+
+
 export interface BuilderCourse {
   id: string;
   title: string;
