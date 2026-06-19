@@ -1,10 +1,9 @@
-// SOAR QSR Learning Platform — admin-gated shell (Milestone 1).
+// SOAR QSR Learning Platform — admin-gated home (Milestones 1–5 shipped).
 //
 // This is the locked-down container the rest of the platform builds into. It
 // carries the SOAR QSR brand (distinct from the SOAR Hub chrome) and lays out
-// the three surfaces from the spec — Learn / Build / Manage — as a roadmap.
-// No fake numbers: real data + flows arrive with Milestones 2+ once the
-// production spec and prototypes are in hand.
+// the three surfaces from the spec — Learn / Build / Manage — all now live.
+// Numbers are real (server-backed); the area stays admin-gated until launch.
 import { Sparkles, GraduationCap, PencilRuler, BarChart3, Lock, BookOpen, Play } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -134,10 +133,11 @@ export function QsrHomePage() {
       </div>
 
       <p className="mt-6 max-w-2xl text-xs leading-relaxed text-ink-subtle">
-        Shell only — Milestone 1. The data model (spec §4), the card{" "}
-        <span className="font-qsr-mono">data</span> contract (§5), and the prototype-faithful UI
-        land with Milestones 2+ once the production spec and prototype files are attached. This area
-        stays admin-only — gated by the <span className="font-qsr-mono">qsr_platform</span> flag —
+        Milestones 1–5 shipped: the learner player (swipeable cards, quizzes,
+        polls, reveals, video), gamification (points, streaks, badges), the
+        course builder, the above-store manager dashboard, and media uploads
+        (image + video, with HeyGen/YouTube/Vimeo embeds). This area stays
+        admin-only — gated by the <span className="font-qsr-mono">qsr_platform</span> flag —
         until launch.
       </p>
     </div>
