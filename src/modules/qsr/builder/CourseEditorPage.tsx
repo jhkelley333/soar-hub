@@ -6,9 +6,10 @@ import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft, ChevronDown, ChevronUp, Eye, GripVertical, Languages, Loader2, Plus, Save, Trash2,
+  ArrowLeft, BellRing, ChevronDown, ChevronUp, Eye, GripVertical, Languages, Loader2, Plus, Save, Trash2,
 } from "lucide-react";
 import { useToast } from "@/shared/ui/Toaster";
+import { ROLE_LABELS } from "@/types/database";
 import type { CardType } from "../types";
 import {
   getCourseTree, saveCourse, setCoursePublish, saveLesson, deleteLesson,
@@ -121,19 +122,28 @@ function PublishButton({ courseId, status, onDone }: { courseId: string; status:
   );
 }
 
-function CourseMetaForm({ course, onSaved }: { course: { id: string; title: string; category: string | null; description: string | null; est_minutes: number | null; points: number; status: string }; onSaved: () => void }) {
+// "Shift Manager and above" — the role tiers don't separate shift managers from
+// crew numerically, so this is an explicit, editable default.
+const REQUIRE_ROLE_OPTIONS = ["shift_manager", "first_assistant_manager", "associate_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"];
+
+function CourseMetaForm({ course, onSaved }: { course: { id: string; title: string; category: string | null; description: string | null; est_minutes: number | null; points: number; status: string; requirement_cadence?: string | null; requirement_roles?: string[] | null }; onSaved: () => void }) {
   const toast = useToast();
   const [title, setTitle] = useState(course.title);
   const [category, setCategory] = useState(course.category ?? "");
   const [description, setDescription] = useState(course.description ?? "");
   const [estMinutes, setEstMinutes] = useState(course.est_minutes?.toString() ?? "");
   const [points, setPoints] = useState(course.points?.toString() ?? "0");
+  const [cadence, setCadence] = useState(course.requirement_cadence ?? "");
+  const [roles, setRoles] = useState<string[]>(course.requirement_roles?.length ? course.requirement_roles : REQUIRE_ROLE_OPTIONS);
+  const toggleRole = (r: string) => setRoles((rs) => (rs.includes(r) ? rs.filter((x) => x !== r) : [...rs, r]));
 
   const m = useMutation({
     mutationFn: () => saveCourse({
       id: course.id, title: title.trim(), category: category.trim() || null,
       description: description.trim() || null,
       est_minutes: estMinutes === "" ? null : Number(estMinutes), points: Number(points) || 0,
+      requirement_cadence: cadence || null,
+      requirement_roles: cadence ? roles : [],
     }),
     onSuccess: () => { toast.push("Course saved.", "success"); onSaved(); },
     onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Save failed.", "error"),
@@ -161,6 +171,32 @@ function CourseMetaForm({ course, onSaved }: { course: { id: string; title: stri
           </div>
         </div>
         <textarea className={inputCls} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Short description" />
+
+        {/* Required training — pops up on login until completed in the window */}
+        <div className="rounded-xl border border-border bg-surface-sunk/40 p-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="inline-flex items-center gap-1.5 font-qsr-ui text-sm font-semibold text-ink"><BellRing className="h-4 w-4 text-qsr-azure" /> Required training</span>
+            <select className={`${inputCls} w-auto`} value={cadence} onChange={(e) => setCadence(e.target.value)}>
+              <option value="">Not required</option>
+              <option value="quarterly">Every quarter</option>
+              <option value="annual">Once a year</option>
+            </select>
+          </div>
+          {cadence && (
+            <div className="mt-3">
+              <span className="mb-1.5 block font-qsr-ui text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">Required for these roles</span>
+              <div className="flex flex-wrap gap-1.5">
+                {REQUIRE_ROLE_OPTIONS.map((r) => (
+                  <button key={r} type="button" onClick={() => toggleRole(r)} className={`rounded-full px-2.5 py-1 font-qsr-ui text-xs font-semibold transition ${roles.includes(r) ? "bg-qsr-azure text-white" : "bg-surface text-ink-muted ring-1 ring-border"}`}>
+                    {ROLE_LABELS[r as keyof typeof ROLE_LABELS] ?? r}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 font-qsr-ui text-[11px] text-ink-subtle">Anyone in these roles who hasn’t completed it this {cadence === "annual" ? "year" : "quarter"} gets a reminder pop-up at login. Default is Shift Manager and above.</p>
+            </div>
+          )}
+        </div>
+
         <button type="button" onClick={() => m.mutate()} disabled={m.isPending || !title.trim()} className="inline-flex items-center gap-1.5 rounded-lg bg-ink px-3 py-2 font-qsr-ui text-sm font-semibold text-white disabled:opacity-40">
           {m.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save details
         </button>

@@ -373,6 +373,61 @@ function unwrap(result) {
   return respond(200, result);
 }
 
+// ── Required ("pop up on login") training ────────────────────────────────
+// Fiscal model mirrors src/lib/fiscal.ts (FY2026 4-4-5). A quarterly course is
+// "outstanding" if the caller's role is targeted and they haven't completed it
+// since the start of the current fiscal quarter.
+const RQ_FY_START = "2025-12-29";
+const RQ_PERIOD_WEEKS = [4, 4, 5, 4, 4, 5, 4, 4, 5, 4, 4, 5];
+const rqUtc = (iso) => Date.parse(`${iso}T00:00:00Z`);
+const rqAddDays = (iso, n) => new Date(rqUtc(iso) + n * 86400000).toISOString().slice(0, 10);
+function rqPeriod(iso) {
+  const days = Math.floor((rqUtc(iso) - rqUtc(RQ_FY_START)) / 86400000);
+  if (days < 0) return null;
+  const wk = Math.floor(days / 7);
+  let sw = 0;
+  for (let i = 0; i < RQ_PERIOD_WEEKS.length; i++) {
+    if (wk < sw + RQ_PERIOD_WEEKS[i]) return i + 1;
+    sw += RQ_PERIOD_WEEKS[i];
+  }
+  return null;
+}
+function rqWindowStart(iso, cadence) {
+  if (cadence === "annual") return RQ_FY_START;
+  const period = rqPeriod(iso);
+  if (!period) return RQ_FY_START;
+  const qStartPeriod = Math.floor((period - 1) / 3) * 3 + 1; // first period of this quarter
+  let sw = 0;
+  for (let i = 0; i < qStartPeriod - 1; i++) sw += RQ_PERIOD_WEEKS[i];
+  return rqAddDays(RQ_FY_START, sw * 7);
+}
+
+async function getRequired(supa, user) {
+  const { data: courses } = await supa
+    .from("qsr_courses")
+    .select("id, title, category, est_minutes, requirement_cadence, requirement_roles")
+    .eq("status", "published")
+    .not("requirement_cadence", "is", null);
+  const role = String(user.role);
+  const applicable = (courses || []).filter((c) => Array.isArray(c.requirement_roles) && c.requirement_roles.includes(role));
+  if (!applicable.length) return { required: [] };
+  const today = new Date().toISOString().slice(0, 10);
+  const out = [];
+  for (const c of applicable) {
+    const windowStart = rqWindowStart(today, c.requirement_cadence);
+    const { data: done } = await supa
+      .from("qsr_enrollments")
+      .select("id")
+      .eq("user_id", user.id).eq("course_id", c.id).eq("status", "completed")
+      .gte("completed_at", `${windowStart}T00:00:00Z`)
+      .limit(1);
+    if (!done || !done.length) {
+      out.push({ id: c.id, title: c.title, category: c.category, est_minutes: c.est_minutes, cadence: c.requirement_cadence });
+    }
+  }
+  return { required: out };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   let supa;
@@ -393,6 +448,7 @@ export const handler = async (event) => {
     if (action === "complete") return unwrap(await completeLesson(supa, user, body));
     if (action === "stats") return unwrap(await getStats(supa, user));
     if (action === "leaderboard") return unwrap(await getLeaderboard(supa, user));
+    if (action === "required") return unwrap(await getRequired(supa, user));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });

@@ -128,6 +128,8 @@ export interface BuilderCourse {
   updated_at: string;
   lesson_count: number;
   card_count: number;
+  requirement_cadence?: string | null; // null = not required; 'quarterly' | 'annual'
+  requirement_roles?: string[] | null;
 }
 export interface BuilderCard {
   id: string;
@@ -282,4 +284,12 @@ export function mintAccessToken(store_id: string, label?: string): Promise<{ tok
 }
 export function revokeAccessToken(id: string): Promise<{ ok: true }> {
   return learnFetch(`${MANAGE_FN}?action=revokeToken`, { method: "POST", body: JSON.stringify({ id }) });
+}
+
+// ── Required ("pop up on login") training ────────────────────────────────────
+export interface RequiredCourse {
+  id: string; title: string; category: string | null; est_minutes: number | null; cadence: string;
+}
+export function fetchRequiredTraining(): Promise<{ required: RequiredCourse[] }> {
+  return learnFetch(`${LEARN_FN}?action=required`);
 }

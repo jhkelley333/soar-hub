@@ -309,6 +309,9 @@ async function escalate(supa, { store, variancecents, type, reason, managerName,
 // validate each store's Bank in week 1 of every period.
 const FUND_FY_START = "2025-12-29"; // Mon Dec 29 2025
 const FUND_PERIOD_WEEKS = [4, 4, 5, 4, 4, 5, 4, 4, 5, 4, 4, 5];
+// Store Funds goes live in Period 7 — earlier (setup/test) periods are excluded
+// from the month-to-month metrics so P6 trials don't skew the numbers.
+const FUND_LAUNCH_PERIOD = 7;
 const isoToUtc = (iso) => Date.parse(`${iso}T00:00:00Z`);
 const addDaysIsoUtc = (iso, n) => new Date(isoToUtc(iso) + n * 86400000).toISOString().slice(0, 10);
 const daysBetweenIso = (a, b) => Math.floor((isoToUtc(a) - isoToUtc(b)) / 86400000);
@@ -345,6 +348,7 @@ async function fundBankMap(supa, storeIds) {
 }
 
 async function fundOverview(supa, user) {
+  if (!ACT_ROLES.has(String(user.role))) return { error: "Store Funds is for DO and above.", status: 403 };
   const access = await storeRowsForUser(supa, user);
   const rows = access.rows;
   const settings = await getSettings(supa);
@@ -460,6 +464,7 @@ async function fundSetBanks(supa, user, body) {
 }
 
 async function fundMetrics(supa, user) {
+  if (!ACT_ROLES.has(String(user.role))) return { error: "Store Funds is for DO and above.", status: 403 };
   const access = await storeRowsForUser(supa, user);
   const rows = access.rows;
   if (!rows.length) return { periods: [], banked_stores: 0, store_count: 0 };
@@ -471,6 +476,7 @@ async function fundMetrics(supa, user) {
     .in("store_id", ids).not("fiscal_period", "is", null);
   const byPeriod = new Map();
   for (const v of vals || []) {
+    if (v.fiscal_period < FUND_LAUNCH_PERIOD) continue; // pre-launch (≤ P6) excluded
     if (!byPeriod.has(v.fiscal_period)) byPeriod.set(v.fiscal_period, []);
     byPeriod.get(v.fiscal_period).push(v);
   }

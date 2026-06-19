@@ -119,7 +119,7 @@ async function getCourseTree(supa, courseId) {
 
 // ── Writes ─────────────────────────────────────────────────────────────────
 async function saveCourse(supa, user, body) {
-  const { id, title, category, description, est_minutes, points } = body || {};
+  const { id, title, category, description, est_minutes, points, requirement_cadence, requirement_roles } = body || {};
   if (!title || !String(title).trim()) return { error: "Title is required.", status: 400 };
   const patch = {
     title: String(title).trim(),
@@ -129,6 +129,10 @@ async function saveCourse(supa, user, body) {
     points: Number(points) || 0,
     updated_at: new Date().toISOString(),
   };
+  // Required-training settings are optional — only patch them when provided so
+  // existing callers (lesson/card saves) don't clear them.
+  if (requirement_cadence !== undefined) patch.requirement_cadence = requirement_cadence || null;
+  if (requirement_roles !== undefined) patch.requirement_roles = Array.isArray(requirement_roles) ? requirement_roles : [];
   if (id) {
     const { data, error } = await supa.from("qsr_courses").update(patch).eq("id", id).select().single();
     if (error) throw error;
