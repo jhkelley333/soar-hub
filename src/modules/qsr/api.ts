@@ -13,6 +13,7 @@ export interface QsrCourseSummary {
   status: "draft" | "published";
   est_minutes: number | null;
   points: number;
+  total_points?: number; // completion points + every quiz card's points (view 0170)
   lesson_count: number;
   card_count: number;
 }
@@ -20,7 +21,7 @@ export interface QsrCourseSummary {
 export async function listQsrCourses(): Promise<QsrCourseSummary[]> {
   const { data, error } = await supabase
     .from("qsr_course_summary")
-    .select("id, title, category, description, status, est_minutes, points, lesson_count, card_count")
+    .select("id, title, category, description, status, est_minutes, points, total_points, lesson_count, card_count")
     .order("title");
   if (error) throw new Error(error.message);
   return (data ?? []) as QsrCourseSummary[];
@@ -108,6 +109,7 @@ export interface BuilderCourse {
   status: "draft" | "published";
   est_minutes: number | null;
   points: number;
+  total_points?: number; // completion points + every quiz card's points
   version: number;
   created_at: string;
   updated_at: string;
