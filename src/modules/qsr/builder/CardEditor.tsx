@@ -63,15 +63,37 @@ function Area({ value, onChange, placeholder, rows = 3 }: { value: unknown; onCh
   return <textarea className={inputCls} rows={rows} value={(value as string) ?? ""} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />;
 }
 
-// Editable list of strings (quiz / poll options).
+// Editable list of strings (quiz / poll options). When `multi`, the correct
+// marker is a checkbox set (answers[] via onAnswers); otherwise a single radio.
 function OptionList({
-  options, answer, onOptions, onAnswer,
-}: { options: string[]; answer?: number; onOptions: (v: string[]) => void; onAnswer?: (i: number) => void }) {
+  options, answer, answers, multi, onOptions, onAnswer, onAnswers,
+}: {
+  options: string[]; answer?: number; answers?: number[]; multi?: boolean;
+  onOptions: (v: string[]) => void; onAnswer?: (i: number) => void; onAnswers?: (v: number[]) => void;
+}) {
+  const sel = answers ?? [];
+  const toggle = (i: number) => onAnswers?.(sel.includes(i) ? sel.filter((a) => a !== i) : [...sel, i].sort((a, b) => a - b));
+  const removeAt = (i: number) => {
+    onOptions(options.filter((_, j) => j !== i));
+    if (multi) {
+      onAnswers?.(sel.filter((a) => a !== i).map((a) => (a > i ? a - 1 : a)));
+    } else if (onAnswer && answer != null && answer >= options.length - 1) {
+      onAnswer(Math.max(0, options.length - 2));
+    }
+  };
   return (
     <div className="space-y-2">
       {options.map((opt, i) => (
         <div key={i} className="flex items-center gap-2">
-          {onAnswer && (
+          {multi ? (
+            <input
+              type="checkbox"
+              checked={sel.includes(i)}
+              onChange={() => toggle(i)}
+              className="h-4 w-4 accent-qsr-azure"
+              title="Correct answer"
+            />
+          ) : onAnswer ? (
             <input
               type="radio"
               checked={answer === i}
@@ -79,7 +101,7 @@ function OptionList({
               className="h-4 w-4 accent-qsr-azure"
               title="Correct answer"
             />
-          )}
+          ) : null}
           <input
             className={inputCls}
             value={opt}
@@ -88,11 +110,7 @@ function OptionList({
           />
           <button
             type="button"
-            onClick={() => {
-              const next = options.filter((_, j) => j !== i);
-              onOptions(next);
-              if (onAnswer && answer != null && answer >= next.length) onAnswer(Math.max(0, next.length - 1));
-            }}
+            onClick={() => removeAt(i)}
             className="shrink-0 rounded-md p-1.5 text-ink-subtle hover:bg-surface-sunk hover:text-qsr-crimson"
             title="Remove option"
           >
@@ -215,9 +233,24 @@ export function CardEditor({ type, data, setData, cardId }: { type: CardType; da
         <div className="space-y-3">
           {kicker}
           <Field label="Question"><Area value={data.q} onChange={(v) => set("q", v)} rows={2} /></Field>
-          <Field label="Options (select the correct one)">
-            <OptionList options={arr<string>("options")} answer={data.answer as number} onOptions={(v) => set("options", v)} onAnswer={(i) => set("answer", i)} />
+          <label className="flex items-center gap-2 font-qsr-ui text-sm text-ink">
+            <input
+              type="checkbox" checked={!!data.multi} className="h-4 w-4 accent-qsr-azure"
+              onChange={(e) => set("multi", e.target.checked)}
+            />
+            Multiple correct answers
+          </label>
+          <Field label={data.multi ? "Options (check all correct answers)" : "Options (select the correct one)"}>
+            <OptionList
+              options={arr<string>("options")} multi={!!data.multi}
+              answer={data.answer as number} answers={arr<number>("answers")}
+              onOptions={(v) => set("options", v)}
+              onAnswer={(i) => set("answer", i)} onAnswers={(v) => set("answers", v)}
+            />
           </Field>
+          {!!data.multi && arr<number>("answers").length === 0 && (
+            <p className="-mt-1 font-qsr-ui text-[11px] text-qsr-crimson">Check at least one correct answer.</p>
+          )}
           <Field label="Explanation (shown after answering)"><Area value={data.explain} onChange={(v) => set("explain", v)} rows={2} /></Field>
           <Field label="Points">
             <input type="number" min="0" className={`${inputCls} w-28`} value={(data.points as number) ?? 10} onChange={(e) => set("points", Number(e.target.value))} />

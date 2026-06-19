@@ -237,24 +237,38 @@ export function VideoCard({ card, onAdvance }: CardProps) {
 // ── quiz (server-scored) ───────────────────────────────────────────────────
 export function QuizCard({ card, onAdvance, onPoints }: CardProps) {
   const d = card.data as QuizData;
-  const [selected, setSelected] = useState<number | null>(null);
-  const [result, setResult] = useState<{ correct: boolean; answer: number; explain: string | null } | null>(null);
+  const multi = !!d.multi;
+  const [selected, setSelected] = useState<number[]>([]);
+  const [result, setResult] = useState<{ correct: boolean; answers: number[]; explain: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const choose = async (i: number) => {
-    if (result || busy) return;
-    setSelected(i); setBusy(true);
+  const submit = async (sel: number[]) => {
+    if (result || busy || !sel.length) return;
+    setBusy(true);
     try {
-      const r = await answerQuiz(card.id, i);
-      setResult({ correct: r.correct, answer: r.answer, explain: r.explain });
+      const r = await answerQuiz(card.id, multi ? sel : sel[0]);
+      const answers = r.answers ?? (r.answer != null ? [r.answer] : []);
+      setResult({ correct: r.correct, answers, explain: r.explain });
       onPoints(r.pointsAwarded);
     } finally { setBusy(false); }
   };
 
+  const onPick = (i: number) => {
+    if (result || busy) return;
+    if (multi) {
+      setSelected((s) => (s.includes(i) ? s.filter((x) => x !== i) : [...s, i]));
+    } else {
+      setSelected([i]);
+      submit([i]);
+    }
+  };
+
   const optionClass = (i: number) => {
-    if (!result) return "border-border bg-white text-ink hover:border-qsr-azure";
-    if (i === result.answer) return "border-success bg-success/10 text-ink";
-    if (i === selected) return "border-danger bg-danger/10 text-ink";
+    if (!result) return selected.includes(i)
+      ? "border-qsr-azure bg-qsr-azure/5 text-ink"
+      : "border-border bg-white text-ink hover:border-qsr-azure";
+    if (result.answers.includes(i)) return "border-success bg-success/10 text-ink";
+    if (selected.includes(i)) return "border-danger bg-danger/10 text-ink";
     return "border-border bg-white text-ink-subtle";
   };
 
@@ -266,15 +280,16 @@ export function QuizCard({ card, onAdvance, onPoints }: CardProps) {
           {d.points != null && <span className="font-qsr-mono text-xs font-semibold text-qsr-gold">+{d.points}</span>}
         </div>
         <h2 className="mt-3 font-qsr-display text-xl font-bold leading-snug text-ink">{d.q}</h2>
+        {multi && !result && <p className="mt-1 font-qsr-ui text-xs text-ink-subtle">Select all that apply.</p>}
         <div className="mt-4 space-y-2.5">
           {d.options.map((o, i) => (
             <button
-              key={i} type="button" onClick={() => choose(i)} disabled={!!result || busy}
+              key={i} type="button" onClick={() => onPick(i)} disabled={!!result || busy}
               className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left font-qsr-ui text-[15px] transition active:scale-[0.99] ${optionClass(i)}`}
             >
               <span>{o}</span>
-              {result && i === result.answer && <Check className="h-4 w-4 text-success" />}
-              {result && i === selected && i !== result.answer && <X className="h-4 w-4 text-danger" />}
+              {result && result.answers.includes(i) && <Check className="h-4 w-4 text-success" />}
+              {result && selected.includes(i) && !result.answers.includes(i) && <X className="h-4 w-4 text-danger" />}
             </button>
           ))}
         </div>
@@ -282,7 +297,11 @@ export function QuizCard({ card, onAdvance, onPoints }: CardProps) {
           <p className="mt-4 rounded-2xl bg-surface-sunk px-4 py-3 font-qsr-ui text-sm text-ink-muted">{result.explain}</p>
         )}
       </div>
-      <PrimaryBtn onClick={onAdvance} disabled={!result}>Continue ▸</PrimaryBtn>
+      {multi && !result ? (
+        <PrimaryBtn onClick={() => submit(selected)} disabled={!selected.length || busy}>Check answer ▸</PrimaryBtn>
+      ) : (
+        <PrimaryBtn onClick={onAdvance} disabled={!result}>Continue ▸</PrimaryBtn>
+      )}
     </div>
   );
 }

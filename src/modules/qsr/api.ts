@@ -56,12 +56,12 @@ export function recordCardProgress(
 }
 
 export function answerQuiz(
-  cardId: string, answerIndex: number,
-): Promise<{ ok: true; correct: boolean; pointsAwarded: number; answer: number; explain: string | null }> {
-  return learnFetch(`${LEARN_FN}?action=quiz`, {
-    method: "POST",
-    body: JSON.stringify({ card_id: cardId, answer_index: answerIndex }),
-  });
+  cardId: string, selection: number | number[],
+): Promise<{ ok: true; correct: boolean; pointsAwarded: number; answer: number | null; answers?: number[]; multi?: boolean; explain: string | null }> {
+  const body = Array.isArray(selection)
+    ? { card_id: cardId, answer_indices: selection }
+    : { card_id: cardId, answer_index: selection };
+  return learnFetch(`${LEARN_FN}?action=quiz`, { method: "POST", body: JSON.stringify(body) });
 }
 
 export function votePoll(cardId: string, optionIndex: number): Promise<{ ok: true; results: number[] }> {
