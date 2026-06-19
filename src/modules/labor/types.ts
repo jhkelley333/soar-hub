@@ -64,6 +64,11 @@ export interface DistrictStoreRow {
   variance_pts: number | null;
   dollars_over_chart: number | null;
   hours_over_chart: number | null;
+  // Cumulative labor % through the anchor date.
+  wtd_labor_pct: number | null;
+  ptd_labor_pct: number | null;
+  wtd_dollars_over_chart: number | null;
+  ptd_dollars_over_chart: number | null;
   status: ChartStatus;
   explained: boolean;
   note_due: boolean;
@@ -73,8 +78,12 @@ export interface DistrictStoreRow {
 export interface DistrictRollup {
   store_count: number;
   district_labor_pct: number | null;
+  wtd_labor_pct: number | null;
+  ptd_labor_pct: number | null;
   stores_over_chart: number;
   dollars_over_chart: number;
+  wtd_dollars_over_chart: number;
+  ptd_dollars_over_chart: number;
   hours_over_chart: number;
   notes_due: number;
   notes_explained: number;

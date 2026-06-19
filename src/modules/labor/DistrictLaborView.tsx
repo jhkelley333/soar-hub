@@ -111,14 +111,38 @@ export function DistrictLaborView() {
         <EmptyState title="No labor data yet" description="No snapshot captured for your stores yet. Data appears after the nightly sync." />
       ) : (
         <div className="space-y-5">
-          {/* Rollup tiles */}
-          <div className="grid gap-4 md:grid-cols-4">
+          {/* Labor % — day vs cumulative (WTD / period-to-date) */}
+          <div className="grid gap-4 sm:grid-cols-3">
             <Tile
-              label="District Labor %"
+              label="District Labor % · Day"
               value={fmtPct(rollup.district_labor_pct)}
               subOverride={`avg across ${rollup.store_count} stores`}
               tone={rollup.stores_over_chart > rollup.store_count / 2 ? "over" : "on"}
             />
+            <Tile
+              label="WTD Labor %"
+              value={fmtPct(rollup.wtd_labor_pct)}
+              subOverride={
+                rollup.wtd_dollars_over_chart
+                  ? `${fmtSignedMoney(rollup.wtd_dollars_over_chart)} over chart`
+                  : "week to date · district avg"
+              }
+              tone={rollup.wtd_dollars_over_chart > 0 ? "over" : "on"}
+            />
+            <Tile
+              label="PTD Labor %"
+              value={fmtPct(rollup.ptd_labor_pct)}
+              subOverride={
+                rollup.ptd_dollars_over_chart
+                  ? `${fmtSignedMoney(rollup.ptd_dollars_over_chart)} over · period-to-date`
+                  : "period to date · district avg"
+              }
+              tone={rollup.ptd_dollars_over_chart > 0 ? "over" : "on"}
+            />
+          </div>
+
+          {/* Operational rollups */}
+          <div className="grid gap-4 sm:grid-cols-3">
             <Tile
               label="Stores Over Chart"
               value={`${rollup.stores_over_chart} / ${rollup.store_count}`}
@@ -176,7 +200,9 @@ export function DistrictLaborView() {
                   <span className="w-1" />
                   <span className="w-9" />
                   <span className="min-w-0 flex-1">Store</span>
-                  <span className="w-16 text-right">Labor %</span>
+                  <span className="w-16 text-right">Day %</span>
+                  <span className="hidden w-14 text-right lg:block">WTD %</span>
+                  <span className="hidden w-14 text-right lg:block">PTD %</span>
                   <span className="hidden w-14 text-right sm:block">Var</span>
                   <span className="hidden w-20 text-right sm:block">$ Over</span>
                   <span className="hidden w-14 text-right sm:block">Hrs</span>
@@ -257,6 +283,12 @@ function StoreRow({ row }: { row: DistrictStoreRow }) {
         </div>
         <div className={cn("w-16 text-right text-sm font-bold tabular-nums", over ? "text-sonic" : "text-ok")}>
           {fmtPct(row.labor_pct)}
+        </div>
+        <div className="hidden w-14 text-right text-xs tabular-nums text-zinc-500 lg:block">
+          {fmtPct(row.wtd_labor_pct)}
+        </div>
+        <div className="hidden w-14 text-right text-xs tabular-nums text-zinc-500 lg:block">
+          {fmtPct(row.ptd_labor_pct)}
         </div>
         <div className={cn("hidden w-14 text-right text-xs tabular-nums sm:block", over ? "text-sonic-700" : "text-zinc-500")}>
           {fmtSignedPts(row.variance_pts).replace(" pts", "")}
