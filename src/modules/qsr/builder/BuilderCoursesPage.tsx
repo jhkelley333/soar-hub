@@ -71,7 +71,7 @@ export function BuilderCoursesPage() {
                 <div className="mt-1 flex flex-wrap gap-x-4 font-qsr-mono text-[11px] text-ink-muted">
                   <span>{c.lesson_count} lessons</span>
                   <span>{c.card_count} cards</span>
-                  <span>+{c.points} pts</span>
+                  <span>+{c.total_points ?? c.points} pts</span>
                 </div>
               </div>
               <button type="button" onClick={() => publish.mutate({ id: c.id, publish: c.status !== "published" })} disabled={publish.isPending} className="rounded-lg border border-border px-3 py-1.5 font-qsr-ui text-xs font-semibold text-ink hover:border-qsr-azure">

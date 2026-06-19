@@ -121,7 +121,7 @@ export function QsrHomePage() {
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-qsr-mono text-[11px] text-ink-muted">
                   <span>{c.card_count} cards</span>
                   {c.est_minutes != null && <span>{c.est_minutes} min</span>}
-                  <span>+{c.points} pts</span>
+                  <span>+{c.total_points ?? c.points} pts</span>
                 </div>
                 <div className="mt-3 inline-flex items-center gap-1.5 font-qsr-ui text-sm font-semibold text-qsr-azure">
                   <Play className="h-3.5 w-3.5 fill-qsr-azure" /> Start lesson
