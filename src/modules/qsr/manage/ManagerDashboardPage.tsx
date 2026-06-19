@@ -4,7 +4,7 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, BarChart3, Download, Loader2, Plus, Trash2, Users } from "lucide-react";
+import { ArrowLeft, BarChart3, Download, Loader2, Plus, QrCode, Trash2, Users } from "lucide-react";
 import { useToast } from "@/shared/ui/Toaster";
 import {
   fetchManageOverview, fetchByCourse, fetchByStore, fetchAssignTargets,
@@ -66,9 +66,14 @@ export function ManagerDashboardPage() {
         <Link to="/qsr" className="inline-flex items-center gap-1.5 font-qsr-ui text-sm text-ink-muted hover:text-ink">
           <ArrowLeft className="h-4 w-4" /> SOAR QSR
         </Link>
-        <button type="button" onClick={() => exportM.mutate()} disabled={exportM.isPending} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 font-qsr-ui text-sm font-semibold text-ink hover:border-qsr-azure disabled:opacity-40">
-          {exportM.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Export completions
-        </button>
+        <div className="flex items-center gap-2">
+          <Link to="/qsr/share" className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 font-qsr-ui text-sm font-semibold text-ink hover:border-qsr-azure">
+            <QrCode className="h-4 w-4" /> Share codes
+          </Link>
+          <button type="button" onClick={() => exportM.mutate()} disabled={exportM.isPending} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 font-qsr-ui text-sm font-semibold text-ink hover:border-qsr-azure disabled:opacity-40">
+            {exportM.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Export completions
+          </button>
+        </div>
       </div>
 
       <div className="flex items-center gap-2">

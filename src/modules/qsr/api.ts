@@ -257,3 +257,24 @@ export async function uploadQsrMedia(file: File, cardId: string): Promise<string
   if (error) throw error;
   return supabase.storage.from(QSR_MEDIA_BUCKET).getPublicUrl(path).data.publicUrl;
 }
+
+// ── Public QR access tokens (admin minting via qsr-manage) ───────────────────
+export interface QsrAccessToken {
+  id: string;
+  token: string;
+  store_id: string;
+  label: string | null;
+  is_active: boolean;
+  created_at: string;
+  revoked_at: string | null;
+  store: { id: string; number: string; name: string } | null;
+}
+export function fetchAccessTokens(): Promise<{ tokens: QsrAccessToken[] }> {
+  return learnFetch(`${MANAGE_FN}?action=tokens`);
+}
+export function mintAccessToken(store_id: string, label?: string): Promise<{ token: QsrAccessToken }> {
+  return learnFetch(`${MANAGE_FN}?action=mintToken`, { method: "POST", body: JSON.stringify({ store_id, label }) });
+}
+export function revokeAccessToken(id: string): Promise<{ ok: true }> {
+  return learnFetch(`${MANAGE_FN}?action=revokeToken`, { method: "POST", body: JSON.stringify({ id }) });
+}

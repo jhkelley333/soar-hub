@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import confetti from "canvas-confetti";
 import { Check, X, Play, Lock } from "lucide-react";
-import { answerQuiz, votePoll, recordCardProgress, completeLesson } from "../api";
+import { useLearnApi } from "./LearnApi";
 import type {
   LessonCard, IntroData, StepsData, ImageData, VideoData, QuizData, RevealData, PollData, DoneData,
 } from "../types";
@@ -130,6 +130,7 @@ function parseVideo(input?: string | null): { kind: "youtube" | "vimeo" | "mp4" 
 }
 
 export function VideoCard({ card, onAdvance }: CardProps) {
+  const { recordCardProgress } = useLearnApi();
   const d = card.data as VideoData;
   const v = parseVideo(d.videoUrl);
   const gated = !!d.gate;
@@ -240,6 +241,7 @@ export function VideoCard({ card, onAdvance }: CardProps) {
 
 // ── quiz (server-scored; must answer correctly to advance) ─────────────────
 export function QuizCard({ card, onAdvance, onPoints }: CardProps) {
+  const { answerQuiz } = useLearnApi();
   const d = card.data as QuizData;
   const multi = !!d.multi;
   const [selected, setSelected] = useState<number[]>([]);
@@ -349,6 +351,7 @@ export function RevealCard({ card, onAdvance }: CardProps) {
 
 // ── poll (server-aggregated) ───────────────────────────────────────────────
 export function PollCard({ card, onAdvance }: CardProps) {
+  const { votePoll } = useLearnApi();
   const d = card.data as PollData;
   const [results, setResults] = useState<number[] | null>(card.progress?.answer_index != null ? (d.results ?? null) : null);
   const [voted, setVoted] = useState(card.progress?.answer_index != null);
@@ -393,6 +396,7 @@ export function PollCard({ card, onAdvance }: CardProps) {
 
 // ── done (server-computed completion) ──────────────────────────────────────
 export function DoneCard({ card, courseId, onFinish }: { card: LessonCard; courseId: string; onFinish: () => void }) {
+  const { completeLesson } = useLearnApi();
   const d = card.data as DoneData;
   const [stats, setStats] = useState<{ points: number; score: string; streak: number } | null>(null);
 
