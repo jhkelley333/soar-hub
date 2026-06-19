@@ -6,6 +6,15 @@
 [functions]
   node_bundler = "esbuild"
 
+# Dynamic QR redirect — a printed QR encodes /q/<code>; this rewrites to the
+# qr-redirect function, which 302s to the code's current target. Must precede
+# the SPA fallback so it isn't swallowed by the catch-all. status=200 proxies
+# the request to the function and returns its response (the 302) verbatim.
+[[redirects]]
+  from = "/q/*"
+  to = "/.netlify/functions/qr-redirect?code=:splat"
+  status = 200
+
 # SPA fallback — react-router handles all client-side routes.
 [[redirects]]
   from = "/*"
