@@ -166,6 +166,80 @@ async function generate(supa, user, body) {
   return respond(200, { course_id: course.id, title: course.title });
 }
 
+// ── Translate a course into Spanish (inline data.i18n.es) ────────────────────
+const TEXT_KEYS = ["kicker", "title", "body", "q", "explain", "reveal"];
+
+function translatable(card) {
+  const d = card.data || {};
+  const out = { id: card.id, type: card.type };
+  for (const k of TEXT_KEYS) if (d[k]) out[k] = d[k];
+  if (Array.isArray(d.options)) out.options = d.options.map((o) => String(o ?? ""));
+  if (Array.isArray(d.steps)) out.steps = d.steps.map((s) => ({ t: s?.t ?? "", d: s?.d ?? "" }));
+  if (Array.isArray(d.meta)) out.meta = d.meta.map((m) => ({ v: m?.v ?? "", k: m?.k ?? "" }));
+  return out;
+}
+
+const TRANSLATE_SYSTEM = `You are a professional translator localizing SONIC Drive-In ("SOAR QSR") crew training from English into neutral Latin American Spanish for frontline restaurant crew. Translate naturally and concisely, second-person ("tú/usted" — use "tú"), keep the upbeat tone. Do NOT translate brand/product names (SONIC, SONIC Blast, Carhop, etc.) or numbers. Preserve meaning exactly — this is training, accuracy matters.
+
+You receive a JSON array of cards, each with an "id" and some text fields. Return STRICT JSON ONLY: an array of objects, each { "id": <same id>, ...translated text fields }. Rules:
+- Only include the text fields that were present on the input card.
+- For "options" and "steps" and "meta" arrays, return the SAME number of items in the SAME order. steps items are {t,d}; meta items are {v,k} — translate only the label "k", copy "v" unchanged.
+- Never include answer keys, indices, or any field not given to you.
+- Output only the JSON array, no prose, no code fences.`;
+
+async function translate(supa, user, body) {
+  const courseId = String(body?.course_id || "").trim();
+  if (!courseId) return respond(400, { error: "course_id is required." });
+  if (!process.env.ANTHROPIC_API_KEY) return respond(500, { error: "ANTHROPIC_API_KEY is not set on the server." });
+
+  const { data: course } = await supa.from("qsr_courses").select("id, languages").eq("id", courseId).maybeSingle();
+  if (!course) return respond(404, { error: "Course not found." });
+  const { data: lessons } = await supa.from("qsr_lessons").select("id").eq("course_id", courseId);
+  const lessonIds = (lessons || []).map((l) => l.id);
+  if (!lessonIds.length) return respond(400, { error: "This course has no lessons to translate." });
+  const { data: cards } = await supa.from("qsr_cards").select("id, type, data").in("lesson_id", lessonIds);
+  const payload = (cards || []).map(translatable).filter((c) => Object.keys(c).length > 2); // has at least one text field
+  if (!payload.length) return respond(400, { error: "Nothing to translate yet — add some card text first." });
+
+  let translated;
+  try {
+    const anthropic = new Anthropic();
+    const msg = await anthropic.messages.create({
+      model: "claude-opus-4-8",
+      max_tokens: 8000,
+      output_config: { effort: "medium" },
+      system: TRANSLATE_SYSTEM,
+      messages: [{ role: "user", content: `${JSON.stringify(payload)}\n\nReturn the translated JSON array only.` }],
+    });
+    const text = (msg.content || []).filter((b) => b.type === "text").map((b) => b.text).join("");
+    const a = text.indexOf("["); const b = text.lastIndexOf("]");
+    if (a === -1 || b === -1) throw new Error("model did not return a JSON array");
+    translated = JSON.parse(text.slice(a, b + 1));
+  } catch (e) {
+    return respond(502, { error: `Translation failed: ${e.message || e}` });
+  }
+
+  const esById = new Map((Array.isArray(translated) ? translated : []).map((c) => [c.id, c]));
+  let count = 0;
+  for (const card of cards || []) {
+    const es = esById.get(card.id);
+    if (!es) continue;
+    const prevEs = card.data?.i18n?.es || {};
+    const newEs = { ...prevEs }; // preserve a manually-set es.videoUrl
+    for (const k of TEXT_KEYS) if (es[k] != null && es[k] !== "") newEs[k] = String(es[k]);
+    if (Array.isArray(es.options)) newEs.options = es.options.map((o) => String(o ?? ""));
+    if (Array.isArray(es.steps)) newEs.steps = es.steps.map((s) => ({ t: String(s?.t ?? ""), d: String(s?.d ?? "") }));
+    if (Array.isArray(es.meta)) newEs.meta = es.meta.map((m) => ({ v: String(m?.v ?? ""), k: String(m?.k ?? "") }));
+    const data = { ...(card.data || {}), i18n: { ...(card.data?.i18n || {}), es: newEs } };
+    await supa.from("qsr_cards").update({ data }).eq("id", card.id);
+    count++;
+  }
+
+  const langs = Array.from(new Set([...(course.languages || ["en"]), "es"]));
+  await supa.from("qsr_courses").update({ languages: langs }).eq("id", courseId);
+  return respond(200, { ok: true, translated: count, languages: langs });
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   let supa;
@@ -180,6 +254,7 @@ export const handler = async (event) => {
 
   try {
     if (action === "generate") return await generate(supa, user, body);
+    if (action === "translate") return await translate(supa, user, body);
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });

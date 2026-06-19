@@ -43,8 +43,8 @@ async function learnFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export function fetchLesson(courseId: string): Promise<LessonPayload> {
-  return learnFetch<LessonPayload>(`${LEARN_FN}?action=lesson&course_id=${encodeURIComponent(courseId)}`);
+export function fetchLesson(courseId: string, lang = "en"): Promise<LessonPayload> {
+  return learnFetch<LessonPayload>(`${LEARN_FN}?action=lesson&course_id=${encodeURIComponent(courseId)}&lang=${encodeURIComponent(lang)}`);
 }
 
 export function recordCardProgress(
@@ -57,11 +57,11 @@ export function recordCardProgress(
 }
 
 export function answerQuiz(
-  cardId: string, selection: number | number[],
+  cardId: string, selection: number | number[], lang = "en",
 ): Promise<{ ok: true; correct: boolean; pointsAwarded: number; answer: number | null; answers?: number[]; multi?: boolean; explain: string | null }> {
   const body = Array.isArray(selection)
-    ? { card_id: cardId, answer_indices: selection }
-    : { card_id: cardId, answer_index: selection };
+    ? { card_id: cardId, answer_indices: selection, lang }
+    : { card_id: cardId, answer_index: selection, lang };
   return learnFetch(`${LEARN_FN}?action=quiz`, { method: "POST", body: JSON.stringify(body) });
 }
 
@@ -106,6 +106,11 @@ export function generateCourse(
   input: { topic: string; sourceText?: string; lessons?: number },
 ): Promise<{ course_id: string; title: string }> {
   return learnFetch("/.netlify/functions/qsr-ai?action=generate", { method: "POST", body: JSON.stringify(input) });
+}
+
+// AI translation — fills each card's Spanish (data.i18n.es) for a course.
+export function translateCourse(courseId: string): Promise<{ ok: true; translated: number; languages: string[] }> {
+  return learnFetch("/.netlify/functions/qsr-ai?action=translate", { method: "POST", body: JSON.stringify({ course_id: courseId, target: "es" }) });
 }
 
 

@@ -29,12 +29,12 @@ export function resolveLearnToken(token: string): Promise<PublicHub> {
 
 export function makePublicLearnApi(token: string, learnerId: string): LearnApi {
   return {
-    fetchLesson: (courseId) => publicFetch<LessonPayload>("lesson", { token, learnerId, course_id: courseId }),
+    fetchLesson: (courseId, lang = "en") => publicFetch<LessonPayload>("lesson", { token, learnerId, course_id: courseId, lang }),
     recordCardProgress: (cardId, state, watchedPct) =>
       publicFetch("progress", { token, learnerId, card_id: cardId, state, watched_pct: watchedPct }),
-    answerQuiz: (cardId, selection) =>
+    answerQuiz: (cardId, selection, lang = "en") =>
       publicFetch("quiz", {
-        token, learnerId, card_id: cardId,
+        token, learnerId, card_id: cardId, lang,
         ...(Array.isArray(selection) ? { answer_indices: selection } : { answer_index: selection }),
       }),
     votePoll: (cardId, optionIndex) => publicFetch("poll", { token, learnerId, card_id: cardId, option_index: optionIndex }),

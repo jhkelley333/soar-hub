@@ -6,13 +6,13 @@ import { useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowLeft, ChevronDown, ChevronUp, Eye, GripVertical, Loader2, Plus, Save, Trash2,
+  ArrowLeft, ChevronDown, ChevronUp, Eye, GripVertical, Languages, Loader2, Plus, Save, Trash2,
 } from "lucide-react";
 import { useToast } from "@/shared/ui/Toaster";
 import type { CardType } from "../types";
 import {
   getCourseTree, saveCourse, setCoursePublish, saveLesson, deleteLesson,
-  saveCard, deleteCard, reorderBuilder,
+  saveCard, deleteCard, reorderBuilder, translateCourse,
   type BuilderCard, type BuilderLesson,
 } from "../api";
 import { CardEditor } from "./CardEditor";
@@ -61,6 +61,7 @@ export function CourseEditorPage() {
           <ArrowLeft className="h-4 w-4" /> All courses
         </Link>
         <div className="flex items-center gap-2">
+          <TranslateButton courseId={course.id} onDone={invalidate} toast={toast} />
           <Link to={`/qsr/course/${course.id}`} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 font-qsr-ui text-sm font-semibold text-ink hover:border-qsr-azure">
             <Eye className="h-4 w-4" /> Preview
           </Link>
@@ -77,6 +78,25 @@ export function CourseEditorPage() {
         <AddLesson courseId={course.id} hasLessons={lessons.length > 0} onAdded={invalidate} toast={toast} />
       </div>
     </div>
+  );
+}
+
+function TranslateButton({ courseId, onDone, toast }: { courseId: string; onDone: () => void; toast: ReturnType<typeof useToast> }) {
+  const m = useMutation({
+    mutationFn: () => translateCourse(courseId),
+    onSuccess: (r) => { toast.push(`Translated ${r.translated} card${r.translated === 1 ? "" : "s"} to Spanish — review in each card's “Spanish” panel.`, "success"); onDone(); },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Translation failed.", "error"),
+  });
+  return (
+    <button
+      type="button"
+      onClick={() => { if (confirm("Auto-translate every card to Spanish? Existing Spanish text will be overwritten (your Spanish video URLs are kept).")) m.mutate(); }}
+      disabled={m.isPending}
+      title="Fill each card's Spanish translation with AI"
+      className="inline-flex items-center gap-1.5 rounded-lg border border-qsr-azure px-3 py-1.5 font-qsr-ui text-sm font-semibold text-qsr-azure hover:bg-qsr-azure/5 disabled:opacity-40"
+    >
+      {m.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Languages className="h-4 w-4" />} {m.isPending ? "Translating…" : "Translate to Spanish"}
+    </button>
   );
 }
 

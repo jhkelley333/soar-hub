@@ -36,13 +36,17 @@ export function LessonPlayer({ courseId: courseIdProp, onExit }: { courseId?: st
   const courseId = courseIdProp ?? params.courseId ?? "";
   const [index, setIndex] = useState(0);
   const [points, setPoints] = useState(0);
+  const [lang, setLang] = useState("en");
 
   const lessonQ = useQuery({
-    queryKey: ["qsr", "lesson", courseId],
-    queryFn: () => fetchLesson(courseId),
+    queryKey: ["qsr", "lesson", courseId, lang],
+    queryFn: () => fetchLesson(courseId, lang),
     enabled: !!courseId,
+    placeholderData: (prev) => prev, // keep current cards visible while toggling language
   });
   const cards: LessonCard[] = useMemo(() => lessonQ.data?.cards ?? [], [lessonQ.data]);
+  const languages = lessonQ.data?.course.languages ?? ["en"];
+  const hasEs = languages.includes("es");
 
   // Seed running points from any quiz already answered correctly.
   useEffect(() => {
@@ -65,7 +69,7 @@ export function LessonPlayer({ courseId: courseIdProp, onExit }: { courseId?: st
   const back = () => setIndex((i) => Math.max(i - 1, 0));
 
   const renderCard = (c: LessonCard) => {
-    const common = { card: c, onAdvance: () => advance(c), onPoints: (delta: number) => setPoints((p) => p + delta) };
+    const common = { card: c, onAdvance: () => advance(c), onPoints: (delta: number) => setPoints((p) => p + delta), lang };
     switch (c.type) {
       case "intro": return <IntroCard {...common} />;
       case "steps": return <StepsCard {...common} />;
@@ -94,6 +98,20 @@ export function LessonPlayer({ courseId: courseIdProp, onExit }: { courseId?: st
               <X className="h-4 w-4" />
             </button>
             <Seg total={cards.length} filled={index} dark={dark} />
+            {hasEs && (
+              <div className={`flex shrink-0 overflow-hidden rounded-full text-[10px] font-bold ${dark ? "bg-white/15" : "bg-surface-sunk"}`}>
+                {(["en", "es"] as const).map((l) => (
+                  <button
+                    key={l} type="button" onClick={() => setLang(l)}
+                    className={`px-2 py-0.5 uppercase transition ${
+                      lang === l ? "bg-qsr-azure text-white" : dark ? "text-white/70" : "text-ink-muted"
+                    }`}
+                  >
+                    {l}
+                  </button>
+                ))}
+              </div>
+            )}
             <span className={`flex items-center gap-1 font-qsr-mono text-xs font-semibold ${dark ? "text-white" : "text-ink"}`}>
               <Zap className="h-3.5 w-3.5 text-qsr-gold" />{points}
             </span>
