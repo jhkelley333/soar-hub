@@ -171,20 +171,22 @@ export function VideoCard({ card, onAdvance }: CardProps) {
   // Direct video file — real progress drives the gate exactly.
   if (v.kind === "mp4") {
     return (
-      <div className="flex h-full flex-col justify-between bg-midnight-950 p-7 text-white">
-        <div className="flex flex-1 flex-col">
+      <div className="flex h-full flex-col bg-midnight-950 p-7 text-white">
+        <div className="shrink-0">
           <Kicker light>{d.kicker}</Kicker>
           <h2 className="mt-3 font-qsr-display text-2xl font-bold">{d.title}</h2>
           {d.body && <p className="mt-2 font-qsr-ui text-sm text-white/70">{d.body}</p>}
+        </div>
+        <div className="my-4 min-h-0 flex-1">
           <video
             src={v.src} controls playsInline
-            className="mt-4 w-full flex-1 rounded-2xl bg-black object-contain"
+            className="h-full w-full rounded-2xl bg-black object-contain"
             onTimeUpdate={(e) => { const el = e.currentTarget; if (el.duration) report(Math.min(1, el.currentTime / el.duration)); }}
             onEnded={() => report(1)}
           />
-          {gated && <p className="mt-3 font-qsr-mono text-[11px] text-white/50">Watched {Math.round(pct * 100)}% · gate ≥ {Math.round(threshold * 100)}%</p>}
         </div>
-        {ContinueBtn}
+        {gated && <p className="mb-2 shrink-0 font-qsr-mono text-[11px] text-white/50">Watched {Math.round(pct * 100)}% · gate ≥ {Math.round(threshold * 100)}%</p>}
+        <div className="shrink-0">{ContinueBtn}</div>
       </div>
     );
   }
@@ -192,27 +194,29 @@ export function VideoCard({ card, onAdvance }: CardProps) {
   // YouTube / Vimeo / any other iframe embed (HeyGen, Loom, Wistia…).
   if (v.kind === "youtube" || v.kind === "vimeo" || v.kind === "embed") {
     return (
-      <div className="flex h-full flex-col justify-between bg-midnight-950 p-7 text-white">
-        <div className="flex flex-1 flex-col">
+      <div className="flex h-full flex-col bg-midnight-950 p-7 text-white">
+        <div className="shrink-0">
           <Kicker light>{d.kicker}</Kicker>
           <h2 className="mt-3 font-qsr-display text-2xl font-bold">{d.title}</h2>
           {d.body && <p className="mt-2 font-qsr-ui text-sm text-white/70">{d.body}</p>}
-          <div className="mt-4 aspect-video w-full overflow-hidden rounded-2xl bg-black">
+        </div>
+        <div className="my-4 flex min-h-0 flex-1 items-center">
+          <div className="aspect-video max-h-full w-full overflow-hidden rounded-2xl bg-black">
             <iframe
               src={v.embed} title={d.title} className="h-full w-full" allowFullScreen
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             />
           </div>
-          {gated && (
-            <div className="mt-3">
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/15">
-                <div className="h-full bg-qsr-gold transition-all" style={{ width: `${Math.round(pct * 100)}%` }} />
-              </div>
-              <p className="mt-2 font-qsr-mono text-[11px] text-white/50">{passable ? "Unlocked" : "Keep watching to continue…"}</p>
-            </div>
-          )}
         </div>
-        {ContinueBtn}
+        {gated && (
+          <div className="mb-2 shrink-0">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/15">
+              <div className="h-full bg-qsr-gold transition-all" style={{ width: `${Math.round(pct * 100)}%` }} />
+            </div>
+            <p className="mt-2 font-qsr-mono text-[11px] text-white/50">{passable ? "Unlocked" : "Keep watching to continue…"}</p>
+          </div>
+        )}
+        <div className="shrink-0">{ContinueBtn}</div>
       </div>
     );
   }
