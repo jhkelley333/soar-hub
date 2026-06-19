@@ -448,12 +448,11 @@ export const router = createBrowserRouter([
         ),
       },
       {
+        // The course player is open to any signed-in user (it's training
+        // content; the server only serves published courses and tracks
+        // per-user progress). Home / Builder / Manager stay admin-only.
         path: "qsr/course/:courseId",
-        element: (
-          <ProtectedRoute requireRoles={["admin"]}>
-            <LessonPlayer />
-          </ProtectedRoute>
-        ),
+        element: <LessonPlayer />,
       },
       {
         path: "qsr/builder",
