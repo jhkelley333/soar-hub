@@ -110,51 +110,120 @@ export function ImageCard({ card, onAdvance }: CardProps) {
 }
 
 // ── video (server-gated; simulated playback until Mux/M5) ──────────────────
+// Recognize a pasted video URL → an embeddable form. YouTube/Vimeo become
+// iframe embed URLs; a direct media file becomes an <video> source.
+function parseVideo(url?: string | null): { kind: "youtube" | "vimeo" | "mp4" | "none"; embed?: string; src?: string } {
+  if (!url) return { kind: "none" };
+  const u = url.trim();
+  let m = u.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([\w-]{11})/);
+  if (m) return { kind: "youtube", embed: `https://www.youtube-nocookie.com/embed/${m[1]}?rel=0` };
+  m = u.match(/vimeo\.com\/(?:video\/)?(\d+)/);
+  if (m) return { kind: "vimeo", embed: `https://player.vimeo.com/video/${m[1]}` };
+  if (/\.(mp4|webm|ogg|mov)(\?|$)/i.test(u)) return { kind: "mp4", src: u };
+  return { kind: "none" };
+}
+
 export function VideoCard({ card, onAdvance }: CardProps) {
   const d = card.data as VideoData;
+  const v = parseVideo(d.videoUrl);
+  const gated = !!d.gate;
+  const threshold = d.threshold ?? 0.9;
   const [pct, setPct] = useState(card.progress?.watched_pct ?? 0);
-  const [passable, setPassable] = useState(card.progress?.state === "passed");
-  const [playing, setPlaying] = useState(false);
-  const timer = useRef<number | null>(null);
+  const [passable, setPassable] = useState(!gated || card.progress?.state === "passed");
+  const reported = useRef(card.progress?.watched_pct ?? 0);
 
-  useEffect(() => () => { if (timer.current) window.clearInterval(timer.current); }, []);
-
-  const play = () => {
-    if (playing || passable) return;
-    setPlaying(true);
-    timer.current = window.setInterval(async () => {
-      setPct((p) => {
-        const next = Math.min(1, +(p + 0.1).toFixed(2));
-        // Report to the server; it alone decides when the card is passable.
-        recordCardProgress(card.id, "seen", next).then((r) => { if (r.passable) setPassable(true); }).catch(() => {});
-        if (next >= 1 && timer.current) { window.clearInterval(timer.current); setPlaying(false); }
-        return next;
-      });
-    }, 600);
+  // Push watch progress to the server (it alone flips the card to passable),
+  // throttled to ~5% steps.
+  const report = (frac: number) => {
+    setPct(frac);
+    if (!gated || frac < reported.current + 0.05) return;
+    reported.current = frac;
+    recordCardProgress(card.id, "seen", +frac.toFixed(2)).then((r) => { if (r.passable) setPassable(true); }).catch(() => {});
   };
 
+  // Embeds can't report true playback without each provider's SDK, so gate them
+  // on elapsed time against the author's approx length (best effort).
+  useEffect(() => {
+    if (!gated || passable || (v.kind !== "youtube" && v.kind !== "vimeo")) return;
+    const length = d.lengthSec && d.lengthSec > 0 ? d.lengthSec : 60;
+    const startedAt = Date.now() - (reported.current * length * 1000);
+    const id = window.setInterval(() => {
+      const frac = Math.min(1, (Date.now() - startedAt) / 1000 / length);
+      report(frac);
+      if (frac >= 1) window.clearInterval(id);
+    }, 1000);
+    return () => window.clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gated, passable, v.kind]);
+
+  const ContinueBtn = (
+    <PrimaryBtn tone="white" onClick={onAdvance} disabled={!passable}>
+      {passable ? "Continue ▸" : gated ? "Watch to continue" : "Continue ▸"}
+    </PrimaryBtn>
+  );
+
+  // Direct video file — real progress drives the gate exactly.
+  if (v.kind === "mp4") {
+    return (
+      <div className="flex h-full flex-col justify-between bg-midnight-950 p-7 text-white">
+        <div className="flex flex-1 flex-col">
+          <Kicker light>{d.kicker}</Kicker>
+          <h2 className="mt-3 font-qsr-display text-2xl font-bold">{d.title}</h2>
+          {d.body && <p className="mt-2 font-qsr-ui text-sm text-white/70">{d.body}</p>}
+          <video
+            src={v.src} controls playsInline
+            className="mt-4 w-full flex-1 rounded-2xl bg-black object-contain"
+            onTimeUpdate={(e) => { const el = e.currentTarget; if (el.duration) report(Math.min(1, el.currentTime / el.duration)); }}
+            onEnded={() => report(1)}
+          />
+          {gated && <p className="mt-3 font-qsr-mono text-[11px] text-white/50">Watched {Math.round(pct * 100)}% · gate ≥ {Math.round(threshold * 100)}%</p>}
+        </div>
+        {ContinueBtn}
+      </div>
+    );
+  }
+
+  // YouTube / Vimeo embed.
+  if (v.kind === "youtube" || v.kind === "vimeo") {
+    return (
+      <div className="flex h-full flex-col justify-between bg-midnight-950 p-7 text-white">
+        <div className="flex flex-1 flex-col">
+          <Kicker light>{d.kicker}</Kicker>
+          <h2 className="mt-3 font-qsr-display text-2xl font-bold">{d.title}</h2>
+          {d.body && <p className="mt-2 font-qsr-ui text-sm text-white/70">{d.body}</p>}
+          <div className="mt-4 aspect-video w-full overflow-hidden rounded-2xl bg-black">
+            <iframe
+              src={v.embed} title={d.title} className="h-full w-full" allowFullScreen
+              allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            />
+          </div>
+          {gated && (
+            <div className="mt-3">
+              <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/15">
+                <div className="h-full bg-qsr-gold transition-all" style={{ width: `${Math.round(pct * 100)}%` }} />
+              </div>
+              <p className="mt-2 font-qsr-mono text-[11px] text-white/50">{passable ? "Unlocked" : "Keep watching to continue…"}</p>
+            </div>
+          )}
+        </div>
+        {ContinueBtn}
+      </div>
+    );
+  }
+
+  // No (recognized) source yet — show a prompt instead of fake playback.
   return (
     <div className="flex h-full flex-col justify-between bg-midnight-950 p-7 text-white">
       <div className="flex flex-1 flex-col items-center justify-center text-center">
         <Kicker light>{d.kicker}</Kicker>
         <h2 className="mt-3 font-qsr-display text-2xl font-bold">{d.title}</h2>
         {d.body && <p className="mt-2 font-qsr-ui text-sm text-white/70">{d.body}</p>}
-        <button
-          type="button" onClick={play}
-          className="mt-7 flex h-16 w-16 items-center justify-center rounded-full bg-white/15 ring-1 ring-white/30 transition active:scale-95"
-        >
-          <Play className="h-7 w-7 fill-white text-white" />
-        </button>
-        <div className="mt-5 h-1.5 w-48 overflow-hidden rounded-full bg-white/15">
-          <div className="h-full bg-qsr-gold transition-all" style={{ width: `${Math.round(pct * 100)}%` }} />
+        <div className="mt-6 flex h-16 w-16 items-center justify-center rounded-full bg-white/10 ring-1 ring-white/20">
+          <Play className="h-7 w-7 fill-white/70 text-white/70" />
         </div>
-        <p className="mt-3 font-qsr-mono text-[11px] text-white/50">
-          Simulated playback until Mux (Milestone 5) · gate ≥ {Math.round((d.threshold ?? 0.9) * 100)}%
-        </p>
+        <p className="mt-4 font-qsr-ui text-xs text-white/50">No video set — add a YouTube, Vimeo, or .mp4 URL in the builder.</p>
       </div>
-      <PrimaryBtn tone="white" onClick={onAdvance} disabled={!passable}>
-        {passable ? "Continue ▸" : "Watch to continue"}
-      </PrimaryBtn>
+      <PrimaryBtn tone="white" onClick={onAdvance}>Continue ▸</PrimaryBtn>
     </div>
   );
 }
