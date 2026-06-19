@@ -213,6 +213,10 @@ function CardRow({ card, index, count, onChanged, toast, onMoveUp, onMoveDown }:
     onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Failed.", "error"),
   });
 
+  // The intro is the lesson's hero card — its title renders as the headline,
+  // so it can't be saved blank.
+  const titleMissing = card.type === "intro" && !((data.title as string) || "").trim();
+
   return (
     <div className="rounded-xl border border-border">
       <div className="flex items-center gap-2 px-3 py-2">
@@ -228,11 +232,12 @@ function CardRow({ card, index, count, onChanged, toast, onMoveUp, onMoveDown }:
       {open && (
         <div className="border-t border-border bg-surface-sunk/40 p-4">
           <CardEditor type={card.type} data={data} setData={setData} />
-          <div className="mt-4 flex gap-2">
-            <button type="button" onClick={() => save.mutate()} disabled={save.isPending} className="inline-flex items-center gap-1.5 rounded-lg bg-qsr-azure px-3 py-2 font-qsr-ui text-sm font-semibold text-white disabled:opacity-40">
+          <div className="mt-4 flex items-center gap-2">
+            <button type="button" onClick={() => save.mutate()} disabled={save.isPending || titleMissing} className="inline-flex items-center gap-1.5 rounded-lg bg-qsr-azure px-3 py-2 font-qsr-ui text-sm font-semibold text-white disabled:opacity-40">
               {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save card
             </button>
             <button type="button" onClick={() => { setData(card.data as Record<string, unknown>); setOpen(false); }} className="rounded-lg border border-border px-3 py-2 font-qsr-ui text-sm font-semibold text-ink">Cancel</button>
+            {titleMissing && <span className="font-qsr-ui text-xs text-qsr-crimson">An intro card needs a title.</span>}
           </div>
         </div>
       )}
