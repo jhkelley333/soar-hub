@@ -231,3 +231,19 @@ export function deleteAssignment(id: string): Promise<{ ok: true }> {
 export function fetchCompletions(): Promise<{ rows: CompletionRow[] }> {
   return learnFetch(`${MANAGE_FN}?action=completions`);
 }
+
+// ── Course media uploads (Supabase Storage, bucket from migration 0169) ──────
+const QSR_MEDIA_BUCKET = "qsr-media";
+
+// Uploads an image/video for a card and returns its public URL (to store in
+// the card's videoUrl / imageUrl). Authors only — gated by storage RLS.
+export async function uploadQsrMedia(file: File, cardId: string): Promise<string> {
+  const safe = file.name.replace(/[^\w.-]+/g, "_").slice(-80);
+  const path = `${cardId}/${Date.now()}-${safe}`;
+  const { error } = await supabase.storage.from(QSR_MEDIA_BUCKET).upload(path, file, {
+    contentType: file.type || undefined,
+    upsert: false,
+  });
+  if (error) throw error;
+  return supabase.storage.from(QSR_MEDIA_BUCKET).getPublicUrl(path).data.publicUrl;
+}

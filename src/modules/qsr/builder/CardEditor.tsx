@@ -2,10 +2,47 @@
 // place via setData; the parent owns save/validation round-trips. Mirrors the
 // exact field shapes the Player's renderers consume (LessonCards.tsx) so what
 // you author is what learners see.
-import { Plus, Trash2 } from "lucide-react";
+import { useRef, useState } from "react";
+import { Loader2, Plus, Trash2, Upload } from "lucide-react";
 import type { CardType } from "../types";
+import { uploadQsrMedia } from "../api";
 
 type Data = Record<string, unknown>;
+
+// Drag-drop / picker that uploads an image or video to Supabase Storage and
+// hands back its public URL. Needs a saved card (cardId) to key the path.
+function MediaUpload({ cardId, accept, label, onUploaded }: {
+  cardId?: string; accept: string; label: string; onUploaded: (url: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const handle = async (file?: File | null) => {
+    if (!file) return;
+    if (!cardId) { setErr("Save the card once before uploading."); return; }
+    setBusy(true); setErr(null);
+    try { onUploaded(await uploadQsrMedia(file, cardId)); }
+    catch (e) { setErr(e instanceof Error ? e.message : "Upload failed."); }
+    finally { setBusy(false); if (inputRef.current) inputRef.current.value = ""; }
+  };
+  return (
+    <div
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={(e) => { e.preventDefault(); handle(e.dataTransfer.files?.[0]); }}
+      className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-border px-3 py-2"
+    >
+      <button
+        type="button" onClick={() => inputRef.current?.click()} disabled={busy}
+        className="inline-flex items-center gap-1.5 rounded-md bg-ink px-2.5 py-1.5 font-qsr-ui text-xs font-semibold text-white disabled:opacity-40"
+      >
+        {busy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />} {busy ? "Uploading…" : label}
+      </button>
+      <span className="font-qsr-ui text-[11px] text-ink-subtle">or drag a file here</span>
+      <input ref={inputRef} type="file" accept={accept} className="hidden" onChange={(e) => handle(e.target.files?.[0])} />
+      {err && <span className="w-full font-qsr-ui text-[11px] text-qsr-crimson">{err}</span>}
+    </div>
+  );
+}
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -74,7 +111,7 @@ function OptionList({
   );
 }
 
-export function CardEditor({ type, data, setData }: { type: CardType; data: Data; setData: (d: Data) => void }) {
+export function CardEditor({ type, data, setData, cardId }: { type: CardType; data: Data; setData: (d: Data) => void; cardId?: string }) {
   const set = (k: string, v: unknown) => setData({ ...data, [k]: v });
   const arr = <T,>(k: string): T[] => (Array.isArray(data[k]) ? (data[k] as T[]) : []);
 
@@ -134,7 +171,15 @@ export function CardEditor({ type, data, setData }: { type: CardType; data: Data
         <div className="space-y-3">
           {kicker}{title}
           <Field label="Body"><Area value={data.body} onChange={(v) => set("body", v)} /></Field>
-          <Field label="Image URL (optional — media milestone)"><Text value={data.imageUrl} onChange={(v) => set("imageUrl", v || null)} placeholder="https://…" /></Field>
+          <Field label="Image">
+            <div className="space-y-2">
+              <Text value={data.imageUrl} onChange={(v) => set("imageUrl", v || null)} placeholder="https://… or upload below" />
+              <MediaUpload cardId={cardId} accept="image/*" label="Upload image" onUploaded={(url) => set("imageUrl", url)} />
+              {typeof data.imageUrl === "string" && data.imageUrl && (
+                <img src={data.imageUrl} alt="" className="max-h-32 rounded-lg border border-border object-cover" />
+              )}
+            </div>
+          </Field>
         </div>
       );
     case "video":
@@ -142,11 +187,14 @@ export function CardEditor({ type, data, setData }: { type: CardType; data: Data
         <div className="space-y-3">
           {kicker}{title}
           <Field label="Body"><Area value={data.body} onChange={(v) => set("body", v)} /></Field>
-          <Field label="Video URL or embed code">
-            <Area value={data.videoUrl} onChange={(v) => set("videoUrl", v || null)} rows={2} placeholder={'https://youtu.be/…  ·  a direct .mp4  ·  or paste a full <iframe …> embed (HeyGen, Loom, Wistia)'} />
+          <Field label="Video — upload a file or paste a URL / embed code">
+            <div className="space-y-2">
+              <MediaUpload cardId={cardId} accept="video/*,.mp4,.mov,.webm" label="Upload video (.mp4)" onUploaded={(url) => set("videoUrl", url)} />
+              <Area value={data.videoUrl} onChange={(v) => set("videoUrl", v || null)} rows={2} placeholder={'…or paste https://youtu.be/…  ·  a direct .mp4  ·  a full <iframe …> embed (HeyGen, Loom, Wistia)'} />
+            </div>
           </Field>
           <p className="-mt-1 font-qsr-ui text-[11px] text-ink-subtle">
-            Paste a YouTube/Vimeo link, a direct .mp4 (e.g. a Supabase Storage file), or a whole <code>&lt;iframe&gt;</code> embed snippet — we'll pull the video out of it. MP4 gates on real watch %; embeds gate on elapsed time.
+            Upload an .mp4 for exact watch-tracking (best for HeyGen — download the MP4, drop it here), or paste a YouTube/Vimeo link or a whole <code>&lt;iframe&gt;</code> embed. MP4 gates on real watch %; embeds gate on elapsed time.
           </p>
           <div className="flex flex-wrap items-center gap-4">
             <label className="flex items-center gap-2 font-qsr-ui text-sm text-ink">
