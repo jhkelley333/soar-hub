@@ -23,7 +23,10 @@ export interface VideoData {
 }
 export interface QuizData {
   kicker?: string; points?: number; q: string; options: string[];
-  answer?: number; explain?: string; // stripped for learners
+  answer?: number;        // correct index (single-select)
+  answers?: number[];     // correct indices (when multi)
+  multi?: boolean;        // allow selecting more than one
+  explain?: string; // stripped for learners
 }
 export interface RevealData {
   kicker?: string; title: string; reveal: string;

@@ -47,12 +47,20 @@ function validateCard(type, d) {
         ? null : "Steps card needs a title and at least one step.";
     case "image": return has("title") ? null : "Image card needs a title.";
     case "video": return has("title") ? null : "Video card needs a title.";
-    case "quiz":
+    case "quiz": {
       if (!has("q")) return "Quiz needs a question.";
       if (opts.length < 2) return "Quiz needs at least two options.";
-      if (typeof d.answer !== "number" || d.answer < 0 || d.answer >= d.options.length)
+      const n = Array.isArray(d.options) ? d.options.length : 0;
+      if (d.multi) {
+        const ans = Array.isArray(d.answers) ? d.answers : [];
+        if (!ans.length) return "Mark at least one correct answer.";
+        if (ans.some((a) => typeof a !== "number" || a < 0 || a >= n)) return "A correct answer points to a missing option.";
+        return null;
+      }
+      if (typeof d.answer !== "number" || d.answer < 0 || d.answer >= n)
         return "Pick the correct answer.";
       return null;
+    }
     case "reveal":
       return has("title") && has("reveal") ? null : "Reveal card needs a title and reveal text.";
     case "poll":
