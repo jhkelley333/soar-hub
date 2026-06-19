@@ -402,6 +402,53 @@ function rqWindowStart(iso, cadence) {
   return rqAddDays(RQ_FY_START, sw * 7);
 }
 
+// Full "My Training" view: every published course with the caller's status
+// (not started / in progress / completed) plus whether it's required for their
+// role and still outstanding this window. Degrades gracefully pre-0174 (no
+// requirement columns) by treating everything as not-required.
+async function getMyTraining(supa, user) {
+  let res = await supa
+    .from("qsr_courses")
+    .select("id, title, category, description, est_minutes, points, requirement_cadence, requirement_roles")
+    .eq("status", "published").order("title");
+  if (res.error) {
+    res = await supa
+      .from("qsr_courses")
+      .select("id, title, category, description, est_minutes, points")
+      .eq("status", "published").order("title");
+  }
+  const list = res.data || [];
+  const ids = list.map((c) => c.id);
+  const enrByCourse = new Map();
+  if (ids.length) {
+    const { data: enr } = await supa
+      .from("qsr_enrollments")
+      .select("course_id, status, completed_at")
+      .eq("user_id", user.id).in("course_id", ids);
+    for (const e of enr || []) enrByCourse.set(e.course_id, e);
+  }
+  const role = String(user.role);
+  const today = new Date().toISOString().slice(0, 10);
+  const courses = list.map((c) => {
+    const e = enrByCourse.get(c.id);
+    const status = e ? (e.status === "completed" ? "completed" : "in_progress") : "not_started";
+    const required = !!(c.requirement_cadence && Array.isArray(c.requirement_roles) && c.requirement_roles.includes(role));
+    let outstanding = false;
+    if (required) {
+      const windowStart = rqWindowStart(today, c.requirement_cadence);
+      const doneThisWindow = !!(e && e.status === "completed" && e.completed_at && e.completed_at >= `${windowStart}T00:00:00Z`);
+      outstanding = !doneThisWindow;
+    }
+    return {
+      id: c.id, title: c.title, category: c.category, description: c.description,
+      est_minutes: c.est_minutes, points: c.points,
+      status, completed_at: e?.completed_at ?? null,
+      required, cadence: c.requirement_cadence ?? null, outstanding,
+    };
+  });
+  return { courses };
+}
+
 async function getRequired(supa, user) {
   const { data: courses } = await supa
     .from("qsr_courses")
@@ -449,6 +496,7 @@ export const handler = async (event) => {
     if (action === "stats") return unwrap(await getStats(supa, user));
     if (action === "leaderboard") return unwrap(await getLeaderboard(supa, user));
     if (action === "required") return unwrap(await getRequired(supa, user));
+    if (action === "mytraining") return unwrap(await getMyTraining(supa, user));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });

@@ -293,3 +293,21 @@ export interface RequiredCourse {
 export function fetchRequiredTraining(): Promise<{ required: RequiredCourse[] }> {
   return learnFetch(`${LEARN_FN}?action=required`);
 }
+
+// My Training — every published course with the caller's status + required flag.
+export interface MyTrainingCourse {
+  id: string;
+  title: string;
+  category: string | null;
+  description: string | null;
+  est_minutes: number | null;
+  points: number;
+  status: "not_started" | "in_progress" | "completed";
+  completed_at: string | null;
+  required: boolean;
+  cadence: string | null; // 'quarterly' | 'annual' | null
+  outstanding: boolean; // required AND not completed in the current window
+}
+export function fetchMyTraining(): Promise<{ courses: MyTrainingCourse[] }> {
+  return learnFetch(`${LEARN_FN}?action=mytraining`);
+}
