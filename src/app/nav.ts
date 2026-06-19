@@ -27,6 +27,7 @@ import {
   GraduationCap,
   GitBranch,
   BookMarked,
+  BookOpenCheck,
   CloudSun,
   type LucideIcon,
 } from "lucide-react";
@@ -109,6 +110,10 @@ export const NAV: NavItem[] = [
   // Coaching Tool Kit — coaching-for-performance reference cards for hourly
   // managers and above. Lives under People.
   { to: "/coaching",    label: "Coaching Tool Kit", icon: GraduationCap, roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // My Training — learner home for SOAR QSR. Open to everyone signed in; the
+  // list is empty (with a friendly note) for anyone with nothing assigned, and
+  // it's the persistent place to find required training the login pop-up nags about.
+  { to: "/my-training", label: "My Training",  icon: BookOpenCheck,   roles: null },
   // Team Pipeline — Talent Planning. Gated behind the team_pipeline flag:
   // roles:[] means it stays dark until the flag resolves true for the user
   // (admins always see it). Scoped to the viewer's org tree in-app.
@@ -206,6 +211,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/paf": "PEOPLE",
   "/employee-actions": "PEOPLE",
   "/coaching": "PEOPLE",
+  "/my-training": "PEOPLE",
   "/team-pipeline": "PEOPLE",
   "/contacts": "PEOPLE",
   "/team": "PEOPLE",

@@ -32,6 +32,7 @@ import { FeatureFlagsPage } from "@/modules/admin/FeatureFlagsPage";
 import { RoleAccessPage } from "@/modules/admin/RoleAccessPage";
 import { RegionAccessPage } from "@/modules/admin/RegionAccessPage";
 import { QsrHomePage } from "@/modules/qsr/QsrHomePage";
+import { MyTrainingPage } from "@/modules/qsr/MyTrainingPage";
 import { LessonPlayer } from "@/modules/qsr/player/LessonPlayer";
 import { BuilderCoursesPage } from "@/modules/qsr/builder/BuilderCoursesPage";
 import { CourseEditorPage } from "@/modules/qsr/builder/CourseEditorPage";
@@ -446,6 +447,12 @@ export const router = createBrowserRouter([
             <QsrHomePage />
           </ProtectedRoute>
         ),
+      },
+      {
+        // My Training — learner home, open to every signed-in user. Lists the
+        // caller's required + all published courses; the player enforces access.
+        path: "my-training",
+        element: <MyTrainingPage />,
       },
       {
         // The course player is open to any signed-in user (it's training
