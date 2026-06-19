@@ -109,6 +109,7 @@ export interface BuilderCourse {
   status: "draft" | "published";
   est_minutes: number | null;
   points: number;
+  total_points?: number; // completion points + every quiz card's points
   version: number;
   created_at: string;
   updated_at: string;

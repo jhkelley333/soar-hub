@@ -83,15 +83,21 @@ async function listCourses(supa) {
   for (const l of lessons || []) lessonByCourse.set(l.course_id, (lessonByCourse.get(l.course_id) || 0) + 1);
   const lessonIds = (lessons || []).map((l) => l.id);
   const { data: cards } = lessonIds.length
-    ? await supa.from("qsr_cards").select("id, lesson_id").in("lesson_id", lessonIds) : { data: [] };
+    ? await supa.from("qsr_cards").select("id, lesson_id, type, data").in("lesson_id", lessonIds) : { data: [] };
   const cardByCourse = new Map();
+  const quizPtsByCourse = new Map();
   for (const cd of cards || []) {
     const cid = lessonToCourse.get(cd.lesson_id);
     cardByCourse.set(cid, (cardByCourse.get(cid) || 0) + 1);
+    if (cd.type === "quiz") {
+      const p = Number(cd.data?.points ?? 0) || 0;
+      quizPtsByCourse.set(cid, (quizPtsByCourse.get(cid) || 0) + p);
+    }
   }
   return {
     courses: (courses || []).map((c) => ({
       ...c, lesson_count: lessonByCourse.get(c.id) || 0, card_count: cardByCourse.get(c.id) || 0,
+      total_points: (Number(c.points) || 0) + (quizPtsByCourse.get(c.id) || 0),
     })),
   };
 }
