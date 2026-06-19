@@ -345,6 +345,7 @@ async function fundBankMap(supa, storeIds) {
 }
 
 async function fundOverview(supa, user) {
+  if (!ACT_ROLES.has(String(user.role))) return { error: "Store Funds is for DO and above.", status: 403 };
   const access = await storeRowsForUser(supa, user);
   const rows = access.rows;
   const settings = await getSettings(supa);
@@ -460,6 +461,7 @@ async function fundSetBanks(supa, user, body) {
 }
 
 async function fundMetrics(supa, user) {
+  if (!ACT_ROLES.has(String(user.role))) return { error: "Store Funds is for DO and above.", status: 403 };
   const access = await storeRowsForUser(supa, user);
   const rows = access.rows;
   if (!rows.length) return { periods: [], banked_stores: 0, store_count: 0 };
