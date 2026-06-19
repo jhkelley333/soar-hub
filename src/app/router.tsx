@@ -48,6 +48,8 @@ import { WorkOrdersV2Route } from "@/modules/work-orders-v2/WorkOrdersV2Route";
 import { CashManagementRoute } from "@/modules/cash-management/CashManagementRoute";
 import { VendorPortalPage } from "@/modules/vendor-portal/VendorPortalPage";
 import { PublicSubmitPage } from "@/modules/public-submit/PublicSubmitPage";
+import { PublicLearnPage } from "@/modules/qsr/public/PublicLearnPage";
+import { SharePage } from "@/modules/qsr/share/SharePage";
 import { WorkspacesPage } from "@/modules/workspaces/WorkspacesPage";
 import { WorkspaceDetail } from "@/modules/workspaces/WorkspaceDetail";
 import { TemplateDetailPage } from "@/modules/workspaces/TemplateDetailPage";
@@ -93,6 +95,9 @@ export const router = createBrowserRouter([
   // Public ticket-submission page — anyone with the URL can search
   // for a store and file a work order. Lives outside the auth tree.
   { path: "/submit", element: <PublicSubmitPage /> },
+  // Public no-login QSR player — crew scan their store's QR, pick their
+  // name, and take courses. Token in the URL is the only credential.
+  { path: "/learn/:token", element: <PublicLearnPage /> },
   {
     path: "/",
     element: <RootRoute />,
@@ -471,6 +476,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <ManagerDashboardPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "qsr/share",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <SharePage />
           </ProtectedRoute>
         ),
       },

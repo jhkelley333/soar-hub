@@ -6,8 +6,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { X, Zap } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchLesson, recordCardProgress } from "../api";
 import type { LessonCard } from "../types";
+import { useLearnApi } from "./LearnApi";
 import {
   IntroCard, StepsCard, ImageCard, VideoCard, QuizCard, RevealCard, PollCard, DoneCard,
 } from "./LessonCards";
@@ -29,9 +29,11 @@ function Seg({ total, filled, dark }: { total: number; filled: number; dark: boo
   );
 }
 
-export function LessonPlayer() {
-  const { courseId = "" } = useParams();
+export function LessonPlayer({ courseId: courseIdProp, onExit }: { courseId?: string; onExit?: () => void } = {}) {
+  const params = useParams();
   const navigate = useNavigate();
+  const { fetchLesson, recordCardProgress } = useLearnApi();
+  const courseId = courseIdProp ?? params.courseId ?? "";
   const [index, setIndex] = useState(0);
   const [points, setPoints] = useState(0);
 
@@ -52,7 +54,7 @@ export function LessonPlayer() {
     setPoints(p);
   }, [lessonQ.data]);
 
-  const exit = () => navigate("/qsr");
+  const exit = onExit ?? (() => navigate("/qsr"));
   const card = cards[index];
   const dark = card ? DARK_TYPES.has(card.type) : true;
 

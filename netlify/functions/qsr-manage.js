@@ -211,6 +211,37 @@ async function completions(supa) {
   return { rows };
 }
 
+// ── Public QR access tokens (one per store; see 0171 + qsr-public.js) ─────────
+async function listTokens(supa) {
+  const { data } = await supa.from("qsr_access_tokens").select("*").order("created_at", { ascending: false });
+  const storeIds = [...new Set((data || []).map((t) => t.store_id))];
+  const { data: stores } = storeIds.length
+    ? await supa.from("stores").select("id, number, name").in("id", storeIds) : { data: [] };
+  const byId = new Map((stores || []).map((s) => [s.id, s]));
+  return { tokens: (data || []).map((t) => ({ ...t, store: byId.get(t.store_id) || null })) };
+}
+async function mintToken(supa, user, body) {
+  const { store_id, label } = body || {};
+  if (!store_id) return { error: "store_id required.", status: 400 };
+  // Reuse the store's existing active token so the posted QR stays stable.
+  const { data: ex } = await supa.from("qsr_access_tokens")
+    .select("*").eq("store_id", store_id).eq("is_active", true).is("revoked_at", null).maybeSingle();
+  if (ex) return { token: ex };
+  const rand = (globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`).replace(/-/g, "");
+  const { data, error } = await supa.from("qsr_access_tokens")
+    .insert({ token: `s_${rand}`, store_id, label: label || null, created_by: user.id }).select().single();
+  if (error) throw error;
+  return { token: data };
+}
+async function revokeToken(supa, user, body) {
+  const { id } = body || {};
+  if (!id) return { error: "id required.", status: 400 };
+  const { error } = await supa.from("qsr_access_tokens")
+    .update({ is_active: false, revoked_at: new Date().toISOString(), revoked_by: user.id }).eq("id", id);
+  if (error) throw error;
+  return { ok: true };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   let supa;
@@ -232,6 +263,9 @@ export const handler = async (event) => {
     if (action === "assignments") return unwrap(await listAssignments(supa));
     if (action === "assign") return unwrap(await assign(supa, user, body));
     if (action === "unassign") return unwrap(await unassign(supa, body));
+    if (action === "tokens") return unwrap(await listTokens(supa));
+    if (action === "mintToken") return unwrap(await mintToken(supa, user, body));
+    if (action === "revokeToken") return unwrap(await revokeToken(supa, user, body));
     if (action === "completions") return unwrap(await completions(supa));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
