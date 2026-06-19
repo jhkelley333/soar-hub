@@ -231,7 +231,7 @@ function CardRow({ card, index, count, onChanged, toast, onMoveUp, onMoveDown }:
       </div>
       {open && (
         <div className="border-t border-border bg-surface-sunk/40 p-4">
-          <CardEditor type={card.type} data={data} setData={setData} />
+          <CardEditor type={card.type} data={data} setData={setData} cardId={card.id} />
           <div className="mt-4 flex items-center gap-2">
             <button type="button" onClick={() => save.mutate()} disabled={save.isPending || titleMissing} className="inline-flex items-center gap-1.5 rounded-lg bg-qsr-azure px-3 py-2 font-qsr-ui text-sm font-semibold text-white disabled:opacity-40">
               {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />} Save card
