@@ -142,11 +142,11 @@ export function CardEditor({ type, data, setData }: { type: CardType; data: Data
         <div className="space-y-3">
           {kicker}{title}
           <Field label="Body"><Area value={data.body} onChange={(v) => set("body", v)} /></Field>
-          <Field label="Video URL (YouTube, Vimeo, or a direct .mp4)">
-            <Text value={data.videoUrl} onChange={(v) => set("videoUrl", v || null)} placeholder="https://youtu.be/… · https://vimeo.com/… · https://….mp4" />
+          <Field label="Video URL or embed code">
+            <Area value={data.videoUrl} onChange={(v) => set("videoUrl", v || null)} rows={2} placeholder={'https://youtu.be/…  ·  a direct .mp4  ·  or paste a full <iframe …> embed (HeyGen, Loom, Wistia)'} />
           </Field>
           <p className="-mt-1 font-qsr-ui text-[11px] text-ink-subtle">
-            Paste a normal YouTube/Vimeo share link, or a direct link to an .mp4 (e.g. a Supabase Storage file). MP4 gates on real watch %; embeds gate on elapsed time.
+            Paste a YouTube/Vimeo link, a direct .mp4 (e.g. a Supabase Storage file), or a whole <code>&lt;iframe&gt;</code> embed snippet — we'll pull the video out of it. MP4 gates on real watch %; embeds gate on elapsed time.
           </p>
           <div className="flex flex-wrap items-center gap-4">
             <label className="flex items-center gap-2 font-qsr-ui text-sm text-ink">

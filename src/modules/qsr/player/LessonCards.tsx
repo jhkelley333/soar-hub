@@ -110,16 +110,22 @@ export function ImageCard({ card, onAdvance }: CardProps) {
 }
 
 // ── video (server-gated; simulated playback until Mux/M5) ──────────────────
-// Recognize a pasted video URL → an embeddable form. YouTube/Vimeo become
-// iframe embed URLs; a direct media file becomes an <video> source.
-function parseVideo(url?: string | null): { kind: "youtube" | "vimeo" | "mp4" | "none"; embed?: string; src?: string } {
-  if (!url) return { kind: "none" };
-  const u = url.trim();
+// Recognize a pasted video URL — or a full <iframe …> embed snippet — and turn
+// it into something we can render. YouTube/Vimeo get tidy embed URLs; a direct
+// media file becomes a <video>; any other http(s) URL (HeyGen, Loom, Wistia…)
+// is embedded as-is in an iframe.
+function parseVideo(input?: string | null): { kind: "youtube" | "vimeo" | "mp4" | "embed" | "none"; embed?: string; src?: string } {
+  if (!input) return { kind: "none" };
+  const raw = input.trim();
+  // If they pasted a whole <iframe>, pull the src out of it.
+  const iframe = raw.match(/<iframe[^>]*\ssrc=["']([^"']+)["']/i);
+  const u = (iframe ? iframe[1] : raw).trim();
   let m = u.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([\w-]{11})/);
   if (m) return { kind: "youtube", embed: `https://www.youtube-nocookie.com/embed/${m[1]}?rel=0` };
   m = u.match(/vimeo\.com\/(?:video\/)?(\d+)/);
   if (m) return { kind: "vimeo", embed: `https://player.vimeo.com/video/${m[1]}` };
   if (/\.(mp4|webm|ogg|mov)(\?|$)/i.test(u)) return { kind: "mp4", src: u };
+  if (/^https?:\/\//i.test(u)) return { kind: "embed", embed: u };
   return { kind: "none" };
 }
 
@@ -144,7 +150,7 @@ export function VideoCard({ card, onAdvance }: CardProps) {
   // Embeds can't report true playback without each provider's SDK, so gate them
   // on elapsed time against the author's approx length (best effort).
   useEffect(() => {
-    if (!gated || passable || (v.kind !== "youtube" && v.kind !== "vimeo")) return;
+    if (!gated || passable || v.kind === "mp4" || v.kind === "none") return;
     const length = d.lengthSec && d.lengthSec > 0 ? d.lengthSec : 60;
     const startedAt = Date.now() - (reported.current * length * 1000);
     const id = window.setInterval(() => {
@@ -183,8 +189,8 @@ export function VideoCard({ card, onAdvance }: CardProps) {
     );
   }
 
-  // YouTube / Vimeo embed.
-  if (v.kind === "youtube" || v.kind === "vimeo") {
+  // YouTube / Vimeo / any other iframe embed (HeyGen, Loom, Wistia…).
+  if (v.kind === "youtube" || v.kind === "vimeo" || v.kind === "embed") {
     return (
       <div className="flex h-full flex-col justify-between bg-midnight-950 p-7 text-white">
         <div className="flex flex-1 flex-col">
