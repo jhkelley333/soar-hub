@@ -132,6 +132,23 @@ async function evaluateBadges(supa, userId, ctx) {
   return toAward.map((t) => t.key);
 }
 
+// Overlay a card's translation (Spanish, etc.) onto the base English data.
+const I18N_TEXT_KEYS = ["kicker", "title", "body", "q", "explain", "reveal", "videoUrl", "imageUrl"];
+function localizeCardData(raw, lang) {
+  const { i18n, ...base } = raw || {};
+  const tr = i18n && i18n[lang];
+  if (lang === "en" || !tr) return base;
+  const out = { ...base };
+  for (const k of I18N_TEXT_KEYS) if (tr[k] != null && tr[k] !== "") out[k] = tr[k];
+  if (Array.isArray(base.options) && Array.isArray(tr.options))
+    out.options = base.options.map((o, i) => (tr.options[i] != null && tr.options[i] !== "" ? tr.options[i] : o));
+  if (Array.isArray(base.steps) && Array.isArray(tr.steps))
+    out.steps = base.steps.map((s, i) => ({ ...s, t: tr.steps[i]?.t || s.t, d: tr.steps[i]?.d ?? s.d }));
+  if (Array.isArray(base.meta) && Array.isArray(tr.meta))
+    out.meta = base.meta.map((m, i) => ({ ...m, k: tr.meta[i]?.k || m.k }));
+  return out;
+}
+
 // ── actions ───────────────────────────────────────────────────────────────
 async function resolve(supa, body) {
   const ctx = await resolveToken(supa, body?.token);
@@ -147,10 +164,10 @@ async function resolve(supa, body) {
   };
 }
 
-async function getLesson(supa, caller, courseId) {
+async function getLesson(supa, caller, courseId, lang = "en") {
   if (!courseId) return { error: "course_id is required.", status: 400 };
   const { data: course } = await supa
-    .from("qsr_courses").select("id, title, category, description, status, est_minutes, points").eq("id", courseId).maybeSingle();
+    .from("qsr_courses").select("id, title, category, description, status, est_minutes, points, languages").eq("id", courseId).maybeSingle();
   if (!course || course.status !== "published") return { error: "Course not available.", status: 403 };
   const { data: lessons } = await supa
     .from("qsr_lessons").select("id, title, module, ord").eq("course_id", courseId).order("ord");
@@ -164,7 +181,7 @@ async function getLesson(supa, caller, courseId) {
   const progByCard = new Map((prog || []).map((p) => [p.card_id, p]));
   const safeCards = [];
   for (const c of cards || []) {
-    let data = c.data || {};
+    let data = localizeCardData(c.data, lang);
     if (c.type === "quiz") { const { answer, answers, explain, ...rest } = data; data = rest; }
     if (c.type === "poll") {
       const optionCount = Array.isArray(data.options) ? data.options.length : 0;
@@ -193,7 +210,7 @@ async function recordProgress(supa, caller, body) {
 }
 
 async function answerQuiz(supa, caller, body) {
-  const { card_id, answer_index, answer_indices } = body || {};
+  const { card_id, answer_index, answer_indices, lang } = body || {};
   if (!card_id) return { error: "card_id is required.", status: 400 };
   const { data: card } = await supa.from("qsr_cards").select("id, type, data, lesson_id").eq("id", card_id).maybeSingle();
   if (!card || card.type !== "quiz") return { error: "Not a quiz card.", status: 400 };
@@ -226,7 +243,8 @@ async function answerQuiz(supa, caller, body) {
       .insert({ user_id: caller.id, delta: pointsAwarded, reason: "quiz_correct", card_id, course_id: ctx.courseId })
       .then(() => {}, () => {});
   }
-  return { ok: true, correct, pointsAwarded, answer: multi ? null : Number(d.answer), answers: correctAnswers, multi, explain: d.explain ?? null };
+  const explain = (lang === "es" && d.i18n?.es?.explain) ? d.i18n.es.explain : (d.explain ?? null);
+  return { ok: true, correct, pointsAwarded, answer: multi ? null : Number(d.answer), answers: correctAnswers, multi, explain };
 }
 
 async function votePoll(supa, caller, body) {
@@ -293,7 +311,7 @@ export const handler = async (event) => {
     const g = await gate(supa, body);
     if (g.error) return respond(g.status, { error: g.error });
     const caller = g.caller;
-    if (action === "lesson") return unwrap(await getLesson(supa, caller, body.course_id));
+    if (action === "lesson") return unwrap(await getLesson(supa, caller, body.course_id, body.lang || "en"));
     if (action === "progress") return unwrap(await recordProgress(supa, caller, body));
     if (action === "quiz") return unwrap(await answerQuiz(supa, caller, body));
     if (action === "poll") return unwrap(await votePoll(supa, caller, body));

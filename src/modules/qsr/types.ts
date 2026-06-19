@@ -59,7 +59,7 @@ export interface LessonCard {
 export interface LessonPayload {
   course: {
     id: string; title: string; category: string | null; description: string | null;
-    status: string; est_minutes: number | null; points: number;
+    status: string; est_minutes: number | null; points: number; languages?: string[] | null;
   };
   lesson: { id: string; title: string; module: string | null; ord: number };
   enrollmentId: string;

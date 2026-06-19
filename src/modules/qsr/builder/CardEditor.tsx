@@ -3,7 +3,7 @@
 // exact field shapes the Player's renderers consume (LessonCards.tsx) so what
 // you author is what learners see.
 import { useRef, useState } from "react";
-import { Loader2, Plus, Trash2, Upload } from "lucide-react";
+import { Languages, Loader2, Plus, Trash2, Upload } from "lucide-react";
 import type { CardType } from "../types";
 import { uploadQsrMedia } from "../api";
 
@@ -139,6 +139,7 @@ export function CardEditor({ type, data, setData, cardId }: { type: CardType; da
   const kicker = <Field label="Kicker (small label)"><Text value={data.kicker} onChange={(v) => set("kicker", v)} placeholder="e.g. Carhop Service" /></Field>;
   const title = <Field label="Title"><Text value={data.title} onChange={(v) => set("title", v)} placeholder="Card title" /></Field>;
 
+  const en = (() => {
   switch (type) {
     case "intro": {
       const meta = arr<{ v: string; k: string }>("meta");
@@ -284,4 +285,104 @@ export function CardEditor({ type, data, setData, cardId }: { type: CardType; da
     default:
       return null;
   }
+  })();
+
+  return (
+    <div className="space-y-4">
+      {en}
+      <SpanishSection type={type} data={data} setData={setData} />
+    </div>
+  );
+}
+
+// Spanish translation overlay for one card — text-only inputs bound to
+// data.i18n.es (+ a Spanish video URL), shown when the learner picks Español.
+// Structure (option/step counts, answer keys) stays owned by the English form;
+// this only translates the visible text, so nothing can desync.
+function SpanishSection({ type, data, setData }: { type: CardType; data: Data; setData: (d: Data) => void }) {
+  const [open, setOpen] = useState(false);
+  const i18n = (data.i18n && typeof data.i18n === "object" ? data.i18n : {}) as Record<string, Record<string, unknown>>;
+  const es = (i18n.es ?? {}) as Record<string, unknown>;
+  const setEs = (k: string, v: unknown) => setData({ ...data, i18n: { ...i18n, es: { ...es, [k]: v } } });
+  const enArr = <T,>(k: string): T[] => (Array.isArray(data[k]) ? (data[k] as T[]) : []);
+  const esArr = <T,>(k: string): T[] => (Array.isArray(es[k]) ? (es[k] as T[]) : []);
+
+  const fields: React.ReactNode[] = [];
+  const scalar = (k: string, label: string, area = false) => {
+    fields.push(
+      <Field key={k} label={label}>
+        {area
+          ? <Area value={es[k]} onChange={(v) => setEs(k, v)} placeholder={String(data[k] ?? "")} />
+          : <Text value={es[k]} onChange={(v) => setEs(k, v)} placeholder={String(data[k] ?? "")} />}
+      </Field>,
+    );
+  };
+  if (type === "intro" || type === "image") { scalar("kicker", "Kicker"); scalar("title", "Title"); scalar("body", "Body", true); }
+  if (type === "reveal") { scalar("kicker", "Kicker"); scalar("title", "Title"); scalar("reveal", "Reveal text", true); }
+  if (type === "done") { scalar("title", "Title"); scalar("body", "Body", true); }
+  if (type === "steps") {
+    scalar("kicker", "Kicker"); scalar("title", "Title");
+    const enSteps = enArr<{ t: string; d?: string }>("steps");
+    const esSteps = esArr<{ t?: string; d?: string }>("steps");
+    const setStep = (i: number, key: "t" | "d", v: string) => {
+      const next = enSteps.map((_, j) => ({ ...(esSteps[j] ?? {}) }));
+      next[i] = { ...next[i], [key]: v };
+      setEs("steps", next);
+    };
+    fields.push(
+      <Field key="steps" label="Steps">
+        <div className="space-y-2">
+          {enSteps.map((s, i) => (
+            <div key={i} className="rounded-lg border border-border p-2">
+              <input className={inputCls} value={(esSteps[i]?.t as string) ?? ""} placeholder={s.t} onChange={(e) => setStep(i, "t", e.target.value)} />
+              <input className={`${inputCls} mt-2`} value={(esSteps[i]?.d as string) ?? ""} placeholder={s.d || "(optional)"} onChange={(e) => setStep(i, "d", e.target.value)} />
+            </div>
+          ))}
+        </div>
+      </Field>,
+    );
+  }
+  if (type === "quiz" || type === "poll") {
+    scalar("q", "Question", true);
+    const enOpts = enArr<string>("options");
+    const esOpts = esArr<string>("options");
+    const setOpt = (i: number, v: string) => {
+      const next = enOpts.map((_, j) => esOpts[j] ?? "");
+      next[i] = v;
+      setEs("options", next);
+    };
+    fields.push(
+      <Field key="options" label="Options (same order as English)">
+        <div className="space-y-2">
+          {enOpts.map((o, i) => (
+            <input key={i} className={inputCls} value={esOpts[i] ?? ""} placeholder={o} onChange={(e) => setOpt(i, e.target.value)} />
+          ))}
+        </div>
+      </Field>,
+    );
+    if (type === "quiz") scalar("explain", "Explanation", true);
+  }
+  if (type === "video") {
+    scalar("kicker", "Kicker"); scalar("title", "Title"); scalar("body", "Body", true);
+    fields.push(
+      <Field key="videoUrl" label="Spanish video — URL / .mp4 / embed (plays when learner picks ES)">
+        <Area value={es.videoUrl} onChange={(v) => setEs("videoUrl", v || "")} rows={2} placeholder="Leave blank to reuse the English video" />
+      </Field>,
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-border">
+      <button type="button" onClick={() => setOpen((o) => !o)} className="flex w-full items-center justify-between px-3 py-2 font-qsr-ui text-xs font-semibold uppercase tracking-wide text-ink-muted">
+        <span className="inline-flex items-center gap-1.5"><Languages className="h-3.5 w-3.5" /> Spanish (Español)</span>
+        <span className="text-qsr-azure">{open ? "Hide" : "Edit"}</span>
+      </button>
+      {open && (
+        <div className="space-y-3 border-t border-border p-3">
+          <p className="font-qsr-ui text-[11px] text-ink-subtle">Shown when the learner switches to Español. Blank fields fall back to English. Use “Translate to Spanish” on the course to auto-fill.</p>
+          {fields}
+        </div>
+      )}
+    </div>
+  );
 }

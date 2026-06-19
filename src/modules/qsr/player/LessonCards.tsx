@@ -33,7 +33,7 @@ const Kicker = ({ children, light }: { children?: React.ReactNode; light?: boole
     }`}>{children}</span>
   ) : null;
 
-type CardProps = { card: LessonCard; onAdvance: () => void; onPoints: (delta: number) => void };
+type CardProps = { card: LessonCard; onAdvance: () => void; onPoints: (delta: number) => void; lang?: string };
 
 // ── intro ────────────────────────────────────────────────────────────────
 export function IntroCard({ card, onAdvance }: CardProps) {
@@ -240,7 +240,7 @@ export function VideoCard({ card, onAdvance }: CardProps) {
 }
 
 // ── quiz (server-scored; must answer correctly to advance) ─────────────────
-export function QuizCard({ card, onAdvance, onPoints }: CardProps) {
+export function QuizCard({ card, onAdvance, onPoints, lang }: CardProps) {
   const { answerQuiz } = useLearnApi();
   const d = card.data as QuizData;
   const multi = !!d.multi;
@@ -252,7 +252,7 @@ export function QuizCard({ card, onAdvance, onPoints }: CardProps) {
     if (busy || !sel.length) return;
     setBusy(true);
     try {
-      const r = await answerQuiz(card.id, multi ? sel : sel[0]);
+      const r = await answerQuiz(card.id, multi ? sel : sel[0], lang);
       const answers = r.answers ?? (r.answer != null ? [r.answer] : []);
       setResult({ correct: r.correct, answers, explain: r.explain });
       if (r.pointsAwarded) onPoints(r.pointsAwarded);
