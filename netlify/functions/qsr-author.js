@@ -131,10 +131,14 @@ async function setPublish(supa, body) {
   if (publish) {
     const { data: lessons } = await supa.from("qsr_lessons").select("id").eq("course_id", id);
     const lessonIds = (lessons || []).map((l) => l.id);
-    const { count } = lessonIds.length
-      ? await supa.from("qsr_cards").select("id", { count: "exact", head: true }).in("lesson_id", lessonIds)
-      : { count: 0 };
-    if (!count) return { error: "Add at least one card before publishing.", status: 400 };
+    const { data: cards } = lessonIds.length
+      ? await supa.from("qsr_cards").select("type, data").in("lesson_id", lessonIds)
+      : { data: [] };
+    if (!(cards || []).length) return { error: "Add at least one card before publishing.", status: 400 };
+    // Every card must pass its content rules — catches blank scaffolds that were
+    // added but never filled in.
+    const bad = (cards || []).map((c) => validateCard(c.type, c.data || {})).find(Boolean);
+    if (bad) return { error: `Can't publish: ${bad}`, status: 400 };
   }
   const { data, error } = await supa.from("qsr_courses")
     .update({ status: publish ? "published" : "draft", updated_at: new Date().toISOString() })
@@ -181,14 +185,18 @@ async function deleteLesson(supa, body) {
 async function saveCard(supa, body) {
   const { id, lesson_id, type, data, ord } = body || {};
   if (!CARD_TYPES.includes(type)) return { error: "Invalid card type.", status: 400 };
-  const verr = validateCard(type, data || {});
-  if (verr) return { error: verr, status: 400 };
   if (id) {
+    // Editing an existing card — enforce per-type content rules on save.
+    const verr = validateCard(type, data || {});
+    if (verr) return { error: verr, status: 400 };
     const { data: row, error } = await supa.from("qsr_cards")
       .update({ type, data: data || {} }).eq("id", id).select().single();
     if (error) throw error;
     return { card: row };
   }
+  // New card: insert a blank scaffold. The author fills it in and saves (which
+  // runs validation above); publishing re-checks every card. Don't validate the
+  // empty scaffold here or the very first "Add card" click would fail.
   if (!lesson_id) return { error: "lesson_id required.", status: 400 };
   const { data: last } = await supa.from("qsr_cards")
     .select("ord").eq("lesson_id", lesson_id).order("ord", { ascending: false }).limit(1).maybeSingle();
