@@ -238,7 +238,7 @@ export function VideoCard({ card, onAdvance }: CardProps) {
   );
 }
 
-// ── quiz (server-scored) ───────────────────────────────────────────────────
+// ── quiz (server-scored; must answer correctly to advance) ─────────────────
 export function QuizCard({ card, onAdvance, onPoints }: CardProps) {
   const d = card.data as QuizData;
   const multi = !!d.multi;
@@ -247,15 +247,18 @@ export function QuizCard({ card, onAdvance, onPoints }: CardProps) {
   const [busy, setBusy] = useState(false);
 
   const submit = async (sel: number[]) => {
-    if (result || busy || !sel.length) return;
+    if (busy || !sel.length) return;
     setBusy(true);
     try {
       const r = await answerQuiz(card.id, multi ? sel : sel[0]);
       const answers = r.answers ?? (r.answer != null ? [r.answer] : []);
       setResult({ correct: r.correct, answers, explain: r.explain });
-      onPoints(r.pointsAwarded);
+      if (r.pointsAwarded) onPoints(r.pointsAwarded);
     } finally { setBusy(false); }
   };
+
+  // Wrong answer → clear and let them try again; the card won't advance.
+  const retry = () => { setResult(null); setSelected([]); };
 
   const onPick = (i: number) => {
     if (result || busy) return;
@@ -267,24 +270,35 @@ export function QuizCard({ card, onAdvance, onPoints }: CardProps) {
     }
   };
 
+  const wrong = !!result && !result.correct;
   const optionClass = (i: number) => {
     if (!result) return selected.includes(i)
       ? "border-qsr-azure bg-qsr-azure/5 text-ink"
       : "border-border bg-white text-ink hover:border-qsr-azure";
-    if (result.answers.includes(i)) return "border-success bg-success/10 text-ink";
+    if (result.correct) return result.answers.includes(i)
+      ? "border-success bg-success/10 text-ink"
+      : "border-border bg-white text-ink-subtle";
+    // wrong: flag only their picks — don't reveal the correct answer
     if (selected.includes(i)) return "border-danger bg-danger/10 text-ink";
     return "border-border bg-white text-ink-subtle";
   };
+
+  let footer;
+  if (result?.correct) footer = <PrimaryBtn onClick={onAdvance}>Continue ▸</PrimaryBtn>;
+  else if (wrong) footer = <PrimaryBtn onClick={retry}>Try again ▸</PrimaryBtn>;
+  else if (multi) footer = <PrimaryBtn onClick={() => submit(selected)} disabled={!selected.length || busy}>Check answer ▸</PrimaryBtn>;
+  else footer = <PrimaryBtn disabled>Choose an answer</PrimaryBtn>;
 
   return (
     <div className="flex h-full flex-col justify-between bg-white p-7">
       <div className="overflow-y-auto pt-4">
         <div className="flex items-center gap-2">
           <Kicker>{d.kicker}</Kicker>
-          {d.points != null && <span className="font-qsr-mono text-xs font-semibold text-qsr-gold">+{d.points}</span>}
+          {result?.correct && d.points != null && <span className="font-qsr-mono text-xs font-semibold text-qsr-gold">+{d.points}</span>}
         </div>
         <h2 className="mt-3 font-qsr-display text-xl font-bold leading-snug text-ink">{d.q}</h2>
         {multi && !result && <p className="mt-1 font-qsr-ui text-xs text-ink-subtle">Select all that apply.</p>}
+        {wrong && <p className="mt-2 font-qsr-ui text-sm font-semibold text-danger">Not quite — give it another try.</p>}
         <div className="mt-4 space-y-2.5">
           {d.options.map((o, i) => (
             <button
@@ -292,20 +306,16 @@ export function QuizCard({ card, onAdvance, onPoints }: CardProps) {
               className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left font-qsr-ui text-[15px] transition active:scale-[0.99] ${optionClass(i)}`}
             >
               <span>{o}</span>
-              {result && result.answers.includes(i) && <Check className="h-4 w-4 text-success" />}
-              {result && selected.includes(i) && !result.answers.includes(i) && <X className="h-4 w-4 text-danger" />}
+              {result?.correct && result.answers.includes(i) && <Check className="h-4 w-4 text-success" />}
+              {wrong && selected.includes(i) && <X className="h-4 w-4 text-danger" />}
             </button>
           ))}
         </div>
-        {result?.explain && (
+        {result?.correct && result.explain && (
           <p className="mt-4 rounded-2xl bg-surface-sunk px-4 py-3 font-qsr-ui text-sm text-ink-muted">{result.explain}</p>
         )}
       </div>
-      {multi && !result ? (
-        <PrimaryBtn onClick={() => submit(selected)} disabled={!selected.length || busy}>Check answer ▸</PrimaryBtn>
-      ) : (
-        <PrimaryBtn onClick={onAdvance} disabled={!result}>Continue ▸</PrimaryBtn>
-      )}
+      {footer}
     </div>
   );
 }

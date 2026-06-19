@@ -169,9 +169,10 @@ async function answerQuiz(supa, user, body) {
   }
   const cardPoints = Number(d.points ?? 10);
 
-  // No points on retries of the same card.
+  // No points on retries — but only a prior *correct* attempt burns them, so a
+  // wrong guess before getting it right still earns the points.
   const { data: prior } = await supa
-    .from("qsr_quiz_attempts").select("id").eq("user_id", user.id).eq("card_id", card_id).limit(1);
+    .from("qsr_quiz_attempts").select("id").eq("user_id", user.id).eq("card_id", card_id).eq("correct", true).limit(1);
   const pointsAwarded = correct && (!prior || prior.length === 0) ? cardPoints : 0;
 
   await supa.from("qsr_quiz_attempts").insert({ user_id: user.id, card_id, answer_index: storedIndex, correct, points_awarded: pointsAwarded });

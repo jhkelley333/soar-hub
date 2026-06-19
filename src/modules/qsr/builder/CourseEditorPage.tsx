@@ -26,8 +26,8 @@ const CARD_ORDER: CardType[] = ["intro", "steps", "image", "video", "quiz", "rev
 function defaultData(type: CardType): Record<string, unknown> {
   switch (type) {
     case "steps": return { title: "", steps: [{ t: "", d: "" }] };
-    case "video": return { title: "", gate: false, threshold: 0.9 };
-    case "quiz": return { q: "", options: ["", ""], answer: 0, points: 10 };
+    case "video": return { title: "", gate: true, threshold: 0.9 };
+    case "quiz": return { q: "", options: ["", ""], points: 10 };
     case "reveal": return { title: "", reveal: "" };
     case "poll": return { q: "", options: ["", ""] };
     default: return { title: "" };
