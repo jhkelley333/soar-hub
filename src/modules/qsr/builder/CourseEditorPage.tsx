@@ -130,8 +130,14 @@ function CourseMetaForm({ course, onSaved }: { course: { id: string; title: stri
         <div className="grid gap-3 sm:grid-cols-2">
           <input className={inputCls} value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Category (e.g. Carhop Service)" />
           <div className="grid grid-cols-2 gap-3">
-            <input className={inputCls} type="number" min="0" value={estMinutes} onChange={(e) => setEstMinutes(e.target.value)} placeholder="Est. min" />
-            <input className={inputCls} type="number" min="0" value={points} onChange={(e) => setPoints(e.target.value)} placeholder="Points" />
+            <label className="block">
+              <span className="mb-1 block font-qsr-ui text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">Est. minutes</span>
+              <input className={inputCls} type="number" min="0" value={estMinutes} onChange={(e) => setEstMinutes(e.target.value)} placeholder="e.g. 5" />
+            </label>
+            <label className="block">
+              <span className="mb-1 block font-qsr-ui text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">Completion points</span>
+              <input className={inputCls} type="number" min="0" value={points} onChange={(e) => setPoints(e.target.value)} placeholder="e.g. 50" />
+            </label>
           </div>
         </div>
         <textarea className={inputCls} rows={2} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Short description" />
