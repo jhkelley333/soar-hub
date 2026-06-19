@@ -17,6 +17,7 @@ import { PafQueuePage } from "@/modules/paf/PafQueuePage";
 import { EmployeeActionsPage } from "@/modules/employee-actions/EmployeeActionsPage";
 import { SchedulePage } from "@/modules/schedule/SchedulePage";
 import { OpsToolsPage } from "@/modules/ops-tools/OpsToolsPage";
+import { QrCodesPage } from "@/modules/qr-codes/QrCodesPage";
 import { SiteAuditPage } from "@/modules/site-audit/SiteAuditPage";
 import { LaborPage } from "@/modules/labor/LaborPage";
 import { LaborSyncPage } from "@/modules/labor/LaborSyncPage";
@@ -655,6 +656,16 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <ScopeDetailPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // QR Codes — dynamic QR generator, reached from the Operations Tools
+        // hub. GM and above; the backend re-checks role on every write.
+        path: "qr-codes",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <QrCodesPage />
           </ProtectedRoute>
         ),
       },

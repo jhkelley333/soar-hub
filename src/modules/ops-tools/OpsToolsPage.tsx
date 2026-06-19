@@ -4,7 +4,7 @@
 // its own nav item by design.
 
 import { Link } from "react-router-dom";
-import { ArrowRight, ClipboardCheck, HardHat, ListChecks, type LucideIcon } from "lucide-react";
+import { ArrowRight, ClipboardCheck, HardHat, ListChecks, QrCode, type LucideIcon } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { cn } from "@/lib/cn";
@@ -47,6 +47,14 @@ const TOOLS: Tool[] = [
     icon: HardHat,
     roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"],
     to: () => "/reno-scoping",
+  },
+  {
+    key: "qr-codes",
+    title: "QR Codes",
+    desc: "Generate a QR code, print or share it, then change where it points anytime — no reprinting when a site moves.",
+    icon: QrCode,
+    roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"],
+    to: () => "/qr-codes",
   },
 ];
 

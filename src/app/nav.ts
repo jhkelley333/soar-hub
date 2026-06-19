@@ -17,7 +17,6 @@ import {
   Sparkles,
   ClipboardList,
   ClipboardCheck,
-  HardHat,
   MessageCircle,
   Gauge,
   RefreshCw,
@@ -85,11 +84,9 @@ export const NAV: NavItem[] = [
   // for deep links (e.g. from the AssignmentDetailPage back-link), but
   // they don't appear in the sidebar — open /workspaces and switch tabs.
   { to: "/workspaces",  label: "Workspaces",  icon: ClipboardList,   roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
-  // Reno Scoping — Pre-Reskin Scoping for the 2026 Full-to-Bright
-  // program. GM+ can scope their own store; DO+ reviews. RLS filters
-  // visibility regardless, but we gate the nav link to GM+ so shift
-  // managers don't see a dead link.
-  { to: "/reno-scoping", label: "Reno Scoping", icon: HardHat,        roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // Reno Scoping is reached through the Operations Tools hub (/operations),
+  // so it's kept out of the sidebar to reduce clutter. Its routes stay live
+  // for deep links and the hub's card.
   { to: "/weather",     label: "Weather",     icon: CloudSun,        roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
   // My Walks + Walkthroughs are reached through the Operations Tools hub
   // (/operations), so they're kept out of the sidebar to reduce clutter.
@@ -203,7 +200,6 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/ranker": "OPERATIONS",
   "/labor": "OPERATIONS",
   "/admin/cash-management": "OPERATIONS",
-  "/reno-scoping": "OPERATIONS",
   "/weather": "OPERATIONS",
   "/schedule": "OPERATIONS",
   "/my-walks": "OPERATIONS",
