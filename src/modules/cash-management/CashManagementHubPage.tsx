@@ -4,7 +4,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Banknote, Bell, HelpCircle, Home, LayoutGrid, Moon, Search, Settings, TrendingUp, type LucideIcon } from "lucide-react";
+import { Banknote, Bell, HelpCircle, Home, LayoutGrid, Moon, Search, Settings, TrendingUp, Wallet, type LucideIcon } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Button } from "@/shared/ui/Button";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -20,9 +20,10 @@ import { DepositTab } from "./DepositTab";
 import { AlertsTab } from "./AlertsTab";
 import { DsrTab } from "./DsrTab";
 import { SettingsTab } from "./SettingsTab";
+import { StoreFundsTab } from "./StoreFundsTab";
 import { CashGuideDrawer } from "./CashGuideDrawer";
 
-type TabId = "leaders" | "find-deposit" | "dashboard" | "closeout" | "deposit" | "alerts" | "dsr" | "settings";
+type TabId = "leaders" | "find-deposit" | "store-funds" | "dashboard" | "closeout" | "deposit" | "alerts" | "dsr" | "settings";
 
 // DO/SDO/RVP/VP/COO/admin get the multi-store leader roll-up (mirrors the
 // server's ACT_ROLES gate on ?action=leader-overview).
@@ -37,6 +38,11 @@ const FIND_DEPOSIT_TAB: { id: TabId; label: string; icon: LucideIcon } = {
   id: "find-deposit",
   label: "Find Deposit",
   icon: Search,
+};
+const STORE_FUNDS_TAB: { id: TabId; label: string; icon: LucideIcon } = {
+  id: "store-funds",
+  label: "Store Funds",
+  icon: Wallet,
 };
 const TABS: { id: TabId; label: string; icon: LucideIcon }[] = [
   { id: "dashboard", label: "Dashboard", icon: Home },
@@ -81,7 +87,7 @@ export function CashManagementHubPage() {
     () => (
       <div className="mb-5 flex gap-1 overflow-x-auto border-b border-zinc-200 [scrollbar-width:none] sm:flex-wrap sm:overflow-visible [&::-webkit-scrollbar]:hidden">
         {[
-          ...(isLeader ? [LEADER_TAB, FIND_DEPOSIT_TAB] : []),
+          ...(isLeader ? [LEADER_TAB, FIND_DEPOSIT_TAB, STORE_FUNDS_TAB] : []),
           ...TABS,
           ...(isAdmin ? [SETTINGS_TAB] : []),
         ].map((t) => {
@@ -193,6 +199,7 @@ export function CashManagementHubPage() {
 
       {active === "leaders" && isLeader && <LeaderDashboardTab onOpenStore={openStore} />}
       {active === "find-deposit" && isLeader && <DepositSearchTab />}
+      {active === "store-funds" && isLeader && <StoreFundsTab />}
       {active === "dashboard" && <DashboardTab overview={overview} onNav={goto} />}
       {active === "closeout" && <CloseoutTab storeId={effectiveStoreId} onDone={() => goto("deposit")} />}
       {active === "deposit" && <DepositTab storeId={effectiveStoreId} onDone={() => goto("dsr")} />}
