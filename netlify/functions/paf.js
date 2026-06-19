@@ -43,6 +43,8 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
+import { sendSms, telnyxConfigured } from "./_lib/telnyx.js";
+import { getFlag } from "./_lib/flags.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -95,6 +97,14 @@ const REJECTABLE_STATUSES = new Set([
   "Needs Approval",
   "Needs Info",
 ]);
+
+// Statuses a PAF can be edited from: rejected (the original flow), or still
+// awaiting a decision (pending). Once Approved/Processed it's locked.
+const EDITABLE_STATUSES = new Set(["Rejected", "Pending", "Pending SDO Approval"]);
+
+// Statuses from which the submitter may delete their OWN PAF (before anyone
+// has actioned it). Admins can delete any non-archived PAF.
+const SUBMITTER_DELETABLE_STATUSES = new Set(["Pending", "Pending SDO Approval"]);
 
 // Light in-process cache for the form config so list/submit don't hit
 // the DB every call. Same TTL as paf-config.js.
@@ -313,15 +323,20 @@ function calcPafCost(p) {
     num(p.spot_bonus_amt) +
     num(p.training_bonus_amt) +
     num(p.referral_bonus_amt);
-  return (
+  const gross =
     num(p.reg_hours) * r +
     num(p.ot_hours) * r * 1.5 +
     num(p.cc_tips) +
     num(p.declared_tips) +
     (hourly ? num(p.pto_hours) * r : 0) +
     (hourly ? num(p.illness_hours) * r : 0) +
-    bonusAmt
-  );
+    bonusAmt;
+  // Partial back pay nets out what was already received.
+  const alreadyPaid =
+    String(p.backpay_type ?? "").toLowerCase() === "partial"
+      ? num(p.backpay_paid_reg) + num(p.backpay_paid_cc_tips) + num(p.backpay_paid_declared_tips)
+      : 0;
+  return Math.max(0, gross - alreadyPaid);
 }
 
 function normalizeSSN(v) {
@@ -719,6 +734,13 @@ async function buildPafRowFromBody(supa, user, body) {
     cc_tips: num(body?.cc_tips),
     declared_tips: num(body?.declared_tips),
 
+    // Back pay: full (default) or partial. Partial records what was already
+    // received so the netted cost is the remaining owed.
+    backpay_type: category === "Backpay" && String(body?.backpay_type).toLowerCase() === "partial" ? "partial" : "full",
+    backpay_paid_reg: num(body?.backpay_paid_reg),
+    backpay_paid_cc_tips: num(body?.backpay_paid_cc_tips),
+    backpay_paid_declared_tips: num(body?.backpay_paid_declared_tips),
+
     pto_hours: num(body?.pto_hours),
     illness_hours: num(body?.illness_hours),
 
@@ -898,9 +920,9 @@ async function resubmitPaf(supa, user, body) {
   if (fetchErr) return { error: fetchErr.message, status: 500 };
   if (!existing) return { error: "PAF not found.", status: 404 };
   if (existing.archived) return { error: "This PAF was deleted.", status: 400 };
-  if (existing.status !== "Rejected") {
+  if (!EDITABLE_STATUSES.has(existing.status)) {
     return {
-      error: `Only a rejected PAF can be edited and resubmitted (status: ${existing.status}).`,
+      error: `This PAF can no longer be edited (status: ${existing.status}). Only pending or rejected PAFs can be edited.`,
       status: 400,
     };
   }
@@ -965,16 +987,17 @@ async function resubmitPaf(supa, user, body) {
     resubmitted_by_email: onBehalf ? user.email : null,
   };
 
-  // Guard against a concurrent process: only update while still Rejected.
+  // Guard against a concurrent decision: only update while still in the same
+  // editable status it was when we fetched it.
   const { data: updated, error: updErr } = await supa
     .from("paf_submissions")
     .update(updateRow)
     .eq("id", id)
-    .eq("status", "Rejected")
+    .eq("status", existing.status)
     .select("id");
   if (updErr) return { error: updErr.message, status: 500 };
   if (!updated || updated.length === 0) {
-    return { error: "This PAF is no longer in a rejected state.", status: 409 };
+    return { error: "This PAF was just actioned and can no longer be edited.", status: 409 };
   }
 
   await logAudit(supa, {
@@ -1517,9 +1540,6 @@ async function logAudit(supa, entry) {
 // audit log as "Deleted by System Admin" with the reason. A reason is required.
 // ----------------------------------------------------------------------------
 async function deletePaf(supa, user, body) {
-  if (user.role !== "admin") {
-    return { error: "Only a System Admin can delete a PAF.", status: 403 };
-  }
   const id = body?.id;
   const reason = sanitizeText(body?.reason, 2000);
   if (!id) return { error: "id is required.", status: 400 };
@@ -1527,12 +1547,24 @@ async function deletePaf(supa, user, body) {
 
   const { data: existing, error: fetchErr } = await supa
     .from("paf_submissions")
-    .select("id, archived")
+    .select("id, archived, status, submitter_id")
     .eq("id", id)
     .maybeSingle();
   if (fetchErr) return { error: fetchErr.message, status: 500 };
   if (!existing) return { error: "PAF not found.", status: 404 };
   if (existing.archived) return { error: "This PAF is already deleted.", status: 400 };
+
+  // Admins can delete any PAF; the submitter can delete their OWN PAF only
+  // while it's still pending (before anyone has approved/processed it).
+  const isAdmin = user.role === "admin";
+  const ownPending =
+    existing.submitter_id === user.id && SUBMITTER_DELETABLE_STATUSES.has(existing.status);
+  if (!isAdmin && !ownPending) {
+    return {
+      error: "You can only delete your own PAF while it's still pending. Ask an admin to remove an actioned one.",
+      status: 403,
+    };
+  }
 
   const { error } = await supa
     .from("paf_submissions")
@@ -1556,6 +1588,84 @@ async function deletePaf(supa, user, body) {
   });
 
   return { ok: true };
+}
+
+// notify-approver — manual nudge to the assigned approver when a quick
+// response is needed. Emails them (reliable) and, when Telnyx is set up,
+// also texts a heads-up + a link to the PAF queue (not a magic link).
+const TEXTABLE_STATUSES = new Set(["Pending", "Pending SDO Approval"]);
+const PAF_NOTIFY_FLAG = "paf_text_approver";
+async function textApprover(supa, user, body) {
+  if (!SUBMIT_ROLES.has(user.role)) return { error: "Your role can't notify PAF approvers.", status: 403 };
+  if (!(await getFlag(supa, PAF_NOTIFY_FLAG, { userId: user.id }))) {
+    return { error: "Notifying the approver isn't turned on yet.", status: 403 };
+  }
+  const id = body?.id;
+  if (!id) return { error: "id is required.", status: 400 };
+
+  const { data: paf, error } = await supa
+    .from("paf_submissions")
+    .select("id, status, employee_name, category, estimated_cost, sdo_approver_id, submitter_name, archived")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) return { error: error.message, status: 500 };
+  if (!paf || paf.archived) return { error: "PAF not found.", status: 404 };
+  if (!TEXTABLE_STATUSES.has(paf.status)) {
+    return { error: `This PAF is ${paf.status} — there's no pending approval to nudge.`, status: 409 };
+  }
+  if (!paf.sdo_approver_id) {
+    return { error: "This PAF has no assigned approver to notify (it may be with Payroll).", status: 400 };
+  }
+
+  const { data: appr } = await supa
+    .from("profiles").select("full_name, preferred_name, phone, email").eq("id", paf.sdo_approver_id).maybeSingle();
+  if (!appr?.phone && !appr?.email) {
+    return { error: "The assigned approver has no phone or email on file.", status: 400 };
+  }
+
+  const who = appr.preferred_name || appr.full_name || "the approver";
+  const amount = paf.estimated_cost != null ? fmtMoney(paf.estimated_cost) : null;
+  const detail = [paf.category, amount].filter(Boolean).join(", ");
+  const link = `${appBaseUrl()}/paf`;
+  const summary = `${paf.employee_name}${detail ? ` (${detail})` : ""}${paf.submitter_name ? ` from ${paf.submitter_name}` : ""}`;
+
+  const channels = [];
+  let lastError = null;
+
+  // SMS — best-effort. Only when Telnyx is configured and we have a number;
+  // a failure here never blocks the email below.
+  if (telnyxConfigured() && appr.phone) {
+    const smsText = `SOAR PAF needs your review: ${summary}. ${link}`;
+    const sent = await sendSms(appr.phone, smsText);
+    if (sent.ok) channels.push("text");
+    else lastError = sent.error;
+  }
+
+  // Email — the reliable channel (and the only one while 10DLC is pending).
+  if (appr.email) {
+    const emailRes = await sendEmailViaResend({
+      to: appr.email,
+      subject: `PAF needs your review — ${paf.employee_name}`,
+      text:
+        `Hi ${who},\n\n` +
+        `A Payroll Action Form needs your review:\n\n` +
+        `  ${summary}\n\n` +
+        `Please review and respond here:\n${link}\n\n` +
+        `— SOAR PAF`,
+    });
+    if (emailRes.ok) channels.push("email");
+    else if (!emailRes.skipped) lastError = "Couldn't send the email.";
+  }
+
+  if (channels.length === 0) {
+    return { error: lastError || "Couldn't reach the approver (no channel succeeded).", status: 502 };
+  }
+
+  await logAudit(supa, {
+    paf_id: id, actor_id: user.id, actor_email: user.email,
+    action: "notify-approver", detail: { to: who, channels },
+  });
+  return { ok: true, to: who, channels };
 }
 
 function unwrap(result) {
@@ -1614,6 +1724,7 @@ export const handler = async (event) => {
       if (action === "sdo-approve") return unwrap(await sdoApprovePaf(supa, user, body));
       if (action === "sdo-reject") return unwrap(await sdoRejectPaf(supa, user, body));
       if (action === "delete") return unwrap(await deletePaf(supa, user, body));
+      if (action === "text-approver") return unwrap(await textApprover(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
     return respond(405, { error: "method not allowed" });

@@ -21,12 +21,16 @@ import { Label } from "@/shared/ui/Label";
 import { Badge } from "@/shared/ui/Badge";
 import { useAuth } from "@/auth/AuthProvider";
 import { decideApproval, fileToBase64, requestInfo, submitApproval, uploadPhoto } from "./api";
+import { tierForAmount } from "./approval";
 import {
   APPROVAL_TIERS,
   type ApprovalTier,
   type Ticket,
   type TicketApproval,
 } from "./types";
+
+const tierLabelOf = (v: ApprovalTier) =>
+  APPROVAL_TIERS.find((t) => t.value === v)?.label ?? v;
 
 interface Props {
   ticket: Ticket;
@@ -82,13 +86,40 @@ export function ApprovalSection({
   const justification = recommendedQuote?.note || latest?.notes || null;
 
   const [requesting, setRequesting] = useState(false);
-  const [tier, setTier] = useState<ApprovalTier>(APPROVAL_TIERS[0].value);
+  // Amount drives the approver, mirroring the vendor side — no manual tier
+  // picker. Dollars as typed; the tier is derived via tierForAmount.
+  const [amount, setAmount] = useState("");
   const [notes, setNotes] = useState("");
   const [quoteFile, setQuoteFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  const derivedTier = tierForAmount(Number(amount));
+
+  // Above the top approval tier ($1,750), an approval must be recorded as a
+  // WhatsApp / Owner sign-off. The backend enforces this (verbal=true); here
+  // we surface the required checkbox so the approver can confirm it.
+  const WHATSAPP_THRESHOLD_CENTS = 175000;
+  const approvalAmountCents =
+    recommendedQuote?.amount_cents ?? Math.round((Number(ticket.cost_estimate) || 0) * 100);
+  const needsWhatsapp = approvalAmountCents > WHATSAPP_THRESHOLD_CENTS;
+  const [approvingWhatsapp, setApprovingWhatsapp] = useState(false);
+  const [whatsappChecked, setWhatsappChecked] = useState(false);
+  const [approveNotes, setApproveNotes] = useState("");
+
+  // Open the request form, prefilling the amount from the recommended quote
+  // when there is one so the approver is pre-routed.
+  function openRequest() {
+    if (recommendedQuote?.amount_cents) {
+      setAmount((recommendedQuote.amount_cents / 100).toFixed(2));
+    }
+    setRequesting(true);
+  }
+
   const submit = useMutation({
     mutationFn: async () => {
+      if (!derivedTier) {
+        throw new Error("Enter a positive dollar amount.");
+      }
       if (!notes.trim()) {
         throw new Error("Approval notes are required.");
       }
@@ -109,13 +140,14 @@ export function ApprovalSection({
       }
       return submitApproval({
         id: ticket.id,
-        approvalTier: tier,
+        approvalTier: derivedTier,
         approvalNotes: notes.trim(),
         quoteUrl: finalUrl,
       });
     },
     onSuccess: () => {
       setRequesting(false);
+      setAmount("");
       setNotes("");
       setQuoteFile(null);
       onChanged();
@@ -125,7 +157,7 @@ export function ApprovalSection({
   });
 
   const decide = useMutation({
-    mutationFn: (vars: { decision: "Approved" | "Rejected"; notes: string }) => {
+    mutationFn: (vars: { decision: "Approved" | "Rejected"; notes: string; verbal?: boolean }) => {
       if (!latest) return Promise.reject(new Error("No pending approval."));
       if (vars.decision === "Rejected" && !vars.notes.trim()) {
         return Promise.reject(new Error("A reason is required to reject."));
@@ -135,9 +167,15 @@ export function ApprovalSection({
         approvalId: latest.id,
         decision: vars.decision,
         notes: vars.notes.trim() || undefined,
+        verbal: vars.verbal,
       });
     },
-    onSuccess: onChanged,
+    onSuccess: () => {
+      setApprovingWhatsapp(false);
+      setWhatsappChecked(false);
+      setApproveNotes("");
+      onChanged();
+    },
     onError: (e: unknown) =>
       onError(e instanceof Error ? e.message : "Decision failed."),
   });
@@ -188,7 +226,7 @@ export function ApprovalSection({
       {!latest && !requesting && (
         <button
           type="button"
-          onClick={() => setRequesting(true)}
+          onClick={openRequest}
           className="flex w-full items-center justify-center gap-2 rounded-lg border-2 border-dashed border-amber-300 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-800 transition hover:border-amber-400 hover:bg-amber-100"
         >
           <FileText className="h-4 w-4" strokeWidth={1.75} />
@@ -217,6 +255,9 @@ export function ApprovalSection({
                 by <span className="font-medium text-zinc-700">{latest.approved_by}</span>
               </span>
             )}
+            {latest.approved_via_whatsapp && (
+              <Badge tone="success">WhatsApp ✓</Badge>
+            )}
             {latest.quote_url && (
               <a
                 href={latest.quote_url}
@@ -243,7 +284,7 @@ export function ApprovalSection({
             <div className="mt-2 flex flex-wrap gap-2">
               <Button
                 variant="primary"
-                onClick={() => handleDecide("Approved")}
+                onClick={() => (needsWhatsapp ? setApprovingWhatsapp((v) => !v) : handleDecide("Approved"))}
                 disabled={decide.isPending}
               >
                 <CheckCircle2 className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
@@ -268,6 +309,44 @@ export function ApprovalSection({
               {decide.isPending && (
                 <Loader2 className="my-auto h-3.5 w-3.5 animate-spin text-zinc-400" />
               )}
+            </div>
+          )}
+
+          {/* Over $1,750 → record the WhatsApp / Owner approval explicitly. */}
+          {latest.status === "Pending" && isApprover(callerRole) && needsWhatsapp && approvingWhatsapp && (
+            <div className="mt-2 rounded-md border border-emerald-200 bg-emerald-50 p-2.5">
+              <div className="text-[11px] font-semibold text-emerald-900">
+                ${(approvalAmountCents / 100).toLocaleString("en-US", { minimumFractionDigits: 2 })} is over $1,750 — record the out-of-system approval.
+              </div>
+              <textarea
+                value={approveNotes}
+                onChange={(e) => setApproveNotes(e.target.value.slice(0, 2000))}
+                rows={2}
+                placeholder="Approval notes (optional)…"
+                className="mt-1.5 block w-full rounded-md border border-emerald-200 bg-white px-2.5 py-2 text-sm"
+              />
+              <label className="mt-1.5 flex items-center gap-2 text-[12px] font-medium text-emerald-900">
+                <input
+                  type="checkbox"
+                  checked={whatsappChecked}
+                  onChange={(e) => setWhatsappChecked(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-emerald-600"
+                />
+                Approved in WhatsApp (Owner / above top tier)
+              </label>
+              <div className="mt-2 flex gap-2">
+                <Button
+                  variant="primary"
+                  onClick={() => decide.mutate({ decision: "Approved", notes: approveNotes, verbal: true })}
+                  disabled={decide.isPending || !whatsappChecked}
+                >
+                  {decide.isPending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+                  Confirm approval
+                </Button>
+                <Button variant="ghost" onClick={() => setApprovingWhatsapp(false)} disabled={decide.isPending}>
+                  Cancel
+                </Button>
+              </div>
             </div>
           )}
 
@@ -314,7 +393,7 @@ export function ApprovalSection({
             <div className="mt-2">
               <button
                 type="button"
-                onClick={() => setRequesting(true)}
+                onClick={openRequest}
                 className="text-xs font-medium text-accent hover:underline"
               >
                 Submit another approval request →
@@ -327,15 +406,28 @@ export function ApprovalSection({
       {requesting && (
         <div className="mt-2 space-y-3 rounded-md border border-amber-200 bg-amber-50/50 p-3">
           <div>
-            <Label htmlFor={`appr-tier-${ticket.id}`}>Approval Tier *</Label>
-            <select
-              id={`appr-tier-${ticket.id}`}
-              value={tier}
-              onChange={(e) => setTier(e.target.value as ApprovalTier)}
-              className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-            >
-              {APPROVAL_TIERS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-            </select>
+            <Label htmlFor={`appr-amount-${ticket.id}`}>Approval Amount *</Label>
+            <div className="flex items-center gap-1">
+              <span className="text-sm text-zinc-500">$</span>
+              <input
+                id={`appr-amount-${ticket.id}`}
+                type="number"
+                min="0"
+                step="0.01"
+                inputMode="decimal"
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                placeholder="0.00"
+                className="h-9 w-full rounded-md border border-zinc-200 bg-white px-3 text-sm text-midnight focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              />
+            </div>
+            <div className="mt-1 text-[11px] text-zinc-500">
+              {derivedTier ? (
+                <>Routes to: <strong className="text-zinc-700">{tierLabelOf(derivedTier)}</strong></>
+              ) : (
+                "Enter the amount to route this to the right approver."
+              )}
+            </div>
           </div>
           <div>
             <Label htmlFor={`appr-notes-${ticket.id}`}>Request Notes *</Label>
@@ -388,7 +480,7 @@ export function ApprovalSection({
             <Button
               variant="primary"
               onClick={() => submit.mutate()}
-              disabled={submit.isPending}
+              disabled={submit.isPending || !derivedTier}
             >
               {submit.isPending && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
               Submit Request

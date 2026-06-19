@@ -1,5 +1,12 @@
 @import "tailwindcss";
 
+/* Class-based dark mode. `dark:` utilities activate when <html> (or any
+ * ancestor) carries the `.dark` class — toggled by src/lib/theme.ts and the
+ * no-flash boot script in index.html. Scoped to the redesigned shell +
+ * dashboard for now; other module pages have no `dark:` classes so they're
+ * unaffected. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* -----------------------------------------------------------------------------
  * Design tokens
  * Tailwind v4 uses CSS-first theme config. Keep this list intentional —
@@ -10,10 +17,25 @@
   --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", Menlo, monospace;
   --font-display: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 
+  /* ── SOAR QSR Learning Platform brand (admin-only module) ──────────────────
+     Its own brand, distinct from the SOAR Hub app chrome. First pass from the
+     build prompt; reconcile verbatim with brand.jsx when the prototypes land. */
+  --color-qsr-azure: #0B5FA5;   /* SONIC azure — primary */
+  --color-qsr-crimson: #EA0F44; /* SOAR crimson — accent / CTA */
+  --color-qsr-gold: #FFC62E;    /* highlight / rewards */
+  --font-qsr-display: "Bricolage Grotesque", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-qsr-ui: "Hanken Grotesk", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-qsr-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
   /* Surface scale — borrowed from zinc but tuned for executive density */
   --color-surface: #ffffff;
   --color-surface-muted: #fafafa;
   --color-surface-sunk: #f4f4f5;
+
+  /* App canvas — the soft blue behind the cards in light mode. Distinct from
+     surface-muted so neutral muted chips/rows stay grey. Dark mode uses the
+     night surface (see AppShell). */
+  --color-canvas: #E8F1F8;
 
   --color-border: #e4e4e7;
   --color-border-strong: #d4d4d8;
@@ -21,6 +43,11 @@
   --color-ink: #09090b;
   --color-ink-muted: #52525b;
   --color-ink-subtle: #a1a1aa;
+
+  /* Heading ink — brand navy in light, flips to light ink in dark (see the
+     .dark block). Use text-heading for card/section titles so they read in
+     both themes without pinning text-midnight (which is also the brand mark). */
+  --color-heading: #285780;
 
   /* Sonic brand palette — change once and the whole app rebrands */
   --color-accent: #008AD8;          /* Sky — primary actions, active nav */
@@ -69,6 +96,29 @@
   --color-frost-200: oklch(88% 0.04 220);
   --color-frost-300: oklch(82% 0.07 220);
 
+  /* ---------------------------------------------------------------------------
+   * Dashboard redesign tokens (Claude Code handoff). Exact hexes from the
+   * design's token table — brand blues are identity, status colors are flags.
+   * These add design-named utilities (bg-midnight-deep, text-sky-300,
+   * bg-frost-soft, …) without disturbing the OKLCH scales above.
+   * ------------------------------------------------------------------------ */
+  --color-midnight-deep: #1C3D5C;   /* darker brand surface / hero base */
+  --color-midnight-hero: #15324B;   /* hero gradient deep stop */
+  --color-sky-700: #005C94;
+  --color-sky-600: #0072B5;
+  --color-sky-300: #5BB4E8;
+  --color-frost-soft: #E6F6FB;
+  --color-frost-bright: #A5E2F0;
+  --color-cherry-600: #C30040;
+
+  /* Dark-theme neutrals for the shell + dashboard surfaces. Consumed via the
+   * `dark:` variant (e.g. dark:bg-night, dark:border-night-line). */
+  --color-night:        #0B1B2B;    /* app canvas in dark mode */
+  --color-night-raised: #102A40;    /* card surface in dark mode */
+  --color-night-line:   #1E3A52;    /* hairline / border in dark mode */
+  --color-night-ink:    #E8F1F8;    /* primary text in dark mode */
+  --color-night-muted:  #8FB0C7;    /* muted text in dark mode */
+
   /* Sonic scale — Sonic red. sonic ≡ cherry (#E40046). 700 is a slightly
    * darker variant for text-on-light-pink situations. */
   --color-sonic-50:  oklch(96% 0.025 25);
@@ -90,6 +140,29 @@
   --shadow-card:  0 1px 2px rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.06);
   --shadow-bar:   0 -2px 8px rgba(15, 23, 42, 0.04);
   --shadow-float: 0 12px 32px rgba(15, 23, 42, 0.18);
+}
+
+/* -----------------------------------------------------------------------------
+ * Dark theme — flip the SEMANTIC tokens under .dark so every utility built on
+ * them (bg-surface, bg-canvas, text-ink, text-heading, border-border, …) turns
+ * dark automatically. This is what lets pages go dark-capable by migrating raw
+ * colors (bg-white, text-zinc-900, …) onto these tokens instead of hand-adding
+ * `dark:` to each. Brand scales (accent/midnight/cherry) intentionally do NOT
+ * flip — they're identity, not surface. Values reuse the night-* palette above.
+ * -------------------------------------------------------------------------- */
+.dark {
+  --color-canvas:        #0B1B2B;  /* night            — app background */
+  --color-surface:       #102A40;  /* night-raised     — cards */
+  --color-surface-muted: #0E2334;  /* muted rows/chips */
+  --color-surface-sunk:  #0A1826;  /* sunk wells */
+
+  --color-border:        #1E3A52;  /* night-line */
+  --color-border-strong: #2A4D6A;
+
+  --color-ink:           #E8F1F8;  /* night-ink */
+  --color-ink-muted:     #8FB0C7;  /* night-muted */
+  --color-ink-subtle:    #5E7E96;
+  --color-heading:       #E8F1F8;
 }
 
 html, body, #root { height: 100%; }
@@ -218,4 +291,14 @@ body {
 }
 .phone-scroll::-webkit-scrollbar {
   display: none;
+}
+
+/* SOAR QSR lesson-player card slide-in. */
+@keyframes qsr-card-in {
+  from { opacity: 0; transform: translateX(18px); }
+  to   { opacity: 1; transform: none; }
+}
+.qsr-card-in { animation: qsr-card-in 240ms ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .qsr-card-in { animation: none; }
 }

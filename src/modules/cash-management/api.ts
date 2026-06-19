@@ -6,7 +6,10 @@ import type {
   CashSettings,
   CmgConfig,
   DepositDetail,
+  DepositSearchFilters,
+  DepositSearchResponse,
   DsrResponse,
+  LeaderOverview,
   Overview,
   PendingDeposit,
 } from "./types";
@@ -44,12 +47,19 @@ export function fetchOverview(storeId?: string | null): Promise<Overview> {
 export function fetchConfig(): Promise<CmgConfig> {
   return request<CmgConfig>(`${FN}?action=config`);
 }
-// Scope-wide counts for the dashboard quick-link card.
-export function fetchCashBadges(): Promise<{ pending_deposits: number; open_alerts: number }> {
-  return request<{ pending_deposits: number; open_alerts: number }>(`${FN}?action=badges`);
+// Multi-store leader roll-up — scoped server-side to the caller's stores.
+export function fetchLeaderOverview(): Promise<LeaderOverview> {
+  return request<LeaderOverview>(`${FN}?action=leader-overview`);
 }
-export function fetchDeposit(storeId?: string | null): Promise<{ deposit: PendingDeposit | null; toleranceCents: number }> {
-  return request<{ deposit: PendingDeposit | null; toleranceCents: number }>(`${FN}?action=deposit${sp(storeId)}`);
+// Scope-wide counts for the dashboard quick-link card.
+export function fetchCashBadges(): Promise<{ pending_deposits: number; open_alerts: number; deposits_verified_today: number }> {
+  return request<{ pending_deposits: number; open_alerts: number; deposits_verified_today: number }>(`${FN}?action=badges`);
+}
+// `deposits` is the full pending list (oldest first). `deposit` is kept on the
+// shape for back-compat but always equals deposits[0] when there's at least
+// one — callers should prefer `deposits` going forward.
+export function fetchDeposit(storeId?: string | null): Promise<{ deposits: PendingDeposit[]; deposit: PendingDeposit | null; toleranceCents: number }> {
+  return request<{ deposits: PendingDeposit[]; deposit: PendingDeposit | null; toleranceCents: number }>(`${FN}?action=deposit${sp(storeId)}`);
 }
 export function fetchAlerts(storeId?: string | null): Promise<AlertsResponse> {
   return request<AlertsResponse>(`${FN}?action=alerts${sp(storeId)}`);
@@ -69,7 +79,10 @@ export function fetchSettings(): Promise<CashSettings> {
 export function updateSettings(input: {
   closeout_tolerance_cents: number;
   deposit_tolerance_cents: number;
-}): Promise<{ ok: true; closeoutToleranceCents: number; depositToleranceCents: number }> {
+  // 0–23, Central Time. Closes submitted before this hour count as the
+  // prior business day. Optional — omit to leave unchanged.
+  business_day_cutoff_hour?: number;
+}): Promise<{ ok: true; closeoutToleranceCents: number; depositToleranceCents: number; businessDayCutoffHour: number }> {
   return request(`${FN}?action=update-settings`, { method: "POST", body: JSON.stringify(input) });
 }
 
@@ -82,9 +95,39 @@ export interface SubmitCloseoutInput {
   reason?: string;
   // The closer confirmed the business date shown.
   acknowledged?: boolean;
+  // Retro/late close: a prior business date (YYYY-MM-DD) being backfilled, plus
+  // an optional note on why it's late. Omitted ⇒ the server uses today.
+  business_date?: string;
+  late_note?: string;
+  // Set true to confirm "yes, this really is for today" past the wrong-day
+  // fail-safe (the prior business day has no closeout yet).
+  confirm_today?: boolean;
+  // Required to correct an already-submitted (locked) closeout.
+  correction_reason?: string;
 }
-export function submitCloseout(input: SubmitCloseoutInput): Promise<{ ok: true; id: string; flagged: boolean; status: string }> {
+// On a normal success the server returns { ok, id, … }. When the wrong-day
+// fail-safe trips it instead returns { confirm_business_date, today,
+// suggested_date } so the UI can ask which day this deposit is for.
+export interface SubmitCloseoutResult {
+  ok?: true;
+  id?: string;
+  flagged?: boolean;
+  status?: string;
+  is_late?: boolean;
+  confirm_business_date?: boolean;
+  today?: string;
+  suggested_date?: string;
+  corrected?: boolean;
+  needs_unlock?: boolean;
+}
+export function submitCloseout(input: SubmitCloseoutInput): Promise<SubmitCloseoutResult> {
   return request(`${FN}?action=submit-closeout`, { method: "POST", body: JSON.stringify(input) });
+}
+
+// Dates in the last 7 days (excluding today) with no closeout yet — the options
+// for a retro/late close.
+export function fetchMissedDays(storeId?: string | null): Promise<{ missed: string[]; window_days: number }> {
+  return request<{ missed: string[]; window_days: number }>(`${FN}?action=missed-days${sp(storeId)}`);
 }
 
 export interface VerifyDepositInput {
@@ -120,6 +163,15 @@ export function editCloseout(input: EditCloseoutInput): Promise<{ ok: true }> {
 
 export function decideAlert(id: string, decision: "acknowledged" | "resolved"): Promise<{ ok: true }> {
   return request(`${FN}?action=alert-decide`, { method: "POST", body: JSON.stringify({ id, decision }) });
+}
+
+// Search deposits across the caller's scope by date / store # / amount.
+export function searchDeposits(filters: DepositSearchFilters): Promise<DepositSearchResponse> {
+  const qs = new URLSearchParams();
+  if (filters.date) qs.set("date", filters.date);
+  if (filters.store_number) qs.set("store_number", filters.store_number);
+  if (filters.amount) qs.set("amount", filters.amount);
+  return request<DepositSearchResponse>(`${FN}?action=search-deposits&${qs.toString()}`);
 }
 
 // Upload a slip photo to the private bucket; returns the storage path.

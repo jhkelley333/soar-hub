@@ -7,6 +7,8 @@ import type { StatusPillKind } from "@/shared/ui/StatusPill";
 export function statusKind(status: string): StatusPillKind {
   // Green only for the truly finished states.
   if (status === "Completed" || status === "Closed") return "approved";
+  // Withdrawn — no longer needed; muted/grey, out of the active flow.
+  if (status === "Withdrawn") return "pending";
   // Sent back to the submitter — its own lane.
   if (status === "Changes Requested") return "revision";
   // Every other status names a stage the request has cleared, so the pill is
@@ -18,6 +20,7 @@ export function statusKind(status: string): StatusPillKind {
 // The role/party the request is currently waiting on, or null when it's done.
 // Rendered as "→ Waiting on {who}" next to the status.
 export function waitingOn(kind: "training" | "pto", status: string): string | null {
+  if (status === "Withdrawn") return null; // no longer in flight
   if (status === "Changes Requested") return "submitter";
   if (kind === "training") {
     if (status === "Submitted" || status === "Approved") return "SDO/RVP";

@@ -301,7 +301,7 @@ async function renderEmail(supabase, ticket, kind, extraVars = {}) {
 // FACILITIES_FROM_EMAIL first, then RESEND_FROM_EMAIL, then a
 // hardcoded default — same precedence in both subsystems so the
 // FROM address can't drift.
-export async function sendEmail({ to, subject, html, cc, bcc, replyTo }) {
+export async function sendEmail({ to, subject, html, cc, bcc, replyTo, attachments }) {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
     return { sent: false, reason: "RESEND_API_KEY not set" };
@@ -323,6 +323,8 @@ export async function sendEmail({ to, subject, html, cc, bcc, replyTo }) {
   if (cc && (Array.isArray(cc) ? cc.length : cc)) payload.cc = Array.isArray(cc) ? cc : [cc];
   if (bcc && (Array.isArray(bcc) ? bcc.length : bcc)) payload.bcc = Array.isArray(bcc) ? bcc : [bcc];
   if (replyTo) payload.reply_to = replyTo;
+  // Resend attachments: [{ filename, content: <base64> }]
+  if (Array.isArray(attachments) && attachments.length) payload.attachments = attachments;
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",

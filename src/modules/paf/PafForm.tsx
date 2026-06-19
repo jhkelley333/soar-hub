@@ -127,6 +127,51 @@ function NhField({ label, children }: { label: string; children: React.ReactNode
   );
 }
 
+// Pre-submit gate: the submitter must click to confirm the entered home store.
+// Warns (but still allows) when it doesn't match their primary store.
+function HomeStoreVerify({
+  verified,
+  onVerify,
+  storeNum,
+  storeName,
+  primaryMismatch,
+  primary,
+}: {
+  verified: boolean;
+  onVerify: () => void;
+  storeNum: string;
+  storeName: string | null;
+  primaryMismatch: boolean;
+  primary: MyStore | null;
+}) {
+  const labelFor = (num: string, name: string | null) => `#${num}${name ? ` — ${name}` : ""}`;
+  if (verified) {
+    return (
+      <div className="mt-3 flex items-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+        <span className="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-emerald-600 text-[10px] font-bold text-white">✓</span>
+        Home store verified: <strong>{labelFor(storeNum, storeName)}</strong>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2.5 text-sm text-amber-900">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          Confirm the home store before submitting: <strong>{labelFor(storeNum, storeName)}</strong>
+        </div>
+        <Button type="button" size="sm" variant="secondary" onClick={onVerify}>
+          Verify home store
+        </Button>
+      </div>
+      {primaryMismatch && primary && (
+        <div className="mt-1.5 text-xs text-amber-800">
+          Heads up — this isn't your primary store ({labelFor(String(primary.number), primary.name)}). Verify only if this PAF is intentionally for a different store.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // snake_case keys used in the DB / config.
 type FormState = Record<string, string>;
 
@@ -167,6 +212,10 @@ function pafRowToFormState(p: PafRow): FormState {
     ot_hours: n(p.ot_hours),
     cc_tips: n(p.cc_tips),
     declared_tips: n(p.declared_tips),
+    backpay_type: p.backpay_type === "partial" ? "partial" : "",
+    backpay_paid_reg: n(p.backpay_paid_reg),
+    backpay_paid_cc_tips: n(p.backpay_paid_cc_tips),
+    backpay_paid_declared_tips: n(p.backpay_paid_declared_tips),
     pto_hours: n(p.pto_hours),
     illness_hours: n(p.illness_hours),
     original_store: s(p.original_store),
@@ -266,6 +315,9 @@ export function PafForm({
   const [state, setState] = useState<FormState>({});
   const [error, setError] = useState<string | null>(null);
   const [offerName, setOfferName] = useState<string | null>(null);
+  // Home-store verification: the submitter must confirm the entered home store
+  // before submitting. Resets whenever the store changes.
+  const [homeVerified, setHomeVerified] = useState(false);
   const [offerUploading, setOfferUploading] = useState(false);
 
   async function handleOfferPick(e: React.ChangeEvent<HTMLInputElement>) {
@@ -407,8 +459,29 @@ export function PafForm({
       training_bonus_amt: state.training_bonus_amt,
       referral_bonus_amt: state.referral_bonus_amt,
       pay_basis: (state.pay_basis ?? "").toLowerCase(),
+      backpay_type: state.backpay_type,
+      backpay_paid_reg: state.backpay_paid_reg,
+      backpay_paid_cc_tips: state.backpay_paid_cc_tips,
+      backpay_paid_declared_tips: state.backpay_paid_declared_tips,
     });
   }, [state]);
+
+  // Home-store verification state.
+  const homeStoreNum = (state.drive_in ?? "").trim();
+  const primaryStore = useMemo(
+    () => myStores.find((s) => s.id === profile?.primary_store_id) ?? null,
+    [myStores, profile?.primary_store_id],
+  );
+  const enteredStore = useMemo(
+    () => myStores.find((s) => String(s.number) === homeStoreNum) ?? null,
+    [myStores, homeStoreNum],
+  );
+  const primaryMismatch = !!(primaryStore && homeStoreNum && String(primaryStore.number) !== homeStoreNum);
+  // Verify only when an actual home store was entered (the Salary-Leader new
+  // hire uses its own multi-store picker, not the home-store field).
+  const needsHomeVerify = homeStoreNum !== "" && state.category !== NEW_HIRE_LEADER;
+  // Any change to the entered home store clears a prior verification.
+  useEffect(() => { setHomeVerified(false); }, [homeStoreNum]);
 
   const submit = useMutation({
     mutationFn: (input: PafSubmitInput) =>
@@ -452,6 +525,17 @@ export function PafForm({
       if (key === "category") {
         // Reset bonus_type so picking Bonus shows an empty sub-form.
         next.bonus_type = "";
+        // Drop back-pay sub-state so it can't ship when not on Backpay.
+        next.backpay_type = "";
+        next.backpay_paid_reg = "";
+        next.backpay_paid_cc_tips = "";
+        next.backpay_paid_declared_tips = "";
+      }
+      // Switching back to Full clears the already-paid amounts.
+      if (key === "backpay_type" && value !== "partial") {
+        next.backpay_paid_reg = "";
+        next.backpay_paid_cc_tips = "";
+        next.backpay_paid_declared_tips = "";
       }
       // Referral Tier auto-fill — picking a tier writes the tier's amount
       // into referral_bonus_amt. Editable afterward.
@@ -467,6 +551,12 @@ export function PafForm({
     e.preventDefault();
     setError(null);
     if (!cfg) return;
+
+    // Require an explicit home-store verification when a store was entered.
+    if (needsHomeVerify && !homeVerified) {
+      setError("Please verify the home store before submitting.");
+      return;
+    }
 
     if (state.category === NEW_HIRE_LEADER) {
       // This category's fields are custom-rendered, so validate them
@@ -656,6 +746,65 @@ export function PafForm({
             />
           </FormSection>
         ))}
+
+      {/* Back pay type — custom block. Full = the form as-is; Partial nets out
+          what the team member already received (reg pay / CC tips / declared). */}
+      {state.category === "Backpay" && (
+        <FormSection
+          title="Back pay type"
+          description="Full pays the entire amount above. Partial records what was already paid and nets the cost down to what's still owed."
+        >
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap gap-2">
+              {([["full", "Full back pay"], ["partial", "Partial back pay"]] as [string, string][]).map(([val, label]) => {
+                const on = val === "partial" ? state.backpay_type === "partial" : state.backpay_type !== "partial";
+                return (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => patch("backpay_type", val)}
+                    className={`rounded-md px-3 py-1.5 text-sm font-semibold ring-1 ring-inset transition ${
+                      on ? "bg-midnight text-white ring-midnight" : "bg-white text-zinc-600 ring-zinc-200 hover:text-midnight"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+            {state.backpay_type === "partial" && (
+              <>
+                <p className="text-xs text-zinc-500">
+                  Enter what was already paid in each bucket. The estimated cost above is the remaining amount owed.
+                </p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  {([
+                    ["backpay_paid_reg", "Regular pay already paid"],
+                    ["backpay_paid_cc_tips", "CC tips already paid"],
+                    ["backpay_paid_declared_tips", "Declared tips already paid"],
+                  ] as [string, string][]).map(([k, label]) => (
+                    <NhField key={k} label={label}>
+                      <div className="relative">
+                        <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">$</span>
+                        <input
+                          inputMode="decimal"
+                          value={state[k] ?? ""}
+                          onChange={(e) => patch(k, e.target.value.replace(/[^0-9.]/g, ""))}
+                          placeholder="0.00"
+                          className={`${NH_INPUT} pl-6`}
+                        />
+                      </div>
+                    </NhField>
+                  ))}
+                </div>
+                <div className="rounded-md bg-zinc-50 px-3 py-2 text-sm text-zinc-700 ring-1 ring-inset ring-zinc-100">
+                  Remaining owed after partial payment: <strong className="text-midnight">{formatUSD(liveCost)}</strong>
+                </div>
+              </>
+            )}
+          </div>
+        </FormSection>
+      )}
 
       {/* New Hire (Salary Leader) — custom, role-conditional section. */}
       {state.category === NEW_HIRE_LEADER && (
@@ -857,6 +1006,19 @@ export function PafForm({
         />
       </FormSection>
 
+      {/* Home-store verification — shared across breakpoints so mobile can
+          confirm too (the desktop cost card below is hidden on small screens). */}
+      {needsHomeVerify && (
+        <HomeStoreVerify
+          verified={homeVerified}
+          onVerify={() => setHomeVerified(true)}
+          storeNum={homeStoreNum}
+          storeName={enteredStore?.name ?? null}
+          primaryMismatch={primaryMismatch}
+          primary={primaryStore}
+        />
+      )}
+
       {/* Cost + submit. Inline on desktop; sticky bottom bar on mobile so
           the user never has to scroll to find Submit on a long form. */}
       <div className="hidden sm:block">
@@ -877,7 +1039,7 @@ export function PafForm({
                     {error}
                   </Badge>
                 )}
-                <Button type="submit" disabled={submit.isPending}>
+                <Button type="submit" disabled={submit.isPending || (needsHomeVerify && !homeVerified)}>
                   {submit.isPending
                     ? isEdit
                       ? "Resubmitting…"
@@ -909,7 +1071,7 @@ export function PafForm({
           </div>
           <Button
             type="submit"
-            disabled={submit.isPending}
+            disabled={submit.isPending || (needsHomeVerify && !homeVerified)}
             className="h-11 px-5 text-sm"
           >
             {submit.isPending

@@ -11,6 +11,7 @@ import {
   ChevronLeft,
   ChevronUp,
   FileText,
+  HelpCircle,
   Image as ImageIcon,
   Link2,
   Loader2,
@@ -81,6 +82,7 @@ import { MyStoreQrPanel } from "./MyStoreQrPanel";
 import { StatusBar } from "./StatusBar";
 import { TicketActionBar } from "./TicketActionBar";
 import { TicketActivityFeed } from "./TicketActivityFeed";
+import { WorkOrdersGuideDrawer } from "./WorkOrdersGuideDrawer";
 import { useAuth } from "@/auth/AuthProvider";
 
 const STATUS_TONE: Record<TicketStatus, "info" | "warning" | "success" | "danger" | "neutral"> = {
@@ -173,6 +175,7 @@ export function WorkOrdersV2Page() {
   // When non-null, we're inside the Settings panel rather than the
   // main tab strip. Holds whichever settings sub-tab is active.
   const [settingsTab, setSettingsTab] = useState<SettingsTabId | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
   const { profile } = useAuth();
   const callerRole = profile?.role || "gm"; // safe default; backend re-checks every action
   const canSeeSettings = SETTINGS_ROLES.has(callerRole);
@@ -187,19 +190,34 @@ export function WorkOrdersV2Page() {
             : "Submit, route, and close facilities work orders across every store. Stores, vendors, and internal staff collaborate on each ticket in one place."
         }
         actions={
-          canSeeSettings && !settingsTab ? (
-            <button
-              type="button"
-              onClick={() => setSettingsTab("library")}
-              className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:border-accent hover:text-midnight"
-              title="Settings (RVP+)"
-            >
-              <Settings className="h-4 w-4" strokeWidth={1.75} />
-              Settings
-            </button>
+          !settingsTab ? (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setGuideOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:border-accent hover:text-midnight"
+                title="Work Orders user guide"
+              >
+                <HelpCircle className="h-4 w-4" strokeWidth={1.75} />
+                Guide
+              </button>
+              {canSeeSettings ? (
+                <button
+                  type="button"
+                  onClick={() => setSettingsTab("library")}
+                  className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 bg-white px-3 py-1.5 text-xs font-medium text-zinc-700 hover:border-accent hover:text-midnight"
+                  title="Settings (RVP+)"
+                >
+                  <Settings className="h-4 w-4" strokeWidth={1.75} />
+                  Settings
+                </button>
+              ) : null}
+            </div>
           ) : null
         }
       />
+
+      <WorkOrdersGuideDrawer open={guideOpen} onClose={() => setGuideOpen(false)} />
 
       {/* "Powered by FacilityOS" credit line. Wrapped in a dark pill
           because the neon-cyan glow effect needs a dark backdrop to

@@ -15,6 +15,9 @@ import { WorkOrdersPage } from "@/modules/work-orders/WorkOrdersPage";
 import { PafPage } from "@/modules/paf/PafPage";
 import { PafQueuePage } from "@/modules/paf/PafQueuePage";
 import { EmployeeActionsPage } from "@/modules/employee-actions/EmployeeActionsPage";
+import { SchedulePage } from "@/modules/schedule/SchedulePage";
+import { OpsToolsPage } from "@/modules/ops-tools/OpsToolsPage";
+import { SiteAuditPage } from "@/modules/site-audit/SiteAuditPage";
 import { LaborPage } from "@/modules/labor/LaborPage";
 import { LaborSyncPage } from "@/modules/labor/LaborSyncPage";
 import { ResourcesPage } from "@/modules/resources/ResourcesPage";
@@ -27,6 +30,12 @@ import { BulkOrgImportPage } from "@/modules/admin/BulkOrgImportPage";
 import { BulkAttributesPage } from "@/modules/admin/BulkAttributesPage";
 import { FeatureFlagsPage } from "@/modules/admin/FeatureFlagsPage";
 import { RoleAccessPage } from "@/modules/admin/RoleAccessPage";
+import { RegionAccessPage } from "@/modules/admin/RegionAccessPage";
+import { QsrHomePage } from "@/modules/qsr/QsrHomePage";
+import { LessonPlayer } from "@/modules/qsr/player/LessonPlayer";
+import { BuilderCoursesPage } from "@/modules/qsr/builder/BuilderCoursesPage";
+import { CourseEditorPage } from "@/modules/qsr/builder/CourseEditorPage";
+import { ManagerDashboardPage } from "@/modules/qsr/manage/ManagerDashboardPage";
 import { PafConfigPage } from "@/modules/admin/pafConfig/PafConfigPage";
 import { TemplatesListPage } from "@/modules/walkthrough/builder/TemplatesListPage";
 import { WalkthroughBuilderPage } from "@/modules/walkthrough/builder/WalkthroughBuilderPage";
@@ -39,6 +48,8 @@ import { WorkOrdersV2Route } from "@/modules/work-orders-v2/WorkOrdersV2Route";
 import { CashManagementRoute } from "@/modules/cash-management/CashManagementRoute";
 import { VendorPortalPage } from "@/modules/vendor-portal/VendorPortalPage";
 import { PublicSubmitPage } from "@/modules/public-submit/PublicSubmitPage";
+import { PublicLearnPage } from "@/modules/qsr/public/PublicLearnPage";
+import { SharePage } from "@/modules/qsr/share/SharePage";
 import { WorkspacesPage } from "@/modules/workspaces/WorkspacesPage";
 import { WorkspaceDetail } from "@/modules/workspaces/WorkspaceDetail";
 import { TemplateDetailPage } from "@/modules/workspaces/TemplateDetailPage";
@@ -65,6 +76,13 @@ import { AssignmentsPage as WalkthroughAssignmentsPage } from "@/modules/walkthr
 import { DirectoryPage } from "@/modules/directory/DirectoryPage";
 import { ChatLayout } from "@/modules/chat/ChatLayout";
 import { GroupInfoPage } from "@/modules/chat/GroupInfoPage";
+import { CoachingToolkitPage } from "@/modules/coaching/CoachingToolkitPage";
+import { ToolDetailPage } from "@/modules/coaching/ToolDetailPage";
+import { TeamPipelinePage } from "@/modules/team-pipeline/TeamPipelinePage";
+import { ManualSearchPage } from "@/modules/manuals/ManualSearchPage";
+import { ManualAdminPage } from "@/modules/manuals/ManualAdminPage";
+import { WeatherPage } from "@/modules/weather/WeatherPage";
+import { WeatherSyncPage } from "@/modules/weather/WeatherSyncPage";
 
 export const router = createBrowserRouter([
   { path: "/login", element: <LoginPage /> },
@@ -77,6 +95,9 @@ export const router = createBrowserRouter([
   // Public ticket-submission page — anyone with the URL can search
   // for a store and file a work order. Lives outside the auth tree.
   { path: "/submit", element: <PublicSubmitPage /> },
+  // Public no-login QSR player — crew scan their store's QR, pick their
+  // name, and take courses. Token in the URL is the only credential.
+  { path: "/learn/:token", element: <PublicLearnPage /> },
   {
     path: "/",
     element: <RootRoute />,
@@ -108,6 +129,30 @@ export const router = createBrowserRouter([
         ),
       },
       {
+        path: "schedule",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <SchedulePage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "operations",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <OpsToolsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "site-audits",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <SiteAuditPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
         path: "labor",
         element: (
           <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
@@ -123,7 +168,32 @@ export const router = createBrowserRouter([
           </ProtectedRoute>
         ),
       },
+      {
+        path: "admin/weather-sync",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <WeatherSyncPage />
+          </ProtectedRoute>
+        ),
+      },
       { path: "contacts", element: <ContactsPage /> },
+      { path: "manuals", element: <ManualSearchPage /> },
+      {
+        path: "weather",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <WeatherPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/manuals",
+        element: (
+          <ProtectedRoute requireRoles={["rvp", "vp", "coo", "admin"]}>
+            <ManualAdminPage />
+          </ProtectedRoute>
+        ),
+      },
       { path: "chat", element: <ChatLayout /> },
       { path: "chat/:threadId", element: <ChatLayout /> },
       { path: "chat/:threadId/info", element: <GroupInfoPage /> },
@@ -284,6 +354,35 @@ export const router = createBrowserRouter([
       },
       { path: "cfm-expiring", element: <CfmExpiringPage /> },
       {
+        // Coaching for Performance Tool Kit — a reference card chooser for
+        // hourly managers and above. Home chooser + per-tool detail routes.
+        path: "coaching",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <CoachingToolkitPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "coaching/:toolId",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <ToolDetailPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Team Pipeline (Talent Planning) — gated behind the team_pipeline
+        // feature flag. roles:[] means access comes only from the flag
+        // (global enable or per-user/store allowlist) — admin always in.
+        path: "team-pipeline",
+        element: (
+          <FlagOrRoleRoute roles={[]} flagKey="team_pipeline">
+            <TeamPipelinePage />
+          </FlagOrRoleRoute>
+        ),
+      },
+      {
         path: "admin/org",
         element: (
           <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
@@ -332,6 +431,63 @@ export const router = createBrowserRouter([
         ),
       },
       {
+        path: "admin/region-access",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <RegionAccessPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // SOAR QSR Learning Platform — admin-only during the build.
+        path: "qsr",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <QsrHomePage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "qsr/course/:courseId",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <LessonPlayer />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "qsr/builder",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <BuilderCoursesPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "qsr/builder/:courseId",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <CourseEditorPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "qsr/manage",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <ManagerDashboardPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "qsr/share",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <SharePage />
+          </ProtectedRoute>
+        ),
+      },
+      {
         path: "admin/paf-config",
         element: (
           <ProtectedRoute requireRoles={["payroll", "admin"]}>
@@ -374,17 +530,14 @@ export const router = createBrowserRouter([
         ),
       },
       {
-        // Cash Management — night-close → next-day deposit cycle, in pilot.
-        // Store-leaders run closeouts/deposits; DO+ act on alerts (enforced
-        // in cash-management.js). Pilot-flagged like PAF.
+        // Cash Management — night-close → next-day deposit cycle. Store
+        // leaders run closeouts/deposits; DO+ act on alerts (enforced in
+        // cash-management.js). Rolled out by role now (pilot flag retired).
         path: "admin/cash-management",
         element: (
-          <FlagOrRoleRoute
-            roles={["gm", "shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "do", "sdo", "rvp", "vp", "coo", "admin", "accounting"]}
-            flagKey="cash_management_pilot"
-          >
+          <ProtectedRoute requireRoles={["gm", "shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "do", "sdo", "rvp", "vp", "coo", "admin", "accounting"]}>
             <CashManagementRoute />
-          </FlagOrRoleRoute>
+          </ProtectedRoute>
         ),
       },
       {

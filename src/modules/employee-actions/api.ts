@@ -60,6 +60,16 @@ export function decideEmployeeAction(
   });
 }
 
+// Approve several requests in one call (approve only).
+export function bulkApproveEmployeeActions(
+  items: { type: "training" | "pto"; id: string }[]
+): Promise<{ ok: true; approved: number; failed: number; results: { id: string | null; ok: boolean; error?: string }[] }> {
+  return request(`${FN}?action=decide-bulk`, {
+    method: "POST",
+    body: JSON.stringify({ items, action: "approve" }),
+  });
+}
+
 // Post-approval confirmation steps (entered / closed-out / paf-submitted).
 export function confirmEmployeeAction(
   input: ConfirmInput
@@ -117,5 +127,18 @@ export function deleteEmployeeAction(
   return request(`${FN}?action=delete`, {
     method: "POST",
     body: JSON.stringify({ type, id }),
+  });
+}
+
+// DO+ withdraws a request that's no longer needed (e.g. employee quit).
+// Sets status 'Withdrawn'; reason is optional.
+export function withdrawEmployeeAction(
+  type: "training" | "pto",
+  id: string,
+  reason?: string
+): Promise<{ ok: true; status: string }> {
+  return request(`${FN}?action=withdraw`, {
+    method: "POST",
+    body: JSON.stringify({ type, id, reason: reason || undefined }),
   });
 }

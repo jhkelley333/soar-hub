@@ -53,6 +53,12 @@ export interface PafRow {
   cc_tips: number | string;
   declared_tips: number | string;
 
+  // Back pay: full | partial. Partial records what was already received.
+  backpay_type?: string | null;
+  backpay_paid_reg?: number | string | null;
+  backpay_paid_cc_tips?: number | string | null;
+  backpay_paid_declared_tips?: number | string | null;
+
   pto_hours: number | string;
   illness_hours: number | string;
 

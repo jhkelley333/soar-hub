@@ -1,7 +1,7 @@
 // Cash Management — Next-Day Deposit Validation. Bank-credit match + stamped
 // slip photo + carried-over (read-only from DSR) + 3-point verify checklist.
 
-import { useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Banknote, Camera, Check } from "lucide-react";
@@ -49,8 +49,17 @@ export function DepositTab({
   const fileRef = useRef<HTMLInputElement>(null);
 
   const depQuery = useQuery({ queryKey: ["cash-deposit", storeId], queryFn: () => fetchDeposit(storeId) });
-  const dep = depQuery.data?.deposit;
+  const deposits = depQuery.data?.deposits ?? [];
   const tol = depQuery.data?.toleranceCents ?? 500;
+
+  // Which pending deposit the closer is validating. When there's only one
+  // (the common case) it's auto-selected; with multiple (banks taking 2–3
+  // days to credit, especially across weekends) the closer picks.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const dep = useMemo(
+    () => deposits.find((d) => d.id === selectedId) ?? deposits[0] ?? null,
+    [deposits, selectedId]
+  );
 
   const [bankCredit, setBankCredit] = useState("");
   const [slipPath, setSlipPath] = useState<string | null>(null);
@@ -61,6 +70,20 @@ export function DepositTab({
   const [carriedDollars, setCarriedDollars] = useState("");
   const [carriedAck, setCarriedAck] = useState(false);
   const [carriedNote, setCarriedNote] = useState("");
+
+  // Switching which deposit is being validated must reset all of the
+  // validator's inputs so the bank-credit / slip / carried-over numbers from
+  // a different deposit don't leak across.
+  useEffect(() => {
+    setBankCredit("");
+    setSlipPath(null);
+    setSlipName(null);
+    setReason("");
+    setCarriedCount("");
+    setCarriedDollars("");
+    setCarriedAck(false);
+    setCarriedNote("");
+  }, [dep?.id]);
 
   const bankCents = toCents(bankCredit);
   const hasBank = bankCredit !== "";
@@ -112,13 +135,14 @@ export function DepositTab({
   });
 
   if (depQuery.isLoading) return <Skeleton className="h-80 w-full" />;
-  if (!dep)
+  if (deposits.length === 0 || !dep)
     return (
       <EmptyState
         title="No deposit awaiting validation"
         description="Once tonight's closeout is submitted, its deposit shows up here the next day."
       />
     );
+  const multiPending = deposits.length > 1;
 
   // Verify control — inline on desktop, portaled to the mobile sticky footer.
   const verifyAction = (
@@ -140,6 +164,52 @@ export function DepositTab({
           Confirm the bank credited the deposit, attach the stamped slip, and record anything carried forward from the DSR.
         </p>
       </div>
+
+      {/* Pending-deposits picker — only shown when more than one deposit is
+          awaiting verification (e.g. a Friday deposit still uncredited when
+          Monday's lands). Oldest first so the eldest unprocessed one gets
+          attention. */}
+      {multiPending && (
+        <Card className="mb-5 overflow-hidden">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-zinc-200 px-5 py-3">
+            <div>
+              <div className="text-sm font-semibold text-midnight">{deposits.length} deposits awaiting validation</div>
+              <div className="text-xs text-zinc-500">Banks can take 2–3 days to credit, especially over weekends.</div>
+            </div>
+            <Pill tone="amber" dot>Oldest first</Pill>
+          </div>
+          <ul className="divide-y divide-zinc-100">
+            {deposits.map((d) => {
+              const isActive = d.id === dep.id;
+              return (
+                <li key={d.id}>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedId(d.id)}
+                    className={cn(
+                      "flex w-full items-center justify-between gap-3 px-5 py-3 text-left transition",
+                      isActive ? "bg-emerald-50" : "hover:bg-zinc-50"
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-sm font-semibold text-midnight">{d.code}</span>
+                        <span className="text-xs text-zinc-500">· {d.for_date}</span>
+                        {isActive && <Pill tone="green" dot>Validating</Pill>}
+                      </div>
+                      <div className="mt-0.5 text-xs text-zinc-500">Closed by {d.closed_by}</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[11px] font-bold uppercase tracking-wider text-zinc-400">Expected</div>
+                      <div className="font-semibold tabular-nums text-midnight">{usd(d.expected_cents)}</div>
+                    </div>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </Card>
+      )}
 
       <Card className="mb-5 flex flex-wrap items-center justify-between gap-4 p-5">
         <div className="flex items-center gap-4">

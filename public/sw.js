@@ -16,7 +16,7 @@
 // Bump the version suffix any time we ship a change users need to
 // pick up immediately (e.g. a stuck-cache fix). The activate handler
 // below purges every cache whose name doesn't match this one.
-const CACHE_NAME = "soar-hub-v8";
+const CACHE_NAME = "soar-hub-v11";
 
 // Precache the bare minimum the app needs to render an offline shell.
 // Vite hashes JS/CSS bundle filenames, so we let runtime caching pick
@@ -28,6 +28,17 @@ const APP_SHELL = [
   "/app-icon.png",
   "/favicon.svg",
 ];
+
+// Last-resort navigation fallback: shown only when the network is down AND
+// there's no cached shell to boot the SPA (e.g. a first load during a blip).
+// Beats a hard browser "network error" page — it explains itself and quietly
+// reloads, so the app recovers on its own the moment the connection returns.
+const OFFLINE_HTML = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>SOAR Hub</title>
+<style>html,body{height:100%}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,system-ui,sans-serif;background:#E8F1F8;color:#285780;display:grid;place-items:center;text-align:center;padding:24px}.t{font-weight:600;font-size:18px}.s{color:#52607a;font-size:14px;margin-top:8px;max-width:300px}</style>
+</head><body><div><div class="t">Reconnecting…</div><div class="s">Your connection dropped for a moment. This page will retry automatically.</div></div>
+<script>setTimeout(function(){location.reload()},4000)</script></body></html>`;
 
 self.addEventListener("install", (event) => {
   // Take over from any previous SW immediately so users don't wait
@@ -218,12 +229,25 @@ self.addEventListener("fetch", (event) => {
           }
           return fresh;
         } catch {
+          // Offline / transient blip. Serve the cached shell so the SPA can
+          // still boot and the client router takes over.
           const cache = await caches.open(CACHE_NAME);
-          return (
-            (await cache.match("/")) ||
-            (await cache.match(request)) ||
-            Response.error()
-          );
+          const cachedShell = (await cache.match("/")) || (await cache.match(request));
+          if (cachedShell) return cachedShell;
+          // No cached shell yet (e.g. first load during a blip). One more
+          // network try on the real URL before giving up.
+          try {
+            const retry = await fetch(request);
+            if (retry) return retry;
+          } catch {
+            /* still down */
+          }
+          // Last resort: a self-reloading "Reconnecting…" page instead of a
+          // hard browser network-error screen.
+          return new Response(OFFLINE_HTML, {
+            status: 200,
+            headers: { "Content-Type": "text/html; charset=utf-8" },
+          });
         }
       })(),
     );
@@ -246,7 +270,10 @@ self.addEventListener("fetch", (event) => {
           }
           return response;
         })
-        .catch(() => cached);
+        // If the network fails and nothing is cached, `cached` is undefined —
+        // returning that to respondWith throws "Failed to convert value to
+        // 'Response'". Fall back to a real network-error Response instead.
+        .catch(() => cached || Response.error());
       return cached || networkFetch;
     }),
   );

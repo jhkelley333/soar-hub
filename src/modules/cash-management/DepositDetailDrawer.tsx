@@ -1,6 +1,8 @@
 // Cash Management — deposit/closeout review drawer. Shows the full closeout +
 // deposit, the stamped slip, an action history (who did what, when), and — for
-// admins — an inline edit form to correct a closeout (e.g. wrong business date).
+// DOs and above (within their scope) — an inline edit form to correct a prior
+// day's closeout/deposit (wrong amount, wrong business date). Edits require a
+// reason and are logged.
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -15,7 +17,7 @@ import { MoneyInput, Pill, StatusPill } from "./ui";
 
 const ACTION_LABEL: Record<string, string> = {
   submit: "Submitted",
-  edit: "Edited by admin",
+  edit: "Edited",
   "verify-deposit": "Deposit validated",
   "alert-ack": "Alert acknowledged",
   "alert-resolve": "Alert resolved",
@@ -165,11 +167,12 @@ export function DepositDetailDrawer({
                   </label>
                 </div>
                 <label className="block">
-                  <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-amber-800">Reason / note</div>
+                  <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-amber-800">Reason for edit *</div>
                   <textarea
                     value={reason}
                     onChange={(e) => setReason(e.target.value)}
                     rows={2}
+                    placeholder="Why is this being corrected? (logged for the record)"
                     className="block w-full resize-y rounded-md border-0 bg-white px-3 py-2 text-sm ring-1 ring-inset ring-amber-200 focus:outline-none focus:ring-2 focus:ring-accent"
                   />
                 </label>
@@ -177,11 +180,14 @@ export function DepositDetailDrawer({
                   <Button variant="secondary" className="w-full" onClick={() => setEditing(false)} disabled={save.isPending}>
                     Cancel
                   </Button>
-                  <Button className="w-full" onClick={() => save.mutate()} disabled={save.isPending}>
+                  <Button className="w-full" onClick={() => save.mutate()} disabled={save.isPending || reason.trim().length < 4}>
                     <Check className="h-4 w-4" />
                     {save.isPending ? "Saving…" : "Save changes"}
                   </Button>
                 </div>
+                {reason.trim().length < 4 && (
+                  <div className="text-[11px] font-medium text-amber-700">A reason is required to save an edit.</div>
+                )}
               </div>
             </section>
           ) : (

@@ -76,6 +76,65 @@ function withTimeout<T>(p: Promise<T>, label: string, ms: number): Promise<T> {
   ]);
 }
 
+// ── Transient-failure retry ──────────────────────────────────────────────
+// A flaky gateway / DNS hiccup makes an auth call fail for a few seconds and
+// then recover on its own. Without help that reads as "Sign-in timed out" and
+// the user panics. So we silently retry transient failures with a short
+// backoff and show "Reconnecting…", turning a 15s blip into a non-event.
+// Genuine auth failures (wrong password, etc.) are NOT transient — they come
+// back fast and retrying would only delay the truth, so we surface them at
+// once.
+const AUTH_MAX_ATTEMPTS = 3;
+const AUTH_BACKOFF_MS = [900, 2200]; // waits before attempts 2 and 3
+const OFFLINE_MESSAGE =
+  "Can't reach the server right now — check your connection and try again.";
+const delay = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+// True for network/DNS/timeout-class failures worth retrying; false for a
+// real server response like bad credentials (4xx, except 429).
+function isTransientAuthError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { name?: string; status?: number; message?: string };
+  // supabase-js wraps fetch/DNS failures as AuthRetryableFetchError.
+  if (e.name === "AuthRetryableFetchError") return true;
+  const status = typeof e.status === "number" ? e.status : undefined;
+  if (status !== undefined && (status === 0 || status === 429 || status >= 500)) return true;
+  const msg = (e.message || "").toLowerCase();
+  return /failed to fetch|networkerror|network error|load failed|timed out|fetch failed|network request failed|err_name_not_resolved|err_network|connection/.test(
+    msg
+  );
+}
+
+// Run an auth op (which resolves to `{ error }` or throws) with retry on
+// transient failures. `onReconnecting` fires before each backoff so the UI
+// can show a reconnecting state. Throws OFFLINE_MESSAGE once retries are
+// exhausted on a transient failure; rethrows real errors immediately.
+async function withAuthRetry<T extends { error: unknown }>(
+  op: () => Promise<T>,
+  onReconnecting: () => void
+): Promise<T> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      const result = await op();
+      if (result.error && isTransientAuthError(result.error)) {
+        if (attempt >= AUTH_MAX_ATTEMPTS) throw new Error(OFFLINE_MESSAGE);
+        onReconnecting();
+        await delay(AUTH_BACKOFF_MS[attempt - 1] ?? 2200);
+        continue;
+      }
+      return result; // success, or a terminal auth error the caller will throw
+    } catch (err) {
+      if (isTransientAuthError(err)) {
+        if (attempt >= AUTH_MAX_ATTEMPTS) throw new Error(OFFLINE_MESSAGE);
+        onReconnecting();
+        await delay(AUTH_BACKOFF_MS[attempt - 1] ?? 2200);
+        continue;
+      }
+      throw err; // terminal (bad credentials, validation, etc.)
+    }
+  }
+}
+
 // Resolve a phone-or-email identifier to the canonical email Supabase auth
 // expects. For email input we pass through; for phone we ping the public
 // auth-resolve function which looks up the matching profile by phone and
@@ -116,6 +175,9 @@ export function LoginPage() {
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  // Set while withAuthRetry is mid-backoff after a transient failure, so the
+  // button reads "Reconnecting…" instead of erroring out.
+  const [reconnecting, setReconnecting] = useState(false);
   const [googlePending, setGooglePending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -202,9 +264,16 @@ export function LoginPage() {
     return <Navigate to={safeRedirectTarget(from, profile.role)} replace />;
   }
 
+  // Fires before each retry backoff to flip the form into "Reconnecting…".
+  function onReconnecting() {
+    setReconnecting(true);
+    setInfo("Connection looks slow — reconnecting…");
+  }
+
   async function handleSubmit(e?: FormEvent) {
     e?.preventDefault();
     setSubmitting(true);
+    setReconnecting(false);
     setError(null);
     setInfo(null);
     try {
@@ -213,22 +282,30 @@ export function LoginPage() {
       const email = resolved.email;
 
       if (mode === "password") {
-        const { error } = await withTimeout(
-          supabase.auth.signInWithPassword({ email, password }),
-          "Sign-in",
-          SIGN_IN_TIMEOUT_MS
+        const { error } = await withAuthRetry(
+          () =>
+            withTimeout(
+              supabase.auth.signInWithPassword({ email, password }),
+              "Sign-in",
+              SIGN_IN_TIMEOUT_MS
+            ),
+          onReconnecting
         );
         if (error) throw error;
       } else if (mode === "magic") {
-        const { error } = await withTimeout(
-          supabase.auth.signInWithOtp({
-            email,
-            // emailRedirectTo keeps the magic LINK in the email working
-            // for browser users; PWA users use the code below instead.
-            options: { emailRedirectTo: window.location.origin },
-          }),
-          "Email code",
-          SIGN_IN_TIMEOUT_MS
+        const { error } = await withAuthRetry(
+          () =>
+            withTimeout(
+              supabase.auth.signInWithOtp({
+                email,
+                // emailRedirectTo keeps the magic LINK in the email working
+                // for browser users; PWA users use the code below instead.
+                options: { emailRedirectTo: window.location.origin },
+              }),
+              "Email code",
+              SIGN_IN_TIMEOUT_MS
+            ),
+          onReconnecting
         );
         if (error) throw error;
         setCodeEmail(email);
@@ -236,12 +313,16 @@ export function LoginPage() {
         setInfo("We emailed you a sign-in code. Enter it below to continue.");
       } else {
         // forgot
-        const { error } = await withTimeout(
-          supabase.auth.resetPasswordForEmail(email, {
-            redirectTo: `${window.location.origin}/reset-password`,
-          }),
-          "Reset request",
-          SIGN_IN_TIMEOUT_MS
+        const { error } = await withAuthRetry(
+          () =>
+            withTimeout(
+              supabase.auth.resetPasswordForEmail(email, {
+                redirectTo: `${window.location.origin}/reset-password`,
+              }),
+              "Reset request",
+              SIGN_IN_TIMEOUT_MS
+            ),
+          onReconnecting
         );
         if (error) throw error;
         setInfo(
@@ -249,32 +330,40 @@ export function LoginPage() {
         );
       }
     } catch (err) {
+      setInfo(null); // clear any "reconnecting…" hint before showing the error
       setError(err instanceof Error ? err.message : "Sign-in failed.");
     } finally {
       setSubmitting(false);
+      setReconnecting(false);
     }
   }
 
   async function handleVerifyCode(e: FormEvent) {
     e.preventDefault();
     setSubmitting(true);
+    setReconnecting(false);
     setError(null);
     try {
-      const { error } = await withTimeout(
-        // Email-OTP sent via signInWithOtp verifies with type "email".
-        // On success onAuthStateChange fires SIGNED_IN, AuthProvider
-        // loads the profile, and the redirect at the top of this
-        // component takes over — all without leaving the PWA.
-        supabase.auth.verifyOtp({
-          email: codeEmail,
-          token: code.trim(),
-          type: "email",
-        }),
-        "Code check",
-        SIGN_IN_TIMEOUT_MS
+      const { error } = await withAuthRetry(
+        () =>
+          withTimeout(
+            // Email-OTP sent via signInWithOtp verifies with type "email".
+            // On success onAuthStateChange fires SIGNED_IN, AuthProvider
+            // loads the profile, and the redirect at the top of this
+            // component takes over — all without leaving the PWA.
+            supabase.auth.verifyOtp({
+              email: codeEmail,
+              token: code.trim(),
+              type: "email",
+            }),
+            "Code check",
+            SIGN_IN_TIMEOUT_MS
+          ),
+        onReconnecting
       );
       if (error) throw error;
     } catch (err) {
+      setInfo(null);
       setError(
         err instanceof Error
           ? err.message
@@ -282,6 +371,7 @@ export function LoginPage() {
       );
     } finally {
       setSubmitting(false);
+      setReconnecting(false);
     }
   }
 
@@ -386,7 +476,7 @@ export function LoginPage() {
                 <input
                   id="id-pwa"
                   type="text"
-                  inputMode={detected === "phone" ? "tel" : "email"}
+                  inputMode="email"
                   autoComplete="username"
                   autoCapitalize="off"
                   spellCheck={false}
@@ -466,7 +556,9 @@ export function LoginPage() {
               disabled={submitting}
               className="flex w-full items-center justify-center gap-2 rounded-lg bg-[#2f72e0] py-3.5 text-[15px] font-semibold text-white shadow-lg shadow-sky-950/40 transition hover:bg-[#2864c9] disabled:opacity-60"
             >
-              {submitting
+              {reconnecting
+                ? "Reconnecting…"
+                : submitting
                 ? "Working…"
                 : mode === "forgot"
                   ? "Send reset link"
@@ -648,13 +740,13 @@ export function LoginPage() {
                   <Input
                     id="identifier"
                     type="text"
-                    inputMode={
-                      detected === "email"
-                        ? "email"
-                        : detected === "phone"
-                          ? "tel"
-                          : "text"
-                    }
+                    // Always the email keyboard — it has letters, "@", ".",
+                    // AND a 123 toggle for digits, so it handles an email OR a
+                    // phone. We must NOT switch to inputMode="tel" based on
+                    // digit count: an email with digits (brooke.davidson9889@…)
+                    // would flip the phone to a numeric keypad mid-typing and
+                    // trap the user — they can't type the rest of their email.
+                    inputMode="email"
                     autoComplete="username"
                     autoCapitalize="off"
                     spellCheck={false}
@@ -701,11 +793,12 @@ export function LoginPage() {
             )}
 
             <Button type="submit" variant="danger" disabled={submitting} className="w-full">
-              {submitting && "Working…"}
-              {!submitting && mode === "password" && "Sign in"}
-              {!submitting && mode === "magic" && !codeSent && "Send code"}
-              {!submitting && mode === "magic" && codeSent && "Verify & sign in"}
-              {!submitting && mode === "forgot" && "Send reset link"}
+              {reconnecting && "Reconnecting…"}
+              {!reconnecting && submitting && "Working…"}
+              {!reconnecting && !submitting && mode === "password" && "Sign in"}
+              {!reconnecting && !submitting && mode === "magic" && !codeSent && "Send code"}
+              {!reconnecting && !submitting && mode === "magic" && codeSent && "Verify & sign in"}
+              {!reconnecting && !submitting && mode === "forgot" && "Send reset link"}
             </Button>
           </form>
 

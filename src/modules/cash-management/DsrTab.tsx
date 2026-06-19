@@ -94,7 +94,10 @@ export function DsrTab({ storeId }: { storeId: string | null }) {
                 return (
                   <tr key={h.business_date} className="border-t border-zinc-100 text-right">
                     <td className="px-5 py-3 text-left">
-                      <div className="font-medium text-midnight">{h.business_date.slice(5)}</div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-midnight">{h.business_date.slice(5)}</span>
+                        {h.is_late && <Pill tone="red">Late</Pill>}
+                      </div>
                       <div className="font-mono text-[11px] text-zinc-400">{h.id}</div>
                     </td>
                     <td className="px-4 py-3 tabular-nums text-zinc-600">{usd(h.cash_due_cents)}</td>
@@ -135,7 +138,10 @@ export function DsrTab({ storeId }: { storeId: string | null }) {
               <li key={h.business_date} className="px-4 py-3">
                 <div className="flex items-center justify-between gap-3">
                   <div>
-                    <div className="font-medium text-midnight">{h.business_date.slice(5)}</div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-medium text-midnight">{h.business_date.slice(5)}</span>
+                      {h.is_late && <Pill tone="red">Late</Pill>}
+                    </div>
                     <div className="font-mono text-[11px] text-zinc-400">{h.id}</div>
                   </div>
                   <div className="flex items-center gap-2">

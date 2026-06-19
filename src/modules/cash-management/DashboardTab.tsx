@@ -170,7 +170,10 @@ export function DashboardTab({ overview, onNav }: { overview: Overview; onNav: (
                 return (
                   <tr key={h.closeout_id} className="border-t border-zinc-100">
                     <td className="px-5 py-3">
-                      <div className="font-medium text-midnight">{h.business_date.slice(5)}</div>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium text-midnight">{h.business_date.slice(5)}</span>
+                        {h.is_late && <Pill tone="red">Late</Pill>}
+                      </div>
                       <div className="font-mono text-[11px] text-zinc-400">{h.id}</div>
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-zinc-600">{usd(h.cash_due_cents)}</td>
@@ -199,7 +202,10 @@ export function DashboardTab({ overview, onNav }: { overview: Overview; onNav: (
                   <li key={h.closeout_id} className="px-4 py-3">
                     <div className="flex items-center justify-between gap-3">
                       <div>
-                        <div className="font-medium text-midnight">{h.business_date.slice(5)}</div>
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-medium text-midnight">{h.business_date.slice(5)}</span>
+                          {h.is_late && <Pill tone="red">Late</Pill>}
+                        </div>
                         <div className="font-mono text-[11px] text-zinc-400">{h.id}</div>
                       </div>
                       <StatusPill status={h.status} />

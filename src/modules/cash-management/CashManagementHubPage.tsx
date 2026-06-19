@@ -4,7 +4,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Banknote, Bell, HelpCircle, Home, Moon, Settings, TrendingUp, type LucideIcon } from "lucide-react";
+import { Banknote, Bell, HelpCircle, Home, LayoutGrid, Moon, Search, Settings, TrendingUp, type LucideIcon } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Button } from "@/shared/ui/Button";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -13,6 +13,8 @@ import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import { fetchOverview } from "./api";
 import { DashboardTab } from "./DashboardTab";
+import { LeaderDashboardTab } from "./LeaderDashboardTab";
+import { DepositSearchTab } from "./DepositSearchTab";
 import { CloseoutTab } from "./CloseoutTab";
 import { DepositTab } from "./DepositTab";
 import { AlertsTab } from "./AlertsTab";
@@ -20,8 +22,22 @@ import { DsrTab } from "./DsrTab";
 import { SettingsTab } from "./SettingsTab";
 import { CashGuideDrawer } from "./CashGuideDrawer";
 
-type TabId = "dashboard" | "closeout" | "deposit" | "alerts" | "dsr" | "settings";
+type TabId = "leaders" | "find-deposit" | "dashboard" | "closeout" | "deposit" | "alerts" | "dsr" | "settings";
 
+// DO/SDO/RVP/VP/COO/admin get the multi-store leader roll-up (mirrors the
+// server's ACT_ROLES gate on ?action=leader-overview).
+const LEADER_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
+
+const LEADER_TAB: { id: TabId; label: string; icon: LucideIcon } = {
+  id: "leaders",
+  label: "Leaders",
+  icon: LayoutGrid,
+};
+const FIND_DEPOSIT_TAB: { id: TabId; label: string; icon: LucideIcon } = {
+  id: "find-deposit",
+  label: "Find Deposit",
+  icon: Search,
+};
 const TABS: { id: TabId; label: string; icon: LucideIcon }[] = [
   { id: "dashboard", label: "Dashboard", icon: Home },
   { id: "closeout", label: "Night Closeout", icon: Moon },
@@ -38,9 +54,17 @@ const SETTINGS_TAB: { id: TabId; label: string; icon: LucideIcon } = {
 export function CashManagementHubPage() {
   const { profile } = useAuth();
   const isAdmin = profile?.role === "admin";
+  const isLeader = !!profile?.role && LEADER_ROLES.has(profile.role);
   const [storeId, setStoreId] = useState<string | null>(null);
-  const [active, setActive] = useState<TabId>("dashboard");
+  // Leaders land on the roll-up; everyone else on their store dashboard.
+  const [active, setActive] = useState<TabId>(isLeader ? "leaders" : "dashboard");
   const [guideOpen, setGuideOpen] = useState(false);
+
+  // Drill from a leader-roll-up row into that store's dashboard.
+  const openStore = (id: string) => {
+    setStoreId(id);
+    setActive("dashboard");
+  };
 
   const overviewQuery = useQuery({
     queryKey: ["cash-overview", storeId],
@@ -56,7 +80,11 @@ export function CashManagementHubPage() {
   const tabNav = useMemo(
     () => (
       <div className="mb-5 flex gap-1 overflow-x-auto border-b border-zinc-200 [scrollbar-width:none] sm:flex-wrap sm:overflow-visible [&::-webkit-scrollbar]:hidden">
-        {(isAdmin ? [...TABS, SETTINGS_TAB] : TABS).map((t) => {
+        {[
+          ...(isLeader ? [LEADER_TAB, FIND_DEPOSIT_TAB] : []),
+          ...TABS,
+          ...(isAdmin ? [SETTINGS_TAB] : []),
+        ].map((t) => {
           const Icon = t.icon;
           const badge =
             t.id === "deposit" && overview?.pending_deposit
@@ -91,7 +119,7 @@ export function CashManagementHubPage() {
         })}
       </div>
     ),
-    [active, overview, isAdmin]
+    [active, overview, isAdmin, isLeader]
   );
 
   if (overviewQuery.isLoading) {
@@ -163,6 +191,8 @@ export function CashManagementHubPage() {
 
       {tabNav}
 
+      {active === "leaders" && isLeader && <LeaderDashboardTab onOpenStore={openStore} />}
+      {active === "find-deposit" && isLeader && <DepositSearchTab />}
       {active === "dashboard" && <DashboardTab overview={overview} onNav={goto} />}
       {active === "closeout" && <CloseoutTab storeId={effectiveStoreId} onDone={() => goto("deposit")} />}
       {active === "deposit" && <DepositTab storeId={effectiveStoreId} onDone={() => goto("dsr")} />}

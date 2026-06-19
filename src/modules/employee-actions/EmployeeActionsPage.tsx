@@ -3,7 +3,8 @@
 // and a read-only History list of requests in the caller's scope.
 // Approvals / tracking / sign-offs are a later layer.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
@@ -31,9 +32,27 @@ function fmtMoney(n: number): string {
 
 export function EmployeeActionsPage() {
   const { profile } = useAuth();
-  const [tab, setTab] = useState<Tab>("training");
+  // Deep link: /employee-actions?tab=history&type=training|pto&id=… opens the
+  // History tab and pops that request's detail drawer (e.g. from the calendar).
+  const [searchParams, setSearchParams] = useSearchParams();
+  const focusId = searchParams.get("id");
+  const focusKind: "training" | "pto" = searchParams.get("type") === "pto" ? "pto" : "training";
+  const [tab, setTab] = useState<Tab>(focusId ? "history" : "training");
   const [editTraining, setEditTraining] = useState<TrainingCreditRow | null>(null);
   const [editPto, setEditPto] = useState<PtoRow | null>(null);
+
+  // Consume the deep-link params once so the drawer doesn't reopen on tab
+  // changes; the focus is captured below before clearing.
+  const [focus, setFocus] = useState<{ kind: "training" | "pto"; id: string } | null>(
+    focusId ? { kind: focusKind, id: focusId } : null,
+  );
+  useEffect(() => {
+    if (!focusId) return;
+    const next = new URLSearchParams(searchParams);
+    next.delete("id"); next.delete("type"); next.delete("tab");
+    setSearchParams(next, { replace: true });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const canSubmit = SUBMIT_ROLES.includes(profile?.role ?? "");
   const canApprove = APPROVER_ROLES.includes(profile?.role ?? "");
@@ -106,7 +125,7 @@ export function EmployeeActionsPage() {
       {tab === "approvals" && (canApprove ? <ApprovalQueue /> : <NoAccess />)}
 
       {tab === "history" && (
-        <HistoryList onEditTraining={editTrainingRow} onEditPto={editPtoRow} />
+        <HistoryList focus={focus} onConsumeFocus={() => setFocus(null)} onEditTraining={editTrainingRow} onEditPto={editPtoRow} />
       )}
     </>
   );
@@ -129,14 +148,29 @@ type Selection =
   | null;
 
 function HistoryList({
+  focus,
+  onConsumeFocus,
   onEditTraining,
   onEditPto,
 }: {
+  focus: { kind: "training" | "pto"; id: string } | null;
+  onConsumeFocus: () => void;
   onEditTraining: (row: TrainingCreditRow) => void;
   onEditPto: (row: PtoRow) => void;
 }) {
   const [selected, setSelected] = useState<Selection>(null);
   const query = useQuery({ queryKey: ["ea-list"], queryFn: listEmployeeActions });
+
+  // Auto-open the deep-linked request once the list loads.
+  useEffect(() => {
+    if (!focus || !query.data) return;
+    const row = focus.kind === "training"
+      ? query.data.trainingCredits.find((r) => r.id === focus.id)
+      : query.data.ptoRequests.find((r) => r.id === focus.id);
+    if (row) setSelected({ kind: focus.kind, row } as Selection);
+    onConsumeFocus();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focus, query.data]);
 
   if (query.isLoading) return <Skeleton className="h-40 w-full" />;
   if (query.isError || !query.data) {

@@ -50,6 +50,26 @@ export const supabase = createClient(url, anonKey, {
     persistSession: true,
     autoRefreshToken: true,
     detectSessionInUrl: true,
+    // Implicit flow: recovery/invite links carry the session tokens directly
+    // in the URL hash, which detectSessionInUrl consumes on landing. supabase-js
+    // v2 defaults to PKCE, which instead returns a `?code=` that must be
+    // exchanged using a `code_verifier` stored in localStorage when the flow
+    // was *started* — so a new user accepting an invite (no verifier anywhere),
+    // or anyone clicking a reset link on a different device/browser, or an email
+    // security scanner that pre-fetches the one-time link, all fail with
+    // "Auth session missing!" when they try to set a password. The
+    // AcceptInvite/ResetPassword pages are built to read the hash tokens, so we
+    // pin implicit to match. (Email/password sign-in is unaffected.)
+    flowType: "implicit",
     lock: inPageLock,
+    // Pin the session storage key to the project ref. supabase-js otherwise
+    // derives it from the URL hostname's first label, so moving the client off
+    // the raw `<ref>.supabase.co` URL onto the `api.mysoarhub.com` custom
+    // domain (done to dodge ISP-level *.supabase.co DNS blocklisting) would
+    // change the key from `sb-mebzvovvdugkwjypwepg-auth-token` to
+    // `sb-api-auth-token` and silently log everyone out on cutover. Pinning it
+    // keeps existing sessions valid across the domain swap. The AuthProvider
+    // purge matches `sb-*-auth-token` by pattern, so it still clears this key.
+    storageKey: "sb-mebzvovvdugkwjypwepg-auth-token",
   },
 });

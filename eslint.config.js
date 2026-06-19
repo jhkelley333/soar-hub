@@ -38,9 +38,9 @@ export default tseslint.config(
       "no-useless-escape": "warn",
       "no-case-declarations": "warn",
       "no-irregular-whitespace": "warn",
-      // TODO: pre-existing violations (DashboardPage, H2HView). These are real
-      // hook-order issues to fix; warn now so CI is green, restore to "error".
-      "react-hooks/rules-of-hooks": "warn",
+      // Hook-order violations are real bugs — block them (the two pre-existing
+      // ones in DashboardPage + H2HView were fixed).
+      "react-hooks/rules-of-hooks": "error",
     },
   },
 

@@ -10,7 +10,7 @@ import { Button } from "@/shared/ui/Button";
 import { StatusPill } from "@/shared/ui/StatusPill";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
-import { confirmEmployeeAction, decideEmployeeAction, deleteEmployeeAction } from "./api";
+import { confirmEmployeeAction, decideEmployeeAction, deleteEmployeeAction, withdrawEmployeeAction } from "./api";
 import { statusKind, waitingOn } from "./statusMeta";
 import type { ConfirmStep, PtoRow, TrainingCreditRow } from "./types";
 
@@ -84,6 +84,14 @@ export function RequestDetailDrawer({
   const action = row ? availableAction(kind, row.status, role, isOwner) : null;
   const canEdit = !!row && row.status === "Changes Requested" && (isOwner || isAdmin) && !!onEdit;
 
+  // DO & above can correct/withdraw any in-flight (non-terminal) request.
+  const isDoPlus = role === "do" || role === "sdo" || role === "rvp" || role === "admin";
+  const terminal = !!row && (row.status === "Completed" || row.status === "Closed" || row.status === "Withdrawn");
+  // Correct = direct edit by DO+ (training only; resets approval on save).
+  // Suppressed when the owner-resubmit "Edit & Resubmit" already shows.
+  const showCorrect = kind === "training" && isDoPlus && !!row && !terminal && !!onEdit && !canEdit;
+  const canWithdraw = isDoPlus && !!row && !terminal;
+
   function invalidate() {
     qc.invalidateQueries({ queryKey: ["ea-queue"] });
     qc.invalidateQueries({ queryKey: ["ea-list"] });
@@ -108,13 +116,19 @@ export function RequestDetailDrawer({
     onSuccess: (r) => done(`Marked ${r.status}.`),
     onError: fail,
   });
+  const withdrawMut = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+      withdrawEmployeeAction(kind, id, reason),
+    onSuccess: () => done("Request withdrawn."),
+    onError: fail,
+  });
   const delMut = useMutation({
     mutationFn: (id: string) => deleteEmployeeAction(kind, id),
     onSuccess: () => done("Request deleted."),
     onError: fail,
   });
 
-  const busy = decideMut.isPending || confirmMut.isPending || delMut.isPending;
+  const busy = decideMut.isPending || confirmMut.isPending || delMut.isPending || withdrawMut.isPending;
 
   const confirmLabel: Record<ConfirmStep, string> = {
     entered: "Mark on weekly sheet",
@@ -140,6 +154,27 @@ export function RequestDetailDrawer({
       {canEdit && (
         <Button type="button" disabled={busy} onClick={() => onEdit?.()}>
           Edit &amp; Resubmit
+        </Button>
+      )}
+      {canWithdraw && (
+        <button
+          type="button"
+          disabled={busy}
+          onClick={() => {
+            const reason = window.prompt(
+              "Withdraw this request (e.g. employee resigned)?\nAdd an optional reason, or leave blank:"
+            );
+            if (reason === null) return; // cancelled
+            withdrawMut.mutate({ id: row.id, reason: reason.trim() || undefined });
+          }}
+          className="rounded-md px-2.5 py-1.5 text-sm font-medium text-zinc-700 ring-1 ring-inset ring-zinc-300 hover:bg-zinc-50 disabled:opacity-50"
+        >
+          Withdraw
+        </button>
+      )}
+      {showCorrect && (
+        <Button type="button" variant="secondary" disabled={busy} onClick={() => onEdit?.()}>
+          Correct
         </Button>
       )}
       {action === "decide" && (
@@ -205,6 +240,12 @@ export function RequestDetailDrawer({
           {row.rejection_reason && row.status === "Changes Requested" && (
             <Field label="Changes requested">
               <span className="text-amber-700">{row.rejection_reason}</span>
+            </Field>
+          )}
+
+          {row.status === "Withdrawn" && (
+            <Field label="Withdrawn">
+              <span className="text-zinc-600">{row.withdrawn_reason || "No reason given"}</span>
             </Field>
           )}
 

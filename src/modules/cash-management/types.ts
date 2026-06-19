@@ -15,6 +15,11 @@ export interface CloseoutCard {
   variance_cents: number;
   status: "awaiting-deposit" | "flagged" | "verified";
   flagged: boolean;
+  // True when this day was backfilled after its business date (a missed close).
+  is_late: boolean;
+  // Who submitted it — drives the lock/unlock authority on the client.
+  submitted_by?: string | null;
+  submitted_by_name?: string | null;
 }
 
 export interface Overview {
@@ -56,6 +61,9 @@ export interface CmgConfig {
 export interface CashSettings {
   closeoutToleranceCents: number;
   depositToleranceCents: number;
+  // 0–23 hour, Central Time. Closeouts submitted before this hour count as
+  // the prior business day.
+  businessDayCutoffHour: number;
   can_edit: boolean;
 }
 
@@ -104,6 +112,44 @@ export interface DsrRow {
   carried_over_cents: number;
   deposit_verified: boolean;
   status: string;
+  is_late?: boolean;
+}
+
+// ── Leader roll-up (multi-store, DO/SDO/RVP/VP/COO/admin) ─────────────────
+export type LeaderIssue = "not_closed" | "over_tolerance" | "deposit_overdue" | "open_alerts";
+
+export interface LeaderStoreRow {
+  store: CmgStore;
+  closed_today: boolean;
+  today_variance_cents: number | null;
+  today_flagged: boolean;
+  today_is_late: boolean;
+  last_close_date: string | null;
+  pending_deposits: number;
+  oldest_pending_for_date: string | null;
+  deposit_overdue_days: number;
+  deposit_overdue: boolean;
+  open_alerts: number;
+  issues: LeaderIssue[];
+}
+
+export interface LeaderSummary {
+  stores_total: number;
+  closed_today: number;
+  not_closed_today: number;
+  over_tolerance: number;
+  deposits_pending: number;
+  deposits_overdue: number;
+  open_alerts: number;
+  needs_attention: number;
+}
+
+export interface LeaderOverview {
+  business_date: string | null;
+  tolerance_cents: number;
+  scope_all: boolean;
+  summary: LeaderSummary;
+  stores: LeaderStoreRow[];
 }
 
 export interface CashAuditEntry {
@@ -165,4 +211,27 @@ export interface DsrResponse {
   clean_days: number;
   days: number;
   ledger: DsrRow[];
+}
+
+export interface DepositSearchResult {
+  id: string;
+  closeout_id: string;
+  store_number: string;
+  store_name: string | null;
+  for_date: string;
+  expected_cents: number;
+  bank_credited_cents: number | null;
+  variance_cents: number | null;
+  status: string;
+  flagged: boolean;
+  verified_at: string | null;
+}
+export interface DepositSearchResponse {
+  deposits: DepositSearchResult[];
+  count: number;
+}
+export interface DepositSearchFilters {
+  date?: string;
+  store_number?: string;
+  amount?: string;
 }

@@ -1,0 +1,305 @@
+// qsr-public.js — SOAR QSR public (no-login) learner runtime.
+//
+// Drives the QR-code player: a per-store access token (0171) + a learner the
+// crew member self-selects from the store roster. NO Supabase auth — the token
+// is the entry credential. Every action resolves the token to a store and
+// validates that the chosen learner is an active profile AT that store before
+// recording anything, so a token can only ever write progress for its own
+// store's crew. Server stays the source of truth for scoring/gating (this
+// mirrors qsr-learn.js; kept self-contained to protect the authed path).
+
+import { createClient } from "@supabase/supabase-js";
+
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+const DEFAULT_VIDEO_THRESHOLD = 0.9;
+const RANK = { seen: 0, answered: 1, passed: 2 };
+
+function admin() {
+  if (!SUPABASE_URL || !SERVICE_KEY) throw new Error("qsr-public env not configured");
+  return createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+function respond(statusCode, payload) {
+  return { statusCode, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) };
+}
+
+// token → active store. Returns { store } or null.
+async function resolveToken(supa, token) {
+  if (!token) return null;
+  const { data } = await supa.from("qsr_access_tokens")
+    .select("id, store_id, is_active, revoked_at").eq("token", token).maybeSingle();
+  if (!data || !data.is_active || data.revoked_at) return null;
+  const { data: store } = await supa.from("stores").select("id, number, name").eq("id", data.store_id).maybeSingle();
+  if (!store) return null;
+  return { store };
+}
+
+// Verify learnerId is an active profile at this store. Returns the caller or null.
+async function resolveLearner(supa, learnerId, storeId) {
+  if (!learnerId) return null;
+  const { data: p } = await supa.from("profiles")
+    .select("id, primary_store_id, is_active").eq("id", learnerId).maybeSingle();
+  if (!p || p.is_active === false || p.primary_store_id !== storeId) return null;
+  return { id: p.id, role: "crew" }; // never an author → quiz keys stay stripped
+}
+
+// Resolve { token, learnerId } from the body to a { store, caller }.
+async function gate(supa, body) {
+  const ctx = await resolveToken(supa, body?.token);
+  if (!ctx) return { error: "This training link is invalid or has been turned off.", status: 403 };
+  const caller = await resolveLearner(supa, body?.learnerId, ctx.store.id);
+  if (!caller) return { error: "Pick your name from your store's list to continue.", status: 403 };
+  return { store: ctx.store, caller };
+}
+
+// ── shared core (mirrors qsr-learn) ───────────────────────────────────────
+async function ensureEnrollment(supa, userId, courseId) {
+  const { data: ex } = await supa
+    .from("qsr_enrollments").select("id, status").eq("user_id", userId).eq("course_id", courseId).maybeSingle();
+  if (ex) return ex;
+  const { data, error } = await supa
+    .from("qsr_enrollments").insert({ user_id: userId, course_id: courseId }).select("id, status").single();
+  if (error) throw error;
+  return data;
+}
+async function courseIdForCard(supa, cardId) {
+  const { data: card } = await supa.from("qsr_cards").select("id, type, data, lesson_id").eq("id", cardId).maybeSingle();
+  if (!card) return null;
+  const { data: lesson } = await supa.from("qsr_lessons").select("course_id").eq("id", card.lesson_id).maybeSingle();
+  return { card, courseId: lesson?.course_id };
+}
+async function pollCounts(supa, cardId, optionCount) {
+  const counts = new Array(optionCount).fill(0);
+  const { data: votes } = await supa
+    .from("qsr_card_progress").select("answer_index").eq("card_id", cardId).not("answer_index", "is", null);
+  for (const v of votes || []) if (v.answer_index != null && v.answer_index < optionCount) counts[v.answer_index]++;
+  return counts;
+}
+async function upsertProgressUpgrade(supa, enrollmentId, cardId, state, extra = {}) {
+  const { data: ex } = await supa
+    .from("qsr_card_progress").select("state").eq("enrollment_id", enrollmentId).eq("card_id", cardId).maybeSingle();
+  const finalState = ex && RANK[ex.state] >= RANK[state] ? ex.state : state;
+  await supa.from("qsr_card_progress").upsert(
+    { enrollment_id: enrollmentId, card_id: cardId, state: finalState, updated_at: new Date().toISOString(), ...extra },
+    { onConflict: "enrollment_id,card_id" },
+  );
+  return finalState;
+}
+const maskOf = (arr) => (arr || []).reduce((m, i) => m | (1 << Number(i)), 0);
+const todayStr = () => new Date().toISOString().slice(0, 10);
+async function totalPoints(supa, userId) {
+  const { data } = await supa.from("qsr_points_ledger").select("delta").eq("user_id", userId);
+  return (data || []).reduce((s, r) => s + (r.delta || 0), 0);
+}
+async function bumpStreak(supa, userId) {
+  const today = todayStr();
+  const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+  const { data: row } = await supa
+    .from("qsr_streaks").select("current, longest, last_active_date").eq("user_id", userId).maybeSingle();
+  let current = 1, longest = 1;
+  if (row) {
+    if (row.last_active_date === today) { current = row.current || 1; longest = row.longest || current; }
+    else {
+      current = row.last_active_date === yesterday ? (row.current || 0) + 1 : 1;
+      longest = Math.max(row.longest || 0, current);
+    }
+  }
+  await supa.from("qsr_streaks")
+    .upsert({ user_id: userId, current, longest, last_active_date: today, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+  return { current, longest };
+}
+async function evaluateBadges(supa, userId, ctx) {
+  const { data: badges } = await supa.from("qsr_badges").select("id, key");
+  const { data: earned } = await supa.from("qsr_user_badges").select("badge_id").eq("user_id", userId);
+  const earnedIds = new Set((earned || []).map((e) => e.badge_id));
+  const byKey = new Map((badges || []).map((b) => [b.key, b]));
+  const { count: completedCount } = await supa
+    .from("qsr_enrollments").select("id", { count: "exact", head: true }).eq("user_id", userId).eq("status", "completed");
+  const want = [
+    ["first_lesson", (completedCount || 0) >= 1],
+    ["perfect_score", !!ctx.perfect],
+    ["streak_3", (ctx.streakCurrent || 0) >= 3],
+    ["streak_7", (ctx.streakCurrent || 0) >= 7],
+  ];
+  const toAward = [];
+  for (const [key, ok] of want) {
+    const b = byKey.get(key);
+    if (ok && b && !earnedIds.has(b.id)) toAward.push({ user_id: userId, badge_id: b.id, key });
+  }
+  if (toAward.length) {
+    await supa.from("qsr_user_badges").insert(toAward.map(({ user_id, badge_id }) => ({ user_id, badge_id }))).then(() => {}, () => {});
+  }
+  return toAward.map((t) => t.key);
+}
+
+// ── actions ───────────────────────────────────────────────────────────────
+async function resolve(supa, body) {
+  const ctx = await resolveToken(supa, body?.token);
+  if (!ctx) return { error: "This training link is invalid or has been turned off.", status: 403 };
+  const { data: learners } = await supa.from("profiles")
+    .select("id, full_name, preferred_name").eq("primary_store_id", ctx.store.id).eq("is_active", true).order("full_name");
+  const { data: courses } = await supa.from("qsr_course_summary")
+    .select("id, title, category, est_minutes, card_count, points, total_points").eq("status", "published").order("title");
+  return {
+    store: ctx.store,
+    learners: (learners || []).map((p) => ({ id: p.id, name: p.preferred_name || p.full_name || "—" })),
+    courses: courses || [],
+  };
+}
+
+async function getLesson(supa, caller, courseId) {
+  if (!courseId) return { error: "course_id is required.", status: 400 };
+  const { data: course } = await supa
+    .from("qsr_courses").select("id, title, category, description, status, est_minutes, points").eq("id", courseId).maybeSingle();
+  if (!course || course.status !== "published") return { error: "Course not available.", status: 403 };
+  const { data: lessons } = await supa
+    .from("qsr_lessons").select("id, title, module, ord").eq("course_id", courseId).order("ord");
+  const lesson = lessons?.[0];
+  if (!lesson) return { error: "Lesson not found.", status: 404 };
+  const { data: cards } = await supa
+    .from("qsr_cards").select("id, ord, type, data").eq("lesson_id", lesson.id).order("ord");
+  const enrollment = await ensureEnrollment(supa, caller.id, courseId);
+  const { data: prog } = await supa
+    .from("qsr_card_progress").select("card_id, state, answer_index, correct, watched_pct").eq("enrollment_id", enrollment.id);
+  const progByCard = new Map((prog || []).map((p) => [p.card_id, p]));
+  const safeCards = [];
+  for (const c of cards || []) {
+    let data = c.data || {};
+    if (c.type === "quiz") { const { answer, answers, explain, ...rest } = data; data = rest; }
+    if (c.type === "poll") {
+      const optionCount = Array.isArray(data.options) ? data.options.length : 0;
+      data = { ...data, results: await pollCounts(supa, c.id, optionCount) };
+    }
+    safeCards.push({ id: c.id, ord: c.ord, type: c.type, data, progress: progByCard.get(c.id) || null });
+  }
+  return { course, lesson, enrollmentId: enrollment.id, cards: safeCards };
+}
+
+async function recordProgress(supa, caller, body) {
+  const { card_id, state, watched_pct } = body || {};
+  if (!card_id || !state) return { error: "card_id and state are required.", status: 400 };
+  const ctx = await courseIdForCard(supa, card_id);
+  if (!ctx?.courseId) return { error: "Card not found.", status: 404 };
+  const enrollment = await ensureEnrollment(supa, caller.id, ctx.courseId);
+  let passable;
+  const extra = {};
+  if (ctx.card.type === "video" && watched_pct != null) {
+    extra.watched_pct = Number(watched_pct);
+    const threshold = Number(ctx.card.data?.threshold ?? DEFAULT_VIDEO_THRESHOLD);
+    passable = Number(watched_pct) >= threshold;
+  }
+  const finalState = await upsertProgressUpgrade(supa, enrollment.id, card_id, state, extra);
+  return { ok: true, state: finalState, passable };
+}
+
+async function answerQuiz(supa, caller, body) {
+  const { card_id, answer_index, answer_indices } = body || {};
+  if (!card_id) return { error: "card_id is required.", status: 400 };
+  const { data: card } = await supa.from("qsr_cards").select("id, type, data, lesson_id").eq("id", card_id).maybeSingle();
+  if (!card || card.type !== "quiz") return { error: "Not a quiz card.", status: 400 };
+  const d = card.data || {};
+  const multi = !!d.multi;
+  let correct, storedIndex, correctAnswers;
+  if (multi) {
+    if (!Array.isArray(answer_indices)) return { error: "answer_indices is required for a multi-select quiz.", status: 400 };
+    const sel = answer_indices.map(Number).filter((x) => Number.isInteger(x) && x >= 0);
+    const correctSet = (Array.isArray(d.answers) ? d.answers : []).map(Number);
+    correct = maskOf(sel) === maskOf(correctSet);
+    storedIndex = maskOf(sel);
+    correctAnswers = correctSet;
+  } else {
+    if (answer_index == null) return { error: "answer_index is required.", status: 400 };
+    correct = Number(answer_index) === Number(d.answer);
+    storedIndex = Number(answer_index);
+    correctAnswers = d.answer == null ? [] : [Number(d.answer)];
+  }
+  const cardPoints = Number(d.points ?? 10);
+  const { data: prior } = await supa
+    .from("qsr_quiz_attempts").select("id").eq("user_id", caller.id).eq("card_id", card_id).eq("correct", true).limit(1);
+  const pointsAwarded = correct && (!prior || prior.length === 0) ? cardPoints : 0;
+  await supa.from("qsr_quiz_attempts").insert({ user_id: caller.id, card_id, answer_index: storedIndex, correct, points_awarded: pointsAwarded });
+  const ctx = await courseIdForCard(supa, card_id);
+  const enrollment = await ensureEnrollment(supa, caller.id, ctx.courseId);
+  await upsertProgressUpgrade(supa, enrollment.id, card_id, correct ? "passed" : "answered", { answer_index: storedIndex, correct });
+  if (pointsAwarded > 0) {
+    await supa.from("qsr_points_ledger")
+      .insert({ user_id: caller.id, delta: pointsAwarded, reason: "quiz_correct", card_id, course_id: ctx.courseId })
+      .then(() => {}, () => {});
+  }
+  return { ok: true, correct, pointsAwarded, answer: multi ? null : Number(d.answer), answers: correctAnswers, multi, explain: d.explain ?? null };
+}
+
+async function votePoll(supa, caller, body) {
+  const { card_id, option_index } = body || {};
+  if (!card_id || option_index == null) return { error: "card_id and option_index are required.", status: 400 };
+  const { data: card } = await supa.from("qsr_cards").select("id, type, data, lesson_id").eq("id", card_id).maybeSingle();
+  if (!card || card.type !== "poll") return { error: "Not a poll card.", status: 400 };
+  const ctx = await courseIdForCard(supa, card_id);
+  const enrollment = await ensureEnrollment(supa, caller.id, ctx.courseId);
+  await upsertProgressUpgrade(supa, enrollment.id, card_id, "answered", { answer_index: Number(option_index) });
+  const optionCount = Array.isArray(card.data?.options) ? card.data.options.length : 0;
+  return { ok: true, results: await pollCounts(supa, card_id, optionCount) };
+}
+
+async function completeLesson(supa, caller, body) {
+  const { course_id } = body || {};
+  if (!course_id) return { error: "course_id is required.", status: 400 };
+  const { data: course } = await supa.from("qsr_courses").select("id, points").eq("id", course_id).maybeSingle();
+  if (!course) return { error: "Course not found.", status: 404 };
+  const enrollment = await ensureEnrollment(supa, caller.id, course_id);
+  await supa.from("qsr_enrollments")
+    .update({ status: "completed", completed_at: new Date().toISOString() }).eq("id", enrollment.id);
+  if (course.points) {
+    await supa.from("qsr_points_ledger")
+      .insert({ user_id: caller.id, delta: course.points, reason: "lesson_complete", course_id })
+      .then(() => {}, () => {});
+  }
+  const { data: lessons } = await supa.from("qsr_lessons").select("id").eq("course_id", course_id);
+  const lessonIds = (lessons || []).map((l) => l.id);
+  const { data: quizCards } = lessonIds.length
+    ? await supa.from("qsr_cards").select("id").eq("type", "quiz").in("lesson_id", lessonIds) : { data: [] };
+  const quizIds = (quizCards || []).map((c) => c.id);
+  let correctCount = 0;
+  if (quizIds.length) {
+    const { data: attempts } = await supa
+      .from("qsr_quiz_attempts").select("card_id, correct").eq("user_id", caller.id).in("card_id", quizIds);
+    const correctByCard = new Set();
+    for (const a of attempts || []) if (a.correct) correctByCard.add(a.card_id);
+    correctCount = correctByCard.size;
+  }
+  const perfect = quizIds.length > 0 && correctCount === quizIds.length;
+  const streak = await bumpStreak(supa, caller.id);
+  const points = await totalPoints(supa, caller.id);
+  const newBadges = await evaluateBadges(supa, caller.id, { perfect, streakCurrent: streak.current });
+  return { ok: true, points, score: `${correctCount}/${quizIds.length}`, streak: streak.current, longest: streak.longest, newBadges };
+}
+
+function unwrap(result) {
+  if (result && typeof result === "object" && "error" in result && "status" in result) return respond(result.status, { error: result.error });
+  return respond(200, result);
+}
+
+export const handler = async (event) => {
+  if (event.httpMethod === "OPTIONS") return respond(204, {});
+  let supa;
+  try { supa = admin(); } catch (e) { return respond(500, { error: e.message }); }
+  let body = {};
+  if (event.httpMethod === "POST") { try { body = JSON.parse(event.body || "{}"); } catch { body = {}; } }
+  const action = (event.queryStringParameters || {}).action || "resolve";
+
+  try {
+    if (action === "resolve") return unwrap(await resolve(supa, body));
+    // Every other action is learner-scoped: resolve+validate the token & learner.
+    const g = await gate(supa, body);
+    if (g.error) return respond(g.status, { error: g.error });
+    const caller = g.caller;
+    if (action === "lesson") return unwrap(await getLesson(supa, caller, body.course_id));
+    if (action === "progress") return unwrap(await recordProgress(supa, caller, body));
+    if (action === "quiz") return unwrap(await answerQuiz(supa, caller, body));
+    if (action === "poll") return unwrap(await votePoll(supa, caller, body));
+    if (action === "complete") return unwrap(await completeLesson(supa, caller, body));
+    return respond(400, { error: `Unknown action: ${action}` });
+  } catch (e) {
+    return respond(500, { error: e.message || "server error" });
+  }
+};

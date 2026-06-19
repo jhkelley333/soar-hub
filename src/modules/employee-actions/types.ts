@@ -41,6 +41,7 @@ export interface TrainingCreditRow {
   approved_by_email: string | null;
   decision_note: string | null;
   rejection_reason: string | null;
+  withdrawn_reason: string | null;
   // Post-approval tracking
   entered_at: string | null;
   closed_out_at: string | null;
@@ -79,6 +80,7 @@ export interface PtoRow {
   approved_by_email: string | null;
   decision_note: string | null;
   rejection_reason: string | null;
+  withdrawn_reason: string | null;
   // Post-approval tracking
   paf_submitted_at: string | null;
   closed_at: string | null;

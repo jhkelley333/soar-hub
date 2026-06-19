@@ -1252,6 +1252,15 @@ export const handler = async (event) => {
           message: 'A vendor is required. Choose one, or mark "Need help finding a vendor".',
         });
       }
+      // A photo is required on every work order. The client sends the first
+      // photo (base64) here so it's bound to creation server-side — no
+      // work order can exist without one. Additional photos upload after.
+      if (!Array.isArray(photos) || photos.length === 0 || !photos[0]?.data) {
+        return respond(400, {
+          ok: false,
+          message: "At least one photo is required (one should show the serial / model number).",
+        });
+      }
 
       // When a cost breakdown is supplied, it is the source of truth for
       // the total — keep cost_estimate in sync so existing readers (list,
@@ -1297,6 +1306,31 @@ export const handler = async (event) => {
         .single();
       if (ticketError) throw ticketError;
 
+      // Upload the required submission photo(s) bound to creation. If the
+      // first (required) photo can't be stored, roll the ticket back so we
+      // never leave a photo-less work order. Done before activities so a
+      // rollback leaves nothing behind.
+      const submissionPhotoRows = [];
+      for (const p of photos) {
+        if (!p?.data) continue;
+        const buf = Buffer.from(p.data, "base64");
+        const ext = (p.name || "photo.jpg").split(".").pop();
+        const path = `${ticket.id}/${Date.now()}-${submissionPhotoRows.length}.${ext}`;
+        const { error: upErr } = await supabase.storage
+          .from(PHOTOS_BUCKET)
+          .upload(path, buf, { contentType: p.type || "image/jpeg", upsert: false });
+        if (upErr) {
+          await supabase.from("tickets").delete().eq("id", ticket.id);
+          return respond(500, { ok: false, message: "Couldn't store the photo — please retry." });
+        }
+        const url = supabase.storage.from(PHOTOS_BUCKET).getPublicUrl(path).data.publicUrl || path;
+        submissionPhotoRows.push({
+          ticket_id: ticket.id, file_url: url, file_name: p.name || "",
+          file_size: buf.length, mime_type: p.type || "", uploaded_by: userName, upload_type: "submission",
+        });
+      }
+      if (submissionPhotoRows.length) await supabase.from("ticket_photos").insert(submissionPhotoRows);
+
       await supabase.from("ticket_activities").insert({
         ticket_id:   ticket.id,
         user_id:     userId,
@@ -1322,19 +1356,6 @@ export const handler = async (event) => {
           event_data:  { wo_number: woNumber },
           visibility:  "all",
         });
-      }
-
-      if (photos && photos.length) {
-        const photoRows = photos.map((p) => ({
-          ticket_id:   ticket.id,
-          file_url:    p.url || "",
-          file_name:   p.name || "",
-          file_size:   p.size || 0,
-          mime_type:   p.mimeType || "",
-          uploaded_by: userName,
-          upload_type: "submission",
-        }));
-        await supabase.from("ticket_photos").insert(photoRows);
       }
 
       try {
@@ -1375,6 +1396,16 @@ export const handler = async (event) => {
         const { data: existing } = await supabase
           .from("tickets").select("id, wo_number").eq("id", ca.work_order_ticket_id).maybeSingle();
         if (existing) return respond(200, { ok: true, ticket: existing, woNumber: existing.wo_number, alreadyLinked: true });
+      }
+
+      // A work order requires a photo — the corrective action must carry at
+      // least one origin photo from the walkthrough before it can spawn one.
+      const capaPhotoIds = Array.isArray(ca.origin_photo_ids) ? ca.origin_photo_ids : [];
+      if (capaPhotoIds.length === 0) {
+        return respond(400, {
+          ok: false,
+          message: "This corrective action has no photo. Add a photo to the walkthrough item before raising a work order.",
+        });
       }
 
       const { data: store } = await supabase
@@ -1956,6 +1987,7 @@ export const handler = async (event) => {
       // quote). Above the top active tier it's verbal/Owner: only that
       // top tier or higher may record it, and only with verbal=true.
       let approvalNote = notes || "";
+      let approvedViaWhatsapp = false;
       if (decision === "Approved") {
         let amountCents = 0;
         if (quoteId) {
@@ -1985,6 +2017,7 @@ export const handler = async (event) => {
               });
             }
             approvalNote = `${approvalNote ? approvalNote + " " : ""}— verbal approval (WhatsApp/Owner) recorded by ${userName}`;
+            approvedViaWhatsapp = true;
           } else {
             const required = active.find((t) => t.nte_cents >= amountCents);
             if (!callerRow || !required || callerRow.sort_order < required.sort_order) {
@@ -1997,15 +2030,20 @@ export const handler = async (event) => {
         }
       }
 
-      await supabase
+      // Throw on failure so the decision can't half-apply — a silent failure
+      // here (e.g. a pending migration) previously left the approval row
+      // Pending while the ticket + activity log showed Approved.
+      const { error: apprUpdErr } = await supabase
         .from("ticket_approvals")
         .update({
-          status:      decision,
-          approved_by: userName,
-          approved_at: new Date().toISOString(),
-          notes:       approvalNote,
+          status:                decision,
+          approved_by:           userName,
+          approved_at:           new Date().toISOString(),
+          notes:                 approvalNote,
+          approved_via_whatsapp: approvedViaWhatsapp,
         })
         .eq("id", approvalId);
+      if (apprUpdErr) throw apprUpdErr;
 
       // Approving against a specific quote commits it: that quote becomes
       // the recommended one and its total becomes the ticket's cost.
@@ -2120,6 +2158,8 @@ export const handler = async (event) => {
         fileData, fileName, fileType, isRecommended,
       } = JSON.parse(event.body);
       if (!ticketId) return respond(400, { ok: false, message: "ticketId required." });
+      // A quote must include its document.
+      if (!fileData) return respond(400, { ok: false, message: "Attach the quote document (PDF or image)." });
 
       let fileUrl = null;
       if (fileData) {

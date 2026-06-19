@@ -17,13 +17,15 @@ import {
   BadgeCheck,
   Wrench,
   Trophy,
-  Route,
   Banknote,
+  LayoutGrid,
+  GraduationCap,
   ChevronRight,
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
+import { FISCAL, fiscalInfo, fiscalWeekLabel } from "@/lib/fiscal";
 import { Drawer } from "@/shared/ui/Drawer";
 import { fetchApprovalsQueue, relativeTime } from "@/modules/approvals/api";
 import { fetchBirthdays, fetchMyTree, launchScopeLabel } from "@/modules/my-stores/api";
@@ -39,6 +41,12 @@ import { fetchCashBadges } from "@/modules/cash-management/api";
 const CASH_ROLES = new Set([
   "gm", "shift_manager", "first_assistant_manager", "associate_manager",
   "crew_leader", "do", "sdo", "rvp", "vp", "coo", "admin", "accounting",
+]);
+
+// Coaching Tool Kit — hourly managers and above (mirrors the nav/route gate).
+const COACH_ROLES = new Set([
+  "shift_manager", "first_assistant_manager", "associate_manager",
+  "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin",
 ]);
 
 function greetingFor(d = new Date()): string {
@@ -93,6 +101,7 @@ export function MobileHome() {
     staleTime: 60_000,
   });
   const canCash = !!role && CASH_ROLES.has(role);
+  const canCoach = !!role && COACH_ROLES.has(role);
   const cashBadgesQ = useQuery({
     queryKey: ["cash-badges"],
     queryFn: fetchCashBadges,
@@ -121,6 +130,7 @@ export function MobileHome() {
   const birthdayCount = birthdaysQ.data?.entries.length ?? 0;
 
   const scopeFull = role && treeQ.data ? launchScopeLabel(treeQ.data, role) : null;
+  const fInfo = fiscalInfo(new Date());
 
   const num = (q: { isLoading: boolean }, v: number) => (q.isLoading ? "—" : String(v));
 
@@ -168,6 +178,11 @@ export function MobileHome() {
               {role.toUpperCase()}
               {scopeFull ? ` · ${scopeFull}` : ""}
             </p>
+          )}
+          {fInfo && (
+            <span className="mt-1.5 inline-flex items-center rounded-full bg-accent/10 px-2 py-0.5 text-[10.5px] font-semibold text-accent">
+              {FISCAL.label} · P{fInfo.period} W{fInfo.weekInPeriod} · {fiscalWeekLabel(fInfo.fiscalWeek)}
+            </span>
           )}
         </div>
         <div className="ml-3 flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-frost-100 text-[13px] font-semibold text-midnight-700 ring-1 ring-midnight-100">
@@ -243,11 +258,11 @@ export function MobileHome() {
           sub={`${itemsNeedYou} pending`}
         />
         <QuickAction
-          to="/walkthrough"
-          Icon={Route}
+          to="/operations"
+          Icon={LayoutGrid}
           gradient="linear-gradient(135deg,#3f6d97,#21496f)"
-          title="Walkthrough"
-          sub="Start new"
+          title="Operations Tools"
+          sub="Audits & walks"
         />
         <QuickAction
           to="/ranker"
@@ -290,6 +305,27 @@ export function MobileHome() {
                   .filter(Boolean)
                   .join(" · ");
               })()}
+            </p>
+          </div>
+          <ChevronRight className="h-5 w-5 shrink-0 text-midnight-300" />
+        </Link>
+      )}
+
+      {canCoach && (
+        <Link
+          to="/coaching"
+          className="mt-3 flex items-center gap-3 rounded-2xl bg-surface p-4 shadow-card ring-1 ring-midnight-100 transition active:scale-[0.99]"
+        >
+          <div
+            className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-white"
+            style={{ background: "linear-gradient(135deg,#7c5cd6,#5b3fb0)" }}
+          >
+            <GraduationCap className="h-[19px] w-[19px]" strokeWidth={2} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="text-[14px] font-semibold text-midnight-900">Coaching Tool Kit</p>
+            <p className="truncate text-[12.5px] text-midnight-500">
+              Coaching cards for the moment
             </p>
           </div>
           <ChevronRight className="h-5 w-5 shrink-0 text-midnight-300" />

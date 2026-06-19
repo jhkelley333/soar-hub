@@ -11,11 +11,11 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const VARIANT: Record<Variant, string> = {
   primary:
-    "bg-accent text-accent-fg hover:bg-accent-hover disabled:bg-zinc-300 disabled:text-zinc-500",
+    "bg-accent text-accent-fg hover:bg-accent-hover disabled:bg-surface-sunk disabled:text-ink-subtle",
   secondary:
-    "bg-white text-midnight ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50 disabled:text-zinc-400",
+    "bg-surface text-heading ring-1 ring-inset ring-border hover:bg-surface-muted disabled:text-ink-subtle",
   ghost:
-    "text-zinc-700 hover:bg-zinc-100 disabled:text-zinc-400",
+    "text-ink-muted hover:bg-surface-muted disabled:text-ink-subtle",
   danger:
     "bg-cherry text-white hover:bg-cherry-hover disabled:bg-red-300",
 };

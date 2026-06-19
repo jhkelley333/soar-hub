@@ -17,6 +17,7 @@ const AUDIT_LABEL: Record<string, string> = {
   "mark-processed": "Marked Processed",
   "sdo-approved": "Approved by SDO",
   "sdo-rejected": "Rejected by SDO",
+  "notify-approver": "Approver notified",
   delete: "Deleted by System Admin",
 };
 
@@ -106,6 +107,21 @@ export function PafDetail({ paf }: { paf: PafRow }) {
             )}
             {Number(paf.declared_tips) > 0 && (
               <Field label="Declared Tips" value={formatUSD(Number(paf.declared_tips))} />
+            )}
+          </Grid>
+        </Section>
+      )}
+
+      {paf.category === "Backpay" && (
+        <Section title="Back Pay">
+          <Grid>
+            <Field label="Type" value={paf.backpay_type === "partial" ? "Partial — netted to remaining owed" : "Full"} />
+            {paf.backpay_type === "partial" && (
+              <>
+                <Field label="Already Paid — Regular" value={formatUSD(Number(paf.backpay_paid_reg ?? 0))} />
+                <Field label="Already Paid — CC Tips" value={formatUSD(Number(paf.backpay_paid_cc_tips ?? 0))} />
+                <Field label="Already Paid — Declared Tips" value={formatUSD(Number(paf.backpay_paid_declared_tips ?? 0))} />
+              </>
             )}
           </Grid>
         </Section>

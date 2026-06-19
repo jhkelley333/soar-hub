@@ -38,9 +38,10 @@
 //   LABOR_SHEET_ID                spreadsheet id (defaults to the known sheet)
 //   LABOR_SHEET_TAB               tab name (default "Labor")
 //   LABOR_SHEET_RANGE             range (default "A1:AB1000")
-//   LABOR_POLL_TZ                 business-hours tz (default America/Chicago)
-//   LABOR_POLL_START_HOUR         first hour to poll, local (default 4)
-//   LABOR_POLL_END_HOUR           last hour to poll, local (default 23)
+//   LABOR_POLL_TZ                 poll-window tz (default America/Chicago)
+//   LABOR_POLL_START              window open, local "HH:MM" (default 07:30)
+//   LABOR_POLL_END                window close, local "HH:MM" (default 14:00)
+//                                 (legacy LABOR_POLL_START_HOUR/END_HOUR honored)
 //   SUPABASE_* / VITE_SUPABASE_*  standard service-role access
 
 import { createClient } from "@supabase/supabase-js";
@@ -62,13 +63,39 @@ const SHEET_TAB = process.env.LABOR_SHEET_TAB || "Labor";
 const SHEET_RANGE = process.env.LABOR_SHEET_RANGE || "A1:AB1000";
 
 const POLL_TZ = process.env.LABOR_POLL_TZ || "America/Chicago";
-const POLL_START_HOUR = intEnv(process.env.LABOR_POLL_START_HOUR, 4);
-const POLL_END_HOUR = intEnv(process.env.LABOR_POLL_END_HOUR, 23);
 
-function intEnv(v, dflt) {
-  const n = parseInt(v, 10);
-  return Number.isFinite(n) ? n : dflt;
+// Poll window, local to POLL_TZ, stored as minutes-since-midnight so it can
+// start/end on the half hour. Set via LABOR_POLL_START / LABOR_POLL_END as
+// "HH:MM" (or a bare hour); the legacy *_HOUR vars still work as a fallback.
+// Default 07:30–14:00 — back office fills the sheet late-morning through
+// early afternoon. Both ends are inclusive to the minute.
+const POLL_START_MIN = minutesEnv(
+  process.env.LABOR_POLL_START,
+  process.env.LABOR_POLL_START_HOUR,
+  7 * 60 + 30,
+);
+const POLL_END_MIN = minutesEnv(
+  process.env.LABOR_POLL_END,
+  process.env.LABOR_POLL_END_HOUR,
+  14 * 60,
+);
+
+// Parse a clock time to minutes-of-day. Prefers an "HH:MM"/bare-hour string,
+// then a legacy bare-hour value, then the default (already in minutes).
+function minutesEnv(timeStr, legacyHour, dflt) {
+  if (timeStr != null && String(timeStr).trim() !== "") {
+    const m = String(timeStr).trim().match(/^(\d{1,2})(?::(\d{2}))?$/);
+    if (m) {
+      const h = Math.min(23, parseInt(m[1], 10));
+      const mm = m[2] ? Math.min(59, parseInt(m[2], 10)) : 0;
+      return h * 60 + mm;
+    }
+  }
+  const lh = parseInt(legacyHour, 10);
+  if (Number.isFinite(lh)) return lh * 60;
+  return dflt;
 }
+
 
 function admin() {
   return createClient(SUPABASE_URL, SERVICE_KEY, {
@@ -237,14 +264,15 @@ function findBusinessDate(rows, headerIdx) {
   return null;
 }
 
-// Hour-of-day in `tz` for a given instant (for the business-hours gate).
-function hourInTz(date, tz) {
-  const h = new Intl.DateTimeFormat("en-US", {
-    timeZone: tz, hour: "2-digit", hour12: false,
-  }).formatToParts(date).find((p) => p.type === "hour")?.value;
-  let n = parseInt(h, 10);
-  if (n === 24) n = 0;
-  return n;
+// Minutes-since-midnight in `tz` for a given instant (poll-window gate).
+function minuteOfDayInTz(date, tz) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(date);
+  let h = parseInt(parts.find((p) => p.type === "hour")?.value, 10);
+  const m = parseInt(parts.find((p) => p.type === "minute")?.value, 10);
+  if (h === 24) h = 0;
+  return h * 60 + m;
 }
 
 // Stable content hash of the mapped snapshot rows — the change signal.
@@ -318,11 +346,11 @@ export const handler = async (event) => {
   // Business-hours gate: outside the window there's nothing new to capture,
   // so skip the sheet read entirely. ?force or ?dry bypasses it.
   if (!force && !dry) {
-    const localHour = hourInTz(new Date(), POLL_TZ);
-    if (localHour < POLL_START_HOUR || localHour > POLL_END_HOUR) {
+    const localMin = minuteOfDayInTz(new Date(), POLL_TZ);
+    if (localMin < POLL_START_MIN || localMin > POLL_END_MIN) {
       return {
         statusCode: 200,
-        body: JSON.stringify({ skipped: true, reason: "outside poll window", localHour }),
+        body: JSON.stringify({ skipped: true, reason: "outside poll window", localMin }),
       };
     }
   }
@@ -463,9 +491,10 @@ export const handler = async (event) => {
 };
 
 // Schedule config — Netlify reads this export. Poll every 15 minutes; the
-// handler gates itself to business hours (LABOR_POLL_START_HOUR..END_HOUR
-// in LABOR_POLL_TZ) and only upserts when the sheet content changed, so
-// off-hours and no-change polls are cheap. This is what lets the snapshot
+// handler gates itself to the poll window (LABOR_POLL_START..LABOR_POLL_END
+// in LABOR_POLL_TZ, default 07:30–14:00) and only upserts when the sheet
+// content changed, so off-window and no-change polls are cheap. This is what
+// lets the snapshot
 // follow back office filling the sheet at different times instead of
 // betting on one nightly capture.
 export const config = {
