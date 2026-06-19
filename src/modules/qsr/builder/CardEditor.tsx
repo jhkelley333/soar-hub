@@ -78,15 +78,18 @@ export function CardEditor({ type, data, setData }: { type: CardType; data: Data
   const set = (k: string, v: unknown) => setData({ ...data, [k]: v });
   const arr = <T,>(k: string): T[] => (Array.isArray(data[k]) ? (data[k] as T[]) : []);
 
-  const Kicker = () => <Field label="Kicker (small label)"><Text value={data.kicker} onChange={(v) => set("kicker", v)} placeholder="e.g. Carhop Service" /></Field>;
-  const Title = () => <Field label="Title"><Text value={data.title} onChange={(v) => set("title", v)} placeholder="Card title" /></Field>;
+  // Plain elements, not components — rendering `{kicker}` from a function
+  // defined in the render body gives it a new identity every keystroke, which
+  // remounts the input and drops focus. Elements inline without remounting.
+  const kicker = <Field label="Kicker (small label)"><Text value={data.kicker} onChange={(v) => set("kicker", v)} placeholder="e.g. Carhop Service" /></Field>;
+  const title = <Field label="Title"><Text value={data.title} onChange={(v) => set("title", v)} placeholder="Card title" /></Field>;
 
   switch (type) {
     case "intro": {
       const meta = arr<{ v: string; k: string }>("meta");
       return (
         <div className="space-y-3">
-          <Kicker /><Title />
+          {kicker}{title}
           <Field label="Body"><Area value={data.body} onChange={(v) => set("body", v)} /></Field>
           <Field label="Meta chips (value · label)">
             <div className="space-y-2">
@@ -107,7 +110,7 @@ export function CardEditor({ type, data, setData }: { type: CardType; data: Data
       const steps = arr<{ t: string; d?: string }>("steps");
       return (
         <div className="space-y-3">
-          <Kicker /><Title />
+          {kicker}{title}
           <Field label="Steps">
             <div className="space-y-2">
               {steps.map((s, i) => (
@@ -129,7 +132,7 @@ export function CardEditor({ type, data, setData }: { type: CardType; data: Data
     case "image":
       return (
         <div className="space-y-3">
-          <Kicker /><Title />
+          {kicker}{title}
           <Field label="Body"><Area value={data.body} onChange={(v) => set("body", v)} /></Field>
           <Field label="Image URL (optional — media milestone)"><Text value={data.imageUrl} onChange={(v) => set("imageUrl", v || null)} placeholder="https://…" /></Field>
         </div>
@@ -137,7 +140,7 @@ export function CardEditor({ type, data, setData }: { type: CardType; data: Data
     case "video":
       return (
         <div className="space-y-3">
-          <Kicker /><Title />
+          {kicker}{title}
           <Field label="Body"><Area value={data.body} onChange={(v) => set("body", v)} /></Field>
           <Field label="Mux playback ID (optional — media milestone)"><Text value={data.muxPlaybackId} onChange={(v) => set("muxPlaybackId", v || null)} /></Field>
           <div className="flex items-center gap-4">
@@ -154,7 +157,7 @@ export function CardEditor({ type, data, setData }: { type: CardType; data: Data
     case "quiz":
       return (
         <div className="space-y-3">
-          <Kicker />
+          {kicker}
           <Field label="Question"><Area value={data.q} onChange={(v) => set("q", v)} rows={2} /></Field>
           <Field label="Options (select the correct one)">
             <OptionList options={arr<string>("options")} answer={data.answer as number} onOptions={(v) => set("options", v)} onAnswer={(i) => set("answer", i)} />
@@ -168,14 +171,14 @@ export function CardEditor({ type, data, setData }: { type: CardType; data: Data
     case "reveal":
       return (
         <div className="space-y-3">
-          <Kicker /><Title />
+          {kicker}{title}
           <Field label="Reveal text (hidden until tapped)"><Area value={data.reveal} onChange={(v) => set("reveal", v)} /></Field>
         </div>
       );
     case "poll":
       return (
         <div className="space-y-3">
-          <Kicker />
+          {kicker}
           <Field label="Question"><Area value={data.q} onChange={(v) => set("q", v)} rows={2} /></Field>
           <Field label="Options"><OptionList options={arr<string>("options")} onOptions={(v) => set("options", v)} /></Field>
           <p className="font-qsr-ui text-[11px] text-ink-subtle">Results are tallied server-side and start at zero.</p>
@@ -184,7 +187,7 @@ export function CardEditor({ type, data, setData }: { type: CardType; data: Data
     case "done":
       return (
         <div className="space-y-3">
-          <Title />
+          {title}
           <Field label="Body"><Area value={data.body} onChange={(v) => set("body", v)} /></Field>
           <p className="font-qsr-ui text-[11px] text-ink-subtle">Points/score/streak are filled in by the server on completion.</p>
         </div>
