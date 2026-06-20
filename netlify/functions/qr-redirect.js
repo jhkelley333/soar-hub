@@ -42,15 +42,22 @@ export const handler = async (event) => {
     return notFound(row && !row.is_active ? "This QR code has been deactivated." : undefined);
   }
 
-  // Count the scan, but never block the redirect on it.
-  supa.rpc("increment_qr_scan", { p_id: row.id }).then(
-    () => {},
-    async () => {
-      // Fallback if the RPC isn't present: best-effort read-modify-write.
+  // Count the scan. We must AWAIT this: a serverless function freezes its
+  // container the instant the handler returns, so a fire-and-forget write gets
+  // dropped and the count never moves. A single UPDATE is a couple of ms — well
+  // worth it to count reliably. Counting must still never break the redirect,
+  // so any failure is swallowed.
+  try {
+    // PostgREST surfaces a missing-RPC as a resolved { error }, not a throw, so
+    // branch on error (not catch) to reach the read-modify-write fallback.
+    const { error } = await supa.rpc("increment_qr_scan", { p_id: row.id });
+    if (error) {
       const { data: cur } = await supa.from("qr_codes").select("scan_count").eq("id", row.id).maybeSingle();
-      await supa.from("qr_codes").update({ scan_count: (cur?.scan_count || 0) + 1 }).eq("id", row.id).then(() => {}, () => {});
-    },
-  );
+      await supa.from("qr_codes").update({ scan_count: (cur?.scan_count || 0) + 1 }).eq("id", row.id);
+    }
+  } catch {
+    /* never block the redirect on counting */
+  }
 
   return {
     statusCode: 302,
