@@ -124,6 +124,62 @@ function StyleEditor({
         </div>
       </div>
       {logoErr && <p className="mt-1.5 text-xs text-red-600">{logoErr}</p>}
+
+      {/* Caption frame — words around the QR */}
+      <div className="mt-3 border-t border-zinc-200 pt-3 dark:border-night-line">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs">
+            <span className="font-semibold uppercase tracking-wide text-ink-subtle">Frame</span>
+            <select
+              value={style.frame || "none"}
+              onChange={(e) => {
+                const frame = e.target.value as QrStyle["frame"];
+                set(frame === "none" ? { frame } : { frame, frameText: style.frameText || "SCAN ME" });
+              }}
+              className="mt-1 w-full rounded-lg border border-zinc-200 px-2 py-1.5 text-sm dark:border-night-line dark:bg-night-base"
+            >
+              <option value="none">None</option>
+              <option value="label">Caption bar</option>
+              <option value="border">Framed border</option>
+            </select>
+          </label>
+
+          {style.frame && style.frame !== "none" && (
+            <>
+              <label className="text-xs">
+                <span className="font-semibold uppercase tracking-wide text-ink-subtle">Words</span>
+                <input
+                  value={style.frameText ?? ""}
+                  onChange={(e) => set({ frameText: e.target.value })}
+                  maxLength={40}
+                  placeholder="SCAN ME"
+                  className="mt-1 w-full rounded-lg border border-zinc-200 px-2.5 py-1.5 text-sm dark:border-night-line dark:bg-night-base"
+                />
+              </label>
+              <label className="text-xs">
+                <span className="font-semibold uppercase tracking-wide text-ink-subtle">Position</span>
+                <select value={style.framePosition || "bottom"} onChange={(e) => set({ framePosition: e.target.value as QrStyle["framePosition"] })} className="mt-1 w-full rounded-lg border border-zinc-200 px-2 py-1.5 text-sm dark:border-night-line dark:bg-night-base">
+                  <option value="bottom">Bottom</option>
+                  <option value="top">Top</option>
+                </select>
+              </label>
+              <div className="text-xs">
+                <span className="font-semibold uppercase tracking-wide text-ink-subtle">Frame colors</span>
+                <div className="mt-1 flex items-center gap-3">
+                  <label className="flex items-center gap-1.5" title="Bar / border color">
+                    <input type="color" value={style.frameColor || style.fg || "#0a0a0a"} onChange={(e) => set({ frameColor: e.target.value })} className={swatch} />
+                    <span className="text-ink-muted">Bar</span>
+                  </label>
+                  <label className="flex items-center gap-1.5" title="Caption text color">
+                    <input type="color" value={style.frameTextColor || "#ffffff"} onChange={(e) => set({ frameTextColor: e.target.value })} className={swatch} />
+                    <span className="text-ink-muted">Text</span>
+                  </label>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
