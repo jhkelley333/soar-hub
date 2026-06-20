@@ -22,6 +22,26 @@ function absoluteLocation(target) {
   return "https://" + t.replace(/^\/+/, "");
 }
 
+// Pull the code out of the request. The /q/* rewrite is supposed to pass it as
+// ?code=:splat, but Netlify's :splat interpolation INSIDE a query string on a
+// function rewrite is unreliable and frequently arrives empty. So we prefer the
+// query param when present, then fall back to parsing it out of the original
+// path / URL (/q/<code>) — which the proxy rewrite preserves on event.path and
+// event.rawUrl. This makes the redirect robust regardless of the toml quirk.
+function extractCode(event) {
+  const fromQuery = (event.queryStringParameters?.code || "").trim();
+  if (fromQuery && fromQuery !== ":splat") return fromQuery;
+  const sources = [event.path, event.rawUrl, event.headers?.["x-nf-original-pathname"]];
+  for (const src of sources) {
+    if (!src) continue;
+    const m = /\/q\/([^/?#]+)/i.exec(String(src));
+    if (m && m[1]) {
+      try { return decodeURIComponent(m[1]).trim(); } catch { return m[1].trim(); }
+    }
+  }
+  return "";
+}
+
 function notFound(message) {
   return {
     statusCode: 404,
@@ -37,7 +57,7 @@ function notFound(message) {
 }
 
 export const handler = async (event) => {
-  const code = (event.queryStringParameters?.code || "").trim();
+  const code = extractCode(event);
   if (!code) return notFound("No code was provided.");
   if (!SUPABASE_URL || !SERVICE_KEY) return notFound("Service unavailable.");
 
