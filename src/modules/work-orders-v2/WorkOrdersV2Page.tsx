@@ -53,6 +53,7 @@ import {
   type ThreadType,
 } from "./types";
 import { NewTicketModal } from "./NewTicketModal";
+import { LogWorkModal } from "./LogWorkModal";
 import { QueueTable } from "./QueueTable";
 import { QuotesSection } from "./mobile/QuotesSection";
 import { useFlag } from "@/lib/flags";
@@ -346,6 +347,7 @@ function TicketsTab() {
   const [openOnly, setOpenOnly] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [modalOpen, setModalOpen] = useState(false);
+  const [logOpen, setLogOpen] = useState(false); // record off-ticket work (DO+)
 
   // Redesigned queue view (flagged). When on, the list renders as the new
   // QueueTable and a single selected ticket opens in detail mode; when off,
@@ -469,6 +471,7 @@ function TicketsTab() {
             currentUserId={profile?.id ?? null}
             onOpen={openDetail}
             onNew={() => setModalOpen(true)}
+            onLogWork={isDoPlus(callerRole) ? () => setLogOpen(true) : undefined}
           />
         )}
 
@@ -478,6 +481,17 @@ function TicketsTab() {
           onCreated={(woNumber) => {
             setModalOpen(false);
             toast.push(`Ticket ${woNumber} created.`, "success");
+            refetchAll();
+          }}
+          onError={(msg) => toast.push(msg, "error")}
+        />
+
+        <LogWorkModal
+          open={logOpen}
+          onClose={() => setLogOpen(false)}
+          onLogged={(woNumber) => {
+            setLogOpen(false);
+            toast.push(`Recorded work — ${woNumber}.`, "success");
             refetchAll();
           }}
           onError={(msg) => toast.push(msg, "error")}

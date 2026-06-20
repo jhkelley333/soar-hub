@@ -181,6 +181,11 @@ export interface Ticket {
   closed_by_store?: boolean;
   callback_of?: string | null;
   related_to?: string | null;
+  // Work recorded after the fact (a store had a vendor do a job without a
+  // ticket). Lands as a closed ticket with the invoice attached. service_date
+  // is when the work was actually performed.
+  is_logged_offline?: boolean;
+  service_date?: string | null;
   completed_at?: string | null;
   closed_at?: string | null;
   priority: TicketPriority;

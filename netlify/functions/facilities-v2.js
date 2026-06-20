@@ -1311,6 +1311,114 @@ export const handler = async (event) => {
       return respond(200, { ok: true, thresholds: data || [] });
     }
 
+    // ── LOG OFF-TICKET WORK ──
+    // Record work a store had done WITHOUT a ticket. Creates a completed
+    // (closed) work order flagged is_logged_offline, attaches the invoice, and
+    // optionally sets the vendor as the store's go-to for that category so the
+    // next ticket routes to them. DO and above only.
+    if (action === "logWork" && event.httpMethod === "POST") {
+      if (roleLevel(role) > 3) {
+        return respond(403, { ok: false, message: "DO and above only." });
+      }
+      const body = JSON.parse(event.body || "{}");
+      const {
+        storeNumber, storeId, storeName, category, assetType, modelNumber,
+        vendorName, vendorId, serviceDate, cost, description,
+        resolutionCategory, setPreferred, invoice,
+      } = body;
+
+      if (!storeNumber) return respond(400, { ok: false, message: "Store is required." });
+      if (!vendorName || !String(vendorName).trim()) return respond(400, { ok: false, message: "Vendor is required." });
+      if (!description || !String(description).trim()) return respond(400, { ok: false, message: "Describe the work that was done." });
+      if (!serviceDate) return respond(400, { ok: false, message: "Service date is required." });
+      if (!invoice?.data) return respond(400, { ok: false, message: "Attach the invoice." });
+
+      // Scope: the store must be visible to the caller (admin/coo/vp see all).
+      const access = await getStoresForUser(supabase, profile);
+      if (!access.all && !access.stores.includes(String(storeNumber))) {
+        return respond(403, { ok: false, message: "That store isn't in your area." });
+      }
+
+      const costNum =
+        cost != null && cost !== "" && Number.isFinite(Number(cost)) ? Math.max(0, Number(cost)) : null;
+      const nowIso = new Date().toISOString();
+      const loggedWoNumber = await generateWONumber(supabase, storeNumber);
+
+      const { data: loggedTicket, error: logErr } = await supabase
+        .from("tickets")
+        .insert({
+          wo_number:            loggedWoNumber,
+          store_number:         storeNumber,
+          store_name:           storeName || "",
+          submitted_by:         userName,
+          submitted_by_user_id: userId,
+          category:             category || "",
+          asset_type:           assetType || "",
+          model_number:         modelNumber || "",
+          issue_description:    String(description).trim(),
+          status:               "closed",
+          is_logged_offline:    true,
+          service_date:         serviceDate,
+          priority:             "Standard",
+          is_business_critical: false,
+          vendor_name:          String(vendorName).trim(),
+          vendor_id:            vendorId || null,
+          needs_vendor_help:    false,
+          cost_estimate:        costNum,
+          admin_close_reason:   "completed_and_verified",
+          resolution_category:  resolutionCategory || "repaired",
+          date_submitted:       nowIso,
+          date_completed:       serviceDate,
+          completed_at:         nowIso,
+          closed_at:            nowIso,
+        })
+        .select()
+        .single();
+      if (logErr) throw logErr;
+
+      // Attach the invoice. Roll the ticket back if the upload fails so we
+      // never leave an invoice-less record.
+      const invBuf = Buffer.from(invoice.data, "base64");
+      const invExt = (invoice.name || "invoice.pdf").split(".").pop();
+      const invPath = `${loggedTicket.id}/${Date.now()}-invoice.${invExt}`;
+      const { error: invUpErr } = await supabase.storage
+        .from(PHOTOS_BUCKET)
+        .upload(invPath, invBuf, { contentType: invoice.type || "application/octet-stream", upsert: false });
+      if (invUpErr) {
+        await supabase.from("tickets").delete().eq("id", loggedTicket.id);
+        return respond(500, { ok: false, message: "Couldn't store the invoice — please retry." });
+      }
+      const invUrl = supabase.storage.from(PHOTOS_BUCKET).getPublicUrl(invPath).data.publicUrl || invPath;
+      await supabase.from("ticket_photos").insert({
+        ticket_id: loggedTicket.id, file_url: invUrl, file_name: invoice.name || "invoice",
+        file_size: invBuf.length, mime_type: invoice.type || "", uploaded_by: userName, upload_type: "invoice",
+      });
+
+      await supabase.from("ticket_activities").insert({
+        ticket_id: loggedTicket.id, user_id: userId, user_name: userName, user_role: role,
+        update_type: "created", new_value: "closed",
+        notes: `Off-ticket work logged — vendor ${String(vendorName).trim()}${costNum != null ? `, $${costNum.toFixed(2)}` : ""}`,
+        event_type: "work_logged",
+        event_data: { wo_number: loggedWoNumber, service_date: serviceDate, logged_offline: true },
+        visibility: "all",
+      });
+
+      // Optionally make this vendor the store's go-to for the category, so the
+      // next ticket for this kind of work suggests them. Best-effort.
+      if (setPreferred && vendorId && storeId && category) {
+        try {
+          await supabase.from("vendor_store_preferences").upsert(
+            { store_id: storeId, vendor_id: vendorId, category: String(category).trim(), rank: 1, notes: "Auto-set from logged work", created_by_id: userId },
+            { onConflict: "store_id,category,vendor_id" },
+          );
+        } catch (e) {
+          console.warn("[facilities-v2] logWork preference upsert failed", e);
+        }
+      }
+
+      return respond(200, { ok: true, ticket: loggedTicket, woNumber: loggedWoNumber });
+    }
+
     // ── CREATE TICKET ──
     if (action === "createTicket" && event.httpMethod === "POST") {
       const payload = JSON.parse(event.body);

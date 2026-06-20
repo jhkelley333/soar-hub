@@ -1,5 +1,5 @@
 import { useMemo, useState, type CSSProperties } from "react";
-import { Search, Plus, Download, MessageCircle } from "lucide-react";
+import { Search, Plus, Download, MessageCircle, ClipboardList } from "lucide-react";
 import {
   type Ticket,
   type TicketStatus,
@@ -67,6 +67,7 @@ export function QueueTable({
   onOpen,
   onNew,
   onExport,
+  onLogWork,
 }: {
   tickets: Ticket[];
   stats?: QueueStats;
@@ -74,6 +75,8 @@ export function QueueTable({
   onOpen: (id: string) => void;
   onNew: () => void;
   onExport?: () => void;
+  // DO+ only — record work a store had done without a ticket.
+  onLogWork?: () => void;
 }) {
   const [tab, setTab] = useState<TabId>("open");
   const [search, setSearch] = useState("");
@@ -163,6 +166,12 @@ export function QueueTable({
             <button type="button" onClick={() => setShowSnippet(true)} style={primaryBtnStyle}>
               <MessageCircle className="h-3.5 w-3.5" strokeWidth={1.9} />
               Send {selected.size} to vendor
+            </button>
+          )}
+          {onLogWork && (
+            <button type="button" onClick={onLogWork} style={secBtnStyle}>
+              <ClipboardList className="h-3.5 w-3.5" strokeWidth={1.75} />
+              Log work
             </button>
           )}
           {onExport && (
@@ -305,6 +314,11 @@ export function QueueTable({
                       <span style={{ width: 6, height: 6, flex: "0 0 6px", borderRadius: 6, background: WO.primary }} aria-label="unread" />
                     )}
                     <span style={{ fontWeight: 600, color: WO.primary, fontFamily: WO.mono, fontSize: 12 }}>{t.wo_number}</span>
+                    {t.is_logged_offline && (
+                      <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: ".06em", textTransform: "uppercase", color: WO.muted, border: `1px solid ${WO.line}`, borderRadius: 5, padding: "1px 5px" }}>
+                        Logged
+                      </span>
+                    )}
                   </div>
                 </td>
                 <td style={{ padding: "12px", verticalAlign: "top" }}>
