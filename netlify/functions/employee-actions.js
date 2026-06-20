@@ -1388,6 +1388,30 @@ async function decideBulk(supa, user, body) {
   return { ok: true, approved, failed, results };
 }
 
+// Run one post-approval confirm step (e.g. "entered" = mark on weekly sheet)
+// across many requests in a single call. Reuses confirm() per item, so every
+// per-request gate (actionableStep + store scope) and side effect (audit +
+// email) is identical to acting on them one at a time — this just saves the
+// approver from opening each drawer. Lets an RVP mark a whole week's worth of
+// training credits across multiple stores onto the weekly sheet at once.
+async function confirmBulk(supa, user, body) {
+  const items = Array.isArray(body?.items) ? body.items.slice(0, 200) : [];
+  const step = sanitizeText(body?.step, 20);
+  if (!items.length) return { error: "No requests selected.", status: 400 };
+  if (!step) return { error: "Missing step.", status: 400 };
+  let done = 0, failed = 0;
+  const results = [];
+  for (const it of items) {
+    const type = sanitizeText(it?.type, 20);
+    const id = sanitizeText(it?.id, 64);
+    if (!type || !id) { results.push({ id: id || null, ok: false, error: "Missing type or id." }); failed++; continue; }
+    const r = await confirm(supa, user, { type, id, step });
+    if (r && typeof r === "object" && "error" in r) { results.push({ id, ok: false, error: r.error }); failed++; }
+    else { results.push({ id, ok: true }); done++; }
+  }
+  return { ok: true, done, failed, results };
+}
+
 // HTTP handler
 // ----------------------------------------------------------------------------
 function unwrap(result) {
@@ -1429,6 +1453,7 @@ export const handler = async (event) => {
       if (action === "decide") return unwrap(await decide(supa, user, body));
       if (action === "decide-bulk") return unwrap(await decideBulk(supa, user, body));
       if (action === "confirm") return unwrap(await confirm(supa, user, body));
+      if (action === "confirm-bulk") return unwrap(await confirmBulk(supa, user, body));
       if (action === "withdraw") return unwrap(await withdrawRequest(supa, user, body));
       if (action === "delete") return unwrap(await deleteRequest(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });
