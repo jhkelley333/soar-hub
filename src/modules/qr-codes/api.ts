@@ -18,6 +18,18 @@ async function qrFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
+// Visual styling for a code (persisted as jsonb). All fields optional; the
+// renderer falls back to sensible defaults so old rows render fine.
+export interface QrStyle {
+  shape?: "square" | "circle"; // overall QR shape
+  dots?: "square" | "rounded" | "dots" | "classy" | "extra-rounded";
+  corners?: "square" | "dot" | "extra-rounded";
+  fg?: string; // foreground / dots color
+  bg?: string; // background color
+  gradient?: boolean; // linear gradient on the dots
+  fg2?: string; // gradient end color
+}
+
 export interface QrCode {
   id: string;
   code: string;
@@ -25,6 +37,8 @@ export interface QrCode {
   target_url: string;
   is_active: boolean;
   scan_count: number;
+  style: QrStyle;
+  logo_url: string | null; // center logo (a data URL or external URL)
   created_by_id: string | null;
   created_by_name: string | null;
   created_at: string;
@@ -37,7 +51,9 @@ export function listQrCodes(): Promise<{ codes: QrCode[] }> {
 export function createQrCode(input: { label: string; target_url: string }): Promise<{ code: QrCode }> {
   return qrFetch(`${FN}?action=create`, { method: "POST", body: JSON.stringify(input) });
 }
-export function updateQrCode(input: { id: string; label?: string; target_url?: string }): Promise<{ code: QrCode }> {
+export function updateQrCode(
+  input: { id: string; label?: string; target_url?: string; style?: QrStyle; logo_url?: string | null },
+): Promise<{ code: QrCode }> {
   return qrFetch(`${FN}?action=update`, { method: "POST", body: JSON.stringify(input) });
 }
 export function setQrActive(id: string, is_active: boolean): Promise<{ code: QrCode }> {

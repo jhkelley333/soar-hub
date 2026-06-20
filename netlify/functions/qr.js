@@ -72,6 +72,46 @@ function normalizeUrl(raw) {
   }
 }
 
+// Column sets — FULL includes the 0176 styling columns; BASE is the pre-0176
+// fallback so reads still work if the styling migration hasn't run yet.
+const FULL_COLS = "id, code, label, target_url, is_active, scan_count, style, logo_url, created_by_id, created_at, updated_at";
+const BASE_COLS = "id, code, label, target_url, is_active, scan_count, created_by_id, created_at, updated_at";
+const isMissingCol = (err) => !!err && (err.code === "42703" || /does not exist/i.test(err.message || ""));
+
+// Always hand the client a complete shape, even on the BASE (pre-0176) path.
+const normalizeRow = (r) => ({ ...r, style: r?.style || {}, logo_url: r?.logo_url ?? null });
+
+// Whitelist style values so junk (or anything that could break the renderer)
+// never reaches the jsonb column.
+const DOT_TYPES = new Set(["square", "rounded", "dots", "classy", "extra-rounded"]);
+const CORNER_TYPES = new Set(["square", "dot", "extra-rounded"]);
+const SHAPES = new Set(["square", "circle"]);
+const isHex = (s) => typeof s === "string" && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(s);
+function sanitizeStyle(raw) {
+  if (!raw || typeof raw !== "object") return {};
+  const out = {};
+  if (SHAPES.has(raw.shape)) out.shape = raw.shape;
+  if (DOT_TYPES.has(raw.dots)) out.dots = raw.dots;
+  if (CORNER_TYPES.has(raw.corners)) out.corners = raw.corners;
+  if (isHex(raw.fg)) out.fg = raw.fg;
+  if (isHex(raw.bg)) out.bg = raw.bg;
+  if (isHex(raw.fg2)) out.fg2 = raw.fg2;
+  if (typeof raw.gradient === "boolean") out.gradient = raw.gradient;
+  return out;
+}
+// Logo: an http(s) URL or an inline data:image up to ~200 KB. null clears it.
+function validateLogo(raw) {
+  if (raw === null) return { value: null };
+  const s = String(raw).trim();
+  if (!s) return { value: null };
+  if (/^https?:\/\//i.test(s)) return { value: s.slice(0, 2048) };
+  if (/^data:image\/(png|jpe?g|gif|webp|svg\+xml);base64,/i.test(s)) {
+    if (s.length > 300_000) return { error: "Logo image is too large — use one under ~200 KB." };
+    return { value: s };
+  }
+  return { error: "Logo must be an image upload or an http(s) URL." };
+}
+
 // Attach the creator's display name without a fragile PostgREST embed.
 async function withCreators(supa, rows) {
   const ids = [...new Set(rows.map((r) => r.created_by_id).filter(Boolean))];
@@ -80,16 +120,21 @@ async function withCreators(supa, rows) {
     const { data: people } = await supa.from("profiles").select("id, full_name, preferred_name").in("id", ids);
     nameById = new Map((people || []).map((p) => [p.id, p.preferred_name || p.full_name || null]));
   }
-  return rows.map((r) => ({ ...r, created_by_name: nameById.get(r.created_by_id) || null }));
+  return rows.map((r) => ({ ...normalizeRow(r), created_by_name: nameById.get(r.created_by_id) || null }));
+}
+
+// Re-read one row after a write, tolerating a missing styling column.
+async function selectById(supa, id) {
+  let res = await supa.from("qr_codes").select(FULL_COLS).eq("id", id).single();
+  if (res.error && isMissingCol(res.error)) res = await supa.from("qr_codes").select(BASE_COLS).eq("id", id).single();
+  return res;
 }
 
 async function listCodes(supa) {
-  const { data, error } = await supa
-    .from("qr_codes")
-    .select("id, code, label, target_url, is_active, scan_count, created_by_id, created_at, updated_at")
-    .order("created_at", { ascending: false });
-  if (error) throw new Error(error.message);
-  return { codes: await withCreators(supa, data || []) };
+  let res = await supa.from("qr_codes").select(FULL_COLS).order("created_at", { ascending: false });
+  if (res.error && isMissingCol(res.error)) res = await supa.from("qr_codes").select(BASE_COLS).order("created_at", { ascending: false });
+  if (res.error) throw new Error(res.error.message);
+  return { codes: await withCreators(supa, res.data || []) };
 }
 
 async function createCode(supa, user, body) {
@@ -98,15 +143,24 @@ async function createCode(supa, user, body) {
   if (!label) return { error: "A label is required.", status: 400 };
   if (!target) return { error: "Enter a valid web address (http or https).", status: 400 };
 
+  // Optional styling on create (the UI customizes after, but support it here).
+  const base = { label, target_url: target, created_by_id: user.id };
+  if (body.style !== undefined) base.style = sanitizeStyle(body.style);
+  if (body.logo_url !== undefined) {
+    const lg = validateLogo(body.logo_url);
+    if (lg.error) return { error: lg.error, status: 400 };
+    base.logo_url = lg.value;
+  }
+
   // Retry on the rare slug collision.
   for (let attempt = 0; attempt < 5; attempt++) {
     const code = genCode();
-    const { data, error } = await supa
-      .from("qr_codes")
-      .insert({ code, label, target_url: target, created_by_id: user.id })
-      .select("id, code, label, target_url, is_active, scan_count, created_by_id, created_at, updated_at")
-      .single();
-    if (!error) return { code: (await withCreators(supa, [data]))[0] };
+    const { data: ins, error } = await supa.from("qr_codes").insert({ code, ...base }).select("id").single();
+    if (!error) {
+      const { data, error: selErr } = await selectById(supa, ins.id);
+      if (selErr) return { error: selErr.message, status: 500 };
+      return { code: (await withCreators(supa, [data]))[0] };
+    }
     if (error.code !== "23505") return { error: error.message, status: 500 }; // not a unique violation
   }
   return { error: "Could not generate a unique code, please retry.", status: 500 };
@@ -126,20 +180,27 @@ async function updateCode(supa, body) {
     if (!target) return { error: "Enter a valid web address (http or https).", status: 400 };
     patch.target_url = target;
   }
-  const { data, error } = await supa
-    .from("qr_codes").update(patch).eq("id", id)
-    .select("id, code, label, target_url, is_active, scan_count, created_by_id, created_at, updated_at").single();
+  if (body.style !== undefined) patch.style = sanitizeStyle(body.style);
+  if (body.logo_url !== undefined) {
+    const lg = validateLogo(body.logo_url);
+    if (lg.error) return { error: lg.error, status: 400 };
+    patch.logo_url = lg.value;
+  }
+  const { error } = await supa.from("qr_codes").update(patch).eq("id", id);
   if (error) return { error: error.message, status: 500 };
+  const { data, error: selErr } = await selectById(supa, id);
+  if (selErr) return { error: selErr.message, status: 500 };
   return { code: (await withCreators(supa, [data]))[0] };
 }
 
 async function toggleCode(supa, body) {
   const id = String(body?.id || "");
   if (!id) return { error: "id is required.", status: 400 };
-  const { data, error } = await supa
-    .from("qr_codes").update({ is_active: !!body.is_active, updated_at: new Date().toISOString() }).eq("id", id)
-    .select("id, code, label, target_url, is_active, scan_count, created_by_id, created_at, updated_at").single();
+  const { error } = await supa
+    .from("qr_codes").update({ is_active: !!body.is_active, updated_at: new Date().toISOString() }).eq("id", id);
   if (error) return { error: error.message, status: 500 };
+  const { data, error: selErr } = await selectById(supa, id);
+  if (selErr) return { error: selErr.message, status: 500 };
   return { code: (await withCreators(supa, [data]))[0] };
 }
 
