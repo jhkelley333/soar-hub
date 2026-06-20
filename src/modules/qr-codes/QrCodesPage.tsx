@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  QrCode as QrIcon, Plus, Link as LinkIcon, Download, Copy, Check, Trash2, Power, ExternalLink, Loader2, Palette, ImagePlus, X,
+  QrCode as QrIcon, Plus, Link as LinkIcon, Download, Copy, Check, Trash2, Power, ExternalLink, Loader2, Palette, ImagePlus, X, RefreshCw,
 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import {
@@ -315,7 +315,9 @@ function CreateForm() {
 }
 
 export function QrCodesPage() {
-  const q = useQuery({ queryKey: ["qr-codes"], queryFn: listQrCodes, staleTime: 30_000 });
+  // Low stale time + refetch on focus so a scan's count shows when you come
+  // back to this tab, without a hard reload.
+  const q = useQuery({ queryKey: ["qr-codes"], queryFn: listQrCodes, staleTime: 3_000, refetchOnWindowFocus: true });
   const codes = q.data?.codes ?? [];
 
   return (
@@ -324,7 +326,21 @@ export function QrCodesPage() {
 
       <CreateForm />
 
-      <div className="mt-6">
+      {codes.length > 0 && (
+        <div className="mt-6 flex items-center justify-between">
+          <span className="text-xs text-ink-subtle">{codes.length} code{codes.length === 1 ? "" : "s"}</span>
+          <button
+            type="button"
+            onClick={() => q.refetch()}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-semibold text-ink-muted hover:bg-zinc-50 disabled:opacity-50 dark:border-night-line"
+            disabled={q.isFetching}
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${q.isFetching ? "animate-spin" : ""}`} /> Refresh scans
+          </button>
+        </div>
+      )}
+
+      <div className="mt-3">
         {q.isLoading ? (
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="h-44 animate-pulse rounded-2xl bg-zinc-100 dark:bg-night-raised" />
