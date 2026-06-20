@@ -9,9 +9,11 @@ import {
 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import {
-  listQrCodes, createQrCode, updateQrCode, setQrActive, deleteQrCode, publicQrUrl, type QrCode, type QrStyle,
+  listQrCodes, createQrCode, updateQrCode, setQrActive, deleteQrCode, publicQrUrl, destinationReady,
+  type QrCode, type QrStyle, type QrKind, type QrPayload,
 } from "./api";
 import { StyledQr, downloadStyledQr, fileToLogoDataUrl } from "./StyledQr";
+import { DestinationEditor } from "./DestinationEditor";
 
 const DOT_OPTIONS: { v: NonNullable<QrStyle["dots"]>; label: string }[] = [
   { v: "square", label: "Square" },
@@ -133,7 +135,8 @@ function QrCard({ qr }: { qr: QrCode }) {
   const qc = useQueryClient();
   const url = publicQrUrl(qr.code);
   const [label, setLabel] = useState(qr.label);
-  const [target, setTarget] = useState(qr.target_url);
+  const [kind, setKind] = useState<QrKind>(qr.kind || "url");
+  const [payload, setPayload] = useState<QrPayload>(qr.payload || {});
   const [style, setStyle] = useState<QrStyle>(qr.style || {});
   const [logo, setLogo] = useState<string | null>(qr.logo_url);
   const [showStyle, setShowStyle] = useState(false);
@@ -141,17 +144,18 @@ function QrCard({ qr }: { qr: QrCode }) {
 
   // Re-sync from the row when it changes underneath us (e.g. after a refetch).
   useEffect(() => {
-    setLabel(qr.label); setTarget(qr.target_url); setStyle(qr.style || {}); setLogo(qr.logo_url);
-  }, [qr.label, qr.target_url, qr.style, qr.logo_url]);
+    setLabel(qr.label); setKind(qr.kind || "url"); setPayload(qr.payload || {}); setStyle(qr.style || {}); setLogo(qr.logo_url);
+  }, [qr.label, qr.kind, qr.payload, qr.style, qr.logo_url]);
 
   const dirty =
     label.trim() !== qr.label ||
-    target.trim() !== qr.target_url ||
+    kind !== (qr.kind || "url") ||
+    JSON.stringify(payload) !== JSON.stringify(qr.payload || {}) ||
     JSON.stringify(style) !== JSON.stringify(qr.style || {}) ||
     (logo || null) !== (qr.logo_url || null);
 
   const save = useMutation({
-    mutationFn: () => updateQrCode({ id: qr.id, label: label.trim(), target_url: target.trim(), style, logo_url: logo }),
+    mutationFn: () => updateQrCode({ id: qr.id, label: label.trim(), kind, payload, style, logo_url: logo }),
     onSuccess: () => { setErr(null); qc.invalidateQueries({ queryKey: ["qr-codes"] }); },
     onError: (e: Error) => setErr(e.message),
   });
@@ -181,12 +185,14 @@ function QrCard({ qr }: { qr: QrCode }) {
           <label className="mt-2 block text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">Label</label>
           <input value={label} onChange={(e) => setLabel(e.target.value)} className="mt-0.5 w-full rounded-lg border border-zinc-200 px-2.5 py-1.5 text-sm dark:border-night-line dark:bg-night-base" />
 
-          <label className="mt-2 block text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">Points to</label>
-          <div className="mt-0.5 flex gap-1.5">
-            <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="https://…" className="w-full rounded-lg border border-zinc-200 px-2.5 py-1.5 text-sm dark:border-night-line dark:bg-night-base" />
-            <a href={target} target="_blank" rel="noreferrer" className="inline-flex items-center rounded-lg border border-zinc-200 px-2 text-ink-muted hover:bg-zinc-50 dark:border-night-line" title="Open destination">
-              <ExternalLink className="h-4 w-4" />
+          <div className="mt-2 flex items-center justify-between">
+            <label className="block text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">Destination</label>
+            <a href={qr.target_url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-[11px] text-ink-subtle hover:text-accent" title="Open current destination">
+              <ExternalLink className="h-3.5 w-3.5" /> Test
             </a>
+          </div>
+          <div className="mt-1">
+            <DestinationEditor kind={kind} setKind={setKind} payload={payload} setPayload={setPayload} />
           </div>
         </div>
       </div>
@@ -200,7 +206,7 @@ function QrCard({ qr }: { qr: QrCode }) {
       {err && <p className="mt-2 text-xs text-red-600">{err}</p>}
 
       <div className="mt-3 flex flex-wrap items-center gap-2">
-        <button type="button" disabled={!dirty || save.isPending} onClick={() => save.mutate()} className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40">
+        <button type="button" disabled={!dirty || !destinationReady(kind, payload) || save.isPending} onClick={() => save.mutate()} className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-40">
           {save.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />} Save changes
         </button>
         <CopyButton text={url} />
@@ -223,36 +229,40 @@ function QrCard({ qr }: { qr: QrCode }) {
 function CreateForm() {
   const qc = useQueryClient();
   const [label, setLabel] = useState("");
-  const [target, setTarget] = useState("");
+  const [kind, setKind] = useState<QrKind>("url");
+  const [payload, setPayload] = useState<QrPayload>({});
   const [err, setErr] = useState<string | null>(null);
 
+  const ready = label.trim() && destinationReady(kind, payload);
   const create = useMutation({
-    mutationFn: () => createQrCode({ label: label.trim(), target_url: target.trim() }),
-    onSuccess: () => { setLabel(""); setTarget(""); setErr(null); qc.invalidateQueries({ queryKey: ["qr-codes"] }); },
+    mutationFn: () => createQrCode({ label: label.trim(), kind, payload }),
+    onSuccess: () => { setLabel(""); setKind("url"); setPayload({}); setErr(null); qc.invalidateQueries({ queryKey: ["qr-codes"] }); },
     onError: (e: Error) => setErr(e.message),
   });
 
   return (
-    <form onSubmit={(e) => { e.preventDefault(); if (label.trim() && target.trim()) create.mutate(); }} className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-card dark:border-night-line dark:bg-night-raised">
+    <form onSubmit={(e) => { e.preventDefault(); if (ready) create.mutate(); }} className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-card dark:border-night-line dark:bg-night-raised">
       <div className="flex items-center gap-2 text-sm font-semibold text-ink dark:text-night-ink">
         <Plus className="h-4 w-4 text-accent" /> New QR code
       </div>
-      <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_1.5fr_auto] sm:items-end">
+      <div className="mt-3 grid gap-3 sm:grid-cols-2">
         <div>
           <label className="block text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">Label</label>
           <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Drive-thru menu" className="mt-0.5 w-full rounded-lg border border-zinc-200 px-2.5 py-2 text-sm dark:border-night-line dark:bg-night-base" />
         </div>
         <div>
-          <label className="block text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">Destination URL</label>
-          <input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="https://example.com/menu" className="mt-0.5 w-full rounded-lg border border-zinc-200 px-2.5 py-2 text-sm dark:border-night-line dark:bg-night-base" />
+          <label className="block text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">Scan destination</label>
+          <div className="mt-1"><DestinationEditor kind={kind} setKind={setKind} payload={payload} setPayload={setPayload} /></div>
         </div>
-        <button type="submit" disabled={!label.trim() || !target.trim() || create.isPending} className="inline-flex h-[38px] items-center justify-center gap-1.5 rounded-lg bg-accent px-4 text-sm font-semibold text-white disabled:opacity-40">
+      </div>
+      <div className="mt-3 flex items-center gap-3">
+        <button type="submit" disabled={!ready || create.isPending} className="inline-flex h-[38px] items-center justify-center gap-1.5 rounded-lg bg-accent px-4 text-sm font-semibold text-white disabled:opacity-40">
           {create.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <QrIcon className="h-4 w-4" />} Generate
         </button>
+        {err && <p className="text-xs text-red-600">{err}</p>}
       </div>
-      {err && <p className="mt-2 text-xs text-red-600">{err}</p>}
       <p className="mt-2 text-xs text-ink-subtle">
-        The QR encodes a stable SOAR Hub link — change where it points or restyle it anytime, no reprinting. Customize the look after it’s created.
+        The QR encodes a stable SOAR Hub link — change the destination, its type, or its look anytime, no reprinting.
       </p>
     </form>
   );

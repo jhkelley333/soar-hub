@@ -30,11 +30,24 @@ export interface QrStyle {
   fg2?: string; // gradient end color
 }
 
+// What the QR points at. The server resolves kind + payload into target_url
+// (mailto:/tel:/sms:/https:) — the code stays dynamic + editable either way.
+export type QrKind = "url" | "email" | "call" | "sms";
+export interface QrPayload {
+  url?: string;
+  email?: string;
+  subject?: string;
+  phone?: string;
+  body?: string; // email body or SMS message
+}
+
 export interface QrCode {
   id: string;
   code: string;
   label: string;
-  target_url: string;
+  kind: QrKind;
+  payload: QrPayload;
+  target_url: string; // resolved redirect target
   is_active: boolean;
   scan_count: number;
   style: QrStyle;
@@ -48,13 +61,20 @@ export interface QrCode {
 export function listQrCodes(): Promise<{ codes: QrCode[] }> {
   return qrFetch(`${FN}?action=list`);
 }
-export function createQrCode(input: { label: string; target_url: string }): Promise<{ code: QrCode }> {
+export function createQrCode(input: { label: string; kind: QrKind; payload: QrPayload }): Promise<{ code: QrCode }> {
   return qrFetch(`${FN}?action=create`, { method: "POST", body: JSON.stringify(input) });
 }
 export function updateQrCode(
-  input: { id: string; label?: string; target_url?: string; style?: QrStyle; logo_url?: string | null },
+  input: { id: string; label?: string; kind?: QrKind; payload?: QrPayload; style?: QrStyle; logo_url?: string | null },
 ): Promise<{ code: QrCode }> {
   return qrFetch(`${FN}?action=update`, { method: "POST", body: JSON.stringify(input) });
+}
+
+// Client-side check that a destination is complete enough to submit.
+export function destinationReady(kind: QrKind, p: QrPayload): boolean {
+  if (kind === "url") return !!p.url?.trim();
+  if (kind === "email") return !!p.email?.trim();
+  return !!p.phone?.trim(); // call + sms
 }
 export function setQrActive(id: string, is_active: boolean): Promise<{ code: QrCode }> {
   return qrFetch(`${FN}?action=toggle`, { method: "POST", body: JSON.stringify({ id, is_active }) });

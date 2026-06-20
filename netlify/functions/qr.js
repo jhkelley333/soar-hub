@@ -72,14 +72,77 @@ function normalizeUrl(raw) {
   }
 }
 
-// Column sets — FULL includes the 0176 styling columns; BASE is the pre-0176
-// fallback so reads still work if the styling migration hasn't run yet.
-const FULL_COLS = "id, code, label, target_url, is_active, scan_count, style, logo_url, created_by_id, created_at, updated_at";
-const BASE_COLS = "id, code, label, target_url, is_active, scan_count, created_by_id, created_at, updated_at";
+// Column tiers, newest schema first. Reads fall back through them so the page
+// still loads before a migration runs (0177 kind/payload, then 0176 style/logo).
+const COL_TIERS = [
+  "id, code, label, target_url, kind, payload, is_active, scan_count, style, logo_url, created_by_id, created_at, updated_at",
+  "id, code, label, target_url, is_active, scan_count, style, logo_url, created_by_id, created_at, updated_at",
+  "id, code, label, target_url, is_active, scan_count, created_by_id, created_at, updated_at",
+];
 const isMissingCol = (err) => !!err && (err.code === "42703" || /does not exist/i.test(err.message || ""));
 
-// Always hand the client a complete shape, even on the BASE (pre-0176) path.
-const normalizeRow = (r) => ({ ...r, style: r?.style || {}, logo_url: r?.logo_url ?? null });
+// Try each column tier until one isn't blocked by a missing column. `build`
+// applies the row filter/ordering to a `.select(cols)` query.
+async function selectTiered(supa, build) {
+  let res;
+  for (const cols of COL_TIERS) {
+    res = await build(supa.from("qr_codes").select(cols));
+    if (!res.error || !isMissingCol(res.error)) return res;
+  }
+  return res;
+}
+
+// Always hand the client a complete shape, even on a pre-migration path.
+const normalizeRow = (r) => ({
+  ...r,
+  kind: r?.kind || "url",
+  payload: r?.payload || {},
+  style: r?.style || {},
+  logo_url: r?.logo_url ?? null,
+});
+
+// ── Destination kinds → a resolved target_url the /q redirect 302s to ───────
+const KINDS = new Set(["url", "email", "call", "sms"]);
+const str = (x) => (x == null ? "" : String(x).slice(0, 2000));
+// Keep only digits and a leading +, so tel:/sms: get a clean dialable number.
+function cleanPhone(raw) {
+  const s = String(raw || "").trim();
+  const plus = s.trim().startsWith("+") ? "+" : "";
+  const digits = s.replace(/\D/g, "");
+  return digits.length >= 7 ? plus + digits : null;
+}
+function sanitizePayload(kind, p) {
+  p = p || {};
+  if (kind === "email") return { email: str(p.email), subject: str(p.subject), body: str(p.body) };
+  if (kind === "call") return { phone: str(p.phone) };
+  if (kind === "sms") return { phone: str(p.phone), body: str(p.body) };
+  return { url: str(p.url) };
+}
+function resolveTarget(kind, payload, body) {
+  const p = payload || {};
+  if (kind === "email") {
+    const email = String(p.email || "").trim();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { error: "Enter a valid email address." };
+    const q = [];
+    if (p.subject) q.push("subject=" + encodeURIComponent(p.subject));
+    if (p.body) q.push("body=" + encodeURIComponent(p.body));
+    return { value: "mailto:" + email + (q.length ? "?" + q.join("&") : "") };
+  }
+  if (kind === "call") {
+    const ph = cleanPhone(p.phone);
+    if (!ph) return { error: "Enter a valid phone number." };
+    return { value: "tel:" + ph };
+  }
+  if (kind === "sms") {
+    const ph = cleanPhone(p.phone);
+    if (!ph) return { error: "Enter a valid phone number." };
+    return { value: "sms:" + ph + (p.body ? "?body=" + encodeURIComponent(p.body) : "") };
+  }
+  // url (default)
+  const url = normalizeUrl(p.url ?? body?.target_url);
+  if (!url) return { error: "Enter a valid web address (http or https)." };
+  return { value: url };
+}
 
 // Whitelist style values so junk (or anything that could break the renderer)
 // never reaches the jsonb column.
@@ -123,28 +186,33 @@ async function withCreators(supa, rows) {
   return rows.map((r) => ({ ...normalizeRow(r), created_by_name: nameById.get(r.created_by_id) || null }));
 }
 
-// Re-read one row after a write, tolerating a missing styling column.
+// Re-read one row after a write, tolerating a missing newer column.
 async function selectById(supa, id) {
-  let res = await supa.from("qr_codes").select(FULL_COLS).eq("id", id).single();
-  if (res.error && isMissingCol(res.error)) res = await supa.from("qr_codes").select(BASE_COLS).eq("id", id).single();
-  return res;
+  return selectTiered(supa, (q) => q.eq("id", id).single());
 }
 
 async function listCodes(supa) {
-  let res = await supa.from("qr_codes").select(FULL_COLS).order("created_at", { ascending: false });
-  if (res.error && isMissingCol(res.error)) res = await supa.from("qr_codes").select(BASE_COLS).order("created_at", { ascending: false });
+  const res = await selectTiered(supa, (q) => q.order("created_at", { ascending: false }));
   if (res.error) throw new Error(res.error.message);
   return { codes: await withCreators(supa, res.data || []) };
 }
 
 async function createCode(supa, user, body) {
   const label = String(body?.label || "").trim();
-  const target = normalizeUrl(body?.target_url);
   if (!label) return { error: "A label is required.", status: 400 };
-  if (!target) return { error: "Enter a valid web address (http or https).", status: 400 };
 
-  // Optional styling on create (the UI customizes after, but support it here).
-  const base = { label, target_url: target, created_by_id: user.id };
+  // Destination: kind (url|email|call|sms) + payload → resolved target_url.
+  const kind = KINDS.has(body?.kind) ? body.kind : "url";
+  const resolved = resolveTarget(kind, body?.payload, body);
+  if (resolved.error) return { error: resolved.error, status: 400 };
+
+  const base = {
+    label,
+    kind,
+    payload: sanitizePayload(kind, body?.payload),
+    target_url: resolved.value,
+    created_by_id: user.id,
+  };
   if (body.style !== undefined) base.style = sanitizeStyle(body.style);
   if (body.logo_url !== undefined) {
     const lg = validateLogo(body.logo_url);
@@ -175,10 +243,21 @@ async function updateCode(supa, body) {
     if (!label) return { error: "Label cannot be empty.", status: 400 };
     patch.label = label;
   }
-  if (body.target_url != null) {
-    const target = normalizeUrl(body.target_url);
-    if (!target) return { error: "Enter a valid web address (http or https).", status: 400 };
-    patch.target_url = target;
+  // Destination edit: a kind+payload pair recomputes target_url. (A bare
+  // target_url with no kind is treated as a url, for backward compatibility.)
+  if (body.kind !== undefined || body.payload !== undefined) {
+    const kind = KINDS.has(body.kind) ? body.kind : "url";
+    const resolved = resolveTarget(kind, body.payload, body);
+    if (resolved.error) return { error: resolved.error, status: 400 };
+    patch.kind = kind;
+    patch.payload = sanitizePayload(kind, body.payload);
+    patch.target_url = resolved.value;
+  } else if (body.target_url != null) {
+    const resolved = resolveTarget("url", { url: body.target_url }, body);
+    if (resolved.error) return { error: resolved.error, status: 400 };
+    patch.kind = "url";
+    patch.payload = { url: resolved.value };
+    patch.target_url = resolved.value;
   }
   if (body.style !== undefined) patch.style = sanitizeStyle(body.style);
   if (body.logo_url !== undefined) {
