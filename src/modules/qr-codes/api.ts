@@ -28,6 +28,12 @@ export interface QrStyle {
   bg?: string; // background color
   gradient?: boolean; // linear gradient on the dots
   fg2?: string; // gradient end color
+  // Caption frame — words around the QR (e.g. "SCAN ME"). Baked into the PNG.
+  frame?: "none" | "label" | "border"; // label = caption bar; border = framed card + bar
+  frameText?: string; // the words
+  framePosition?: "top" | "bottom"; // which side the caption sits on
+  frameColor?: string; // bar / border color (defaults to the dots color)
+  frameTextColor?: string; // caption text color (defaults to white)
 }
 
 // What the QR points at. The server resolves kind + payload into target_url

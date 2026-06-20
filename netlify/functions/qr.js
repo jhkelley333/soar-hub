@@ -149,6 +149,8 @@ function resolveTarget(kind, payload, body) {
 const DOT_TYPES = new Set(["square", "rounded", "dots", "classy", "extra-rounded"]);
 const CORNER_TYPES = new Set(["square", "dot", "extra-rounded"]);
 const SHAPES = new Set(["square", "circle"]);
+const FRAME_TYPES = new Set(["none", "label", "border"]);
+const FRAME_POS = new Set(["top", "bottom"]);
 const isHex = (s) => typeof s === "string" && /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(s);
 function sanitizeStyle(raw) {
   if (!raw || typeof raw !== "object") return {};
@@ -160,6 +162,11 @@ function sanitizeStyle(raw) {
   if (isHex(raw.bg)) out.bg = raw.bg;
   if (isHex(raw.fg2)) out.fg2 = raw.fg2;
   if (typeof raw.gradient === "boolean") out.gradient = raw.gradient;
+  if (FRAME_TYPES.has(raw.frame)) out.frame = raw.frame;
+  if (FRAME_POS.has(raw.framePosition)) out.framePosition = raw.framePosition;
+  if (typeof raw.frameText === "string") out.frameText = raw.frameText.slice(0, 40);
+  if (isHex(raw.frameColor)) out.frameColor = raw.frameColor;
+  if (isHex(raw.frameTextColor)) out.frameTextColor = raw.frameTextColor;
   return out;
 }
 // Logo: an http(s) URL or an inline data:image up to ~200 KB. null clears it.

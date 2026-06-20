@@ -5,7 +5,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  QrCode as QrIcon, Plus, Link as LinkIcon, Download, Copy, Check, Trash2, Power, ExternalLink, Loader2, Palette, ImagePlus, X,
+  QrCode as QrIcon, Plus, Link as LinkIcon, Download, Copy, Check, Trash2, Power, ExternalLink, Loader2, Palette, ImagePlus, X, RefreshCw,
 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import {
@@ -126,6 +126,62 @@ function StyleEditor({
         </div>
       </div>
       {logoErr && <p className="mt-1.5 text-xs text-red-600">{logoErr}</p>}
+
+      {/* Caption frame — words around the QR */}
+      <div className="mt-3 border-t border-zinc-200 pt-3 dark:border-night-line">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="text-xs">
+            <span className="font-semibold uppercase tracking-wide text-ink-subtle">Frame</span>
+            <select
+              value={style.frame || "none"}
+              onChange={(e) => {
+                const frame = e.target.value as QrStyle["frame"];
+                set(frame === "none" ? { frame } : { frame, frameText: style.frameText || "SCAN ME" });
+              }}
+              className="mt-1 w-full rounded-lg border border-zinc-200 px-2 py-1.5 text-sm dark:border-night-line dark:bg-night-base"
+            >
+              <option value="none">None</option>
+              <option value="label">Caption bar</option>
+              <option value="border">Framed border</option>
+            </select>
+          </label>
+
+          {style.frame && style.frame !== "none" && (
+            <>
+              <label className="text-xs">
+                <span className="font-semibold uppercase tracking-wide text-ink-subtle">Words</span>
+                <input
+                  value={style.frameText ?? ""}
+                  onChange={(e) => set({ frameText: e.target.value })}
+                  maxLength={40}
+                  placeholder="SCAN ME"
+                  className="mt-1 w-full rounded-lg border border-zinc-200 px-2.5 py-1.5 text-sm dark:border-night-line dark:bg-night-base"
+                />
+              </label>
+              <label className="text-xs">
+                <span className="font-semibold uppercase tracking-wide text-ink-subtle">Position</span>
+                <select value={style.framePosition || "bottom"} onChange={(e) => set({ framePosition: e.target.value as QrStyle["framePosition"] })} className="mt-1 w-full rounded-lg border border-zinc-200 px-2 py-1.5 text-sm dark:border-night-line dark:bg-night-base">
+                  <option value="bottom">Bottom</option>
+                  <option value="top">Top</option>
+                </select>
+              </label>
+              <div className="text-xs">
+                <span className="font-semibold uppercase tracking-wide text-ink-subtle">Frame colors</span>
+                <div className="mt-1 flex items-center gap-3">
+                  <label className="flex items-center gap-1.5" title="Bar / border color">
+                    <input type="color" value={style.frameColor || style.fg || "#0a0a0a"} onChange={(e) => set({ frameColor: e.target.value })} className={swatch} />
+                    <span className="text-ink-muted">Bar</span>
+                  </label>
+                  <label className="flex items-center gap-1.5" title="Caption text color">
+                    <input type="color" value={style.frameTextColor || "#ffffff"} onChange={(e) => set({ frameTextColor: e.target.value })} className={swatch} />
+                    <span className="text-ink-muted">Text</span>
+                  </label>
+                </div>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -269,7 +325,9 @@ function CreateForm() {
 }
 
 export function QrCodesPage() {
-  const q = useQuery({ queryKey: ["qr-codes"], queryFn: listQrCodes, staleTime: 30_000 });
+  // Low stale time + refetch on focus so a scan's count shows when you come
+  // back to this tab, without a hard reload.
+  const q = useQuery({ queryKey: ["qr-codes"], queryFn: listQrCodes, staleTime: 3_000, refetchOnWindowFocus: true });
   const codes = q.data?.codes ?? [];
 
   return (
@@ -278,7 +336,21 @@ export function QrCodesPage() {
 
       <CreateForm />
 
-      <div className="mt-6">
+      {codes.length > 0 && (
+        <div className="mt-6 flex items-center justify-between">
+          <span className="text-xs text-ink-subtle">{codes.length} code{codes.length === 1 ? "" : "s"}</span>
+          <button
+            type="button"
+            onClick={() => q.refetch()}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-2.5 py-1.5 text-xs font-semibold text-ink-muted hover:bg-zinc-50 disabled:opacity-50 dark:border-night-line"
+            disabled={q.isFetching}
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${q.isFetching ? "animate-spin" : ""}`} /> Refresh scans
+          </button>
+        </div>
+      )}
+
+      <div className="mt-3">
         {q.isLoading ? (
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="h-44 animate-pulse rounded-2xl bg-zinc-100 dark:bg-night-raised" />
