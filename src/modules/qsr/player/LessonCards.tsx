@@ -140,10 +140,16 @@ export function VideoCard({ card, onAdvance }: CardProps) {
   const reported = useRef(card.progress?.watched_pct ?? 0);
 
   // Push watch progress to the server (it alone flips the card to passable),
-  // throttled to ~5% steps.
+  // throttled to ~5% steps — EXCEPT the terminal 100%, which must always post.
+  // Otherwise a 100% gate is unreachable: the last 5% step lands ~95% and the
+  // final completion update gets swallowed by the throttle window, so the
+  // server never sees watched_pct >= 1.0 and the button stays locked even
+  // though the UI shows "Watched 100%".
   const report = (frac: number) => {
     setPct(frac);
-    if (!gated || frac < reported.current + 0.05) return;
+    if (!gated) return;
+    const complete = frac >= 1 && reported.current < 1; // post the final 100% exactly once
+    if (!complete && frac < reported.current + 0.05) return;
     reported.current = frac;
     recordCardProgress(card.id, "seen", +frac.toFixed(2)).then((r) => { if (r.passable) setPassable(true); }).catch(() => {});
   };
