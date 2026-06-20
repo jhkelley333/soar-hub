@@ -536,6 +536,53 @@ async function getStoresForUser(supabase, profile) {
   };
 }
 
+// ── Vendor WhatsApp snippet ────────────────────────────────────────────────
+// Format a 10-digit store phone as (xxx) xxx-xxxx; pass anything else through.
+function fmtStorePhone(p) {
+  const d = String(p || "").replace(/\D/g, "");
+  if (d.length === 10) return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
+  return p ? String(p).trim() : "";
+}
+// One-line store address from the stores columns (address/city/state/zip).
+function fmtStoreAddress(s) {
+  if (!s) return "";
+  const cityState = [s.city, s.state].filter(Boolean).join(", ");
+  const tail = [cityState, s.zip].filter(Boolean).join(" ").trim();
+  return [s.address, tail].filter(Boolean).join(", ").trim();
+}
+// Build a copy-paste WhatsApp message for a set of work orders, grouped by
+// store so each store's address + phone appears once above its WOs. Uses
+// WhatsApp markdown (*bold*) and a couple of emojis for scannability.
+function buildVendorSnippet(tickets, storeByNum) {
+  const groups = new Map();
+  for (const t of tickets) {
+    const k = String(t.store_number);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(t);
+  }
+  const blocks = [];
+  for (const [num, list] of groups) {
+    const s = storeByNum.get(num);
+    const name = (list[0].store_name || s?.name || "").trim();
+    const lines = [`*Store #${num}${name ? ` — ${name}` : ""}*`];
+    const addr = fmtStoreAddress(s);
+    const phone = fmtStorePhone(s?.phone);
+    if (addr) lines.push(`📍 ${addr}`);
+    if (phone) lines.push(`📞 ${phone}`);
+    lines.push("");
+    for (const t of list) {
+      const titleBits = [t.asset_type, t.category].filter(Boolean).join(" / ");
+      lines.push(`• *${t.wo_number}*${titleBits ? ` — ${titleBits}` : ""}${t.priority ? ` [${t.priority}]` : ""}`);
+      const desc = (t.work_requested || t.issue_description || "").trim();
+      if (desc) lines.push(`   ${desc}`);
+      if (t.model_number) lines.push(`   Model: ${t.model_number}`);
+    }
+    blocks.push(lines.join("\n"));
+  }
+  const intro = `*Work order${tickets.length === 1 ? "" : "s"} for service*`;
+  return [intro, "", blocks.join("\n\n")].join("\n");
+}
+
 async function generateWONumber(supabase, storeNumber) {
   const { data, error } = await supabase.rpc("next_wo_sequence", {
     p_store: String(storeNumber),
@@ -787,7 +834,43 @@ export const handler = async (event) => {
       return respond(200, { ok: true, tickets: data });
     }
 
-    // ── MARK TICKET SEEN ──
+    // ── VENDOR WHATSAPP SNIPPET ──
+    // Given a set of selected ticket ids, return a ready-to-paste WhatsApp
+    // message grouped by store (with each store's address + phone). Scoped to
+    // the caller's stores like getTickets, so you can only snippet WOs you can
+    // already see.
+    if (action === "vendorSnippet" && event.httpMethod === "POST") {
+      const { ids } = JSON.parse(event.body || "{}");
+      const ticketIds = Array.isArray(ids) ? ids.filter(Boolean).slice(0, 100) : [];
+      if (!ticketIds.length) return respond(400, { ok: false, message: "No work orders selected." });
+
+      const storeAccess = await getStoresForUser(supabase, profile);
+      if (!storeAccess.all && !storeAccess.stores.length) {
+        return respond(200, { ok: true, text: "", count: 0 });
+      }
+
+      let tq = supabase
+        .from("tickets")
+        .select("id, wo_number, store_number, store_name, category, asset_type, model_number, issue_description, work_requested, priority, status, vendor_name")
+        .in("id", ticketIds)
+        .order("store_number", { ascending: true })
+        .order("date_submitted", { ascending: true });
+      if (!storeAccess.all) tq = tq.in("store_number", storeAccess.stores);
+      const { data: tks, error: tErr } = await tq;
+      if (tErr) throw tErr;
+      if (!tks?.length) return respond(200, { ok: true, text: "", count: 0 });
+
+      const storeNums = [...new Set(tks.map((t) => String(t.store_number)))];
+      const { data: storeRows } = await supabase
+        .from("stores")
+        .select("number, name, address, city, state, zip, phone")
+        .in("number", storeNums);
+      const storeByNum = new Map((storeRows || []).map((s) => [String(s.number), s]));
+
+      const text = buildVendorSnippet(tks, storeByNum);
+      return respond(200, { ok: true, text, count: tks.length });
+    }
+
     // Upserts ticket_views.last_seen_at = now() for (caller,
     // ticket). Called when the user expands a card or posts a
     // message — anything that means "I've looked at this."

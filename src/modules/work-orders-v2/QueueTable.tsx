@@ -1,5 +1,5 @@
 import { useMemo, useState, type CSSProperties } from "react";
-import { Search, Plus, Download } from "lucide-react";
+import { Search, Plus, Download, MessageCircle } from "lucide-react";
 import {
   type Ticket,
   type TicketStatus,
@@ -8,6 +8,7 @@ import {
 } from "./types";
 import { WO, Pill, statusPillTone, priorityPillTone } from "./liveTheme";
 import { NotificationBell } from "./NotificationBell";
+import { VendorSnippetModal } from "./VendorSnippetModal";
 
 // New work-order queue (flagged: wo2_new_ui). A table-style list matching
 // the redesigned mockup — SLA intentionally omitted (not modeled yet),
@@ -76,6 +77,12 @@ export function QueueTable({
 }) {
   const [tab, setTab] = useState<TabId>("open");
   const [search, setSearch] = useState("");
+  // Multi-select for "Send to vendor" — keyed by ticket id, persists across
+  // tab/search changes so you can gather WOs from different views.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [showSnippet, setShowSnippet] = useState(false);
+  const toggleOne = (id: string) =>
+    setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
 
   const counts = useMemo(() => {
     let open = 0, closed = 0, mine = 0;
@@ -152,6 +159,12 @@ export function QueueTable({
         </div>
         <div className="flex items-center gap-2">
           <NotificationBell tone="light" align="right" />
+          {selected.size > 0 && (
+            <button type="button" onClick={() => setShowSnippet(true)} style={primaryBtnStyle}>
+              <MessageCircle className="h-3.5 w-3.5" strokeWidth={1.9} />
+              Send {selected.size} to vendor
+            </button>
+          )}
           {onExport && (
             <button type="button" onClick={onExport} style={secBtnStyle}>
               <Download className="h-3.5 w-3.5" strokeWidth={1.75} />
@@ -243,6 +256,23 @@ export function QueueTable({
         <table className="w-full min-w-[720px] border-collapse text-sm">
           <thead>
             <tr style={{ textAlign: "left", borderBottom: `1px solid ${WO.line}` }}>
+              <th style={{ ...thStyle, width: 36 }}>
+                <input
+                  type="checkbox"
+                  aria-label="Select all in view"
+                  checked={rows.length > 0 && rows.every((t) => selected.has(t.id))}
+                  onChange={(e) => {
+                    const ids = rows.map((t) => t.id);
+                    setSelected((prev) => {
+                      const next = new Set(prev);
+                      if (e.target.checked) ids.forEach((id) => next.add(id));
+                      else ids.forEach((id) => next.delete(id));
+                      return next;
+                    });
+                  }}
+                  style={{ cursor: "pointer" }}
+                />
+              </th>
               <th style={thStyle}>Work order</th>
               <th style={thStyle}>Issue</th>
               <th style={thStyle}>Status</th>
@@ -260,6 +290,15 @@ export function QueueTable({
                 onMouseEnter={(e) => (e.currentTarget.style.background = WO.surfaceAlt)}
                 onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
               >
+                <td style={{ padding: "12px", verticalAlign: "top" }} onClick={(e) => e.stopPropagation()}>
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${t.wo_number}`}
+                    checked={selected.has(t.id)}
+                    onChange={() => toggleOne(t.id)}
+                    style={{ cursor: "pointer" }}
+                  />
+                </td>
                 <td style={{ padding: "12px", verticalAlign: "top" }}>
                   <div className="flex items-center gap-2">
                     {(t.unread_message_count ?? 0) > 0 && (
@@ -330,7 +369,23 @@ export function QueueTable({
 
       <div style={{ marginTop: 12, fontSize: 11, color: WO.muted }}>
         Showing {rows.length} of {tickets.length}
+        {selected.size > 0 && (
+          <>
+            {" · "}
+            <button
+              type="button"
+              onClick={() => setSelected(new Set())}
+              style={{ background: "none", border: "none", padding: 0, color: WO.primary, cursor: "pointer", font: "inherit" }}
+            >
+              Clear {selected.size} selected
+            </button>
+          </>
+        )}
       </div>
+
+      {showSnippet && (
+        <VendorSnippetModal ids={[...selected]} onClose={() => setShowSnippet(false)} />
+      )}
     </div>
   );
 }

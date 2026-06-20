@@ -95,6 +95,16 @@ export function fetchTickets(): Promise<TicketsResponse> {
   return request<TicketsResponse>(`${FN}?action=getTickets`);
 }
 
+// Build a copy-paste WhatsApp message for the selected work orders, grouped by
+// store with each store's address + phone. Server-side so store contact data
+// stays scoped to what the caller can see.
+export function fetchVendorSnippet(ids: string[]): Promise<{ ok: true; text: string; count: number }> {
+  return request(`${FN}?action=vendorSnippet`, {
+    method: "POST",
+    body: JSON.stringify({ ids }),
+  });
+}
+
 // Single ticket with its photos, approvals, and activity feed joined in.
 // Used by the mobile detail view; the desktop page hydrates detail
 // inline from the list instead.
