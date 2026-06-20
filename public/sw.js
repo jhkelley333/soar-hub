@@ -16,7 +16,7 @@
 // Bump the version suffix any time we ship a change users need to
 // pick up immediately (e.g. a stuck-cache fix). The activate handler
 // below purges every cache whose name doesn't match this one.
-const CACHE_NAME = "soar-hub-v11";
+const CACHE_NAME = "soar-hub-v12";
 
 // Precache the bare minimum the app needs to render an offline shell.
 // Vite hashes JS/CSS bundle filenames, so we let runtime caching pick
@@ -200,6 +200,13 @@ self.addEventListener("fetch", (event) => {
   // Skip Netlify functions and auth callbacks — these need to hit the
   // network every time and any cached response could leak across users.
   if (url.pathname.startsWith("/.netlify/")) return;
+
+  // Skip the dynamic QR redirect (/q/<code>). It is NOT an SPA route — it's a
+  // server-side 302 served by the qr-redirect Netlify function. If the SW
+  // handled it like any other navigation (serving the app shell below), the
+  // request would never reach the function, so the QR wouldn't redirect AND
+  // its scan wouldn't be counted. Let it pass straight through to the network.
+  if (url.pathname.startsWith("/q/")) return;
 
   // Network-first for navigation / HTML document requests.
   //
