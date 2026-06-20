@@ -70,6 +70,18 @@ export function bulkApproveEmployeeActions(
   });
 }
 
+// Run one confirm step (e.g. "entered" = mark on weekly sheet) across many
+// requests at once. Used for the bulk "Mark on weekly sheet" action.
+export function bulkConfirmEmployeeActions(
+  items: { type: "training" | "pto"; id: string }[],
+  step: string
+): Promise<{ ok: true; done: number; failed: number; results: { id: string | null; ok: boolean; error?: string }[] }> {
+  return request(`${FN}?action=confirm-bulk`, {
+    method: "POST",
+    body: JSON.stringify({ items, step }),
+  });
+}
+
 // Post-approval confirmation steps (entered / closed-out / paf-submitted).
 export function confirmEmployeeAction(
   input: ConfirmInput
