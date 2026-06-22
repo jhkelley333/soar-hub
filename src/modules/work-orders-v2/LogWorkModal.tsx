@@ -61,6 +61,9 @@ export function LogWorkModal({
       const { extracted: ex } = await extractInvoice({ data, type: file.type || "application/octet-stream" });
       let filledAny = false;
       const fill = (cond: boolean, set: () => void) => { if (cond) { set(); filledAny = true; } };
+      // Store: only when not already chosen and the matched store is one the
+      // caller can actually log against.
+      fill(!storeNumber && !!ex.store_number && stores.some((s) => s.number === ex.store_number), () => setStoreNumber(ex.store_number));
       fill(!vendorName.trim() && !!ex.vendor_name, () => setVendorName(ex.vendor_name));
       fill(!assetType.trim() && !!ex.asset_type, () => setAssetType(ex.asset_type));
       fill(!description.trim() && !!ex.description, () => setDescription(ex.description));

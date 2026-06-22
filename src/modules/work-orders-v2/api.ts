@@ -121,6 +121,7 @@ export function logOfflineWork(body: LogWorkBody): Promise<{ ok: true; ticket: T
 // when the model can't determine them.
 export interface ExtractedInvoice {
   vendor_name: string;
+  store_number: string;
   service_date: string;
   cost: number | null;
   description: string;

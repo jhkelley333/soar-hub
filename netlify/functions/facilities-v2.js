@@ -1326,13 +1326,37 @@ export const handler = async (event) => {
       const { invoice } = JSON.parse(event.body || "{}");
       if (!invoice?.data) return respond(400, { ok: false, message: "No invoice provided." });
 
-      // Known vendor names (scoped to the caller) help the model map the
-      // invoice's vendor onto a vendor already on file.
+      // Reference data (scoped to the caller) so the model can cross-reference:
+      //  • vendor name      → a vendor already on file
+      //  • service address  → the store number
+      //  • category/asset   → the work-order issue library
       let vendorNames = [];
       try {
         const { data: vrows } = await supabase.from("vendors").select("name").eq("is_active", true).limit(300);
         vendorNames = [...new Set((vrows || []).map((v) => v.name).filter(Boolean))];
       } catch { /* hints are optional */ }
+
+      const allowedStores = new Set();
+      const storeRefs = [];
+      try {
+        const access = await getStoresForUser(supabase, profile);
+        let sq = supabase.from("stores").select("number, name, address, city, state, zip").eq("is_active", true).order("number").limit(500);
+        if (!access.all) sq = sq.in("number", access.stores.length ? access.stores : ["__none__"]);
+        const { data: srows } = await sq;
+        for (const s of srows || []) {
+          allowedStores.add(String(s.number));
+          const addr = [s.address, [s.city, s.state].filter(Boolean).join(", "), s.zip].filter(Boolean).join(" ").trim();
+          storeRefs.push(`#${s.number}${s.name ? ` ${s.name}` : ""}${addr ? ` — ${addr}` : ""}`);
+        }
+      } catch { /* store matching is optional */ }
+
+      let libCategories = [];
+      let libAssets = [];
+      try {
+        const { data: items } = await supabase.from("issue_library").select("category, asset_type, display_name").limit(600);
+        libCategories = [...new Set((items || []).map((i) => i.category).filter(Boolean))];
+        libAssets = [...new Set((items || []).map((i) => i.display_name || i.asset_type).filter(Boolean))];
+      } catch { /* optional */ }
 
       const mediaType = String(invoice.type || "");
       const isPdf = /pdf/i.test(mediaType);
@@ -1345,25 +1369,30 @@ export const handler = async (event) => {
         additionalProperties: false,
         properties: {
           vendor_name: { type: "string" },
+          store_number: { type: "string" },
           service_date: { type: "string" },
           cost: { type: "number" },
           description: { type: "string" },
           category: { type: "string" },
           equipment: { type: "string" },
         },
-        required: ["vendor_name", "service_date", "cost", "description", "category", "equipment"],
+        required: ["vendor_name", "store_number", "service_date", "cost", "description", "category", "equipment"],
       };
 
       const known = vendorNames.length ? vendorNames.slice(0, 200).join("; ") : "(none on file)";
+      const storeList = storeRefs.length ? storeRefs.slice(0, 450).join("\n") : "(none available)";
+      const catList = libCategories.length ? libCategories.join("; ") : "(use your best judgment)";
+      const assetList = libAssets.length ? libAssets.slice(0, 200).join("; ") : "(use your best judgment)";
       const prompt =
         "This is a vendor invoice for facilities / equipment repair work at a restaurant. " +
         "Extract these fields:\n" +
         "- vendor_name: the company that did the work. If it clearly matches one of these vendors on file, return that exact name: " + known + "\n" +
+        "- store_number: cross-reference the SERVICE / SHIP-TO / job-location address on the invoice against this store list and return the matching store's number (digits only). Match on street + city + state/zip; return an empty string if there is no confident address match. Do NOT guess.\nStores:\n" + storeList + "\n" +
         "- service_date: the date the work was performed (or the invoice date if that's all there is), as YYYY-MM-DD.\n" +
         "- cost: the invoice grand total as a number, no currency symbol or commas.\n" +
         "- description: a short summary of the work performed (one sentence).\n" +
-        "- category: your best guess of the trade/category (e.g. Refrigeration, HVAC, Plumbing, Electrical, Cooking Equipment).\n" +
-        "- equipment: the specific equipment serviced, if stated.\n" +
+        "- category: the trade/category. Choose the closest match from this list when reasonable: " + catList + "\n" +
+        "- equipment: the specific equipment serviced. Choose the closest match from this list when reasonable: " + assetList + "\n" +
         "Use an empty string for any text field you can't determine, and 0 for cost if unknown.";
 
       // Prefer structured outputs (guaranteed-valid JSON); if that's rejected
@@ -1372,7 +1401,7 @@ export const handler = async (event) => {
       async function callClaude(structured) {
         const messages = [{
           role: "user",
-          content: [sourceBlock, { type: "text", text: structured ? prompt : prompt + "\n\nRespond with ONLY a JSON object with exactly these keys: vendor_name, service_date, cost, description, category, equipment. No prose, no markdown." }],
+          content: [sourceBlock, { type: "text", text: structured ? prompt : prompt + "\n\nRespond with ONLY a JSON object with exactly these keys: vendor_name, store_number, service_date, cost, description, category, equipment. No prose, no markdown." }],
         }];
         const payload = { model: "claude-sonnet-4-6", max_tokens: 1024, messages };
         if (structured) payload.output_config = { format: { type: "json_schema", schema } };
@@ -1418,10 +1447,14 @@ export const handler = async (event) => {
       const clamp = (x, n = 500) => (x == null ? "" : String(x).slice(0, n));
       const date = /^\d{4}-\d{2}-\d{2}/.test(String(parsed.service_date || "")) ? String(parsed.service_date).slice(0, 10) : "";
       const costNum = Number(parsed.cost);
+      // Only trust a store match that's actually in the caller's scope.
+      const sn = String(parsed.store_number || "").replace(/\D/g, "");
+      const storeNumber = sn && allowedStores.has(sn) ? sn : "";
       return respond(200, {
         ok: true,
         extracted: {
           vendor_name: clamp(parsed.vendor_name, 200),
+          store_number: storeNumber,
           service_date: date,
           cost: Number.isFinite(costNum) && costNum > 0 ? costNum : null,
           description: clamp(parsed.description, 1000),
