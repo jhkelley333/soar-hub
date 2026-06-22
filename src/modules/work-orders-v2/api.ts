@@ -466,15 +466,27 @@ export interface RelatedInWarrantyTicket {
   parts_expires_at: string | null;
 }
 
+// A recent repair on the same equipment (incl. logged off-ticket work) that
+// isn't necessarily under warranty — surfaced as a possible repeat/callback.
+export interface RecentRepairTicket {
+  id: string;
+  wo_number: string;
+  asset_type: string | null;
+  category: string | null;
+  vendor_name: string | null;
+  is_logged_offline: boolean;
+  when: string | null;
+}
+
 export function fetchRelatedInWarranty(
   storeNumber: string,
   assetType?: string,
   category?: string,
-): Promise<{ ok: true; tickets: RelatedInWarrantyTicket[] }> {
+): Promise<{ ok: true; tickets: RelatedInWarrantyTicket[]; recent?: RecentRepairTicket[] }> {
   const params = new URLSearchParams({ action: "getRelatedInWarranty", storeNumber });
   if (assetType) params.set("assetType", assetType);
   if (category)  params.set("category",  category);
-  return request<{ ok: true; tickets: RelatedInWarrantyTicket[] }>(`${FN}?${params.toString()}`);
+  return request<{ ok: true; tickets: RelatedInWarrantyTicket[]; recent?: RecentRepairTicket[] }>(`${FN}?${params.toString()}`);
 }
 
 export interface VendorScopeRow {
