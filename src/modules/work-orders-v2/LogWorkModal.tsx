@@ -10,7 +10,7 @@ import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
 import { VendorSearchInput } from "./VendorSearchInput";
-import { extractInvoice, fetchCallerStores, fetchIssueLibrary, fileToBase64, logOfflineWork } from "./api";
+import { extractInvoice, fetchCallerStores, fetchIssueLibrary, fileToBase64, logOfflineWork, saveVendor } from "./api";
 
 const RESOLUTION_OPTIONS = [
   { value: "repaired", label: "Repaired" },
@@ -46,6 +46,7 @@ export function LogWorkModal({
   const [extracting, setExtracting] = useState(false);
   const [autofilled, setAutofilled] = useState(false);
   const [extractNote, setExtractNote] = useState<string | null>(null);
+  const [pendingAdd, setPendingAdd] = useState(false); // confirm "add new vendor?"
 
   const todayStr = new Date().toISOString().slice(0, 10);
   // Read the invoice with AI and pre-fill empty fields (never clobber what the
@@ -96,6 +97,7 @@ export function LogWorkModal({
     setCost(""); setDescription(""); setResolution("repaired"); setInvoice(null);
     setSetPreferred(true); setSubmitting(false);
     setExtracting(false); setAutofilled(false); setExtractNote(null);
+    setPendingAdd(false);
   }, [open]);
 
   const categories = useMemo(() => {
@@ -111,10 +113,27 @@ export function LogWorkModal({
   const canSubmit =
     !!storeNumber && !!vendorName.trim() && !!serviceDate && !!description.trim() && !!invoice && !submitting && !extracting;
 
-  async function handleSubmit() {
+  // A vendor typed but not picked from the list has no vendorId — offer to add
+  // it to the system before recording (so it's reusable + can be set preferred).
+  const vendorIsNew = !!vendorName.trim() && !vendorId;
+
+  function handleSubmit() {
     if (!invoice) return;
+    if (vendorIsNew) { setPendingAdd(true); return; }
+    void doSubmit(false);
+  }
+
+  async function doSubmit(addVendor: boolean) {
+    if (!invoice) return;
+    setPendingAdd(false);
     setSubmitting(true);
     try {
+      let useVendorId = vendorId;
+      if (addVendor && !useVendorId && vendorName.trim()) {
+        const { vendor } = await saveVendor({ name: vendorName.trim(), category: category || undefined, is_active: true });
+        useVendorId = vendor.id;
+        setVendorId(vendor.id);
+      }
       const data = await fileToBase64(invoice);
       const res = await logOfflineWork({
         storeNumber,
@@ -124,12 +143,12 @@ export function LogWorkModal({
         assetType: assetType.trim() || undefined,
         modelNumber: modelNumber.trim() || undefined,
         vendorName: vendorName.trim(),
-        vendorId,
+        vendorId: useVendorId,
         serviceDate,
         cost: cost.trim() ? Number(cost) : null,
         description: description.trim(),
         resolutionCategory: resolution,
-        setPreferred: setPreferred && !!vendorId && !!category,
+        setPreferred: setPreferred && !!useVendorId && !!category,
         invoice: { data, name: invoice.name, type: invoice.type || "application/octet-stream" },
       });
       onLogged(res.woNumber);
@@ -301,13 +320,30 @@ export function LogWorkModal({
           </label>
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-zinc-100 px-5 py-3">
-          <Button variant="ghost" onClick={onClose} disabled={submitting}>Cancel</Button>
-          <Button variant="primary" onClick={handleSubmit} disabled={!canSubmit}>
-            {submitting && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
-            Record work
-          </Button>
-        </div>
+        {pendingAdd ? (
+          <div className="border-t border-zinc-100 px-5 py-3">
+            <p className="text-sm text-zinc-700">
+              <strong>{vendorName.trim()}</strong> isn't in your vendor list. Add it so it's reusable next time
+              {category ? <> (and set as this store's go-to for {category})</> : null}?
+            </p>
+            <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+              <Button variant="ghost" onClick={() => setPendingAdd(false)} disabled={submitting}>Back</Button>
+              <Button variant="secondary" onClick={() => doSubmit(false)} disabled={submitting}>Record without adding</Button>
+              <Button variant="primary" onClick={() => doSubmit(true)} disabled={submitting}>
+                {submitting && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+                Add vendor &amp; record
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-end gap-2 border-t border-zinc-100 px-5 py-3">
+            <Button variant="ghost" onClick={onClose} disabled={submitting}>Cancel</Button>
+            <Button variant="primary" onClick={handleSubmit} disabled={!canSubmit}>
+              {submitting && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />}
+              Record work
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );
