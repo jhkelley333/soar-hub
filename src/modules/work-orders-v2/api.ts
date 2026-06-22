@@ -132,6 +132,23 @@ export function extractInvoice(invoice: { data: string; type: string }): Promise
   return request(`${FN}?action=extractInvoice`, { method: "POST", body: JSON.stringify({ invoice }) });
 }
 
+// What the AI reads off a replacement-equipment receipt / spec plate.
+export interface ExtractedReplacement {
+  manufacturer: string;
+  model: string;
+  supplier: string;
+  cost: number | null;
+  eta: string;
+  asset_tag: string;
+  po_number: string;
+  warranty_labor_days: number | null;
+  warranty_parts_days: number | null;
+  warranty_source: "" | "vendor" | "manufacturer" | "none";
+}
+export function extractReplacement(invoice: { data: string; type: string }): Promise<{ ok: true; extracted: ExtractedReplacement }> {
+  return request(`${FN}?action=extractReplacement`, { method: "POST", body: JSON.stringify({ invoice }) });
+}
+
 // Build a copy-paste WhatsApp message for the selected work orders, grouped by
 // store with each store's address + phone. Server-side so store contact data
 // stays scoped to what the caller can see.
