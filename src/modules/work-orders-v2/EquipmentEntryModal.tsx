@@ -114,6 +114,12 @@ export function EquipmentEntryModal({
       const { extracted: ex } = await extractReplacement({ data, type: f.type || "application/octet-stream" });
       let filled = false;
       const fill = (cond: boolean, set: () => void) => { if (cond) { set(); filled = true; } };
+      // Store: match the receipt's address → a store the caller can pick, unless
+      // the modal is locked to a store or one's already chosen.
+      if (!storeIdLock && !storeId && ex.store_number) {
+        const match = stores.find((s) => s.number === ex.store_number);
+        if (match) { setStoreId(match.id); filled = true; }
+      }
       fill(!manufacturer.trim() && !!ex.manufacturer, () => setManufacturer(ex.manufacturer));
       fill(!model.trim() && !!ex.model, () => setModel(ex.model));
       fill(!supplier.trim() && !!ex.supplier, () => setSupplier(ex.supplier));
