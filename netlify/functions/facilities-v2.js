@@ -1464,6 +1464,131 @@ export const handler = async (event) => {
       });
     }
 
+    // ── EXTRACT REPLACEMENT (AI) ──
+    // Read a replacement-equipment receipt / invoice / spec plate (image or PDF)
+    // with Claude vision and return the structured fields, so "Order Replacement"
+    // can auto-fill itself. GM and above. Best-effort: any failure degrades to
+    // manual entry.
+    if (action === "extractReplacement" && event.httpMethod === "POST") {
+      if (roleLevel(role) > 4) {
+        return respond(403, { ok: false, message: "GM and above only." });
+      }
+      if (!process.env.ANTHROPIC_API_KEY) {
+        return respond(500, { ok: false, message: "Receipt reading isn't configured (ANTHROPIC_API_KEY missing)." });
+      }
+      const { invoice } = JSON.parse(event.body || "{}");
+      if (!invoice?.data) return respond(400, { ok: false, message: "No file provided." });
+
+      let supplierNames = [];
+      try {
+        const { data: vrows } = await supabase.from("vendors").select("name").eq("is_active", true).limit(300);
+        supplierNames = [...new Set((vrows || []).map((v) => v.name).filter(Boolean))];
+      } catch { /* optional */ }
+
+      const mediaType = String(invoice.type || "");
+      const isPdf = /pdf/i.test(mediaType);
+      const sourceBlock = isPdf
+        ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: invoice.data } }
+        : { type: "image", source: { type: "base64", media_type: mediaType.startsWith("image/") ? mediaType : "image/jpeg", data: invoice.data } };
+
+      const schema = {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          manufacturer: { type: "string" },
+          model: { type: "string" },
+          supplier: { type: "string" },
+          cost: { type: "number" },
+          eta: { type: "string" },
+          asset_tag: { type: "string" },
+          po_number: { type: "string" },
+          warranty_labor_days: { type: "number" },
+          warranty_parts_days: { type: "number" },
+          warranty_source: { type: "string" },
+        },
+        required: ["manufacturer", "model", "supplier", "cost", "eta", "asset_tag", "po_number", "warranty_labor_days", "warranty_parts_days", "warranty_source"],
+      };
+
+      const knownSuppliers = supplierNames.length ? supplierNames.slice(0, 200).join("; ") : "(none on file)";
+      const prompt =
+        "This is a receipt / invoice / spec plate for REPLACEMENT equipment installed at a restaurant (e.g. a fryer, cooler, ice machine, HVAC unit). " +
+        "Extract these fields:\n" +
+        "- manufacturer: the equipment maker (e.g. Frymaster, Hoshizaki, True).\n" +
+        "- model: the model number / SKU.\n" +
+        "- supplier: the company it was purchased from. If it clearly matches one of these vendors on file, return that exact name: " + knownSuppliers + "\n" +
+        "- cost: the equipment total as a number, no currency symbol or commas.\n" +
+        "- eta: the install or delivery date as YYYY-MM-DD (use the receipt/order date if that's all there is); empty string if unknown.\n" +
+        "- asset_tag: the serial number or asset tag, if shown.\n" +
+        "- po_number: the PO or order number, if shown.\n" +
+        "- warranty_labor_days: labor warranty length IN DAYS (convert months×30, years×365); 0 if not stated.\n" +
+        "- warranty_parts_days: parts warranty length IN DAYS; 0 if not stated.\n" +
+        "- warranty_source: who backs the parts warranty — exactly one of: vendor, manufacturer, none. Empty string if unknown.\n" +
+        "Use an empty string for any text field you can't determine, and 0 for any number you can't determine.";
+
+      async function callClaude(structured) {
+        const messages = [{
+          role: "user",
+          content: [sourceBlock, { type: "text", text: structured ? prompt : prompt + "\n\nRespond with ONLY a JSON object with exactly these keys: manufacturer, model, supplier, cost, eta, asset_tag, po_number, warranty_labor_days, warranty_parts_days, warranty_source. No prose, no markdown." }],
+        }];
+        const payload = { model: "claude-sonnet-4-6", max_tokens: 1024, messages };
+        if (structured) payload.output_config = { format: { type: "json_schema", schema } };
+        return fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      let apiRes;
+      try {
+        apiRes = await callClaude(true);
+        if (apiRes.status === 400) {
+          console.warn("[extractReplacement] structured output rejected; retrying prompt-only");
+          apiRes = await callClaude(false);
+        }
+      } catch (e) {
+        console.error("[extractReplacement] fetch threw", e);
+        return respond(502, { ok: false, message: "Couldn't reach the receipt reader." });
+      }
+      if (!apiRes.ok) {
+        const t = await apiRes.text().catch(() => "");
+        console.error("[extractReplacement] anthropic error", apiRes.status, t.slice(0, 300));
+        return respond(502, { ok: false, message: `Receipt reading failed (${apiRes.status}).` });
+      }
+      const apiJson = await apiRes.json();
+      if (apiJson?.stop_reason === "refusal") {
+        return respond(422, { ok: false, message: "The receipt couldn't be read automatically — enter the details manually." });
+      }
+      let parsed = {};
+      try {
+        const text = (apiJson?.content || []).find((b) => b.type === "text")?.text || "";
+        parsed = JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim());
+      } catch (e) {
+        console.error("[extractReplacement] parse failed", e);
+        return respond(502, { ok: false, message: "Couldn't read the receipt details." });
+      }
+      const clamp = (x, n = 200) => (x == null ? "" : String(x).slice(0, n));
+      const eta = /^\d{4}-\d{2}-\d{2}/.test(String(parsed.eta || "")) ? String(parsed.eta).slice(0, 10) : "";
+      const costNum = Number(parsed.cost);
+      const intOrNull = (v) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n > 0 ? n : null; };
+      const src = ["vendor", "manufacturer", "none"].includes(String(parsed.warranty_source || "").toLowerCase()) ? String(parsed.warranty_source).toLowerCase() : "";
+      return respond(200, {
+        ok: true,
+        extracted: {
+          manufacturer: clamp(parsed.manufacturer, 120),
+          model: clamp(parsed.model, 120),
+          supplier: clamp(parsed.supplier, 200),
+          cost: Number.isFinite(costNum) && costNum > 0 ? costNum : null,
+          eta,
+          asset_tag: clamp(parsed.asset_tag, 120),
+          po_number: clamp(parsed.po_number, 120),
+          warranty_labor_days: intOrNull(parsed.warranty_labor_days),
+          warranty_parts_days: intOrNull(parsed.warranty_parts_days),
+          warranty_source: src,
+        },
+      });
+    }
+
     // ── LOG OFF-TICKET WORK ──
     // Record work a store had done WITHOUT a ticket. Creates a completed
     // (closed) work order flagged is_logged_offline, attaches the invoice, and
