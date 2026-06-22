@@ -3193,7 +3193,48 @@ export const handler = async (event) => {
         });
         if (matches.length >= 5) break;
       }
-      return respond(200, { ok: true, tickets: matches });
+
+      // Recent repairs (including logged off-ticket work) on the same equipment
+      // at this store — surfaced as a possible repeat / callback even when no
+      // warranty is stamped, so logged jobs feed the same detection as normal
+      // work orders. Best-effort: if the query errors (e.g. pre-0178, no
+      // is_logged_offline column) recent simply comes back empty and the
+      // warranty matching above is unaffected.
+      const recent = [];
+      try {
+        const recentSince = new Date(now - 120 * 86400_000).toISOString();
+        const matchedIds = new Set(matches.map((m) => m.id));
+        const { data: rRows } = await supabase
+          .from("tickets")
+          .select("id, wo_number, asset_type, category, vendor_name, resolution_category, is_logged_offline, service_date, completed_at, closed_at, date_submitted")
+          .eq("store_number", String(storeNumber).trim())
+          .in("status", ["closed", "completed"])
+          .gte("date_submitted", recentSince)
+          .order("date_submitted", { ascending: false })
+          .limit(60);
+        for (const t of rRows || []) {
+          if (matchedIds.has(t.id)) continue;
+          const isRepair = t.is_logged_offline || t.resolution_category === "repaired" || t.resolution_category === "replaced";
+          if (!isRepair) continue;
+          const tA = String(t.asset_type || "").toLowerCase();
+          const tC = String(t.category || "").toLowerCase();
+          const assetMatch = at && (tA.includes(at) || at.includes(tA) || tC.includes(at));
+          const catMatch = cat && (tC.includes(cat) || cat.includes(tC));
+          if (!assetMatch && !catMatch) continue;
+          recent.push({
+            id: t.id,
+            wo_number: t.wo_number,
+            asset_type: t.asset_type,
+            category: t.category,
+            vendor_name: t.vendor_name,
+            is_logged_offline: !!t.is_logged_offline,
+            when: t.service_date || t.completed_at || t.closed_at || t.date_submitted,
+          });
+          if (recent.length >= 5) break;
+        }
+      } catch { /* recent repairs are best-effort */ }
+
+      return respond(200, { ok: true, tickets: matches, recent });
     }
 
     // ── ORG LOOKUPS (for scope label rendering) ──
