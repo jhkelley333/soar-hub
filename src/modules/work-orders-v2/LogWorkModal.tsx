@@ -5,12 +5,12 @@
 // category. Mirrors the ReasonModal/NewTicketModal overlay + shared UI.
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Loader2, X } from "lucide-react";
+import { Loader2, X, Sparkles } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
 import { VendorSearchInput } from "./VendorSearchInput";
-import { fetchCallerStores, fetchIssueLibrary, fileToBase64, logOfflineWork } from "./api";
+import { extractInvoice, fetchCallerStores, fetchIssueLibrary, fileToBase64, logOfflineWork } from "./api";
 
 const RESOLUTION_OPTIONS = [
   { value: "repaired", label: "Repaired" },
@@ -43,6 +43,41 @@ export function LogWorkModal({
   const [invoice, setInvoice] = useState<File | null>(null);
   const [setPreferred, setSetPreferred] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const [autofilled, setAutofilled] = useState(false);
+  const [extractNote, setExtractNote] = useState<string | null>(null);
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  // Read the invoice with AI and pre-fill empty fields (never clobber what the
+  // user already typed). Failures are silent-ish — the form stays usable.
+  async function onInvoicePicked(file: File | null) {
+    setInvoice(file);
+    setAutofilled(false);
+    setExtractNote(null);
+    if (!file) return;
+    setExtracting(true);
+    try {
+      const data = await fileToBase64(file);
+      const { extracted: ex } = await extractInvoice({ data, type: file.type || "application/octet-stream" });
+      let filledAny = false;
+      const fill = (cond: boolean, set: () => void) => { if (cond) { set(); filledAny = true; } };
+      fill(!vendorName.trim() && !!ex.vendor_name, () => setVendorName(ex.vendor_name));
+      fill(!assetType.trim() && !!ex.asset_type, () => setAssetType(ex.asset_type));
+      fill(!description.trim() && !!ex.description, () => setDescription(ex.description));
+      fill((!cost.trim()) && ex.cost != null, () => setCost(String(ex.cost)));
+      // Only adopt the invoice date if the user hasn't moved off today's default.
+      fill(serviceDate === todayStr && !!ex.service_date, () => setServiceDate(ex.service_date));
+      // Category only when it matches a known option.
+      const match = categories.find((c) => c.toLowerCase() === ex.category.trim().toLowerCase());
+      fill(!category && !!match, () => setCategory(match as string));
+      setAutofilled(filledAny);
+      if (!filledAny) setExtractNote("Couldn't pull anything new from that invoice — fill in what's needed.");
+    } catch (e) {
+      setExtractNote((e as Error)?.message || "Couldn't read the invoice — enter the details manually.");
+    } finally {
+      setExtracting(false);
+    }
+  }
 
   const stores = storesQ.data?.stores ?? [];
   // Auto-select when the caller has exactly one store.
@@ -57,6 +92,7 @@ export function LogWorkModal({
     setVendorName(""); setVendorId(null); setServiceDate(new Date().toISOString().slice(0, 10));
     setCost(""); setDescription(""); setResolution("repaired"); setInvoice(null);
     setSetPreferred(true); setSubmitting(false);
+    setExtracting(false); setAutofilled(false); setExtractNote(null);
   }, [open]);
 
   const categories = useMemo(() => {
@@ -70,7 +106,7 @@ export function LogWorkModal({
   if (!open) return null;
 
   const canSubmit =
-    !!storeNumber && !!vendorName.trim() && !!serviceDate && !!description.trim() && !!invoice && !submitting;
+    !!storeNumber && !!vendorName.trim() && !!serviceDate && !!description.trim() && !!invoice && !submitting && !extracting;
 
   async function handleSubmit() {
     if (!invoice) return;
@@ -222,15 +258,28 @@ export function LogWorkModal({
               id="lw-invoice"
               type="file"
               accept="image/*,application/pdf"
-              onChange={(e) => setInvoice(e.target.files?.[0] || null)}
+              onChange={(e) => onInvoicePicked(e.target.files?.[0] || null)}
               className="block w-full text-sm text-zinc-700 file:mr-2 file:rounded-md file:border-0 file:bg-accent/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-midnight hover:file:bg-accent/20"
             />
             {invoice && (
               <div className="mt-1 flex items-center gap-2 text-[11px] text-zinc-500">
                 <span className="truncate font-mono">{invoice.name}</span>
                 <span>({(invoice.size / 1024).toFixed(0)} KB)</span>
-                <button type="button" onClick={() => setInvoice(null)} className="text-red-600 hover:underline">remove</button>
+                <button type="button" onClick={() => { setInvoice(null); setAutofilled(false); setExtractNote(null); }} className="text-red-600 hover:underline">remove</button>
               </div>
+            )}
+            {extracting && (
+              <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-accent">
+                <Loader2 className="h-3 w-3 animate-spin" /> Reading the invoice…
+              </div>
+            )}
+            {!extracting && autofilled && (
+              <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-emerald-700">
+                <Sparkles className="h-3 w-3" /> Auto-filled from the invoice — please review.
+              </div>
+            )}
+            {!extracting && extractNote && (
+              <div className="mt-1.5 text-[11px] text-amber-700">{extractNote}</div>
             )}
           </div>
 
