@@ -1501,6 +1501,14 @@ export const handler = async (event) => {
         }
       } catch { /* store matching is optional */ }
 
+      // Issue-library equipment types so the asset/equipment classification
+      // maps onto a real, selectable asset.
+      let libAssets = [];
+      try {
+        const { data: items } = await supabase.from("issue_library").select("asset_type, display_name").limit(600);
+        libAssets = [...new Set((items || []).map((i) => i.display_name || i.asset_type).filter(Boolean))];
+      } catch { /* optional */ }
+
       const mediaType = String(invoice.type || "");
       const isPdf = /pdf/i.test(mediaType);
       const sourceBlock = isPdf
@@ -1513,6 +1521,7 @@ export const handler = async (event) => {
         properties: {
           manufacturer: { type: "string" },
           model: { type: "string" },
+          equipment: { type: "string" },
           supplier: { type: "string" },
           store_number: { type: "string" },
           cost: { type: "number" },
@@ -1523,16 +1532,18 @@ export const handler = async (event) => {
           warranty_parts_days: { type: "number" },
           warranty_source: { type: "string" },
         },
-        required: ["manufacturer", "model", "supplier", "store_number", "cost", "eta", "asset_tag", "po_number", "warranty_labor_days", "warranty_parts_days", "warranty_source"],
+        required: ["manufacturer", "model", "equipment", "supplier", "store_number", "cost", "eta", "asset_tag", "po_number", "warranty_labor_days", "warranty_parts_days", "warranty_source"],
       };
 
       const knownSuppliers = supplierNames.length ? supplierNames.slice(0, 200).join("; ") : "(none on file)";
       const storeList = storeRefs.length ? storeRefs.slice(0, 450).join("\n") : "(none available)";
+      const assetList = libAssets.length ? libAssets.slice(0, 200).join("; ") : "(use your best judgment)";
       const prompt =
         "This is a receipt / invoice / spec plate for REPLACEMENT equipment installed at a restaurant (e.g. a fryer, cooler, ice machine, HVAC unit). " +
         "Extract these fields:\n" +
         "- manufacturer: the equipment maker (e.g. Frymaster, Hoshizaki, True).\n" +
         "- model: the model number / SKU.\n" +
+        "- equipment: the KIND of equipment (e.g. Fryer, Walk-in Cooler, Ice Machine, HVAC unit). Choose the closest match from this list when reasonable: " + assetList + "\n" +
         "- supplier: the company it was purchased from. If it clearly matches one of these vendors on file, return that exact name: " + knownSuppliers + "\n" +
         "- store_number: cross-reference the SHIP-TO / install / location address on the receipt against this store list and return the matching store's number (digits only). Match on street + city + state/zip; empty string if there's no confident match. Do NOT guess.\nStores:\n" + storeList + "\n" +
         "- cost: the equipment total as a number, no currency symbol or commas.\n" +
@@ -1547,7 +1558,7 @@ export const handler = async (event) => {
       async function callClaude(structured) {
         const messages = [{
           role: "user",
-          content: [sourceBlock, { type: "text", text: structured ? prompt : prompt + "\n\nRespond with ONLY a JSON object with exactly these keys: manufacturer, model, supplier, store_number, cost, eta, asset_tag, po_number, warranty_labor_days, warranty_parts_days, warranty_source. No prose, no markdown." }],
+          content: [sourceBlock, { type: "text", text: structured ? prompt : prompt + "\n\nRespond with ONLY a JSON object with exactly these keys: manufacturer, model, equipment, supplier, store_number, cost, eta, asset_tag, po_number, warranty_labor_days, warranty_parts_days, warranty_source. No prose, no markdown." }],
         }];
         const payload = { model: "claude-sonnet-4-6", max_tokens: 1024, messages };
         if (structured) payload.output_config = { format: { type: "json_schema", schema } };
@@ -1598,6 +1609,7 @@ export const handler = async (event) => {
         extracted: {
           manufacturer: clamp(parsed.manufacturer, 120),
           model: clamp(parsed.model, 120),
+          asset_type: clamp(parsed.equipment, 120),
           supplier: clamp(parsed.supplier, 200),
           store_number: storeNumber,
           cost: Number.isFinite(costNum) && costNum > 0 ? costNum : null,
