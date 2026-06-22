@@ -3,7 +3,7 @@
 // backfill write it); admins also get the dashboard widget's sync/backfill.
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { CloudSun } from "lucide-react";
+import { CloudSun, ChevronLeft, ChevronRight } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -32,11 +32,12 @@ function thisWeekLastYear(): { start: string; end: string; year: number } {
 const fullDay = (d: string) =>
   new Date(`${d}T00:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 
-// The current Mon–Sun week as seven YYYY-MM-DD dates.
-function thisWeek(): { start: string; end: string; days: string[] } {
+// A Mon–Sun week as seven YYYY-MM-DD dates, shifted `offset` weeks from the
+// current week (0 = this week, -1 = last week, …).
+function weekFor(offset: number): { start: string; end: string; days: string[] } {
   const now = new Date();
   const monday = new Date(now);
-  monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  monday.setDate(now.getDate() - ((now.getDay() + 6) % 7) + offset * 7);
   const days = Array.from({ length: 7 }, (_, i) => {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
@@ -62,6 +63,7 @@ export function WeatherPage() {
 
   const [storeId, setStoreId] = useState<string>("");
   const [days, setDays] = useState(90);
+  const [weekOffset, setWeekOffset] = useState(0); // 0 = this week, -1 = last week…
 
   // Default to the user's primary store, else the first scoped store.
   useEffect(() => {
@@ -81,7 +83,7 @@ export function WeatherPage() {
     enabled: !!storeId,
     staleTime: 15 * 60_000,
   });
-  const week = useMemo(() => thisWeek(), []);
+  const week = useMemo(() => weekFor(weekOffset), [weekOffset]);
   const weekQ = useQuery({
     queryKey: ["weather-range", storeId, week.start, week.end],
     queryFn: () => fetchWeatherRange(storeId, week.start, week.end),
@@ -117,7 +119,7 @@ export function WeatherPage() {
   }, [weekQ.data, curQ.data, week.days, todayYmd]);
 
   const cur = curQ.data?.current;
-  const forecast = (curQ.data?.forecast ?? []).slice(0, 5);
+  const forecast = (curQ.data?.forecast ?? []).slice(0, 7);
   const loc = curQ.data?.location ?? histQ.data?.location;
   const points = histQ.data?.points ?? [];
   const stats = useMemo(() => {
@@ -180,7 +182,7 @@ export function WeatherPage() {
                     </div>
                   </div>
                   {forecast.length > 0 && (
-                    <div className="flex gap-4">
+                    <div className="flex flex-wrap gap-4">
                       {forecast.map((d, i) => (
                         <div key={d.date ?? i} className="flex flex-col items-center gap-0.5 text-center">
                           <span className="text-[11px] font-medium text-zinc-500">{dayLabel(d.date)}</span>
@@ -200,7 +202,37 @@ export function WeatherPage() {
           <Card>
             <CardBody>
               <div className="mb-3 flex items-center justify-between gap-2">
-                <span className="text-sm font-semibold text-zinc-700">This week</span>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setWeekOffset((o) => o - 1)}
+                    className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700"
+                    aria-label="Previous week"
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </button>
+                  <span className="min-w-[8.5rem] text-center text-sm font-semibold text-zinc-700">
+                    {weekOffset === 0 ? "This week" : `${fullDay(week.start)} – ${fullDay(week.end)}`}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setWeekOffset((o) => Math.min(0, o + 1))}
+                    disabled={weekOffset >= 0}
+                    className="rounded-md p-1 text-zinc-400 hover:bg-zinc-100 hover:text-zinc-700 disabled:opacity-30 disabled:hover:bg-transparent"
+                    aria-label="Next week"
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </button>
+                  {weekOffset !== 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setWeekOffset(0)}
+                      className="ml-1 rounded-md px-2 py-0.5 text-xs font-medium text-accent hover:bg-accent/10"
+                    >
+                      This week
+                    </button>
+                  )}
+                </div>
                 <span className="text-xs text-zinc-400">
                   <span className="text-zinc-500">●</span> actual · <span className="text-zinc-300">○</span> forecast
                 </span>

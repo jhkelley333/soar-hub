@@ -4,7 +4,7 @@
 
 const WEATHER_KEY = process.env.GOOGLE_WEATHER_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
 const GEOCODE_KEY = process.env.GOOGLE_GEOCODING_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
-const FORECAST_DAYS = 5;
+const FORECAST_DAYS = 7;
 
 export function weatherKeyConfigured() {
   return !!WEATHER_KEY;
