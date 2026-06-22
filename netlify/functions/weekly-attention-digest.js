@@ -249,6 +249,22 @@ function buildEmail(recipient, data, base) {
   return { html, text: lines.join("\n") };
 }
 
+// Representative content for a ?to= self-test, so the email layout is always
+// visible even when the recipient has nothing pending.
+function sampleData() {
+  const wo = {
+    needsVendor: [{ wo_number: "WO-1042", store_number: "1082", store_name: "Sample Store", asset_type: "Walk-in Cooler", priority: "Urgent" }],
+    pendingApproval: [{ wo_number: "WO-1039", store_number: "1082", store_name: "Sample Store", asset_type: "Fryer", priority: "Standard" }],
+    toCloseOut: [{ wo_number: "WO-1028", store_number: "1147", store_name: "Sample Store", asset_type: "HVAC RTU #2", priority: "Standard" }],
+    stalled: [{ wo_number: "WO-0990", store_number: "1147", store_name: "Sample Store", asset_type: "Ice Machine", priority: "Standard" }],
+  };
+  const ea = new Map([
+    ["Approve / send back", [{ kind: "PTO", who: "Jane D.", store: "1082" }]],
+    ["Close out", [{ kind: "PTO", who: "Marcus R.", store: "1147" }]],
+  ]);
+  return { wo, ea, woTotal: 4, eaTotal: 2, total: 6 };
+}
+
 export const handler = async (event) => {
   if (!SUPABASE_URL || !SERVICE_KEY) {
     console.error("[weekly-attention-digest] missing Supabase env vars; aborting.");
@@ -258,13 +274,40 @@ export const handler = async (event) => {
   const force = params.force === "1" || params.force === "true";
   const dry = params.dry === "1" || params.dry === "true";
 
+  const supa = admin();
+
+  // ── Self-test: ?to=<email> sends one digest only to that address. The email
+  // must belong to an existing profile (so this can't be used to spam arbitrary
+  // addresses). If the profile is a DO/SDO with real items they're used; add
+  // ?sample=1 (or if they have nothing) to send representative sample content
+  // so the layout is always visible. Bypasses the Monday-9AM time guard.
+  const toRaw = (params.to || "").trim().toLowerCase();
+  if (toRaw) {
+    const { data: prof } = await supa
+      .from("profiles").select("id, email, full_name, preferred_name, role")
+      .ilike("email", toRaw).eq("is_active", true).maybeSingle();
+    if (!prof) return { statusCode: 400, body: JSON.stringify({ error: "No active profile with that email." }) };
+
+    let data = null;
+    if (prof.role === "do" || prof.role === "sdo") {
+      const stores = await storeNumbersFor(supa, prof.id);
+      data = await gatherForRecipient(supa, prof, stores);
+    }
+    const useSample = params.sample === "1" || !data || data.total === 0;
+    if (useSample) data = sampleData();
+
+    const subject = `[TEST] Your Monday hub digest — ${data.total} item${data.total === 1 ? "" : "s"} need attention`;
+    const { html, text } = buildEmail(prof, data, appBaseUrl());
+    const res = await sendEmail({ to: prof.email, subject, html, text });
+    return { statusCode: 200, body: JSON.stringify({ test: true, to: prof.email, total: data.total, sample: useSample, result: res?.ok ? "sent" : (res?.status || res?.error || "skipped") }) };
+  }
+
   const central = wallClockInTz(new Date(), SEND_TZ);
   const dow = new Date(Date.UTC(central.year, central.month - 1, central.day)).getUTCDay();
   if (!force && (central.hour !== SEND_HOUR || dow !== SEND_WEEKDAY)) {
     return { statusCode: 200, body: JSON.stringify({ skipped: true, reason: "outside send window", central }) };
   }
 
-  const supa = admin();
   const { data: recipients, error } = await supa
     .from("profiles")
     .select("id, email, full_name, preferred_name, role")
