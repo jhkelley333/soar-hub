@@ -95,6 +95,28 @@ export function fetchTickets(): Promise<TicketsResponse> {
   return request<TicketsResponse>(`${FN}?action=getTickets`);
 }
 
+// Record off-ticket work (a job the store had done without a work order).
+// Creates a completed/closed entry with the invoice attached; DO+ only.
+export interface LogWorkBody {
+  storeNumber: string;
+  storeId?: string;
+  storeName?: string;
+  category?: string;
+  assetType?: string;
+  modelNumber?: string;
+  vendorName: string;
+  vendorId?: string | null;
+  serviceDate: string;
+  cost?: number | null;
+  description: string;
+  resolutionCategory?: string;
+  setPreferred?: boolean;
+  invoice: { data: string; name: string; type: string };
+}
+export function logOfflineWork(body: LogWorkBody): Promise<{ ok: true; ticket: Ticket; woNumber: string }> {
+  return request(`${FN}?action=logWork`, { method: "POST", body: JSON.stringify(body) });
+}
+
 // Build a copy-paste WhatsApp message for the selected work orders, grouped by
 // store with each store's address + phone. Server-side so store contact data
 // stays scoped to what the caller can see.
