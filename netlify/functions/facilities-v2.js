@@ -1374,7 +1374,7 @@ export const handler = async (event) => {
           role: "user",
           content: [sourceBlock, { type: "text", text: structured ? prompt : prompt + "\n\nRespond with ONLY a JSON object with exactly these keys: vendor_name, service_date, cost, description, category, equipment. No prose, no markdown." }],
         }];
-        const payload = { model: "claude-opus-4-8", max_tokens: 1024, messages };
+        const payload = { model: "claude-sonnet-4-6", max_tokens: 1024, messages };
         if (structured) payload.output_config = { format: { type: "json_schema", schema } };
         return fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
