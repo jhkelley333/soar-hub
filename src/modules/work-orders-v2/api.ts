@@ -137,6 +137,7 @@ export interface ExtractedReplacement {
   manufacturer: string;
   model: string;
   supplier: string;
+  store_number: string;
   cost: number | null;
   eta: string;
   asset_tag: string;
