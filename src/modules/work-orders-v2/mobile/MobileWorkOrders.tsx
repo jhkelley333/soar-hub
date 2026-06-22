@@ -15,7 +15,7 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Search, MessageSquare, Clock, Plus, RefreshCw } from "lucide-react";
+import { Search, MessageSquare, Clock, Plus, RefreshCw, Check } from "lucide-react";
 import { AppHeader } from "@/shared/ui/AppHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -26,6 +26,7 @@ import { cn } from "@/lib/cn";
 import { fetchTickets } from "../api";
 import { statusLabel, isOpenStatus, type Ticket } from "../types";
 import { NewTicketModal } from "../NewTicketModal";
+import { VendorSnippetModal } from "../VendorSnippetModal";
 import {
   ticketTier,
   priorityChipClass,
@@ -42,6 +43,12 @@ export function MobileWorkOrders() {
   const [status, setStatus] = useState<WoStatusFilter>("open");
   const [query, setQuery] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  // Multi-select → "Send to vendor" WhatsApp snippet.
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [snippetOpen, setSnippetOpen] = useState(false);
+  const toggleSel = (id: string) =>
+    setSelected((prev) => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const qc = useQueryClient();
   const toast = useToast();
 
@@ -133,18 +140,27 @@ export function MobileWorkOrders() {
         title="Work Orders"
         subtitle={ticketsQ.data ? `${openCount} open` : "Loading…"}
         trailing={
-          <button
-            type="button"
-            onClick={() => ticketsQ.refetch()}
-            disabled={ticketsQ.isFetching}
-            className="p-1 text-midnight-500 hover:text-midnight-900 disabled:opacity-50"
-            aria-label="Refresh"
-          >
-            <RefreshCw
-              className={cn("h-4 w-4", ticketsQ.isFetching && "animate-spin")}
-              strokeWidth={2}
-            />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => { setSelecting((s) => !s); setSelected(new Set()); }}
+              className="px-2 py-1 text-[12px] font-semibold text-accent"
+            >
+              {selecting ? "Done" : "Select"}
+            </button>
+            <button
+              type="button"
+              onClick={() => ticketsQ.refetch()}
+              disabled={ticketsQ.isFetching}
+              className="p-1 text-midnight-500 hover:text-midnight-900 disabled:opacity-50"
+              aria-label="Refresh"
+            >
+              <RefreshCw
+                className={cn("h-4 w-4", ticketsQ.isFetching && "animate-spin")}
+                strokeWidth={2}
+              />
+            </button>
+          </div>
         }
       />
 
@@ -204,23 +220,51 @@ export function MobileWorkOrders() {
             </p>
           ) : (
             filtered.map((t) => (
-              <TicketCard key={t.id} ticket={t} onOpen={() => openTicket(t.id)} />
+              <TicketCard
+                key={t.id}
+                ticket={t}
+                selecting={selecting}
+                selected={selected.has(t.id)}
+                onToggle={() => toggleSel(t.id)}
+                onOpen={() => openTicket(t.id)}
+              />
             ))
           )}
         </div>
       )}
 
-      {/* New-ticket FAB — floats above the bottom tab bar (lifted by the
-          tab-bar height + the iPhone home-indicator inset). */}
-      <button
-        type="button"
-        onClick={() => setCreateOpen(true)}
-        className="fixed right-4 z-30 inline-flex items-center gap-1.5 rounded-full bg-accent px-4 py-3 text-[13px] font-semibold text-white shadow-float hover:bg-accent-hover transition"
-        style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 4.75rem)" }}
-      >
-        <Plus className="h-4 w-4" strokeWidth={2.5} />
-        New
-      </button>
+      {/* New-ticket FAB — hidden while selecting (the send bar takes over). */}
+      {!selecting && (
+        <button
+          type="button"
+          onClick={() => setCreateOpen(true)}
+          className="fixed right-4 z-30 inline-flex items-center gap-1.5 rounded-full bg-accent px-4 py-3 text-[13px] font-semibold text-white shadow-float hover:bg-accent-hover transition"
+          style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 4.75rem)" }}
+        >
+          <Plus className="h-4 w-4" strokeWidth={2.5} />
+          New
+        </button>
+      )}
+
+      {/* Send-to-vendor bar — appears while selecting, above the tab bar. */}
+      {selecting && (
+        <div
+          className="fixed inset-x-0 z-30 border-t border-midnight-100 bg-white px-4 py-3 shadow-float"
+          style={{ bottom: "calc(env(safe-area-inset-bottom, 0px) + 3.5rem)" }}
+        >
+          <button
+            type="button"
+            disabled={selected.size === 0}
+            onClick={() => setSnippetOpen(true)}
+            className="w-full inline-flex items-center justify-center gap-2 rounded-full bg-accent px-4 py-3 text-[14px] font-semibold text-white disabled:opacity-40"
+          >
+            <MessageSquare className="h-4 w-4" strokeWidth={2.25} />
+            Send {selected.size || ""} to vendor
+          </button>
+        </div>
+      )}
+
+      {snippetOpen && <VendorSnippetModal ids={[...selected]} onClose={() => setSnippetOpen(false)} />}
 
       <NewTicketModal
         open={createOpen}
@@ -236,17 +280,38 @@ export function MobileWorkOrders() {
   );
 }
 
-function TicketCard({ ticket, onOpen }: { ticket: Ticket; onOpen: () => void }) {
+function TicketCard({
+  ticket, onOpen, selecting, selected, onToggle,
+}: {
+  ticket: Ticket;
+  onOpen: () => void;
+  selecting?: boolean;
+  selected?: boolean;
+  onToggle?: () => void;
+}) {
   const tier = ticketTier(ticket);
   const unread = ticket.unread_message_count ?? 0;
   return (
     <button
       type="button"
-      onClick={onOpen}
-      className="relative block w-full text-left bg-surface rounded-xl ring-1 ring-midnight-100 shadow-card pl-4 pr-3 py-3 hover:ring-midnight-200 transition"
+      onClick={selecting ? onToggle : onOpen}
+      className={cn(
+        "relative block w-full text-left bg-surface rounded-xl ring-1 shadow-card pl-4 pr-3 py-3 transition",
+        selected ? "ring-2 ring-accent" : "ring-midnight-100 hover:ring-midnight-200",
+      )}
     >
       <TierBar tier={tier} />
       <div className="flex items-start gap-3">
+        {selecting && (
+          <span
+            className={cn(
+              "mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border",
+              selected ? "border-accent bg-accent text-white" : "border-midnight-300",
+            )}
+          >
+            {selected && <Check className="h-3 w-3" strokeWidth={3} />}
+          </span>
+        )}
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
             <span className="font-mono text-[11px] font-semibold text-midnight-500">
