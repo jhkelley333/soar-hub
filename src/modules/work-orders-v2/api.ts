@@ -136,6 +136,7 @@ export function extractInvoice(invoice: { data: string; type: string }): Promise
 export interface ExtractedReplacement {
   manufacturer: string;
   model: string;
+  asset_type: string;
   supplier: string;
   store_number: string;
   cost: number | null;

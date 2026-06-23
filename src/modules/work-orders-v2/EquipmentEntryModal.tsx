@@ -120,6 +120,7 @@ export function EquipmentEntryModal({
         const match = stores.find((s) => s.number === ex.store_number);
         if (match) { setStoreId(match.id); filled = true; }
       }
+      fill(!assetType.trim() && !!ex.asset_type, () => setAssetType(ex.asset_type));
       fill(!manufacturer.trim() && !!ex.manufacturer, () => setManufacturer(ex.manufacturer));
       fill(!model.trim() && !!ex.model, () => setModel(ex.model));
       fill(!supplier.trim() && !!ex.supplier, () => setSupplier(ex.supplier));
