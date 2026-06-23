@@ -1,7 +1,7 @@
 // Chat — Compose (new chat) sheet. Steps: picker → people/object →
 // first message. People come from the live contacts endpoint; creating
-// a thread hits the backend and routes to the new thread. Recent-work
-// shortcuts are still sample (real WO/submission feed is a follow-up).
+// a thread hits the backend and routes to the new thread. The tied-thread
+// flow takes a real WO/submission reference and find-or-creates its thread.
 
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
@@ -17,31 +17,19 @@ import {
   postBroadcast,
   fetchManagedOptions,
   createManagedGroup,
+  openScopedThread,
   type ChatContact,
   type CreateThreadBody,
   type BroadcastAudience,
   type ManagedOption,
+  type ScopeKind,
 } from "../api";
 
 type Scope = "direct" | "group" | "tied" | "news" | "team";
-type TiedKind = "submission" | "workorder";
 
 const NEWS_POSTER_ROLES = ["do", "sdo", "rvp", "vp", "coo", "admin"];
 const NEWS_COMPANY_ROLES = ["coo", "admin"];
 const TEAM_CREATE_ROLES = ["do", "sdo", "rvp", "vp", "coo", "admin"];
-
-interface WorkItem {
-  id: string;
-  kind: TiedKind;
-  ref: string;
-  title: string;
-  sub: string;
-}
-const RECENT_WORK: WorkItem[] = [
-  { id: "WO-2026-0418", kind: "workorder", ref: "WO-2026-0418", title: "Ice maker · SDI 4287", sub: "$3,840 · with GM Sarah Chen" },
-  { id: "sub-3961", kind: "submission", ref: "SAFETY-3961", title: "Safety Check · Burleson", sub: "Resubmitted 8:54p · with GM Priya Mehta" },
-  { id: "WO-2026-0392", kind: "workorder", ref: "WO-2026-0392", title: "Patio canopy · SDI 6033", sub: "$1,210 · approved" },
-];
 
 export function ComposeModal({
   open,
@@ -66,7 +54,8 @@ export function ComposeModal({
   const [scope, setScope] = useState<Scope | null>(null);
   const [people, setPeople] = useState<string[]>([]);
   const [groupName, setGroupName] = useState("");
-  const [objectId, setObjectId] = useState<string | null>(null);
+  const [tiedKind, setTiedKind] = useState<ScopeKind>("workorder");
+  const [tiedRef, setTiedRef] = useState("");
   const [message, setMessage] = useState("");
   const [newsTitle, setNewsTitle] = useState("");
   const [audience, setAudience] = useState<BroadcastAudience>("subtree");
@@ -113,6 +102,18 @@ export function ComposeModal({
       toast.push(e instanceof Error ? e.message : "Couldn't create the chat.", "error"),
   });
 
+  const tiedMut = useMutation({
+    mutationFn: () => openScopedThread(tiedKind, tiedRef.trim()),
+    onSuccess: ({ threadId }) => {
+      qc.invalidateQueries({ queryKey: ["chat", "inbox"] });
+      onCreated?.();
+      close();
+      navigate(`/chat/${threadId}`);
+    },
+    onError: (e: unknown) =>
+      toast.push(e instanceof Error ? e.message : "Couldn't find that reference.", "error"),
+  });
+
   const broadcastMut = useMutation({
     mutationFn: () =>
       postBroadcast({ title: newsTitle.trim(), text: message.trim(), audience }),
@@ -131,7 +132,8 @@ export function ComposeModal({
     setScope(null);
     setPeople([]);
     setGroupName("");
-    setObjectId(null);
+    setTiedKind("workorder");
+    setTiedRef("");
     setMessage("");
     setNewsTitle("");
     setAudience("subtree");
@@ -145,11 +147,6 @@ export function ComposeModal({
   function startDirectWith(id: string) {
     setScope("direct");
     setPeople([id]);
-    setStep(3);
-  }
-  function startTied(w: WorkItem) {
-    setScope("tied");
-    setObjectId(w.id);
     setStep(3);
   }
   function togglePerson(id: string) {
@@ -170,10 +167,6 @@ export function ComposeModal({
     : contacts;
 
   function summaryLine(): string {
-    if (scope === "tied") {
-      const w = RECENT_WORK.find((x) => x.id === objectId);
-      return w ? `${w.ref} · ${w.title}` : "Tied thread";
-    }
     if (scope === "group") return groupName.trim() || "New group";
     return contacts.find((c) => c.id === people[0])?.name ?? "New chat";
   }
@@ -186,19 +179,8 @@ export function ComposeModal({
     let body: CreateThreadBody;
     if (scope === "group") {
       body = { kind: "group", title: groupName.trim(), participantUserIds: people };
-    } else if (scope === "direct") {
-      body = { kind: "direct", participantUserIds: [people[0]], firstMessage: message.trim() };
     } else {
-      const w = RECENT_WORK.find((x) => x.id === objectId);
-      if (!w) return;
-      body = {
-        kind: w.kind,
-        title: `${w.ref} · ${w.title}`,
-        subtitle: w.sub,
-        scopeKind: w.kind,
-        scopeRef: w.ref,
-        firstMessage: message.trim(),
-      };
+      body = { kind: "direct", participantUserIds: [people[0]], firstMessage: message.trim() };
     }
     createMut.mutate(body);
   }
@@ -272,11 +254,11 @@ export function ComposeModal({
           {back}
           <button
             type="button"
-            disabled={!objectId}
-            onClick={() => setStep(3)}
+            disabled={!tiedRef.trim() || tiedMut.isPending}
+            onClick={() => tiedMut.mutate()}
             className="ml-auto h-10 rounded-lg bg-midnight-900 px-5 text-[14px] font-semibold text-white disabled:opacity-40"
           >
-            Next
+            {tiedMut.isPending ? "Opening…" : "Open chat"}
           </button>
         </div>
       );
@@ -339,24 +321,6 @@ export function ComposeModal({
               </div>
             </>
           )}
-
-          <p className="mb-2 mt-4 text-[11px] font-semibold uppercase tracking-wide text-midnight-400">Recent work</p>
-          <ul className="divide-y divide-midnight-100">
-            {RECENT_WORK.map((w) => (
-              <li key={w.id}>
-                <button type="button" onClick={() => startTied(w)} className="flex w-full items-center gap-3 py-2.5 text-left">
-                  <span className={cn("flex h-9 w-9 items-center justify-center rounded-xl", w.kind === "submission" ? "bg-frost-100 text-midnight-700" : "bg-sonic-50 text-sonic")}>
-                    <ClipboardList className="h-[17px] w-[17px]" strokeWidth={2} />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block font-mono text-[10.5px] uppercase tracking-wide text-midnight-400">{w.ref}</span>
-                    <span className="block truncate text-[14px] font-medium text-midnight-900">{w.title}</span>
-                    <span className="block truncate text-[12px] text-midnight-500">{w.sub}</span>
-                  </span>
-                </button>
-              </li>
-            ))}
-          </ul>
         </div>
       )}
 
@@ -476,25 +440,38 @@ export function ComposeModal({
       )}
 
       {step === 2 && scope === "tied" && (
-        <ul className="divide-y divide-midnight-100">
-          {RECENT_WORK.map((w) => {
-            const sel = objectId === w.id;
-            return (
-              <li key={w.id}>
-                <button type="button" onClick={() => setObjectId(w.id)} className="flex w-full items-center gap-3 py-2.5 text-left">
-                  <div className="min-w-0 flex-1">
-                    <span className="block font-mono text-[10.5px] uppercase tracking-wide text-midnight-400">{w.ref}</span>
-                    <span className="block truncate text-[14px] font-medium text-midnight-900">{w.title}</span>
-                    <span className="block truncate text-[12px] text-midnight-500">{w.sub}</span>
-                  </div>
-                  <span className={cn("flex h-5 w-5 items-center justify-center rounded-full border", sel ? "border-accent bg-accent text-white" : "border-midnight-300")}>
-                    {sel && <Check className="h-3 w-3" strokeWidth={3} />}
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        <div>
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-midnight-400">What's this about?</p>
+          <div className="mb-4 grid grid-cols-2 gap-2">
+            {([["workorder", "Work order"], ["submission", "Submission"]] as [ScopeKind, string][]).map(([k, label]) => (
+              <button
+                key={k}
+                type="button"
+                onClick={() => setTiedKind(k)}
+                className={cn(
+                  "flex items-center justify-center gap-2 rounded-xl p-3 text-[14px] font-semibold ring-1 transition",
+                  tiedKind === k ? "bg-accent/5 text-midnight-900 ring-accent" : "bg-surface text-midnight-600 ring-midnight-100 hover:ring-midnight-300",
+                )}
+              >
+                <ClipboardList className="h-[17px] w-[17px]" strokeWidth={2} />
+                {label}
+              </button>
+            ))}
+          </div>
+
+          <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-midnight-400">Reference</p>
+          <input
+            value={tiedRef}
+            onChange={(e) => setTiedRef(e.target.value)}
+            autoFocus
+            placeholder={tiedKind === "workorder" ? "e.g. WO-2026-0418" : "e.g. SAFETY-3961"}
+            className="w-full rounded-xl border border-midnight-200 px-3 py-2.5 text-[15px] text-midnight-900 placeholder:text-midnight-400 focus:border-accent focus:outline-none"
+            onKeyDown={(e) => { if (e.key === "Enter" && tiedRef.trim() && !tiedMut.isPending) tiedMut.mutate(); }}
+          />
+          <p className="mt-2 text-[12px] text-midnight-500">
+            Opens the chat tied to that {tiedKind === "workorder" ? "work order" : "submission"} — its participants and history come along automatically.
+          </p>
+        </div>
       )}
 
       {step === 3 && (
