@@ -9,13 +9,13 @@ import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, ArrowLeft, Camera, Check, ChevronRight, Clock, Image as ImageIcon,
-  Plus, Send,
+  Plus, Send, Trash2,
 } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { createAudit, fetchAuditStores, fileToPhoto, resolveIssue, type PhotoPayload } from "./api";
+import { createAudit, deleteAudit, fetchAuditStores, fileToPhoto, resolveIssue, type PhotoPayload } from "./api";
 import { SEVERITY_META, type AuditIssue, type SiteAudit } from "./types";
 
 function fmtDate(d: string) {
@@ -78,7 +78,7 @@ function Overview({ audits, canWrite, onOpen, onStartCapture }: { audits: SiteAu
     <div className="mx-auto max-w-[1100px]">
       <div className="mb-5 flex items-end justify-between gap-4">
         <div>
-          <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-zinc-400">Site Audits · Command</div>
+          <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-zinc-400">Site Audits</div>
           <h1 className="text-2xl font-bold tracking-tight text-midnight">Operations overview</h1>
         </div>
         {canWrite && <NewWalkButton onCreated={onStartCapture} />}
@@ -164,6 +164,11 @@ function AuditDetail({ audit, canWrite, onBack, onCapture, onShare }: { audit: S
     onSuccess: () => { setProofFor(null); qc.invalidateQueries({ queryKey: ["site-audits"] }); },
     onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't update.", "error"),
   });
+  const del = useMutation({
+    mutationFn: () => deleteAudit(audit.id),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["site-audits"] }); onBack(); },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't delete.", "error"),
+  });
 
   return (
     <div className="mx-auto max-w-[1100px]">
@@ -247,6 +252,16 @@ function AuditDetail({ audit, canWrite, onBack, onCapture, onShare }: { audit: S
               </div>
             );
           })}
+        </div>
+      )}
+
+      {audit.can_delete && (
+        <div className="mt-8 border-t border-zinc-100 pt-4">
+          <button
+            onClick={() => del.isPending ? null : (window.confirm("Delete this entire audit and all of its issues?") && del.mutate())}
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-red-500 hover:underline">
+            <Trash2 className="h-3.5 w-3.5" /> Delete audit
+          </button>
         </div>
       )}
 
