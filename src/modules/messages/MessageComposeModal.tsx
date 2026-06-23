@@ -2,12 +2,14 @@
 // (which store positions can see it, default leaders + GM), optional
 // attachments, and a pin toggle. Posts to the author's scope server-side.
 import { useState } from "react";
-import { Loader2, X, Paperclip, Pin } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
+import { Loader2, X, Paperclip, Pin, Link2, GraduationCap, Trash2 } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
 import { ROLE_LABELS, type UserRole } from "@/types/database";
-import { createMessage, fileToBase64 } from "./api";
+import { fetchMyTraining } from "@/modules/qsr/api";
+import { createMessage, fileToBase64, type MessageLink } from "./api";
 
 // The store positions a message can be addressed to, ordered seniority-first.
 const AUDIENCE_OPTIONS: UserRole[] = [
@@ -21,12 +23,20 @@ export function MessageComposeModal({ onClose, onPosted }: { onClose: () => void
   const [body, setBody] = useState("");
   const [audience, setAudience] = useState<Set<UserRole>>(new Set(DEFAULT_AUDIENCE));
   const [files, setFiles] = useState<File[]>([]);
+  const [links, setLinks] = useState<MessageLink[]>([]);
+  const [pickTraining, setPickTraining] = useState(false);
   const [pinned, setPinned] = useState(false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
   const toggle = (r: UserRole) =>
     setAudience((prev) => { const n = new Set(prev); n.has(r) ? n.delete(r) : n.add(r); return n; });
+  const updateLink = (i: number, patch: Partial<MessageLink>) =>
+    setLinks((prev) => prev.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+  const removeLink = (i: number) => setLinks((prev) => prev.filter((_, j) => j !== i));
+
+  // Course catalog for the "link to training" picker (any signed-in user).
+  const trainingQ = useQuery({ queryKey: ["my-training", "compose"], queryFn: fetchMyTraining, enabled: pickTraining });
 
   async function post() {
     if (!title.trim()) { setErr("Add a title."); return; }
@@ -42,6 +52,7 @@ export function MessageComposeModal({ onClose, onPosted }: { onClose: () => void
         body: body.trim(),
         audienceRoles: [...audience],
         attachments,
+        links: links.filter((l) => l.url.trim()),
         isPinned: pinned,
       });
       onPosted();
@@ -122,6 +133,56 @@ export function MessageComposeModal({ onClose, onPosted }: { onClose: () => void
                   </li>
                 ))}
               </ul>
+            )}
+          </div>
+
+          <div>
+            <Label>Links (optional)</Label>
+            {links.length > 0 && (
+              <ul className="mt-1 space-y-1.5">
+                {links.map((l, i) => (
+                  <li key={i} className="flex items-center gap-1.5">
+                    {l.training ? <GraduationCap className="h-3.5 w-3.5 shrink-0 text-qsr-azure" /> : <Link2 className="h-3.5 w-3.5 shrink-0 text-zinc-400" />}
+                    <input
+                      value={l.label}
+                      onChange={(e) => updateLink(i, { label: e.target.value })}
+                      placeholder="Label"
+                      className="w-1/3 rounded-md border border-zinc-200 px-2 py-1 text-xs"
+                    />
+                    <input
+                      value={l.url}
+                      onChange={(e) => updateLink(i, { url: e.target.value })}
+                      placeholder="https://…"
+                      disabled={l.training}
+                      className="min-w-0 flex-1 rounded-md border border-zinc-200 px-2 py-1 text-xs disabled:bg-zinc-50 disabled:text-zinc-500"
+                    />
+                    <button type="button" onClick={() => removeLink(i)} className="shrink-0 rounded p-1 text-zinc-400 hover:text-red-600" aria-label="Remove link">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="mt-1.5 flex flex-wrap items-center gap-2">
+              <button type="button" onClick={() => setLinks((p) => [...p, { label: "", url: "", training: false }])} className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-semibold text-zinc-600 hover:bg-zinc-50">
+                <Link2 className="h-3.5 w-3.5" /> Add link
+              </button>
+              <button type="button" onClick={() => setPickTraining((s) => !s)} className="inline-flex items-center gap-1.5 rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-semibold text-zinc-600 hover:bg-zinc-50">
+                <GraduationCap className="h-3.5 w-3.5 text-qsr-azure" /> Link to training
+              </button>
+            </div>
+            {pickTraining && (
+              <select
+                value=""
+                onChange={(e) => {
+                  const c = (trainingQ.data?.courses ?? []).find((x) => x.id === e.target.value);
+                  if (c) { setLinks((p) => [...p, { label: c.title, url: `/qsr/course/${c.id}`, training: true }]); setPickTraining(false); }
+                }}
+                className="mt-1.5 h-9 w-full rounded-md border border-zinc-200 bg-white px-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+              >
+                <option value="">{trainingQ.isLoading ? "Loading courses…" : "Pick a course…"}</option>
+                {(trainingQ.data?.courses ?? []).map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+              </select>
             )}
           </div>
 

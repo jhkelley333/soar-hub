@@ -3,8 +3,9 @@
 // date, attachments, and a "I've read this" acknowledgement. GM and above get a
 // "New message" button and a read count with a tap-through reader list.
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Megaphone, Plus, Paperclip, Pin, Check, Trash2, Loader2, Users } from "lucide-react";
+import { Megaphone, Plus, Paperclip, Pin, Check, Trash2, Loader2, Users, Link2, GraduationCap } from "lucide-react";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { useToast } from "@/shared/ui/Toaster";
 import { ROLE_LABELS, type UserRole } from "@/types/database";
@@ -127,6 +128,20 @@ function MessageItem({ msg, onChanged }: { msg: StoreMessage; onChanged: () => v
               <Paperclip className="h-3 w-3" /> <span className="max-w-[10rem] truncate">{a.name}</span>
             </a>
           ))}
+        </div>
+      )}
+
+      {(msg.links ?? []).length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {(msg.links ?? []).map((l, i) => {
+            const internal = l.url.startsWith("/");
+            const Icon = l.training ? GraduationCap : Link2;
+            const cls = `inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[11px] font-medium ${l.training ? "border-qsr-azure/30 bg-qsr-azure/5 text-qsr-azure" : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"}`;
+            const inner = <><Icon className="h-3 w-3" /> <span className="max-w-[12rem] truncate">{l.label || l.url}</span></>;
+            return internal
+              ? <Link key={i} to={l.url} className={cls}>{inner}</Link>
+              : <a key={i} href={l.url} target="_blank" rel="noreferrer" className={cls}>{inner}</a>;
+          })}
         </div>
       )}
 
