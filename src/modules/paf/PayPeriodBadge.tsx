@@ -19,7 +19,7 @@ export function PayPeriodBadge({ className }: { className?: string }) {
     >
       <CalendarClock className="h-3.5 w-3.5" strokeWidth={2} />
       <span className="font-semibold">Pay period {cycle}</span>
-      <span className="font-normal text-accent/70">pays {fmt(payday)}</span>
+      <span className="font-normal text-accent/70">ended {fmt(periodEnd)} · pays {fmt(payday)}</span>
     </span>
   );
 }
