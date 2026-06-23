@@ -51,6 +51,7 @@ import { FISCAL, fiscalInfo, fiscalWeekLabel } from "@/lib/fiscal";
 import { BirthdayCelebration } from "@/modules/my-stores/BirthdayCelebration";
 import { MobileHome } from "./MobileHome";
 import { WeatherWidget } from "./WeatherWidget";
+import { MessageBoard } from "@/modules/messages/MessageBoard";
 
 const SDO_REVIEW_ROLES = new Set<UserRole>(["sdo", "rvp", "vp", "coo", "admin"]);
 const PTO_VIEW_ROLES = new Set<UserRole>(["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]);
@@ -202,6 +203,9 @@ export function DashboardPage() {
         storeCount={storeCount}
         showWalkActions={!!role && WALK_ROLES.has(role)}
       />
+
+      {/* Store message board — announcements addressed to the signed-in user. */}
+      <MessageBoard />
 
       {/* KPI row: hero + 4 stat cards */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
