@@ -277,6 +277,7 @@ function OperationsCard({ store }: { store: MyStoreNode }) {
   const fields: { label: string; value: string | null; copy?: boolean; href?: string }[] = [
     { label: "Plate IQ Email", value: store.plate_iq_email, copy: true },
     { label: "Soar Company", value: store.soar_company_name },
+    { label: "Pay Cycle", value: store.pay_cycle ? `Period ${store.pay_cycle}` : null },
     { label: "POS", value: store.pos_provider },
     { label: "Security Vendor", value: store.security_vendor },
     {

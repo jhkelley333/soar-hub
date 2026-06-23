@@ -199,7 +199,7 @@ async function getMyTree(supa, user) {
         .from("stores")
         .select(
           "id, number, name, city, state, phone, email, address, district_id, is_active, " +
-            "plate_iq_email, soar_company_name, food_vendor_name, " +
+            "plate_iq_email, soar_company_name, pay_cycle, food_vendor_name, " +
             "food_vendor_contact_name, food_vendor_contact_phone, " +
             "food_vendor_contact_email, food_vendor_account_number, " +
             "acquisition_date, pos_provider, security_vendor, security_vendor_phone, " +

@@ -31,6 +31,7 @@ export interface OrgStore {
   // Operations / vendor
   plate_iq_email: string | null;
   soar_company_name: string | null;
+  pay_cycle: string | null;
   acquisition_date: string | null;
   pos_provider: string | null;
   security_vendor: string | null;
@@ -177,6 +178,7 @@ interface CreateStoreInput extends BaseFields {
   zip?: string | null;
   plate_iq_email?: string | null;
   soar_company_name?: string | null;
+  pay_cycle?: string | null;
   acquisition_date?: string | null;
   pos_provider?: string | null;
   security_vendor?: string | null;
@@ -223,6 +225,7 @@ export interface UpdateOrgNodeInput {
   is_active?: boolean;
   plate_iq_email?: string | null;
   soar_company_name?: string | null;
+  pay_cycle?: string | null;
   acquisition_date?: string | null;
   pos_provider?: string | null;
   security_vendor?: string | null;
@@ -372,6 +375,7 @@ export interface OrgBulkRowAnnotated {
   zip?: string | null;
   plate_iq_email?: string | null;
   soar_company_name?: string | null;
+  pay_cycle?: string | null;
   acquisition_date?: string | null;
   pos_provider?: string | null;
   security_vendor?: string | null;

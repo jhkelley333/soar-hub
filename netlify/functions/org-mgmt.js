@@ -125,7 +125,7 @@ async function buildTree(supa) {
       .from("stores")
       .select(
         "id, number, name, phone, email, address, city, state, zip, district_id, is_active, " +
-        "plate_iq_email, soar_company_name, " +
+        "plate_iq_email, soar_company_name, pay_cycle, " +
         "acquisition_date, pos_provider, security_vendor, security_vendor_phone, food_vendor_name, " +
         "has_apple_pay, has_order_ahead, has_outdoor_seating, has_drive_thru, has_clearance_bar, " +
         "drive_thru_lanes, drive_thru_type, public_restroom_count, " +
@@ -185,6 +185,7 @@ async function buildTree(supa) {
       is_active: s.is_active,
       plate_iq_email: s.plate_iq_email,
       soar_company_name: s.soar_company_name,
+      pay_cycle: s.pay_cycle,
       acquisition_date: s.acquisition_date,
       pos_provider: s.pos_provider,
       security_vendor: s.security_vendor,
@@ -302,7 +303,7 @@ const EDITABLE_FIELDS = {
     "number", "name",
     "phone", "email", "address", "city", "state", "zip",
     "is_active",
-    "plate_iq_email", "soar_company_name",
+    "plate_iq_email", "soar_company_name", "pay_cycle",
     "acquisition_date", "pos_provider", "security_vendor", "security_vendor_phone", "food_vendor_name",
     "has_apple_pay", "has_order_ahead", "has_outdoor_seating",
     "has_drive_thru", "has_clearance_bar",
@@ -335,6 +336,8 @@ const FIELD_RULES = {
   // Operations / vendor (admin-only, edited via Org admin or bulk import):
   plate_iq_email:    { type: "string", maxLen: 200, trim: true, nullable: true },
   soar_company_name: { type: "string", maxLen: 200, trim: true, nullable: true },
+  // Payroll cycle — one of A / B / C (DB CHECK enforces the set too).
+  pay_cycle:         { type: "stringEnum", values: ["A", "B", "C"], nullable: true },
   // Acquisition / vendor metadata. Strict ISO date so legacy M/D/Y input
   // doesn't get coerced into the wrong day by the PG date parser.
   acquisition_date:  { type: "date",   nullable: true },
