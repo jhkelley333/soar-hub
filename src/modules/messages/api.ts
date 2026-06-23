@@ -25,6 +25,12 @@ export interface MessageAttachment {
   size?: number;
 }
 
+export interface MessageLink {
+  label: string;
+  url: string;       // external https URL or an internal app path (/qsr/course/…)
+  training?: boolean;
+}
+
 export interface StoreMessage {
   id: string;
   author_id: string | null;
@@ -34,6 +40,7 @@ export interface StoreMessage {
   title: string;
   body: string;
   attachments: MessageAttachment[];
+  links: MessageLink[];
   is_pinned: boolean;
   created_at: string;
   read_count: number;
@@ -57,6 +64,7 @@ export interface CreateMessageInput {
   audienceRoles: UserRole[];
   storeNumbers?: string[];
   attachments?: { data: string; name: string; type: string }[];
+  links?: MessageLink[];
   isPinned?: boolean;
 }
 export function createMessage(input: CreateMessageInput): Promise<{ message: StoreMessage }> {

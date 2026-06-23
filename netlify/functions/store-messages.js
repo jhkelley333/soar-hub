@@ -148,6 +148,18 @@ async function createMessage(supa, profile, body) {
   }
   if (!scope.length) return { error: "Couldn't determine which stores to post to.", status: 400 };
 
+  // Links — external URLs + internal app links (e.g. /qsr/course/<id>).
+  const links = [];
+  for (const l of (Array.isArray(body?.links) ? body.links : []).slice(0, 12)) {
+    let url = String(l?.url || "").trim();
+    if (!url) continue;
+    if (url.startsWith("/")) { /* internal app path — keep as-is */ }
+    else if (/^https?:\/\//i.test(url)) url = url.slice(0, 2048);
+    else url = "https://" + url.replace(/^\/+/, ""); // bare host → https
+    const label = String(l?.label || "").trim().slice(0, 140) || url;
+    links.push({ label, url, training: !!l?.training });
+  }
+
   const { data: msg, error } = await supa
     .from("store_messages")
     .insert({
@@ -157,6 +169,7 @@ async function createMessage(supa, profile, body) {
       audience_roles: audience,
       title,
       body: text,
+      links,
       is_pinned: !!body?.isPinned,
     })
     .select()
