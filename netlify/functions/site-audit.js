@@ -176,6 +176,7 @@ async function listAudits(supa, user) {
   for (const rep of reports || []) if (!lastReport.has(rep.audit_id)) lastReport.set(rep.audit_id, rep);
 
   const storeName = new Map(scope.rows.map((s) => [s.id, s.name]));
+  const role = String(user.role || "").toLowerCase();
   const out = [];
   for (const a of audits || []) {
     const issues = byAudit.get(a.id) || [];
@@ -183,6 +184,8 @@ async function listAudits(supa, user) {
     out.push({
       id: a.id, store_id: a.store_id, store_number: a.store_number, store_name: storeName.get(a.store_id) || null,
       created_by_name: a.created_by_name, status: a.status, note: a.note, date: a.date, created_at: a.created_at,
+      // Only the auditor who created it, or an admin, may delete an audit.
+      can_delete: a.created_by === user.id || role === "admin",
       stats: auditStats(issues),
       last_report: rep ? { signed_by_name: rep.signed_by_name, sent_at: rep.sent_at, status: rep.status, recipient_count: (rep.recipients || []).length } : null,
       issues: await Promise.all(issues.map((i) => issueCard(supa, i))),
@@ -303,9 +306,9 @@ async function deleteAudit(supa, user, body) {
   const auditId = sanitize(body?.audit_id, 64);
   const r = await loadAudit(supa, user, auditId);
   if (r.error) return r;
-  // Only the auditor or a DO+ can delete an audit.
-  const isLeader = ORG_WIDE.has(String(user.role)) || ["do", "sdo", "rvp"].includes(String(user.role));
-  if (r.audit.created_by !== user.id && !isLeader) return { error: "Only the auditor or a DO+ can delete this audit.", status: 403 };
+  // Only the auditor who created it, or an admin, can delete an audit.
+  const isAdmin = String(user.role || "").toLowerCase() === "admin";
+  if (r.audit.created_by !== user.id && !isAdmin) return { error: "Only the auditor or an admin can delete this audit.", status: 403 };
   const { error } = await supa.from("site_audits").delete().eq("id", auditId);
   if (error) return { error: error.message, status: 500 };
   return { ok: true };
