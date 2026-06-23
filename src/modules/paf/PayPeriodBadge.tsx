@@ -8,20 +8,18 @@ import { cn } from "@/lib/cn";
 const fmt = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
 export function PayPeriodBadge({ className }: { className?: string }) {
-  const { cycle, periodEnd, payday } = currentPayPeriod();
+  const { cycle, periodStart, periodEnd, payday } = currentPayPeriod();
   return (
     <span
       className={cn(
         "inline-flex items-center gap-2 rounded-full bg-accent/10 px-3 py-1 text-xs font-medium text-accent",
         className,
       )}
-      title={`Pay period ${cycle} · closes ${fmt(periodEnd)} · pays ${fmt(payday)}`}
+      title={`Pay period ${cycle} · ${fmt(periodStart)} – ${fmt(periodEnd)} · pays ${fmt(payday)}`}
     >
       <CalendarClock className="h-3.5 w-3.5" strokeWidth={2} />
       <span className="font-semibold">Pay period {cycle}</span>
-      <span className="font-normal text-accent/70">
-        closes {fmt(periodEnd)} · pays {fmt(payday)}
-      </span>
+      <span className="font-normal text-accent/70">pays {fmt(payday)}</span>
     </span>
   );
 }

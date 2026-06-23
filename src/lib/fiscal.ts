@@ -120,23 +120,34 @@ export function fiscalInfo(date: Date): FiscalInfo | null {
 
 export interface PayPeriodNow {
   cycle: "A" | "B";
-  periodEnd: Date; // the Sunday that closes this biweekly pay period
-  payday: Date;    // the Friday it pays (holiday-adjusted)
+  periodStart: Date; // first day (Mon) of the two-week pay period
+  periodEnd: Date;   // the Sunday that closes the pay period
+  payday: Date;      // the Friday it pays (holiday-adjusted)
 }
 
-// Which biweekly payroll cycle (A or B) a given date falls in. The two cycles'
-// period-ends land on alternating Sundays, so the Sunday that closes the date's
-// own Mon–Sun week is a close for exactly one cycle — that's the current period.
-// Driven entirely off the FY pay anchors, so it stays correct as weeks roll.
+// The biweekly payroll cycle (A or B) PAFs are currently being completed for —
+// i.e. the one whose payday is next. We anchor on the next upcoming payday (on
+// or after the date), because PAFs for a period are finalized through its pay
+// run; once that Friday passes, the next upcoming period takes over. Driven off
+// the modeled paydays, so A/B and the dates stay correct as weeks roll.
 export function currentPayPeriod(date: Date = new Date()): PayPeriodNow {
   const today = new Date(date.getFullYear(), date.getMonth(), date.getDate());
-  const dow = (today.getDay() + 6) % 7;       // 0 = Mon … 6 = Sun
-  const periodEnd = addDays(today, 6 - dow);   // Sunday that ends this week
-  const fromA = diffDays(periodEnd, FY.payAnchorA); // a multiple of 7
-  const cycle: "A" | "B" = (((fromA % 14) + 14) % 14 === 0) ? "A" : "B";
-  let payday = addDays(periodEnd, 5);
-  if (FY.holidays[fkey(payday)]) payday = addDays(payday, -1);
-  return { cycle, periodEnd, payday };
+  for (let k = 0; k < 14; k++) {
+    const day = addDays(today, k);
+    const pd = MODEL.paydays[fkey(day)];
+    if (pd) {
+      // Undo any holiday pull-forward to recover the nominal Friday, then the
+      // period's closing Sunday is five days before it; the period is 14 days.
+      const friday = pd.moved ? addDays(day, 1) : day;
+      const periodEnd = addDays(friday, -5);
+      return { cycle: pd.cycle, periodStart: addDays(periodEnd, -13), periodEnd, payday: day };
+    }
+  }
+  // Outside the modeled payday range — fall back to the week's ending Sunday.
+  const dow = (today.getDay() + 6) % 7;
+  const periodEnd = addDays(today, 6 - dow);
+  const cycle: "A" | "B" = ((((diffDays(periodEnd, FY.payAnchorA) % 14) + 14) % 14) === 0) ? "A" : "B";
+  return { cycle, periodStart: addDays(periodEnd, -13), periodEnd, payday: addDays(periodEnd, 5) };
 }
 
 export const dateKey = fkey;
