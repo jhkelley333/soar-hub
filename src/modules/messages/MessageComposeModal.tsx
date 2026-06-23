@@ -1,6 +1,6 @@
-// Compose a store message — GM and above. Title + body, an audience picker
-// (which store positions can see it, default leaders + GM), optional
-// attachments, and a pin toggle. Posts to the author's scope server-side.
+// Compose or edit a store message — GM and above. Title + body, an audience
+// picker (which store positions can see it, default leaders + GM), optional
+// attachments + links (incl. a "link to training" picker), and a pin toggle.
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Loader2, X, Paperclip, Pin, Link2, GraduationCap, Trash2 } from "lucide-react";
@@ -9,23 +9,31 @@ import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
 import { ROLE_LABELS, type UserRole } from "@/types/database";
 import { fetchMyTraining } from "@/modules/qsr/api";
-import { createMessage, fileToBase64, type MessageLink } from "./api";
+import { createMessage, updateMessage, fileToBase64, type MessageLink, type MessageAttachment, type StoreMessage } from "./api";
 
-// The store positions a message can be addressed to, ordered seniority-first.
 const AUDIENCE_OPTIONS: UserRole[] = [
   "gm", "shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop",
 ];
 const DEFAULT_AUDIENCE: UserRole[] = ["crew_leader", "associate_manager", "first_assistant_manager", "shift_manager", "gm"];
 const MAX_FILES = 8;
 
-export function MessageComposeModal({ onClose, onPosted }: { onClose: () => void; onPosted: () => void }) {
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
-  const [audience, setAudience] = useState<Set<UserRole>>(new Set(DEFAULT_AUDIENCE));
+export function MessageComposeModal({
+  editing, onClose, onPosted,
+}: {
+  editing?: StoreMessage | null;
+  onClose: () => void;
+  onPosted: () => void;
+}) {
+  const isEdit = !!editing;
+  const [title, setTitle] = useState(editing?.title ?? "");
+  const [body, setBody] = useState(editing?.body ?? "");
+  const [audience, setAudience] = useState<Set<UserRole>>(new Set(editing?.audience_roles ?? DEFAULT_AUDIENCE));
   const [files, setFiles] = useState<File[]>([]);
-  const [links, setLinks] = useState<MessageLink[]>([]);
+  const existing: MessageAttachment[] = editing?.attachments ?? [];
+  const [removed, setRemoved] = useState<Set<string>>(new Set());
+  const [links, setLinks] = useState<MessageLink[]>(editing?.links ?? []);
   const [pickTraining, setPickTraining] = useState(false);
-  const [pinned, setPinned] = useState(false);
+  const [pinned, setPinned] = useState(editing?.is_pinned ?? false);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -35,10 +43,9 @@ export function MessageComposeModal({ onClose, onPosted }: { onClose: () => void
     setLinks((prev) => prev.map((l, j) => (j === i ? { ...l, ...patch } : l)));
   const removeLink = (i: number) => setLinks((prev) => prev.filter((_, j) => j !== i));
 
-  // Course catalog for the "link to training" picker (any signed-in user).
   const trainingQ = useQuery({ queryKey: ["my-training", "compose"], queryFn: fetchMyTraining, enabled: pickTraining });
 
-  async function post() {
+  async function submit() {
     if (!title.trim()) { setErr("Add a title."); return; }
     if (audience.size === 0) { setErr("Pick at least one position to address."); return; }
     setBusy(true);
@@ -47,27 +54,41 @@ export function MessageComposeModal({ onClose, onPosted }: { onClose: () => void
       const attachments = await Promise.all(
         files.slice(0, MAX_FILES).map(async (f) => ({ data: await fileToBase64(f), name: f.name, type: f.type || "application/octet-stream" })),
       );
-      await createMessage({
-        title: title.trim(),
-        body: body.trim(),
-        audienceRoles: [...audience],
-        attachments,
-        links: links.filter((l) => l.url.trim()),
-        isPinned: pinned,
-      });
+      const cleanLinks = links.filter((l) => l.url.trim());
+      if (isEdit && editing) {
+        await updateMessage({
+          id: editing.id,
+          title: title.trim(),
+          body: body.trim(),
+          audienceRoles: [...audience],
+          links: cleanLinks,
+          isPinned: pinned,
+          attachments,
+          removeAttachmentUrls: [...removed],
+        });
+      } else {
+        await createMessage({
+          title: title.trim(),
+          body: body.trim(),
+          audienceRoles: [...audience],
+          attachments,
+          links: cleanLinks,
+          isPinned: pinned,
+        });
+      }
       onPosted();
     } catch (e) {
-      setErr((e as Error)?.message || "Couldn't post the message.");
+      setErr((e as Error)?.message || "Couldn't save the message.");
     } finally {
       setBusy(false);
     }
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}>
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4" onClick={(e) => { if (e.target === e.currentTarget && !busy) onClose(); }}>
       <div className="flex max-h-[90vh] w-full max-w-md flex-col rounded-xl bg-white shadow-2xl">
         <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-3">
-          <div className="text-base font-semibold tracking-tight text-midnight">New message</div>
+          <div className="text-base font-semibold tracking-tight text-midnight">{isEdit ? "Edit message" : "New message"}</div>
           <button type="button" onClick={onClose} disabled={busy} className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-midnight" aria-label="Close">
             <X className="h-4 w-4" />
           </button>
@@ -96,12 +117,7 @@ export function MessageComposeModal({ onClose, onPosted }: { onClose: () => void
               {AUDIENCE_OPTIONS.map((r) => {
                 const on = audience.has(r);
                 return (
-                  <button
-                    key={r}
-                    type="button"
-                    onClick={() => toggle(r)}
-                    className={`rounded-full border px-2.5 py-1 text-xs font-medium ${on ? "border-accent bg-accent/10 text-accent" : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"}`}
-                  >
+                  <button key={r} type="button" onClick={() => toggle(r)} className={`rounded-full border px-2.5 py-1 text-xs font-medium ${on ? "border-accent bg-accent/10 text-accent" : "border-zinc-200 text-zinc-600 hover:bg-zinc-50"}`}>
                     {ROLE_LABELS[r]}
                   </button>
                 );
@@ -110,18 +126,23 @@ export function MessageComposeModal({ onClose, onPosted }: { onClose: () => void
             <div className="mt-1 text-[10px] text-zinc-500">Posts to your store(s). Defaults to hourly leaders and up — add crew/carhop if needed.</div>
           </div>
 
+          {/* Attachments */}
           <div>
             <Label htmlFor="msg-files">Attachments (optional)</Label>
+            {existing.filter((a) => !removed.has(a.url)).length > 0 && (
+              <ul className="mb-1 space-y-1">
+                {existing.filter((a) => !removed.has(a.url)).map((a) => (
+                  <li key={a.url} className="flex items-center gap-2 text-[11px] text-zinc-500">
+                    <Paperclip className="h-3 w-3" /> <span className="truncate font-mono">{a.name}</span>
+                    <button type="button" onClick={() => setRemoved((p) => new Set(p).add(a.url))} className="text-red-600 hover:underline">remove</button>
+                  </li>
+                ))}
+              </ul>
+            )}
             <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-zinc-200 px-2.5 py-1.5 text-xs font-semibold text-zinc-600 hover:bg-zinc-50">
               <Paperclip className="h-3.5 w-3.5" /> Add files
-              <input
-                id="msg-files"
-                type="file"
-                multiple
-                accept="image/*,application/pdf"
-                className="hidden"
-                onChange={(e) => { setFiles((prev) => [...prev, ...Array.from(e.target.files || [])].slice(0, MAX_FILES)); e.target.value = ""; }}
-              />
+              <input id="msg-files" type="file" multiple accept="image/*,application/pdf" className="hidden"
+                onChange={(e) => { setFiles((prev) => [...prev, ...Array.from(e.target.files || [])].slice(0, MAX_FILES)); e.target.value = ""; }} />
             </label>
             {files.length > 0 && (
               <ul className="mt-1.5 space-y-1">
@@ -136,6 +157,7 @@ export function MessageComposeModal({ onClose, onPosted }: { onClose: () => void
             )}
           </div>
 
+          {/* Links */}
           <div>
             <Label>Links (optional)</Label>
             {links.length > 0 && (
@@ -143,22 +165,9 @@ export function MessageComposeModal({ onClose, onPosted }: { onClose: () => void
                 {links.map((l, i) => (
                   <li key={i} className="flex items-center gap-1.5">
                     {l.training ? <GraduationCap className="h-3.5 w-3.5 shrink-0 text-qsr-azure" /> : <Link2 className="h-3.5 w-3.5 shrink-0 text-zinc-400" />}
-                    <input
-                      value={l.label}
-                      onChange={(e) => updateLink(i, { label: e.target.value })}
-                      placeholder="Label"
-                      className="w-1/3 rounded-md border border-zinc-200 px-2 py-1 text-xs"
-                    />
-                    <input
-                      value={l.url}
-                      onChange={(e) => updateLink(i, { url: e.target.value })}
-                      placeholder="https://…"
-                      disabled={l.training}
-                      className="min-w-0 flex-1 rounded-md border border-zinc-200 px-2 py-1 text-xs disabled:bg-zinc-50 disabled:text-zinc-500"
-                    />
-                    <button type="button" onClick={() => removeLink(i)} className="shrink-0 rounded p-1 text-zinc-400 hover:text-red-600" aria-label="Remove link">
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
+                    <input value={l.label} onChange={(e) => updateLink(i, { label: e.target.value })} placeholder="Label" className="w-1/3 rounded-md border border-zinc-200 px-2 py-1 text-xs" />
+                    <input value={l.url} onChange={(e) => updateLink(i, { url: e.target.value })} placeholder="https://…" disabled={l.training} className="min-w-0 flex-1 rounded-md border border-zinc-200 px-2 py-1 text-xs disabled:bg-zinc-50 disabled:text-zinc-500" />
+                    <button type="button" onClick={() => removeLink(i)} className="shrink-0 rounded p-1 text-zinc-400 hover:text-red-600" aria-label="Remove link"><Trash2 className="h-3.5 w-3.5" /></button>
                   </li>
                 ))}
               </ul>
@@ -172,14 +181,10 @@ export function MessageComposeModal({ onClose, onPosted }: { onClose: () => void
               </button>
             </div>
             {pickTraining && (
-              <select
-                value=""
-                onChange={(e) => {
-                  const c = (trainingQ.data?.courses ?? []).find((x) => x.id === e.target.value);
-                  if (c) { setLinks((p) => [...p, { label: c.title, url: `/qsr/course/${c.id}`, training: true }]); setPickTraining(false); }
-                }}
-                className="mt-1.5 h-9 w-full rounded-md border border-zinc-200 bg-white px-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              >
+              <select value="" onChange={(e) => {
+                const c = (trainingQ.data?.courses ?? []).find((x) => x.id === e.target.value);
+                if (c) { setLinks((p) => [...p, { label: c.title, url: `/qsr/course/${c.id}`, training: true }]); setPickTraining(false); }
+              }} className="mt-1.5 h-9 w-full rounded-md border border-zinc-200 bg-white px-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent">
                 <option value="">{trainingQ.isLoading ? "Loading courses…" : "Pick a course…"}</option>
                 {(trainingQ.data?.courses ?? []).map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
               </select>
@@ -196,8 +201,8 @@ export function MessageComposeModal({ onClose, onPosted }: { onClose: () => void
 
         <div className="flex items-center justify-end gap-2 border-t border-zinc-100 px-5 py-3">
           <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
-          <Button variant="primary" onClick={post} disabled={busy || !title.trim()}>
-            {busy && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />} Post
+          <Button variant="primary" onClick={submit} disabled={busy || !title.trim()}>
+            {busy && <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" />} {isEdit ? "Save" : "Post"}
           </Button>
         </div>
       </div>

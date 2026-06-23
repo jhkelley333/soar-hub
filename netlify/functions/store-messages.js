@@ -77,6 +77,39 @@ async function visibleStoreNumbers(supa, userId) {
 
 const overlaps = (a = [], b = []) => { const set = new Set(b); return a.some((x) => set.has(x)); };
 
+// Normalize a links array: internal /paths kept, http(s) kept, bare hosts → https.
+function sanitizeLinks(raw) {
+  const out = [];
+  for (const l of (Array.isArray(raw) ? raw : []).slice(0, 12)) {
+    let url = String(l?.url || "").trim();
+    if (!url) continue;
+    if (url.startsWith("/")) { /* internal */ }
+    else if (/^https?:\/\//i.test(url)) url = url.slice(0, 2048);
+    else url = "https://" + url.replace(/^\/+/, "");
+    out.push({ label: String(l?.label || "").trim().slice(0, 140) || url, url, training: !!l?.training });
+  }
+  return out;
+}
+
+// Upload base64 files to the bucket; returns attachment descriptors.
+async function uploadAttachments(supa, msgId, files, startIndex = 0) {
+  const out = [];
+  for (const f of (Array.isArray(files) ? files : []).slice(0, 8)) {
+    if (!f?.data) continue;
+    try {
+      const buf = Buffer.from(f.data, "base64");
+      if (buf.length > 10 * 1024 * 1024) continue;
+      const ext = (f.name || "file").split(".").pop();
+      const path = `${msgId}/${Date.now()}-${startIndex + out.length}.${ext}`;
+      const { error: upErr } = await supa.storage.from(BUCKET).upload(path, buf, { contentType: f.type || "application/octet-stream", upsert: false });
+      if (upErr) continue;
+      const url = supa.storage.from(BUCKET).getPublicUrl(path).data.publicUrl || path;
+      out.push({ url, name: f.name || "attachment", type: f.type || "", size: buf.length });
+    } catch { /* skip a bad attachment */ }
+  }
+  return out;
+}
+
 async function listMessages(supa, profile) {
   const role = String(profile.role || "").toLowerCase();
   const myStore = await callerStoreNumber(supa, profile);
@@ -148,17 +181,7 @@ async function createMessage(supa, profile, body) {
   }
   if (!scope.length) return { error: "Couldn't determine which stores to post to.", status: 400 };
 
-  // Links — external URLs + internal app links (e.g. /qsr/course/<id>).
-  const links = [];
-  for (const l of (Array.isArray(body?.links) ? body.links : []).slice(0, 12)) {
-    let url = String(l?.url || "").trim();
-    if (!url) continue;
-    if (url.startsWith("/")) { /* internal app path — keep as-is */ }
-    else if (/^https?:\/\//i.test(url)) url = url.slice(0, 2048);
-    else url = "https://" + url.replace(/^\/+/, ""); // bare host → https
-    const label = String(l?.label || "").trim().slice(0, 140) || url;
-    links.push({ label, url, training: !!l?.training });
-  }
+  const links = sanitizeLinks(body?.links);
 
   const { data: msg, error } = await supa
     .from("store_messages")
@@ -176,27 +199,49 @@ async function createMessage(supa, profile, body) {
     .single();
   if (error) return { error: error.message, status: 500 };
 
-  // Attachments — upload each to the public bucket, then stamp the URLs.
-  const files = Array.isArray(body?.attachments) ? body.attachments.slice(0, 8) : [];
-  const attached = [];
-  for (const f of files) {
-    if (!f?.data) continue;
-    try {
-      const buf = Buffer.from(f.data, "base64");
-      if (buf.length > 10 * 1024 * 1024) continue; // 10 MB cap
-      const ext = (f.name || "file").split(".").pop();
-      const path = `${msg.id}/${Date.now()}-${attached.length}.${ext}`;
-      const { error: upErr } = await supa.storage.from(BUCKET).upload(path, buf, { contentType: f.type || "application/octet-stream", upsert: false });
-      if (upErr) continue;
-      const url = supa.storage.from(BUCKET).getPublicUrl(path).data.publicUrl || path;
-      attached.push({ url, name: f.name || "attachment", type: f.type || "", size: buf.length });
-    } catch { /* skip a bad attachment, don't fail the post */ }
-  }
+  const attached = await uploadAttachments(supa, msg.id, body?.attachments, 0);
   if (attached.length) {
     await supa.from("store_messages").update({ attachments: attached }).eq("id", msg.id);
     msg.attachments = attached;
   }
   return { message: msg };
+}
+
+// Edit a message — author or admin. Updates text/audience/pin/links, can append
+// new attachments and drop existing ones, and stamps edited_at.
+async function updateMessage(supa, profile, body) {
+  const id = String(body?.id || "");
+  if (!id) return { error: "id is required.", status: 400 };
+  const { data: m } = await supa.from("store_messages").select("*").eq("id", id).maybeSingle();
+  if (!m || !m.is_active) return { error: "Message not found.", status: 404 };
+  const role = String(profile.role || "").toLowerCase();
+  if (m.author_id !== profile.id && role !== "admin") return { error: "Author only.", status: 403 };
+
+  const patch = { edited_at: new Date().toISOString(), updated_at: new Date().toISOString() };
+  if (body.title != null) {
+    const t = String(body.title).trim();
+    if (!t) return { error: "Title cannot be empty.", status: 400 };
+    patch.title = t;
+  }
+  if (body.body != null) patch.body = String(body.body).trim();
+  if (body.isPinned != null) patch.is_pinned = !!body.isPinned;
+  if (body.links != null) patch.links = sanitizeLinks(body.links);
+  if (Array.isArray(body.audienceRoles)) {
+    const aud = [...new Set(body.audienceRoles.map((r) => String(r).toLowerCase()).filter((r) => AUDIENCE_ROLES.has(r)))];
+    if (aud.length) patch.audience_roles = aud;
+  }
+
+  // Attachments: keep existing minus any removed, then append new uploads.
+  if (body.removeAttachmentUrls || body.attachments) {
+    const remove = new Set(Array.isArray(body.removeAttachmentUrls) ? body.removeAttachmentUrls : []);
+    let kept = (m.attachments || []).filter((a) => !remove.has(a.url));
+    const added = await uploadAttachments(supa, id, body.attachments, kept.length);
+    patch.attachments = [...kept, ...added];
+  }
+
+  const { data: updated, error } = await supa.from("store_messages").update(patch).eq("id", id).select().single();
+  if (error) return { error: error.message, status: 500 };
+  return { message: updated };
 }
 
 async function canSee(supa, profile, m) {
@@ -289,6 +334,7 @@ export const handler = async (event) => {
     if (event.httpMethod === "POST") {
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "create") return unwrap(await createMessage(supa, user, body));
+      if (action === "update") return unwrap(await updateMessage(supa, user, body));
       if (action === "markRead") return unwrap(await markRead(supa, user, body));
       if (action === "delete") return unwrap(await deleteMessage(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });

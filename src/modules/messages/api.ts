@@ -43,6 +43,7 @@ export interface StoreMessage {
   links: MessageLink[];
   is_pinned: boolean;
   created_at: string;
+  edited_at: string | null;
   read_count: number;
   has_read: boolean;
   can_manage: boolean;
@@ -69,6 +70,20 @@ export interface CreateMessageInput {
 }
 export function createMessage(input: CreateMessageInput): Promise<{ message: StoreMessage }> {
   return req(`${FN}?action=create`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export interface UpdateMessageInput {
+  id: string;
+  title?: string;
+  body?: string;
+  audienceRoles?: UserRole[];
+  links?: MessageLink[];
+  isPinned?: boolean;
+  attachments?: { data: string; name: string; type: string }[];
+  removeAttachmentUrls?: string[];
+}
+export function updateMessage(input: UpdateMessageInput): Promise<{ message: StoreMessage }> {
+  return req(`${FN}?action=update`, { method: "POST", body: JSON.stringify(input) });
 }
 
 export function markMessageRead(id: string): Promise<{ ok: true }> {
