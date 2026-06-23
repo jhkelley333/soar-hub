@@ -16,6 +16,7 @@ import { listPafs } from "./api";
 import { PafForm } from "./PafForm";
 import { PafTable } from "./PafTable";
 import { PafGuideDrawer } from "./PafGuideDrawer";
+import { PayPeriodBadge } from "./PayPeriodBadge";
 import {
   applyFilters,
   QueueFilters,
@@ -81,7 +82,8 @@ export function PafPage() {
         title="Payroll Adjustment Forms"
         description={`${data.pafs.length} PAF${data.pafs.length === 1 ? "" : "s"} in your scope.`}
         actions={
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <PayPeriodBadge className="mr-1" />
             <Button variant="ghost" size="sm" onClick={() => setGuideOpen(true)}>
               <HelpCircle className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
               Guide

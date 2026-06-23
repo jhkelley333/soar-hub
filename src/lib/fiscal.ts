@@ -118,6 +118,27 @@ export function fiscalInfo(date: Date): FiscalInfo | null {
   };
 }
 
+export interface PayPeriodNow {
+  cycle: "A" | "B";
+  periodEnd: Date; // the Sunday that closes this biweekly pay period
+  payday: Date;    // the Friday it pays (holiday-adjusted)
+}
+
+// Which biweekly payroll cycle (A or B) a given date falls in. The two cycles'
+// period-ends land on alternating Sundays, so the Sunday that closes the date's
+// own Mon–Sun week is a close for exactly one cycle — that's the current period.
+// Driven entirely off the FY pay anchors, so it stays correct as weeks roll.
+export function currentPayPeriod(date: Date = new Date()): PayPeriodNow {
+  const today = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const dow = (today.getDay() + 6) % 7;       // 0 = Mon … 6 = Sun
+  const periodEnd = addDays(today, 6 - dow);   // Sunday that ends this week
+  const fromA = diffDays(periodEnd, FY.payAnchorA); // a multiple of 7
+  const cycle: "A" | "B" = (((fromA % 14) + 14) % 14 === 0) ? "A" : "B";
+  let payday = addDays(periodEnd, 5);
+  if (FY.holidays[fkey(payday)]) payday = addDays(payday, -1);
+  return { cycle, periodEnd, payday };
+}
+
 export const dateKey = fkey;
 export const closeOn = (key: string): number | null => MODEL.closes[key] ?? null;
 export const paydayOn = (key: string): Payday | null => MODEL.paydays[key] ?? null;
