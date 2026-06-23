@@ -35,6 +35,7 @@ export interface MyStoreNode {
   is_active: boolean;
   plate_iq_email: string | null;
   soar_company_name: string | null;
+  pay_cycle: string | null;
   acquisition_date: string | null;
   pos_provider: string | null;
   security_vendor: string | null;

@@ -91,6 +91,7 @@ export function EditOrgNodeModal({
   // Operations / vendor (admin-only)
   const [plateIqEmail, setPlateIqEmail] = useState("");
   const [soarCompanyName, setSoarCompanyName] = useState("");
+  const [payCycle, setPayCycle] = useState("");
   const [acquisitionDate, setAcquisitionDate] = useState("");
   const [posProvider, setPosProvider] = useState("");
   const [securityVendor, setSecurityVendor] = useState("");
@@ -135,6 +136,7 @@ export function EditOrgNodeModal({
       setParentId(target.district_id);
       setPlateIqEmail(s.plate_iq_email ?? "");
       setSoarCompanyName(s.soar_company_name ?? "");
+      setPayCycle(s.pay_cycle ?? "");
       setAcquisitionDate(s.acquisition_date ?? "");
       setPosProvider(s.pos_provider ?? "");
       setSecurityVendor(s.security_vendor ?? "");
@@ -250,6 +252,7 @@ export function EditOrgNodeModal({
       updates.zip = zip.trim() || null;
       updates.plate_iq_email = plateIqEmail.trim() || null;
       updates.soar_company_name = soarCompanyName.trim() || null;
+      updates.pay_cycle = payCycle || null;
       // Acquisition date — HTML date input already emits YYYY-MM-DD.
       // Empty string clears the column; the backend's "date" validator
       // accepts null but not "" so coalesce here.
@@ -462,6 +465,21 @@ export function EditOrgNodeModal({
                   onChange={(e) => setSoarCompanyName(e.target.value)}
                   disabled={!isAdmin}
                 />
+              </div>
+              <div>
+                <Label htmlFor="org-pay-cycle">Pay Cycle</Label>
+                <select
+                  id="org-pay-cycle"
+                  value={payCycle}
+                  onChange={(e) => setPayCycle(e.target.value)}
+                  disabled={!isAdmin}
+                  className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent disabled:opacity-60"
+                >
+                  <option value="">—</option>
+                  <option value="A">Period A</option>
+                  <option value="B">Period B</option>
+                  <option value="C">Period C</option>
+                </select>
               </div>
               <div>
                 <Label htmlFor="org-acq-date">Acquisition Date</Label>
