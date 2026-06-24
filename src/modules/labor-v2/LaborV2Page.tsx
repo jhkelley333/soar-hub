@@ -38,7 +38,7 @@ const LEVEL_ORDER: LaborLevel[] = ["region", "area", "district", "store"];
 const childLevel = (l: LaborLevel): LaborLevel | null => LEVEL_ORDER[LEVEL_ORDER.indexOf(l) + 1] ?? null;
 const levelLabel = (l: LaborLevel) => LEVELS.find((x) => x.key === l)?.label ?? l;
 
-type SortKey = "name" | "sales" | "labor" | "target" | "variance" | "splh";
+type SortKey = "name" | "sales" | "labor" | "target" | "variance" | "sched" | "actual" | "actVsSched" | "splh";
 
 export function LaborV2Page() {
   const qc = useQueryClient();
@@ -87,6 +87,9 @@ export function LaborV2Page() {
         case "labor": return r.laborPct ?? -Infinity;
         case "target": return r.targetPct ?? -Infinity;
         case "variance": return r.variancePts ?? -Infinity;
+        case "sched": return r.scheduledHours ?? -Infinity;
+        case "actual": return r.laborHours ?? -Infinity;
+        case "actVsSched": return r.actualVsSched ?? -Infinity;
         case "splh": return r.splh ?? -Infinity;
       }
     };
@@ -196,9 +199,9 @@ export function LaborV2Page() {
                         <Th label="Labor %" k="labor" sort={sort} onSort={toggleSort} right />
                         <Th label="Target %" k="target" sort={sort} onSort={toggleSort} right />
                         <Th label="Variance" k="variance" sort={sort} onSort={toggleSort} right />
-                        <th className="py-2 pl-3 text-right">Sched Hrs</th>
-                        <th className="py-2 pl-3 text-right">Actual Hrs</th>
-                        <th className="py-2 pl-3 text-right">Act−Sched</th>
+                        <Th label="Sched Hrs" k="sched" sort={sort} onSort={toggleSort} right />
+                        <Th label="Actual Hrs" k="actual" sort={sort} onSort={toggleSort} right />
+                        <Th label="Act−Sched" k="actVsSched" sort={sort} onSort={toggleSort} right />
                         <Th label="SPLH" k="splh" sort={sort} onSort={toggleSort} right />
                       </tr>
                     </thead>
