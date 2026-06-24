@@ -5,18 +5,15 @@
 // snapshot.
 //
 // Env (set in Netlify, then redeploy):
-//   SKUNKWORKS_KPI_URL    base snapshot URL (no token), e.g.
-//                         https://skunkworks-api.expresswaytech.com/v1/kpi/shared/snapshot
+//   SKUNKWORKS_KPI_URL    base snapshot URL (no token) — kept in env, never in
+//                         code, so Netlify's secret scanner stays happy
 //   SKUNKWORKS_KPI_TOKEN  the shared access token
-//   (falls back to a sane default URL if SKUNKWORKS_KPI_URL is unset)
 
 import { createClient } from "@supabase/supabase-js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const KPI_URL =
-  process.env.SKUNKWORKS_KPI_URL ||
-  "https://skunkworks-api.expresswaytech.com/v1/kpi/shared/snapshot";
+const KPI_URL = process.env.SKUNKWORKS_KPI_URL;
 const KPI_TOKEN = process.env.SKUNKWORKS_KPI_TOKEN;
 
 function admin() {
@@ -66,8 +63,8 @@ export const handler = async (event) => {
     return respond(403, { error: "Admins only." });
   }
 
-  if (!KPI_TOKEN) {
-    return respond(503, { error: "KPI feed isn't configured (SKUNKWORKS_KPI_TOKEN missing)." });
+  if (!KPI_URL || !KPI_TOKEN) {
+    return respond(503, { error: "KPI feed isn't configured (set SKUNKWORKS_KPI_URL + SKUNKWORKS_KPI_TOKEN in Netlify)." });
   }
 
   // Fetch the snapshot server-side. The token rides in the query string per the
