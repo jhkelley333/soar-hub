@@ -80,23 +80,28 @@ function chartStatus(laborPct, goalPct) {
 }
 
 // Shape one band (prefix "" = daily, "wtd_", "ptd_") into the UI's LaborBand.
-// Goal/chart = the feed's target %; over-chart $ derived from it.
+// Goal/chart = the feed's target %. $ over chart = cost − sales×target. Hours
+// over chart = ($ over chart) ÷ avg store wage, where avg wage = cost ÷ hours.
 function shapeBand(row, prefix) {
   if (!row) return null;
   const laborFrac = row[`${prefix}labor_pct`];
   const targetFrac = row[`${prefix}target_labor_pct`];
   const sales = row[`${prefix}net_sales`];
   const cost = row[`${prefix}labor_cost`];
-  const hoursOver = row[`${prefix}actual_vs_scheduled_hours`];
+  const hours = row[`${prefix}labor_hours`];
   const laborPct = pct(laborFrac);
   const goalPct = pct(targetFrac);
   const chartAllowed = sales != null && targetFrac != null ? round2(sales * Number(targetFrac)) : null;
+  const dollarsOver = cost != null && chartAllowed != null ? round2(Number(cost) - chartAllowed) : null;
+  // Avg wage from this band's own cost/hours; convert the $ overage to hours.
+  const avgWage = cost != null && hours ? Number(cost) / Number(hours) : null;
+  const hoursOver = dollarsOver != null && avgWage ? round1(dollarsOver / avgWage) : null;
   return {
     labor_pct: laborPct == null ? null : round1(laborPct),
     sales: sales ?? null,
     variance_pts: laborPct != null && goalPct != null ? round1(laborPct - goalPct) : null,
-    dollars_over_chart: cost != null && chartAllowed != null ? round2(cost - chartAllowed) : null,
-    hours_over_chart: hoursOver ?? null,
+    dollars_over_chart: dollarsOver,
+    hours_over_chart: hoursOver,
     chart_dollars_allowed: chartAllowed,
     status: chartStatus(laborPct, goalPct),
   };
