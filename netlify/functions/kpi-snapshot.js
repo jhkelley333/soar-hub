@@ -40,15 +40,90 @@ async function getSessionUser(event) {
   return profile;
 }
 
-// Classify a businessDateData row by its org level. The feed rolls up with
-// child names set to "Total" above the level the row represents, so the most
-// specific non-"Total" name wins.
+// Classify a businessDateData row by its (feed) org level.
 function levelOf(r) {
   if (r.storeName && r.storeName !== "Total") return "store";
   if (r.districtName && r.districtName !== "Total") return "district";
   if (r.regionName && r.regionName !== "Total") return "region";
   if (r.regionParentName && r.regionParentName !== "Total") return "regionParent";
   return "total";
+}
+
+// The feed's storeName is "<store#> <name>" (e.g. "3574 Helton Dr"); the leading
+// digits are our store number — our join key into the SOAR org hierarchy.
+function storeNumberOf(r) {
+  const m = String(r.storeName || "").match(/^\s*(\d+)/);
+  return m ? m[1] : null;
+}
+
+// Resolve store numbers → our org (store/district/area/region names) by walking
+// stores → districts → areas → regions. Returns a Map keyed by store number.
+async function resolveOrg(supa, numbers) {
+  const map = new Map();
+  if (!numbers.length) return map;
+  const { data: stores } = await supa.from("stores").select("number, name, district_id").in("number", numbers);
+  const districtIds = [...new Set((stores || []).map((s) => s.district_id).filter(Boolean))];
+  const { data: districts } = districtIds.length
+    ? await supa.from("districts").select("id, name, area_id").in("id", districtIds) : { data: [] };
+  const areaIds = [...new Set((districts || []).map((d) => d.area_id).filter(Boolean))];
+  const { data: areas } = areaIds.length
+    ? await supa.from("areas").select("id, name, region_id").in("id", areaIds) : { data: [] };
+  const regionIds = [...new Set((areas || []).map((a) => a.region_id).filter(Boolean))];
+  const { data: regions } = regionIds.length
+    ? await supa.from("regions").select("id, name").in("id", regionIds) : { data: [] };
+  const dMap = new Map((districts || []).map((d) => [d.id, d]));
+  const aMap = new Map((areas || []).map((a) => [a.id, a]));
+  const rMap = new Map((regions || []).map((r) => [r.id, r]));
+  for (const s of stores || []) {
+    const d = dMap.get(s.district_id) || null;
+    const a = d ? aMap.get(d.area_id) || null : null;
+    const r = a ? rMap.get(a.region_id) || null : null;
+    map.set(String(s.number), {
+      number: String(s.number),
+      store: s.name || `#${s.number}`,
+      district: d?.name ?? null,
+      area: a?.name ?? null,
+      region: r?.name ?? null,
+    });
+  }
+  return map;
+}
+
+const num = (v) => (typeof v === "number" && isFinite(v) ? v : 0);
+const div = (a, b) => (b ? a / b : null);
+
+// Aggregate a set of store-level feed rows into one summary, recomputing
+// rates/averages from their numerators & denominators (never averaging %s).
+function aggregate(name, rows) {
+  const s = (k) => rows.reduce((acc, r) => acc + num(r[k]), 0);
+  const netSales = s("netSales");
+  const tickets = s("tickets");
+  const prevNet = s("previousYearNetSales");
+  const prevTickets = s("previousYearTickets");
+  const laborHours = s("laborHours");
+  const laborNum = s("laborPercentageNumerator") || s("laborCost");
+  const laborDen = s("laborPercentageDenominator") || netSales;
+  return {
+    name,
+    storeCount: rows.length,
+    netSales,
+    grossSales: s("grossSales"),
+    subTotal: s("subTotal"),
+    tickets,
+    averageTicketAmount: div(netSales, tickets),
+    yoYNetSalesPercentage: div(netSales - prevNet, prevNet),
+    yoYTrafficPercentage: div(tickets - prevTickets, prevTickets),
+    laborCost: s("laborCost"),
+    laborHours,
+    laborPercentage: div(laborNum, laborDen),
+    splh: div(netSales, laborHours),
+    onTimePercentage: div(s("onTimePercentageNumerator"), s("onTimePercentageDenominator")),
+    orderAheadPercentage: div(s("orderAheadNetSales"), s("orderAheadNetSalesDenominator")),
+    deliveryPercentage: div(s("deliveryNetSales"), s("deliveryNetSalesDenominator")),
+    discountPercentage: div(s("discountPercentageDiscountsTotal"), s("discountPercentageSales")),
+    discountTotal: s("discountTotal"),
+    voidTotal: s("voidTotal"),
+  };
 }
 
 export const handler = async (event) => {
@@ -103,21 +178,63 @@ export const handler = async (event) => {
     const rows = Array.isArray(payload?.rawData?.businessDateData)
       ? payload.rawData.businessDateData
       : [];
-    // Tag each row with its level and keep all KPI fields intact (pass-through).
     const tagged = rows.map((r) => ({ level: levelOf(r), ...r }));
     const total = tagged.find((r) => r.level === "total") ?? null;
+
+    // Re-scope the store-level rows onto OUR org hierarchy via store number.
+    const storeRows = tagged.filter((r) => r.level === "store");
+    const supa = admin();
+    const orgMap = await resolveOrg(
+      supa,
+      [...new Set(storeRows.map(storeNumberOf).filter(Boolean))],
+    );
+
+    let matched = 0;
+    const unmatched = [];
+    const inScope = [];
+    for (const r of storeRows) {
+      const number = storeNumberOf(r);
+      const org = number ? orgMap.get(number) : null;
+      if (org) { matched++; inScope.push({ ...r, soar: org }); }
+      else { unmatched.push(number || r.storeName || "—"); }
+    }
+
+    const groupBy = (keyFn) => {
+      const m = new Map();
+      for (const r of inScope) {
+        const k = keyFn(r) || "Unassigned";
+        if (!m.has(k)) m.set(k, []);
+        m.get(k).push(r);
+      }
+      return [...m.entries()]
+        .map(([name, rs]) => aggregate(name, rs))
+        .sort((a, b) => num(b.netSales) - num(a.netSales));
+    };
+
+    const levels = {
+      region: groupBy((r) => r.soar.region),
+      area: groupBy((r) => r.soar.area),
+      district: groupBy((r) => r.soar.district),
+      store: inScope
+        .map((r) => ({
+          ...aggregate(r.soar.store, [r]),
+          number: r.soar.number,
+          district: r.soar.district,
+          region: r.soar.region,
+        }))
+        .sort((a, b) => num(b.netSales) - num(a.netSales)),
+    };
 
     return respond(200, {
       ok: true,
       fetchedAt: new Date().toISOString(),
-      counts: {
-        total: tagged.length,
-        stores: tagged.filter((r) => r.level === "store").length,
-        districts: tagged.filter((r) => r.level === "district").length,
-        regions: tagged.filter((r) => r.level === "region").length,
-      },
       total,
-      rows: tagged,
+      scope: {
+        matched,
+        unmatched: unmatched.length,
+        unmatchedSample: unmatched.slice(0, 10),
+      },
+      levels,
     });
   } catch (e) {
     // Last-resort guard so the function never returns a bare 502 — the dashboard

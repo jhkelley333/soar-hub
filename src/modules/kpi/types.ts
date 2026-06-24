@@ -96,7 +96,39 @@ export interface KpiRow {
 export interface KpiSnapshot {
   ok: true;
   fetchedAt: string;
-  counts: { total: number; stores: number; districts: number; regions: number };
   total: KpiRow | null;
-  rows: KpiRow[];
+  scope: { matched: number; unmatched: number; unmatchedSample: string[] };
+  levels: {
+    region: KpiOrgRow[];
+    area: KpiOrgRow[];
+    district: KpiOrgRow[];
+    store: KpiOrgRow[];
+  };
+}
+
+// A row rolled up onto OUR org hierarchy (region / area / district / store),
+// recomputed from store-level numerators & denominators server-side.
+export interface KpiOrgRow {
+  name: string;
+  storeCount: number;
+  number?: string;       // store level only
+  district?: string | null;
+  region?: string | null;
+  netSales: number | null;
+  grossSales: number | null;
+  subTotal: number | null;
+  tickets: number | null;
+  averageTicketAmount: number | null;
+  yoYNetSalesPercentage: number | null;
+  yoYTrafficPercentage: number | null;
+  laborCost: number | null;
+  laborHours: number | null;
+  laborPercentage: number | null;
+  splh: number | null;
+  onTimePercentage: number | null;
+  orderAheadPercentage: number | null;
+  deliveryPercentage: number | null;
+  discountPercentage: number | null;
+  discountTotal: number | null;
+  voidTotal: number | null;
 }
