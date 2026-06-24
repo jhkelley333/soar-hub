@@ -156,6 +156,62 @@ function aggregate(name, rows) {
   };
 }
 
+// Tag + org-scope + roll up one period's feed rows into { total, scope, levels }.
+function buildPeriod(dataRows, orgMap) {
+  const tagged = (Array.isArray(dataRows) ? dataRows : []).map((r) => ({ level: levelOf(r), ...r }));
+  const total = tagged.find((r) => r.level === "total") ?? null;
+  const storeRows = tagged.filter((r) => r.level === "store");
+
+  let matched = 0;
+  const unmatched = [];
+  const inScope = [];
+  for (const r of storeRows) {
+    const number = storeNumberOf(r);
+    const org = number ? orgMap.get(number) : null;
+    if (org) { matched++; inScope.push({ ...r, soar: org }); }
+    else { unmatched.push(number || r.storeName || "—"); }
+  }
+
+  const groupBy = (keyFn, leaderKey) => {
+    const m = new Map();
+    for (const r of inScope) {
+      const k = keyFn(r) || "Unassigned";
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(r);
+    }
+    return [...m.entries()]
+      .map(([name, rs]) => ({ ...aggregate(name, rs), leader: rs[0]?.soar?.[leaderKey] ?? null }))
+      .sort((a, b) => num(b.netSales) - num(a.netSales));
+  };
+
+  const levels = {
+    region: groupBy((r) => r.soar.region, "rvpName"),
+    area: groupBy((r) => r.soar.area, "sdoName"),
+    district: groupBy((r) => r.soar.district, "doName"),
+    store: inScope
+      .map((r) => {
+        // Keep the store number in the label (don't double it if our store
+        // name already starts with it): e.g. "3574 Helton Dr".
+        const nm = String(r.soar.store).trim();
+        const label = nm.startsWith(r.soar.number) ? nm : `${r.soar.number} ${nm}`;
+        return {
+          ...aggregate(label, [r]),
+          number: r.soar.number,
+          leader: r.soar.gmName,
+          district: r.soar.district,
+          region: r.soar.region,
+        };
+      })
+      .sort((a, b) => num(b.netSales) - num(a.netSales)),
+  };
+
+  return {
+    total,
+    scope: { matched, unmatched: unmatched.length, unmatchedSample: unmatched.slice(0, 10) },
+    levels,
+  };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
 
@@ -205,73 +261,34 @@ export const handler = async (event) => {
       clearTimeout(timer);
     }
 
-    const rows = Array.isArray(payload?.rawData?.businessDateData)
-      ? payload.rawData.businessDateData
-      : [];
-    const tagged = rows.map((r) => ({ level: levelOf(r), ...r }));
-    const total = tagged.find((r) => r.level === "total") ?? null;
+    const rd = (payload && payload.rawData) || {};
+    const feedKeys = Object.keys(rd);
+    // Pick the first present array for each period (the feed may name them a few
+    // different ways; feedKeys is returned so the UI can self-report mismatches).
+    const pick = (cands) => { for (const k of cands) if (Array.isArray(rd[k])) return rd[k]; return []; };
+    const dayRows = pick(["businessDateData"]);
+    const wtdRows = pick(["weekToDateData", "weekToDate", "wtdData", "businessWeekData", "weekData", "wtd"]);
+    const ptdRows = pick(["periodToDateData", "periodToDate", "ptdData", "businessPeriodData", "periodData", "ptd"]);
 
-    // Re-scope the store-level rows onto OUR org hierarchy via store number.
-    const storeRows = tagged.filter((r) => r.level === "store");
+    // Resolve our org once over the union of store numbers across all periods.
     const supa = admin();
-    const orgMap = await resolveOrg(
-      supa,
-      [...new Set(storeRows.map(storeNumberOf).filter(Boolean))],
-    );
-
-    let matched = 0;
-    const unmatched = [];
-    const inScope = [];
-    for (const r of storeRows) {
-      const number = storeNumberOf(r);
-      const org = number ? orgMap.get(number) : null;
-      if (org) { matched++; inScope.push({ ...r, soar: org }); }
-      else { unmatched.push(number || r.storeName || "—"); }
-    }
-
-    const groupBy = (keyFn, leaderKey) => {
-      const m = new Map();
-      for (const r of inScope) {
-        const k = keyFn(r) || "Unassigned";
-        if (!m.has(k)) m.set(k, []);
-        m.get(k).push(r);
-      }
-      return [...m.entries()]
-        .map(([name, rs]) => ({ ...aggregate(name, rs), leader: rs[0]?.soar?.[leaderKey] ?? null }))
-        .sort((a, b) => num(b.netSales) - num(a.netSales));
-    };
-
-    const levels = {
-      region: groupBy((r) => r.soar.region, "rvpName"),
-      area: groupBy((r) => r.soar.area, "sdoName"),
-      district: groupBy((r) => r.soar.district, "doName"),
-      store: inScope
-        .map((r) => {
-          // Keep the store number in the label (don't double it if our store
-          // name already starts with it): e.g. "3574 Helton Dr".
-          const nm = String(r.soar.store).trim();
-          const label = nm.startsWith(r.soar.number) ? nm : `${r.soar.number} ${nm}`;
-          return {
-            ...aggregate(label, [r]),
-            number: r.soar.number,
-            leader: r.soar.gmName,
-            district: r.soar.district,
-            region: r.soar.region,
-          };
-        })
-        .sort((a, b) => num(b.netSales) - num(a.netSales)),
-    };
+    const storeNumbers = [...new Set(
+      [...dayRows, ...wtdRows, ...ptdRows]
+        .filter((r) => levelOf(r) === "store")
+        .map(storeNumberOf)
+        .filter(Boolean),
+    )];
+    const orgMap = await resolveOrg(supa, storeNumbers);
 
     return respond(200, {
       ok: true,
       fetchedAt: new Date().toISOString(),
-      total,
-      scope: {
-        matched,
-        unmatched: unmatched.length,
-        unmatchedSample: unmatched.slice(0, 10),
+      feedKeys,
+      periods: {
+        day: buildPeriod(dayRows, orgMap),
+        wtd: buildPeriod(wtdRows, orgMap),
+        ptd: buildPeriod(ptdRows, orgMap),
       },
-      levels,
     });
   } catch (e) {
     // Last-resort guard so the function never returns a bare 502 — the dashboard

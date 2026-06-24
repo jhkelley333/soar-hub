@@ -13,7 +13,7 @@ import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { cn } from "@/lib/cn";
 import { fetchKpiSnapshot } from "./api";
-import type { KpiOrgRow } from "./types";
+import type { KpiOrgRow, PeriodKey } from "./types";
 
 // ── formatters ──────────────────────────────────────────────────────────────
 const n = (v: number | null | undefined) => (v == null ? null : v);
@@ -65,15 +65,23 @@ const LEVELS: { key: LevelKey; label: string }[] = [
 // Leader title shown next to each row's name, by level.
 const LEADER_LABEL: Record<LevelKey, string> = { region: "RVP", area: "SDO", district: "DO", store: "GM" };
 
+const PERIODS: { key: PeriodKey; label: string }[] = [
+  { key: "day", label: "Daily" },
+  { key: "wtd", label: "WTD" },
+  { key: "ptd", label: "PTD" },
+];
+
 export function KpiDashboardPage() {
   const q = useQuery({ queryKey: ["kpi-snapshot"], queryFn: fetchKpiSnapshot, staleTime: 5 * 60_000 });
+  const [period, setPeriod] = useState<PeriodKey>("day");
   const [level, setLevel] = useState<LevelKey>("region");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "netSales", dir: "desc" });
 
-  const total = q.data?.total ?? null;
+  const pdata = q.data?.periods?.[period] ?? null;
+  const total = pdata?.total ?? null;
   const rows = useMemo(() => {
-    const all: KpiOrgRow[] = q.data?.levels?.[level] ?? [];
+    const all: KpiOrgRow[] = pdata?.levels?.[level] ?? [];
     const term = search.trim().toLowerCase();
     const filtered = term ? all.filter((r) => r.name.toLowerCase().includes(term)) : all;
     const val = (r: KpiOrgRow, k: SortKey): number | string => {
@@ -93,7 +101,7 @@ export function KpiDashboardPage() {
       const cmp = typeof av === "string" ? av.localeCompare(bv as string) : (av as number) - (bv as number);
       return sort.dir === "asc" ? cmp : -cmp;
     });
-  }, [q.data, level, search, sort]);
+  }, [pdata, level, search, sort]);
 
   function toggleSort(key: SortKey) {
     setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "name" ? "asc" : "desc" }));
@@ -102,7 +110,8 @@ export function KpiDashboardPage() {
   const asOf = q.data?.fetchedAt
     ? new Date(q.data.fetchedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
     : null;
-  const scope = q.data?.scope;
+  const scope = pdata?.scope;
+  const periodHasData = !!total || (pdata?.levels?.store?.length ?? 0) > 0;
 
   return (
     <>
@@ -135,6 +144,33 @@ export function KpiDashboardPage() {
         />
       ) : (
         <>
+          {/* Period selector — Daily reflects the previous completed business day. */}
+          <div className="mb-4 flex flex-wrap items-center gap-3">
+            <div className="inline-flex rounded-md ring-1 ring-inset ring-zinc-200">
+              {PERIODS.map((p) => (
+                <button key={p.key} onClick={() => setPeriod(p.key)}
+                  className={cn("px-4 py-1.5 text-sm font-semibold transition first:rounded-l-md last:rounded-r-md",
+                    period === p.key ? "bg-accent text-white" : "text-zinc-600 hover:bg-zinc-50")}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs text-zinc-400">
+              {period === "day" ? "Daily = previous completed business day" : period === "wtd" ? "Week-to-date" : "Period-to-date"}
+            </span>
+          </div>
+
+          {!periodHasData ? (
+            <EmptyState
+              title={`No ${period.toUpperCase()} data in this snapshot`}
+              description={
+                q.data?.feedKeys?.length
+                  ? `The feed returned: ${q.data.feedKeys.join(", ")}. If the ${period === "wtd" ? "week-to-date" : "period-to-date"} section is named differently, tell me the key and I'll map it.`
+                  : "The feed didn't include this period."
+              }
+            />
+          ) : (
+          <>
           {/* Company total tiles (all stores in the feed) */}
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
             <Tile label="Net Sales" value={fmtUSD0(n(total?.netSales ?? null))} delta={total?.yoYNetSalesPercentage ?? null} sub="vs last year" />
@@ -221,6 +257,8 @@ export function KpiDashboardPage() {
               </div>
             </CardBody>
           </Card>
+          </>
+          )}
         </>
       )}
     </>
