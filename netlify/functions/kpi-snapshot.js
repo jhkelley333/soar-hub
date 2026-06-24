@@ -61,6 +61,10 @@ export const handler = async (event) => {
   try { user = await getSessionUser(event); }
   catch (e) { return respond(500, { error: e.message || "auth failed" }); }
   if (!user) return respond(401, { error: "unauthorized" });
+  // Admin-only: the KPI feed is company-wide financial data.
+  if (String(user.role || "").toLowerCase() !== "admin") {
+    return respond(403, { error: "Admins only." });
+  }
 
   if (!KPI_TOKEN) {
     return respond(503, { error: "KPI feed isn't configured (SKUNKWORKS_KPI_TOKEN missing)." });
