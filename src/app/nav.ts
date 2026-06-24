@@ -125,6 +125,7 @@ export const NAV: NavItem[] = [
   { to: "/my-stores",   label: "My Stores",   icon: Building2,       roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
   { to: "/admin/org",   label: "Org Admin",   icon: Network,         roles: ["vp", "coo", "admin"] },
   { to: "/admin/kpi",   label: "KPI Dashboard", icon: BarChart3,   roles: ["admin"] },
+  { to: "/admin/labor-v2", label: "Labor v2",   icon: Gauge,       roles: ["admin"] },
   { to: "/admin/bulk-attributes", label: "Bulk Attributes", icon: Layers, roles: ["admin"] },
   { to: "/admin/feature-flags",   label: "Feature Flags",   icon: Flag,   roles: ["admin"] },
   { to: "/admin/role-access",     label: "Role Access",     icon: KeyRound, roles: ["admin"] },
