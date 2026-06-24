@@ -41,6 +41,7 @@ function laborAgg(name, rows) {
   const netSales = s("net_sales");
   const laborCost = s("labor_cost");
   const laborHours = s("labor_hours");
+  const overtimeHours = s("overtime_hours");
   const scheduledHours = s("scheduled_labor_hours");
   const actualVsSched = s("actual_vs_scheduled_hours");
   const targetLaborDollars = rows.reduce((a, r) => a + numv(r.target_labor_pct) * numv(r.net_sales), 0);
@@ -52,6 +53,7 @@ function laborAgg(name, rows) {
     netSales,
     laborCost,
     laborHours,
+    overtimeHours,
     scheduledHours,
     actualVsSched,
     laborPct,
