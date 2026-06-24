@@ -26,6 +26,8 @@ export interface LaborSummary {
   ok: true;
   date: string | null;
   total: LaborRow | null;
+  // Present only on a refresh: how many feed rows carried each band.
+  refreshed?: { stores: number; wtd: number; ptd: number } | null;
   scope: { matched: number; unmatched: number; unmatchedSample?: string[] };
   levels: Record<LaborLevel, LaborRow[]>;
 }

@@ -61,7 +61,11 @@ export function LaborV2Page() {
     onSuccess: (data) => {
       qc.setQueryData(["labor-v2-summary", date], data);
       qc.invalidateQueries({ queryKey: ["labor-v2-dates"] });
-      toast.push("Pulled the latest labor numbers.", "success");
+      const r = data.refreshed;
+      toast.push(
+        r ? `Pulled ${r.stores} stores · WTD ${r.wtd} · PTD ${r.ptd}.` : "Pulled the latest labor numbers.",
+        "success",
+      );
     },
     onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't refresh.", "error"),
   });
