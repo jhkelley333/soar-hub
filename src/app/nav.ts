@@ -67,6 +67,8 @@ export const NAV: NavItem[] = [
   // chart and explain misses; DO+ get the district rollup. Backend
   // (labor.js) enforces scope; nav is wide so shift managers see it too.
   { to: "/labor",       label: "Labor",       icon: Gauge,           roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // Labor v2 — same daily review, fed by the KPI feed instead of the sheet.
+  { to: "/labor-v2",    label: "Labor v2",    icon: Gauge,           roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   // Cash Management — night-close + next-day deposit cycle. Store leaders
   // run it; DO+ act on alerts. Rolled out by role now (the pilot flag was
   // retired once it shipped to all store leaders).
@@ -125,7 +127,7 @@ export const NAV: NavItem[] = [
   { to: "/my-stores",   label: "My Stores",   icon: Building2,       roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
   { to: "/admin/org",   label: "Org Admin",   icon: Network,         roles: ["vp", "coo", "admin"] },
   { to: "/admin/kpi",   label: "KPI Dashboard", icon: BarChart3,   roles: ["admin"] },
-  { to: "/admin/labor-v2", label: "Labor v2",   icon: Gauge,       roles: ["admin"] },
+  { to: "/admin/labor-v2", label: "Labor v2 · Rollup", icon: Gauge, roles: ["admin"] },
   { to: "/admin/bulk-attributes", label: "Bulk Attributes", icon: Layers, roles: ["admin"] },
   { to: "/admin/feature-flags",   label: "Feature Flags",   icon: Flag,   roles: ["admin"] },
   { to: "/admin/role-access",     label: "Role Access",     icon: KeyRound, roles: ["admin"] },
@@ -202,6 +204,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/operations": "OPERATIONS",
   "/ranker": "OPERATIONS",
   "/labor": "OPERATIONS",
+  "/labor-v2": "OPERATIONS",
   "/admin/cash-management": "OPERATIONS",
   "/weather": "OPERATIONS",
   "/schedule": "OPERATIONS",

@@ -5,14 +5,41 @@ import { isStoreRow, storeNumberOf } from "./kpiOrg.js";
 
 const numOrNull = (v) => (typeof v === "number" && isFinite(v) ? v : null);
 
-// Store-level labor rows shaped for the labor_v2_daily table.
+// The feed names its period sections a few different ways; mirror kpi-snapshot.
+const WTD_SECTIONS = ["weekToDateData", "weekToDate", "wtdData", "businessWeekData", "weekData", "wtd"];
+const PTD_SECTIONS = ["periodToDateData", "periodToDate", "ptdData", "businessPeriodData", "periodData", "ptd"];
+
+function pickSection(rd, cands) {
+  for (const k of cands) if (Array.isArray(rd[k])) return rd[k];
+  return [];
+}
+
+// Map a period's store rows by store number, for joining onto the daily rows.
+function storeRowsByNumber(rows) {
+  const m = new Map();
+  for (const r of rows) {
+    if (!isStoreRow(r)) continue;
+    const number = storeNumberOf(r);
+    if (number) m.set(number, r);
+  }
+  return m;
+}
+
+// Store-level labor rows shaped for the labor_v2_daily table. The daily slice
+// drives the row set; WTD + PTD bands are joined on store number so the GM view
+// can render all three cards (goal/chart per band = the feed's target %).
 export function extractLaborRows(payload) {
-  const rows = Array.isArray(payload?.rawData?.businessDateData) ? payload.rawData.businessDateData : [];
+  const rd = payload?.rawData || {};
+  const rows = Array.isArray(rd.businessDateData) ? rd.businessDateData : [];
+  const wtd = storeRowsByNumber(pickSection(rd, WTD_SECTIONS));
+  const ptd = storeRowsByNumber(pickSection(rd, PTD_SECTIONS));
   const out = [];
   for (const r of rows) {
     if (!isStoreRow(r)) continue;
     const number = storeNumberOf(r);
     if (!number) continue;
+    const w = wtd.get(number);
+    const p = ptd.get(number);
     out.push({
       store_number: number,
       net_sales: numOrNull(r.netSales),
@@ -25,6 +52,18 @@ export function extractLaborRows(payload) {
       scheduled_labor_hours: numOrNull(r.scheduledLaborHours),
       actual_vs_scheduled_hours: numOrNull(r.actualVsScheduledHours),
       splh: numOrNull(r.splh),
+      // Week to Date band (labor_hours feeds the avg-wage → hours-over calc)
+      wtd_net_sales: numOrNull(w?.netSales),
+      wtd_labor_cost: numOrNull(w?.laborCost),
+      wtd_labor_hours: numOrNull(w?.laborHours),
+      wtd_labor_pct: numOrNull(w?.laborPercentage),
+      wtd_target_labor_pct: numOrNull(w?.targetLaborPercentage),
+      // Period to Date band
+      ptd_net_sales: numOrNull(p?.netSales),
+      ptd_labor_cost: numOrNull(p?.laborCost),
+      ptd_labor_hours: numOrNull(p?.laborHours),
+      ptd_labor_pct: numOrNull(p?.laborPercentage),
+      ptd_target_labor_pct: numOrNull(p?.targetLaborPercentage),
     });
   }
   return out;
