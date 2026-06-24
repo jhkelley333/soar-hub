@@ -111,7 +111,8 @@ export interface KpiSnapshot {
 export interface KpiOrgRow {
   name: string;
   storeCount: number;
-  number?: string;       // store level only
+  leader?: string | null; // GM (store) / DO (district) / SDO (area) / RVP (region)
+  number?: string;        // store level only
   district?: string | null;
   region?: string | null;
   netSales: number | null;
