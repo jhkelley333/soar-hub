@@ -54,51 +54,74 @@ function levelOf(r) {
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
 
-  let user;
-  try { user = await getSessionUser(event); }
-  catch (e) { return respond(500, { error: e.message || "auth failed" }); }
-  if (!user) return respond(401, { error: "unauthorized" });
-  // Admin-only: the KPI feed is company-wide financial data.
-  if (String(user.role || "").toLowerCase() !== "admin") {
-    return respond(403, { error: "Admins only." });
-  }
-
-  if (!KPI_URL || !KPI_TOKEN) {
-    return respond(503, { error: "KPI feed isn't configured (set SKUNKWORKS_KPI_URL + SKUNKWORKS_KPI_TOKEN in Netlify)." });
-  }
-
-  // Fetch the snapshot server-side. The token rides in the query string per the
-  // feed's contract; keep it out of any logging.
-  const url = `${KPI_URL}${KPI_URL.includes("?") ? "&" : "?"}token=${encodeURIComponent(KPI_TOKEN)}`;
-  let payload;
   try {
-    const res = await fetch(url, { headers: { Accept: "application/json" } });
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      return respond(502, { error: `KPI feed responded ${res.status}`, detail: body.slice(0, 300) });
+    let user;
+    try { user = await getSessionUser(event); }
+    catch (e) { return respond(500, { error: e.message || "auth failed" }); }
+    if (!user) return respond(401, { error: "unauthorized" });
+    // Admin-only: the KPI feed is company-wide financial data.
+    if (String(user.role || "").toLowerCase() !== "admin") {
+      return respond(403, { error: "Admins only." });
     }
-    payload = await res.json();
+
+    if (!KPI_URL || !KPI_TOKEN) {
+      return respond(503, { error: "KPI feed isn't configured (set SKUNKWORKS_KPI_URL + SKUNKWORKS_KPI_TOKEN in Netlify)." });
+    }
+
+    // Build the request URL robustly: strip any token already on SKUNKWORKS_KPI_URL
+    // (so a full URL pasted into the env var doesn't double the token), then set ours.
+    let url;
+    try {
+      const u = new URL(KPI_URL);
+      u.searchParams.delete("token");
+      u.searchParams.set("token", KPI_TOKEN);
+      url = u.toString();
+    } catch {
+      return respond(500, { error: `SKUNKWORKS_KPI_URL is not a valid URL: "${String(KPI_URL).slice(0, 80)}"` });
+    }
+
+    // Time-box the upstream fetch so a hung feed returns a clean error here
+    // instead of being killed by the Lambda timeout (which surfaces as a bare 502).
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    let payload;
+    try {
+      const res = await fetch(url, { headers: { Accept: "application/json" }, signal: ctrl.signal });
+      const text = await res.text();
+      if (!res.ok) {
+        return respond(502, { error: `KPI feed responded ${res.status}`, detail: text.slice(0, 300) });
+      }
+      try { payload = JSON.parse(text); }
+      catch { return respond(502, { error: "KPI feed returned non-JSON", detail: text.slice(0, 300) }); }
+    } catch (e) {
+      const msg = e?.name === "AbortError" ? "timed out after 8s" : (e?.message || String(e));
+      return respond(502, { error: `Couldn't reach the KPI feed: ${msg}` });
+    } finally {
+      clearTimeout(timer);
+    }
+
+    const rows = Array.isArray(payload?.rawData?.businessDateData)
+      ? payload.rawData.businessDateData
+      : [];
+    // Tag each row with its level and keep all KPI fields intact (pass-through).
+    const tagged = rows.map((r) => ({ level: levelOf(r), ...r }));
+    const total = tagged.find((r) => r.level === "total") ?? null;
+
+    return respond(200, {
+      ok: true,
+      fetchedAt: new Date().toISOString(),
+      counts: {
+        total: tagged.length,
+        stores: tagged.filter((r) => r.level === "store").length,
+        districts: tagged.filter((r) => r.level === "district").length,
+        regions: tagged.filter((r) => r.level === "region").length,
+      },
+      total,
+      rows: tagged,
+    });
   } catch (e) {
-    return respond(502, { error: `Couldn't reach the KPI feed: ${e.message}` });
+    // Last-resort guard so the function never returns a bare 502 — the dashboard
+    // surfaces this message in its empty state.
+    return respond(500, { error: `kpi-snapshot error: ${e?.message || String(e)}` });
   }
-
-  const rows = Array.isArray(payload?.rawData?.businessDateData)
-    ? payload.rawData.businessDateData
-    : [];
-  // Tag each row with its level and keep all KPI fields intact (pass-through).
-  const tagged = rows.map((r) => ({ level: levelOf(r), ...r }));
-  const total = tagged.find((r) => r.level === "total") ?? null;
-
-  return respond(200, {
-    ok: true,
-    fetchedAt: new Date().toISOString(),
-    counts: {
-      total: tagged.length,
-      stores: tagged.filter((r) => r.level === "store").length,
-      districts: tagged.filter((r) => r.level === "district").length,
-      regions: tagged.filter((r) => r.level === "region").length,
-    },
-    total,
-    rows: tagged,
-  });
 };
