@@ -58,12 +58,18 @@ export function extractLaborRows(payload) {
       wtd_labor_hours: numOrNull(w?.laborHours),
       wtd_labor_pct: numOrNull(w?.laborPercentage),
       wtd_target_labor_pct: numOrNull(w?.targetLaborPercentage),
+      wtd_scheduled_labor_hours: numOrNull(w?.scheduledLaborHours),
+      wtd_overtime_hours: numOrNull(w?.overTimeHours),
+      wtd_actual_vs_scheduled_hours: numOrNull(w?.actualVsScheduledHours),
       // Period to Date band
       ptd_net_sales: numOrNull(p?.netSales),
       ptd_labor_cost: numOrNull(p?.laborCost),
       ptd_labor_hours: numOrNull(p?.laborHours),
       ptd_labor_pct: numOrNull(p?.laborPercentage),
       ptd_target_labor_pct: numOrNull(p?.targetLaborPercentage),
+      ptd_scheduled_labor_hours: numOrNull(p?.scheduledLaborHours),
+      ptd_overtime_hours: numOrNull(p?.overTimeHours),
+      ptd_actual_vs_scheduled_hours: numOrNull(p?.actualVsScheduledHours),
     });
   }
   return out;

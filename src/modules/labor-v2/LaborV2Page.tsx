@@ -92,7 +92,6 @@ export function LaborV2Page() {
 
   const total = q.data?.total ?? null;
   const totalBand = total ? total[period] : null;
-  const showDaily = period === "day";
 
   const rows = useMemo(() => {
     const base: LaborRow[] = q.data?.levels?.[displayLevel] ?? [];
@@ -109,10 +108,10 @@ export function LaborV2Page() {
         case "variance": return b.variancePts ?? -Infinity;
         case "dollarsOver": return b.dollarsOver ?? -Infinity;
         case "hoursOver": return b.hoursOver ?? -Infinity;
-        case "sched": return r.scheduledHours ?? -Infinity;
-        case "actual": return r.laborHours ?? -Infinity;
-        case "ot": return r.overtimeHours ?? -Infinity;
-        case "actVsSched": return r.actualVsSched ?? -Infinity;
+        case "sched": return b.scheduledHours ?? -Infinity;
+        case "actual": return b.laborHours ?? -Infinity;
+        case "ot": return b.overtimeHours ?? -Infinity;
+        case "actVsSched": return b.actualVsSched ?? -Infinity;
       }
     };
     return [...filtered].sort((a, b) => {
@@ -237,10 +236,10 @@ export function LaborV2Page() {
                         <Th label="Variance" k="variance" sort={sort} onSort={toggleSort} right />
                         <Th label="$ Over Chart" k="dollarsOver" sort={sort} onSort={toggleSort} right />
                         <Th label="Hours Over" k="hoursOver" sort={sort} onSort={toggleSort} right />
-                        {showDaily && <Th label="Sched Hrs" k="sched" sort={sort} onSort={toggleSort} right />}
-                        {showDaily && <Th label="Actual Hrs" k="actual" sort={sort} onSort={toggleSort} right />}
-                        {showDaily && <Th label="OT Hrs" k="ot" sort={sort} onSort={toggleSort} right />}
-                        {showDaily && <Th label="Act−Sched" k="actVsSched" sort={sort} onSort={toggleSort} right />}
+                        <Th label="Sched Hrs" k="sched" sort={sort} onSort={toggleSort} right />
+                        <Th label="Actual Hrs" k="actual" sort={sort} onSort={toggleSort} right />
+                        <Th label="OT Hrs" k="ot" sort={sort} onSort={toggleSort} right />
+                        <Th label="Act−Sched" k="actVsSched" sort={sort} onSort={toggleSort} right />
                       </tr>
                     </thead>
                     <tbody>
@@ -267,10 +266,10 @@ export function LaborV2Page() {
                             <td className={cn("py-2.5 pl-3 text-right tabular-nums", overTone(b.variancePts != null ? b.variancePts > 0 : null))}>{fmtPts(b.variancePts)}</td>
                             <td className={cn("py-2.5 pl-3 text-right tabular-nums", overTone(b.dollarsOver != null ? b.dollarsOver > 0 : null))}>{fmtSignedUSD0(b.dollarsOver)}</td>
                             <td className={cn("py-2.5 pl-3 text-right tabular-nums", overTone(b.hoursOver != null ? b.hoursOver > 0 : null))}>{fmtSignedHrs(b.hoursOver)}</td>
-                            {showDaily && <td className="py-2.5 pl-3 text-right tabular-nums text-zinc-600">{fmtHrs(r.scheduledHours)}</td>}
-                            {showDaily && <td className="py-2.5 pl-3 text-right tabular-nums text-zinc-600">{fmtHrs(r.laborHours)}</td>}
-                            {showDaily && <td className={cn("py-2.5 pl-3 text-right tabular-nums", r.overtimeHours != null && r.overtimeHours > 0 ? "font-semibold text-amber-600" : "text-zinc-600")}>{fmtHrs(r.overtimeHours)}</td>}
-                            {showDaily && <td className={cn("py-2.5 pl-3 text-right tabular-nums", overTone(r.actualVsSched != null ? r.actualVsSched > 0 : null))}>{fmtHrs(r.actualVsSched)}</td>}
+                            <td className="py-2.5 pl-3 text-right tabular-nums text-zinc-600">{fmtHrs(b.scheduledHours)}</td>
+                            <td className="py-2.5 pl-3 text-right tabular-nums text-zinc-600">{fmtHrs(b.laborHours)}</td>
+                            <td className={cn("py-2.5 pl-3 text-right tabular-nums", b.overtimeHours != null && b.overtimeHours > 0 ? "font-semibold text-amber-600" : "text-zinc-600")}>{fmtHrs(b.overtimeHours)}</td>
+                            <td className={cn("py-2.5 pl-3 text-right tabular-nums", overTone(b.actualVsSched != null ? b.actualVsSched > 0 : null))}>{fmtHrs(b.actualVsSched)}</td>
                           </tr>
                         );
                       })}
