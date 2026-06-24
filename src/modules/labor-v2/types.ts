@@ -13,6 +13,7 @@ export interface LaborRow {
   netSales: number | null;
   laborCost: number | null;
   laborHours: number | null;       // actual hours
+  overtimeHours: number | null;
   scheduledHours: number | null;
   actualVsSched: number | null;
   laborPct: number | null;         // fraction

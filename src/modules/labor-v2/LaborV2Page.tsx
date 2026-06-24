@@ -38,7 +38,7 @@ const LEVEL_ORDER: LaborLevel[] = ["region", "area", "district", "store"];
 const childLevel = (l: LaborLevel): LaborLevel | null => LEVEL_ORDER[LEVEL_ORDER.indexOf(l) + 1] ?? null;
 const levelLabel = (l: LaborLevel) => LEVELS.find((x) => x.key === l)?.label ?? l;
 
-type SortKey = "name" | "sales" | "labor" | "target" | "variance" | "sched" | "actual" | "actVsSched" | "splh";
+type SortKey = "name" | "sales" | "labor" | "target" | "variance" | "sched" | "actual" | "ot" | "actVsSched" | "splh";
 
 export function LaborV2Page() {
   const qc = useQueryClient();
@@ -89,6 +89,7 @@ export function LaborV2Page() {
         case "variance": return r.variancePts ?? -Infinity;
         case "sched": return r.scheduledHours ?? -Infinity;
         case "actual": return r.laborHours ?? -Infinity;
+        case "ot": return r.overtimeHours ?? -Infinity;
         case "actVsSched": return r.actualVsSched ?? -Infinity;
         case "splh": return r.splh ?? -Infinity;
       }
@@ -131,8 +132,8 @@ export function LaborV2Page() {
       />
 
       {q.isLoading ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-7">
+          {Array.from({ length: 7 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}
         </div>
       ) : q.isError ? (
         <EmptyState title="Couldn't load labor" description={(q.error as Error)?.message ?? "Try again."} />
@@ -144,12 +145,13 @@ export function LaborV2Page() {
       ) : (
         <>
           {/* Company tiles */}
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-7">
             <Tile label="Net Sales" value={fmtUSD0(total?.netSales ?? null)} />
             <Tile label="Labor %" value={fmtPct(total?.laborPct ?? null)} tone={overTone(total ? (total.laborPct ?? 0) > (total.targetPct ?? Infinity) : null)} />
             <Tile label="Target %" value={fmtPct(total?.targetPct ?? null)} />
             <Tile label="Variance" value={fmtPts(total?.variancePts ?? null)} tone={overTone(total ? (total.variancePts ?? 0) > 0 : null)} />
             <Tile label="SPLH" value={fmtRate(total?.splh ?? null)} sub="sales / labor hr" />
+            <Tile label="OT Hours" value={fmtHrs(total?.overtimeHours ?? null)} sub="overtime hrs" tone={total && (total.overtimeHours ?? 0) > 0 ? "text-amber-600" : undefined} />
             <Tile label="Sched vs Actual" value={fmtHrs(total?.actualVsSched ?? null)} sub="act − sched hrs" tone={overTone(total ? (total.actualVsSched ?? 0) > 0 : null)} />
           </div>
 
@@ -201,6 +203,7 @@ export function LaborV2Page() {
                         <Th label="Variance" k="variance" sort={sort} onSort={toggleSort} right />
                         <Th label="Sched Hrs" k="sched" sort={sort} onSort={toggleSort} right />
                         <Th label="Actual Hrs" k="actual" sort={sort} onSort={toggleSort} right />
+                        <Th label="OT Hrs" k="ot" sort={sort} onSort={toggleSort} right />
                         <Th label="Act−Sched" k="actVsSched" sort={sort} onSort={toggleSort} right />
                         <Th label="SPLH" k="splh" sort={sort} onSort={toggleSort} right />
                       </tr>
@@ -229,6 +232,7 @@ export function LaborV2Page() {
                             <td className={cn("py-2.5 pl-3 text-right tabular-nums", overTone(r.variancePts != null ? r.variancePts > 0 : null))}>{fmtPts(r.variancePts)}</td>
                             <td className="py-2.5 pl-3 text-right tabular-nums text-zinc-600">{fmtHrs(r.scheduledHours)}</td>
                             <td className="py-2.5 pl-3 text-right tabular-nums text-zinc-600">{fmtHrs(r.laborHours)}</td>
+                            <td className={cn("py-2.5 pl-3 text-right tabular-nums", r.overtimeHours != null && r.overtimeHours > 0 ? "font-semibold text-amber-600" : "text-zinc-600")}>{fmtHrs(r.overtimeHours)}</td>
                             <td className={cn("py-2.5 pl-3 text-right tabular-nums", overTone(r.actualVsSched != null ? r.actualVsSched > 0 : null))}>{fmtHrs(r.actualVsSched)}</td>
                             <td className="py-2.5 pl-3 text-right tabular-nums text-zinc-600">{fmtRate(r.splh)}</td>
                           </tr>

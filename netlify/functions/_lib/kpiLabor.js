@@ -18,6 +18,7 @@ export function extractLaborRows(payload) {
       net_sales: numOrNull(r.netSales),
       labor_cost: numOrNull(r.laborCost),
       labor_hours: numOrNull(r.laborHours),
+      overtime_hours: numOrNull(r.overTimeHours),
       labor_pct: numOrNull(r.laborPercentage),
       target_labor_pct: numOrNull(r.targetLaborPercentage),
       variance_target: numOrNull(r.varianceTargetValue),
