@@ -41,11 +41,13 @@ function Tile({ label, value, delta, sub }: { label: string; value: string; delt
     <Card>
       <CardBody>
         <div className="text-xs font-medium text-zinc-500">{label}</div>
-        <div className="mt-1.5 flex items-baseline gap-2">
-          <span className="text-2xl font-bold tabular-nums tracking-tight text-midnight dark:text-night-ink">{value}</span>
-          {delta !== undefined && <Delta frac={delta} />}
-        </div>
-        {sub && <div className="mt-1 text-[11px] text-zinc-400">{sub}</div>}
+        <div className="mt-1.5 text-2xl font-bold tabular-nums tracking-tight text-midnight dark:text-night-ink">{value}</div>
+        {(delta !== undefined || sub) && (
+          <div className="mt-1 flex flex-wrap items-center gap-x-1.5 text-[11px] text-zinc-400">
+            {delta !== undefined && <Delta frac={delta ?? null} />}
+            {sub && <span>{sub}</span>}
+          </div>
+        )}
       </CardBody>
     </Card>
   );
