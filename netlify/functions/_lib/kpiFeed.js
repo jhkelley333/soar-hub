@@ -29,7 +29,13 @@ export async function fetchKpiFeed({ timeoutMs = 12000 } = {}) {
     const text = await res.text();
     if (!res.ok) throw new Error(`KPI feed responded ${res.status}: ${text.slice(0, 200)}`);
     try { return JSON.parse(text); }
-    catch { throw new Error("KPI feed returned non-JSON."); }
+    catch {
+      // Surface what the feed actually returned (HTML error/login page, gateway
+      // notice, empty body…) so a non-JSON response is diagnosable, not opaque.
+      const ct = res.headers.get("content-type") || "unknown";
+      const snippet = text.trim().slice(0, 180).replace(/\s+/g, " ");
+      throw new Error(`KPI feed returned non-JSON (content-type ${ct}): ${snippet || "<empty body>"}`);
+    }
   } catch (e) {
     if (e?.name === "AbortError") throw new Error("KPI feed timed out.");
     throw e;
