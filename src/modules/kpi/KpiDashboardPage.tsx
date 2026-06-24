@@ -1,6 +1,7 @@
-// /admin/kpi — admin-only KPI dashboard over the Expressway snapshot feed.
-// Total roll-up tiles up top, then a level-switchable, sortable, searchable
-// table to drill from regions → districts → stores.
+// /admin/kpi — admin-only KPI dashboard over the Expressway snapshot feed,
+// re-scoped onto OUR org hierarchy (region → area → district → store) by joining
+// the feed's store number to the SOAR org. Total tiles up top, then a
+// level-switchable, sortable, searchable drill-down.
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -12,7 +13,7 @@ import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { cn } from "@/lib/cn";
 import { fetchKpiSnapshot } from "./api";
-import type { KpiLevel, KpiRow } from "./types";
+import type { KpiOrgRow } from "./types";
 
 // ── formatters ──────────────────────────────────────────────────────────────
 const n = (v: number | null | undefined) => (v == null ? null : v);
@@ -52,33 +53,28 @@ function Tile({ label, value, delta, sub }: { label: string; value: string; delt
 
 // ── table model ─────────────────────────────────────────────────────────────
 type SortKey = "name" | "netSales" | "yoY" | "tickets" | "avgTicket" | "labor" | "splh" | "onTime";
-const LEVELS: { key: Exclude<KpiLevel, "total" | "regionParent">; label: string }[] = [
-  { key: "store", label: "Stores" },
-  { key: "district", label: "Districts" },
+type LevelKey = "region" | "area" | "district" | "store";
+const LEVELS: { key: LevelKey; label: string }[] = [
   { key: "region", label: "Regions" },
+  { key: "area", label: "Areas" },
+  { key: "district", label: "Districts" },
+  { key: "store", label: "Stores" },
 ];
-
-function nameFor(r: KpiRow): string {
-  if (r.level === "store") return r.storeName;
-  if (r.level === "district") return r.districtName;
-  if (r.level === "region") return r.regionName;
-  return r.regionParentName || r.storeName || "—";
-}
 
 export function KpiDashboardPage() {
   const q = useQuery({ queryKey: ["kpi-snapshot"], queryFn: fetchKpiSnapshot, staleTime: 5 * 60_000 });
-  const [level, setLevel] = useState<(typeof LEVELS)[number]["key"]>("store");
+  const [level, setLevel] = useState<LevelKey>("region");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "netSales", dir: "desc" });
 
   const total = q.data?.total ?? null;
   const rows = useMemo(() => {
-    const all = (q.data?.rows ?? []).filter((r) => r.level === level);
+    const all: KpiOrgRow[] = q.data?.levels?.[level] ?? [];
     const term = search.trim().toLowerCase();
-    const filtered = term ? all.filter((r) => nameFor(r).toLowerCase().includes(term)) : all;
-    const val = (r: KpiRow, k: SortKey): number | string => {
+    const filtered = term ? all.filter((r) => r.name.toLowerCase().includes(term)) : all;
+    const val = (r: KpiOrgRow, k: SortKey): number | string => {
       switch (k) {
-        case "name": return nameFor(r).toLowerCase();
+        case "name": return r.name.toLowerCase();
         case "netSales": return r.netSales ?? -Infinity;
         case "yoY": return r.yoYNetSalesPercentage ?? -Infinity;
         case "tickets": return r.tickets ?? -Infinity;
@@ -102,12 +98,17 @@ export function KpiDashboardPage() {
   const asOf = q.data?.fetchedAt
     ? new Date(q.data.fetchedAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
     : null;
+  const scope = q.data?.scope;
 
   return (
     <>
       <PageHeader
         title="KPI Dashboard"
-        description={asOf ? `Company snapshot · as of ${asOf}` : "Company snapshot"}
+        description={
+          asOf
+            ? `As of ${asOf}${scope ? ` · ${scope.matched} stores mapped to your org${scope.unmatched ? ` · ${scope.unmatched} unmatched` : ""}` : ""}`
+            : "Company snapshot, by your org"
+        }
         actions={
           <Button variant="secondary" size="sm" onClick={() => q.refetch()} disabled={q.isFetching}>
             <RefreshCw className={cn("mr-1 h-3.5 w-3.5", q.isFetching && "animate-spin")} /> Refresh
@@ -130,7 +131,7 @@ export function KpiDashboardPage() {
         />
       ) : (
         <>
-          {/* Total roll-up tiles */}
+          {/* Company total tiles (all stores in the feed) */}
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
             <Tile label="Net Sales" value={fmtUSD0(n(total?.netSales ?? null))} delta={total?.yoYNetSalesPercentage ?? null} sub="vs last year" />
             <Tile label="Tickets" value={fmtNum(n(total?.tickets ?? null))} delta={total?.yoYTrafficPercentage ?? null} sub="traffic vs LY" />
@@ -147,7 +148,7 @@ export function KpiDashboardPage() {
             <Tile label="Void Total" value={fmtUSD0(n(total?.voidTotal ?? null))} sub={`${fmtNum(n(total?.voidQuantity ?? null))} voids`} />
           </div>
 
-          {/* Drill-down */}
+          {/* Drill-down by our org */}
           <Card className="mt-6">
             <CardBody>
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -169,7 +170,7 @@ export function KpiDashboardPage() {
 
               {rows.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-zinc-200 p-8 text-center text-sm text-zinc-400">
-                  No {level} rows in this snapshot.
+                  No {level} rows — no stores matched your org for this snapshot.
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -188,9 +189,13 @@ export function KpiDashboardPage() {
                     </thead>
                     <tbody>
                       {rows.map((r, i) => (
-                        <tr key={`${r.storeTenantBaseId}-${r.districtTenantBaseId}-${r.regionTenantBaseId}-${i}`}
-                          className="border-b border-zinc-50 hover:bg-zinc-50/60">
-                          <td className="py-2.5 pr-3 font-medium text-midnight dark:text-night-ink">{nameFor(r)}</td>
+                        <tr key={`${r.name}-${i}`} className="border-b border-zinc-50 hover:bg-zinc-50/60">
+                          <td className="py-2.5 pr-3">
+                            <span className="font-medium text-midnight dark:text-night-ink">{r.name}</span>
+                            {level !== "store" && (
+                              <span className="ml-2 text-[11px] text-zinc-400">{r.storeCount} store{r.storeCount === 1 ? "" : "s"}</span>
+                            )}
+                          </td>
                           <td className="py-2.5 pl-3 text-right tabular-nums">{fmtUSD0(r.netSales)}</td>
                           <td className="py-2.5 pl-3 text-right"><div className="flex justify-end"><Delta frac={r.yoYNetSalesPercentage} /></div></td>
                           <td className="py-2.5 pl-3 text-right tabular-nums text-zinc-600">{fmtNum(r.tickets)}</td>
@@ -204,7 +209,10 @@ export function KpiDashboardPage() {
                   </table>
                 </div>
               )}
-              <div className="mt-2 text-[11px] text-zinc-400">{rows.length} {level}{rows.length === 1 ? "" : "s"}</div>
+              <div className="mt-2 text-[11px] text-zinc-400">
+                {rows.length} {level}{rows.length === 1 ? "" : "s"}
+                {scope?.unmatched ? ` · ${scope.unmatched} feed store${scope.unmatched === 1 ? "" : "s"} not in your org` : ""}
+              </div>
             </CardBody>
           </Card>
         </>
