@@ -69,8 +69,6 @@ export const NAV: NavItem[] = [
   { to: "/labor",       label: "Labor",       icon: Gauge,           roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   // Labor v2 — same daily review, fed by the KPI feed instead of the sheet.
   { to: "/labor-v2",    label: "Labor v2",    icon: Gauge,           roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
-  // Team labor — leadership rollup (District / Market / Region) scoped to org.
-  { to: "/labor-v2/team", label: "Team Labor",  icon: Gauge,           roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
   // Cash Management — night-close + next-day deposit cycle. Store leaders
   // run it; DO+ act on alerts. Rolled out by role now (the pilot flag was
   // retired once it shipped to all store leaders).
@@ -207,7 +205,6 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/ranker": "OPERATIONS",
   "/labor": "OPERATIONS",
   "/labor-v2": "OPERATIONS",
-  "/labor-v2/team": "OPERATIONS",
   "/admin/cash-management": "OPERATIONS",
   "/weather": "OPERATIONS",
   "/schedule": "OPERATIONS",

@@ -416,6 +416,10 @@ function teamBand(rows, prefix) {
     variance_pts: laborPct != null && targetPct != null ? round1(laborPct - targetPct) : null,
     dollars_over_chart: dollarsOver,
     hours_over_chart: dollarsOver != null && avgWage ? round1(dollarsOver / avgWage) : null,
+    scheduled_hours: s("scheduled_labor_hours"),
+    actual_hours: hours,
+    overtime_hours: s("overtime_hours"),
+    act_vs_sched: s("actual_vs_scheduled_hours"),
     status: chartStatus(laborPct, targetPct),
   };
 }
