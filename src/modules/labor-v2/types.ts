@@ -54,6 +54,10 @@ export interface TeamBand {
   variance_pts: number | null;
   dollars_over_chart: number | null;
   hours_over_chart: number | null;
+  scheduled_hours: number | null;
+  actual_hours: number | null;
+  overtime_hours: number | null;
+  act_vs_sched: number | null;
   status: TeamStatus;
 }
 

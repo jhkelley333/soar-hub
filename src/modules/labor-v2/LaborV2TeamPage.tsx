@@ -18,6 +18,7 @@ const fmtPts = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : ""}$
 const fmtSignedUSD0 = (v: number | null) =>
   v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })}`;
 const fmtSignedHrs = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(Math.round(v)).toLocaleString("en-US")}`);
+const fmtHrs = (v: number | null) => (v == null ? "—" : Math.round(v).toLocaleString("en-US"));
 const fmtDate = (s: string | null) =>
   s ? new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "—";
 
@@ -135,7 +136,11 @@ export function LaborV2TeamPage() {
               <span className="hidden w-14 text-right lg:block">PTD %</span>
               <span className="w-14 text-right">Var</span>
               <span className="w-20 text-right">$ Over</span>
-              <span className="w-14 text-right">Hrs</span>
+              <span className="w-14 text-right">Hrs Over</span>
+              <span className="hidden w-16 text-right xl:block">Sched</span>
+              <span className="hidden w-16 text-right xl:block">Actual</span>
+              <span className="hidden w-14 text-right xl:block">OT</span>
+              <span className="hidden w-16 text-right xl:block">Act−Sch</span>
               <span className="ml-2 w-[92px] text-right">Status</span>
             </div>
 
@@ -169,6 +174,17 @@ function Tile({ label, value, sub, tone }: { label: string; value: string; sub?:
   );
 }
 
+function HoursCells({ band }: { band: TeamBand }) {
+  return (
+    <>
+      <span className="hidden w-16 text-right text-xs tabular-nums text-zinc-500 xl:block">{fmtHrs(band.scheduled_hours)}</span>
+      <span className="hidden w-16 text-right text-xs tabular-nums text-zinc-500 xl:block">{fmtHrs(band.actual_hours)}</span>
+      <span className={cn("hidden w-14 text-right text-xs tabular-nums xl:block", band.overtime_hours ? "font-semibold text-amber-600" : "text-zinc-500")}>{fmtHrs(band.overtime_hours)}</span>
+      <span className={cn("hidden w-16 text-right text-xs tabular-nums xl:block", (band.act_vs_sched ?? 0) > 0 ? "text-red-600" : "text-emerald-600")}>{fmtSignedHrs(band.act_vs_sched)}</span>
+    </>
+  );
+}
+
 function GroupRow({ g }: { g: TeamGroup }) {
   const over = g.day.status === "over";
   return (
@@ -184,6 +200,7 @@ function GroupRow({ g }: { g: TeamGroup }) {
       <span className={cn("w-14 text-right text-xs tabular-nums", over ? "text-red-700" : "text-zinc-500")}>{fmtPts(g.day.variance_pts)}</span>
       <span className={cn("w-20 text-right text-xs tabular-nums", over ? "text-red-700" : "text-zinc-500")}>{fmtSignedUSD0(g.day.dollars_over_chart)}</span>
       <span className="w-14 text-right text-xs tabular-nums text-zinc-500">{fmtSignedHrs(g.day.hours_over_chart)}</span>
+      <HoursCells band={g.day} />
       <span className="ml-2 w-[92px] text-right text-[11px] font-semibold tabular-nums text-zinc-500">
         {g.storesOver} over{g.notesDue ? ` · ${g.notesDue} due` : ""}
       </span>
@@ -213,6 +230,7 @@ function StoreRow({ s }: { s: TeamStore }) {
         <span className={cn("w-14 text-right text-xs tabular-nums", over ? "text-red-700" : "text-zinc-500")}>{fmtPts(s.day.variance_pts)}</span>
         <span className={cn("w-20 text-right text-xs tabular-nums", over ? "text-red-700" : "text-zinc-500")}>{fmtSignedUSD0(s.day.dollars_over_chart)}</span>
         <span className="w-14 text-right text-xs tabular-nums text-zinc-500">{fmtSignedHrs(s.day.hours_over_chart)}</span>
+        <HoursCells band={s.day} />
         <span className={cn("ml-2 inline-flex w-[92px] shrink-0 items-center justify-end gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide", chip)}>
           <span className={cn("h-1.5 w-1.5 rounded-full", dot)} />
           {label}
