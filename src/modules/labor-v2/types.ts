@@ -2,6 +2,19 @@
 
 export type LaborLevel = "region" | "area" | "district" | "store";
 
+// One period's aggregate (Daily / WTD / PTD) for an org node.
+export interface LaborBandAgg {
+  sales: number | null;
+  laborPct: number | null;         // fraction
+  targetPct: number | null;        // fraction
+  variancePts: number | null;      // laborPct - targetPct (fraction; ×100 = points)
+  dollarsOver: number | null;      // labor cost − chart $ allowed
+  hoursOver: number | null;        // $ over ÷ blended avg wage
+  chartAllowed: number | null;     // sales × target
+}
+
+export type LaborPeriod = "day" | "wtd" | "ptd";
+
 export interface LaborRow {
   name: string;
   storeCount: number;
@@ -10,16 +23,14 @@ export interface LaborRow {
   region?: string | null;
   area?: string | null;
   district?: string | null;
-  netSales: number | null;
-  laborCost: number | null;
-  laborHours: number | null;       // actual hours
-  overtimeHours: number | null;
-  scheduledHours: number | null;
-  actualVsSched: number | null;
-  laborPct: number | null;         // fraction
-  targetPct: number | null;        // fraction
-  variancePts: number | null;      // laborPct - targetPct (fraction; ×100 = points)
-  splh: number | null;
+  netSales: number | null;         // daily sales (default sort)
+  laborHours: number | null;       // daily actual hours
+  overtimeHours: number | null;    // daily OT hours
+  scheduledHours: number | null;   // daily scheduled hours
+  actualVsSched: number | null;    // daily act − sched hours
+  day: LaborBandAgg;
+  wtd: LaborBandAgg;
+  ptd: LaborBandAgg;
 }
 
 export interface LaborSummary {

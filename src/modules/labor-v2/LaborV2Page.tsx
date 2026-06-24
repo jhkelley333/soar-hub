@@ -1,6 +1,7 @@
 // /admin/labor-v2 — admin-only labor + sales by store, rolled up onto our org
-// (region → area → district → store) with click-to-drill, a historical date
-// picker, and labor-vs-target coloring. Data: labor_v2_daily via labor-v2 fn.
+// (region → area → district → store) with click-to-drill, a Daily/WTD/PTD
+// period toggle, a historical date picker, and labor-vs-target coloring.
+// Data: labor_v2_daily via the labor-v2 fn.
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -13,19 +14,22 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { fetchLaborDates, fetchLaborSummary } from "./api";
-import type { LaborLevel, LaborRow } from "./types";
+import type { LaborBandAgg, LaborLevel, LaborPeriod, LaborRow } from "./types";
 
 const fmtUSD0 = (v: number | null) =>
   v == null ? "—" : v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+const fmtSignedUSD0 = (v: number | null) =>
+  v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })}`;
 const fmtPct = (frac: number | null, d = 1) => (frac == null ? "—" : `${(frac * 100).toFixed(d)}%`);
 const fmtPts = (frac: number | null) => (frac == null ? "—" : `${frac >= 0 ? "+" : ""}${(frac * 100).toFixed(1)} pts`);
 const fmtHrs = (v: number | null) => (v == null ? "—" : Math.round(v).toLocaleString("en-US"));
-const fmtRate = (v: number | null, d = 2) => (v == null ? "—" : v.toFixed(d));
+const fmtSignedHrs = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(Math.round(v)).toLocaleString("en-US")}`);
 const fmtDate = (s: string | null) =>
   s ? new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "—";
 
 // Over target → red; on/under → emerald.
 const overTone = (over: boolean | null) => (over == null ? "text-zinc-600" : over ? "text-red-600" : "text-emerald-600");
+const isOver = (b: LaborBandAgg | null) => (b && b.laborPct != null && b.targetPct != null ? b.laborPct > b.targetPct : null);
 
 const LEVELS: { key: LaborLevel; label: string }[] = [
   { key: "region", label: "Regions" },
@@ -38,12 +42,19 @@ const LEVEL_ORDER: LaborLevel[] = ["region", "area", "district", "store"];
 const childLevel = (l: LaborLevel): LaborLevel | null => LEVEL_ORDER[LEVEL_ORDER.indexOf(l) + 1] ?? null;
 const levelLabel = (l: LaborLevel) => LEVELS.find((x) => x.key === l)?.label ?? l;
 
-type SortKey = "name" | "sales" | "labor" | "target" | "variance" | "sched" | "actual" | "ot" | "actVsSched" | "splh";
+const PERIODS: { key: LaborPeriod; label: string; hint: string }[] = [
+  { key: "day", label: "Daily", hint: "previous completed business day" },
+  { key: "wtd", label: "WTD", hint: "week-to-date" },
+  { key: "ptd", label: "PTD", hint: "period-to-date" },
+];
+
+type SortKey = "name" | "sales" | "labor" | "target" | "variance" | "dollarsOver" | "hoursOver" | "sched" | "actual" | "ot" | "actVsSched";
 
 export function LaborV2Page() {
   const qc = useQueryClient();
   const toast = useToast();
   const [date, setDate] = useState<string>(""); // "" = latest
+  const [period, setPeriod] = useState<LaborPeriod>("day");
   const [level, setLevel] = useState<LaborLevel>("region");
   const [path, setPath] = useState<{ level: LaborLevel; name: string }[]>([]);
   const [search, setSearch] = useState("");
@@ -63,14 +74,9 @@ export function LaborV2Page() {
       qc.invalidateQueries({ queryKey: ["labor-v2-dates"] });
       const r = data.refreshed;
       if (r && (r.wtd === 0 || r.ptd === 0)) {
-        // A band came back empty — surface the feed's section names so we can
-        // see what it actually calls its WTD/PTD arrays.
         toast.push(`Pulled ${r.stores} stores · WTD ${r.wtd} · PTD ${r.ptd}. Feed sections: ${(r.feedKeys ?? []).join(", ") || "none"}`, "error");
       } else {
-        toast.push(
-          r ? `Pulled ${r.stores} stores · WTD ${r.wtd} · PTD ${r.ptd}.` : "Pulled the latest labor numbers.",
-          "success",
-        );
+        toast.push(r ? `Pulled ${r.stores} stores · WTD ${r.wtd} · PTD ${r.ptd}.` : "Pulled the latest labor numbers.", "success");
       }
     },
     onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't refresh.", "error"),
@@ -85,23 +91,28 @@ export function LaborV2Page() {
   }
 
   const total = q.data?.total ?? null;
+  const totalBand = total ? total[period] : null;
+  const showDaily = period === "day";
+
   const rows = useMemo(() => {
     const base: LaborRow[] = q.data?.levels?.[displayLevel] ?? [];
     const all = base.filter((r) => path.every((c) => (r[c.level as keyof LaborRow] as unknown) === c.name));
     const term = search.trim().toLowerCase();
     const filtered = term ? all.filter((r) => r.name.toLowerCase().includes(term)) : all;
     const val = (r: LaborRow, k: SortKey): number | string => {
+      const b = r[period];
       switch (k) {
         case "name": return r.name.toLowerCase();
-        case "sales": return r.netSales ?? -Infinity;
-        case "labor": return r.laborPct ?? -Infinity;
-        case "target": return r.targetPct ?? -Infinity;
-        case "variance": return r.variancePts ?? -Infinity;
+        case "sales": return b.sales ?? -Infinity;
+        case "labor": return b.laborPct ?? -Infinity;
+        case "target": return b.targetPct ?? -Infinity;
+        case "variance": return b.variancePts ?? -Infinity;
+        case "dollarsOver": return b.dollarsOver ?? -Infinity;
+        case "hoursOver": return b.hoursOver ?? -Infinity;
         case "sched": return r.scheduledHours ?? -Infinity;
         case "actual": return r.laborHours ?? -Infinity;
         case "ot": return r.overtimeHours ?? -Infinity;
         case "actVsSched": return r.actualVsSched ?? -Infinity;
-        case "splh": return r.splh ?? -Infinity;
       }
     };
     return [...filtered].sort((a, b) => {
@@ -109,7 +120,7 @@ export function LaborV2Page() {
       const cmp = typeof av === "string" ? av.localeCompare(bv as string) : (av as number) - (bv as number);
       return sort.dir === "asc" ? cmp : -cmp;
     });
-  }, [q.data, displayLevel, path, search, sort]);
+  }, [q.data, displayLevel, path, search, sort, period]);
 
   function toggleSort(key: SortKey) {
     setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "name" ? "asc" : "desc" }));
@@ -142,8 +153,8 @@ export function LaborV2Page() {
       />
 
       {q.isLoading ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-7">
-          {Array.from({ length: 7 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}
         </div>
       ) : q.isError ? (
         <EmptyState title="Couldn't load labor" description={(q.error as Error)?.message ?? "Try again."} />
@@ -154,15 +165,28 @@ export function LaborV2Page() {
         />
       ) : (
         <>
-          {/* Company tiles */}
-          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-7">
-            <Tile label="Net Sales" value={fmtUSD0(total?.netSales ?? null)} />
-            <Tile label="Labor %" value={fmtPct(total?.laborPct ?? null)} tone={overTone(total ? (total.laborPct ?? 0) > (total.targetPct ?? Infinity) : null)} />
-            <Tile label="Target %" value={fmtPct(total?.targetPct ?? null)} />
-            <Tile label="Variance" value={fmtPts(total?.variancePts ?? null)} tone={overTone(total ? (total.variancePts ?? 0) > 0 : null)} />
-            <Tile label="SPLH" value={fmtRate(total?.splh ?? null)} sub="sales / labor hr" />
-            <Tile label="OT Hours" value={fmtHrs(total?.overtimeHours ?? null)} sub="overtime hrs" tone={total && (total.overtimeHours ?? 0) > 0 ? "text-amber-600" : undefined} />
-            <Tile label="Sched vs Actual" value={fmtHrs(total?.actualVsSched ?? null)} sub="act − sched hrs" tone={overTone(total ? (total.actualVsSched ?? 0) > 0 : null)} />
+          {/* Period toggle */}
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <div className="inline-flex rounded-md ring-1 ring-inset ring-zinc-200">
+              {PERIODS.map((p) => (
+                <button key={p.key} onClick={() => setPeriod(p.key)}
+                  className={cn("px-4 py-1.5 text-sm font-semibold transition first:rounded-l-md last:rounded-r-md",
+                    period === p.key ? "bg-accent text-white" : "text-zinc-600 hover:bg-zinc-50")}>
+                  {p.label}
+                </button>
+              ))}
+            </div>
+            <span className="text-xs text-zinc-400">{PERIODS.find((p) => p.key === period)?.hint}</span>
+          </div>
+
+          {/* Company tiles (selected period) */}
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+            <Tile label="Net Sales" value={fmtUSD0(totalBand?.sales ?? null)} />
+            <Tile label="Labor %" value={fmtPct(totalBand?.laborPct ?? null)} tone={overTone(isOver(totalBand))} />
+            <Tile label="Target %" value={fmtPct(totalBand?.targetPct ?? null)} />
+            <Tile label="Variance" value={fmtPts(totalBand?.variancePts ?? null)} tone={overTone(totalBand ? (totalBand.variancePts ?? 0) > 0 : null)} />
+            <Tile label="$ Over Chart" value={fmtSignedUSD0(totalBand?.dollarsOver ?? null)} sub="cost − chart $" tone={overTone(totalBand ? (totalBand.dollarsOver ?? 0) > 0 : null)} />
+            <Tile label="Hours Over Chart" value={fmtSignedHrs(totalBand?.hoursOver ?? null)} sub="$ over ÷ avg wage" tone={overTone(totalBand ? (totalBand.hoursOver ?? 0) > 0 : null)} />
           </div>
 
           <Card className="mt-6">
@@ -211,17 +235,18 @@ export function LaborV2Page() {
                         <Th label="Labor %" k="labor" sort={sort} onSort={toggleSort} right />
                         <Th label="Target %" k="target" sort={sort} onSort={toggleSort} right />
                         <Th label="Variance" k="variance" sort={sort} onSort={toggleSort} right />
-                        <Th label="Sched Hrs" k="sched" sort={sort} onSort={toggleSort} right />
-                        <Th label="Actual Hrs" k="actual" sort={sort} onSort={toggleSort} right />
-                        <Th label="OT Hrs" k="ot" sort={sort} onSort={toggleSort} right />
-                        <Th label="Act−Sched" k="actVsSched" sort={sort} onSort={toggleSort} right />
-                        <Th label="SPLH" k="splh" sort={sort} onSort={toggleSort} right />
+                        <Th label="$ Over Chart" k="dollarsOver" sort={sort} onSort={toggleSort} right />
+                        <Th label="Hours Over" k="hoursOver" sort={sort} onSort={toggleSort} right />
+                        {showDaily && <Th label="Sched Hrs" k="sched" sort={sort} onSort={toggleSort} right />}
+                        {showDaily && <Th label="Actual Hrs" k="actual" sort={sort} onSort={toggleSort} right />}
+                        {showDaily && <Th label="OT Hrs" k="ot" sort={sort} onSort={toggleSort} right />}
+                        {showDaily && <Th label="Act−Sched" k="actVsSched" sort={sort} onSort={toggleSort} right />}
                       </tr>
                     </thead>
                     <tbody>
                       {rows.map((r, i) => {
                         const canDrill = !!childLevel(displayLevel);
-                        const over = r.laborPct != null && r.targetPct != null ? r.laborPct > r.targetPct : null;
+                        const b = r[period];
                         return (
                           <tr key={`${r.name}-${i}`}
                             onClick={canDrill ? () => drillInto(r) : undefined}
@@ -236,15 +261,16 @@ export function LaborV2Page() {
                                 {displayLevel !== "store" && ` · ${r.storeCount} store${r.storeCount === 1 ? "" : "s"}`}
                               </div>
                             </td>
-                            <td className="py-2.5 pl-3 text-right tabular-nums">{fmtUSD0(r.netSales)}</td>
-                            <td className={cn("py-2.5 pl-3 text-right font-semibold tabular-nums", overTone(over))}>{fmtPct(r.laborPct)}</td>
-                            <td className="py-2.5 pl-3 text-right tabular-nums text-zinc-500">{fmtPct(r.targetPct)}</td>
-                            <td className={cn("py-2.5 pl-3 text-right tabular-nums", overTone(r.variancePts != null ? r.variancePts > 0 : null))}>{fmtPts(r.variancePts)}</td>
-                            <td className="py-2.5 pl-3 text-right tabular-nums text-zinc-600">{fmtHrs(r.scheduledHours)}</td>
-                            <td className="py-2.5 pl-3 text-right tabular-nums text-zinc-600">{fmtHrs(r.laborHours)}</td>
-                            <td className={cn("py-2.5 pl-3 text-right tabular-nums", r.overtimeHours != null && r.overtimeHours > 0 ? "font-semibold text-amber-600" : "text-zinc-600")}>{fmtHrs(r.overtimeHours)}</td>
-                            <td className={cn("py-2.5 pl-3 text-right tabular-nums", overTone(r.actualVsSched != null ? r.actualVsSched > 0 : null))}>{fmtHrs(r.actualVsSched)}</td>
-                            <td className="py-2.5 pl-3 text-right tabular-nums text-zinc-600">{fmtRate(r.splh)}</td>
+                            <td className="py-2.5 pl-3 text-right tabular-nums">{fmtUSD0(b.sales)}</td>
+                            <td className={cn("py-2.5 pl-3 text-right font-semibold tabular-nums", overTone(isOver(b)))}>{fmtPct(b.laborPct)}</td>
+                            <td className="py-2.5 pl-3 text-right tabular-nums text-zinc-500">{fmtPct(b.targetPct)}</td>
+                            <td className={cn("py-2.5 pl-3 text-right tabular-nums", overTone(b.variancePts != null ? b.variancePts > 0 : null))}>{fmtPts(b.variancePts)}</td>
+                            <td className={cn("py-2.5 pl-3 text-right tabular-nums", overTone(b.dollarsOver != null ? b.dollarsOver > 0 : null))}>{fmtSignedUSD0(b.dollarsOver)}</td>
+                            <td className={cn("py-2.5 pl-3 text-right tabular-nums", overTone(b.hoursOver != null ? b.hoursOver > 0 : null))}>{fmtSignedHrs(b.hoursOver)}</td>
+                            {showDaily && <td className="py-2.5 pl-3 text-right tabular-nums text-zinc-600">{fmtHrs(r.scheduledHours)}</td>}
+                            {showDaily && <td className="py-2.5 pl-3 text-right tabular-nums text-zinc-600">{fmtHrs(r.laborHours)}</td>}
+                            {showDaily && <td className={cn("py-2.5 pl-3 text-right tabular-nums", r.overtimeHours != null && r.overtimeHours > 0 ? "font-semibold text-amber-600" : "text-zinc-600")}>{fmtHrs(r.overtimeHours)}</td>}
+                            {showDaily && <td className={cn("py-2.5 pl-3 text-right tabular-nums", overTone(r.actualVsSched != null ? r.actualVsSched > 0 : null))}>{fmtHrs(r.actualVsSched)}</td>}
                           </tr>
                         );
                       })}

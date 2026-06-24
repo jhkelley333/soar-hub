@@ -112,32 +112,46 @@ function shapeBand(row, prefix) {
   };
 }
 
-// Aggregate labor rows into one summary (weighted from $ and hours; never
-// averaging percentages).
-function laborAgg(name, rows) {
-  const s = (k) => rows.reduce((a, r) => a + numv(r[k]), 0);
-  const netSales = s("net_sales");
-  const laborCost = s("labor_cost");
-  const laborHours = s("labor_hours");
-  const overtimeHours = s("overtime_hours");
-  const scheduledHours = s("scheduled_labor_hours");
-  const actualVsSched = s("actual_vs_scheduled_hours");
-  const targetLaborDollars = rows.reduce((a, r) => a + numv(r.target_labor_pct) * numv(r.net_sales), 0);
-  const laborPct = div(laborCost, netSales);
-  const targetPct = div(targetLaborDollars, netSales);
+// Aggregate one band (prefix "" = daily, "wtd_", "ptd_") across a set of store
+// rows, weighting from $ and hours (never averaging percentages). $ over chart =
+// cost − sales×target; hours over chart = $ over ÷ blended avg wage (cost÷hours).
+function bandAgg(rows, prefix) {
+  const s = (k) => rows.reduce((a, r) => a + numv(r[prefix + k]), 0);
+  const sales = s("net_sales");
+  const cost = s("labor_cost");
+  const hours = s("labor_hours");
+  const chartAllowed = rows.reduce((a, r) => a + numv(r[prefix + "target_labor_pct"]) * numv(r[prefix + "net_sales"]), 0);
+  const laborPct = div(cost, sales);
+  const targetPct = div(chartAllowed, sales);
+  const dollarsOver = sales ? round2(cost - chartAllowed) : null;
+  const avgWage = hours ? cost / hours : null;
   return {
-    name,
-    storeCount: rows.length,
-    netSales,
-    laborCost,
-    laborHours,
-    overtimeHours,
-    scheduledHours,
-    actualVsSched,
+    sales,
     laborPct,
     targetPct,
     variancePts: laborPct != null && targetPct != null ? laborPct - targetPct : null,
-    splh: div(netSales, laborHours),
+    dollarsOver,
+    hoursOver: dollarsOver != null && avgWage ? round1(dollarsOver / avgWage) : null,
+    chartAllowed: sales ? round2(chartAllowed) : null,
+  };
+}
+
+// One org node: the three bands plus daily operational extras (hours columns
+// shown only on the Daily view).
+function laborAgg(name, rows) {
+  const s = (k) => rows.reduce((a, r) => a + numv(r[k]), 0);
+  const day = bandAgg(rows, "");
+  return {
+    name,
+    storeCount: rows.length,
+    netSales: day.sales, // default sort key (daily sales)
+    laborHours: s("labor_hours"),
+    overtimeHours: s("overtime_hours"),
+    scheduledHours: s("scheduled_labor_hours"),
+    actualVsSched: s("actual_vs_scheduled_hours"),
+    day,
+    wtd: bandAgg(rows, "wtd_"),
+    ptd: bandAgg(rows, "ptd_"),
   };
 }
 
