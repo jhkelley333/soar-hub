@@ -100,6 +100,14 @@ export function LaborV2TeamPage() {
     });
   }, [data, displayLevel, path, filter, sort, isStore]);
 
+  // The drilled-into node's own rollup row (shown as a summary above its
+  // children). Null at the top level — the tiles cover the whole scope there.
+  const summary = useMemo<TeamGroup | null>(() => {
+    if (!data || !path.length) return null;
+    const lvl = path[path.length - 1].level as "region" | "area" | "district";
+    return data.levels[lvl].find(matchesPath) ?? null;
+  }, [data, path]);
+
   const levelTabs: TeamDisplayLevel[] = data
     ? [...(["region", "area", "district"] as const).filter((lv) => data.levels[lv].length > 0), "store"]
     : [];
@@ -254,6 +262,9 @@ export function LaborV2TeamPage() {
             </div>
 
             <div className="divide-y divide-zinc-100">
+              {summary && (
+                <SummaryRow name={summary.name} leader={summary.leader} storeCount={summary.storeCount} storesOver={summary.storesOver} notesDue={summary.notesDue} r={summary} />
+              )}
               {rows.length === 0 ? (
                 <div className="p-8 text-center text-sm text-zinc-500">{isStore ? "No stores match this filter." : "Nothing here yet."}</div>
               ) : isStore ? (
@@ -291,6 +302,41 @@ function SortTh({ label, k, sort, onSort, className }: {
   );
 }
 
+// The right-aligned metric columns (Day/WTD/PTD %, Var, $ Over, Hrs/Unit, then
+// Sched/Actual/OT/Act−Sch), shared by group, store, and summary rows.
+function BandCells({ r }: { r: { day: TeamBand; wtd: TeamBand; ptd: TeamBand } }) {
+  const over = r.day.status === "over";
+  return (
+    <>
+      <span className={cn("w-16 text-right text-sm font-bold tabular-nums", over ? "text-red-600" : "text-emerald-600")}>{fmtPctPts(r.day.labor_pct)}</span>
+      <span className="hidden w-14 text-right text-xs tabular-nums text-zinc-500 lg:block">{fmtPctPts(r.wtd.labor_pct)}</span>
+      <span className="hidden w-14 text-right text-xs tabular-nums text-zinc-500 lg:block">{fmtPctPts(r.ptd.labor_pct)}</span>
+      <span className={cn("w-14 text-right text-xs tabular-nums", over ? "text-red-700" : "text-zinc-500")}>{fmtPts(r.day.variance_pts)}</span>
+      <span className={cn("w-20 text-right text-xs tabular-nums", over ? "text-red-700" : "text-zinc-500")}>{fmtSignedUSD0(r.day.dollars_over_chart)}</span>
+      <span className="w-14 text-right text-xs tabular-nums text-zinc-500">{fmtSignedHrs(r.day.hours_over_chart)}</span>
+      <HoursCells band={r.day} />
+    </>
+  );
+}
+
+// A non-clickable "total" row for the current scope (whole org at root, or the
+// drilled node), shown above its children.
+function SummaryRow({ name, leader, storeCount, storesOver, notesDue, r }: {
+  name: string; leader: string | null; storeCount: number; storesOver: number; notesDue: number; r: { day: TeamBand; wtd: TeamBand; ptd: TeamBand };
+}) {
+  return (
+    <div className="flex items-center gap-3 border-b-2 border-zinc-200 bg-zinc-50/70 px-4 py-3">
+      <span className="h-10 w-1 rounded-full bg-transparent" />
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-sm font-bold text-midnight dark:text-night-ink">{name}</div>
+        <div className="truncate text-xs text-zinc-500">{leader ? `${leader} · ` : ""}{storeCount} store{storeCount === 1 ? "" : "s"}</div>
+      </div>
+      <BandCells r={r} />
+      <span className="ml-2 w-[92px] text-right text-[11px] font-semibold tabular-nums text-zinc-500">{storesOver} over{notesDue ? ` · ${notesDue} due` : ""}</span>
+    </div>
+  );
+}
+
 function HoursCells({ band }: { band: TeamBand }) {
   return (
     <>
@@ -314,13 +360,7 @@ function GroupRow({ g, onDrill }: { g: TeamGroup; onDrill: () => void }) {
         </div>
         <div className="truncate text-xs text-zinc-500">{g.leader || "—"} · {g.storeCount} store{g.storeCount === 1 ? "" : "s"}</div>
       </div>
-      <span className={cn("w-16 text-right text-sm font-bold tabular-nums", over ? "text-red-600" : "text-emerald-600")}>{fmtPctPts(g.day.labor_pct)}</span>
-      <span className="hidden w-14 text-right text-xs tabular-nums text-zinc-500 lg:block">{fmtPctPts(g.wtd.labor_pct)}</span>
-      <span className="hidden w-14 text-right text-xs tabular-nums text-zinc-500 lg:block">{fmtPctPts(g.ptd.labor_pct)}</span>
-      <span className={cn("w-14 text-right text-xs tabular-nums", over ? "text-red-700" : "text-zinc-500")}>{fmtPts(g.day.variance_pts)}</span>
-      <span className={cn("w-20 text-right text-xs tabular-nums", over ? "text-red-700" : "text-zinc-500")}>{fmtSignedUSD0(g.day.dollars_over_chart)}</span>
-      <span className="w-14 text-right text-xs tabular-nums text-zinc-500">{fmtSignedHrs(g.day.hours_over_chart)}</span>
-      <HoursCells band={g.day} />
+      <BandCells r={g} />
       <span className="ml-2 w-[92px] text-right text-[11px] font-semibold tabular-nums text-zinc-500">
         {g.storesOver} over{g.notesDue ? ` · ${g.notesDue} due` : ""}
       </span>
@@ -344,13 +384,7 @@ function StoreRow({ s }: { s: TeamStore }) {
             {[s.gm_name ? `GM ${s.gm_name}` : null, s.do_name ? `DO ${s.do_name}` : null].filter(Boolean).join(" · ") || "—"}
           </div>
         </div>
-        <span className={cn("w-16 text-right text-sm font-bold tabular-nums", over ? "text-red-600" : "text-emerald-600")}>{fmtPctPts(s.day.labor_pct)}</span>
-        <span className="hidden w-14 text-right text-xs tabular-nums text-zinc-500 lg:block">{fmtPctPts(s.wtd.labor_pct)}</span>
-        <span className="hidden w-14 text-right text-xs tabular-nums text-zinc-500 lg:block">{fmtPctPts(s.ptd.labor_pct)}</span>
-        <span className={cn("w-14 text-right text-xs tabular-nums", over ? "text-red-700" : "text-zinc-500")}>{fmtPts(s.day.variance_pts)}</span>
-        <span className={cn("w-20 text-right text-xs tabular-nums", over ? "text-red-700" : "text-zinc-500")}>{fmtSignedUSD0(s.day.dollars_over_chart)}</span>
-        <span className="w-14 text-right text-xs tabular-nums text-zinc-500">{fmtSignedHrs(s.day.hours_over_chart)}</span>
-        <HoursCells band={s.day} />
+        <BandCells r={s} />
         <span className={cn("ml-2 inline-flex w-[92px] shrink-0 items-center justify-end gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide", chip)}>
           <span className={cn("h-1.5 w-1.5 rounded-full", dot)} />
           {label}
