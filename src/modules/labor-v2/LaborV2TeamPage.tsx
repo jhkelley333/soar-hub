@@ -5,7 +5,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Clock } from "lucide-react";
+import { ArrowDown, ArrowUp, Clock } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -33,26 +33,57 @@ const LEVELS: { key: TeamLevel; label: string }[] = [
 
 type View = "groups" | "stores";
 type Filter = "all" | "over" | "due";
-type Sort = "worst" | "labor" | "store";
+type SortKey = "name" | "day" | "wtd" | "ptd" | "var" | "over" | "hrsover" | "sched" | "actual" | "ot" | "actsch" | "status";
+
+const STATUS_RANK: Record<string, number> = { over: 3, unknown: 2, on: 1, missing: 0 };
+
+// Sort accessor shared by group rows and store rows (both carry day/wtd/ptd
+// bands and a status).
+function sortVal(r: TeamGroup | TeamStore, k: SortKey): number | string {
+  const label = "store_number" in r ? String(r.store_number) : r.name;
+  const status = "status" in r ? r.status : r.day.status;
+  switch (k) {
+    case "name": return label.toLowerCase();
+    case "day": return r.day.labor_pct ?? -Infinity;
+    case "wtd": return r.wtd.labor_pct ?? -Infinity;
+    case "ptd": return r.ptd.labor_pct ?? -Infinity;
+    case "var": return r.day.variance_pts ?? -Infinity;
+    case "over": return r.day.dollars_over_chart ?? -Infinity;
+    case "hrsover": return r.day.hours_over_chart ?? -Infinity;
+    case "sched": return r.day.scheduled_hours ?? -Infinity;
+    case "actual": return r.day.actual_hours ?? -Infinity;
+    case "ot": return r.day.overtime_hours ?? -Infinity;
+    case "actsch": return r.day.act_vs_sched ?? -Infinity;
+    case "status": return STATUS_RANK[status] ?? 0;
+  }
+}
 
 export function LaborV2TeamPage() {
   const [level, setLevel] = useState<TeamLevel>("district");
   const [view, setView] = useState<View>("groups");
   const [filter, setFilter] = useState<Filter>("all");
-  const [sort, setSort] = useState<Sort>("worst");
+  const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "var", dir: "desc" });
 
   const q = useQuery({ queryKey: ["labor-v2-team", level], queryFn: () => fetchLaborV2Team(level), staleTime: 5 * 60_000 });
   const data = q.data;
   const t = data?.totals ?? null;
 
+  function toggleSort(key: SortKey) {
+    setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "name" ? "asc" : "desc" }));
+  }
+  const sortList = <T extends TeamGroup | TeamStore>(arr: T[]): T[] =>
+    [...arr].sort((a, b) => {
+      const av = sortVal(a, sort.key), bv = sortVal(b, sort.key);
+      const cmp = typeof av === "string" ? av.localeCompare(bv as string) : (av as number) - (bv as number);
+      return sort.dir === "asc" ? cmp : -cmp;
+    });
+
+  const groupRows = useMemo(() => sortList(data?.groups ?? []), [data?.groups, sort]);
   const stores = useMemo(() => {
     let r = [...(data?.stores ?? [])];
     if (filter === "over") r = r.filter((s) => s.status === "over");
     if (filter === "due") r = r.filter((s) => s.note_due);
-    if (sort === "worst") r.sort((a, b) => (b.day.variance_pts ?? -999) - (a.day.variance_pts ?? -999));
-    if (sort === "labor") r.sort((a, b) => (b.day.labor_pct ?? -999) - (a.day.labor_pct ?? -999));
-    if (sort === "store") r.sort((a, b) => String(a.store_number).localeCompare(String(b.store_number)));
-    return r;
+    return sortList(r);
   }, [data?.stores, filter, sort]);
 
   const overCount = (data?.stores ?? []).filter((s) => s.status === "over").length;
@@ -114,41 +145,34 @@ export function LaborV2TeamPage() {
                 <button onClick={() => setView("stores")} className={cn("px-3.5 py-1.5 text-sm font-medium first:rounded-l-md last:rounded-r-md", view === "stores" ? "bg-midnight text-white" : "text-zinc-600 hover:bg-zinc-50")}>By store</button>
               </div>
               {view === "stores" && (
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <Chips value={filter} onChange={setFilter} options={[
-                    { value: "all", label: `All ${data!.stores.length}` },
-                    { value: "over", label: `Over ${overCount}`, dot: "bg-red-500" },
-                    { value: "due", label: `Due ${dueCount}`, dot: "bg-amber-500" },
-                  ]} />
-                  <Chips value={sort} onChange={setSort} options={[
-                    { value: "worst", label: "worst first" },
-                    { value: "labor", label: "labor %" },
-                    { value: "store", label: "store" },
-                  ]} />
-                </div>
+                <Chips value={filter} onChange={setFilter} options={[
+                  { value: "all", label: `All ${data!.stores.length}` },
+                  { value: "over", label: `Over ${overCount}`, dot: "bg-red-500" },
+                  { value: "due", label: `Due ${dueCount}`, dot: "bg-amber-500" },
+                ]} />
               )}
             </div>
 
             <div className="hidden items-center gap-3 border-b border-zinc-100 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 sm:flex">
-              <span className="min-w-0 flex-1">{view === "groups" ? levelNoun : "Store"}</span>
-              <span className="w-16 text-right">Day %</span>
-              <span className="hidden w-14 text-right lg:block">WTD %</span>
-              <span className="hidden w-14 text-right lg:block">PTD %</span>
-              <span className="w-14 text-right">Var</span>
-              <span className="w-20 text-right">$ Over</span>
-              <span className="w-14 text-right">Hrs Over</span>
-              <span className="hidden w-16 text-right xl:block">Sched</span>
-              <span className="hidden w-16 text-right xl:block">Actual</span>
-              <span className="hidden w-14 text-right xl:block">OT</span>
-              <span className="hidden w-16 text-right xl:block">Act−Sch</span>
-              <span className="ml-2 w-[92px] text-right">Status</span>
+              <SortTh label={view === "groups" ? levelNoun : "Store"} k="name" sort={sort} onSort={toggleSort} className="min-w-0 flex-1 justify-start" />
+              <SortTh label="Day %" k="day" sort={sort} onSort={toggleSort} className="w-16" />
+              <SortTh label="WTD %" k="wtd" sort={sort} onSort={toggleSort} className="hidden w-14 lg:flex" />
+              <SortTh label="PTD %" k="ptd" sort={sort} onSort={toggleSort} className="hidden w-14 lg:flex" />
+              <SortTh label="Var" k="var" sort={sort} onSort={toggleSort} className="w-14" />
+              <SortTh label="$ Over" k="over" sort={sort} onSort={toggleSort} className="w-20" />
+              <SortTh label="Hrs Over" k="hrsover" sort={sort} onSort={toggleSort} className="w-14" />
+              <SortTh label="Sched" k="sched" sort={sort} onSort={toggleSort} className="hidden w-16 xl:flex" />
+              <SortTh label="Actual" k="actual" sort={sort} onSort={toggleSort} className="hidden w-16 xl:flex" />
+              <SortTh label="OT" k="ot" sort={sort} onSort={toggleSort} className="hidden w-14 xl:flex" />
+              <SortTh label="Act−Sch" k="actsch" sort={sort} onSort={toggleSort} className="hidden w-16 xl:flex" />
+              <SortTh label="Status" k="status" sort={sort} onSort={toggleSort} className="ml-2 w-[92px]" />
             </div>
 
             <div className="divide-y divide-zinc-100">
               {view === "groups"
-                ? (data!.groups.length === 0
+                ? (groupRows.length === 0
                     ? <Empty />
-                    : data!.groups.map((g) => <GroupRow key={g.name} g={g} />))
+                    : groupRows.map((g) => <GroupRow key={g.name} g={g} />))
                 : (stores.length === 0
                     ? <div className="p-8 text-center text-sm text-zinc-500">No stores match this filter.</div>
                     : stores.map((s) => <StoreRow key={s.store_number} s={s} />))}
@@ -171,6 +195,18 @@ function Tile({ label, value, sub, tone }: { label: string; value: string; sub?:
       <div className={cn("mt-1 text-3xl font-bold tabular-nums tracking-tight text-midnight dark:text-night-ink", tone)}>{value}</div>
       {sub && <div className="mt-1 text-xs text-zinc-500">{sub}</div>}
     </div>
+  );
+}
+
+function SortTh({ label, k, sort, onSort, className }: {
+  label: string; k: SortKey; sort: { key: SortKey; dir: "asc" | "desc" }; onSort: (k: SortKey) => void; className?: string;
+}) {
+  const active = sort.key === k;
+  return (
+    <button onClick={() => onSort(k)} className={cn("inline-flex items-center justify-end gap-1 text-right uppercase tracking-wide hover:text-zinc-600", active && "text-accent", className)}>
+      {label}
+      {active && (sort.dir === "asc" ? <ArrowUp className="h-2.5 w-2.5" /> : <ArrowDown className="h-2.5 w-2.5" />)}
+    </button>
   );
 }
 
