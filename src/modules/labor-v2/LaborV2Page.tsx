@@ -62,10 +62,16 @@ export function LaborV2Page() {
       qc.setQueryData(["labor-v2-summary", date], data);
       qc.invalidateQueries({ queryKey: ["labor-v2-dates"] });
       const r = data.refreshed;
-      toast.push(
-        r ? `Pulled ${r.stores} stores · WTD ${r.wtd} · PTD ${r.ptd}.` : "Pulled the latest labor numbers.",
-        "success",
-      );
+      if (r && (r.wtd === 0 || r.ptd === 0)) {
+        // A band came back empty — surface the feed's section names so we can
+        // see what it actually calls its WTD/PTD arrays.
+        toast.push(`Pulled ${r.stores} stores · WTD ${r.wtd} · PTD ${r.ptd}. Feed sections: ${(r.feedKeys ?? []).join(", ") || "none"}`, "error");
+      } else {
+        toast.push(
+          r ? `Pulled ${r.stores} stores · WTD ${r.wtd} · PTD ${r.ptd}.` : "Pulled the latest labor numbers.",
+          "success",
+        );
+      }
     },
     onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't refresh.", "error"),
   });

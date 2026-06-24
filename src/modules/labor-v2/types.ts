@@ -26,8 +26,9 @@ export interface LaborSummary {
   ok: true;
   date: string | null;
   total: LaborRow | null;
-  // Present only on a refresh: how many feed rows carried each band.
-  refreshed?: { stores: number; wtd: number; ptd: number } | null;
+  // Present only on a refresh: how many feed rows carried each band, plus the
+  // feed's rawData section names (for diagnosing an empty WTD/PTD).
+  refreshed?: { stores: number; wtd: number; ptd: number; feedKeys?: string[] } | null;
   scope: { matched: number; unmatched: number; unmatchedSample?: string[] };
   levels: Record<LaborLevel, LaborRow[]>;
 }
