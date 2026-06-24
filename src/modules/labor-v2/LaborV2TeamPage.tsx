@@ -5,10 +5,13 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, ChevronRight, Clock } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronRight, Clock, Copy, Share2 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
+import { Modal } from "@/shared/ui/Modal";
+import { Button } from "@/shared/ui/Button";
+import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { fetchLaborV2Team } from "./api";
 import type { TeamBand, TeamDisplayLevel, TeamGroup, TeamStore } from "./types";
@@ -56,10 +59,12 @@ function sortVal(r: TeamGroup | TeamStore, k: SortKey): number | string {
 }
 
 export function LaborV2TeamPage() {
+  const toast = useToast();
   const [baseLevel, setBaseLevel] = useState<TeamDisplayLevel | null>(null);
   const [path, setPath] = useState<{ level: TeamDisplayLevel; name: string }[]>([]);
   const [filter, setFilter] = useState<Filter>("all");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "var", dir: "desc" });
+  const [shareDraft, setShareDraft] = useState<string | null>(null);
 
   const q = useQuery({ queryKey: ["labor-v2-team"], queryFn: () => fetchLaborV2Team(), staleTime: 5 * 60_000 });
   const data = q.data;
@@ -100,20 +105,79 @@ export function LaborV2TeamPage() {
     : [];
   const nameHeader = LEVEL_LABEL[displayLevel] === "Stores" ? "Store" : LEVEL_LABEL[displayLevel];
 
+  // Plain-text summary of the current scope + visible rows, for sharing to
+  // WhatsApp (which only takes text). Reflects the active drill + sort.
+  function buildShareText(): string {
+    if (!data || !t) return "";
+    const band = (b: TeamBand) => `${fmtPctPts(b.labor_pct)} (tgt ${fmtPctPts(b.target_pct)}, ${fmtPts(b.variance_pts)})`;
+    const scope = path.length ? path.map((c) => c.name).join(" › ") : "All my stores";
+    const out: string[] = [
+      `*SOAR Labor — ${fmtDate(data.date)}*`,
+      `Scope: ${scope} · ${data.scope.stores} stores`,
+      "",
+      `DAY  ${band(t.day)} · ${fmtSignedUSD0(t.day.dollars_over_chart)} over · ${fmtSignedHrs(t.day.hours_over_chart)} hr/unit`,
+      `WTD  ${band(t.wtd)} · ${fmtSignedUSD0(t.wtd.dollars_over_chart)} over`,
+      `PTD  ${band(t.ptd)} · ${fmtSignedUSD0(t.ptd.dollars_over_chart)} over`,
+      `Over chart: ${t.storesOver}/${data.scope.stores} stores · ${t.notesDue} notes due`,
+      "",
+      `${LEVEL_LABEL[displayLevel]}:`,
+    ];
+    const cap = 25;
+    rows.slice(0, cap).forEach((r, i) => {
+      const name = "store_number" in r ? `${r.store_number} ${r.store_name}` : r.name;
+      out.push(`${i + 1}. ${name} — ${fmtPctPts(r.day.labor_pct)} (${fmtPts(r.day.variance_pts)}) ${fmtSignedUSD0(r.day.dollars_over_chart)}`);
+    });
+    if (rows.length > cap) out.push(`…and ${rows.length - cap} more`);
+    return out.join("\n");
+  }
+  function openShare() { setShareDraft(buildShareText()); }
+  function shareToWhatsApp() {
+    if (shareDraft == null) return;
+    window.open(`https://wa.me/?text=${encodeURIComponent(shareDraft)}`, "_blank", "noopener");
+  }
+  async function copyShare() {
+    if (shareDraft == null) return;
+    try { await navigator.clipboard.writeText(shareDraft); toast.push("Copied to clipboard.", "success"); }
+    catch { toast.push("Couldn't copy — select the text and copy manually.", "error"); }
+  }
+
   return (
     <>
       <PageHeader
         title="Team labor"
         description={data?.date ? `${fmtDate(data.date)} · ${data.scope.stores} stores rolled up${data.scope.dos.length ? ` · ${data.scope.dos.length} DO${data.scope.dos.length === 1 ? "" : "s"}` : ""}` : "Labor rollup for your stores"}
         actions={
-          t && t.notesDue > 0 ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-sonic-50 px-3 py-1.5 text-xs font-semibold text-sonic-700">
-              <Clock className="h-3.5 w-3.5" />
-              {t.notesDue} {t.notesDue === 1 ? "note" : "notes"} to review
-            </span>
-          ) : undefined
+          <div className="flex flex-wrap items-center gap-2">
+            {t && t.notesDue > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-sonic-50 px-3 py-1.5 text-xs font-semibold text-sonic-700">
+                <Clock className="h-3.5 w-3.5" />
+                {t.notesDue} {t.notesDue === 1 ? "note" : "notes"} to review
+              </span>
+            )}
+            {t && (
+              <Button variant="secondary" size="sm" onClick={openShare}>
+                <Share2 className="mr-1 h-3.5 w-3.5" /> Share
+              </Button>
+            )}
+          </div>
         }
       />
+
+      <Modal open={shareDraft != null} onClose={() => setShareDraft(null)} title="Share labor to WhatsApp"
+        footer={
+          <>
+            <Button variant="secondary" size="sm" onClick={copyShare}><Copy className="mr-1 h-3.5 w-3.5" /> Copy</Button>
+            <Button size="sm" onClick={shareToWhatsApp}><Share2 className="mr-1 h-3.5 w-3.5" /> Open WhatsApp</Button>
+          </>
+        }>
+        <p className="mb-2 text-xs text-zinc-500">Edit if you like, then open WhatsApp to pick a chat — or copy the text.</p>
+        <textarea
+          value={shareDraft ?? ""}
+          onChange={(e) => setShareDraft(e.target.value)}
+          rows={14}
+          className="w-full resize-y rounded-lg border-0 bg-zinc-50 p-3 font-mono text-xs text-zinc-800 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+        />
+      </Modal>
 
       {/* Level tabs (jump) — drill into a row to go deeper */}
       {levelTabs.length > 0 && (
@@ -146,7 +210,7 @@ export function LaborV2TeamPage() {
             <Tile label="PTD Labor %" value={fmtPctPts(t.ptd.labor_pct)} sub={t.ptd.dollars_over_chart ? `${fmtSignedUSD0(t.ptd.dollars_over_chart)} over · PTD` : "period-to-date"} tone={overTone(isOver(t.ptd))} />
             <Tile label="Stores Over Chart" value={`${t.storesOver} / ${data!.scope.stores}`} sub={`${data!.scope.stores - t.storesOver} on or under`} tone={overTone(t.storesOver > 0)} />
             <Tile label="Notes to Review" value={String(t.notesDue)} sub={`${t.notesExplained} already explained`} />
-            <Tile label="$ Over Chart · Day" value={fmtSignedUSD0(t.day.dollars_over_chart)} sub={`${fmtSignedHrs(t.day.hours_over_chart)} hrs`} tone={overTone((t.day.dollars_over_chart ?? 0) > 0)} />
+            <Tile label="$ Over Chart · Day" value={fmtSignedUSD0(t.day.dollars_over_chart)} sub={`${fmtSignedHrs(t.day.hours_over_chart)} hrs/unit`} tone={overTone((t.day.dollars_over_chart ?? 0) > 0)} />
           </div>
 
           {/* List */}
@@ -181,7 +245,7 @@ export function LaborV2TeamPage() {
               <SortTh label="PTD %" k="ptd" sort={sort} onSort={toggleSort} className="hidden w-14 lg:flex" />
               <SortTh label="Var" k="var" sort={sort} onSort={toggleSort} className="w-14" />
               <SortTh label="$ Over" k="over" sort={sort} onSort={toggleSort} className="w-20" />
-              <SortTh label="Hrs Over" k="hrsover" sort={sort} onSort={toggleSort} className="w-14" />
+              <SortTh label="Hrs/Unit" k="hrsover" sort={sort} onSort={toggleSort} className="w-14" />
               <SortTh label="Sched" k="sched" sort={sort} onSort={toggleSort} className="hidden w-16 xl:flex" />
               <SortTh label="Actual" k="actual" sort={sort} onSort={toggleSort} className="hidden w-16 xl:flex" />
               <SortTh label="OT" k="ot" sort={sort} onSort={toggleSort} className="hidden w-14 xl:flex" />
