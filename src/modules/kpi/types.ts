@@ -93,9 +93,7 @@ export interface KpiRow {
   [key: string]: unknown;
 }
 
-export interface KpiSnapshot {
-  ok: true;
-  fetchedAt: string;
+export interface KpiPeriod {
   total: KpiRow | null;
   scope: { matched: number; unmatched: number; unmatchedSample: string[] };
   levels: {
@@ -104,6 +102,15 @@ export interface KpiSnapshot {
     district: KpiOrgRow[];
     store: KpiOrgRow[];
   };
+}
+
+export type PeriodKey = "day" | "wtd" | "ptd";
+
+export interface KpiSnapshot {
+  ok: true;
+  fetchedAt: string;
+  feedKeys: string[];               // top-level rawData section names from the feed
+  periods: Record<PeriodKey, KpiPeriod>;
 }
 
 // A row rolled up onto OUR org hierarchy (region / area / district / store),
