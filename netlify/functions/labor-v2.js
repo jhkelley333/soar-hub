@@ -188,7 +188,13 @@ async function refreshNow(supa) {
   const wc = wallClockInTz(new Date(), TZ);
   const businessDate = feedBusinessDate(payload, wc);
   const rows = extractLaborRows(payload).map((r) => ({ ...r, business_date: businessDate, captured_at: new Date().toISOString() }));
-  if (rows.length) await supa.from("labor_v2_daily").upsert(rows, { onConflict: "store_number,business_date" });
+  if (rows.length) {
+    const { error } = await supa.from("labor_v2_daily").upsert(rows, { onConflict: "store_number,business_date" });
+    // Surface write failures instead of swallowing them — a missing column
+    // (e.g. migration 0187 not applied) would otherwise leave stale rows with
+    // no signal. The Postgres message names the offending column.
+    if (error) throw new Error(`Couldn't save labor rows: ${error.message}`);
+  }
   return businessDate;
 }
 
