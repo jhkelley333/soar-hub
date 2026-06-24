@@ -76,7 +76,9 @@ export function LaborV2Page() {
       if (r && (r.wtd === 0 || r.ptd === 0)) {
         toast.push(`Pulled ${r.stores} stores · WTD ${r.wtd} · PTD ${r.ptd}. Feed sections: ${(r.feedKeys ?? []).join(", ") || "none"}`, "error");
       } else {
-        toast.push(r ? `Pulled ${r.stores} stores · WTD ${r.wtd} · PTD ${r.ptd}.` : "Pulled the latest labor numbers.", "success");
+        const ff = r?.forecastFields ?? [];
+        const fcast = ff.length ? ` · forecast fields: ${ff.join(", ")}` : " · no forecast fields in feed";
+        toast.push(r ? `Pulled ${r.stores} stores · WTD ${r.wtd} · PTD ${r.ptd}.${fcast}` : "Pulled the latest labor numbers.", "success");
       }
     },
     onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't refresh.", "error"),

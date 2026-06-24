@@ -25,6 +25,21 @@ function storeRowsByNumber(rows) {
   return m;
 }
 
+// Probe a sample store row for forecast-style fields. The feed may expose a
+// sales forecast / adjusted forecast under any name (or not at all), so return
+// the keys that look forecast-related (with sample values) plus the full field
+// list, so we can see exactly what's available and map it.
+export function feedForecastProbe(payload) {
+  const rd = payload?.rawData || {};
+  const rows = Array.isArray(rd.businessDateData) ? rd.businessDateData : [];
+  const sample = rows.find((r) => isStoreRow(r) && storeNumberOf(r));
+  if (!sample) return { store: null, allFields: [], forecastFields: [] };
+  const keys = Object.keys(sample).sort();
+  const rx = /forecast|adjust|projec|\bplan|budget|expected|estimat/i;
+  const forecastFields = keys.filter((k) => rx.test(k)).map((k) => ({ key: k, value: sample[k] }));
+  return { store: storeNumberOf(sample), allFields: keys, forecastFields };
+}
+
 // Store-level labor rows shaped for the labor_v2_daily table. The daily slice
 // drives the row set; WTD + PTD bands are joined on store number so the GM view
 // can render all three cards (goal/chart per band = the feed's target %).
