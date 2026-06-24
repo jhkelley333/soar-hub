@@ -6,6 +6,8 @@ import { createClient } from "@supabase/supabase-js";
 import { resolveOrg } from "./_lib/kpiOrg.js";
 import { fetchKpiFeed, kpiConfigured } from "./_lib/kpiFeed.js";
 import { extractLaborRows, feedBusinessDate, feedSectionReport, wallClockInTz } from "./_lib/kpiLabor.js";
+import { upsertLaborCloses } from "./_lib/laborCloses.js";
+import { fiscalForDate } from "./_lib/fiscal.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -199,6 +201,10 @@ async function refreshNow(supa) {
     // no signal. The Postgres message names the offending column.
     if (error) throw new Error(`Couldn't save labor rows: ${error.message}`);
   }
+  // If this business date closes a fiscal week / period, snapshot the final
+  // WTD / PTD into the close ledgers (idempotent).
+  try { await upsertLaborCloses(supa, extracted, businessDate); }
+  catch (e) { console.log(`[labor-v2] close snapshot failed: ${e.message}`); }
   // Report how many rows carried each band, so the UI can confirm WTD/PTD
   // actually came through the feed (vs. a silent extraction miss).
   const report = feedSectionReport(payload);
@@ -367,6 +373,24 @@ async function saveReview(supa, user, body) {
   return { ok: true, review: data };
 }
 
+// One-time/again-safe backfill: walk existing labor_v2_daily and snapshot a
+// close for every business_date that is a fiscal week / period end. Lets the
+// close ledgers pick up weeks/periods that closed before this feature shipped.
+async function backfillCloses(supa) {
+  const { data: dateRows } = await supa.from("labor_v2_daily").select("business_date").order("business_date", { ascending: true }).limit(5000);
+  const dates = [...new Set((dateRows || []).map((r) => r.business_date))];
+  const closeDates = dates.filter((d) => { const fi = fiscalForDate(d); return fi && (fi.isWeekEnd || fi.isPeriodEnd); });
+  let weeks = 0;
+  let periods = 0;
+  for (const d of closeDates) {
+    const { data: rows } = await supa.from("labor_v2_daily").select("*").eq("business_date", d);
+    const r = await upsertLaborCloses(supa, rows || [], d);
+    weeks += r.weeks;
+    periods += r.periods;
+  }
+  return { scannedDates: dates.length, closeDates: closeDates.length, weeksWritten: weeks, periodsWritten: periods };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   let supa;
@@ -398,6 +422,7 @@ export const handler = async (event) => {
     // Admin-only org rollup.
     if (!isAdmin) return respond(403, { error: "Admins only." });
     if (action === "dates") return respond(200, await listDates(supa));
+    if (action === "backfill-closes") return unwrap(await backfillCloses(supa));
     if (action === "summary") {
       const out = await summary(supa, params);
       if (out?.error) return respond(out.status || 500, { error: out.error });
