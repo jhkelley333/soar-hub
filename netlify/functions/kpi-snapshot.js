@@ -180,7 +180,14 @@ function buildPeriod(dataRows, orgMap) {
       m.get(k).push(r);
     }
     return [...m.entries()]
-      .map(([name, rs]) => ({ ...aggregate(name, rs), leader: rs[0]?.soar?.[leaderKey] ?? null }))
+      .map(([name, rs]) => ({
+        ...aggregate(name, rs),
+        leader: rs[0]?.soar?.[leaderKey] ?? null,
+        // Parent identifiers (single-valued within a group) for drill-down.
+        region: rs[0]?.soar?.region ?? null,
+        area: rs[0]?.soar?.area ?? null,
+        district: rs[0]?.soar?.district ?? null,
+      }))
       .sort((a, b) => num(b.netSales) - num(a.netSales));
   };
 
@@ -199,6 +206,7 @@ function buildPeriod(dataRows, orgMap) {
           number: r.soar.number,
           leader: r.soar.gmName,
           district: r.soar.district,
+          area: r.soar.area,
           region: r.soar.region,
         };
       })

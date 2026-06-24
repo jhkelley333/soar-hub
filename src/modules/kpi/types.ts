@@ -121,6 +121,7 @@ export interface KpiOrgRow {
   leader?: string | null; // GM (store) / DO (district) / SDO (area) / RVP (region)
   number?: string;        // store level only
   district?: string | null;
+  area?: string | null;
   region?: string | null;
   netSales: number | null;
   grossSales: number | null;
