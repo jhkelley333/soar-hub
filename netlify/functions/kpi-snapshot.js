@@ -216,12 +216,18 @@ export const handler = async (event) => {
       area: groupBy((r) => r.soar.area),
       district: groupBy((r) => r.soar.district),
       store: inScope
-        .map((r) => ({
-          ...aggregate(r.soar.store, [r]),
-          number: r.soar.number,
-          district: r.soar.district,
-          region: r.soar.region,
-        }))
+        .map((r) => {
+          // Keep the store number in the label (don't double it if our store
+          // name already starts with it): e.g. "3574 Helton Dr".
+          const nm = String(r.soar.store).trim();
+          const label = nm.startsWith(r.soar.number) ? nm : `${r.soar.number} ${nm}`;
+          return {
+            ...aggregate(label, [r]),
+            number: r.soar.number,
+            district: r.soar.district,
+            region: r.soar.region,
+          };
+        })
         .sort((a, b) => num(b.netSales) - num(a.netSales)),
     };
 
