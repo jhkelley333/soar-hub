@@ -35,6 +35,7 @@ import { RegionAccessPage } from "@/modules/admin/RegionAccessPage";
 import { KpiDashboardPage } from "@/modules/kpi/KpiDashboardPage";
 import { LaborV2Page } from "@/modules/labor-v2/LaborV2Page";
 import { LaborV2GmPage } from "@/modules/labor-v2/LaborV2GmPage";
+import { LaborV2TeamPage } from "@/modules/labor-v2/LaborV2TeamPage";
 import { QsrHomePage } from "@/modules/qsr/QsrHomePage";
 import { MyTrainingPage } from "@/modules/qsr/MyTrainingPage";
 import { LessonPlayer } from "@/modules/qsr/player/LessonPlayer";
@@ -202,6 +203,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <LaborV2GmPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "labor-v2/team",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <LaborV2TeamPage />
           </ProtectedRoute>
         ),
       },
