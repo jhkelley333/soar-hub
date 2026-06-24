@@ -18,6 +18,7 @@ export interface LaborBand {
   dollars_over_chart: number | null;
   hours_over_chart: number | null;
   chart_dollars_allowed: number | null;
+  avg_wage?: number | null;        // labor cost ÷ labor hours (Labor v2 only)
   status: ChartStatus;
 }
 

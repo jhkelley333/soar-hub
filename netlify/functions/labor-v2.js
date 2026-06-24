@@ -39,8 +39,8 @@ const div = (a, b) => (b ? a / b : null);
 const READ_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]);
 const REVIEW_ROLES = new Set(["gm", "do", "sdo", "rvp", "admin"]);
 const ORG_WIDE = new Set(["payroll", "admin", "vp", "coo"]);
-// A day is a "miss" (note due) when labor runs over the target by > this many points.
-const MISS_TOLERANCE_PTS = (() => { const n = parseFloat(process.env.LABOR_MISS_TOLERANCE_PTS); return Number.isFinite(n) ? n : 0.5; })();
+// A day is a "miss" (note due) whenever labor runs over the chart at all —
+// if you miss, you miss; no tolerance band. (Same as the OVER CHART badge.)
 
 const roleOf = (u) => String(u?.role || "").toLowerCase();
 const round1 = (n) => Math.round((Number(n) || 0) * 10) / 10;
@@ -74,9 +74,11 @@ async function resolveVisibleStoreRows(supa, user) {
   return data ?? [];
 }
 
+// Over the chart whenever labor exceeds the target at all (matching the
+// displayed, 1-dp variance). Over = a miss; an explanation is required.
 function chartStatus(laborPct, goalPct) {
   if (laborPct == null || goalPct == null) return "unknown";
-  return laborPct - goalPct > MISS_TOLERANCE_PTS ? "over" : "on";
+  return round1(laborPct - goalPct) > 0 ? "over" : "on";
 }
 
 // Shape one band (prefix "" = daily, "wtd_", "ptd_") into the UI's LaborBand.
@@ -103,6 +105,7 @@ function shapeBand(row, prefix) {
     dollars_over_chart: dollarsOver,
     hours_over_chart: hoursOver,
     chart_dollars_allowed: chartAllowed,
+    avg_wage: avgWage == null ? null : round2(avgWage),
     status: chartStatus(laborPct, goalPct),
   };
 }
