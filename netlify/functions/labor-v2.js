@@ -5,7 +5,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { resolveOrg } from "./_lib/kpiOrg.js";
 import { fetchKpiFeed, kpiConfigured } from "./_lib/kpiFeed.js";
-import { extractLaborRows, feedBusinessDate, feedSectionReport, wallClockInTz } from "./_lib/kpiLabor.js";
+import { extractLaborRows, feedBusinessDate, feedForecastProbe, feedSectionReport, wallClockInTz } from "./_lib/kpiLabor.js";
 import { upsertLaborCloses } from "./_lib/laborCloses.js";
 import { fiscalForDate } from "./_lib/fiscal.js";
 
@@ -221,11 +221,13 @@ async function refreshNow(supa) {
   // Report how many rows carried each band, so the UI can confirm WTD/PTD
   // actually came through the feed (vs. a silent extraction miss).
   const report = feedSectionReport(payload);
+  const probe = feedForecastProbe(payload);
   const counts = {
     stores: extracted.length,
     wtd: extracted.filter((r) => r.wtd_net_sales != null).length,
     ptd: extracted.filter((r) => r.ptd_net_sales != null).length,
     feedKeys: report.feedKeys,
+    forecastFields: probe.forecastFields.map((f) => f.key),
   };
   return { businessDate, counts };
 }
@@ -435,6 +437,10 @@ export const handler = async (event) => {
     // Admin-only org rollup.
     if (!isAdmin) return respond(403, { error: "Admins only." });
     if (action === "dates") return respond(200, await listDates(supa));
+    if (action === "feed-fields") {
+      if (!kpiConfigured()) return respond(503, { error: "KPI feed isn't configured." });
+      return respond(200, { ok: true, ...feedForecastProbe(await fetchKpiFeed()) });
+    }
     if (action === "backfill-closes") return unwrap(await backfillCloses(supa));
     if (action === "summary") {
       const out = await summary(supa, params);
