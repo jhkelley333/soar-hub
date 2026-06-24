@@ -69,6 +69,19 @@ export function extractLaborRows(payload) {
   return out;
 }
 
+// Diagnostic: what the feed actually contains, so a refresh can self-report why
+// WTD/PTD may be empty. Returns the rawData section names plus how many
+// store-level rows each period section yielded.
+export function feedSectionReport(payload) {
+  const rd = payload?.rawData || {};
+  return {
+    feedKeys: Object.keys(rd),
+    dayStores: storeRowsByNumber(Array.isArray(rd.businessDateData) ? rd.businessDateData : []).size,
+    wtdStores: storeRowsByNumber(pickSection(rd, WTD_SECTIONS)).size,
+    ptdStores: storeRowsByNumber(pickSection(rd, PTD_SECTIONS)).size,
+  };
+}
+
 // The feed serves the previous completed business day. Prefer an explicit date
 // on the payload if present; otherwise the day before the given Central wall
 // clock ({year, month, day}).

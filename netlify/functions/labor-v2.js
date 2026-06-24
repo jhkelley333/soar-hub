@@ -5,7 +5,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { resolveOrg } from "./_lib/kpiOrg.js";
 import { fetchKpiFeed, kpiConfigured } from "./_lib/kpiFeed.js";
-import { extractLaborRows, feedBusinessDate, wallClockInTz } from "./_lib/kpiLabor.js";
+import { extractLaborRows, feedBusinessDate, feedSectionReport, wallClockInTz } from "./_lib/kpiLabor.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -198,10 +198,12 @@ async function refreshNow(supa) {
   }
   // Report how many rows carried each band, so the UI can confirm WTD/PTD
   // actually came through the feed (vs. a silent extraction miss).
+  const report = feedSectionReport(payload);
   const counts = {
     stores: extracted.length,
     wtd: extracted.filter((r) => r.wtd_net_sales != null).length,
     ptd: extracted.filter((r) => r.ptd_net_sales != null).length,
+    feedKeys: report.feedKeys,
   };
   return { businessDate, counts };
 }
