@@ -60,6 +60,8 @@ const LEVELS: { key: LevelKey; label: string }[] = [
   { key: "district", label: "Districts" },
   { key: "store", label: "Stores" },
 ];
+// Leader title shown next to each row's name, by level.
+const LEADER_LABEL: Record<LevelKey, string> = { region: "RVP", area: "SDO", district: "DO", store: "GM" };
 
 export function KpiDashboardPage() {
   const q = useQuery({ queryKey: ["kpi-snapshot"], queryFn: fetchKpiSnapshot, staleTime: 5 * 60_000 });
@@ -191,10 +193,12 @@ export function KpiDashboardPage() {
                       {rows.map((r, i) => (
                         <tr key={`${r.name}-${i}`} className="border-b border-zinc-50 hover:bg-zinc-50/60">
                           <td className="py-2.5 pr-3">
-                            <span className="font-medium text-midnight dark:text-night-ink">{r.name}</span>
-                            {level !== "store" && (
-                              <span className="ml-2 text-[11px] text-zinc-400">{r.storeCount} store{r.storeCount === 1 ? "" : "s"}</span>
-                            )}
+                            <div className="font-medium text-midnight dark:text-night-ink">{r.name}</div>
+                            <div className="text-[11px] text-zinc-400">
+                              <span className="font-medium text-zinc-500">{LEADER_LABEL[level]}</span>
+                              {" "}{r.leader || "—"}
+                              {level !== "store" && ` · ${r.storeCount} store${r.storeCount === 1 ? "" : "s"}`}
+                            </div>
                           </td>
                           <td className="py-2.5 pl-3 text-right tabular-nums">{fmtUSD0(r.netSales)}</td>
                           <td className="py-2.5 pl-3 text-right"><div className="flex justify-end"><Delta frac={r.yoYNetSalesPercentage} /></div></td>

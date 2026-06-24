@@ -61,7 +61,8 @@ function storeNumberOf(r) {
 async function resolveOrg(supa, numbers) {
   const map = new Map();
   if (!numbers.length) return map;
-  const { data: stores } = await supa.from("stores").select("number, name, district_id").in("number", numbers);
+  const { data: stores } = await supa.from("stores").select("id, number, name, district_id").in("number", numbers);
+  const storeIds = [...new Set((stores || []).map((s) => s.id).filter(Boolean))];
   const districtIds = [...new Set((stores || []).map((s) => s.district_id).filter(Boolean))];
   const { data: districts } = districtIds.length
     ? await supa.from("districts").select("id, name, area_id").in("id", districtIds) : { data: [] };
@@ -71,6 +72,31 @@ async function resolveOrg(supa, numbers) {
   const regionIds = [...new Set((areas || []).map((a) => a.region_id).filter(Boolean))];
   const { data: regions } = regionIds.length
     ? await supa.from("regions").select("id, name").in("id", regionIds) : { data: [] };
+
+  // Leaders. GM is a profile whose primary_store_id is the store; DO/SDO/RVP
+  // come from user_scopes rows on the district/area/region node, matched to the
+  // expected role for that level. Mirrors org.js leadership resolution.
+  const nameOf = (p) => (p ? p.preferred_name || p.full_name || p.email || null : null);
+  const nodeIds = [...storeIds, ...districtIds, ...areaIds, ...regionIds];
+  const { data: scopeRows } = nodeIds.length
+    ? await supa.from("user_scopes").select("user_id, scope_type, scope_id").in("scope_id", nodeIds) : { data: [] };
+  const scopeUserIds = [...new Set((scopeRows || []).map((s) => s.user_id))];
+  const { data: scopeProfiles } = scopeUserIds.length
+    ? await supa.from("profiles").select("id, full_name, preferred_name, email, role").in("id", scopeUserIds).eq("is_active", true) : { data: [] };
+  const { data: gmProfiles } = storeIds.length
+    ? await supa.from("profiles").select("id, full_name, preferred_name, email, primary_store_id").eq("role", "gm").eq("is_active", true).in("primary_store_id", storeIds) : { data: [] };
+  const profById = new Map((scopeProfiles || []).map((p) => [p.id, p]));
+  const expectedRole = { district: "do", area: "sdo", region: "rvp", store: "gm" };
+  const leaderByNode = new Map(); // scope_id → leader name
+  for (const s of scopeRows || []) {
+    const p = profById.get(s.user_id);
+    if (p && String(p.role || "").toLowerCase() === expectedRole[s.scope_type] && !leaderByNode.has(s.scope_id)) {
+      leaderByNode.set(s.scope_id, nameOf(p));
+    }
+  }
+  const gmByStore = new Map();
+  for (const p of gmProfiles || []) if (p.primary_store_id) gmByStore.set(p.primary_store_id, nameOf(p));
+
   const dMap = new Map((districts || []).map((d) => [d.id, d]));
   const aMap = new Map((areas || []).map((a) => [a.id, a]));
   const rMap = new Map((regions || []).map((r) => [r.id, r]));
@@ -81,9 +107,13 @@ async function resolveOrg(supa, numbers) {
     map.set(String(s.number), {
       number: String(s.number),
       store: s.name || `#${s.number}`,
+      gmName: gmByStore.get(s.id) || leaderByNode.get(s.id) || null,
       district: d?.name ?? null,
+      doName: d ? leaderByNode.get(d.id) || null : null,
       area: a?.name ?? null,
+      sdoName: a ? leaderByNode.get(a.id) || null : null,
       region: r?.name ?? null,
+      rvpName: r ? leaderByNode.get(r.id) || null : null,
     });
   }
   return map;
@@ -199,7 +229,7 @@ export const handler = async (event) => {
       else { unmatched.push(number || r.storeName || "—"); }
     }
 
-    const groupBy = (keyFn) => {
+    const groupBy = (keyFn, leaderKey) => {
       const m = new Map();
       for (const r of inScope) {
         const k = keyFn(r) || "Unassigned";
@@ -207,14 +237,14 @@ export const handler = async (event) => {
         m.get(k).push(r);
       }
       return [...m.entries()]
-        .map(([name, rs]) => aggregate(name, rs))
+        .map(([name, rs]) => ({ ...aggregate(name, rs), leader: rs[0]?.soar?.[leaderKey] ?? null }))
         .sort((a, b) => num(b.netSales) - num(a.netSales));
     };
 
     const levels = {
-      region: groupBy((r) => r.soar.region),
-      area: groupBy((r) => r.soar.area),
-      district: groupBy((r) => r.soar.district),
+      region: groupBy((r) => r.soar.region, "rvpName"),
+      area: groupBy((r) => r.soar.area, "sdoName"),
+      district: groupBy((r) => r.soar.district, "doName"),
       store: inScope
         .map((r) => {
           // Keep the store number in the label (don't double it if our store
@@ -224,6 +254,7 @@ export const handler = async (event) => {
           return {
             ...aggregate(label, [r]),
             number: r.soar.number,
+            leader: r.soar.gmName,
             district: r.soar.district,
             region: r.soar.region,
           };
