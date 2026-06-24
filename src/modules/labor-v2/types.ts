@@ -43,3 +43,59 @@ export interface LaborSummary {
   scope: { matched: number; unmatched: number; unmatchedSample?: string[] };
   levels: Record<LaborLevel, LaborRow[]>;
 }
+
+// ── Leadership "Team labor" rollup (scoped to the caller's org) ───────
+export type TeamLevel = "region" | "area" | "district";
+export type TeamStatus = "on" | "over" | "unknown" | "missing";
+
+export interface TeamBand {
+  labor_pct: number | null;        // percent points (e.g. 23.7)
+  target_pct: number | null;
+  variance_pts: number | null;
+  dollars_over_chart: number | null;
+  hours_over_chart: number | null;
+  status: TeamStatus;
+}
+
+export interface TeamGroup {
+  name: string;
+  leader: string | null;
+  storeCount: number;
+  day: TeamBand;
+  wtd: TeamBand;
+  ptd: TeamBand;
+  storesOver: number;
+  notesDue: number;
+}
+
+export interface TeamStore {
+  store_number: string;
+  store_name: string;
+  gm_name: string | null;
+  do_name: string | null;
+  day: TeamBand;
+  wtd: TeamBand;
+  ptd: TeamBand;
+  status: TeamStatus;
+  note_due: boolean;
+  explained: boolean;
+  note: string | null;
+}
+
+export interface TeamLaborResponse {
+  ok: true;
+  date: string | null;
+  level: TeamLevel;
+  scope: { stores: number; dos: string[] };
+  totals: {
+    day: TeamBand;
+    wtd: TeamBand;
+    ptd: TeamBand;
+    storesOver: number;
+    notesDue: number;
+    notesExplained: number;
+  } | null;
+  nodes: string[];
+  groups: TeamGroup[];
+  stores: TeamStore[];
+}

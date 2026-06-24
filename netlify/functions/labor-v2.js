@@ -386,6 +386,121 @@ async function saveReview(supa, user, body) {
   return { ok: true, review: data };
 }
 
+// ── Leadership rollup ("Team labor") ─────────────────────────────────
+// Scoped to the caller's stores (DO → district, SDO → market/area, RVP →
+// region). Returns scope totals, a rollup at the chosen level, and the flat
+// store list with note status — the data points from the admin rollup plus the
+// notes-to-review workflow.
+const TEAM_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
+const LEVEL_CFG = {
+  region: { key: (r) => r.soar.region, leader: "rvpName" },
+  area: { key: (r) => r.soar.area, leader: "sdoName" },     // "Market"
+  district: { key: (r) => r.soar.district, leader: "doName" },
+};
+
+// Percent-based band for one store ([r]) or a group of rows. labor_pct /
+// target_pct in percent points; $ over / hours over absolute.
+function teamBand(rows, prefix) {
+  const s = (k) => rows.reduce((a, r) => a + numv(r[prefix + k]), 0);
+  const sales = s("net_sales");
+  const cost = s("labor_cost");
+  const hours = s("labor_hours");
+  const chartAllowed = rows.reduce((a, r) => a + numv(r[prefix + "target_labor_pct"]) * numv(r[prefix + "net_sales"]), 0);
+  const laborPct = sales ? round1((cost / sales) * 100) : null;
+  const targetPct = sales ? round1((chartAllowed / sales) * 100) : null;
+  const dollarsOver = sales ? round2(cost - chartAllowed) : null;
+  const avgWage = hours ? cost / hours : null;
+  return {
+    labor_pct: laborPct,
+    target_pct: targetPct,
+    variance_pts: laborPct != null && targetPct != null ? round1(laborPct - targetPct) : null,
+    dollars_over_chart: dollarsOver,
+    hours_over_chart: dollarsOver != null && avgWage ? round1(dollarsOver / avgWage) : null,
+    status: chartStatus(laborPct, targetPct),
+  };
+}
+
+async function teamView(supa, user, params) {
+  if (!TEAM_ROLES.has(roleOf(user))) return { error: "not authorized", status: 403 };
+  const level = ["region", "area", "district"].includes(params.level) ? params.level : "district";
+  const empty = { date: null, level, scope: { stores: 0, dos: [] }, totals: null, nodes: [], groups: [], stores: [] };
+
+  const visible = await resolveVisibleStoreRows(supa, user);
+  if (!visible.length) return empty;
+  const numbers = [...new Set(visible.map((s) => String(s.number)))];
+
+  const anchor = params.date && /^\d{4}-\d{2}-\d{2}$/.test(params.date) ? params.date : await latestBusinessDate(supa);
+  if (!anchor) return empty;
+
+  const [{ data: rows }, { data: reviews }] = await Promise.all([
+    supa.from("labor_v2_daily").select("*").eq("business_date", anchor).in("store_number", numbers),
+    supa.from("labor_reviews").select("store_number, note").eq("business_date", anchor).in("store_number", numbers),
+  ]);
+  const reviewByStore = new Map((reviews || []).map((r) => [String(r.store_number), r]));
+  const orgMap = await resolveOrg(supa, numbers);
+
+  const inScope = [];
+  for (const r of rows || []) {
+    const soar = orgMap.get(String(r.store_number));
+    if (soar) inScope.push({ ...r, soar });
+  }
+  if (!inScope.length) return { ...empty, date: anchor };
+
+  const shapeStore = (r) => {
+    const review = reviewByStore.get(String(r.store_number));
+    const explained = !!review;
+    const day = teamBand([r], "");
+    const over = day.status === "over";
+    const nm = String(r.soar.store).trim();
+    return {
+      store_number: r.soar.number,
+      store_name: nm.replace(new RegExp(`^\\s*${r.soar.number}\\s*`), ""),
+      gm_name: r.soar.gmName,
+      do_name: r.soar.doName,
+      day,
+      wtd: teamBand([r], "wtd_"),
+      ptd: teamBand([r], "ptd_"),
+      status: day.status,
+      note_due: over && !explained,
+      explained,
+      note: review?.note ?? null,
+    };
+  };
+  const allStores = inScope.map(shapeStore);
+
+  // Rollup rows at the chosen level.
+  const groupsMap = new Map();
+  for (const r of inScope) {
+    const k = LEVEL_CFG[level].key(r) || "Unassigned";
+    if (!groupsMap.has(k)) groupsMap.set(k, []);
+    groupsMap.get(k).push(r);
+  }
+  const groups = [...groupsMap.entries()].map(([name, rs]) => {
+    const day = teamBand(rs, "");
+    const over = rs.filter((r) => teamBand([r], "").status === "over").length;
+    const due = rs.filter((r) => teamBand([r], "").status === "over" && !reviewByStore.get(String(r.store_number))).length;
+    return {
+      name, leader: rs[0]?.soar?.[LEVEL_CFG[level].leader] ?? null, storeCount: rs.length,
+      day, wtd: teamBand(rs, "wtd_"), ptd: teamBand(rs, "ptd_"), storesOver: over, notesDue: due,
+    };
+  }).sort((a, b) => (b.day.variance_pts ?? -999) - (a.day.variance_pts ?? -999));
+
+  return {
+    date: anchor,
+    level,
+    scope: { stores: inScope.length, dos: [...new Set(inScope.map((r) => r.soar.doName).filter(Boolean))] },
+    totals: {
+      day: teamBand(inScope, ""), wtd: teamBand(inScope, "wtd_"), ptd: teamBand(inScope, "ptd_"),
+      storesOver: allStores.filter((s) => s.status === "over").length,
+      notesDue: allStores.filter((s) => s.note_due).length,
+      notesExplained: allStores.filter((s) => s.explained).length,
+    },
+    nodes: [...groupsMap.keys()].sort(),
+    groups,
+    stores: allStores.sort((a, b) => (b.day.variance_pts ?? -999) - (a.day.variance_pts ?? -999)),
+  };
+}
+
 // One-time/again-safe backfill: walk existing labor_v2_daily and snapshot a
 // close for every business_date that is a fiscal week / period end. Lets the
 // close ledgers pick up weeks/periods that closed before this feature shipped.
@@ -430,6 +545,7 @@ export const handler = async (event) => {
 
     // GM-facing reads — scope enforced per store in the function.
     if (action === "gm") return unwrap(await gmView(supa, user, params));
+    if (action === "team") return unwrap(await teamView(supa, user, params));
     if (action === "my-stores") return unwrap(await listMyStores(supa, user));
 
     // Admin-only org rollup.
