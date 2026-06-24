@@ -185,7 +185,7 @@ export function LaborV2Page() {
             <Tile label="Target %" value={fmtPct(totalBand?.targetPct ?? null)} />
             <Tile label="Variance" value={fmtPts(totalBand?.variancePts ?? null)} tone={overTone(totalBand ? (totalBand.variancePts ?? 0) > 0 : null)} />
             <Tile label="$ Over Chart" value={fmtSignedUSD0(totalBand?.dollarsOver ?? null)} sub="cost − chart $" tone={overTone(totalBand ? (totalBand.dollarsOver ?? 0) > 0 : null)} />
-            <Tile label="Hours Over Chart" value={fmtSignedHrs(totalBand?.hoursOver ?? null)} sub="$ over ÷ avg wage" tone={overTone(totalBand ? (totalBand.hoursOver ?? 0) > 0 : null)} />
+            <Tile label="Hrs Over / Unit" value={fmtSignedHrs(totalBand?.hoursOver ?? null)} sub="hrs over ÷ # stores" tone={overTone(totalBand ? (totalBand.hoursOver ?? 0) > 0 : null)} />
           </div>
 
           <Card className="mt-6">
@@ -235,7 +235,7 @@ export function LaborV2Page() {
                         <Th label="Target %" k="target" sort={sort} onSort={toggleSort} right />
                         <Th label="Variance" k="variance" sort={sort} onSort={toggleSort} right />
                         <Th label="$ Over Chart" k="dollarsOver" sort={sort} onSort={toggleSort} right />
-                        <Th label="Hours Over" k="hoursOver" sort={sort} onSort={toggleSort} right />
+                        <Th label="Hrs/Unit" k="hoursOver" sort={sort} onSort={toggleSort} right />
                         <Th label="Sched Hrs" k="sched" sort={sort} onSort={toggleSort} right />
                         <Th label="Actual Hrs" k="actual" sort={sort} onSort={toggleSort} right />
                         <Th label="OT Hrs" k="ot" sort={sort} onSort={toggleSort} right />
