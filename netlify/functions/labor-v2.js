@@ -26,13 +26,81 @@ async function getSessionUser(supa, event) {
   if (!token) return null;
   const { data: userRes, error } = await supa.auth.getUser(token);
   if (error || !userRes?.user) return null;
-  const { data: profile } = await supa.from("profiles").select("id, role, is_active").eq("id", userRes.user.id).single();
+  const { data: profile } = await supa.from("profiles").select("id, email, full_name, preferred_name, role, is_active").eq("id", userRes.user.id).single();
   if (!profile || profile.is_active === false) return null;
   return profile;
 }
 
 const numv = (v) => (v == null || isNaN(Number(v)) ? 0 : Number(v));
 const div = (a, b) => (b ? a / b : null);
+
+// ── GM view: roles, scope, dates ─────────────────────────────────────
+// Who can read a store's daily labor, and who can write the explanation note.
+const READ_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]);
+const REVIEW_ROLES = new Set(["gm", "do", "sdo", "rvp", "admin"]);
+const ORG_WIDE = new Set(["payroll", "admin", "vp", "coo"]);
+// A day is a "miss" (note due) when labor runs over the target by > this many points.
+const MISS_TOLERANCE_PTS = (() => { const n = parseFloat(process.env.LABOR_MISS_TOLERANCE_PTS); return Number.isFinite(n) ? n : 0.5; })();
+
+const roleOf = (u) => String(u?.role || "").toLowerCase();
+const round1 = (n) => Math.round((Number(n) || 0) * 10) / 10;
+const round2 = (n) => Math.round((Number(n) || 0) * 100) / 100;
+const pct = (frac) => (frac == null ? null : Number(frac) * 100); // stored fraction → percent points
+
+function pad2(n) { return String(n).padStart(2, "0"); }
+function isoOf(d) { return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`; }
+function parseIso(s) {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(s || ""));
+  return m ? new Date(Date.UTC(+m[1], +m[2] - 1, +m[3])) : null;
+}
+function shiftDays(d, n) { const x = new Date(d.getTime()); x.setUTCDate(x.getUTCDate() + n); return x; }
+// The Mon–Sun week (7 ISO strings) containing `anchor`.
+function weekDates(anchor) {
+  const back = (anchor.getUTCDay() + 6) % 7; // days since Monday
+  const monday = shiftDays(anchor, -back);
+  return Array.from({ length: 7 }, (_, i) => isoOf(shiftDays(monday, i)));
+}
+
+// Stores the caller may view labor for (admins/org-wide see all active).
+async function resolveVisibleStoreRows(supa, user) {
+  if (roleOf(user) === "admin" || ORG_WIDE.has(roleOf(user))) {
+    const { data } = await supa.from("stores").select("id, number, name, district_id, is_active").eq("is_active", true).order("number");
+    return data ?? [];
+  }
+  const { data: visibleIds } = await supa.rpc("user_visible_stores", { uid: user.id });
+  const ids = (visibleIds ?? []).map((v) => (typeof v === "string" ? v : v?.user_visible_stores ?? null)).filter(Boolean);
+  if (!ids.length) return [];
+  const { data } = await supa.from("stores").select("id, number, name, district_id, is_active").in("id", ids).eq("is_active", true).order("number");
+  return data ?? [];
+}
+
+function chartStatus(laborPct, goalPct) {
+  if (laborPct == null || goalPct == null) return "unknown";
+  return laborPct - goalPct > MISS_TOLERANCE_PTS ? "over" : "on";
+}
+
+// Shape one band (prefix "" = daily, "wtd_", "ptd_") into the UI's LaborBand.
+// Goal/chart = the feed's target %; over-chart $ derived from it.
+function shapeBand(row, prefix) {
+  if (!row) return null;
+  const laborFrac = row[`${prefix}labor_pct`];
+  const targetFrac = row[`${prefix}target_labor_pct`];
+  const sales = row[`${prefix}net_sales`];
+  const cost = row[`${prefix}labor_cost`];
+  const hoursOver = row[`${prefix}actual_vs_scheduled_hours`];
+  const laborPct = pct(laborFrac);
+  const goalPct = pct(targetFrac);
+  const chartAllowed = sales != null && targetFrac != null ? round2(sales * Number(targetFrac)) : null;
+  return {
+    labor_pct: laborPct == null ? null : round1(laborPct),
+    sales: sales ?? null,
+    variance_pts: laborPct != null && goalPct != null ? round1(laborPct - goalPct) : null,
+    dollars_over_chart: cost != null && chartAllowed != null ? round2(cost - chartAllowed) : null,
+    hours_over_chart: hoursOver ?? null,
+    chart_dollars_allowed: chartAllowed,
+    status: chartStatus(laborPct, goalPct),
+  };
+}
 
 // Aggregate labor rows into one summary (weighted from $ and hours; never
 // averaging percentages).
@@ -155,6 +223,124 @@ async function summary(supa, params) {
   };
 }
 
+// Most recent business_date we have any row for (the default "yesterday").
+async function latestBusinessDate(supa) {
+  const { data } = await supa.from("labor_v2_daily").select("business_date").order("business_date", { ascending: false }).limit(1).maybeSingle();
+  return data?.business_date ?? null;
+}
+
+// Stores the caller can pick from in the GM view (the store dropdown).
+async function listMyStores(supa, user) {
+  if (!READ_ROLES.has(roleOf(user))) return { stores: [] };
+  const rows = await resolveVisibleStoreRows(supa, user);
+  return { stores: rows.map((s) => ({ id: s.id, number: s.number, name: s.name, district_id: s.district_id })) };
+}
+
+// GM day view for one store: Daily / WTD / PTD bands + week strip + note state.
+async function gmView(supa, user, params) {
+  if (!READ_ROLES.has(roleOf(user))) return { error: "not authorized", status: 403 };
+  const storeNumber = String(params.store || "").trim();
+  if (!storeNumber) return { error: "store is required", status: 400 };
+
+  // Scope check (admins/org-wide can view any store).
+  let storeRow = null;
+  if (roleOf(user) === "admin" || ORG_WIDE.has(roleOf(user))) {
+    const { data } = await supa.from("stores").select("id, number, name, district_id").eq("number", storeNumber).maybeSingle();
+    storeRow = data;
+  } else {
+    const visible = await resolveVisibleStoreRows(supa, user);
+    storeRow = visible.find((s) => String(s.number) === storeNumber) || null;
+    if (!storeRow) return { error: `Store ${storeNumber} is outside your scope.`, status: 403 };
+  }
+  if (!storeRow) return { error: `Store ${storeNumber} not found.`, status: 404 };
+
+  const anchorIso = params.date || (await latestBusinessDate(supa));
+  if (!anchorIso) return { store: storeRow, date: null, day: null, wtd: null, ptd: null, week: [], goal: null, notes_due: 0 };
+  const anchor = parseIso(anchorIso);
+  if (!anchor) return { error: "bad date", status: 400 };
+
+  const week = weekDates(anchor);
+  const [{ data: rows }, { data: reviews }] = await Promise.all([
+    supa.from("labor_v2_daily").select("*").eq("store_number", storeNumber).gte("business_date", week[0]).lte("business_date", week[6]),
+    supa.from("labor_reviews").select("*").eq("store_number", storeNumber).gte("business_date", week[0]).lte("business_date", week[6]),
+  ]);
+  const rowByDate = new Map((rows ?? []).map((r) => [r.business_date, r]));
+  const reviewByDate = new Map((reviews ?? []).map((r) => [r.business_date, r]));
+
+  const anchorRow = rowByDate.get(anchorIso) || null;
+  // Headline goal = PTD target if present, else the day's target.
+  const goalPct = pct(anchorRow?.ptd_target_labor_pct ?? anchorRow?.target_labor_pct ?? null);
+
+  const shapeDay = (row, review) => {
+    if (!row) return null;
+    const band = shapeBand(row, "");
+    const explained = !!review;
+    return {
+      ...band,
+      business_date: row.business_date,
+      note_due: band.status === "over" && !explained,
+      explained,
+      review: review ? { note: review.note, by: review.reviewed_by_email, at: review.updated_at } : null,
+    };
+  };
+
+  const weekStrip = week.map((iso) => {
+    const r = rowByDate.get(iso);
+    const laborPct = r ? pct(r.labor_pct) : null;
+    const status = r ? chartStatus(laborPct, pct(r.target_labor_pct)) : "missing";
+    return {
+      business_date: iso,
+      labor_pct: laborPct == null ? null : round1(laborPct),
+      status,
+      note_due: status === "over" && !reviewByDate.get(iso),
+    };
+  });
+
+  return {
+    store: { number: storeRow.number, name: storeRow.name, district_id: storeRow.district_id },
+    date: anchorIso,
+    goal: goalPct == null ? null : round1(goalPct),
+    goal_source: "store chart target",
+    gm_name: null,
+    day: shapeDay(anchorRow, reviewByDate.get(anchorIso)),
+    wtd: shapeBand(anchorRow, "wtd_"),
+    ptd: shapeBand(anchorRow, "ptd_"),
+    week: weekStrip,
+    notes_due: weekStrip.filter((d) => d.note_due).length,
+  };
+}
+
+// Upsert the GM's explanation note into labor_reviews (the existing notes
+// schema, shared with the original /labor tab).
+async function saveReview(supa, user, body) {
+  if (!REVIEW_ROLES.has(roleOf(user))) return { error: "You don't have permission to add a labor note.", status: 403 };
+  const storeNumber = String(body?.store_number || "").trim();
+  const businessDate = String(body?.business_date || "").trim();
+  const note = String(body?.note ?? "").trim().slice(0, 2000);
+  if (!storeNumber) return { error: "store_number is required", status: 400 };
+  if (!parseIso(businessDate)) return { error: "valid business_date is required", status: 400 };
+  if (!note) return { error: "note is required", status: 400 };
+
+  let storeRow;
+  if (roleOf(user) === "admin" || ORG_WIDE.has(roleOf(user))) {
+    const { data } = await supa.from("stores").select("id, number").eq("number", storeNumber).maybeSingle();
+    storeRow = data;
+  } else {
+    const visible = await resolveVisibleStoreRows(supa, user);
+    storeRow = visible.find((s) => String(s.number) === storeNumber) || null;
+    if (!storeRow) return { error: `Store ${storeNumber} is outside your scope.`, status: 403 };
+  }
+  if (!storeRow) return { error: `Store ${storeNumber} not found.`, status: 404 };
+
+  const now = new Date().toISOString();
+  const { data, error } = await supa.from("labor_reviews").upsert(
+    { store_id: storeRow.id, store_number: storeNumber, business_date: businessDate, reviewed_by_id: user.id, reviewed_by_email: user.email, note, acknowledged: true, updated_at: now },
+    { onConflict: "store_id,business_date" },
+  ).select("id, note, reviewed_by_email, updated_at").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, review: data };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   let supa;
@@ -165,11 +351,26 @@ export const handler = async (event) => {
   try { user = await getSessionUser(supa, event); }
   catch (e) { return respond(500, { error: e.message || "auth failed" }); }
   if (!user) return respond(401, { error: "unauthorized" });
-  if (String(user.role || "").toLowerCase() !== "admin") return respond(403, { error: "Admins only." });
 
   const params = event.queryStringParameters || {};
   const action = params.action || "summary";
+  const isAdmin = roleOf(user) === "admin";
+  const unwrap = (out) => (out?.error ? respond(out.status || 500, { error: out.error }) : respond(200, { ok: true, ...out }));
+
   try {
+    // POST — GM/DO note write (shared labor_reviews schema).
+    if (event.httpMethod === "POST") {
+      const body = event.body ? JSON.parse(event.body) : {};
+      if (action === "review") return unwrap(await saveReview(supa, user, body));
+      return respond(400, { error: `Unknown action: ${action}` });
+    }
+
+    // GM-facing reads — scope enforced per store in the function.
+    if (action === "gm") return unwrap(await gmView(supa, user, params));
+    if (action === "my-stores") return unwrap(await listMyStores(supa, user));
+
+    // Admin-only org rollup.
+    if (!isAdmin) return respond(403, { error: "Admins only." });
     if (action === "dates") return respond(200, await listDates(supa));
     if (action === "summary") {
       const out = await summary(supa, params);
