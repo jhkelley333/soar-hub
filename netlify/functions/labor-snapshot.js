@@ -47,6 +47,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { google } from "googleapis";
 import { createHash } from "node:crypto";
+import { getGoogleCredentials } from "./_lib/googleCreds.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY =
@@ -104,18 +105,16 @@ function admin() {
 }
 
 // ── Google Sheets ────────────────────────────────────────────────────
-function sheetsClient() {
-  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  if (!raw) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON missing.");
+async function sheetsClient() {
   const auth = new google.auth.GoogleAuth({
-    credentials: JSON.parse(raw),
+    credentials: await getGoogleCredentials(),
     scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
   });
   return google.sheets({ version: "v4", auth });
 }
 
 async function readGrid() {
-  const sheets = sheetsClient();
+  const sheets = await sheetsClient();
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: SHEET_ID,
     range: `${SHEET_TAB}!${SHEET_RANGE}`,

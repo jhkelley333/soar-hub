@@ -8,6 +8,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { google } from "googleapis";
+import { getGoogleCredentials } from "./googleCreds.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -169,17 +170,15 @@ export function average(values) {
 }
 
 // ── Sheets client ──────────────────────────────────────────────────────────
-function googleAuth() {
-  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  if (!raw) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON missing.");
+async function googleAuth() {
   return new google.auth.GoogleAuth({
-    credentials: JSON.parse(raw),
+    credentials: await getGoogleCredentials(),
     scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
   });
 }
 
 export async function getSheetsClient() {
-  return google.sheets({ version: "v4", auth: googleAuth() });
+  return google.sheets({ version: "v4", auth: await googleAuth() });
 }
 
 // ── Week tab discovery ─────────────────────────────────────────────────────

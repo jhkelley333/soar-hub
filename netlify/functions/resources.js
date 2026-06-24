@@ -14,6 +14,7 @@
 
 import { google } from "googleapis";
 import { createClient } from "@supabase/supabase-js";
+import { getGoogleCredentials } from "./_lib/googleCreds.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -69,11 +70,9 @@ function respond(statusCode, body) {
   };
 }
 
-function getDrive() {
-  const raw = process.env.GOOGLE_SERVICE_ACCOUNT_JSON;
-  if (!raw) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON not set");
+async function getDrive() {
   const auth = new google.auth.GoogleAuth({
-    credentials: JSON.parse(raw),
+    credentials: await getGoogleCredentials(),
     scopes: ["https://www.googleapis.com/auth/drive.readonly"],
   });
   return google.drive({ version: "v3", auth });
@@ -224,7 +223,7 @@ export const handler = async (event) => {
   const folderId = params.folderId || ROOT_FOLDER_ID;
 
   try {
-    const drive = getDrive();
+    const drive = await getDrive();
     if (action === "getFolder") {
       return respond(200, await actionGetFolder(drive, folderId));
     }

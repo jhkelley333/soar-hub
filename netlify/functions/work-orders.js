@@ -67,6 +67,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { google } from "googleapis";
 import { isHourlyStoreRole } from "./_lib/roles.js";
+import { getGoogleCredentials } from "./_lib/googleCreds.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -449,9 +450,8 @@ async function appendUrlToRow(rowId, url) {
 // Google Sheets + Drive (vendors + videos)
 // ----------------------------------------------------------------------------
 
-function googleAuth(scopes) {
-  if (!GOOGLE_CREDS) throw new Error("GOOGLE_SERVICE_ACCOUNT_JSON is not set");
-  const creds = JSON.parse(GOOGLE_CREDS);
+async function googleAuth(scopes) {
+  const creds = await getGoogleCredentials();
   return new google.auth.JWT({
     email: creds.client_email,
     key: creds.private_key,
@@ -461,7 +461,7 @@ function googleAuth(scopes) {
 
 async function listVendors() {
   if (!VENDOR_SHEET_ID) throw new Error("VENDOR_SHEET_ID is not set");
-  const auth = googleAuth(["https://www.googleapis.com/auth/spreadsheets.readonly"]);
+  const auth = await googleAuth(["https://www.googleapis.com/auth/spreadsheets.readonly"]);
   const sheets = google.sheets({ version: "v4", auth });
   const res = await sheets.spreadsheets.values.get({
     spreadsheetId: VENDOR_SHEET_ID,
@@ -477,7 +477,7 @@ async function listVendors() {
 
 async function listVideos() {
   if (!VIDEO_FOLDER_ID) throw new Error("VIDEO_FOLDER_ID is not set");
-  const auth = googleAuth(["https://www.googleapis.com/auth/drive.readonly"]);
+  const auth = await googleAuth(["https://www.googleapis.com/auth/drive.readonly"]);
   const drive = google.drive({ version: "v3", auth });
   const res = await drive.files.list({
     q: `'${VIDEO_FOLDER_ID}' in parents and trashed = false`,
@@ -534,13 +534,13 @@ function fingerprint(value) {
   };
 }
 
-function googleCredsHealth() {
-  if (!GOOGLE_CREDS) return { present: false };
+async function googleCredsHealth() {
   try {
-    const obj = JSON.parse(GOOGLE_CREDS);
+    const obj = await getGoogleCredentials();
     return {
       present: true,
       parses: true,
+      source: process.env.GOOGLE_SERVICE_ACCOUNT_JSON ? "env" : "app_secrets",
       type: obj.type ?? null,
       hasClientEmail: typeof obj.client_email === "string" && obj.client_email.length > 0,
       hasPrivateKey: typeof obj.private_key === "string" && obj.private_key.length > 0,
@@ -551,7 +551,7 @@ function googleCredsHealth() {
     };
   } catch (e) {
     return {
-      present: true,
+      present: false,
       parses: false,
       parseError: e instanceof Error ? e.message : String(e),
     };
@@ -611,7 +611,7 @@ export const handler = async (event) => {
             VIDEO_FOLDER_ID: fingerprint(VIDEO_FOLDER_ID),
             GOOGLE_SERVICE_ACCOUNT_JSON: fingerprint(GOOGLE_CREDS),
           },
-          googleCreds: googleCredsHealth(),
+          googleCreds: await googleCredsHealth(),
         });
       }
       if (action === "vendors") return respond(200, await listVendors());
