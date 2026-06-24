@@ -133,22 +133,21 @@ function bandAgg(rows, prefix) {
     dollarsOver,
     hoursOver: dollarsOver != null && avgWage ? round1(dollarsOver / avgWage) : null,
     chartAllowed: sales ? round2(chartAllowed) : null,
+    // Operational hours for the period (Sched / Actual / OT / Act−Sched).
+    laborHours: hours,
+    scheduledHours: s("scheduled_labor_hours"),
+    overtimeHours: s("overtime_hours"),
+    actualVsSched: s("actual_vs_scheduled_hours"),
   };
 }
 
-// One org node: the three bands plus daily operational extras (hours columns
-// shown only on the Daily view).
+// One org node: the three bands (each carries its own sales/labor/hours).
 function laborAgg(name, rows) {
-  const s = (k) => rows.reduce((a, r) => a + numv(r[k]), 0);
   const day = bandAgg(rows, "");
   return {
     name,
     storeCount: rows.length,
     netSales: day.sales, // default sort key (daily sales)
-    laborHours: s("labor_hours"),
-    overtimeHours: s("overtime_hours"),
-    scheduledHours: s("scheduled_labor_hours"),
-    actualVsSched: s("actual_vs_scheduled_hours"),
     day,
     wtd: bandAgg(rows, "wtd_"),
     ptd: bandAgg(rows, "ptd_"),

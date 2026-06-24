@@ -11,6 +11,10 @@ export interface LaborBandAgg {
   dollarsOver: number | null;      // labor cost − chart $ allowed
   hoursOver: number | null;        // $ over ÷ blended avg wage
   chartAllowed: number | null;     // sales × target
+  laborHours: number | null;       // actual hours
+  scheduledHours: number | null;
+  overtimeHours: number | null;
+  actualVsSched: number | null;    // act − sched hours
 }
 
 export type LaborPeriod = "day" | "wtd" | "ptd";
@@ -24,10 +28,6 @@ export interface LaborRow {
   area?: string | null;
   district?: string | null;
   netSales: number | null;         // daily sales (default sort)
-  laborHours: number | null;       // daily actual hours
-  overtimeHours: number | null;    // daily OT hours
-  scheduledHours: number | null;   // daily scheduled hours
-  actualVsSched: number | null;    // daily act − sched hours
   day: LaborBandAgg;
   wtd: LaborBandAgg;
   ptd: LaborBandAgg;
