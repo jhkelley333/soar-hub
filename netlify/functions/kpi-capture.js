@@ -10,6 +10,7 @@
 // regardless of the hour.
 
 import { createClient } from "@supabase/supabase-js";
+import { extractLaborRows, feedBusinessDate } from "./_lib/kpiLabor.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -77,8 +78,19 @@ export const handler = async (event) => {
     );
   if (error) return { statusCode: 500, body: `DB insert failed: ${error.message}` };
 
-  console.log(`[kpi-capture] stored snapshot for ${centralDate} ${wc.hour}:00 CT`);
-  return { statusCode: 200, body: `captured ${centralDate} ${wc.hour}:00 CT` };
+  // Also fan the store-level labor numbers into labor_v2_daily (per store + the
+  // feed's business date), so Labor v2 has its history without a separate fetch.
+  let laborStored = 0;
+  const businessDate = feedBusinessDate(payload, wc);
+  const laborRows = extractLaborRows(payload).map((r) => ({ ...r, business_date: businessDate, captured_at: new Date().toISOString() }));
+  if (laborRows.length) {
+    const { error: lerr } = await supa.from("labor_v2_daily").upsert(laborRows, { onConflict: "store_number,business_date" });
+    if (lerr) console.log(`[kpi-capture] labor upsert failed: ${lerr.message}`);
+    else laborStored = laborRows.length;
+  }
+
+  console.log(`[kpi-capture] stored snapshot for ${centralDate} ${wc.hour}:00 CT · labor rows ${laborStored} (${businessDate})`);
+  return { statusCode: 200, body: `captured ${centralDate} ${wc.hour}:00 CT · labor ${laborStored} rows for ${businessDate}` };
 };
 
 // Fire on every UTC hour that could be 7/9/11 Central (CST or CDT); the handler
