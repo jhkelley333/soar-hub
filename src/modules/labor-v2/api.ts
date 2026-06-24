@@ -2,7 +2,7 @@
 // the GM day view).
 import { supabase } from "@/lib/supabase";
 import type { GmLaborResponse, LaborStore, ReviewInput } from "@/modules/labor/types";
-import type { LaborSummary, TeamLaborResponse, TeamLevel } from "./types";
+import type { LaborSummary, TeamLaborResponse } from "./types";
 
 const FN = "/.netlify/functions/labor-v2";
 
@@ -35,9 +35,9 @@ export function fetchLaborDates(): Promise<{ dates: string[] }> {
   return req(`${FN}?action=dates`);
 }
 
-// ── Leadership "Team labor" rollup (District / Market / Region) ───────
-export function fetchLaborV2Team(level: TeamLevel, date?: string): Promise<TeamLaborResponse> {
-  const p = new URLSearchParams({ action: "team", level });
+// ── Leadership "Team labor" rollup (drill Region → Market → District → Store) ─
+export function fetchLaborV2Team(date?: string): Promise<TeamLaborResponse> {
+  const p = new URLSearchParams({ action: "team" });
   if (date) p.set("date", date);
   return req(`${FN}?${p.toString()}`);
 }

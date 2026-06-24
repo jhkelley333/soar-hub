@@ -61,10 +61,15 @@ export interface TeamBand {
   status: TeamStatus;
 }
 
+export type TeamDisplayLevel = TeamLevel | "store";
+
 export interface TeamGroup {
   name: string;
   leader: string | null;
   storeCount: number;
+  region: string | null;
+  area: string | null;
+  district: string | null;
   day: TeamBand;
   wtd: TeamBand;
   ptd: TeamBand;
@@ -77,6 +82,9 @@ export interface TeamStore {
   store_name: string;
   gm_name: string | null;
   do_name: string | null;
+  region: string | null;
+  area: string | null;
+  district: string | null;
   day: TeamBand;
   wtd: TeamBand;
   ptd: TeamBand;
@@ -89,7 +97,6 @@ export interface TeamStore {
 export interface TeamLaborResponse {
   ok: true;
   date: string | null;
-  level: TeamLevel;
   scope: { stores: number; dos: string[] };
   totals: {
     day: TeamBand;
@@ -99,7 +106,11 @@ export interface TeamLaborResponse {
     notesDue: number;
     notesExplained: number;
   } | null;
-  nodes: string[];
-  groups: TeamGroup[];
-  stores: TeamStore[];
+  startLevel: TeamLevel;
+  levels: {
+    region: TeamGroup[];
+    area: TeamGroup[];
+    district: TeamGroup[];
+    store: TeamStore[];
+  };
 }

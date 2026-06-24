@@ -426,8 +426,7 @@ function teamBand(rows, prefix) {
 
 async function teamView(supa, user, params) {
   if (!TEAM_ROLES.has(roleOf(user))) return { error: "not authorized", status: 403 };
-  const level = ["region", "area", "district"].includes(params.level) ? params.level : "district";
-  const empty = { date: null, level, scope: { stores: 0, dos: [] }, totals: null, nodes: [], groups: [], stores: [] };
+  const empty = { date: null, scope: { stores: 0, dos: [] }, totals: null, startLevel: "district", levels: { region: [], area: [], district: [], store: [] } };
 
   const visible = await resolveVisibleStoreRows(supa, user);
   if (!visible.length) return empty;
@@ -450,58 +449,66 @@ async function teamView(supa, user, params) {
   }
   if (!inScope.length) return { ...empty, date: anchor };
 
-  const shapeStore = (r) => {
+  const storeOver = (r) => teamBand([r], "").status === "over";
+
+  // Group rollup at one level (region/area/district), carrying parent names so
+  // the client can filter the drill path.
+  const groupLevel = (lvl) => {
+    const m = new Map();
+    for (const r of inScope) {
+      const k = LEVEL_CFG[lvl].key(r) || "Unassigned";
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(r);
+    }
+    return [...m.entries()].map(([name, rs]) => ({
+      name,
+      leader: rs[0]?.soar?.[LEVEL_CFG[lvl].leader] ?? null,
+      storeCount: rs.length,
+      region: rs[0]?.soar?.region ?? null,
+      area: rs[0]?.soar?.area ?? null,
+      district: rs[0]?.soar?.district ?? null,
+      day: teamBand(rs, ""), wtd: teamBand(rs, "wtd_"), ptd: teamBand(rs, "ptd_"),
+      storesOver: rs.filter(storeOver).length,
+      notesDue: rs.filter((r) => storeOver(r) && !reviewByStore.get(String(r.store_number))).length,
+    })).sort((a, b) => (b.day.variance_pts ?? -999) - (a.day.variance_pts ?? -999));
+  };
+
+  const storeRows = inScope.map((r) => {
     const review = reviewByStore.get(String(r.store_number));
     const explained = !!review;
     const day = teamBand([r], "");
-    const over = day.status === "over";
     const nm = String(r.soar.store).trim();
     return {
       store_number: r.soar.number,
       store_name: nm.replace(new RegExp(`^\\s*${r.soar.number}\\s*`), ""),
       gm_name: r.soar.gmName,
       do_name: r.soar.doName,
-      day,
-      wtd: teamBand([r], "wtd_"),
-      ptd: teamBand([r], "ptd_"),
+      region: r.soar.region, area: r.soar.area, district: r.soar.district,
+      day, wtd: teamBand([r], "wtd_"), ptd: teamBand([r], "ptd_"),
       status: day.status,
-      note_due: over && !explained,
+      note_due: day.status === "over" && !explained,
       explained,
       note: review?.note ?? null,
     };
-  };
-  const allStores = inScope.map(shapeStore);
-
-  // Rollup rows at the chosen level.
-  const groupsMap = new Map();
-  for (const r of inScope) {
-    const k = LEVEL_CFG[level].key(r) || "Unassigned";
-    if (!groupsMap.has(k)) groupsMap.set(k, []);
-    groupsMap.get(k).push(r);
-  }
-  const groups = [...groupsMap.entries()].map(([name, rs]) => {
-    const day = teamBand(rs, "");
-    const over = rs.filter((r) => teamBand([r], "").status === "over").length;
-    const due = rs.filter((r) => teamBand([r], "").status === "over" && !reviewByStore.get(String(r.store_number))).length;
-    return {
-      name, leader: rs[0]?.soar?.[LEVEL_CFG[level].leader] ?? null, storeCount: rs.length,
-      day, wtd: teamBand(rs, "wtd_"), ptd: teamBand(rs, "ptd_"), storesOver: over, notesDue: due,
-    };
   }).sort((a, b) => (b.day.variance_pts ?? -999) - (a.day.variance_pts ?? -999));
+
+  const levels = { region: groupLevel("region"), area: groupLevel("area"), district: groupLevel("district"), store: storeRows };
+  // Start the drill at the broadest level with more than one node (else the
+  // lowest non-store level), so a single-node chain isn't a dead click.
+  let startLevel = "district";
+  for (const lv of ["region", "area", "district"]) { if (levels[lv].length > 1) { startLevel = lv; break; } }
 
   return {
     date: anchor,
-    level,
     scope: { stores: inScope.length, dos: [...new Set(inScope.map((r) => r.soar.doName).filter(Boolean))] },
     totals: {
       day: teamBand(inScope, ""), wtd: teamBand(inScope, "wtd_"), ptd: teamBand(inScope, "ptd_"),
-      storesOver: allStores.filter((s) => s.status === "over").length,
-      notesDue: allStores.filter((s) => s.note_due).length,
-      notesExplained: allStores.filter((s) => s.explained).length,
+      storesOver: storeRows.filter((s) => s.status === "over").length,
+      notesDue: storeRows.filter((s) => s.note_due).length,
+      notesExplained: storeRows.filter((s) => s.explained).length,
     },
-    nodes: [...groupsMap.keys()].sort(),
-    groups,
-    stores: allStores.sort((a, b) => (b.day.variance_pts ?? -999) - (a.day.variance_pts ?? -999)),
+    startLevel,
+    levels,
   };
 }
 
