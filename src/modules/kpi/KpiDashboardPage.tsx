@@ -5,7 +5,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, RefreshCw, Search, TrendingDown, TrendingUp } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronRight, RefreshCw, Search, TrendingDown, TrendingUp } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -64,6 +64,9 @@ const LEVELS: { key: LevelKey; label: string }[] = [
 ];
 // Leader title shown next to each row's name, by level.
 const LEADER_LABEL: Record<LevelKey, string> = { region: "RVP", area: "SDO", district: "DO", store: "GM" };
+const LEVEL_ORDER: LevelKey[] = ["region", "area", "district", "store"];
+const childLevel = (l: LevelKey): LevelKey | null => LEVEL_ORDER[LEVEL_ORDER.indexOf(l) + 1] ?? null;
+const levelLabel = (l: LevelKey) => LEVELS.find((x) => x.key === l)?.label ?? l;
 
 const PERIODS: { key: PeriodKey; label: string }[] = [
   { key: "day", label: "Daily" },
@@ -74,14 +77,27 @@ const PERIODS: { key: PeriodKey; label: string }[] = [
 export function KpiDashboardPage() {
   const q = useQuery({ queryKey: ["kpi-snapshot"], queryFn: fetchKpiSnapshot, staleTime: 5 * 60_000 });
   const [period, setPeriod] = useState<PeriodKey>("day");
-  const [level, setLevel] = useState<LevelKey>("region");
+  const [level, setLevel] = useState<LevelKey>("region"); // base level when not drilled
+  const [path, setPath] = useState<{ level: LevelKey; name: string }[]>([]);
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "netSales", dir: "desc" });
+
+  // Drilling into a row shows the child level filtered to that node; the toggle
+  // sets the base level (and clears any drill).
+  const displayLevel: LevelKey = path.length ? childLevel(path[path.length - 1].level) ?? "store" : level;
+  function selectLevel(key: LevelKey) { setLevel(key); setPath([]); setSearch(""); }
+  function drillInto(row: KpiOrgRow) {
+    if (!childLevel(displayLevel)) return; // store rows are leaves
+    setPath((p) => [...p, { level: displayLevel, name: row.name }]);
+    setSearch("");
+  }
 
   const pdata = q.data?.periods?.[period] ?? null;
   const total = pdata?.total ?? null;
   const rows = useMemo(() => {
-    const all: KpiOrgRow[] = pdata?.levels?.[level] ?? [];
+    const base: KpiOrgRow[] = pdata?.levels?.[displayLevel] ?? [];
+    // Constrain to the drilled-into ancestors (each crumb fixes one org field).
+    const all = base.filter((r) => path.every((c) => (r[c.level as keyof KpiOrgRow] as unknown) === c.name));
     const term = search.trim().toLowerCase();
     const filtered = term ? all.filter((r) => r.name.toLowerCase().includes(term)) : all;
     const val = (r: KpiOrgRow, k: SortKey): number | string => {
@@ -101,7 +117,7 @@ export function KpiDashboardPage() {
       const cmp = typeof av === "string" ? av.localeCompare(bv as string) : (av as number) - (bv as number);
       return sort.dir === "asc" ? cmp : -cmp;
     });
-  }, [pdata, level, search, sort]);
+  }, [pdata, displayLevel, path, search, sort]);
 
   function toggleSort(key: SortKey) {
     setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "name" ? "asc" : "desc" }));
@@ -194,23 +210,39 @@ export function KpiDashboardPage() {
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <div className="inline-flex rounded-md ring-1 ring-inset ring-zinc-200">
                   {LEVELS.map((l) => (
-                    <button key={l.key} onClick={() => setLevel(l.key)}
+                    <button key={l.key} onClick={() => selectLevel(l.key)}
                       className={cn("px-3.5 py-1.5 text-sm font-medium transition first:rounded-l-md last:rounded-r-md",
-                        level === l.key ? "bg-midnight text-white" : "text-zinc-600 hover:bg-zinc-50")}>
+                        displayLevel === l.key ? "bg-midnight text-white" : "text-zinc-600 hover:bg-zinc-50")}>
                       {l.label}
                     </button>
                   ))}
                 </div>
                 <div className="flex items-center gap-2 rounded-lg bg-zinc-50 px-3 py-1.5 ring-1 ring-inset ring-zinc-200">
                   <Search className="h-4 w-4 text-zinc-400" />
-                  <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Search ${level}s…`}
+                  <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={`Search ${displayLevel}s…`}
                     className="w-40 bg-transparent text-sm text-zinc-800 placeholder:text-zinc-400 focus:outline-none" />
                 </div>
               </div>
 
+              {/* Drill breadcrumb */}
+              {path.length > 0 && (
+                <div className="mb-3 flex flex-wrap items-center gap-1 text-sm">
+                  <button onClick={() => setPath([])} className="font-medium text-accent hover:underline">{levelLabel(level)}</button>
+                  {path.map((c, i) => (
+                    <span key={i} className="flex items-center gap-1">
+                      <ChevronRight className="h-3.5 w-3.5 text-zinc-300" />
+                      <button onClick={() => setPath(path.slice(0, i + 1))}
+                        className={cn(i === path.length - 1 ? "font-semibold text-midnight dark:text-night-ink" : "text-accent hover:underline")}>
+                        {c.name}
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+
               {rows.length === 0 ? (
                 <div className="rounded-xl border border-dashed border-zinc-200 p-8 text-center text-sm text-zinc-400">
-                  No {level} rows — no stores matched your org for this snapshot.
+                  No {displayLevel} rows here.
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -228,14 +260,21 @@ export function KpiDashboardPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {rows.map((r, i) => (
-                        <tr key={`${r.name}-${i}`} className="border-b border-zinc-50 hover:bg-zinc-50/60">
+                      {rows.map((r, i) => {
+                        const canDrill = !!childLevel(displayLevel);
+                        return (
+                        <tr key={`${r.name}-${i}`}
+                          onClick={canDrill ? () => drillInto(r) : undefined}
+                          className={cn("border-b border-zinc-50 hover:bg-zinc-50/60", canDrill && "cursor-pointer")}>
                           <td className="py-2.5 pr-3">
-                            <div className="font-medium text-midnight dark:text-night-ink">{r.name}</div>
+                            <div className="flex items-center gap-1.5 font-medium text-midnight dark:text-night-ink">
+                              {r.name}
+                              {canDrill && <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-300" />}
+                            </div>
                             <div className="text-[11px] text-zinc-400">
-                              <span className="font-medium text-zinc-500">{LEADER_LABEL[level]}</span>
+                              <span className="font-medium text-zinc-500">{LEADER_LABEL[displayLevel]}</span>
                               {" "}{r.leader || "—"}
-                              {level !== "store" && ` · ${r.storeCount} store${r.storeCount === 1 ? "" : "s"}`}
+                              {displayLevel !== "store" && ` · ${r.storeCount} store${r.storeCount === 1 ? "" : "s"}`}
                             </div>
                           </td>
                           <td className="py-2.5 pl-3 text-right tabular-nums">{fmtUSD0(r.netSales)}</td>
@@ -246,13 +285,14 @@ export function KpiDashboardPage() {
                           <td className="py-2.5 pl-3 text-right tabular-nums text-zinc-600">{fmtRate(r.splh)}</td>
                           <td className="py-2.5 pl-3 text-right tabular-nums text-zinc-600">{fmtPct(r.onTimePercentage)}</td>
                         </tr>
-                      ))}
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
               )}
               <div className="mt-2 text-[11px] text-zinc-400">
-                {rows.length} {level}{rows.length === 1 ? "" : "s"}
+                {rows.length} {displayLevel}{rows.length === 1 ? "" : "s"}
                 {scope?.unmatched ? ` · ${scope.unmatched} feed store${scope.unmatched === 1 ? "" : "s"} not in your org` : ""}
               </div>
             </CardBody>
