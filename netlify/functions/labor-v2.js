@@ -74,9 +74,18 @@ async function resolveVisibleStoreRows(supa, user) {
   return data ?? [];
 }
 
+// Badge status: "over" whenever labor exceeds the chart at all (matching the
+// displayed, 1-dp variance), so a store that spent over the chart never reads
+// green. The miss/note tolerance below is a separate, looser gate.
 function chartStatus(laborPct, goalPct) {
   if (laborPct == null || goalPct == null) return "unknown";
-  return laborPct - goalPct > MISS_TOLERANCE_PTS ? "over" : "on";
+  return round1(laborPct - goalPct) > 0 ? "over" : "on";
+}
+
+// A "miss" (explanation required) only when over by MORE than the tolerance,
+// so being a hair over the chart shows OVER CHART without forcing a note.
+function isMiss(laborPct, goalPct) {
+  return laborPct != null && goalPct != null && laborPct - goalPct > MISS_TOLERANCE_PTS;
 }
 
 // Shape one band (prefix "" = daily, "wtd_", "ptd_") into the UI's LaborBand.
@@ -301,7 +310,7 @@ async function gmView(supa, user, params) {
     return {
       ...band,
       business_date: row.business_date,
-      note_due: band.status === "over" && !explained,
+      note_due: isMiss(pct(row.labor_pct), pct(row.target_labor_pct)) && !explained,
       explained,
       review: review ? { note: review.note, by: review.reviewed_by_email, at: review.updated_at } : null,
     };
@@ -315,7 +324,7 @@ async function gmView(supa, user, params) {
       business_date: iso,
       labor_pct: laborPct == null ? null : round1(laborPct),
       status,
-      note_due: status === "over" && !reviewByDate.get(iso),
+      note_due: isMiss(laborPct, pct(r?.target_labor_pct)) && !reviewByDate.get(iso),
     };
   });
 
