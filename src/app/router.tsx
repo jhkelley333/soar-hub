@@ -32,6 +32,7 @@ import { BulkAttributesPage } from "@/modules/admin/BulkAttributesPage";
 import { FeatureFlagsPage } from "@/modules/admin/FeatureFlagsPage";
 import { RoleAccessPage } from "@/modules/admin/RoleAccessPage";
 import { RegionAccessPage } from "@/modules/admin/RegionAccessPage";
+import { KpiDashboardPage } from "@/modules/kpi/KpiDashboardPage";
 import { QsrHomePage } from "@/modules/qsr/QsrHomePage";
 import { MyTrainingPage } from "@/modules/qsr/MyTrainingPage";
 import { LessonPlayer } from "@/modules/qsr/player/LessonPlayer";
@@ -175,6 +176,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <WeatherSyncPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/kpi",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <KpiDashboardPage />
           </ProtectedRoute>
         ),
       },
