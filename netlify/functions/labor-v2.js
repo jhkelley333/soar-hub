@@ -187,7 +187,8 @@ async function refreshNow(supa) {
   const payload = await fetchKpiFeed();
   const wc = wallClockInTz(new Date(), TZ);
   const businessDate = feedBusinessDate(payload, wc);
-  const rows = extractLaborRows(payload).map((r) => ({ ...r, business_date: businessDate, captured_at: new Date().toISOString() }));
+  const extracted = extractLaborRows(payload);
+  const rows = extracted.map((r) => ({ ...r, business_date: businessDate, captured_at: new Date().toISOString() }));
   if (rows.length) {
     const { error } = await supa.from("labor_v2_daily").upsert(rows, { onConflict: "store_number,business_date" });
     // Surface write failures instead of swallowing them — a missing column
@@ -195,18 +196,26 @@ async function refreshNow(supa) {
     // no signal. The Postgres message names the offending column.
     if (error) throw new Error(`Couldn't save labor rows: ${error.message}`);
   }
-  return businessDate;
+  // Report how many rows carried each band, so the UI can confirm WTD/PTD
+  // actually came through the feed (vs. a silent extraction miss).
+  const counts = {
+    stores: extracted.length,
+    wtd: extracted.filter((r) => r.wtd_net_sales != null).length,
+    ptd: extracted.filter((r) => r.ptd_net_sales != null).length,
+  };
+  return { businessDate, counts };
 }
 
 async function summary(supa, params) {
   let date = params.date && /^\d{4}-\d{2}-\d{2}$/.test(params.date) ? params.date : null;
 
   // Refresh from the live feed when asked, or when there's no history yet.
+  let refreshed = null;
   if (params.refresh === "1" || !date) {
     const { data: anyRow } = await supa.from("labor_v2_daily").select("business_date").order("business_date", { ascending: false }).limit(1);
     if (params.refresh === "1" || !anyRow?.length) {
-      try { const bd = await refreshNow(supa); if (!date) date = bd; }
-      catch (e) { if (!anyRow?.length) return { error: e.message, status: 502 }; }
+      try { const r = await refreshNow(supa); if (!date) date = r.businessDate; refreshed = r.counts; }
+      catch (e) { if (!anyRow?.length) return { error: e.message, status: 502 }; throw e; }
     }
     if (!date) date = anyRow?.[0]?.business_date ?? null;
   }
@@ -229,6 +238,7 @@ async function summary(supa, params) {
   return {
     date,
     total,
+    refreshed,
     scope: { matched, unmatched: unmatched.length, unmatchedSample: unmatched.slice(0, 10) },
     levels: buildLevels(inScope),
   };
