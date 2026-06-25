@@ -8,7 +8,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, Download, Layers, Loader2, Mail, Pencil, Phone, Plus, Star, X } from "lucide-react";
+import { CheckCircle2, Download, Layers, Loader2, Mail, MapPin, Pencil, Phone, Plus, Star, X } from "lucide-react";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
@@ -47,6 +47,46 @@ const ROLE_LEVEL: Record<string, number> = {
 };
 function canManage(role: string) {
   return (ROLE_LEVEL[role.toLowerCase()] ?? 99) <= 3;
+}
+
+// Normalize a name for comparison: lowercase, drop punctuation + common
+// suffixes, collapse whitespace.
+const normVendor = (s: string) =>
+  s.toLowerCase().replace(/\b(inc|llc|co|corp|company|services?|service|the)\b/g, " ").replace(/[^a-z0-9]+/g, " ").trim();
+
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  if (!m) return n; if (!n) return m;
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  for (let i = 1; i <= m; i++) {
+    const cur = [i];
+    for (let j = 1; j <= n; j++) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+    }
+    prev = cur;
+  }
+  return prev[n];
+}
+
+// Existing vendors whose name is the same or close to the typed one — so we can
+// surface "this is already in the system (maybe misspelled)" before adding.
+function similarVendors(name: string, vendors: Vendor[]): { vendor: Vendor; exact: boolean }[] {
+  const n = normVendor(name);
+  if (n.length < 3) return [];
+  return vendors
+    .map((v) => {
+      const vn = normVendor(v.name);
+      if (!vn) return null;
+      const d = levenshtein(n, vn);
+      const ratio = 1 - d / Math.max(n.length, vn.length);
+      const exact = vn === n;
+      const close = exact || ratio >= 0.8 || (Math.min(n.length, vn.length) >= 4 && (vn.includes(n) || n.includes(vn)));
+      return close ? { vendor: v, exact, ratio } : null;
+    })
+    .filter((m): m is { vendor: Vendor; exact: boolean; ratio: number } => !!m)
+    .sort((a, b) => Number(b.exact) - Number(a.exact) || b.ratio - a.ratio)
+    .slice(0, 4)
+    .map(({ vendor, exact }) => ({ vendor, exact }));
 }
 
 export function VendorsTab({ callerRole }: { callerRole: string }) {
@@ -110,7 +150,7 @@ export function VendorsTab({ callerRole }: { callerRole: string }) {
       if (area && (v.service_area || "") !== area) return false;
       if (!matchesScopeFilter(v, scopeFilter)) return false;
       if (!q) return true;
-      return [v.name, v.category, v.service_area, v.services, v.phone, v.email, v.contact_person, v.notes]
+      return [v.name, v.category, v.service_area, v.services, v.phone, v.email, v.address, v.contact_person, v.notes]
         .filter(Boolean)
         .join(" ")
         .toLowerCase()
@@ -278,6 +318,8 @@ export function VendorsTab({ callerRole }: { callerRole: string }) {
         <VendorEditModal
           vendor={editing === "new" ? null : editing}
           org={orgQ.data}
+          allVendors={vendors}
+          onEditExisting={(v) => setEditing(v)}
           onClose={() => setEditing(null)}
           onSaved={() => {
             toast.push("Vendor saved.", "success");
@@ -429,6 +471,17 @@ function VendorRow({
                 Email
               </a>
             )}
+            {vendor.address && (
+              <a
+                href={`https://maps.google.com/?q=${encodeURIComponent(vendor.address)}`}
+                target="_blank"
+                rel="noopener"
+                className="inline-flex items-center gap-1 rounded-md border border-zinc-200 bg-white px-2 py-1 text-xs font-medium text-zinc-600 hover:border-accent hover:text-midnight"
+              >
+                <MapPin className="h-3 w-3" strokeWidth={1.75} />
+                <span className="max-w-[180px] truncate">{vendor.address}</span>
+              </a>
+            )}
             <button
               type="button"
               onClick={onRate}
@@ -516,12 +569,16 @@ function Stars({ rating, total }: { rating: number | null; total: number }) {
 function VendorEditModal({
   vendor,
   org,
+  allVendors,
+  onEditExisting,
   onClose,
   onSaved,
   onError,
 }: {
   vendor: Vendor | null;
   org: OrgIndexResponse | undefined;
+  allVendors: Vendor[];
+  onEditExisting: (v: Vendor) => void;
   onClose: () => void;
   onSaved: () => void;
   onError: (msg: string) => void;
@@ -534,7 +591,17 @@ function VendorEditModal({
   const [phone, setPhone] = useState(vendor?.phone || "");
   const [email, setEmail] = useState(vendor?.email || "");
   const [website, setWebsite] = useState(vendor?.website || "");
+  const [address, setAddress] = useState(vendor?.address || "");
   const [notes, setNotes] = useState(vendor?.notes || "");
+  const [dismissedDupes, setDismissedDupes] = useState(false);
+
+  // Only when adding (not editing): surface existing vendors with the same or a
+  // close name, so a misspelled duplicate isn't created.
+  const matches = useMemo(
+    () => (vendor || dismissedDupes ? [] : similarVendors(name, allVendors)),
+    [vendor, dismissedDupes, name, allVendors],
+  );
+  const exactMatch = matches.find((m) => m.exact)?.vendor ?? null;
   // is_internal marks an in-house tech / internal facilities
   // resource. Renders an "Internal" chip in the vendor typeahead
   // and lets reporting split internal vs external by group-by.
@@ -593,6 +660,7 @@ function VendorEditModal({
         phone: phone || undefined,
         email: email || undefined,
         website: website || undefined,
+        address: address || undefined,
         notes: notes || undefined,
         is_internal: isInternal,
         labor_warranty_days:   Number.isFinite(labWarN as number)  ? (labWarN as number)  : null,
@@ -635,6 +703,25 @@ function VendorEditModal({
           </button>
         </div>
         <div className="space-y-3 px-5 py-4">
+          {matches.length > 0 && (
+            <div className="rounded-lg bg-amber-50 p-3 ring-1 ring-amber-200">
+              <p className="text-xs font-semibold text-amber-800">
+                {exactMatch ? "This vendor is already in the system." : "A similar vendor is already in the system — maybe spelled differently?"}
+              </p>
+              <div className="mt-2 space-y-1.5">
+                {matches.map((m) => (
+                  <div key={m.vendor.id} className="flex items-center justify-between gap-2 rounded-md bg-white px-2.5 py-1.5 ring-1 ring-amber-200">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-midnight">{m.vendor.name}</div>
+                      <div className="truncate text-[11px] text-zinc-500">{[m.vendor.category, m.vendor.phone, m.vendor.email].filter(Boolean).join(" · ") || "—"}</div>
+                    </div>
+                    <button type="button" onClick={() => onEditExisting(m.vendor)} className="shrink-0 rounded-md bg-amber-600 px-2.5 py-1 text-xs font-semibold text-white hover:brightness-110">Update this one</button>
+                  </div>
+                ))}
+              </div>
+              <button type="button" onClick={() => setDismissedDupes(true)} className="mt-2 text-[11px] font-medium text-amber-700 underline">None of these — add as new</button>
+            </div>
+          )}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div>
               <Label htmlFor="vm-name">Name *</Label>
@@ -668,6 +755,10 @@ function VendorEditModal({
               <Label htmlFor="vm-web">Website</Label>
               <Input id="vm-web" value={website} onChange={(e) => setWebsite(e.target.value)} />
             </div>
+          </div>
+          <div>
+            <Label htmlFor="vm-address">Address</Label>
+            <Input id="vm-address" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Street, city, state ZIP" />
           </div>
           <div>
             <Label htmlFor="vm-services">Services (comma separated)</Label>

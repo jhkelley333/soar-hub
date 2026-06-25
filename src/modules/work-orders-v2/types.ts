@@ -552,6 +552,7 @@ export interface Vendor {
   phone: string | null;
   email: string | null;
   website: string | null;
+  address: string | null;
   contact_person: string | null;
   notes: string | null;
   notification_preference?: string | null;
@@ -597,6 +598,7 @@ export interface SaveVendorBody {
   phone?: string;
   email?: string;
   website?: string;
+  address?: string;
   notes?: string;
   is_active?: boolean;
   is_internal?: boolean;
