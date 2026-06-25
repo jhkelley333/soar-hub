@@ -58,6 +58,7 @@ export interface TeamBand {
   actual_hours: number | null;
   overtime_hours: number | null;
   act_vs_sched: number | null;
+  training_credit?: number | null;
   status: TeamStatus;
 }
 

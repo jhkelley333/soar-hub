@@ -108,6 +108,9 @@ export function BandCard({
         <Metric label="Chart $ Allowed" value={fmtMoney(band?.chart_dollars_allowed)} />
         {band?.avg_wage != null && <Metric label="Avg Wage" value={`${fmtMoneyCents(band.avg_wage)}/hr`} />}
       </dl>
+      {!!band?.training_credit && (
+        <p className="mt-2 text-[11px] text-zinc-500">incl. {fmtMoney(band.training_credit)} training credit</p>
+      )}
     </div>
   );
 }
