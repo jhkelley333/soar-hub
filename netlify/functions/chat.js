@@ -275,7 +275,7 @@ export const handler = async (event) => {
         supa.from("chat_thread_members").select("user_id, role").eq("thread_id", threadId),
         supa
           .from("chat_messages")
-          .select("id, thread_id, from_user_id, text, system, created_at")
+          .select("id, thread_id, from_user_id, text, system, created_at, deleted_at")
           .eq("thread_id", threadId)
           .order("created_at", { ascending: true }),
       ]);
@@ -319,10 +319,13 @@ export const handler = async (event) => {
           id: m.id,
           threadId: m.thread_id,
           fromUserId: m.system ? "system" : m.from_user_id,
-          text: m.text,
+          // A deleted message renders as a tombstone — don't ship its text or
+          // attachments to the client, just the flag.
+          text: m.deleted_at ? "" : m.text,
           system: m.system,
+          deleted: !!m.deleted_at,
           at: m.created_at,
-          attachments: attByMsg.get(m.id) || [],
+          attachments: m.deleted_at ? [] : attByMsg.get(m.id) || [],
         })),
       });
     }
@@ -409,6 +412,65 @@ export const handler = async (event) => {
         console.warn("[chat] push notify failed", e?.message || e);
       }
       return respond(200, { ok: true, message: data });
+    }
+
+    // Delete a message — soft delete (keeps a tombstone row). The sender can
+    // delete their own; a thread owner/admin can delete anyone's. Once the
+    // row carries deleted_at it drops out of chat_inbox_unread, so the
+    // recipient's unread + "needs you" notification clears on the next inbox
+    // sync. We also recompute the thread's last-message preview when the
+    // deleted message was the latest one.
+    if (action === "deleteMessage" && event.httpMethod === "POST") {
+      const { messageId } = JSON.parse(event.body || "{}");
+      if (!messageId) return respond(400, { ok: false, message: "messageId required." });
+
+      const { data: msg } = await supa
+        .from("chat_messages")
+        .select("id, thread_id, from_user_id, system, deleted_at")
+        .eq("id", messageId)
+        .maybeSingle();
+      if (!msg) return respond(404, { ok: false, message: "Message not found." });
+      if (msg.system) return respond(400, { ok: false, message: "System messages can't be deleted." });
+
+      const { data: mine } = await supa
+        .from("chat_thread_members")
+        .select("role")
+        .eq("thread_id", msg.thread_id)
+        .eq("user_id", uid)
+        .maybeSingle();
+      if (!mine) return respond(403, { ok: false, message: "Not a member of this thread." });
+      const isOwnerAdmin = ["owner", "admin"].includes(mine.role);
+      if (msg.from_user_id !== uid && !isOwnerAdmin) {
+        return respond(403, { ok: false, message: "You can only delete your own messages." });
+      }
+
+      // Idempotent — re-deleting is a no-op so a double tap doesn't error.
+      if (!msg.deleted_at) {
+        await supa
+          .from("chat_messages")
+          .update({ deleted_at: new Date().toISOString(), deleted_by: uid })
+          .eq("id", messageId);
+
+        // Refresh the inbox preview from the latest surviving message.
+        const { data: latest } = await supa
+          .from("chat_messages")
+          .select("text, created_at, from_user_id")
+          .eq("thread_id", msg.thread_id)
+          .is("deleted_at", null)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        await supa
+          .from("chat_threads")
+          .update({
+            last_message_text: latest ? latest.text || "📎 attachment" : "",
+            last_message_at: latest ? latest.created_at : null,
+            last_message_from: latest ? latest.from_user_id : null,
+          })
+          .eq("id", msg.thread_id);
+      }
+
+      return respond(200, { ok: true });
     }
 
     if (action === "create" && event.httpMethod === "POST") {

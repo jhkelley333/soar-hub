@@ -55,6 +55,16 @@ export function useChatRealtime(threadId?: string) {
           markThreadRead(threadId).catch(() => {});
         },
       );
+      // A soft-delete is an UPDATE — refresh the thread so the tombstone
+      // appears and the inbox so any cleared unread count recomputes.
+      channel.on(
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "chat_messages", filter: `thread_id=eq.${threadId}` },
+        () => {
+          qc.invalidateQueries({ queryKey: ["chat", "thread", threadId] });
+          qc.invalidateQueries({ queryKey: ["chat", "inbox"] });
+        },
+      );
     } else {
       const bumpInbox = () => qc.invalidateQueries({ queryKey: ["chat", "inbox"] });
       const onInsert = (payload: { new: MessageRow }) => {
@@ -84,6 +94,8 @@ export function useChatRealtime(threadId?: string) {
       };
       channel
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "chat_messages" }, onInsert)
+        // A delete elsewhere clears unread/needsYou — recompute the badge.
+        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "chat_messages" }, bumpInbox)
         .on("postgres_changes", { event: "*", schema: "public", table: "chat_thread_members" }, bumpInbox);
     }
 
