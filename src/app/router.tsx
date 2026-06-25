@@ -34,6 +34,7 @@ import { RoleAccessPage } from "@/modules/admin/RoleAccessPage";
 import { RegionAccessPage } from "@/modules/admin/RegionAccessPage";
 import { KpiDashboardPage } from "@/modules/kpi/KpiDashboardPage";
 import { LaborV2Page } from "@/modules/labor-v2/LaborV2Page";
+import { PullLogPage } from "@/modules/labor-v2/PullLogPage";
 import { LaborV2Entry } from "@/modules/labor-v2/LaborV2Entry";
 import { QsrHomePage } from "@/modules/qsr/QsrHomePage";
 import { MyTrainingPage } from "@/modules/qsr/MyTrainingPage";
@@ -194,6 +195,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <LaborV2Page />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/labor-v2/log",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <PullLogPage />
           </ProtectedRoute>
         ),
       },
