@@ -5,7 +5,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Clock, Copy, Share2 } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Clock, Copy, RefreshCw, Share2 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -170,6 +170,9 @@ export function LaborV2TeamPage() {
                 <Share2 className="mr-1 h-3.5 w-3.5" /> Share
               </Button>
             )}
+            <Button variant="secondary" size="sm" onClick={() => q.refetch()} disabled={q.isFetching}>
+              <RefreshCw className={cn("mr-1 h-3.5 w-3.5", q.isFetching && "animate-spin")} /> Refresh
+            </Button>
           </div>
         }
       />
