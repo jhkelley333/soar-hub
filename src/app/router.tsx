@@ -517,7 +517,7 @@ export const router = createBrowserRouter([
       {
         path: "qsr/manage",
         element: (
-          <ProtectedRoute requireRoles={["admin"]}>
+          <ProtectedRoute requireRoles={["shift_manager", "associate_manager", "first_assistant_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <ManagerDashboardPage />
           </ProtectedRoute>
         ),

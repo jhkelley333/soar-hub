@@ -32,6 +32,19 @@ async function visibleStoreIds(supa, user) {
 }
 const newToken = () =>
   `s_${(globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`).replace(/-/g, "")}`;
+
+// Dashboard view actions are open to store leaders (scoped); assign/unassign/
+// targets stay admin/author-only.
+const VIEW_ACTIONS = new Set(["overview", "byCourse", "byStore", "assignments", "completions"]);
+
+// The active learners the caller may see (scoped to visible stores; null = all).
+async function scopedProfiles(supa, user) {
+  const visible = await visibleStoreIds(supa, user);
+  const { data } = await supa.from("profiles").select("id, full_name, preferred_name, primary_store_id").eq("is_active", true);
+  let profs = data || [];
+  if (visible) profs = profs.filter((p) => p.primary_store_id && visible.has(p.primary_store_id));
+  return { profs, userIds: new Set(profs.map((p) => p.id)), visible };
+}
 async function getUser(supa, event) {
   const header = event.headers?.authorization || event.headers?.Authorization;
   if (!header?.startsWith("Bearer ")) return null;
@@ -68,18 +81,19 @@ async function storeRegionMap(supa) {
   }]));
 }
 
-async function overview(supa) {
-  const [{ count: learners }, { count: published }, { data: enr }, { data: ledger }] = await Promise.all([
-    supa.from("profiles").select("id", { count: "exact", head: true }).eq("is_active", true),
+async function overview(supa, user) {
+  const { profs, userIds } = await scopedProfiles(supa, user);
+  const [{ count: published }, { data: enr }, { data: ledger }] = await Promise.all([
     supa.from("qsr_courses").select("id", { count: "exact", head: true }).eq("status", "published"),
-    supa.from("qsr_enrollments").select("status"),
-    supa.from("qsr_points_ledger").select("delta"),
+    supa.from("qsr_enrollments").select("user_id, status"),
+    supa.from("qsr_points_ledger").select("user_id, delta"),
   ]);
-  const enrollments = (enr || []).length;
-  const completions = (enr || []).filter((e) => e.status === "completed").length;
-  const totalPoints = (ledger || []).reduce((s, r) => s + (r.delta || 0), 0);
+  const scopedEnr = (enr || []).filter((e) => userIds.has(e.user_id));
+  const enrollments = scopedEnr.length;
+  const completions = scopedEnr.filter((e) => e.status === "completed").length;
+  const totalPoints = (ledger || []).filter((r) => userIds.has(r.user_id)).reduce((s, r) => s + (r.delta || 0), 0);
   return {
-    learners: learners || 0,
+    learners: profs.length,
     publishedCourses: published || 0,
     enrollments,
     completions,
@@ -88,11 +102,13 @@ async function overview(supa) {
   };
 }
 
-async function byCourse(supa) {
-  const [{ data: courses }, { data: enr }] = await Promise.all([
+async function byCourse(supa, user) {
+  const { userIds } = await scopedProfiles(supa, user);
+  const [{ data: courses }, { data: enrAll }] = await Promise.all([
     supa.from("qsr_courses").select("id, title, status"),
-    supa.from("qsr_enrollments").select("course_id, status"),
+    supa.from("qsr_enrollments").select("user_id, course_id, status"),
   ]);
+  const enr = (enrAll || []).filter((e) => userIds.has(e.user_id));
   const m = new Map();
   for (const e of enr || []) {
     const row = m.get(e.course_id) || { enrolled: 0, completed: 0 };
@@ -110,17 +126,16 @@ async function byCourse(supa) {
   };
 }
 
-async function byStore(supa) {
+async function byStore(supa, user) {
   const storeInfo = await storeRegionMap(supa);
-  const [{ data: profiles }, { data: enr }] = await Promise.all([
-    supa.from("profiles").select("id, primary_store_id").eq("is_active", true),
-    supa.from("qsr_enrollments").select("user_id, status"),
-  ]);
-  const userStore = new Map((profiles || []).map((p) => [p.id, p.primary_store_id]));
+  const { profs, userIds } = await scopedProfiles(supa, user);
+  const { data: enrAll } = await supa.from("qsr_enrollments").select("user_id, status");
+  const enr = (enrAll || []).filter((e) => userIds.has(e.user_id));
+  const userStore = new Map(profs.map((p) => [p.id, p.primary_store_id]));
   const per = new Map();
   const bump = (sid) => { if (!per.has(sid)) per.set(sid, { learners: 0, enrolled: 0, completed: 0 }); return per.get(sid); };
-  for (const p of profiles || []) if (p.primary_store_id) bump(p.primary_store_id).learners++;
-  for (const e of enr || []) {
+  for (const p of profs) if (p.primary_store_id) bump(p.primary_store_id).learners++;
+  for (const e of enr) {
     const sid = userStore.get(e.user_id);
     if (!sid) continue;
     const row = bump(sid);
@@ -147,7 +162,8 @@ async function targets(supa) {
   return { courses: courses || [], stores };
 }
 
-async function listAssignments(supa) {
+async function listAssignments(supa, user) {
+  const { visible } = await scopedProfiles(supa, user);
   const { data: a } = await supa.from("qsr_assignments").select("*").order("created_at", { ascending: false });
   const list = a || [];
   const courseIds = [...new Set(list.map((x) => x.course_id))];
@@ -157,17 +173,20 @@ async function listAssignments(supa) {
     supa.from("qsr_enrollments").select("user_id, course_id, status"),
   ]);
   const titleById = new Map((courses || []).map((c) => [c.id, c.title]));
-  const activeIds = new Set((profiles || []).map((p) => p.id));
+  // Only count learners the caller can see (null visible = all).
+  const visibleIds = new Set((profiles || []).filter((p) => !visible || (p.primary_store_id && visible.has(p.primary_store_id))).map((p) => p.id));
   const usersForScope = (asg) => {
-    if (asg.scope_type === "store") return new Set((profiles || []).filter((p) => p.primary_store_id === asg.scope_id).map((p) => p.id));
-    if (asg.scope_type === "user") return new Set([asg.scope_id]);
-    return activeIds; // 'all' (region/district fall back to org-wide for v1)
+    let target;
+    if (asg.scope_type === "store") target = (profiles || []).filter((p) => p.primary_store_id === asg.scope_id).map((p) => p.id);
+    else if (asg.scope_type === "user") target = [asg.scope_id];
+    else target = (profiles || []).map((p) => p.id); // 'all'
+    return new Set(target.filter((id) => visibleIds.has(id)));
   };
   const assignments = list.map((asg) => {
     const users = usersForScope(asg);
     const completed = (enr || []).filter((e) => e.course_id === asg.course_id && e.status === "completed" && users.has(e.user_id)).length;
     return { ...asg, course_title: titleById.get(asg.course_id) || "—", total: users.size, completed };
-  });
+  }).filter((x) => !visible || x.total > 0); // hide assignments with nobody in the caller's scope
   return { assignments };
 }
 
@@ -197,10 +216,11 @@ async function unassign(supa, body) {
 }
 
 // Flat completion rows for an audit CSV.
-async function completions(supa) {
-  const { data: enr } = await supa.from("qsr_enrollments")
+async function completions(supa, user) {
+  const { userIds: scopedIds } = await scopedProfiles(supa, user);
+  const { data: enrAll } = await supa.from("qsr_enrollments")
     .select("user_id, course_id, completed_at").eq("status", "completed");
-  const list = enr || [];
+  const list = (enrAll || []).filter((e) => scopedIds.has(e.user_id));
   const userIds = [...new Set(list.map((e) => e.user_id))];
   const courseIds = [...new Set(list.map((e) => e.course_id))];
   const [{ data: profiles }, { data: courses }, storeInfo] = await Promise.all([
@@ -296,20 +316,20 @@ export const handler = async (event) => {
   const action = params.action || "overview";
   // QR-code actions are open to store leaders (scoped to their org); the rest of
   // the manager dashboard stays admin/author-only.
-  if (TOKEN_ACTIONS.has(action)) {
+  if (TOKEN_ACTIONS.has(action) || VIEW_ACTIONS.has(action)) {
     if (!STORE_LEADER_ROLES.has(String(user.role))) return respond(403, { error: "forbidden" });
-  } else if (!isAuthor(user.role)) {
+  } else if (!isAuthor(user.role)) { // targets, assign, unassign — authoring
     return respond(403, { error: "forbidden" });
   }
   let body = {};
   if (event.httpMethod === "POST") { try { body = JSON.parse(event.body || "{}"); } catch { body = {}; } }
 
   try {
-    if (action === "overview") return unwrap(await overview(supa));
-    if (action === "byCourse") return unwrap(await byCourse(supa));
-    if (action === "byStore") return unwrap(await byStore(supa));
+    if (action === "overview") return unwrap(await overview(supa, user));
+    if (action === "byCourse") return unwrap(await byCourse(supa, user));
+    if (action === "byStore") return unwrap(await byStore(supa, user));
     if (action === "targets") return unwrap(await targets(supa));
-    if (action === "assignments") return unwrap(await listAssignments(supa));
+    if (action === "assignments") return unwrap(await listAssignments(supa, user));
     if (action === "assign") return unwrap(await assign(supa, user, body));
     if (action === "unassign") return unwrap(await unassign(supa, body));
     if (action === "tokens") return unwrap(await listTokens(supa, user));
@@ -317,7 +337,7 @@ export const handler = async (event) => {
     if (action === "mintToken") return unwrap(await mintToken(supa, user, body));
     if (action === "mintAllStores") return unwrap(await mintAllStores(supa, user));
     if (action === "revokeToken") return unwrap(await revokeToken(supa, user, body));
-    if (action === "completions") return unwrap(await completions(supa));
+    if (action === "completions") return unwrap(await completions(supa, user));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });
