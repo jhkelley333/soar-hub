@@ -13,12 +13,22 @@ async function authToken(): Promise<string> {
   return token;
 }
 
-async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const token = await authToken();
-  const res = await fetch(path, {
+function callWith(path: string, init: RequestInit, token: string): Promise<Response> {
+  return fetch(path, {
     ...init,
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...(init.headers ?? {}) },
   });
+}
+
+async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
+  let res = await callWith(path, init, await authToken());
+  // A 401 usually means the stored access token went stale — refresh the
+  // session once and retry before surfacing "unauthorized".
+  if (res.status === 401) {
+    const { data } = await supabase.auth.refreshSession();
+    const fresh = data.session?.access_token;
+    if (fresh) res = await callWith(path, init, fresh);
+  }
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((body as { error?: string })?.error || `Request failed (${res.status})`);
   return body as T;
