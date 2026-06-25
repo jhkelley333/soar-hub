@@ -127,22 +127,16 @@ function storeHoursOver(r, prefix) {
 
 // Hrs/Unit: at the store level, the store's own hours over — but only if it's
 // over (negative/under is hidden). At District and above it's the average over
-// ALL stores that have data (their children): only the OVER stores' hours feed
-// the sum, but you divide by every store that polled (under/on-chart count in
-// the denominator). Stores with no daily data are excluded entirely.
+// ALL the node's stores (its children): only the OVER stores' hours feed the
+// sum, but you divide by every store — under, on-chart, and no-data stores all
+// count in the denominator and add 0 to the sum.
 function hoursPerUnit(rows, prefix) {
   if (rows.length === 1) {
     const h = storeHoursOver(rows[0], prefix);
     return h != null && h > 0 ? round2(h) : null;
   }
-  let sum = 0, count = 0;
-  for (const r of rows) {
-    const h = storeHoursOver(r, prefix);
-    if (h == null) continue;            // no daily data → not a child to divide by
-    count += 1;                          // all polled stores count in the denominator
-    if (h > 0) sum += h;                 // only over stores add to the numerator
-  }
-  return count ? round2(sum / count) : null;
+  const posSum = rows.reduce((a, r) => { const h = storeHoursOver(r, prefix); return a + (h && h > 0 ? h : 0); }, 0);
+  return round2(posSum / rows.length);
 }
 
 // Aggregate one band (prefix "" = daily, "wtd_", "ptd_") across a set of store
