@@ -37,8 +37,8 @@ import { createClient } from "@supabase/supabase-js";
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const READ_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]);
-const REVIEW_ROLES = new Set(["gm", "do", "sdo", "rvp", "admin"]);
+const READ_ROLES = new Set(["shift_manager", "associate_manager", "first_assistant_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]);
+const REVIEW_ROLES = new Set(["shift_manager", "associate_manager", "first_assistant_manager", "gm", "do", "sdo", "rvp", "admin"]);
 const ORG_WIDE = new Set(["payroll", "admin", "vp", "coo"]);
 // Who can see the sync-status panel (the labor pipeline health view).
 const SYNC_ROLES = new Set(["admin", "vp", "coo"]);

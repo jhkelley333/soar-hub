@@ -40,8 +40,8 @@ const div = (a, b) => (b ? a / b : null);
 
 // ── GM view: roles, scope, dates ─────────────────────────────────────
 // Who can read a store's daily labor, and who can write the explanation note.
-const READ_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]);
-const REVIEW_ROLES = new Set(["gm", "do", "sdo", "rvp", "admin"]);
+const READ_ROLES = new Set(["shift_manager", "associate_manager", "first_assistant_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]);
+const REVIEW_ROLES = new Set(["shift_manager", "associate_manager", "first_assistant_manager", "gm", "do", "sdo", "rvp", "admin"]);
 const ORG_WIDE = new Set(["payroll", "admin", "vp", "coo"]);
 // A day is a "miss" (note due) whenever labor runs over the chart at all —
 // if you miss, you miss; no tolerance band. (Same as the OVER CHART badge.)
