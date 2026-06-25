@@ -113,11 +113,15 @@ function shapeBand(row, prefix) {
 }
 
 // One store's hours over chart for a band ($ over ÷ that store's avg wage).
+// Returns null when the store has no real daily basis (missing sales / labor /
+// target) — such stores are excluded from the Hrs/Unit average entirely.
 function storeHoursOver(r, prefix) {
   const cost = numv(r[prefix + "labor_cost"]);
   const hours = numv(r[prefix + "labor_hours"]);
-  if (!hours) return null;
-  const chartAllowed = numv(r[prefix + "net_sales"]) * numv(r[prefix + "target_labor_pct"]);
+  const sales = numv(r[prefix + "net_sales"]);
+  const target = numv(r[prefix + "target_labor_pct"]);
+  if (!sales || !cost || !hours || !target) return null;
+  const chartAllowed = sales * target;
   return (cost - chartAllowed) / (cost / hours);
 }
 
@@ -447,7 +451,7 @@ function teamBand(rows, prefix) {
 
 async function teamView(supa, user, params) {
   if (!TEAM_ROLES.has(roleOf(user))) return { error: "not authorized", status: 403 };
-  const empty = { date: null, scope: { stores: 0, dos: [] }, totals: null, startLevel: "district", levels: { region: [], area: [], district: [], store: [] } };
+  const empty = { date: null, scope: { stores: 0, dos: [] }, totals: null, startLevel: "district", levels: { region: [], area: [], district: [], store: [] }, missing: [] };
 
   const visible = await resolveVisibleStoreRows(supa, user);
   if (!visible.length) return empty;
@@ -463,12 +467,20 @@ async function teamView(supa, user, params) {
   const reviewByStore = new Map((reviews || []).map((r) => [String(r.store_number), r]));
   const orgMap = await resolveOrg(supa, numbers);
 
+  // Visible stores with no Expressway poll for this date (no row, or a row
+  // with no daily sales) — surfaced so the numbers can be flagged as skewed.
+  const polled = new Set((rows || []).filter((r) => r.net_sales != null).map((r) => String(r.store_number)));
+  const missing = visible
+    .filter((s) => !polled.has(String(s.number)))
+    .map((s) => ({ number: String(s.number), name: s.name }))
+    .sort((a, b) => a.number.localeCompare(b.number));
+
   const inScope = [];
   for (const r of rows || []) {
     const soar = orgMap.get(String(r.store_number));
     if (soar) inScope.push({ ...r, soar });
   }
-  if (!inScope.length) return { ...empty, date: anchor };
+  if (!inScope.length) return { ...empty, date: anchor, missing };
 
   const storeOver = (r) => teamBand([r], "").status === "over";
 
@@ -530,6 +542,7 @@ async function teamView(supa, user, params) {
     },
     startLevel,
     levels,
+    missing,
   };
 }
 
