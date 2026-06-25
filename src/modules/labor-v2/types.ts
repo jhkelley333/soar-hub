@@ -113,4 +113,6 @@ export interface TeamLaborResponse {
     district: TeamGroup[];
     store: TeamStore[];
   };
+  // Visible stores with no Expressway poll for the date (numbers may be skewed).
+  missing: { number: string; name: string }[];
 }

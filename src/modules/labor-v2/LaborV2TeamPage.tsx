@@ -5,7 +5,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, ChevronRight, Clock, Copy, Share2 } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Clock, Copy, Share2 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -128,9 +128,9 @@ export function LaborV2TeamPage() {
       `WTD  ${band(t.wtd)} · ${fmtSignedUSD0(t.wtd.dollars_over_chart)} over`,
       `PTD  ${band(t.ptd)} · ${fmtSignedUSD0(t.ptd.dollars_over_chart)} over`,
       `Over chart: ${t.storesOver}/${data.scope.stores} stores · ${t.notesDue} notes due`,
-      "",
-      `${LEVEL_LABEL[displayLevel]}:`,
     ];
+    if (data.missing.length) out.push(`⚠ May be skewed — ${data.missing.length} store(s) not polled: ${data.missing.map((m) => `#${m.number}`).join(", ")}`);
+    out.push("", `${LEVEL_LABEL[displayLevel]}:`);
     const cap = 25;
     rows.slice(0, cap).forEach((r, i) => {
       const name = "store_number" in r ? `${r.store_number} ${r.store_name}` : r.name;
@@ -198,6 +198,16 @@ export function LaborV2TeamPage() {
               {LEVEL_LABEL[lv]}
             </button>
           ))}
+        </div>
+      )}
+
+      {data && data.missing.length > 0 && (
+        <div className="mb-4 flex items-start gap-3 rounded-xl bg-amber-50 p-4 ring-1 ring-amber-200">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+          <div className="min-w-0 text-sm text-amber-800">
+            <p className="font-semibold">Numbers may be skewed — {data.missing.length} store{data.missing.length === 1 ? "" : "s"} had no Expressway polling for this day.</p>
+            <p className="mt-1 break-words text-xs text-amber-700">{data.missing.map((m) => `#${m.number} ${m.name}`).join(" · ")}</p>
+          </div>
         </div>
       )}
 
