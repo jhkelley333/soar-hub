@@ -82,10 +82,16 @@ export function applyCreditsToRows(rows, creditMap) {
 
 function apply(r, prefix, credit) {
   if (!credit.amt && !credit.hrs) return;
-  const cost = Math.max(0, numv(r[prefix + "labor_cost"]) - credit.amt);
+  const origCost = numv(r[prefix + "labor_cost"]);
+  const sales = numv(r[prefix + "net_sales"]);
+  // Remember the pre-credit labor % (fraction) for display, computed the same
+  // way as the post-credit value (cost ÷ sales) so it's an apples-to-apples "was".
+  const key = prefix === "" ? "day" : prefix === "wtd_" ? "wtd" : "ptd";
+  r._tcPre = r._tcPre || {};
+  r._tcPre[key] = sales ? origCost / sales : (r[prefix + "labor_pct"] ?? null);
+  const cost = Math.max(0, origCost - credit.amt);
   const hours = Math.max(0, numv(r[prefix + "labor_hours"]) - credit.hrs);
   r[prefix + "labor_cost"] = cost;
   r[prefix + "labor_hours"] = hours;
-  const sales = numv(r[prefix + "net_sales"]);
   if (sales) r[prefix + "labor_pct"] = cost / sales; // keep the stored % in sync (GM view reads it)
 }
