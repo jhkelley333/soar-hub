@@ -282,33 +282,37 @@ export function LaborV2TeamPage() {
               </select>
             </div>
 
-            <div className="hidden items-center gap-3 border-b border-zinc-100 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 lg:flex">
-              <SortTh label={nameHeader} k="name" sort={sort} onSort={toggleSort} className="min-w-0 flex-1 justify-start" />
-              <SortTh label="Day %" k="day" sort={sort} onSort={toggleSort} className="w-16" />
-              <SortTh label="WTD %" k="wtd" sort={sort} onSort={toggleSort} className="hidden w-14 lg:flex" />
-              <SortTh label="PTD %" k="ptd" sort={sort} onSort={toggleSort} className="hidden w-14 lg:flex" />
-              <SortTh label="Var" k="var" sort={sort} onSort={toggleSort} className="w-14" />
-              <SortTh label="$ Over" k="over" sort={sort} onSort={toggleSort} className="w-20" />
-              <SortTh label="Hrs/Unit" k="hrsover" sort={sort} onSort={toggleSort} className="w-14" />
-              <SortTh label="Sched" k="sched" sort={sort} onSort={toggleSort} className="hidden w-16 xl:flex" />
-              <SortTh label="Actual" k="actual" sort={sort} onSort={toggleSort} className="hidden w-16 xl:flex" />
-              <SortTh label="OT" k="ot" sort={sort} onSort={toggleSort} className="hidden w-14 xl:flex" />
-              <SortTh label="Act−Sch" k="actsch" sort={sort} onSort={toggleSort} className="hidden w-16 xl:flex" />
-              <SortTh label="Status" k="status" sort={sort} onSort={toggleSort} className="ml-2 w-[92px]" />
-            </div>
-
-            {/* Desktop table */}
-            <div className="hidden divide-y divide-zinc-100 lg:block">
-              {summary && (
-                <SummaryRow name={summary.name} leader={summary.leader} storeCount={summary.storeCount} storesOver={summary.storesOver} notesDue={summary.notesDue} r={summary} />
-              )}
-              {rows.length === 0 ? (
-                <div className="p-8 text-center text-sm text-zinc-500">{isStore ? "No stores match this filter." : "Nothing here yet."}</div>
-              ) : isStore ? (
-                (rows as TeamStore[]).map((s) => <StoreRow key={s.store_number} s={s} />)
-              ) : (
-                (rows as TeamGroup[]).map((g) => <GroupRow key={g.name} g={g} onDrill={() => drillInto(g.name)} />)
-              )}
+            {/* Desktop table — fixed columns, horizontal scroll so the header
+                and rows stay aligned on narrow screens instead of squishing. */}
+            <div className="hidden overflow-x-auto lg:block">
+              <div className="min-w-[1120px]">
+                <div className="flex items-center gap-3 border-b border-zinc-100 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+                  <SortTh label={nameHeader} k="name" sort={sort} onSort={toggleSort} className="min-w-0 flex-1 justify-start" />
+                  <SortTh label="Day %" k="day" sort={sort} onSort={toggleSort} className="w-16 shrink-0" />
+                  <SortTh label="WTD %" k="wtd" sort={sort} onSort={toggleSort} className="w-14 shrink-0" />
+                  <SortTh label="PTD %" k="ptd" sort={sort} onSort={toggleSort} className="w-14 shrink-0" />
+                  <SortTh label="Var" k="var" sort={sort} onSort={toggleSort} className="w-14 shrink-0" />
+                  <SortTh label="$ Over" k="over" sort={sort} onSort={toggleSort} className="w-20 shrink-0" />
+                  <SortTh label="Hrs/Unit" k="hrsover" sort={sort} onSort={toggleSort} className="w-16 shrink-0" />
+                  <SortTh label="Sched" k="sched" sort={sort} onSort={toggleSort} className="w-16 shrink-0" />
+                  <SortTh label="Actual" k="actual" sort={sort} onSort={toggleSort} className="w-16 shrink-0" />
+                  <SortTh label="OT" k="ot" sort={sort} onSort={toggleSort} className="w-14 shrink-0" />
+                  <SortTh label="Act−Sch" k="actsch" sort={sort} onSort={toggleSort} className="w-16 shrink-0" />
+                  <SortTh label="Status" k="status" sort={sort} onSort={toggleSort} className="ml-2 w-[92px] shrink-0" />
+                </div>
+                <div className="divide-y divide-zinc-100">
+                  {summary && (
+                    <SummaryRow name={summary.name} leader={summary.leader} storeCount={summary.storeCount} storesOver={summary.storesOver} notesDue={summary.notesDue} r={summary} />
+                  )}
+                  {rows.length === 0 ? (
+                    <div className="p-8 text-center text-sm text-zinc-500">{isStore ? "No stores match this filter." : "Nothing here yet."}</div>
+                  ) : isStore ? (
+                    (rows as TeamStore[]).map((s) => <StoreRow key={s.store_number} s={s} />)
+                  ) : (
+                    (rows as TeamGroup[]).map((g) => <GroupRow key={g.name} g={g} onDrill={() => drillInto(g.name)} />)
+                  )}
+                </div>
+              </div>
             </div>
 
             {/* Mobile cards */}
@@ -357,12 +361,12 @@ function BandCells({ r }: { r: { day: TeamBand; wtd: TeamBand; ptd: TeamBand } }
   const over = r.day.status === "over";
   return (
     <>
-      <span className={cn("w-16 text-right text-sm font-bold tabular-nums", over ? "text-red-600" : "text-emerald-600")}>{fmtPctPts(r.day.labor_pct)}</span>
-      <span className="hidden w-14 text-right text-xs tabular-nums text-zinc-500 lg:block">{fmtPctPts(r.wtd.labor_pct)}</span>
-      <span className="hidden w-14 text-right text-xs tabular-nums text-zinc-500 lg:block">{fmtPctPts(r.ptd.labor_pct)}</span>
-      <span className={cn("w-14 text-right text-xs tabular-nums", over ? "text-red-700" : "text-zinc-500")}>{fmtPts(r.day.variance_pts)}</span>
-      <span className={cn("w-20 text-right text-xs tabular-nums", over ? "text-red-700" : "text-zinc-500")}>{fmtSignedUSD0(r.day.dollars_over_chart)}</span>
-      <span className="w-14 text-right text-xs tabular-nums text-zinc-500">{fmtRate2(r.day.hours_over_chart)}</span>
+      <span className={cn("w-16 shrink-0 text-right text-sm font-bold tabular-nums", over ? "text-red-600" : "text-emerald-600")}>{fmtPctPts(r.day.labor_pct)}</span>
+      <span className="w-14 shrink-0 text-right text-xs tabular-nums text-zinc-500">{fmtPctPts(r.wtd.labor_pct)}</span>
+      <span className="w-14 shrink-0 text-right text-xs tabular-nums text-zinc-500">{fmtPctPts(r.ptd.labor_pct)}</span>
+      <span className={cn("w-14 shrink-0 text-right text-xs tabular-nums", over ? "text-red-700" : "text-zinc-500")}>{fmtPts(r.day.variance_pts)}</span>
+      <span className={cn("w-20 shrink-0 text-right text-xs tabular-nums", over ? "text-red-700" : "text-zinc-500")}>{fmtSignedUSD0(r.day.dollars_over_chart)}</span>
+      <span className="w-16 shrink-0 text-right text-xs tabular-nums text-zinc-500">{fmtRate2(r.day.hours_over_chart)}</span>
       <HoursCells band={r.day} />
     </>
   );
@@ -375,13 +379,13 @@ function SummaryRow({ name, leader, storeCount, storesOver, notesDue, r }: {
 }) {
   return (
     <div className="flex items-center gap-3 border-b-2 border-zinc-200 bg-zinc-50/70 px-4 py-3">
-      <span className="h-10 w-1 rounded-full bg-transparent" />
+      <span className="h-10 w-1 shrink-0 rounded-full bg-transparent" />
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-bold text-midnight dark:text-night-ink">{name}</div>
         <div className="truncate text-xs text-zinc-500">{leader ? `${leader} · ` : ""}{storeCount} store{storeCount === 1 ? "" : "s"}</div>
       </div>
       <BandCells r={r} />
-      <span className="ml-2 w-[92px] text-right text-[11px] font-semibold tabular-nums text-zinc-500">{storesOver} over{notesDue ? ` · ${notesDue} due` : ""}</span>
+      <span className="ml-2 w-[92px] shrink-0 text-right text-[11px] font-semibold tabular-nums text-zinc-500">{storesOver} over{notesDue ? ` · ${notesDue} due` : ""}</span>
     </div>
   );
 }
@@ -389,10 +393,10 @@ function SummaryRow({ name, leader, storeCount, storesOver, notesDue, r }: {
 function HoursCells({ band }: { band: TeamBand }) {
   return (
     <>
-      <span className="hidden w-16 text-right text-xs tabular-nums text-zinc-500 xl:block">{fmtHrs(band.scheduled_hours)}</span>
-      <span className="hidden w-16 text-right text-xs tabular-nums text-zinc-500 xl:block">{fmtHrs(band.actual_hours)}</span>
-      <span className={cn("hidden w-14 text-right text-xs tabular-nums xl:block", band.overtime_hours ? "font-semibold text-amber-600" : "text-zinc-500")}>{fmtHrs(band.overtime_hours)}</span>
-      <span className={cn("hidden w-16 text-right text-xs tabular-nums xl:block", (band.act_vs_sched ?? 0) > 0 ? "text-red-600" : "text-emerald-600")}>{fmtSignedHrs(band.act_vs_sched)}</span>
+      <span className="w-16 shrink-0 text-right text-xs tabular-nums text-zinc-500">{fmtHrs(band.scheduled_hours)}</span>
+      <span className="w-16 shrink-0 text-right text-xs tabular-nums text-zinc-500">{fmtHrs(band.actual_hours)}</span>
+      <span className={cn("w-14 shrink-0 text-right text-xs tabular-nums", band.overtime_hours ? "font-semibold text-amber-600" : "text-zinc-500")}>{fmtHrs(band.overtime_hours)}</span>
+      <span className={cn("w-16 shrink-0 text-right text-xs tabular-nums", (band.act_vs_sched ?? 0) > 0 ? "text-red-600" : "text-emerald-600")}>{fmtSignedHrs(band.act_vs_sched)}</span>
     </>
   );
 }
@@ -468,7 +472,7 @@ function GroupRow({ g, onDrill }: { g: TeamGroup; onDrill: () => void }) {
   const over = g.day.status === "over";
   return (
     <button onClick={onDrill} className="flex w-full items-center gap-3 p-4 text-left hover:bg-zinc-50">
-      <span className={cn("h-10 w-1 rounded-full", over ? "bg-sonic" : "bg-transparent")} />
+      <span className={cn("h-10 w-1 shrink-0 rounded-full", over ? "bg-sonic" : "bg-transparent")} />
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-1.5 truncate text-sm font-semibold text-midnight dark:text-night-ink">
           {g.name}
@@ -477,7 +481,7 @@ function GroupRow({ g, onDrill }: { g: TeamGroup; onDrill: () => void }) {
         <div className="truncate text-xs text-zinc-500">{g.leader || "—"} · {g.storeCount} store{g.storeCount === 1 ? "" : "s"}</div>
       </div>
       <BandCells r={g} />
-      <span className="ml-2 w-[92px] text-right text-[11px] font-semibold tabular-nums text-zinc-500">
+      <span className="ml-2 w-[92px] shrink-0 text-right text-[11px] font-semibold tabular-nums text-zinc-500">
         {g.storesOver} over{g.notesDue ? ` · ${g.notesDue} due` : ""}
       </span>
     </button>
@@ -493,7 +497,7 @@ function StoreRow({ s }: { s: TeamStore }) {
   return (
     <div>
       <button onClick={() => s.note && setOpen((o) => !o)} className={cn("flex w-full items-center gap-3 p-4 text-left", s.note && "hover:bg-zinc-50")}>
-        <span className={cn("h-10 w-1 rounded-full", over ? "bg-sonic" : "bg-transparent")} />
+        <span className={cn("h-10 w-1 shrink-0 rounded-full", over ? "bg-sonic" : "bg-transparent")} />
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold text-midnight dark:text-night-ink">#{s.store_number} · {s.store_name}</div>
           <div className="truncate text-xs text-zinc-500">
