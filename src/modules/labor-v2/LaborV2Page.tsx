@@ -23,7 +23,7 @@ const fmtSignedUSD0 = (v: number | null) =>
 const fmtPct = (frac: number | null, d = 1) => (frac == null ? "—" : `${(frac * 100).toFixed(d)}%`);
 const fmtPts = (frac: number | null) => (frac == null ? "—" : `${frac >= 0 ? "+" : ""}${(frac * 100).toFixed(1)} pts`);
 const fmtHrs = (v: number | null) => (v == null ? "—" : Math.round(v).toLocaleString("en-US"));
-const fmtSignedHrs = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(Math.round(v)).toLocaleString("en-US")}`);
+const fmtRate2 = (v: number | null) => (v == null ? "—" : `+${v.toFixed(2)}`); // Hrs/Unit: per-store avg of over-stores, 2 dp
 const fmtDate = (s: string | null) =>
   s ? new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "—";
 
@@ -185,7 +185,7 @@ export function LaborV2Page() {
             <Tile label="Target %" value={fmtPct(totalBand?.targetPct ?? null)} />
             <Tile label="Variance" value={fmtPts(totalBand?.variancePts ?? null)} tone={overTone(totalBand ? (totalBand.variancePts ?? 0) > 0 : null)} />
             <Tile label="$ Over Chart" value={fmtSignedUSD0(totalBand?.dollarsOver ?? null)} sub="cost − chart $" tone={overTone(totalBand ? (totalBand.dollarsOver ?? 0) > 0 : null)} />
-            <Tile label="Hrs Over / Unit" value={fmtSignedHrs(totalBand?.hoursOver ?? null)} sub="hrs over ÷ # stores" tone={overTone(totalBand ? (totalBand.hoursOver ?? 0) > 0 : null)} />
+            <Tile label="Hrs Over / Unit" value={fmtRate2(totalBand?.hoursOver ?? null)} sub="over-store hrs ÷ # stores" tone={overTone(totalBand ? (totalBand.hoursOver ?? 0) > 0 : null)} />
           </div>
 
           <Card className="mt-6">
@@ -265,7 +265,7 @@ export function LaborV2Page() {
                             <td className="py-2.5 pl-3 text-right tabular-nums text-zinc-500">{fmtPct(b.targetPct)}</td>
                             <td className={cn("py-2.5 pl-3 text-right tabular-nums", overTone(b.variancePts != null ? b.variancePts > 0 : null))}>{fmtPts(b.variancePts)}</td>
                             <td className={cn("py-2.5 pl-3 text-right tabular-nums", overTone(b.dollarsOver != null ? b.dollarsOver > 0 : null))}>{fmtSignedUSD0(b.dollarsOver)}</td>
-                            <td className={cn("py-2.5 pl-3 text-right tabular-nums", overTone(b.hoursOver != null ? b.hoursOver > 0 : null))}>{fmtSignedHrs(b.hoursOver)}</td>
+                            <td className={cn("py-2.5 pl-3 text-right tabular-nums", overTone(b.hoursOver != null ? b.hoursOver > 0 : null))}>{fmtRate2(b.hoursOver)}</td>
                             <td className="py-2.5 pl-3 text-right tabular-nums text-zinc-600">{fmtHrs(b.scheduledHours)}</td>
                             <td className="py-2.5 pl-3 text-right tabular-nums text-zinc-600">{fmtHrs(b.laborHours)}</td>
                             <td className={cn("py-2.5 pl-3 text-right tabular-nums", b.overtimeHours != null && b.overtimeHours > 0 ? "font-semibold text-amber-600" : "text-zinc-600")}>{fmtHrs(b.overtimeHours)}</td>
