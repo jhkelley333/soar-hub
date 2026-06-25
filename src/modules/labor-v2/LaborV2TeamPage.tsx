@@ -14,7 +14,7 @@ import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { fetchLaborV2Team } from "./api";
-import type { TeamBand, TeamDisplayLevel, TeamGroup, TeamStore } from "./types";
+import type { LaborPeriod, TeamBand, TeamDisplayLevel, TeamGroup, TeamStore } from "./types";
 
 const fmtPctPts = (v: number | null) => (v == null ? "—" : `${v.toFixed(1)}%`);
 const fmtPts = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(1)}`);
@@ -65,6 +65,7 @@ export function LaborV2TeamPage() {
   const [path, setPath] = useState<{ level: TeamDisplayLevel; name: string }[]>([]);
   const [filter, setFilter] = useState<Filter>("all");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "var", dir: "desc" });
+  const [period, setPeriod] = useState<LaborPeriod>("day"); // mobile cards: which period headlines
   const [shareDraft, setShareDraft] = useState<string | null>(null);
 
   const q = useQuery({ queryKey: ["labor-v2-team"], queryFn: () => fetchLaborV2Team(), staleTime: 5 * 60_000 });
@@ -258,7 +259,30 @@ export function LaborV2TeamPage() {
               )}
             </div>
 
-            <div className="hidden items-center gap-3 border-b border-zinc-100 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 sm:flex">
+            {/* Mobile controls: period + sort (the table header is desktop-only) */}
+            <div className="flex items-center justify-between gap-2 border-b border-zinc-100 px-3 py-2 lg:hidden">
+              <div className="inline-flex rounded-md ring-1 ring-inset ring-zinc-200 text-xs">
+                {(["day", "wtd", "ptd"] as LaborPeriod[]).map((p) => (
+                  <button key={p} onClick={() => setPeriod(p)}
+                    className={cn("px-3 py-1 font-semibold uppercase first:rounded-l-md last:rounded-r-md", period === p ? "bg-accent text-white" : "text-zinc-500")}>
+                    {p === "day" ? "Day" : p.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+              <select
+                value={`${sort.key}:${sort.dir}`}
+                onChange={(e) => { const [key, dir] = e.target.value.split(":"); setSort({ key: key as SortKey, dir: dir as "asc" | "desc" }); }}
+                className="h-7 rounded-md border-0 bg-zinc-50 px-2 text-xs text-zinc-700 ring-1 ring-inset ring-zinc-200 focus:outline-none"
+              >
+                <option value="var:desc">Variance ↓</option>
+                <option value="day:desc">Labor % ↓</option>
+                <option value="over:desc">$ Over ↓</option>
+                <option value="hrsover:desc">Hrs/Unit ↓</option>
+                <option value="name:asc">Name ↑</option>
+              </select>
+            </div>
+
+            <div className="hidden items-center gap-3 border-b border-zinc-100 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400 lg:flex">
               <SortTh label={nameHeader} k="name" sort={sort} onSort={toggleSort} className="min-w-0 flex-1 justify-start" />
               <SortTh label="Day %" k="day" sort={sort} onSort={toggleSort} className="w-16" />
               <SortTh label="WTD %" k="wtd" sort={sort} onSort={toggleSort} className="hidden w-14 lg:flex" />
@@ -273,7 +297,8 @@ export function LaborV2TeamPage() {
               <SortTh label="Status" k="status" sort={sort} onSort={toggleSort} className="ml-2 w-[92px]" />
             </div>
 
-            <div className="divide-y divide-zinc-100">
+            {/* Desktop table */}
+            <div className="hidden divide-y divide-zinc-100 lg:block">
               {summary && (
                 <SummaryRow name={summary.name} leader={summary.leader} storeCount={summary.storeCount} storesOver={summary.storesOver} notesDue={summary.notesDue} r={summary} />
               )}
@@ -283,6 +308,18 @@ export function LaborV2TeamPage() {
                 (rows as TeamStore[]).map((s) => <StoreRow key={s.store_number} s={s} />)
               ) : (
                 (rows as TeamGroup[]).map((g) => <GroupRow key={g.name} g={g} onDrill={() => drillInto(g.name)} />)
+              )}
+            </div>
+
+            {/* Mobile cards */}
+            <div className="space-y-2 p-3 lg:hidden">
+              {summary && <MobileRow row={summary} isStore={false} period={period} summary />}
+              {rows.length === 0 ? (
+                <div className="p-6 text-center text-sm text-zinc-500">{isStore ? "No stores match this filter." : "Nothing here yet."}</div>
+              ) : isStore ? (
+                (rows as TeamStore[]).map((s) => <MobileRow key={s.store_number} row={s} isStore period={period} />)
+              ) : (
+                (rows as TeamGroup[]).map((g) => <MobileRow key={g.name} row={g} isStore={false} period={period} onDrill={() => drillInto(g.name)} />)
               )}
             </div>
           </div>
@@ -357,6 +394,73 @@ function HoursCells({ band }: { band: TeamBand }) {
       <span className={cn("hidden w-14 text-right text-xs tabular-nums xl:block", band.overtime_hours ? "font-semibold text-amber-600" : "text-zinc-500")}>{fmtHrs(band.overtime_hours)}</span>
       <span className={cn("hidden w-16 text-right text-xs tabular-nums xl:block", (band.act_vs_sched ?? 0) > 0 ? "text-red-600" : "text-emerald-600")}>{fmtSignedHrs(band.act_vs_sched)}</span>
     </>
+  );
+}
+
+function MobileMetric({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-[10px] uppercase tracking-wide text-zinc-400">{label}</div>
+      <div className={cn("truncate text-sm font-semibold tabular-nums text-midnight dark:text-night-ink", tone)}>{value}</div>
+    </div>
+  );
+}
+
+// Responsive card for a group / store / summary on phones + tablets.
+function MobileRow({ row, isStore, period, summary, onDrill }: {
+  row: TeamGroup | TeamStore; isStore: boolean; period: LaborPeriod; summary?: boolean; onDrill?: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const b = row[period];
+  const over = b.status === "over";
+  const store = isStore ? (row as TeamStore) : null;
+  const grp = isStore ? null : (row as TeamGroup);
+  const name = store ? `#${store.store_number} ${store.store_name}` : grp!.name;
+  const sub = store
+    ? [store.gm_name ? `GM ${store.gm_name}` : null, store.do_name ? `DO ${store.do_name}` : null].filter(Boolean).join(" · ") || "—"
+    : `${grp!.leader || "—"} · ${grp!.storeCount} store${grp!.storeCount === 1 ? "" : "s"}`;
+  const tap = summary ? undefined : isStore ? () => store!.note && setOpen((o) => !o) : onDrill;
+
+  const statusLabel = store ? (store.note_due ? "Note due" : store.explained ? "Explained" : over ? "Over" : "On chart") : null;
+  const statusCls = store?.note_due ? "bg-amber-50 text-amber-700" : store?.explained ? "bg-accent-100 text-accent-700" : over ? "bg-sonic-50 text-sonic-700" : "bg-emerald-50 text-emerald-700";
+
+  return (
+    <div className={cn("overflow-hidden rounded-xl ring-1", summary ? "bg-zinc-50 ring-zinc-300" : "bg-white ring-zinc-200", over && !summary && "ring-red-200")}>
+      <button onClick={tap} className={cn("flex w-full items-start gap-3 p-3.5 text-left", tap && "active:bg-zinc-50")}>
+        <span className={cn("mt-0.5 h-9 w-1 shrink-0 rounded-full", over ? "bg-sonic" : "bg-transparent")} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-1.5 text-sm font-semibold text-midnight dark:text-night-ink">
+            <span className="truncate">{name}</span>
+            {grp && !summary && <ChevronRight className="h-4 w-4 shrink-0 text-zinc-300" />}
+          </div>
+          <div className="mt-0.5 truncate text-xs text-zinc-500">{sub}</div>
+          <div className="mt-1.5">
+            {store
+              ? <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide", statusCls)}>{statusLabel}</span>
+              : <span className="text-[11px] font-semibold text-zinc-500">{grp!.storesOver} over{grp!.notesDue ? ` · ${grp!.notesDue} due` : ""}</span>}
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className={cn("text-2xl font-bold tabular-nums", over ? "text-red-600" : "text-emerald-600")}>{fmtPctPts(b.labor_pct)}</div>
+          <div className="text-[11px] text-zinc-400">tgt {fmtPctPts(b.target_pct)} · {fmtPts(b.variance_pts)}</div>
+        </div>
+      </button>
+      <div className="grid grid-cols-3 gap-2 border-t border-zinc-100 px-3.5 py-2">
+        <MobileMetric label="$ Over" value={fmtSignedUSD0(b.dollars_over_chart)} tone={over ? "text-red-700" : undefined} />
+        <MobileMetric label="Hrs/Unit" value={fmtRate2(b.hours_over_chart)} />
+        <MobileMetric label="Sched→Act" value={`${fmtHrs(b.scheduled_hours)}→${fmtHrs(b.actual_hours)}`} />
+      </div>
+      {store && open && store.note && (
+        <div className="border-t border-zinc-100 bg-zinc-50/60 px-3.5 py-2.5">
+          <div className="grid grid-cols-3 gap-2">
+            <MobileMetric label="WTD %" value={fmtPctPts(store.wtd.labor_pct)} />
+            <MobileMetric label="PTD %" value={fmtPctPts(store.ptd.labor_pct)} />
+            <MobileMetric label="OT hrs" value={fmtHrs(b.overtime_hours)} />
+          </div>
+          <div className="mt-2 rounded-lg bg-white p-2 text-xs text-zinc-600 ring-1 ring-zinc-200">{store.note}</div>
+        </div>
+      )}
+    </div>
   );
 }
 
