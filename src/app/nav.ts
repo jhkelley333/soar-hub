@@ -116,6 +116,9 @@ export const NAV: NavItem[] = [
   // list is empty (with a friendly note) for anyone with nothing assigned, and
   // it's the persistent place to find required training the login pop-up nags about.
   { to: "/my-training", label: "My Training",  icon: BookOpenCheck,   roles: null },
+  // Team Training — completion rollup scoped to the caller's org (GM → store,
+  // DO → district, RVP → region; admins org-wide). Admins also assign courses.
+  { to: "/qsr/manage",  label: "Team Training", icon: BarChart3,       roles: ["shift_manager", "first_assistant_manager", "associate_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"], flagKey: "qsr_platform" },
   // Training QR codes — store leaders + up see/print their stores' codes
   // (scoped by org in qsr-manage); admins also bulk-create + manage all.
   { to: "/qsr/share",   label: "Training QR Codes", icon: QrCode,      roles: ["shift_manager", "first_assistant_manager", "associate_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"], flagKey: "qsr_platform" },
@@ -220,6 +223,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/employee-actions": "PEOPLE",
   "/coaching": "PEOPLE",
   "/my-training": "PEOPLE",
+  "/qsr/manage": "PEOPLE",
   "/qsr/share": "PEOPLE",
   "/team-pipeline": "PEOPLE",
   "/contacts": "PEOPLE",
