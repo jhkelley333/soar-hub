@@ -64,7 +64,7 @@ export function ManagerDashboardPage() {
     <div className="mx-auto max-w-5xl space-y-6">
       <div className="flex items-center justify-between">
         <Link to="/qsr" className="inline-flex items-center gap-1.5 font-qsr-ui text-sm text-ink-muted hover:text-ink">
-          <ArrowLeft className="h-4 w-4" /> SOAR QSR
+          <ArrowLeft className="h-4 w-4" /> Soar MyLearning
         </Link>
         <div className="flex items-center gap-2">
           <Link to="/qsr/share" className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 font-qsr-ui text-sm font-semibold text-ink hover:border-qsr-azure">

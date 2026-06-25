@@ -129,7 +129,7 @@ export function LessonPlayer({ courseId: courseIdProp, onExit }: { courseId?: st
         ) : lessonQ.isError ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 p-7 text-center">
             <p className="text-sm text-ink-muted">{(lessonQ.error as Error)?.message || "Couldn't load this lesson."}</p>
-            <button type="button" onClick={exit} className="text-sm font-semibold text-qsr-azure">Back to SOAR QSR</button>
+            <button type="button" onClick={exit} className="text-sm font-semibold text-qsr-azure">Back to Soar MyLearning</button>
           </div>
         ) : card ? (
           <div key={index} className="qsr-card-in h-full">{renderCard(card)}</div>
