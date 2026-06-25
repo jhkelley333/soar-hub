@@ -4,7 +4,9 @@
 //   1. Workspace sign-offs   — listMySignoffs() (audits/forms/walkthroughs)
 //   2. PAF approvals         — listSdoQueue()   (bonus PAFs awaiting SDO+)
 //   3. Work order approvals  — fetchOpenWorkOrderAlerts() filtered to
-//                              "awaitingApproval" + "emergencies"
+//                              "awaitingApproval" only (dollar-routed
+//                              pay approvals; emergencies are awareness
+//                              reminders, not pay decisions)
 //
 // Each source's row gets normalized into a single ApprovalItem shape so
 // the page can render them in one tier-sorted list. Each row deep-links
@@ -217,15 +219,16 @@ export async function fetchApprovalsQueue(
     for (const p of pafRes.value.pafs ?? []) items.push(pafRow(p));
   }
 
-  // Work orders — only the awaitingApproval + emergencies groups belong
-  // in this queue. The other OpenAlerts groups (new24h, stuck, etc.)
-  // are reminders, not decisions.
+  // Work orders — ONLY the awaitingApproval group belongs in this queue.
+  // Those are the rows where someone requested approval to pay, routed to
+  // the caller's tier by dollar amount (tierForAmount: <$500 DO, $500-1000
+  // SDO, >$1000 RVP). The other OpenAlerts groups — emergencies, new24h,
+  // stuck — are awareness reminders, not pay decisions, and were polluting
+  // the queue with work orders that don't need an approval at all.
   if (woRes.status === "fulfilled" && woRes.value) {
     for (const g of woRes.value.groups) {
       if (g.key === "awaitingApproval") {
         for (const it of g.items) items.push(woRow(it, "yellow"));
-      } else if (g.key === "emergencies") {
-        for (const it of g.items) items.push(woRow(it, "red"));
       }
     }
   }
