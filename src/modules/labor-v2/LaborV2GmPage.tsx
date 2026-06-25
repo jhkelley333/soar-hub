@@ -8,7 +8,7 @@
 
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Check, Clock } from "lucide-react";
+import { AlertTriangle, Check, Clock, RefreshCw } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -57,12 +57,17 @@ export function LaborV2GmPage() {
             : "Review your numbers against chart and explain any miss."
         }
         actions={
-          data && data.notes_due > 0 ? (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-sonic-50 px-3 py-1.5 text-xs font-semibold text-sonic-700">
-              <Clock className="h-3.5 w-3.5" />
-              {data.notes_due} {data.notes_due === 1 ? "note" : "notes"} due
-            </span>
-          ) : undefined
+          <div className="flex flex-wrap items-center gap-2">
+            {data && data.notes_due > 0 && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-sonic-50 px-3 py-1.5 text-xs font-semibold text-sonic-700">
+                <Clock className="h-3.5 w-3.5" />
+                {data.notes_due} {data.notes_due === 1 ? "note" : "notes"} due
+              </span>
+            )}
+            <Button variant="secondary" size="sm" onClick={() => gmQ.refetch()} disabled={gmQ.isFetching}>
+              <RefreshCw className={cn("mr-1 h-3.5 w-3.5", gmQ.isFetching && "animate-spin")} /> Refresh
+            </Button>
+          </div>
         }
       />
 
