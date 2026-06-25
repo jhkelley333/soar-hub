@@ -21,6 +21,7 @@ const fmtPts = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : ""}$
 const fmtSignedUSD0 = (v: number | null) =>
   v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })}`;
 const fmtSignedHrs = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(Math.round(v)).toLocaleString("en-US")}`);
+const fmtRate2 = (v: number | null) => (v == null ? "—" : `+${v.toFixed(2)}`); // Hrs/Unit: per-store avg of over-stores, 2 dp (negatives hidden upstream)
 const fmtHrs = (v: number | null) => (v == null ? "—" : Math.round(v).toLocaleString("en-US"));
 const fmtDate = (s: string | null) =>
   s ? new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "—";
@@ -123,7 +124,7 @@ export function LaborV2TeamPage() {
       `*SOAR Labor — ${fmtDate(data.date)}*`,
       `Scope: ${scope} · ${data.scope.stores} stores`,
       "",
-      `DAY  ${band(t.day)} · ${fmtSignedUSD0(t.day.dollars_over_chart)} over · ${fmtSignedHrs(t.day.hours_over_chart)} hr/unit`,
+      `DAY  ${band(t.day)} · ${fmtSignedUSD0(t.day.dollars_over_chart)} over · ${fmtRate2(t.day.hours_over_chart)} hr/unit`,
       `WTD  ${band(t.wtd)} · ${fmtSignedUSD0(t.wtd.dollars_over_chart)} over`,
       `PTD  ${band(t.ptd)} · ${fmtSignedUSD0(t.ptd.dollars_over_chart)} over`,
       `Over chart: ${t.storesOver}/${data.scope.stores} stores · ${t.notesDue} notes due`,
@@ -218,7 +219,7 @@ export function LaborV2TeamPage() {
             <Tile label="PTD Labor %" value={fmtPctPts(t.ptd.labor_pct)} sub={t.ptd.dollars_over_chart ? `${fmtSignedUSD0(t.ptd.dollars_over_chart)} over · PTD` : "period-to-date"} tone={overTone(isOver(t.ptd))} />
             <Tile label="Stores Over Chart" value={`${t.storesOver} / ${data!.scope.stores}`} sub={`${data!.scope.stores - t.storesOver} on or under`} tone={overTone(t.storesOver > 0)} />
             <Tile label="Notes to Review" value={String(t.notesDue)} sub={`${t.notesExplained} already explained`} />
-            <Tile label="$ Over Chart · Day" value={fmtSignedUSD0(t.day.dollars_over_chart)} sub={`${fmtSignedHrs(t.day.hours_over_chart)} hrs/unit`} tone={overTone((t.day.dollars_over_chart ?? 0) > 0)} />
+            <Tile label="$ Over Chart · Day" value={fmtSignedUSD0(t.day.dollars_over_chart)} sub={`${fmtRate2(t.day.hours_over_chart)} hr/unit`} tone={overTone((t.day.dollars_over_chart ?? 0) > 0)} />
           </div>
 
           {/* List */}
@@ -313,7 +314,7 @@ function BandCells({ r }: { r: { day: TeamBand; wtd: TeamBand; ptd: TeamBand } }
       <span className="hidden w-14 text-right text-xs tabular-nums text-zinc-500 lg:block">{fmtPctPts(r.ptd.labor_pct)}</span>
       <span className={cn("w-14 text-right text-xs tabular-nums", over ? "text-red-700" : "text-zinc-500")}>{fmtPts(r.day.variance_pts)}</span>
       <span className={cn("w-20 text-right text-xs tabular-nums", over ? "text-red-700" : "text-zinc-500")}>{fmtSignedUSD0(r.day.dollars_over_chart)}</span>
-      <span className="w-14 text-right text-xs tabular-nums text-zinc-500">{fmtSignedHrs(r.day.hours_over_chart)}</span>
+      <span className="w-14 text-right text-xs tabular-nums text-zinc-500">{fmtRate2(r.day.hours_over_chart)}</span>
       <HoursCells band={r.day} />
     </>
   );

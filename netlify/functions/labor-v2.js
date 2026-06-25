@@ -112,6 +112,29 @@ function shapeBand(row, prefix) {
   };
 }
 
+// One store's hours over chart for a band ($ over ÷ that store's avg wage).
+function storeHoursOver(r, prefix) {
+  const cost = numv(r[prefix + "labor_cost"]);
+  const hours = numv(r[prefix + "labor_hours"]);
+  if (!hours) return null;
+  const chartAllowed = numv(r[prefix + "net_sales"]) * numv(r[prefix + "target_labor_pct"]);
+  return (cost - chartAllowed) / (cost / hours);
+}
+
+// Hrs/Unit: at the store level, the store's own hours over — but only if it's
+// over (negative/under is hidden). At District and above it's the average
+// across ONLY the over stores: sum of over-stores' hours over ÷ count of over
+// stores (under/on-chart stores are excluded from both sides).
+function hoursPerUnit(rows, prefix) {
+  if (rows.length === 1) {
+    const h = storeHoursOver(rows[0], prefix);
+    return h != null && h > 0 ? round2(h) : null;
+  }
+  let sum = 0, count = 0;
+  for (const r of rows) { const h = storeHoursOver(r, prefix); if (h && h > 0) { sum += h; count += 1; } }
+  return count ? round2(sum / count) : null;
+}
+
 // Aggregate one band (prefix "" = daily, "wtd_", "ptd_") across a set of store
 // rows, weighting from $ and hours (never averaging percentages). $ over chart =
 // cost − sales×target; hours over chart = $ over ÷ blended avg wage (cost÷hours).
@@ -124,16 +147,13 @@ function bandAgg(rows, prefix) {
   const laborPct = div(cost, sales);
   const targetPct = div(chartAllowed, sales);
   const dollarsOver = sales ? round2(cost - chartAllowed) : null;
-  const avgWage = hours ? cost / hours : null;
-  // Hours over chart, per unit: total hours over ÷ # stores in the rollup.
-  const hoursOverTotal = dollarsOver != null && avgWage ? dollarsOver / avgWage : null;
   return {
     sales,
     laborPct,
     targetPct,
     variancePts: laborPct != null && targetPct != null ? laborPct - targetPct : null,
     dollarsOver,
-    hoursOver: hoursOverTotal != null && rows.length ? round1(hoursOverTotal / rows.length) : null,
+    hoursOver: hoursPerUnit(rows, prefix),
     chartAllowed: sales ? round2(chartAllowed) : null,
     // Operational hours for the period (Sched / Actual / OT / Act−Sched).
     laborHours: hours,
@@ -411,15 +431,12 @@ function teamBand(rows, prefix) {
   const laborPct = sales ? round1((cost / sales) * 100) : null;
   const targetPct = sales ? round1((chartAllowed / sales) * 100) : null;
   const dollarsOver = sales ? round2(cost - chartAllowed) : null;
-  const avgWage = hours ? cost / hours : null;
-  // Hours over chart, per unit: total hours over ÷ # stores in the rollup.
-  const hoursOverTotal = dollarsOver != null && avgWage ? dollarsOver / avgWage : null;
   return {
     labor_pct: laborPct,
     target_pct: targetPct,
     variance_pts: laborPct != null && targetPct != null ? round1(laborPct - targetPct) : null,
     dollars_over_chart: dollarsOver,
-    hours_over_chart: hoursOverTotal != null && rows.length ? round1(hoursOverTotal / rows.length) : null,
+    hours_over_chart: hoursPerUnit(rows, prefix),
     scheduled_hours: s("scheduled_labor_hours"),
     actual_hours: hours,
     overtime_hours: s("overtime_hours"),
