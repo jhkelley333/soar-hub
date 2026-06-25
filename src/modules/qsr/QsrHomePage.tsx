@@ -43,7 +43,7 @@ export function QsrHomePage() {
       {/* Brand hero */}
       <div className="overflow-hidden rounded-[28px] bg-qsr-azure px-6 py-9 text-white sm:px-10 sm:py-11">
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.15em] text-white/70">
-          <Sparkles className="h-4 w-4 text-qsr-gold" /> SOAR QSR · Learning Platform
+          <Sparkles className="h-4 w-4 text-qsr-gold" /> Soar MyLearning · Learning Platform
         </div>
         <h1 className="mt-3 max-w-2xl font-qsr-display text-3xl font-bold leading-[1.1] sm:text-4xl">
           Frontline training that crews actually open.

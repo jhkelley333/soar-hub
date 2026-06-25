@@ -37,7 +37,7 @@ export function BuilderCoursesPage() {
   return (
     <div className="mx-auto max-w-4xl">
       <Link to="/qsr" className="inline-flex items-center gap-1.5 font-qsr-ui text-sm text-ink-muted hover:text-ink">
-        <ArrowLeft className="h-4 w-4" /> SOAR QSR
+        <ArrowLeft className="h-4 w-4" /> Soar MyLearning
       </Link>
 
       <div className="mt-3 flex items-center justify-between">

@@ -43,7 +43,7 @@ export function PublicLearnPage() {
       {/* brand hero */}
       <div className="bg-qsr-azure px-6 py-8 text-white">
         <div className="mx-auto flex max-w-md items-center gap-2 text-xs font-semibold uppercase tracking-[0.15em] text-white/70">
-          <Sparkles className="h-4 w-4 text-qsr-gold" /> SOAR QSR · Training
+          <Sparkles className="h-4 w-4 text-qsr-gold" /> Soar MyLearning · Training
         </div>
         <h1 className="mx-auto mt-2 max-w-md font-qsr-display text-2xl font-bold">{hub.store.number} — {hub.store.name}</h1>
         {learner && <p className="mx-auto mt-1 max-w-md font-qsr-ui text-sm text-white/85">Hi {learner.name.split(" ")[0]} 👋 Pick a course to start.</p>}

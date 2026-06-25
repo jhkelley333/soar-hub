@@ -97,7 +97,7 @@ export function MyTrainingPage() {
         </span>
         <div>
           <h1 className="font-qsr-display text-2xl font-bold text-ink">My Training</h1>
-          <p className="text-sm text-ink-muted">Required courses and the full SOAR QSR catalog.</p>
+          <p className="text-sm text-ink-muted">Required courses and the full Soar MyLearning catalog.</p>
         </div>
       </div>
 

@@ -50,7 +50,7 @@ export function SharePage() {
   return (
     <div className="mx-auto max-w-3xl space-y-6">
       <Link to="/qsr" className="inline-flex items-center gap-1.5 font-qsr-ui text-sm text-ink-muted hover:text-ink">
-        <ArrowLeft className="h-4 w-4" /> SOAR QSR
+        <ArrowLeft className="h-4 w-4" /> Soar MyLearning
       </Link>
 
       <div className="flex items-center gap-2">
