@@ -231,7 +231,7 @@ export function LaborV2TeamPage() {
             <Tile label="PTD Labor %" value={fmtPctPts(t.ptd.labor_pct)} sub={t.ptd.dollars_over_chart ? `${fmtSignedUSD0(t.ptd.dollars_over_chart)} over · PTD` : "period-to-date"} tone={overTone(isOver(t.ptd))} />
             <Tile label="Stores Over Chart" value={`${t.storesOver} / ${data!.scope.stores}`} sub={`${data!.scope.stores - t.storesOver} on or under`} tone={overTone(t.storesOver > 0)} />
             <Tile label="Notes to Review" value={String(t.notesDue)} sub={`${t.notesExplained} already explained`} />
-            <Tile label="$ Over Chart · Day" value={fmtSignedUSD0(t.day.dollars_over_chart)} sub={`${fmtRate2(t.day.hours_over_chart)} hr/unit`} tone={overTone((t.day.dollars_over_chart ?? 0) > 0)} />
+            <Tile label="$ Over Chart · Day" value={fmtSignedUSD0(t.day.dollars_over_chart)} sub={t.day.training_credit ? `incl. ${fmtSignedUSD0(-t.day.training_credit)} training credit` : `${fmtRate2(t.day.hours_over_chart)} hr/unit`} tone={overTone((t.day.dollars_over_chart ?? 0) > 0)} />
           </div>
 
           {/* List */}

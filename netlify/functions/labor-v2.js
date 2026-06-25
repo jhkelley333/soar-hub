@@ -8,6 +8,7 @@ import { fetchKpiFeed, kpiConfigured } from "./_lib/kpiFeed.js";
 import { extractLaborRows, feedBusinessDate, feedSectionReport, wallClockInTz } from "./_lib/kpiLabor.js";
 import { upsertLaborCloses } from "./_lib/laborCloses.js";
 import { fiscalForDate } from "./_lib/fiscal.js";
+import { loadTrainingCreditDates, applyCreditsToRows } from "./_lib/trainingCredit.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -108,6 +109,7 @@ function shapeBand(row, prefix) {
     hours_over_chart: hoursOver,
     chart_dollars_allowed: chartAllowed,
     avg_wage: avgWage == null ? null : round2(avgWage),
+    training_credit: round2((row._tc?.[prefix === "" ? "day" : prefix === "wtd_" ? "wtd" : "ptd"]?.amt) ?? 0),
     status: chartStatus(laborPct, goalPct),
   };
 }
@@ -273,6 +275,7 @@ async function summary(supa, params) {
 
   const { data: rows } = await supa.from("labor_v2_daily").select("*").eq("business_date", date);
   const numbers = [...new Set((rows || []).map((r) => String(r.store_number)).filter(Boolean))];
+  applyCreditsToRows(rows || [], await loadTrainingCreditDates(supa, numbers));
   const orgMap = await resolveOrg(supa, numbers);
 
   let matched = 0;
@@ -335,6 +338,7 @@ async function gmView(supa, user, params) {
     supa.from("labor_v2_daily").select("*").eq("store_number", storeNumber).gte("business_date", week[0]).lte("business_date", week[6]),
     supa.from("labor_reviews").select("*").eq("store_number", storeNumber).gte("business_date", week[0]).lte("business_date", week[6]),
   ]);
+  applyCreditsToRows(rows ?? [], await loadTrainingCreditDates(supa, [storeNumber]));
   const rowByDate = new Map((rows ?? []).map((r) => [r.business_date, r]));
   const reviewByDate = new Map((reviews ?? []).map((r) => [r.business_date, r]));
 
@@ -435,6 +439,8 @@ function teamBand(rows, prefix) {
   const laborPct = sales ? round1((cost / sales) * 100) : null;
   const targetPct = sales ? round1((chartAllowed / sales) * 100) : null;
   const dollarsOver = sales ? round2(cost - chartAllowed) : null;
+  const tcKey = prefix === "" ? "day" : prefix === "wtd_" ? "wtd" : "ptd";
+  const trainingCredit = round2(rows.reduce((a, r) => a + numv(r._tc?.[tcKey]?.amt), 0));
   return {
     labor_pct: laborPct,
     target_pct: targetPct,
@@ -445,6 +451,7 @@ function teamBand(rows, prefix) {
     actual_hours: hours,
     overtime_hours: s("overtime_hours"),
     act_vs_sched: s("actual_vs_scheduled_hours"),
+    training_credit: trainingCredit,
     status: chartStatus(laborPct, targetPct),
   };
 }
@@ -464,6 +471,7 @@ async function teamView(supa, user, params) {
     supa.from("labor_v2_daily").select("*").eq("business_date", anchor).in("store_number", numbers),
     supa.from("labor_reviews").select("store_number, note").eq("business_date", anchor).in("store_number", numbers),
   ]);
+  applyCreditsToRows(rows || [], await loadTrainingCreditDates(supa, numbers));
   const reviewByStore = new Map((reviews || []).map((r) => [String(r.store_number), r]));
   const orgMap = await resolveOrg(supa, numbers);
 
