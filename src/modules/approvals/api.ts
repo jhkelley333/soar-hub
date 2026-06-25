@@ -162,7 +162,16 @@ function pafRow(p: PafRow): ApprovalItem {
   };
 }
 
+// Over the top approval tier ($1,750) a quote can't be cleared in-app — it
+// needs a recorded WhatsApp / Owner sign-off. Mirrors ApprovalSection's
+// WHATSAPP_THRESHOLD_CENTS (175000). Such items still belong in the RVP's
+// approvals list; we surface them red with a clear notice so they're not
+// missed and the approver knows the WhatsApp step is required.
+const WHATSAPP_THRESHOLD_DOLLARS = 1750;
+
 function woRow(item: OpenAlertItem, tier: Tier): ApprovalItem {
+  const amount = item.cost_estimate ?? null;
+  const needsWhatsapp = amount != null && amount > WHATSAPP_THRESHOLD_DOLLARS;
   return {
     id: `work_order:${item.id}`,
     source: "work_order",
@@ -175,11 +184,11 @@ function woRow(item: OpenAlertItem, tier: Tier): ApprovalItem {
     // isn't in the payload. The row falls back to showing SDI alone,
     // which matches what the WO2 alerts widget does already.
     storeName: null,
-    tier,
+    tier: needsWhatsapp ? "red" : tier,
     score: null,
-    amount: item.cost_estimate ?? null,
+    amount,
     flagged: item.is_business_critical ? 1 : 0,
-    prior: null,
+    prior: needsWhatsapp ? "Over $1,750 — needs WhatsApp approval" : null,
     // WO2 routes deep-link via ?ticket=<id>
     deepLink: `/admin/work-orders-v2?ticket=${encodeURIComponent(item.id)}`,
   };
