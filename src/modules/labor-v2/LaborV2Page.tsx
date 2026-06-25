@@ -65,6 +65,8 @@ export function LaborV2Page() {
     queryKey: ["labor-v2-summary", date],
     queryFn: () => fetchLaborSummary({ date: date || undefined }),
     staleTime: 5 * 60_000,
+    refetchOnWindowFocus: true,
+    refetchInterval: 10 * 60_000, // auto-refresh; server self-heals stale data
   });
 
   const refresh = useMutation({

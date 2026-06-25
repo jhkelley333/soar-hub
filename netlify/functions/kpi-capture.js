@@ -54,19 +54,28 @@ export const handler = async (event) => {
     return { statusCode: 500, body: "SKUNKWORKS_KPI_URL is not a valid URL" };
   }
 
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), 15000);
+  // Fetch the feed with a few retries — the feed occasionally returns a
+  // non-JSON error page / 5xx, and a single blip shouldn't skip the capture.
   let payload;
-  try {
-    const res = await fetch(url, { headers: { Accept: "application/json" }, signal: ctrl.signal });
-    const text = await res.text();
-    if (!res.ok) return { statusCode: 502, body: `KPI feed responded ${res.status}: ${text.slice(0, 200)}` };
-    payload = JSON.parse(text);
-  } catch (e) {
-    const msg = e?.name === "AbortError" ? "timed out" : (e?.message || String(e));
-    return { statusCode: 502, body: `Couldn't reach the KPI feed: ${msg}` };
-  } finally {
-    clearTimeout(timer);
+  let lastErr = "";
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 15000);
+    try {
+      const res = await fetch(url, { headers: { Accept: "application/json" }, signal: ctrl.signal });
+      const text = await res.text();
+      if (!res.ok) { lastErr = `responded ${res.status}: ${text.slice(0, 150)}`; }
+      else { try { payload = JSON.parse(text); break; } catch { lastErr = `non-JSON: ${text.slice(0, 120).replace(/\s+/g, " ")}`; } }
+    } catch (e) {
+      lastErr = e?.name === "AbortError" ? "timed out" : (e?.message || String(e));
+    } finally {
+      clearTimeout(timer);
+    }
+    if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 2000)); // 2s, 4s backoff
+  }
+  if (!payload) {
+    console.log(`[kpi-capture] feed failed after retries: ${lastErr}`);
+    return { statusCode: 502, body: `Couldn't reach the KPI feed after retries: ${lastErr}` };
   }
 
   const centralDate = `${wc.year}-${String(wc.month).padStart(2, "0")}-${String(wc.day).padStart(2, "0")}`;
