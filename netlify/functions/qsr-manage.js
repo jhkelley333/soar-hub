@@ -19,6 +19,19 @@ function respond(statusCode, payload) {
 function isAuthor(role) {
   return ["admin"].includes(String(role));
 }
+// Store leaders + up can view/manage QR codes, scoped to their org.
+const STORE_LEADER_ROLES = new Set(["shift_manager", "associate_manager", "first_assistant_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]);
+const ORG_WIDE = new Set(["admin", "vp", "coo", "payroll"]);
+const TOKEN_ACTIONS = new Set(["tokens", "mintToken", "revokeToken", "tokenStores", "mintAllStores"]);
+
+// Store ids the caller may see (null = all, for org-wide roles).
+async function visibleStoreIds(supa, user) {
+  if (ORG_WIDE.has(String(user.role))) return null;
+  const { data } = await supa.rpc("user_visible_stores", { uid: user.id });
+  return new Set((data || []).map((v) => (typeof v === "string" ? v : v?.user_visible_stores)).filter(Boolean));
+}
+const newToken = () =>
+  `s_${(globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`).replace(/-/g, "")}`;
 async function getUser(supa, event) {
   const header = event.headers?.authorization || event.headers?.Authorization;
   if (!header?.startsWith("Bearer ")) return null;
@@ -212,30 +225,60 @@ async function completions(supa) {
 }
 
 // ── Public QR access tokens (one per store; see 0171 + qsr-public.js) ─────────
-async function listTokens(supa) {
+// Scoped to the caller's org: a GM sees their store's code, a DO their
+// district's, an RVP their region's; admins/org-wide see all.
+async function listTokens(supa, user) {
+  const visible = await visibleStoreIds(supa, user);
   const { data } = await supa.from("qsr_access_tokens").select("*").order("created_at", { ascending: false });
-  const storeIds = [...new Set((data || []).map((t) => t.store_id))];
+  let toks = data || [];
+  if (visible) toks = toks.filter((t) => visible.has(t.store_id));
+  const storeIds = [...new Set(toks.map((t) => t.store_id))];
   const { data: stores } = storeIds.length
     ? await supa.from("stores").select("id, number, name").in("id", storeIds) : { data: [] };
   const byId = new Map((stores || []).map((s) => [s.id, s]));
-  return { tokens: (data || []).map((t) => ({ ...t, store: byId.get(t.store_id) || null })) };
+  return { tokens: toks.map((t) => ({ ...t, store: byId.get(t.store_id) || null })) };
+}
+// The caller's stores, for the mint picker.
+async function tokenStores(supa, user) {
+  const visible = await visibleStoreIds(supa, user);
+  let q = supa.from("stores").select("id, number, name").eq("is_active", true).order("number");
+  if (visible) q = q.in("id", visible.size ? [...visible] : ["00000000-0000-0000-0000-000000000000"]);
+  const { data } = await q;
+  return { stores: data || [], canMintAll: isAuthor(user.role) };
 }
 async function mintToken(supa, user, body) {
   const { store_id, label } = body || {};
   if (!store_id) return { error: "store_id required.", status: 400 };
+  const visible = await visibleStoreIds(supa, user);
+  if (visible && !visible.has(store_id)) return { error: "That store is outside your scope.", status: 403 };
   // Reuse the store's existing active token so the posted QR stays stable.
   const { data: ex } = await supa.from("qsr_access_tokens")
     .select("*").eq("store_id", store_id).eq("is_active", true).is("revoked_at", null).maybeSingle();
   if (ex) return { token: ex };
-  const rand = (globalThis.crypto?.randomUUID?.() || `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`).replace(/-/g, "");
   const { data, error } = await supa.from("qsr_access_tokens")
-    .insert({ token: `s_${rand}`, store_id, label: label || null, created_by: user.id }).select().single();
+    .insert({ token: newToken(), store_id, label: label || null, created_by: user.id }).select().single();
   if (error) throw error;
   return { token: data };
+}
+// Admin: mint a code for every active store that doesn't have one yet.
+async function mintAllStores(supa, user) {
+  if (!isAuthor(user.role)) return { error: "Admins only.", status: 403 };
+  const [{ data: stores }, { data: existing }] = await Promise.all([
+    supa.from("stores").select("id").eq("is_active", true),
+    supa.from("qsr_access_tokens").select("store_id").eq("is_active", true).is("revoked_at", null),
+  ]);
+  const have = new Set((existing || []).map((t) => t.store_id));
+  const rows = (stores || []).filter((s) => !have.has(s.id)).map((s) => ({ token: newToken(), store_id: s.id, created_by: user.id }));
+  if (rows.length) { const { error } = await supa.from("qsr_access_tokens").insert(rows); if (error) throw error; }
+  return { created: rows.length, total: (stores || []).length };
 }
 async function revokeToken(supa, user, body) {
   const { id } = body || {};
   if (!id) return { error: "id required.", status: 400 };
+  const { data: tok } = await supa.from("qsr_access_tokens").select("store_id").eq("id", id).maybeSingle();
+  if (!tok) return { error: "Code not found.", status: 404 };
+  const visible = await visibleStoreIds(supa, user);
+  if (visible && !visible.has(tok.store_id)) return { error: "That store is outside your scope.", status: 403 };
   const { error } = await supa.from("qsr_access_tokens")
     .update({ is_active: false, revoked_at: new Date().toISOString(), revoked_by: user.id }).eq("id", id);
   if (error) throw error;
@@ -248,10 +291,16 @@ export const handler = async (event) => {
   try { supa = admin(); } catch (e) { return respond(500, { error: e.message }); }
   const user = await getUser(supa, event).catch(() => null);
   if (!user) return respond(401, { error: "unauthorized" });
-  if (!isAuthor(user.role)) return respond(403, { error: "forbidden" });
 
   const params = event.queryStringParameters || {};
   const action = params.action || "overview";
+  // QR-code actions are open to store leaders (scoped to their org); the rest of
+  // the manager dashboard stays admin/author-only.
+  if (TOKEN_ACTIONS.has(action)) {
+    if (!STORE_LEADER_ROLES.has(String(user.role))) return respond(403, { error: "forbidden" });
+  } else if (!isAuthor(user.role)) {
+    return respond(403, { error: "forbidden" });
+  }
   let body = {};
   if (event.httpMethod === "POST") { try { body = JSON.parse(event.body || "{}"); } catch { body = {}; } }
 
@@ -263,8 +312,10 @@ export const handler = async (event) => {
     if (action === "assignments") return unwrap(await listAssignments(supa));
     if (action === "assign") return unwrap(await assign(supa, user, body));
     if (action === "unassign") return unwrap(await unassign(supa, body));
-    if (action === "tokens") return unwrap(await listTokens(supa));
+    if (action === "tokens") return unwrap(await listTokens(supa, user));
+    if (action === "tokenStores") return unwrap(await tokenStores(supa, user));
     if (action === "mintToken") return unwrap(await mintToken(supa, user, body));
+    if (action === "mintAllStores") return unwrap(await mintAllStores(supa, user));
     if (action === "revokeToken") return unwrap(await revokeToken(supa, user, body));
     if (action === "completions") return unwrap(await completions(supa));
     return respond(400, { error: `Unknown action: ${action}` });

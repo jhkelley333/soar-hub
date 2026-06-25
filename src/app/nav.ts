@@ -30,6 +30,7 @@ import {
   CloudSun,
   BarChart3,
   ScrollText,
+  QrCode,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -115,6 +116,9 @@ export const NAV: NavItem[] = [
   // list is empty (with a friendly note) for anyone with nothing assigned, and
   // it's the persistent place to find required training the login pop-up nags about.
   { to: "/my-training", label: "My Training",  icon: BookOpenCheck,   roles: null },
+  // Training QR codes — store leaders + up see/print their stores' codes
+  // (scoped by org in qsr-manage); admins also bulk-create + manage all.
+  { to: "/qsr/share",   label: "Training QR Codes", icon: QrCode,      roles: ["shift_manager", "first_assistant_manager", "associate_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"], flagKey: "qsr_platform" },
   // Team Pipeline — Talent Planning. Gated behind the team_pipeline flag:
   // roles:[] means it stays dark until the flag resolves true for the user
   // (admins always see it). Scoped to the viewer's org tree in-app.
@@ -216,6 +220,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/employee-actions": "PEOPLE",
   "/coaching": "PEOPLE",
   "/my-training": "PEOPLE",
+  "/qsr/share": "PEOPLE",
   "/team-pipeline": "PEOPLE",
   "/contacts": "PEOPLE",
   "/team": "PEOPLE",

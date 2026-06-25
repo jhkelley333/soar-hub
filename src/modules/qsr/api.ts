@@ -279,6 +279,13 @@ export interface QsrAccessToken {
 export function fetchAccessTokens(): Promise<{ tokens: QsrAccessToken[] }> {
   return learnFetch(`${MANAGE_FN}?action=tokens`);
 }
+// The caller's stores (scoped) for the mint picker + whether they can bulk-mint.
+export function fetchTokenStores(): Promise<{ stores: { id: string; number: string; name: string }[]; canMintAll: boolean }> {
+  return learnFetch(`${MANAGE_FN}?action=tokenStores`);
+}
+export function mintAllStores(): Promise<{ created: number; total: number }> {
+  return learnFetch(`${MANAGE_FN}?action=mintAllStores`, { method: "POST", body: "{}" });
+}
 export function mintAccessToken(store_id: string, label?: string): Promise<{ token: QsrAccessToken }> {
   return learnFetch(`${MANAGE_FN}?action=mintToken`, { method: "POST", body: JSON.stringify({ store_id, label }) });
 }

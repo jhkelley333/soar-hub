@@ -5,9 +5,10 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
-import { ArrowLeft, Check, Copy, Loader2, QrCode, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, Copy, Loader2, QrCode, Stamp, Trash2 } from "lucide-react";
 import { useToast } from "@/shared/ui/Toaster";
-import { fetchAccessTokens, mintAccessToken, revokeAccessToken, fetchAssignTargets } from "../api";
+import { useAuth } from "@/auth/AuthProvider";
+import { fetchAccessTokens, mintAccessToken, revokeAccessToken, fetchTokenStores, mintAllStores } from "../api";
 
 const learnUrl = (token: string) => `${window.location.origin}/learn/${token}`;
 
@@ -20,9 +21,11 @@ function QrThumb({ url }: { url: string }) {
 export function SharePage() {
   const qc = useQueryClient();
   const toast = useToast();
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === "admin";
   const tokensQ = useQuery({ queryKey: ["qsr", "tokens"], queryFn: fetchAccessTokens });
-  const targetsQ = useQuery({ queryKey: ["qsr", "manage", "targets"], queryFn: fetchAssignTargets });
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["qsr", "tokens"] });
+  const storesQ = useQuery({ queryKey: ["qsr", "tokenStores"], queryFn: fetchTokenStores });
+  const invalidate = () => { qc.invalidateQueries({ queryKey: ["qsr", "tokens"] }); qc.invalidateQueries({ queryKey: ["qsr", "tokenStores"] }); };
 
   const [storeId, setStoreId] = useState("");
   const [copied, setCopied] = useState("");
@@ -31,6 +34,11 @@ export function SharePage() {
   const mint = useMutation({
     mutationFn: () => mintAccessToken(storeId),
     onSuccess: () => { toast.push("Store code ready.", "success"); setStoreId(""); invalidate(); },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Failed.", "error"),
+  });
+  const mintAll = useMutation({
+    mutationFn: () => mintAllStores(),
+    onSuccess: (r) => { toast.push(r.created ? `Created ${r.created} new code${r.created === 1 ? "" : "s"} (${r.total} stores).` : `All ${r.total} stores already have a code.`, "success"); invalidate(); },
     onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Failed.", "error"),
   });
   const revoke = useMutation({
@@ -45,12 +53,13 @@ export function SharePage() {
 
   const active = (tokensQ.data?.tokens ?? []).filter((t) => t.is_active && !t.revoked_at);
   const usedStoreIds = new Set(active.map((t) => t.store_id));
-  const availableStores = (targetsQ.data?.stores ?? []).filter((s) => !usedStoreIds.has(s.id));
+  const availableStores = (storesQ.data?.stores ?? []).filter((s) => !usedStoreIds.has(s.id));
+  const canMintAll = !!storesQ.data?.canMintAll;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      <Link to="/qsr" className="inline-flex items-center gap-1.5 font-qsr-ui text-sm text-ink-muted hover:text-ink">
-        <ArrowLeft className="h-4 w-4" /> Soar MyLearning
+      <Link to={isAdmin ? "/qsr" : "/my-training"} className="inline-flex items-center gap-1.5 font-qsr-ui text-sm text-ink-muted hover:text-ink">
+        <ArrowLeft className="h-4 w-4" /> {isAdmin ? "Soar MyLearning" : "My Training"}
       </Link>
 
       <div className="flex items-center gap-2">
@@ -73,6 +82,11 @@ export function SharePage() {
         <button type="button" onClick={() => mint.mutate()} disabled={!storeId || mint.isPending} className="inline-flex items-center gap-1.5 rounded-lg bg-qsr-azure px-3 py-2 font-qsr-ui text-sm font-semibold text-white hover:brightness-110 disabled:opacity-40">
           {mint.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <QrCode className="h-4 w-4" />} Generate
         </button>
+        {canMintAll && (
+          <button type="button" onClick={() => { if (confirm("Create a QR code for every store that doesn't have one yet?")) mintAll.mutate(); }} disabled={mintAll.isPending} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 font-qsr-ui text-sm font-semibold text-ink hover:border-qsr-azure disabled:opacity-40">
+            {mintAll.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Stamp className="h-4 w-4" />} Create for all stores
+          </button>
+        )}
       </div>
 
       {/* Active codes */}
