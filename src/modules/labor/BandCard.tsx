@@ -109,7 +109,10 @@ export function BandCard({
         {band?.avg_wage != null && <Metric label="Avg Wage" value={`${fmtMoneyCents(band.avg_wage)}/hr`} />}
       </dl>
       {!!band?.training_credit && (
-        <p className="mt-2 text-[11px] text-zinc-500">incl. {fmtMoney(band.training_credit)} training credit</p>
+        <p className="mt-2 text-[11px] text-zinc-500">
+          incl. {fmtMoney(band.training_credit)} training credit
+          {band.labor_pct_pre != null ? ` (labor was ${fmtPct(band.labor_pct_pre)})` : ""}
+        </p>
       )}
     </div>
   );

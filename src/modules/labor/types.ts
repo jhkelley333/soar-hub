@@ -20,6 +20,7 @@ export interface LaborBand {
   chart_dollars_allowed: number | null;
   avg_wage?: number | null;        // labor cost ÷ labor hours (Labor v2 only)
   training_credit?: number | null; // approved training $ credited out of this band (Labor v2)
+  labor_pct_pre?: number | null;   // labor % before the training credit (Labor v2)
   status: ChartStatus;
 }
 

@@ -111,6 +111,8 @@ function shapeBand(row, prefix) {
     chart_dollars_allowed: chartAllowed,
     avg_wage: avgWage == null ? null : round2(avgWage),
     training_credit: round2((row._tc?.[prefix === "" ? "day" : prefix === "wtd_" ? "wtd" : "ptd"]?.amt) ?? 0),
+    labor_pct_pre: row._tcPre?.[prefix === "" ? "day" : prefix === "wtd_" ? "wtd" : "ptd"] != null
+      ? round1(Number(row._tcPre[prefix === "" ? "day" : prefix === "wtd_" ? "wtd" : "ptd"]) * 100) : null,
     status: chartStatus(laborPct, goalPct),
   };
 }
