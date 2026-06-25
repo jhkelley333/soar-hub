@@ -29,6 +29,7 @@ import {
   BookOpenCheck,
   CloudSun,
   BarChart3,
+  ScrollText,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -128,6 +129,7 @@ export const NAV: NavItem[] = [
   { to: "/admin/org",   label: "Org Admin",   icon: Network,         roles: ["vp", "coo", "admin"] },
   { to: "/admin/kpi",   label: "KPI Dashboard", icon: BarChart3,   roles: ["admin"] },
   { to: "/admin/labor-v2", label: "Labor v2 · Rollup", icon: Gauge, roles: ["admin"] },
+  { to: "/admin/labor-v2/log", label: "Pull Log", icon: ScrollText, roles: ["admin"] },
   { to: "/admin/bulk-attributes", label: "Bulk Attributes", icon: Layers, roles: ["admin"] },
   { to: "/admin/feature-flags",   label: "Feature Flags",   icon: Flag,   roles: ["admin"] },
   { to: "/admin/role-access",     label: "Role Access",     icon: KeyRound, roles: ["admin"] },

@@ -35,6 +35,27 @@ export function fetchLaborDates(): Promise<{ dates: string[] }> {
   return req(`${FN}?action=dates`);
 }
 
+export interface PullLogEntry {
+  id: string;
+  created_at: string;
+  source: string;            // 'cron' | 'refresh' | 'self-heal'
+  ok: boolean;
+  business_date: string | null;
+  store_rows: number | null;
+  wtd_rows: number | null;
+  ptd_rows: number | null;
+  kpi_snapshot: boolean | null;
+  central_date: string | null;
+  central_hour: number | null;
+  triggered_by: string | null;
+  duration_ms: number | null;
+  error: string | null;
+}
+
+export function fetchPullLog(): Promise<{ entries: PullLogEntry[] }> {
+  return req(`${FN}?action=pull-log`);
+}
+
 // ── Leadership "Team labor" rollup (drill Region → Market → District → Store) ─
 export function fetchLaborV2Team(date?: string): Promise<TeamLaborResponse> {
   const p = new URLSearchParams({ action: "team" });

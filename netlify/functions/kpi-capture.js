@@ -12,6 +12,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { extractLaborRows, feedBusinessDate } from "./_lib/kpiLabor.js";
 import { upsertLaborCloses } from "./_lib/laborCloses.js";
+import { logPull } from "./_lib/pullLog.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -39,6 +40,8 @@ export const handler = async (event) => {
   if (!force && !CAPTURE_HOURS.includes(wc.hour)) {
     return { statusCode: 200, body: `skip — ${wc.hour}:00 CT is not a capture hour` };
   }
+  const started = Date.now();
+  const centralDate = `${wc.year}-${String(wc.month).padStart(2, "0")}-${String(wc.day).padStart(2, "0")}`;
   if (!KPI_URL || !KPI_TOKEN || !SUPABASE_URL || !SERVICE_KEY) {
     return { statusCode: 200, body: "kpi-capture not configured (env vars missing)" };
   }
@@ -73,13 +76,13 @@ export const handler = async (event) => {
     }
     if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 2000)); // 2s, 4s backoff
   }
+  const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
   if (!payload) {
     console.log(`[kpi-capture] feed failed after retries: ${lastErr}`);
+    await logPull(supa, { source: "cron", ok: false, central_date: centralDate, central_hour: wc.hour, error: lastErr, duration_ms: Date.now() - started });
     return { statusCode: 502, body: `Couldn't reach the KPI feed after retries: ${lastErr}` };
   }
 
-  const centralDate = `${wc.year}-${String(wc.month).padStart(2, "0")}-${String(wc.day).padStart(2, "0")}`;
-  const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
   const { error } = await supa
     .from("kpi_snapshots")
     .upsert(
@@ -106,6 +109,12 @@ export const handler = async (event) => {
   try { closes = await upsertLaborCloses(supa, extracted, businessDate); }
   catch (e) { console.log(`[kpi-capture] close snapshot failed: ${e.message}`); }
 
+  await logPull(supa, {
+    source: "cron", ok: true, business_date: businessDate, store_rows: laborStored,
+    wtd_rows: extracted.filter((r) => r.wtd_net_sales != null).length,
+    ptd_rows: extracted.filter((r) => r.ptd_net_sales != null).length,
+    kpi_snapshot: true, central_date: centralDate, central_hour: wc.hour, duration_ms: Date.now() - started,
+  });
   console.log(`[kpi-capture] stored snapshot for ${centralDate} ${wc.hour}:00 CT · labor rows ${laborStored} (${businessDate}) · closes w${closes.weeks}/p${closes.periods}`);
   return { statusCode: 200, body: `captured ${centralDate} ${wc.hour}:00 CT · labor ${laborStored} rows for ${businessDate} · closes ${closes.weeks}w/${closes.periods}p` };
 };

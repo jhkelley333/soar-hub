@@ -9,6 +9,7 @@ import { extractLaborRows, feedBusinessDate, feedSectionReport, wallClockInTz } 
 import { upsertLaborCloses } from "./_lib/laborCloses.js";
 import { fiscalForDate } from "./_lib/fiscal.js";
 import { loadTrainingCreditDates, applyCreditsToRows } from "./_lib/trainingCredit.js";
+import { logPull } from "./_lib/pullLog.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -228,37 +229,52 @@ async function listDates(supa) {
 }
 
 // Pull the feed now and upsert into labor_v2_daily; returns the business date.
-async function refreshNow(supa) {
-  if (!kpiConfigured()) throw new Error("KPI feed isn't configured.");
-  const payload = await fetchKpiFeed();
-  const wc = wallClockInTz(new Date(), TZ);
-  const businessDate = feedBusinessDate(payload, wc);
-  const extracted = extractLaborRows(payload);
-  const rows = extracted.map((r) => ({ ...r, business_date: businessDate, captured_at: new Date().toISOString() }));
-  if (rows.length) {
-    const { error } = await supa.from("labor_v2_daily").upsert(rows, { onConflict: "store_number,business_date" });
-    // Surface write failures instead of swallowing them — a missing column
-    // (e.g. migration 0187 not applied) would otherwise leave stale rows with
-    // no signal. The Postgres message names the offending column.
-    if (error) throw new Error(`Couldn't save labor rows: ${error.message}`);
+// ctx = { source, triggeredBy } for the pull log.
+async function refreshNow(supa, ctx = {}) {
+  const started = Date.now();
+  const source = ctx.source || "refresh";
+  try {
+    if (!kpiConfigured()) throw new Error("KPI feed isn't configured.");
+    const payload = await fetchKpiFeed();
+    const wc = wallClockInTz(new Date(), TZ);
+    const businessDate = feedBusinessDate(payload, wc);
+    const extracted = extractLaborRows(payload);
+    const rows = extracted.map((r) => ({ ...r, business_date: businessDate, captured_at: new Date().toISOString() }));
+    if (rows.length) {
+      const { error } = await supa.from("labor_v2_daily").upsert(rows, { onConflict: "store_number,business_date" });
+      // Surface write failures instead of swallowing them — a missing column
+      // (e.g. migration 0187 not applied) would otherwise leave stale rows with
+      // no signal. The Postgres message names the offending column.
+      if (error) throw new Error(`Couldn't save labor rows: ${error.message}`);
+    }
+    // If this business date closes a fiscal week / period, snapshot the final
+    // WTD / PTD into the close ledgers (idempotent).
+    try { await upsertLaborCloses(supa, extracted, businessDate); }
+    catch (e) { console.log(`[labor-v2] close snapshot failed: ${e.message}`); }
+    // Report how many rows carried each band, so the UI can confirm WTD/PTD
+    // actually came through the feed (vs. a silent extraction miss).
+    const report = feedSectionReport(payload);
+    const counts = {
+      stores: extracted.length,
+      wtd: extracted.filter((r) => r.wtd_net_sales != null).length,
+      ptd: extracted.filter((r) => r.ptd_net_sales != null).length,
+      feedKeys: report.feedKeys,
+    };
+    await logPull(supa, { source, ok: true, business_date: businessDate, store_rows: counts.stores, wtd_rows: counts.wtd, ptd_rows: counts.ptd, triggered_by: ctx.triggeredBy, duration_ms: Date.now() - started });
+    return { businessDate, counts };
+  } catch (e) {
+    await logPull(supa, { source, ok: false, error: e.message, triggered_by: ctx.triggeredBy, duration_ms: Date.now() - started });
+    throw e;
   }
-  // If this business date closes a fiscal week / period, snapshot the final
-  // WTD / PTD into the close ledgers (idempotent).
-  try { await upsertLaborCloses(supa, extracted, businessDate); }
-  catch (e) { console.log(`[labor-v2] close snapshot failed: ${e.message}`); }
-  // Report how many rows carried each band, so the UI can confirm WTD/PTD
-  // actually came through the feed (vs. a silent extraction miss).
-  const report = feedSectionReport(payload);
-  const counts = {
-    stores: extracted.length,
-    wtd: extracted.filter((r) => r.wtd_net_sales != null).length,
-    ptd: extracted.filter((r) => r.ptd_net_sales != null).length,
-    feedKeys: report.feedKeys,
-  };
-  return { businessDate, counts };
 }
 
-async function summary(supa, params) {
+// Recent pull-log rows for the admin log page.
+async function pullLog(supa) {
+  const { data } = await supa.from("kpi_pull_log").select("*").order("created_at", { ascending: false }).limit(200);
+  return { entries: data || [] };
+}
+
+async function summary(supa, params, user) {
   let date = params.date && /^\d{4}-\d{2}-\d{2}$/.test(params.date) ? params.date : null;
 
   // Refresh from the live feed when asked, when there's no history yet, or when
@@ -272,7 +288,8 @@ async function summary(supa, params) {
     const expected = yest.toISOString().slice(0, 10); // feed serves the previous business day
     const stale = !latest || latest < expected;
     if (params.refresh === "1" || stale) {
-      try { const r = await refreshNow(supa); if (!date) date = r.businessDate; refreshed = r.counts; }
+      const ctx = { source: params.refresh === "1" ? "refresh" : "self-heal", triggeredBy: user?.email };
+      try { const r = await refreshNow(supa, ctx); if (!date) date = r.businessDate; refreshed = r.counts; }
       catch (e) { if (!latest) return { error: e.message, status: 502 }; /* keep serving stale data */ }
     }
     if (!date) date = latest;
@@ -610,9 +627,10 @@ export const handler = async (event) => {
     // Admin-only org rollup.
     if (!isAdmin) return respond(403, { error: "Admins only." });
     if (action === "dates") return respond(200, await listDates(supa));
+    if (action === "pull-log") return respond(200, { ok: true, ...(await pullLog(supa)) });
     if (action === "backfill-closes") return unwrap(await backfillCloses(supa));
     if (action === "summary") {
-      const out = await summary(supa, params);
+      const out = await summary(supa, params, user);
       if (out?.error) return respond(out.status || 500, { error: out.error });
       return respond(200, { ok: true, ...out });
     }
