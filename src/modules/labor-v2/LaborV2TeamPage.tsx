@@ -68,7 +68,7 @@ export function LaborV2TeamPage() {
   const [period, setPeriod] = useState<LaborPeriod>("day"); // mobile cards: which period headlines
   const [shareDraft, setShareDraft] = useState<string | null>(null);
 
-  const q = useQuery({ queryKey: ["labor-v2-team"], queryFn: () => fetchLaborV2Team(), staleTime: 5 * 60_000 });
+  const q = useQuery({ queryKey: ["labor-v2-team"], queryFn: () => fetchLaborV2Team(), staleTime: 5 * 60_000, refetchOnWindowFocus: true, refetchInterval: 10 * 60_000 });
   const data = q.data;
   const t = data?.totals ?? null;
   const missing = data?.missing ?? [];

@@ -261,15 +261,21 @@ async function refreshNow(supa) {
 async function summary(supa, params) {
   let date = params.date && /^\d{4}-\d{2}-\d{2}$/.test(params.date) ? params.date : null;
 
-  // Refresh from the live feed when asked, or when there's no history yet.
+  // Refresh from the live feed when asked, when there's no history yet, or when
+  // the latest data is stale (the scheduled capture missed — self-heal).
   let refreshed = null;
   if (params.refresh === "1" || !date) {
     const { data: anyRow } = await supa.from("labor_v2_daily").select("business_date").order("business_date", { ascending: false }).limit(1);
-    if (params.refresh === "1" || !anyRow?.length) {
+    const latest = anyRow?.[0]?.business_date ?? null;
+    const wc = wallClockInTz(new Date(), TZ);
+    const yest = new Date(Date.UTC(wc.year, wc.month - 1, wc.day)); yest.setUTCDate(yest.getUTCDate() - 1);
+    const expected = yest.toISOString().slice(0, 10); // feed serves the previous business day
+    const stale = !latest || latest < expected;
+    if (params.refresh === "1" || stale) {
       try { const r = await refreshNow(supa); if (!date) date = r.businessDate; refreshed = r.counts; }
-      catch (e) { if (!anyRow?.length) return { error: e.message, status: 502 }; throw e; }
+      catch (e) { if (!latest) return { error: e.message, status: 502 }; /* keep serving stale data */ }
     }
-    if (!date) date = anyRow?.[0]?.business_date ?? null;
+    if (!date) date = latest;
   }
   if (!date) return { date: null, total: null, scope: { matched: 0, unmatched: 0 }, levels: { region: [], area: [], district: [], store: [] } };
 

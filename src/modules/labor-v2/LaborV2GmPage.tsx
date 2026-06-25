@@ -39,6 +39,8 @@ export function LaborV2GmPage() {
     queryKey: [GM_QK, store, date ?? "latest"],
     queryFn: () => fetchLaborV2Gm(store, date),
     enabled: !!store,
+    refetchOnWindowFocus: true,
+    refetchInterval: 10 * 60_000,
   });
 
   const data = gmQ.data;
