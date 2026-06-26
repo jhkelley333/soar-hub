@@ -1,4 +1,4 @@
--- 0169_chat_message_soft_delete.sql
+-- 0192_chat_message_soft_delete.sql
 -- Soft-delete for chat messages: a deleted_at/deleted_by stamp keeps the row
 -- (audit + thread continuity) while the UI shows a "message deleted" tombstone.
 -- The inbox unread/mention RPC is updated to ignore deleted messages, so
