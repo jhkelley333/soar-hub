@@ -13,6 +13,9 @@ export interface OrgManager {
   full_name: string | null;
   email: string;
   role: UserRole;
+  // True when this person covers the node via additional ("acting") scope
+  // rather than their primary role assignment.
+  acting?: boolean;
 }
 
 export type DriveThruType = "single_pole_two_menus" | "split_housing";

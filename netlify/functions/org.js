@@ -256,7 +256,23 @@ async function getMyTree(supa, user) {
     .from("user_scopes")
     .select("user_id, scope_type, scope_id")
     .in("scope_type", ["store", "district", "area", "region"]);
-  const scopedUserIds = Array.from(new Set((scopeRows ?? []).map((r) => r.user_id)));
+  // Additional ("acting") coverage feeds the same leadership resolution, so an
+  // RVP covering an area as acting SDO shows in that store's SDO slot. Only
+  // non-expired rows count.
+  const nowIso = new Date().toISOString();
+  const { data: addlScopeRows } = await supa
+    .from("additional_scopes")
+    .select("user_id, scope_type, scope_id, expires_at")
+    .in("scope_type", ["store", "district", "area", "region"]);
+  const activeAddl = (addlScopeRows ?? []).filter(
+    (r) => !r.expires_at || r.expires_at > nowIso
+  );
+  const scopedUserIds = Array.from(
+    new Set([
+      ...(scopeRows ?? []).map((r) => r.user_id),
+      ...activeAddl.map((r) => r.user_id),
+    ])
+  );
   let scopedProfiles = [];
   if (scopedUserIds.length) {
     const { data } = await supa
@@ -272,17 +288,33 @@ async function getMyTree(supa, user) {
 
   function findManager(role, scopeType, scopeId) {
     if (!scopeId) return null;
-    const matches = (scopeRows ?? []).filter(
+    const primary = (scopeRows ?? []).filter(
       (s) => s.scope_type === scopeType && s.scope_id === scopeId
-        && profileById.get(s.user_id)?.role === role
     );
-    if (matches.length === 0) return null;
-    // Stable order: when more than one user has the same role + scope
-    // (rare but possible during a transition), pick the lowest user_id
-    // so the leadership card resolves to the SAME person across calls
-    // instead of flipping based on database row order.
-    matches.sort((a, b) => a.user_id.localeCompare(b.user_id));
-    return profileById.get(matches[0].user_id);
+    const additional = activeAddl.filter(
+      (s) => s.scope_type === scopeType && s.scope_id === scopeId
+    );
+    // Preference, best first: a primary-scope holder whose role matches the
+    // slot, then an acting (additional) holder whose role matches, then any
+    // primary holder, then any acting holder — e.g. an RVP covering an area as
+    // acting SDO fills the SDO slot when no real SDO is assigned. Within a
+    // tier, lowest user_id for a stable pick across calls.
+    const tiers = [
+      { rows: primary.filter((s) => profileById.get(s.user_id)?.role === role), acting: false },
+      { rows: additional.filter((s) => profileById.get(s.user_id)?.role === role), acting: true },
+      { rows: primary, acting: false },
+      { rows: additional, acting: true },
+    ];
+    for (const tier of tiers) {
+      const valid = tier.rows.filter((s) => profileById.get(s.user_id));
+      if (valid.length) {
+        valid.sort((a, b) => a.user_id.localeCompare(b.user_id));
+        // acting = filling this slot via additional coverage, not a primary
+        // role assignment (e.g. an RVP covering an area as SDO).
+        return { ...profileById.get(valid[0].user_id), acting: tier.acting };
+      }
+    }
+    return null;
   }
 
   // GM per store: union of two sources of truth, since the codebase has

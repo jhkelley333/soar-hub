@@ -938,14 +938,17 @@ function ManagerChips({ managers }: { managers: OrgManager[] }) {
       {managers.map((m) => (
         <span
           key={m.id}
-          className="inline-flex items-center gap-1 rounded bg-zinc-100 px-2 py-0.5 text-xs"
-          title={m.email}
+          className={`inline-flex items-center gap-1 rounded px-2 py-0.5 text-xs ${
+            m.acting ? "bg-amber-50 ring-1 ring-amber-200" : "bg-zinc-100"
+          }`}
+          title={m.acting ? `${m.email} · acting coverage` : m.email}
         >
           <span className="font-medium text-zinc-700">
             {m.full_name?.trim() || m.email}
           </span>
           <span className="text-zinc-400">·</span>
           <span className="text-zinc-500">{ROLE_LABELS[m.role] ?? m.role}</span>
+          {m.acting && <span className="text-amber-600">· acting</span>}
         </span>
       ))}
     </div>

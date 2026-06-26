@@ -102,6 +102,9 @@ export interface LeadershipPerson {
   preferred_name: string | null;
   role: string;
   profile_photo_url?: string | null;
+  // True when this person fills the slot via additional ("acting") coverage
+  // rather than their primary role (e.g. an RVP covering an area as SDO).
+  acting?: boolean;
 }
 
 export interface StoreLeadership {
