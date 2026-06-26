@@ -165,7 +165,9 @@ export function TeamPage() {
       <AddUserModal open={addOpen} onClose={() => setAddOpen(false)} />
       <EditMemberModal
         open={!!editing}
-        member={editing}
+        // Read the live row from the query so in-modal edits (e.g. adding
+        // coverage) reflect immediately after a refetch, not a stale snapshot.
+        member={editing ? (data.members.find((m) => m.id === editing.id) ?? editing) : null}
         managerRole={data.user.role}
         onClose={() => setEditing(null)}
       />

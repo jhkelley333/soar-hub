@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
@@ -8,14 +8,17 @@ import { useToast } from "@/shared/ui/Toaster";
 import { ROLE_LABELS, type UserRole } from "@/types/database";
 import { formatPhoneForDisplay, normalizePhone } from "@/lib/phone";
 import {
+  addScope,
   fetchHistory,
   fetchManageableRoles,
   fetchScopeOptions,
   permDeleteUser,
+  removeScope,
   sendPasswordReset,
   updateUser,
   type AuditEntry,
   type ManagedUser,
+  type ScopeOptionsResponse,
   type UpdateUserInput,
 } from "./api";
 
@@ -90,9 +93,18 @@ export function EditMemberModal({
   const [gmAssignedDate, setGmAssignedDate] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  // Hydrate the form whenever the modal opens for a (different) member.
+  // Hydrate the form whenever the modal opens for a (different) member. Guard
+  // on the member ID so a live-data refetch (e.g. after adding coverage, which
+  // hands us a new object with the same id) refreshes the coverage list
+  // WITHOUT clobbering unsaved edits in the main form.
+  const hydratedIdRef = useRef<string | null>(null);
   useEffect(() => {
-    if (open && member) {
+    if (!open) {
+      hydratedIdRef.current = null;
+      return;
+    }
+    if (member && hydratedIdRef.current !== member.id) {
+      hydratedIdRef.current = member.id;
       setFullName(member.full_name ?? "");
       setEmail(member.email ?? "");
       setPhone(member.phone ? formatPhoneForDisplay(member.phone) : "");
@@ -219,6 +231,10 @@ export function EditMemberModal({
   const canEditEmail = (["do", "sdo", "rvp", "vp", "coo", "admin"] as UserRole[]).includes(
     managerRole
   );
+
+  // Admin / VP / COO may grant additional ("acting") coverage on top of a
+  // user's role scope. Server enforces the same gate.
+  const canManageScope = (["admin", "vp", "coo"] as UserRole[]).includes(managerRole);
 
   function submitEdits() {
     if (!member) return;
@@ -466,6 +482,10 @@ export function EditMemberModal({
                   </div>
                 )}
               </div>
+
+              {canManageScope && (
+                <AdditionalCoverageSection member={member} scopeData={scopeQuery.data} />
+              )}
             </>
           )}
 
@@ -533,6 +553,198 @@ export function EditMemberModal({
         </div>
       )}
     </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Additional coverage (acting scope) — admin / VP / COO only
+// ---------------------------------------------------------------------------
+
+function AdditionalCoverageSection({
+  member,
+  scopeData,
+}: {
+  member: ManagedUser;
+  scopeData: ScopeOptionsResponse | undefined;
+}) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [kind, setKind] = useState<"district" | "area" | "region" | "store">("district");
+  const [nodeId, setNodeId] = useState("");
+  const [end, setEnd] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+
+  const nodeOptions = useMemo(() => {
+    if (!scopeData) return [] as { value: string; label: string }[];
+    if (kind === "store")
+      return scopeData.stores.map((s) => ({
+        value: s.id,
+        label: `Store ${s.number}${s.name ? " — " + s.name : ""}`,
+      }));
+    if (kind === "district")
+      return scopeData.districts.map((d) => ({
+        value: d.id,
+        label: `${d.name}${d.code ? ` (${d.code})` : ""}`,
+      }));
+    if (kind === "area")
+      return scopeData.areas.map((a) => ({
+        value: a.id,
+        label: `${a.name}${a.code ? ` (${a.code})` : ""}`,
+      }));
+    return scopeData.regions.map((r) => ({
+      value: r.id,
+      label: `${r.name}${r.code ? ` (${r.code})` : ""}`,
+    }));
+  }, [kind, scopeData]);
+
+  const add = useMutation({
+    mutationFn: () =>
+      addScope({
+        user_id: member.id,
+        scope_type: kind,
+        scope_id: nodeId,
+        expires_at: end.trim() === "" ? null : end,
+      }),
+    onSuccess: () => {
+      toast.push("Coverage added.", "success");
+      setNodeId("");
+      setEnd("");
+      setErr(null);
+      qc.invalidateQueries({ queryKey: ["my-team"] });
+    },
+    onError: (e: unknown) => setErr((e as Error)?.message ?? "Couldn't add coverage."),
+  });
+
+  const remove = useMutation({
+    mutationFn: (id: string) => removeScope(id),
+    onSuccess: () => {
+      toast.push("Coverage removed.", "success");
+      qc.invalidateQueries({ queryKey: ["my-team"] });
+    },
+    onError: (e: unknown) => setErr((e as Error)?.message ?? "Couldn't remove coverage."),
+  });
+
+  const existing = member.additional_scopes ?? [];
+  const today = new Date().toISOString().slice(0, 10);
+
+  function expiryLabel(iso: string | null): { text: string; expired: boolean } | null {
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return null;
+    const expired = d.getTime() < Date.now();
+    const when = d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+    return { text: `${expired ? "expired" : "until"} ${when}`, expired };
+  }
+
+  return (
+    <div className="border-t border-zinc-100 pt-4">
+      <Label>Additional coverage</Label>
+      <p className="mt-0.5 text-[11px] text-zinc-500">
+        Extra districts/areas/regions/stores this person covers on top of their role —
+        e.g. an RVP acting as DO for a district. Adds to what they can see and manage.
+      </p>
+
+      {existing.length > 0 && (
+        <ul className="mt-2 space-y-1.5">
+          {existing.map((s) => {
+            const exp = expiryLabel(s.expires_at);
+            return (
+              <li
+                key={s.id}
+                className="flex items-center justify-between gap-2 rounded-md border border-zinc-200 bg-zinc-50 px-3 py-2 text-sm"
+              >
+                <span className={exp?.expired ? "text-zinc-400 line-through" : "text-zinc-800"}>
+                  {s.label}
+                  {exp && (
+                    <span className={`ml-2 text-[11px] ${exp.expired ? "text-red-500" : "text-zinc-500"}`}>
+                      ({exp.text})
+                    </span>
+                  )}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => remove.mutate(s.id)}
+                  disabled={remove.isPending}
+                  className="shrink-0 text-xs font-medium text-red-600 hover:underline disabled:opacity-50"
+                >
+                  Remove
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+
+      <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <div>
+          <Label htmlFor="cov-kind">Level</Label>
+          <select
+            id="cov-kind"
+            value={kind}
+            onChange={(e) => {
+              setKind(e.target.value as typeof kind);
+              setNodeId("");
+            }}
+            className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+          >
+            <option value="district">District</option>
+            <option value="area">Area</option>
+            <option value="region">Region</option>
+            <option value="store">Store</option>
+          </select>
+        </div>
+        <div>
+          <Label htmlFor="cov-node">{kind[0].toUpperCase() + kind.slice(1)}</Label>
+          <select
+            id="cov-node"
+            value={nodeId}
+            onChange={(e) => setNodeId(e.target.value)}
+            className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+          >
+            <option value="">— Select —</option>
+            {nodeOptions.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <Label htmlFor="cov-end">End date (optional)</Label>
+          <Input
+            id="cov-end"
+            type="date"
+            min={today}
+            value={end}
+            onChange={(e) => setEnd(e.target.value)}
+          />
+          <p className="mt-1 text-[11px] text-zinc-500">
+            Blank = permanent. Set for temporary acting coverage.
+          </p>
+        </div>
+        <div className="flex items-end">
+          <Button
+            variant="secondary"
+            onClick={() => {
+              if (!nodeId) {
+                setErr("Pick a place to cover.");
+                return;
+              }
+              add.mutate();
+            }}
+            disabled={add.isPending}
+          >
+            {add.isPending ? "Adding…" : "Add coverage"}
+          </Button>
+        </div>
+      </div>
+
+      {err && (
+        <div className="mt-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+          {err}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -617,6 +829,10 @@ function actionLabel(action: AuditEntry["action"]): string {
       return "Reactivated";
     case "delete":
       return "Permanently deleted";
+    case "add_scope":
+      return "Added coverage";
+    case "remove_scope":
+      return "Removed coverage";
   }
 }
 
