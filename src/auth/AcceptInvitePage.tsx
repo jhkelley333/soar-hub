@@ -35,6 +35,7 @@ export function AcceptInvitePage() {
   const [done, setDone] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
     // Treat both INITIAL_SESSION (fresh detectSessionInUrl pickup) and
     // SIGNED_IN as proof the invite token is good. PASSWORD_RECOVERY
     // can also fire if the project is configured that way.
@@ -45,21 +46,38 @@ export function AcceptInvitePage() {
           event === "PASSWORD_RECOVERY") &&
         session
       ) {
-        setReady(true);
+        if (!cancelled) setReady(true);
       }
     });
-    if (
-      window.location.hash.includes("type=invite") ||
-      window.location.hash.includes("access_token=")
-    ) {
-      setReady(true);
-    }
     // Also handle the case where detectSessionInUrl already ran and set
     // a session before we subscribed.
     supabase.auth.getSession().then(({ data }) => {
-      if (data.session) setReady(true);
+      if (data.session && !cancelled) setReady(true);
     });
-    return () => sub.subscription.unsubscribe();
+
+    // If no session arrives within ~8s, the token exchange failed silently —
+    // almost always because the invite link was already used (a fresh re-invite
+    // invalidates the prior link, so the old email's link is now dead) or
+    // expired. Surface a clear, actionable message instead of leaving the user
+    // on a form that will fail with "Auth session missing!" on submit. We
+    // intentionally DO NOT setReady(true) based on the URL hash alone, because
+    // a spent/expired token still ships a "type=invite" hash but produces no
+    // session — and that was the path leading to the cryptic submit error.
+    const expiredTimer = window.setTimeout(async () => {
+      if (cancelled) return;
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) {
+        setError(
+          "This invite link is no longer valid. It may have expired or been replaced by a newer one — ask your manager to send a fresh invite and use that email.",
+        );
+      }
+    }, 8000);
+
+    return () => {
+      cancelled = true;
+      sub.subscription.unsubscribe();
+      window.clearTimeout(expiredTimer);
+    };
   }, []);
 
   async function handleSubmit(e: FormEvent) {
@@ -92,15 +110,19 @@ export function AcceptInvitePage() {
           () => finish({ ok: false, message: "Setup timed out." }),
           15000
         );
+        const friendly = (msg: string | undefined) =>
+          /auth session missing/i.test(msg || "")
+            ? "Your invite link is no longer valid. It may have expired or been replaced by a newer one — ask your manager to send a fresh invite and use that email."
+            : msg || "Setup failed.";
         supabase.auth
           .updateUser({ password })
           .then(({ error: updErr }) => {
-            if (updErr) finish({ ok: false, message: updErr.message });
+            if (updErr) finish({ ok: false, message: friendly(updErr.message) });
           })
           .catch((err) => {
             finish({
               ok: false,
-              message: err instanceof Error ? err.message : "Setup failed.",
+              message: friendly(err instanceof Error ? err.message : undefined),
             });
           });
       }
@@ -198,11 +220,11 @@ export function AcceptInvitePage() {
           ) : (
             <>
               <h2 className="text-xl font-semibold tracking-tight text-midnight">
-                Accept your invite
+                {error ? "Invite link no longer valid" : "Accept your invite"}
               </h2>
               <p className="mt-2 text-sm text-zinc-600">
-                Open the invite link from your email to set up your account.
-                The link will expire after one use.
+                {error ??
+                  "Open the invite link from your email to set up your account. The link will expire after one use."}
               </p>
               <button
                 type="button"
