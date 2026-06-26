@@ -16,9 +16,11 @@ import {
   removeScope,
   sendPasswordReset,
   updateUser,
+  type AdditionalScope,
   type AuditEntry,
   type ManagedUser,
   type ScopeOptionsResponse,
+  type TeamListResponse,
   type UpdateUserInput,
 } from "./api";
 
@@ -600,6 +602,24 @@ function AdditionalCoverageSection({
     }));
   }, [kind, scopeData]);
 
+  // Patch the cached team list's member.additional_scopes so the change shows
+  // immediately (the invalidate that follows reconciles with the server's
+  // labeled rows). Returns the previous cache for rollback on error.
+  function patchCache(fn: (rows: AdditionalScope[]) => AdditionalScope[]) {
+    const prev = qc.getQueryData<TeamListResponse>(["my-team"]);
+    if (prev) {
+      qc.setQueryData<TeamListResponse>(["my-team"], {
+        ...prev,
+        members: prev.members.map((m) =>
+          m.id === member.id
+            ? { ...m, additional_scopes: fn(m.additional_scopes ?? []) }
+            : m
+        ),
+      });
+    }
+    return prev;
+  }
+
   const add = useMutation({
     mutationFn: () =>
       addScope({
@@ -608,23 +628,46 @@ function AdditionalCoverageSection({
         scope_id: nodeId,
         expires_at: end.trim() === "" ? null : end,
       }),
+    onMutate: async () => {
+      await qc.cancelQueries({ queryKey: ["my-team"] });
+      const selected = nodeOptions.find((o) => o.value === nodeId);
+      const optimistic: AdditionalScope = {
+        id: `optimistic-${kind}-${nodeId}`,
+        scope_type: kind,
+        scope_id: nodeId,
+        label: selected?.label ?? `${kind[0].toUpperCase()}${kind.slice(1)}`,
+        expires_at: end.trim() === "" ? null : `${end}T23:59:59Z`,
+        note: null,
+      };
+      const prev = patchCache((rows) => [...rows, optimistic]);
+      return { prev };
+    },
     onSuccess: () => {
       toast.push("Coverage added.", "success");
       setNodeId("");
       setEnd("");
       setErr(null);
-      qc.invalidateQueries({ queryKey: ["my-team"] });
     },
-    onError: (e: unknown) => setErr((e as Error)?.message ?? "Couldn't add coverage."),
+    onError: (e: unknown, _v, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["my-team"], ctx.prev);
+      setErr((e as Error)?.message ?? "Couldn't add coverage.");
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["my-team"] }),
   });
 
   const remove = useMutation({
     mutationFn: (id: string) => removeScope(id),
-    onSuccess: () => {
-      toast.push("Coverage removed.", "success");
-      qc.invalidateQueries({ queryKey: ["my-team"] });
+    onMutate: async (id: string) => {
+      await qc.cancelQueries({ queryKey: ["my-team"] });
+      const prev = patchCache((rows) => rows.filter((s) => s.id !== id));
+      return { prev };
     },
-    onError: (e: unknown) => setErr((e as Error)?.message ?? "Couldn't remove coverage."),
+    onSuccess: () => toast.push("Coverage removed.", "success"),
+    onError: (e: unknown, _id, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["my-team"], ctx.prev);
+      setErr((e as Error)?.message ?? "Couldn't remove coverage.");
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["my-team"] }),
   });
 
   const existing = member.additional_scopes ?? [];
