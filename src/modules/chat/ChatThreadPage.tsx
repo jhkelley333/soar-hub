@@ -20,6 +20,12 @@ export function ChatThreadPage({ embedded = false }: { embedded?: boolean }) {
     queryKey: ["chat", "thread", threadId],
     queryFn: () => fetchThread(threadId),
     enabled: !!threadId,
+    // Mobile suspends the realtime socket when the app is backgrounded /
+    // the phone locks, so live updates stop arriving. The global default is
+    // refetchOnWindowFocus:false; override it here so reopening the thread
+    // (or regaining network) re-pulls and re-syncs with other devices.
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
 
   useEffect(() => {

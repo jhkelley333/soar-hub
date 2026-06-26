@@ -39,6 +39,11 @@ export function ChatList({
     queryKey: INBOX_KEY,
     queryFn: () => fetchInbox(),
     staleTime: 30_000,
+    // Re-sync the inbox when the app returns to the foreground or the
+    // network reconnects (mobile drops the realtime socket while
+    // backgrounded). staleTime keeps this from firing more than every 30s.
+    refetchOnWindowFocus: true,
+    refetchOnReconnect: true,
   });
   const threads = inboxQ.data?.threads ?? [];
 

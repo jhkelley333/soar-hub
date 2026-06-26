@@ -14,6 +14,7 @@ import { MembersStrip, type StripMember } from "./MembersStrip";
 import { ExternalBanner } from "./Banners";
 import {
   sendChatMessage,
+  deleteChatMessage,
   uploadChatAttachment,
   type ThreadResponse,
   type AttachmentInput,
@@ -40,6 +41,8 @@ export function GroupThread({
   const [pending, setPending] = useState<
     { id: string; file: File; url: string; isImage: boolean }[]
   >([]);
+  // Message tapped/long-pressed for the actions menu (delete).
+  const [actionMsg, setActionMsg] = useState<ChatMessage | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Open search when arrived from the Group Info "Search" tile.
@@ -133,6 +136,39 @@ export function GroupThread({
       qc.invalidateQueries({ queryKey: ["chat", "inbox"] });
     },
   });
+
+  // Delete a message. Optimistically swap it for a tombstone, then let the
+  // refetch (and the recipient's realtime UPDATE) settle the real state and
+  // clear the unread / "needs you" badge.
+  const del = useMutation({
+    mutationFn: (m: ChatMessage) => deleteChatMessage(m.id),
+    onMutate: async (m) => {
+      setActionMsg(null);
+      await qc.cancelQueries({ queryKey: threadKey });
+      const prev = qc.getQueryData<ThreadResponse>(threadKey);
+      if (prev) {
+        qc.setQueryData<ThreadResponse>(threadKey, {
+          ...prev,
+          messages: prev.messages.map((x) =>
+            x.id === m.id ? { ...x, deleted: true, text: "", attachments: [] } : x,
+          ),
+        });
+      }
+      return { prev };
+    },
+    onError: (e: unknown, _m, ctx) => {
+      if (ctx?.prev) qc.setQueryData(threadKey, ctx.prev);
+      toast.push(e instanceof Error ? e.message : "Couldn't delete message.", "error");
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: threadKey });
+      qc.invalidateQueries({ queryKey: ["chat", "inbox"] });
+    },
+  });
+
+  // Sender deletes their own; owners/admins can delete anyone's.
+  const canDeleteMsg = (m: ChatMessage) =>
+    !m.system && (m.fromUserId === currentUserId || myRole === "owner" || myRole === "admin");
 
   const canSend = (draft.trim().length > 0 || pending.length > 0) && !send.isPending;
 
@@ -255,6 +291,8 @@ export function GroupThread({
                 user={users[m.fromUserId]}
                 showAvatar={firstOfRun}
                 showName={firstOfRun && !sent}
+                canDelete={canDeleteMsg(m)}
+                onRequestActions={() => setActionMsg(m)}
               />
             );
           });
@@ -330,6 +368,37 @@ export function GroupThread({
               aria-label="Send"
             >
               <ArrowUp className="h-[20px] w-[20px]" strokeWidth={2.5} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Message actions — long-press / right-click a message to delete it. */}
+      {actionMsg && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center bg-midnight-900/40"
+          onClick={() => setActionMsg(null)}
+        >
+          <div
+            className="m-3 w-full max-w-md overflow-hidden rounded-2xl bg-surface shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+            style={{ marginBottom: "calc(env(safe-area-inset-bottom, 0px) + 12px)" }}
+          >
+            <button
+              type="button"
+              onClick={() => del.mutate(actionMsg)}
+              disabled={del.isPending}
+              className="block w-full px-4 py-3.5 text-center text-[15px] font-semibold text-sonic-700 hover:bg-surface-muted disabled:opacity-50"
+            >
+              {del.isPending ? "Deleting…" : "Delete message"}
+            </button>
+            <div className="h-px bg-midnight-100" />
+            <button
+              type="button"
+              onClick={() => setActionMsg(null)}
+              className="block w-full px-4 py-3.5 text-center text-[15px] text-midnight-700 hover:bg-surface-muted"
+            >
+              Cancel
             </button>
           </div>
         </div>

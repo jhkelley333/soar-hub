@@ -100,6 +100,16 @@ export function sendChatMessage(
   });
 }
 
+// Soft-delete a message. The sender can delete their own; thread owners and
+// admins can delete anyone's. Server clears it from the unread counts so the
+// recipient's notification badge drops on the next inbox sync.
+export function deleteChatMessage(messageId: string): Promise<{ ok: true }> {
+  return req(`${FN}?action=deleteMessage`, {
+    method: "POST",
+    body: JSON.stringify({ messageId }),
+  });
+}
+
 const CHAT_BUCKET = "chat-attachments";
 
 export function isImageMime(mime: string): boolean {

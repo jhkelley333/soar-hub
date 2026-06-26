@@ -70,5 +70,7 @@ export interface ChatMessage {
   /** Pre-formatted display time, e.g. "Tue 4:18p". */
   at: string;
   system?: boolean;
+  /** Soft-deleted — render a "message deleted" tombstone instead of content. */
+  deleted?: boolean;
   attachments?: ChatAttachment[];
 }

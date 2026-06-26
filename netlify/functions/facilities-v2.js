@@ -451,14 +451,18 @@ async function runBulkScopeUpdate(supabase, userId, body) {
 function approvalTiersForRole(role) {
   const DO  = "DO < $500";
   const SDO = "SDO $501-$1000";
-  const RVP = "RVP $1001-$1750";
   switch (String(role || "").toLowerCase()) {
     case "do":    return [DO];
     case "sdo":   return [SDO, DO];
+    // RVP and above are the catch-all approver: they see EVERY pending
+    // approval regardless of band — DO/SDO quotes they can clear early,
+    // RVP-band quotes, and over-$1,750 items (which carry the RVP tier
+    // string but still need a recorded WhatsApp/verbal sign-off). null =
+    // "no tier filter / all bands", distinct from [] = "doesn't approve".
     case "rvp":
     case "vp":
-    case "coo":   return [RVP, SDO, DO];
-    case "admin": return [RVP, SDO, DO];
+    case "coo":
+    case "admin": return null;
     default:      return [];
   }
 }
@@ -3832,13 +3836,15 @@ export const handler = async (event) => {
         .eq("status", "completed")
         .order("completed_at", { ascending: false });
 
-      // 4. Awaiting your approval — pending quotes in caller's tier.
+      // 4. Awaiting your approval — pending quotes the caller can act on.
       // GMs / shift managers don't approve quotes; they get an empty
-      // bucket. Admin tier sees every pending tier.
+      // bucket. DO/SDO are scoped to their dollar bands; RVP and above are
+      // the catch-all approver (callerTiers === null) and see every
+      // pending approval in scope, no tier filter — including over-$1,750.
       const callerTiers = approvalTiersForRole(role);
       let approvalRows = [];
-      if (callerTiers.length) {
-        const { data } = await supabase
+      if (callerTiers === null || callerTiers.length) {
+        let q = supabase
           .from("ticket_approvals")
           .select(`
             id, ticket_id, approval_tier, requested_by, notes, created_at,
@@ -3847,8 +3853,9 @@ export const handler = async (event) => {
           `)
           .eq("status", "Pending")
           .in("tickets.store_number", visibleStoreNumbers)
-          .in("approval_tier", callerTiers)
           .order("created_at", { ascending: false });
+        if (callerTiers) q = q.in("approval_tier", callerTiers);
+        const { data } = await q;
         approvalRows = data || [];
       }
 

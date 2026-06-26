@@ -4,7 +4,9 @@
 //   1. Workspace sign-offs   — listMySignoffs() (audits/forms/walkthroughs)
 //   2. PAF approvals         — listSdoQueue()   (bonus PAFs awaiting SDO+)
 //   3. Work order approvals  — fetchOpenWorkOrderAlerts() filtered to
-//                              "awaitingApproval" + "emergencies"
+//                              "awaitingApproval" only (dollar-routed
+//                              pay approvals; emergencies are awareness
+//                              reminders, not pay decisions)
 //
 // Each source's row gets normalized into a single ApprovalItem shape so
 // the page can render them in one tier-sorted list. Each row deep-links
@@ -160,7 +162,16 @@ function pafRow(p: PafRow): ApprovalItem {
   };
 }
 
+// Over the top approval tier ($1,750) a quote can't be cleared in-app — it
+// needs a recorded WhatsApp / Owner sign-off. Mirrors ApprovalSection's
+// WHATSAPP_THRESHOLD_CENTS (175000). Such items still belong in the RVP's
+// approvals list; we surface them red with a clear notice so they're not
+// missed and the approver knows the WhatsApp step is required.
+const WHATSAPP_THRESHOLD_DOLLARS = 1750;
+
 function woRow(item: OpenAlertItem, tier: Tier): ApprovalItem {
+  const amount = item.cost_estimate ?? null;
+  const needsWhatsapp = amount != null && amount > WHATSAPP_THRESHOLD_DOLLARS;
   return {
     id: `work_order:${item.id}`,
     source: "work_order",
@@ -173,11 +184,11 @@ function woRow(item: OpenAlertItem, tier: Tier): ApprovalItem {
     // isn't in the payload. The row falls back to showing SDI alone,
     // which matches what the WO2 alerts widget does already.
     storeName: null,
-    tier,
+    tier: needsWhatsapp ? "red" : tier,
     score: null,
-    amount: item.cost_estimate ?? null,
+    amount,
     flagged: item.is_business_critical ? 1 : 0,
-    prior: null,
+    prior: needsWhatsapp ? "Over $1,750 — needs WhatsApp approval" : null,
     // WO2 routes deep-link via ?ticket=<id>
     deepLink: `/admin/work-orders-v2?ticket=${encodeURIComponent(item.id)}`,
   };
@@ -217,15 +228,16 @@ export async function fetchApprovalsQueue(
     for (const p of pafRes.value.pafs ?? []) items.push(pafRow(p));
   }
 
-  // Work orders — only the awaitingApproval + emergencies groups belong
-  // in this queue. The other OpenAlerts groups (new24h, stuck, etc.)
-  // are reminders, not decisions.
+  // Work orders — ONLY the awaitingApproval group belongs in this queue.
+  // Those are the rows where someone requested approval to pay, routed to
+  // the caller's tier by dollar amount (tierForAmount: <$500 DO, $500-1000
+  // SDO, >$1000 RVP). The other OpenAlerts groups — emergencies, new24h,
+  // stuck — are awareness reminders, not pay decisions, and were polluting
+  // the queue with work orders that don't need an approval at all.
   if (woRes.status === "fulfilled" && woRes.value) {
     for (const g of woRes.value.groups) {
       if (g.key === "awaitingApproval") {
         for (const it of g.items) items.push(woRow(it, "yellow"));
-      } else if (g.key === "emergencies") {
-        for (const it of g.items) items.push(woRow(it, "red"));
       }
     }
   }
