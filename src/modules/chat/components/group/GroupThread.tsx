@@ -9,6 +9,7 @@ import { ChevronLeft, Search, MoreHorizontal, Paperclip, ArrowUp, X, FileText } 
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { MessageBubble } from "./MessageBubble";
+import { SwipeToDelete } from "./SwipeToDelete";
 import { SystemMessage } from "./SystemMessage";
 import { MembersStrip, type StripMember } from "./MembersStrip";
 import { ExternalBanner } from "./Banners";
@@ -283,17 +284,19 @@ export function GroupThread({
             const prev = visible[i - 1];
             const firstOfRun = !prev || prev.system || prev.fromUserId !== m.fromUserId;
             const sent = m.fromUserId === currentUserId;
+            const deletable = canDeleteMsg(m) && !m.deleted;
             return (
-              <MessageBubble
-                key={m.id}
-                message={m}
-                sent={sent}
-                user={users[m.fromUserId]}
-                showAvatar={firstOfRun}
-                showName={firstOfRun && !sent}
-                canDelete={canDeleteMsg(m)}
-                onRequestActions={() => setActionMsg(m)}
-              />
+              <SwipeToDelete key={m.id} enabled={deletable} onDelete={() => del.mutate(m)}>
+                <MessageBubble
+                  message={m}
+                  sent={sent}
+                  user={users[m.fromUserId]}
+                  showAvatar={firstOfRun}
+                  showName={firstOfRun && !sent}
+                  canDelete={canDeleteMsg(m)}
+                  onRequestActions={() => setActionMsg(m)}
+                />
+              </SwipeToDelete>
             );
           });
         })()}
