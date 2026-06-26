@@ -64,8 +64,15 @@ export async function coveringScopes(supabase, kind, id) {
   return covering;
 }
 
+// The org level each leadership role owns — used to match acting coverage to
+// the right tier (an 'area' additional scope = acting at the SDO tier).
+const SCOPE_FOR_ROLE = { gm: "store", do: "district", sdo: "area", rvp: "region" };
+
 // Find active profiles with `role` whose user_scopes covers (kind, id).
-// Coverage: direct, any ancestor, or global. Returns array of user_ids.
+// Coverage: direct, any ancestor, or global. ALSO includes acting coverers —
+// anyone with a non-expired additional_scopes row at the role's tier covering
+// the anchor (regardless of their primary role), so an RVP acting as SDO for
+// an area is a valid 'sdo' approver. Returns array of user_ids.
 export async function usersAtAnchorWithRole(supabase, kind, id, role) {
   const covering = await coveringScopes(supabase, kind, id);
   const filterParts = covering.map(
@@ -83,6 +90,24 @@ export async function usersAtAnchorWithRole(supabase, kind, id, role) {
     if (!p || !p.is_active) continue;
     if (String(p.role || "").toLowerCase() !== targetRole) continue;
     ids.add(p.id);
+  }
+
+  // Acting coverage at the role's own tier (e.g. 'sdo' → an 'area' additional
+  // scope) covering this anchor — any primary role qualifies.
+  const wantScope = SCOPE_FOR_ROLE[targetRole];
+  const cov = wantScope ? covering.find((c) => c.scope_type === wantScope) : null;
+  if (cov) {
+    const nowIso = new Date().toISOString();
+    const { data: acting } = await supabase
+      .from("additional_scopes")
+      .select("user_id, expires_at, profiles:user_id(id, is_active)")
+      .eq("scope_type", wantScope)
+      .eq("scope_id", cov.scope_id);
+    for (const r of acting || []) {
+      if (r.expires_at && r.expires_at <= nowIso) continue;
+      const p = r.profiles;
+      if (p && p.is_active) ids.add(p.id);
+    }
   }
   return Array.from(ids);
 }

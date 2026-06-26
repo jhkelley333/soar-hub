@@ -395,22 +395,46 @@ async function resolveBonusApprover(supa, driveIn, submitterRole) {
     scopeId = areaRow.region_id;
   }
 
+  // Primary: a real <targetRole> assigned to this scope via user_scopes.
   const { data: candidates } = await supa
     .from("profiles")
     .select("id")
     .eq("role", targetRole)
     .eq("is_active", true);
   const candidateIds = (candidates ?? []).map((p) => p.id);
-  if (!candidateIds.length) return null;
+  if (candidateIds.length) {
+    const { data: scoped } = await supa
+      .from("user_scopes")
+      .select("user_id")
+      .eq("scope_type", scopeType)
+      .eq("scope_id", scopeId)
+      .in("user_id", candidateIds)
+      .limit(1);
+    if (scoped?.[0]?.user_id) return scoped[0].user_id;
+  }
 
-  const { data: scoped } = await supa
-    .from("user_scopes")
-    .select("user_id")
+  // Fallback: acting coverage — whoever covers this scope via additional_scopes
+  // (non-expired), regardless of their primary role. An RVP covering an area as
+  // acting SDO approves that area's bonus PAFs.
+  const nowIso = new Date().toISOString();
+  const { data: actingRows } = await supa
+    .from("additional_scopes")
+    .select("user_id, expires_at")
     .eq("scope_type", scopeType)
-    .eq("scope_id", scopeId)
-    .in("user_id", candidateIds)
-    .limit(1);
-  return scoped?.[0]?.user_id ?? null;
+    .eq("scope_id", scopeId);
+  const actingIds = (actingRows ?? [])
+    .filter((r) => !r.expires_at || r.expires_at > nowIso)
+    .map((r) => r.user_id);
+  if (actingIds.length) {
+    const { data: active } = await supa
+      .from("profiles")
+      .select("id")
+      .in("id", actingIds)
+      .eq("is_active", true)
+      .limit(1);
+    if (active?.[0]?.id) return active[0].id;
+  }
+  return null;
 }
 
 async function resolveAdminFallback(supa) {
