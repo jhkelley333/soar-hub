@@ -139,8 +139,23 @@ async function buildTree(supa) {
       .select("user_id, scope_type, scope_id"),
   ]);
 
+  // Additional ("acting") coverage shows alongside primary managers on each
+  // node — e.g. an RVP covering an area as acting SDO. Non-expired only.
+  const nowIso = new Date().toISOString();
+  const { data: addlScopes } = await supa
+    .from("additional_scopes")
+    .select("user_id, scope_type, scope_id, expires_at");
+  const activeAddl = (addlScopes ?? []).filter(
+    (r) => !r.expires_at || r.expires_at > nowIso
+  );
+
   // Resolve managers for each scope row.
-  const userIds = [...new Set((scopes ?? []).map((s) => s.user_id))];
+  const userIds = [
+    ...new Set([
+      ...(scopes ?? []).map((s) => s.user_id),
+      ...activeAddl.map((s) => s.user_id),
+    ]),
+  ];
   const { data: profiles } = userIds.length
     ? await supa
         .from("profiles")
@@ -164,6 +179,23 @@ async function buildTree(supa) {
       full_name: profile.full_name,
       email: profile.email,
       role: profile.role,
+    });
+  }
+  // Acting coverage — added to the same node lists, flagged so the UI can mark
+  // them. Skip anyone already present as a primary manager on that node.
+  for (const s of activeAddl) {
+    const profile = profileMap[s.user_id];
+    if (!profile) continue;
+    const key = `${s.scope_type}:${s.scope_id ?? "global"}`;
+    if (!managersByScope.has(key)) managersByScope.set(key, []);
+    const list = managersByScope.get(key);
+    if (list.some((m) => m.id === profile.id)) continue;
+    list.push({
+      id: profile.id,
+      full_name: profile.full_name,
+      email: profile.email,
+      role: profile.role,
+      acting: true,
     });
   }
   const lookup = (kind, id) => managersByScope.get(`${kind}:${id}`) ?? [];

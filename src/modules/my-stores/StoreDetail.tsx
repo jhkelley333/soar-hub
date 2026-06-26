@@ -1314,8 +1314,15 @@ function LeadershipSlot({
 
   return (
     <div className="rounded-md border border-zinc-200 px-3 py-2.5">
-      <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
-        {label}
+      <div className="flex items-center gap-1.5">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">
+          {label}
+        </div>
+        {person.acting && (
+          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-700">
+            Acting
+          </span>
+        )}
       </div>
       <div className="mt-1 text-sm font-semibold text-midnight">
         {person.preferred_name || person.full_name || person.email}
