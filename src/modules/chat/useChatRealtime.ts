@@ -99,7 +99,20 @@ export function useChatRealtime(threadId?: string) {
         .on("postgres_changes", { event: "*", schema: "public", table: "chat_thread_members" }, bumpInbox);
     }
 
-    channel.subscribe();
+    // Self-heal on reconnect: a mobile device that was backgrounded drops the
+    // socket, so any message/delete during the outage is missed. On the FIRST
+    // SUBSCRIBED we skip (the queries already loaded); on every later one (a
+    // rejoin after a drop) we invalidate so the thread + inbox re-sync.
+    let firstConnect = true;
+    channel.subscribe((status) => {
+      if (status !== "SUBSCRIBED") return;
+      if (firstConnect) {
+        firstConnect = false;
+        return;
+      }
+      if (threadId) qc.invalidateQueries({ queryKey: ["chat", "thread", threadId] });
+      qc.invalidateQueries({ queryKey: ["chat", "inbox"] });
+    });
     return () => {
       supabase.removeChannel(channel);
     };
