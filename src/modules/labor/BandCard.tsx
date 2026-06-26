@@ -7,6 +7,7 @@ import { cn } from "@/lib/cn";
 import type { ChartStatus, LaborBand } from "./types";
 import {
   fmtMoney,
+  fmtMoneyCents,
   fmtPct,
   fmtSignedHours,
   fmtSignedMoney,
@@ -105,7 +106,14 @@ export function BandCard({
         <Metric label="$ Over Chart" value={fmtSignedMoney(band?.dollars_over_chart)} over={over} />
         <Metric label="Hours Over Chart" value={fmtSignedHours(band?.hours_over_chart)} over={over} />
         <Metric label="Chart $ Allowed" value={fmtMoney(band?.chart_dollars_allowed)} />
+        {band?.avg_wage != null && <Metric label="Avg Wage" value={`${fmtMoneyCents(band.avg_wage)}/hr`} />}
       </dl>
+      {!!band?.training_credit && (
+        <p className="mt-2 text-[11px] text-zinc-500">
+          incl. {fmtMoney(band.training_credit)} training credit
+          {band.labor_pct_pre != null ? ` (labor was ${fmtPct(band.labor_pct_pre)})` : ""}
+        </p>
+      )}
     </div>
   );
 }

@@ -76,12 +76,31 @@ async function upsertProgressUpgrade(supa, enrollmentId, cardId, state, extra = 
   return finalState;
 }
 
+// Overlay a card's Spanish (or other) translation onto the base English data:
+// per-field text + a language-specific videoUrl, falling back to English for
+// anything not translated. Always strips the i18n blob from what we ship.
+const I18N_TEXT_KEYS = ["kicker", "title", "body", "q", "explain", "reveal", "videoUrl", "imageUrl"];
+function localizeCardData(raw, lang) {
+  const { i18n, ...base } = raw || {};
+  const tr = i18n && i18n[lang];
+  if (lang === "en" || !tr) return base;
+  const out = { ...base };
+  for (const k of I18N_TEXT_KEYS) if (tr[k] != null && tr[k] !== "") out[k] = tr[k];
+  if (Array.isArray(base.options) && Array.isArray(tr.options))
+    out.options = base.options.map((o, i) => (tr.options[i] != null && tr.options[i] !== "" ? tr.options[i] : o));
+  if (Array.isArray(base.steps) && Array.isArray(tr.steps))
+    out.steps = base.steps.map((s, i) => ({ ...s, t: tr.steps[i]?.t || s.t, d: tr.steps[i]?.d ?? s.d }));
+  if (Array.isArray(base.meta) && Array.isArray(tr.meta))
+    out.meta = base.meta.map((m, i) => ({ ...m, k: tr.meta[i]?.k || m.k }));
+  return out;
+}
+
 // GET lesson — strips quiz keys, injects server-aggregated poll results,
 // ensures an enrollment, and attaches the caller's per-card progress.
-async function getLesson(supa, user, courseId) {
+async function getLesson(supa, user, courseId, lang = "en") {
   if (!courseId) return { error: "course_id is required.", status: 400 };
   const { data: course } = await supa
-    .from("qsr_courses").select("id, title, category, description, status, est_minutes, points").eq("id", courseId).maybeSingle();
+    .from("qsr_courses").select("id, title, category, description, status, est_minutes, points, languages").eq("id", courseId).maybeSingle();
   if (!course) return { error: "Course not found.", status: 404 };
   const author = isAuthor(user.role);
   if (course.status !== "published" && !author) return { error: "Course not available.", status: 403 };
@@ -101,9 +120,9 @@ async function getLesson(supa, user, courseId) {
 
   const safeCards = [];
   for (const c of cards || []) {
-    let data = c.data || {};
+    let data = localizeCardData(c.data, lang);
     if (c.type === "quiz" && !author) {
-      const { answer, explain, ...rest } = data; // never ship the key to a learner
+      const { answer, answers, explain, ...rest } = data; // never ship the key(s) to a learner
       data = rest;
     }
     if (c.type === "poll") {
@@ -138,26 +157,48 @@ async function recordProgress(supa, user, body) {
   return { ok: true, state: finalState };
 }
 
+// Option indices → bitmask, so a multi-select answer fits the integer
+// answer_index column without a schema change.
+const maskOf = (arr) => (arr || []).reduce((m, i) => m | (1 << Number(i)), 0);
+
 async function answerQuiz(supa, user, body) {
-  const { card_id, answer_index } = body || {};
-  if (!card_id || answer_index == null) return { error: "card_id and answer_index are required.", status: 400 };
+  const { card_id, answer_index, answer_indices, lang } = body || {};
+  if (!card_id) return { error: "card_id is required.", status: 400 };
   const { data: card } = await supa.from("qsr_cards").select("id, type, data, lesson_id").eq("id", card_id).maybeSingle();
   if (!card || card.type !== "quiz") return { error: "Not a quiz card.", status: 400 };
 
-  const correctIndex = card.data?.answer;
-  const correct = Number(answer_index) === Number(correctIndex);
-  const cardPoints = Number(card.data?.points ?? 10);
+  const d = card.data || {};
+  const multi = !!d.multi;
 
-  // No points on retries of the same card.
+  // Grade server-side; persist a single integer (raw index, or a bitmask of the
+  // selected set when multi).
+  let correct, storedIndex, correctAnswers;
+  if (multi) {
+    if (!Array.isArray(answer_indices)) return { error: "answer_indices is required for a multi-select quiz.", status: 400 };
+    const sel = answer_indices.map(Number).filter((x) => Number.isInteger(x) && x >= 0);
+    const correctSet = (Array.isArray(d.answers) ? d.answers : []).map(Number);
+    correct = maskOf(sel) === maskOf(correctSet);
+    storedIndex = maskOf(sel);
+    correctAnswers = correctSet;
+  } else {
+    if (answer_index == null) return { error: "answer_index is required.", status: 400 };
+    correct = Number(answer_index) === Number(d.answer);
+    storedIndex = Number(answer_index);
+    correctAnswers = d.answer == null ? [] : [Number(d.answer)];
+  }
+  const cardPoints = Number(d.points ?? 10);
+
+  // No points on retries — but only a prior *correct* attempt burns them, so a
+  // wrong guess before getting it right still earns the points.
   const { data: prior } = await supa
-    .from("qsr_quiz_attempts").select("id").eq("user_id", user.id).eq("card_id", card_id).limit(1);
+    .from("qsr_quiz_attempts").select("id").eq("user_id", user.id).eq("card_id", card_id).eq("correct", true).limit(1);
   const pointsAwarded = correct && (!prior || prior.length === 0) ? cardPoints : 0;
 
-  await supa.from("qsr_quiz_attempts").insert({ user_id: user.id, card_id, answer_index, correct, points_awarded: pointsAwarded });
+  await supa.from("qsr_quiz_attempts").insert({ user_id: user.id, card_id, answer_index: storedIndex, correct, points_awarded: pointsAwarded });
 
   const ctx = await courseIdForCard(supa, card_id);
   const enrollment = await ensureEnrollment(supa, user.id, ctx.courseId);
-  await upsertProgressUpgrade(supa, enrollment.id, card_id, correct ? "passed" : "answered", { answer_index, correct });
+  await upsertProgressUpgrade(supa, enrollment.id, card_id, correct ? "passed" : "answered", { answer_index: storedIndex, correct });
 
   // Points ledger is the source of truth (§8). First correct attempt only.
   if (pointsAwarded > 0) {
@@ -166,7 +207,8 @@ async function answerQuiz(supa, user, body) {
       .then(() => {}, () => {});
   }
 
-  return { ok: true, correct, pointsAwarded, answer: correctIndex, explain: card.data?.explain ?? null };
+  const explain = (lang === "es" && d.i18n?.es?.explain) ? d.i18n.es.explain : (d.explain ?? null);
+  return { ok: true, correct, pointsAwarded, answer: multi ? null : Number(d.answer), answers: correctAnswers, multi, explain };
 }
 
 async function votePoll(supa, user, body) {
@@ -331,6 +373,108 @@ function unwrap(result) {
   return respond(200, result);
 }
 
+// ── Required ("pop up on login") training ────────────────────────────────
+// Fiscal model mirrors src/lib/fiscal.ts (FY2026 4-4-5). A quarterly course is
+// "outstanding" if the caller's role is targeted and they haven't completed it
+// since the start of the current fiscal quarter.
+const RQ_FY_START = "2025-12-29";
+const RQ_PERIOD_WEEKS = [4, 4, 5, 4, 4, 5, 4, 4, 5, 4, 4, 5];
+const rqUtc = (iso) => Date.parse(`${iso}T00:00:00Z`);
+const rqAddDays = (iso, n) => new Date(rqUtc(iso) + n * 86400000).toISOString().slice(0, 10);
+function rqPeriod(iso) {
+  const days = Math.floor((rqUtc(iso) - rqUtc(RQ_FY_START)) / 86400000);
+  if (days < 0) return null;
+  const wk = Math.floor(days / 7);
+  let sw = 0;
+  for (let i = 0; i < RQ_PERIOD_WEEKS.length; i++) {
+    if (wk < sw + RQ_PERIOD_WEEKS[i]) return i + 1;
+    sw += RQ_PERIOD_WEEKS[i];
+  }
+  return null;
+}
+function rqWindowStart(iso, cadence) {
+  if (cadence === "annual") return RQ_FY_START;
+  const period = rqPeriod(iso);
+  if (!period) return RQ_FY_START;
+  const qStartPeriod = Math.floor((period - 1) / 3) * 3 + 1; // first period of this quarter
+  let sw = 0;
+  for (let i = 0; i < qStartPeriod - 1; i++) sw += RQ_PERIOD_WEEKS[i];
+  return rqAddDays(RQ_FY_START, sw * 7);
+}
+
+// Full "My Training" view: every published course with the caller's status
+// (not started / in progress / completed) plus whether it's required for their
+// role and still outstanding this window. Degrades gracefully pre-0174 (no
+// requirement columns) by treating everything as not-required.
+async function getMyTraining(supa, user) {
+  let res = await supa
+    .from("qsr_courses")
+    .select("id, title, category, description, est_minutes, points, requirement_cadence, requirement_roles")
+    .eq("status", "published").order("title");
+  if (res.error) {
+    res = await supa
+      .from("qsr_courses")
+      .select("id, title, category, description, est_minutes, points")
+      .eq("status", "published").order("title");
+  }
+  const list = res.data || [];
+  const ids = list.map((c) => c.id);
+  const enrByCourse = new Map();
+  if (ids.length) {
+    const { data: enr } = await supa
+      .from("qsr_enrollments")
+      .select("course_id, status, completed_at")
+      .eq("user_id", user.id).in("course_id", ids);
+    for (const e of enr || []) enrByCourse.set(e.course_id, e);
+  }
+  const role = String(user.role);
+  const today = new Date().toISOString().slice(0, 10);
+  const courses = list.map((c) => {
+    const e = enrByCourse.get(c.id);
+    const status = e ? (e.status === "completed" ? "completed" : "in_progress") : "not_started";
+    const required = !!(c.requirement_cadence && Array.isArray(c.requirement_roles) && c.requirement_roles.includes(role));
+    let outstanding = false;
+    if (required) {
+      const windowStart = rqWindowStart(today, c.requirement_cadence);
+      const doneThisWindow = !!(e && e.status === "completed" && e.completed_at && e.completed_at >= `${windowStart}T00:00:00Z`);
+      outstanding = !doneThisWindow;
+    }
+    return {
+      id: c.id, title: c.title, category: c.category, description: c.description,
+      est_minutes: c.est_minutes, points: c.points,
+      status, completed_at: e?.completed_at ?? null,
+      required, cadence: c.requirement_cadence ?? null, outstanding,
+    };
+  });
+  return { courses };
+}
+
+async function getRequired(supa, user) {
+  const { data: courses } = await supa
+    .from("qsr_courses")
+    .select("id, title, category, est_minutes, requirement_cadence, requirement_roles")
+    .eq("status", "published")
+    .not("requirement_cadence", "is", null);
+  const role = String(user.role);
+  const applicable = (courses || []).filter((c) => Array.isArray(c.requirement_roles) && c.requirement_roles.includes(role));
+  if (!applicable.length) return { required: [] };
+  const today = new Date().toISOString().slice(0, 10);
+  const out = [];
+  for (const c of applicable) {
+    const windowStart = rqWindowStart(today, c.requirement_cadence);
+    const { data: done } = await supa
+      .from("qsr_enrollments")
+      .select("id")
+      .eq("user_id", user.id).eq("course_id", c.id).eq("status", "completed")
+      .gte("completed_at", `${windowStart}T00:00:00Z`)
+      .limit(1);
+    if (!done || !done.length) {
+      out.push({ id: c.id, title: c.title, category: c.category, est_minutes: c.est_minutes, cadence: c.requirement_cadence });
+    }
+  }
+  return { required: out };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   let supa;
@@ -344,13 +488,15 @@ export const handler = async (event) => {
   if (event.httpMethod === "POST") { try { body = JSON.parse(event.body || "{}"); } catch { body = {}; } }
 
   try {
-    if (action === "lesson") return unwrap(await getLesson(supa, user, params.course_id));
+    if (action === "lesson") return unwrap(await getLesson(supa, user, params.course_id, params.lang || "en"));
     if (action === "progress") return unwrap(await recordProgress(supa, user, body));
     if (action === "quiz") return unwrap(await answerQuiz(supa, user, body));
     if (action === "poll") return unwrap(await votePoll(supa, user, body));
     if (action === "complete") return unwrap(await completeLesson(supa, user, body));
     if (action === "stats") return unwrap(await getStats(supa, user));
     if (action === "leaderboard") return unwrap(await getLeaderboard(supa, user));
+    if (action === "required") return unwrap(await getRequired(supa, user));
+    if (action === "mytraining") return unwrap(await getMyTraining(supa, user));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });

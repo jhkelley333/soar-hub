@@ -23,7 +23,10 @@ export interface VideoData {
 }
 export interface QuizData {
   kicker?: string; points?: number; q: string; options: string[];
-  answer?: number; explain?: string; // stripped for learners
+  answer?: number;        // correct index (single-select)
+  answers?: number[];     // correct indices (when multi)
+  multi?: boolean;        // allow selecting more than one
+  explain?: string; // stripped for learners
 }
 export interface RevealData {
   kicker?: string; title: string; reveal: string;
@@ -56,7 +59,7 @@ export interface LessonCard {
 export interface LessonPayload {
   course: {
     id: string; title: string; category: string | null; description: string | null;
-    status: string; est_minutes: number | null; points: number;
+    status: string; est_minutes: number | null; points: number; languages?: string[] | null;
   };
   lesson: { id: string; title: string; module: string | null; ord: number };
   enrollmentId: string;

@@ -20,6 +20,7 @@ import {
   type QueueFilterState,
 } from "./QueueFilters";
 import { downloadPafsCsv } from "./csv";
+import { PayPeriodBadge } from "./PayPeriodBadge";
 import type { PafRow, PafStatus } from "./types";
 
 // Today's YYYY-MM-DD in local time (used to split current vs upcoming).
@@ -126,7 +127,8 @@ export function PafQueuePage() {
         title="Payroll PAF Queue"
         description={`${pending} PAF${pending === 1 ? "" : "s"} awaiting action.`}
         actions={
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <PayPeriodBadge className="mr-1" />
             <Link to="/paf">
               <Button variant="ghost" size="sm">
                 <ChevronLeft className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />

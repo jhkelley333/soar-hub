@@ -13,6 +13,7 @@ export interface QsrCourseSummary {
   status: "draft" | "published";
   est_minutes: number | null;
   points: number;
+  total_points?: number; // completion points + every quiz card's points (view 0170)
   lesson_count: number;
   card_count: number;
 }
@@ -20,7 +21,7 @@ export interface QsrCourseSummary {
 export async function listQsrCourses(): Promise<QsrCourseSummary[]> {
   const { data, error } = await supabase
     .from("qsr_course_summary")
-    .select("id, title, category, description, status, est_minutes, points, lesson_count, card_count")
+    .select("id, title, category, description, status, est_minutes, points, total_points, lesson_count, card_count")
     .order("title");
   if (error) throw new Error(error.message);
   return (data ?? []) as QsrCourseSummary[];
@@ -42,8 +43,8 @@ async function learnFetch<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export function fetchLesson(courseId: string): Promise<LessonPayload> {
-  return learnFetch<LessonPayload>(`${LEARN_FN}?action=lesson&course_id=${encodeURIComponent(courseId)}`);
+export function fetchLesson(courseId: string, lang = "en"): Promise<LessonPayload> {
+  return learnFetch<LessonPayload>(`${LEARN_FN}?action=lesson&course_id=${encodeURIComponent(courseId)}&lang=${encodeURIComponent(lang)}`);
 }
 
 export function recordCardProgress(
@@ -56,12 +57,12 @@ export function recordCardProgress(
 }
 
 export function answerQuiz(
-  cardId: string, answerIndex: number,
-): Promise<{ ok: true; correct: boolean; pointsAwarded: number; answer: number; explain: string | null }> {
-  return learnFetch(`${LEARN_FN}?action=quiz`, {
-    method: "POST",
-    body: JSON.stringify({ card_id: cardId, answer_index: answerIndex }),
-  });
+  cardId: string, selection: number | number[], lang = "en",
+): Promise<{ ok: true; correct: boolean; pointsAwarded: number; answer: number | null; answers?: number[]; multi?: boolean; explain: string | null }> {
+  const body = Array.isArray(selection)
+    ? { card_id: cardId, answer_indices: selection, lang }
+    : { card_id: cardId, answer_index: selection, lang };
+  return learnFetch(`${LEARN_FN}?action=quiz`, { method: "POST", body: JSON.stringify(body) });
 }
 
 export function votePoll(cardId: string, optionIndex: number): Promise<{ ok: true; results: number[] }> {
@@ -100,6 +101,19 @@ export function fetchQsrLeaderboard(): Promise<QsrLeaderboard> {
 // ── Authoring (Milestone 4 — Course Builder) ─────────────────────────────────
 const AUTHOR_FN = "/.netlify/functions/qsr-author";
 
+// AI course authoring — drafts a course from a topic / pasted source (qsr-ai).
+export function generateCourse(
+  input: { topic: string; sourceText?: string; lessons?: number },
+): Promise<{ course_id: string; title: string }> {
+  return learnFetch("/.netlify/functions/qsr-ai?action=generate", { method: "POST", body: JSON.stringify(input) });
+}
+
+// AI translation — fills each card's Spanish (data.i18n.es) for a course.
+export function translateCourse(courseId: string): Promise<{ ok: true; translated: number; languages: string[] }> {
+  return learnFetch("/.netlify/functions/qsr-ai?action=translate", { method: "POST", body: JSON.stringify({ course_id: courseId, target: "es" }) });
+}
+
+
 export interface BuilderCourse {
   id: string;
   title: string;
@@ -108,11 +122,14 @@ export interface BuilderCourse {
   status: "draft" | "published";
   est_minutes: number | null;
   points: number;
+  total_points?: number; // completion points + every quiz card's points
   version: number;
   created_at: string;
   updated_at: string;
   lesson_count: number;
   card_count: number;
+  requirement_cadence?: string | null; // null = not required; 'quarterly' | 'annual'
+  requirement_roles?: string[] | null;
 }
 export interface BuilderCard {
   id: string;
@@ -230,4 +247,74 @@ export function deleteAssignment(id: string): Promise<{ ok: true }> {
 }
 export function fetchCompletions(): Promise<{ rows: CompletionRow[] }> {
   return learnFetch(`${MANAGE_FN}?action=completions`);
+}
+
+// ── Course media uploads (Supabase Storage, bucket from migration 0169) ──────
+const QSR_MEDIA_BUCKET = "qsr-media";
+
+// Uploads an image/video for a card and returns its public URL (to store in
+// the card's videoUrl / imageUrl). Authors only — gated by storage RLS.
+export async function uploadQsrMedia(file: File, cardId: string): Promise<string> {
+  const safe = file.name.replace(/[^\w.-]+/g, "_").slice(-80);
+  const path = `${cardId}/${Date.now()}-${safe}`;
+  const { error } = await supabase.storage.from(QSR_MEDIA_BUCKET).upload(path, file, {
+    contentType: file.type || undefined,
+    upsert: false,
+  });
+  if (error) throw error;
+  return supabase.storage.from(QSR_MEDIA_BUCKET).getPublicUrl(path).data.publicUrl;
+}
+
+// ── Public QR access tokens (admin minting via qsr-manage) ───────────────────
+export interface QsrAccessToken {
+  id: string;
+  token: string;
+  store_id: string;
+  label: string | null;
+  is_active: boolean;
+  created_at: string;
+  revoked_at: string | null;
+  store: { id: string; number: string; name: string } | null;
+}
+export function fetchAccessTokens(): Promise<{ tokens: QsrAccessToken[] }> {
+  return learnFetch(`${MANAGE_FN}?action=tokens`);
+}
+// The caller's stores (scoped) for the mint picker + whether they can bulk-mint.
+export function fetchTokenStores(): Promise<{ stores: { id: string; number: string; name: string }[]; canMintAll: boolean }> {
+  return learnFetch(`${MANAGE_FN}?action=tokenStores`);
+}
+export function mintAllStores(): Promise<{ created: number; total: number }> {
+  return learnFetch(`${MANAGE_FN}?action=mintAllStores`, { method: "POST", body: "{}" });
+}
+export function mintAccessToken(store_id: string, label?: string): Promise<{ token: QsrAccessToken }> {
+  return learnFetch(`${MANAGE_FN}?action=mintToken`, { method: "POST", body: JSON.stringify({ store_id, label }) });
+}
+export function revokeAccessToken(id: string): Promise<{ ok: true }> {
+  return learnFetch(`${MANAGE_FN}?action=revokeToken`, { method: "POST", body: JSON.stringify({ id }) });
+}
+
+// ── Required ("pop up on login") training ────────────────────────────────────
+export interface RequiredCourse {
+  id: string; title: string; category: string | null; est_minutes: number | null; cadence: string;
+}
+export function fetchRequiredTraining(): Promise<{ required: RequiredCourse[] }> {
+  return learnFetch(`${LEARN_FN}?action=required`);
+}
+
+// My Training — every published course with the caller's status + required flag.
+export interface MyTrainingCourse {
+  id: string;
+  title: string;
+  category: string | null;
+  description: string | null;
+  est_minutes: number | null;
+  points: number;
+  status: "not_started" | "in_progress" | "completed";
+  completed_at: string | null;
+  required: boolean;
+  cadence: string | null; // 'quarterly' | 'annual' | null
+  outstanding: boolean; // required AND not completed in the current window
+}
+export function fetchMyTraining(): Promise<{ courses: MyTrainingCourse[] }> {
+  return learnFetch(`${LEARN_FN}?action=mytraining`);
 }

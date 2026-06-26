@@ -304,6 +304,203 @@ async function escalate(supa, { store, variancecents, type, reason, managerName,
   await sendEmail(emails, subject, body);
 }
 
+// ── Store Funds (the "Bank") ─────────────────────────────────────────────
+// SONIC 4-week fiscal periods (FY2026 4-4-5), mirroring src/lib/fiscal.ts. DOs
+// validate each store's Bank in week 1 of every period.
+const FUND_FY_START = "2025-12-29"; // Mon Dec 29 2025
+const FUND_PERIOD_WEEKS = [4, 4, 5, 4, 4, 5, 4, 4, 5, 4, 4, 5];
+// Store Funds goes live in Period 7 — earlier (setup/test) periods are excluded
+// from the month-to-month metrics so P6 trials don't skew the numbers.
+const FUND_LAUNCH_PERIOD = 7;
+const isoToUtc = (iso) => Date.parse(`${iso}T00:00:00Z`);
+const addDaysIsoUtc = (iso, n) => new Date(isoToUtc(iso) + n * 86400000).toISOString().slice(0, 10);
+const daysBetweenIso = (a, b) => Math.floor((isoToUtc(a) - isoToUtc(b)) / 86400000);
+function fiscalInfoIso(iso) {
+  const days = daysBetweenIso(iso, FUND_FY_START);
+  if (days < 0) return null;
+  const wk = Math.floor(days / 7);
+  let sw = 0;
+  for (let i = 0; i < FUND_PERIOD_WEEKS.length; i++) {
+    if (wk < sw + FUND_PERIOD_WEEKS[i]) {
+      return { period: i + 1, fiscalWeek: wk + 1, weekInPeriod: wk - sw + 1, periodStart: addDaysIsoUtc(FUND_FY_START, sw * 7) };
+    }
+    sw += FUND_PERIOD_WEEKS[i];
+  }
+  return null;
+}
+function periodStartByNum(p) {
+  let sw = 0;
+  for (let i = 0; i < p - 1 && i < FUND_PERIOD_WEEKS.length; i++) sw += FUND_PERIOD_WEEKS[i];
+  return addDaysIsoUtc(FUND_FY_START, sw * 7);
+}
+
+// Read the fund tolerance on its own so the shared getSettings select stays
+// independent of migration 0173 (a missing column here just falls back to $5).
+async function fundTolerance(supa) {
+  const { data } = await supa.from("cash_settings").select("fund_tolerance_cents").eq("id", "global").maybeSingle();
+  return data?.fund_tolerance_cents ?? TOLERANCE_CENTS;
+}
+
+async function fundBankMap(supa, storeIds) {
+  if (!storeIds.length) return new Map();
+  const { data } = await supa.from("store_fund_settings").select("store_id, bank_amount_cents").in("store_id", storeIds);
+  return new Map((data || []).map((r) => [r.store_id, r.bank_amount_cents]));
+}
+
+async function fundOverview(supa, user) {
+  if (!ACT_ROLES.has(String(user.role))) return { error: "Store Funds is for DO and above.", status: 403 };
+  const access = await storeRowsForUser(supa, user);
+  const rows = access.rows;
+  const settings = await getSettings(supa);
+  const tolerance = await fundTolerance(supa);
+  if (!rows.length) return { period: null, toleranceCents: tolerance, stores: [], rollup: null, can_validate: false, is_admin: false };
+  const today = currentBusinessDateCT(settings.cutoffHour);
+  const fi = fiscalInfoIso(today);
+  const ids = rows.map((r) => r.id);
+  const bankMap = await fundBankMap(supa, ids);
+  const { data: vals } = await supa
+    .from("store_fund_validations")
+    .select("store_id, counted_cents, bank_amount_cents, variance_cents, over_tolerance, validated_at, validated_by_name, fiscal_period")
+    .in("store_id", ids)
+    .order("validated_at", { ascending: false });
+  const latest = new Map();
+  const thisPeriod = new Set();
+  for (const v of vals || []) {
+    if (!latest.has(v.store_id)) latest.set(v.store_id, v);
+    if (fi && v.fiscal_period === fi.period) thisPeriod.add(v.store_id);
+  }
+  const stores = rows.map((r) => {
+    const bank = bankMap.has(r.id) ? bankMap.get(r.id) : null;
+    const last = latest.get(r.id) || null;
+    return {
+      store_id: r.id, store_number: String(r.number), store_name: r.name || null,
+      bank_amount_cents: bank, bank_set: bank != null,
+      validated_this_period: thisPeriod.has(r.id),
+      last: last
+        ? { counted_cents: last.counted_cents, variance_cents: last.variance_cents, over_tolerance: last.over_tolerance, validated_at: last.validated_at, by: last.validated_by_name }
+        : null,
+    };
+  }).sort((a, b) => Number(a.store_number) - Number(b.store_number));
+  const withBank = stores.filter((s) => s.bank_set);
+  const rollup = {
+    store_count: stores.length,
+    bank_set_count: withBank.length,
+    validated_this_period: stores.filter((s) => s.validated_this_period).length,
+    due: withBank.filter((s) => !s.validated_this_period).length,
+    over_tolerance: stores.filter((s) => s.last?.over_tolerance).length,
+  };
+  return { period: fi, toleranceCents: tolerance, stores, rollup, can_validate: ACT_ROLES.has(String(user.role)), is_admin: String(user.role) === "admin" };
+}
+
+async function fundValidate(supa, user, body) {
+  if (!ACT_ROLES.has(String(user.role))) return { error: "Only a DO or above can validate the store Bank.", status: 403 };
+  const access = await storeRowsForUser(supa, user);
+  const store = access.rows.find((r) => String(r.number) === String(body?.store_number));
+  if (!store) return { error: "That store isn't in your scope.", status: 403 };
+  const { data: setting } = await supa.from("store_fund_settings").select("bank_amount_cents").eq("store_id", store.id).maybeSingle();
+  if (!setting || setting.bank_amount_cents == null) return { error: "Set this store's Bank amount before validating.", status: 400 };
+  const bank = Number(setting.bank_amount_cents);
+  const counted = Math.round(Number(body?.counted_cents || 0));
+  const variance = counted - bank;
+  const settings = await getSettings(supa);
+  const tolerance = await fundTolerance(supa);
+  const over = Math.abs(variance) > tolerance;
+  const reason = String(body?.reason || "").trim();
+  if (over && reason.length < 8) return { error: "A variance reason (8+ characters) is required to escalate.", status: 400 };
+  const businessDate = currentBusinessDateCT(settings.cutoffHour);
+  const fi = fiscalInfoIso(businessDate);
+  const name = user.preferred_name || user.full_name || user.email;
+  const { data: row, error } = await supa.from("store_fund_validations").insert({
+    store_id: store.id, store_number: String(store.number), business_date: businessDate,
+    fiscal_period: fi?.period ?? null, fiscal_week: fi?.fiscalWeek ?? null, week_in_period: fi?.weekInPeriod ?? null,
+    bank_amount_cents: bank, counted_cents: counted, variance_cents: variance,
+    denominations: body?.denominations ?? null, over_tolerance: over, reason: reason || null,
+    validated_by: user.id, validated_by_name: name,
+  }).select("id").single();
+  if (error) return { error: error.message, status: 500 };
+  await logCash(supa, { store_id: store.id, store_number: String(store.number), action: "fund-validate", actor_id: user.id, actor_name: name, detail: { counted, bank, variance, over } });
+
+  let alerted = null;
+  if (over) {
+    const leaders = await resolveStoreLeaders(supa, store.id);
+    const emails = [leaders.sdo?.email, leaders.do?.email].filter(Boolean);
+    const type = variance < 0 ? "short" : "over";
+    await sendEmail(
+      emails,
+      `[Cash MGT] Store Bank ${type} at Store ${store.number} — ${fmtMoney(variance)}`,
+      `The store Bank validation at Store ${store.number}${store.name ? ` (${store.name})` : ""} is ${type} by ${fmtMoney(Math.abs(variance))} (tolerance ${fmtMoney(tolerance)}).\n\n` +
+        `Counted: ${fmtMoney(counted)} vs Bank ${fmtMoney(bank)}\n` +
+        `By: ${name}\nReason: ${reason || "—"}\n\n` +
+        `Review it in the hub: ${appBaseUrl()}/admin/cash-management`,
+    );
+    alerted = leaders.sdo?.name || leaders.do?.name || null;
+  }
+  return { ok: true, id: row.id, variance_cents: variance, over_tolerance: over, alerted };
+}
+
+async function fundSetBanks(supa, user, body) {
+  if (String(user.role) !== "admin") return { error: "Only an admin can set Bank amounts.", status: 403 };
+  const items = Array.isArray(body?.items) ? body.items : [];
+  if (!items.length) return { error: "No Bank amounts provided.", status: 400 };
+  const numbers = items.map((i) => String(i.store_number).trim()).filter(Boolean);
+  const { data: stores } = await supa.from("stores").select("id, number").in("number", numbers);
+  const byNum = new Map((stores || []).map((s) => [String(s.number), s.id]));
+  const name = user.preferred_name || user.full_name || user.email;
+  const now = new Date().toISOString();
+  const upserts = [];
+  const unknown = [];
+  for (const it of items) {
+    const num = String(it.store_number).trim();
+    const id = byNum.get(num);
+    const cents = Math.round(Number(it.bank_amount_cents));
+    if (!id || !Number.isFinite(cents) || cents < 0) { unknown.push(num); continue; }
+    upserts.push({ store_id: id, store_number: num, bank_amount_cents: cents, updated_by: user.id, updated_by_name: name, updated_at: now });
+  }
+  if (upserts.length) {
+    const { error } = await supa.from("store_fund_settings").upsert(upserts, { onConflict: "store_id" });
+    if (error) return { error: error.message, status: 500 };
+  }
+  return { ok: true, updated: upserts.length, unknown };
+}
+
+async function fundMetrics(supa, user) {
+  if (!ACT_ROLES.has(String(user.role))) return { error: "Store Funds is for DO and above.", status: 403 };
+  const access = await storeRowsForUser(supa, user);
+  const rows = access.rows;
+  if (!rows.length) return { periods: [], banked_stores: 0, store_count: 0 };
+  const ids = rows.map((r) => r.id);
+  const bankMap = await fundBankMap(supa, ids);
+  const banked = ids.filter((id) => bankMap.get(id) != null).length;
+  const { data: vals } = await supa.from("store_fund_validations")
+    .select("store_id, fiscal_period, week_in_period, business_date, variance_cents")
+    .in("store_id", ids).not("fiscal_period", "is", null);
+  const byPeriod = new Map();
+  for (const v of vals || []) {
+    if (v.fiscal_period < FUND_LAUNCH_PERIOD) continue; // pre-launch (≤ P6) excluded
+    if (!byPeriod.has(v.fiscal_period)) byPeriod.set(v.fiscal_period, []);
+    byPeriod.get(v.fiscal_period).push(v);
+  }
+  const periods = [];
+  for (const [p, list] of [...byPeriod.entries()].sort((a, b) => a[0] - b[0])) {
+    const start = periodStartByNum(p);
+    const validatedStores = new Set(list.map((v) => v.store_id));
+    const onTimeStores = new Set(list.filter((v) => v.week_in_period === 1).map((v) => v.store_id));
+    const days = list.map((v) => daysBetweenIso(v.business_date, start)).filter((n) => n != null && n >= 0);
+    const absVars = list.map((v) => Math.abs(v.variance_cents || 0));
+    periods.push({
+      period: p,
+      due: banked,
+      validated: validatedStores.size,
+      on_time: onTimeStores.size,
+      on_time_pct: banked ? Math.round((onTimeStores.size / banked) * 100) : 0,
+      avg_days_to_validate: days.length ? Number((days.reduce((a, b) => a + b, 0) / days.length).toFixed(1)) : null,
+      total_variance_cents: absVars.reduce((a, b) => a + b, 0),
+      avg_abs_variance_cents: absVars.length ? Math.round(absVars.reduce((a, b) => a + b, 0) / absVars.length) : 0,
+    });
+  }
+  return { periods, banked_stores: banked, store_count: rows.length };
+}
+
 // ---- closeout row -> display shape for tables ----
 function closeoutCard(co) {
   return {
@@ -1223,6 +1420,8 @@ export const handler = async (event) => {
       if (action === "badges") return unwrap(await badges(supa, user));
       if (action === "settings") return unwrap(await getSettingsAction(supa, user));
       if (action === "detail") return unwrap(await detail(supa, user, params));
+      if (action === "fund-overview") return unwrap(await fundOverview(supa, user));
+      if (action === "fund-metrics") return unwrap(await fundMetrics(supa, user));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {
@@ -1232,6 +1431,8 @@ export const handler = async (event) => {
       if (action === "alert-decide") return unwrap(await decideAlert(supa, user, body));
       if (action === "update-settings") return unwrap(await updateSettings(supa, user, body));
       if (action === "edit-closeout") return unwrap(await editCloseout(supa, user, body));
+      if (action === "fund-validate") return unwrap(await fundValidate(supa, user, body));
+      if (action === "fund-set-banks") return unwrap(await fundSetBanks(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
     return respond(405, { error: "method not allowed" });

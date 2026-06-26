@@ -6,7 +6,7 @@
 import { useEffect, useRef, useState } from "react";
 import confetti from "canvas-confetti";
 import { Check, X, Play, Lock } from "lucide-react";
-import { answerQuiz, votePoll, recordCardProgress, completeLesson } from "../api";
+import { useLearnApi } from "./LearnApi";
 import type {
   LessonCard, IntroData, StepsData, ImageData, VideoData, QuizData, RevealData, PollData, DoneData,
 } from "../types";
@@ -33,7 +33,7 @@ const Kicker = ({ children, light }: { children?: React.ReactNode; light?: boole
     }`}>{children}</span>
   ) : null;
 
-type CardProps = { card: LessonCard; onAdvance: () => void; onPoints: (delta: number) => void };
+type CardProps = { card: LessonCard; onAdvance: () => void; onPoints: (delta: number) => void; lang?: string };
 
 // ── intro ────────────────────────────────────────────────────────────────
 export function IntroCard({ card, onAdvance }: CardProps) {
@@ -130,6 +130,7 @@ function parseVideo(input?: string | null): { kind: "youtube" | "vimeo" | "mp4" 
 }
 
 export function VideoCard({ card, onAdvance }: CardProps) {
+  const { recordCardProgress } = useLearnApi();
   const d = card.data as VideoData;
   const v = parseVideo(d.videoUrl);
   const gated = !!d.gate;
@@ -139,10 +140,16 @@ export function VideoCard({ card, onAdvance }: CardProps) {
   const reported = useRef(card.progress?.watched_pct ?? 0);
 
   // Push watch progress to the server (it alone flips the card to passable),
-  // throttled to ~5% steps.
+  // throttled to ~5% steps — EXCEPT the terminal 100%, which must always post.
+  // Otherwise a 100% gate is unreachable: the last 5% step lands ~95% and the
+  // final completion update gets swallowed by the throttle window, so the
+  // server never sees watched_pct >= 1.0 and the button stays locked even
+  // though the UI shows "Watched 100%".
   const report = (frac: number) => {
     setPct(frac);
-    if (!gated || frac < reported.current + 0.05) return;
+    if (!gated) return;
+    const complete = frac >= 1 && reported.current < 1; // post the final 100% exactly once
+    if (!complete && frac < reported.current + 0.05) return;
     reported.current = frac;
     recordCardProgress(card.id, "seen", +frac.toFixed(2)).then((r) => { if (r.passable) setPassable(true); }).catch(() => {});
   };
@@ -171,20 +178,22 @@ export function VideoCard({ card, onAdvance }: CardProps) {
   // Direct video file — real progress drives the gate exactly.
   if (v.kind === "mp4") {
     return (
-      <div className="flex h-full flex-col justify-between bg-midnight-950 p-7 text-white">
-        <div className="flex flex-1 flex-col">
+      <div className="flex h-full flex-col bg-midnight-950 p-7 text-white">
+        <div className="shrink-0">
           <Kicker light>{d.kicker}</Kicker>
           <h2 className="mt-3 font-qsr-display text-2xl font-bold">{d.title}</h2>
           {d.body && <p className="mt-2 font-qsr-ui text-sm text-white/70">{d.body}</p>}
+        </div>
+        <div className="my-4 min-h-0 flex-1">
           <video
             src={v.src} controls playsInline
-            className="mt-4 w-full flex-1 rounded-2xl bg-black object-contain"
+            className="h-full w-full rounded-2xl bg-black object-contain"
             onTimeUpdate={(e) => { const el = e.currentTarget; if (el.duration) report(Math.min(1, el.currentTime / el.duration)); }}
             onEnded={() => report(1)}
           />
-          {gated && <p className="mt-3 font-qsr-mono text-[11px] text-white/50">Watched {Math.round(pct * 100)}% · gate ≥ {Math.round(threshold * 100)}%</p>}
         </div>
-        {ContinueBtn}
+        {gated && <p className="mb-2 shrink-0 font-qsr-mono text-[11px] text-white/50">Watched {Math.round(pct * 100)}% · gate ≥ {Math.round(threshold * 100)}%</p>}
+        <div className="shrink-0">{ContinueBtn}</div>
       </div>
     );
   }
@@ -192,27 +201,29 @@ export function VideoCard({ card, onAdvance }: CardProps) {
   // YouTube / Vimeo / any other iframe embed (HeyGen, Loom, Wistia…).
   if (v.kind === "youtube" || v.kind === "vimeo" || v.kind === "embed") {
     return (
-      <div className="flex h-full flex-col justify-between bg-midnight-950 p-7 text-white">
-        <div className="flex flex-1 flex-col">
+      <div className="flex h-full flex-col bg-midnight-950 p-7 text-white">
+        <div className="shrink-0">
           <Kicker light>{d.kicker}</Kicker>
           <h2 className="mt-3 font-qsr-display text-2xl font-bold">{d.title}</h2>
           {d.body && <p className="mt-2 font-qsr-ui text-sm text-white/70">{d.body}</p>}
-          <div className="mt-4 aspect-video w-full overflow-hidden rounded-2xl bg-black">
+        </div>
+        <div className="my-4 flex min-h-0 flex-1 items-center">
+          <div className="aspect-video max-h-full w-full overflow-hidden rounded-2xl bg-black">
             <iframe
               src={v.embed} title={d.title} className="h-full w-full" allowFullScreen
               allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             />
           </div>
-          {gated && (
-            <div className="mt-3">
-              <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/15">
-                <div className="h-full bg-qsr-gold transition-all" style={{ width: `${Math.round(pct * 100)}%` }} />
-              </div>
-              <p className="mt-2 font-qsr-mono text-[11px] text-white/50">{passable ? "Unlocked" : "Keep watching to continue…"}</p>
-            </div>
-          )}
         </div>
-        {ContinueBtn}
+        {gated && (
+          <div className="mb-2 shrink-0">
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/15">
+              <div className="h-full bg-qsr-gold transition-all" style={{ width: `${Math.round(pct * 100)}%` }} />
+            </div>
+            <p className="mt-2 font-qsr-mono text-[11px] text-white/50">{passable ? "Unlocked" : "Keep watching to continue…"}</p>
+          </div>
+        )}
+        <div className="shrink-0">{ContinueBtn}</div>
       </div>
     );
   }
@@ -234,55 +245,85 @@ export function VideoCard({ card, onAdvance }: CardProps) {
   );
 }
 
-// ── quiz (server-scored) ───────────────────────────────────────────────────
-export function QuizCard({ card, onAdvance, onPoints }: CardProps) {
+// ── quiz (server-scored; must answer correctly to advance) ─────────────────
+export function QuizCard({ card, onAdvance, onPoints, lang }: CardProps) {
+  const { answerQuiz } = useLearnApi();
   const d = card.data as QuizData;
-  const [selected, setSelected] = useState<number | null>(null);
-  const [result, setResult] = useState<{ correct: boolean; answer: number; explain: string | null } | null>(null);
+  const multi = !!d.multi;
+  const [selected, setSelected] = useState<number[]>([]);
+  const [result, setResult] = useState<{ correct: boolean; answers: number[]; explain: string | null } | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const choose = async (i: number) => {
-    if (result || busy) return;
-    setSelected(i); setBusy(true);
+  const submit = async (sel: number[]) => {
+    if (busy || !sel.length) return;
+    setBusy(true);
     try {
-      const r = await answerQuiz(card.id, i);
-      setResult({ correct: r.correct, answer: r.answer, explain: r.explain });
-      onPoints(r.pointsAwarded);
+      const r = await answerQuiz(card.id, multi ? sel : sel[0], lang);
+      const answers = r.answers ?? (r.answer != null ? [r.answer] : []);
+      setResult({ correct: r.correct, answers, explain: r.explain });
+      if (r.pointsAwarded) onPoints(r.pointsAwarded);
     } finally { setBusy(false); }
   };
 
+  // Wrong answer → clear and let them try again; the card won't advance.
+  const retry = () => { setResult(null); setSelected([]); };
+
+  const onPick = (i: number) => {
+    if (result || busy) return;
+    if (multi) {
+      setSelected((s) => (s.includes(i) ? s.filter((x) => x !== i) : [...s, i]));
+    } else {
+      setSelected([i]);
+      submit([i]);
+    }
+  };
+
+  const wrong = !!result && !result.correct;
   const optionClass = (i: number) => {
-    if (!result) return "border-border bg-white text-ink hover:border-qsr-azure";
-    if (i === result.answer) return "border-success bg-success/10 text-ink";
-    if (i === selected) return "border-danger bg-danger/10 text-ink";
+    if (!result) return selected.includes(i)
+      ? "border-qsr-azure bg-qsr-azure/5 text-ink"
+      : "border-border bg-white text-ink hover:border-qsr-azure";
+    if (result.correct) return result.answers.includes(i)
+      ? "border-success bg-success/10 text-ink"
+      : "border-border bg-white text-ink-subtle";
+    // wrong: flag only their picks — don't reveal the correct answer
+    if (selected.includes(i)) return "border-danger bg-danger/10 text-ink";
     return "border-border bg-white text-ink-subtle";
   };
+
+  let footer;
+  if (result?.correct) footer = <PrimaryBtn onClick={onAdvance}>Continue ▸</PrimaryBtn>;
+  else if (wrong) footer = <PrimaryBtn onClick={retry}>Try again ▸</PrimaryBtn>;
+  else if (multi) footer = <PrimaryBtn onClick={() => submit(selected)} disabled={!selected.length || busy}>Check answer ▸</PrimaryBtn>;
+  else footer = <PrimaryBtn disabled>Choose an answer</PrimaryBtn>;
 
   return (
     <div className="flex h-full flex-col justify-between bg-white p-7">
       <div className="overflow-y-auto pt-4">
         <div className="flex items-center gap-2">
           <Kicker>{d.kicker}</Kicker>
-          {d.points != null && <span className="font-qsr-mono text-xs font-semibold text-qsr-gold">+{d.points}</span>}
+          {result?.correct && d.points != null && <span className="font-qsr-mono text-xs font-semibold text-qsr-gold">+{d.points}</span>}
         </div>
         <h2 className="mt-3 font-qsr-display text-xl font-bold leading-snug text-ink">{d.q}</h2>
+        {multi && !result && <p className="mt-1 font-qsr-ui text-xs text-ink-subtle">Select all that apply.</p>}
+        {wrong && <p className="mt-2 font-qsr-ui text-sm font-semibold text-danger">Not quite — give it another try.</p>}
         <div className="mt-4 space-y-2.5">
           {d.options.map((o, i) => (
             <button
-              key={i} type="button" onClick={() => choose(i)} disabled={!!result || busy}
+              key={i} type="button" onClick={() => onPick(i)} disabled={!!result || busy}
               className={`flex w-full items-center justify-between rounded-2xl border px-4 py-3 text-left font-qsr-ui text-[15px] transition active:scale-[0.99] ${optionClass(i)}`}
             >
               <span>{o}</span>
-              {result && i === result.answer && <Check className="h-4 w-4 text-success" />}
-              {result && i === selected && i !== result.answer && <X className="h-4 w-4 text-danger" />}
+              {result?.correct && result.answers.includes(i) && <Check className="h-4 w-4 text-success" />}
+              {wrong && selected.includes(i) && <X className="h-4 w-4 text-danger" />}
             </button>
           ))}
         </div>
-        {result?.explain && (
+        {result?.correct && result.explain && (
           <p className="mt-4 rounded-2xl bg-surface-sunk px-4 py-3 font-qsr-ui text-sm text-ink-muted">{result.explain}</p>
         )}
       </div>
-      <PrimaryBtn onClick={onAdvance} disabled={!result}>Continue ▸</PrimaryBtn>
+      {footer}
     </div>
   );
 }
@@ -316,6 +357,7 @@ export function RevealCard({ card, onAdvance }: CardProps) {
 
 // ── poll (server-aggregated) ───────────────────────────────────────────────
 export function PollCard({ card, onAdvance }: CardProps) {
+  const { votePoll } = useLearnApi();
   const d = card.data as PollData;
   const [results, setResults] = useState<number[] | null>(card.progress?.answer_index != null ? (d.results ?? null) : null);
   const [voted, setVoted] = useState(card.progress?.answer_index != null);
@@ -360,6 +402,7 @@ export function PollCard({ card, onAdvance }: CardProps) {
 
 // ── done (server-computed completion) ──────────────────────────────────────
 export function DoneCard({ card, courseId, onFinish }: { card: LessonCard; courseId: string; onFinish: () => void }) {
+  const { completeLesson } = useLearnApi();
   const d = card.data as DoneData;
   const [stats, setStats] = useState<{ points: number; score: string; streak: number } | null>(null);
 

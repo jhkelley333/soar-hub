@@ -47,12 +47,20 @@ function validateCard(type, d) {
         ? null : "Steps card needs a title and at least one step.";
     case "image": return has("title") ? null : "Image card needs a title.";
     case "video": return has("title") ? null : "Video card needs a title.";
-    case "quiz":
+    case "quiz": {
       if (!has("q")) return "Quiz needs a question.";
       if (opts.length < 2) return "Quiz needs at least two options.";
-      if (typeof d.answer !== "number" || d.answer < 0 || d.answer >= d.options.length)
+      const n = Array.isArray(d.options) ? d.options.length : 0;
+      if (d.multi) {
+        const ans = Array.isArray(d.answers) ? d.answers : [];
+        if (!ans.length) return "Mark at least one correct answer.";
+        if (ans.some((a) => typeof a !== "number" || a < 0 || a >= n)) return "A correct answer points to a missing option.";
+        return null;
+      }
+      if (typeof d.answer !== "number" || d.answer < 0 || d.answer >= n)
         return "Pick the correct answer.";
       return null;
+    }
     case "reveal":
       return has("title") && has("reveal") ? null : "Reveal card needs a title and reveal text.";
     case "poll":
@@ -75,15 +83,21 @@ async function listCourses(supa) {
   for (const l of lessons || []) lessonByCourse.set(l.course_id, (lessonByCourse.get(l.course_id) || 0) + 1);
   const lessonIds = (lessons || []).map((l) => l.id);
   const { data: cards } = lessonIds.length
-    ? await supa.from("qsr_cards").select("id, lesson_id").in("lesson_id", lessonIds) : { data: [] };
+    ? await supa.from("qsr_cards").select("id, lesson_id, type, data").in("lesson_id", lessonIds) : { data: [] };
   const cardByCourse = new Map();
+  const quizPtsByCourse = new Map();
   for (const cd of cards || []) {
     const cid = lessonToCourse.get(cd.lesson_id);
     cardByCourse.set(cid, (cardByCourse.get(cid) || 0) + 1);
+    if (cd.type === "quiz") {
+      const p = Number(cd.data?.points ?? 0) || 0;
+      quizPtsByCourse.set(cid, (quizPtsByCourse.get(cid) || 0) + p);
+    }
   }
   return {
     courses: (courses || []).map((c) => ({
       ...c, lesson_count: lessonByCourse.get(c.id) || 0, card_count: cardByCourse.get(c.id) || 0,
+      total_points: (Number(c.points) || 0) + (quizPtsByCourse.get(c.id) || 0),
     })),
   };
 }
@@ -105,7 +119,7 @@ async function getCourseTree(supa, courseId) {
 
 // ── Writes ─────────────────────────────────────────────────────────────────
 async function saveCourse(supa, user, body) {
-  const { id, title, category, description, est_minutes, points } = body || {};
+  const { id, title, category, description, est_minutes, points, requirement_cadence, requirement_roles } = body || {};
   if (!title || !String(title).trim()) return { error: "Title is required.", status: 400 };
   const patch = {
     title: String(title).trim(),
@@ -115,6 +129,10 @@ async function saveCourse(supa, user, body) {
     points: Number(points) || 0,
     updated_at: new Date().toISOString(),
   };
+  // Required-training settings are optional — only patch them when provided so
+  // existing callers (lesson/card saves) don't clear them.
+  if (requirement_cadence !== undefined) patch.requirement_cadence = requirement_cadence || null;
+  if (requirement_roles !== undefined) patch.requirement_roles = Array.isArray(requirement_roles) ? requirement_roles : [];
   if (id) {
     const { data, error } = await supa.from("qsr_courses").update(patch).eq("id", id).select().single();
     if (error) throw error;

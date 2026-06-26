@@ -15,7 +15,7 @@ import { StatusPill } from "@/shared/ui/StatusPill";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
-import { bulkApproveEmployeeActions, listApprovalQueue } from "./api";
+import { bulkApproveEmployeeActions, bulkConfirmEmployeeActions, listApprovalQueue } from "./api";
 import { RequestDetailDrawer } from "./RequestDetailDrawer";
 import { statusKind, waitingOn } from "./statusMeta";
 import type { PtoRow, TrainingCreditRow } from "./types";
@@ -108,6 +108,22 @@ export function ApprovalQueue() {
     onError: (e: unknown) => toast.push((e as Error)?.message ?? "Bulk approve failed.", "error"),
   });
 
+  // Bulk "Mark on weekly sheet" — the post-approval "entered" step, run across
+  // many requests (e.g. an RVP entering a week's training credits for several
+  // stores) in one go.
+  const markSheet = useMutation({
+    mutationFn: (items: { type: "training" | "pto"; id: string }[]) => bulkConfirmEmployeeActions(items, "entered"),
+    onSuccess: (r) => {
+      toast.push(
+        `Marked ${r.done} on the weekly sheet${r.failed ? ` · ${r.failed} couldn't be updated` : ""}.`,
+        r.failed ? "info" : "success",
+      );
+      setPicked(new Set());
+      qc.invalidateQueries({ queryKey: ["ea-queue"] });
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Mark on weekly sheet failed.", "error"),
+  });
+
   const trainingCredits = query.data?.trainingCredits ?? [];
   const ptoRequests = query.data?.ptoRequests ?? [];
 
@@ -151,18 +167,24 @@ export function ApprovalQueue() {
     .filter((r) => !range || inWeek(r.pto_start_date, r.pto_end_date, range));
   const shown = tc.length + pto.length;
 
-  // Bulk selection — only rows the caller can approve right now.
+  // Bulk selection — rows the caller can act on in bulk right now. Two bulk
+  // actions are supported: "decide" (approve) and "entered" (mark on weekly
+  // sheet). A row is selectable if it needs either; the action bar then offers
+  // whichever button(s) match what's selected.
   const key = (kind: "training" | "pto", id: string) => `${kind}:${id}`;
   const togglePick = (k: string) =>
     setPicked((prev) => { const next = new Set(prev); next.has(k) ? next.delete(k) : next.add(k); return next; });
-  const approvable = [
-    ...tc.filter((r) => r.action_needed === "decide").map((r) => ({ kind: "training" as const, id: r.id })),
-    ...pto.filter((r) => r.action_needed === "decide").map((r) => ({ kind: "pto" as const, id: r.id })),
+  const isBulkable = (r: { action_needed?: string | null }) => r.action_needed === "decide" || r.action_needed === "entered";
+  const bulkable = [
+    ...tc.filter(isBulkable).map((r) => ({ kind: "training" as const, id: r.id, action: r.action_needed })),
+    ...pto.filter(isBulkable).map((r) => ({ kind: "pto" as const, id: r.id, action: r.action_needed })),
   ];
-  const pickedItems = approvable.filter((a) => picked.has(key(a.kind, a.id))).map((a) => ({ type: a.kind, id: a.id }));
-  const allApprovableSelected = approvable.length > 0 && approvable.every((a) => picked.has(key(a.kind, a.id)));
+  const pickedBulk = bulkable.filter((a) => picked.has(key(a.kind, a.id)));
+  const pickedDecide = pickedBulk.filter((a) => a.action === "decide").map((a) => ({ type: a.kind, id: a.id }));
+  const pickedEntered = pickedBulk.filter((a) => a.action === "entered").map((a) => ({ type: a.kind, id: a.id }));
+  const allBulkSelected = bulkable.length > 0 && bulkable.every((a) => picked.has(key(a.kind, a.id)));
   const toggleSelectAll = () =>
-    setPicked(allApprovableSelected ? new Set() : new Set(approvable.map((a) => key(a.kind, a.id))));
+    setPicked(allBulkSelected ? new Set() : new Set(bulkable.map((a) => key(a.kind, a.id))));
 
   if (query.isLoading) return <Skeleton className="h-40 w-full" />;
   if (query.isError || !query.data) {
@@ -242,20 +264,27 @@ export function ApprovalQueue() {
         {range && <span className="text-xs text-zinc-500">{fmtDay(range[0])} – {fmtDay(range[1])}</span>}
       </div>
 
-      {/* Bulk approve */}
-      {approvable.length > 0 && (
+      {/* Bulk actions — approve and/or mark on weekly sheet */}
+      {bulkable.length > 0 && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-accent/30 bg-accent/5 px-3 py-2">
           <label className="flex items-center gap-2 text-sm text-zinc-700">
-            <input type="checkbox" className="h-4 w-4 accent-accent" checked={allApprovableSelected} onChange={toggleSelectAll} />
-            Select all approvable ({approvable.length})
+            <input type="checkbox" className="h-4 w-4 accent-accent" checked={allBulkSelected} onChange={toggleSelectAll} />
+            Select all ({bulkable.length})
           </label>
-          <span className="ml-auto text-sm text-zinc-600">{pickedItems.length} selected</span>
+          <span className="ml-auto text-sm text-zinc-600">{pickedBulk.length} selected</span>
           {picked.size > 0 && (
             <Button size="sm" variant="ghost" onClick={() => setPicked(new Set())}>Clear</Button>
           )}
-          <Button size="sm" disabled={!pickedItems.length || bulk.isPending} onClick={() => bulk.mutate(pickedItems)}>
-            {bulk.isPending ? "Approving…" : `Approve ${pickedItems.length || ""}`.trim()}
-          </Button>
+          {pickedEntered.length > 0 && (
+            <Button size="sm" variant="secondary" disabled={markSheet.isPending} onClick={() => markSheet.mutate(pickedEntered)}>
+              {markSheet.isPending ? "Marking…" : `Mark ${pickedEntered.length} on weekly sheet`}
+            </Button>
+          )}
+          {pickedDecide.length > 0 && (
+            <Button size="sm" disabled={bulk.isPending} onClick={() => bulk.mutate(pickedDecide)}>
+              {bulk.isPending ? "Approving…" : `Approve ${pickedDecide.length}`}
+            </Button>
+          )}
         </div>
       )}
 
@@ -282,7 +311,7 @@ export function ApprovalQueue() {
                     r.training_type,
                     fmtMoney(r.requested_amount),
                   ]}
-                  selectable={r.action_needed === "decide"}
+                  selectable={isBulkable(r)}
                   selected={picked.has(key("training", r.id))}
                   onToggleSelect={() => togglePick(key("training", r.id))}
                   onOpen={() => setSelected({ kind: "training", row: r })}
@@ -309,7 +338,7 @@ export function ApprovalQueue() {
                         ? `${r.vacation_hours ?? 0} hrs${r.amount != null ? ` · ${fmtMoney(r.amount)}` : ""}`
                         : `${r.days_used ?? 0} day(s)`,
                     ]}
-                    selectable={r.action_needed === "decide"}
+                    selectable={isBulkable(r)}
                     selected={picked.has(key("pto", r.id))}
                     onToggleSelect={() => togglePick(key("pto", r.id))}
                     onOpen={() => setSelected({ kind: "pto", row: r })}

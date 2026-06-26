@@ -15,12 +15,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { FileText, Loader2, X } from "lucide-react";
+import { FileText, Loader2, X, Sparkles } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
 import { useToast } from "@/shared/ui/Toaster";
 import {
+  extractReplacement,
   fetchCallerStores,
   fetchIssueLibrary,
   saveEquipment,
@@ -91,6 +92,53 @@ export function EquipmentEntryModal({
   const [existingWarrantyUrl, setExistingWarrantyUrl] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
+  // AI auto-fill from the receipt.
+  const [scanning, setScanning] = useState(false);
+  const [scanFilled, setScanFilled] = useState(false);
+  const [scanNote, setScanNote] = useState<string | null>(null);
+
+  // Validate + (best-effort) AI-read a chosen receipt, filling empty fields.
+  async function onReceiptPicked(f: File | null) {
+    setScanFilled(false);
+    setScanNote(null);
+    if (f && f.size > MAX_RECEIPT_BYTES) {
+      setError(`File too large (${(f.size / 1024 / 1024).toFixed(1)} MB); cap is 10 MB.`);
+      return;
+    }
+    setError(null);
+    setReceiptFile(f);
+    if (!f) return;
+    setScanning(true);
+    try {
+      const data = await fileToBase64(f);
+      const { extracted: ex } = await extractReplacement({ data, type: f.type || "application/octet-stream" });
+      let filled = false;
+      const fill = (cond: boolean, set: () => void) => { if (cond) { set(); filled = true; } };
+      // Store: match the receipt's address → a store the caller can pick, unless
+      // the modal is locked to a store or one's already chosen.
+      if (!storeIdLock && !storeId && ex.store_number) {
+        const match = stores.find((s) => s.number === ex.store_number);
+        if (match) { setStoreId(match.id); filled = true; }
+      }
+      fill(!assetType.trim() && !!ex.asset_type, () => setAssetType(ex.asset_type));
+      fill(!manufacturer.trim() && !!ex.manufacturer, () => setManufacturer(ex.manufacturer));
+      fill(!model.trim() && !!ex.model, () => setModel(ex.model));
+      fill(!supplier.trim() && !!ex.supplier, () => setSupplier(ex.supplier));
+      fill(!assetTag.trim() && !!ex.asset_tag, () => setAssetTag(ex.asset_tag));
+      fill(!poNumber.trim() && !!ex.po_number, () => setPoNumber(ex.po_number));
+      fill(!cost.trim() && ex.cost != null, () => setCost(String(ex.cost)));
+      fill(!purchasedAt && !!ex.eta, () => setPurchasedAt(ex.eta));
+      fill(!warrLabor.trim() && ex.warranty_labor_days != null, () => setWarrLabor(String(ex.warranty_labor_days)));
+      fill(!warrParts.trim() && ex.warranty_parts_days != null, () => setWarrParts(String(ex.warranty_parts_days)));
+      fill(!warrSource && !!ex.warranty_source, () => setWarrSource(ex.warranty_source));
+      setScanFilled(filled);
+      if (!filled) setScanNote("Couldn't pull anything new from that receipt — fill in what's needed.");
+    } catch (e) {
+      setScanNote((e as Error)?.message || "Couldn't read the receipt — enter the details manually.");
+    } finally {
+      setScanning(false);
+    }
+  }
 
   // Caller's accessible stores for the dropdown — only fetched when
   // there's no lock (i.e. the modal renders the picker).
@@ -180,6 +228,9 @@ export function EquipmentEntryModal({
     } else if (!existing) {
       setStoreId("");
     }
+    setScanning(false);
+    setScanFilled(false);
+    setScanNote(null);
     // For an EDIT with no lock, resolve store_id from existing row.
     // The row only carries store_number; look it up from the caller's
     // stores once that query resolves (handled in a separate effect).
@@ -536,16 +587,7 @@ export function EquipmentEntryModal({
               id="eq-receipt"
               type="file"
               accept="image/*,application/pdf"
-              onChange={(e) => {
-                const f = e.target.files?.[0] || null;
-                if (f && f.size > MAX_RECEIPT_BYTES) {
-                  setError(`File too large (${(f.size / 1024 / 1024).toFixed(1)} MB); cap is 10 MB.`);
-                  e.target.value = "";
-                  return;
-                }
-                setError(null);
-                setReceiptFile(f);
-              }}
+              onChange={(e) => onReceiptPicked(e.target.files?.[0] || null)}
               className="block w-full text-sm text-zinc-700 file:mr-2 file:rounded-md file:border-0 file:bg-accent/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-midnight hover:file:bg-accent/20"
             />
             {receiptFile && (
@@ -554,12 +596,25 @@ export function EquipmentEntryModal({
                 <span>({(receiptFile.size / 1024).toFixed(0)} KB)</span>
                 <button
                   type="button"
-                  onClick={() => setReceiptFile(null)}
+                  onClick={() => { setReceiptFile(null); setScanFilled(false); setScanNote(null); }}
                   className="text-red-600 hover:underline"
                 >
                   remove
                 </button>
               </div>
+            )}
+            {scanning && (
+              <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-accent">
+                <Loader2 className="h-3 w-3 animate-spin" /> Reading the receipt…
+              </div>
+            )}
+            {!scanning && scanFilled && (
+              <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-emerald-700">
+                <Sparkles className="h-3 w-3" /> Auto-filled from the receipt — please review.
+              </div>
+            )}
+            {!scanning && scanNote && (
+              <div className="mt-1.5 text-[11px] text-amber-700">{scanNote}</div>
             )}
             <div className="mt-1 text-[10px] text-zinc-500">
               PDF or image, up to 10 MB. Uploaded after the save; replaces any existing receipt on this row.

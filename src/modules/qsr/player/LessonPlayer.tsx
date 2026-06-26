@@ -6,8 +6,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { X, Zap } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { fetchLesson, recordCardProgress } from "../api";
 import type { LessonCard } from "../types";
+import { useLearnApi } from "./LearnApi";
 import {
   IntroCard, StepsCard, ImageCard, VideoCard, QuizCard, RevealCard, PollCard, DoneCard,
 } from "./LessonCards";
@@ -29,18 +29,24 @@ function Seg({ total, filled, dark }: { total: number; filled: number; dark: boo
   );
 }
 
-export function LessonPlayer() {
-  const { courseId = "" } = useParams();
+export function LessonPlayer({ courseId: courseIdProp, onExit }: { courseId?: string; onExit?: () => void } = {}) {
+  const params = useParams();
   const navigate = useNavigate();
+  const { fetchLesson, recordCardProgress } = useLearnApi();
+  const courseId = courseIdProp ?? params.courseId ?? "";
   const [index, setIndex] = useState(0);
   const [points, setPoints] = useState(0);
+  const [lang, setLang] = useState("en");
 
   const lessonQ = useQuery({
-    queryKey: ["qsr", "lesson", courseId],
-    queryFn: () => fetchLesson(courseId),
+    queryKey: ["qsr", "lesson", courseId, lang],
+    queryFn: () => fetchLesson(courseId, lang),
     enabled: !!courseId,
+    placeholderData: (prev) => prev, // keep current cards visible while toggling language
   });
   const cards: LessonCard[] = useMemo(() => lessonQ.data?.cards ?? [], [lessonQ.data]);
+  const languages = lessonQ.data?.course.languages ?? ["en"];
+  const hasEs = languages.includes("es");
 
   // Seed running points from any quiz already answered correctly.
   useEffect(() => {
@@ -52,7 +58,7 @@ export function LessonPlayer() {
     setPoints(p);
   }, [lessonQ.data]);
 
-  const exit = () => navigate("/qsr");
+  const exit = onExit ?? (() => navigate("/qsr"));
   const card = cards[index];
   const dark = card ? DARK_TYPES.has(card.type) : true;
 
@@ -63,7 +69,7 @@ export function LessonPlayer() {
   const back = () => setIndex((i) => Math.max(i - 1, 0));
 
   const renderCard = (c: LessonCard) => {
-    const common = { card: c, onAdvance: () => advance(c), onPoints: (delta: number) => setPoints((p) => p + delta) };
+    const common = { card: c, onAdvance: () => advance(c), onPoints: (delta: number) => setPoints((p) => p + delta), lang };
     switch (c.type) {
       case "intro": return <IntroCard {...common} />;
       case "steps": return <StepsCard {...common} />;
@@ -92,6 +98,20 @@ export function LessonPlayer() {
               <X className="h-4 w-4" />
             </button>
             <Seg total={cards.length} filled={index} dark={dark} />
+            {hasEs && (
+              <div className={`flex shrink-0 overflow-hidden rounded-full text-[10px] font-bold ${dark ? "bg-white/15" : "bg-surface-sunk"}`}>
+                {(["en", "es"] as const).map((l) => (
+                  <button
+                    key={l} type="button" onClick={() => setLang(l)}
+                    className={`px-2 py-0.5 uppercase transition ${
+                      lang === l ? "bg-qsr-azure text-white" : dark ? "text-white/70" : "text-ink-muted"
+                    }`}
+                  >
+                    {l}
+                  </button>
+                ))}
+              </div>
+            )}
             <span className={`flex items-center gap-1 font-qsr-mono text-xs font-semibold ${dark ? "text-white" : "text-ink"}`}>
               <Zap className="h-3.5 w-3.5 text-qsr-gold" />{points}
             </span>
@@ -109,7 +129,7 @@ export function LessonPlayer() {
         ) : lessonQ.isError ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 p-7 text-center">
             <p className="text-sm text-ink-muted">{(lessonQ.error as Error)?.message || "Couldn't load this lesson."}</p>
-            <button type="button" onClick={exit} className="text-sm font-semibold text-qsr-azure">Back to SOAR QSR</button>
+            <button type="button" onClick={exit} className="text-sm font-semibold text-qsr-azure">Back to Soar MyLearning</button>
           </div>
         ) : card ? (
           <div key={index} className="qsr-card-in h-full">{renderCard(card)}</div>

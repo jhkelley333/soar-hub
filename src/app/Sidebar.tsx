@@ -11,9 +11,8 @@ import { useOverrides } from "@/lib/roleAccess";
 import { useRegionAccess, regionVisible } from "@/lib/regionAccess";
 import { listPafs, listSdoQueue } from "@/modules/paf/api";
 import { listApprovalQueue } from "@/modules/employee-actions/api";
-import { countPendingScopes } from "@/modules/reno-scoping/api";
 import { useChatUnreadCount } from "@/modules/chat/useChatUnread";
-import { ROLE_LABELS, roleLevel, type UserRole } from "@/types/database";
+import { ROLE_LABELS, type UserRole } from "@/types/database";
 import { cn } from "@/lib/cn";
 
 // Roles that see a PAF count badge in the sidebar. Submitters (DO,
@@ -56,23 +55,6 @@ function usePafBadgeCount(role: UserRole | undefined): number | null {
     return sdoQuery.data.pafs.length;
   }
   return null;
-}
-
-// Count of submitted-but-not-yet-reviewed reno scopes visible to the
-// caller. RLS filters automatically — DOs see their district, RVPs see
-// their region, etc. Shown next to the Reno Scoping nav item for any
-// reviewer role (DO+).
-function useRenoBadgeCount(role: UserRole | undefined): number | null {
-  const level = role ? roleLevel(role) : null;
-  const isReviewer = level != null && level >= roleLevel("do")!;
-  const q = useQuery({
-    queryKey: ["reno-pending-count"],
-    queryFn: countPendingScopes,
-    enabled: isReviewer,
-    staleTime: 30_000,
-  });
-  if (!isReviewer) return null;
-  return q.data ?? null;
 }
 
 // Count of Employee Action requests awaiting the caller's action (approvals
@@ -127,13 +109,11 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const sections = groupedNav(navItems);
   const pafBadge = usePafBadgeCount(profile?.role);
   const eaBadge = useEmployeeActionsBadgeCount(profile?.role);
-  const renoBadge = useRenoBadgeCount(profile?.role);
   const chatBadge = useChatUnreadCount();
 
   function badgeFor(to: string): number | null {
     if (to === "/paf" && typeof pafBadge === "number" && pafBadge > 0) return pafBadge;
     if (to === "/employee-actions" && typeof eaBadge === "number" && eaBadge > 0) return eaBadge;
-    if (to === "/reno-scoping" && typeof renoBadge === "number" && renoBadge > 0) return renoBadge;
     if (to === "/chat" && chatBadge > 0) return chatBadge > 99 ? 99 : chatBadge;
     return null;
   }

@@ -17,6 +17,7 @@ import { PafQueuePage } from "@/modules/paf/PafQueuePage";
 import { EmployeeActionsPage } from "@/modules/employee-actions/EmployeeActionsPage";
 import { SchedulePage } from "@/modules/schedule/SchedulePage";
 import { OpsToolsPage } from "@/modules/ops-tools/OpsToolsPage";
+import { QrCodesPage } from "@/modules/qr-codes/QrCodesPage";
 import { SiteAuditPage } from "@/modules/site-audit/SiteAuditPage";
 import { LaborPage } from "@/modules/labor/LaborPage";
 import { LaborSyncPage } from "@/modules/labor/LaborSyncPage";
@@ -31,7 +32,12 @@ import { BulkAttributesPage } from "@/modules/admin/BulkAttributesPage";
 import { FeatureFlagsPage } from "@/modules/admin/FeatureFlagsPage";
 import { RoleAccessPage } from "@/modules/admin/RoleAccessPage";
 import { RegionAccessPage } from "@/modules/admin/RegionAccessPage";
+import { KpiDashboardPage } from "@/modules/kpi/KpiDashboardPage";
+import { LaborV2Page } from "@/modules/labor-v2/LaborV2Page";
+import { PullLogPage } from "@/modules/labor-v2/PullLogPage";
+import { LaborV2Entry } from "@/modules/labor-v2/LaborV2Entry";
 import { QsrHomePage } from "@/modules/qsr/QsrHomePage";
+import { MyTrainingPage } from "@/modules/qsr/MyTrainingPage";
 import { LessonPlayer } from "@/modules/qsr/player/LessonPlayer";
 import { BuilderCoursesPage } from "@/modules/qsr/builder/BuilderCoursesPage";
 import { CourseEditorPage } from "@/modules/qsr/builder/CourseEditorPage";
@@ -48,6 +54,8 @@ import { WorkOrdersV2Route } from "@/modules/work-orders-v2/WorkOrdersV2Route";
 import { CashManagementRoute } from "@/modules/cash-management/CashManagementRoute";
 import { VendorPortalPage } from "@/modules/vendor-portal/VendorPortalPage";
 import { PublicSubmitPage } from "@/modules/public-submit/PublicSubmitPage";
+import { PublicLearnPage } from "@/modules/qsr/public/PublicLearnPage";
+import { SharePage } from "@/modules/qsr/share/SharePage";
 import { WorkspacesPage } from "@/modules/workspaces/WorkspacesPage";
 import { WorkspaceDetail } from "@/modules/workspaces/WorkspaceDetail";
 import { TemplateDetailPage } from "@/modules/workspaces/TemplateDetailPage";
@@ -93,6 +101,9 @@ export const router = createBrowserRouter([
   // Public ticket-submission page — anyone with the URL can search
   // for a store and file a work order. Lives outside the auth tree.
   { path: "/submit", element: <PublicSubmitPage /> },
+  // Public no-login QSR player — crew scan their store's QR, pick their
+  // name, and take courses. Token in the URL is the only credential.
+  { path: "/learn/:token", element: <PublicLearnPage /> },
   {
     path: "/",
     element: <RootRoute />,
@@ -168,6 +179,38 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <WeatherSyncPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/kpi",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <KpiDashboardPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/labor-v2",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <LaborV2Page />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/labor-v2/log",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <PullLogPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "labor-v2",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <LaborV2Entry />
           </ProtectedRoute>
         ),
       },
@@ -443,12 +486,17 @@ export const router = createBrowserRouter([
         ),
       },
       {
+        // My Training — learner home, open to every signed-in user. Lists the
+        // caller's required + all published courses; the player enforces access.
+        path: "my-training",
+        element: <MyTrainingPage />,
+      },
+      {
+        // The course player is open to any signed-in user (it's training
+        // content; the server only serves published courses and tracks
+        // per-user progress). Home / Builder / Manager stay admin-only.
         path: "qsr/course/:courseId",
-        element: (
-          <ProtectedRoute requireRoles={["admin"]}>
-            <LessonPlayer />
-          </ProtectedRoute>
-        ),
+        element: <LessonPlayer />,
       },
       {
         path: "qsr/builder",
@@ -469,8 +517,16 @@ export const router = createBrowserRouter([
       {
         path: "qsr/manage",
         element: (
-          <ProtectedRoute requireRoles={["admin"]}>
+          <ProtectedRoute requireRoles={["shift_manager", "associate_manager", "first_assistant_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <ManagerDashboardPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "qsr/share",
+        element: (
+          <ProtectedRoute requireRoles={["shift_manager", "associate_manager", "first_assistant_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <SharePage />
           </ProtectedRoute>
         ),
       },
@@ -636,6 +692,16 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <ScopeDetailPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // QR Codes — dynamic QR generator, reached from the Operations Tools
+        // hub. GM and above; the backend re-checks role on every write.
+        path: "qr-codes",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <QrCodesPage />
           </ProtectedRoute>
         ),
       },

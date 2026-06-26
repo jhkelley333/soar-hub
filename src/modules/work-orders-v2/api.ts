@@ -95,6 +95,72 @@ export function fetchTickets(): Promise<TicketsResponse> {
   return request<TicketsResponse>(`${FN}?action=getTickets`);
 }
 
+// Record off-ticket work (a job the store had done without a work order).
+// Creates a completed/closed entry with the invoice attached; DO+ only.
+export interface LogWorkBody {
+  storeNumber: string;
+  storeId?: string;
+  storeName?: string;
+  category?: string;
+  assetType?: string;
+  modelNumber?: string;
+  vendorName: string;
+  vendorId?: string | null;
+  serviceDate: string;
+  cost?: number | null;
+  description: string;
+  resolutionCategory?: string;
+  setPreferred?: boolean;
+  invoice: { data: string; name: string; type: string };
+}
+export function logOfflineWork(body: LogWorkBody): Promise<{ ok: true; ticket: Ticket; woNumber: string }> {
+  return request(`${FN}?action=logWork`, { method: "POST", body: JSON.stringify(body) });
+}
+
+// What the AI reads off an uploaded invoice. All fields best-effort; blanks
+// when the model can't determine them.
+export interface ExtractedInvoice {
+  vendor_name: string;
+  store_number: string;
+  service_date: string;
+  cost: number | null;
+  description: string;
+  category: string;
+  asset_type: string;
+}
+export function extractInvoice(invoice: { data: string; type: string }): Promise<{ ok: true; extracted: ExtractedInvoice }> {
+  return request(`${FN}?action=extractInvoice`, { method: "POST", body: JSON.stringify({ invoice }) });
+}
+
+// What the AI reads off a replacement-equipment receipt / spec plate.
+export interface ExtractedReplacement {
+  manufacturer: string;
+  model: string;
+  asset_type: string;
+  supplier: string;
+  store_number: string;
+  cost: number | null;
+  eta: string;
+  asset_tag: string;
+  po_number: string;
+  warranty_labor_days: number | null;
+  warranty_parts_days: number | null;
+  warranty_source: "" | "vendor" | "manufacturer" | "none";
+}
+export function extractReplacement(invoice: { data: string; type: string }): Promise<{ ok: true; extracted: ExtractedReplacement }> {
+  return request(`${FN}?action=extractReplacement`, { method: "POST", body: JSON.stringify({ invoice }) });
+}
+
+// Build a copy-paste WhatsApp message for the selected work orders, grouped by
+// store with each store's address + phone. Server-side so store contact data
+// stays scoped to what the caller can see.
+export function fetchVendorSnippet(ids: string[]): Promise<{ ok: true; text: string; count: number }> {
+  return request(`${FN}?action=vendorSnippet`, {
+    method: "POST",
+    body: JSON.stringify({ ids }),
+  });
+}
+
 // Single ticket with its photos, approvals, and activity feed joined in.
 // Used by the mobile detail view; the desktop page hydrates detail
 // inline from the list instead.
@@ -419,15 +485,27 @@ export interface RelatedInWarrantyTicket {
   parts_expires_at: string | null;
 }
 
+// A recent repair on the same equipment (incl. logged off-ticket work) that
+// isn't necessarily under warranty — surfaced as a possible repeat/callback.
+export interface RecentRepairTicket {
+  id: string;
+  wo_number: string;
+  asset_type: string | null;
+  category: string | null;
+  vendor_name: string | null;
+  is_logged_offline: boolean;
+  when: string | null;
+}
+
 export function fetchRelatedInWarranty(
   storeNumber: string,
   assetType?: string,
   category?: string,
-): Promise<{ ok: true; tickets: RelatedInWarrantyTicket[] }> {
+): Promise<{ ok: true; tickets: RelatedInWarrantyTicket[]; recent?: RecentRepairTicket[] }> {
   const params = new URLSearchParams({ action: "getRelatedInWarranty", storeNumber });
   if (assetType) params.set("assetType", assetType);
   if (category)  params.set("category",  category);
-  return request<{ ok: true; tickets: RelatedInWarrantyTicket[] }>(`${FN}?${params.toString()}`);
+  return request<{ ok: true; tickets: RelatedInWarrantyTicket[]; recent?: RecentRepairTicket[] }>(`${FN}?${params.toString()}`);
 }
 
 export interface VendorScopeRow {

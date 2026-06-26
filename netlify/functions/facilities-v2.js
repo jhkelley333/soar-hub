@@ -540,6 +540,53 @@ async function getStoresForUser(supabase, profile) {
   };
 }
 
+// ── Vendor WhatsApp snippet ────────────────────────────────────────────────
+// Format a 10-digit store phone as (xxx) xxx-xxxx; pass anything else through.
+function fmtStorePhone(p) {
+  const d = String(p || "").replace(/\D/g, "");
+  if (d.length === 10) return `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}`;
+  return p ? String(p).trim() : "";
+}
+// One-line store address from the stores columns (address/city/state/zip).
+function fmtStoreAddress(s) {
+  if (!s) return "";
+  const cityState = [s.city, s.state].filter(Boolean).join(", ");
+  const tail = [cityState, s.zip].filter(Boolean).join(" ").trim();
+  return [s.address, tail].filter(Boolean).join(", ").trim();
+}
+// Build a copy-paste WhatsApp message for a set of work orders, grouped by
+// store so each store's address + phone appears once above its WOs. Uses
+// WhatsApp markdown (*bold*) and a couple of emojis for scannability.
+function buildVendorSnippet(tickets, storeByNum) {
+  const groups = new Map();
+  for (const t of tickets) {
+    const k = String(t.store_number);
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(t);
+  }
+  const blocks = [];
+  for (const [num, list] of groups) {
+    const s = storeByNum.get(num);
+    const name = (list[0].store_name || s?.name || "").trim();
+    const lines = [`*Store #${num}${name ? ` — ${name}` : ""}*`];
+    const addr = fmtStoreAddress(s);
+    const phone = fmtStorePhone(s?.phone);
+    if (addr) lines.push(`📍 ${addr}`);
+    if (phone) lines.push(`📞 ${phone}`);
+    lines.push("");
+    for (const t of list) {
+      const titleBits = [t.asset_type, t.category].filter(Boolean).join(" / ");
+      lines.push(`• *${t.wo_number}*${titleBits ? ` — ${titleBits}` : ""}${t.priority ? ` [${t.priority}]` : ""}`);
+      const desc = (t.work_requested || t.issue_description || "").trim();
+      if (desc) lines.push(`   ${desc}`);
+      if (t.model_number) lines.push(`   Model: ${t.model_number}`);
+    }
+    blocks.push(lines.join("\n"));
+  }
+  const intro = `*Work order${tickets.length === 1 ? "" : "s"} for service*`;
+  return [intro, "", blocks.join("\n\n")].join("\n");
+}
+
 async function generateWONumber(supabase, storeNumber) {
   const { data, error } = await supabase.rpc("next_wo_sequence", {
     p_store: String(storeNumber),
@@ -791,7 +838,43 @@ export const handler = async (event) => {
       return respond(200, { ok: true, tickets: data });
     }
 
-    // ── MARK TICKET SEEN ──
+    // ── VENDOR WHATSAPP SNIPPET ──
+    // Given a set of selected ticket ids, return a ready-to-paste WhatsApp
+    // message grouped by store (with each store's address + phone). Scoped to
+    // the caller's stores like getTickets, so you can only snippet WOs you can
+    // already see.
+    if (action === "vendorSnippet" && event.httpMethod === "POST") {
+      const { ids } = JSON.parse(event.body || "{}");
+      const ticketIds = Array.isArray(ids) ? ids.filter(Boolean).slice(0, 100) : [];
+      if (!ticketIds.length) return respond(400, { ok: false, message: "No work orders selected." });
+
+      const storeAccess = await getStoresForUser(supabase, profile);
+      if (!storeAccess.all && !storeAccess.stores.length) {
+        return respond(200, { ok: true, text: "", count: 0 });
+      }
+
+      let tq = supabase
+        .from("tickets")
+        .select("id, wo_number, store_number, store_name, category, asset_type, model_number, issue_description, work_requested, priority, status, vendor_name")
+        .in("id", ticketIds)
+        .order("store_number", { ascending: true })
+        .order("date_submitted", { ascending: true });
+      if (!storeAccess.all) tq = tq.in("store_number", storeAccess.stores);
+      const { data: tks, error: tErr } = await tq;
+      if (tErr) throw tErr;
+      if (!tks?.length) return respond(200, { ok: true, text: "", count: 0 });
+
+      const storeNums = [...new Set(tks.map((t) => String(t.store_number)))];
+      const { data: storeRows } = await supabase
+        .from("stores")
+        .select("number, name, address, city, state, zip, phone")
+        .in("number", storeNums);
+      const storeByNum = new Map((storeRows || []).map((s) => [String(s.number), s]));
+
+      const text = buildVendorSnippet(tks, storeByNum);
+      return respond(200, { ok: true, text, count: tks.length });
+    }
+
     // Upserts ticket_views.last_seen_at = now() for (caller,
     // ticket). Called when the user expands a card or posts a
     // message — anything that means "I've looked at this."
@@ -1230,6 +1313,426 @@ export const handler = async (event) => {
         .select("*")
         .order("sort_order", { ascending: true });
       return respond(200, { ok: true, thresholds: data || [] });
+    }
+
+    // ── EXTRACT INVOICE (AI) ──
+    // Read an uploaded invoice (image or PDF) with Claude vision and return the
+    // structured fields, so "Record completed work" can auto-fill itself. DO+
+    // only. Best-effort: any failure returns a 4xx/5xx and the form stays
+    // manually editable.
+    if (action === "extractInvoice" && event.httpMethod === "POST") {
+      if (roleLevel(role) > 3) {
+        return respond(403, { ok: false, message: "DO and above only." });
+      }
+      if (!process.env.ANTHROPIC_API_KEY) {
+        return respond(500, { ok: false, message: "Invoice reading isn't configured (ANTHROPIC_API_KEY missing)." });
+      }
+      const { invoice } = JSON.parse(event.body || "{}");
+      if (!invoice?.data) return respond(400, { ok: false, message: "No invoice provided." });
+
+      // Reference data (scoped to the caller) so the model can cross-reference:
+      //  • vendor name      → a vendor already on file
+      //  • service address  → the store number
+      //  • category/asset   → the work-order issue library
+      let vendorNames = [];
+      try {
+        const { data: vrows } = await supabase.from("vendors").select("name").eq("is_active", true).limit(300);
+        vendorNames = [...new Set((vrows || []).map((v) => v.name).filter(Boolean))];
+      } catch { /* hints are optional */ }
+
+      const allowedStores = new Set();
+      const storeRefs = [];
+      try {
+        const access = await getStoresForUser(supabase, profile);
+        let sq = supabase.from("stores").select("number, name, address, city, state, zip").eq("is_active", true).order("number").limit(500);
+        if (!access.all) sq = sq.in("number", access.stores.length ? access.stores : ["__none__"]);
+        const { data: srows } = await sq;
+        for (const s of srows || []) {
+          allowedStores.add(String(s.number));
+          const addr = [s.address, [s.city, s.state].filter(Boolean).join(", "), s.zip].filter(Boolean).join(" ").trim();
+          storeRefs.push(`#${s.number}${s.name ? ` ${s.name}` : ""}${addr ? ` — ${addr}` : ""}`);
+        }
+      } catch { /* store matching is optional */ }
+
+      let libCategories = [];
+      let libAssets = [];
+      try {
+        const { data: items } = await supabase.from("issue_library").select("category, asset_type, display_name").limit(600);
+        libCategories = [...new Set((items || []).map((i) => i.category).filter(Boolean))];
+        libAssets = [...new Set((items || []).map((i) => i.display_name || i.asset_type).filter(Boolean))];
+      } catch { /* optional */ }
+
+      const mediaType = String(invoice.type || "");
+      const isPdf = /pdf/i.test(mediaType);
+      const sourceBlock = isPdf
+        ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: invoice.data } }
+        : { type: "image", source: { type: "base64", media_type: mediaType.startsWith("image/") ? mediaType : "image/jpeg", data: invoice.data } };
+
+      const schema = {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          vendor_name: { type: "string" },
+          store_number: { type: "string" },
+          service_date: { type: "string" },
+          cost: { type: "number" },
+          description: { type: "string" },
+          category: { type: "string" },
+          equipment: { type: "string" },
+        },
+        required: ["vendor_name", "store_number", "service_date", "cost", "description", "category", "equipment"],
+      };
+
+      const known = vendorNames.length ? vendorNames.slice(0, 200).join("; ") : "(none on file)";
+      const storeList = storeRefs.length ? storeRefs.slice(0, 450).join("\n") : "(none available)";
+      const catList = libCategories.length ? libCategories.join("; ") : "(use your best judgment)";
+      const assetList = libAssets.length ? libAssets.slice(0, 200).join("; ") : "(use your best judgment)";
+      const prompt =
+        "This is a vendor invoice for facilities / equipment repair work at a restaurant. " +
+        "Extract these fields:\n" +
+        "- vendor_name: the company that did the work. If it clearly matches one of these vendors on file, return that exact name: " + known + "\n" +
+        "- store_number: cross-reference the SERVICE / SHIP-TO / job-location address on the invoice against this store list and return the matching store's number (digits only). Match on street + city + state/zip; return an empty string if there is no confident address match. Do NOT guess.\nStores:\n" + storeList + "\n" +
+        "- service_date: the date the work was performed (or the invoice date if that's all there is), as YYYY-MM-DD.\n" +
+        "- cost: the invoice grand total as a number, no currency symbol or commas.\n" +
+        "- description: a short summary of the work performed (one sentence).\n" +
+        "- category: the trade/category. Choose the closest match from this list when reasonable: " + catList + "\n" +
+        "- equipment: the specific equipment serviced. Choose the closest match from this list when reasonable: " + assetList + "\n" +
+        "Use an empty string for any text field you can't determine, and 0 for cost if unknown.";
+
+      // Prefer structured outputs (guaranteed-valid JSON); if that's rejected
+      // (e.g. a 400 on the format param), retry once as a plain "JSON only"
+      // prompt so a config hiccup never disables the feature.
+      async function callClaude(structured) {
+        const messages = [{
+          role: "user",
+          content: [sourceBlock, { type: "text", text: structured ? prompt : prompt + "\n\nRespond with ONLY a JSON object with exactly these keys: vendor_name, store_number, service_date, cost, description, category, equipment. No prose, no markdown." }],
+        }];
+        const payload = { model: "claude-sonnet-4-6", max_tokens: 1024, messages };
+        if (structured) payload.output_config = { format: { type: "json_schema", schema } };
+        return fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-api-key": process.env.ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+          },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      let apiRes;
+      try {
+        apiRes = await callClaude(true);
+        if (apiRes.status === 400) {
+          console.warn("[extractInvoice] structured output rejected; retrying prompt-only");
+          apiRes = await callClaude(false);
+        }
+      } catch (e) {
+        console.error("[extractInvoice] fetch threw", e);
+        return respond(502, { ok: false, message: "Couldn't reach the invoice reader." });
+      }
+      if (!apiRes.ok) {
+        const t = await apiRes.text().catch(() => "");
+        console.error("[extractInvoice] anthropic error", apiRes.status, t.slice(0, 300));
+        return respond(502, { ok: false, message: `Invoice reading failed (${apiRes.status}).` });
+      }
+      const apiJson = await apiRes.json();
+      if (apiJson?.stop_reason === "refusal") {
+        return respond(422, { ok: false, message: "The invoice couldn't be read automatically — enter the details manually." });
+      }
+      let parsed = {};
+      try {
+        const text = (apiJson?.content || []).find((b) => b.type === "text")?.text || "";
+        parsed = JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim());
+      } catch (e) {
+        console.error("[extractInvoice] parse failed", e);
+        return respond(502, { ok: false, message: "Couldn't read the invoice details." });
+      }
+      const clamp = (x, n = 500) => (x == null ? "" : String(x).slice(0, n));
+      const date = /^\d{4}-\d{2}-\d{2}/.test(String(parsed.service_date || "")) ? String(parsed.service_date).slice(0, 10) : "";
+      const costNum = Number(parsed.cost);
+      // Only trust a store match that's actually in the caller's scope.
+      const sn = String(parsed.store_number || "").replace(/\D/g, "");
+      const storeNumber = sn && allowedStores.has(sn) ? sn : "";
+      return respond(200, {
+        ok: true,
+        extracted: {
+          vendor_name: clamp(parsed.vendor_name, 200),
+          store_number: storeNumber,
+          service_date: date,
+          cost: Number.isFinite(costNum) && costNum > 0 ? costNum : null,
+          description: clamp(parsed.description, 1000),
+          category: clamp(parsed.category, 100),
+          asset_type: clamp(parsed.equipment, 200),
+        },
+      });
+    }
+
+    // ── EXTRACT REPLACEMENT (AI) ──
+    // Read a replacement-equipment receipt / invoice / spec plate (image or PDF)
+    // with Claude vision and return the structured fields, so "Order Replacement"
+    // can auto-fill itself. GM and above. Best-effort: any failure degrades to
+    // manual entry.
+    if (action === "extractReplacement" && event.httpMethod === "POST") {
+      if (roleLevel(role) > 4) {
+        return respond(403, { ok: false, message: "GM and above only." });
+      }
+      if (!process.env.ANTHROPIC_API_KEY) {
+        return respond(500, { ok: false, message: "Receipt reading isn't configured (ANTHROPIC_API_KEY missing)." });
+      }
+      const { invoice } = JSON.parse(event.body || "{}");
+      if (!invoice?.data) return respond(400, { ok: false, message: "No file provided." });
+
+      let supplierNames = [];
+      try {
+        const { data: vrows } = await supabase.from("vendors").select("name").eq("is_active", true).limit(300);
+        supplierNames = [...new Set((vrows || []).map((v) => v.name).filter(Boolean))];
+      } catch { /* optional */ }
+
+      // Scoped store list (with addresses) so the install / ship-to address on
+      // the receipt can be matched to a store number.
+      const allowedStores = new Set();
+      const storeRefs = [];
+      try {
+        const access = await getStoresForUser(supabase, profile);
+        let sq = supabase.from("stores").select("number, name, address, city, state, zip").eq("is_active", true).order("number").limit(500);
+        if (!access.all) sq = sq.in("number", access.stores.length ? access.stores : ["__none__"]);
+        const { data: srows } = await sq;
+        for (const s of srows || []) {
+          allowedStores.add(String(s.number));
+          const addr = [s.address, [s.city, s.state].filter(Boolean).join(", "), s.zip].filter(Boolean).join(" ").trim();
+          storeRefs.push(`#${s.number}${s.name ? ` ${s.name}` : ""}${addr ? ` — ${addr}` : ""}`);
+        }
+      } catch { /* store matching is optional */ }
+
+      // Issue-library equipment types so the asset/equipment classification
+      // maps onto a real, selectable asset.
+      let libAssets = [];
+      try {
+        const { data: items } = await supabase.from("issue_library").select("asset_type, display_name").limit(600);
+        libAssets = [...new Set((items || []).map((i) => i.display_name || i.asset_type).filter(Boolean))];
+      } catch { /* optional */ }
+
+      const mediaType = String(invoice.type || "");
+      const isPdf = /pdf/i.test(mediaType);
+      const sourceBlock = isPdf
+        ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: invoice.data } }
+        : { type: "image", source: { type: "base64", media_type: mediaType.startsWith("image/") ? mediaType : "image/jpeg", data: invoice.data } };
+
+      const schema = {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          manufacturer: { type: "string" },
+          model: { type: "string" },
+          equipment: { type: "string" },
+          supplier: { type: "string" },
+          store_number: { type: "string" },
+          cost: { type: "number" },
+          eta: { type: "string" },
+          asset_tag: { type: "string" },
+          po_number: { type: "string" },
+          warranty_labor_days: { type: "number" },
+          warranty_parts_days: { type: "number" },
+          warranty_source: { type: "string" },
+        },
+        required: ["manufacturer", "model", "equipment", "supplier", "store_number", "cost", "eta", "asset_tag", "po_number", "warranty_labor_days", "warranty_parts_days", "warranty_source"],
+      };
+
+      const knownSuppliers = supplierNames.length ? supplierNames.slice(0, 200).join("; ") : "(none on file)";
+      const storeList = storeRefs.length ? storeRefs.slice(0, 450).join("\n") : "(none available)";
+      const assetList = libAssets.length ? libAssets.slice(0, 200).join("; ") : "(use your best judgment)";
+      const prompt =
+        "This is a receipt / invoice / spec plate for REPLACEMENT equipment installed at a restaurant (e.g. a fryer, cooler, ice machine, HVAC unit). " +
+        "Extract these fields:\n" +
+        "- manufacturer: the equipment maker (e.g. Frymaster, Hoshizaki, True).\n" +
+        "- model: the model number / SKU.\n" +
+        "- equipment: the KIND of equipment (e.g. Fryer, Walk-in Cooler, Ice Machine, HVAC unit). Choose the closest match from this list when reasonable: " + assetList + "\n" +
+        "- supplier: the company it was purchased from. If it clearly matches one of these vendors on file, return that exact name: " + knownSuppliers + "\n" +
+        "- store_number: cross-reference the SHIP-TO / install / location address on the receipt against this store list and return the matching store's number (digits only). Match on street + city + state/zip; empty string if there's no confident match. Do NOT guess.\nStores:\n" + storeList + "\n" +
+        "- cost: the equipment total as a number, no currency symbol or commas.\n" +
+        "- eta: the install or delivery date as YYYY-MM-DD (use the receipt/order date if that's all there is); empty string if unknown.\n" +
+        "- asset_tag: the serial number or asset tag, if shown.\n" +
+        "- po_number: the PO or order number, if shown.\n" +
+        "- warranty_labor_days: labor warranty length IN DAYS (convert months×30, years×365); 0 if not stated.\n" +
+        "- warranty_parts_days: parts warranty length IN DAYS; 0 if not stated.\n" +
+        "- warranty_source: who backs the parts warranty — exactly one of: vendor, manufacturer, none. Empty string if unknown.\n" +
+        "Use an empty string for any text field you can't determine, and 0 for any number you can't determine.";
+
+      async function callClaude(structured) {
+        const messages = [{
+          role: "user",
+          content: [sourceBlock, { type: "text", text: structured ? prompt : prompt + "\n\nRespond with ONLY a JSON object with exactly these keys: manufacturer, model, equipment, supplier, store_number, cost, eta, asset_tag, po_number, warranty_labor_days, warranty_parts_days, warranty_source. No prose, no markdown." }],
+        }];
+        const payload = { model: "claude-sonnet-4-6", max_tokens: 1024, messages };
+        if (structured) payload.output_config = { format: { type: "json_schema", schema } };
+        return fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      let apiRes;
+      try {
+        apiRes = await callClaude(true);
+        if (apiRes.status === 400) {
+          console.warn("[extractReplacement] structured output rejected; retrying prompt-only");
+          apiRes = await callClaude(false);
+        }
+      } catch (e) {
+        console.error("[extractReplacement] fetch threw", e);
+        return respond(502, { ok: false, message: "Couldn't reach the receipt reader." });
+      }
+      if (!apiRes.ok) {
+        const t = await apiRes.text().catch(() => "");
+        console.error("[extractReplacement] anthropic error", apiRes.status, t.slice(0, 300));
+        return respond(502, { ok: false, message: `Receipt reading failed (${apiRes.status}).` });
+      }
+      const apiJson = await apiRes.json();
+      if (apiJson?.stop_reason === "refusal") {
+        return respond(422, { ok: false, message: "The receipt couldn't be read automatically — enter the details manually." });
+      }
+      let parsed = {};
+      try {
+        const text = (apiJson?.content || []).find((b) => b.type === "text")?.text || "";
+        parsed = JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim());
+      } catch (e) {
+        console.error("[extractReplacement] parse failed", e);
+        return respond(502, { ok: false, message: "Couldn't read the receipt details." });
+      }
+      const clamp = (x, n = 200) => (x == null ? "" : String(x).slice(0, n));
+      const eta = /^\d{4}-\d{2}-\d{2}/.test(String(parsed.eta || "")) ? String(parsed.eta).slice(0, 10) : "";
+      const costNum = Number(parsed.cost);
+      const intOrNull = (v) => { const n = Math.round(Number(v)); return Number.isFinite(n) && n > 0 ? n : null; };
+      const src = ["vendor", "manufacturer", "none"].includes(String(parsed.warranty_source || "").toLowerCase()) ? String(parsed.warranty_source).toLowerCase() : "";
+      const sn = String(parsed.store_number || "").replace(/\D/g, "");
+      const storeNumber = sn && allowedStores.has(sn) ? sn : "";
+      return respond(200, {
+        ok: true,
+        extracted: {
+          manufacturer: clamp(parsed.manufacturer, 120),
+          model: clamp(parsed.model, 120),
+          asset_type: clamp(parsed.equipment, 120),
+          supplier: clamp(parsed.supplier, 200),
+          store_number: storeNumber,
+          cost: Number.isFinite(costNum) && costNum > 0 ? costNum : null,
+          eta,
+          asset_tag: clamp(parsed.asset_tag, 120),
+          po_number: clamp(parsed.po_number, 120),
+          warranty_labor_days: intOrNull(parsed.warranty_labor_days),
+          warranty_parts_days: intOrNull(parsed.warranty_parts_days),
+          warranty_source: src,
+        },
+      });
+    }
+
+    // ── LOG OFF-TICKET WORK ──
+    // Record work a store had done WITHOUT a ticket. Creates a completed
+    // (closed) work order flagged is_logged_offline, attaches the invoice, and
+    // optionally sets the vendor as the store's go-to for that category so the
+    // next ticket routes to them. DO and above only.
+    if (action === "logWork" && event.httpMethod === "POST") {
+      if (roleLevel(role) > 3) {
+        return respond(403, { ok: false, message: "DO and above only." });
+      }
+      const body = JSON.parse(event.body || "{}");
+      const {
+        storeNumber, storeId, storeName, category, assetType, modelNumber,
+        vendorName, vendorId, serviceDate, cost, description,
+        resolutionCategory, setPreferred, invoice,
+      } = body;
+
+      if (!storeNumber) return respond(400, { ok: false, message: "Store is required." });
+      if (!vendorName || !String(vendorName).trim()) return respond(400, { ok: false, message: "Vendor is required." });
+      if (!description || !String(description).trim()) return respond(400, { ok: false, message: "Describe the work that was done." });
+      if (!serviceDate) return respond(400, { ok: false, message: "Service date is required." });
+      if (!invoice?.data) return respond(400, { ok: false, message: "Attach the invoice." });
+
+      // Scope: the store must be visible to the caller (admin/coo/vp see all).
+      const access = await getStoresForUser(supabase, profile);
+      if (!access.all && !access.stores.includes(String(storeNumber))) {
+        return respond(403, { ok: false, message: "That store isn't in your area." });
+      }
+
+      const costNum =
+        cost != null && cost !== "" && Number.isFinite(Number(cost)) ? Math.max(0, Number(cost)) : null;
+      const nowIso = new Date().toISOString();
+      const loggedWoNumber = await generateWONumber(supabase, storeNumber);
+
+      const { data: loggedTicket, error: logErr } = await supabase
+        .from("tickets")
+        .insert({
+          wo_number:            loggedWoNumber,
+          store_number:         storeNumber,
+          store_name:           storeName || "",
+          submitted_by:         userName,
+          submitted_by_user_id: userId,
+          category:             category || "",
+          asset_type:           assetType || "",
+          model_number:         modelNumber || "",
+          issue_description:    String(description).trim(),
+          status:               "closed",
+          is_logged_offline:    true,
+          service_date:         serviceDate,
+          priority:             "Standard",
+          is_business_critical: false,
+          vendor_name:          String(vendorName).trim(),
+          vendor_id:            vendorId || null,
+          needs_vendor_help:    false,
+          cost_estimate:        costNum,
+          admin_close_reason:   "completed_and_verified",
+          resolution_category:  resolutionCategory || "repaired",
+          date_submitted:       nowIso,
+          date_completed:       serviceDate,
+          completed_at:         nowIso,
+          closed_at:            nowIso,
+        })
+        .select()
+        .single();
+      if (logErr) throw logErr;
+
+      // Attach the invoice. Roll the ticket back if the upload fails so we
+      // never leave an invoice-less record.
+      const invBuf = Buffer.from(invoice.data, "base64");
+      const invExt = (invoice.name || "invoice.pdf").split(".").pop();
+      const invPath = `${loggedTicket.id}/${Date.now()}-invoice.${invExt}`;
+      const { error: invUpErr } = await supabase.storage
+        .from(PHOTOS_BUCKET)
+        .upload(invPath, invBuf, { contentType: invoice.type || "application/octet-stream", upsert: false });
+      if (invUpErr) {
+        await supabase.from("tickets").delete().eq("id", loggedTicket.id);
+        return respond(500, { ok: false, message: "Couldn't store the invoice — please retry." });
+      }
+      const invUrl = supabase.storage.from(PHOTOS_BUCKET).getPublicUrl(invPath).data.publicUrl || invPath;
+      await supabase.from("ticket_photos").insert({
+        ticket_id: loggedTicket.id, file_url: invUrl, file_name: invoice.name || "invoice",
+        file_size: invBuf.length, mime_type: invoice.type || "", uploaded_by: userName, upload_type: "invoice",
+      });
+
+      await supabase.from("ticket_activities").insert({
+        ticket_id: loggedTicket.id, user_id: userId, user_name: userName, user_role: role,
+        update_type: "created", new_value: "closed",
+        notes: `Off-ticket work logged — vendor ${String(vendorName).trim()}${costNum != null ? `, $${costNum.toFixed(2)}` : ""}`,
+        event_type: "work_logged",
+        event_data: { wo_number: loggedWoNumber, service_date: serviceDate, logged_offline: true },
+        visibility: "all",
+      });
+
+      // Optionally make this vendor the store's go-to for the category, so the
+      // next ticket for this kind of work suggests them. Best-effort.
+      if (setPreferred && vendorId && storeId && category) {
+        try {
+          await supabase.from("vendor_store_preferences").upsert(
+            { store_id: storeId, vendor_id: vendorId, category: String(category).trim(), rank: 1, notes: "Auto-set from logged work", created_by_id: userId },
+            { onConflict: "store_id,category,vendor_id" },
+          );
+        } catch (e) {
+          console.warn("[facilities-v2] logWork preference upsert failed", e);
+        }
+      }
+
+      return respond(200, { ok: true, ticket: loggedTicket, woNumber: loggedWoNumber });
     }
 
     // ── CREATE TICKET ──
@@ -2853,7 +3356,48 @@ export const handler = async (event) => {
         });
         if (matches.length >= 5) break;
       }
-      return respond(200, { ok: true, tickets: matches });
+
+      // Recent repairs (including logged off-ticket work) on the same equipment
+      // at this store — surfaced as a possible repeat / callback even when no
+      // warranty is stamped, so logged jobs feed the same detection as normal
+      // work orders. Best-effort: if the query errors (e.g. pre-0178, no
+      // is_logged_offline column) recent simply comes back empty and the
+      // warranty matching above is unaffected.
+      const recent = [];
+      try {
+        const recentSince = new Date(now - 120 * 86400_000).toISOString();
+        const matchedIds = new Set(matches.map((m) => m.id));
+        const { data: rRows } = await supabase
+          .from("tickets")
+          .select("id, wo_number, asset_type, category, vendor_name, resolution_category, is_logged_offline, service_date, completed_at, closed_at, date_submitted")
+          .eq("store_number", String(storeNumber).trim())
+          .in("status", ["closed", "completed"])
+          .gte("date_submitted", recentSince)
+          .order("date_submitted", { ascending: false })
+          .limit(60);
+        for (const t of rRows || []) {
+          if (matchedIds.has(t.id)) continue;
+          const isRepair = t.is_logged_offline || t.resolution_category === "repaired" || t.resolution_category === "replaced";
+          if (!isRepair) continue;
+          const tA = String(t.asset_type || "").toLowerCase();
+          const tC = String(t.category || "").toLowerCase();
+          const assetMatch = at && (tA.includes(at) || at.includes(tA) || tC.includes(at));
+          const catMatch = cat && (tC.includes(cat) || cat.includes(tC));
+          if (!assetMatch && !catMatch) continue;
+          recent.push({
+            id: t.id,
+            wo_number: t.wo_number,
+            asset_type: t.asset_type,
+            category: t.category,
+            vendor_name: t.vendor_name,
+            is_logged_offline: !!t.is_logged_offline,
+            when: t.service_date || t.completed_at || t.closed_at || t.date_submitted,
+          });
+          if (recent.length >= 5) break;
+        }
+      } catch { /* recent repairs are best-effort */ }
+
+      return respond(200, { ok: true, tickets: matches, recent });
     }
 
     // ── ORG LOOKUPS (for scope label rendering) ──

@@ -1,10 +1,9 @@
-// SOAR QSR Learning Platform — admin-gated shell (Milestone 1).
+// SOAR QSR Learning Platform — admin-gated home (Milestones 1–5 shipped).
 //
 // This is the locked-down container the rest of the platform builds into. It
 // carries the SOAR QSR brand (distinct from the SOAR Hub chrome) and lays out
-// the three surfaces from the spec — Learn / Build / Manage — as a roadmap.
-// No fake numbers: real data + flows arrive with Milestones 2+ once the
-// production spec and prototypes are in hand.
+// the three surfaces from the spec — Learn / Build / Manage — all now live.
+// Numbers are real (server-backed); the area stays admin-gated until launch.
 import { Sparkles, GraduationCap, PencilRuler, BarChart3, Lock, BookOpen, Play } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
@@ -44,7 +43,7 @@ export function QsrHomePage() {
       {/* Brand hero */}
       <div className="overflow-hidden rounded-[28px] bg-qsr-azure px-6 py-9 text-white sm:px-10 sm:py-11">
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.15em] text-white/70">
-          <Sparkles className="h-4 w-4 text-qsr-gold" /> SOAR QSR · Learning Platform
+          <Sparkles className="h-4 w-4 text-qsr-gold" /> Soar MyLearning · Learning Platform
         </div>
         <h1 className="mt-3 max-w-2xl font-qsr-display text-3xl font-bold leading-[1.1] sm:text-4xl">
           Frontline training that crews actually open.
@@ -122,7 +121,7 @@ export function QsrHomePage() {
                 <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 font-qsr-mono text-[11px] text-ink-muted">
                   <span>{c.card_count} cards</span>
                   {c.est_minutes != null && <span>{c.est_minutes} min</span>}
-                  <span>+{c.points} pts</span>
+                  <span>+{c.total_points ?? c.points} pts</span>
                 </div>
                 <div className="mt-3 inline-flex items-center gap-1.5 font-qsr-ui text-sm font-semibold text-qsr-azure">
                   <Play className="h-3.5 w-3.5 fill-qsr-azure" /> Start lesson
@@ -134,10 +133,11 @@ export function QsrHomePage() {
       </div>
 
       <p className="mt-6 max-w-2xl text-xs leading-relaxed text-ink-subtle">
-        Shell only — Milestone 1. The data model (spec §4), the card{" "}
-        <span className="font-qsr-mono">data</span> contract (§5), and the prototype-faithful UI
-        land with Milestones 2+ once the production spec and prototype files are attached. This area
-        stays admin-only — gated by the <span className="font-qsr-mono">qsr_platform</span> flag —
+        Milestones 1–5 shipped: the learner player (swipeable cards, quizzes,
+        polls, reveals, video), gamification (points, streaks, badges), the
+        course builder, the above-store manager dashboard, and media uploads
+        (image + video, with HeyGen/YouTube/Vimeo embeds). This area stays
+        admin-only — gated by the <span className="font-qsr-mono">qsr_platform</span> flag —
         until launch.
       </p>
     </div>

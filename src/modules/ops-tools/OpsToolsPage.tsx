@@ -4,7 +4,7 @@
 // its own nav item by design.
 
 import { Link } from "react-router-dom";
-import { ArrowRight, ClipboardCheck, HardHat, ListChecks, type LucideIcon } from "lucide-react";
+import { ArrowRight, ClipboardCheck, ListChecks, QrCode, type LucideIcon } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { cn } from "@/lib/cn";
@@ -41,12 +41,12 @@ const TOOLS: Tool[] = [
     to: (role) => (DO_PLUS.has(role) ? "/walkthroughs" : "/my-walks"),
   },
   {
-    key: "reno-scoping",
-    title: "Reno Scoping",
-    desc: "Pre-reskin scoping for the 2026 Full-to-Bright program — scope your store, DO+ reviews.",
-    icon: HardHat,
+    key: "qr-codes",
+    title: "QR Codes",
+    desc: "Generate a QR code, print or share it, then change where it points anytime — no reprinting when a site moves.",
+    icon: QrCode,
     roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"],
-    to: () => "/reno-scoping",
+    to: () => "/qr-codes",
   },
 ];
 

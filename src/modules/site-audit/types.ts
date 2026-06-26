@@ -51,6 +51,7 @@ export interface SiteAudit {
   note: string | null;
   date: string;
   created_at: string;
+  can_delete: boolean;
   stats: AuditStats;
   last_report: LastReport | null;
   issues: AuditIssue[];

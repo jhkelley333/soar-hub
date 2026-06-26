@@ -241,6 +241,13 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
     const all = warrantyHintQ.data?.tickets ?? [];
     return all.filter((t) => !dismissedHints.has(t.id));
   }, [warrantyHintQ.data, dismissedHints]);
+  // Recent repairs (incl. logged off-ticket work) on this equipment — a possible
+  // repeat/callback even without a warranty. Excludes any already shown as a
+  // warranty match and any dismissed.
+  const recentRepairs = useMemo(() => {
+    const all = warrantyHintQ.data?.recent ?? [];
+    return all.filter((t) => !dismissedHints.has(t.id));
+  }, [warrantyHintQ.data, dismissedHints]);
 
   // Equipment-register warranty flag: is there equipment AT THIS STORE,
   // matching the chosen asset, that's still under a parts/labor warranty?
@@ -647,6 +654,58 @@ export function NewTicketModal({ open, onClose, onCreated, onError }: Props) {
                             setDismissedHints((prev) => new Set(prev).add(h.id));
                           }}
                           className="rounded-md border border-emerald-300 bg-white px-2 py-1 text-[11px] font-medium text-emerald-900 hover:bg-emerald-50"
+                        >
+                          Use as callback — assign {h.vendor_name}
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setDismissedHints((prev) => new Set(prev).add(h.id))}
+                        className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] font-medium text-zinc-600 hover:bg-zinc-50"
+                      >
+                        Different issue, continue
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {recentRepairs.length > 0 && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 p-3">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-amber-900">
+                Heads up — recent repair{recentRepairs.length === 1 ? "" : "s"} on this equipment
+              </div>
+              <div className="mt-1 text-xs text-amber-900">
+                This store already had work on this equipment recently. Is this a repeat or callback rather than a fresh issue?
+              </div>
+              <ul className="mt-2 space-y-2">
+                {recentRepairs.map((h) => (
+                  <li key={h.id} className="rounded-md border border-amber-100 bg-white p-2 text-xs">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                      <span className="font-mono font-semibold text-midnight">{h.wo_number}</span>
+                      <span className="text-zinc-700">{h.asset_type || h.category}</span>
+                      {h.vendor_name && <span className="text-zinc-500">· {h.vendor_name}</span>}
+                      {h.is_logged_offline && (
+                        <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-zinc-500">Logged</span>
+                      )}
+                      {h.when && <span className="text-[11px] text-zinc-400">{fmtShortDate(h.when)}</span>}
+                    </div>
+                    <div className="mt-1.5 flex flex-wrap gap-2">
+                      {h.vendor_name && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setVendorName(h.vendor_name || "");
+                            setDescription((d) => {
+                              const tag = `[Callback for ${h.wo_number}]`;
+                              if (d.includes(tag)) return d;
+                              return d.trim() ? `${tag} ${d}` : tag;
+                            });
+                            setDismissedHints((prev) => new Set(prev).add(h.id));
+                          }}
+                          className="rounded-md border border-amber-300 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:bg-amber-50"
                         >
                           Use as callback — assign {h.vendor_name}
                         </button>

@@ -235,3 +235,43 @@ export interface DepositSearchFilters {
   store_number?: string;
   amount?: string;
 }
+
+// ── Store Funds (the "Bank") ─────────────────────────────────────────────────
+export interface FundPeriod {
+  period: number;
+  fiscalWeek: number;
+  weekInPeriod: number;
+  periodStart: string;
+}
+export interface FundStoreRow {
+  store_id: string;
+  store_number: string;
+  store_name: string | null;
+  bank_amount_cents: number | null;
+  bank_set: boolean;
+  validated_this_period: boolean;
+  last: { counted_cents: number; variance_cents: number; over_tolerance: boolean; validated_at: string; by: string | null } | null;
+}
+export interface FundOverview {
+  period: FundPeriod | null;
+  toleranceCents: number;
+  stores: FundStoreRow[];
+  rollup: { store_count: number; bank_set_count: number; validated_this_period: number; due: number; over_tolerance: number } | null;
+  can_validate: boolean;
+  is_admin: boolean;
+}
+export interface FundMetricPeriod {
+  period: number;
+  due: number;
+  validated: number;
+  on_time: number;
+  on_time_pct: number;
+  avg_days_to_validate: number | null;
+  total_variance_cents: number;
+  avg_abs_variance_cents: number;
+}
+export interface FundMetrics {
+  periods: FundMetricPeriod[];
+  banked_stores: number;
+  store_count: number;
+}

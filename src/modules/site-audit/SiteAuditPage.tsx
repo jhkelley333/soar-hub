@@ -323,7 +323,7 @@ function AuditSummary({ audit, canWrite, onBack, onCapture, onShare, onIssue, on
         </button>
       )}
 
-      {canWrite && (
+      {audit.can_delete && (
         <button onClick={() => del.isPending ? null : (window.confirm("Delete this entire audit?") && del.mutate())}
           className="mx-auto mt-4 block text-xs font-medium text-red-500 hover:underline">Delete audit</button>
       )}

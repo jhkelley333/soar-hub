@@ -6,11 +6,12 @@
 // transition without bespoke modals per state pair.
 
 import { useEffect, useMemo, useState } from "react";
-import { Loader2, X } from "lucide-react";
+import { Loader2, X, Sparkles } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
 import { VendorSearchInput } from "./VendorSearchInput";
+import { extractReplacement, fileToBase64 } from "./api";
 import type {
   AdminCloseReason,
   ResolutionCategory,
@@ -160,6 +161,10 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
   const [replWarrSource, setReplWarrSource] = useState<"" | "vendor" | "manufacturer" | "none">("");
   const [replReceipt, setReplReceipt] = useState<File | null>(null);
   const [replWarrantyDoc, setReplWarrantyDoc] = useState<File | null>(null);
+  // AI auto-fill from the replacement receipt.
+  const [replScanning, setReplScanning] = useState(false);
+  const [replScanNote, setReplScanNote] = useState<string | null>(null);
+  const [replScanFilled, setReplScanFilled] = useState(false);
   // Parts-on-order fields. Only meaningful for the order_parts modal
   // kind. Description, cost, ETA required; supplier + PO optional.
   const [partsDesc, setPartsDesc] = useState<string>("");
@@ -188,6 +193,9 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
     setReplWarrSource("");
     setReplReceipt(null);
     setReplWarrantyDoc(null);
+    setReplScanning(false);
+    setReplScanNote(null);
+    setReplScanFilled(false);
     setPartsDesc("");
     setPartsSupplier("");
     setPartsCost("");
@@ -195,6 +203,38 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
     setPartsPoNumber("");
     setPartsReceipt(null);
   }, [open, config.kind]);
+
+  // Read the replacement receipt/spec-plate with AI and pre-fill empty fields
+  // (never clobber what the user typed). Best-effort.
+  async function onReplReceiptPicked(file: File | null) {
+    setReplReceipt(file);
+    setReplScanFilled(false);
+    setReplScanNote(null);
+    if (!file) return;
+    setReplScanning(true);
+    try {
+      const data = await fileToBase64(file);
+      const { extracted: ex } = await extractReplacement({ data, type: file.type || "application/octet-stream" });
+      let filled = false;
+      const fill = (cond: boolean, set: () => void) => { if (cond) { set(); filled = true; } };
+      fill(!replManufacturer.trim() && !!ex.manufacturer, () => setReplManufacturer(ex.manufacturer));
+      fill(!replModel.trim() && !!ex.model, () => setReplModel(ex.model));
+      fill(!replSupplier.trim() && !!ex.supplier, () => setReplSupplier(ex.supplier));
+      fill(!replCost.trim() && ex.cost != null, () => setReplCost(String(ex.cost)));
+      fill(!replEta.trim() && !!ex.eta, () => setReplEta(ex.eta));
+      fill(!replAssetTag.trim() && !!ex.asset_tag, () => setReplAssetTag(ex.asset_tag));
+      fill(!replPoNumber.trim() && !!ex.po_number, () => setReplPoNumber(ex.po_number));
+      fill(!replWarrLabor.trim() && ex.warranty_labor_days != null, () => setReplWarrLabor(String(ex.warranty_labor_days)));
+      fill(!replWarrParts.trim() && ex.warranty_parts_days != null, () => setReplWarrParts(String(ex.warranty_parts_days)));
+      fill(!replWarrSource && !!ex.warranty_source, () => setReplWarrSource(ex.warranty_source));
+      setReplScanFilled(filled);
+      if (!filled) setReplScanNote("Couldn't pull anything new from that receipt — fill in what's needed.");
+    } catch (e) {
+      setReplScanNote((e as Error)?.message || "Couldn't read the receipt — enter the details manually.");
+    } finally {
+      setReplScanning(false);
+    }
+  }
 
   const title = useMemo(() => config.title || defaultTitle(config.kind), [config]);
   const submitLabel = useMemo(
@@ -602,12 +642,12 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
               </div>
 
               <div className="border-t border-zinc-200 pt-3">
-                <Label htmlFor="repl-receipt">Receipt / invoice (optional)</Label>
+                <Label htmlFor="repl-receipt">Receipt / invoice (optional — auto-fills the fields above)</Label>
                 <input
                   id="repl-receipt"
                   type="file"
                   accept="image/*,application/pdf"
-                  onChange={(e) => setReplReceipt(e.target.files?.[0] || null)}
+                  onChange={(e) => onReplReceiptPicked(e.target.files?.[0] || null)}
                   className="block w-full text-sm text-zinc-700 file:mr-2 file:rounded-md file:border-0 file:bg-accent/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-midnight hover:file:bg-accent/20"
                 />
                 {replReceipt && (
@@ -616,12 +656,25 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
                     <span>({(replReceipt.size / 1024).toFixed(0)} KB)</span>
                     <button
                       type="button"
-                      onClick={() => setReplReceipt(null)}
+                      onClick={() => { setReplReceipt(null); setReplScanFilled(false); setReplScanNote(null); }}
                       className="text-red-600 hover:underline"
                     >
                       remove
                     </button>
                   </div>
+                )}
+                {replScanning && (
+                  <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-accent">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Reading the receipt…
+                  </div>
+                )}
+                {!replScanning && replScanFilled && (
+                  <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-emerald-700">
+                    <Sparkles className="h-3 w-3" /> Auto-filled from the receipt — please review.
+                  </div>
+                )}
+                {!replScanning && replScanNote && (
+                  <div className="mt-1.5 text-[11px] text-amber-700">{replScanNote}</div>
                 )}
                 <div className="mt-1 text-[10px] text-zinc-500">
                   PDF or image. Uploaded after the ticket transitions; failures don't block the order.

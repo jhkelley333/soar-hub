@@ -17,7 +17,6 @@ import {
   Sparkles,
   ClipboardList,
   ClipboardCheck,
-  HardHat,
   MessageCircle,
   Gauge,
   RefreshCw,
@@ -27,7 +26,11 @@ import {
   GraduationCap,
   GitBranch,
   BookMarked,
+  BookOpenCheck,
   CloudSun,
+  BarChart3,
+  ScrollText,
+  QrCode,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -66,6 +69,8 @@ export const NAV: NavItem[] = [
   // chart and explain misses; DO+ get the district rollup. Backend
   // (labor.js) enforces scope; nav is wide so shift managers see it too.
   { to: "/labor",       label: "Labor",       icon: Gauge,           roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // Labor v2 — same daily review, fed by the KPI feed instead of the sheet.
+  { to: "/labor-v2",    label: "Labor v2",    icon: Gauge,           roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   // Cash Management — night-close + next-day deposit cycle. Store leaders
   // run it; DO+ act on alerts. Rolled out by role now (the pilot flag was
   // retired once it shipped to all store leaders).
@@ -84,11 +89,9 @@ export const NAV: NavItem[] = [
   // for deep links (e.g. from the AssignmentDetailPage back-link), but
   // they don't appear in the sidebar — open /workspaces and switch tabs.
   { to: "/workspaces",  label: "Workspaces",  icon: ClipboardList,   roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
-  // Reno Scoping — Pre-Reskin Scoping for the 2026 Full-to-Bright
-  // program. GM+ can scope their own store; DO+ reviews. RLS filters
-  // visibility regardless, but we gate the nav link to GM+ so shift
-  // managers don't see a dead link.
-  { to: "/reno-scoping", label: "Reno Scoping", icon: HardHat,        roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // Reno Scoping is reached through the Operations Tools hub (/operations),
+  // so it's kept out of the sidebar to reduce clutter. Its routes stay live
+  // for deep links and the hub's card.
   { to: "/weather",     label: "Weather",     icon: CloudSun,        roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
   // My Walks + Walkthroughs are reached through the Operations Tools hub
   // (/operations), so they're kept out of the sidebar to reduce clutter.
@@ -109,6 +112,16 @@ export const NAV: NavItem[] = [
   // Coaching Tool Kit — coaching-for-performance reference cards for hourly
   // managers and above. Lives under People.
   { to: "/coaching",    label: "Coaching Tool Kit", icon: GraduationCap, roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // My Training — learner home for SOAR QSR. Open to everyone signed in; the
+  // list is empty (with a friendly note) for anyone with nothing assigned, and
+  // it's the persistent place to find required training the login pop-up nags about.
+  { to: "/my-training", label: "My Training",  icon: BookOpenCheck,   roles: null },
+  // Team Training — completion rollup scoped to the caller's org (GM → store,
+  // DO → district, RVP → region; admins org-wide). Admins also assign courses.
+  { to: "/qsr/manage",  label: "Team Training", icon: BarChart3,       roles: ["shift_manager", "first_assistant_manager", "associate_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"], flagKey: "qsr_platform" },
+  // Training QR codes — store leaders + up see/print their stores' codes
+  // (scoped by org in qsr-manage); admins also bulk-create + manage all.
+  { to: "/qsr/share",   label: "Training QR Codes", icon: QrCode,      roles: ["shift_manager", "first_assistant_manager", "associate_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"], flagKey: "qsr_platform" },
   // Team Pipeline — Talent Planning. Gated behind the team_pipeline flag:
   // roles:[] means it stays dark until the flag resolves true for the user
   // (admins always see it). Scoped to the viewer's org tree in-app.
@@ -121,13 +134,16 @@ export const NAV: NavItem[] = [
   { to: "/team",        label: "My Team",     icon: Users,           roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/my-stores",   label: "My Stores",   icon: Building2,       roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
   { to: "/admin/org",   label: "Org Admin",   icon: Network,         roles: ["vp", "coo", "admin"] },
+  { to: "/admin/kpi",   label: "KPI Dashboard", icon: BarChart3,   roles: ["admin"] },
+  { to: "/admin/labor-v2", label: "Labor v2 · Rollup", icon: Gauge, roles: ["admin"] },
+  { to: "/admin/labor-v2/log", label: "Pull Log", icon: ScrollText, roles: ["admin"] },
   { to: "/admin/bulk-attributes", label: "Bulk Attributes", icon: Layers, roles: ["admin"] },
   { to: "/admin/feature-flags",   label: "Feature Flags",   icon: Flag,   roles: ["admin"] },
   { to: "/admin/role-access",     label: "Role Access",     icon: KeyRound, roles: ["admin"] },
   { to: "/admin/region-access",   label: "Region Access",   icon: Globe,    roles: ["admin"] },
   // SOAR QSR Learning Platform — admin-only during the build. The qsr_platform
   // flag broadens access to a pilot cohort at launch (combined with role).
-  { to: "/qsr",         label: "SOAR QSR",    icon: Sparkles,        roles: ["admin"], flagKey: "qsr_platform" },
+  { to: "/qsr",         label: "Soar MyLearning", icon: Sparkles,    roles: ["admin"], flagKey: "qsr_platform" },
   { to: "/admin/paf-config", label: "PAF Config", icon: Settings,    roles: ["payroll", "admin"] },
   { to: "/admin/labor-sync", label: "Labor Sync", icon: RefreshCw,   roles: ["vp", "coo", "admin"] },
   { to: "/admin/weather-sync", label: "Weather Sync", icon: CloudSun, roles: ["admin"] },
@@ -197,8 +213,8 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/operations": "OPERATIONS",
   "/ranker": "OPERATIONS",
   "/labor": "OPERATIONS",
+  "/labor-v2": "OPERATIONS",
   "/admin/cash-management": "OPERATIONS",
-  "/reno-scoping": "OPERATIONS",
   "/weather": "OPERATIONS",
   "/schedule": "OPERATIONS",
   "/my-walks": "OPERATIONS",
@@ -206,6 +222,9 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/paf": "PEOPLE",
   "/employee-actions": "PEOPLE",
   "/coaching": "PEOPLE",
+  "/my-training": "PEOPLE",
+  "/qsr/manage": "PEOPLE",
+  "/qsr/share": "PEOPLE",
   "/team-pipeline": "PEOPLE",
   "/contacts": "PEOPLE",
   "/team": "PEOPLE",

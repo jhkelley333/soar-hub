@@ -9,6 +9,8 @@ import type {
   DepositSearchFilters,
   DepositSearchResponse,
   DsrResponse,
+  FundMetrics,
+  FundOverview,
   LeaderOverview,
   Overview,
   PendingDeposit,
@@ -183,4 +185,22 @@ export async function uploadSlip(storeId: string, file: File): Promise<string> {
   });
   if (error) throw new Error(error.message);
   return path;
+}
+
+// ── Store Funds (the "Bank") ─────────────────────────────────────────────────
+export function fetchFundOverview(): Promise<FundOverview> {
+  return request<FundOverview>(`${FN}?action=fund-overview`);
+}
+export function fetchFundMetrics(): Promise<FundMetrics> {
+  return request<FundMetrics>(`${FN}?action=fund-metrics`);
+}
+export function submitFundValidation(input: {
+  store_number: string; counted_cents: number; denominations?: Record<string, number>; reason?: string;
+}): Promise<{ ok: true; variance_cents: number; over_tolerance: boolean; alerted: string | null }> {
+  return request(`${FN}?action=fund-validate`, { method: "POST", body: JSON.stringify(input) });
+}
+export function setStoreBanks(
+  items: { store_number: string; bank_amount_cents: number }[],
+): Promise<{ ok: true; updated: number; unknown: string[] }> {
+  return request(`${FN}?action=fund-set-banks`, { method: "POST", body: JSON.stringify({ items }) });
 }

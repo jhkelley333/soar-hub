@@ -6,6 +6,7 @@ import { formatUSD } from "./cost";
 import { cn } from "@/lib/cn";
 import { useToast } from "@/shared/ui/Toaster";
 import { DiscussButton } from "@/modules/chat/DiscussButton";
+import { PayPeriodBadge } from "./PayPeriodBadge";
 
 // Maps audit log action codes (kept short for storage) to human labels.
 const AUDIT_LABEL: Record<string, string> = {
@@ -49,11 +50,12 @@ export function PafDetail({ paf }: { paf: PafRow }) {
 
   return (
     <div className="space-y-4 text-sm">
-      <ApprovalStepper paf={paf} />
-
-      <div className="flex justify-end">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <PayPeriodBadge />
         <DiscussButton scopeKind="submission" scopeRef={paf.id} />
       </div>
+
+      <ApprovalStepper paf={paf} />
 
       <Section title="Submission">
         <Grid>

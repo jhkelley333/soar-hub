@@ -4,8 +4,9 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, BarChart3, Download, Loader2, Plus, Trash2, Users } from "lucide-react";
+import { ArrowLeft, BarChart3, Download, Loader2, Plus, QrCode, Trash2, Users } from "lucide-react";
 import { useToast } from "@/shared/ui/Toaster";
+import { useAuth } from "@/auth/AuthProvider";
 import {
   fetchManageOverview, fetchByCourse, fetchByStore, fetchAssignTargets,
   fetchAssignments, createAssignment, deleteAssignment, fetchCompletions,
@@ -39,6 +40,8 @@ function exportCsv(rows: Record<string, string>[], filename: string) {
 
 export function ManagerDashboardPage() {
   const toast = useToast();
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === "admin";
   const overviewQ = useQuery({ queryKey: ["qsr", "manage", "overview"], queryFn: fetchManageOverview });
   const byCourseQ = useQuery({ queryKey: ["qsr", "manage", "byCourse"], queryFn: fetchByCourse });
   const byStoreQ = useQuery({ queryKey: ["qsr", "manage", "byStore"], queryFn: fetchByStore });
@@ -63,12 +66,17 @@ export function ManagerDashboardPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <div className="flex items-center justify-between">
-        <Link to="/qsr" className="inline-flex items-center gap-1.5 font-qsr-ui text-sm text-ink-muted hover:text-ink">
-          <ArrowLeft className="h-4 w-4" /> SOAR QSR
+        <Link to={isAdmin ? "/qsr" : "/my-training"} className="inline-flex items-center gap-1.5 font-qsr-ui text-sm text-ink-muted hover:text-ink">
+          <ArrowLeft className="h-4 w-4" /> {isAdmin ? "Soar MyLearning" : "My Training"}
         </Link>
-        <button type="button" onClick={() => exportM.mutate()} disabled={exportM.isPending} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 font-qsr-ui text-sm font-semibold text-ink hover:border-qsr-azure disabled:opacity-40">
-          {exportM.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Export completions
-        </button>
+        <div className="flex items-center gap-2">
+          <Link to="/qsr/share" className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 font-qsr-ui text-sm font-semibold text-ink hover:border-qsr-azure">
+            <QrCode className="h-4 w-4" /> Share codes
+          </Link>
+          <button type="button" onClick={() => exportM.mutate()} disabled={exportM.isPending} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 font-qsr-ui text-sm font-semibold text-ink hover:border-qsr-azure disabled:opacity-40">
+            {exportM.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />} Export completions
+          </button>
+        </div>
       </div>
 
       <div className="flex items-center gap-2">
@@ -140,15 +148,15 @@ export function ManagerDashboardPage() {
         )}
       </div>
 
-      <AssignmentsPanel />
+      <AssignmentsPanel canAssign={isAdmin} />
     </div>
   );
 }
 
-function AssignmentsPanel() {
+function AssignmentsPanel({ canAssign }: { canAssign: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const targetsQ = useQuery({ queryKey: ["qsr", "manage", "targets"], queryFn: fetchAssignTargets });
+  const targetsQ = useQuery({ queryKey: ["qsr", "manage", "targets"], queryFn: fetchAssignTargets, enabled: canAssign });
   const listQ = useQuery({ queryKey: ["qsr", "manage", "assignments"], queryFn: fetchAssignments });
   const invalidate = () => qc.invalidateQueries({ queryKey: ["qsr", "manage", "assignments"] });
 
@@ -183,6 +191,7 @@ function AssignmentsPanel() {
     <div className={card}>
       <h2 className="mb-3 font-qsr-display text-lg font-semibold text-ink">Assignments</h2>
 
+      {canAssign && (
       <div className="grid gap-2 rounded-xl border border-border p-3 sm:grid-cols-[1fr_auto_1fr_auto_auto] sm:items-center">
         <select className={inputCls} value={courseId} onChange={(e) => setCourseId(e.target.value)}>
           <option value="">Choose a course…</option>
@@ -203,6 +212,7 @@ function AssignmentsPanel() {
           {add.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />} Assign
         </button>
       </div>
+      )}
 
       <div className="mt-3 space-y-2">
         {listQ.isLoading ? <div className="h-12 animate-pulse rounded-xl bg-surface-sunk" /> :
@@ -221,7 +231,7 @@ function AssignmentsPanel() {
                 <div className="font-qsr-ui text-[10px] uppercase tracking-wide text-ink-subtle">done</div>
               </div>
               <RateBar rate={a.total ? Math.round((a.completed / a.total) * 100) : 0} />
-              <button type="button" onClick={() => remove.mutate(a.id)} className="rounded-md p-1.5 text-ink-subtle hover:text-qsr-crimson" title="Remove"><Trash2 className="h-4 w-4" /></button>
+              {canAssign && <button type="button" onClick={() => remove.mutate(a.id)} className="rounded-md p-1.5 text-ink-subtle hover:text-qsr-crimson" title="Remove"><Trash2 className="h-4 w-4" /></button>}
             </div>
           ))}
       </div>
