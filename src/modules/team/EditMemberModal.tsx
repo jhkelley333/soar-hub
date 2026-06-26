@@ -232,9 +232,12 @@ export function EditMemberModal({
     managerRole
   );
 
-  // Admin / VP / COO may grant additional ("acting") coverage on top of a
-  // user's role scope. Server enforces the same gate.
-  const canManageScope = (["admin", "vp", "coo"] as UserRole[]).includes(managerRole);
+  // Admin / VP / COO grant additional ("acting") coverage to anyone; RVP / SDO
+  // may also grant it, limited to their own team + reach (server-enforced, and
+  // the scope picker only offers nodes within their reach).
+  const canManageScope = (["admin", "vp", "coo", "rvp", "sdo"] as UserRole[]).includes(
+    managerRole
+  );
 
   function submitEdits() {
     if (!member) return;
