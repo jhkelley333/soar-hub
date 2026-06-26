@@ -206,23 +206,36 @@ async function resolveVisibleStoreNumbers(supa, userId) {
 // the given org scope. Returns full profile rows (id, email, names).
 async function scopedProfiles(supa, scopeType, scopeId, role) {
   if (!scopeId) return [];
-  const { data: candidates } = await supa
+  const nowIso = new Date().toISOString();
+  // Who covers this scope: primary holders (user_scopes) plus acting coverers
+  // (additional_scopes, non-expired). Primary counts only if their role
+  // matches the tier; acting coverers count regardless of primary role (an
+  // RVP covering an area is a valid acting SDO escalation target).
+  const [{ data: primaryScoped }, { data: actingScoped }] = await Promise.all([
+    supa.from("user_scopes").select("user_id").eq("scope_type", scopeType).eq("scope_id", scopeId),
+    supa.from("additional_scopes").select("user_id, expires_at").eq("scope_type", scopeType).eq("scope_id", scopeId),
+  ]);
+  const activeActing = (actingScoped ?? []).filter((r) => !r.expires_at || r.expires_at > nowIso);
+  const ids = Array.from(
+    new Set([
+      ...(primaryScoped ?? []).map((s) => s.user_id),
+      ...activeActing.map((s) => s.user_id),
+    ])
+  );
+  if (!ids.length) return [];
+  const { data: profiles } = await supa
     .from("profiles")
-    .select("id, email, full_name, preferred_name")
-    .eq("role", role)
+    .select("id, email, full_name, preferred_name, role")
+    .in("id", ids)
     .eq("is_active", true);
-  const byId = new Map((candidates ?? []).map((p) => [p.id, p]));
-  if (!byId.size) return [];
-  const { data: scoped } = await supa
-    .from("user_scopes")
-    .select("user_id")
-    .eq("scope_type", scopeType)
-    .eq("scope_id", scopeId)
-    .in("user_id", Array.from(byId.keys()));
+  const primaryIds = new Set((primaryScoped ?? []).map((s) => s.user_id));
+  const actingIds = new Set(activeActing.map((s) => s.user_id));
   const out = [];
-  for (const s of scoped ?? []) {
-    const p = byId.get(s.user_id);
-    if (p) out.push(p);
+  for (const p of profiles ?? []) {
+    const primaryMatch = primaryIds.has(p.id) && p.role === role;
+    if (primaryMatch || actingIds.has(p.id)) {
+      out.push({ id: p.id, email: p.email, full_name: p.full_name, preferred_name: p.preferred_name });
+    }
   }
   return out;
 }
