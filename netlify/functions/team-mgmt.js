@@ -342,10 +342,11 @@ function isSingleStoreRole(role) {
 // rewrites the sign-in credential, so it's held above the GM tier.
 const EMAIL_EDIT_ROLES = ["do", "sdo", "rvp", "vp", "coo", "admin"];
 
-// Who can grant/remove ADDITIONAL ("acting") scope — top-of-house only. The
-// reach helpers exist (resolveStoresForScope + user_visible_stores) if we
-// later want to let an RVP/SDO assign coverage within their own reach.
-const SCOPE_ADMIN_ROLES = ["admin", "coo", "vp"];
+// Additional ("acting") scope assigners. Org-wide roles assign to anyone with
+// any in-reach scope (they see everything). RVP/SDO may also assign, but only
+// to a user on their team and only coverage fully within their own reach.
+const ORG_WIDE_SCOPE_ROLES = ["admin", "coo", "vp"];
+const SCOPE_ASSIGNER_ROLES = ["admin", "coo", "vp", "rvp", "sdo"];
 
 // Which roles can a manager create / change-to?
 function manageableRoles(role) {
@@ -1149,8 +1150,8 @@ async function deleteUser(supa, manager, body) {
 // ----------------------------------------------------------------------------
 
 async function addScope(supa, manager, body) {
-  if (!SCOPE_ADMIN_ROLES.includes(manager.role)) {
-    return { error: "Only an Admin, VP, or COO can assign additional scope.", status: 403 };
+  if (!SCOPE_ASSIGNER_ROLES.includes(manager.role)) {
+    return { error: "You don't have permission to assign additional scope.", status: 403 };
   }
   const target_id = body?.user_id;
   const scope_type = body?.scope_type;
@@ -1188,6 +1189,20 @@ async function addScope(supa, manager, body) {
     return { error: "That scope has no active stores.", status: 400 };
   }
 
+  // RVP/SDO assigners are constrained to their own team + reach; org-wide
+  // roles (admin/vp/coo) see everything and skip both checks.
+  if (!ORG_WIDE_SCOPE_ROLES.includes(manager.role)) {
+    const { data: managed } = await supa.rpc("manageable_users", { manager_id: manager.id });
+    if (!(managed ?? []).some((m) => m.id === target_id)) {
+      return { error: "That user isn't on your team.", status: 403 };
+    }
+    const { data: managerStoreIds } = await supa.rpc("user_visible_stores", { uid: manager.id });
+    const reach = new Set(managerStoreIds ?? []);
+    if (targetStores.some((id) => !reach.has(id))) {
+      return { error: "That coverage is outside your reach.", status: 403 };
+    }
+  }
+
   const { error: insErr } = await supa.from("additional_scopes").insert({
     user_id: target_id,
     scope_type,
@@ -1215,8 +1230,8 @@ async function addScope(supa, manager, body) {
 }
 
 async function removeScope(supa, manager, body) {
-  if (!SCOPE_ADMIN_ROLES.includes(manager.role)) {
-    return { error: "Only an Admin, VP, or COO can remove additional scope.", status: 403 };
+  if (!SCOPE_ASSIGNER_ROLES.includes(manager.role)) {
+    return { error: "You don't have permission to remove additional scope.", status: 403 };
   }
   const id = body?.id;
   if (!id) return { error: "id is required.", status: 400 };
@@ -1227,6 +1242,21 @@ async function removeScope(supa, manager, body) {
     .eq("id", id)
     .maybeSingle();
   if (!row) return { error: "Scope assignment not found.", status: 404 };
+
+  // RVP/SDO can only remove coverage from a teammate, and only coverage that
+  // sits within their own reach; org-wide roles skip both checks.
+  if (!ORG_WIDE_SCOPE_ROLES.includes(manager.role)) {
+    const { data: managed } = await supa.rpc("manageable_users", { manager_id: manager.id });
+    if (!(managed ?? []).some((m) => m.id === row.user_id)) {
+      return { error: "That user isn't on your team.", status: 403 };
+    }
+    const rowStores = await resolveStoresForScope(supa, row.scope_type, row.scope_id);
+    const { data: managerStoreIds } = await supa.rpc("user_visible_stores", { uid: manager.id });
+    const reach = new Set(managerStoreIds ?? []);
+    if (rowStores.length && rowStores.some((sid) => !reach.has(sid))) {
+      return { error: "That coverage is outside your reach.", status: 403 };
+    }
+  }
 
   const { error: delErr } = await supa.from("additional_scopes").delete().eq("id", id);
   if (delErr) return { error: `Couldn't remove scope: ${delErr.message}`, status: 500 };
