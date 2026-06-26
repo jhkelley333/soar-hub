@@ -32,12 +32,11 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import type { UserRole } from "@/types/database";
-import { fetchCallerStores, fetchRecentMessages, fetchStats, fetchTickets } from "@/modules/work-orders-v2/api";
+import { fetchCallerStores, fetchOpenWorkOrderAlerts, fetchRecentMessages, fetchStats, fetchTickets } from "@/modules/work-orders-v2/api";
 import { isOpenStatus } from "@/modules/work-orders-v2/types";
 import type { RecentMessage, Ticket } from "@/modules/work-orders-v2/types";
 import { fetchCfmExpiring } from "@/modules/team/api";
 import { listSdoQueue } from "@/modules/paf/api";
-import type { PafRow } from "@/modules/paf/types";
 import { fetchCashBadges } from "@/modules/cash-management/api";
 import { listApprovalQueue } from "@/modules/employee-actions/api";
 import { fetchBirthdays } from "@/modules/my-stores/api";
@@ -149,6 +148,7 @@ export function DashboardPage() {
 
   const woStatsQ = useQuery({ queryKey: ["wo2", "stats"], queryFn: fetchStats, ...dashQ });
   const ticketsQ = useQuery({ queryKey: ["wo2", "tickets"], queryFn: fetchTickets, enabled: canWo, ...dashQ });
+  const woAlertsQ = useQuery({ queryKey: ["wo2", "alerts"], queryFn: fetchOpenWorkOrderAlerts, enabled: canWo, ...dashQ });
   const eaQ = useQuery({ queryKey: ["ea-queue"], queryFn: listApprovalQueue, enabled: isEaApprover, ...dashQ });
   const storesQ = useQuery({ queryKey: ["wo2", "caller-stores"], queryFn: fetchCallerStores, ...dashQ });
   const weatherStoreId = profile?.primary_store_id ?? storesQ.data?.stores?.[0]?.id ?? null;
@@ -194,6 +194,8 @@ export function DashboardPage() {
   const depositsVerifiedToday = cashQ.data?.deposits_verified_today ?? 0;
   const bonusPafs = sdoQ.data?.pafs ?? [];
   const eaCount = (eaQ.data?.trainingCredits.length ?? 0) + (eaQ.data?.ptoRequests.length ?? 0);
+  const woApprovals =
+    woAlertsQ.data?.groups.find((g) => g.key === "awaitingApproval")?.count ?? 0;
 
   return (
     <div className="space-y-6">
@@ -258,12 +260,12 @@ export function DashboardPage() {
       </div>
 
       <ActionQueue
-        escalatedWos={escalatedTickets}
-        bonusPafs={bonusPafs}
-        cashAlerts={canCash ? cashAlerts : 0}
+        woApprovals={canWo ? woApprovals : 0}
+        pafCount={isSdoReviewer ? bonusPafs.length : 0}
+        cashCount={canCash ? cashAlerts + closeoutsToValidate : 0}
         eaCount={isEaApprover ? eaCount : 0}
         loading={
-          (canWo && ticketsQ.isLoading) ||
+          (canWo && woAlertsQ.isLoading) ||
           (isSdoReviewer && sdoQ.isLoading) ||
           (canCash && cashQ.isLoading) ||
           (isEaApprover && eaQ.isLoading)
@@ -518,60 +520,33 @@ function KpiCard({
 
 // ── Action Queue ────────────────────────────────────────────────────
 function ActionQueue({
-  escalatedWos,
-  bonusPafs,
-  cashAlerts,
+  woApprovals,
+  pafCount,
+  cashCount,
   eaCount,
   loading,
 }: {
-  escalatedWos: Ticket[];
-  bonusPafs: PafRow[];
-  cashAlerts: number;
+  woApprovals: number;
+  pafCount: number;
+  cashCount: number;
   eaCount: number;
   loading: boolean;
 }) {
   const items: ActionRowData[] = [];
 
-  // Escalated work orders first — business-critical or aged-out open tickets.
-  for (const t of escalatedWos.slice(0, 5)) {
-    const days = ticketDaysOpen(t);
+  // One summary row per category: Cash, Employee actions, Work Order
+  // Approvals, PAF Actions — each shown only when it has items, deep-linking
+  // into that module to act.
+  if (cashCount > 0) {
     items.push({
-      id: `wo-${t.id}`,
-      icon: Hammer,
-      tone: "err",
-      title: `Escalated · ${t.asset_type || t.category || "Work order"}`,
-      meta: [
-        `Store ${t.store_number}`,
-        t.is_business_critical ? "Business critical" : `${days} days open`,
-      ].join(" · "),
-      action: { label: "Review", tone: "err" },
-      to: `/admin/work-orders-v2?ticket=${encodeURIComponent(t.id)}`,
-      time: relativeTime(t.date_submitted),
-    });
-  }
-
-  if (cashAlerts > 0) {
-    items.push({
-      id: "cash-alerts",
+      id: "cash",
       icon: Wallet,
       tone: "warn",
-      title: `${cashAlerts} cash variance${cashAlerts === 1 ? "" : "s"} over tolerance`,
-      meta: "Awaiting resolution",
-      action: { label: "Resolve", tone: "warn" },
+      title: `${cashCount} cash item${cashCount === 1 ? "" : "s"} need attention`,
+      meta: "Alerts & deposits to clear",
+      action: { label: "Open", tone: "warn" },
       to: "/admin/cash-management",
       time: "",
-    });
-  }
-  for (const p of bonusPafs.slice(0, 5)) {
-    items.push({
-      id: `paf-${p.id}`,
-      icon: FileText,
-      tone: "sky",
-      title: `Bonus PAF · ${p.employee_name}`,
-      meta: p.submitter_name ? `Submitted by ${p.submitter_name}` : "Bonus awaiting approval",
-      action: { label: "Review", tone: "sky" },
-      to: "/paf",
-      time: relativeTime(p.created_at),
     });
   }
   if (eaCount > 0) {
@@ -583,6 +558,30 @@ function ActionQueue({
       meta: "Training credits & PTO requests",
       action: { label: "Review", tone: "sky" },
       to: "/employee-actions",
+      time: "",
+    });
+  }
+  if (woApprovals > 0) {
+    items.push({
+      id: "wo-approvals",
+      icon: Hammer,
+      tone: "warn",
+      title: `${woApprovals} work order approval${woApprovals === 1 ? "" : "s"}`,
+      meta: "Quotes awaiting your decision",
+      action: { label: "Review", tone: "warn" },
+      to: "/approvals",
+      time: "",
+    });
+  }
+  if (pafCount > 0) {
+    items.push({
+      id: "paf-actions",
+      icon: FileText,
+      tone: "sky",
+      title: `${pafCount} PAF action${pafCount === 1 ? "" : "s"}`,
+      meta: "Bonus PAFs awaiting approval",
+      action: { label: "Review", tone: "sky" },
+      to: "/paf",
       time: "",
     });
   }

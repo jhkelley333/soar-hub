@@ -13,7 +13,7 @@ import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   Search, Filter, Clock, Flag,
-  ClipboardCheck, FileText, Hammer,
+  Wallet, Users, FileText, Hammer,
 } from "lucide-react";
 import { AppHeader } from "@/shared/ui/AppHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -38,10 +38,11 @@ type SourceFilter = "all" | ApprovalSource;
 
 const TIER_RANK: Record<Tier, number> = { red: 0, yellow: 1, green: 2 };
 
-const SOURCE_ICON: Record<ApprovalSource, typeof ClipboardCheck> = {
-  workspace: ClipboardCheck,
-  paf: FileText,
+const SOURCE_ICON: Record<ApprovalSource, typeof Hammer> = {
   work_order: Hammer,
+  paf: FileText,
+  cash: Wallet,
+  employee_action: Users,
 };
 
 export function ApprovalsPage() {
@@ -135,9 +136,10 @@ export function ApprovalsPage() {
                 onChange={setSource}
                 options={[
                   { value: "all", label: "All sources" },
-                  { value: "workspace", label: "Audits", count: query.data.bySource.workspace },
-                  { value: "paf", label: "PAFs", count: query.data.bySource.paf },
                   { value: "work_order", label: "Work orders", count: query.data.bySource.work_order },
+                  { value: "paf", label: "PAFs", count: query.data.bySource.paf },
+                  { value: "cash", label: "Cash", count: query.data.bySource.cash },
+                  { value: "employee_action", label: "Employee", count: query.data.bySource.employee_action },
                 ]}
               />
             </div>
@@ -158,7 +160,7 @@ export function ApprovalsPage() {
             <div className="px-4 pt-8">
               <EmptyState
                 title="Nothing waiting on you"
-                description="When submissions, PAFs, or work orders need your decision they'll appear here."
+                description="When cash, employee actions, work order approvals, or PAFs need your attention they'll appear here."
               />
             </div>
           ) : (
