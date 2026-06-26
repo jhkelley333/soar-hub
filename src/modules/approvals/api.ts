@@ -1,33 +1,33 @@
-// Unified approvals queue. Merges three sources that each have their
-// own pending-decision pipeline today:
+// Unified action queue. Surfaces exactly four kinds of pending action:
 //
-//   1. Workspace sign-offs   — listMySignoffs() (audits/forms/walkthroughs)
-//   2. PAF approvals         — listSdoQueue()   (bonus PAFs awaiting SDO+)
-//   3. Work order approvals  — fetchOpenWorkOrderAlerts() filtered to
-//                              "awaitingApproval" only (dollar-routed
-//                              pay approvals; emergencies are awareness
-//                              reminders, not pay decisions)
+//   1. Work order approvals — fetchOpenWorkOrderAlerts() "awaitingApproval"
+//      (dollar-routed pay approvals). One card per quote.
+//   2. PAF approvals        — listSdoQueue() (bonus PAFs awaiting SDO+).
+//      One card per PAF.
+//   3. Cash                 — fetchCashBadges() open alerts + pending
+//      deposits, rolled up into a SINGLE summary row.
+//   4. Employee actions     — listApprovalQueue() training credits + PTO
+//      awaiting decision, rolled up into a SINGLE summary row.
 //
-// Each source's row gets normalized into a single ApprovalItem shape so
-// the page can render them in one tier-sorted list. Each row deep-links
-// back to its native detail page where the actual decision is made.
+// (Workspace audits/sign-offs were intentionally removed — they live on the
+// Operations Tools surface, not the approvals/action queue.)
 //
-// RLS / role gating: every source is already scoped to what the caller
-// can see at the server. We additionally skip the PAF and WO pulls when
-// the caller's role doesn't approve those sources at all, so we don't
-// burn API calls.
+// Each source normalizes into one ApprovalItem shape so the page renders one
+// tier-sorted list; each row deep-links to its native detail page. Role gating
+// skips a source the caller can't act on so we don't burn the API call.
 
-import { listMySignoffs } from "@/modules/workspaces/api";
 import { listSdoQueue } from "@/modules/paf/api";
 import {
   fetchOpenWorkOrderAlerts,
   type OpenAlertItem,
 } from "@/modules/work-orders-v2/api";
+import { fetchCashBadges } from "@/modules/cash-management/api";
+import { listApprovalQueue } from "@/modules/employee-actions/api";
 import type { PafRow } from "@/modules/paf/types";
 import type { UserRole } from "@/types/database";
 import type { Tier } from "@/shared/ui/Tier";
 
-export type ApprovalSource = "workspace" | "paf" | "work_order";
+export type ApprovalSource = "work_order" | "paf" | "cash" | "employee_action";
 
 export interface ApprovalItem {
   /** Unique key across all sources (prefixed by source so React keys + de-dupe work). */
@@ -50,81 +50,52 @@ export interface ApprovalItem {
 export interface ApprovalsQueue {
   items: ApprovalItem[];
   counts: { all: number; green: number; yellow: number; red: number };
-  bySource: { workspace: number; paf: number; work_order: number };
+  bySource: { work_order: number; paf: number; cash: number; employee_action: number };
 }
 
 // ----------------------------------------------------------------------------
-// Source-specific raw types (narrow inline rather than widen each module's
-// canonical types, mirroring the existing pattern in SignoffQueuePage).
+// Role gating — which sources each role can act on.
 // ----------------------------------------------------------------------------
 
-type RawSignoff = {
-  id: string;
-  submission_id: string;
-  step_number: number;
-  created_at: string;
-  step: { label: string | null } | null;
-  submission: {
-    id: string;
-    submitted_at: string;
-    signoff_status: string;
-    audit_outcome: "pass" | "fail" | "fail_critical" | null;
-    audit_score_percent: number | null;
-    audit_critical_failed: boolean | null;
-    assignment: {
-      id: string;
-      workspaces: { id: string; name: string } | null;
-      workspace_templates: { id: string; name: string; type: "form" | "audit" } | null;
-      store: { id: string; store_number: string | null; name: string | null } | null;
-    } | null;
-  } | null;
-};
-
-// ----------------------------------------------------------------------------
-// Role gating
-// ----------------------------------------------------------------------------
-
-const PAF_APPROVER_ROLES = new Set<UserRole>(["sdo", "rvp", "vp", "coo", "admin"]);
-const WO_APPROVER_ROLES = new Set<UserRole>(["do", "sdo", "rvp", "vp", "coo", "admin"]);
+const PAF_APPROVER_ROLES = new Set<string>(["sdo", "rvp", "vp", "coo", "admin"]);
+const WO_APPROVER_ROLES = new Set<string>(["do", "sdo", "rvp", "vp", "coo", "admin"]);
+// Cash-capable roles (mirrors MobileHome's CASH_ROLES).
+const CASH_ROLES = new Set<string>([
+  "gm", "shift_manager", "first_assistant_manager", "associate_manager",
+  "crew_leader", "do", "sdo", "rvp", "vp", "coo", "admin", "accounting",
+]);
+// Employee-action approvers (mirrors employee-actions.js APPROVER_ROLES).
+const EA_APPROVER_ROLES = new Set<string>(["do", "sdo", "rvp", "admin"]);
 
 // ----------------------------------------------------------------------------
 // Normalizers
 // ----------------------------------------------------------------------------
 
-function tierFromOutcome(
-  outcome: "pass" | "fail" | "fail_critical" | null,
-): Tier {
-  if (outcome === "fail_critical") return "red";
-  if (outcome === "fail") return "yellow";
-  return "green";
-}
-
-function priorActionFor(status: string): string | null {
-  if (status === "resubmitted") return "Resubmitted after revision";
-  if (status === "needs_revision") return "Returned for revision";
-  return null;
-}
-
-function workspaceRow(raw: RawSignoff): ApprovalItem | null {
-  const s = raw.submission;
-  if (!s) return null;
-  const a = s.assignment;
-  const tpl = a?.workspace_templates;
+// A single rolled-up summary row (used for Cash + Employee actions, which are
+// categories rather than discrete approval cards).
+function summaryRow(opts: {
+  source: ApprovalSource;
+  sourceLabel: string;
+  title: string;
+  subtitle: string;
+  deepLink: string;
+  at: string;
+}): ApprovalItem {
   return {
-    id: `workspace:${raw.id}`,
-    source: "workspace",
-    sourceLabel: "Submission",
-    title: tpl?.name ?? "Submission",
-    subtitle: a?.workspaces?.name ?? "",
-    submittedAt: s.submitted_at,
-    sdi: a?.store?.store_number ?? null,
-    storeName: a?.store?.name ?? null,
-    tier: tierFromOutcome(s.audit_outcome),
-    score: s.audit_score_percent,
+    id: `${opts.source}:summary`,
+    source: opts.source,
+    sourceLabel: opts.sourceLabel,
+    title: opts.title,
+    subtitle: opts.subtitle,
+    submittedAt: opts.at,
+    sdi: null,
+    storeName: null,
+    tier: "yellow",
+    score: null,
     amount: null,
-    flagged: s.audit_critical_failed ? 1 : 0,
-    prior: priorActionFor(s.signoff_status),
-    deepLink: `/submissions/${s.id}`,
+    flagged: 0,
+    prior: null,
+    deepLink: opts.deepLink,
   };
 }
 
@@ -201,44 +172,79 @@ function woRow(item: OpenAlertItem, tier: Tier): ApprovalItem {
 export async function fetchApprovalsQueue(
   callerRole: UserRole | null,
 ): Promise<ApprovalsQueue> {
-  // Run all three sources in parallel. Each falls back to an empty
-  // list on error so one broken source doesn't take down the queue.
-  const wantPaf = callerRole != null && PAF_APPROVER_ROLES.has(callerRole);
-  const wantWo = callerRole != null && WO_APPROVER_ROLES.has(callerRole);
+  // Run all four sources in parallel, gated to what the caller can act on.
+  // Each degrades to empty/null on error so one broken source never blanks
+  // the queue.
+  const role = callerRole ?? "";
+  const wantPaf = PAF_APPROVER_ROLES.has(role);
+  const wantWo = WO_APPROVER_ROLES.has(role);
+  const wantCash = CASH_ROLES.has(role);
+  const wantEa = EA_APPROVER_ROLES.has(role);
 
-  const [signoffsRes, pafRes, woRes] = await Promise.allSettled([
-    listMySignoffs(),
+  const [pafRes, woRes, cashRes, eaRes] = await Promise.allSettled([
     wantPaf ? listSdoQueue() : Promise.resolve({ pafs: [] as PafRow[] }),
     wantWo ? fetchOpenWorkOrderAlerts() : Promise.resolve(null),
+    wantCash ? fetchCashBadges() : Promise.resolve(null),
+    wantEa ? listApprovalQueue() : Promise.resolve(null),
   ]);
 
   const items: ApprovalItem[] = [];
+  const nowIso = new Date().toISOString();
 
-  // Workspace sign-offs
-  if (signoffsRes.status === "fulfilled") {
-    const raws = (signoffsRes.value.signoffs ?? []) as unknown as RawSignoff[];
-    for (const r of raws) {
-      const row = workspaceRow(r);
-      if (row) items.push(row);
-    }
-  }
-
-  // PAFs
-  if (pafRes.status === "fulfilled") {
-    for (const p of pafRes.value.pafs ?? []) items.push(pafRow(p));
-  }
-
-  // Work orders — ONLY the awaitingApproval group belongs in this queue.
-  // Those are the rows where someone requested approval to pay, routed to
-  // the caller's tier by dollar amount (tierForAmount: <$500 DO, $500-1000
-  // SDO, >$1000 RVP). The other OpenAlerts groups — emergencies, new24h,
-  // stuck — are awareness reminders, not pay decisions, and were polluting
-  // the queue with work orders that don't need an approval at all.
+  // Work order approvals — only the awaitingApproval bucket (dollar-routed pay
+  // approvals). One card per quote.
   if (woRes.status === "fulfilled" && woRes.value) {
     for (const g of woRes.value.groups) {
       if (g.key === "awaitingApproval") {
         for (const it of g.items) items.push(woRow(it, "yellow"));
       }
+    }
+  }
+
+  // PAF approvals — one card per bonus PAF awaiting the caller's decision.
+  if (pafRes.status === "fulfilled") {
+    for (const p of pafRes.value.pafs ?? []) items.push(pafRow(p));
+  }
+
+  // Cash — one summary row for open alerts + pending deposits to clear.
+  if (cashRes.status === "fulfilled" && cashRes.value) {
+    const deposits = cashRes.value.pending_deposits ?? 0;
+    const alerts = cashRes.value.open_alerts ?? 0;
+    const total = deposits + alerts;
+    if (total > 0) {
+      items.push(
+        summaryRow({
+          source: "cash",
+          sourceLabel: "Cash",
+          title: `${total} cash item${total === 1 ? "" : "s"} need attention`,
+          subtitle: [
+            deposits > 0 ? `${deposits} deposit${deposits === 1 ? "" : "s"} to validate` : null,
+            alerts > 0 ? `${alerts} open alert${alerts === 1 ? "" : "s"}` : null,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+          deepLink: "/admin/cash-management",
+          at: nowIso,
+        }),
+      );
+    }
+  }
+
+  // Employee actions — one summary row for training credits + PTO to approve.
+  if (eaRes.status === "fulfilled" && eaRes.value) {
+    const ea =
+      (eaRes.value.trainingCredits?.length ?? 0) + (eaRes.value.ptoRequests?.length ?? 0);
+    if (ea > 0) {
+      items.push(
+        summaryRow({
+          source: "employee_action",
+          sourceLabel: "Employee Actions",
+          title: `${ea} employee action${ea === 1 ? "" : "s"} to approve`,
+          subtitle: "Training credits & PTO requests",
+          deepLink: "/employee-actions",
+          at: nowIso,
+        }),
+      );
     }
   }
 
@@ -250,9 +256,10 @@ export async function fetchApprovalsQueue(
   };
 
   const bySource = {
-    workspace: items.filter((i) => i.source === "workspace").length,
-    paf: items.filter((i) => i.source === "paf").length,
     work_order: items.filter((i) => i.source === "work_order").length,
+    paf: items.filter((i) => i.source === "paf").length,
+    cash: items.filter((i) => i.source === "cash").length,
+    employee_action: items.filter((i) => i.source === "employee_action").length,
   };
 
   return { items, counts, bySource };
