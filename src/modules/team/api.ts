@@ -26,6 +26,18 @@ export interface ScopeBadge {
   code?: string;
 }
 
+// Additional ("acting") coverage granted on top of a user's primary role
+// scope — e.g. an RVP also covering a district as acting DO. expires_at is
+// null for permanent coverage.
+export interface AdditionalScope {
+  id: string;
+  scope_type: ScopeType;
+  scope_id: string | null;
+  label: string;
+  expires_at: string | null;
+  note: string | null;
+}
+
 export interface ManagedUser {
   id: string;
   email: string;
@@ -37,6 +49,7 @@ export interface ManagedUser {
   // user hasn't accepted the invite / set a password yet.
   email_confirmed_at: string | null;
   scopes: ScopeBadge[];
+  additional_scopes: AdditionalScope[];
   // Extended profile fields from Account Settings, surfaced read-only
   // to leadership viewing this team member's card.
   preferred_name: string | null;
@@ -188,6 +201,33 @@ export function updateUser(input: UpdateUserInput): Promise<UpdateUserResponse> 
 }
 
 // ----------------------------------------------------------------------------
+// Additional scope (acting coverage) — admin/VP/COO only, server-enforced.
+// ----------------------------------------------------------------------------
+
+export interface AddScopeInput {
+  user_id: string;
+  scope_type: "store" | "district" | "area" | "region";
+  scope_id: string;
+  // YYYY-MM-DD for temporary coverage; omit/null for permanent.
+  expires_at?: string | null;
+  note?: string | null;
+}
+
+export function addScope(input: AddScopeInput): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`${FN}?action=add-scope`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function removeScope(id: string): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`${FN}?action=remove-scope`, {
+    method: "POST",
+    body: JSON.stringify({ id }),
+  });
+}
+
+// ----------------------------------------------------------------------------
 // History (audit log)
 // ----------------------------------------------------------------------------
 
@@ -196,7 +236,9 @@ export type AuditAction =
   | "update"
   | "deactivate"
   | "reactivate"
-  | "delete";
+  | "delete"
+  | "add_scope"
+  | "remove_scope";
 
 export interface AuditEntry {
   id: string;

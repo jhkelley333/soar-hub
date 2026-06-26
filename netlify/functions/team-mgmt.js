@@ -107,19 +107,19 @@ async function listManaged(supa, manager) {
     .from("user_scopes")
     .select("user_id, scope_type, scope_id")
     .in("user_id", ids);
+  // Additional ("acting") coverage rows — labeled and returned alongside the
+  // primary scopes so the UI can show + manage extra coverage.
+  const { data: addlScopes } = await supa
+    .from("additional_scopes")
+    .select("id, user_id, scope_type, scope_id, expires_at, note")
+    .in("user_id", ids);
 
-  const storeIds = (scopes ?? [])
-    .filter((s) => s.scope_type === "store")
-    .map((s) => s.scope_id);
-  const districtIds = (scopes ?? [])
-    .filter((s) => s.scope_type === "district")
-    .map((s) => s.scope_id);
-  const areaIds = (scopes ?? [])
-    .filter((s) => s.scope_type === "area")
-    .map((s) => s.scope_id);
-  const regionIds = (scopes ?? [])
-    .filter((s) => s.scope_type === "region")
-    .map((s) => s.scope_id);
+  // id → label maps are built from BOTH primary and additional scopes.
+  const allScopeRows = [...(scopes ?? []), ...(addlScopes ?? [])];
+  const storeIds = allScopeRows.filter((s) => s.scope_type === "store").map((s) => s.scope_id);
+  const districtIds = allScopeRows.filter((s) => s.scope_type === "district").map((s) => s.scope_id);
+  const areaIds = allScopeRows.filter((s) => s.scope_type === "area").map((s) => s.scope_id);
+  const regionIds = allScopeRows.filter((s) => s.scope_type === "region").map((s) => s.scope_id);
 
   const [{ data: stores }, { data: districts }, { data: areas }, { data: regions }] =
     await Promise.all([
@@ -197,6 +197,19 @@ async function listManaged(supa, manager) {
     });
   }
 
+  // Additional coverage, labeled, grouped by user.
+  const additionalByUser = {};
+  for (const a of addlScopes ?? []) {
+    (additionalByUser[a.user_id] ||= []).push({
+      id: a.id,
+      scope_type: a.scope_type,
+      scope_id: a.scope_id,
+      label: labelFor(a),
+      expires_at: a.expires_at,
+      note: a.note,
+    });
+  }
+
   // Pull email_confirmed_at for each member from auth.admin.listUsers so the
   // UI can flag accounts that haven't activated yet (invite sent but link
   // never clicked / password never set). Cap at MAX_AUTH_PAGES * 200
@@ -246,6 +259,7 @@ async function listManaged(supa, manager) {
     is_active: m.is_active,
     email_confirmed_at: confirmedMap[m.id] ?? null,
     scopes: scopesByUser[m.id] ?? [],
+    additional_scopes: additionalByUser[m.id] ?? [],
   }));
 
   // Pull the rest of the per-profile fields the My Team UI surfaces:
@@ -327,6 +341,11 @@ function isSingleStoreRole(role) {
 // Who can correct a team member's email address? DO and above only — it
 // rewrites the sign-in credential, so it's held above the GM tier.
 const EMAIL_EDIT_ROLES = ["do", "sdo", "rvp", "vp", "coo", "admin"];
+
+// Who can grant/remove ADDITIONAL ("acting") scope — top-of-house only. The
+// reach helpers exist (resolveStoresForScope + user_visible_stores) if we
+// later want to let an RVP/SDO assign coverage within their own reach.
+const SCOPE_ADMIN_ROLES = ["admin", "coo", "vp"];
 
 // Which roles can a manager create / change-to?
 function manageableRoles(role) {
@@ -1123,6 +1142,107 @@ async function deleteUser(supa, manager, body) {
 }
 
 // ----------------------------------------------------------------------------
+// add-scope / remove-scope — additional ("acting") coverage on top of a
+// user's primary role scope. Top-of-house only. Writes to additional_scopes,
+// which user_visible_stores() unions in (non-expired), so the grant flows to
+// My Team, RLS, labor, etc. automatically.
+// ----------------------------------------------------------------------------
+
+async function addScope(supa, manager, body) {
+  if (!SCOPE_ADMIN_ROLES.includes(manager.role)) {
+    return { error: "Only an Admin, VP, or COO can assign additional scope.", status: 403 };
+  }
+  const target_id = body?.user_id;
+  const scope_type = body?.scope_type;
+  const scope_id = body?.scope_id ?? null;
+  const note = body?.note ? String(body.note).trim().slice(0, 200) || null : null;
+
+  if (!target_id) return { error: "user_id is required.", status: 400 };
+  if (!["store", "district", "area", "region"].includes(scope_type)) {
+    return { error: "scope_type must be store, district, area, or region.", status: 400 };
+  }
+  if (!scope_id) return { error: "A scope must be selected.", status: 400 };
+
+  // Optional end date for temporary acting coverage. Stored as end-of-day UTC
+  // so the assignment stays live through the chosen day.
+  let expires_at = null;
+  if (body?.expires_at) {
+    const raw = String(body.expires_at).trim();
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+      return { error: "End date must be YYYY-MM-DD or empty.", status: 400 };
+    }
+    expires_at = `${raw}T23:59:59Z`;
+  }
+
+  const { data: target } = await supa
+    .from("profiles")
+    .select("id, is_active")
+    .eq("id", target_id)
+    .maybeSingle();
+  if (!target) return { error: "User not found.", status: 404 };
+  if (!target.is_active) return { error: "That user is inactive.", status: 400 };
+
+  // The scope must resolve to at least one active store (catches a stale id).
+  const targetStores = await resolveStoresForScope(supa, scope_type, scope_id);
+  if (!targetStores.length) {
+    return { error: "That scope has no active stores.", status: 400 };
+  }
+
+  const { error: insErr } = await supa.from("additional_scopes").insert({
+    user_id: target_id,
+    scope_type,
+    scope_id,
+    note,
+    expires_at,
+    created_by: manager.id,
+  });
+  if (insErr) {
+    if (/duplicate|unique/i.test(insErr.message || "")) {
+      return { error: "That scope is already assigned to this user.", status: 409 };
+    }
+    return { error: `Couldn't assign scope: ${insErr.message}`, status: 500 };
+  }
+
+  await logChange(supa, {
+    actor_id: manager.id,
+    target_id,
+    action: "add_scope",
+    before: null,
+    after: { scope_type, scope_id, expires_at, note },
+  });
+
+  return { ok: true };
+}
+
+async function removeScope(supa, manager, body) {
+  if (!SCOPE_ADMIN_ROLES.includes(manager.role)) {
+    return { error: "Only an Admin, VP, or COO can remove additional scope.", status: 403 };
+  }
+  const id = body?.id;
+  if (!id) return { error: "id is required.", status: 400 };
+
+  const { data: row } = await supa
+    .from("additional_scopes")
+    .select("id, user_id, scope_type, scope_id, expires_at, note")
+    .eq("id", id)
+    .maybeSingle();
+  if (!row) return { error: "Scope assignment not found.", status: 404 };
+
+  const { error: delErr } = await supa.from("additional_scopes").delete().eq("id", id);
+  if (delErr) return { error: `Couldn't remove scope: ${delErr.message}`, status: 500 };
+
+  await logChange(supa, {
+    actor_id: manager.id,
+    target_id: row.user_id,
+    action: "remove_scope",
+    before: { scope_type: row.scope_type, scope_id: row.scope_id, expires_at: row.expires_at, note: row.note },
+    after: null,
+  });
+
+  return { ok: true };
+}
+
+// ----------------------------------------------------------------------------
 // history — recent audit entries for a user (or any manageable user)
 // ----------------------------------------------------------------------------
 //
@@ -1582,7 +1702,9 @@ export const handler = async (event) => {
         action === "add-user" ||
         action === "update-user" ||
         action === "bulk-import" ||
-        action === "delete-user"
+        action === "delete-user" ||
+        action === "add-scope" ||
+        action === "remove-scope"
       ) {
         const fn =
           action === "add-user"
@@ -1591,7 +1713,11 @@ export const handler = async (event) => {
               ? updateUser
               : action === "bulk-import"
                 ? bulkImport
-                : deleteUser;
+                : action === "delete-user"
+                  ? deleteUser
+                  : action === "add-scope"
+                    ? addScope
+                    : removeScope;
         const result = await fn(supa, manager, body);
         if (!result?.error) await syncManagedGroups(supa, manager.id);
         return unwrap(result);
