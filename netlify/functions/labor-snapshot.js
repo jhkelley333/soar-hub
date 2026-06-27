@@ -274,6 +274,26 @@ function minuteOfDayInTz(date, tz) {
   return h * 60 + m;
 }
 
+// Calendar date (YYYY-MM-DD) for `instant` in `tz`. en-CA happens to format as
+// ISO so we don't have to fish through formatToParts. Used by the freeze guard
+// to decide how stale a business_date is relative to today Central.
+function isoDateInTz(date, tz) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit",
+  }).format(date);
+}
+
+// Whole-day difference between two YYYY-MM-DD strings, treated as local
+// calendar days. Positive when `b` is later than `a`.
+function isoDateDiffDays(a, b) {
+  const pa = /^(\d{4})-(\d{2})-(\d{2})$/.exec(a || "");
+  const pb = /^(\d{4})-(\d{2})-(\d{2})$/.exec(b || "");
+  if (!pa || !pb) return 0;
+  const ta = Date.UTC(+pa[1], +pa[2] - 1, +pa[3]);
+  const tb = Date.UTC(+pb[1], +pb[2] - 1, +pb[3]);
+  return Math.round((tb - ta) / 86400000);
+}
+
 // Stable content hash of the mapped snapshot rows — the change signal.
 // Sort by store so row reordering on the sheet doesn't look like a change;
 // include business_date so a date rollover always counts as a change.
@@ -456,6 +476,44 @@ export const handler = async (event) => {
   if (!ready.length) {
     console.warn(`[labor-snapshot] no resolvable rows for ${businessDate}.`);
     return { statusCode: 200, body: JSON.stringify(summary) };
+  }
+
+  // Freeze guard: don't overwrite a snapshot for a date that's 2+ days behind
+  // today Central. The legitimate workflow is "back office writes yesterday's
+  // labor today; polls converge through the 2pm cutoff" — so yesterday and
+  // today are always writable. But if the sheet's Sales Date has stuck on a
+  // date older than yesterday while the daily band kept updating (which
+  // produces the well-known bug of one day's numbers leaking onto another),
+  // we'd otherwise corrupt an already-recorded historical row. ?force=1
+  // bypasses this for explicit backfills.
+  if (!force) {
+    const todayCentralIso = isoDateInTz(new Date(), POLL_TZ);
+    const ageDays = isoDateDiffDays(businessDate, todayCentralIso);
+    if (ageDays >= 2 && prevState) {
+      // 'prevState' presence means a row already exists in labor_sync_state
+      // for this business_date, which only happens after a successful first
+      // sync — so we'd be OVERWRITING, not creating. Skip and log loudly so
+      // the admin pull log shows what we refused.
+      console.warn(
+        `[labor-snapshot] FROZEN: refusing to overwrite ${businessDate} ` +
+          `(${ageDays} days behind today_central=${todayCentralIso}). ` +
+          `Sheet's Sales Date appears stuck. Run with ?force=1 to override.`,
+      );
+      await supa.from("labor_sync_state").update({
+        poll_count: (prevState?.poll_count ?? 0) + 1,
+        last_polled_at: now,
+      }).eq("business_date", businessDate);
+      return {
+        statusCode: 200,
+        body: JSON.stringify({
+          ...summary,
+          upserted: 0,
+          skipped: "frozen-stale-sales-date",
+          age_days: ageDays,
+          today_central: todayCentralIso,
+        }),
+      };
+    }
   }
 
   const { error } = await supa

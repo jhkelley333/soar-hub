@@ -18,14 +18,14 @@ export function fmtMoneyCents(n: number | null | undefined): string {
 
 export function fmtPct(n: number | null | undefined): string {
   if (n == null) return "—";
-  return `${Number(n).toFixed(1)}%`;
+  return `${Number(n).toFixed(2)}%`;
 }
 
 // Signed value with explicit + sign, for variance/over-chart numbers.
 export function fmtSignedPts(n: number | null | undefined): string {
   if (n == null) return "—";
   const v = Number(n);
-  return `${v >= 0 ? "+" : ""}${v.toFixed(1)} pts`;
+  return `${v >= 0 ? "+" : ""}${v.toFixed(2)} pts`;
 }
 
 export function fmtSignedMoney(n: number | null | undefined): string {
