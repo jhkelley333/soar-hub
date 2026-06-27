@@ -475,6 +475,49 @@ async function getRequired(supa, user) {
   return { required: out };
 }
 
+// Audit a user's interaction with the required-training popup. Three actions:
+//   'shown'     — the popup was rendered for this course
+//   'started'   — the user clicked "Start training" → deep-linked to the player
+//   'dismissed' — the user X'd / "Later"'d the popup
+// 'shown' is dedup'd to once per user+course per 12h so re-renders during the
+// same session (route changes, refetches, re-mounts) don't spam the log; the
+// terminal actions (started/dismissed) are always recorded.
+async function logTrainingEvent(supa, user, body) {
+  const courseId = String(body?.course_id || "");
+  const act = String(body?.action || "");
+  if (!courseId) return { error: "course_id required.", status: 400 };
+  if (!["shown", "started", "dismissed"].includes(act)) {
+    return { error: "action must be shown|started|dismissed.", status: 400 };
+  }
+  // Confirm the course exists; cheap and avoids polluting the table with junk
+  // ids if a client gets out of sync.
+  const { data: course } = await supa
+    .from("qsr_courses").select("id").eq("id", courseId).maybeSingle();
+  if (!course) return { error: "course not found.", status: 404 };
+
+  if (act === "shown") {
+    const since = new Date(Date.now() - 12 * 3600_000).toISOString();
+    const { data: recent } = await supa
+      .from("qsr_training_events")
+      .select("id")
+      .eq("user_id", user.id)
+      .eq("course_id", courseId)
+      .eq("action", "shown")
+      .gte("created_at", since)
+      .limit(1);
+    if (recent && recent.length) return { ok: true, deduped: true };
+  }
+
+  const { error } = await supa.from("qsr_training_events").insert({
+    user_id: user.id,
+    course_id: courseId,
+    action: act,
+    event_data: body?.event_data ?? null,
+  });
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   let supa;
@@ -497,6 +540,7 @@ export const handler = async (event) => {
     if (action === "leaderboard") return unwrap(await getLeaderboard(supa, user));
     if (action === "required") return unwrap(await getRequired(supa, user));
     if (action === "mytraining") return unwrap(await getMyTraining(supa, user));
+    if (action === "log-training-event") return unwrap(await logTrainingEvent(supa, user, body));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });

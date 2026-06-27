@@ -301,6 +301,25 @@ export function fetchRequiredTraining(): Promise<{ required: RequiredCourse[] }>
   return learnFetch(`${LEARN_FN}?action=required`);
 }
 
+// Audit one interaction with the required-training popup. 'shown' is the
+// server-deduped one-per-12h marker; 'started' / 'dismissed' are the terminal
+// actions. Best-effort from the client — failures don't block the UX.
+export type TrainingPopupAction = "shown" | "started" | "dismissed";
+export function logTrainingPopupEvent(
+  courseId: string,
+  action: TrainingPopupAction,
+  eventData?: Record<string, unknown>,
+): Promise<{ ok: true; deduped?: boolean }> {
+  return learnFetch(`${LEARN_FN}?action=log-training-event`, {
+    method: "POST",
+    body: JSON.stringify({
+      course_id: courseId,
+      action,
+      event_data: eventData ?? null,
+    }),
+  });
+}
+
 // My Training — every published course with the caller's status + required flag.
 export interface MyTrainingCourse {
   id: string;
