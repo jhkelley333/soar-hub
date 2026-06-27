@@ -1,7 +1,8 @@
 import { useMemo, useState, type CSSProperties } from "react";
-import { Search, Plus, Download, MessageCircle, ClipboardList } from "lucide-react";
+import { Search, Plus, Download, MessageCircle, ClipboardList, ArrowUp, ArrowDown } from "lucide-react";
 import {
   type Ticket,
+  type TicketApproval,
   type TicketStatus,
   statusLabel,
   isOpenStatus,
@@ -17,6 +18,77 @@ import { VendorSnippetModal } from "./VendorSnippetModal";
 // detail. Net-new is presentational only.
 
 type TabId = "open" | "mine" | "closed" | "all";
+
+// Columns the user can sort by. "approval" is the new approval-state column.
+type SortKey =
+  | "wo_number"
+  | "issue"
+  | "status"
+  | "vendor"
+  | "owner"
+  | "priority"
+  | "approval";
+type SortDir = "asc" | "desc";
+
+// Priority ranking used when sorting by Priority (high → low).
+const PRIORITY_RANK: Record<string, number> = {
+  Emergency: 0,
+  Urgent: 1,
+  Standard: 2,
+  Low: 3,
+};
+
+// The latest approval row on a ticket, by requested_at (PostgREST embed order
+// isn't guaranteed). Returns null when no approval has ever been requested.
+function latestApproval(t: Ticket): TicketApproval | null {
+  const arr = t.ticket_approvals ?? [];
+  if (!arr.length) return null;
+  return [...arr].sort(
+    (a, b) => new Date(a.requested_at).getTime() - new Date(b.requested_at).getTime(),
+  )[arr.length - 1];
+}
+
+// Sort weight for the Approval column — order matches what an approver cares
+// about most: pending first (asc), then approved, rejected, then none.
+function approvalRank(t: Ticket): number {
+  const a = latestApproval(t);
+  if (!a) return 4;
+  if (a.status === "Pending") return 0;
+  if (a.status === "Approved") return 1;
+  return 2; // Rejected
+}
+
+function approvalLabel(a: TicketApproval | null): string {
+  if (!a) return "—";
+  return a.status; // Pending / Approved / Rejected
+}
+
+function approvalPillTone(a: TicketApproval | null): "warn" | "ok" | "danger" | "gray" {
+  if (!a) return "gray";
+  if (a.status === "Pending") return "warn";
+  if (a.status === "Approved") return "ok";
+  return "danger";
+}
+
+function compareForSort(a: Ticket, b: Ticket, key: SortKey): number {
+  const s = (v: string | null | undefined) => (v ?? "").toLowerCase();
+  switch (key) {
+    case "wo_number":
+      return s(a.wo_number).localeCompare(s(b.wo_number));
+    case "issue":
+      return s(a.asset_type || a.category).localeCompare(s(b.asset_type || b.category));
+    case "status":
+      return s(statusLabel(a.status)).localeCompare(s(statusLabel(b.status)));
+    case "vendor":
+      return s(a.vendor_name).localeCompare(s(b.vendor_name));
+    case "owner":
+      return s(a.submitted_by).localeCompare(s(b.submitted_by));
+    case "priority":
+      return (PRIORITY_RANK[a.priority] ?? 99) - (PRIORITY_RANK[b.priority] ?? 99);
+    case "approval":
+      return approvalRank(a) - approvalRank(b);
+  }
+}
 
 function initials(name: string | null): string {
   if (!name) return "—";
@@ -80,10 +152,24 @@ export function QueueTable({
 }) {
   const [tab, setTab] = useState<TabId>("open");
   const [search, setSearch] = useState("");
+  // Sort state — click a header to toggle asc/desc; clicking a new column
+  // resets to asc. Default sort matches the previous fetch order (no manual
+  // sort = use the order the data came in).
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
   // Multi-select for "Send to vendor" — keyed by ticket id, persists across
   // tab/search changes so you can gather WOs from different views.
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [showSnippet, setShowSnippet] = useState(false);
+
+  function toggleSort(key: SortKey) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("asc");
+    }
+  }
   const toggleOne = (id: string) =>
     setSelected((prev) => { const next = new Set(prev); next.has(id) ? next.delete(id) : next.add(id); return next; });
 
@@ -108,7 +194,7 @@ export function QueueTable({
 
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return tickets.filter((t) => {
+    const filtered = tickets.filter((t) => {
       if (tab === "open" && !isOpenStatus(t.status)) return false;
       if (tab === "closed" && isOpenStatus(t.status)) return false;
       if (tab === "mine" && t.submitted_by_user_id !== currentUserId) return false;
@@ -121,7 +207,10 @@ export function QueueTable({
       }
       return true;
     });
-  }, [tickets, tab, search, currentUserId]);
+    if (!sortKey) return filtered;
+    const sign = sortDir === "asc" ? 1 : -1;
+    return [...filtered].sort((a, b) => sign * compareForSort(a, b, sortKey));
+  }, [tickets, tab, search, currentUserId, sortKey, sortDir]);
 
   const chips = [
     { label: "Open", value: stats?.open ?? counts.open, alert: false },
@@ -262,7 +351,7 @@ export function QueueTable({
         className="mt-3 overflow-x-auto"
         style={{ border: `1px solid ${WO.line}`, borderRadius: 10, background: WO.surface }}
       >
-        <table className="w-full min-w-[720px] border-collapse text-sm">
+        <table className="w-full min-w-[860px] border-collapse text-sm">
           <thead>
             <tr style={{ textAlign: "left", borderBottom: `1px solid ${WO.line}` }}>
               <th style={{ ...thStyle, width: 36 }}>
@@ -282,12 +371,13 @@ export function QueueTable({
                   style={{ cursor: "pointer" }}
                 />
               </th>
-              <th style={thStyle}>Work order</th>
-              <th style={thStyle}>Issue</th>
-              <th style={thStyle}>Status</th>
-              <th style={thStyle}>Vendor</th>
-              <th style={thStyle}>Owner</th>
-              <th style={thStyle}>Priority</th>
+              <SortableTh label="Work order" sortKey="wo_number" current={sortKey} dir={sortDir} onClick={toggleSort} style={thStyle} />
+              <SortableTh label="Issue" sortKey="issue" current={sortKey} dir={sortDir} onClick={toggleSort} style={thStyle} />
+              <SortableTh label="Status" sortKey="status" current={sortKey} dir={sortDir} onClick={toggleSort} style={thStyle} />
+              <SortableTh label="Vendor" sortKey="vendor" current={sortKey} dir={sortDir} onClick={toggleSort} style={thStyle} />
+              <SortableTh label="Owner" sortKey="owner" current={sortKey} dir={sortDir} onClick={toggleSort} style={thStyle} />
+              <SortableTh label="Priority" sortKey="priority" current={sortKey} dir={sortDir} onClick={toggleSort} style={thStyle} />
+              <SortableTh label="Awaiting Approval" sortKey="approval" current={sortKey} dir={sortDir} onClick={toggleSort} style={thStyle} />
             </tr>
           </thead>
           <tbody>
@@ -369,6 +459,18 @@ export function QueueTable({
                 <td style={{ padding: "12px", verticalAlign: "top" }}>
                   <Pill tone={priorityPillTone(t.priority)}>{t.priority}</Pill>
                 </td>
+                <td style={{ padding: "12px", verticalAlign: "top" }}>
+                  {(() => {
+                    const a = latestApproval(t);
+                    const tone = approvalPillTone(a);
+                    if (!a) return <span style={{ color: WO.muted }}>—</span>;
+                    return (
+                      <Pill tone={tone} dot>
+                        {approvalLabel(a)}
+                      </Pill>
+                    );
+                  })()}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -401,5 +503,57 @@ export function QueueTable({
         <VendorSnippetModal ids={[...selected]} onClose={() => setShowSnippet(false)} />
       )}
     </div>
+  );
+}
+
+// Clickable header cell that toggles sort direction on its column and shows an
+// arrow for the active column. Keeps the existing thStyle look so the column
+// row stays visually consistent — the column just becomes interactive.
+function SortableTh({
+  label,
+  sortKey,
+  current,
+  dir,
+  onClick,
+  style,
+}: {
+  label: string;
+  sortKey: SortKey;
+  current: SortKey | null;
+  dir: SortDir;
+  onClick: (k: SortKey) => void;
+  style: CSSProperties;
+}) {
+  const active = current === sortKey;
+  return (
+    <th style={style}>
+      <button
+        type="button"
+        onClick={() => onClick(sortKey)}
+        style={{
+          display: "inline-flex",
+          alignItems: "center",
+          gap: 4,
+          background: "none",
+          border: "none",
+          padding: 0,
+          color: active ? WO.ink : WO.muted,
+          font: "inherit",
+          fontSize: 10,
+          fontWeight: 600,
+          letterSpacing: ".08em",
+          textTransform: "uppercase",
+          cursor: "pointer",
+        }}
+      >
+        {label}
+        {active &&
+          (dir === "asc" ? (
+            <ArrowUp className="h-3 w-3" strokeWidth={2.25} />
+          ) : (
+            <ArrowDown className="h-3 w-3" strokeWidth={2.25} />
+          ))}
+      </button>
+    </th>
   );
 }

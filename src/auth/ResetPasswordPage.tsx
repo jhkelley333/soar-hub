@@ -30,11 +30,34 @@ export function ResetPasswordPage() {
   const [done, setDone] = useState(false);
 
   useEffect(() => {
-    const { data: sub } = supabase.auth.onAuthStateChange((event) => {
-      if (event === "PASSWORD_RECOVERY") setRecoveryReady(true);
+    let cancelled = false;
+    const { data: sub } = supabase.auth.onAuthStateChange((event, session) => {
+      if ((event === "PASSWORD_RECOVERY" || event === "INITIAL_SESSION" || event === "SIGNED_IN") && session) {
+        if (!cancelled) setRecoveryReady(true);
+      }
     });
-    if (window.location.hash.includes("type=recovery")) setRecoveryReady(true);
-    return () => sub.subscription.unsubscribe();
+    // Race: detectSessionInUrl may have already fired before our listener attached.
+    supabase.auth.getSession().then(({ data }) => {
+      if (data.session && !cancelled) setRecoveryReady(true);
+    });
+    // Don't trust the hash alone — a spent/expired reset token still ships a
+    // "type=recovery" hash but produces no session, which led to "Auth session
+    // missing!" on submit. If no session arrives in ~8s, surface a clear,
+    // actionable expired-link message instead of the form.
+    const expiredTimer = window.setTimeout(async () => {
+      if (cancelled) return;
+      const { data } = await supabase.auth.getSession();
+      if (!data.session) {
+        setError(
+          "This reset link is no longer valid. It may have expired or already been used — request a new one from the sign-in page.",
+        );
+      }
+    }, 8000);
+    return () => {
+      cancelled = true;
+      sub.subscription.unsubscribe();
+      window.clearTimeout(expiredTimer);
+    };
   }, []);
 
   async function handleSubmit(e: FormEvent) {
@@ -76,15 +99,19 @@ export function ResetPasswordPage() {
         // Fire-and-forget. If the promise DOES resolve we still want the
         // result (it carries explicit errors); if it never resolves the
         // event listener takes over.
+        const friendly = (msg: string | undefined) =>
+          /auth session missing/i.test(msg || "")
+            ? "Your reset link is no longer valid. It may have expired or already been used — request a new one from the sign-in page."
+            : msg || "Update failed.";
         supabase.auth
           .updateUser({ password })
           .then(({ error: updErr }) => {
-            if (updErr) finish({ ok: false, message: updErr.message });
+            if (updErr) finish({ ok: false, message: friendly(updErr.message) });
           })
           .catch((err) => {
             finish({
               ok: false,
-              message: err instanceof Error ? err.message : "Update failed.",
+              message: friendly(err instanceof Error ? err.message : undefined),
             });
           });
       }
@@ -178,11 +205,11 @@ export function ResetPasswordPage() {
           ) : (
             <>
               <h2 className="text-xl font-semibold tracking-tight text-midnight">
-                Reset your password
+                {error ? "Reset link no longer valid" : "Reset your password"}
               </h2>
               <p className="mt-2 text-sm text-zinc-600">
-                Open the reset link from your email to set a new password.
-                The link will expire after one use.
+                {error ??
+                  "Open the reset link from your email to set a new password. The link will expire after one use."}
               </p>
               <button
                 type="button"
