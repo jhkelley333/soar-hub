@@ -456,10 +456,12 @@ async function getRequired(supa, user) {
     .eq("status", "published")
     .not("requirement_cadence", "is", null);
   const role = String(user.role);
-  const applicable = (courses || []).filter((c) => Array.isArray(c.requirement_roles) && c.requirement_roles.includes(role));
-  if (!applicable.length) return { required: [] };
+  const applicable = (courses || []).filter(
+    (c) => Array.isArray(c.requirement_roles) && c.requirement_roles.includes(role),
+  );
   const today = new Date().toISOString().slice(0, 10);
-  const out = [];
+  const byCourse = new Map();
+  // 1. Role-required (cadence) — what was already surfaced.
   for (const c of applicable) {
     const windowStart = rqWindowStart(today, c.requirement_cadence);
     const { data: done } = await supa
@@ -469,10 +471,64 @@ async function getRequired(supa, user) {
       .gte("completed_at", `${windowStart}T00:00:00Z`)
       .limit(1);
     if (!done || !done.length) {
-      out.push({ id: c.id, title: c.title, category: c.category, est_minutes: c.est_minutes, cadence: c.requirement_cadence });
+      byCourse.set(c.id, {
+        id: c.id,
+        title: c.title,
+        category: c.category,
+        est_minutes: c.est_minutes,
+        cadence: c.requirement_cadence,
+        source: "required",
+        due_at: null,
+      });
     }
   }
-  return { required: out };
+  // 2. Assignment-driven — every qsr_assignments row that applies to the user
+  // (direct, store, district, area, region, or 'all') whose course isn't
+  // completed yet. Surface the earliest due_at when multiple rows match the
+  // same course. Dedup against role-required so a course required AND assigned
+  // doesn't show twice (role-required wins for source labeling).
+  const { data: assigned } = await supa.rpc("qsr_assignments_for_user", { uid: user.id });
+  const assignedRows = assigned || [];
+  if (assignedRows.length) {
+    const courseIds = Array.from(new Set(assignedRows.map((a) => a.course_id)));
+    const [{ data: assignedCourses }, { data: enrollments }] = await Promise.all([
+      supa
+        .from("qsr_courses")
+        .select("id, title, category, est_minutes")
+        .in("id", courseIds)
+        .eq("status", "published"),
+      supa
+        .from("qsr_enrollments")
+        .select("course_id")
+        .eq("user_id", user.id)
+        .eq("status", "completed")
+        .in("course_id", courseIds),
+    ]);
+    const courseById = new Map((assignedCourses || []).map((c) => [c.id, c]));
+    const completedSet = new Set((enrollments || []).map((e) => e.course_id));
+    // Earliest due date per course across all matching assignment rows.
+    const earliestDue = new Map();
+    for (const a of assignedRows) {
+      if (!a.due_at) continue;
+      const prev = earliestDue.get(a.course_id);
+      if (!prev || a.due_at < prev) earliestDue.set(a.course_id, a.due_at);
+    }
+    for (const id of courseIds) {
+      if (completedSet.has(id) || byCourse.has(id)) continue;
+      const c = courseById.get(id);
+      if (!c) continue;
+      byCourse.set(id, {
+        id: c.id,
+        title: c.title,
+        category: c.category,
+        est_minutes: c.est_minutes,
+        cadence: null,
+        source: "assigned",
+        due_at: earliestDue.get(id) || null,
+      });
+    }
+  }
+  return { required: Array.from(byCourse.values()) };
 }
 
 // Audit a user's interaction with the required-training popup. Three actions:

@@ -85,12 +85,16 @@ export function RequiredTrainingPrompt() {
         </div>
         <div className="mt-3">
           <div className="text-[11px] font-semibold uppercase tracking-wide text-qsr-crimson">
-            Required training · {course.cadence === "annual" ? "this year" : "this quarter"}
+            {course.source === "assigned"
+              ? "Training assigned to you"
+              : `Required training · ${course.cadence === "annual" ? "this year" : "this quarter"}`}
           </div>
           <h2 className="mt-0.5 font-qsr-display text-xl font-bold text-ink">{course.title}</h2>
           <p className="mt-1.5 text-sm text-zinc-500">
-            {course.category ? `${course.category} · ` : ""}You haven&rsquo;t completed this{" "}
-            {course.cadence === "annual" ? "year" : "quarter"} yet.
+            {course.category ? `${course.category} · ` : ""}
+            {course.source === "assigned"
+              ? "You haven’t completed this yet."
+              : `You haven’t completed this ${course.cadence === "annual" ? "year" : "quarter"} yet.`}
             {course.est_minutes != null && (
               <>
                 {" "}
@@ -101,6 +105,11 @@ export function RequiredTrainingPrompt() {
               </>
             )}
           </p>
+          {course.due_at && (
+            <p className="mt-1 text-[12px] font-medium text-qsr-crimson">
+              Due {new Date(course.due_at).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}
+            </p>
+          )}
         </div>
         <div className="mt-5 flex gap-2">
           <button

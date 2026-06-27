@@ -313,6 +313,31 @@ async function listManaged(supa, manager) {
     row.primary_store_name = ps?.name ?? null;
   }
 
+  // Per-member training summary — outstanding count (role-required +
+  // assignment-driven, deduped) plus last-30d popup interactions. Fire each
+  // RPC call in parallel and tolerate failures so one bad row doesn't blank
+  // the column for the whole team. Empty defaults match the migration's
+  // shape, so a missing summary just shows zeros.
+  const summaries = await Promise.all(
+    enriched.map(async (row) => {
+      try {
+        const { data } = await supa.rpc("qsr_user_training_summary", { uid: row.id });
+        return Array.isArray(data) ? data[0] : data;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  enriched.forEach((row, i) => {
+    const s = summaries[i] || {};
+    row.training_summary = {
+      outstanding_count: Number(s.outstanding_count) || 0,
+      shown_30d: Number(s.shown_30d) || 0,
+      started_30d: Number(s.started_30d) || 0,
+      dismissed_30d: Number(s.dismissed_30d) || 0,
+    };
+  });
+
   return { user: manager, members: enriched };
 }
 

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download, Mail, Phone, Search, Copy } from "lucide-react";
+import { Download, Mail, Phone, Search, Copy, GraduationCap } from "lucide-react";
 import { Link } from "react-router-dom";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
@@ -14,7 +14,7 @@ import { ROLE_LABELS, isHourlyStoreRole, type UserRole } from "@/types/database"
 import { formatPhoneForDisplay } from "@/lib/phone";
 import { cn } from "@/lib/cn";
 import { downloadCSV, toCSV } from "@/lib/csv";
-import { listTeam, type ManagedUser } from "./api";
+import { listTeam, type ManagedUser, type TrainingSummary } from "./api";
 import { AddUserModal } from "./AddUserModal";
 import { EditMemberModal } from "./EditMemberModal";
 
@@ -405,6 +405,8 @@ function MemberCard({
             </div>
           )}
 
+          <TrainingChip summary={member.training_summary} />
+
           {member.scopes.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {member.scopes.map((s, i) => (
@@ -435,6 +437,52 @@ function formatDateShort(iso: string): string {
   const [y, m, d] = iso.slice(0, 10).split("-");
   const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   return `${months[parseInt(m, 10) - 1]} ${parseInt(d, 10)}, ${y}`;
+}
+
+// One-glance training engagement chip: outstanding count (role-required +
+// assignment-driven) and last-30-day popup activity. Tone follows the worst
+// signal — outstanding-with-dismissals is red, outstanding alone is amber,
+// engaged-but-on-track is green, nothing to say renders nothing.
+function TrainingChip({ summary }: { summary?: TrainingSummary }) {
+  if (!summary) return null;
+  const { outstanding_count, shown_30d, started_30d, dismissed_30d } = summary;
+  const total30 = shown_30d + started_30d + dismissed_30d;
+  if (outstanding_count === 0 && total30 === 0) return null;
+
+  let tone: "warning" | "danger" | "ok" | "neutral" = "neutral";
+  let label = "";
+  if (outstanding_count > 0 && dismissed_30d > 0) {
+    tone = "danger";
+    label = `${outstanding_count} outstanding · dismissed ${dismissed_30d}×`;
+  } else if (outstanding_count > 0) {
+    tone = "warning";
+    label = `${outstanding_count} outstanding training`;
+  } else {
+    tone = "ok";
+    label = "Training up to date";
+  }
+  const title = `Last 30 days: ${shown_30d} shown · ${started_30d} started · ${dismissed_30d} dismissed`;
+  const cls = {
+    warning: "bg-amber-50 text-amber-800 ring-amber-200",
+    danger: "bg-red-50 text-red-800 ring-red-200",
+    ok: "bg-emerald-50 text-emerald-800 ring-emerald-200",
+    neutral: "bg-zinc-100 text-zinc-700 ring-zinc-200",
+  }[tone];
+
+  return (
+    <div className="mt-2">
+      <span
+        className={cn(
+          "inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ring-1",
+          cls,
+        )}
+        title={title}
+      >
+        <GraduationCap className="h-3 w-3" strokeWidth={2} />
+        {label}
+      </span>
+    </div>
+  );
 }
 
 function formatBirthdayShort(iso: string): string {
