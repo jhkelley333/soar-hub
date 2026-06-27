@@ -478,26 +478,31 @@ export const handler = async (event) => {
     return { statusCode: 200, body: JSON.stringify(summary) };
   }
 
-  // Freeze guard: don't overwrite a snapshot for a date that's 2+ days behind
-  // today Central. The legitimate workflow is "back office writes yesterday's
-  // labor today; polls converge through the 2pm cutoff" — so yesterday and
-  // today are always writable. But if the sheet's Sales Date has stuck on a
-  // date older than yesterday while the daily band kept updating (which
-  // produces the well-known bug of one day's numbers leaking onto another),
-  // we'd otherwise corrupt an already-recorded historical row. ?force=1
-  // bypasses this for explicit backfills.
+  // Defensive guards: refuse to overwrite an existing snapshot when something
+  // looks off. All bypassed by ?force=1 (for explicit backfills / corrections).
+  //
+  //   1) STALE-DATE FREEZE — sheet's Sales Date is 2+ days behind today
+  //      Central. Catches the back office leaving Sales Date stuck for
+  //      multiple days while still updating the daily band.
+  //   2) AFTER-WINDOW SEAL — Sales Date is yesterday but it's already past
+  //      the 2pm Central poll window today. By that hour yesterday's labor
+  //      is normally finalized, so any further change to that row is almost
+  //      certainly the back office accidentally writing today's numbers into
+  //      yesterday's band. (The natural "back office writes yesterday's
+  //      labor today; polls converge through 2pm" workflow still flows —
+  //      converging happens BEFORE the cutoff, not after.)
+  //   3) DRIFT DETECTOR — for any existing snapshot, if the new daily labor
+  //      % differs from the stored value by more than DRIFT_PCT_THRESHOLD
+  //      points (default 5) on enough stores, log a DRIFT warning and skip.
+  //      Default trips at ≥3 stores or ≥30% of changed stores, whichever is
+  //      smaller; tunable via env.
   if (!force) {
     const todayCentralIso = isoDateInTz(new Date(), POLL_TZ);
     const ageDays = isoDateDiffDays(businessDate, todayCentralIso);
-    if (ageDays >= 2 && prevState) {
-      // 'prevState' presence means a row already exists in labor_sync_state
-      // for this business_date, which only happens after a successful first
-      // sync — so we'd be OVERWRITING, not creating. Skip and log loudly so
-      // the admin pull log shows what we refused.
+    const skipUpdate = async (reason, extra) => {
       console.warn(
-        `[labor-snapshot] FROZEN: refusing to overwrite ${businessDate} ` +
-          `(${ageDays} days behind today_central=${todayCentralIso}). ` +
-          `Sheet's Sales Date appears stuck. Run with ?force=1 to override.`,
+        `[labor-snapshot] ${reason.toUpperCase()}: refusing to overwrite ${businessDate} (${JSON.stringify(extra)}). ` +
+          "Run with ?force=1 to override.",
       );
       await supa.from("labor_sync_state").update({
         poll_count: (prevState?.poll_count ?? 0) + 1,
@@ -505,14 +510,71 @@ export const handler = async (event) => {
       }).eq("business_date", businessDate);
       return {
         statusCode: 200,
-        body: JSON.stringify({
-          ...summary,
-          upserted: 0,
-          skipped: "frozen-stale-sales-date",
-          age_days: ageDays,
-          today_central: todayCentralIso,
-        }),
+        body: JSON.stringify({ ...summary, upserted: 0, skipped: reason, ...extra }),
       };
+    };
+
+    // (1) Stale-date freeze
+    if (ageDays >= 2 && prevState) {
+      return await skipUpdate("frozen-stale-sales-date", {
+        age_days: ageDays,
+        today_central: todayCentralIso,
+      });
+    }
+
+    // (2) After-window seal — yesterday's row, but we're past today's window
+    const localMinNow = minuteOfDayInTz(new Date(), POLL_TZ);
+    if (ageDays === 1 && prevState && localMinNow > POLL_END_MIN) {
+      return await skipUpdate("frozen-after-window", {
+        age_days: ageDays,
+        today_central: todayCentralIso,
+        poll_window_end_min: POLL_END_MIN,
+        local_min_now: localMinNow,
+      });
+    }
+
+    // (3) Drift detector — compare new daily labor % against the stored row
+    // for each store and skip if too many drift past the threshold. We only
+    // apply this when a prior snapshot exists (prevState set); a first write
+    // for the date is always allowed.
+    if (prevState && ready.length) {
+      const driftPts = Number(process.env.LABOR_DRIFT_PCT_THRESHOLD || 5);
+      const driftMinStores = Number(process.env.LABOR_DRIFT_MIN_STORES || 3);
+      const driftMinRatio = Number(process.env.LABOR_DRIFT_MIN_RATIO || 0.3);
+      const storeIds = ready.map((r) => r.store_id);
+      const { data: existing } = await supa
+        .from("labor_daily_snapshots")
+        .select("store_id, daily_labor_pct")
+        .eq("business_date", businessDate)
+        .in("store_id", storeIds);
+      const prevByStore = new Map(
+        (existing || []).map((r) => [r.store_id, r.daily_labor_pct]),
+      );
+      let drifted = 0;
+      let compared = 0;
+      const samples = [];
+      for (const r of ready) {
+        const prev = prevByStore.get(r.store_id);
+        const next = r.daily_labor_pct;
+        if (prev == null || next == null) continue;
+        compared += 1;
+        if (Math.abs(Number(next) - Number(prev)) > driftPts) {
+          drifted += 1;
+          if (samples.length < 5) {
+            samples.push({ store_number: r.store_number, prev, next });
+          }
+        }
+      }
+      const ratio = compared ? drifted / compared : 0;
+      if (drifted >= driftMinStores && ratio >= driftMinRatio) {
+        return await skipUpdate("frozen-drift", {
+          drifted,
+          compared,
+          threshold_pts: driftPts,
+          ratio: Number(ratio.toFixed(2)),
+          samples,
+        });
+      }
     }
   }
 
