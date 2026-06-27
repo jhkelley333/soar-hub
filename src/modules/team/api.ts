@@ -26,6 +26,17 @@ export interface ScopeBadge {
   code?: string;
 }
 
+// Per-member training summary surfaced on the My Team list. outstanding_count
+// is role-required + assignment-driven, deduped. *_30d are popup interaction
+// counts from qsr_training_events over the last 30 days, so leadership can
+// see at a glance who has and hasn't engaged.
+export interface TrainingSummary {
+  outstanding_count: number;
+  shown_30d: number;
+  started_30d: number;
+  dismissed_30d: number;
+}
+
 // Additional ("acting") coverage granted on top of a user's primary role
 // scope — e.g. an RVP also covering a district as acting DO. expires_at is
 // null for permanent coverage.
@@ -67,6 +78,8 @@ export interface ManagedUser {
   primary_store_id: string | null;
   primary_store_number: string | null;
   primary_store_name: string | null;
+  /** Training engagement summary (outstanding + last-30d popup events). */
+  training_summary?: TrainingSummary;
 }
 
 export interface TeamListResponse {

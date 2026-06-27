@@ -295,7 +295,16 @@ export function revokeAccessToken(id: string): Promise<{ ok: true }> {
 
 // ── Required ("pop up on login") training ────────────────────────────────────
 export interface RequiredCourse {
-  id: string; title: string; category: string | null; est_minutes: number | null; cadence: string;
+  id: string;
+  title: string;
+  category: string | null;
+  est_minutes: number | null;
+  /** Cadence label (e.g. "quarterly" / "annual") for role-required items; null for assigned. */
+  cadence: string | null;
+  /** Where this outstanding course came from. */
+  source?: "required" | "assigned";
+  /** ISO due date — present for assignment-driven items when the assigner set one. */
+  due_at?: string | null;
 }
 export function fetchRequiredTraining(): Promise<{ required: RequiredCourse[] }> {
   return learnFetch(`${LEARN_FN}?action=required`);
