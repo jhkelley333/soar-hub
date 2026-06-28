@@ -55,23 +55,28 @@ export function AcceptInvitePage() {
       if (data.session && !cancelled) setReady(true);
     });
 
-    // If no session arrives within ~8s, the token exchange failed silently —
-    // almost always because the invite link was already used (a fresh re-invite
-    // invalidates the prior link, so the old email's link is now dead) or
-    // expired. Surface a clear, actionable message instead of leaving the user
-    // on a form that will fail with "Auth session missing!" on submit. We
-    // intentionally DO NOT setReady(true) based on the URL hash alone, because
-    // a spent/expired token still ships a "type=invite" hash but produces no
-    // session — and that was the path leading to the cryptic submit error.
+    // If no session arrives within ~15s, the token exchange failed silently —
+    // usually because the invite link was already used (a fresh re-invite
+    // invalidates the prior link) or expired. 15s is generous for slow mobile
+    // networks so we don't false-positive a legitimately-arriving session as
+    // "expired". Console diagnostics let us tell the two cases apart if this
+    // recurs on a fresh invite (no hash = direct visit; hash but no session =
+    // exchange failure; hash + session = good).
     const expiredTimer = window.setTimeout(async () => {
       if (cancelled) return;
       const { data } = await supabase.auth.getSession();
       if (!data.session) {
+        const hash = window.location.hash || "";
+        const hasInviteHash = /type=invite|access_token=/.test(hash);
+        console.warn(
+          "[accept-invite] no session after 15s",
+          { hadHash: !!hash, hasInviteHash, hashSample: hash.slice(0, 60) },
+        );
         setError(
           "This invite link is no longer valid. It may have expired or been replaced by a newer one — ask your manager to send a fresh invite and use that email.",
         );
       }
-    }, 8000);
+    }, 15000);
 
     return () => {
       cancelled = true;

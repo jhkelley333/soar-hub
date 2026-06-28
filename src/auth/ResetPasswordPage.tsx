@@ -41,9 +41,9 @@ export function ResetPasswordPage() {
       if (data.session && !cancelled) setRecoveryReady(true);
     });
     // Don't trust the hash alone — a spent/expired reset token still ships a
-    // "type=recovery" hash but produces no session, which led to "Auth session
-    // missing!" on submit. If no session arrives in ~8s, surface a clear,
-    // actionable expired-link message instead of the form.
+    // "type=recovery" hash but produces no session. Wait ~15s for the session
+    // exchange to complete on slow mobile networks before surfacing the
+    // "no longer valid" message.
     const expiredTimer = window.setTimeout(async () => {
       if (cancelled) return;
       const { data } = await supabase.auth.getSession();
@@ -52,7 +52,7 @@ export function ResetPasswordPage() {
           "This reset link is no longer valid. It may have expired or already been used — request a new one from the sign-in page.",
         );
       }
-    }, 8000);
+    }, 15000);
     return () => {
       cancelled = true;
       sub.subscription.unsubscribe();

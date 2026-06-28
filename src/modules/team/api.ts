@@ -286,6 +286,16 @@ export function sendPasswordReset(userId: string): Promise<{ ok: true; sent_to: 
   });
 }
 
+// Re-send the original invite email (NOT a password reset). Use when the
+// user hasn't activated yet — generates a fresh invite link and invalidates
+// any prior one. Server rejects with 409 if the user is already confirmed.
+export function resendInvite(userId: string): Promise<{ ok: true; sent_to: string }> {
+  return request<{ ok: true; sent_to: string }>(`${FN}?action=resend-invite`, {
+    method: "POST",
+    body: JSON.stringify({ user_id: userId }),
+  });
+}
+
 // ----------------------------------------------------------------------------
 // Permanent delete (admin only) — hard-deletes the auth user. The deletion
 // is logged to history first; see team-mgmt.js deleteUser + migration 0107.
