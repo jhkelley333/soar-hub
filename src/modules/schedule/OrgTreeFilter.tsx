@@ -88,8 +88,20 @@ export function OrgTreeFilter({
   const allNums = useMemo(() => nodes.flatMap((n) => n.storeNumbers), [nodes]);
   const allOn = allNums.length > 0 && allNums.every((n) => active.has(n));
 
-  // Collapsed branch keys. Default: everything expanded.
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  // Collapsed branch keys. Default: every parent node starts collapsed so the
+  // panel opens with only the regions visible and the user expands what they
+  // want to see. Lazy useState init so we only walk the tree once.
+  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+    const set = new Set<string>();
+    const walk = (n: TreeNode) => {
+      if (n.children.length > 0) {
+        set.add(n.key);
+        n.children.forEach(walk);
+      }
+    };
+    nodes.forEach(walk);
+    return set;
+  });
 
   function setMany(nums: string[], on: boolean) {
     const next = new Set(active);

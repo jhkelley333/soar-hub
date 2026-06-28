@@ -155,8 +155,20 @@ export function LaborV2TeamPage() {
   return (
     <>
       <PageHeader
-        title="Team labor"
-        description={data?.date ? `${fmtDate(data.date)} · ${data.scope.stores} stores rolled up${data.scope.dos.length ? ` · ${data.scope.dos.length} DO${data.scope.dos.length === 1 ? "" : "s"}` : ""}` : "Labor rollup for your stores"}
+        title={
+          <span className="inline-flex items-center gap-2">
+            Team labor
+            <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent">
+              Beta
+            </span>
+          </span>
+        }
+        description={
+          <>
+            <span className="block text-accent">Testing pulling from IX</span>
+            {data?.date ? `${fmtDate(data.date)} · ${data.scope.stores} stores rolled up${data.scope.dos.length ? ` · ${data.scope.dos.length} DO${data.scope.dos.length === 1 ? "" : "s"}` : ""}` : "Labor rollup for your stores"}
+          </>
+        }
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {t && t.notesDue > 0 && (
