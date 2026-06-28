@@ -97,7 +97,7 @@ export function PortfolioView({ week, onDrillStore, onDrillH2H }: Props) {
 
   if (query.isLoading) {
     return (
-      <div className="mx-auto max-w-xl space-y-3">
+      <div className="space-y-3">
         <Skeleton className="h-40 w-full rounded-2xl" />
         <Skeleton className="h-10 w-full" />
         <Skeleton className="h-24 w-full" />
@@ -128,7 +128,7 @@ export function PortfolioView({ week, onDrillStore, onDrillH2H }: Props) {
       : sorted.filter((r) => tiers.get(r.store) === tier);
 
   return (
-    <div className="mx-auto max-w-xl space-y-3">
+    <div className="space-y-3">
       {/* Hero */}
       <div className="relative overflow-hidden rounded-2xl bg-midnight-900 p-4 text-white shadow-card">
         <div className="pointer-events-none absolute -right-6 -top-6 rotate-12 opacity-10">
