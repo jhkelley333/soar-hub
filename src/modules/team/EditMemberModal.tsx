@@ -14,6 +14,7 @@ import {
   fetchScopeOptions,
   permDeleteUser,
   removeScope,
+  resendInvite,
   sendPasswordReset,
   updateUser,
   type AdditionalScope,
@@ -217,6 +218,14 @@ export function EditMemberModal({
     onError: (e: unknown) => setError((e as Error)?.message ?? "Send reset failed."),
   });
 
+  const invite = useMutation({
+    mutationFn: (id: string) => resendInvite(id),
+    onSuccess: (data) => {
+      toast.push(`Fresh invite sent to ${data.sent_to}.`, "success");
+    },
+    onError: (e: unknown) => setError((e as Error)?.message ?? "Couldn't resend invite."),
+  });
+
   const permDelete = useMutation({
     mutationFn: (id: string) => permDeleteUser(id),
     onSuccess: () => {
@@ -332,6 +341,7 @@ export function EditMemberModal({
     deactivate.isPending ||
     reactivate.isPending ||
     reset.isPending ||
+    invite.isPending ||
     permDelete.isPending;
 
   return (
@@ -500,18 +510,41 @@ export function EditMemberModal({
             </div>
           )}
 
-          {/* Send password reset — active users only */}
+          {/* Sign-in help — active users only. Two options:
+              - Resend invite: regenerates a fresh invite (use when they haven't
+                activated yet; invalidates any prior invite link).
+              - Send password reset: for users who've already activated and
+                forgot. */}
           {member.is_active && (
             <div className="border-t border-zinc-100 pt-4">
-              <Button
-                variant="secondary"
-                onClick={() => member && reset.mutate(member.id)}
-                disabled={anyMutationPending}
-              >
-                {reset.isPending ? "Sending…" : "Send password reset"}
-              </Button>
-              <p className="mt-1 text-xs text-zinc-500">
-                Emails them a link to set a new password.
+              <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                Sign-in help
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Button
+                  variant={member.email_confirmed_at ? "secondary" : "primary"}
+                  onClick={() => member && invite.mutate(member.id)}
+                  disabled={anyMutationPending || !!member.email_confirmed_at}
+                  title={
+                    member.email_confirmed_at
+                      ? "Account already activated — use Send password reset instead."
+                      : undefined
+                  }
+                >
+                  {invite.isPending ? "Sending…" : "Resend invite"}
+                </Button>
+                <Button
+                  variant={member.email_confirmed_at ? "primary" : "secondary"}
+                  onClick={() => member && reset.mutate(member.id)}
+                  disabled={anyMutationPending}
+                >
+                  {reset.isPending ? "Sending…" : "Send password reset"}
+                </Button>
+              </div>
+              <p className="mt-1.5 text-xs text-zinc-500">
+                {member.email_confirmed_at
+                  ? "Account is active — send a password reset if they forgot. (Resend invite is disabled because the account is already set up.)"
+                  : "Account hasn't been set up yet — Resend invite generates a fresh invite link (invalidates any prior one). Password reset works too if they prefer."}
               </p>
             </div>
           )}

@@ -1105,6 +1105,68 @@ async function sendReset(supa, manager, body) {
 }
 
 // ----------------------------------------------------------------------------
+// resend-invite — re-send the original invite email (NOT a password reset)
+// ----------------------------------------------------------------------------
+//
+// For team members who haven't completed account setup yet (email not
+// confirmed). Calls supabase.auth.admin.inviteUserByEmail again, which
+// generates a FRESH invite link and invalidates any prior one — the same
+// thing addUser does when a user is first invited. Once the user has set a
+// password (email_confirmed_at populated), we redirect callers to use
+// send-reset instead, since an invite link wouldn't do anything for them.
+
+async function resendInvite(supa, manager, body) {
+  const target_id = body?.user_id;
+  if (!target_id) return { error: "user_id is required.", status: 400 };
+
+  // Scope check — same rule as send-reset: target must be in caller's reach.
+  if (target_id !== manager.id) {
+    const { data: managed } = await supa.rpc("manageable_users", {
+      manager_id: manager.id,
+    });
+    const ok = (managed ?? []).some((m) => m.id === target_id);
+    if (!ok) return { error: "That user isn't in your scope.", status: 403 };
+  }
+
+  const { data: target } = await supa
+    .from("profiles")
+    .select("email, full_name, is_active")
+    .eq("id", target_id)
+    .maybeSingle();
+  if (!target) return { error: "User not found.", status: 404 };
+  if (!target.is_active) {
+    return { error: "That user is inactive. Reactivate before resending an invite.", status: 400 };
+  }
+
+  // If the user has already activated their account, an invite link would do
+  // nothing useful — surface a clear nudge to use send-reset instead.
+  try {
+    const { data: au } = await supa.auth.admin.getUserById(target_id);
+    if (au?.user?.email_confirmed_at) {
+      return {
+        error:
+          "This user has already activated their account. Use Send password reset to give them a way back in.",
+        status: 409,
+      };
+    }
+  } catch (e) {
+    console.warn("[team-mgmt] resend-invite: getUserById failed; continuing", e?.message || e);
+  }
+
+  const inviteRedirect =
+    (process.env.URL || process.env.DEPLOY_URL || "").replace(/\/$/, "") + "/accept-invite";
+  const { error: inviteErr } = await supa.auth.admin.inviteUserByEmail(target.email, {
+    data: target.full_name ? { full_name: target.full_name } : undefined,
+    redirectTo: inviteRedirect || undefined,
+  });
+  if (inviteErr) {
+    return { error: `Invite resend failed: ${inviteErr.message}`, status: 500 };
+  }
+
+  return { ok: true, sent_to: target.email };
+}
+
+// ----------------------------------------------------------------------------
 // delete-user — admin-only PERMANENT delete
 // ----------------------------------------------------------------------------
 //
@@ -1778,6 +1840,7 @@ export const handler = async (event) => {
         return unwrap(result);
       }
       if (action === "send-reset") return unwrap(await sendReset(supa, manager, body));
+      if (action === "resend-invite") return unwrap(await resendInvite(supa, manager, body));
       if (action === "bulk-preview") return unwrap(await bulkPreview(supa, manager, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
