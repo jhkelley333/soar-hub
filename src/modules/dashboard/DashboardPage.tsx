@@ -10,26 +10,26 @@
 // redirected to their PAF queue. Both guards live BELOW all hooks so hook
 // order stays stable (react-hooks/rules-of-hooks).
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowRight,
   Banknote,
-  Calendar,
   CalendarOff,
   ChevronRight,
   FileText,
   Gift,
   Hammer,
   MessageSquare,
-  Plus,
+  PhoneCall,
   ShieldCheck,
   TrendingDown,
   TrendingUp,
   Wallet,
 } from "lucide-react";
+import { MakeTheRightCallDrawer } from "@/modules/contacts/MakeTheRightCallDrawer";
 import { useAuth } from "@/auth/AuthProvider";
 import type { UserRole } from "@/types/database";
 import { fetchCallerStores, fetchOpenWorkOrderAlerts, fetchRecentMessages, fetchStats, fetchTickets } from "@/modules/work-orders-v2/api";
@@ -316,6 +316,10 @@ function Greeting({
   showWalkActions: boolean;
 }) {
   const fInfo = fiscalInfo(new Date());
+  // Drawer open state for "Make the right call" — only mounted when the
+  // caller's role qualifies (showWalkActions), so the button + drawer share
+  // the same gate.
+  const [callOpen, setCallOpen] = useState(false);
   return (
     <div className="flex flex-wrap items-start justify-between gap-4">
       <div>
@@ -344,22 +348,17 @@ function Greeting({
         </p>
       </div>
       {showWalkActions && (
-        <div className="flex items-center gap-2">
-          <Link
-            to="/walkthroughs"
-            className="inline-flex h-9 items-center gap-2 rounded-xl border border-zinc-200 bg-white px-3.5 text-sm font-medium text-ink-muted transition hover:border-accent hover:text-ink dark:border-night-line dark:bg-night-raised dark:text-night-muted dark:hover:text-night-ink"
-          >
-            <Calendar className="h-4 w-4" strokeWidth={1.75} />
-            Schedule
-          </Link>
-          <Link
-            to="/my-walks"
+        <>
+          <button
+            type="button"
+            onClick={() => setCallOpen(true)}
             className="inline-flex h-9 items-center gap-2 rounded-xl bg-accent px-3.5 text-sm font-semibold text-white transition hover:bg-accent-hover"
           >
-            <Plus className="h-4 w-4" strokeWidth={2} />
-            New walkthrough
-          </Link>
-        </div>
+            <PhoneCall className="h-4 w-4" strokeWidth={2} />
+            Make the right call
+          </button>
+          <MakeTheRightCallDrawer open={callOpen} onClose={() => setCallOpen(false)} />
+        </>
       )}
     </div>
   );
