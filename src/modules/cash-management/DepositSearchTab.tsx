@@ -97,7 +97,9 @@ export function DepositSearchTab() {
       ) : (
         <Card className="overflow-hidden">
           <div className="border-b border-zinc-100 px-4 py-2.5 text-xs font-medium text-zinc-500">{results.length} result{results.length === 1 ? "" : "s"}</div>
-          <div className="overflow-x-auto">
+
+          {/* Desktop / tablet: full table */}
+          <div className="hidden overflow-x-auto sm:block">
             <table className="w-full text-sm">
               <thead className="text-left text-xs font-medium uppercase tracking-wide text-zinc-400">
                 <tr>
@@ -125,6 +127,41 @@ export function DepositSearchTab() {
               </tbody>
             </table>
           </div>
+
+          {/* Mobile: tap-to-open cards. Store + variance + status are most
+              decision-relevant; full detail is one tap away in the drawer. */}
+          <ul className="divide-y divide-zinc-100 sm:hidden">
+            {results.map((d) => (
+              <li key={d.id}>
+                <button
+                  type="button"
+                  onClick={() => setOpenCloseout(d.closeout_id)}
+                  className="block w-full px-4 py-3 text-left transition active:bg-zinc-50"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="truncate font-medium text-midnight">#{d.store_number}{d.store_name && <span className="font-normal text-zinc-500"> — {d.store_name}</span>}</span>
+                    <Badge tone={statusTone(d.status)}>{d.status}</Badge>
+                  </div>
+                  <div className="mt-1.5 grid grid-cols-3 gap-2 text-[12px]">
+                    <div>
+                      <div className="text-zinc-400">Day</div>
+                      <div className="text-zinc-700">{d.for_date}</div>
+                    </div>
+                    <div>
+                      <div className="text-zinc-400">Bank</div>
+                      <div className="tabular-nums text-zinc-700">{d.bank_credited_cents != null ? usd(d.bank_credited_cents) : "—"}</div>
+                    </div>
+                    <div>
+                      <div className="text-zinc-400">Variance</div>
+                      <div className={`tabular-nums ${d.variance_cents ? "font-semibold text-red-600" : "text-zinc-400"}`}>
+                        {d.variance_cents != null ? usd(d.variance_cents, { signed: true }) : "—"}
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
         </Card>
       )}
 
