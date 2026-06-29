@@ -124,24 +124,32 @@ async function uploadAttachments(supa, msgId, files, startIndex = 0) {
   return out;
 }
 
-async function listMessages(supa, profile) {
+async function listMessages(supa, profile, view = "live") {
   const role = String(profile.role || "").toLowerCase();
   const myStore = await callerStoreNumber(supa, profile);
   const isManager = (lvl(role) ?? 0) >= POST_MIN_LEVEL;
   const myStores = isManager ? await visibleStoreNumbers(supa, profile.id) : [];
   const isAdmin = role === "admin";
 
-  // Drop expired messages (expires_at <= now). NULL = never expires, which is
-  // the historical default and still the most common case.
+  // Two views:
+  //   live    — current behavior: is_active AND (no expiry OR expiry > now)
+  //   archive — everything that's no longer on the live board: deleted
+  //             (is_active=false) OR expired (expires_at <= now). Same per-user
+  //             visibility filter still applies; admin sees everything.
   const nowIso = new Date().toISOString();
-  const { data: msgs, error } = await supa
-    .from("store_messages")
-    .select("*")
-    .eq("is_active", true)
-    .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
-    .order("is_pinned", { ascending: false })
-    .order("created_at", { ascending: false })
-    .limit(100);
+  let query = supa.from("store_messages").select("*");
+  if (view === "archive") {
+    query = query
+      .or(`is_active.eq.false,and(is_active.eq.true,expires_at.lte.${nowIso})`)
+      .order("updated_at", { ascending: false });
+  } else {
+    query = query
+      .eq("is_active", true)
+      .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
+      .order("is_pinned", { ascending: false })
+      .order("created_at", { ascending: false });
+  }
+  const { data: msgs, error } = await query.limit(100);
   if (error) throw new Error(error.message);
 
   const visible = (msgs || []).filter((m) => {
@@ -162,9 +170,54 @@ async function listMessages(supa, profile) {
     }
   }
 
+  // Recipient denominator per message, computed once with two batched queries
+  // and aggregated in memory. The previous per-message version of this lookup
+  // only ran inside getReaders (one message at a time) — here we want a count
+  // on every card without sending 2*N round-trips.
+  const recipientCount = new Map();
+  if (visible.length) {
+    const allStoreNumbers = new Set();
+    const allRoles = new Set();
+    for (const m of visible) {
+      for (const n of m.store_numbers || []) allStoreNumbers.add(String(n));
+      for (const r of m.audience_roles || []) allRoles.add(r);
+    }
+    let storeIdByNumber = new Map();
+    let profileRows = [];
+    if (allStoreNumbers.size && allRoles.size) {
+      const { data: storeRows } = await supa
+        .from("stores").select("id, number").in("number", [...allStoreNumbers]);
+      storeIdByNumber = new Map((storeRows || []).map((s) => [String(s.number), s.id]));
+      const sids = [...storeIdByNumber.values()];
+      if (sids.length) {
+        const { data: prows } = await supa
+          .from("profiles")
+          .select("id, primary_store_id, role")
+          .in("primary_store_id", sids)
+          .in("role", [...allRoles])
+          .eq("is_active", true);
+        profileRows = prows || [];
+      }
+    }
+    for (const m of visible) {
+      const targetSids = new Set(
+        (m.store_numbers || [])
+          .map((n) => storeIdByNumber.get(String(n)))
+          .filter(Boolean),
+      );
+      const targetRoles = new Set(m.audience_roles || []);
+      let c = 0;
+      for (const p of profileRows) {
+        if (targetSids.has(p.primary_store_id) && targetRoles.has(String(p.role).toLowerCase())) c++;
+      }
+      recipientCount.set(m.id, c);
+    }
+  }
+
   const messages = visible.map((m) => ({
     ...m,
     read_count: countById.get(m.id) || 0,
+    recipient_count: recipientCount.get(m.id) || 0,
     has_read: mineRead.has(m.id),
     can_manage: m.author_id === profile.id || isAdmin,
   }));
@@ -355,7 +408,10 @@ export const handler = async (event) => {
   const action = (event.queryStringParameters || {}).action || "list";
   try {
     if (event.httpMethod === "GET") {
-      if (action === "list") return unwrap(await listMessages(supa, user));
+      if (action === "list") {
+        const view = (event.queryStringParameters || {}).view === "archive" ? "archive" : "live";
+        return unwrap(await listMessages(supa, user, view));
+      }
       if (action === "readers") return unwrap(await getReaders(supa, user, (event.queryStringParameters || {}).id));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
