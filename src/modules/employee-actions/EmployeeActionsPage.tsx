@@ -138,7 +138,7 @@ export function EmployeeActionsPage() {
     <>
       <PageHeader
         title="Employee Actions"
-        description="Training credit and PTO requests. Submitting notifies the store's DO and RVP."
+        description="Training credit and PTO requests. Submitting notifies the store's DO, SDO and RVP."
       />
 
       <div className="mb-4">
