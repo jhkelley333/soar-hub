@@ -42,6 +42,8 @@ export interface StoreMessage {
   attachments: MessageAttachment[];
   links: MessageLink[];
   is_pinned: boolean;
+  /** ISO timestamp when the message auto-hides; null = no expiry. */
+  expires_at: string | null;
   created_at: string;
   edited_at: string | null;
   read_count: number;
@@ -67,6 +69,8 @@ export interface CreateMessageInput {
   attachments?: { data: string; name: string; type: string }[];
   links?: MessageLink[];
   isPinned?: boolean;
+  /** Active for N days from posting (1..365). Omit or null = no auto-expiry. */
+  daysActive?: number | null;
 }
 export function createMessage(input: CreateMessageInput): Promise<{ message: StoreMessage }> {
   return req(`${FN}?action=create`, { method: "POST", body: JSON.stringify(input) });
@@ -81,6 +85,8 @@ export interface UpdateMessageInput {
   isPinned?: boolean;
   attachments?: { data: string; name: string; type: string }[];
   removeAttachmentUrls?: string[];
+  /** number = reset the countdown from now; null = clear (no expiry); undefined = no change. */
+  daysActive?: number | null;
 }
 export function updateMessage(input: UpdateMessageInput): Promise<{ message: StoreMessage }> {
   return req(`${FN}?action=update`, { method: "POST", body: JSON.stringify(input) });

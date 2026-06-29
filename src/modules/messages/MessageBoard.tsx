@@ -13,6 +13,18 @@ import { MessageDetailModal } from "./MessageDetailModal";
 const fmtShort = (s: string) =>
   new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
+// "expires in 5d" / "expires tomorrow" / "expires today" — shown only on
+// cards the viewer authored or admin's, so audience members aren't reminded
+// the post will disappear soon.
+function fmtExpiry(iso: string): string {
+  const ms = new Date(iso).getTime() - Date.now();
+  if (!Number.isFinite(ms)) return "";
+  const days = Math.ceil(ms / 86_400_000);
+  if (days <= 0) return "expiring";
+  if (days === 1) return "expires tomorrow";
+  return `expires in ${days}d`;
+}
+
 export function MessageBoard() {
   const qc = useQueryClient();
   const toast = useToast();
@@ -70,7 +82,7 @@ export function MessageBoard() {
                       {m.attachments.length > 0 && <Paperclip className="h-3 w-3 shrink-0 text-zinc-400" />}
                     </div>
                     <div className="truncate text-[11px] text-zinc-500">
-                      {m.author_name || "—"} · {fmtShort(m.created_at)}{m.edited_at && <span className="italic"> · edited</span>}
+                      {m.author_name || "—"} · {fmtShort(m.created_at)}{m.edited_at && <span className="italic"> · edited</span>}{m.expires_at && m.can_manage && <span className="italic text-amber-700"> · {fmtExpiry(m.expires_at)}</span>}
                     </div>
                   </div>
                   <ChevronRight className="h-4 w-4 shrink-0 text-zinc-300" />

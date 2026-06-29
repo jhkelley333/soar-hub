@@ -34,6 +34,16 @@ export function MessageComposeModal({
   const [links, setLinks] = useState<MessageLink[]>(editing?.links ?? []);
   const [pickTraining, setPickTraining] = useState(false);
   const [pinned, setPinned] = useState(editing?.is_pinned ?? false);
+  // Days active: 0 = "Until removed" (no expiry); 1..365 = auto-hide after N
+  // days. New posts default to 14; editing seeds from the saved expires_at
+  // when present so the picker round-trips.
+  const initialDays = (() => {
+    if (!editing?.expires_at) return editing ? 0 : 14;
+    const ms = new Date(editing.expires_at).getTime() - Date.now();
+    if (!Number.isFinite(ms) || ms <= 0) return 0;
+    return Math.max(1, Math.min(365, Math.round(ms / 86_400_000)));
+  })();
+  const [daysActive, setDaysActive] = useState<number>(initialDays);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -55,6 +65,8 @@ export function MessageComposeModal({
         files.slice(0, MAX_FILES).map(async (f) => ({ data: await fileToBase64(f), name: f.name, type: f.type || "application/octet-stream" })),
       );
       const cleanLinks = links.filter((l) => l.url.trim());
+      // daysActive: 0 ⇒ null on the wire (no expiry); positive ⇒ days.
+      const days = daysActive > 0 ? daysActive : null;
       if (isEdit && editing) {
         await updateMessage({
           id: editing.id,
@@ -65,6 +77,7 @@ export function MessageComposeModal({
           isPinned: pinned,
           attachments,
           removeAttachmentUrls: [...removed],
+          daysActive: days,
         });
       } else {
         await createMessage({
@@ -74,6 +87,7 @@ export function MessageComposeModal({
           attachments,
           links: cleanLinks,
           isPinned: pinned,
+          daysActive: days,
         });
       }
       onPosted();
@@ -189,6 +203,29 @@ export function MessageComposeModal({
                 {(trainingQ.data?.courses ?? []).map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
               </select>
             )}
+          </div>
+
+          <div>
+            <Label htmlFor="msg-days">Show for</Label>
+            <select
+              id="msg-days"
+              value={String(daysActive)}
+              onChange={(e) => setDaysActive(Number(e.target.value))}
+              className="block h-9 w-full rounded-md border border-zinc-200 bg-white px-2 text-sm focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+            >
+              <option value="1">1 day</option>
+              <option value="3">3 days</option>
+              <option value="7">7 days</option>
+              <option value="14">14 days</option>
+              <option value="30">30 days</option>
+              <option value="60">60 days</option>
+              <option value="90">90 days</option>
+              <option value="0">Until removed</option>
+            </select>
+            <div className="mt-1 text-[10px] text-zinc-500">
+              The message auto-hides from the board after this. Pick &quot;Until
+              removed&quot; if you&apos;ll take it down yourself.
+            </div>
           </div>
 
           <label className="flex items-center gap-2 text-xs font-medium text-zinc-700">
