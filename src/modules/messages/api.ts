@@ -47,6 +47,8 @@ export interface StoreMessage {
   created_at: string;
   edited_at: string | null;
   read_count: number;
+  /** Total audience size for this message (active profiles whose role + store match). */
+  recipient_count: number;
   has_read: boolean;
   can_manage: boolean;
 }
@@ -57,8 +59,15 @@ export interface MessageReader {
   read_at: string;
 }
 
-export function listMessages(): Promise<{ messages: StoreMessage[]; canPost: boolean }> {
-  return req(`${FN}?action=list`);
+/**
+ * "live"    — active, not-yet-expired posts. Default board view.
+ * "archive" — deleted (is_active=false) OR expired posts, same visibility rules.
+ */
+export type MessageBoardView = "live" | "archive";
+export function listMessages(
+  view: MessageBoardView = "live",
+): Promise<{ messages: StoreMessage[]; canPost: boolean }> {
+  return req(`${FN}?action=list&view=${view}`);
 }
 
 export interface CreateMessageInput {
