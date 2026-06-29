@@ -7,7 +7,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Banknote, Bell, Building2, ChevronLeft, Moon, TrendingUp, type LucideIcon } from "lucide-react";
+import { Banknote, Bell, Building2, ChevronLeft, Moon, TrendingUp, Vault, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/auth/AuthProvider";
 import { fetchOverview } from "./api";
@@ -15,15 +15,23 @@ import { CloseoutTab } from "./CloseoutTab";
 import { DepositTab } from "./DepositTab";
 import { AlertsTab } from "./AlertsTab";
 import { DsrTab } from "./DsrTab";
+import { StoreFundsTab } from "./StoreFundsTab";
 
-type TabId = "closeout" | "deposit" | "alerts" | "dsr";
+type TabId = "closeout" | "deposit" | "alerts" | "dsr" | "funds";
 
-const TABS: { id: TabId; label: string; icon: LucideIcon }[] = [
+// DO and above see the bank-validation rollup (Store Funds) as a 5th tab on
+// the mobile bar. Mirrors the desktop hub's LEADER_ROLES set.
+const LEADER_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
+
+const STORE_TABS: { id: TabId; label: string; icon: LucideIcon }[] = [
   { id: "closeout", label: "Closeout", icon: Moon },
   { id: "deposit", label: "Deposit", icon: Banknote },
   { id: "alerts", label: "Alerts", icon: Bell },
   { id: "dsr", label: "DSR", icon: TrendingUp },
 ];
+const LEADER_TAB: { id: TabId; label: string; icon: LucideIcon } = {
+  id: "funds", label: "Funds", icon: Vault,
+};
 
 function initialsOf(name: string | null | undefined): string {
   return (name || "?")
@@ -49,6 +57,8 @@ export function MobileCashApp() {
   const openAlerts = overview?.open_alerts ?? 0;
   const hasPending = !!overview?.pending_deposit;
   const hasAction = active === "closeout" || active === "deposit";
+  const isLeader = !!profile?.role && LEADER_ROLES.has(profile.role);
+  const tabs = isLeader ? [...STORE_TABS, LEADER_TAB] : STORE_TABS;
 
   return (
     <div className="flex h-full flex-col bg-surface-muted">
@@ -96,6 +106,7 @@ export function MobileCashApp() {
         {active === "deposit" && <DepositTab storeId={effId} onDone={() => setActive("dsr")} actionSlot={actionEl} />}
         {active === "alerts" && <AlertsTab storeId={effId} />}
         {active === "dsr" && <DsrTab storeId={effId} />}
+        {active === "funds" && isLeader && <StoreFundsTab />}
       </div>
 
       {/* sticky primary action — Closeout/Deposit portal their button here */}
@@ -107,8 +118,11 @@ export function MobileCashApp() {
         style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) / 2)" }}
         aria-label="Cash sections"
       >
-        <div className="grid grid-cols-4">
-          {TABS.map((t) => {
+        <div
+          className="grid"
+          style={{ gridTemplateColumns: `repeat(${tabs.length}, minmax(0, 1fr))` }}
+        >
+          {tabs.map((t) => {
             const on = active === t.id;
             const badge = t.id === "alerts" ? openAlerts : t.id === "deposit" && hasPending ? 1 : 0;
             const Icon = t.icon;
