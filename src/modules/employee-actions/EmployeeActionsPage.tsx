@@ -22,33 +22,62 @@ import { RequestDetailDrawer } from "./RequestDetailDrawer";
 import { statusKind, waitingOn } from "./statusMeta";
 import type { PtoRow, TrainingCreditRow } from "./types";
 
-// History time-window chips. "week" = Mon→today (running this week, same
-// as the Birthdays widget convention); "month" = the current calendar
-// month; "90" = trailing 90 days; "all" = unbounded.
+// History time-window chips, matched against the request's ACTIVE DATE RANGE
+// (the vacation period for PTO, the training period for training credits) —
+// NOT the submission date. So a PTO submitted weeks ago for 6/29–7/05 shows
+// up under "This week" of 6/29–7/05, which is what leadership expects when
+// asking "who's on vacation this week?".
+//
+// Windows:
+//   week   — Mon→Sun of the current week
+//   month  — 1st→end-of-month of the current month
+//   90     — trailing 90 days (past-only)
+//   all    — unbounded
 type HistoryRange = "week" | "month" | "90" | "all";
-function rangeStart(range: HistoryRange): Date | null {
-  if (range === "all") return null;
+
+interface Window { start: Date | null; end: Date | null; }
+
+function localDate(iso: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso || "");
+  if (!m) return null;
+  return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 0, 0, 0, 0);
+}
+function rangeWindow(range: HistoryRange): Window {
+  if (range === "all") return { start: null, end: null };
   if (range === "week") {
-    // thisWeekRange returns Mon (start) / Sun (end). Floor "this week" to that
-    // Monday for an inclusive "is this row from this week?" check.
-    const { start } = thisWeekRange();
-    const [y, m, d] = start.split("-").map(Number);
-    return new Date(y, m - 1, d, 0, 0, 0, 0);
+    const { start, end } = thisWeekRange();
+    const s = localDate(start);
+    const e = localDate(end);
+    if (e) e.setHours(23, 59, 59, 999);
+    return { start: s, end: e };
   }
   if (range === "month") {
     const d = new Date();
-    return new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
+    const start = new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
+    const end = new Date(d.getFullYear(), d.getMonth() + 1, 0, 23, 59, 59, 999);
+    return { start, end };
   }
-  // "90"
-  const d = new Date();
-  d.setDate(d.getDate() - 90);
-  d.setHours(0, 0, 0, 0);
-  return d;
+  // "90" — trailing 90 days, past-only.
+  const end = new Date();
+  end.setHours(23, 59, 59, 999);
+  const start = new Date(end);
+  start.setDate(start.getDate() - 90);
+  start.setHours(0, 0, 0, 0);
+  return { start, end };
 }
-function inRange(iso: string, since: Date | null): boolean {
-  if (!since) return true;
-  const t = new Date(iso).getTime();
-  return Number.isFinite(t) && t >= since.getTime();
+
+// True when a row's [rowStart, rowEnd] overlaps the chosen [start, end].
+// When the row date is missing, falls back to created_at so the row stays
+// discoverable somewhere. A null window bound = unbounded that side.
+function overlaps(rowStartIso: string | null, rowEndIso: string | null, fallbackIso: string, win: Window): boolean {
+  if (!win.start && !win.end) return true;
+  const rowStart = (rowStartIso && localDate(rowStartIso)) ?? localDate(fallbackIso) ?? new Date(fallbackIso);
+  const rowEndRaw = (rowEndIso && localDate(rowEndIso)) ?? rowStart;
+  const rowEnd = new Date(rowEndRaw);
+  rowEnd.setHours(23, 59, 59, 999);
+  if (win.start && rowEnd.getTime() < win.start.getTime()) return false;
+  if (win.end && rowStart.getTime() > win.end.getTime()) return false;
+  return true;
 }
 
 type Tab = "training" | "pto" | "history" | "approvals";
@@ -216,22 +245,31 @@ function HistoryList({
   }
 
   const { trainingCredits, ptoRequests } = query.data;
-  // Counts (precomputed across all 4 ranges) drive the chip badges so the
-  // user sees scope before clicking. Memoize since each filter does an O(n)
-  // pass over both lists.
+  // Per-row date-range overlap with the chosen window:
+  //  - PTO: pto_start_date → pto_end_date (the actual vacation window)
+  //  - Training credit: start_date → last_day_date (the training window)
+  // Falls back to created_at when both date columns are null so the row
+  // stays discoverable. Memoized so chips show counts without re-filtering.
+  const trainingMatches = (r: TrainingCreditRow, win: Window) =>
+    overlaps(r.start_date, r.last_day_date, r.created_at, win);
+  const ptoMatches = (r: PtoRow, win: Window) =>
+    overlaps(r.pto_start_date, r.pto_end_date, r.created_at, win);
+
   const counts = useMemo(() => {
     const make = (r: HistoryRange) => {
-      const since = rangeStart(r);
-      const t = trainingCredits.filter((row) => inRange(row.created_at, since)).length;
-      const p = ptoRequests.filter((row) => inRange(row.created_at, since)).length;
-      return t + p;
+      const w = rangeWindow(r);
+      return (
+        trainingCredits.filter((row) => trainingMatches(row, w)).length +
+        ptoRequests.filter((row) => ptoMatches(row, w)).length
+      );
     };
     return { week: make("week"), month: make("month"), "90": make("90"), all: make("all") };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [trainingCredits, ptoRequests]);
 
-  const since = rangeStart(range);
-  const visibleTraining = trainingCredits.filter((r) => inRange(r.created_at, since));
-  const visiblePto = ptoRequests.filter((r) => inRange(r.created_at, since));
+  const win = rangeWindow(range);
+  const visibleTraining = trainingCredits.filter((r) => trainingMatches(r, win));
+  const visiblePto = ptoRequests.filter((r) => ptoMatches(r, win));
   const total = visibleTraining.length + visiblePto.length;
 
   if (trainingCredits.length + ptoRequests.length === 0) {
