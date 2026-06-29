@@ -3,7 +3,7 @@
 // glyph, the name, a "YOU" badge on the viewer's own scope node, and an eye
 // toggle that shows/hides that branch. Visibility operates on a Set of active
 // store NUMBERS (events carry store_number); the parent owns the set.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Building2, ChevronDown, ChevronRight, Columns3, Eye, EyeOff, Map, Shield } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { orgSwatch } from "./colors";
@@ -89,9 +89,16 @@ export function OrgTreeFilter({
   const allOn = allNums.length > 0 && allNums.every((n) => active.has(n));
 
   // Collapsed branch keys. Default: every parent node starts collapsed so the
-  // panel opens with only the regions visible and the user expands what they
-  // want to see. Lazy useState init so we only walk the tree once.
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => {
+  // panel opens with only the regions visible. We can't seed via the useState
+  // initializer because the tree usually arrives asynchronously — on first
+  // render `nodes` is empty (React Query still loading) and the initializer
+  // only runs once. Instead, seed via a useEffect the first time non-empty
+  // nodes show up, guarded by a ref so a later refetch doesn't clobber the
+  // user's manual expand/collapse choices.
+  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (seededRef.current || nodes.length === 0) return;
     const set = new Set<string>();
     const walk = (n: TreeNode) => {
       if (n.children.length > 0) {
@@ -100,8 +107,9 @@ export function OrgTreeFilter({
       }
     };
     nodes.forEach(walk);
-    return set;
-  });
+    setCollapsed(set);
+    seededRef.current = true;
+  }, [nodes]);
 
   function setMany(nums: string[], on: boolean) {
     const next = new Set(active);
