@@ -3,7 +3,7 @@
 // and a read-only History list of requests in the caller's scope.
 // Approvals / tracking / sign-offs are a later layer.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -13,6 +13,7 @@ import { StatusPill } from "@/shared/ui/StatusPill";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useAuth } from "@/auth/AuthProvider";
+import { thisWeekRange } from "@/modules/my-stores/dateRange";
 import { listEmployeeActions } from "./api";
 import { TrainingCreditForm } from "./TrainingCreditForm";
 import { PtoRequestForm } from "./PtoRequestForm";
@@ -20,6 +21,35 @@ import { ApprovalQueue } from "./ApprovalQueue";
 import { RequestDetailDrawer } from "./RequestDetailDrawer";
 import { statusKind, waitingOn } from "./statusMeta";
 import type { PtoRow, TrainingCreditRow } from "./types";
+
+// History time-window chips. "week" = Mon→today (running this week, same
+// as the Birthdays widget convention); "month" = the current calendar
+// month; "90" = trailing 90 days; "all" = unbounded.
+type HistoryRange = "week" | "month" | "90" | "all";
+function rangeStart(range: HistoryRange): Date | null {
+  if (range === "all") return null;
+  if (range === "week") {
+    // thisWeekRange returns Mon (start) / Sun (end). Floor "this week" to that
+    // Monday for an inclusive "is this row from this week?" check.
+    const { start } = thisWeekRange();
+    const [y, m, d] = start.split("-").map(Number);
+    return new Date(y, m - 1, d, 0, 0, 0, 0);
+  }
+  if (range === "month") {
+    const d = new Date();
+    return new Date(d.getFullYear(), d.getMonth(), 1, 0, 0, 0, 0);
+  }
+  // "90"
+  const d = new Date();
+  d.setDate(d.getDate() - 90);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+function inRange(iso: string, since: Date | null): boolean {
+  if (!since) return true;
+  const t = new Date(iso).getTime();
+  return Number.isFinite(t) && t >= since.getTime();
+}
 
 type Tab = "training" | "pto" | "history" | "approvals";
 
@@ -159,6 +189,7 @@ function HistoryList({
   onEditPto: (row: PtoRow) => void;
 }) {
   const [selected, setSelected] = useState<Selection>(null);
+  const [range, setRange] = useState<HistoryRange>("week");
   const query = useQuery({ queryKey: ["ea-list"], queryFn: listEmployeeActions });
 
   // Auto-open the deep-linked request once the list loads.
@@ -185,9 +216,25 @@ function HistoryList({
   }
 
   const { trainingCredits, ptoRequests } = query.data;
-  const total = trainingCredits.length + ptoRequests.length;
+  // Counts (precomputed across all 4 ranges) drive the chip badges so the
+  // user sees scope before clicking. Memoize since each filter does an O(n)
+  // pass over both lists.
+  const counts = useMemo(() => {
+    const make = (r: HistoryRange) => {
+      const since = rangeStart(r);
+      const t = trainingCredits.filter((row) => inRange(row.created_at, since)).length;
+      const p = ptoRequests.filter((row) => inRange(row.created_at, since)).length;
+      return t + p;
+    };
+    return { week: make("week"), month: make("month"), "90": make("90"), all: make("all") };
+  }, [trainingCredits, ptoRequests]);
 
-  if (!total) {
+  const since = rangeStart(range);
+  const visibleTraining = trainingCredits.filter((r) => inRange(r.created_at, since));
+  const visiblePto = ptoRequests.filter((r) => inRange(r.created_at, since));
+  const total = visibleTraining.length + visiblePto.length;
+
+  if (trainingCredits.length + ptoRequests.length === 0) {
     return (
       <Card>
         <EmptyState
@@ -199,17 +246,43 @@ function HistoryList({
   }
 
   return (
-    <div className="space-y-6">
-      <Section title="Training Credit Requests" count={trainingCredits.length}>
-        {trainingCredits.map((r) => (
+    <div className="space-y-4">
+      {/* Time-window chips — mirrors the Segmented filter Approvals uses.
+          Defaults to "This week" so leadership sees the running week first. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <Segmented<HistoryRange>
+          value={range}
+          onChange={setRange}
+          options={[
+            { value: "week",  label: "This week",   count: counts.week },
+            { value: "month", label: "This month",  count: counts.month },
+            { value: "90",    label: "Last 90 days", count: counts["90"] },
+            { value: "all",   label: "All",         count: counts.all },
+          ]}
+        />
+      </div>
+
+      {total === 0 && (
+        <Card>
+          <EmptyState
+            title="No requests in this window"
+            description="Widen the range to see older requests."
+          />
+        </Card>
+      )}
+
+      {visibleTraining.length > 0 && (
+      <Section title="Training Credit Requests" count={visibleTraining.length}>
+        {visibleTraining.map((r) => (
           <TrainingRow key={r.id} row={r} onOpen={() => setSelected({ kind: "training", row: r })} />
         ))}
-      </Section>
-      <Section title="PTO Requests" count={ptoRequests.length}>
-        {ptoRequests.map((r) => (
+      </Section>)}
+      {visiblePto.length > 0 && (
+      <Section title="PTO Requests" count={visiblePto.length}>
+        {visiblePto.map((r) => (
           <PtoRowItem key={r.id} row={r} onOpen={() => setSelected({ kind: "pto", row: r })} />
         ))}
-      </Section>
+      </Section>)}
 
       <RequestDetailDrawer
         kind={selected?.kind ?? "training"}
