@@ -232,6 +232,33 @@ function HistoryList({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus, query.data]);
 
+  // Per-row date-range overlap with the chosen window:
+  //  - PTO: pto_start_date → pto_end_date (the actual vacation window)
+  //  - Training credit: start_date → last_day_date (the training window)
+  // Falls back to created_at when both date columns are null so the row
+  // stays discoverable somewhere.
+  //
+  // The chip-count memo MUST sit above any early returns below — otherwise
+  // the loading→loaded transition would change the hook count between
+  // renders (React error #310). Empty arrays as defaults keep the math
+  // safe when query.data isn't ready yet.
+  const trainingCredits = query.data?.trainingCredits ?? [];
+  const ptoRequests = query.data?.ptoRequests ?? [];
+  const counts = useMemo(() => {
+    const trainingMatches = (r: TrainingCreditRow, w: Window) =>
+      overlaps(r.start_date, r.last_day_date, r.created_at, w);
+    const ptoMatches = (r: PtoRow, w: Window) =>
+      overlaps(r.pto_start_date, r.pto_end_date, r.created_at, w);
+    const make = (r: HistoryRange) => {
+      const w = rangeWindow(r);
+      return (
+        trainingCredits.filter((row) => trainingMatches(row, w)).length +
+        ptoRequests.filter((row) => ptoMatches(row, w)).length
+      );
+    };
+    return { week: make("week"), month: make("month"), "90": make("90"), all: make("all") };
+  }, [trainingCredits, ptoRequests]);
+
   if (query.isLoading) return <Skeleton className="h-40 w-full" />;
   if (query.isError || !query.data) {
     return (
@@ -244,29 +271,10 @@ function HistoryList({
     );
   }
 
-  const { trainingCredits, ptoRequests } = query.data;
-  // Per-row date-range overlap with the chosen window:
-  //  - PTO: pto_start_date → pto_end_date (the actual vacation window)
-  //  - Training credit: start_date → last_day_date (the training window)
-  // Falls back to created_at when both date columns are null so the row
-  // stays discoverable. Memoized so chips show counts without re-filtering.
-  const trainingMatches = (r: TrainingCreditRow, win: Window) =>
-    overlaps(r.start_date, r.last_day_date, r.created_at, win);
-  const ptoMatches = (r: PtoRow, win: Window) =>
-    overlaps(r.pto_start_date, r.pto_end_date, r.created_at, win);
-
-  const counts = useMemo(() => {
-    const make = (r: HistoryRange) => {
-      const w = rangeWindow(r);
-      return (
-        trainingCredits.filter((row) => trainingMatches(row, w)).length +
-        ptoRequests.filter((row) => ptoMatches(row, w)).length
-      );
-    };
-    return { week: make("week"), month: make("month"), "90": make("90"), all: make("all") };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [trainingCredits, ptoRequests]);
-
+  const trainingMatches = (r: TrainingCreditRow, w: Window) =>
+    overlaps(r.start_date, r.last_day_date, r.created_at, w);
+  const ptoMatches = (r: PtoRow, w: Window) =>
+    overlaps(r.pto_start_date, r.pto_end_date, r.created_at, w);
   const win = rangeWindow(range);
   const visibleTraining = trainingCredits.filter((r) => trainingMatches(r, win));
   const visiblePto = ptoRequests.filter((r) => ptoMatches(r, win));
