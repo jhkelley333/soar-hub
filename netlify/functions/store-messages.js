@@ -78,6 +78,20 @@ async function visibleStoreNumbers(supa, userId) {
 const overlaps = (a = [], b = []) => { const set = new Set(b); return a.some((x) => set.has(x)); };
 
 // Normalize a links array: internal /paths kept, http(s) kept, bare hosts → https.
+// Convert a "days active" choice into an ISO expires_at, or null for "no
+// expiry". Returns the literal string "invalid" so the caller can shape a
+// 400 response. Accepts:
+//   null / undefined / "" / 0           → null (no expiry)
+//   positive integer 1..365             → now() + N days
+function expiryFromDays(raw) {
+  if (raw == null || raw === "") return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return "invalid";
+  if (n === 0) return null;
+  if (!Number.isInteger(n) || n < 1 || n > 365) return "invalid";
+  return new Date(Date.now() + n * 86_400_000).toISOString();
+}
+
 function sanitizeLinks(raw) {
   const out = [];
   for (const l of (Array.isArray(raw) ? raw : []).slice(0, 12)) {
@@ -117,10 +131,14 @@ async function listMessages(supa, profile) {
   const myStores = isManager ? await visibleStoreNumbers(supa, profile.id) : [];
   const isAdmin = role === "admin";
 
+  // Drop expired messages (expires_at <= now). NULL = never expires, which is
+  // the historical default and still the most common case.
+  const nowIso = new Date().toISOString();
   const { data: msgs, error } = await supa
     .from("store_messages")
     .select("*")
     .eq("is_active", true)
+    .or(`expires_at.is.null,expires_at.gt.${nowIso}`)
     .order("is_pinned", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(100);
@@ -182,6 +200,8 @@ async function createMessage(supa, profile, body) {
   if (!scope.length) return { error: "Couldn't determine which stores to post to.", status: 400 };
 
   const links = sanitizeLinks(body?.links);
+  const expires_at = expiryFromDays(body?.daysActive);
+  if (expires_at === "invalid") return { error: "Days active must be between 1 and 365.", status: 400 };
 
   const { data: msg, error } = await supa
     .from("store_messages")
@@ -194,6 +214,7 @@ async function createMessage(supa, profile, body) {
       body: text,
       links,
       is_pinned: !!body?.isPinned,
+      expires_at,
     })
     .select()
     .single();
@@ -226,6 +247,13 @@ async function updateMessage(supa, profile, body) {
   if (body.body != null) patch.body = String(body.body).trim();
   if (body.isPinned != null) patch.is_pinned = !!body.isPinned;
   if (body.links != null) patch.links = sanitizeLinks(body.links);
+  // daysActive on update: undefined = no change; null = clear back to "no
+  // expiry"; positive integer = reset the countdown from now.
+  if (body.daysActive !== undefined) {
+    const e = expiryFromDays(body.daysActive);
+    if (e === "invalid") return { error: "Days active must be between 1 and 365.", status: 400 };
+    patch.expires_at = e;
+  }
   if (Array.isArray(body.audienceRoles)) {
     const aud = [...new Set(body.audienceRoles.map((r) => String(r).toLowerCase()).filter((r) => AUDIENCE_ROLES.has(r)))];
     if (aud.length) patch.audience_roles = aud;
