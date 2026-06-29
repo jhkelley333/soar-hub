@@ -108,14 +108,14 @@ export function AlertsTab({ storeId }: { storeId: string | null }) {
         )}
       </div>
 
-      <Card className="mb-5 hidden grid-cols-3 divide-x divide-zinc-200 sm:grid">
-        <div className="px-5 py-4">
-          <Figure label="Open" value={data.counts.open} tone={data.counts.open ? "red" : undefined} mono={false} sub="Need acknowledgement" />
+      <Card className="mb-5 grid grid-cols-3 divide-x divide-zinc-200">
+        <div className="px-3 py-3 sm:px-5 sm:py-4">
+          <Figure label="Open" value={data.counts.open} tone={data.counts.open ? "red" : undefined} mono={false} sub="Need ack" />
         </div>
-        <div className="px-5 py-4">
+        <div className="px-3 py-3 sm:px-5 sm:py-4">
           <Figure label="Acknowledged" value={data.counts.acknowledged} mono={false} sub="Under review" />
         </div>
-        <div className="px-5 py-4">
+        <div className="px-3 py-3 sm:px-5 sm:py-4">
           <Figure label="Resolved" value={data.counts.resolved} mono={false} sub="Closed out" />
         </div>
       </Card>
@@ -152,7 +152,7 @@ export function AlertsTab({ storeId }: { storeId: string | null }) {
                 key={a.id}
                 onClick={() => setSelId(a.id)}
                 className={cn(
-                  "block w-full border-l-[3px] px-4 py-3 text-left transition",
+                  "block w-full border-l-[3px] px-4 py-4 text-left transition sm:py-3",
                   i ? "border-t border-t-zinc-100" : "",
                   on ? "border-l-accent bg-zinc-50" : "border-l-transparent hover:bg-zinc-50"
                 )}

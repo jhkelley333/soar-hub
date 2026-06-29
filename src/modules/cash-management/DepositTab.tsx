@@ -298,7 +298,7 @@ export function DepositTab({
                   shrinkage exposure. Carried-over dollars aren't new sales, so they're reconciled separately.
                 </InfoDot>
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <div>
                   <div className="mb-1 text-[11px] text-zinc-500">Open checks (count)</div>
                   <input

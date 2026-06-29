@@ -152,7 +152,7 @@ export function DepositDetailDrawer({
                   />
                   <div className="mt-1 text-[11px] text-amber-700">Fix a wrong-day entry here.</div>
                 </label>
-                <div className="grid grid-cols-3 gap-2">
+                <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
                   <label className="block">
                     <div className="mb-1 text-[11px] font-bold uppercase tracking-wider text-amber-800">Cash due</div>
                     <MoneyInput value={cashDue} onChange={setCashDue} />
@@ -193,7 +193,7 @@ export function DepositDetailDrawer({
           ) : (
             <section>
               <h4 className="mb-2 text-xs font-semibold uppercase tracking-wide text-midnight">Closeout</h4>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Row label="Business day" value={d.closeout.business_date} mono={false} />
                 <Row label="Status" value={<StatusPill status={d.closeout.status} />} mono={false} />
                 <Row label="Cash due" value={usd(d.closeout.cash_due_cents)} />
@@ -220,7 +220,7 @@ export function DepositDetailDrawer({
                 <h4 className="text-xs font-semibold uppercase tracking-wide text-midnight">Deposit {d.deposit.code}</h4>
                 <StatusPill status={d.deposit.status} />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Row label="Expected at bank" value={usd(d.deposit.expected_cents)} />
                 <Row label="Bank credited" value={d.deposit.bank_credited_cents != null ? usd(d.deposit.bank_credited_cents) : "—"} />
                 {d.deposit.variance_cents != null && (
