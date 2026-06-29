@@ -4,7 +4,10 @@
 
 const WEATHER_KEY = process.env.GOOGLE_WEATHER_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
 const GEOCODE_KEY = process.env.GOOGLE_GEOCODING_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
-const FORECAST_DAYS = 7;
+// Google Maps Weather "forecast/days:lookup" supports up to 10 days. We
+// surface them all; the dashboard widget keeps showing just the next few
+// while the Weather page renders the full 10-day strip.
+const FORECAST_DAYS = 10;
 
 export function weatherKeyConfigured() {
   return !!WEATHER_KEY;

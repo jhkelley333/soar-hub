@@ -61,15 +61,41 @@ export function WeatherPage() {
   const storesQ = useQuery({ queryKey: ["wo2", "caller-stores"], queryFn: fetchCallerStores, staleTime: 5 * 60_000 });
   const stores = storesQ.data?.stores ?? [];
 
-  const [storeId, setStoreId] = useState<string>("");
-  const [days, setDays] = useState(90);
+  // Persist the user's last picks across visits so the page doesn't reset to
+  // the primary store + 90-day default every time. Keyed locally because the
+  // values are presentational; if the saved store is no longer in scope we
+  // fall through to the primary-store default below.
+  const SAVED_STORE_KEY = "weather.lastStoreId";
+  const SAVED_DAYS_KEY = "weather.lastRangeDays";
+  const [storeId, setStoreId] = useState<string>(() => {
+    try { return localStorage.getItem(SAVED_STORE_KEY) || ""; } catch { return ""; }
+  });
+  const [days, setDays] = useState<number>(() => {
+    try {
+      const v = Number(localStorage.getItem(SAVED_DAYS_KEY));
+      return RANGES.some((r) => r.days === v) ? v : 90;
+    } catch { return 90; }
+  });
   const [weekOffset, setWeekOffset] = useState(0); // 0 = this week, -1 = last week…
 
-  // Default to the user's primary store, else the first scoped store.
+  // If the saved store isn't in scope (e.g. transferred out), fall back to the
+  // user's primary store, else the first scoped store. Only runs while we
+  // don't have a valid storeId resolved yet.
   useEffect(() => {
-    if (storeId || !stores.length) return;
+    if (!stores.length) return;
+    if (storeId && stores.some((s) => s.id === storeId)) return;
     setStoreId(profile?.primary_store_id && stores.some((s) => s.id === profile.primary_store_id) ? profile.primary_store_id : stores[0].id);
   }, [stores, storeId, profile?.primary_store_id]);
+
+  // Save the user's picks. Wrapped in try/catch in case the browser blocks
+  // storage (e.g. private mode, third-party cookies blocked).
+  useEffect(() => {
+    if (!storeId) return;
+    try { localStorage.setItem(SAVED_STORE_KEY, storeId); } catch { /* ignore */ }
+  }, [storeId]);
+  useEffect(() => {
+    try { localStorage.setItem(SAVED_DAYS_KEY, String(days)); } catch { /* ignore */ }
+  }, [days]);
 
   const curQ = useQuery({
     queryKey: ["weather", storeId],
@@ -119,7 +145,8 @@ export function WeatherPage() {
   }, [weekQ.data, curQ.data, week.days, todayYmd]);
 
   const cur = curQ.data?.current;
-  const forecast = (curQ.data?.forecast ?? []).slice(0, 7);
+  // Show the full 10-day forecast we now pull from Google Weather.
+  const forecast = (curQ.data?.forecast ?? []).slice(0, 10);
   const loc = curQ.data?.location ?? histQ.data?.location;
   const points = histQ.data?.points ?? [];
   const stats = useMemo(() => {
