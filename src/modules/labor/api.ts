@@ -82,3 +82,30 @@ export function fetchSyncStatus(): Promise<SyncStatusResponse> {
 export function triggerSyncNow(): Promise<SyncNowResponse> {
   return request<SyncNowResponse>(`${FN}?action=sync-now`, { method: "POST" });
 }
+
+// Diagnostic dry-run — reads the sheet, parses the column map, returns up to
+// 3 mapped sample rows. No DB writes. Used by the Pull Log admin to confirm
+// which sheet columns we're reading for each band when suspect values appear.
+export interface SyncDryRunResponse {
+  ok: true;
+  business_date: string;
+  rows_parsed: number;
+  stores_matched: number;
+  stores_orphaned: string[];
+  column_map: {
+    di: string | null;
+    location: string | null;
+    gm: string | null;
+    do: string | null;
+    sdo: string | null;
+    rvp: string | null;
+    base_ptd_labor_goal: string | null;
+    daily: Record<string, string | null>;
+    wtd: Record<string, string | null>;
+    ptd: Record<string, string | null>;
+  };
+  sample: Record<string, unknown>[];
+}
+export function triggerSyncDryRun(): Promise<SyncDryRunResponse> {
+  return request<SyncDryRunResponse>(`${FN}?action=sync-dry`, { method: "POST" });
+}

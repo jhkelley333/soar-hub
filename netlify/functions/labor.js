@@ -492,6 +492,27 @@ async function syncNow(user) {
   }
 }
 
+// Dry-run wrapper for diagnostics: reads the sheet and returns the parsed
+// column map + a sample of 3 mapped rows, WITHOUT writing to the DB. Use this
+// to confirm which sheet column we're reading for each band/field — handy when
+// suspect WTD/PTD values turn up app-wide and you need to rule out a column-
+// mapping shift. Same auth as sync-now.
+async function syncDryRun(user) {
+  if (!SYNC_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const base = (process.env.URL || process.env.DEPLOY_URL || "").replace(/\/$/, "");
+  if (!base) return { error: "site URL not configured", status: 500 };
+  try {
+    const res = await fetch(`${base}/.netlify/functions/labor-snapshot?dry=1`, {
+      method: "GET",
+    });
+    const detail = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: detail?.error || `dry-run failed (${res.status})`, status: 502 };
+    return { ok: true, ...detail };
+  } catch (e) {
+    return { error: e?.message || "dry-run failed", status: 502 };
+  }
+}
+
 // ── HTTP handler ─────────────────────────────────────────────────────
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
@@ -521,6 +542,7 @@ export const handler = async (event) => {
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "review") return unwrap(await saveReview(supa, user, body));
       if (action === "sync-now") return unwrap(await syncNow(user));
+      if (action === "sync-dry") return unwrap(await syncDryRun(user));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
     return respond(405, { error: "method not allowed" });
