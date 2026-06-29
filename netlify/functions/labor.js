@@ -44,8 +44,9 @@ const ORG_WIDE = new Set(["payroll", "admin", "vp", "coo"]);
 const SYNC_ROLES = new Set(["admin", "vp", "coo"]);
 
 // A day is a "miss" (note due) when labor runs over the goal by more than
-// this many points. Tunable without a deploy via env.
-const MISS_TOLERANCE_PTS = floatEnv(process.env.LABOR_MISS_TOLERANCE_PTS, 0.5);
+// this many points after 1-dp rounding. Default 0 → any positive variance
+// reads as over-chart; env LABOR_MISS_TOLERANCE_PTS can re-introduce slack.
+const MISS_TOLERANCE_PTS = floatEnv(process.env.LABOR_MISS_TOLERANCE_PTS, 0);
 
 function floatEnv(v, dflt) {
   const n = parseFloat(v);
@@ -136,12 +137,14 @@ function weekDates(anchor) {
 function round1(n) { return Math.round((Number(n) || 0) * 10) / 10; }
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 
-// Status for one band's labor% vs. goal. Negative variance = under goal
-// (good). Over by > tolerance = "over" (a daily miss → note due).
+// Status for one band's labor% vs. goal. Over the goal at all (after the same
+// 1-dp rounding that drives the displayed "+0.4 pts" variance) → "over"; a
+// daily miss requires an explanation. Tolerance defaults to 0 so anything
+// displayed as "+0.0 pts" stays on-chart while anything displayed positive
+// reads red — env LABOR_MISS_TOLERANCE_PTS can re-loosen if ever wanted.
 function chartStatus(laborPct, goalPct) {
   if (laborPct == null || goalPct == null) return "unknown";
-  const varPts = laborPct - goalPct;
-  if (varPts > MISS_TOLERANCE_PTS) return "over";
+  if (round1(laborPct - goalPct) > MISS_TOLERANCE_PTS) return "over";
   return "on";
 }
 
