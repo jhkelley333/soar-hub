@@ -71,9 +71,17 @@ function rangeWindow(range: HistoryRange): Window {
 // discoverable somewhere. A null window bound = unbounded that side.
 function overlaps(rowStartIso: string | null, rowEndIso: string | null, fallbackIso: string, win: Window): boolean {
   if (!win.start && !win.end) return true;
-  const rowStart = (rowStartIso && localDate(rowStartIso)) ?? localDate(fallbackIso) ?? new Date(fallbackIso);
-  const rowEndRaw = (rowEndIso && localDate(rowEndIso)) ?? rowStart;
-  const rowEnd = new Date(rowEndRaw);
+  // Use ternaries instead of `&&` for the null-coalesce chain — a `string &&`
+  // expression with an empty string evaluates to "" (not null), which slipped
+  // past `??` and produced `rowStart: "" | Date`, breaking `.getTime()` under
+  // strict TS. Ternaries always yield `Date | null` so the chain narrows.
+  const rowStart: Date =
+    (rowStartIso ? localDate(rowStartIso) : null) ??
+    localDate(fallbackIso) ??
+    new Date(fallbackIso);
+  const rowEnd: Date = new Date(
+    (rowEndIso ? localDate(rowEndIso) : null) ?? rowStart,
+  );
   rowEnd.setHours(23, 59, 59, 999);
   if (win.start && rowEnd.getTime() < win.start.getTime()) return false;
   if (win.end && rowStart.getTime() > win.end.getTime()) return false;
