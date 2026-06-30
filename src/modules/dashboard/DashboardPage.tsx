@@ -135,6 +135,13 @@ export function DashboardPage() {
   const canPto = !!role && PTO_VIEW_ROLES.has(role);
   const canWo = !!role && WO_ROLES.has(role);
   const isEaApprover = !!role && EA_APPROVER_ROLES.has(role);
+  // Oversight-only roles (currently just FBC — external consultant) get a
+  // narrower dashboard: CFMs Expiring + Stores in Scope + Birthdays. The
+  // operations-heavy tiles (Open WOs hero, Cash Variances, Bonus PAFs,
+  // Action Queue, Work-Order Messages) are hidden so the page isn't
+  // dominated by signals they can't act on. Easy to extend if we add
+  // similar consulting/audit-only roles later.
+  const isOversightOnly = role === "fbc";
 
   // Dashboard cards are summary data — they don't need second-by-second
   // freshness, and they shouldn't fan out a fresh wave of queries every
@@ -209,17 +216,10 @@ export function DashboardPage() {
       {/* Store message board — announcements addressed to the signed-in user. */}
       <MessageBoard />
 
-      {/* KPI row: hero + 4 stat cards */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
-        <KpiHero
-          loading={woStatsQ.isLoading}
-          error={woStatsQ.isError}
-          open={openWo}
-          escalated={escalated}
-          points={sparkPoints}
-          trendPct={trendPct}
-        />
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:col-span-7">
+      {/* KPI row: hero + 4 stat cards (operations roles). FBC gets a slim
+          two-card row covering just the oversight metrics they care about. */}
+      {isOversightOnly ? (
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <KpiCard
             icon={ShieldCheck}
             title="CFMs Expiring"
@@ -230,15 +230,6 @@ export function DashboardPage() {
             to="/cfm-expiring"
           />
           <KpiCard
-            icon={Wallet}
-            title="Cash Variances"
-            sub="Open, over tolerance"
-            value={!canCash ? "—" : cashQ.isLoading ? "…" : cashQ.isError ? "—" : String(cashAlerts)}
-            foot={!canCash ? "Not in your scope" : cashAlerts > 0 ? `${cashAlerts} awaiting resolution` : "All clear for the cycle"}
-            tone={cashAlerts > 0 ? "warn" : "ok"}
-            to={canCash ? "/admin/cash-management" : undefined}
-          />
-          <KpiCard
             icon={Banknote}
             title="Stores in Scope"
             sub={storeCount !== null ? "Your footprint" : ""}
@@ -247,30 +238,72 @@ export function DashboardPage() {
             tone="sky"
             to="/my-stores"
           />
-          <KpiCard
-            icon={FileText}
-            title="Bonus PAFs"
-            sub="Awaiting your review"
-            value={!isSdoReviewer ? "—" : sdoQ.isLoading ? "…" : sdoQ.isError ? "—" : String(bonusPafs.length)}
-            foot={!isSdoReviewer ? "Not in your scope" : bonusPafs.length > 0 ? "Before payroll" : "Nothing pending"}
-            tone={bonusPafs.length > 0 ? "warn" : "ok"}
-            to={isSdoReviewer ? "/paf" : undefined}
-          />
         </div>
-      </div>
+      ) : (
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12">
+          <KpiHero
+            loading={woStatsQ.isLoading}
+            error={woStatsQ.isError}
+            open={openWo}
+            escalated={escalated}
+            points={sparkPoints}
+            trendPct={trendPct}
+          />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:col-span-7">
+            <KpiCard
+              icon={ShieldCheck}
+              title="CFMs Expiring"
+              sub="Next 60 days"
+              value={cfmQ.isLoading ? "…" : cfmQ.isError ? "—" : String(cfmTotal)}
+              foot={cfmExpired > 0 ? `${cfmExpired} already expired` : "All certifications current"}
+              tone={cfmExpired > 0 ? "err" : cfmTotal > 0 ? "warn" : "ok"}
+              to="/cfm-expiring"
+            />
+            <KpiCard
+              icon={Wallet}
+              title="Cash Variances"
+              sub="Open, over tolerance"
+              value={!canCash ? "—" : cashQ.isLoading ? "…" : cashQ.isError ? "—" : String(cashAlerts)}
+              foot={!canCash ? "Not in your scope" : cashAlerts > 0 ? `${cashAlerts} awaiting resolution` : "All clear for the cycle"}
+              tone={cashAlerts > 0 ? "warn" : "ok"}
+              to={canCash ? "/admin/cash-management" : undefined}
+            />
+            <KpiCard
+              icon={Banknote}
+              title="Stores in Scope"
+              sub={storeCount !== null ? "Your footprint" : ""}
+              value={storesQ.isLoading ? "…" : storesQ.isError ? "—" : String(storeCount ?? 0)}
+              foot="Across your regions"
+              tone="sky"
+              to="/my-stores"
+            />
+            <KpiCard
+              icon={FileText}
+              title="Bonus PAFs"
+              sub="Awaiting your review"
+              value={!isSdoReviewer ? "—" : sdoQ.isLoading ? "…" : sdoQ.isError ? "—" : String(bonusPafs.length)}
+              foot={!isSdoReviewer ? "Not in your scope" : bonusPafs.length > 0 ? "Before payroll" : "Nothing pending"}
+              tone={bonusPafs.length > 0 ? "warn" : "ok"}
+              to={isSdoReviewer ? "/paf" : undefined}
+            />
+          </div>
+        </div>
+      )}
 
-      <ActionQueue
-        woApprovals={canWo ? woApprovals : 0}
-        pafCount={isSdoReviewer ? bonusPafs.length : 0}
-        cashCount={canCash ? cashAlerts + closeoutsToValidate : 0}
-        eaCount={isEaApprover ? eaCount : 0}
-        loading={
-          (canWo && woAlertsQ.isLoading) ||
-          (isSdoReviewer && sdoQ.isLoading) ||
-          (canCash && cashQ.isLoading) ||
-          (isEaApprover && eaQ.isLoading)
-        }
-      />
+      {!isOversightOnly && (
+        <ActionQueue
+          woApprovals={canWo ? woApprovals : 0}
+          pafCount={isSdoReviewer ? bonusPafs.length : 0}
+          cashCount={canCash ? cashAlerts + closeoutsToValidate : 0}
+          eaCount={isEaApprover ? eaCount : 0}
+          loading={
+            (canWo && woAlertsQ.isLoading) ||
+            (isSdoReviewer && sdoQ.isLoading) ||
+            (canCash && cashQ.isLoading) ||
+            (isEaApprover && eaQ.isLoading)
+          }
+        />
+      )}
 
       {/* Secondary grid */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -292,11 +325,13 @@ export function DashboardPage() {
         )}
       </div>
 
-      <NewMessages
-        loading={msgQ.isLoading}
-        error={msgQ.isError}
-        messages={msgQ.data?.messages ?? []}
-      />
+      {!isOversightOnly && (
+        <NewMessages
+          loading={msgQ.isLoading}
+          error={msgQ.isError}
+          messages={msgQ.data?.messages ?? []}
+        />
+      )}
 
       <BirthdayCelebration />
     </div>
