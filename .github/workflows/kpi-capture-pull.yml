@@ -1,0 +1,68 @@
+# KPI capture auto-pull — external trigger for the kpi-capture function.
+#
+# Netlify's native scheduled-function trigger has been unreliable in this
+# project (see labor-auto-pull.yml, which moved labor-snapshot off it for the
+# same reason) — kpi-capture.js never got that same fix, which is why admins
+# had to manually check the KPI Dashboard until the feed looked complete,
+# then hit "Refresh" on Labor v2 to pull it in. This workflow drives the same
+# capture from GitHub's scheduler instead, which is reliable and gives a
+# visible run history in the Actions tab.
+#
+# It just pings the (unauthenticated, idempotent) kpi-capture function. The
+# function itself still:
+#   - gates to its capture hours (7 AM–2 PM Central), so off-window pings
+#     return instantly without writing, and
+#   - upserts on (central_date, central_hour) for kpi_snapshots and on
+#     (store_number, business_date) for labor_v2_daily, so a retry — or the
+#     Netlify-native schedule firing at the same time — never duplicates.
+# So running every 30 minutes all day is cheap and safe.
+#
+# SETUP:
+#   - Nothing required beyond merging this to the default branch and having
+#     Actions enabled. It defaults to https://mysoarhub.com.
+#   - Optional: set a SITE_URL repo secret to override the target (e.g. if the
+#     domain changes) — Settings → Secrets and variables → Actions.
+#   - Scheduled workflows only run from the default branch.
+#
+# Verify: the Actions tab shows a run every ~30 min, and /admin/labor-v2's
+# date list + the KPI Dashboard both pick up same-day numbers without anyone
+# clicking Refresh. (You can also run it on demand here via "Run workflow".)
+
+name: KPI capture auto-pull
+
+on:
+  schedule:
+    # Every 30 minutes. GitHub cron is UTC; the function applies its own
+    # capture-hours window, so we don't restrict hours here.
+    - cron: "*/30 * * * *"
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+# Don't pile up overlapping runs if one is slow.
+concurrency:
+  group: kpi-capture-pull
+  cancel-in-progress: false
+
+jobs:
+  pull:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping kpi-capture
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+        run: |
+          set -euo pipefail
+          base="${SITE_URL:-https://mysoarhub.com}"
+          base="${base%/}"
+          url="${base}/.netlify/functions/kpi-capture"
+          echo "Pinging ${url}"
+          code=$(curl -fsS --max-time 120 -o /tmp/kpi-capture.json -w "%{http_code}" "${url}" || true)
+          echo "HTTP ${code}"
+          echo "--- response ---"
+          cat /tmp/kpi-capture.json 2>/dev/null || echo "(no body)"
+          echo
+          # Treat any non-2xx as a failure so a broken pull shows red here.
+          case "${code}" in
+            2*) echo "OK" ;;
+            *) echo "::error::kpi-capture returned HTTP ${code}"; exit 1 ;;
+          esac

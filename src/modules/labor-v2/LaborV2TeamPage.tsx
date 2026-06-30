@@ -236,7 +236,7 @@ export function LaborV2TeamPage() {
       ) : q.isError ? (
         <EmptyState title="Couldn't load team labor" description={(q.error as Error)?.message ?? "Try again."} />
       ) : !t ? (
-        <EmptyState title="No labor data yet" description="No labor captured for your stores yet. Data appears after the next capture (7/9/11 AM CT)." />
+        <EmptyState title="No labor data yet" description="No labor captured for your stores yet. Data appears after the next capture (7 AM–2 PM CT)." />
       ) : (
         <div className="space-y-5">
           {/* Tiles (whole scope) */}

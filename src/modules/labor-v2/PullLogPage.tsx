@@ -49,7 +49,7 @@ export function PullLogPage() {
       ) : q.isError ? (
         <EmptyState title="Couldn't load the pull log" description={(q.error as Error)?.message ?? "Try again."} />
       ) : entries.length === 0 ? (
-        <EmptyState title="No pulls logged yet" description="Pulls appear here after the next scheduled capture (7/9/11 AM CT) or a manual refresh." />
+        <EmptyState title="No pulls logged yet" description="Pulls appear here after the next scheduled capture (7 AM–2 PM CT) or a manual refresh." />
       ) : (
         <Card>
           <CardBody className="p-0">

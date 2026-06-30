@@ -162,7 +162,7 @@ export function LaborV2Page() {
       ) : !activeDate ? (
         <EmptyState
           title="No labor history yet"
-          description="Click Refresh to pull the latest day from the feed, or wait for the next scheduled capture (7/9/11 AM CT)."
+          description="Click Refresh to pull the latest day from the feed, or wait for the next scheduled capture (7 AM–2 PM CT)."
         />
       ) : (
         <>
