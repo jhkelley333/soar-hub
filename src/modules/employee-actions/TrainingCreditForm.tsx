@@ -145,8 +145,13 @@ export function TrainingCreditForm({
     for (const d of state.training_days) {
       if (!d.start_time || !d.end_time)
         return setError(`Enter a start and end time for ${d.day}.`);
-      if (calcDayHours(d.start_time, d.end_time) <= 0)
-        return setError(`${d.day}: end time must be after the start time.`);
+      const hrs = calcDayHours(d.start_time, d.end_time);
+      // 0 hrs = same start & end time (overnight wraps now produce a real
+      // positive number from calcDayHours, so this catches actual data errors).
+      if (hrs <= 0)
+        return setError(`${d.day}: end time can't be the same as the start time.`);
+      if (hrs > 16)
+        return setError(`${d.day}: that's over 16 hours — double-check the times.`);
     }
 
     submit.mutate({
