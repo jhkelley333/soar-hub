@@ -283,11 +283,32 @@ export const handler = async (event) => {
   // so the layout is always visible. Bypasses the Monday-9AM time guard.
   const toRaw = (params.to || "").trim().toLowerCase();
   if (toRaw) {
-    const { data: prof } = await supa
-      .from("profiles").select("id, email, full_name, preferred_name, role")
-      .ilike("email", toRaw).eq("is_active", true).maybeSingle();
-    if (!prof) return { statusCode: 400, body: JSON.stringify({ error: "No active profile with that email." }) };
+    // Two-pass lookup so the error message tells the truth: first match by
+    // email (any active status), then check is_active separately. The legacy
+    // single-shot ilike+eq returned the same "No active profile" message for
+    // (a) no profile at all, (b) profile is inactive, (c) email typo — all
+    // three are different problems and need different fixes.
+    const { data: candidates } = await supa
+      .from("profiles")
+      .select("id, email, full_name, preferred_name, role, is_active")
+      .ilike("email", toRaw);
+    if (!candidates || candidates.length === 0) {
+      return { statusCode: 404, body: JSON.stringify({
+        error: "No profile with that email exists. Check spelling, or make sure the address matches profiles.email exactly (case-insensitive).",
+        searched: toRaw,
+      }) };
+    }
+    const prof = candidates.find((p) => p.is_active) || candidates[0];
+    if (!prof.is_active) {
+      return { statusCode: 400, body: JSON.stringify({
+        error: "Profile exists but is_active=false. Reactivate it (My Team → Edit member → Reactivate) and try again.",
+        profile: { id: prof.id, email: prof.email, role: prof.role },
+      }) };
+    }
 
+    // Real data only for the roles the regular schedule actually digests
+    // (do, sdo). RVP / VP / COO and other roles can still test the email
+    // layout — they get the sample dataset rendered into the same template.
     let data = null;
     if (prof.role === "do" || prof.role === "sdo") {
       const stores = await storeNumbersFor(supa, prof.id);
@@ -299,7 +320,16 @@ export const handler = async (event) => {
     const subject = `[TEST] Your Monday hub digest — ${data.total} item${data.total === 1 ? "" : "s"} need attention`;
     const { html, text } = buildEmail(prof, data, appBaseUrl());
     const res = await sendEmail({ to: prof.email, subject, html, text });
-    return { statusCode: 200, body: JSON.stringify({ test: true, to: prof.email, total: data.total, sample: useSample, result: res?.ok ? "sent" : (res?.status || res?.error || "skipped") }) };
+    return { statusCode: 200, body: JSON.stringify({
+      test: true,
+      to: prof.email,
+      role: prof.role,
+      total: data.total,
+      sample: useSample,
+      // RVPs etc. won't see this scheduled normally — the test just shows the layout.
+      role_in_regular_schedule: prof.role === "do" || prof.role === "sdo",
+      result: res?.ok ? "sent" : (res?.status || res?.error || "skipped"),
+    }) };
   }
 
   const central = wallClockInTz(new Date(), SEND_TZ);
