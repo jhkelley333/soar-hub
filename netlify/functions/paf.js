@@ -522,9 +522,28 @@ async function listMyStores(supa, user) {
     return { stores: [] };
   }
   const rows = await resolveVisibleStoreRows(supa, user.id);
-  // Strip out any PAF-restricted stores the caller can't pick (e.g. Store
-  // 8100 is hidden from DOs). The submit endpoint enforces the same rule.
-  return { stores: rows.filter((s) => canSeeRestrictedStore(user.role, s.number)) };
+  // Strip out any PAF-restricted stores the caller can't pick.
+  const visible = rows.filter((s) => canSeeRestrictedStore(user.role, s.number));
+
+  // Restricted stores like 8100 (corporate/hold — where above-store leadership
+  // is coded) sit OUTSIDE the normal org tree, so they wouldn't appear in any
+  // RVP's or SDO's scope-based visible-stores list. Append them as a global
+  // option for the roles allowed to see them, so an SDO/RVP/VP/COO/payroll
+  // can still submit a PAF against the store their employee is coded to.
+  const haveNumbers = new Set(visible.map((s) => String(s.number)));
+  const needGlobalNumbers = Object.keys(PAF_RESTRICTED_STORES)
+    .filter((n) => !haveNumbers.has(n))
+    .filter((n) => canSeeRestrictedStore(user.role, n));
+  if (needGlobalNumbers.length) {
+    const { data: extras } = await supa
+      .from("stores")
+      .select(STORE_SELECT)
+      .in("number", needGlobalNumbers)
+      .eq("is_active", true);
+    for (const row of extras || []) visible.push(flattenStore(row));
+    visible.sort((a, b) => Number(a.number) - Number(b.number));
+  }
+  return { stores: visible };
 }
 
 // ----------------------------------------------------------------------------
@@ -706,9 +725,12 @@ async function buildPafRowFromBody(supa, user, body) {
   }
 
   // Scope check: caller must have access to a Drive-In # they typed in.
-  // Skipped when waived or when the store was derived from the new location
-  // (a demotion's destination store may sit outside the submitter's scope).
-  if (driveIn && user.role !== "admin") {
+  // Skipped when waived, when the store was derived from the new location
+  // (a demotion's destination store may sit outside the submitter's scope),
+  // OR when the store is on the PAF_RESTRICTED_STORES allowlist for this
+  // role — those are intentionally global for allowed roles even when they
+  // sit outside the org tree (e.g. Store 8100 corporate/hold).
+  if (driveIn && user.role !== "admin" && !PAF_RESTRICTED_STORES[String(driveIn)]) {
     const numbers = await resolveVisibleStoreNumbers(supa, user.id);
     if (!numbers.includes(driveIn)) {
       return { error: `Store ${driveIn} is outside your scope.`, status: 403 };
