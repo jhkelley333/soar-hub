@@ -17,10 +17,17 @@ import { createClient } from "@supabase/supabase-js";
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
+// Keep this in sync with src/types/database.ts UserRole. Missing entries
+// here cause the set/clear endpoints to reject toggles for that role with
+// "module_key and a valid role are required" even though the role exists
+// — that's how the Role Access grid for fbc / accounting / facilities /
+// human_resources started failing once those roles were added.
 const ALL_ROLES = [
   "shift_manager", "first_assistant_manager", "associate_manager",
   "crew_leader", "crew_member", "carhop",
-  "gm", "do", "sdo", "rvp", "vp", "coo", "payroll", "admin",
+  "gm", "do", "sdo", "rvp", "vp", "coo",
+  "payroll", "accounting", "facilities", "human_resources", "fbc",
+  "admin",
 ];
 
 function admin() {
