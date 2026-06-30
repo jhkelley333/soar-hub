@@ -74,8 +74,22 @@ const PERIODS: { key: PeriodKey; label: string }[] = [
   { key: "ptd", label: "PTD" },
 ];
 
+// Upstream KPI feed transiently 502s with "non-JSON" — usually a cold start on
+// the source. Auto-retry several times with exponential backoff so a refresh-
+// then-everything-works rhythm becomes invisible. Total worst-case spend is
+// ~22s across 5 attempts before the user actually sees an error card.
+const MAX_KPI_RETRIES = 4; // total attempts = 1 + 4 = 5
+
 export function KpiDashboardPage() {
-  const q = useQuery({ queryKey: ["kpi-snapshot"], queryFn: fetchKpiSnapshot, staleTime: 5 * 60_000 });
+  const q = useQuery({
+    queryKey: ["kpi-snapshot"],
+    queryFn: fetchKpiSnapshot,
+    staleTime: 5 * 60_000,
+    retry: MAX_KPI_RETRIES,
+    // 1.5s, 3s, 6s, 12s (clamped at 12s) — gives the upstream time to warm up
+    // without piling on more pressure during a real outage.
+    retryDelay: (attempt) => Math.min(1500 * 2 ** attempt, 12_000),
+  });
   const [period, setPeriod] = useState<PeriodKey>("day");
   const [level, setLevel] = useState<LevelKey>("region"); // base level when not drilled
   const [path, setPath] = useState<{ level: LevelKey; name: string }[]>([]);
@@ -146,8 +160,34 @@ export function KpiDashboardPage() {
       />
 
       {q.isLoading ? (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
-          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}
+        <div className="space-y-3">
+          {/* Live status strip — indeterminate progress while we wait, and a
+              transparent "Retrying" message when an attempt failed. The user
+              asked for this so a transient non-JSON response isn't confused
+              with the page being broken. */}
+          <div className="rounded-md bg-white px-4 py-2 ring-1 ring-inset ring-zinc-200">
+            <div className="flex items-center justify-between text-xs text-zinc-600">
+              <span className="font-medium">
+                {q.failureCount > 0
+                  ? `Retrying the KPI feed… attempt ${q.failureCount + 1} of ${MAX_KPI_RETRIES + 1}`
+                  : "Loading KPIs…"}
+              </span>
+              {q.failureCount > 0 && (
+                <span className="text-amber-700">
+                  Upstream is slow to respond — hold on
+                </span>
+              )}
+            </div>
+            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-zinc-100">
+              <div className="h-full w-1/3 animate-[kpiBar_1.2s_ease-in-out_infinite] rounded-full bg-accent" />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+            {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-24 w-full" />)}
+          </div>
+          {/* Local keyframes — declare via a one-off <style> so we don't have
+              to wire a Tailwind animation in the global config. */}
+          <style>{`@keyframes kpiBar { 0% { transform: translateX(-100%); } 100% { transform: translateX(400%); } }`}</style>
         </div>
       ) : q.isError ? (
         <EmptyState
