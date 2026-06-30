@@ -184,6 +184,7 @@ function AuditList({ audits, canWrite, onOpen, onCreated }: {
 }) {
   const toast = useToast();
   const [picking, setPicking] = useState(false);
+  const [view, setView] = useState<"active" | "archived">("active");
   const storesQ = useQuery({ queryKey: ["site-audit-stores"], queryFn: fetchAuditStores, enabled: picking });
   const [storeId, setStoreId] = useState("");
   const create = useMutation({
@@ -191,6 +192,10 @@ function AuditList({ audits, canWrite, onOpen, onCreated }: {
     onSuccess: (r) => { setPicking(false); setStoreId(""); onCreated(r.audit_id); },
     onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't start audit.", "error"),
   });
+
+  const activeCount = audits.filter((a) => a.status !== "complete").length;
+  const archivedCount = audits.length - activeCount;
+  const visible = audits.filter((a) => view === "archived" ? a.status === "complete" : a.status !== "complete");
 
   return (
     <div>
@@ -204,22 +209,47 @@ function AuditList({ audits, canWrite, onOpen, onCreated }: {
         )}
       </div>
 
-      {audits.length === 0 ? (
-        <EmptyState title="No audits yet" description={canWrite ? "Start a new audit to walk a store and capture issues." : "Audits in your scope will appear here."} />
+      <div className="mb-3 inline-flex rounded-md ring-1 ring-inset ring-zinc-200">
+        {(["active", "archived"] as const).map((v) => (
+          <button key={v} onClick={() => setView(v)} className={cn("px-3.5 py-1.5 text-sm font-medium capitalize transition first:rounded-l-md last:rounded-r-md",
+            view === v ? "bg-midnight text-white" : "text-zinc-600 hover:bg-zinc-50")}>
+            {v} <span className="tabular-nums opacity-70">{v === "active" ? activeCount : archivedCount}</span>
+          </button>
+        ))}
+      </div>
+
+      {visible.length === 0 ? (
+        <EmptyState
+          title={view === "archived" ? "No archived audits" : "No audits yet"}
+          description={view === "archived"
+            ? "Audits an admin has closed will be archived here."
+            : canWrite ? "Start a new audit to walk a store and capture issues." : "Audits in your scope will appear here."}
+        />
       ) : (
         <div className="space-y-3">
-          {audits.map((a) => {
+          {visible.map((a) => {
             const s = a.stats;
+            const closed = a.status === "complete";
             return (
               <button key={a.id} onClick={() => onOpen(a.id)}
-                className="flex w-full items-center gap-3 rounded-2xl border border-zinc-200 bg-white p-4 text-left shadow-card transition hover:border-accent/60">
+                className={cn("flex w-full items-center gap-3 rounded-2xl border p-4 text-left shadow-card transition hover:border-accent/60",
+                  closed ? "border-zinc-200 bg-zinc-50/60" : "border-zinc-200 bg-white")}>
                 <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent/10 text-accent text-sm font-bold">
                   #{a.store_number}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="truncate font-semibold text-midnight">{a.store_name || `Store #${a.store_number}`}</span>
-                    {s.high > 0 && <span className="shrink-0 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-700">{s.high} high</span>}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className={cn("truncate font-semibold", closed ? "text-zinc-500" : "text-midnight")}>
+                      {a.store_name || `Store #${a.store_number}`}
+                    </span>
+                    {closed && (
+                      <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-zinc-200 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-zinc-600">
+                        Closed
+                      </span>
+                    )}
+                    {!closed && s.high > 0 && (
+                      <span className="shrink-0 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-700">{s.high} high</span>
+                    )}
                     {a.last_report && (
                       <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
                         <Send className="h-2.5 w-2.5" strokeWidth={2.5} /> Shared
@@ -308,7 +338,7 @@ function AuditSummary({ audit, canWrite, onBack, onCapture, onShare, onIssue, on
         </div>
       </div>
 
-      {canWrite && (
+      {canWrite && !isClosed && (
         <button onClick={onShare}
           className="mb-4 flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-200 bg-white py-2.5 text-sm font-semibold text-midnight shadow-card transition hover:border-accent hover:text-accent">
           <Send className="h-4 w-4" /> Share &amp; sign off report
@@ -330,11 +360,17 @@ function AuditSummary({ audit, canWrite, onBack, onCapture, onShare, onIssue, on
         <div className="space-y-2">{issues.map((i) => <IssueRow key={i.id} issue={i} onClick={() => onIssue(i.id)} />)}</div>
       )}
 
-      {canWrite && (
+      {canWrite && !isClosed && (
         <button onClick={onCapture}
           className="sticky bottom-4 mt-5 flex w-full items-center justify-center gap-2 rounded-full bg-accent px-5 py-3.5 text-sm font-semibold text-white shadow-float hover:bg-accent/90">
           <Camera className="h-5 w-5" /> Capture issue
         </button>
+      )}
+
+      {isClosed && (
+        <div className="mt-5 rounded-xl border border-dashed border-zinc-200 bg-zinc-50 p-4 text-center text-xs text-zinc-500">
+          This audit is closed. Reopen it to capture or share again.
+        </div>
       )}
 
       {audit.can_close && (
