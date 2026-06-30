@@ -2,7 +2,7 @@
 // Driven off the fiscal calendar: when a captured business_date is a fiscal
 // week end, each store's WTD band is the closing week; when it's a period end,
 // the PTD band is the closing period. Upsert keyed by fiscal identifiers, so
-// re-running (the 7/9/11 captures, or a revision) just refreshes the close.
+// re-running (the hourly captures, or a revision) just refreshes the close.
 
 import { fiscalForDate } from "./fiscal.js";
 

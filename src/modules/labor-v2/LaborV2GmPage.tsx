@@ -113,7 +113,7 @@ export function LaborV2GmPage() {
       ) : !day ? (
         <EmptyState
           title="No labor data yet"
-          description="No labor has been captured for this store and week. Data appears once the feed pulls (7/9/11 AM CT) or after an admin refreshes Labor v2."
+          description="No labor has been captured for this store and week. Data appears once the feed pulls (7 AM–2 PM CT) or after an admin refreshes Labor v2."
         />
       ) : (
         <div className="space-y-5">
