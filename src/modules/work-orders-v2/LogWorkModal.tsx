@@ -151,13 +151,13 @@ export function LogWorkModal({
       let useVendorId = vendorId;
       let resolvedVendorName = vendorName.trim();
       if (addVendor && !useVendorId && vendorName.trim()) {
-        const { vendor, linked_existing } = await saveVendor({
+        const { vendor, linked_existing, backfilled } = await saveVendor({
           name: vendorName.trim(),
           category: category || undefined,
           is_active: true,
           // Best-effort contact details extracted from the invoice. Backend
-          // ignores empty strings; for an existing-name collision it returns
-          // the existing row unchanged (won't clobber its current details).
+          // backfills empty fields on an existing vendor without overwriting
+          // anything already set by hand.
           phone: extractedVendor.phone || undefined,
           email: extractedVendor.email || undefined,
           website: extractedVendor.website || undefined,
@@ -165,14 +165,16 @@ export function LogWorkModal({
         });
         useVendorId = vendor.id;
         setVendorId(vendor.id);
-        // When the name collided with an existing vendor not visible at this
-        // store, the backend returns that vendor instead of failing on the
-        // unique constraint. Use the canonical name so the work order links
-        // to the right row, and let the user know that's what happened.
         if (linked_existing) {
           resolvedVendorName = vendor.name;
           setVendorName(vendor.name);
-          toast.push(`Linked to existing vendor "${vendor.name}".`, "success");
+          const n = backfilled?.length ?? 0;
+          toast.push(
+            n > 0
+              ? `Linked to existing vendor "${vendor.name}" — filled in ${n} missing field${n === 1 ? "" : "s"}.`
+              : `Linked to existing vendor "${vendor.name}".`,
+            "success",
+          );
         }
       }
       const data = await fileToBase64(invoice);

@@ -3067,6 +3067,29 @@ export const handler = async (event) => {
                 .ilike("name", name)
                 .maybeSingle();
               if (existing) {
+                // BACKFILL any empty contact fields on the existing row with
+                // what the caller carried in (typically extracted from an
+                // invoice letterhead). Never overwrites a non-empty existing
+                // value — a vendor already curated by hand keeps its data.
+                const BACKFILL_KEYS = ["phone", "email", "website", "address", "category", "services", "contact_person"];
+                const patch = {};
+                for (const k of BACKFILL_KEYS) {
+                  const incoming = fields?.[k];
+                  if (incoming && !String(existing[k] || "").trim()) {
+                    patch[k] = incoming;
+                  }
+                }
+                if (Object.keys(patch).length) {
+                  const { data: enriched } = await supabase
+                    .from("vendors")
+                    .update(patch)
+                    .eq("id", existing.id)
+                    .select("*, vendor_ratings(rating), vendor_scopes(id, scope_type, scope_id)")
+                    .single();
+                  if (enriched) {
+                    return respond(200, { ok: true, vendor: enriched, linked_existing: true, backfilled: Object.keys(patch) });
+                  }
+                }
                 return respond(200, { ok: true, vendor: existing, linked_existing: true });
               }
             }
