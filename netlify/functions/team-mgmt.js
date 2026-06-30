@@ -270,8 +270,8 @@ async function listManaged(supa, manager) {
     .from("profiles")
     .select(
       "id, preferred_name, profile_photo_url, birthday, show_birthday, " +
-        "shirt_size, favorite_quote, cfm_cert_number, cfm_issued_at, " +
-        "cfm_expires_at, start_date, gm_assigned_date, primary_store_id"
+        "shirt_size, shirt_cut, favorite_quote, cfm_cert_number, cfm_issued_at, " +
+        "cfm_expires_at, passport_expires_at, start_date, gm_assigned_date, primary_store_id"
     )
     .in("id", members.map((m) => m.id));
   const extrasById = Object.fromEntries((extras ?? []).map((e) => [e.id, e]));
@@ -301,10 +301,12 @@ async function listManaged(supa, manager) {
     row.birthday = e.birthday ?? null;
     row.show_birthday = e.show_birthday !== false;
     row.shirt_size = e.shirt_size ?? null;
+    row.shirt_cut = e.shirt_cut ?? null;
     row.favorite_quote = e.favorite_quote ?? null;
     row.cfm_cert_number = e.cfm_cert_number ?? null;
     row.cfm_issued_at = e.cfm_issued_at ?? null;
     row.cfm_expires_at = e.cfm_expires_at ?? null;
+    row.passport_expires_at = e.passport_expires_at ?? null;
     row.start_date = e.start_date ?? null;
     row.gm_assigned_date = e.gm_assigned_date ?? null;
     row.primary_store_id = e.primary_store_id ?? null;

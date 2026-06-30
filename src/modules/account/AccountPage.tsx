@@ -32,12 +32,19 @@ import {
 } from "@/lib/push";
 
 const SHIRT_SIZES = ["XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
+const SHIRT_CUTS: { value: string; label: string }[] = [
+  { value: "mens", label: "Men's" },
+  { value: "womens", label: "Women's" },
+];
 const AVATAR_BUCKET = "avatars";
 const CFM_BUCKET = "cfm-certs";
+const PASSPORT_BUCKET = "passports";
 const AVATAR_MIME = ["image/jpeg", "image/png", "image/webp"];
 const CFM_MIME = ["application/pdf", "image/jpeg", "image/png"];
+const PASSPORT_MIME = ["application/pdf", "image/jpeg", "image/png"];
 const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
 const CFM_MAX_BYTES = 10 * 1024 * 1024;
+const PASSPORT_MAX_BYTES = 10 * 1024 * 1024;
 
 export function AccountPage() {
   const { profile, refresh } = useAuth();
@@ -51,6 +58,7 @@ export function AccountPage() {
   // Only GMs see + can change this; everyone else is force-true.
   const [showBirthday, setShowBirthday] = useState(true);
   const [shirtSize, setShirtSize] = useState("");
+  const [shirtCut, setShirtCut] = useState("");
   const [favoriteQuote, setFavoriteQuote] = useState("");
   const [profileError, setProfileError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -64,6 +72,7 @@ export function AccountPage() {
       setBirthday(profile.birthday ?? "");
       setShowBirthday(profile.show_birthday ?? true);
       setShirtSize(profile.shirt_size ?? "");
+      setShirtCut(profile.shirt_cut ?? "");
       setFavoriteQuote(profile.favorite_quote ?? "");
     }
   }, [profile]);
@@ -78,9 +87,10 @@ export function AccountPage() {
       (birthday || null) !== (profile.birthday ?? null) ||
       showBirthday !== (profile.show_birthday ?? true) ||
       (shirtSize || null) !== (profile.shirt_size ?? null) ||
+      (shirtCut || null) !== (profile.shirt_cut ?? null) ||
       (favoriteQuote.trim() || null) !== (profile.favorite_quote ?? null)
     );
-  }, [profile, fullName, preferredName, phone, birthday, showBirthday, shirtSize, favoriteQuote]);
+  }, [profile, fullName, preferredName, phone, birthday, showBirthday, shirtSize, shirtCut, favoriteQuote]);
 
   // Tab-close guard.
   useEffect(() => {
@@ -132,6 +142,7 @@ export function AccountPage() {
           // can opt out via the toggle below.
           show_birthday: profile.role === "gm" ? showBirthday : true,
           shirt_size: shirtSize || null,
+          shirt_cut: shirtCut || null,
           favorite_quote: favoriteQuote.trim() || null,
         })
         .eq("id", profile.id);
@@ -229,19 +240,35 @@ export function AccountPage() {
                 </div>
                 <div>
                   <Label htmlFor="acct-shirt">Shirt size</Label>
-                  <select
-                    id="acct-shirt"
-                    value={shirtSize}
-                    onChange={(e) => setShirtSize(e.target.value)}
-                    className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
-                  >
-                    <option value="">—</option>
-                    {SHIRT_SIZES.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="flex gap-2">
+                    <select
+                      id="acct-shirt"
+                      value={shirtSize}
+                      onChange={(e) => setShirtSize(e.target.value)}
+                      className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+                    >
+                      <option value="">—</option>
+                      {SHIRT_SIZES.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      id="acct-shirt-cut"
+                      aria-label="Shirt cut"
+                      value={shirtCut}
+                      onChange={(e) => setShirtCut(e.target.value)}
+                      className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+                    >
+                      <option value="">Cut</option>
+                      {SHIRT_CUTS.map((c) => (
+                        <option key={c.value} value={c.value}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
               <div>
@@ -295,6 +322,7 @@ export function AccountPage() {
         <div className="space-y-6">
           <NotificationsCard />
           <CertifiedFoodManagerCard />
+          <PassportCard />
           <SignInMethodsCard />
           <PasswordCard />
         </div>
@@ -837,6 +865,242 @@ function CertifiedFoodManagerCard() {
             )}
             <Button type="submit" disabled={uploading}>
               {uploading ? "Saving…" : "Save certificate"}
+            </Button>
+          </div>
+        </form>
+      </CardBody>
+    </Card>
+  );
+}
+
+// ----------------------------------------------------------------------------
+// Passport card — expiration date + an optional scan of the photo page, used
+// to verify trip eligibility for international team trips (e.g. the annual
+// Cancun trip). No passport-number field by design — leadership only needs
+// to know a valid passport is on file, not the actual ID number. Mirrors the
+// CFM card's upload pattern; file is stored privately (owner + admin read).
+// ----------------------------------------------------------------------------
+
+function PassportCard() {
+  const { profile, refresh } = useAuth();
+  const toast = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const [expiresAt, setExpiresAt] = useState("");
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [hasFile, setHasFile] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+
+  useEffect(() => {
+    if (profile) setExpiresAt(profile.passport_expires_at ?? "");
+  }, [profile]);
+
+  // Probe whether a stored passport file exists, same approach as the CFM
+  // card: skip the savedAt → null cleanup transition so a save doesn't
+  // trigger two storage lists.
+  const probedSavedAtRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!profile) return;
+    const isCleanupTransition =
+      probedSavedAtRef.current !== null && savedAt === null;
+    probedSavedAtRef.current = savedAt;
+    if (isCleanupTransition) return;
+    let cancelled = false;
+    supabase.storage
+      .from(PASSPORT_BUCKET)
+      .list(profile.id, { limit: 5 })
+      .then(({ data }) => {
+        if (cancelled) return;
+        setHasFile((data ?? []).some((f) => f.name.startsWith("passport.")));
+      })
+      .catch(() => {
+        /* not fatal */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [profile, savedAt]);
+
+  useEffect(() => {
+    if (savedAt === null) return;
+    const t = setTimeout(() => setSavedAt(null), 4000);
+    return () => clearTimeout(t);
+  }, [savedAt]);
+
+  // International travel norms typically require 6 months of validity
+  // beyond the trip date, so "expiring soon" uses a wider window than the
+  // CFM card's 60 days.
+  const expiryStatus = useMemo(() => {
+    if (!expiresAt) return null;
+    const now = new Date();
+    const exp = new Date(expiresAt);
+    const days = Math.floor((exp.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    if (days < 0) return { tone: "danger" as const, label: `Expired ${-days}d ago` };
+    if (days <= 182) return { tone: "warning" as const, label: `Expires in ${days}d` };
+    return { tone: "success" as const, label: `Valid (${days}d left)` };
+  }, [expiresAt]);
+
+  function onPickFile(e: ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0] ?? null;
+    e.target.value = "";
+    if (!f) return;
+    if (!PASSPORT_MIME.includes(f.type)) {
+      setError("File must be PDF, JPG, or PNG.");
+      return;
+    }
+    if (f.size > PASSPORT_MAX_BYTES) {
+      setError("File must be 10 MB or smaller.");
+      return;
+    }
+    setError(null);
+    setPendingFile(f);
+  }
+
+  async function handleSave(e: FormEvent) {
+    e.preventDefault();
+    if (!profile) return;
+    setError(null);
+    setUploading(true);
+    try {
+      const { error: dbErr } = await supabase
+        .from("profiles")
+        .update({ passport_expires_at: expiresAt || null })
+        .eq("id", profile.id);
+      if (dbErr) throw new Error(dbErr.message);
+
+      if (pendingFile) {
+        const ext = pendingFile.name.split(".").pop()?.toLowerCase() ?? "pdf";
+        const path = `${profile.id}/passport.${ext}`;
+        const { error: upErr } = await supabase.storage
+          .from(PASSPORT_BUCKET)
+          .upload(path, pendingFile, {
+            upsert: true,
+            contentType: pendingFile.type,
+          });
+        if (upErr) throw new Error(upErr.message);
+        setPendingFile(null);
+      }
+
+      await refresh();
+      setSavedAt(Date.now());
+      toast.push("Passport info saved.", "success");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Save failed.");
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  async function handleViewFile() {
+    if (!profile) return;
+    const { data } = await supabase.storage
+      .from(PASSPORT_BUCKET)
+      .list(profile.id, { limit: 5 });
+    const file = (data ?? []).find((f) => f.name.startsWith("passport."));
+    if (!file) {
+      toast.push("No passport file on record.", "info");
+      return;
+    }
+    const path = `${profile.id}/${file.name}`;
+    const { data: signed, error } = await supabase.storage
+      .from(PASSPORT_BUCKET)
+      .createSignedUrl(path, 60);
+    if (error || !signed?.signedUrl) {
+      toast.push("Couldn't open file.", "error");
+      return;
+    }
+    window.open(signed.signedUrl, "_blank", "noopener,noreferrer");
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title="Passport"
+        description="For international team trips (e.g. the annual Cancun trip). Upload a scan of the photo page and its expiration date so leadership can verify eligibility."
+      />
+      <CardBody>
+        <form onSubmit={handleSave} className="space-y-4">
+          <div>
+            <Label htmlFor="passport-expires">Expiration date</Label>
+            <Input
+              id="passport-expires"
+              type="date"
+              value={expiresAt}
+              onChange={(e) => setExpiresAt(e.target.value)}
+            />
+            {expiryStatus && (
+              <div className="mt-1">
+                <Badge tone={expiryStatus.tone}>{expiryStatus.label}</Badge>
+              </div>
+            )}
+            <p className="mt-1 text-xs text-zinc-500">
+              Most countries require 6+ months of validity beyond the travel date.
+            </p>
+          </div>
+
+          <div className="rounded-md border border-zinc-200 bg-zinc-50 p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2 text-sm text-zinc-700">
+                <FileText className="h-4 w-4" strokeWidth={1.75} />
+                {pendingFile ? (
+                  <span>{pendingFile.name} (queued)</span>
+                ) : hasFile ? (
+                  <span>Passport file on record.</span>
+                ) : (
+                  <span className="text-zinc-500">No passport file uploaded.</span>
+                )}
+              </div>
+              <div className="flex shrink-0 gap-2">
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept={PASSPORT_MIME.join(",")}
+                  className="hidden"
+                  onChange={onPickFile}
+                />
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => fileRef.current?.click()}
+                >
+                  {hasFile || pendingFile ? "Replace" : "Upload"}
+                </Button>
+                {hasFile && !pendingFile && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleViewFile}
+                  >
+                    <Download className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+                    View
+                  </Button>
+                )}
+              </div>
+            </div>
+            <p className="mt-2 text-xs text-zinc-500">
+              PDF / JPG / PNG up to 10 MB. Stored privately — only you and admins can view.
+            </p>
+          </div>
+
+          {error && (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {error}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2">
+            {savedAt !== null && (
+              <Badge tone="success" className="inline-flex items-center gap-1">
+                <Check className="h-3 w-3" strokeWidth={2.5} />
+                Updated
+              </Badge>
+            )}
+            <Button type="submit" disabled={uploading}>
+              {uploading ? "Saving…" : "Save passport info"}
             </Button>
           </div>
         </form>
