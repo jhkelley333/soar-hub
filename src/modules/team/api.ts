@@ -73,6 +73,7 @@ export interface ManagedUser {
   cfm_cert_number: string | null;
   cfm_issued_at: string | null;
   cfm_expires_at: string | null;
+  passport_expires_at: string | null;
   // Leadership-managed HR fields.
   start_date: string | null;
   gm_assigned_date: string | null;

@@ -272,6 +272,22 @@ function MemberCard({
           ? "warning"
           : "neutral";
 
+  // International travel norms typically require 6 months of validity
+  // beyond the trip date, so passport uses a wider "expiring soon" window
+  // than the CFM cert's 60 days.
+  const passportExpiry = member.passport_expires_at ? new Date(member.passport_expires_at) : null;
+  const passportDaysToExpiry = passportExpiry
+    ? Math.floor((passportExpiry.getTime() - Date.now()) / 86_400_000)
+    : null;
+  const passportTone: "neutral" | "warning" | "danger" =
+    passportDaysToExpiry == null
+      ? "neutral"
+      : passportDaysToExpiry < 0
+        ? "danger"
+        : passportDaysToExpiry < 182
+          ? "warning"
+          : "neutral";
+
   return (
     <Card
       className={cn(
@@ -398,6 +414,18 @@ function MemberCard({
                       : `Expires ${formatDateShort(member.cfm_expires_at!)}`}
                   </Badge>
                 )}
+              </span>
+            )}
+            {/* Passport on file — for international trip eligibility (e.g.
+                the annual Cancun trip). Number is never shown, only status. */}
+            {passportExpiry && (
+              <span className="inline-flex items-center gap-1">
+                <span className="text-zinc-400">Passport:</span>
+                <Badge tone={passportTone}>
+                  {passportDaysToExpiry! < 0
+                    ? "Expired"
+                    : `Expires ${formatDateShort(member.passport_expires_at!)}`}
+                </Badge>
               </span>
             )}
           </div>

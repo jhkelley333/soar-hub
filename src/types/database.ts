@@ -66,6 +66,9 @@ export interface Profile {
   cfm_cert_number: string | null;
   cfm_issued_at: string | null;     // ISO date
   cfm_expires_at: string | null;    // ISO date — generated column (issued + 5y)
+  // Migration 0202 — passport on file for international team trips.
+  // File itself lives in the private `passports` storage bucket.
+  passport_expires_at: string | null; // ISO date
   // Phase 0 contacts module (migration 0029):
   pinned_contact_ids: string[];
   // JSON of nav-item order; null = default order. Reserved for the
