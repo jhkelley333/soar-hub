@@ -18,7 +18,7 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
-  captureIssue, createAudit, deleteAudit, deleteIssue, fetchAuditStores, fetchAudits,
+  captureIssue, closeAudit, createAudit, deleteAudit, deleteIssue, fetchAuditStores, fetchAudits,
   fileToPhoto, resolveIssue, shareReport, updateIssue, type CaptureIssueInput, type PhotoPayload,
 } from "./api";
 import { AREAS, SEVERITY_META, type AuditIssue, type AuditStats, type AuditsResponse, type ProofKind, type Severity, type SiteAudit } from "./types";
@@ -263,13 +263,20 @@ function AuditSummary({ audit, canWrite, onBack, onCapture, onShare, onIssue, on
   audit: SiteAudit; canWrite: boolean; onBack: () => void; onCapture: () => void; onShare: () => void; onIssue: (id: string) => void; onDeleted: () => void;
 }) {
   const toast = useToast();
+  const qc = useQueryClient();
   const [tab, setTab] = useState<"open" | "done" | "all">("open");
   const s = audit.stats;
   const issues = audit.issues.filter((i) => tab === "all" ? true : tab === "open" ? !i.completed : i.completed);
+  const isClosed = audit.status === "complete";
   const del = useMutation({
     mutationFn: () => deleteAudit(audit.id),
     onSuccess: onDeleted,
     onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't delete.", "error"),
+  });
+  const close = useMutation({
+    mutationFn: () => closeAudit({ audit_id: audit.id, reopen: isClosed }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["site-audits"] }),
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't update audit.", "error"),
   });
 
   return (
@@ -278,11 +285,18 @@ function AuditSummary({ audit, canWrite, onBack, onCapture, onShare, onIssue, on
       <div className="mb-4">
         <h1 className="text-xl font-bold tracking-tight text-midnight">{audit.store_name || `Store #${audit.store_number}`}</h1>
         <div className="text-xs text-zinc-500">#{audit.store_number} · {fmtDate(audit.date)} · {audit.created_by_name || "—"}</div>
-        {audit.last_report && (
-          <span className="mt-2 inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
-            <Check className="h-3 w-3" strokeWidth={2.5} /> Report shared · {new Date(audit.last_report.sent_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-          </span>
-        )}
+        <div className="mt-2 flex flex-wrap gap-2">
+          {isClosed && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-600">
+              <Check className="h-3 w-3" strokeWidth={2.5} /> Closed
+            </span>
+          )}
+          {audit.last_report && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
+              <Check className="h-3 w-3" strokeWidth={2.5} /> Report shared · {new Date(audit.last_report.sent_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+            </span>
+          )}
+        </div>
       </div>
 
       <div className="mb-3 flex items-center gap-4 rounded-2xl border border-zinc-200 bg-white p-4 shadow-card">
@@ -323,9 +337,16 @@ function AuditSummary({ audit, canWrite, onBack, onCapture, onShare, onIssue, on
         </button>
       )}
 
+      {audit.can_close && (
+        <button onClick={() => close.isPending ? null : close.mutate()}
+          className="mx-auto mt-4 block text-xs font-semibold text-accent hover:underline">
+          {isClosed ? "Reopen audit" : "Close audit (admin)"}
+        </button>
+      )}
+
       {audit.can_delete && (
         <button onClick={() => del.isPending ? null : (window.confirm("Delete this entire audit?") && del.mutate())}
-          className="mx-auto mt-4 block text-xs font-medium text-red-500 hover:underline">Delete audit</button>
+          className="mx-auto mt-3 block text-xs font-medium text-red-500 hover:underline">Delete audit</button>
       )}
     </div>
   );

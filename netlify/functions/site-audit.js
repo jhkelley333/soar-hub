@@ -181,6 +181,7 @@ async function listAudits(supa, user) {
 
   const storeName = new Map(scope.rows.map((s) => [s.id, s.name]));
   const role = String(user.role || "").toLowerCase();
+  const isAdmin = role === "admin";
   const out = [];
   for (const a of audits || []) {
     const issues = byAudit.get(a.id) || [];
@@ -189,7 +190,9 @@ async function listAudits(supa, user) {
       id: a.id, store_id: a.store_id, store_number: a.store_number, store_name: storeName.get(a.store_id) || null,
       created_by_name: a.created_by_name, status: a.status, note: a.note, date: a.date, created_at: a.created_at,
       // Only the auditor who created it, or an admin, may delete an audit.
-      can_delete: a.created_by === user.id || role === "admin",
+      can_delete: a.created_by === user.id || isAdmin,
+      // Admin-only: close (status = 'complete') / reopen (status = 'open').
+      can_close: isAdmin,
       stats: auditStats(issues),
       last_report: rep ? { signed_by_name: rep.signed_by_name, sent_at: rep.sent_at, status: rep.status, recipient_count: (rep.recipients || []).length } : null,
       issues: await Promise.all(issues.map((i) => issueCard(supa, i))),
@@ -279,11 +282,18 @@ async function resolveIssue(supa, user, body) {
   try { photoPath = await uploadImage(supa, body?.completion?.photo, `${auditId}/proof`); }
   catch (e) { return { error: `Proof photo upload failed: ${e.message}`, status: 500 }; }
 
-  if (need.includes("note") && note.length < 1) {
-    return { error: "A note is required to close this issue.", status: 422 };
-  }
-  if (need.includes("photo") && !photoPath) {
-    return { error: "A photo is required to close this issue.", status: 422 };
+  // Admins may force-close an issue without supplying the auditor-required
+  // proof — this is a deliberate override so an admin can clean up stale or
+  // disputed issues without re-doing the field walk. Everyone else still
+  // owes the photo/note the auditor set.
+  const isAdmin = String(user.role || "").toLowerCase() === "admin";
+  if (!isAdmin) {
+    if (need.includes("note") && note.length < 1) {
+      return { error: "A note is required to close this issue.", status: 422 };
+    }
+    if (need.includes("photo") && !photoPath) {
+      return { error: "A photo is required to close this issue.", status: 422 };
+    }
   }
 
   const completion = {
@@ -304,6 +314,24 @@ async function deleteIssue(supa, user, body) {
   const { error } = await supa.from("site_audit_issues").delete().eq("id", sanitize(body?.issue_id, 64)).eq("audit_id", auditId);
   if (error) return { error: error.message, status: 500 };
   return { ok: true };
+}
+
+// Admin-only: flip the audit's status to 'complete' (close) or back to
+// 'open' (reopen). The 'complete' value is part of the original status
+// check constraint from 0145, so no schema change is needed.
+async function closeAudit(supa, user, body) {
+  const auditId = sanitize(body?.audit_id, 64);
+  const r = await loadAudit(supa, user, auditId);
+  if (r.error) return r;
+  if (String(user.role || "").toLowerCase() !== "admin") {
+    return { error: "Only an admin can close or reopen an audit.", status: 403 };
+  }
+  const nextStatus = body?.reopen === true ? "open" : "complete";
+  const { error } = await supa.from("site_audits")
+    .update({ status: nextStatus, updated_at: new Date().toISOString() })
+    .eq("id", auditId);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, status: nextStatus };
 }
 
 async function deleteAudit(supa, user, body) {
@@ -535,6 +563,7 @@ export const handler = async (event) => {
     if (action === "update-issue") return unwrap(await updateIssue(supa, user, body));
     if (action === "resolve-issue") return unwrap(await resolveIssue(supa, user, body));
     if (action === "delete-issue") return unwrap(await deleteIssue(supa, user, body));
+    if (action === "close-audit") return unwrap(await closeAudit(supa, user, body));
     if (action === "delete-audit") return unwrap(await deleteAudit(supa, user, body));
     if (action === "share-report") return unwrap(await shareReport(supa, user, body));
     return respond(400, { error: `Unknown action: ${action}` });
