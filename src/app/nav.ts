@@ -31,6 +31,7 @@ import {
   BarChart3,
   ScrollText,
   QrCode,
+  AlertTriangle,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -64,6 +65,10 @@ export const NAV: NavItem[] = [
   // Walkthroughs, Reno Scoping). The individual tools keep their own routes;
   // this is the consolidated entry point.
   { to: "/operations",  label: "Operations Tools", icon: LayoutGrid, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
+  // Business Disruptions — replaces the standalone "Sonic Business Disruption
+  // Reporting" form. GM and above report a closure/disruption; it routes to
+  // the selected DO by email and lands in a DO+ queue scoped like Site Audits.
+  { to: "/business-disruptions", label: "Business Disruptions", icon: AlertTriangle, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/ranker",      label: "Ranker",      icon: TrendingUp,      roles: ["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
   // Labor — daily labor review. GMs review their store's numbers against
   // chart and explain misses; DO+ get the district rollup. Backend
@@ -215,6 +220,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/admin/work-orders-v2": "MAIN",
   "/chat": "MAIN",
   "/operations": "OPERATIONS",
+  "/business-disruptions": "OPERATIONS",
   "/ranker": "OPERATIONS",
   "/labor": "OPERATIONS",
   "/labor-v2": "OPERATIONS",
