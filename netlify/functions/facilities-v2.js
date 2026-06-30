@@ -1379,8 +1379,15 @@ export const handler = async (event) => {
           description: { type: "string" },
           category: { type: "string" },
           equipment: { type: "string" },
+          // Vendor contact details from the invoice letterhead / footer. Used
+          // when the user adds this vendor inline from Log Work so the new
+          // vendor row is fully populated instead of name + category only.
+          vendor_phone: { type: "string" },
+          vendor_email: { type: "string" },
+          vendor_website: { type: "string" },
+          vendor_address: { type: "string" },
         },
-        required: ["vendor_name", "store_number", "service_date", "cost", "description", "category", "equipment"],
+        required: ["vendor_name", "store_number", "service_date", "cost", "description", "category", "equipment", "vendor_phone", "vendor_email", "vendor_website", "vendor_address"],
       };
 
       const known = vendorNames.length ? vendorNames.slice(0, 200).join("; ") : "(none on file)";
@@ -1397,6 +1404,10 @@ export const handler = async (event) => {
         "- description: a short summary of the work performed (one sentence).\n" +
         "- category: the trade/category. Choose the closest match from this list when reasonable: " + catList + "\n" +
         "- equipment: the specific equipment serviced. Choose the closest match from this list when reasonable: " + assetList + "\n" +
+        "- vendor_phone: the vendor's phone number from the invoice letterhead/footer, normalized to digits only (e.g. \"2148765432\"). Empty string if not present.\n" +
+        "- vendor_email: the vendor's email address from the letterhead/footer. Empty string if not present.\n" +
+        "- vendor_website: the vendor's website URL from the letterhead/footer. Empty string if not present.\n" +
+        "- vendor_address: the vendor's mailing/business address (one line, comma-separated). Empty string if not present.\n" +
         "Use an empty string for any text field you can't determine, and 0 for cost if unknown.";
 
       // Prefer structured outputs (guaranteed-valid JSON); if that's rejected
@@ -1405,7 +1416,7 @@ export const handler = async (event) => {
       async function callClaude(structured) {
         const messages = [{
           role: "user",
-          content: [sourceBlock, { type: "text", text: structured ? prompt : prompt + "\n\nRespond with ONLY a JSON object with exactly these keys: vendor_name, store_number, service_date, cost, description, category, equipment. No prose, no markdown." }],
+          content: [sourceBlock, { type: "text", text: structured ? prompt : prompt + "\n\nRespond with ONLY a JSON object with exactly these keys: vendor_name, store_number, service_date, cost, description, category, equipment, vendor_phone, vendor_email, vendor_website, vendor_address. No prose, no markdown." }],
         }];
         const payload = { model: "claude-sonnet-4-6", max_tokens: 1024, messages };
         if (structured) payload.output_config = { format: { type: "json_schema", schema } };
@@ -1454,6 +1465,13 @@ export const handler = async (event) => {
       // Only trust a store match that's actually in the caller's scope.
       const sn = String(parsed.store_number || "").replace(/\D/g, "");
       const storeNumber = sn && allowedStores.has(sn) ? sn : "";
+      // Normalize the contact bits: strip a phone down to digits, lowercase
+      // the email, and trim whitespace on everything. Empty strings stay
+      // empty so the client can detect "nothing extracted".
+      const phoneDigits = String(parsed.vendor_phone || "").replace(/\D/g, "").slice(0, 20);
+      const email = String(parsed.vendor_email || "").trim().toLowerCase().slice(0, 200);
+      const website = clamp(parsed.vendor_website, 200);
+      const address = clamp(parsed.vendor_address, 300);
       return respond(200, {
         ok: true,
         extracted: {
@@ -1464,6 +1482,10 @@ export const handler = async (event) => {
           description: clamp(parsed.description, 1000),
           category: clamp(parsed.category, 100),
           asset_type: clamp(parsed.equipment, 200),
+          vendor_phone: phoneDigits,
+          vendor_email: email,
+          vendor_website: website,
+          vendor_address: address,
         },
       });
     }
@@ -2992,6 +3014,27 @@ export const handler = async (event) => {
       }
       const payload = JSON.parse(event.body);
       const { id: vendorId, ...fields } = payload;
+
+      // When creating a fresh vendor with a category but no `services` yet,
+      // derive a sensible default from the issue library: take the distinct
+      // asset/equipment display names under that category and join them as
+      // a comma-separated services string. Saves the user from having to fill
+      // it in by hand after a Log Work add-vendor flow.
+      if (!vendorId && fields?.category && !String(fields?.services || "").trim()) {
+        try {
+          const { data: items } = await supabase
+            .from("issue_library")
+            .select("display_name, asset_type")
+            .ilike("category", String(fields.category).trim())
+            .limit(50);
+          const labels = [...new Set(
+            (items || [])
+              .map((i) => String(i.display_name || i.asset_type || "").trim())
+              .filter(Boolean),
+          )];
+          if (labels.length) fields.services = labels.slice(0, 12).join(", ");
+        } catch { /* services derivation is best-effort */ }
+      }
       if (vendorId) {
         const { data, error } = await supabase
           .from("vendors")

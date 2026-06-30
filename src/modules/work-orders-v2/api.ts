@@ -127,6 +127,11 @@ export interface ExtractedInvoice {
   description: string;
   category: string;
   asset_type: string;
+  /** Vendor contact bits pulled from the invoice letterhead, when present. Empty string when not. */
+  vendor_phone: string;
+  vendor_email: string;
+  vendor_website: string;
+  vendor_address: string;
 }
 export function extractInvoice(invoice: { data: string; type: string }): Promise<{ ok: true; extracted: ExtractedInvoice }> {
   return request(`${FN}?action=extractInvoice`, { method: "POST", body: JSON.stringify({ invoice }) });

@@ -38,6 +38,15 @@ export function LogWorkModal({
   const [modelNumber, setModelNumber] = useState("");
   const [vendorName, setVendorName] = useState("");
   const [vendorId, setVendorId] = useState<string | null>(null);
+  // Vendor contact bits pulled from the invoice letterhead. Saved on the
+  // vendor row when the user adds a new vendor inline from this modal, so a
+  // brand-new vendor is fully populated instead of just name + category.
+  const [extractedVendor, setExtractedVendor] = useState<{
+    phone?: string;
+    email?: string;
+    website?: string;
+    address?: string;
+  }>({});
   const [serviceDate, setServiceDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [cost, setCost] = useState("");
   const [description, setDescription] = useState("");
@@ -76,6 +85,15 @@ export function LogWorkModal({
       // Category only when it matches a known option.
       const match = categories.find((c) => c.toLowerCase() === ex.category.trim().toLowerCase());
       fill(!category && !!match, () => setCategory(match as string));
+      // Stash vendor contact bits — applied only if we actually add this
+      // vendor on submit. We never overwrite an existing vendor's contact
+      // fields from here.
+      setExtractedVendor({
+        phone: ex.vendor_phone || undefined,
+        email: ex.vendor_email || undefined,
+        website: ex.vendor_website || undefined,
+        address: ex.vendor_address || undefined,
+      });
       setAutofilled(filledAny);
       if (!filledAny) setExtractNote("Couldn't pull anything new from that invoice — fill in what's needed.");
     } catch (e) {
@@ -133,7 +151,18 @@ export function LogWorkModal({
       let useVendorId = vendorId;
       let resolvedVendorName = vendorName.trim();
       if (addVendor && !useVendorId && vendorName.trim()) {
-        const { vendor, linked_existing } = await saveVendor({ name: vendorName.trim(), category: category || undefined, is_active: true });
+        const { vendor, linked_existing } = await saveVendor({
+          name: vendorName.trim(),
+          category: category || undefined,
+          is_active: true,
+          // Best-effort contact details extracted from the invoice. Backend
+          // ignores empty strings; for an existing-name collision it returns
+          // the existing row unchanged (won't clobber its current details).
+          phone: extractedVendor.phone || undefined,
+          email: extractedVendor.email || undefined,
+          website: extractedVendor.website || undefined,
+          address: extractedVendor.address || undefined,
+        });
         useVendorId = vendor.id;
         setVendorId(vendor.id);
         // When the name collided with an existing vendor not visible at this
