@@ -2,7 +2,8 @@
 
 export const CLOSURE_TYPES = [
   "Weather", "Power Outage", "Equipment Failure", "Staffing", "Plumbing",
-  "Fire/Safety", "Robbery/Theft", "Vandalism", "Health Department", "Other",
+  "Fire/Safety", "Robbery/Theft", "Vandalism", "Health Department",
+  "Internet Issue", "POS Issues", "Connectivity Issues", "Other",
 ] as const;
 
 export const ISSUE_TYPES = [
@@ -50,9 +51,4 @@ export interface StorePick {
   id: string;
   number: string;
   name: string | null;
-}
-
-export interface DmPick {
-  id: string;
-  name: string;
 }
