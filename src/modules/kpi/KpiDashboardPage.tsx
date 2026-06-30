@@ -74,18 +74,26 @@ const PERIODS: { key: PeriodKey; label: string }[] = [
   { key: "ptd", label: "PTD" },
 ];
 
-// Upstream KPI feed transiently 502s with "non-JSON" — usually a cold start on
-// the source. Auto-retry several times with exponential backoff so a refresh-
-// then-everything-works rhythm becomes invisible. Total worst-case spend is
-// ~22s across 5 attempts before the user actually sees an error card.
+// Upstream KPI feed transiently 502s — usually a slow response from the
+// source that the server-side proxy's own timeout cut off. Auto-retry
+// several times with exponential backoff so a refresh-then-everything-works
+// rhythm becomes invisible. Total worst-case spend is ~38s across 5 attempts
+// before the user actually sees an error card.
 const MAX_KPI_RETRIES = 4; // total attempts = 1 + 4 = 5
+// A login/redirect page or missing config means every retry will fail
+// identically (it's not a transient blip) — bail immediately instead of
+// burning ~38s of "Retrying…" on a deterministic failure. Matches the
+// wording fetchKpiFeed() (netlify/functions/_lib/kpiFeed.js) uses for
+// these two cases.
+const NON_RETRYABLE = /retrying won.t help|isn.t configured/i;
 
 export function KpiDashboardPage() {
   const q = useQuery({
     queryKey: ["kpi-snapshot"],
     queryFn: fetchKpiSnapshot,
     staleTime: 5 * 60_000,
-    retry: MAX_KPI_RETRIES,
+    retry: (failureCount, error) =>
+      failureCount < MAX_KPI_RETRIES && !NON_RETRYABLE.test((error as Error)?.message ?? ""),
     // 1.5s, 3s, 6s, 12s (clamped at 12s) — gives the upstream time to warm up
     // without piling on more pressure during a real outage.
     retryDelay: (attempt) => Math.min(1500 * 2 ** attempt, 12_000),
