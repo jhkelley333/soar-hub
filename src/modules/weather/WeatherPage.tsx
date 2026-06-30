@@ -102,12 +102,16 @@ export function WeatherPage() {
     queryFn: () => fetchWeatherForStore(storeId),
     enabled: !!storeId,
     staleTime: 15 * 60_000,
+    retry: 2,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 6000),
   });
   const histQ = useQuery({
     queryKey: ["weather-history", storeId, days],
     queryFn: () => fetchWeatherHistory(storeId, days),
     enabled: !!storeId,
     staleTime: 15 * 60_000,
+    retry: 2,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 6000),
   });
   const week = useMemo(() => weekFor(weekOffset), [weekOffset]);
   const weekQ = useQuery({
@@ -115,6 +119,8 @@ export function WeatherPage() {
     queryFn: () => fetchWeatherRange(storeId, week.start, week.end),
     enabled: !!storeId,
     staleTime: 15 * 60_000,
+    retry: 2,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 6000),
   });
   const lastYear = useMemo(() => thisWeekLastYear(), []);
   const lyQ = useQuery({
@@ -122,6 +128,8 @@ export function WeatherPage() {
     queryFn: () => fetchWeatherRange(storeId, lastYear.start, lastYear.end),
     enabled: !!storeId,
     staleTime: 15 * 60_000,
+    retry: 2,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 6000),
   });
   const lyPoints = lyQ.data?.points ?? [];
 

@@ -4226,7 +4226,7 @@ export const handler = async (event) => {
             notification_type: thread === "store" ? "store_message" : "requester_message",
             subject, message: html,
             status: result.sent ? "sent" : `failed: ${result.reason}`,
-          }).then(() => {}).catch(() => {});
+          }).then(() => {}).catch((e) => console.warn("[facilities-v2] ticket_notifications insert failed:", e?.message || e));
         }
       } else {
         // A reply on the internal/vendor thread answers any outstanding
@@ -4324,7 +4324,7 @@ export const handler = async (event) => {
           ticket_id: ticketId, recipient_email: to.join(", "),
           notification_type: "info_requested", subject, message: html,
           status: result.sent ? "sent" : `failed: ${result.reason}`,
-        }).then(() => {}).catch(() => {});
+        }).then(() => {}).catch((e) => console.warn("[facilities-v2] ticket_notifications insert failed:", e?.message || e));
       }
 
       if (openThread) {
