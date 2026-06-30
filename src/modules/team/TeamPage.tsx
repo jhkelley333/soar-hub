@@ -68,14 +68,19 @@ export function TeamPage() {
     return list;
   }, [allMembers, search, roleFilter, includeInactive]);
 
-  // Roles present in the result set, for the filter dropdown.
-  const rolesPresent = useMemo(() => {
-    const set = new Set<UserRole>();
-    for (const m of allMembers) set.add(m.role);
-    return Array.from(set).sort((a, b) =>
-      (ROLE_LABELS[a] ?? a).localeCompare(ROLE_LABELS[b] ?? b)
-    );
-  }, [allMembers]);
+  // Every role, not just ones currently present in the result set — a role
+  // with zero visible members right now (a brand-new hire's role, or a
+  // backend visibility gap like the one manageable_users() once had for
+  // fbc/back-office roles) should still be selectable, both so the filter
+  // doesn't silently drop options and so "0 results" is a debuggable signal
+  // instead of the option just not existing.
+  const rolesPresent = useMemo(
+    () =>
+      (Object.keys(ROLE_LABELS) as UserRole[]).sort((a, b) =>
+        ROLE_LABELS[a].localeCompare(ROLE_LABELS[b])
+      ),
+    []
+  );
 
   if (query.isLoading) {
     return (
