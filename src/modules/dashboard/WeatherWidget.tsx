@@ -29,6 +29,8 @@ export function WeatherWidget({ storeId }: { storeId: string }) {
     queryFn: () => fetchWeatherForStore(storeId),
     staleTime: 15 * 60_000,
     refetchOnWindowFocus: false,
+    retry: 2,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 6000),
   });
 
   const sync = useMutation({

@@ -9,8 +9,8 @@ import { fetchQsrStats, fetchQsrLeaderboard } from "./api";
 const BADGE_ICON: Record<string, typeof Award> = { rocket: Rocket, target: Target, flame: Flame };
 
 export function GamificationPanel() {
-  const statsQ = useQuery({ queryKey: ["qsr", "stats"], queryFn: fetchQsrStats, staleTime: 30_000 });
-  const lbQ = useQuery({ queryKey: ["qsr", "leaderboard"], queryFn: fetchQsrLeaderboard, staleTime: 30_000 });
+  const statsQ = useQuery({ queryKey: ["qsr", "stats"], queryFn: fetchQsrStats, staleTime: 30_000, retry: 2 });
+  const lbQ = useQuery({ queryKey: ["qsr", "leaderboard"], queryFn: fetchQsrLeaderboard, staleTime: 30_000, retry: 2 });
   const s = statsQ.data;
   const lb = lbQ.data;
 

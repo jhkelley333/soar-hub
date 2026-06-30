@@ -35,7 +35,7 @@ const SURFACES = [
 ] as const;
 
 export function QsrHomePage() {
-  const coursesQ = useQuery({ queryKey: ["qsr", "courses"], queryFn: listQsrCourses, staleTime: 60_000 });
+  const coursesQ = useQuery({ queryKey: ["qsr", "courses"], queryFn: listQsrCourses, staleTime: 60_000, retry: 2 });
   const courses = coursesQ.data ?? [];
 
   return (
