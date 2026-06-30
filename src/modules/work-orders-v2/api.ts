@@ -704,13 +704,15 @@ export function searchVendors(
 /**
  * Server may return `linked_existing: true` when a name collision with the
  * vendors_name_unique constraint resolves to an existing vendor that wasn't
- * visible in the caller's store-scoped search. UI should show a "linked to
- * existing vendor" toast in that case instead of a confused duplicate error.
+ * visible in the caller's store-scoped search. `backfilled` is the list of
+ * field names that were empty on the existing row and got populated from the
+ * incoming payload (e.g. an invoice-extracted phone/email). UI shows a
+ * "linked + N enriched" message instead of a confused duplicate error.
  */
 export function saveVendor(
   payload: SaveVendorBody,
-): Promise<{ ok: true; vendor: Vendor; linked_existing?: boolean }> {
-  return request<{ ok: true; vendor: Vendor; linked_existing?: boolean }>(`${FN}?action=saveVendor`, {
+): Promise<{ ok: true; vendor: Vendor; linked_existing?: boolean; backfilled?: string[] }> {
+  return request<{ ok: true; vendor: Vendor; linked_existing?: boolean; backfilled?: string[] }>(`${FN}?action=saveVendor`, {
     method: "POST",
     body: JSON.stringify(payload),
   });
