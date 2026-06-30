@@ -19,8 +19,12 @@ const BUCKET = "site-audit-photos";
 const MAX_PDF_PHOTOS = 40; // bound PDF size + generation time on big audits
 
 // GM and above may create audits, capture issues, set proof, resolve, share.
-const CAPTURE_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]);
-const ORG_WIDE = new Set(["vp", "coo", "admin"]);
+// FBC sits alongside the field-leader tiers for audits: they walk every store
+// in the org and need to log + close issues end-to-end.
+const CAPTURE_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]);
+// Org-wide visibility — these roles see every audit regardless of user_scopes.
+// FBC is org-wide because their coverage isn't tied to a region/district.
+const ORG_WIDE = new Set(["vp", "coo", "admin", "fbc"]);
 const AREAS = new Set(["FOH", "BOH", "Restroom", "Stock Room", "Roof", "Parking Lot", "Stall", "Landscaping", "Managers Desk", "Patio", "Trash Enclosure", "Kitchen", "Misc."]);
 const SEVERITIES = new Set(["high", "medium", "low"]);
 
