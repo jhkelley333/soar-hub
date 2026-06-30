@@ -68,7 +68,11 @@ async function pullWeather(lat, lng) {
   const ll = `location.latitude=${lat}&location.longitude=${lng}`;
   const [curRes, fcRes] = await Promise.all([
     fetch(`${base}/currentConditions:lookup?key=${WEATHER_KEY}&unitsSystem=IMPERIAL&${ll}`),
-    fetch(`${base}/forecast/days:lookup?key=${WEATHER_KEY}&unitsSystem=IMPERIAL&days=${FORECAST_DAYS}&${ll}`),
+    // forecast/days:lookup paginates independently of `days` — pageSize
+    // defaults to 5, so without it Google silently returns only the first
+    // 5 days no matter how high `days` is set. Match pageSize to
+    // FORECAST_DAYS (both cap at 10) to get the full set in one call.
+    fetch(`${base}/forecast/days:lookup?key=${WEATHER_KEY}&unitsSystem=IMPERIAL&days=${FORECAST_DAYS}&pageSize=${FORECAST_DAYS}&${ll}`),
   ]);
   const current = curRes.ok ? await curRes.json() : null;
   const forecast = fcRes.ok ? await fcRes.json() : null;
