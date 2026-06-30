@@ -32,6 +32,10 @@ import {
 } from "@/lib/push";
 
 const SHIRT_SIZES = ["XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
+const SHIRT_CUTS: { value: string; label: string }[] = [
+  { value: "mens", label: "Men's" },
+  { value: "womens", label: "Women's" },
+];
 const AVATAR_BUCKET = "avatars";
 const CFM_BUCKET = "cfm-certs";
 const AVATAR_MIME = ["image/jpeg", "image/png", "image/webp"];
@@ -51,6 +55,7 @@ export function AccountPage() {
   // Only GMs see + can change this; everyone else is force-true.
   const [showBirthday, setShowBirthday] = useState(true);
   const [shirtSize, setShirtSize] = useState("");
+  const [shirtCut, setShirtCut] = useState("");
   const [favoriteQuote, setFavoriteQuote] = useState("");
   const [profileError, setProfileError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -64,6 +69,7 @@ export function AccountPage() {
       setBirthday(profile.birthday ?? "");
       setShowBirthday(profile.show_birthday ?? true);
       setShirtSize(profile.shirt_size ?? "");
+      setShirtCut(profile.shirt_cut ?? "");
       setFavoriteQuote(profile.favorite_quote ?? "");
     }
   }, [profile]);
@@ -78,9 +84,10 @@ export function AccountPage() {
       (birthday || null) !== (profile.birthday ?? null) ||
       showBirthday !== (profile.show_birthday ?? true) ||
       (shirtSize || null) !== (profile.shirt_size ?? null) ||
+      (shirtCut || null) !== (profile.shirt_cut ?? null) ||
       (favoriteQuote.trim() || null) !== (profile.favorite_quote ?? null)
     );
-  }, [profile, fullName, preferredName, phone, birthday, showBirthday, shirtSize, favoriteQuote]);
+  }, [profile, fullName, preferredName, phone, birthday, showBirthday, shirtSize, shirtCut, favoriteQuote]);
 
   // Tab-close guard.
   useEffect(() => {
@@ -132,6 +139,7 @@ export function AccountPage() {
           // can opt out via the toggle below.
           show_birthday: profile.role === "gm" ? showBirthday : true,
           shirt_size: shirtSize || null,
+          shirt_cut: shirtCut || null,
           favorite_quote: favoriteQuote.trim() || null,
         })
         .eq("id", profile.id);
@@ -229,19 +237,35 @@ export function AccountPage() {
                 </div>
                 <div>
                   <Label htmlFor="acct-shirt">Shirt size</Label>
-                  <select
-                    id="acct-shirt"
-                    value={shirtSize}
-                    onChange={(e) => setShirtSize(e.target.value)}
-                    className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
-                  >
-                    <option value="">—</option>
-                    {SHIRT_SIZES.map((s) => (
-                      <option key={s} value={s}>
-                        {s}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="flex gap-2">
+                    <select
+                      id="acct-shirt"
+                      value={shirtSize}
+                      onChange={(e) => setShirtSize(e.target.value)}
+                      className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+                    >
+                      <option value="">—</option>
+                      {SHIRT_SIZES.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+                    <select
+                      id="acct-shirt-cut"
+                      aria-label="Shirt cut"
+                      value={shirtCut}
+                      onChange={(e) => setShirtCut(e.target.value)}
+                      className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+                    >
+                      <option value="">Cut</option>
+                      {SHIRT_CUTS.map((c) => (
+                        <option key={c.value} value={c.value}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                 </div>
               </div>
               <div>

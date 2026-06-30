@@ -68,6 +68,7 @@ export interface ManagedUser {
   birthday: string | null;
   show_birthday: boolean;
   shirt_size: string | null;
+  shirt_cut: string | null;
   favorite_quote: string | null;
   cfm_cert_number: string | null;
   cfm_issued_at: string | null;

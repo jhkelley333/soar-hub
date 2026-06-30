@@ -381,7 +381,10 @@ function MemberCard({
             {member.shirt_size && (
               <span>
                 <span className="text-zinc-400">Shirt:</span>{" "}
-                <span className="text-zinc-700">{member.shirt_size}</span>
+                <span className="text-zinc-700">
+                  {member.shirt_size}
+                  {member.shirt_cut && ` (${shirtCutLabel(member.shirt_cut)})`}
+                </span>
               </span>
             )}
             {member.cfm_cert_number && (
@@ -483,6 +486,10 @@ function TrainingChip({ summary }: { summary?: TrainingSummary }) {
       </span>
     </div>
   );
+}
+
+function shirtCutLabel(cut: string): string {
+  return cut === "womens" ? "Women's" : cut === "mens" ? "Men's" : cut;
 }
 
 function formatBirthdayShort(iso: string): string {

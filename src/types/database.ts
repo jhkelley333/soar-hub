@@ -60,6 +60,8 @@ export interface Profile {
   // in app code (DO/SDO/RVP/Payroll/Admin don't get to hide).
   show_birthday: boolean;
   shirt_size: string | null;
+  // Migration 0201 — "mens" | "womens" | null.
+  shirt_cut: string | null;
   favorite_quote: string | null;
   cfm_cert_number: string | null;
   cfm_issued_at: string | null;     // ISO date
