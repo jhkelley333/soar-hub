@@ -3013,7 +3013,61 @@ export const handler = async (event) => {
         return respond(403, { ok: false, message: "DO and above only." });
       }
       const payload = JSON.parse(event.body);
-      const { id: vendorId, ...fields } = payload;
+      // `scope` is an optional visibility choice carried by Log Work's
+      // pendingAdd dialog: { type: 'store'|'district'|'area'|'region'|'national',
+      // storeNumber: '3445' }. We resolve the scope_id from the store's
+      // hierarchy when present and insert a vendor_scopes row after the
+      // vendor write (whether the write was an insert or a linked-existing
+      // backfill).
+      const { id: vendorId, scope, ...fields } = payload;
+
+      async function resolveScopeRow(s) {
+        if (!s || !s.type) return null;
+        if (s.type === "national") return { scope_type: "national", scope_id: null };
+        const sn = String(s.storeNumber || "").trim();
+        if (!sn) return null;
+        const { data: store } = await supabase
+          .from("stores")
+          .select("id, district_id")
+          .eq("number", sn)
+          .maybeSingle();
+        if (!store) return null;
+        if (s.type === "store") return { scope_type: "store", scope_id: store.id };
+        if (!store.district_id) return null;
+        if (s.type === "district") return { scope_type: "district", scope_id: store.district_id };
+        const { data: district } = await supabase
+          .from("districts")
+          .select("id, area_id")
+          .eq("id", store.district_id)
+          .maybeSingle();
+        if (!district?.area_id) return null;
+        if (s.type === "area") return { scope_type: "area", scope_id: district.area_id };
+        const { data: area } = await supabase
+          .from("areas")
+          .select("id, region_id")
+          .eq("id", district.area_id)
+          .maybeSingle();
+        if (!area?.region_id) return null;
+        if (s.type === "region") return { scope_type: "region", scope_id: area.region_id };
+        return null;
+      }
+
+      // Idempotent scope insert — DB has a (vendor_id, scope_type, scope_id)
+      // unique-ish pattern through the existing tools; we tolerate the 23505
+      // unique-violation if the row already exists.
+      async function attachScope(targetVendorId) {
+        if (!scope) return null;
+        const row = await resolveScopeRow(scope);
+        if (!row) return null;
+        const { error: scErr } = await supabase
+          .from("vendor_scopes")
+          .insert({ ...row, vendor_id: targetVendorId, created_by_id: profile.id });
+        if (scErr && scErr.code !== "23505") {
+          console.warn("[saveVendor] scope insert failed:", scErr.message);
+          return null;
+        }
+        return row;
+      }
 
       // When creating a fresh vendor with a category but no `services` yet,
       // derive a sensible default from the issue library: take the distinct
@@ -3043,6 +3097,7 @@ export const handler = async (event) => {
           .select()
           .single();
         if (error) throw error;
+        await attachScope(vendorId);
         return respond(200, { ok: true, vendor: data });
       } else {
         const { data, error } = await supabase
@@ -3079,6 +3134,7 @@ export const handler = async (event) => {
                     patch[k] = incoming;
                   }
                 }
+                const attached = await attachScope(existing.id);
                 if (Object.keys(patch).length) {
                   const { data: enriched } = await supabase
                     .from("vendors")
@@ -3087,16 +3143,17 @@ export const handler = async (event) => {
                     .select("*, vendor_ratings(rating), vendor_scopes(id, scope_type, scope_id)")
                     .single();
                   if (enriched) {
-                    return respond(200, { ok: true, vendor: enriched, linked_existing: true, backfilled: Object.keys(patch) });
+                    return respond(200, { ok: true, vendor: enriched, linked_existing: true, backfilled: Object.keys(patch), scope_attached: !!attached });
                   }
                 }
-                return respond(200, { ok: true, vendor: existing, linked_existing: true });
+                return respond(200, { ok: true, vendor: existing, linked_existing: true, scope_attached: !!attached });
               }
             }
           }
           throw error;
         }
-        return respond(200, { ok: true, vendor: data });
+        const attached = await attachScope(data.id);
+        return respond(200, { ok: true, vendor: data, scope_attached: !!attached });
       }
     }
 
@@ -3230,7 +3287,15 @@ export const handler = async (event) => {
       // restrict to vendors whose vendor_scopes intersect the
       // store's hierarchy (or who have no scopes at all = legacy
       // "visible everywhere" fallback).
-      const { storeNumber } = event.queryStringParameters || {};
+      //
+      // includeOutOfScope=1 returns the full set even when storeNumber is
+      // passed, tagging the out-of-scope rows with `_out_of_scope: true`. Used
+      // by Log Work so the user can find a vendor that exists in the system
+      // but isn't normally visible at their store, instead of falling into
+      // the "isn't in your vendor list — add it?" prompt for a vendor that
+      // already exists.
+      const { storeNumber, includeOutOfScope } = event.queryStringParameters || {};
+      const wantAll = includeOutOfScope === "1" || includeOutOfScope === "true";
       const { data: vendors, error } = await supabase
         .from("vendors")
         .select("*, vendor_ratings(rating), vendor_scopes(id, scope_type, scope_id)")
@@ -3247,9 +3312,16 @@ export const handler = async (event) => {
           visibleVendors = vendors || [];
         } else {
           const strict = await isStrictVendorScopes(supabase);
-          visibleVendors = (vendors || []).filter((v) =>
-            isVendorVisibleAtStore(v.vendor_scopes || [], allowedSet, strict),
-          );
+          if (wantAll) {
+            visibleVendors = (vendors || []).map((v) => ({
+              ...v,
+              _out_of_scope: !isVendorVisibleAtStore(v.vendor_scopes || [], allowedSet, strict),
+            }));
+          } else {
+            visibleVendors = (vendors || []).filter((v) =>
+              isVendorVisibleAtStore(v.vendor_scopes || [], allowedSet, strict),
+            );
+          }
         }
       } else {
         // No specific store → this is the vendor directory (Vendors

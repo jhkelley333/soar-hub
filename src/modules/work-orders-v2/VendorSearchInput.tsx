@@ -47,9 +47,14 @@ export function VendorSearchInput({
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
 
+  // includeOutOfScope so a vendor that exists in the system but isn't scoped
+  // to this store still surfaces by name. Without it, a vendor added from a
+  // different store would prompt "isn't in your vendor list — add it?" even
+  // though it already exists, and the add would either link-existing or trip
+  // the unique constraint.
   const vendorsQ = useQuery({
-    queryKey: ["wo2", "vendorsForStore", storeNumber || ""],
-    queryFn: () => fetchVendors({ storeNumber: storeNumber || undefined }),
+    queryKey: ["wo2", "vendorsForStore", storeNumber || "", "v2"],
+    queryFn: () => fetchVendors({ storeNumber: storeNumber || undefined, includeOutOfScope: true }),
     enabled: !disabled,
     staleTime: 60_000,
   });
@@ -145,6 +150,14 @@ export function VendorSearchInput({
                 {v.is_internal && (
                   <span className="rounded-sm bg-indigo-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-indigo-800">
                     Internal
+                  </span>
+                )}
+                {v._out_of_scope && (
+                  <span
+                    className="rounded-sm bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-800"
+                    title="Exists in the system but not visible at your store. Click to link."
+                  >
+                    Outside scope
                   </span>
                 )}
               </div>

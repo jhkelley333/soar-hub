@@ -581,6 +581,10 @@ export interface Vendor {
   parts_warranty_days?: number | null;
   parts_warranty_source?: "vendor" | "manufacturer" | "none" | null;
   warranty_notes?: string | null;
+  /** True when getVendors was called with includeOutOfScope=1 and this row
+   *  isn't normally visible at the caller's storeNumber. UI surfaces it as
+   *  an "outside your store" hint so the user can still link to it. */
+  _out_of_scope?: boolean;
 }
 
 export interface VendorsResponse {
@@ -606,6 +610,15 @@ export interface SaveVendorBody {
   parts_warranty_days?: number | null;
   parts_warranty_source?: "vendor" | "manufacturer" | "none" | null;
   warranty_notes?: string | null;
+  /** Visibility scope to attach to this vendor on save. Used by Log Work's
+   *  pendingAdd dialog so the user can choose whether the vendor is
+   *  reachable just at their store or across a wider scope. The backend
+   *  resolves storeNumber → store/district/area/region ids, and the
+   *  vendor_scopes insert is idempotent (existing rows are kept). */
+  scope?: {
+    type: "store" | "district" | "area" | "region" | "national";
+    storeNumber?: string;
+  };
 }
 
 export interface RateVendorBody {
