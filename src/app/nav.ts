@@ -100,12 +100,11 @@ export const NAV: NavItem[] = [
   // after the V2 cutover. Route stays alive for archival deep links;
   // admins can still navigate to /work-orders manually if needed.
   // { to: "/work-orders", label: "Work Orders", icon: Wrench, roles: ["admin"] },
-  // PAF is currently in pilot mode — only payroll + admin by role. The
-  // paf_pilot flag widens this to specific hand-picked testers (DOs,
-  // RVPs, etc.) without code changes; admins add user IDs from
-  // /admin/feature-flags. To return to the previous "DO and up" rule,
-  // delete the flagKey here and add the original roles back to roles.
-  { to: "/paf",         label: "PAF",         icon: FileSpreadsheet, roles: ["do", "payroll", "admin"], flagKey: "paf_pilot" },
+  // PAF — DO + payroll + admin by role. Per-user widening (a single tester
+  // without changing the role allowlist) is handled by the Role Access page;
+  // a stale paf_pilot flag is no longer wired here because flagKey bypasses
+  // the role gate, which leaked the module to roles like fbc.
+  { to: "/paf",         label: "PAF",         icon: FileSpreadsheet, roles: ["do", "payroll", "admin"] },
   // Employee Actions — Training Credit + PTO request forms. GM and up;
   // submitting notifies the store's DO + RVP. Approvals/tracking land later.
   { to: "/employee-actions", label: "Employee Actions", icon: ClipboardCheck, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
@@ -164,7 +163,12 @@ export function visibleNav(
     if (ov !== undefined) return ov;
     if (!item.roles) return true;
     if (item.roles.includes(role)) return true;
-    if (item.flagKey && flags[item.flagKey]) return true;
+    // flagKey only opens the module when the role allowlist is explicitly
+    // empty (the "gated until the flag flips on" pattern — see
+    // team_pipeline above). Otherwise a global flag like qsr_platform
+    // would bypass the role gate and leak the module to every signed-in
+    // user, which is what surfaced PAF + Team Training to FBC.
+    if (item.flagKey && flags[item.flagKey] && item.roles.length === 0) return true;
     return false;
   });
 }
