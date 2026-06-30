@@ -41,6 +41,11 @@ function scopeKindForRole(role: UserRole): ScopeKind {
       return "district";
     case "sdo":
       return "area";
+    case "fbc":
+      // FBC defaults to area scope (matches backend scopeForRole). An admin
+      // can still pick a specific district, region, or store from the same
+      // picker if a particular consultant covers a wider/narrower slice.
+      return "area";
     case "rvp":
       return "region";
     case "vp":

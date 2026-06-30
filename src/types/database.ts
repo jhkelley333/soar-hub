@@ -21,6 +21,7 @@ export type UserRole =
   | "accounting"
   | "facilities"
   | "human_resources"
+  | "fbc"
   | "admin";
 
 // Hourly store-level roles that all share Shift Manager's permission tier.
@@ -150,6 +151,7 @@ export function roleLevel(role: UserRole): number | null {
     case "accounting":    return null;
     case "facilities":    return null;
     case "human_resources": return null;
+    case "fbc":           return null;
   }
 }
 
@@ -170,6 +172,7 @@ export const ROLE_LABELS: Record<UserRole, string> = {
   accounting: "Accounting",
   facilities: "Facilities",
   human_resources: "Human Resources",
+  fbc: "FBC",
   admin: "Admin",
 };
 

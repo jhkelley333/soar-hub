@@ -377,7 +377,7 @@ const SCOPE_ASSIGNER_ROLES = ["admin", "coo", "vp", "rvp", "sdo"];
 function manageableRoles(role) {
   switch (role) {
     case "admin":
-      return [...HOURLY_STORE_ROLES, "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll", "accounting", "facilities", "human_resources"];
+      return [...HOURLY_STORE_ROLES, "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll", "accounting", "facilities", "human_resources", "fbc"];
     case "coo":
     case "vp":
       return [...HOURLY_STORE_ROLES, "gm", "do", "sdo", "rvp"];
@@ -412,6 +412,11 @@ function scopeForRole(role) {
       return "area";
     case "rvp":
       return "region";
+    case "fbc":
+      // FBC (Franchise Business Consultant) — external consultant. Defaults
+      // to area scope; admin can edit to district/region after creation if
+      // needed via the regular team-mgmt update flow.
+      return "area";
     case "vp":
     case "coo":
     case "admin":
@@ -1432,7 +1437,7 @@ async function fetchHistory(supa, manager, query) {
 // returns annotated rows. The user reviews, then ?action=bulk-import
 // runs invites for valid rows only.
 
-const ALL_ROLES = [...HOURLY_STORE_ROLES,"gm","do","sdo","rvp","vp","coo","admin","payroll","accounting","facilities","human_resources"];
+const ALL_ROLES = [...HOURLY_STORE_ROLES,"gm","do","sdo","rvp","vp","coo","admin","payroll","accounting","facilities","human_resources","fbc"];
 
 async function bulkValidate(supa, rows) {
   // Pre-load org maps so we can resolve codes → ids in O(1).
