@@ -52,6 +52,8 @@ export interface SiteAudit {
   date: string;
   created_at: string;
   can_delete: boolean;
+  // Admin-only: may flip status between 'open' and 'complete'.
+  can_close: boolean;
   stats: AuditStats;
   last_report: LastReport | null;
   issues: AuditIssue[];

@@ -15,7 +15,7 @@ import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { createAudit, deleteAudit, fetchAuditStores, fileToPhoto, resolveIssue, type PhotoPayload } from "./api";
+import { closeAudit, createAudit, deleteAudit, fetchAuditStores, fileToPhoto, resolveIssue, type PhotoPayload } from "./api";
 import { SEVERITY_META, type AuditIssue, type SiteAudit } from "./types";
 
 function fmtDate(d: string) {
@@ -169,6 +169,12 @@ function AuditDetail({ audit, canWrite, onBack, onCapture, onShare }: { audit: S
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["site-audits"] }); onBack(); },
     onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't delete.", "error"),
   });
+  const isClosed = audit.status === "complete";
+  const close = useMutation({
+    mutationFn: () => closeAudit({ audit_id: audit.id, reopen: isClosed }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["site-audits"] }),
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't update audit.", "error"),
+  });
 
   return (
     <div className="mx-auto max-w-[1100px]">
@@ -177,13 +183,20 @@ function AuditDetail({ audit, canWrite, onBack, onCapture, onShare }: { audit: S
         <div>
           <h1 className="text-2xl font-bold tracking-tight text-midnight">{audit.store_name || `Store #${audit.store_number}`}</h1>
           <div className="mt-1 text-sm text-zinc-500">#{audit.store_number} · {audit.created_by_name || "—"} · {fmtDate(audit.date)}</div>
-          {audit.last_report && (
-            <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
-              <Check className="h-3.5 w-3.5" strokeWidth={2.5} /> Report shared {new Date(audit.last_report.sent_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-              {audit.last_report.signed_by_name ? ` · signed by ${audit.last_report.signed_by_name}` : ""}
-              {audit.last_report.recipient_count ? ` · ${audit.last_report.recipient_count} recipient${audit.last_report.recipient_count === 1 ? "" : "s"}` : ""}
-            </span>
-          )}
+          <div className="mt-2 flex flex-wrap gap-2">
+            {isClosed && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-100 px-2.5 py-1 text-xs font-semibold text-zinc-600">
+                <Check className="h-3.5 w-3.5" strokeWidth={2.5} /> Closed
+              </span>
+            )}
+            {audit.last_report && (
+              <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700">
+                <Check className="h-3.5 w-3.5" strokeWidth={2.5} /> Report shared {new Date(audit.last_report.sent_at).toLocaleDateString("en-US", { month: "short", day: "numeric" })}
+                {audit.last_report.signed_by_name ? ` · signed by ${audit.last_report.signed_by_name}` : ""}
+                {audit.last_report.recipient_count ? ` · ${audit.last_report.recipient_count} recipient${audit.last_report.recipient_count === 1 ? "" : "s"}` : ""}
+              </span>
+            )}
+          </div>
         </div>
         <div className="flex flex-col items-end gap-3">
           {canWrite && (
@@ -255,13 +268,22 @@ function AuditDetail({ audit, canWrite, onBack, onCapture, onShare }: { audit: S
         </div>
       )}
 
-      {audit.can_delete && (
-        <div className="mt-8 border-t border-zinc-100 pt-4">
-          <button
-            onClick={() => del.isPending ? null : (window.confirm("Delete this entire audit and all of its issues?") && del.mutate())}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-red-500 hover:underline">
-            <Trash2 className="h-3.5 w-3.5" /> Delete audit
-          </button>
+      {(audit.can_close || audit.can_delete) && (
+        <div className="mt-8 flex flex-wrap items-center gap-4 border-t border-zinc-100 pt-4">
+          {audit.can_close && (
+            <button
+              onClick={() => close.isPending ? null : close.mutate()}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-accent hover:underline">
+              <Check className="h-3.5 w-3.5" strokeWidth={2.5} /> {isClosed ? "Reopen audit" : "Close audit (admin)"}
+            </button>
+          )}
+          {audit.can_delete && (
+            <button
+              onClick={() => del.isPending ? null : (window.confirm("Delete this entire audit and all of its issues?") && del.mutate())}
+              className="inline-flex items-center gap-1.5 text-xs font-medium text-red-500 hover:underline">
+              <Trash2 className="h-3.5 w-3.5" /> Delete audit
+            </button>
+          )}
         </div>
       )}
 

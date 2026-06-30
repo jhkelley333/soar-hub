@@ -75,6 +75,9 @@ export function deleteIssue(input: { audit_id: string; issue_id: string }): Prom
 export function deleteAudit(audit_id: string): Promise<{ ok: true }> {
   return request(`${FN}?action=delete-audit`, { method: "POST", body: JSON.stringify({ audit_id }) });
 }
+export function closeAudit(input: { audit_id: string; reopen?: boolean }): Promise<{ ok: true; status: "open" | "complete" }> {
+  return request(`${FN}?action=close-audit`, { method: "POST", body: JSON.stringify(input) });
+}
 export interface ShareReportInput {
   audit_id: string;
   signature: string; // base64 data URL of the signature canvas
