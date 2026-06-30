@@ -57,15 +57,20 @@ const TOKEN_EXPIRY_HOURS = 72;
 // straight to Payroll.
 const SUBMIT_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]);
 
-// Stores that are restricted on PAF — hidden from the drive-in dropdown and
-// rejected on submit unless the submitter's role is in the allowed set. Use
-// this for corporate / training / hold stores that DOs shouldn't be running
-// payroll changes against on their own.
+// "Restricted" stores on PAF — listed here so the listMyStores fetch will
+// always append them for the allowed roles even when they sit outside the
+// caller's normal org scope (corporate / training / hold stores aren't in
+// any operating district's hierarchy). The allowlist also doubles as a
+// submit-side gate, but for 8100 we open it to every PAF-submitter role
+// because employees coded there include above-store leadership that any
+// DO might need to file a PAF against.
 //
 // Key  = store_number (string).
-// Value = roles that can pick this store on a PAF.
+// Value = roles that can pick this store on a PAF + see it in the dropdown
+//         even when they have no scope to it. Use a narrower set if a future
+//         store should genuinely be restricted (e.g. SDO+).
 const PAF_RESTRICTED_STORES = {
-  "8100": new Set(["sdo", "rvp", "vp", "coo", "admin", "payroll"]),
+  "8100": new Set(["do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]),
 };
 function canSeeRestrictedStore(role, storeNumber) {
   const allowed = PAF_RESTRICTED_STORES[String(storeNumber).trim()];
