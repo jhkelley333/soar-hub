@@ -110,26 +110,67 @@ function exportPnl(stores: FundStoreRow[]) {
 
 function FundRow({ row, canValidate, onValidate }: { row: FundStoreRow; canValidate: boolean; onValidate: () => void }) {
   const over = row.last?.over_tolerance;
+  // Subtitle reads the last validation's date + counter when the row is done
+  // this period; falls back to the period status otherwise.
+  const subtitle = !row.bank_set
+    ? "No Bank set"
+    : row.validated_this_period && row.last
+      ? `Validated ${fmtValidatedAt(row.last.validated_at)}${row.last.by ? ` by ${row.last.by}` : ""}`
+      : "Due this period";
+
+  // Click handler is wrapped in a confirm only when the row is already
+  // validated — that's the "lock" the user asked for. Default validate flow
+  // (first count of the period) goes straight through unchanged.
+  const onClickValidate = () => {
+    if (row.validated_this_period) {
+      const ok = window.confirm(
+        `Re-count this store's Bank? The previous validation will be replaced.\n\n#${row.store_number}${row.store_name ? ` · ${row.store_name}` : ""}`,
+      );
+      if (!ok) return;
+    }
+    onValidate();
+  };
+
   return (
     <div className="grid grid-cols-1 items-center gap-2 p-4 sm:grid-cols-[1fr_auto_auto_auto_auto] sm:gap-4">
       <div className="min-w-0">
         <div className="truncate text-sm font-semibold text-midnight">#{row.store_number}{row.store_name ? ` · ${row.store_name}` : ""}</div>
-        <div className="text-xs text-zinc-500">{row.bank_set ? (row.validated_this_period ? "Validated this period" : "Due this period") : "No Bank set"}</div>
+        <div className="truncate text-xs text-zinc-500">{subtitle}</div>
       </div>
       <div className="text-right text-sm font-semibold tabular-nums text-midnight sm:w-24">{row.bank_amount_cents != null ? usd(row.bank_amount_cents) : "—"}</div>
       <div className="text-right text-sm tabular-nums text-zinc-600 sm:w-24">{row.last ? usd(row.last.counted_cents) : "—"}</div>
       <div className={cn("text-right text-sm font-semibold tabular-nums sm:w-24", over ? "text-red-600" : "text-zinc-600")}>{row.last ? usd(row.last.variance_cents, { signed: true }) : "—"}</div>
       <div className="flex justify-end sm:w-28">
         {canValidate ? (
-          <button type="button" onClick={onValidate} disabled={!row.bank_set} className="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:brightness-110 disabled:opacity-40" title={row.bank_set ? "" : "Set this store's Bank amount first"}>
-            Validate
-          </button>
+          row.validated_this_period ? (
+            // Locked look — click confirms re-count.
+            <button
+              type="button"
+              onClick={onClickValidate}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200 hover:bg-emerald-100"
+              title="Validated this period — click to re-count"
+            >
+              <Check className="h-3.5 w-3.5" /> Validated
+            </button>
+          ) : (
+            <button type="button" onClick={onClickValidate} disabled={!row.bank_set} className="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:brightness-110 disabled:opacity-40" title={row.bank_set ? "" : "Set this store's Bank amount first"}>
+              Validate
+            </button>
+          )
         ) : (
           <StatusPill row={row} />
         )}
       </div>
     </div>
   );
+}
+
+// "Jun 29 at 12:34 PM" — short, unambiguous, no year for current-period reads.
+function fmtValidatedAt(iso: string | null | undefined): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  return `${d.toLocaleDateString("en-US", { month: "short", day: "numeric" })} at ${d.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}`;
 }
 
 function StatusPill({ row }: { row: FundStoreRow }) {
