@@ -10,11 +10,10 @@
 //   SKUNKWORKS_KPI_TOKEN  the shared access token
 
 import { createClient } from "@supabase/supabase-js";
+import { fetchKpiFeed, kpiConfigured } from "./_lib/kpiFeed.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const KPI_URL = process.env.SKUNKWORKS_KPI_URL;
-const KPI_TOKEN = process.env.SKUNKWORKS_KPI_TOKEN;
 
 function admin() {
   if (!SUPABASE_URL || !SERVICE_KEY) throw new Error("kpi-snapshot env vars not configured");
@@ -233,40 +232,23 @@ export const handler = async (event) => {
       return respond(403, { error: "Admins only." });
     }
 
-    if (!KPI_URL || !KPI_TOKEN) {
+    if (!kpiConfigured()) {
       return respond(503, { error: "KPI feed isn't configured (set SKUNKWORKS_KPI_URL + SKUNKWORKS_KPI_TOKEN in Netlify)." });
     }
 
-    // Build the request URL robustly: strip any token already on SKUNKWORKS_KPI_URL
-    // (so a full URL pasted into the env var doesn't double the token), then set ours.
-    let url;
-    try {
-      const u = new URL(KPI_URL);
-      u.searchParams.delete("token");
-      u.searchParams.set("token", KPI_TOKEN);
-      url = u.toString();
-    } catch {
-      return respond(500, { error: `SKUNKWORKS_KPI_URL is not a valid URL: "${String(KPI_URL).slice(0, 80)}"` });
-    }
-
-    // Time-box the upstream fetch so a hung feed returns a clean error here
-    // instead of being killed by the Lambda timeout (which surfaces as a bare 502).
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 8000);
+    // Shared fetch (also used by labor-v2.js) — handles the URL/token build,
+    // a 15s timeout (this proxy used to time-box at 8s, which is shorter than
+    // the feed sometimes needs and was cutting it off on every retry rather
+    // than just the genuinely slow ones), and distinguishes a login/redirect
+    // page (config/access problem — retrying won't help) from a generic
+    // non-JSON blip, both folded into the thrown error's message so the
+    // dashboard's error card is actually diagnosable instead of a bare
+    // "non-JSON" with no detail.
     let payload;
     try {
-      const res = await fetch(url, { headers: { Accept: "application/json" }, signal: ctrl.signal });
-      const text = await res.text();
-      if (!res.ok) {
-        return respond(502, { error: `KPI feed responded ${res.status}`, detail: text.slice(0, 300) });
-      }
-      try { payload = JSON.parse(text); }
-      catch { return respond(502, { error: "KPI feed returned non-JSON", detail: text.slice(0, 300) }); }
+      payload = await fetchKpiFeed({ timeoutMs: 15000 });
     } catch (e) {
-      const msg = e?.name === "AbortError" ? "timed out after 8s" : (e?.message || String(e));
-      return respond(502, { error: `Couldn't reach the KPI feed: ${msg}` });
-    } finally {
-      clearTimeout(timer);
+      return respond(502, { error: e.message || "Couldn't reach the KPI feed." });
     }
 
     const rd = (payload && payload.rawData) || {};
