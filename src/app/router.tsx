@@ -145,7 +145,7 @@ export const router = createBrowserRouter([
       {
         path: "operations",
         element: (
-          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
             <OpsToolsPage />
           </ProtectedRoute>
         ),
@@ -153,7 +153,7 @@ export const router = createBrowserRouter([
       {
         path: "site-audits",
         element: (
-          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
             <SiteAuditPage />
           </ProtectedRoute>
         ),
@@ -517,7 +517,7 @@ export const router = createBrowserRouter([
       {
         path: "qsr/manage",
         element: (
-          <ProtectedRoute requireRoles={["shift_manager", "associate_manager", "first_assistant_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+          <ProtectedRoute requireRoles={["shift_manager", "associate_manager", "first_assistant_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
             <ManagerDashboardPage />
           </ProtectedRoute>
         ),
@@ -586,7 +586,7 @@ export const router = createBrowserRouter([
       {
         path: "ranker",
         element: (
-          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
             <RankerPage />
           </ProtectedRoute>
         ),

@@ -30,6 +30,10 @@ function scopeKindForRole(role: UserRole): ScopeKind {
       return "district";
     case "sdo":
       return "area";
+    case "fbc":
+      // External consultant (Franchise Business Consultant) — defaults to
+      // area, but the picker still lets the admin choose another scope.
+      return "area";
     case "rvp":
       return "region";
     case "vp":

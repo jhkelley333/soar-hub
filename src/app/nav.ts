@@ -63,8 +63,8 @@ export const NAV: NavItem[] = [
   // Operations Tools — a card hub for the field/store-ops tools (Site Audits,
   // Walkthroughs, Reno Scoping). The individual tools keep their own routes;
   // this is the consolidated entry point.
-  { to: "/operations",  label: "Operations Tools", icon: LayoutGrid, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
-  { to: "/ranker",      label: "Ranker",      icon: TrendingUp,      roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
+  { to: "/operations",  label: "Operations Tools", icon: LayoutGrid, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
+  { to: "/ranker",      label: "Ranker",      icon: TrendingUp,      roles: ["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
   // Labor — daily labor review. GMs review their store's numbers against
   // chart and explain misses; DO+ get the district rollup. Backend
   // (labor.js) enforces scope; nav is wide so shift managers see it too.
@@ -118,7 +118,7 @@ export const NAV: NavItem[] = [
   { to: "/my-training", label: "My Training",  icon: BookOpenCheck,   roles: null },
   // Team Training — completion rollup scoped to the caller's org (GM → store,
   // DO → district, RVP → region; admins org-wide). Admins also assign courses.
-  { to: "/qsr/manage",  label: "Team Training", icon: BarChart3,       roles: ["shift_manager", "first_assistant_manager", "associate_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"], flagKey: "qsr_platform" },
+  { to: "/qsr/manage",  label: "Team Training", icon: BarChart3,       roles: ["shift_manager", "first_assistant_manager", "associate_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"], flagKey: "qsr_platform" },
   // Training QR codes — store leaders + up see/print their stores' codes
   // (scoped by org in qsr-manage); admins also bulk-create + manage all.
   { to: "/qsr/share",   label: "Training QR Codes", icon: QrCode,      roles: ["shift_manager", "first_assistant_manager", "associate_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"], flagKey: "qsr_platform" },
@@ -132,7 +132,7 @@ export const NAV: NavItem[] = [
   { to: "/admin/manuals", label: "Manuals Admin", icon: BookMarked,  roles: ["rvp", "vp", "coo", "admin"] },
   { to: "/resources",   label: "Resources",   icon: BookOpen,        roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/team",        label: "My Team",     icon: Users,           roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
-  { to: "/my-stores",   label: "My Stores",   icon: Building2,       roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
+  { to: "/my-stores",   label: "My Stores",   icon: Building2,       roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll", "fbc"] },
   { to: "/admin/org",   label: "Org Admin",   icon: Network,         roles: ["vp", "coo", "admin"] },
   { to: "/admin/kpi",   label: "KPI Dashboard", icon: BarChart3,   roles: ["admin"] },
   { to: "/admin/labor-v2", label: "Labor v2 (Beta) · Rollup", icon: Gauge, roles: ["admin"] },
