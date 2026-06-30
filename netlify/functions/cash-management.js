@@ -360,25 +360,42 @@ async function fundOverview(supa, user) {
   const bankMap = await fundBankMap(supa, ids);
   const { data: vals } = await supa
     .from("store_fund_validations")
-    .select("store_id, counted_cents, bank_amount_cents, variance_cents, over_tolerance, validated_at, validated_by_name, fiscal_period")
+    .select("store_id, counted_cents, bank_amount_cents, variance_cents, over_tolerance, validated_at, validated_by_name, fiscal_period, is_off_cycle")
     .in("store_id", ids)
     .order("validated_at", { ascending: false });
+  // Track three things per store:
+  //  - latest         = most recent validation of any kind (drives last-count display)
+  //  - latestRequired = most recent required (non-off-cycle) row (drives the
+  //                     locked Validated subtitle and the period status)
+  //  - latestOffCycle = most recent off-cycle row (shown as a separate note)
+  // The "Validated this period" set only contains stores whose latest required
+  // row sits in the current fiscal period — an off-cycle surprise audit can't
+  // satisfy the monthly requirement on its own.
   const latest = new Map();
+  const latestRequired = new Map();
+  const latestOffCycle = new Map();
   const thisPeriod = new Set();
   for (const v of vals || []) {
     if (!latest.has(v.store_id)) latest.set(v.store_id, v);
-    if (fi && v.fiscal_period === fi.period) thisPeriod.add(v.store_id);
+    if (v.is_off_cycle) {
+      if (!latestOffCycle.has(v.store_id)) latestOffCycle.set(v.store_id, v);
+    } else {
+      if (!latestRequired.has(v.store_id)) latestRequired.set(v.store_id, v);
+      if (fi && v.fiscal_period === fi.period) thisPeriod.add(v.store_id);
+    }
   }
+  const shape = (v) => v
+    ? { counted_cents: v.counted_cents, variance_cents: v.variance_cents, over_tolerance: v.over_tolerance, validated_at: v.validated_at, by: v.validated_by_name }
+    : null;
   const stores = rows.map((r) => {
     const bank = bankMap.has(r.id) ? bankMap.get(r.id) : null;
-    const last = latest.get(r.id) || null;
     return {
       store_id: r.id, store_number: String(r.number), store_name: r.name || null,
       bank_amount_cents: bank, bank_set: bank != null,
       validated_this_period: thisPeriod.has(r.id),
-      last: last
-        ? { counted_cents: last.counted_cents, variance_cents: last.variance_cents, over_tolerance: last.over_tolerance, validated_at: last.validated_at, by: last.validated_by_name }
-        : null,
+      last: shape(latest.get(r.id)),
+      last_required: shape(latestRequired.get(r.id)),
+      last_off_cycle: shape(latestOffCycle.get(r.id)),
     };
   }).sort((a, b) => Number(a.store_number) - Number(b.store_number));
   const withBank = stores.filter((s) => s.bank_set);
@@ -410,15 +427,20 @@ async function fundValidate(supa, user, body) {
   const businessDate = currentBusinessDateCT(settings.cutoffHour);
   const fi = fiscalInfoIso(businessDate);
   const name = user.preferred_name || user.full_name || user.email;
+  // Off-cycle audits are recorded with is_off_cycle=true so the monthly
+  // requirement check (validated_this_period) ignores them. A surprise audit
+  // can't satisfy the cycle on its own.
+  const isOffCycle = !!body?.is_off_cycle;
   const { data: row, error } = await supa.from("store_fund_validations").insert({
     store_id: store.id, store_number: String(store.number), business_date: businessDate,
     fiscal_period: fi?.period ?? null, fiscal_week: fi?.fiscalWeek ?? null, week_in_period: fi?.weekInPeriod ?? null,
     bank_amount_cents: bank, counted_cents: counted, variance_cents: variance,
     denominations: body?.denominations ?? null, over_tolerance: over, reason: reason || null,
+    is_off_cycle: isOffCycle,
     validated_by: user.id, validated_by_name: name,
   }).select("id").single();
   if (error) return { error: error.message, status: 500 };
-  await logCash(supa, { store_id: store.id, store_number: String(store.number), action: "fund-validate", actor_id: user.id, actor_name: name, detail: { counted, bank, variance, over } });
+  await logCash(supa, { store_id: store.id, store_number: String(store.number), action: isOffCycle ? "fund-validate-off-cycle" : "fund-validate", actor_id: user.id, actor_name: name, detail: { counted, bank, variance, over, off_cycle: isOffCycle } });
 
   let alerted = null;
   if (over) {

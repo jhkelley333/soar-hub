@@ -14,7 +14,7 @@ import { fetchFundOverview, fetchFundMetrics, submitFundValidation, setStoreBank
 import { usd, toCents, centsToInput } from "./money";
 import type { FundStoreRow } from "./types";
 
-type Mode = { v: "list" } | { v: "validate"; store: FundStoreRow } | { v: "metrics" } | { v: "banks" };
+type Mode = { v: "list" } | { v: "validate"; store: FundStoreRow; offCycle?: boolean } | { v: "metrics" } | { v: "banks" };
 
 const DENOMS: { cents: number; label: string; kind: "Bill" | "Coin" }[] = [
   { cents: 10000, label: "$100", kind: "Bill" }, { cents: 5000, label: "$50", kind: "Bill" },
@@ -34,7 +34,7 @@ export function StoreFundsTab() {
 
   if (mode.v === "metrics") return <MetricsPanel onBack={() => setMode({ v: "list" })} />;
   if (mode.v === "banks") return <BanksPanel stores={data.stores} onBack={() => setMode({ v: "list" })} />;
-  if (mode.v === "validate") return <ValidatePanel store={mode.store} toleranceCents={data.toleranceCents} onBack={() => setMode({ v: "list" })} />;
+  if (mode.v === "validate") return <ValidatePanel store={mode.store} toleranceCents={data.toleranceCents} offCycle={!!mode.offCycle} onBack={() => setMode({ v: "list" })} />;
 
   const r = data.rollup;
   return (
@@ -85,7 +85,13 @@ export function StoreFundsTab() {
         </div>
         <div className="divide-y divide-zinc-100">
           {data.stores.map((s) => (
-            <FundRow key={s.store_id} row={s} canValidate={data.can_validate} onValidate={() => setMode({ v: "validate", store: s })} />
+            <FundRow
+              key={s.store_id}
+              row={s}
+              canValidate={data.can_validate}
+              onValidate={() => setMode({ v: "validate", store: s })}
+              onOffCycleAudit={() => setMode({ v: "validate", store: s, offCycle: true })}
+            />
           ))}
           {data.stores.length === 0 && <div className="p-8 text-center text-sm text-zinc-500">No stores in your scope.</div>}
         </div>
@@ -108,19 +114,33 @@ function exportPnl(stores: FundStoreRow[]) {
   downloadCSV(`store-funds-${new Date().toISOString().slice(0, 10)}.csv`, toCSV(headers, rows));
 }
 
-function FundRow({ row, canValidate, onValidate }: { row: FundStoreRow; canValidate: boolean; onValidate: () => void }) {
+function FundRow({
+  row,
+  canValidate,
+  onValidate,
+  onOffCycleAudit,
+}: {
+  row: FundStoreRow;
+  canValidate: boolean;
+  onValidate: () => void;
+  onOffCycleAudit: () => void;
+}) {
+  // Counts shown in the row's amount/variance columns come from the most
+  // recent count of any kind. The locked-subtitle text reuses the latest
+  // REQUIRED validation so an off-cycle audit can't fake compliance.
   const over = row.last?.over_tolerance;
-  // Subtitle reads the last validation's date + counter when the row is done
-  // this period; falls back to the period status otherwise.
+  const required = row.last_required;
   const subtitle = !row.bank_set
     ? "No Bank set"
-    : row.validated_this_period && row.last
-      ? `Validated ${fmtValidatedAt(row.last.validated_at)}${row.last.by ? ` by ${row.last.by}` : ""}`
+    : row.validated_this_period && required
+      ? `Validated ${fmtValidatedAt(required.validated_at)}${required.by ? ` by ${required.by}` : ""}`
       : "Due this period";
+  const offCycleNote = row.last_off_cycle
+    ? `Last off-cycle audit ${fmtValidatedAt(row.last_off_cycle.validated_at)}${row.last_off_cycle.by ? ` by ${row.last_off_cycle.by}` : ""}`
+    : null;
 
-  // Click handler is wrapped in a confirm only when the row is already
-  // validated — that's the "lock" the user asked for. Default validate flow
-  // (first count of the period) goes straight through unchanged.
+  // Confirm re-counts that would replace the required validation. Off-cycle
+  // audits don't replace anything, so they go straight through.
   const onClickValidate = () => {
     if (row.validated_this_period) {
       const ok = window.confirm(
@@ -136,22 +156,33 @@ function FundRow({ row, canValidate, onValidate }: { row: FundStoreRow; canValid
       <div className="min-w-0">
         <div className="truncate text-sm font-semibold text-midnight">#{row.store_number}{row.store_name ? ` · ${row.store_name}` : ""}</div>
         <div className="truncate text-xs text-zinc-500">{subtitle}</div>
+        {offCycleNote && <div className="truncate text-[11px] text-amber-700">{offCycleNote}</div>}
       </div>
       <div className="text-right text-sm font-semibold tabular-nums text-midnight sm:w-24">{row.bank_amount_cents != null ? usd(row.bank_amount_cents) : "—"}</div>
       <div className="text-right text-sm tabular-nums text-zinc-600 sm:w-24">{row.last ? usd(row.last.counted_cents) : "—"}</div>
       <div className={cn("text-right text-sm font-semibold tabular-nums sm:w-24", over ? "text-red-600" : "text-zinc-600")}>{row.last ? usd(row.last.variance_cents, { signed: true }) : "—"}</div>
-      <div className="flex justify-end sm:w-28">
+      <div className="flex flex-col items-end gap-1.5 sm:w-32">
         {canValidate ? (
           row.validated_this_period ? (
             // Locked look — click confirms re-count.
-            <button
-              type="button"
-              onClick={onClickValidate}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200 hover:bg-emerald-100"
-              title="Validated this period — click to re-count"
-            >
-              <Check className="h-3.5 w-3.5" /> Validated
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={onClickValidate}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200 hover:bg-emerald-100"
+                title="Validated this period — click to re-count"
+              >
+                <Check className="h-3.5 w-3.5" /> Validated
+              </button>
+              <button
+                type="button"
+                onClick={onOffCycleAudit}
+                className="inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-[11px] font-semibold text-amber-700 ring-1 ring-inset ring-amber-200 hover:bg-amber-50"
+                title="Surprise audit — does not replace the required validation"
+              >
+                <AlertTriangle className="h-3 w-3" /> Off-cycle audit
+              </button>
+            </>
           ) : (
             <button type="button" onClick={onClickValidate} disabled={!row.bank_set} className="rounded-lg bg-accent px-3 py-1.5 text-xs font-semibold text-white hover:brightness-110 disabled:opacity-40" title={row.bank_set ? "" : "Set this store's Bank amount first"}>
               Validate
@@ -192,7 +223,7 @@ function Tile({ label, value, sub, tone = "neutral" }: { label: string; value: s
 }
 
 // ── Validate one store ────────────────────────────────────────────────────────
-function ValidatePanel({ store, toleranceCents, onBack }: { store: FundStoreRow; toleranceCents: number; onBack: () => void }) {
+function ValidatePanel({ store, toleranceCents, offCycle = false, onBack }: { store: FundStoreRow; toleranceCents: number; offCycle?: boolean; onBack: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const [counts, setCounts] = useState<Record<number, number>>({});
@@ -208,9 +239,11 @@ function ValidatePanel({ store, toleranceCents, onBack }: { store: FundStoreRow;
       store_number: store.store_number, counted_cents: counted,
       denominations: Object.fromEntries(Object.entries(counts).filter(([, n]) => n > 0)),
       reason: reason.trim() || undefined,
+      is_off_cycle: offCycle || undefined,
     }),
     onSuccess: (r) => {
-      toast.push(r.over_tolerance ? `Validated & escalated${r.alerted ? ` to ${r.alerted}` : ""}.` : "Bank validated — on chart.", "success");
+      const label = offCycle ? "Off-cycle audit recorded" : "Bank validated — on chart";
+      toast.push(r.over_tolerance ? `${label} & escalated${r.alerted ? ` to ${r.alerted}` : ""}.` : `${label}.`, "success");
       qc.invalidateQueries({ queryKey: ["fund-overview"] });
       onBack();
     },
@@ -221,10 +254,23 @@ function ValidatePanel({ store, toleranceCents, onBack }: { store: FundStoreRow;
     <div className="space-y-4">
       <button type="button" onClick={onBack} className="inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-midnight"><ArrowLeft className="h-4 w-4" /> All stores</button>
       <div>
-        <div className="text-[11px] uppercase tracking-wide text-zinc-400">Petty Cash · Store Bank</div>
-        <h2 className="text-xl font-semibold text-midnight">Validate #{store.store_number}{store.store_name ? ` · ${store.store_name}` : ""}</h2>
+        <div className="text-[11px] uppercase tracking-wide text-zinc-400">
+          Petty Cash · Store Bank{offCycle && " · Off-cycle audit"}
+        </div>
+        <h2 className="text-xl font-semibold text-midnight">
+          {offCycle ? "Off-cycle audit" : "Validate"} #{store.store_number}{store.store_name ? ` · ${store.store_name}` : ""}
+        </h2>
         <p className="mt-1 text-sm text-zinc-500">Count the store cash Bank and confirm it still equals its {usd(bank)} Bank. Shortages or overages above {usd(toleranceCents)} escalate to the SDO.</p>
       </div>
+
+      {offCycle && (
+        <div className="flex items-start gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-inset ring-amber-200">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          <div>
+            <strong>This won&apos;t replace the required monthly validation.</strong> Surprise audits are recorded separately so the period&apos;s "Validated" status stays intact.
+          </div>
+        </div>
+      )}
 
       <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
         {/* count */}
