@@ -16,10 +16,16 @@ import {
 } from "@/lib/roleAccess";
 import { ROLE_LABELS, type UserRole } from "@/types/database";
 
+// Columns the admin grid offers as togglable. Admin is intentionally
+// excluded (always full access). Back-office / horizontal roles
+// (payroll, accounting, facilities, human_resources, fbc) sit after
+// the field hierarchy so they appear together on the right side of
+// the grid for easier scanning.
 const ROLE_COLS: UserRole[] = [
   "shift_manager", "first_assistant_manager", "associate_manager",
   "crew_leader", "crew_member", "carhop",
-  "gm", "do", "sdo", "rvp", "vp", "coo", "payroll",
+  "gm", "do", "sdo", "rvp", "vp", "coo",
+  "payroll", "accounting", "facilities", "human_resources", "fbc",
 ];
 
 function defaultVisible(role: UserRole, roles: UserRole[] | null): boolean {
