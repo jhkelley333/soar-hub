@@ -451,10 +451,11 @@ export function fetchNotifications(): Promise<NotificationsResponse> {
   return request<NotificationsResponse>(`${FN}?action=getNotifications`);
 }
 
-export function fetchVendors(opts?: { storeNumber?: string }): Promise<VendorsResponse> {
-  const qs = opts?.storeNumber
-    ? `&storeNumber=${encodeURIComponent(opts.storeNumber)}`
-    : "";
+export function fetchVendors(opts?: { storeNumber?: string; includeOutOfScope?: boolean }): Promise<VendorsResponse> {
+  const parts: string[] = [];
+  if (opts?.storeNumber) parts.push(`storeNumber=${encodeURIComponent(opts.storeNumber)}`);
+  if (opts?.includeOutOfScope) parts.push("includeOutOfScope=1");
+  const qs = parts.length ? `&${parts.join("&")}` : "";
   return request<VendorsResponse>(`${FN}?action=getVendors${qs}`);
 }
 
@@ -711,8 +712,8 @@ export function searchVendors(
  */
 export function saveVendor(
   payload: SaveVendorBody,
-): Promise<{ ok: true; vendor: Vendor; linked_existing?: boolean; backfilled?: string[] }> {
-  return request<{ ok: true; vendor: Vendor; linked_existing?: boolean; backfilled?: string[] }>(`${FN}?action=saveVendor`, {
+): Promise<{ ok: true; vendor: Vendor; linked_existing?: boolean; backfilled?: string[]; scope_attached?: boolean }> {
+  return request<{ ok: true; vendor: Vendor; linked_existing?: boolean; backfilled?: string[]; scope_attached?: boolean }>(`${FN}?action=saveVendor`, {
     method: "POST",
     body: JSON.stringify(payload),
   });

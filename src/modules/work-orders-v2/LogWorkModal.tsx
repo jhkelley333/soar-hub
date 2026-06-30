@@ -58,6 +58,10 @@ export function LogWorkModal({
   const [autofilled, setAutofilled] = useState(false);
   const [extractNote, setExtractNote] = useState<string | null>(null);
   const [pendingAdd, setPendingAdd] = useState(false); // confirm "add new vendor?"
+  // Where should this vendor be reachable? Defaults to this store; the user
+  // can widen the scope when adding a vendor that should be shared with the
+  // district, area, region, or everywhere.
+  const [vendorScope, setVendorScope] = useState<"store" | "district" | "area" | "region" | "national">("store");
 
   const todayStr = new Date().toISOString().slice(0, 10);
   // Read the invoice with AI and pre-fill empty fields (never clobber what the
@@ -162,6 +166,10 @@ export function LogWorkModal({
           email: extractedVendor.email || undefined,
           website: extractedVendor.website || undefined,
           address: extractedVendor.address || undefined,
+          // Attach a visibility scope so the vendor is reachable from the
+          // chosen tier. Backend resolves storeNumber → store/district/area/
+          // region IDs and inserts idempotently.
+          scope: { type: vendorScope, storeNumber },
         });
         useVendorId = vendor.id;
         setVendorId(vendor.id);
@@ -369,7 +377,23 @@ export function LogWorkModal({
               <strong>{vendorName.trim()}</strong> isn't in your vendor list. Add it so it's reusable next time
               {category ? <> (and set as this store's go-to for {category})</> : null}?
             </p>
-            <div className="mt-2 flex flex-wrap items-center justify-end gap-2">
+            <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+              <Label htmlFor="vendor-scope" className="text-xs text-zinc-500">Make visible at</Label>
+              <select
+                id="vendor-scope"
+                value={vendorScope}
+                onChange={(e) => setVendorScope(e.target.value as typeof vendorScope)}
+                disabled={submitting}
+                className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-sm focus:border-accent focus:outline-none"
+              >
+                <option value="store">This store only</option>
+                <option value="district">Whole district</option>
+                <option value="area">Whole area</option>
+                <option value="region">Whole region</option>
+                <option value="national">Everywhere</option>
+              </select>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
               <Button variant="ghost" onClick={() => setPendingAdd(false)} disabled={submitting}>Back</Button>
               <Button variant="secondary" onClick={() => doSubmit(false)} disabled={submitting}>Record without adding</Button>
               <Button variant="primary" onClick={() => doSubmit(true)} disabled={submitting}>
