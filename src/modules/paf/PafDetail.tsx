@@ -255,16 +255,15 @@ export function PafDetail({ paf }: { paf: PafRow }) {
           </Section>
         )}
 
-      {(paf.last_day_worked || paf.termed_in_tr) && (
+      {(paf.last_day_worked || paf.termed_in_tr || paf.category === "Termination") && (
         <Section title="Termination">
           <Grid>
             {paf.last_day_worked && (
               <Field label="Last Day Worked" value={paf.last_day_worked} />
             )}
             {paf.termed_in_tr && <Field label="Termed in TR" value={paf.termed_in_tr} />}
-            {/* Historical only — hidden in new submissions */}
-            {Number(paf.final_check_hrs) > 0 && (
-              <Field label="Final Check Hours (legacy)" value={String(paf.final_check_hrs)} />
+            {paf.category === "Termination" && (
+              <Field label="Final Check Hours" value={String(paf.final_check_hrs ?? 0)} />
             )}
             {paf.term_demotion && (
               <Field label="Termination Type (legacy)" value={paf.term_demotion} />

@@ -841,9 +841,12 @@ async function buildPafRowFromBody(supa, user, body) {
     new_location: sanitizeText(body?.new_location, 50) || null,
     demotion_effective_date: sanitizeDateInput(body?.demotion_effective_date),
 
-    // Termination — final_check_hrs + term_demotion intentionally not collected
+    // Termination — final_check_hrs is collected again (was dropped in
+    // 0019 and brought back in 0200_paf_final_check_hrs). term_demotion
+    // stays retired; the column still exists for historical rows only.
     last_day_worked: sanitizeDateInput(body?.last_day_worked),
     termed_in_tr: sanitizeText(body?.termed_in_tr, 10) || null,
+    final_check_hrs: num(body?.final_check_hrs),
 
     // New Hire (Salary Leader)
     nh_role: sanitizeText(body?.nh_role, 20) || null,
