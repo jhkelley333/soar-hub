@@ -1,7 +1,8 @@
 // Business Disruption Reporting — replaces the standalone "Sonic Business
 // Disruption Reporting" form. GM and above can submit a closure/disruption
-// report for a store in their scope; it emails the selected District
-// Manager and lands in a DO+ queue scoped the same way Site Audits is.
+// report for a store in their scope; it emails the store's District
+// Manager (resolved automatically from the org chart — no manual picker)
+// and lands in a DO+ queue scoped the same way Site Audits is.
 
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -16,7 +17,7 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
-  createDisruption, fetchDisruptionStores, fetchDisruptions, fetchDistrictManagers,
+  createDisruption, fetchDisruptionStores, fetchDisruptions,
   fileToPayload, setDisruptionStatus, type FilePayload,
 } from "./api";
 import { CLOSURE_TYPES, ISSUE_TYPES, type DisruptionReport, type DisruptionStatus } from "./types";
@@ -149,11 +150,9 @@ const inputCls = "block w-full rounded-md border-0 bg-white px-3 py-2 text-sm te
 function NewReportForm({ onBack, onSubmitted }: { onBack: () => void; onSubmitted: () => void }) {
   const toast = useToast();
   const storesQ = useQuery({ queryKey: ["business-disruption-stores"], queryFn: fetchDisruptionStores, staleTime: 5 * 60_000 });
-  const dmsQ = useQuery({ queryKey: ["business-disruption-dms"], queryFn: fetchDistrictManagers, staleTime: 5 * 60_000 });
 
   const [date, setDate] = useState("");
   const [storeNumber, setStoreNumber] = useState("");
-  const [dmId, setDmId] = useState("");
   const [hours, setHours] = useState("");
   const [storeClosed, setStoreClosed] = useState<boolean | null>(null);
   const [reopenDate, setReopenDate] = useState("");
@@ -192,7 +191,6 @@ function NewReportForm({ onBack, onSubmitted }: { onBack: () => void; onSubmitte
     mutationFn: async () => {
       if (!date) throw new Error("Date of closure or disruption is required.");
       if (!storeNumber) throw new Error("Store # is required.");
-      if (!dmId) throw new Error("District Manager is required.");
       if (storeClosed === null) throw new Error("Please answer whether the store closed.");
       if (orderAheadDisabled === null) throw new Error("Please answer whether Order Ahead was disabled.");
       if (closureTypes.includes("Other") && !closureOther.trim()) throw new Error('Please describe the issue when "Other" is selected.');
@@ -200,7 +198,6 @@ function NewReportForm({ onBack, onSubmitted }: { onBack: () => void; onSubmitte
       return createDisruption({
         disruption_date: date,
         store_number: storeNumber,
-        district_manager_id: dmId,
         hours_disrupted: hours === "" ? null : hours,
         store_closed: storeClosed,
         reopen_date: storeClosed && reopenDate ? reopenDate : null,
@@ -239,14 +236,7 @@ function NewReportForm({ onBack, onSubmitted }: { onBack: () => void; onSubmitte
               <option key={s.id} value={s.number}>#{s.number}{s.name ? ` — ${s.name}` : ""}</option>
             ))}
           </select>
-        </div>
-
-        <div>
-          <FieldLabel required>District Manager</FieldLabel>
-          <select value={dmId} onChange={(e) => setDmId(e.target.value)} className={inputCls}>
-            <option value="" disabled>{dmsQ.isLoading ? "Loading…" : "Select…"}</option>
-            {(dmsQ.data?.dms ?? []).map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-          </select>
+          <p className="mt-1 text-xs text-zinc-500">The store's District Manager is notified automatically — no need to pick one.</p>
         </div>
 
         <div>

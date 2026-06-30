@@ -1,7 +1,7 @@
 // Typed wrappers around netlify/functions/business-disruptions.
 import { supabase } from "@/lib/supabase";
 import { compressPhoto } from "@/modules/reno-scoping/photoCompress";
-import type { DisruptionStatus, DmPick, StorePick } from "./types";
+import type { DisruptionStatus, StorePick } from "./types";
 
 const FN = "/.netlify/functions/business-disruptions";
 
@@ -52,14 +52,10 @@ export function fetchDisruptions(): Promise<DisruptionsResponse> {
 export function fetchDisruptionStores(): Promise<{ stores: StorePick[] }> {
   return request(`${FN}?action=stores`);
 }
-export function fetchDistrictManagers(): Promise<{ dms: DmPick[] }> {
-  return request(`${FN}?action=dms`);
-}
 
 export interface CreateDisruptionInput {
   disruption_date: string;
   store_number: string;
-  district_manager_id: string;
   hours_disrupted?: number | string | null;
   store_closed: boolean;
   reopen_date?: string | null;

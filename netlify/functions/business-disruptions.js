@@ -21,7 +21,8 @@ const REVIEW_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
 const ORG_WIDE = new Set(["vp", "coo", "admin"]);
 const CLOSURE_TYPES = new Set([
   "Weather", "Power Outage", "Equipment Failure", "Staffing", "Plumbing",
-  "Fire/Safety", "Robbery/Theft", "Vandalism", "Health Department", "Other",
+  "Fire/Safety", "Robbery/Theft", "Vandalism", "Health Department",
+  "Internet Issue", "POS Issues", "Connectivity Issues", "Other",
 ]);
 const ISSUE_TYPES = new Set([
   "Slip/Fall", "Food Safety", "Equipment", "Vehicle Accident", "Altercation", "Other",
@@ -195,14 +196,20 @@ async function listStores(supa, user) {
   return { stores: rows.map((s) => ({ id: s.id, number: String(s.number), name: s.name })) };
 }
 
-async function listDms(supa) {
-  const { data } = await supa
-    .from("profiles")
-    .select("id, full_name, preferred_name, email")
-    .eq("role", "do")
-    .eq("is_active", true)
-    .order("full_name");
-  return { dms: (data || []).map((p) => ({ id: p.id, name: displayName(p) })) };
+// Resolve the District Manager (DO) for a store automatically from its
+// district's user_scopes — the submitter no longer hand-picks one. Mirrors
+// the leadership-resolution join kpi-snapshot.js's resolveOrg() does, scoped
+// down to a single district since this only ever needs one store's DO.
+async function resolveDistrictManager(supa, districtId) {
+  if (!districtId) return null;
+  const { data: scopeRows } = await supa
+    .from("user_scopes").select("user_id").eq("scope_type", "district").eq("scope_id", districtId);
+  const userIds = (scopeRows || []).map((s) => s.user_id);
+  if (!userIds.length) return null;
+  const { data: profiles } = await supa
+    .from("profiles").select("id, full_name, preferred_name, email, role")
+    .in("id", userIds).eq("role", "do").eq("is_active", true).limit(1);
+  return profiles?.[0] || null;
 }
 
 async function listDisruptions(supa, user) {
@@ -232,19 +239,17 @@ async function createDisruption(supa, user, body) {
   if (!disruptionDate) return { error: "Date of closure or disruption is required.", status: 400 };
   const storeNumber = sanitize(body?.store_number, 20);
   if (!storeNumber) return { error: "Store # is required.", status: 400 };
-  const { data: store } = await supa.from("stores").select("id, number, name").eq("number", storeNumber).maybeSingle();
+  const { data: store } = await supa.from("stores").select("id, number, name, district_id").eq("number", storeNumber).maybeSingle();
   if (!store) return { error: `Store ${storeNumber} not found.`, status: 404 };
 
   const scope = await storesForUser(supa, user);
   if (!scope.all && !scope.ids.has(store.id)) return { error: "That store is outside your scope.", status: 403 };
 
-  const dmId = sanitize(body?.district_manager_id, 64);
-  let dm = null;
-  if (dmId) {
-    const { data } = await supa.from("profiles").select("id, full_name, preferred_name, email, role").eq("id", dmId).eq("role", "do").maybeSingle();
-    dm = data || null;
-  }
-  if (!dmId || !dm) return { error: "District Manager is required.", status: 400 };
+  // No more manual DM picker — the store is already scope-resolved, so the
+  // District Manager comes straight from the org chart. Missing entirely
+  // (a district with no DO on file) shouldn't block the report; it just
+  // skips the notification email.
+  const dm = await resolveDistrictManager(supa, store.district_id);
 
   const storeClosed = body?.store_closed === true;
   const orderAheadDisabled = body?.order_ahead_disabled === true;
@@ -253,8 +258,8 @@ async function createDisruption(supa, user, body) {
   }
   const description = sanitize(body?.description, 4000);
   if (!description) return { error: "Description is required.", status: 400 };
-  const closureTypes = strArray(body?.closure_types, CLOSURE_TYPES, 10);
-  const issueTypes = strArray(body?.issue_types, ISSUE_TYPES, 10);
+  const closureTypes = strArray(body?.closure_types, CLOSURE_TYPES, CLOSURE_TYPES.size);
+  const issueTypes = strArray(body?.issue_types, ISSUE_TYPES, ISSUE_TYPES.size);
   if (closureTypes.includes("Other") && !sanitize(body?.closure_other_detail, 2000)) {
     return { error: "Please describe the issue when \"Other\" is selected.", status: 400 };
   }
@@ -274,8 +279,8 @@ async function createDisruption(supa, user, body) {
     disruption_date: disruptionDate,
     store_id: store.id,
     store_number: String(store.number),
-    district_manager_id: dm.id,
-    district_manager_name: displayName(dm),
+    district_manager_id: dm?.id ?? null,
+    district_manager_name: dm ? displayName(dm) : null,
     hours_disrupted: body?.hours_disrupted === "" || body?.hours_disrupted == null ? null : num(body.hours_disrupted),
     store_closed: storeClosed,
     reopen_date: storeClosed && /^\d{4}-\d{2}-\d{2}$/.test(body?.reopen_date || "") ? body.reopen_date : null,
@@ -296,7 +301,7 @@ async function createDisruption(supa, user, body) {
   const { data, error } = await supa.from("business_disruptions").insert(row).select("*").single();
   if (error) return { error: error.message, status: 500 };
 
-  if (dm.email) {
+  if (dm?.email) {
     await sendEmailViaResend({
       to: dm.email,
       subject: `Business Disruption — Store #${store.number} — ${disruptionDate}`,
@@ -336,7 +341,6 @@ export const handler = async (event) => {
     if (event.httpMethod === "GET") {
       if (action === "list") return unwrap(await listDisruptions(supa, user));
       if (action === "stores") return respond(200, await listStores(supa, user));
-      if (action === "dms") return respond(200, await listDms(supa));
       return respond(400, { error: `Unknown action: ${action}` });
     }
     if (action === "create") return unwrap(await createDisruption(supa, user, body));
