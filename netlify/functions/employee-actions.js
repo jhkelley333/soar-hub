@@ -418,10 +418,18 @@ function buildTrainingFields(body) {
     if (startMin == null || endMin == null) {
       return { error: `Enter a start and end time for ${day}.`, status: 400 };
     }
-    if (endMin <= startMin) {
-      return { error: `${day}: end time must be after the start time.`, status: 400 };
+    if (endMin === startMin) {
+      return { error: `${day}: end time can't be the same as the start time.`, status: 400 };
     }
-    const hours = round2((endMin - startMin) / 60);
+    // Wrap past midnight when end is earlier than start (e.g. 22:00 → 02:00 is
+    // a four-hour overnight shift, not invalid). Caps at 24h since anything
+    // longer would lap the start, which is implausible for training.
+    let span = endMin - startMin;
+    if (span < 0) span += 24 * 60;
+    if (span > 16 * 60) {
+      return { error: `${day}: that's over 16 hours — double-check the times.`, status: 400 };
+    }
+    const hours = round2(span / 60);
     trainingDays.push({
       day,
       start_time: sanitizeText(d.start_time, 5),

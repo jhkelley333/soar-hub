@@ -256,8 +256,13 @@ export function calcDayHours(start: string, end: string): number {
   const s = re.exec(start);
   const e = re.exec(end);
   if (!s || !e) return 0;
-  const mins =
-    (Number(e[1]) * 60 + Number(e[2])) - (Number(s[1]) * 60 + Number(s[2]));
+  const startMin = Number(s[1]) * 60 + Number(s[2]);
+  const endMin = Number(e[1]) * 60 + Number(e[2]);
+  // Same minute reads as zero (still an error in the caller). Anything where
+  // end < start is treated as crossing midnight — a 22:00 → 02:00 shift is
+  // four hours, not invalid.
+  let mins = endMin - startMin;
+  if (mins < 0) mins += 24 * 60;
   return mins > 0 ? mins / 60 : 0;
 }
 
