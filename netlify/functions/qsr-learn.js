@@ -450,6 +450,13 @@ async function getMyTraining(supa, user) {
 }
 
 async function getRequired(supa, user) {
+  // Payroll is a focused, single-purpose role (their workday is the PAF
+  // queue — see nav.ts) and isn't selectable in the admin's role-cadence
+  // picker (REQUIRE_ROLE_OPTIONS in CourseEditorPage.tsx already excludes
+  // it), but an org-wide ("all") assignment would still catch them. Hard
+  // gate here so payroll never gets the login pop-up regardless of how a
+  // course is assigned.
+  if (String(user.role) === "payroll") return { required: [] };
   const { data: courses } = await supa
     .from("qsr_courses")
     .select("id, title, category, est_minutes, requirement_cadence, requirement_roles")
