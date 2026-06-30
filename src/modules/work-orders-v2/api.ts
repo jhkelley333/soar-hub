@@ -696,8 +696,16 @@ export function searchVendors(
   return request<{ ok: true; vendors: Vendor[] }>(`${FN}?${params.toString()}`);
 }
 
-export function saveVendor(payload: SaveVendorBody): Promise<{ ok: true; vendor: Vendor }> {
-  return request<{ ok: true; vendor: Vendor }>(`${FN}?action=saveVendor`, {
+/**
+ * Server may return `linked_existing: true` when a name collision with the
+ * vendors_name_unique constraint resolves to an existing vendor that wasn't
+ * visible in the caller's store-scoped search. UI should show a "linked to
+ * existing vendor" toast in that case instead of a confused duplicate error.
+ */
+export function saveVendor(
+  payload: SaveVendorBody,
+): Promise<{ ok: true; vendor: Vendor; linked_existing?: boolean }> {
+  return request<{ ok: true; vendor: Vendor; linked_existing?: boolean }>(`${FN}?action=saveVendor`, {
     method: "POST",
     body: JSON.stringify(payload),
   });

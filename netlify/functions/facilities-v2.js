@@ -3007,7 +3007,29 @@ export const handler = async (event) => {
           .insert(fields)
           .select()
           .single();
-        if (error) throw error;
+        if (error) {
+          // The vendors_name_unique constraint trips when the user tries to
+          // create a vendor whose name already exists in the system but isn't
+          // visible at their store (the lookup filters by vendor_scopes and
+          // hides it; the unique constraint is global on `name`). Quietly
+          // resolve to the existing vendor and tag the response so the client
+          // can surface a friendlier message ("linked to existing vendor X"
+          // instead of "duplicate key value violates unique constraint…").
+          if (/vendors_name_unique|duplicate key|unique constraint/i.test(error.message || "")) {
+            const name = String(fields?.name || "").trim();
+            if (name) {
+              const { data: existing } = await supabase
+                .from("vendors")
+                .select("*, vendor_ratings(rating), vendor_scopes(id, scope_type, scope_id)")
+                .ilike("name", name)
+                .maybeSingle();
+              if (existing) {
+                return respond(200, { ok: true, vendor: existing, linked_existing: true });
+              }
+            }
+          }
+          throw error;
+        }
         return respond(200, { ok: true, vendor: data });
       }
     }
