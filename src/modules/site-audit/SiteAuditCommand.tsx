@@ -67,12 +67,17 @@ export function SiteAuditCommand({ audits, canWrite, focusAuditId, onStartCaptur
 }
 
 function Overview({ audits, canWrite, onOpen, onStartCapture }: { audits: SiteAudit[]; canWrite: boolean; onOpen: (id: string) => void; onStartCapture: (id: string) => void }) {
-  const all = audits.flatMap((a) => a.issues);
-  const done = all.filter((i) => i.completed).length;
-  const open = all.length - done;
-  const high = all.filter((i) => i.severity === "high" && !i.completed).length;
-  const overdue = all.filter(isOverdue).length;
-  const pct = all.length ? Math.round((done / all.length) * 100) : 0;
+  const [view, setView] = useState<"active" | "archived">("active");
+  const activeAudits = audits.filter((a) => a.status !== "complete");
+  const archivedAudits = audits.filter((a) => a.status === "complete");
+  // KPIs reflect the operational state — closed audits are out of scope here.
+  const kpiSource = activeAudits.flatMap((a) => a.issues);
+  const done = kpiSource.filter((i) => i.completed).length;
+  const open = kpiSource.length - done;
+  const high = kpiSource.filter((i) => i.severity === "high" && !i.completed).length;
+  const overdue = kpiSource.filter(isOverdue).length;
+  const pct = kpiSource.length ? Math.round((done / kpiSource.length) * 100) : 0;
+  const visible = view === "archived" ? archivedAudits : activeAudits;
 
   return (
     <div className="mx-auto max-w-[1100px]">
@@ -85,30 +90,46 @@ function Overview({ audits, canWrite, onOpen, onStartCapture }: { audits: SiteAu
       </div>
 
       <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Kpi label="Completion rate" value={`${pct}%`} sub={`${done} of ${all.length} resolved`} ring={pct} />
-        <Kpi label="Open issues" value={open} sub={`across ${audits.length} audit${audits.length === 1 ? "" : "s"}`} />
+        <Kpi label="Completion rate" value={`${pct}%`} sub={`${done} of ${kpiSource.length} resolved`} ring={pct} />
+        <Kpi label="Open issues" value={open} sub={`across ${activeAudits.length} active audit${activeAudits.length === 1 ? "" : "s"}`} />
         <Kpi label="High severity" value={high} sub="need attention" tone={high ? "red" : "muted"} />
         <Kpi label="Overdue" value={overdue} sub="past due date" tone={overdue ? "red" : "muted"} icon={Clock} />
       </div>
 
       <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-card">
-        <div className="border-b border-zinc-100 px-5 py-3.5 text-sm font-semibold text-midnight">Store audits</div>
+        <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-3.5">
+          <div className="text-sm font-semibold text-midnight">Store audits</div>
+          <div className="inline-flex rounded-md ring-1 ring-inset ring-zinc-200">
+            {(["active", "archived"] as const).map((v) => (
+              <button key={v} onClick={() => setView(v)} className={cn("px-3 py-1 text-xs font-medium capitalize transition first:rounded-l-md last:rounded-r-md",
+                view === v ? "bg-midnight text-white" : "text-zinc-600 hover:bg-zinc-50")}>
+                {v} <span className="tabular-nums opacity-70">{v === "active" ? activeAudits.length : archivedAudits.length}</span>
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="grid grid-cols-[2.2fr_1.2fr_1.4fr_0.9fr_auto] gap-3 border-b border-zinc-100 px-5 py-2.5 text-[11px] font-bold uppercase tracking-wide text-zinc-400">
           <span>Store</span><span>GM · Date</span><span>Progress</span><span>Status</span><span />
         </div>
-        {audits.length === 0 ? (
+        {visible.length === 0 ? (
           <div className="px-5 py-12 text-center">
-            <div className="text-sm text-zinc-400">No audits in your scope yet.</div>
-            {canWrite && <div className="mt-3"><NewWalkButton onCreated={onStartCapture} label="Start your first walk" /></div>}
+            <div className="text-sm text-zinc-400">
+              {view === "archived" ? "No archived audits yet." : "No audits in your scope yet."}
+            </div>
+            {view === "active" && canWrite && <div className="mt-3"><NewWalkButton onCreated={onStartCapture} label="Start your first walk" /></div>}
           </div>
-        ) : audits.map((a) => {
+        ) : visible.map((a) => {
           const s = a.stats;
+          const closed = a.status === "complete";
           return (
             <button key={a.id} onClick={() => onOpen(a.id)}
-              className="grid w-full grid-cols-[2.2fr_1.2fr_1.4fr_0.9fr_auto] items-center gap-3 border-b border-zinc-100 px-5 py-3.5 text-left transition last:border-b-0 hover:bg-zinc-50">
+              className={cn("grid w-full grid-cols-[2.2fr_1.2fr_1.4fr_0.9fr_auto] items-center gap-3 border-b border-zinc-100 px-5 py-3.5 text-left transition last:border-b-0 hover:bg-zinc-50",
+                closed && "bg-zinc-50/50")}>
               <div className="flex items-center gap-3">
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-accent/10 text-[11px] font-bold text-accent">#{a.store_number}</span>
-                <span className="truncate text-sm font-semibold text-midnight">{a.store_name || `Store #${a.store_number}`}</span>
+                <span className={cn("truncate text-sm font-semibold", closed ? "text-zinc-500" : "text-midnight")}>
+                  {a.store_name || `Store #${a.store_number}`}
+                </span>
                 {a.last_report && (
                   <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-700">
                     <Send className="h-2.5 w-2.5" strokeWidth={2.5} /> Shared
@@ -124,9 +145,17 @@ function Overview({ audits, canWrite, onOpen, onStartCapture }: { audits: SiteAu
                 <Bar pct={s.pct} />
               </div>
               <div>
-                {s.high > 0 ? <span className="inline-flex rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-bold text-red-700">{s.high} high</span>
-                  : s.pct === 100 ? <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-emerald-600"><Check className="h-3.5 w-3.5" /> Complete</span>
-                    : <span className="text-[12px] font-semibold text-amber-600">In progress</span>}
+                {closed ? (
+                  <span className="inline-flex items-center gap-1 rounded-full bg-zinc-200 px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide text-zinc-600">
+                    Closed
+                  </span>
+                ) : s.high > 0 ? (
+                  <span className="inline-flex rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-bold text-red-700">{s.high} high</span>
+                ) : s.pct === 100 ? (
+                  <span className="inline-flex items-center gap-1 text-[12px] font-semibold text-emerald-600"><Check className="h-3.5 w-3.5" /> Complete</span>
+                ) : (
+                  <span className="text-[12px] font-semibold text-amber-600">In progress</span>
+                )}
               </div>
               <ChevronRight className="h-4 w-4 justify-self-end text-zinc-300" />
             </button>
@@ -199,7 +228,7 @@ function AuditDetail({ audit, canWrite, onBack, onCapture, onShare }: { audit: S
           </div>
         </div>
         <div className="flex flex-col items-end gap-3">
-          {canWrite && (
+          {canWrite && !isClosed && (
             <div className="flex gap-2">
               <Button size="sm" onClick={onCapture}><Camera className="h-4 w-4" /> Capture issue</Button>
               <Button size="sm" variant="secondary" onClick={onShare}><Send className="h-4 w-4" /> Share &amp; sign</Button>
