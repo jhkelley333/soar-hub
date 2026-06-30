@@ -56,6 +56,22 @@ const TOKEN_EXPIRY_HOURS = 72;
 // bonuses for direct reports; their bonus PAFs skip SDO and go
 // straight to Payroll.
 const SUBMIT_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]);
+
+// Stores that are restricted on PAF — hidden from the drive-in dropdown and
+// rejected on submit unless the submitter's role is in the allowed set. Use
+// this for corporate / training / hold stores that DOs shouldn't be running
+// payroll changes against on their own.
+//
+// Key  = store_number (string).
+// Value = roles that can pick this store on a PAF.
+const PAF_RESTRICTED_STORES = {
+  "8100": new Set(["sdo", "rvp", "vp", "coo", "admin", "payroll"]),
+};
+function canSeeRestrictedStore(role, storeNumber) {
+  const allowed = PAF_RESTRICTED_STORES[String(storeNumber).trim()];
+  if (!allowed) return true; // not restricted at all
+  return allowed.has(role);
+}
 // Roles that can read PAFs at all (also no GM).
 const READ_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin", "payroll"]);
 // Roles that can process (reject / needs-approval / mark-processed)
@@ -506,7 +522,9 @@ async function listMyStores(supa, user) {
     return { stores: [] };
   }
   const rows = await resolveVisibleStoreRows(supa, user.id);
-  return { stores: rows };
+  // Strip out any PAF-restricted stores the caller can't pick (e.g. Store
+  // 8100 is hidden from DOs). The submit endpoint enforces the same rule.
+  return { stores: rows.filter((s) => canSeeRestrictedStore(user.role, s.number)) };
 }
 
 // ----------------------------------------------------------------------------
@@ -678,6 +696,13 @@ async function buildPafRowFromBody(supa, user, body) {
 
   if (!effectiveDriveIn && !driveInWaived) {
     return { error: "drive_in is required.", status: 400 };
+  }
+
+  // Restricted-store gate: a few stores (e.g. Store 8100 — corporate / hold)
+  // can only be picked on a PAF by SDO+. Catches DOs who'd otherwise type the
+  // number even though the dropdown hid it. Skipped when waived.
+  if (effectiveDriveIn && !driveInWaived && !canSeeRestrictedStore(user.role, effectiveDriveIn)) {
+    return { error: `Store #${effectiveDriveIn} requires SDO or above to submit a PAF.`, status: 403 };
   }
 
   // Scope check: caller must have access to a Drive-In # they typed in.
