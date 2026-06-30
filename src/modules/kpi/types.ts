@@ -109,6 +109,11 @@ export type PeriodKey = "day" | "wtd" | "ptd";
 export interface KpiSnapshot {
   ok: true;
   fetchedAt: string;
+  // True when the live feed call failed and this is the most recent
+  // successful kpi-capture.js snapshot instead (captured hourly,
+  // 7 AM-2 PM Central) — fetchedAt is that capture's timestamp, not now.
+  stale: boolean;
+  liveError: string | null;
   feedKeys: string[];               // top-level rawData section names from the feed
   periods: Record<PeriodKey, KpiPeriod>;
 }

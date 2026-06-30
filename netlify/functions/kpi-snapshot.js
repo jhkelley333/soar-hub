@@ -236,6 +236,8 @@ export const handler = async (event) => {
       return respond(503, { error: "KPI feed isn't configured (set SKUNKWORKS_KPI_URL + SKUNKWORKS_KPI_TOKEN in Netlify)." });
     }
 
+    const supa = admin();
+
     // Shared fetch (also used by labor-v2.js) — handles the URL/token build,
     // a 15s timeout (this proxy used to time-box at 8s, which is shorter than
     // the feed sometimes needs and was cutting it off on every retry rather
@@ -244,11 +246,31 @@ export const handler = async (event) => {
     // non-JSON blip, both folded into the thrown error's message so the
     // dashboard's error card is actually diagnosable instead of a bare
     // "non-JSON" with no detail.
+    //
+    // If the live call fails (e.g. the feed serves a transient interstitial
+    // page instead of JSON), fall back to the most recent row kpi-capture.js
+    // already wrote to kpi_snapshots — it runs hourly 7 AM-2 PM Central, so
+    // there's almost always a recent capture to fall back to. Beats a hard
+    // error card when we're already sitting on perfectly usable data that's
+    // at most an hour or two old.
     let payload;
+    let stale = false;
+    let fetchedAt = new Date().toISOString();
+    let liveError = null;
     try {
       payload = await fetchKpiFeed({ timeoutMs: 15000 });
     } catch (e) {
-      return respond(502, { error: e.message || "Couldn't reach the KPI feed." });
+      liveError = e.message || "Couldn't reach the KPI feed.";
+      const { data: lastCapture } = await supa
+        .from("kpi_snapshots")
+        .select("payload, captured_at")
+        .order("captured_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!lastCapture) return respond(502, { error: liveError });
+      payload = lastCapture.payload;
+      stale = true;
+      fetchedAt = lastCapture.captured_at;
     }
 
     const rd = (payload && payload.rawData) || {};
@@ -261,7 +283,6 @@ export const handler = async (event) => {
     const ptdRows = pick(["periodToDateData", "periodToDate", "ptdData", "businessPeriodData", "periodData", "ptd"]);
 
     // Resolve our org once over the union of store numbers across all periods.
-    const supa = admin();
     const storeNumbers = [...new Set(
       [...dayRows, ...wtdRows, ...ptdRows]
         .filter((r) => levelOf(r) === "store")
@@ -272,7 +293,9 @@ export const handler = async (event) => {
 
     return respond(200, {
       ok: true,
-      fetchedAt: new Date().toISOString(),
+      fetchedAt,
+      stale,
+      liveError: stale ? liveError : null,
       feedKeys,
       periods: {
         day: buildPeriod(dayRows, orgMap),
