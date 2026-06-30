@@ -95,7 +95,20 @@ export function WeatherSyncPage() {
       );
       qc.invalidateQueries({ queryKey: ["weather"] });
     } catch (e) {
-      toast.push(e instanceof Error ? e.message : "Backfill failed.", "error");
+      const message = e instanceof Error ? e.message : "Backfill failed.";
+      // A multi-minute backfill outlives a single access token if the device
+      // sleeps or changes networks mid-loop; Supabase's background refresh
+      // can come back with a dead refresh token, which surfaces here as
+      // "Not signed in" / "unauthorized". Each loop iteration commits its
+      // own slice and skips days already recorded, so nothing already
+      // pulled is lost — just point the admin at signing back in + re-running.
+      const isAuthFailure = /not signed in|unauthorized|refresh token/i.test(message);
+      toast.push(
+        isAuthFailure
+          ? "Your session timed out partway through the backfill. Sign back in and run it again — already-pulled days are skipped, so it picks up where it left off."
+          : message,
+        "error"
+      );
     } finally {
       setBusy(false);
     }
