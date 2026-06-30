@@ -9,6 +9,7 @@ import { Loader2, X, Sparkles } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
+import { useToast } from "@/shared/ui/Toaster";
 import { VendorSearchInput } from "./VendorSearchInput";
 import { extractInvoice, fetchCallerStores, fetchIssueLibrary, fileToBase64, logOfflineWork, saveVendor } from "./api";
 
@@ -27,6 +28,7 @@ export function LogWorkModal({
   onLogged: (woNumber: string) => void;
   onError: (msg: string) => void;
 }) {
+  const toast = useToast();
   const storesQ = useQuery({ queryKey: ["wo2", "callerStores"], queryFn: fetchCallerStores, enabled: open });
   const libQ = useQuery({ queryKey: ["wo2", "issueLibrary"], queryFn: fetchIssueLibrary, enabled: open });
 
@@ -129,10 +131,20 @@ export function LogWorkModal({
     setSubmitting(true);
     try {
       let useVendorId = vendorId;
+      let resolvedVendorName = vendorName.trim();
       if (addVendor && !useVendorId && vendorName.trim()) {
-        const { vendor } = await saveVendor({ name: vendorName.trim(), category: category || undefined, is_active: true });
+        const { vendor, linked_existing } = await saveVendor({ name: vendorName.trim(), category: category || undefined, is_active: true });
         useVendorId = vendor.id;
         setVendorId(vendor.id);
+        // When the name collided with an existing vendor not visible at this
+        // store, the backend returns that vendor instead of failing on the
+        // unique constraint. Use the canonical name so the work order links
+        // to the right row, and let the user know that's what happened.
+        if (linked_existing) {
+          resolvedVendorName = vendor.name;
+          setVendorName(vendor.name);
+          toast.push(`Linked to existing vendor "${vendor.name}".`, "success");
+        }
       }
       const data = await fileToBase64(invoice);
       const res = await logOfflineWork({
@@ -142,7 +154,7 @@ export function LogWorkModal({
         category: category || undefined,
         assetType: assetType.trim() || undefined,
         modelNumber: modelNumber.trim() || undefined,
-        vendorName: vendorName.trim(),
+        vendorName: resolvedVendorName,
         vendorId: useVendorId,
         serviceDate,
         cost: cost.trim() ? Number(cost) : null,
