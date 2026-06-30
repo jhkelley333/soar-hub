@@ -19,6 +19,7 @@ import { SchedulePage } from "@/modules/schedule/SchedulePage";
 import { OpsToolsPage } from "@/modules/ops-tools/OpsToolsPage";
 import { QrCodesPage } from "@/modules/qr-codes/QrCodesPage";
 import { SiteAuditPage } from "@/modules/site-audit/SiteAuditPage";
+import { BusinessDisruptionsPage } from "@/modules/business-disruptions/BusinessDisruptionsPage";
 import { LaborPage } from "@/modules/labor/LaborPage";
 import { LaborSyncPage } from "@/modules/labor/LaborSyncPage";
 import { ResourcesPage } from "@/modules/resources/ResourcesPage";
@@ -155,6 +156,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
             <SiteAuditPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "business-disruptions",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <BusinessDisruptionsPage />
           </ProtectedRoute>
         ),
       },
