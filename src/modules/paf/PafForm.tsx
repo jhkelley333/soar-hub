@@ -235,6 +235,7 @@ function pafRowToFormState(p: PafRow): FormState {
     demotion_effective_date: s(p.demotion_effective_date),
     last_day_worked: s(p.last_day_worked),
     termed_in_tr: s(p.termed_in_tr),
+    final_check_hrs: n(p.final_check_hrs),
     spot_bonus_amt: n(p.spot_bonus_amt),
     spot_bonus_reason: s(p.spot_bonus_reason),
     training_bonus_amt: n(p.training_bonus_amt),
@@ -1166,6 +1167,7 @@ const NUMERIC_KEYS = new Set([
   "referral_bonus_amt",
   "current_pay_rate",
   "new_pay_rate",
+  "final_check_hrs",
 ]);
 
 const DATE_KEYS = new Set([

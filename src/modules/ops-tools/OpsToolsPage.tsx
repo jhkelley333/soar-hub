@@ -29,7 +29,7 @@ const TOOLS: Tool[] = [
     title: "Site Audits",
     desc: "Walk a store, capture issues with a photo + note, set severity & due dates, and track every gap to completion with required proof.",
     icon: ClipboardCheck,
-    roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"],
+    roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"],
     to: () => "/site-audits",
   },
   {

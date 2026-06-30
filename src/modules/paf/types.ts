@@ -82,7 +82,8 @@ export interface PafRow {
   location_change: boolean | null;
   new_location: string | null;
 
-  // Termination — final_check_hrs + term_demotion kept on the row for
+  // Termination — final_check_hrs was dropped in B-2b and brought back
+  // in migration 0200. term_demotion is retired but the column stays for
   // historical PAFs; new submissions write null.
   last_day_worked: string | null;
   term_demotion: string | null;
