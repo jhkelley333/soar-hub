@@ -195,7 +195,12 @@ export function fetchFundMetrics(): Promise<FundMetrics> {
   return request<FundMetrics>(`${FN}?action=fund-metrics`);
 }
 export function submitFundValidation(input: {
-  store_number: string; counted_cents: number; denominations?: Record<string, number>; reason?: string;
+  store_number: string;
+  counted_cents: number;
+  denominations?: Record<string, number>;
+  reason?: string;
+  /** True for a surprise audit that should NOT replace the required monthly validation. */
+  is_off_cycle?: boolean;
 }): Promise<{ ok: true; variance_cents: number; over_tolerance: boolean; alerted: string | null }> {
   return request(`${FN}?action=fund-validate`, { method: "POST", body: JSON.stringify(input) });
 }

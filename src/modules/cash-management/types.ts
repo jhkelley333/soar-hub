@@ -243,14 +243,27 @@ export interface FundPeriod {
   weekInPeriod: number;
   periodStart: string;
 }
+export interface FundValidationSummary {
+  counted_cents: number;
+  variance_cents: number;
+  over_tolerance: boolean;
+  validated_at: string;
+  by: string | null;
+}
 export interface FundStoreRow {
   store_id: string;
   store_number: string;
   store_name: string | null;
   bank_amount_cents: number | null;
   bank_set: boolean;
+  /** True when a non-off-cycle (required) validation exists in the current fiscal period. */
   validated_this_period: boolean;
-  last: { counted_cents: number; variance_cents: number; over_tolerance: boolean; validated_at: string; by: string | null } | null;
+  /** Most recent validation of any kind (required OR off-cycle). */
+  last: FundValidationSummary | null;
+  /** Most recent required (non-off-cycle) validation — drives the locked subtitle. */
+  last_required: FundValidationSummary | null;
+  /** Most recent off-cycle / surprise audit. */
+  last_off_cycle: FundValidationSummary | null;
 }
 export interface FundOverview {
   period: FundPeriod | null;
