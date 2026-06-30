@@ -385,8 +385,11 @@ export function MobileHome() {
             {bdayEntries.map((e) => {
               const today = isToday(e.birthday);
               const tomorrow = isTomorrow(e.birthday);
-              const where =
-                e.store_name || (e.store_number ? `SDI ${e.store_number}` : null);
+              const where = e.store_number
+                ? e.store_name
+                  ? `${e.store_name} · #${e.store_number}`
+                  : `Store #${e.store_number}`
+                : e.store_name;
               return (
                 <li key={e.id} className="flex items-center gap-3 py-3">
                   <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-frost-100 text-[12px] font-semibold text-midnight-700">
