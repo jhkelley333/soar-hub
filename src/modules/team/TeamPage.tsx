@@ -16,6 +16,7 @@ import { cn } from "@/lib/cn";
 import { downloadCSV, toCSV } from "@/lib/csv";
 import { startViewAs } from "@/lib/adminViewAsApi";
 import { setViewAsState } from "@/lib/useViewAs";
+import { defaultLandingPath } from "@/app/nav";
 import { listTeam, type ManagedUser, type TrainingSummary } from "./api";
 import { AddUserModal } from "./AddUserModal";
 import { EditMemberModal } from "./EditMemberModal";
@@ -40,16 +41,16 @@ export function TeamPage() {
 
   const allMembers = query.data?.members ?? [];
 
-  // Admin-only, read-only "View As" — see src/lib/viewAs.ts. Currently
-  // honored by My CAPs / My Assignments / Sign-off Queue; other pages
-  // still show the admin's own data until the same pattern is extended
-  // there.
+  // Admin-only, read-only "View As" — see src/lib/viewAs.ts. Lands on the
+  // target's own default page (same rule useEffectiveRole/nav.ts use for
+  // the rest of the shell), not a fixed page — a payroll target lands on
+  // their PAF queue, everyone else on the dashboard.
   async function viewAs(member: ManagedUser) {
     setStartingViewAs(member.id);
     try {
       const res = await startViewAs(member.id);
       setViewAsState({ sessionId: res.session_id, target: res.target });
-      navigate("/caps");
+      navigate(defaultLandingPath(res.target.role as UserRole));
     } catch (e) {
       toast.push(e instanceof Error ? e.message : "Couldn't start View As.", "error");
     } finally {
