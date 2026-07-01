@@ -3,6 +3,7 @@
 // the JWT and resolve the profile.
 
 import { supabase } from "@/lib/supabase";
+import { viewAsHeaders } from "@/lib/viewAs";
 import type { ChatThread, ChatMessage } from "./types";
 
 const FN = "/.netlify/functions/chat";
@@ -11,7 +12,9 @@ async function authHeaders(): Promise<Record<string, string>> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   if (!token) throw new Error("Not signed in");
-  return { Authorization: `Bearer ${token}` };
+  // Admin "View As" (read-only) — see src/lib/viewAs.ts. No-op unless a
+  // session is active; the backend rejects any POST that carries it.
+  return { Authorization: `Bearer ${token}`, ...viewAsHeaders() };
 }
 
 async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
