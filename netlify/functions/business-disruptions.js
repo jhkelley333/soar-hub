@@ -27,6 +27,9 @@ const CLOSURE_TYPES = new Set([
 const ISSUE_TYPES = new Set([
   "Slip/Fall", "Food Safety", "Equipment", "Vehicle Accident", "Altercation", "Other",
 ]);
+// Closure/Disruption Type selections that trigger their own follow-up field.
+const SOLUGENIX_TRIGGER = new Set(["Internet Issue", "POS Issues", "Connectivity Issues"]);
+const WO_TRIGGER = new Set(["Plumbing", "Vandalism", "Equipment Failure", "Other"]);
 
 function admin() {
   if (!SUPABASE_URL || !SERVICE_KEY) throw new Error("business-disruptions env vars not configured");
@@ -165,29 +168,94 @@ async function sendEmailViaResend({ to, subject, text }) {
   }
 }
 
-function notifyEmailBody(row, store) {
-  const lines = [
-    `A business disruption was reported for store #${row.store_number}${store?.name ? ` (${store.name})` : ""}.`,
-    "",
+function appBaseUrl() {
+  return (process.env.URL || process.env.DEPLOY_URL || "").replace(/\/$/, "");
+}
+
+function reportSummaryLines(row) {
+  return [
     `Date: ${row.disruption_date}`,
     `Reported by: ${row.submitted_by_name}`,
     `Store closed: ${row.store_closed ? "Yes" : "No"}${row.reopen_date ? ` (reopened ${row.reopen_date})` : ""}`,
     `Order Ahead disabled: ${row.order_ahead_disabled ? "Yes" : "No"}`,
     row.closure_types.length ? `Disruption type: ${row.closure_types.join(", ")}` : null,
     row.closure_other_detail ? `Other detail: ${row.closure_other_detail}` : null,
+    row.solugenix_case_number ? `Solugenix Case #: ${row.solugenix_case_number}` : null,
+    row.work_order_filed === true ? `Work Order filed: Yes (${row.work_order_number || "—"})` : row.work_order_filed === false ? "Work Order filed: No" : null,
     `Employee injured: ${row.employee_injured ? "Yes" : "No"} · Store damaged: ${row.store_damaged ? "Yes" : "No"} · Customer injured: ${row.customer_injured ? "Yes" : "No"}`,
     row.issue_types.length ? `Issue type: ${row.issue_types.join(", ")}` : null,
     `Estimated loss sales: $${num(row.estimated_loss_sales).toFixed(2)}`,
     "",
     "Description:",
     row.description,
+  ].filter((l) => l !== null);
+}
+
+function notifyEmailBody(row, store) {
+  const lines = [
+    `A business disruption was reported for store #${row.store_number}${store?.name ? ` (${store.name})` : ""}.`,
     "",
-    `View in SOAR Hub: ${(process.env.URL || process.env.DEPLOY_URL || "").replace(/\/$/, "")}/business-disruptions`,
-  ].filter(Boolean);
+    ...reportSummaryLines(row),
+    "",
+    `View in SOAR Hub: ${appBaseUrl()}/business-disruptions`,
+  ];
+  return lines.join("\n");
+}
+
+// Escalation trigger: any of the incident-severity Yes/No fields. Store
+// damage / an injury is a bigger deal than a routine closure, so it also
+// goes to the store's RVP (and, if configured, a fixed ops distribution
+// list) — not just the DM.
+function needsEscalation(row) {
+  return row.employee_injured || row.customer_injured || row.store_damaged;
+}
+function escalationEmailBody(row, store) {
+  const why = [
+    row.employee_injured && "an employee injury",
+    row.customer_injured && "a customer injury",
+    row.store_damaged && "store damage",
+  ].filter(Boolean).join(", ");
+  const lines = [
+    `A business disruption reported for store #${row.store_number}${store?.name ? ` (${store.name})` : ""} involves ${why} — flagging for visibility.`,
+    "",
+    ...reportSummaryLines(row),
+    "",
+    `View in SOAR Hub: ${appBaseUrl()}/business-disruptions`,
+  ];
+  return lines.join("\n");
+}
+function confirmationEmailBody(row, store) {
+  const lines = [
+    `Your business disruption report for store #${row.store_number}${store?.name ? ` (${store.name})` : ""} was submitted.`,
+    row.district_manager_name ? `It was routed to ${row.district_manager_name}.` : "No District Manager is on file for this store yet, so no one was auto-notified — let your leadership know directly.",
+    "",
+    ...reportSummaryLines(row),
+    "",
+    `View or edit in SOAR Hub: ${appBaseUrl()}/business-disruptions`,
+  ];
   return lines.join("\n");
 }
 
 // ── Actions ──────────────────────────────────────────────────────────────
+
+// Work order typeahead for the "look up that WO" field — scoped to the
+// report's store so a GM can't browse other stores' tickets, matching the
+// WO # / issue text the submitter would actually recognize.
+async function lookupWorkOrders(supa, user, storeNumber, term) {
+  const store = sanitize(storeNumber, 20);
+  const q = sanitize(term, 100);
+  if (!store || q.length < 2) return { tickets: [] };
+  const scope = await storesForUser(supa, user);
+  if (!scope.all && !scope.rows.some((s) => String(s.number) === store)) return { tickets: [] };
+  const { data } = await supa
+    .from("tickets")
+    .select("id, wo_number, work_requested, status")
+    .eq("store_number", store)
+    .ilike("wo_number", `%${q}%`)
+    .order("date_submitted", { ascending: false })
+    .limit(10);
+  return { tickets: (data || []).map((t) => ({ id: t.id, wo_number: t.wo_number, work_requested: t.work_requested, status: t.status })) };
+}
 
 // Stores the caller can submit a report for (for the New Report picker).
 async function listStores(supa, user) {
@@ -212,6 +280,24 @@ async function resolveDistrictManager(supa, districtId) {
   return profiles?.[0] || null;
 }
 
+// Same idea, walked up two more levels (district → area → region) to find
+// the region's RVP, for the injury/damage escalation email.
+async function resolveRegionalVp(supa, districtId) {
+  if (!districtId) return null;
+  const { data: district } = await supa.from("districts").select("area_id").eq("id", districtId).maybeSingle();
+  if (!district?.area_id) return null;
+  const { data: area } = await supa.from("areas").select("region_id").eq("id", district.area_id).maybeSingle();
+  if (!area?.region_id) return null;
+  const { data: scopeRows } = await supa
+    .from("user_scopes").select("user_id").eq("scope_type", "region").eq("scope_id", area.region_id);
+  const userIds = (scopeRows || []).map((s) => s.user_id);
+  if (!userIds.length) return null;
+  const { data: profiles } = await supa
+    .from("profiles").select("id, full_name, preferred_name, email, role")
+    .in("id", userIds).eq("role", "rvp").eq("is_active", true).limit(1);
+  return profiles?.[0] || null;
+}
+
 async function listDisruptions(supa, user) {
   const scope = await storesForUser(supa, user);
   let q = supa.from("business_disruptions").select("*").order("disruption_date", { ascending: false }).order("created_at", { ascending: false }).limit(300);
@@ -223,18 +309,24 @@ async function listDisruptions(supa, user) {
   if (error) return { error: error.message, status: 500 };
   const storeName = new Map(scope.rows.map((s) => [s.id, s.name]));
   const role = String(user.role || "").toLowerCase();
+  // Every row returned here is already in this caller's scope (that's what
+  // the query above filtered on / scope.all means), so a reviewer can edit
+  // any of them; a plain submitter can only edit their own.
   const out = await Promise.all((rows || []).map(async (r) => ({
     ...r,
     store_name: storeName.get(r.store_id) || null,
     attachments: await signedAttachments(supa, r.attachments),
     can_review: REVIEW_ROLES.has(role),
+    can_edit: REVIEW_ROLES.has(role) || r.submitted_by === user.id,
   })));
   return { reports: out, can_write: CAPTURE_ROLES.has(role), can_review: REVIEW_ROLES.has(role) };
 }
 
-async function createDisruption(supa, user, body) {
-  if (!CAPTURE_ROLES.has(String(user.role))) return { error: "Your role can't submit a disruption report.", status: 403 };
-
+// Shared by create + update: resolves the store/DM/RVP and validates every
+// field. Returns { error, status } on failure, or { store, dm, rvp, fields }
+// where `fields` is everything except submitted_by/status/attachments —
+// callers own those since create vs. edit handle them differently.
+async function validateAndResolve(supa, user, body) {
   const disruptionDate = /^\d{4}-\d{2}-\d{2}$/.test(body?.disruption_date || "") ? body.disruption_date : null;
   if (!disruptionDate) return { error: "Date of closure or disruption is required.", status: 400 };
   const storeNumber = sanitize(body?.store_number, 20);
@@ -245,7 +337,7 @@ async function createDisruption(supa, user, body) {
   const scope = await storesForUser(supa, user);
   if (!scope.all && !scope.ids.has(store.id)) return { error: "That store is outside your scope.", status: 403 };
 
-  // No more manual DM picker — the store is already scope-resolved, so the
+  // No manual DM picker — the store is already scope-resolved, so the
   // District Manager comes straight from the org chart. Missing entirely
   // (a district with no DO on file) shouldn't block the report; it just
   // skips the notification email.
@@ -264,18 +356,40 @@ async function createDisruption(supa, user, body) {
     return { error: "Please describe the issue when \"Other\" is selected.", status: 400 };
   }
 
-  const files = Array.isArray(body?.attachments) ? body.attachments.slice(0, MAX_FILES) : [];
-  const uploaded = [];
-  for (const f of files) {
-    try {
-      const r = await uploadFile(supa, f, store.id);
-      if (r) uploaded.push(r);
-    } catch (e) {
-      return { error: `Attachment upload failed: ${e.message}`, status: 500 };
+  // Solugenix Case # — required when the closure type points at IT/telecom
+  // (Internet, POS, Connectivity), since that's who those tickets route to.
+  const needsSolugenix = closureTypes.some((t) => SOLUGENIX_TRIGGER.has(t));
+  const solugenixCase = sanitize(body?.solugenix_case_number, 100);
+  if (needsSolugenix && !solugenixCase) {
+    return { error: "Solugenix Case # is required for Internet/POS/Connectivity issues.", status: 400 };
+  }
+
+  // Work Order follow-up — required when the closure type is something a
+  // work order would normally get filed for (Plumbing, Vandalism, Equipment
+  // Failure, Other). If one was filed, the submitter looks it up and links
+  // it so the report and the WO ticket stay connected.
+  const needsWo = closureTypes.some((t) => WO_TRIGGER.has(t));
+  let workOrderFiled = null;
+  let workOrderTicketId = null;
+  let workOrderNumber = null;
+  if (needsWo) {
+    if (typeof body?.work_order_filed !== "boolean") {
+      return { error: "Please answer whether a Work Order has been put in.", status: 400 };
+    }
+    workOrderFiled = body.work_order_filed;
+    if (workOrderFiled) {
+      const ticketId = sanitize(body?.work_order_ticket_id, 64);
+      if (!ticketId) return { error: "Look up and select the Work Order.", status: 400 };
+      const { data: ticket } = await supa.from("tickets").select("id, wo_number").eq("id", ticketId).maybeSingle();
+      if (!ticket) return { error: "That work order couldn't be found.", status: 404 };
+      workOrderTicketId = ticket.id;
+      workOrderNumber = ticket.wo_number;
     }
   }
 
-  const row = {
+  const rvp = needsEscalationInput(body) ? await resolveRegionalVp(supa, store.district_id) : null;
+
+  const fields = {
     disruption_date: disruptionDate,
     store_id: store.id,
     store_number: String(store.number),
@@ -291,9 +405,46 @@ async function createDisruption(supa, user, body) {
     store_damaged: body?.store_damaged === true,
     customer_injured: body?.customer_injured === true,
     issue_types: issueTypes,
+    solugenix_case_number: solugenixCase || null,
+    work_order_filed: workOrderFiled,
+    work_order_ticket_id: workOrderTicketId,
+    work_order_number: workOrderNumber,
     estimated_loss_sales: num(body?.estimated_loss_sales),
     description,
+  };
+  return { store, dm, rvp, fields };
+}
+function needsEscalationInput(body) {
+  return body?.employee_injured === true || body?.customer_injured === true || body?.store_damaged === true;
+}
+
+// Fixed ops distribution list, CC'd on every escalation alongside the RVP.
+// Comma-separated; optional.
+const ESCALATION_CC = (process.env.BIZ_DISRUPTION_ESCALATION_EMAILS || "")
+  .split(",").map((s) => s.trim()).filter(Boolean);
+
+async function createDisruption(supa, user, body) {
+  if (!CAPTURE_ROLES.has(String(user.role))) return { error: "Your role can't submit a disruption report.", status: 403 };
+
+  const v = await validateAndResolve(supa, user, body);
+  if (v.error) return v;
+  const { store, dm, rvp, fields } = v;
+
+  const files = Array.isArray(body?.attachments) ? body.attachments.slice(0, MAX_FILES) : [];
+  const uploaded = [];
+  for (const f of files) {
+    try {
+      const r = await uploadFile(supa, f, store.id);
+      if (r) uploaded.push(r);
+    } catch (e) {
+      return { error: `Attachment upload failed: ${e.message}`, status: 500 };
+    }
+  }
+
+  const row = {
+    ...fields,
     attachments: uploaded,
+    escalated_to_rvp_name: rvp ? displayName(rvp) : null,
     submitted_by: user.id,
     submitted_by_name: displayName(user),
   };
@@ -304,12 +455,59 @@ async function createDisruption(supa, user, body) {
   if (dm?.email) {
     await sendEmailViaResend({
       to: dm.email,
-      subject: `Business Disruption — Store #${store.number} — ${disruptionDate}`,
+      subject: `Business Disruption — Store #${store.number} — ${fields.disruption_date}`,
       text: notifyEmailBody(data, store),
+    });
+  }
+  if (needsEscalation(data)) {
+    const escalationTo = [rvp?.email, ...ESCALATION_CC].filter(Boolean);
+    if (escalationTo.length) {
+      await sendEmailViaResend({
+        to: escalationTo,
+        subject: `🚨 Business Disruption (escalated) — Store #${store.number} — ${fields.disruption_date}`,
+        text: escalationEmailBody(data, store),
+      });
+    }
+  }
+  if (user.email) {
+    await sendEmailViaResend({
+      to: user.email,
+      subject: `Your report was submitted — Store #${store.number} — ${fields.disruption_date}`,
+      text: confirmationEmailBody(data, store),
     });
   }
 
   return { ok: true, id: data.id };
+}
+
+// GM (own report) or a DO+ reviewer whose scope covers the report's current
+// store may edit. Re-validates every field the same way create does, but
+// never touches attachments (kept immutable after submit) or re-sends any
+// email — an edit is a correction, not a new incident.
+async function updateDisruption(supa, user, body) {
+  const id = sanitize(body?.id, 64);
+  const { data: existing } = await supa.from("business_disruptions").select("id, store_id, submitted_by").eq("id", id).maybeSingle();
+  if (!existing) return { error: "Report not found.", status: 404 };
+
+  const role = String(user.role || "").toLowerCase();
+  let canEdit = existing.submitted_by === user.id;
+  if (!canEdit && REVIEW_ROLES.has(role)) {
+    const scope = await storesForUser(supa, user);
+    canEdit = scope.all || scope.ids.has(existing.store_id);
+  }
+  if (!canEdit) return { error: "You can't edit this report.", status: 403 };
+
+  const v = await validateAndResolve(supa, user, body);
+  if (v.error) return v;
+
+  const { error } = await supa.from("business_disruptions").update({
+    ...v.fields,
+    escalated_to_rvp_name: v.rvp ? displayName(v.rvp) : null,
+    updated_by_name: displayName(user),
+    updated_at: new Date().toISOString(),
+  }).eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
 }
 
 async function setStatus(supa, user, body) {
@@ -341,9 +539,11 @@ export const handler = async (event) => {
     if (event.httpMethod === "GET") {
       if (action === "list") return unwrap(await listDisruptions(supa, user));
       if (action === "stores") return respond(200, await listStores(supa, user));
+      if (action === "wo-lookup") return respond(200, await lookupWorkOrders(supa, user, params.store_number, params.q));
       return respond(400, { error: `Unknown action: ${action}` });
     }
     if (action === "create") return unwrap(await createDisruption(supa, user, body));
+    if (action === "update") return unwrap(await updateDisruption(supa, user, body));
     if (action === "set-status") return unwrap(await setStatus(supa, user, body));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
