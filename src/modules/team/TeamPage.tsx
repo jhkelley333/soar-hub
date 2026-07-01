@@ -259,7 +259,9 @@ export function TeamPage() {
               key={m.id}
               member={m}
               onEdit={() => setEditing(m)}
-              canViewAs={profile?.role === "admin" && m.id !== profile.id}
+              // Temporarily disabled — pinned for now, not removed. Restore
+              // by putting back `profile?.role === "admin" && m.id !== profile.id`.
+              canViewAs={false}
               viewingAs={startingViewAs === m.id}
               onViewAs={() => viewAs(m)}
             />
