@@ -9,6 +9,7 @@ import { groupedNav, visibleNav } from "@/app/nav";
 import { fetchResolvedFlags } from "@/lib/flags";
 import { useOverrides } from "@/lib/roleAccess";
 import { useRegionAccess, regionVisible } from "@/lib/regionAccess";
+import { useViewAs, useEffectiveRole } from "@/lib/useViewAs";
 import { listPafs, listSdoQueue } from "@/modules/paf/api";
 import { listApprovalQueue } from "@/modules/employee-actions/api";
 import { useChatUnreadCount } from "@/modules/chat/useChatUnread";
@@ -92,6 +93,10 @@ function initialsOf(name: string | null | undefined, email: string | null | unde
 // with fixed dark-on-navy colors rather than `dark:` variants.
 export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   const { profile, signOut } = useAuth();
+  const viewAs = useViewAs();
+  // The whole shell (menu, badges, footer identity) renders as the target
+  // while a View As session is active — see useEffectiveRole for why.
+  const effectiveRole = useEffectiveRole(profile);
   // Hidden easter egg — tapping the red brand mark opens RollerBuddy's runner.
   const [gameOpen, setGameOpen] = useState(false);
   // Reuses the same query key as useFlag() so we don't double-fetch.
@@ -103,12 +108,12 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   });
   const { overrides } = useOverrides();
   const { overrides: regionOverrides, myRegionIds } = useRegionAccess();
-  const navItems = visibleNav(profile?.role, flagsQ.data?.flags, overrides).filter(
-    (item) => profile?.role === "admin" || regionVisible(item.to, myRegionIds, regionOverrides),
+  const navItems = visibleNav(effectiveRole, flagsQ.data?.flags, overrides).filter(
+    (item) => effectiveRole === "admin" || regionVisible(item.to, myRegionIds, regionOverrides),
   );
   const sections = groupedNav(navItems);
-  const pafBadge = usePafBadgeCount(profile?.role);
-  const eaBadge = useEmployeeActionsBadgeCount(profile?.role);
+  const pafBadge = usePafBadgeCount(effectiveRole);
+  const eaBadge = useEmployeeActionsBadgeCount(effectiveRole);
   const chatBadge = useChatUnreadCount();
 
   function badgeFor(to: string): number | null {
@@ -193,20 +198,21 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
         ))}
       </nav>
 
-      {/* User footer */}
+      {/* User footer — shows the target's identity while viewing as, since
+          that's exactly what they'd see in their own footer. */}
       <div className="border-t border-white/10 p-3">
         <div className="flex items-center gap-2.5">
           {profile && (
             <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent/90 text-xs font-semibold text-white">
-              {initialsOf(profile.full_name, profile.email)}
+              {viewAs ? initialsOf(viewAs.target.name, null) : initialsOf(profile.full_name, profile.email)}
             </span>
           )}
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-medium text-white">
-              {profile?.full_name ?? profile?.email}
+              {viewAs ? viewAs.target.name : profile?.full_name ?? profile?.email}
             </div>
-            {profile && (
-              <div className="truncate text-xs text-white/50">{ROLE_LABELS[profile.role]}</div>
+            {effectiveRole && (
+              <div className="truncate text-xs text-white/50">{ROLE_LABELS[effectiveRole]}</div>
             )}
           </div>
           <button

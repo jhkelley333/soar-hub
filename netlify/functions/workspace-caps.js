@@ -24,6 +24,7 @@ import { createClient } from "@supabase/supabase-js";
 import {
   requireWorkspaceCap,
 } from "./_lib/workspace_permissions.js";
+import { rejectWriteWhileViewingAs, resolveViewAs } from "./_lib/viewAs.js";
 
 const SUPABASE_URL =
   process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -101,20 +102,12 @@ export const handler = async (event) => {
   const action = (event.queryStringParameters || {}).action || "";
   const supabase = getSupabase();
 
-  // Admin "View As" (read-only) — see workspaces.js for the full rationale.
-  // `effective` is the identity "my ___" queries scope against; every other
-  // action keeps using the real admin's `profile`.
-  const viewAsHeader = event.headers?.["x-view-as-user-id"] || event.headers?.["X-View-As-User-Id"];
-  if (viewAsHeader && event.httpMethod === "POST") {
-    return respond(403, { ok: false, message: "Read-only while viewing as another user — exit View As to make changes." });
-  }
-  let effective = profile;
-  if (viewAsHeader && String(profile.role).toLowerCase() === "admin") {
-    const { data: viewAsTarget } = await supabase
-      .from("profiles").select("id, email, full_name, role, is_active")
-      .eq("id", viewAsHeader).eq("is_active", true).maybeSingle();
-    if (viewAsTarget) effective = viewAsTarget;
-  }
+  // Admin "View As" (read-only) — see _lib/viewAs.js. `effective` is the
+  // identity "my ___" queries scope against; every other action keeps
+  // using the real admin's `profile`.
+  const writeBlocked = rejectWriteWhileViewingAs(event);
+  if (writeBlocked) return writeBlocked;
+  const { effective } = await resolveViewAs(supabase, profile, event);
 
   try {
     // ═══════════════════════════════════════════════════════════

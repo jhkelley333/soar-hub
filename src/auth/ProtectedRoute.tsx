@@ -5,6 +5,7 @@ import type { UserRole } from "@/types/database";
 import { moduleKeyForPath } from "@/app/nav";
 import { useOverrides } from "@/lib/roleAccess";
 import { useRegionAccess, regionVisible } from "@/lib/regionAccess";
+import { useEffectiveRole } from "@/lib/useViewAs";
 
 interface Props {
   children: ReactNode;
@@ -19,6 +20,11 @@ export function ProtectedRoute({ children, requireRoles }: Props) {
   const { overrides, isLoaded } = useOverrides();
   // Region Access can additionally hide a module from a region's users.
   const { overrides: regionOverrides, myRegionIds } = useRegionAccess();
+  // While a View As session is active, route guards gate on the target's
+  // role — so the admin can't navigate anywhere the target couldn't. This
+  // also means the admin's own blanket "role === admin" bypass drops away
+  // for the duration, which is the point: they're seeing the target's world.
+  const effectiveRole = useEffectiveRole(profile);
 
   if (loading) {
     return (
@@ -42,8 +48,8 @@ export function ProtectedRoute({ children, requireRoles }: Props) {
     return <ProfileLoadFailed />;
   }
 
-  if (profile) {
-    const role = profile.role;
+  if (profile && effectiveRole) {
+    const role = effectiveRole;
     // Static decision from the route's requireRoles.
     const staticOk = !requireRoles || requireRoles.includes(role);
     // An explicit override for this module + role wins (grant or revoke).

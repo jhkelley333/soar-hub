@@ -57,6 +57,7 @@ import {
   resolveSignoffCandidates,
   computeAuditScoring,
 } from "./_lib/workspace_resolvers.js";
+import { rejectWriteWhileViewingAs, resolveViewAs } from "./_lib/viewAs.js";
 
 const SUPABASE_URL =
   process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -337,23 +338,12 @@ export const handler = async (event) => {
   const action = (event.queryStringParameters || {}).action || "";
   const supabase = getSupabase();
 
-  // Admin "View As" (read-only). See admin-view-as.js for session start/end.
-  // Every mutating action here is POST, so rejecting any POST that carries
-  // the header is a blanket safety net — View As can never write, even if
-  // a client bug sent the header on a write call. `effective` is the
+  // Admin "View As" (read-only) — see _lib/viewAs.js. `effective` is the
   // identity "my ___" queries scope against; every other action keeps
   // using the real admin's `profile` unchanged (permissions, attribution).
-  const viewAsHeader = event.headers?.["x-view-as-user-id"] || event.headers?.["X-View-As-User-Id"];
-  if (viewAsHeader && event.httpMethod === "POST") {
-    return respond(403, { ok: false, message: "Read-only while viewing as another user — exit View As to make changes." });
-  }
-  let effective = profile;
-  if (viewAsHeader && String(profile.role).toLowerCase() === "admin") {
-    const { data: viewAsTarget } = await supabase
-      .from("profiles").select("id, email, full_name, role, is_active")
-      .eq("id", viewAsHeader).eq("is_active", true).maybeSingle();
-    if (viewAsTarget) effective = viewAsTarget;
-  }
+  const writeBlocked = rejectWriteWhileViewingAs(event);
+  if (writeBlocked) return writeBlocked;
+  const { effective } = await resolveViewAs(supabase, profile, event);
 
   try {
     // ═══════════════════════════════════════════════════════════
