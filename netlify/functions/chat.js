@@ -14,6 +14,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { sendPushToUsers } from "./_lib/push.js";
+import { rejectWriteWhileViewingAs, resolveViewAs } from "./_lib/viewAs.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY =
@@ -133,8 +134,19 @@ export const handler = async (event) => {
   const caller = await getCaller(event);
   if (!caller) return respond(401, { ok: false, message: "Not authenticated." });
 
+  // Admin "View As" (read-only) — see _lib/viewAs.js. Every write below is a
+  // POST, so this one check makes the whole handler read-only for a session.
+  // `effective` (and `uid` derived from it) is who reads are scoped to —
+  // this is chat, so that means the admin sees the target's actual inbox
+  // and threads. `caller` stays the real admin for anything that gates a
+  // WRITE-only capability (those branches are unreachable here anyway since
+  // they're POSTs, but keeping the distinction makes the intent explicit).
+  const writeBlocked = rejectWriteWhileViewingAs(event);
+  if (writeBlocked) return writeBlocked;
+
   const supa = getSupabase();
-  const uid = caller.id;
+  const { effective } = await resolveViewAs(supa, caller, event);
+  const uid = effective.id;
   const action = (event.queryStringParameters || {}).action || "";
 
   try {
@@ -166,7 +178,7 @@ export const handler = async (event) => {
         return respond(200, { ok: true, threads: [], needsYouCount: 0 });
       }
       const memById = new Map((memberships ?? []).map((m) => [m.thread_id, m]));
-      const callerFirst = firstNameOf(displayName(caller)).toLowerCase();
+      const callerFirst = firstNameOf(displayName(effective)).toLowerCase();
 
       // Unread + mention counts are computed in the database (one small
       // result per thread) instead of pulling every message across the
@@ -604,7 +616,9 @@ export const handler = async (event) => {
     // derived from the seats they hold in user_scopes. Each option carries
     // the scope node, target tier, a label, and a live headcount.
     if (action === "managedOptions" && event.httpMethod === "GET") {
-      const role = String(caller.role || "").toLowerCase();
+      // Read-only listing — reflects what the target would see, not what
+      // the real admin is allowed to do (creating one is a POST, blocked).
+      const role = String(effective.role || "").toLowerCase();
       const CAN_CREATE = ["do", "sdo", "rvp", "vp", "coo", "admin"];
       if (!CAN_CREATE.includes(role)) return respond(200, { ok: true, options: [] });
 

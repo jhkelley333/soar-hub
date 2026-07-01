@@ -45,6 +45,7 @@ import type { BirthdayEntry } from "@/modules/my-stores/types";
 import { listEmployeeActions } from "@/modules/employee-actions/api";
 import type { PtoRow } from "@/modules/employee-actions/types";
 import { isStandalone } from "@/lib/push";
+import { useEffectiveRole } from "@/lib/useViewAs";
 import { cn } from "@/lib/cn";
 import { FISCAL, fiscalInfo, fiscalWeekLabel } from "@/lib/fiscal";
 import { BirthdayCelebration } from "@/modules/my-stores/BirthdayCelebration";
@@ -129,7 +130,12 @@ function relativeTime(iso: string): string {
 
 export function DashboardPage() {
   const { profile } = useAuth();
-  const role = profile?.role;
+  // Which cards render is gated on the target's role while View As is
+  // active, so the admin sees the same dashboard layout the target would.
+  // Note: the underlying query data (WO stats, cash alerts, etc.) is still
+  // scoped to the real admin's own visibility — View As doesn't yet thread
+  // through to those endpoints, only chat and My CAPs/Assignments/Sign-offs.
+  const role = useEffectiveRole(profile);
   const canCash = !!role && CASH_ROLES.has(role);
   const isSdoReviewer = !!role && SDO_REVIEW_ROLES.has(role);
   const canPto = !!role && PTO_VIEW_ROLES.has(role);
