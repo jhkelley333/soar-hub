@@ -45,7 +45,7 @@ import type { BirthdayEntry } from "@/modules/my-stores/types";
 import { listEmployeeActions } from "@/modules/employee-actions/api";
 import type { PtoRow } from "@/modules/employee-actions/types";
 import { isStandalone } from "@/lib/push";
-import { useEffectiveRole } from "@/lib/useViewAs";
+import { useEffectiveRole, useViewAs } from "@/lib/useViewAs";
 import { cn } from "@/lib/cn";
 import { FISCAL, fiscalInfo, fiscalWeekLabel } from "@/lib/fiscal";
 import { BirthdayCelebration } from "@/modules/my-stores/BirthdayCelebration";
@@ -130,6 +130,7 @@ function relativeTime(iso: string): string {
 
 export function DashboardPage() {
   const { profile } = useAuth();
+  const viewAs = useViewAs();
   // Which cards render is gated on the target's role while View As is
   // active, so the admin sees the same dashboard layout the target would.
   // Note: the underlying query data (WO stats, cash alerts, etc.) is still
@@ -189,8 +190,9 @@ export function DashboardPage() {
   if (role === "payroll") return <Navigate to="/paf/queue" replace />;
   if (isStandalone()) return <MobileHome />;
 
-  const greetingName =
-    profile?.preferred_name?.trim() || profile?.full_name?.split(" ")[0] || "there";
+  const greetingName = viewAs
+    ? viewAs.target.name.split(" ")[0] || "there"
+    : profile?.preferred_name?.trim() || profile?.full_name?.split(" ")[0] || "there";
   const storeCount = storesQ.data?.stores.length ?? null;
 
   const tickets = ticketsQ.data?.tickets ?? [];
