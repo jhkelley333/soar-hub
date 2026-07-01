@@ -802,7 +802,8 @@ export const handler = async (event) => {
           *,
           ticket_photos(id, file_url, file_name, upload_type, created_at),
           ticket_approvals(id, approval_tier, status, requested_at, approved_at, approved_by, notes, quote_url),
-          ticket_activities(id, user_name, event_type, event_data, notes, created_at)
+          ticket_activities(id, user_name, event_type, event_data, notes, created_at),
+          ticket_quotes(*)
         `)
         .order("date_submitted", { ascending: false });
 
