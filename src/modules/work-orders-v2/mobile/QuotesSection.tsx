@@ -8,14 +8,14 @@
 
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Plus, Paperclip, Trash2, Check, Star, Loader2, Send } from "lucide-react";
+import { Plus, Paperclip, Trash2, Check, Star, Loader2, Send, Sparkles, Copy } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
 import { Drawer } from "@/shared/ui/Drawer";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { addQuote, deleteQuote, setRecommendedQuote, fileToBase64 } from "../api";
+import { addQuote, deleteQuote, extractQuote, setRecommendedQuote, fileToBase64 } from "../api";
 import type { Ticket, WorkOrderQuote } from "../types";
 import { formatDollars } from "./woMobile";
 
@@ -38,6 +38,35 @@ export function QuotesSection({
   const [request, setRequest] = useState("");
   const [note, setNote] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  // AI auto-fill from the quote document — same pattern as Order Parts /
+  // Order Replacement's receipt scan.
+  const [scanning, setScanning] = useState(false);
+  const [scanNote, setScanNote] = useState<string | null>(null);
+  const [scanFilled, setScanFilled] = useState(false);
+
+  async function onFilePicked(picked: File | null) {
+    setFile(picked);
+    setScanFilled(false);
+    setScanNote(null);
+    if (!picked) return;
+    setScanning(true);
+    try {
+      const data = await fileToBase64(picked);
+      const { extracted: ex } = await extractQuote({ data, type: picked.type || "application/octet-stream" });
+      let filled = false;
+      const fill = (cond: boolean, set: () => void) => { if (cond) { set(); filled = true; } };
+      fill(!vendor.trim() && !!ex.vendor_name, () => setVendor(ex.vendor_name));
+      fill(!amount.trim() && ex.amount != null, () => setAmount(String(ex.amount)));
+      fill(!request.trim() && !!ex.work_description, () => setRequest(ex.work_description));
+      fill(!note.trim() && !!ex.note, () => setNote(ex.note));
+      setScanFilled(filled);
+      if (!filled) setScanNote("Couldn't pull anything new from that quote — fill in what's needed.");
+    } catch (e) {
+      setScanNote(e instanceof Error ? e.message : "Couldn't read the quote — enter the details manually.");
+    } finally {
+      setScanning(false);
+    }
+  }
 
   const add = useMutation({
     mutationFn: async () => {
@@ -62,6 +91,7 @@ export function QuotesSection({
       toast.push("Quote added.", "success");
       setAddOpen(false);
       setVendor(""); setAmount(""); setRequest(""); setNote(""); setFile(null);
+      setScanning(false); setScanNote(null); setScanFilled(false);
       onChanged();
     },
     onError: (e: unknown) =>
@@ -84,21 +114,69 @@ export function QuotesSection({
 
   const busy = recommend.isPending || remove.isPending;
 
+  // Cheapest → priciest, for the compare strip and the copy-paste summary —
+  // deliberately separate from `quotes`' on-screen order (recommended
+  // first), since comparing is about price, not who's currently winning.
+  const byPrice = [...quotes].sort((a, b) => a.amount_cents - b.amount_cents);
+  const cheapest = byPrice[0];
+  const priciest = byPrice[byPrice.length - 1];
+  const spreadCents = byPrice.length > 1 ? priciest.amount_cents - cheapest.amount_cents : 0;
+
+  const [copied, setCopied] = useState(false);
+  async function copySummary() {
+    const lines = [
+      `Quotes — ${ticket.wo_number}${ticket.store_number ? ` (#${ticket.store_number}${ticket.store_name ? ` ${ticket.store_name}` : ""})` : ""}`,
+      ...(ticket.work_requested ? [ticket.work_requested] : []),
+      "",
+      ...byPrice.map((q, i) => `${i + 1}. ${q.vendor_name || "Vendor"} — ${formatDollars(q.amount_cents / 100)}${q.is_recommended ? " ⭐ Recommended" : ""}`),
+      ...(byPrice.length > 1
+        ? ["", `Lowest: ${cheapest.vendor_name || "Vendor"} (${formatDollars(cheapest.amount_cents / 100)})`, ...(spreadCents > 0 ? [`Spread: ${formatDollars(spreadCents / 100)}`] : [])]
+        : []),
+    ];
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setCopied(true);
+      toast.push("Copied — paste into WhatsApp.", "success");
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast.push("Couldn't copy to clipboard.", "error");
+    }
+  }
+
   return (
     <section>
       <div className="px-2 pb-1.5 pt-1 flex items-center justify-between">
         <span className="text-[10.5px] font-semibold uppercase tracking-wider text-midnight-500">
           Quotes{quotes.length > 1 ? ` · ${quotes.length}` : ""}
         </span>
-        <button
-          type="button"
-          onClick={() => setAddOpen(true)}
-          className="inline-flex items-center gap-1 text-[12px] font-semibold text-accent"
-        >
-          <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
-          Add quote
-        </button>
+        <div className="flex items-center gap-3">
+          {quotes.length > 0 && (
+            <button
+              type="button"
+              onClick={copySummary}
+              className="inline-flex items-center gap-1 text-[12px] font-semibold text-midnight-600 hover:text-accent"
+            >
+              <Copy className="h-3.5 w-3.5" strokeWidth={2} />
+              {copied ? "Copied!" : "Copy summary"}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => setAddOpen(true)}
+            className="inline-flex items-center gap-1 text-[12px] font-semibold text-accent"
+          >
+            <Plus className="h-3.5 w-3.5" strokeWidth={2.5} />
+            Add quote
+          </button>
+        </div>
       </div>
+
+      {quotes.length > 1 && (
+        <div className="mx-2 mb-2 flex flex-wrap items-center gap-x-3 gap-y-0.5 rounded-lg bg-emerald-50 px-3 py-2 text-[11.5px] text-emerald-800">
+          <span>Lowest: <strong>{cheapest.vendor_name || "Vendor"}</strong> ({formatDollars(cheapest.amount_cents / 100)})</span>
+          {spreadCents > 0 && <span>Spread: {formatDollars(spreadCents / 100)}</span>}
+        </div>
+      )}
 
       {quotes.length === 0 ? (
         <button
@@ -173,7 +251,7 @@ export function QuotesSection({
             />
           </div>
           <div>
-            <Label>Quote document *</Label>
+            <Label>Quote document * (auto-fills the fields above)</Label>
             <label className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-md border-2 border-dashed border-zinc-200 bg-white px-3 py-2.5 text-sm text-zinc-600 hover:border-accent hover:bg-accent/5">
               <Paperclip className="h-4 w-4" strokeWidth={1.75} />
               {file ? file.name : "Attach PDF or image"}
@@ -181,9 +259,22 @@ export function QuotesSection({
                 type="file"
                 accept="image/*,.pdf,application/pdf"
                 className="hidden"
-                onChange={(e) => setFile(e.target.files?.[0] || null)}
+                onChange={(e) => onFilePicked(e.target.files?.[0] || null)}
               />
             </label>
+            {scanning && (
+              <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-accent">
+                <Loader2 className="h-3 w-3 animate-spin" /> Reading the quote…
+              </div>
+            )}
+            {!scanning && scanFilled && (
+              <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-emerald-700">
+                <Sparkles className="h-3 w-3" /> Auto-filled from the quote — please review.
+              </div>
+            )}
+            {!scanning && scanNote && (
+              <div className="mt-1.5 text-[11px] text-amber-700">{scanNote}</div>
+            )}
           </div>
           <div>
             <Label htmlFor="q-note">Justification</Label>

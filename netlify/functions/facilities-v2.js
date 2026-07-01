@@ -1758,6 +1758,111 @@ export const handler = async (event) => {
       });
     }
 
+    // ── EXTRACT QUOTE (AI) ──
+    // Read a vendor quote/estimate (image or PDF) with Claude vision and
+    // return the structured fields, so "Add a quote" (QuotesSection.tsx) can
+    // auto-fill itself instead of the submitter retyping the vendor's total
+    // by hand. Same best-effort pattern as extractReplacement / extractParts.
+    // GM and above.
+    if (action === "extractQuote" && event.httpMethod === "POST") {
+      if (roleLevel(role) > 4) {
+        return respond(403, { ok: false, message: "GM and above only." });
+      }
+      if (!process.env.ANTHROPIC_API_KEY) {
+        return respond(500, { ok: false, message: "Quote reading isn't configured (ANTHROPIC_API_KEY missing)." });
+      }
+      const { invoice } = JSON.parse(event.body || "{}");
+      if (!invoice?.data) return respond(400, { ok: false, message: "No file provided." });
+
+      let supplierNames = [];
+      try {
+        const { data: vrows } = await supabase.from("vendors").select("name").eq("is_active", true).limit(300);
+        supplierNames = [...new Set((vrows || []).map((v) => v.name).filter(Boolean))];
+      } catch { /* optional */ }
+
+      const mediaType = String(invoice.type || "");
+      const isPdf = /pdf/i.test(mediaType);
+      const sourceBlock = isPdf
+        ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: invoice.data } }
+        : { type: "image", source: { type: "base64", media_type: mediaType.startsWith("image/") ? mediaType : "image/jpeg", data: invoice.data } };
+
+      const schema = {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          vendor_name: { type: "string" },
+          amount: { type: "number" },
+          work_description: { type: "string" },
+          note: { type: "string" },
+        },
+        required: ["vendor_name", "amount", "work_description", "note"],
+      };
+
+      const knownSuppliers = supplierNames.length ? supplierNames.slice(0, 200).join("; ") : "(none on file)";
+      const prompt =
+        "This is a QUOTE or ESTIMATE from a vendor for repair/service work at a restaurant (not a paid invoice for completed work). " +
+        "Extract these fields:\n" +
+        "- vendor_name: the company issuing the quote. If it clearly matches one of these vendors on file, return that exact name: " + knownSuppliers + "\n" +
+        "- amount: the quote's grand total as a number, no currency symbol or commas. If it lists multiple options/tiers, use the primary/recommended one.\n" +
+        "- work_description: a short (under 12 words) summary of the scope of work being quoted, written like a work-order description (e.g. \"Replace walk-in cooler compressor and condenser fan\").\n" +
+        "- note: any notable terms worth flagging to an approver — exclusions, a warranty period, financing terms, or a note that this is only one of several line-item options. Empty string if nothing stands out.\n" +
+        "Use an empty string for any text field you can't determine, and 0 for amount if you can't determine it.";
+
+      async function callClaude(structured) {
+        const messages = [{
+          role: "user",
+          content: [sourceBlock, { type: "text", text: structured ? prompt : prompt + "\n\nRespond with ONLY a JSON object with exactly these keys: vendor_name, amount, work_description, note. No prose, no markdown." }],
+        }];
+        const payload = { model: "claude-sonnet-4-6", max_tokens: 1024, messages };
+        if (structured) payload.output_config = { format: { type: "json_schema", schema } };
+        return fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      let apiRes;
+      try {
+        apiRes = await callClaude(true);
+        if (apiRes.status === 400) {
+          console.warn("[extractQuote] structured output rejected; retrying prompt-only");
+          apiRes = await callClaude(false);
+        }
+      } catch (e) {
+        console.error("[extractQuote] fetch threw", e);
+        return respond(502, { ok: false, message: "Couldn't reach the quote reader." });
+      }
+      if (!apiRes.ok) {
+        const t = await apiRes.text().catch(() => "");
+        console.error("[extractQuote] anthropic error", apiRes.status, t.slice(0, 300));
+        return respond(502, { ok: false, message: `Quote reading failed (${apiRes.status}).` });
+      }
+      const qApiJson = await apiRes.json();
+      if (qApiJson?.stop_reason === "refusal") {
+        return respond(422, { ok: false, message: "The quote couldn't be read automatically — enter the details manually." });
+      }
+      let qParsed = {};
+      try {
+        const text = (qApiJson?.content || []).find((b) => b.type === "text")?.text || "";
+        qParsed = JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim());
+      } catch (e) {
+        console.error("[extractQuote] parse failed", e);
+        return respond(502, { ok: false, message: "Couldn't read the quote details." });
+      }
+      const qClamp = (x, n = 200) => (x == null ? "" : String(x).slice(0, n));
+      const amountNum = Number(qParsed.amount);
+      return respond(200, {
+        ok: true,
+        extracted: {
+          vendor_name: qClamp(qParsed.vendor_name, 200),
+          amount: Number.isFinite(amountNum) && amountNum > 0 ? amountNum : null,
+          work_description: qClamp(qParsed.work_description, 300),
+          note: qClamp(qParsed.note, 500),
+        },
+      });
+    }
+
     // ── LOG OFF-TICKET WORK ──
     // Record work a store had done WITHOUT a ticket. Creates a completed
     // (closed) work order flagged is_logged_offline, attaches the invoice, and
