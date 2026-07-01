@@ -45,6 +45,7 @@ import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "node:crypto";
 import { sendSms, telnyxConfigured } from "./_lib/telnyx.js";
 import { getFlag } from "./_lib/flags.js";
+import { resolvePafWatchers } from "./_lib/pafWatchers.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -898,11 +899,17 @@ async function applyBonusRouting(supa, submitterRole, row, driveIn, category) {
 // `submitterDisplay` is the PAF's OWNER (not the editor) so the "from"
 // person in the email reads correctly on an on-behalf resubmit.
 async function notifyPafRouted(supa, submitterDisplay, row, ctx) {
+  // SDO/RVP/VP/COO who opted in (profiles.notify_paf_downline) to being
+  // copied on PAF activity in their own downline — see _lib/pafWatchers.js.
+  const watchers = await resolvePafWatchers(supa, ctx.driveIn);
+  const watcherEmails = watchers.map((w) => w.email).filter(Boolean);
+
   if (row.status === "Pending SDO Approval") {
     const approver = await profileById(supa, row.sdo_approver_id);
+    const to = [approver?.email, ...watcherEmails].filter(Boolean);
     await sendPafEmail(supa, {
       templateKey: "BONUS_SDO_APPROVAL_REQUEST",
-      to: approver?.email,
+      to: [...new Set(to)],
       vars: {
         EMPLOYEE: ctx.employeeName,
         STORE: ctx.driveIn,
@@ -915,7 +922,7 @@ async function notifyPafRouted(supa, submitterDisplay, row, ctx) {
     const recipients = await payrollEmails(supa);
     await sendPafEmail(supa, {
       templateKey: "PAF_SUBMITTED",
-      to: recipients,
+      to: [...new Set([...recipients, ...watcherEmails])],
       vars: {
         EMPLOYEE: ctx.employeeName,
         STORE: ctx.effectiveDriveIn || "N/A",

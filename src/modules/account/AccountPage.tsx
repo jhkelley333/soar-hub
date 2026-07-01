@@ -31,6 +31,7 @@ import {
   notificationPermission,
 } from "@/lib/push";
 
+const NOTIFY_PAF_DOWNLINE_ROLES = new Set(["sdo", "rvp", "vp", "coo"]);
 const SHIRT_SIZES = ["XS", "S", "M", "L", "XL", "XXL", "3XL", "4XL", "5XL"];
 const SHIRT_CUTS: { value: string; label: string }[] = [
   { value: "mens", label: "Men's" },
@@ -57,6 +58,9 @@ export function AccountPage() {
   const [birthday, setBirthday] = useState("");
   // Only GMs see + can change this; everyone else is force-true.
   const [showBirthday, setShowBirthday] = useState(true);
+  // SDO/RVP/VP/COO only — opt in to being copied on PAF activity in their
+  // own downline (migration 0207).
+  const [notifyPafDownline, setNotifyPafDownline] = useState(false);
   const [shirtSize, setShirtSize] = useState("");
   const [shirtCut, setShirtCut] = useState("");
   const [favoriteQuote, setFavoriteQuote] = useState("");
@@ -71,6 +75,7 @@ export function AccountPage() {
       setPhone(profile.phone ? formatPhoneForDisplay(profile.phone) : "");
       setBirthday(profile.birthday ?? "");
       setShowBirthday(profile.show_birthday ?? true);
+      setNotifyPafDownline(profile.notify_paf_downline ?? false);
       setShirtSize(profile.shirt_size ?? "");
       setShirtCut(profile.shirt_cut ?? "");
       setFavoriteQuote(profile.favorite_quote ?? "");
@@ -86,11 +91,12 @@ export function AccountPage() {
       phoneNormalized !== (profile.phone ?? null) ||
       (birthday || null) !== (profile.birthday ?? null) ||
       showBirthday !== (profile.show_birthday ?? true) ||
+      notifyPafDownline !== (profile.notify_paf_downline ?? false) ||
       (shirtSize || null) !== (profile.shirt_size ?? null) ||
       (shirtCut || null) !== (profile.shirt_cut ?? null) ||
       (favoriteQuote.trim() || null) !== (profile.favorite_quote ?? null)
     );
-  }, [profile, fullName, preferredName, phone, birthday, showBirthday, shirtSize, shirtCut, favoriteQuote]);
+  }, [profile, fullName, preferredName, phone, birthday, showBirthday, notifyPafDownline, shirtSize, shirtCut, favoriteQuote]);
 
   // Tab-close guard.
   useEffect(() => {
@@ -141,6 +147,9 @@ export function AccountPage() {
           // Force-true for non-GM roles regardless of state — only GMs
           // can opt out via the toggle below.
           show_birthday: profile.role === "gm" ? showBirthday : true,
+          // Force-false outside the eligible roles — only SDO/RVP/VP/COO
+          // get the toggle below.
+          notify_paf_downline: NOTIFY_PAF_DOWNLINE_ROLES.has(profile.role) ? notifyPafDownline : false,
           shirt_size: shirtSize || null,
           shirt_cut: shirtCut || null,
           favorite_quote: favoriteQuote.trim() || null,
@@ -285,6 +294,23 @@ export function AccountPage() {
                   Optional. Up to 280 characters.
                 </p>
               </div>
+              {profile && NOTIFY_PAF_DOWNLINE_ROLES.has(profile.role) && (
+                <label className="flex items-start gap-2 text-sm text-zinc-700">
+                  <input
+                    type="checkbox"
+                    checked={notifyPafDownline}
+                    onChange={(e) => setNotifyPafDownline(e.target.checked)}
+                    className="mt-0.5 h-3.5 w-3.5 accent-accent"
+                  />
+                  <span>
+                    Notify me about PAF activity in my downline
+                    <span className="block text-xs text-zinc-500">
+                      Copy me on submission alerts and "Message the submitter" emails for PAFs
+                      in my downline.
+                    </span>
+                  </span>
+                </label>
+              )}
               <div className="flex items-center justify-between gap-3">
                 <div className="text-xs text-zinc-500">
                   Role:{" "}
