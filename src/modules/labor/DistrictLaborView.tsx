@@ -5,7 +5,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Clock } from "lucide-react";
+import { ArrowDown, ArrowUp, Clock } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -23,11 +23,38 @@ import {
 import type { DistrictStoreRow } from "./types";
 
 type Filter = "all" | "over" | "due";
-type Sort = "worst" | "labor" | "store";
+// Column-header sort. "worst first" defaults to variance desc; every column
+// (Store, Day/WTD/PTD %, Var, $ Over, Hrs, Status) is independently sortable
+// by clicking its header, matching the Labor v2 table.
+type SortKey = "store" | "day" | "wtd" | "ptd" | "var" | "over" | "hrs" | "status";
+type SortDir = "asc" | "desc";
+interface SortState { key: SortKey; dir: SortDir }
+
+// Rank a row's status so "sort by Status" surfaces the most actionable rows
+// first when sorted desc: a note due outranks an unexplained over-chart
+// store, which outranks an explained one, which outranks on-chart.
+function statusRank(row: DistrictStoreRow): number {
+  if (row.note_due) return 3;
+  if (row.status === "over" && !row.explained) return 2;
+  if (row.explained) return 1;
+  return 0;
+}
+function sortValue(row: DistrictStoreRow, key: SortKey): number | string {
+  switch (key) {
+    case "store": return String(row.store_number);
+    case "day": return row.labor_pct ?? -Infinity;
+    case "wtd": return row.wtd_labor_pct ?? -Infinity;
+    case "ptd": return row.ptd_labor_pct ?? -Infinity;
+    case "var": return row.variance_pts ?? -Infinity;
+    case "over": return row.dollars_over_chart ?? -Infinity;
+    case "hrs": return row.hours_over_chart ?? -Infinity;
+    case "status": return statusRank(row);
+  }
+}
 
 export function DistrictLaborView() {
   const [filter, setFilter] = useState<Filter>("all");
-  const [sort, setSort] = useState<Sort>("worst");
+  const [sort, setSort] = useState<SortState>({ key: "var", dir: "desc" });
   // "" = all districts the caller can see (the default rollup). SDO/RVP can
   // narrow to one district; a single-district DO only ever has one.
   const [district, setDistrict] = useState<string>("");
@@ -43,13 +70,22 @@ export function DistrictLaborView() {
   const data = q.data;
   const rollup = data?.rollup;
 
+  // Clicking the active column flips direction; clicking a new one starts
+  // descending (worst/highest first) except Store, which starts ascending
+  // (alphabetical/numeric makes more sense than "highest store # first").
+  function toggleSort(key: SortKey) {
+    setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "store" ? "asc" : "desc" }));
+  }
+
   const rows = useMemo(() => {
     let r = [...(data?.stores ?? [])];
     if (filter === "over") r = r.filter((s) => s.status === "over");
     if (filter === "due") r = r.filter((s) => s.note_due);
-    if (sort === "worst") r.sort((a, b) => (b.variance_pts ?? -999) - (a.variance_pts ?? -999));
-    if (sort === "labor") r.sort((a, b) => (b.labor_pct ?? -999) - (a.labor_pct ?? -999));
-    if (sort === "store") r.sort((a, b) => String(a.store_number).localeCompare(String(b.store_number)));
+    r.sort((a, b) => {
+      const av = sortValue(a, sort.key), bv = sortValue(b, sort.key);
+      const cmp = typeof av === "string" ? av.localeCompare(bv as string, undefined, { numeric: true }) : (av as number) - (bv as number);
+      return sort.dir === "asc" ? cmp : -cmp;
+    });
     return r;
   }, [data?.stores, filter, sort]);
 
@@ -178,16 +214,6 @@ export function DistrictLaborView() {
                     { value: "due", label: "Note due", count: dueCount, dot: "bg-warn" },
                   ]}
                 />
-                <Segmented<Sort>
-                  dense
-                  value={sort}
-                  onChange={setSort}
-                  options={[
-                    { value: "worst", label: "worst first" },
-                    { value: "labor", label: "labor %" },
-                    { value: "store", label: "store" },
-                  ]}
-                />
               </div>
             </div>
 
@@ -195,18 +221,20 @@ export function DistrictLaborView() {
               <div className="p-8 text-center text-sm text-zinc-500">No stores match this filter.</div>
             ) : (
               <>
-                {/* Column headers — aligned to the StoreRow layout below. */}
+                {/* Column headers — aligned to the StoreRow layout below.
+                    Every column sorts on click; clicking the active one
+                    flips direction. */}
                 <div className="flex w-full items-center gap-3 border-b border-zinc-100 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
                   <span className="w-1" />
                   <span className="w-9" />
-                  <span className="min-w-0 flex-1">Store</span>
-                  <span className="w-16 text-right">Day %</span>
-                  <span className="hidden w-14 text-right lg:block">WTD %</span>
-                  <span className="hidden w-14 text-right lg:block">PTD %</span>
-                  <span className="hidden w-14 text-right sm:block">Var</span>
-                  <span className="hidden w-20 text-right sm:block">$ Over</span>
-                  <span className="hidden w-14 text-right sm:block">Hrs</span>
-                  <span className="ml-2 w-[88px] text-right">Status</span>
+                  <SortTh label="Store" k="store" sort={sort} onSort={toggleSort} className="min-w-0 flex-1" />
+                  <SortTh label="Day %" k="day" sort={sort} onSort={toggleSort} className="w-16" right />
+                  <SortTh label="WTD %" k="wtd" sort={sort} onSort={toggleSort} className="hidden w-14 lg:block" right />
+                  <SortTh label="PTD %" k="ptd" sort={sort} onSort={toggleSort} className="hidden w-14 lg:block" right />
+                  <SortTh label="Var" k="var" sort={sort} onSort={toggleSort} className="hidden w-14 sm:block" right />
+                  <SortTh label="$ Over" k="over" sort={sort} onSort={toggleSort} className="hidden w-20 sm:block" right />
+                  <SortTh label="Hrs" k="hrs" sort={sort} onSort={toggleSort} className="hidden w-14 sm:block" right />
+                  <SortTh label="Status" k="status" sort={sort} onSort={toggleSort} className="ml-2 w-[88px]" right />
                 </div>
                 <div className="divide-y divide-zinc-100">
                   {rows.map((s) => (
@@ -219,6 +247,40 @@ export function DistrictLaborView() {
         </div>
       )}
     </>
+  );
+}
+
+function SortTh({
+  label,
+  k,
+  sort,
+  onSort,
+  right,
+  className,
+}: {
+  label: string;
+  k: SortKey;
+  sort: SortState;
+  onSort: (k: SortKey) => void;
+  right?: boolean;
+  className?: string;
+}) {
+  const active = sort.key === k;
+  return (
+    <span className={cn(className, right && "text-right")}>
+      <button
+        type="button"
+        onClick={() => onSort(k)}
+        className={cn(
+          "inline-flex items-center gap-0.5 text-[10px] font-semibold uppercase tracking-wide hover:text-zinc-600",
+          right && "flex-row-reverse",
+          active && "text-accent"
+        )}
+      >
+        {label}
+        {active && (sort.dir === "asc" ? <ArrowUp className="h-2.5 w-2.5" /> : <ArrowDown className="h-2.5 w-2.5" />)}
+      </button>
+    </span>
   );
 }
 
