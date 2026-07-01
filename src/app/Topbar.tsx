@@ -15,6 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Search, Sun, Moon, Bell, Building2, Hammer, BookUser, BookOpen, Users } from "lucide-react";
 import { useTheme } from "@/lib/theme";
 import { useAuth } from "@/auth/AuthProvider";
+import { useEffectiveRole } from "@/lib/useViewAs";
 import { useChatUnreadCount } from "@/modules/chat/useChatUnread";
 import { fetchCallerStores, fetchTickets } from "@/modules/work-orders-v2/api";
 import { isOpenStatus } from "@/modules/work-orders-v2/types";
@@ -43,8 +44,9 @@ export function Topbar() {
   const { profile } = useAuth();
   const navigate = useNavigate();
   const unread = useChatUnreadCount();
+  const effectiveRole = useEffectiveRole(profile);
 
-  const canWo = !!profile?.role && WO_ROLES.has(profile.role);
+  const canWo = !!effectiveRole && WO_ROLES.has(effectiveRole);
 
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
