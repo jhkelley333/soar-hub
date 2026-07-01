@@ -5,8 +5,10 @@
 //   GET  thread?threadId=…      → one thread, its members, and messages
 //   GET  contacts               → active profiles (compose people picker)
 //   GET  pafUnread?ids=…        → unread + thread id per PAF, for list bells
-//   POST send     {threadId,text,copyMe?} — PAF threads also email the
-//                                submitter; see sendPafEmail / resend-inbound.js
+//   POST send     {threadId,text,copyMe?,includeLeader?} — PAF threads also
+//                                email the submitter, and can loop in the
+//                                submitter's next-level leader; see
+//                                sendPafEmail / resend-inbound.js
 //   POST create   {kind,title,subtitle?,scopeKind?,scopeRef?,participantUserIds[],external?,firstMessage?}
 //   POST markRead {threadId}
 //
@@ -17,6 +19,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { sendPushToUsers } from "./_lib/push.js";
 import { rejectWriteWhileViewingAs, resolveViewAs } from "./_lib/viewAs.js";
+import { findUsersForStore } from "./_lib/ticketEmail.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY =
@@ -87,10 +90,6 @@ function fmtTime(iso) {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
-function appBaseUrl() {
-  return (process.env.URL || process.env.DEPLOY_URL || "").replace(/\/$/, "");
-}
-
 function fmtMoney(n) {
   const v = Number(n);
   if (!Number.isFinite(v)) return "";
@@ -137,6 +136,42 @@ async function sendPafEmail({ to, cc, replyTo, subject, text }) {
     console.warn("[chat] Resend send threw", e);
     return { ok: false, reason: "The email failed to send." };
   }
+}
+
+// One level up the reporting chain from each role — used to resolve "their
+// next-level leader" for the "Include next-level leader" composer option.
+// Bonus-approval routing (resolveBonusApprover in paf.js) is a distinct,
+// business-rule-driven jump (straight to SDO/RVP); this is the plain org
+// chart, one tier at a time.
+const NEXT_LEVEL_ROLE = {
+  shift_manager: "gm",
+  first_assistant_manager: "gm",
+  associate_manager: "gm",
+  crew_leader: "gm",
+  crew_member: "gm",
+  carhop: "gm",
+  gm: "do",
+  do: "sdo",
+  sdo: "rvp",
+  rvp: "vp",
+  vp: "coo",
+};
+
+// Best-effort lookup of the PAF submitter's direct manager, scoped off the
+// PAF's store via the same store→district→area→region walk used elsewhere
+// (findUsersForStore). Returns null if the submitter's role has no next
+// level (e.g. already COO/admin) or no one is assigned to that scope yet.
+async function resolveNextLevelLeader(supa, paf) {
+  if (!paf?.drive_in) return null;
+  const { data: submitter } = await supa
+    .from("profiles")
+    .select("role")
+    .eq("id", paf.submitter_id)
+    .maybeSingle();
+  const nextRole = NEXT_LEVEL_ROLE[String(submitter?.role || "").toLowerCase()];
+  if (!nextRole) return null;
+  const leaders = await findUsersForStore(supa, paf.drive_in, [nextRole]);
+  return leaders[0] || null;
 }
 
 export const handler = async (event) => {
@@ -355,7 +390,7 @@ export const handler = async (event) => {
     }
 
     if (action === "send" && event.httpMethod === "POST") {
-      const { threadId, text, attachments, copyMe } = JSON.parse(event.body || "{}");
+      const { threadId, text, attachments, copyMe, includeLeader } = JSON.parse(event.body || "{}");
       const atts = Array.isArray(attachments) ? attachments.filter((a) => a?.path && a?.name) : [];
       if (!threadId || (!text?.trim() && atts.length === 0)) {
         return respond(400, { ok: false, message: "threadId and text or an attachment required." });
@@ -418,32 +453,75 @@ export const handler = async (event) => {
       // own messages (sent via the app) never trigger a self-email.
       let emailed = false;
       let emailReason = null;
+      let leaderAdded = false;
+      let leaderReason = null;
       if (thr?.scope_kind === "submission" && thr.scope_ref) {
         try {
           const { data: paf } = await supa
             .from("paf_submissions")
-            .select("id, employee_name, submitter_id, submitter_email, submitter_name")
+            .select("id, employee_name, submitter_id, submitter_email, submitter_name, drive_in")
             .eq("id", thr.scope_ref)
             .maybeSingle();
+
+          const bodyText =
+            text?.trim() || (atts.length === 1 ? `📎 ${atts[0].name}` : atts.length ? `📎 ${atts.length} files` : "");
+          const replyTo = `paf-${thr.scope_ref}@${process.env.RESEND_INBOUND_DOMAIN || "inbound.mysoarhub.com"}`;
+
+          // "Include their next-level leader" — add the submitter's direct
+          // manager (one tier up the org chart, resolved off the PAF's
+          // store) as a thread member going forward, and loop them in on
+          // whatever email this message sends.
+          let leaderEmail = null;
+          if (includeLeader && paf) {
+            const leader = await resolveNextLevelLeader(supa, paf);
+            if (leader?.id) {
+              if (leader.id !== uid) {
+                await supa.from("chat_thread_members").upsert(
+                  { thread_id: threadId, user_id: leader.id, role: "member" },
+                  { onConflict: "thread_id,user_id", ignoreDuplicates: true },
+                );
+              }
+              leaderAdded = true;
+              leaderEmail = leader.email || null;
+            } else {
+              leaderReason = "Couldn't find their next-level leader to include.";
+            }
+          }
+
           if (paf?.submitter_id && paf.submitter_id !== uid) {
-            const ccList = copyMe && caller.email ? [caller.email] : [];
-            const bodyText =
-              text?.trim() || (atts.length === 1 ? `📎 ${atts[0].name}` : atts.length ? `📎 ${atts.length} files` : "");
+            const ccList = [
+              ...(copyMe && caller.email ? [caller.email] : []),
+              ...(leaderEmail ? [leaderEmail] : []),
+            ];
             const result = await sendPafEmail({
               to: paf.submitter_email,
               cc: ccList,
-              replyTo: `paf-${thr.scope_ref}@${process.env.RESEND_INBOUND_DOMAIN || "inbound.mysoarhub.com"}`,
+              replyTo,
               subject: `Re: ${paf.employee_name || "your PAF"} — question from ${displayName(caller)}`,
               text:
                 `Hi ${paf.submitter_name || "there"},\n\n` +
                 `${displayName(caller)} sent you a message about ${paf.employee_name || "your PAF"}:\n\n` +
                 `  "${bodyText}"\n\n` +
                 `Just reply to this email — your response posts back onto this conversation automatically.\n\n` +
-                `Or open it directly:\n${appBaseUrl()}/chat/${threadId}\n\n` +
                 `— SOAR PAF`,
             });
             emailed = result.ok;
             if (!result.ok) emailReason = result.reason;
+          } else if (leaderEmail) {
+            // Sender IS the submitter (no submitter-bridge email fires) but
+            // a leader was requested — send them a standalone notice so
+            // they're still looped in.
+            await sendPafEmail({
+              to: leaderEmail,
+              replyTo,
+              subject: `${displayName(caller)} added you to a PAF conversation — ${paf.employee_name || "submission"}`,
+              text:
+                `Hi,\n\n` +
+                `${displayName(caller)} added you to the discussion on ${paf.employee_name || "this PAF"}:\n\n` +
+                `  "${bodyText}"\n\n` +
+                `Just reply to this email — your response posts back onto this conversation automatically.\n\n` +
+                `— SOAR PAF`,
+            });
           }
         } catch (e) {
           console.warn("[chat] PAF message email failed", e?.message || e);
@@ -475,7 +553,7 @@ export const handler = async (event) => {
       } catch (e) {
         console.warn("[chat] push notify failed", e?.message || e);
       }
-      return respond(200, { ok: true, message: data, emailed, emailReason });
+      return respond(200, { ok: true, message: data, emailed, emailReason, leaderAdded, leaderReason });
     }
 
     // Delete a message — soft delete (keeps a tombstone row). The sender can
@@ -922,7 +1000,6 @@ export const handler = async (event) => {
             const amount = pafForAlert.estimated_cost != null ? fmtMoney(pafForAlert.estimated_cost) : "";
             const detail = [pafForAlert.category, amount].filter(Boolean).join(", ");
             const starter = displayName(caller);
-            const link = `${appBaseUrl()}/chat/${thread.id}`;
             await sendPafEmail({
               to: sub.email,
               replyTo: `paf-${scopeRef}@${process.env.RESEND_INBOUND_DOMAIN || "inbound.mysoarhub.com"}`,
@@ -932,7 +1009,6 @@ export const handler = async (event) => {
                 `${starter} started a discussion on your Payroll Action Form and may need a response:\n\n` +
                 `  ${pafForAlert.employee_name || "PAF"}${detail ? ` (${detail})` : ""}\n\n` +
                 `Just reply to this email — your response posts back onto the conversation automatically.\n\n` +
-                `Or open it directly:\n${link}\n\n` +
                 `— SOAR PAF`,
             });
           }

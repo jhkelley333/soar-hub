@@ -39,6 +39,7 @@ export function GroupThread({
   const qc = useQueryClient();
   const [draft, setDraft] = useState("");
   const [copyMe, setCopyMe] = useState(false);
+  const [includeLeader, setIncludeLeader] = useState(false);
   const [searchQ, setSearchQ] = useState<string | null>(null);
   const [pending, setPending] = useState<
     { id: string; file: File; url: string; isImage: boolean }[]
@@ -98,7 +99,13 @@ export function GroupThread({
       if (vars.files.length) {
         atts = await Promise.all(vars.files.map((p) => uploadChatAttachment(threadId, p.file)));
       }
-      return sendChatMessage(threadId, vars.text, atts, isPafThread ? copyMe : undefined);
+      return sendChatMessage(
+        threadId,
+        vars.text,
+        atts,
+        isPafThread ? copyMe : undefined,
+        isPafThread ? includeLeader : undefined,
+      );
     },
     onMutate: async (vars) => {
       // Optimistic: show the text bubble immediately and empty the composer,
@@ -135,6 +142,9 @@ export function GroupThread({
       setPending([]);
       if (isPafThread && res.emailed === false && res.emailReason) {
         toast.push(`Sent, but not emailed: ${res.emailReason}`, "error");
+      }
+      if (isPafThread && includeLeader && !res.leaderAdded && res.leaderReason) {
+        toast.push(res.leaderReason, "error");
       }
     },
     onSettled: () => {
@@ -325,15 +335,26 @@ export function GroupThread({
                 Ask the submitter anything — a question, a status update, whatever you need. It's
                 emailed to them and their replies post back to this thread.
               </div>
-              <label className="mt-1 inline-flex cursor-pointer items-center gap-1.5 font-medium">
-                <input
-                  type="checkbox"
-                  checked={copyMe}
-                  onChange={(e) => setCopyMe(e.target.checked)}
-                  className="h-3 w-3 accent-amber-600"
-                />
-                Send me a copy
-              </label>
+              <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 font-medium">
+                <label className="inline-flex cursor-pointer items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={copyMe}
+                    onChange={(e) => setCopyMe(e.target.checked)}
+                    className="h-3 w-3 accent-amber-600"
+                  />
+                  Send me a copy
+                </label>
+                <label className="inline-flex cursor-pointer items-center gap-1.5">
+                  <input
+                    type="checkbox"
+                    checked={includeLeader}
+                    onChange={(e) => setIncludeLeader(e.target.checked)}
+                    className="h-3 w-3 accent-amber-600"
+                  />
+                  Include their next-level leader
+                </label>
+              </div>
             </div>
           )}
           {/* Staged attachments — preview before sending. */}
