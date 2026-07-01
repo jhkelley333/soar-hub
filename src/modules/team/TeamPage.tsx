@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Download, Mail, Phone, Search, Copy, GraduationCap } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Download, Mail, Phone, Search, Copy, GraduationCap, Eye } from "lucide-react";
+import { Link, useNavigate } from "react-router-dom";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
 import { Badge } from "@/shared/ui/Badge";
@@ -14,6 +14,8 @@ import { ROLE_LABELS, isHourlyStoreRole, type UserRole } from "@/types/database"
 import { formatPhoneForDisplay } from "@/lib/phone";
 import { cn } from "@/lib/cn";
 import { downloadCSV, toCSV } from "@/lib/csv";
+import { startViewAs } from "@/lib/adminViewAsApi";
+import { setViewAsState } from "@/lib/useViewAs";
 import { listTeam, type ManagedUser, type TrainingSummary } from "./api";
 import { AddUserModal } from "./AddUserModal";
 import { EditMemberModal } from "./EditMemberModal";
@@ -22,6 +24,8 @@ type RoleFilter = "all" | UserRole;
 
 export function TeamPage() {
   const { profile } = useAuth();
+  const navigate = useNavigate();
+  const toast = useToast();
   const query = useQuery({
     queryKey: ["my-team"],
     queryFn: listTeam,
@@ -32,8 +36,26 @@ export function TeamPage() {
   const [includeInactive, setIncludeInactive] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<ManagedUser | null>(null);
+  const [startingViewAs, setStartingViewAs] = useState<string | null>(null);
 
   const allMembers = query.data?.members ?? [];
+
+  // Admin-only, read-only "View As" — see src/lib/viewAs.ts. Currently
+  // honored by My CAPs / My Assignments / Sign-off Queue; other pages
+  // still show the admin's own data until the same pattern is extended
+  // there.
+  async function viewAs(member: ManagedUser) {
+    setStartingViewAs(member.id);
+    try {
+      const res = await startViewAs(member.id);
+      setViewAsState({ sessionId: res.session_id, target: res.target });
+      navigate("/caps");
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : "Couldn't start View As.", "error");
+    } finally {
+      setStartingViewAs(null);
+    }
+  }
 
   function exportCsv(members: ManagedUser[]) {
     const headers = ["email", "full_name", "phone", "role", "scope_type", "scope_id_or_code"];
@@ -232,7 +254,14 @@ export function TeamPage() {
       ) : (
         <div className="space-y-2">
           {filtered.map((m) => (
-            <MemberCard key={m.id} member={m} onEdit={() => setEditing(m)} />
+            <MemberCard
+              key={m.id}
+              member={m}
+              onEdit={() => setEditing(m)}
+              canViewAs={profile?.role === "admin" && m.id !== profile.id}
+              viewingAs={startingViewAs === m.id}
+              onViewAs={() => viewAs(m)}
+            />
           ))}
         </div>
       )}
@@ -247,9 +276,15 @@ export function TeamPage() {
 function MemberCard({
   member,
   onEdit,
+  canViewAs,
+  viewingAs,
+  onViewAs,
 }: {
   member: ManagedUser;
   onEdit: () => void;
+  canViewAs: boolean;
+  viewingAs: boolean;
+  onViewAs: () => void;
 }) {
   const toast = useToast();
 
@@ -459,6 +494,18 @@ function MemberCard({
         </div>
 
         <div className="flex shrink-0 gap-2">
+          {canViewAs && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={onViewAs}
+              disabled={viewingAs}
+              title="See My CAPs / My Assignments / Sign-off Queue exactly as this person would — read-only."
+            >
+              <Eye className="h-3.5 w-3.5" strokeWidth={1.75} />
+              {viewingAs ? "Starting…" : "View as"}
+            </Button>
+          )}
           <Button variant="ghost" size="sm" onClick={onEdit}>
             Manage
           </Button>

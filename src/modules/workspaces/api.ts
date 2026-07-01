@@ -14,6 +14,7 @@
 // Pattern mirrors src/modules/paf/api.ts.
 
 import { supabase } from "@/lib/supabase";
+import { viewAsHeaders } from "@/lib/viewAs";
 import type {
   Workspace,
   WorkspaceMember,
@@ -48,6 +49,9 @@ async function authHeaders(): Promise<HeadersInit> {
   return {
     Authorization: `Bearer ${token}`,
     "Content-Type": "application/json",
+    // Admin "View As" (read-only) — see src/lib/viewAs.ts. No-op unless a
+    // session is active; the backend rejects any POST that carries it.
+    ...viewAsHeaders(),
   };
 }
 

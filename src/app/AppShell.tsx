@@ -30,6 +30,7 @@ import { useAppBadge } from "@/modules/chat/useAppBadge";
 import { useAuth } from "@/auth/AuthProvider";
 import { LaunchSplash } from "@/auth/LaunchSplash";
 import { RequiredTrainingPrompt } from "@/modules/qsr/RequiredTrainingPrompt";
+import { ViewAsBanner } from "@/app/ViewAsBanner";
 import { fetchMyTree, launchScopeLabel, scopeWordForRole } from "@/modules/my-stores/api";
 import { cn } from "@/lib/cn";
 
@@ -105,6 +106,7 @@ export function AppShell() {
   return (
     <div className="flex h-dvh flex-col bg-canvas dark:bg-night">
       <RequiredTrainingPrompt />
+      <ViewAsBanner />
       {/* Mobile-only status-bar backdrop. Height equals the iPhone's
           safe-area-inset-top (notch / Dynamic Island), so the system
           status bar paints on a midnight brand strip instead of on
