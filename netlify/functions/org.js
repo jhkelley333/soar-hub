@@ -20,6 +20,7 @@
 //        RVP without an extra round-trip.
 
 import { createClient } from "@supabase/supabase-js";
+import { geocodeAddress, storeAddressString, geocodeConfigured } from "./_lib/geocode.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -950,38 +951,7 @@ async function updateStoreGeo(supa, user, body) {
 // absorbs that. On-site "Use my location" stays the gold standard.
 // ----------------------------------------------------------------------------
 
-const GEOCODE_KEY = process.env.GOOGLE_GEOCODING_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
 const GEOCODE_BATCH = 30; // cap per bulk call to stay under the function timeout
-
-function storeAddressString(s) {
-  return [s.address, s.city, s.state]
-    .map((x) => (x || "").trim())
-    .filter(Boolean)
-    .join(", ");
-}
-
-async function geocodeAddress(address) {
-  if (!GEOCODE_KEY) return { error: "geocoding not configured (GOOGLE_GEOCODING_API_KEY)" };
-  const url =
-    "https://maps.googleapis.com/maps/api/geocode/json?address=" +
-    encodeURIComponent(address) +
-    "&key=" +
-    GEOCODE_KEY;
-  let json;
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return { error: `geocoder http ${res.status}` };
-    json = await res.json();
-  } catch (e) {
-    return { error: e?.message || "geocoder request failed" };
-  }
-  if (json.status === "ZERO_RESULTS") return { error: "no match for address" };
-  if (json.status === "OVER_QUERY_LIMIT") return { error: "over query limit" };
-  if (json.status !== "OK") return { error: `geocoder: ${json.status}` };
-  const loc = json.results?.[0]?.geometry?.location;
-  if (!loc || typeof loc.lat !== "number") return { error: "no location in result" };
-  return { lat: loc.lat, lng: loc.lng };
-}
 
 async function geocodeStore(supa, user, body) {
   const storeId = String(body?.store_id || "").trim();
@@ -1014,7 +984,7 @@ async function geocodeStore(supa, user, body) {
 async function geocodeMissing(supa, user) {
   const canAny = ORG_WIDE.has(user.role) || ["do", "sdo", "rvp"].includes(user.role);
   if (!canAny) return { error: "forbidden", status: 403 };
-  if (!GEOCODE_KEY) return { error: "geocoding not configured (GOOGLE_GEOCODING_API_KEY)", status: 500 };
+  if (!geocodeConfigured()) return { error: "geocoding not configured (GOOGLE_GEOCODING_API_KEY)", status: 500 };
 
   let q = supa
     .from("stores")
