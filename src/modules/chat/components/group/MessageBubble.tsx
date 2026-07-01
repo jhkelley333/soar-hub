@@ -120,7 +120,7 @@ export function MessageBubble({
           </div>
         )}
       </div>
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         {showName && (
           <p className="mb-0.5 ml-1 text-[12px] font-medium text-midnight-600">
             {user?.name ?? "Unknown"}

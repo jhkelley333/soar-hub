@@ -96,6 +96,8 @@ export interface SendMessageResult {
   ok: true;
   emailed: boolean;
   emailReason: string | null;
+  leaderAdded: boolean;
+  leaderReason: string | null;
 }
 
 export function sendChatMessage(
@@ -103,10 +105,17 @@ export function sendChatMessage(
   text: string,
   attachments?: AttachmentInput[],
   copyMe?: boolean,
+  includeLeader?: boolean,
 ): Promise<SendMessageResult> {
   return req(`${FN}?action=send`, {
     method: "POST",
-    body: JSON.stringify({ threadId, text, attachments: attachments ?? [], copyMe: !!copyMe }),
+    body: JSON.stringify({
+      threadId,
+      text,
+      attachments: attachments ?? [],
+      copyMe: !!copyMe,
+      includeLeader: !!includeLeader,
+    }),
   });
 }
 
