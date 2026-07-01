@@ -21,6 +21,7 @@ import {
   bulkEditVendors,
   bulkImportVendors,
   deleteStoreVendorPreference,
+  fetchIssueLibrary,
   fetchOrgIndex,
   fetchVendorPreferences,
   fetchVendors,
@@ -564,6 +565,103 @@ function Stars({ rating, total }: { rating: number | null; total: number }) {
   );
 }
 
+// Tag input for the vendor's Services field, with autocomplete against the
+// Issue Library so entries stay in the system's canonical vocabulary
+// instead of drifting into inconsistent free text. Suggestions narrow to
+// the vendor's Category when one is set (falls back to the full library
+// otherwise). Typing your own value and pressing Enter/comma still works —
+// this steers toward the canonical list, it doesn't lock you into it.
+function ServicesTagInput({
+  value,
+  onChange,
+  category,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  category: string;
+}) {
+  const libQ = useQuery({ queryKey: ["wo2", "issue-library"], queryFn: fetchIssueLibrary, staleTime: 5 * 60_000 });
+  const [term, setTerm] = useState("");
+  const [open, setOpen] = useState(false);
+
+  const tags = useMemo(() => value.split(",").map((s) => s.trim()).filter(Boolean), [value]);
+
+  const allNames = useMemo(() => {
+    const items = libQ.data?.items ?? [];
+    const scoped = category.trim()
+      ? items.filter((i) => i.category.toLowerCase() === category.trim().toLowerCase())
+      : items;
+    const pool = scoped.length ? scoped : items;
+    return [...new Set(pool.map((i) => i.display_name).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  }, [libQ.data, category]);
+
+  const suggestions = useMemo(() => {
+    const t = term.trim().toLowerCase();
+    if (!t) return [];
+    return allNames.filter((n) => n.toLowerCase().includes(t) && !tags.includes(n)).slice(0, 8);
+  }, [term, allNames, tags]);
+
+  function addTag(tag: string) {
+    const t = tag.trim();
+    if (!t || tags.includes(t)) { setTerm(""); return; }
+    onChange([...tags, t].join(", "));
+    setTerm("");
+    setOpen(false);
+  }
+  function removeTag(tag: string) {
+    onChange(tags.filter((t) => t !== tag).join(", "));
+  }
+
+  return (
+    <div>
+      {tags.length > 0 && (
+        <div className="mb-1.5 flex flex-wrap gap-1">
+          {tags.map((t) => (
+            <span key={t} className="inline-flex items-center gap-1 rounded border border-zinc-200 bg-white px-1.5 py-0.5 text-[11px] text-zinc-600">
+              {t}
+              <button type="button" onClick={() => removeTag(t)} className="text-zinc-400 hover:text-red-500">
+                <X className="h-2.5 w-2.5" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="relative">
+        <Input
+          id="vm-services"
+          value={term}
+          onChange={(e) => { setTerm(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === ",") { e.preventDefault(); addTag(term); }
+            else if (e.key === "Backspace" && !term && tags.length) removeTag(tags[tags.length - 1]);
+          }}
+          placeholder="Start typing a service…"
+        />
+        {open && suggestions.length > 0 && (
+          <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-md bg-white shadow-lg ring-1 ring-zinc-200">
+            {suggestions.map((s) => (
+              <button
+                key={s}
+                type="button"
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => addTag(s)}
+                className="block w-full px-3 py-1.5 text-left text-sm hover:bg-zinc-50"
+              >
+                {s}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      <p className="mt-1 text-xs text-zinc-500">
+        Pick from the issue library so services stay consistent with the system, or type your own and press Enter/comma.
+      </p>
+    </div>
+  );
+}
+
 // ── Edit modal ───────────────────────────────────────────────
 
 function VendorEditModal({
@@ -761,13 +859,8 @@ function VendorEditModal({
             <Input id="vm-address" value={address} onChange={(e) => setAddress(e.target.value)} placeholder="Street, city, state ZIP" />
           </div>
           <div>
-            <Label htmlFor="vm-services">Services (comma separated)</Label>
-            <Input
-              id="vm-services"
-              value={services}
-              onChange={(e) => setServices(e.target.value)}
-              placeholder="e.g. Fryer, HVAC, Ice Machine"
-            />
+            <Label htmlFor="vm-services">Services</Label>
+            <ServicesTagInput value={services} onChange={setServices} category={category} />
           </div>
           <div>
             <Label htmlFor="vm-notes">Notes</Label>
