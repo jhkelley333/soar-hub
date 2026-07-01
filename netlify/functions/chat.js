@@ -4,7 +4,9 @@
 //   GET  inbox                  → caller's threads + per-tab unread + needsYou
 //   GET  thread?threadId=…      → one thread, its members, and messages
 //   GET  contacts               → active profiles (compose people picker)
-//   POST send     {threadId,text}
+//   GET  pafUnread?ids=…        → unread + thread id per PAF, for list bells
+//   POST send     {threadId,text,copyMe?} — PAF threads also email the
+//                                submitter; see sendPafEmail / resend-inbound.js
 //   POST create   {kind,title,subtitle?,scopeKind?,scopeRef?,participantUserIds[],external?,firstMessage?}
 //   POST markRead {threadId}
 //
@@ -95,35 +97,45 @@ function fmtMoney(n) {
   return v.toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
-// Minimal Resend send for PAF-discussion alert emails. Mirrors the inline
-// pattern used by the other functions; best-effort, never throws.
+// Minimal Resend send for PAF-thread emails — the initial "someone started a
+// discussion" alert (see "scoped" below) and the per-message "Message the
+// submitter" bridge (see "send" below). Both optionally carry a reply-to
+// address so the submitter's email reply routes back onto the same chat
+// thread via resend-inbound.js. Best-effort, never throws.
 const RESEND_API_KEY = process.env.RESEND_API_KEY;
 const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "notifications@mysoarhub.com";
 const RESEND_FROM_NAME = process.env.PAF_FROM_NAME || process.env.RESEND_FROM_NAME || "SOAR PAF";
 
-async function sendPafChatEmail({ to, subject, text }) {
+async function sendPafEmail({ to, cc, replyTo, subject, text }) {
   if (!RESEND_API_KEY) {
     console.warn("[chat] RESEND_API_KEY not set; skipping email", { to, subject });
-    return { skipped: true };
+    return { ok: false, reason: "Email isn't configured." };
   }
   const recipients = Array.isArray(to) ? to.filter(Boolean) : to ? [to] : [];
-  if (!recipients.length) return { skipped: true };
+  if (!recipients.length) return { ok: false, reason: "No recipient email on file." };
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
       headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`, to: recipients, subject, text }),
+      body: JSON.stringify({
+        from: `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`,
+        to: recipients,
+        ...(cc && cc.length ? { cc } : {}),
+        ...(replyTo ? { reply_to: replyTo } : {}),
+        subject,
+        text,
+      }),
     });
     if (!res.ok) {
       const detail = await res.text().catch(() => "");
       console.warn("[chat] Resend send failed", res.status, detail);
-      return { ok: false };
+      return { ok: false, reason: "The email failed to send." };
     }
     const json = await res.json().catch(() => ({}));
     return { ok: true, id: json?.id };
   } catch (e) {
     console.warn("[chat] Resend send threw", e);
-    return { ok: false };
+    return { ok: false, reason: "The email failed to send." };
   }
 }
 
@@ -343,7 +355,7 @@ export const handler = async (event) => {
     }
 
     if (action === "send" && event.httpMethod === "POST") {
-      const { threadId, text, attachments } = JSON.parse(event.body || "{}");
+      const { threadId, text, attachments, copyMe } = JSON.parse(event.body || "{}");
       const atts = Array.isArray(attachments) ? attachments.filter((a) => a?.path && a?.name) : [];
       if (!threadId || (!text?.trim() && atts.length === 0)) {
         return respond(400, { ok: false, message: "threadId and text or an attachment required." });
@@ -359,7 +371,7 @@ export const handler = async (event) => {
       // Broadcasts are announce-only: only the owner (poster) can add messages.
       const { data: thr } = await supa
         .from("chat_threads")
-        .select("kind, title, perm_send")
+        .select("kind, title, perm_send, scope_kind, scope_ref")
         .eq("id", threadId)
         .maybeSingle();
       if (thr?.kind === "broadcast" && mine.role !== "owner") {
@@ -399,6 +411,46 @@ export const handler = async (event) => {
         .eq("thread_id", threadId)
         .eq("user_id", uid);
 
+      // PAF threads are an outbound email bridge, like Work Orders' Requester
+      // thread: every message from someone other than the submitter is also
+      // emailed to them, with a reply-to that routes their email response
+      // back onto this same thread (see resend-inbound.js). The submitter's
+      // own messages (sent via the app) never trigger a self-email.
+      let emailed = false;
+      let emailReason = null;
+      if (thr?.scope_kind === "submission" && thr.scope_ref) {
+        try {
+          const { data: paf } = await supa
+            .from("paf_submissions")
+            .select("id, employee_name, submitter_id, submitter_email, submitter_name")
+            .eq("id", thr.scope_ref)
+            .maybeSingle();
+          if (paf?.submitter_id && paf.submitter_id !== uid) {
+            const ccList = copyMe && caller.email ? [caller.email] : [];
+            const bodyText =
+              text?.trim() || (atts.length === 1 ? `📎 ${atts[0].name}` : atts.length ? `📎 ${atts.length} files` : "");
+            const result = await sendPafEmail({
+              to: paf.submitter_email,
+              cc: ccList,
+              replyTo: `paf-${thr.scope_ref}@${process.env.RESEND_INBOUND_DOMAIN || "inbound.mysoarhub.com"}`,
+              subject: `Re: ${paf.employee_name || "your PAF"} — question from ${displayName(caller)}`,
+              text:
+                `Hi ${paf.submitter_name || "there"},\n\n` +
+                `${displayName(caller)} sent you a message about ${paf.employee_name || "your PAF"}:\n\n` +
+                `  "${bodyText}"\n\n` +
+                `Just reply to this email — your response posts back onto this conversation automatically.\n\n` +
+                `Or open it directly:\n${appBaseUrl()}/chat/${threadId}\n\n` +
+                `— SOAR PAF`,
+            });
+            emailed = result.ok;
+            if (!result.ok) emailReason = result.reason;
+          }
+        } catch (e) {
+          console.warn("[chat] PAF message email failed", e?.message || e);
+          emailReason = "Message saved, but the email failed to send.";
+        }
+      }
+
       // Best-effort push to the other members. Never blocks the send.
       try {
         const { data: mems } = await supa
@@ -423,7 +475,7 @@ export const handler = async (event) => {
       } catch (e) {
         console.warn("[chat] push notify failed", e?.message || e);
       }
-      return respond(200, { ok: true, message: data });
+      return respond(200, { ok: true, message: data, emailed, emailReason });
     }
 
     // Delete a message — soft delete (keeps a tombstone row). The sender can
@@ -871,14 +923,16 @@ export const handler = async (event) => {
             const detail = [pafForAlert.category, amount].filter(Boolean).join(", ");
             const starter = displayName(caller);
             const link = `${appBaseUrl()}/chat/${thread.id}`;
-            await sendPafChatEmail({
+            await sendPafEmail({
               to: sub.email,
+              replyTo: `paf-${scopeRef}@${process.env.RESEND_INBOUND_DOMAIN || "inbound.mysoarhub.com"}`,
               subject: `A question on your PAF — ${pafForAlert.employee_name || "submission"}`,
               text:
                 `Hi ${who},\n\n` +
                 `${starter} started a discussion on your Payroll Action Form and may need a response:\n\n` +
                 `  ${pafForAlert.employee_name || "PAF"}${detail ? ` (${detail})` : ""}\n\n` +
-                `Open the conversation to reply:\n${link}\n\n` +
+                `Just reply to this email — your response posts back onto the conversation automatically.\n\n` +
+                `Or open it directly:\n${link}\n\n` +
                 `— SOAR PAF`,
             });
           }
@@ -1279,6 +1333,32 @@ export const handler = async (event) => {
           at: a.created_at,
         })),
       });
+    }
+
+    // Bulk unread flag for PAF list rows — "does this PAF's discussion have
+    // an unread message for me, and which thread is it" so the UI can show a
+    // bell and mark it read the moment the PAF's details are opened, without
+    // requiring the caller to have actually opened the chat thread itself.
+    if (action === "pafUnread" && event.httpMethod === "GET") {
+      const idsParam = (event.queryStringParameters || {}).ids || "";
+      const ids = Array.from(new Set(idsParam.split(",").map((s) => s.trim()).filter(Boolean)));
+      if (!ids.length) return respond(200, { ok: true, byPaf: {} });
+
+      const { data: threads } = await supa
+        .from("chat_threads")
+        .select("id, scope_ref")
+        .eq("scope_kind", "submission")
+        .in("scope_ref", ids);
+      if (!threads?.length) return respond(200, { ok: true, byPaf: {} });
+
+      const { data: counts } = await supa.rpc("chat_inbox_unread", { p_uid: uid, p_first: "" });
+      const unreadByThread = new Map((counts ?? []).map((c) => [c.thread_id, c.unread]));
+
+      const byPaf = {};
+      for (const t of threads) {
+        byPaf[t.scope_ref] = { threadId: t.id, unread: unreadByThread.get(t.id) ?? 0 };
+      }
+      return respond(200, { ok: true, byPaf });
     }
 
     if (action === "markRead" && event.httpMethod === "POST") {

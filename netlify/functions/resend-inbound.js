@@ -1,19 +1,22 @@
 // netlify/functions/resend-inbound.js
 //
-// Inbound webhook for Resend "email.received" events. A reply to a
-// Request-More-Info email (sent with reply-to
-// wo-<ticketId>@inbound.mysoarhub.com) lands here. We:
+// Inbound webhook for Resend "email.received" events. Two address families
+// route here:
+//   wo-<ticketId>[--store]@inbound.mysoarhub.com  — Work Order requester/store
+//   paf-<pafId>@inbound.mysoarhub.com             — PAF "Message the submitter"
+// We:
 //   1. verify the Svix signature (Resend signs webhooks via Svix),
-//   2. parse the ticket id out of the recipient address,
+//   2. parse the ticket/PAF id out of the recipient address,
 //   3. pull the reply body via the Resend received-emails API
 //      (the webhook payload is metadata-only),
-//   4. post the reply into the work order's chat thread, and
-//   5. clear the Needs-info flag so the approval clock resumes.
+//   4. post the reply back onto the originating thread (ticket_messages for
+//      WO, the generic chat_messages thread for PAF), and
+//   5. for WO, clear the Needs-info flag so the approval clock resumes.
 //
 // Signature verification is done manually with node:crypto so we don't
 // add the svix dependency. Body fetch is best-effort: if it ever fails
-// we still record that a reply arrived and clear Needs-info, so the loop
-// degrades gracefully rather than breaking.
+// we still record that a reply arrived, so the loop degrades gracefully
+// rather than breaking.
 
 import crypto from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
@@ -71,26 +74,36 @@ function verifySignature(headers, rawBody) {
   return { ok: false, reason: "signature mismatch" };
 }
 
-// wo-<ticketId>@inbound...               → { ticketId, channel: "requester" }
-// wo-<ticketId>--store@inbound...         → { ticketId, channel: "store" }
-// The optional "--<channel>" suffix tells us which thread a reply belongs to.
-// A bare uuid (single hyphens) has no "--", so old addresses stay requester.
-function extractTicketRef(to) {
+// wo-<ticketId>@inbound...               → { kind: "wo", id, channel: "requester" }
+// wo-<ticketId>--store@inbound...         → { kind: "wo", id, channel: "store" }
+// paf-<pafId>@inbound...                  → { kind: "paf", id, channel: "requester" }
+// The optional "--<channel>" suffix tells us which WO thread a reply belongs
+// to. A bare uuid (single hyphens) has no "--", so old addresses stay requester.
+function extractRef(to) {
   const list = Array.isArray(to) ? to : [to];
   for (const entry of list) {
-    const m = addrString(entry).match(/wo-([^@\s]+)@/i);
+    const m = addrString(entry).match(/(wo|paf)-([^@\s]+)@/i);
     if (m) {
-      let token = m[1];
+      const kind = m[1].toLowerCase();
+      let token = m[2];
       let channel = "requester";
       const sep = token.indexOf("--");
       if (sep !== -1) {
         channel = token.slice(sep + 2).toLowerCase() || "requester";
         token = token.slice(0, sep);
       }
-      return { ticketId: token, channel };
+      return { kind, id: token, channel };
     }
   }
   return null;
+}
+
+// Best-effort extraction of the bare email address from a "Name <a@b.com>"
+// or plain "a@b.com" string, lowercased for a case-insensitive profile match.
+function extractEmailAddress(from) {
+  const s = String(from || "");
+  const m = s.match(/<([^>]+)>/);
+  return (m ? m[1] : s).trim().toLowerCase();
 }
 
 async function fetchReceivedEmail(emailId) {
@@ -167,21 +180,26 @@ export const handler = async (event) => {
   }
 
   const data = payload.data || {};
-  const ref = extractTicketRef(data.to);
-  if (!ref) return resp(200, { ok: true, ignored: "no WO address" });
-  const ticketId = ref.ticketId;
-  const threadType = ref.channel === "store" ? "store" : "requester";
+  const ref = extractRef(data.to);
+  if (!ref) return resp(200, { ok: true, ignored: "no recognized inbound address" });
 
   const supabase = getSupabase();
-  const { data: ticket } = await supabase
-    .from("tickets").select("id").eq("id", ticketId).maybeSingle();
-  if (!ticket) return resp(200, { ok: true, ignored: "unknown ticket" });
-
   const full = await fetchReceivedEmail(data.email_id || data.id);
   const from = addrString(data.from) || addrString(full?.from) || "Reply";
   const fromName = String(from).replace(/<[^>]*>/, "").trim() || from;
   const body = topReply(full?.text || htmlToText(full?.html) || "");
   const message = body || `(Reply received from ${fromName} — open it in Resend; body unavailable.)`;
+
+  if (ref.kind === "paf") {
+    return handlePafReply(supabase, ref.id, from, fromName, message);
+  }
+
+  const ticketId = ref.id;
+  const threadType = ref.channel === "store" ? "store" : "requester";
+
+  const { data: ticket } = await supabase
+    .from("tickets").select("id").eq("id", ticketId).maybeSingle();
+  if (!ticket) return resp(200, { ok: true, ignored: "unknown ticket" });
 
   await supabase.from("ticket_messages").insert({
     ticket_id: ticketId,
@@ -210,3 +228,52 @@ export const handler = async (event) => {
 
   return resp(200, { ok: true, ticketId });
 };
+
+// A reply to a PAF "Message the submitter" email. Posts straight into the
+// existing PAF chat thread (chat_threads with scope_kind='submission'). If
+// the sender's address matches an active profile, the message is attributed
+// to them (and they're added to the thread if they weren't already a
+// member) so it renders like a normal chat message; otherwise it's recorded
+// as a system note so the reply isn't silently dropped.
+async function handlePafReply(supabase, pafId, from, fromName, message) {
+  const { data: paf } = await supabase
+    .from("paf_submissions").select("id").eq("id", pafId).maybeSingle();
+  if (!paf) return resp(200, { ok: true, ignored: "unknown paf" });
+
+  const { data: thread } = await supabase
+    .from("chat_threads")
+    .select("id")
+    .eq("scope_kind", "submission")
+    .eq("scope_ref", pafId)
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (!thread) return resp(200, { ok: true, ignored: "no thread for paf" });
+
+  const fromEmail = extractEmailAddress(from);
+  let matchedUserId = null;
+  if (fromEmail) {
+    const { data: matched } = await supabase
+      .from("profiles")
+      .select("id, is_active")
+      .ilike("email", fromEmail)
+      .maybeSingle();
+    if (matched?.is_active) matchedUserId = matched.id;
+  }
+
+  if (matchedUserId) {
+    await supabase.from("chat_thread_members").upsert(
+      { thread_id: thread.id, user_id: matchedUserId, role: "member" },
+      { onConflict: "thread_id,user_id", ignoreDuplicates: true },
+    );
+  }
+
+  await supabase.from("chat_messages").insert({
+    thread_id: thread.id,
+    from_user_id: matchedUserId,
+    text: matchedUserId ? message : `Reply from ${fromName}: ${message}`,
+    system: !matchedUserId,
+  });
+
+  return resp(200, { ok: true, pafId });
+}

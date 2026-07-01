@@ -38,6 +38,7 @@ export function GroupThread({
   const toast = useToast();
   const qc = useQueryClient();
   const [draft, setDraft] = useState("");
+  const [copyMe, setCopyMe] = useState(false);
   const [searchQ, setSearchQ] = useState<string | null>(null);
   const [pending, setPending] = useState<
     { id: string; file: File; url: string; isImage: boolean }[]
@@ -54,6 +55,7 @@ export function GroupThread({
   const { thread, members, users, messages } = data;
   const isGroup = thread.kind === "group";
   const isGroupy = thread.kind === "group"; // has a Group Info screen
+  const isPafThread = thread.scope_kind === "submission";
   const myRole = members.find((m) => m.user_id === currentUserId)?.role;
   const readOnly = thread.kind === "broadcast" && myRole !== "owner";
 
@@ -96,7 +98,7 @@ export function GroupThread({
       if (vars.files.length) {
         atts = await Promise.all(vars.files.map((p) => uploadChatAttachment(threadId, p.file)));
       }
-      await sendChatMessage(threadId, vars.text, atts);
+      return sendChatMessage(threadId, vars.text, atts, isPafThread ? copyMe : undefined);
     },
     onMutate: async (vars) => {
       // Optimistic: show the text bubble immediately and empty the composer,
@@ -128,9 +130,12 @@ export function GroupThread({
       if (ctx?.text) setDraft(ctx.text);
       toast.push(e instanceof Error ? e.message : "Send failed.", "error");
     },
-    onSuccess: () => {
+    onSuccess: (res) => {
       pending.forEach((p) => URL.revokeObjectURL(p.url));
       setPending([]);
+      if (isPafThread && res.emailed === false && res.emailReason) {
+        toast.push(`Sent, but not emailed: ${res.emailReason}`, "error");
+      }
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: threadKey });
@@ -314,6 +319,23 @@ export function GroupThread({
           className="shrink-0 border-t border-midnight-100 bg-surface px-4 pt-3"
           style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 16px)" }}
         >
+          {isPafThread && (
+            <div className="mb-2 rounded-xl bg-amber-50 px-3 py-2 text-[11.5px] text-amber-700">
+              <div>
+                Ask the submitter anything — a question, a status update, whatever you need. It's
+                emailed to them and their replies post back to this thread.
+              </div>
+              <label className="mt-1 inline-flex cursor-pointer items-center gap-1.5 font-medium">
+                <input
+                  type="checkbox"
+                  checked={copyMe}
+                  onChange={(e) => setCopyMe(e.target.checked)}
+                  className="h-3 w-3 accent-amber-600"
+                />
+                Send me a copy
+              </label>
+            </div>
+          )}
           {/* Staged attachments — preview before sending. */}
           {pending.length > 0 && (
             <div className="mb-2 flex gap-2 overflow-x-auto px-1.5 pb-1 pt-2.5">

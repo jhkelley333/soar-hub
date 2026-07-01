@@ -3,12 +3,14 @@
 // (click headers); newest-first is the default.
 
 import { useMemo, useState } from "react";
-import { ArrowDown, ArrowUp, ArrowUpDown, Eye, Pencil } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowDown, ArrowUp, ArrowUpDown, Bell, Eye, Pencil } from "lucide-react";
 import { Badge } from "@/shared/ui/Badge";
 import { Button } from "@/shared/ui/Button";
 import { Drawer } from "@/shared/ui/Drawer";
 import { useAuth } from "@/auth/AuthProvider";
 import { useFlag } from "@/lib/flags";
+import { fetchPafUnread, markThreadRead } from "@/modules/chat/api";
 import { ProcessActions } from "./ProcessActions";
 import { SdoActions } from "./SdoActions";
 import { DeletePafAction } from "./DeletePafAction";
@@ -100,6 +102,29 @@ export function PafTable({
   const [detail, setDetail] = useState<PafRow | null>(null);
   const [sortKey, setSortKey] = useState<SortKey>("created_at");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
+  const qc = useQueryClient();
+
+  // Bell badge: which rows have an unread PAF-discussion message for me.
+  // Cleared the moment the row's details are opened (below), even if the
+  // viewer never actually opens the chat thread itself.
+  const pafIds = useMemo(() => rows.map((r) => r.id), [rows]);
+  const unreadQ = useQuery({
+    queryKey: ["paf-unread", pafIds],
+    queryFn: () => fetchPafUnread(pafIds),
+    enabled: pafIds.length > 0,
+    staleTime: 30_000,
+  });
+  const byPaf = unreadQ.data?.byPaf ?? {};
+
+  function openDetail(p: PafRow) {
+    setDetail(p);
+    const entry = byPaf[p.id];
+    if (entry && entry.unread > 0) {
+      markThreadRead(entry.threadId)
+        .then(() => qc.invalidateQueries({ queryKey: ["paf-unread"] }))
+        .catch(() => {});
+    }
+  }
 
   function clickSort(key: SortKey) {
     if (key === sortKey) {
@@ -186,7 +211,18 @@ export function PafTable({
                       ? `#${p.nh_home_store}`
                       : "—"}
                 </td>
-                <td className="px-3 py-2">{p.employee_name}</td>
+                <td className="px-3 py-2">
+                  <span className="inline-flex items-center gap-1.5">
+                    {p.employee_name}
+                    {byPaf[p.id]?.unread > 0 && (
+                      <Bell
+                        className="h-3 w-3 shrink-0 text-cherry"
+                        strokeWidth={2}
+                        aria-label="Unread message on this PAF's discussion"
+                      />
+                    )}
+                  </span>
+                </td>
                 <td className="px-3 py-2 font-mono">{p.last4_ssn}</td>
                 <td className="px-3 py-2 text-zinc-600">{p.category}</td>
                 <td className="px-3 py-2 tabular-nums">
@@ -203,7 +239,7 @@ export function PafTable({
                       type="button"
                       variant="ghost"
                       size="sm"
-                      onClick={() => setDetail(p)}
+                      onClick={() => openDetail(p)}
                     >
                       <Eye className="mr-1 h-3 w-3" strokeWidth={1.75} />
                       Detail

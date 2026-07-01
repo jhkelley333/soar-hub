@@ -92,14 +92,21 @@ export interface AttachmentInput {
   size: number;
 }
 
+export interface SendMessageResult {
+  ok: true;
+  emailed: boolean;
+  emailReason: string | null;
+}
+
 export function sendChatMessage(
   threadId: string,
   text: string,
   attachments?: AttachmentInput[],
-): Promise<{ ok: true }> {
+  copyMe?: boolean,
+): Promise<SendMessageResult> {
   return req(`${FN}?action=send`, {
     method: "POST",
-    body: JSON.stringify({ threadId, text, attachments: attachments ?? [] }),
+    body: JSON.stringify({ threadId, text, attachments: attachments ?? [], copyMe: !!copyMe }),
   });
 }
 
@@ -216,6 +223,18 @@ export function openScopedThread(
     method: "POST",
     body: JSON.stringify({ scopeKind, scopeRef }),
   });
+}
+
+export interface PafUnreadEntry {
+  threadId: string;
+  unread: number;
+}
+
+// Bulk "does this PAF's discussion have anything unread for me" lookup for
+// list rows (bell badge) — one call for the whole page instead of N.
+export function fetchPafUnread(pafIds: string[]): Promise<{ ok: true; byPaf: Record<string, PafUnreadEntry> }> {
+  if (!pafIds.length) return Promise.resolve({ ok: true, byPaf: {} });
+  return req(`${FN}?action=pafUnread&ids=${encodeURIComponent(pafIds.join(","))}`);
 }
 
 export interface GroupMemberProfile {

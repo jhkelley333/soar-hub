@@ -52,7 +52,7 @@ export function PafDetail({ paf }: { paf: PafRow }) {
     <div className="space-y-4 text-sm">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <PayPeriodBadge />
-        <DiscussButton scopeKind="submission" scopeRef={paf.id} />
+        <DiscussButton scopeKind="submission" scopeRef={paf.id} label="Message the submitter" />
       </div>
 
       <ApprovalStepper paf={paf} />
