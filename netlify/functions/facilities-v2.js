@@ -3069,26 +3069,14 @@ export const handler = async (event) => {
         return row;
       }
 
-      // When creating a fresh vendor with a category but no `services` yet,
-      // derive a sensible default from the issue library: take the distinct
-      // asset/equipment display names under that category and join them as
-      // a comma-separated services string. Saves the user from having to fill
-      // it in by hand after a Log Work add-vendor flow.
-      if (!vendorId && fields?.category && !String(fields?.services || "").trim()) {
-        try {
-          const { data: items } = await supabase
-            .from("issue_library")
-            .select("display_name, asset_type")
-            .ilike("category", String(fields.category).trim())
-            .limit(50);
-          const labels = [...new Set(
-            (items || [])
-              .map((i) => String(i.display_name || i.asset_type || "").trim())
-              .filter(Boolean),
-          )];
-          if (labels.length) fields.services = labels.slice(0, 12).join(", ");
-        } catch { /* services derivation is best-effort */ }
-      }
+      // A fresh vendor with a category but no `services` used to have this
+      // auto-filled from every issue_library item under that category —
+      // but a category (e.g. "Facilities & Infrastructure") spans far more
+      // than any one vendor actually does, so a fire-safety vendor was
+      // getting tagged with doors, ceiling tile, building signs, etc. Those
+      // bogus tags then feed the services.ilike vendor-matching search
+      // below, surfacing the wrong vendor for unrelated repairs. Removed —
+      // `services` is now only ever what someone explicitly typed in.
       if (vendorId) {
         const { data, error } = await supabase
           .from("vendors")
