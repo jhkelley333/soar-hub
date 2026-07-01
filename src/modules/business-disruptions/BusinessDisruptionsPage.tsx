@@ -4,11 +4,11 @@
 // Manager (resolved automatically from the org chart — no manual picker)
 // and lands in a DO+ queue scoped the same way Site Audits is.
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle, ArrowLeft, Check, ChevronRight, Clock, FileText,
-  Image as ImageIcon, Plus, Upload, X,
+  Image as ImageIcon, Plus, Search, Upload, Wrench, X,
 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Button } from "@/shared/ui/Button";
@@ -18,14 +18,35 @@ import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
   createDisruption, fetchDisruptionStores, fetchDisruptions,
-  fileToPayload, setDisruptionStatus, type FilePayload,
+  fileToPayload, lookupWorkOrders, setDisruptionStatus, type FilePayload,
 } from "./api";
-import { CLOSURE_TYPES, ISSUE_TYPES, type DisruptionReport, type DisruptionStatus } from "./types";
+import {
+  CLOSURE_TYPES, ISSUE_TYPES, SOLUGENIX_TRIGGER_TYPES, WO_TRIGGER_TYPES,
+  type DisruptionReport, type DisruptionStatus, type WoPick,
+} from "./types";
 
 type Nav = { screen: "list" | "new" | "detail"; id?: string };
 
 function fmtDate(d: string) {
   return new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
+}
+function fmtShortDate(d: string) {
+  return new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+// A reopen date means the closure is over — even a same-day reopen — so the
+// list badge should read "Reopened", not a flat "Closed" that reads as
+// still-ongoing. Only a genuinely open-ended closure (no reopen date on
+// file) gets the alarming red "Closed".
+function ClosureChip({ report }: { report: DisruptionReport }) {
+  if (!report.store_closed) return null;
+  if (report.reopen_date) {
+    return (
+      <span className="shrink-0 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">
+        Reopened {fmtShortDate(report.reopen_date)}
+      </span>
+    );
+  }
+  return <span className="shrink-0 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-700">Closed</span>;
 }
 function fmtUSD(v: number) {
   return v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
@@ -96,7 +117,7 @@ export function BusinessDisruptionsPage() {
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="truncate font-semibold text-midnight">{r.store_name || `Store #${r.store_number}`}</span>
                     <span className={cn("inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1 ring-inset", meta.chip)}>{meta.label}</span>
-                    {r.store_closed && <span className="shrink-0 rounded-full bg-red-50 px-1.5 py-0.5 text-[10px] font-bold text-red-700">Closed</span>}
+                    <ClosureChip report={r} />
                   </div>
                   <div className="mt-0.5 truncate text-xs text-zinc-500">{fmtDate(r.disruption_date)} · {r.submitted_by_name || "—"}</div>
                   <div className="mt-1 truncate text-xs text-zinc-400">{r.closure_types.join(", ") || r.issue_types.join(", ") || "—"}</div>
@@ -147,6 +168,75 @@ function FieldLabel({ children, required }: { children: React.ReactNode; require
 }
 const inputCls = "block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent";
 
+// Typeahead search against the store's own Work Orders V2 tickets, scoped
+// server-side. Debounced so it doesn't fire a request per keystroke.
+function WoLookupField({ storeNumber, selected, onSelect }: {
+  storeNumber: string; selected: WoPick | null; onSelect: (t: WoPick | null) => void;
+}) {
+  const [term, setTerm] = useState("");
+  const [results, setResults] = useState<WoPick[]>([]);
+  const [searching, setSearching] = useState(false);
+
+  useEffect(() => {
+    if (selected || term.trim().length < 2 || !storeNumber) { setResults([]); return; }
+    setSearching(true);
+    const t = setTimeout(() => {
+      lookupWorkOrders(storeNumber, term.trim())
+        .then((r) => setResults(r.tickets))
+        .catch(() => setResults([]))
+        .finally(() => setSearching(false));
+    }, 350);
+    return () => clearTimeout(t);
+  }, [term, storeNumber, selected]);
+
+  if (selected) {
+    return (
+      <div className="flex items-center gap-2 rounded-md border-0 bg-white px-3 py-2 text-sm ring-1 ring-inset ring-zinc-200">
+        <Wrench className="h-4 w-4 shrink-0 text-accent" />
+        <span className="min-w-0 flex-1 truncate">
+          <span className="font-semibold text-midnight">{selected.wo_number}</span>
+          {selected.work_requested && <span className="text-zinc-500"> — {selected.work_requested}</span>}
+        </span>
+        <button type="button" onClick={() => { onSelect(null); setTerm(""); }} className="shrink-0 text-zinc-400 hover:text-red-500">
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="relative">
+      <div className="relative">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+        <input
+          value={term}
+          onChange={(e) => setTerm(e.target.value)}
+          placeholder="Search by WO #…"
+          className={cn(inputCls, "pl-9")}
+        />
+      </div>
+      {term.trim().length >= 2 && (
+        <div className="absolute z-10 mt-1 w-full overflow-hidden rounded-md bg-white shadow-lg ring-1 ring-zinc-200">
+          {searching ? (
+            <div className="px-3 py-2 text-xs text-zinc-400">Searching…</div>
+          ) : results.length === 0 ? (
+            <div className="px-3 py-2 text-xs text-zinc-400">No matching work orders for this store.</div>
+          ) : (
+            results.map((t) => (
+              <button key={t.id} type="button" onClick={() => { onSelect(t); setResults([]); }}
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-zinc-50">
+                <span className="font-semibold text-midnight">{t.wo_number}</span>
+                {t.work_requested && <span className="min-w-0 flex-1 truncate text-xs text-zinc-500">{t.work_requested}</span>}
+                <span className="shrink-0 text-[10px] uppercase text-zinc-400">{t.status}</span>
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function NewReportForm({ onBack, onSubmitted }: { onBack: () => void; onSubmitted: () => void }) {
   const toast = useToast();
   const storesQ = useQuery({ queryKey: ["business-disruption-stores"], queryFn: fetchDisruptionStores, staleTime: 5 * 60_000 });
@@ -159,6 +249,9 @@ function NewReportForm({ onBack, onSubmitted }: { onBack: () => void; onSubmitte
   const [orderAheadDisabled, setOrderAheadDisabled] = useState<boolean | null>(null);
   const [closureTypes, setClosureTypes] = useState<string[]>([]);
   const [closureOther, setClosureOther] = useState("");
+  const [solugenixCase, setSolugenixCase] = useState("");
+  const [workOrderFiled, setWorkOrderFiled] = useState<boolean | null>(null);
+  const [selectedWo, setSelectedWo] = useState<WoPick | null>(null);
   const [employeeInjured, setEmployeeInjured] = useState<boolean | null>(null);
   const [storeDamaged, setStoreDamaged] = useState<boolean | null>(null);
   const [customerInjured, setCustomerInjured] = useState<boolean | null>(null);
@@ -171,6 +264,9 @@ function NewReportForm({ onBack, onSubmitted }: { onBack: () => void; onSubmitte
 
   const toggle = (list: string[], setList: (v: string[]) => void, v: string) =>
     setList(list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
+
+  const needsSolugenix = closureTypes.some((t) => SOLUGENIX_TRIGGER_TYPES.has(t));
+  const needsWo = closureTypes.some((t) => WO_TRIGGER_TYPES.has(t));
 
   async function onPickFiles(picked: FileList | null) {
     if (!picked) return;
@@ -194,6 +290,9 @@ function NewReportForm({ onBack, onSubmitted }: { onBack: () => void; onSubmitte
       if (storeClosed === null) throw new Error("Please answer whether the store closed.");
       if (orderAheadDisabled === null) throw new Error("Please answer whether Order Ahead was disabled.");
       if (closureTypes.includes("Other") && !closureOther.trim()) throw new Error('Please describe the issue when "Other" is selected.');
+      if (needsSolugenix && !solugenixCase.trim()) throw new Error("Solugenix Case # is required for Internet/POS/Connectivity issues.");
+      if (needsWo && workOrderFiled === null) throw new Error("Please answer whether a Work Order has been put in.");
+      if (needsWo && workOrderFiled === true && !selectedWo) throw new Error("Look up and select the Work Order.");
       if (!description.trim()) throw new Error("Description is required.");
       return createDisruption({
         disruption_date: date,
@@ -204,6 +303,9 @@ function NewReportForm({ onBack, onSubmitted }: { onBack: () => void; onSubmitte
         order_ahead_disabled: orderAheadDisabled,
         closure_types: closureTypes,
         closure_other_detail: closureOther.trim(),
+        solugenix_case_number: solugenixCase.trim(),
+        work_order_filed: needsWo ? workOrderFiled === true : undefined,
+        work_order_ticket_id: workOrderFiled === true ? selectedWo?.id : undefined,
         employee_injured: employeeInjured === true,
         store_damaged: storeDamaged === true,
         customer_injured: customerInjured === true,
@@ -272,6 +374,27 @@ function NewReportForm({ onBack, onSubmitted }: { onBack: () => void; onSubmitte
           <div>
             <FieldLabel required>If other, please describe the issue</FieldLabel>
             <textarea value={closureOther} onChange={(e) => setClosureOther(e.target.value)} rows={2} className={cn(inputCls, "resize-y")} />
+          </div>
+        )}
+
+        {needsSolugenix && (
+          <div>
+            <FieldLabel required>Solugenix Case #</FieldLabel>
+            <p className="mb-1.5 text-xs text-zinc-500">Internet, POS, and connectivity issues route through Solugenix — enter the case # from that ticket.</p>
+            <input value={solugenixCase} onChange={(e) => setSolugenixCase(e.target.value)} className={inputCls} placeholder="e.g. SG-000000" />
+          </div>
+        )}
+
+        {needsWo && (
+          <div>
+            <FieldLabel required>Has a Work Order been put in?</FieldLabel>
+            <YesNo value={workOrderFiled} onChange={(v) => { setWorkOrderFiled(v); if (!v) setSelectedWo(null); }} />
+            {workOrderFiled && (
+              <div className="mt-2">
+                <FieldLabel required>Look up the Work Order</FieldLabel>
+                <WoLookupField storeNumber={storeNumber} selected={selectedWo} onSelect={setSelectedWo} />
+              </div>
+            )}
           </div>
         )}
 
@@ -385,6 +508,19 @@ function ReportDetail({ report, onBack, onChanged }: { report: DisruptionReport;
         <DRow label="Order Ahead disabled" value={report.order_ahead_disabled ? "Yes" : "No"} />
         <DRow label="Closure / disruption type" value={report.closure_types.join(", ") || null} />
         <DRow label="Other detail" value={report.closure_other_detail} />
+        <DRow label="Solugenix Case #" value={report.solugenix_case_number} />
+        <DRow
+          label="Work Order filed"
+          value={
+            report.work_order_filed == null ? null
+            : report.work_order_filed && report.work_order_ticket_id ? (
+              <a href={`/admin/work-orders-v2?ticket=${report.work_order_ticket_id}`} target="_blank" rel="noreferrer"
+                className="inline-flex items-center gap-1 font-semibold text-accent hover:underline">
+                <Wrench className="h-3.5 w-3.5" /> {report.work_order_number || "View work order"}
+              </a>
+            ) : report.work_order_filed ? "Yes" : "No"
+          }
+        />
         <DRow label="Employee injured" value={report.employee_injured ? "Yes" : "No"} />
         <DRow label="Store damaged" value={report.store_damaged ? "Yes" : "No"} />
         <DRow label="Customer injured" value={report.customer_injured ? "Yes" : "No"} />

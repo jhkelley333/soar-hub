@@ -1,7 +1,7 @@
 // Typed wrappers around netlify/functions/business-disruptions.
 import { supabase } from "@/lib/supabase";
 import { compressPhoto } from "@/modules/reno-scoping/photoCompress";
-import type { DisruptionStatus, StorePick } from "./types";
+import type { DisruptionStatus, StorePick, WoPick } from "./types";
 
 const FN = "/.netlify/functions/business-disruptions";
 
@@ -52,6 +52,9 @@ export function fetchDisruptions(): Promise<DisruptionsResponse> {
 export function fetchDisruptionStores(): Promise<{ stores: StorePick[] }> {
   return request(`${FN}?action=stores`);
 }
+export function lookupWorkOrders(storeNumber: string, q: string): Promise<{ tickets: WoPick[] }> {
+  return request(`${FN}?action=wo-lookup&store_number=${encodeURIComponent(storeNumber)}&q=${encodeURIComponent(q)}`);
+}
 
 export interface CreateDisruptionInput {
   disruption_date: string;
@@ -62,6 +65,9 @@ export interface CreateDisruptionInput {
   order_ahead_disabled: boolean;
   closure_types: string[];
   closure_other_detail?: string;
+  solugenix_case_number?: string;
+  work_order_filed?: boolean;
+  work_order_ticket_id?: string;
   employee_injured: boolean;
   store_damaged: boolean;
   customer_injured: boolean;

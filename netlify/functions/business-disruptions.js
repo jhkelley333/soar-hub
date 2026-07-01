@@ -27,6 +27,9 @@ const CLOSURE_TYPES = new Set([
 const ISSUE_TYPES = new Set([
   "Slip/Fall", "Food Safety", "Equipment", "Vehicle Accident", "Altercation", "Other",
 ]);
+// Closure/Disruption Type selections that trigger their own follow-up field.
+const SOLUGENIX_TRIGGER = new Set(["Internet Issue", "POS Issues", "Connectivity Issues"]);
+const WO_TRIGGER = new Set(["Plumbing", "Vandalism", "Equipment Failure", "Other"]);
 
 function admin() {
   if (!SUPABASE_URL || !SERVICE_KEY) throw new Error("business-disruptions env vars not configured");
@@ -175,6 +178,8 @@ function notifyEmailBody(row, store) {
     `Order Ahead disabled: ${row.order_ahead_disabled ? "Yes" : "No"}`,
     row.closure_types.length ? `Disruption type: ${row.closure_types.join(", ")}` : null,
     row.closure_other_detail ? `Other detail: ${row.closure_other_detail}` : null,
+    row.solugenix_case_number ? `Solugenix Case #: ${row.solugenix_case_number}` : null,
+    row.work_order_filed === true ? `Work Order filed: Yes (${row.work_order_number || "—"})` : row.work_order_filed === false ? "Work Order filed: No" : null,
     `Employee injured: ${row.employee_injured ? "Yes" : "No"} · Store damaged: ${row.store_damaged ? "Yes" : "No"} · Customer injured: ${row.customer_injured ? "Yes" : "No"}`,
     row.issue_types.length ? `Issue type: ${row.issue_types.join(", ")}` : null,
     `Estimated loss sales: $${num(row.estimated_loss_sales).toFixed(2)}`,
@@ -188,6 +193,25 @@ function notifyEmailBody(row, store) {
 }
 
 // ── Actions ──────────────────────────────────────────────────────────────
+
+// Work order typeahead for the "look up that WO" field — scoped to the
+// report's store so a GM can't browse other stores' tickets, matching the
+// WO # / issue text the submitter would actually recognize.
+async function lookupWorkOrders(supa, user, storeNumber, term) {
+  const store = sanitize(storeNumber, 20);
+  const q = sanitize(term, 100);
+  if (!store || q.length < 2) return { tickets: [] };
+  const scope = await storesForUser(supa, user);
+  if (!scope.all && !scope.rows.some((s) => String(s.number) === store)) return { tickets: [] };
+  const { data } = await supa
+    .from("tickets")
+    .select("id, wo_number, work_requested, status")
+    .eq("store_number", store)
+    .ilike("wo_number", `%${q}%`)
+    .order("date_submitted", { ascending: false })
+    .limit(10);
+  return { tickets: (data || []).map((t) => ({ id: t.id, wo_number: t.wo_number, work_requested: t.work_requested, status: t.status })) };
+}
 
 // Stores the caller can submit a report for (for the New Report picker).
 async function listStores(supa, user) {
@@ -264,6 +288,37 @@ async function createDisruption(supa, user, body) {
     return { error: "Please describe the issue when \"Other\" is selected.", status: 400 };
   }
 
+  // Solugenix Case # — required when the closure type points at IT/telecom
+  // (Internet, POS, Connectivity), since that's who those tickets route to.
+  const needsSolugenix = closureTypes.some((t) => SOLUGENIX_TRIGGER.has(t));
+  const solugenixCase = sanitize(body?.solugenix_case_number, 100);
+  if (needsSolugenix && !solugenixCase) {
+    return { error: "Solugenix Case # is required for Internet/POS/Connectivity issues.", status: 400 };
+  }
+
+  // Work Order follow-up — required when the closure type is something a
+  // work order would normally get filed for (Plumbing, Vandalism, Equipment
+  // Failure, Other). If one was filed, the submitter looks it up and links
+  // it so the report and the WO ticket stay connected.
+  const needsWo = closureTypes.some((t) => WO_TRIGGER.has(t));
+  let workOrderFiled = null;
+  let workOrderTicketId = null;
+  let workOrderNumber = null;
+  if (needsWo) {
+    if (typeof body?.work_order_filed !== "boolean") {
+      return { error: "Please answer whether a Work Order has been put in.", status: 400 };
+    }
+    workOrderFiled = body.work_order_filed;
+    if (workOrderFiled) {
+      const ticketId = sanitize(body?.work_order_ticket_id, 64);
+      if (!ticketId) return { error: "Look up and select the Work Order.", status: 400 };
+      const { data: ticket } = await supa.from("tickets").select("id, wo_number").eq("id", ticketId).maybeSingle();
+      if (!ticket) return { error: "That work order couldn't be found.", status: 404 };
+      workOrderTicketId = ticket.id;
+      workOrderNumber = ticket.wo_number;
+    }
+  }
+
   const files = Array.isArray(body?.attachments) ? body.attachments.slice(0, MAX_FILES) : [];
   const uploaded = [];
   for (const f of files) {
@@ -291,6 +346,10 @@ async function createDisruption(supa, user, body) {
     store_damaged: body?.store_damaged === true,
     customer_injured: body?.customer_injured === true,
     issue_types: issueTypes,
+    solugenix_case_number: solugenixCase || null,
+    work_order_filed: workOrderFiled,
+    work_order_ticket_id: workOrderTicketId,
+    work_order_number: workOrderNumber,
     estimated_loss_sales: num(body?.estimated_loss_sales),
     description,
     attachments: uploaded,
@@ -341,6 +400,7 @@ export const handler = async (event) => {
     if (event.httpMethod === "GET") {
       if (action === "list") return unwrap(await listDisruptions(supa, user));
       if (action === "stores") return respond(200, await listStores(supa, user));
+      if (action === "wo-lookup") return respond(200, await lookupWorkOrders(supa, user, params.store_number, params.q));
       return respond(400, { error: `Unknown action: ${action}` });
     }
     if (action === "create") return unwrap(await createDisruption(supa, user, body));
