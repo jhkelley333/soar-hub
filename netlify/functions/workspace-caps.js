@@ -101,6 +101,21 @@ export const handler = async (event) => {
   const action = (event.queryStringParameters || {}).action || "";
   const supabase = getSupabase();
 
+  // Admin "View As" (read-only) — see workspaces.js for the full rationale.
+  // `effective` is the identity "my ___" queries scope against; every other
+  // action keeps using the real admin's `profile`.
+  const viewAsHeader = event.headers?.["x-view-as-user-id"] || event.headers?.["X-View-As-User-Id"];
+  if (viewAsHeader && event.httpMethod === "POST") {
+    return respond(403, { ok: false, message: "Read-only while viewing as another user — exit View As to make changes." });
+  }
+  let effective = profile;
+  if (viewAsHeader && String(profile.role).toLowerCase() === "admin") {
+    const { data: viewAsTarget } = await supabase
+      .from("profiles").select("id, email, full_name, role, is_active")
+      .eq("id", viewAsHeader).eq("is_active", true).maybeSingle();
+    if (viewAsTarget) effective = viewAsTarget;
+  }
+
   try {
     // ═══════════════════════════════════════════════════════════
     // CAPs
@@ -165,7 +180,7 @@ export const handler = async (event) => {
           store:store_id(id, store_number:number, name),
           question:question_id(id, question_text)
         `)
-        .or(`assignee_id.eq.${profile.id},verifier_id.eq.${profile.id}`)
+        .or(`assignee_id.eq.${effective.id},verifier_id.eq.${effective.id}`)
         .order("due_at", { ascending: true, nullsFirst: false });
 
       if (!includeClosed) {
@@ -174,7 +189,7 @@ export const handler = async (event) => {
 
       const { data, error } = await q;
       if (error) throw error;
-      return respond(200, { ok: true, caps: data || [] });
+      return respond(200, { ok: true, caps: data || [], viewing_as: effective.id !== profile.id });
     }
 
     if (action === "getCap") {
