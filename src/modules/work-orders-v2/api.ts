@@ -156,6 +156,18 @@ export function extractReplacement(invoice: { data: string; type: string }): Pro
   return request(`${FN}?action=extractReplacement`, { method: "POST", body: JSON.stringify({ invoice }) });
 }
 
+// What the AI reads off a repair-part order receipt/invoice.
+export interface ExtractedParts {
+  description: string;
+  supplier: string;
+  cost: number | null;
+  eta: string;
+  po_number: string;
+}
+export function extractParts(invoice: { data: string; type: string }): Promise<{ ok: true; extracted: ExtractedParts }> {
+  return request(`${FN}?action=extractParts`, { method: "POST", body: JSON.stringify({ invoice }) });
+}
+
 // Build a copy-paste WhatsApp message for the selected work orders, grouped by
 // store with each store's address + phone. Server-side so store contact data
 // stays scoped to what the caller can see.

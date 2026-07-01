@@ -11,7 +11,7 @@ import { Button } from "@/shared/ui/Button";
 import { Input } from "@/shared/ui/Input";
 import { Label } from "@/shared/ui/Label";
 import { VendorSearchInput } from "./VendorSearchInput";
-import { extractReplacement, fileToBase64 } from "./api";
+import { extractParts, extractReplacement, fileToBase64 } from "./api";
 import type {
   AdminCloseReason,
   ResolutionCategory,
@@ -173,6 +173,10 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
   const [partsEta, setPartsEta] = useState<string>("");
   const [partsPoNumber, setPartsPoNumber] = useState<string>("");
   const [partsReceipt, setPartsReceipt] = useState<File | null>(null);
+  // AI auto-fill from the parts receipt — same pattern as the replacement scan.
+  const [partsScanning, setPartsScanning] = useState(false);
+  const [partsScanNote, setPartsScanNote] = useState<string | null>(null);
+  const [partsScanFilled, setPartsScanFilled] = useState(false);
 
   useEffect(() => {
     if (!open) return;
@@ -202,6 +206,9 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
     setPartsEta("");
     setPartsPoNumber("");
     setPartsReceipt(null);
+    setPartsScanning(false);
+    setPartsScanNote(null);
+    setPartsScanFilled(false);
   }, [open, config.kind]);
 
   // Read the replacement receipt/spec-plate with AI and pre-fill empty fields
@@ -233,6 +240,33 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
       setReplScanNote((e as Error)?.message || "Couldn't read the receipt — enter the details manually.");
     } finally {
       setReplScanning(false);
+    }
+  }
+
+  // Same idea for a repair-part order receipt: read it with AI and pre-fill
+  // empty fields (never clobber what the user typed). Best-effort.
+  async function onPartsReceiptPicked(file: File | null) {
+    setPartsReceipt(file);
+    setPartsScanFilled(false);
+    setPartsScanNote(null);
+    if (!file) return;
+    setPartsScanning(true);
+    try {
+      const data = await fileToBase64(file);
+      const { extracted: ex } = await extractParts({ data, type: file.type || "application/octet-stream" });
+      let filled = false;
+      const fill = (cond: boolean, set: () => void) => { if (cond) { set(); filled = true; } };
+      fill(!partsDesc.trim() && !!ex.description, () => setPartsDesc(ex.description));
+      fill(!partsSupplier.trim() && !!ex.supplier, () => setPartsSupplier(ex.supplier));
+      fill(!partsCost.trim() && ex.cost != null, () => setPartsCost(String(ex.cost)));
+      fill(!partsEta.trim() && !!ex.eta, () => setPartsEta(ex.eta));
+      fill(!partsPoNumber.trim() && !!ex.po_number, () => setPartsPoNumber(ex.po_number));
+      setPartsScanFilled(filled);
+      if (!filled) setPartsScanNote("Couldn't pull anything new from that receipt — fill in what's needed.");
+    } catch (e) {
+      setPartsScanNote((e as Error)?.message || "Couldn't read the receipt — enter the details manually.");
+    } finally {
+      setPartsScanning(false);
     }
   }
 
@@ -780,12 +814,12 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
                 />
               </div>
               <div className="border-t border-zinc-200 pt-3">
-                <Label htmlFor="parts-receipt">Receipt / invoice (optional)</Label>
+                <Label htmlFor="parts-receipt">Receipt / invoice (optional — auto-fills the fields above)</Label>
                 <input
                   id="parts-receipt"
                   type="file"
                   accept="image/*,application/pdf"
-                  onChange={(e) => setPartsReceipt(e.target.files?.[0] || null)}
+                  onChange={(e) => onPartsReceiptPicked(e.target.files?.[0] || null)}
                   className="block w-full text-sm text-zinc-700 file:mr-2 file:rounded-md file:border-0 file:bg-accent/10 file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-midnight hover:file:bg-accent/20"
                 />
                 {partsReceipt && (
@@ -794,12 +828,25 @@ export function ReasonModal({ open, config, storeNumber, onClose, onSubmit, subm
                     <span>({(partsReceipt.size / 1024).toFixed(0)} KB)</span>
                     <button
                       type="button"
-                      onClick={() => setPartsReceipt(null)}
+                      onClick={() => { setPartsReceipt(null); setPartsScanFilled(false); setPartsScanNote(null); }}
                       className="text-red-600 hover:underline"
                     >
                       remove
                     </button>
                   </div>
+                )}
+                {partsScanning && (
+                  <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-accent">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Reading the receipt…
+                  </div>
+                )}
+                {!partsScanning && partsScanFilled && (
+                  <div className="mt-1.5 flex items-center gap-1.5 text-[11px] text-emerald-700">
+                    <Sparkles className="h-3 w-3" /> Auto-filled from the receipt — please review.
+                  </div>
+                )}
+                {!partsScanning && partsScanNote && (
+                  <div className="mt-1.5 text-[11px] text-amber-700">{partsScanNote}</div>
                 )}
                 <div className="mt-1 text-[10px] text-zinc-500">
                   PDF or image. Uploaded after the ticket transitions; failures don't block the order.
