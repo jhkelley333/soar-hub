@@ -79,6 +79,13 @@ export interface CreateDisruptionInput {
 export function createDisruption(input: CreateDisruptionInput): Promise<{ ok: true; id: string }> {
   return request(`${FN}?action=create`, { method: "POST", body: JSON.stringify(input) });
 }
+// Same fields as create, minus attachments — a report's files are immutable
+// after submission (editing is for correcting text/selections, not re-doing
+// the photo/document upload).
+export type UpdateDisruptionInput = Omit<CreateDisruptionInput, "attachments"> & { id: string };
+export function updateDisruption(input: UpdateDisruptionInput): Promise<{ ok: true }> {
+  return request(`${FN}?action=update`, { method: "POST", body: JSON.stringify(input) });
+}
 export function setDisruptionStatus(id: string, status: DisruptionStatus): Promise<{ ok: true }> {
   return request(`${FN}?action=set-status`, { method: "POST", body: JSON.stringify({ id, status }) });
 }

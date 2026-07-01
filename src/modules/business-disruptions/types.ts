@@ -48,12 +48,15 @@ export interface DisruptionReport {
   estimated_loss_sales: number;
   description: string;
   attachments: Attachment[];
+  escalated_to_rvp_name: string | null;
   status: DisruptionStatus;
   submitted_by: string | null;
   submitted_by_name: string | null;
+  updated_by_name: string | null;
   created_at: string;
   updated_at: string;
   can_review: boolean;
+  can_edit: boolean;
 }
 
 export interface StorePick {

@@ -18,14 +18,14 @@ import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
   createDisruption, fetchDisruptionStores, fetchDisruptions,
-  fileToPayload, lookupWorkOrders, setDisruptionStatus, type FilePayload,
+  fileToPayload, lookupWorkOrders, setDisruptionStatus, updateDisruption, type FilePayload,
 } from "./api";
 import {
   CLOSURE_TYPES, ISSUE_TYPES, SOLUGENIX_TRIGGER_TYPES, WO_TRIGGER_TYPES,
   type DisruptionReport, type DisruptionStatus, type WoPick,
 } from "./types";
 
-type Nav = { screen: "list" | "new" | "detail"; id?: string };
+type Nav = { screen: "list" | "new" | "edit" | "detail"; id?: string };
 
 function fmtDate(d: string) {
   return new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" });
@@ -57,14 +57,31 @@ const STATUS_META: Record<DisruptionStatus, { label: string; chip: string }> = {
   closed: { label: "Closed", chip: "bg-zinc-100 text-zinc-600 ring-zinc-200" },
 };
 
+function SummaryTile({ label, value, tone }: { label: string; value: string; tone?: "amber" | "red" }) {
+  const toneCls = tone === "amber" ? "text-amber-600" : tone === "red" ? "text-red-600" : "text-midnight";
+  return (
+    <div className="rounded-2xl border border-zinc-200 bg-white p-3.5 shadow-card">
+      <div className="text-[11px] font-medium text-zinc-500">{label}</div>
+      <div className={cn("mt-1 text-xl font-bold tabular-nums tracking-tight", toneCls)}>{value}</div>
+    </div>
+  );
+}
+
 export function BusinessDisruptionsPage() {
   const qc = useQueryClient();
   const [nav, setNav] = useState<Nav>({ screen: "list" });
   const q = useQuery({ queryKey: ["business-disruptions"], queryFn: fetchDisruptions });
   const reports = q.data?.reports ?? [];
   const canWrite = q.data?.can_write ?? false;
+  const canReview = q.data?.can_review ?? false;
   const invalidate = () => qc.invalidateQueries({ queryKey: ["business-disruptions"] });
   const active = useMemo(() => reports.find((r) => r.id === nav.id) ?? null, [reports, nav.id]);
+  const stats = useMemo(() => ({
+    total: reports.length,
+    open: reports.filter((r) => r.status === "open").length,
+    stillClosed: reports.filter((r) => r.store_closed && !r.reopen_date).length,
+    lossSales: reports.reduce((sum, r) => sum + (r.estimated_loss_sales || 0), 0),
+  }), [reports]);
 
   if (q.isLoading) {
     return <div className="mx-auto w-full max-w-2xl space-y-3"><Skeleton className="h-24 w-full" /><Skeleton className="h-24 w-full" /></div>;
@@ -76,9 +93,22 @@ export function BusinessDisruptionsPage() {
   if (nav.screen === "new") {
     return (
       <div className="mx-auto w-full max-w-2xl">
-        <NewReportForm
+        <ReportForm
+          mode="create"
           onBack={() => setNav({ screen: "list" })}
           onSubmitted={() => { invalidate(); setNav({ screen: "list" }); }}
+        />
+      </div>
+    );
+  }
+  if (nav.screen === "edit" && active) {
+    return (
+      <div className="mx-auto w-full max-w-2xl">
+        <ReportForm
+          mode="edit"
+          initial={active}
+          onBack={() => setNav({ screen: "detail", id: active.id })}
+          onSubmitted={() => { invalidate(); setNav({ screen: "detail", id: active.id }); }}
         />
       </div>
     );
@@ -86,7 +116,8 @@ export function BusinessDisruptionsPage() {
   if (nav.screen === "detail" && active) {
     return (
       <div className="mx-auto w-full max-w-2xl">
-        <ReportDetail report={active} onBack={() => setNav({ screen: "list" })} onChanged={invalidate} />
+        <ReportDetail report={active} onBack={() => setNav({ screen: "list" })} onChanged={invalidate}
+          onEdit={() => setNav({ screen: "edit", id: active.id })} />
       </div>
     );
   }
@@ -98,6 +129,14 @@ export function BusinessDisruptionsPage() {
         description="Report a closure or business disruption at a store."
         actions={canWrite ? <Button size="sm" onClick={() => setNav({ screen: "new" })}><Plus className="h-4 w-4" /> New report</Button> : undefined}
       />
+      {canReview && reports.length > 0 && (
+        <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <SummaryTile label="Reports" value={String(stats.total)} />
+          <SummaryTile label="Open" value={String(stats.open)} tone={stats.open > 0 ? "amber" : undefined} />
+          <SummaryTile label="Still closed" value={String(stats.stillClosed)} tone={stats.stillClosed > 0 ? "red" : undefined} />
+          <SummaryTile label="Est. loss sales" value={fmtUSD(stats.lossSales)} />
+        </div>
+      )}
       {reports.length === 0 ? (
         <EmptyState
           title="No disruptions reported"
@@ -237,27 +276,33 @@ function WoLookupField({ storeNumber, selected, onSelect }: {
   );
 }
 
-function NewReportForm({ onBack, onSubmitted }: { onBack: () => void; onSubmitted: () => void }) {
+function ReportForm({ mode, initial, onBack, onSubmitted }: {
+  mode: "create" | "edit"; initial?: DisruptionReport; onBack: () => void; onSubmitted: () => void;
+}) {
   const toast = useToast();
   const storesQ = useQuery({ queryKey: ["business-disruption-stores"], queryFn: fetchDisruptionStores, staleTime: 5 * 60_000 });
 
-  const [date, setDate] = useState("");
-  const [storeNumber, setStoreNumber] = useState("");
-  const [hours, setHours] = useState("");
-  const [storeClosed, setStoreClosed] = useState<boolean | null>(null);
-  const [reopenDate, setReopenDate] = useState("");
-  const [orderAheadDisabled, setOrderAheadDisabled] = useState<boolean | null>(null);
-  const [closureTypes, setClosureTypes] = useState<string[]>([]);
-  const [closureOther, setClosureOther] = useState("");
-  const [solugenixCase, setSolugenixCase] = useState("");
-  const [workOrderFiled, setWorkOrderFiled] = useState<boolean | null>(null);
-  const [selectedWo, setSelectedWo] = useState<WoPick | null>(null);
-  const [employeeInjured, setEmployeeInjured] = useState<boolean | null>(null);
-  const [storeDamaged, setStoreDamaged] = useState<boolean | null>(null);
-  const [customerInjured, setCustomerInjured] = useState<boolean | null>(null);
-  const [issueTypes, setIssueTypes] = useState<string[]>([]);
-  const [lossSales, setLossSales] = useState("");
-  const [description, setDescription] = useState("");
+  const [date, setDate] = useState(initial?.disruption_date ?? "");
+  const [storeNumber, setStoreNumber] = useState(initial?.store_number ?? "");
+  const [hours, setHours] = useState(initial?.hours_disrupted != null ? String(initial.hours_disrupted) : "");
+  const [storeClosed, setStoreClosed] = useState<boolean | null>(initial?.store_closed ?? null);
+  const [reopenDate, setReopenDate] = useState(initial?.reopen_date ?? "");
+  const [orderAheadDisabled, setOrderAheadDisabled] = useState<boolean | null>(initial?.order_ahead_disabled ?? null);
+  const [closureTypes, setClosureTypes] = useState<string[]>(initial?.closure_types ?? []);
+  const [closureOther, setClosureOther] = useState(initial?.closure_other_detail ?? "");
+  const [solugenixCase, setSolugenixCase] = useState(initial?.solugenix_case_number ?? "");
+  const [workOrderFiled, setWorkOrderFiled] = useState<boolean | null>(initial?.work_order_filed ?? null);
+  const [selectedWo, setSelectedWo] = useState<WoPick | null>(
+    initial?.work_order_ticket_id && initial.work_order_number
+      ? { id: initial.work_order_ticket_id, wo_number: initial.work_order_number, work_requested: null, status: "" }
+      : null
+  );
+  const [employeeInjured, setEmployeeInjured] = useState<boolean | null>(initial?.employee_injured ?? null);
+  const [storeDamaged, setStoreDamaged] = useState<boolean | null>(initial?.store_damaged ?? null);
+  const [customerInjured, setCustomerInjured] = useState<boolean | null>(initial?.customer_injured ?? null);
+  const [issueTypes, setIssueTypes] = useState<string[]>(initial?.issue_types ?? []);
+  const [lossSales, setLossSales] = useState(initial ? String(initial.estimated_loss_sales) : "");
+  const [description, setDescription] = useState(initial?.description ?? "");
   const [files, setFiles] = useState<{ file: File; payload: FilePayload | null }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -294,7 +339,7 @@ function NewReportForm({ onBack, onSubmitted }: { onBack: () => void; onSubmitte
       if (needsWo && workOrderFiled === null) throw new Error("Please answer whether a Work Order has been put in.");
       if (needsWo && workOrderFiled === true && !selectedWo) throw new Error("Look up and select the Work Order.");
       if (!description.trim()) throw new Error("Description is required.");
-      return createDisruption({
+      const payload = {
         disruption_date: date,
         store_number: storeNumber,
         hours_disrupted: hours === "" ? null : hours,
@@ -312,17 +357,18 @@ function NewReportForm({ onBack, onSubmitted }: { onBack: () => void; onSubmitte
         issue_types: issueTypes,
         estimated_loss_sales: lossSales === "" ? 0 : lossSales,
         description: description.trim(),
-        attachments: files.map((f) => f.payload).filter((p): p is FilePayload => !!p),
-      });
+      };
+      if (mode === "edit" && initial) return updateDisruption({ ...payload, id: initial.id });
+      return createDisruption({ ...payload, attachments: files.map((f) => f.payload).filter((p): p is FilePayload => !!p) });
     },
-    onSuccess: () => { toast.push("Disruption report submitted.", "success"); onSubmitted(); },
+    onSuccess: () => { toast.push(mode === "edit" ? "Report updated." : "Disruption report submitted.", "success"); onSubmitted(); },
     onError: (e: unknown) => setError(e instanceof Error ? e.message : "Couldn't submit."),
   });
 
   return (
     <div className="pb-8">
-      <button onClick={onBack} className="mb-3 inline-flex items-center gap-1 text-sm font-medium text-zinc-500 hover:text-midnight"><ArrowLeft className="h-4 w-4" /> Disruptions</button>
-      <h1 className="mb-4 text-xl font-bold tracking-tight text-midnight">New disruption report</h1>
+      <button onClick={onBack} className="mb-3 inline-flex items-center gap-1 text-sm font-medium text-zinc-500 hover:text-midnight"><ArrowLeft className="h-4 w-4" /> {mode === "edit" ? "Report" : "Disruptions"}</button>
+      <h1 className="mb-4 text-xl font-bold tracking-tight text-midnight">{mode === "edit" ? "Edit disruption report" : "New disruption report"}</h1>
 
       <div className="space-y-4">
         <div>
@@ -429,31 +475,46 @@ function NewReportForm({ onBack, onSubmitted }: { onBack: () => void; onSubmitte
           <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} className={cn(inputCls, "resize-y")} />
         </div>
 
-        <div>
-          <FieldLabel>Attach Picture or Document</FieldLabel>
-          <p className="mb-1.5 text-xs text-zinc-500">Up to 6 files, 10 MB each.</p>
-          <input ref={fileRef} type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf"
-            className="hidden" onChange={(e) => { void onPickFiles(e.target.files); e.target.value = ""; }} />
-          <button type="button" onClick={() => fileRef.current?.click()} disabled={files.length >= 6}
-            className="flex w-full flex-col items-center gap-2 rounded-xl border border-dashed border-zinc-300 bg-zinc-50 py-6 text-sm text-zinc-500 hover:border-accent hover:text-accent disabled:opacity-50">
-            <Upload className="h-5 w-5" />
-            Browse files
-          </button>
-          {files.length > 0 && (
-            <ul className="mt-2 space-y-1.5">
-              {files.map((f, i) => (
-                <li key={i} className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm">
-                  {f.file.type.startsWith("image/") ? <ImageIcon className="h-4 w-4 shrink-0 text-zinc-400" /> : <FileText className="h-4 w-4 shrink-0 text-zinc-400" />}
-                  <span className="min-w-0 flex-1 truncate text-zinc-700">{f.file.name}</span>
-                  {!f.payload && <span className="shrink-0 text-xs text-zinc-400">Reading…</span>}
-                  <button type="button" onClick={() => setFiles((list) => list.filter((_, idx) => idx !== i))} className="shrink-0 text-zinc-400 hover:text-red-500">
-                    <X className="h-4 w-4" />
-                  </button>
-                </li>
+        {mode === "create" ? (
+          <div>
+            <FieldLabel>Attach Picture or Document</FieldLabel>
+            <p className="mb-1.5 text-xs text-zinc-500">Up to 6 files, 10 MB each.</p>
+            <input ref={fileRef} type="file" multiple accept="image/jpeg,image/png,image/webp,application/pdf"
+              className="hidden" onChange={(e) => { void onPickFiles(e.target.files); e.target.value = ""; }} />
+            <button type="button" onClick={() => fileRef.current?.click()} disabled={files.length >= 6}
+              className="flex w-full flex-col items-center gap-2 rounded-xl border border-dashed border-zinc-300 bg-zinc-50 py-6 text-sm text-zinc-500 hover:border-accent hover:text-accent disabled:opacity-50">
+              <Upload className="h-5 w-5" />
+              Browse files
+            </button>
+            {files.length > 0 && (
+              <ul className="mt-2 space-y-1.5">
+                {files.map((f, i) => (
+                  <li key={i} className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm">
+                    {f.file.type.startsWith("image/") ? <ImageIcon className="h-4 w-4 shrink-0 text-zinc-400" /> : <FileText className="h-4 w-4 shrink-0 text-zinc-400" />}
+                    <span className="min-w-0 flex-1 truncate text-zinc-700">{f.file.name}</span>
+                    {!f.payload && <span className="shrink-0 text-xs text-zinc-400">Reading…</span>}
+                    <button type="button" onClick={() => setFiles((list) => list.filter((_, idx) => idx !== i))} className="shrink-0 text-zinc-400 hover:text-red-500">
+                      <X className="h-4 w-4" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ) : initial && initial.attachments.length > 0 ? (
+          <div>
+            <FieldLabel>Attachments</FieldLabel>
+            <p className="mb-1.5 text-xs text-zinc-500">Attachments can't be changed after submitting.</p>
+            <div className="flex flex-wrap gap-2">
+              {initial.attachments.map((a, i) => (
+                <span key={i} className="flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2 text-xs font-medium text-zinc-600">
+                  {a.type.startsWith("image/") ? <ImageIcon className="h-3.5 w-3.5" /> : <FileText className="h-3.5 w-3.5" />}
+                  {a.name}
+                </span>
               ))}
-            </ul>
-          )}
-        </div>
+            </div>
+          </div>
+        ) : null}
 
         {error && (
           <div className="flex items-start gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700">
@@ -462,7 +523,7 @@ function NewReportForm({ onBack, onSubmitted }: { onBack: () => void; onSubmitte
         )}
 
         <Button className="w-full" disabled={submit.isPending} onClick={() => { setError(null); submit.mutate(); }}>
-          {submit.isPending ? "Submitting…" : "Submit report"}
+          {submit.isPending ? "Saving…" : mode === "edit" ? "Save changes" : "Submit report"}
         </Button>
       </div>
     </div>
@@ -479,7 +540,9 @@ function DRow({ label, value }: { label: string; value: React.ReactNode }) {
     </div>
   );
 }
-function ReportDetail({ report, onBack, onChanged }: { report: DisruptionReport; onBack: () => void; onChanged: () => void }) {
+function ReportDetail({ report, onBack, onChanged, onEdit }: {
+  report: DisruptionReport; onBack: () => void; onChanged: () => void; onEdit: () => void;
+}) {
   const toast = useToast();
   const statusMut = useMutation({
     mutationFn: (status: DisruptionStatus) => setDisruptionStatus(report.id, status),
@@ -495,13 +558,22 @@ function ReportDetail({ report, onBack, onChanged }: { report: DisruptionReport;
       <div className="mb-4 flex items-start justify-between gap-3">
         <div>
           <h1 className="text-xl font-bold tracking-tight text-midnight">{report.store_name || `Store #${report.store_number}`}</h1>
-          <div className="text-xs text-zinc-500">#{report.store_number} · {fmtDate(report.disruption_date)} · {report.submitted_by_name || "—"}</div>
+          <div className="text-xs text-zinc-500">
+            #{report.store_number} · {fmtDate(report.disruption_date)} · {report.submitted_by_name || "—"}
+            {report.updated_by_name && <> · edited by {report.updated_by_name}</>}
+          </div>
         </div>
-        <span className={cn("inline-flex shrink-0 items-center rounded-full px-2.5 py-1 text-xs font-bold uppercase tracking-wide ring-1 ring-inset", meta.chip)}>{meta.label}</span>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className={cn("inline-flex items-center rounded-full px-2.5 py-1 text-xs font-bold uppercase tracking-wide ring-1 ring-inset", meta.chip)}>{meta.label}</span>
+          {report.can_edit && (
+            <button onClick={onEdit} className="text-xs font-semibold text-accent hover:underline">Edit</button>
+          )}
+        </div>
       </div>
 
       <div className="rounded-2xl border border-zinc-200 bg-white p-4 shadow-card">
         <DRow label="District Manager" value={report.district_manager_name} />
+        <DRow label="Escalated to (RVP)" value={report.escalated_to_rvp_name} />
         <DRow label="Hours disrupted" value={report.hours_disrupted != null ? `${report.hours_disrupted}h` : null} />
         <DRow label="Store closed" value={report.store_closed ? "Yes" : "No"} />
         <DRow label="Date of re-open" value={report.reopen_date ? fmtDate(report.reopen_date) : null} />
