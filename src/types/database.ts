@@ -69,6 +69,9 @@ export interface Profile {
   // Migration 0202 — passport on file for international team trips.
   // File itself lives in the private `passports` storage bucket.
   passport_expires_at: string | null; // ISO date
+  // Migration 0207 — SDO/RVP/VP/COO opt-in to being copied on PAF
+  // submission + discussion emails for PAFs in their own downline.
+  notify_paf_downline: boolean;
   // Phase 0 contacts module (migration 0029):
   pinned_contact_ids: string[];
   // JSON of nav-item order; null = default order. Reserved for the

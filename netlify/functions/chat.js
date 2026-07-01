@@ -20,6 +20,7 @@ import { createClient } from "@supabase/supabase-js";
 import { sendPushToUsers } from "./_lib/push.js";
 import { rejectWriteWhileViewingAs, resolveViewAs } from "./_lib/viewAs.js";
 import { findUsersForStore } from "./_lib/ticketEmail.js";
+import { resolvePafWatchers } from "./_lib/pafWatchers.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY =
@@ -467,6 +468,12 @@ export const handler = async (event) => {
             text?.trim() || (atts.length === 1 ? `📎 ${atts[0].name}` : atts.length ? `📎 ${atts.length} files` : "");
           const replyTo = `paf-${thr.scope_ref}@${process.env.RESEND_INBOUND_DOMAIN || "inbound.mysoarhub.com"}`;
 
+          // SDO/RVP/VP/COO who opted in (profiles.notify_paf_downline) to
+          // being copied on every PAF email in their own downline, not just
+          // the initial submission — see _lib/pafWatchers.js.
+          const watchers = paf ? await resolvePafWatchers(supa, paf.drive_in) : [];
+          const watcherEmails = watchers.map((w) => w.email).filter(Boolean);
+
           // "Include their next-level leader" — add the submitter's direct
           // manager (one tier up the org chart, resolved off the PAF's
           // store) as a thread member going forward, and loop them in on
@@ -492,10 +499,11 @@ export const handler = async (event) => {
             const ccList = [
               ...(copyMe && caller.email ? [caller.email] : []),
               ...(leaderEmail ? [leaderEmail] : []),
+              ...watcherEmails,
             ];
             const result = await sendPafEmail({
               to: paf.submitter_email,
-              cc: ccList,
+              cc: [...new Set(ccList)],
               replyTo,
               subject: `Re: ${paf.employee_name || "your PAF"} — question from ${displayName(caller)}`,
               text:
@@ -507,12 +515,12 @@ export const handler = async (event) => {
             });
             emailed = result.ok;
             if (!result.ok) emailReason = result.reason;
-          } else if (leaderEmail) {
+          } else if (leaderEmail || watcherEmails.length) {
             // Sender IS the submitter (no submitter-bridge email fires) but
-            // a leader was requested — send them a standalone notice so
-            // they're still looped in.
+            // a leader and/or opted-in watchers still need to see it.
             await sendPafEmail({
-              to: leaderEmail,
+              to: leaderEmail || watcherEmails[0],
+              cc: [...new Set([leaderEmail, ...watcherEmails].filter((e) => e && e !== (leaderEmail || watcherEmails[0])))],
               replyTo,
               subject: `${displayName(caller)} added you to a PAF conversation — ${paf.employee_name || "submission"}`,
               text:
@@ -942,7 +950,7 @@ export const handler = async (event) => {
       } else {
         const { data: paf } = await supa
           .from("paf_submissions")
-          .select("employee_name, category, estimated_cost, submitter_id, submitter_name, status")
+          .select("employee_name, category, estimated_cost, submitter_id, submitter_name, status, drive_in")
           .eq("id", scopeRef)
           .maybeSingle();
         if (!paf) return respond(404, { ok: false, message: "PAF not found." });
@@ -987,26 +995,52 @@ export const handler = async (event) => {
 
       // Fallback alert: when someone other than the submitter starts a PAF
       // discussion (e.g. Payroll asking a question), email the submitter so
-      // they don't miss it — chat push alone may not reach them.
-      if (pafForAlert?.submitter_id && pafForAlert.submitter_id !== uid) {
+      // they don't miss it — chat push alone may not reach them. Opted-in
+      // SDO/RVP/VP/COO watchers (profiles.notify_paf_downline) are copied on
+      // this too, per _lib/pafWatchers.js.
+      if (pafForAlert) {
         try {
-          const { data: sub } = await supa
-            .from("profiles")
-            .select("email, full_name, preferred_name")
-            .eq("id", pafForAlert.submitter_id)
-            .maybeSingle();
-          if (sub?.email) {
-            const who = sub.preferred_name || sub.full_name || "there";
+          const watchers = await resolvePafWatchers(supa, pafForAlert.drive_in);
+          const watcherEmails = watchers.map((w) => w.email).filter(Boolean);
+          const replyTo = `paf-${scopeRef}@${process.env.RESEND_INBOUND_DOMAIN || "inbound.mysoarhub.com"}`;
+          const starter = displayName(caller);
+
+          if (pafForAlert.submitter_id && pafForAlert.submitter_id !== uid) {
+            const { data: sub } = await supa
+              .from("profiles")
+              .select("email, full_name, preferred_name")
+              .eq("id", pafForAlert.submitter_id)
+              .maybeSingle();
+            if (sub?.email) {
+              const who = sub.preferred_name || sub.full_name || "there";
+              const amount = pafForAlert.estimated_cost != null ? fmtMoney(pafForAlert.estimated_cost) : "";
+              const detail = [pafForAlert.category, amount].filter(Boolean).join(", ");
+              await sendPafEmail({
+                to: sub.email,
+                cc: watcherEmails,
+                replyTo,
+                subject: `A question on your PAF — ${pafForAlert.employee_name || "submission"}`,
+                text:
+                  `Hi ${who},\n\n` +
+                  `${starter} started a discussion on your Payroll Action Form and may need a response:\n\n` +
+                  `  ${pafForAlert.employee_name || "PAF"}${detail ? ` (${detail})` : ""}\n\n` +
+                  `Just reply to this email — your response posts back onto the conversation automatically.\n\n` +
+                  `— SOAR PAF`,
+              });
+            }
+          } else if (watcherEmails.length) {
+            // Starter IS the submitter (no submitter alert fires) but
+            // opted-in watchers still need to see the discussion started.
             const amount = pafForAlert.estimated_cost != null ? fmtMoney(pafForAlert.estimated_cost) : "";
             const detail = [pafForAlert.category, amount].filter(Boolean).join(", ");
-            const starter = displayName(caller);
             await sendPafEmail({
-              to: sub.email,
-              replyTo: `paf-${scopeRef}@${process.env.RESEND_INBOUND_DOMAIN || "inbound.mysoarhub.com"}`,
-              subject: `A question on your PAF — ${pafForAlert.employee_name || "submission"}`,
+              to: watcherEmails[0],
+              cc: watcherEmails.slice(1),
+              replyTo,
+              subject: `New PAF discussion — ${pafForAlert.employee_name || "submission"}`,
               text:
-                `Hi ${who},\n\n` +
-                `${starter} started a discussion on your Payroll Action Form and may need a response:\n\n` +
+                `Hi,\n\n` +
+                `${starter} started a discussion on a PAF in your downline:\n\n` +
                 `  ${pafForAlert.employee_name || "PAF"}${detail ? ` (${detail})` : ""}\n\n` +
                 `Just reply to this email — your response posts back onto the conversation automatically.\n\n` +
                 `— SOAR PAF`,
