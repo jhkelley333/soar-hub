@@ -150,6 +150,7 @@ export function KpiDashboardPage() {
     : null;
   const scope = pdata?.scope;
   const periodHasData = !!total || (pdata?.levels?.store?.length ?? 0) > 0;
+  const stale = q.data?.stale ?? false;
 
   return (
     <>
@@ -157,7 +158,7 @@ export function KpiDashboardPage() {
         title="KPI Dashboard"
         description={
           asOf
-            ? `As of ${asOf}${scope ? ` · ${scope.matched} stores mapped to your org${scope.unmatched ? ` · ${scope.unmatched} unmatched` : ""}` : ""}`
+            ? `${stale ? "Last captured" : "As of"} ${asOf}${scope ? ` · ${scope.matched} stores mapped to your org${scope.unmatched ? ` · ${scope.unmatched} unmatched` : ""}` : ""}`
             : "Company snapshot, by your org"
         }
         actions={
@@ -166,6 +167,14 @@ export function KpiDashboardPage() {
           </Button>
         }
       />
+
+      {stale && (
+        <div className="mb-4 rounded-md bg-amber-50 px-4 py-2.5 text-xs text-amber-800 ring-1 ring-inset ring-amber-200">
+          <span className="font-semibold">Showing the last successful capture</span> — the live feed
+          is having trouble right now{q.data?.liveError ? `: ${q.data.liveError}` : "."} A fresh
+          capture runs automatically hourly (7 AM–2 PM CT); hit Refresh to try the live feed again.
+        </div>
+      )}
 
       {q.isLoading ? (
         <div className="space-y-3">
