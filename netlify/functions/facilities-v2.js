@@ -1649,6 +1649,115 @@ export const handler = async (event) => {
       });
     }
 
+    // ── EXTRACT PARTS ORDER (AI) ──
+    // Same idea as extractReplacement, but for a REPAIR PART receipt/invoice
+    // (a relay, valve, motor, belt — a component, not a whole replacement
+    // unit) so "Order Parts" can auto-fill itself. GM and above. Best-effort:
+    // any failure degrades to manual entry.
+    if (action === "extractParts" && event.httpMethod === "POST") {
+      if (roleLevel(role) > 4) {
+        return respond(403, { ok: false, message: "GM and above only." });
+      }
+      if (!process.env.ANTHROPIC_API_KEY) {
+        return respond(500, { ok: false, message: "Receipt reading isn't configured (ANTHROPIC_API_KEY missing)." });
+      }
+      const { invoice } = JSON.parse(event.body || "{}");
+      if (!invoice?.data) return respond(400, { ok: false, message: "No file provided." });
+
+      let supplierNames = [];
+      try {
+        const { data: vrows } = await supabase.from("vendors").select("name").eq("is_active", true).limit(300);
+        supplierNames = [...new Set((vrows || []).map((v) => v.name).filter(Boolean))];
+      } catch { /* optional */ }
+
+      const mediaType = String(invoice.type || "");
+      const isPdf = /pdf/i.test(mediaType);
+      const sourceBlock = isPdf
+        ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: invoice.data } }
+        : { type: "image", source: { type: "base64", media_type: mediaType.startsWith("image/") ? mediaType : "image/jpeg", data: invoice.data } };
+
+      const schema = {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          description: { type: "string" },
+          supplier: { type: "string" },
+          cost: { type: "number" },
+          eta: { type: "string" },
+          po_number: { type: "string" },
+        },
+        required: ["description", "supplier", "cost", "eta", "po_number"],
+      };
+
+      const knownSuppliers = supplierNames.length ? supplierNames.slice(0, 200).join("; ") : "(none on file)";
+      const prompt =
+        "This is a receipt / invoice / order confirmation for a REPAIR PART ordered for restaurant equipment " +
+        "(e.g. a compressor relay, gas valve, door gasket, belt, motor, control board — a component, NOT a whole replacement unit). " +
+        "Extract these fields:\n" +
+        "- description: the part name/number as it would be written on a work order (e.g. \"Compressor relay, gas valve #5R-2310\"). Combine the part name and its part/SKU number if both are shown.\n" +
+        "- supplier: the company it was ordered from. If it clearly matches one of these vendors on file, return that exact name: " + knownSuppliers + "\n" +
+        "- cost: the order total as a number, no currency symbol or commas.\n" +
+        "- eta: the expected arrival / delivery / ship date as YYYY-MM-DD (use the order date if that's all there is); empty string if unknown.\n" +
+        "- po_number: the PO or order number, if shown.\n" +
+        "Use an empty string for any text field you can't determine, and 0 for cost if you can't determine it.";
+
+      async function callClaude(structured) {
+        const messages = [{
+          role: "user",
+          content: [sourceBlock, { type: "text", text: structured ? prompt : prompt + "\n\nRespond with ONLY a JSON object with exactly these keys: description, supplier, cost, eta, po_number. No prose, no markdown." }],
+        }];
+        const payload = { model: "claude-sonnet-4-6", max_tokens: 1024, messages };
+        if (structured) payload.output_config = { format: { type: "json_schema", schema } };
+        return fetch("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": "2023-06-01" },
+          body: JSON.stringify(payload),
+        });
+      }
+
+      let apiRes;
+      try {
+        apiRes = await callClaude(true);
+        if (apiRes.status === 400) {
+          console.warn("[extractParts] structured output rejected; retrying prompt-only");
+          apiRes = await callClaude(false);
+        }
+      } catch (e) {
+        console.error("[extractParts] fetch threw", e);
+        return respond(502, { ok: false, message: "Couldn't reach the receipt reader." });
+      }
+      if (!apiRes.ok) {
+        const t = await apiRes.text().catch(() => "");
+        console.error("[extractParts] anthropic error", apiRes.status, t.slice(0, 300));
+        return respond(502, { ok: false, message: `Receipt reading failed (${apiRes.status}).` });
+      }
+      const apiJson = await apiRes.json();
+      if (apiJson?.stop_reason === "refusal") {
+        return respond(422, { ok: false, message: "The receipt couldn't be read automatically — enter the details manually." });
+      }
+      let parsed = {};
+      try {
+        const text = (apiJson?.content || []).find((b) => b.type === "text")?.text || "";
+        parsed = JSON.parse(text.replace(/^```(?:json)?\s*|\s*```$/g, "").trim());
+      } catch (e) {
+        console.error("[extractParts] parse failed", e);
+        return respond(502, { ok: false, message: "Couldn't read the receipt details." });
+      }
+      const clamp = (x, n = 200) => (x == null ? "" : String(x).slice(0, n));
+      const eta = /^\d{4}-\d{2}-\d{2}/.test(String(parsed.eta || "")) ? String(parsed.eta).slice(0, 10) : "";
+      const costNum = Number(parsed.cost);
+      return respond(200, {
+        ok: true,
+        extracted: {
+          description: clamp(parsed.description, 300),
+          supplier: clamp(parsed.supplier, 200),
+          cost: Number.isFinite(costNum) && costNum > 0 ? costNum : null,
+          eta,
+          po_number: clamp(parsed.po_number, 120),
+        },
+      });
+    }
+
     // ── LOG OFF-TICKET WORK ──
     // Record work a store had done WITHOUT a ticket. Creates a completed
     // (closed) work order flagged is_logged_offline, attaches the invoice, and
