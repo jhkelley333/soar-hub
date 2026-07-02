@@ -16,13 +16,28 @@ import type { FundStoreRow } from "./types";
 
 type Mode = { v: "list" } | { v: "validate"; store: FundStoreRow; offCycle?: boolean } | { v: "metrics" } | { v: "banks" };
 
-const DENOMS: { cents: number; label: string; kind: "Bill" | "Coin" }[] = [
-  { cents: 10000, label: "$100", kind: "Bill" }, { cents: 5000, label: "$50", kind: "Bill" },
-  { cents: 2000, label: "$20", kind: "Bill" }, { cents: 1000, label: "$10", kind: "Bill" },
-  { cents: 500, label: "$5", kind: "Bill" }, { cents: 100, label: "$1", kind: "Bill" },
-  { cents: 25, label: "25¢", kind: "Coin" }, { cents: 10, label: "10¢", kind: "Coin" },
-  { cents: 5, label: "5¢", kind: "Coin" }, { cents: 1, label: "1¢", kind: "Coin" },
+// Keys are strings (not the cents value) because rolls collide with bills
+// on value — a roll of quarters is $10.00, same as a $10 bill. The key is
+// what's stored in the validation's denominations jsonb (audit detail);
+// counted_cents carries the actual math server-side.
+const DENOMS: { key: string; cents: number; label: string; kind: "Bill" | "Roll" | "Coin" }[] = [
+  { key: "10000", cents: 10000, label: "$100", kind: "Bill" }, { key: "5000", cents: 5000, label: "$50", kind: "Bill" },
+  { key: "2000", cents: 2000, label: "$20", kind: "Bill" }, { key: "1000", cents: 1000, label: "$10", kind: "Bill" },
+  { key: "500", cents: 500, label: "$5", kind: "Bill" }, { key: "100", cents: 100, label: "$1", kind: "Bill" },
+  // Standard bank rolls: quarters $10, dimes $5, nickels $2, pennies 50¢.
+  { key: "roll_25", cents: 1000, label: "Quarters", kind: "Roll" }, { key: "roll_10", cents: 500, label: "Dimes", kind: "Roll" },
+  { key: "roll_5", cents: 200, label: "Nickels", kind: "Roll" }, { key: "roll_1", cents: 50, label: "Pennies", kind: "Roll" },
+  { key: "25", cents: 25, label: "25¢", kind: "Coin" }, { key: "10", cents: 10, label: "10¢", kind: "Coin" },
+  { key: "5", cents: 5, label: "5¢", kind: "Coin" }, { key: "1", cents: 1, label: "1¢", kind: "Coin" },
 ];
+
+// Row subtitle: rolls show their per-roll value; loose coins say "loose" so
+// nobody double-counts coins that are already in a counted roll.
+function denomSub(d: (typeof DENOMS)[number]): string {
+  if (d.kind === "Roll") return `Roll · ${usd(d.cents)}`;
+  if (d.kind === "Coin") return "Coin · loose";
+  return "Bill";
+}
 
 export function StoreFundsTab() {
   const [mode, setMode] = useState<Mode>({ v: "list" });
@@ -226,18 +241,33 @@ function Tile({ label, value, sub, tone = "neutral" }: { label: string; value: s
 function ValidatePanel({ store, toleranceCents, offCycle = false, onBack }: { store: FundStoreRow; toleranceCents: number; offCycle?: boolean; onBack: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const [counts, setCounts] = useState<Record<number, number>>({});
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  // Adding-machine drawers: count a drawer, hit + (or Enter), the amount is
+  // banked on the tape and the input clears for the next drawer.
+  const [drawers, setDrawers] = useState<number[]>([]);
+  const [drawerDraft, setDrawerDraft] = useState("");
   const [reason, setReason] = useState("");
   const bank = store.bank_amount_cents ?? 0;
-  const counted = useMemo(() => DENOMS.reduce((t, d) => t + (counts[d.cents] || 0) * d.cents, 0), [counts]);
+  const denomTotal = useMemo(() => DENOMS.reduce((t, d) => t + (counts[d.key] || 0) * d.cents, 0), [counts]);
+  const drawerTotal = useMemo(() => drawers.reduce((t, c) => t + c, 0), [drawers]);
+  const counted = denomTotal + drawerTotal;
   const variance = counted - bank;
   const over = Math.abs(variance) > toleranceCents;
-  const set = (cents: number, n: number) => setCounts((c) => ({ ...c, [cents]: Math.max(0, n) }));
+  const set = (key: string, n: number) => setCounts((c) => ({ ...c, [key]: Math.max(0, n) }));
+  const addDrawer = () => {
+    const cents = toCents(drawerDraft);
+    if (cents <= 0) return;
+    setDrawers((d) => [...d, cents]);
+    setDrawerDraft("");
+  };
 
   const submit = useMutation({
     mutationFn: () => submitFundValidation({
       store_number: store.store_number, counted_cents: counted,
-      denominations: Object.fromEntries(Object.entries(counts).filter(([, n]) => n > 0)),
+      denominations: {
+        ...Object.fromEntries(Object.entries(counts).filter(([, n]) => n > 0)),
+        ...(drawers.length ? { drawer_amounts_cents: drawers } : {}),
+      },
       reason: reason.trim() || undefined,
       is_off_cycle: offCycle || undefined,
     }),
@@ -277,28 +307,87 @@ function ValidatePanel({ store, toleranceCents, offCycle = false, onBack }: { st
         <div className="rounded-xl bg-white ring-1 ring-zinc-200">
           <div className="flex items-center justify-between border-b border-zinc-100 p-4">
             <h3 className="text-sm font-semibold text-midnight">Bank count</h3>
-            <button type="button" onClick={() => setCounts({})} className="text-xs font-semibold text-accent hover:underline">Reset</button>
+            <button type="button" onClick={() => { setCounts({}); setDrawers([]); setDrawerDraft(""); }} className="text-xs font-semibold text-accent hover:underline">Reset</button>
           </div>
+
+          {/* adding-machine drawer counter */}
+          <div className="border-b border-zinc-100 bg-zinc-50/60 px-4 py-3">
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Count by drawer</div>
+            <p className="mt-0.5 text-xs text-zinc-500">Count a drawer, type its total, hit <span className="font-semibold">+</span> (or Enter) — it's saved to the tape and you move to the next drawer.</p>
+            <div className="mt-2 flex items-center gap-2">
+              <div className="relative flex-1">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">$</span>
+                <input
+                  value={drawerDraft}
+                  onChange={(e) => setDrawerDraft(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addDrawer(); } }}
+                  placeholder="0.00"
+                  inputMode="decimal"
+                  className="h-9 w-full rounded-lg border border-zinc-200 pl-7 pr-3 text-sm tabular-nums focus:border-accent focus:outline-none"
+                />
+              </div>
+              <button
+                type="button"
+                onClick={addDrawer}
+                disabled={toCents(drawerDraft) <= 0}
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-accent text-white hover:brightness-110 disabled:opacity-40"
+                aria-label="Add drawer amount"
+              >
+                <Plus className="h-4 w-4" strokeWidth={2.5} />
+              </button>
+            </div>
+            {drawers.length > 0 && (
+              <div className="mt-2 space-y-1">
+                {drawers.map((c, i) => (
+                  <div key={i} className="flex items-center gap-2 text-sm">
+                    <span className="text-zinc-500">Drawer {i + 1}</span>
+                    <span className="flex-1 border-b border-dotted border-zinc-200" />
+                    <span className="font-semibold tabular-nums text-midnight">{usd(c)}</span>
+                    <button
+                      type="button"
+                      onClick={() => setDrawers((d) => d.filter((_, j) => j !== i))}
+                      className="grid h-6 w-6 place-items-center rounded text-zinc-400 hover:bg-zinc-100 hover:text-red-600"
+                      aria-label={`Remove drawer ${i + 1}`}
+                    >
+                      <Minus className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+                <div className="flex items-center justify-between border-t border-zinc-200 pt-1.5 text-sm">
+                  <span className="font-semibold text-zinc-600">{drawers.length} drawer{drawers.length === 1 ? "" : "s"}</span>
+                  <span className="font-bold tabular-nums text-midnight">{usd(drawerTotal)}</span>
+                </div>
+              </div>
+            )}
+          </div>
+
           <div className="divide-y divide-zinc-100">
             {DENOMS.map((d) => {
-              const n = counts[d.cents] || 0;
+              const n = counts[d.key] || 0;
               return (
-                <div key={d.cents} className="flex items-center gap-3 px-4 py-2.5">
-                  <span className="w-12 text-sm font-semibold text-midnight">{d.label}</span>
-                  <span className="flex-1 text-xs text-zinc-400">{d.kind}</span>
+                <div key={d.key} className="flex items-center gap-3 px-4 py-2.5">
+                  <span className="w-16 text-sm font-semibold text-midnight">{d.label}</span>
+                  <span className="flex-1 text-xs text-zinc-400">{denomSub(d)}</span>
                   <div className="flex items-center rounded-lg ring-1 ring-zinc-200">
-                    <button type="button" onClick={() => set(d.cents, n - 1)} className="grid h-8 w-8 place-items-center text-zinc-500 hover:text-midnight"><Minus className="h-4 w-4" /></button>
-                    <input value={n} onChange={(e) => set(d.cents, parseInt(e.target.value, 10) || 0)} className="h-8 w-12 border-x border-zinc-200 text-center text-sm tabular-nums focus:outline-none" inputMode="numeric" />
-                    <button type="button" onClick={() => set(d.cents, n + 1)} className="grid h-8 w-8 place-items-center text-zinc-500 hover:text-midnight"><Plus className="h-4 w-4" /></button>
+                    <button type="button" onClick={() => set(d.key, n - 1)} className="grid h-8 w-8 place-items-center text-zinc-500 hover:text-midnight"><Minus className="h-4 w-4" /></button>
+                    <input value={n} onChange={(e) => set(d.key, parseInt(e.target.value, 10) || 0)} className="h-8 w-12 border-x border-zinc-200 text-center text-sm tabular-nums focus:outline-none" inputMode="numeric" />
+                    <button type="button" onClick={() => set(d.key, n + 1)} className="grid h-8 w-8 place-items-center text-zinc-500 hover:text-midnight"><Plus className="h-4 w-4" /></button>
                   </div>
                   <span className="w-20 text-right text-sm tabular-nums text-zinc-500">{n > 0 ? usd(n * d.cents) : "$0.00"}</span>
                 </div>
               );
             })}
           </div>
-          <div className="flex items-center justify-between border-t border-zinc-200 bg-zinc-50 px-4 py-3">
-            <span className="text-sm font-semibold text-midnight">Counted total</span>
-            <span className="text-lg font-bold tabular-nums text-midnight">{usd(counted)}</span>
+          <div className="border-t border-zinc-200 bg-zinc-50 px-4 py-3">
+            {drawers.length > 0 && denomTotal > 0 && (
+              <div className="mb-1.5 flex items-center justify-between text-xs text-zinc-500">
+                <span>Drawers {usd(drawerTotal)} + denominations {usd(denomTotal)}</span>
+              </div>
+            )}
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-semibold text-midnight">Counted total</span>
+              <span className="text-lg font-bold tabular-nums text-midnight">{usd(counted)}</span>
+            </div>
           </div>
         </div>
 
