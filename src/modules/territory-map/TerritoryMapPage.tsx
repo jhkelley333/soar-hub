@@ -3,8 +3,10 @@
 // hand-maintained Google My Maps: reassign a district's DO and the pins
 // recolor on their own; no manual pin placement.
 //
-// Phase 2 scope: map + colored pins + click popup. The legend/filter panel
-// (Phase 3) and clustering (Phase 4) layer on top of the same data.
+// Phase 3: legend + filter side panel — DO list with counts and color
+// swatches (click to show/hide that DO's pins), Region/Area/District
+// cascade filters, and an "X of Y shown" summary. All client-side on the
+// one territory-map payload. Clustering is Phase 4.
 //
 // Reads cached coordinates only (stores.latitude/longitude, migration 0121)
 // — geocoding happens on write (org-mgmt) or via the geocode-missing batch,
@@ -12,9 +14,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { APIProvider, Map, AdvancedMarker, Pin, InfoWindow, useMap } from "@vis.gl/react-google-maps";
-import { MapPin } from "lucide-react";
+import { APIProvider, Map as GoogleMap, AdvancedMarker, Pin, InfoWindow, useMap } from "@vis.gl/react-google-maps";
+import { Eye, EyeOff, MapPin } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
+import { cn } from "@/lib/cn";
 import { fetchTerritoryMap, type TerritoryStore } from "./api";
 import { colorsForDos, DO_OPEN_COLOR } from "./colors";
 
@@ -27,6 +30,12 @@ const MAP_ID = (import.meta.env.VITE_GOOGLE_MAPS_MAP_ID as string | undefined) |
 const DFW_CENTER = { lat: 32.9, lng: -97.03 };
 const DEFAULT_ZOOM = 9;
 
+// Legend key for stores whose district has no DO ("DO OPEN"). A sentinel
+// string keeps the toggle set uniform (Set<string> of DO keys).
+const OPEN_KEY = "__open__";
+
+const ALL = "all";
+
 export function TerritoryMapPage() {
   const q = useQuery({
     queryKey: ["territory-map"],
@@ -35,15 +44,97 @@ export function TerritoryMapPage() {
     refetchOnWindowFocus: false,
   });
 
-  const stores = useMemo(
+  // Every store with cached coordinates — the mappable set.
+  const mapped = useMemo(
     () => (q.data?.stores ?? []).filter((s) => s.latitude != null && s.longitude != null),
     [q.data],
   );
   const doColors = useMemo(
-    () => colorsForDos(stores.map((s) => s.do_id).filter(Boolean) as string[]),
-    [stores],
+    () => colorsForDos(mapped.map((s) => s.do_id).filter(Boolean) as string[]),
+    [mapped],
   );
+
+  // Org cascade filters. Changing a parent resets its children so the
+  // narrower selection can never point outside the parent.
+  const [region, setRegion] = useState(ALL);
+  const [area, setArea] = useState(ALL);
+  const [district, setDistrict] = useState(ALL);
+  // DO visibility toggles — keys are DO profile ids (or OPEN_KEY).
+  const [hiddenDos, setHiddenDos] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<TerritoryStore | null>(null);
+
+  // Options for each select, narrowed by the levels above it.
+  const regionOptions = useMemo(() => uniqueOptions(mapped, "region_id", "region_name"), [mapped]);
+  const areaPool = useMemo(
+    () => (region === ALL ? mapped : mapped.filter((s) => s.region_id === region)),
+    [mapped, region],
+  );
+  const areaOptions = useMemo(() => uniqueOptions(areaPool, "area_id", "area_name"), [areaPool]);
+  const districtPool = useMemo(
+    () => (area === ALL ? areaPool : areaPool.filter((s) => s.area_id === area)),
+    [areaPool, area],
+  );
+  const districtOptions = useMemo(
+    () => uniqueOptions(districtPool, "district_id", "district_name"),
+    [districtPool],
+  );
+
+  // Org-filtered set (before DO toggles) — the legend counts key off this,
+  // so narrowing to a region shows each DO's store count within it.
+  const orgFiltered = useMemo(
+    () => (district === ALL ? districtPool : districtPool.filter((s) => s.district_id === district)),
+    [districtPool, district],
+  );
+
+  // Legend rows: DOs present in the org-filtered set, alphabetical, with
+  // DO OPEN pinned to the bottom.
+  const legend = useMemo(() => {
+    const byKey = new Map<string, { key: string; name: string; color: string; count: number }>();
+    for (const s of orgFiltered) {
+      const key = s.do_id ?? OPEN_KEY;
+      const entry = byKey.get(key);
+      if (entry) entry.count++;
+      else {
+        byKey.set(key, {
+          key,
+          name: s.do_id ? s.do_name ?? "Unknown DO" : "DO OPEN",
+          color: s.do_id ? doColors.get(s.do_id) ?? DO_OPEN_COLOR : DO_OPEN_COLOR,
+          count: 1,
+        });
+      }
+    }
+    const rows = Array.from(byKey.values()).sort((a, b) => a.name.localeCompare(b.name));
+    const open = rows.findIndex((r) => r.key === OPEN_KEY);
+    if (open !== -1) rows.push(rows.splice(open, 1)[0]);
+    return rows;
+  }, [orgFiltered, doColors]);
+
+  // What actually renders: org filters AND DO toggles.
+  const visible = useMemo(
+    () => orgFiltered.filter((s) => !hiddenDos.has(s.do_id ?? OPEN_KEY)),
+    [orgFiltered, hiddenDos],
+  );
+
+  // Don't leave a popup floating for a pin that was just filtered away.
+  useEffect(() => {
+    if (selected && !visible.some((s) => s.id === selected.id)) setSelected(null);
+  }, [visible, selected]);
+
+  const toggleDo = (key: string) =>
+    setHiddenDos((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  const resetAll = () => {
+    setRegion(ALL);
+    setArea(ALL);
+    setDistrict(ALL);
+    setHiddenDos(new Set());
+  };
+  const filtersActive = region !== ALL || area !== ALL || district !== ALL || hiddenDos.size > 0;
 
   if (!MAPS_KEY) {
     return (
@@ -65,7 +156,7 @@ export function TerritoryMapPage() {
         title="Territory Map"
         description={
           q.data
-            ? `${stores.length} of ${q.data.total} stores mapped` +
+            ? `${visible.length} of ${q.data.total} stores shown` +
               (q.data.missing_coords > 0 ? ` · ${q.data.missing_coords} missing coordinates` : "")
             : "Stores colored by DO, live from the org data."
         }
@@ -83,51 +174,173 @@ export function TerritoryMapPage() {
       )}
 
       {q.data && (
-        <div className="min-h-[480px] flex-1 overflow-hidden rounded-xl border border-zinc-200">
-          <APIProvider apiKey={MAPS_KEY}>
-            <Map
-              mapId={MAP_ID}
-              defaultCenter={DFW_CENTER}
-              defaultZoom={DEFAULT_ZOOM}
-              gestureHandling="greedy"
-              disableDefaultUI={false}
-              className="h-full w-full"
-            >
-              <FitToStores stores={stores} />
-              {stores.map((s) => (
-                <AdvancedMarker
-                  key={s.id}
-                  position={{ lat: s.latitude!, lng: s.longitude! }}
-                  title={`#${s.number} ${s.name}`}
-                  onClick={() => setSelected(s)}
-                >
-                  <Pin
-                    background={s.do_id ? doColors.get(s.do_id) : DO_OPEN_COLOR}
-                    borderColor="#ffffff"
-                    glyphColor="#ffffff"
-                    scale={0.9}
-                  />
-                </AdvancedMarker>
-              ))}
-              {selected && selected.latitude != null && selected.longitude != null && (
-                <InfoWindow
-                  position={{ lat: selected.latitude, lng: selected.longitude }}
-                  pixelOffset={[0, -36]}
-                  onCloseClick={() => setSelected(null)}
-                >
-                  <StorePopup store={selected} color={selected.do_id ? doColors.get(selected.do_id)! : DO_OPEN_COLOR} />
-                </InfoWindow>
+        <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[300px_1fr]">
+          {/* legend + filters */}
+          <div className="flex min-h-0 flex-col overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
+            <div className="space-y-2 border-b border-zinc-100 p-3">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Filters</span>
+                {filtersActive && (
+                  <button type="button" onClick={resetAll} className="text-xs font-semibold text-accent hover:underline">
+                    Reset
+                  </button>
+                )}
+              </div>
+              <FilterSelect
+                label="Region"
+                value={region}
+                options={regionOptions}
+                onChange={(v) => { setRegion(v); setArea(ALL); setDistrict(ALL); }}
+              />
+              <FilterSelect
+                label="Area"
+                value={area}
+                options={areaOptions}
+                onChange={(v) => { setArea(v); setDistrict(ALL); }}
+              />
+              <FilterSelect
+                label="District"
+                value={district}
+                options={districtOptions}
+                onChange={setDistrict}
+              />
+            </div>
+
+            <div className="flex items-center justify-between px-3 pb-1 pt-3">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+                DOs ({legend.length})
+              </span>
+              <span className="text-[11px] tabular-nums text-zinc-400">
+                {visible.length} of {q.data.total} shown
+              </span>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
+              {legend.map((row) => {
+                const hidden = hiddenDos.has(row.key);
+                return (
+                  <button
+                    key={row.key}
+                    type="button"
+                    onClick={() => toggleDo(row.key)}
+                    className={cn(
+                      "flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm transition hover:bg-zinc-50",
+                      hidden && "opacity-40",
+                    )}
+                    title={hidden ? "Show this DO's stores" : "Hide this DO's stores"}
+                  >
+                    <span
+                      className="h-3.5 w-3.5 shrink-0 rounded-full ring-1 ring-black/10"
+                      style={{ background: row.color }}
+                    />
+                    <span className={cn("min-w-0 flex-1 truncate font-medium text-midnight", hidden && "line-through")}>
+                      {row.name}
+                    </span>
+                    <span className="tabular-nums text-xs text-zinc-500">({row.count})</span>
+                    {hidden
+                      ? <EyeOff className="h-3.5 w-3.5 shrink-0 text-zinc-400" strokeWidth={2} />
+                      : <Eye className="h-3.5 w-3.5 shrink-0 text-zinc-300" strokeWidth={2} />}
+                  </button>
+                );
+              })}
+              {legend.length === 0 && (
+                <p className="px-2 py-4 text-center text-xs text-zinc-400">No stores match these filters.</p>
               )}
-            </Map>
-          </APIProvider>
+            </div>
+          </div>
+
+          {/* map */}
+          <div className="min-h-[480px] overflow-hidden rounded-xl border border-zinc-200">
+            <APIProvider apiKey={MAPS_KEY}>
+              <GoogleMap
+                mapId={MAP_ID}
+                defaultCenter={DFW_CENTER}
+                defaultZoom={DEFAULT_ZOOM}
+                gestureHandling="greedy"
+                disableDefaultUI={false}
+                className="h-full w-full"
+              >
+                <FitToStores stores={mapped} />
+                {visible.map((s) => (
+                  <AdvancedMarker
+                    key={s.id}
+                    position={{ lat: s.latitude!, lng: s.longitude! }}
+                    title={`#${s.number} ${s.name}`}
+                    onClick={() => setSelected(s)}
+                  >
+                    <Pin
+                      background={s.do_id ? doColors.get(s.do_id) : DO_OPEN_COLOR}
+                      borderColor="#ffffff"
+                      glyphColor="#ffffff"
+                      scale={0.9}
+                    />
+                  </AdvancedMarker>
+                ))}
+                {selected && selected.latitude != null && selected.longitude != null && (
+                  <InfoWindow
+                    position={{ lat: selected.latitude, lng: selected.longitude }}
+                    pixelOffset={[0, -36]}
+                    onCloseClick={() => setSelected(null)}
+                  >
+                    <StorePopup store={selected} color={selected.do_id ? doColors.get(selected.do_id)! : DO_OPEN_COLOR} />
+                  </InfoWindow>
+                )}
+              </GoogleMap>
+            </APIProvider>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-// Fit the viewport to the loaded pins once per data load. Skipped for a
-// single store (bounds-fit would zoom to max); DFW default covers that.
+// Distinct (id, name) pairs present in a store list, name-sorted. Stores
+// missing that org level (shouldn't happen, but nullable in the schema)
+// simply don't contribute an option.
+function uniqueOptions(
+  stores: TerritoryStore[],
+  idKey: "region_id" | "area_id" | "district_id",
+  nameKey: "region_name" | "area_name" | "district_name",
+): { id: string; name: string }[] {
+  const byId = new Map<string, string>();
+  for (const s of stores) {
+    const id = s[idKey];
+    if (id && !byId.has(id)) byId.set(id, s[nameKey] ?? id);
+  }
+  return Array.from(byId, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function FilterSelect({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  options: { id: string; name: string }[];
+  onChange: (v: string) => void;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-0.5 block text-[10px] font-semibold uppercase tracking-wide text-zinc-400">{label}</span>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        className="block w-full rounded-lg border-0 bg-white px-2.5 py-1.5 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+      >
+        <option value={ALL}>All {label.toLowerCase()}s</option>
+        {options.map((o) => (
+          <option key={o.id} value={o.id}>{o.name}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+// Fit the viewport to the full mapped set once per data load — deliberately
+// NOT refit on filter/toggle changes, so narrowing the list doesn't yank
+// the camera around. Skipped for a single store (bounds-fit would zoom to
+// max); the DFW default covers that.
 function FitToStores({ stores }: { stores: TerritoryStore[] }) {
   const map = useMap();
   useEffect(() => {
