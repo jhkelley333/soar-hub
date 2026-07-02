@@ -6,15 +6,21 @@
 // Phase 3: legend + filter side panel — DO list with counts and color
 // swatches (click to show/hide that DO's pins), Region/Area/District
 // cascade filters, and an "X of Y shown" summary. All client-side on the
-// one territory-map payload. Clustering is Phase 4.
+// one territory-map payload.
+//
+// Phase 4: clustering — the dense DFW core collapses into count bubbles
+// (via @googlemaps/markerclusterer) until zoomed in. Clusters respect the
+// active filters/toggles automatically: only visible stores have markers,
+// and the clusterer re-groups whenever that set changes.
 //
 // Reads cached coordinates only (stores.latitude/longitude, migration 0121)
 // — geocoding happens on write (org-mgmt) or via the geocode-missing batch,
 // never on render.
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { APIProvider, Map as GoogleMap, AdvancedMarker, Pin, InfoWindow, useMap } from "@vis.gl/react-google-maps";
+import { MarkerClusterer, type Marker } from "@googlemaps/markerclusterer";
 import { Eye, EyeOff, MapPin } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { cn } from "@/lib/cn";
@@ -260,21 +266,7 @@ export function TerritoryMapPage() {
                 className="h-full w-full"
               >
                 <FitToStores stores={mapped} />
-                {visible.map((s) => (
-                  <AdvancedMarker
-                    key={s.id}
-                    position={{ lat: s.latitude!, lng: s.longitude! }}
-                    title={`#${s.number} ${s.name}`}
-                    onClick={() => setSelected(s)}
-                  >
-                    <Pin
-                      background={s.do_id ? doColors.get(s.do_id) : DO_OPEN_COLOR}
-                      borderColor="#ffffff"
-                      glyphColor="#ffffff"
-                      scale={0.9}
-                    />
-                  </AdvancedMarker>
-                ))}
+                <ClusteredStoreMarkers stores={visible} doColors={doColors} onSelect={setSelected} />
                 {selected && selected.latitude != null && selected.longitude != null && (
                   <InfoWindow
                     position={{ lat: selected.latitude, lng: selected.longitude }}
@@ -350,6 +342,91 @@ function FitToStores({ stores }: { stores: TerritoryStore[] }) {
     map.fitBounds(bounds, 48);
   }, [map, stores]);
   return null;
+}
+
+// Clustered store pins. React renders the AdvancedMarkers (so each keeps
+// its DO color + click handler); the clusterer takes over positioning —
+// collapsing dense areas into count bubbles — via collected marker refs.
+// Filters/toggles compose for free: a filtered-out store's marker unmounts,
+// its ref callback fires with null, and the clusterer re-groups without it.
+function ClusteredStoreMarkers({
+  stores,
+  doColors,
+  onSelect,
+}: {
+  stores: TerritoryStore[];
+  doColors: globalThis.Map<string, string>;
+  onSelect: (s: TerritoryStore) => void;
+}) {
+  const map = useMap();
+  const [markers, setMarkers] = useState<Record<string, Marker>>({});
+
+  // One clusterer per map instance. The renderer draws the count bubble as
+  // an AdvancedMarkerElement (a mapId map shouldn't mix in legacy markers).
+  const clusterer = useMemo(() => {
+    if (!map) return null;
+    return new MarkerClusterer({
+      map,
+      renderer: {
+        render: ({ count, position }) => {
+          const el = document.createElement("div");
+          el.style.cssText =
+            "display:grid;place-items:center;border-radius:9999px;" +
+            "background:#1C3D5C;color:#fff;font:600 12px/1 system-ui,sans-serif;" +
+            "border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35);" +
+            `width:${Math.min(56, 30 + Math.floor(Math.log10(count) * 10))}px;` +
+            `height:${Math.min(56, 30 + Math.floor(Math.log10(count) * 10))}px;`;
+          el.textContent = String(count);
+          return new google.maps.marker.AdvancedMarkerElement({
+            position,
+            content: el,
+            zIndex: Number(google.maps.Marker.MAX_ZINDEX) + count,
+          });
+        },
+      },
+    });
+  }, [map]);
+
+  // Feed the clusterer whatever markers currently exist.
+  useEffect(() => {
+    if (!clusterer) return;
+    clusterer.clearMarkers();
+    clusterer.addMarkers(Object.values(markers));
+  }, [clusterer, markers]);
+
+  // Tear the clusterer down with the map (StrictMode remounts, page nav).
+  useEffect(() => () => clusterer?.setMap(null), [clusterer]);
+
+  const setMarkerRef = useCallback((marker: Marker | null, id: string) => {
+    setMarkers((prev) => {
+      if (marker ? prev[id] === marker : !(id in prev)) return prev;
+      const next = { ...prev };
+      if (marker) next[id] = marker;
+      else delete next[id];
+      return next;
+    });
+  }, []);
+
+  return (
+    <>
+      {stores.map((s) => (
+        <AdvancedMarker
+          key={s.id}
+          position={{ lat: s.latitude!, lng: s.longitude! }}
+          title={`#${s.number} ${s.name}`}
+          onClick={() => onSelect(s)}
+          ref={(marker) => setMarkerRef(marker, s.id)}
+        >
+          <Pin
+            background={s.do_id ? doColors.get(s.do_id) : DO_OPEN_COLOR}
+            borderColor="#ffffff"
+            glyphColor="#ffffff"
+            scale={0.9}
+          />
+        </AdvancedMarker>
+      ))}
+    </>
+  );
 }
 
 function StorePopup({ store, color }: { store: TerritoryStore; color: string }) {
