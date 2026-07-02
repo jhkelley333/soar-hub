@@ -197,7 +197,11 @@ export function fetchFundMetrics(): Promise<FundMetrics> {
 export function submitFundValidation(input: {
   store_number: string;
   counted_cents: number;
-  denominations?: Record<string, number>;
+  // Per-denomination counts keyed by denomination key (bills/rolls/loose
+  // coins), plus an optional drawer_amounts_cents tape from the
+  // adding-machine drawer counter. Free-form jsonb server-side (audit
+  // detail); counted_cents carries the math.
+  denominations?: Record<string, number | number[]>;
   reason?: string;
   /** True for a surprise audit that should NOT replace the required monthly validation. */
   is_off_cycle?: boolean;
