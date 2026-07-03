@@ -23,37 +23,63 @@ import {
 import type { DistrictStoreRow } from "./types";
 
 type Filter = "all" | "over" | "due";
+// The view's time horizon. "mtd" reads the PTD band — SONIC's 4-week
+// period-to-date IS the operational month-to-date; MTD is just the label
+// the field uses for it.
+type Horizon = "day" | "wtd" | "mtd";
 // Column-header sort. "worst first" defaults to variance desc; every column
-// (Store, Day/WTD/PTD %, Var, $ Over, Hrs, Status) is independently sortable
-// by clicking its header, matching the Labor v2 table.
-type SortKey = "store" | "day" | "wtd" | "ptd" | "var" | "over" | "hrs" | "status";
+// (Store, Day/WTD/MTD %, Var, $ Over, Hrs, Status) is independently sortable
+// by clicking its header, matching the Labor v2 table. Var/$ Over sort by
+// the ACTIVE horizon's values.
+type SortKey = "store" | "day" | "wtd" | "mtd" | "var" | "over" | "hrs" | "status";
 type SortDir = "asc" | "desc";
 interface SortState { key: SortKey; dir: SortDir }
 
+const HORIZON_LABEL: Record<Horizon, string> = { day: "Day %", wtd: "WTD %", mtd: "MTD %" };
+
+// The two non-active horizons, in fixed day → wtd → mtd order.
+function altHorizons(active: Horizon): Horizon[] {
+  return (["day", "wtd", "mtd"] as Horizon[]).filter((h) => h !== active);
+}
+
+// One horizon's slice of a store row. Hours-over only exists for the day
+// band (the sheet doesn't carry cumulative hours), hence null elsewhere.
+function bandOf(row: DistrictStoreRow, h: Horizon) {
+  if (h === "wtd") {
+    return { pct: row.wtd_labor_pct, variance: row.wtd_variance_pts, dollars: row.wtd_dollars_over_chart, hours: null, status: row.wtd_status };
+  }
+  if (h === "mtd") {
+    return { pct: row.ptd_labor_pct, variance: row.ptd_variance_pts, dollars: row.ptd_dollars_over_chart, hours: null, status: row.ptd_status };
+  }
+  return { pct: row.labor_pct, variance: row.variance_pts, dollars: row.dollars_over_chart, hours: row.hours_over_chart, status: row.status };
+}
+
 // Rank a row's status so "sort by Status" surfaces the most actionable rows
 // first when sorted desc: a note due outranks an unexplained over-chart
-// store, which outranks an explained one, which outranks on-chart.
-function statusRank(row: DistrictStoreRow): number {
+// store, which outranks an explained one, which outranks on-chart. The
+// over-chart part keys off the active horizon; note duty is always daily.
+function statusRank(row: DistrictStoreRow, h: Horizon): number {
   if (row.note_due) return 3;
-  if (row.status === "over" && !row.explained) return 2;
+  if (bandOf(row, h).status === "over" && !row.explained) return 2;
   if (row.explained) return 1;
   return 0;
 }
-function sortValue(row: DistrictStoreRow, key: SortKey): number | string {
+function sortValue(row: DistrictStoreRow, key: SortKey, h: Horizon): number | string {
   switch (key) {
     case "store": return String(row.store_number);
     case "day": return row.labor_pct ?? -Infinity;
     case "wtd": return row.wtd_labor_pct ?? -Infinity;
-    case "ptd": return row.ptd_labor_pct ?? -Infinity;
-    case "var": return row.variance_pts ?? -Infinity;
-    case "over": return row.dollars_over_chart ?? -Infinity;
+    case "mtd": return row.ptd_labor_pct ?? -Infinity;
+    case "var": return bandOf(row, h).variance ?? -Infinity;
+    case "over": return bandOf(row, h).dollars ?? -Infinity;
     case "hrs": return row.hours_over_chart ?? -Infinity;
-    case "status": return statusRank(row);
+    case "status": return statusRank(row, h);
   }
 }
 
 export function DistrictLaborView() {
   const [filter, setFilter] = useState<Filter>("all");
+  const [horizon, setHorizon] = useState<Horizon>("day");
   const [sort, setSort] = useState<SortState>({ key: "var", dir: "desc" });
   // "" = all districts the caller can see (the default rollup). SDO/RVP can
   // narrow to one district; a single-district DO only ever has one.
@@ -79,17 +105,17 @@ export function DistrictLaborView() {
 
   const rows = useMemo(() => {
     let r = [...(data?.stores ?? [])];
-    if (filter === "over") r = r.filter((s) => s.status === "over");
+    if (filter === "over") r = r.filter((s) => bandOf(s, horizon).status === "over");
     if (filter === "due") r = r.filter((s) => s.note_due);
     r.sort((a, b) => {
-      const av = sortValue(a, sort.key), bv = sortValue(b, sort.key);
+      const av = sortValue(a, sort.key, horizon), bv = sortValue(b, sort.key, horizon);
       const cmp = typeof av === "string" ? av.localeCompare(bv as string, undefined, { numeric: true }) : (av as number) - (bv as number);
       return sort.dir === "asc" ? cmp : -cmp;
     });
     return r;
-  }, [data?.stores, filter, sort]);
+  }, [data?.stores, filter, sort, horizon]);
 
-  const overCount = (data?.stores ?? []).filter((s) => s.status === "over").length;
+  const overCount = (data?.stores ?? []).filter((s) => bandOf(s, horizon).status === "over").length;
   const dueCount = (data?.stores ?? []).filter((s) => s.note_due).length;
 
   return (
@@ -107,7 +133,17 @@ export function DistrictLaborView() {
             : undefined
         }
         actions={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Segmented<Horizon>
+              dense
+              value={horizon}
+              onChange={setHorizon}
+              options={[
+                { value: "day", label: "Day" },
+                { value: "wtd", label: "WTD" },
+                { value: "mtd", label: "MTD" },
+              ]}
+            />
             {multiDistrict && (
               <select
                 value={district}
@@ -166,12 +202,12 @@ export function DistrictLaborView() {
               tone={rollup.wtd_dollars_over_chart > 0 ? "over" : "on"}
             />
             <Tile
-              label="PTD Labor %"
+              label="MTD Labor %"
               value={fmtPct(rollup.ptd_labor_pct)}
               subOverride={
                 rollup.ptd_dollars_over_chart
                   ? `${fmtSignedMoney(rollup.ptd_dollars_over_chart)} over · period-to-date`
-                  : "period to date · district avg"
+                  : "month (period) to date · district avg"
               }
               tone={rollup.ptd_dollars_over_chart > 0 ? "over" : "on"}
             />
@@ -202,7 +238,9 @@ export function DistrictLaborView() {
           {/* Store list */}
           <div className="rounded-xl bg-white ring-1 ring-zinc-200">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-100 p-4">
-              <h3 className="text-sm font-semibold text-midnight">Stores · yesterday</h3>
+              <h3 className="text-sm font-semibold text-midnight">
+                {horizon === "day" ? "Stores · yesterday" : horizon === "wtd" ? "Stores · week to date" : "Stores · month to date (period)"}
+              </h3>
               <div className="flex flex-wrap items-center gap-2">
                 <Segmented<Filter>
                   dense
@@ -228,9 +266,12 @@ export function DistrictLaborView() {
                   <span className="w-1" />
                   <span className="w-9" />
                   <SortTh label="Store" k="store" sort={sort} onSort={toggleSort} className="min-w-0 flex-1" />
-                  <SortTh label="Day %" k="day" sort={sort} onSort={toggleSort} className="w-16" right />
-                  <SortTh label="WTD %" k="wtd" sort={sort} onSort={toggleSort} className="hidden w-14 lg:block" right />
-                  <SortTh label="PTD %" k="ptd" sort={sort} onSort={toggleSort} className="hidden w-14 lg:block" right />
+                  {/* Primary column = the active horizon; the two small
+                      lg-only columns carry the other two for context. */}
+                  <SortTh label={HORIZON_LABEL[horizon]} k={horizon} sort={sort} onSort={toggleSort} className="w-16" right />
+                  {altHorizons(horizon).map((h) => (
+                    <SortTh key={h} label={HORIZON_LABEL[h]} k={h} sort={sort} onSort={toggleSort} className="hidden w-14 lg:block" right />
+                  ))}
                   <SortTh label="Var" k="var" sort={sort} onSort={toggleSort} className="hidden w-14 sm:block" right />
                   <SortTh label="$ Over" k="over" sort={sort} onSort={toggleSort} className="hidden w-20 sm:block" right />
                   <SortTh label="Hrs" k="hrs" sort={sort} onSort={toggleSort} className="hidden w-14 sm:block" right />
@@ -238,7 +279,7 @@ export function DistrictLaborView() {
                 </div>
                 <div className="divide-y divide-zinc-100">
                   {rows.map((s) => (
-                    <StoreRow key={s.store_number} row={s} />
+                    <StoreRow key={s.store_number} row={s} horizon={horizon} />
                   ))}
                 </div>
               </>
@@ -310,16 +351,21 @@ function Tile({
   );
 }
 
-function StoreRow({ row }: { row: DistrictStoreRow }) {
-  const sd = statusDisplay(row.status);
-  const over = row.status === "over";
+function StoreRow({ row, horizon }: { row: DistrictStoreRow; horizon: Horizon }) {
+  const band = bandOf(row, horizon);
+  const sd = statusDisplay(band.status);
+  const over = band.status === "over";
   const [open, setOpen] = useState(false);
+  // Note duty is always about yesterday's number regardless of horizon —
+  // reviews are filed per business date.
   const statusLabel = row.note_due ? "Note due" : row.explained ? "Explained" : sd.label;
   const statusClasses = row.note_due
     ? "bg-sonic-50 text-sonic-700"
     : row.explained
     ? "bg-accent-100 text-accent-700"
     : sd.bg + " " + sd.text;
+  const altPct = (h: Horizon) =>
+    h === "day" ? row.labor_pct : h === "wtd" ? row.wtd_labor_pct : row.ptd_labor_pct;
 
   return (
     <div>
@@ -327,7 +373,7 @@ function StoreRow({ row }: { row: DistrictStoreRow }) {
         onClick={() => row.note && setOpen((o) => !o)}
         className={cn("flex w-full items-center gap-3 p-4 text-left", row.note && "hover:bg-zinc-50")}
       >
-        {/* over-chart accent rail */}
+        {/* over-chart accent rail — keyed to the active horizon */}
         <span className={cn("h-10 w-1 rounded-full", over ? "bg-sonic" : "bg-transparent")} />
         {/* store badge — leading 2 digits of the DI, matching the design */}
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-zinc-100 text-xs font-semibold tabular-nums text-zinc-600">
@@ -344,22 +390,21 @@ function StoreRow({ row }: { row: DistrictStoreRow }) {
           </div>
         </div>
         <div className={cn("w-16 text-right text-sm font-bold tabular-nums", over ? "text-sonic" : "text-ok")}>
-          {fmtPct(row.labor_pct)}
+          {fmtPct(band.pct)}
         </div>
-        <div className="hidden w-14 text-right text-xs tabular-nums text-zinc-500 lg:block">
-          {fmtPct(row.wtd_labor_pct)}
-        </div>
-        <div className="hidden w-14 text-right text-xs tabular-nums text-zinc-500 lg:block">
-          {fmtPct(row.ptd_labor_pct)}
-        </div>
+        {altHorizons(horizon).map((h) => (
+          <div key={h} className="hidden w-14 text-right text-xs tabular-nums text-zinc-500 lg:block">
+            {fmtPct(altPct(h))}
+          </div>
+        ))}
         <div className={cn("hidden w-14 text-right text-xs tabular-nums sm:block", over ? "text-sonic-700" : "text-zinc-500")}>
-          {fmtSignedPts(row.variance_pts).replace(" pts", "")}
+          {fmtSignedPts(band.variance).replace(" pts", "")}
         </div>
         <div className={cn("hidden w-20 text-right text-xs tabular-nums sm:block", over ? "text-sonic-700" : "text-zinc-500")}>
-          {fmtSignedMoney(row.dollars_over_chart)}
+          {fmtSignedMoney(band.dollars)}
         </div>
         <div className="hidden w-14 text-right text-xs tabular-nums text-zinc-500 sm:block">
-          {fmtSignedHours(row.hours_over_chart).replace(" hrs", "")}
+          {band.hours != null ? fmtSignedHours(band.hours).replace(" hrs", "") : "—"}
         </div>
         <span className={cn("ml-2 inline-flex shrink-0 items-center gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide", statusClasses)}>
           <span className={cn("h-1.5 w-1.5 rounded-full", row.note_due ? "bg-warn" : sd.dot)} />
