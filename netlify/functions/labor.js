@@ -385,10 +385,16 @@ async function districtView(supa, user, params) {
       hours_over_chart: s.daily_hours_over_chart,
       // Cumulative bands through the anchor date (WTD = Mon-to-date; PTD =
       // SONIC's 4-week period-to-date, the operational "month-to-date").
+      // Variance + status per band so the UI's Day/WTD/MTD view switch can
+      // re-key the over-chart highlighting without needing the goal itself.
       wtd_labor_pct: s.wtd_labor_pct,
       ptd_labor_pct: s.ptd_labor_pct,
       wtd_dollars_over_chart: s.wtd_dollars_over_chart,
       ptd_dollars_over_chart: s.ptd_dollars_over_chart,
+      wtd_variance_pts: s.wtd_labor_pct != null && goal != null ? round1(s.wtd_labor_pct - goal) : null,
+      ptd_variance_pts: s.ptd_labor_pct != null && goal != null ? round1(s.ptd_labor_pct - goal) : null,
+      wtd_status: chartStatus(s.wtd_labor_pct, goal),
+      ptd_status: chartStatus(s.ptd_labor_pct, goal),
       status,                                          // on | over | unknown
       explained: !!review,
       note_due: status === "over" && !review,

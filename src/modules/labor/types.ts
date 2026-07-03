@@ -67,11 +67,16 @@ export interface DistrictStoreRow {
   variance_pts: number | null;
   dollars_over_chart: number | null;
   hours_over_chart: number | null;
-  // Cumulative labor % through the anchor date.
+  // Cumulative labor % through the anchor date, with per-band variance +
+  // status so the Day/WTD/MTD view switch can re-key over-chart highlighting.
   wtd_labor_pct: number | null;
   ptd_labor_pct: number | null;
   wtd_dollars_over_chart: number | null;
   ptd_dollars_over_chart: number | null;
+  wtd_variance_pts: number | null;
+  ptd_variance_pts: number | null;
+  wtd_status: ChartStatus;
+  ptd_status: ChartStatus;
   status: ChartStatus;
   explained: boolean;
   note_due: boolean;
