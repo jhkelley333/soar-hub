@@ -16,7 +16,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Building2, ChevronRight, Search, Users, X } from "lucide-react";
+import { Building2, ChevronRight, Download, Search, Users, X } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -26,8 +26,11 @@ import { Badge } from "@/shared/ui/Badge";
 import { useAuth } from "@/auth/AuthProvider";
 import { ROLE_LABELS } from "@/types/database";
 import { cn } from "@/lib/cn";
+import { toCSV, downloadCSV } from "@/lib/csv";
+import { formatPhoneForDisplay } from "@/lib/phone";
 import { fetchMyTree } from "./api";
 import type {
+  LeadershipPerson,
   MyAreaNode,
   MyDistrictNode,
   MyRegionNode,
@@ -44,6 +47,42 @@ type View =
   | { kind: "districts"; region: MyRegionNode; area: MyAreaNode }
   | { kind: "stores"; region: MyRegionNode; area: MyAreaNode; district: MyDistrictNode }
   | { kind: "store"; storeId: string };
+
+// CSV of every store in the caller's scope with its leadership chain +
+// contact columns. Built entirely from the already-loaded my-tree payload
+// (no extra request); the tree is scope-filtered server-side, so the
+// export can never contain stores the caller can't see in the UI.
+function exportStoresCsv(
+  rows: { store: MyStoreNode; region: MyRegionNode; area: MyAreaNode; district: MyDistrictNode }[],
+  leadership: Record<string, StoreLeadership>,
+) {
+  const person = (p: LeadershipPerson | null | undefined) =>
+    p ? p.preferred_name || p.full_name || p.email : "";
+  const phone = (raw: string | null | undefined) => (raw ? formatPhoneForDisplay(raw) : "");
+
+  const headers = [
+    "Region", "RVP", "RVP Phone", "SDO", "SDO Phone", "DO", "DO Phone", "GM", "GM Phone",
+    "Store #", "Store Name", "Address", "City", "State", "Store Phone", "Store Email",
+  ];
+  const data = rows.map(({ store, region }) => {
+    const lead = leadership[store.id];
+    return {
+      Region: region.name ?? region.code ?? "",
+      RVP: person(lead?.rvp), "RVP Phone": phone(lead?.rvp?.phone),
+      SDO: person(lead?.sdo), "SDO Phone": phone(lead?.sdo?.phone),
+      DO: person(lead?.do), "DO Phone": phone(lead?.do?.phone),
+      GM: person(lead?.gm), "GM Phone": phone(lead?.gm?.phone),
+      "Store #": store.number,
+      "Store Name": store.name ?? "",
+      Address: store.address ?? "",
+      City: store.city ?? "",
+      State: store.state ?? "",
+      "Store Phone": phone(store.phone),
+      "Store Email": store.email ?? "",
+    };
+  });
+  downloadCSV(`my-stores-${new Date().toISOString().slice(0, 10)}.csv`, toCSV(headers, data));
+}
 
 export function MyStoresPage() {
   const { profile } = useAuth();
@@ -163,6 +202,19 @@ export function MyStoresPage() {
       <PageHeader
         title="My Stores"
         description="Drill into the org and surface team contacts."
+        actions={
+          allStoresFlat.length > 0 && (
+            <button
+              type="button"
+              onClick={() => exportStoresCsv(allStoresFlat, leadership)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-semibold text-midnight hover:border-accent"
+              title="Download every store in your scope as a CSV — leadership (RVP/SDO/DO/GM), address, phones, and store email"
+            >
+              <Download className="h-4 w-4" strokeWidth={2} />
+              CSV
+            </button>
+          )
+        }
       />
 
       <Card className="mb-4">
