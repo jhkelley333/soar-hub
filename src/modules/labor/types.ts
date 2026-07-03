@@ -73,6 +73,8 @@ export interface DistrictStoreRow {
   ptd_labor_pct: number | null;
   wtd_dollars_over_chart: number | null;
   ptd_dollars_over_chart: number | null;
+  wtd_hours_over_chart: number | null;
+  ptd_hours_over_chart: number | null;
   wtd_variance_pts: number | null;
   ptd_variance_pts: number | null;
   wtd_status: ChartStatus;
@@ -93,6 +95,8 @@ export interface DistrictRollup {
   wtd_dollars_over_chart: number;
   ptd_dollars_over_chart: number;
   hours_over_chart: number;
+  wtd_hours_over_chart: number;
+  ptd_hours_over_chart: number;
   notes_due: number;
   notes_explained: number;
   dos: string[];
