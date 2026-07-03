@@ -42,14 +42,13 @@ function altHorizons(active: Horizon): Horizon[] {
   return (["day", "wtd", "mtd"] as Horizon[]).filter((h) => h !== active);
 }
 
-// One horizon's slice of a store row. Hours-over only exists for the day
-// band (the sheet doesn't carry cumulative hours), hence null elsewhere.
+// One horizon's slice of a store row.
 function bandOf(row: DistrictStoreRow, h: Horizon) {
   if (h === "wtd") {
-    return { pct: row.wtd_labor_pct, variance: row.wtd_variance_pts, dollars: row.wtd_dollars_over_chart, hours: null, status: row.wtd_status };
+    return { pct: row.wtd_labor_pct, variance: row.wtd_variance_pts, dollars: row.wtd_dollars_over_chart, hours: row.wtd_hours_over_chart, status: row.wtd_status };
   }
   if (h === "mtd") {
-    return { pct: row.ptd_labor_pct, variance: row.ptd_variance_pts, dollars: row.ptd_dollars_over_chart, hours: null, status: row.ptd_status };
+    return { pct: row.ptd_labor_pct, variance: row.ptd_variance_pts, dollars: row.ptd_dollars_over_chart, hours: row.ptd_hours_over_chart, status: row.ptd_status };
   }
   return { pct: row.labor_pct, variance: row.variance_pts, dollars: row.dollars_over_chart, hours: row.hours_over_chart, status: row.status };
 }
@@ -72,7 +71,7 @@ function sortValue(row: DistrictStoreRow, key: SortKey, h: Horizon): number | st
     case "mtd": return row.ptd_labor_pct ?? -Infinity;
     case "var": return bandOf(row, h).variance ?? -Infinity;
     case "over": return bandOf(row, h).dollars ?? -Infinity;
-    case "hrs": return row.hours_over_chart ?? -Infinity;
+    case "hrs": return bandOf(row, h).hours ?? -Infinity;
     case "status": return statusRank(row, h);
   }
 }
@@ -196,7 +195,7 @@ export function DistrictLaborView() {
               value={fmtPct(rollup.wtd_labor_pct)}
               subOverride={
                 rollup.wtd_dollars_over_chart
-                  ? `${fmtSignedMoney(rollup.wtd_dollars_over_chart)} over chart`
+                  ? `${fmtSignedMoney(rollup.wtd_dollars_over_chart)} · ${fmtSignedHours(rollup.wtd_hours_over_chart)} over chart`
                   : "week to date · district avg"
               }
               tone={rollup.wtd_dollars_over_chart > 0 ? "over" : "on"}
@@ -206,7 +205,7 @@ export function DistrictLaborView() {
               value={fmtPct(rollup.ptd_labor_pct)}
               subOverride={
                 rollup.ptd_dollars_over_chart
-                  ? `${fmtSignedMoney(rollup.ptd_dollars_over_chart)} over · period-to-date`
+                  ? `${fmtSignedMoney(rollup.ptd_dollars_over_chart)} · ${fmtSignedHours(rollup.ptd_hours_over_chart)} over · period-to-date`
                   : "month (period) to date · district avg"
               }
               tone={rollup.ptd_dollars_over_chart > 0 ? "over" : "on"}
