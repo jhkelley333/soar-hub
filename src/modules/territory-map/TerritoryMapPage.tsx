@@ -17,7 +17,7 @@
 // — geocoding happens on write (org-mgmt) or via the geocode-missing batch,
 // never on render.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { APIProvider, Map as GoogleMap, AdvancedMarker, Pin, InfoWindow, useMap } from "@vis.gl/react-google-maps";
 import { MarkerClusterer, type Marker } from "@googlemaps/markerclusterer";
@@ -359,7 +359,13 @@ function ClusteredStoreMarkers({
   onSelect: (s: TerritoryStore) => void;
 }) {
   const map = useMap();
-  const [markers, setMarkers] = useState<Record<string, Marker>>({});
+  // Marker instances live in a MUTABLE Map, not React state. Inline ref
+  // callbacks re-fire on every render (null, then the marker again) — with
+  // state that meant two real updates per render, each scheduling another
+  // render: the "maximum update depth exceeded" crash (React #185) this
+  // page shipped with. A ref mutation triggers nothing; the effect below
+  // resyncs the clusterer only when the visible store set actually changes.
+  const markersRef = useRef<globalThis.Map<string, Marker>>(new globalThis.Map());
 
   // One clusterer per map instance. The renderer draws the count bubble as
   // an AdvancedMarkerElement (a mapId map shouldn't mix in legacy markers).
@@ -387,24 +393,22 @@ function ClusteredStoreMarkers({
     });
   }, [map]);
 
-  // Feed the clusterer whatever markers currently exist.
+  // Resync the clusterer AFTER the markers for the current store set have
+  // committed (ref callbacks run before effects in the same commit). Keyed
+  // on `stores` — unrelated re-renders (e.g. opening a popup) leave the
+  // deps unchanged and don't touch the clusterer.
   useEffect(() => {
     if (!clusterer) return;
     clusterer.clearMarkers();
-    clusterer.addMarkers(Object.values(markers));
-  }, [clusterer, markers]);
+    clusterer.addMarkers(Array.from(markersRef.current.values()));
+  }, [clusterer, stores]);
 
   // Tear the clusterer down with the map (StrictMode remounts, page nav).
   useEffect(() => () => clusterer?.setMap(null), [clusterer]);
 
   const setMarkerRef = useCallback((marker: Marker | null, id: string) => {
-    setMarkers((prev) => {
-      if (marker ? prev[id] === marker : !(id in prev)) return prev;
-      const next = { ...prev };
-      if (marker) next[id] = marker;
-      else delete next[id];
-      return next;
-    });
+    if (marker) markersRef.current.set(id, marker);
+    else markersRef.current.delete(id);
   }, []);
 
   return (
