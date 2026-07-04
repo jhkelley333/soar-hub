@@ -20,6 +20,7 @@
 //        RVP without an extra round-trip.
 
 import { createClient } from "@supabase/supabase-js";
+import { geocodeAddress, storeAddressString, geocodeConfigured } from "./_lib/geocode.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -883,6 +884,136 @@ async function listStoresGeo(supa, user) {
 }
 
 // ----------------------------------------------------------------------------
+// territory-map (GET)
+// ----------------------------------------------------------------------------
+//
+// Flat store list for the live territory map: every visible store with its
+// cached coordinates, org path (district/area/region names), and resolved
+// DO. The DO comes from the org data (user_scopes at district level, with
+// acting coverage via additional_scopes) — same preference rules as
+// getMyTree's findManager, restricted to the DO slot — so reassigning a
+// store's DO recolors its pin with no manual upkeep. Visibility mirrors
+// the rest of the app: user_visible_stores for scoped roles, everything
+// for org-wide.
+
+async function territoryMap(supa, user) {
+  const canAny = ORG_WIDE.has(user.role) || ["do", "sdo", "rvp", "fbc"].includes(user.role);
+  if (!canAny) return { error: "forbidden", status: 403 };
+
+  const visibleStoreIds = await callerVisibleStoreIds(supa, user);
+  if (!visibleStoreIds.length) return { stores: [] };
+
+  const nowIso = new Date().toISOString();
+  const [
+    { data: storeRows },
+    { data: districtRows },
+    { data: areaRows },
+    { data: regionRows },
+    { data: scopeRows },
+    { data: addlScopeRows },
+  ] = await Promise.all([
+    supa
+      .from("stores")
+      .select("id, number, name, address, city, state, latitude, longitude, district_id")
+      .in("id", visibleStoreIds)
+      .eq("is_active", true)
+      .order("number"),
+    supa.from("districts").select("id, code, name, area_id"),
+    supa.from("areas").select("id, code, name, region_id"),
+    supa.from("regions").select("id, code, name"),
+    supa
+      .from("user_scopes")
+      .select("user_id, scope_type, scope_id")
+      .eq("scope_type", "district"),
+    supa
+      .from("additional_scopes")
+      .select("user_id, scope_type, scope_id, expires_at")
+      .eq("scope_type", "district"),
+  ]);
+
+  const stores = storeRows ?? [];
+  const districtById = new Map((districtRows ?? []).map((d) => [d.id, d]));
+  const areaById = new Map((areaRows ?? []).map((a) => [a.id, a]));
+  const regionById = new Map((regionRows ?? []).map((r) => [r.id, r]));
+
+  const activeAddl = (addlScopeRows ?? []).filter(
+    (r) => !r.expires_at || r.expires_at > nowIso
+  );
+  const holderIds = Array.from(
+    new Set([
+      ...(scopeRows ?? []).map((r) => r.user_id),
+      ...activeAddl.map((r) => r.user_id),
+    ])
+  );
+  let holderProfiles = [];
+  if (holderIds.length) {
+    const { data } = await supa
+      .from("profiles")
+      .select("id, full_name, preferred_name, email, role, is_active")
+      .in("id", holderIds)
+      .eq("is_active", true);
+    holderProfiles = data ?? [];
+  }
+  const profileById = new Map(holderProfiles.map((p) => [p.id, p]));
+
+  // DO per district — same tier preference as getMyTree's findManager:
+  // primary holder with role 'do' > acting holder with role 'do' > any
+  // primary holder > any acting holder; lowest user_id breaks ties so the
+  // pick (and therefore the pin color) is stable across calls.
+  function resolveDo(districtId) {
+    if (!districtId) return null;
+    const primary = (scopeRows ?? []).filter((s) => s.scope_id === districtId);
+    const additional = activeAddl.filter((s) => s.scope_id === districtId);
+    const tiers = [
+      primary.filter((s) => profileById.get(s.user_id)?.role === "do"),
+      additional.filter((s) => profileById.get(s.user_id)?.role === "do"),
+      primary,
+      additional,
+    ];
+    for (const rows of tiers) {
+      const valid = rows.filter((s) => profileById.get(s.user_id));
+      if (valid.length) {
+        valid.sort((a, b) => a.user_id.localeCompare(b.user_id));
+        const p = profileById.get(valid[0].user_id);
+        return { id: p.id, name: p.preferred_name || p.full_name || p.email };
+      }
+    }
+    return null;
+  }
+  const doByDistrict = new Map();
+  for (const d of districtById.keys()) doByDistrict.set(d, resolveDo(d));
+
+  const out = stores.map((s) => {
+    const district = districtById.get(s.district_id) ?? null;
+    const area = district ? areaById.get(district.area_id) ?? null : null;
+    const region = area ? regionById.get(area.region_id) ?? null : null;
+    const doRef = doByDistrict.get(s.district_id) ?? null;
+    return {
+      id: s.id,
+      number: s.number,
+      name: s.name,
+      address: [s.address, s.city, s.state].filter(Boolean).join(", "),
+      latitude: s.latitude,
+      longitude: s.longitude,
+      district_id: district?.id ?? null,
+      district_name: district?.name ?? null,
+      area_id: area?.id ?? null,
+      area_name: area?.name ?? null,
+      region_id: region?.id ?? null,
+      region_name: region?.name ?? null,
+      do_id: doRef?.id ?? null,
+      do_name: doRef?.name ?? null,
+    };
+  });
+
+  return {
+    stores: out,
+    total: out.length,
+    missing_coords: out.filter((s) => s.latitude == null || s.longitude == null).length,
+  };
+}
+
+// ----------------------------------------------------------------------------
 // update-store-geo (POST)
 // ----------------------------------------------------------------------------
 //
@@ -950,38 +1081,7 @@ async function updateStoreGeo(supa, user, body) {
 // absorbs that. On-site "Use my location" stays the gold standard.
 // ----------------------------------------------------------------------------
 
-const GEOCODE_KEY = process.env.GOOGLE_GEOCODING_API_KEY || process.env.GOOGLE_MAPS_API_KEY;
 const GEOCODE_BATCH = 30; // cap per bulk call to stay under the function timeout
-
-function storeAddressString(s) {
-  return [s.address, s.city, s.state]
-    .map((x) => (x || "").trim())
-    .filter(Boolean)
-    .join(", ");
-}
-
-async function geocodeAddress(address) {
-  if (!GEOCODE_KEY) return { error: "geocoding not configured (GOOGLE_GEOCODING_API_KEY)" };
-  const url =
-    "https://maps.googleapis.com/maps/api/geocode/json?address=" +
-    encodeURIComponent(address) +
-    "&key=" +
-    GEOCODE_KEY;
-  let json;
-  try {
-    const res = await fetch(url);
-    if (!res.ok) return { error: `geocoder http ${res.status}` };
-    json = await res.json();
-  } catch (e) {
-    return { error: e?.message || "geocoder request failed" };
-  }
-  if (json.status === "ZERO_RESULTS") return { error: "no match for address" };
-  if (json.status === "OVER_QUERY_LIMIT") return { error: "over query limit" };
-  if (json.status !== "OK") return { error: `geocoder: ${json.status}` };
-  const loc = json.results?.[0]?.geometry?.location;
-  if (!loc || typeof loc.lat !== "number") return { error: "no location in result" };
-  return { lat: loc.lat, lng: loc.lng };
-}
 
 async function geocodeStore(supa, user, body) {
   const storeId = String(body?.store_id || "").trim();
@@ -1014,7 +1114,7 @@ async function geocodeStore(supa, user, body) {
 async function geocodeMissing(supa, user) {
   const canAny = ORG_WIDE.has(user.role) || ["do", "sdo", "rvp"].includes(user.role);
   if (!canAny) return { error: "forbidden", status: 403 };
-  if (!GEOCODE_KEY) return { error: "geocoding not configured (GOOGLE_GEOCODING_API_KEY)", status: 500 };
+  if (!geocodeConfigured()) return { error: "geocoding not configured (GOOGLE_GEOCODING_API_KEY)", status: 500 };
 
   let q = supa
     .from("stores")
@@ -1179,6 +1279,7 @@ export const handler = async (event) => {
       if (action === "store-vendor-audit")
         return unwrap(await getStoreVendorAudit(supa, user, params));
       if (action === "stores-geo") return unwrap(await listStoresGeo(supa, user));
+      if (action === "territory-map") return unwrap(await territoryMap(supa, user));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {

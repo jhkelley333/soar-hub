@@ -55,6 +55,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { randomUUID } from "crypto";
+import { geocodeStoreOnWrite } from "./_lib/geocode.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -645,6 +646,22 @@ async function createOrgNode(supa, user, body) {
     after: insert,
   });
 
+  // Geocode-on-write: a new store with an address gets its map coordinates
+  // resolved immediately, same as the existing manual "geocode" action in
+  // org.js — best-effort, never fails the create.
+  if (kind === "store" && (insert.address || insert.city || insert.state)) {
+    const geo = await geocodeStoreOnWrite(created);
+    if (geo) {
+      const { data: withGeo } = await supa
+        .from(table)
+        .update(geo)
+        .eq("id", created.id)
+        .select("*")
+        .maybeSingle();
+      if (withGeo) return { ok: true, node: withGeo };
+    }
+  }
+
   return { ok: true, node: created };
 }
 
@@ -749,6 +766,22 @@ async function updateOrgNode(supa, user, body) {
     before,
     after,
   });
+
+  // Geocode-on-write: an edited address/city/state re-resolves the map
+  // coordinates so they never silently drift out of sync with the address
+  // on file. Best-effort — a geocoding hiccup doesn't fail the edit.
+  if (kind === "store" && ("address" in updates || "city" in updates || "state" in updates)) {
+    const geo = await geocodeStoreOnWrite(updatedRow);
+    if (geo) {
+      const { data: withGeo } = await supa
+        .from(table)
+        .update(geo)
+        .eq("id", id)
+        .select("*")
+        .maybeSingle();
+      if (withGeo) return { ok: true, node: withGeo };
+    }
+  }
 
   return { ok: true, node: updatedRow };
 }

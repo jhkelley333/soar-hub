@@ -49,6 +49,7 @@ import { WalkthroughBuilderPage } from "@/modules/walkthrough/builder/Walkthroug
 import { moduleKeyForPath } from "@/app/nav";
 import { useOverrides } from "@/lib/roleAccess";
 import { RankerPage } from "@/modules/ranker/RankerPage";
+import { TerritoryMapPage } from "@/modules/territory-map/TerritoryMapPage";
 import { MyStoresPage } from "@/modules/my-stores/MyStoresPage";
 import { AccountPage } from "@/modules/account/AccountPage";
 import { WorkOrdersV2Route } from "@/modules/work-orders-v2/WorkOrdersV2Route";
@@ -597,6 +598,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
             <RankerPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "territory-map",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
+            <TerritoryMapPage />
           </ProtectedRoute>
         ),
       },

@@ -32,6 +32,7 @@ import {
   ScrollText,
   QrCode,
   AlertTriangle,
+  MapPinned,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -70,6 +71,9 @@ export const NAV: NavItem[] = [
   // the selected DO by email and lands in a DO+ queue scoped like Site Audits.
   { to: "/business-disruptions", label: "Business Disruptions", icon: AlertTriangle, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/ranker",      label: "Ranker",      icon: TrendingUp,      roles: ["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
+  // Territory Map — stores plotted on Google Maps, pin color keyed to the
+  // DO resolved live from the org data. Same audience as Ranker.
+  { to: "/territory-map", label: "Territory Map", icon: MapPinned,   roles: ["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
   // Labor — daily labor review. GMs review their store's numbers against
   // chart and explain misses; DO+ get the district rollup. Backend
   // (labor.js) enforces scope; nav is wide so shift managers see it too.
@@ -222,6 +226,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/operations": "OPERATIONS",
   "/business-disruptions": "OPERATIONS",
   "/ranker": "OPERATIONS",
+  "/territory-map": "OPERATIONS",
   "/labor": "OPERATIONS",
   "/labor-v2": "OPERATIONS",
   "/admin/cash-management": "OPERATIONS",
