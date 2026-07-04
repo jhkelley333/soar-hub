@@ -4,14 +4,16 @@
 // store's GM view (future); for now it surfaces the note inline.
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Clock } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowDown, ArrowUp, Clock, RefreshCw } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Segmented } from "@/shared/ui/Segmented";
+import { useToast } from "@/shared/ui/Toaster";
+import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
-import { fetchDistrictLabor, fetchLaborDistricts } from "./api";
+import { fetchDistrictLabor, fetchLaborDistricts, triggerSyncNow } from "./api";
 import {
   fmtDayLabel,
   fmtPct,
@@ -76,7 +78,14 @@ function sortValue(row: DistrictStoreRow, key: SortKey, h: Horizon): number | st
   }
 }
 
+// Who can trigger an off-cycle sheet sync from here. Mirrors labor.js's
+// SYNC_ROLES — the backend re-checks; this only decides button visibility.
+const SYNC_ROLES = new Set(["admin", "vp", "coo"]);
+
 export function DistrictLaborView() {
+  const { profile } = useAuth();
+  const toast = useToast();
+  const qc = useQueryClient();
   const [filter, setFilter] = useState<Filter>("all");
   const [horizon, setHorizon] = useState<Horizon>("day");
   const [sort, setSort] = useState<SortState>({ key: "var", dir: "desc" });
@@ -87,6 +96,29 @@ export function DistrictLaborView() {
   const districtsQ = useQuery({ queryKey: ["labor-districts"], queryFn: fetchLaborDistricts });
   const districts = districtsQ.data?.districts ?? [];
   const multiDistrict = districts.length > 1;
+  const canSync = SYNC_ROLES.has(profile?.role ?? "");
+
+  // Off-cycle sync — same force-pull as /admin/labor-sync's "Sync now"
+  // (bypasses the 7:30–14:00 CT poll window and the freshness guards),
+  // surfaced here so a stale day can be fixed without leaving the page.
+  // The toast calls out when the sheet's Sales Date is still behind, so
+  // "synced Thursday" never silently reads as success on a Friday.
+  const sync = useMutation({
+    mutationFn: triggerSyncNow,
+    onSuccess: (res) => {
+      const yesterdayIso = new Date(Date.now() - 86_400_000).toISOString().slice(0, 10);
+      if (res.business_date && res.business_date < yesterdayIso) {
+        toast.push(
+          `Synced, but the sheet's Sales Date is still ${fmtDayLabel(res.business_date)} — back office hasn't rolled it forward yet.`,
+          "error",
+        );
+      } else {
+        toast.push(`Synced ${res.business_date ? fmtDayLabel(res.business_date) : "sheet"}.`, "success");
+      }
+      qc.invalidateQueries({ predicate: (q) => String(q.queryKey[0] ?? "").startsWith("labor") });
+    },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Sync failed.", "error"),
+  });
 
   const q = useQuery({
     queryKey: ["labor-district", district || "all"],
@@ -133,6 +165,18 @@ export function DistrictLaborView() {
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            {canSync && (
+              <button
+                type="button"
+                onClick={() => sync.mutate()}
+                disabled={sync.isPending}
+                title="Off-cycle sync — force-pull the labor sheet now, outside the normal 7:30 AM–2 PM CT window"
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-semibold text-midnight hover:border-accent disabled:opacity-50"
+              >
+                <RefreshCw className={cn("h-4 w-4", sync.isPending && "animate-spin")} strokeWidth={2} />
+                {sync.isPending ? "Syncing…" : "Sync sheet"}
+              </button>
+            )}
             <Segmented<Horizon>
               dense
               value={horizon}
