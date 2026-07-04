@@ -69,20 +69,33 @@ export function TerritoryMapPage() {
   const [hiddenDos, setHiddenDos] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<TerritoryStore | null>(null);
 
-  // Options for each select, narrowed by the levels above it.
-  const regionOptions = useMemo(() => uniqueOptions(mapped, "region_id", "region_name"), [mapped]);
+  // Options for each select come from the FULL org hierarchy in the
+  // payload (every region/area/district, even ones with no mapped stores
+  // yet), narrowed by the levels above it. Store filtering below still
+  // works off each store row's own org ids.
+  const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
+  const regionOptions = useMemo(
+    () => [...(q.data?.regions ?? [])].sort(byName),
+    [q.data],
+  );
+  const areaOptions = useMemo(() => {
+    const all = q.data?.areas ?? [];
+    return (region === ALL ? [...all] : all.filter((a) => a.region_id === region)).sort(byName);
+  }, [q.data, region]);
+  const districtOptions = useMemo(() => {
+    const all = q.data?.districts ?? [];
+    const areaIds =
+      area !== ALL ? new Set([area]) : region !== ALL ? new Set(areaOptions.map((a) => a.id)) : null;
+    return (areaIds ? all.filter((d) => d.area_id && areaIds.has(d.area_id)) : [...all]).sort(byName);
+  }, [q.data, area, region, areaOptions]);
+
   const areaPool = useMemo(
     () => (region === ALL ? mapped : mapped.filter((s) => s.region_id === region)),
     [mapped, region],
   );
-  const areaOptions = useMemo(() => uniqueOptions(areaPool, "area_id", "area_name"), [areaPool]);
   const districtPool = useMemo(
     () => (area === ALL ? areaPool : areaPool.filter((s) => s.area_id === area)),
     [areaPool, area],
-  );
-  const districtOptions = useMemo(
-    () => uniqueOptions(districtPool, "district_id", "district_name"),
-    [districtPool],
   );
 
   // Org-filtered set (before DO toggles) — the legend counts key off this,
@@ -283,22 +296,6 @@ export function TerritoryMapPage() {
       )}
     </div>
   );
-}
-
-// Distinct (id, name) pairs present in a store list, name-sorted. Stores
-// missing that org level (shouldn't happen, but nullable in the schema)
-// simply don't contribute an option.
-function uniqueOptions(
-  stores: TerritoryStore[],
-  idKey: "region_id" | "area_id" | "district_id",
-  nameKey: "region_name" | "area_name" | "district_name",
-): { id: string; name: string }[] {
-  const byId = new Map<string, string>();
-  for (const s of stores) {
-    const id = s[idKey];
-    if (id && !byId.has(id)) byId.set(id, s[nameKey] ?? id);
-  }
-  return Array.from(byId, ([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function FilterSelect({

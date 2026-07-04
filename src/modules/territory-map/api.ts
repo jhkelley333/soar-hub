@@ -28,6 +28,11 @@ export interface TerritoryMapResponse {
   stores: TerritoryStore[];
   total: number;
   missing_coords: number;
+  // Full org hierarchy for the filter dropdowns — includes nodes with no
+  // mapped stores, so everything is always selectable.
+  regions: { id: string; name: string }[];
+  areas: { id: string; name: string; region_id: string | null }[];
+  districts: { id: string; name: string; area_id: string | null }[];
 }
 
 async function authHeaders(): Promise<HeadersInit> {
