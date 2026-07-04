@@ -1010,6 +1010,12 @@ async function territoryMap(supa, user) {
     stores: out,
     total: out.length,
     missing_coords: out.filter((s) => s.latitude == null || s.longitude == null).length,
+    // Full org hierarchy for the filter dropdowns — every region/area/
+    // district, not just the ones inferred from mapped stores, so an org
+    // node with no geocoded stores yet is still selectable.
+    regions: (regionRows ?? []).map((r) => ({ id: r.id, name: r.name ?? r.code ?? r.id })),
+    areas: (areaRows ?? []).map((a) => ({ id: a.id, name: a.name ?? a.code ?? a.id, region_id: a.region_id })),
+    districts: (districtRows ?? []).map((d) => ({ id: d.id, name: d.name ?? d.code ?? d.id, area_id: d.area_id })),
   };
 }
 
