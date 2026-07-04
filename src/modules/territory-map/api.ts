@@ -42,8 +42,7 @@ async function authHeaders(): Promise<HeadersInit> {
   return { Authorization: `Bearer ${token}` };
 }
 
-export async function fetchTerritoryMap(): Promise<TerritoryMapResponse> {
-  const res = await fetch(`${FN}?action=territory-map`, { headers: await authHeaders() });
+async function parseOrThrow<T>(res: Response): Promise<T> {
   if (!res.ok) {
     let message = `Request failed (${res.status})`;
     try {
@@ -54,5 +53,36 @@ export async function fetchTerritoryMap(): Promise<TerritoryMapResponse> {
     }
     throw new Error(message);
   }
-  return res.json() as Promise<TerritoryMapResponse>;
+  return res.json() as Promise<T>;
+}
+
+export async function fetchTerritoryMap(): Promise<TerritoryMapResponse> {
+  const res = await fetch(`${FN}?action=territory-map`, { headers: await authHeaders() });
+  return parseOrThrow<TerritoryMapResponse>(res);
+}
+
+// ── Share links (migration 0208) ────────────────────────────────────
+// One live link per user; the viewer sees exactly the stores the creator
+// can see, resolved live server-side. Revoking kills the link immediately.
+
+export async function fetchMapShare(): Promise<{ token: string; created_at: string }> {
+  const res = await fetch(`${FN}?action=map-share`, { headers: await authHeaders() });
+  return parseOrThrow(res);
+}
+
+export async function revokeMapShare(): Promise<{ ok: true }> {
+  const res = await fetch(`${FN}?action=map-share-revoke`, {
+    method: "POST",
+    headers: await authHeaders(),
+    body: "{}",
+  });
+  return parseOrThrow(res);
+}
+
+// PUBLIC — no auth header; the token in the URL is the credential.
+export async function fetchSharedTerritoryMap(
+  token: string,
+): Promise<TerritoryMapResponse & { shared_by: string }> {
+  const res = await fetch(`${FN}?action=shared-map&token=${encodeURIComponent(token)}`);
+  return parseOrThrow(res);
 }

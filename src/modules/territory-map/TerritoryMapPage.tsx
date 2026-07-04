@@ -3,28 +3,31 @@
 // hand-maintained Google My Maps: reassign a district's DO and the pins
 // recolor on their own; no manual pin placement.
 //
-// Phase 3: legend + filter side panel — DO list with counts and color
-// swatches (click to show/hide that DO's pins), Region/Area/District
-// cascade filters, and an "X of Y shown" summary. All client-side on the
-// one territory-map payload.
-//
-// Phase 4: clustering — the dense DFW core collapses into count bubbles
-// (via @googlemaps/markerclusterer) until zoomed in. Clusters respect the
-// active filters/toggles automatically: only visible stores have markers,
-// and the clusterer re-groups whenever that set changes.
+// TerritoryExplorer holds the whole interactive surface (filters, DO
+// legend, map, clustering) and is shared with SharedTerritoryMapPage —
+// the public, token-in-URL view (migration 0208) where the viewer sees
+// exactly the stores the link's creator can see. This authed page adds
+// the Share controls on top.
 //
 // Reads cached coordinates only (stores.latitude/longitude, migration 0121)
 // — geocoding happens on write (org-mgmt) or via the geocode-missing batch,
 // never on render.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { APIProvider, Map as GoogleMap, AdvancedMarker, Pin, InfoWindow, useMap } from "@vis.gl/react-google-maps";
 import { MarkerClusterer, type Marker } from "@googlemaps/markerclusterer";
-import { Eye, EyeOff, MapPin } from "lucide-react";
+import { Copy, Eye, EyeOff, MapPin, Share2, X } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
+import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { fetchTerritoryMap, type TerritoryStore } from "./api";
+import {
+  fetchMapShare,
+  fetchTerritoryMap,
+  revokeMapShare,
+  type TerritoryMapResponse,
+  type TerritoryStore,
+} from "./api";
 import { colorsForDos, DO_OPEN_COLOR } from "./colors";
 
 const MAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
@@ -43,6 +46,7 @@ const OPEN_KEY = "__open__";
 const ALL = "all";
 
 export function TerritoryMapPage() {
+  const toast = useToast();
   const q = useQuery({
     queryKey: ["territory-map"],
     queryFn: fetchTerritoryMap,
@@ -50,10 +54,126 @@ export function TerritoryMapPage() {
     refetchOnWindowFocus: false,
   });
 
+  // Share link — fetched lazily the first time the panel opens.
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const openShare = useMutation({
+    mutationFn: fetchMapShare,
+    onSuccess: (r) => {
+      setShareUrl(`${window.location.origin}/map/${r.token}`);
+      setShareOpen(true);
+    },
+    onError: (e: unknown) =>
+      toast.push(e instanceof Error ? e.message : "Couldn't create the share link.", "error"),
+  });
+  const revoke = useMutation({
+    mutationFn: revokeMapShare,
+    onSuccess: () => {
+      setShareUrl(null);
+      setShareOpen(false);
+      toast.push("Share link revoked — the old URL is dead. Share again to mint a new one.", "info");
+    },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't revoke.", "error"),
+  });
+
+  return (
+    <div className="flex h-full min-h-0 flex-col space-y-4">
+      <PageHeader
+        title="Territory Map"
+        description={
+          q.data
+            ? `${q.data.total} stores` +
+              (q.data.missing_coords > 0 ? ` · ${q.data.missing_coords} missing coordinates` : "")
+            : "Stores colored by DO, live from the org data."
+        }
+        actions={
+          <button
+            type="button"
+            onClick={() => (shareUrl ? setShareOpen((o) => !o) : openShare.mutate())}
+            disabled={openShare.isPending}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-semibold text-midnight hover:border-accent disabled:opacity-50"
+            title="Share a read-only link — the viewer sees exactly the stores you can see, no login needed"
+          >
+            <Share2 className="h-4 w-4" strokeWidth={2} />
+            {openShare.isPending ? "Creating…" : "Share"}
+          </button>
+        }
+      />
+
+      {shareOpen && shareUrl && (
+        <div className="rounded-xl border border-accent/30 bg-accent/5 p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-midnight">Share this map</div>
+              <p className="mt-0.5 text-xs text-zinc-600">
+                Anyone with this link sees <strong>exactly the stores you can see</strong> — scoped to
+                your org visibility, live, no login needed. Revoke kills the link immediately.
+              </p>
+              <div className="mt-2 flex items-center gap-2">
+                <input
+                  readOnly
+                  value={shareUrl}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="h-9 min-w-0 flex-1 rounded-lg border border-zinc-200 bg-white px-3 font-mono text-xs text-midnight focus:border-accent focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(shareUrl).then(
+                      () => toast.push("Link copied.", "success"),
+                      () => toast.push("Couldn't copy — select the text and copy manually.", "error"),
+                    );
+                  }}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-accent px-3 text-sm font-semibold text-white hover:brightness-110"
+                >
+                  <Copy className="h-4 w-4" strokeWidth={2} />
+                  Copy
+                </button>
+                <button
+                  type="button"
+                  onClick={() => revoke.mutate()}
+                  disabled={revoke.isPending}
+                  className="inline-flex h-9 items-center rounded-lg px-3 text-sm font-semibold text-red-700 ring-1 ring-inset ring-red-200 hover:bg-red-50 disabled:opacity-50"
+                >
+                  {revoke.isPending ? "Revoking…" : "Revoke"}
+                </button>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShareOpen(false)}
+              className="rounded p-1 text-zinc-400 hover:text-zinc-700"
+              aria-label="Close share panel"
+            >
+              <X className="h-4 w-4" strokeWidth={2} />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {q.isLoading && (
+        <div className="flex flex-1 items-center justify-center text-sm text-zinc-500">
+          Loading stores…
+        </div>
+      )}
+      {q.isError && (
+        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {(q.error as Error)?.message ?? "Couldn't load the store list."}
+        </div>
+      )}
+
+      {q.data && <TerritoryExplorer data={q.data} />}
+    </div>
+  );
+}
+
+// ── The interactive map surface — filters, DO legend, map, clustering. ──
+// Shared between the authed page above and the public share view.
+export function TerritoryExplorer({ data }: { data: TerritoryMapResponse }) {
   // Every store with cached coordinates — the mappable set.
   const mapped = useMemo(
-    () => (q.data?.stores ?? []).filter((s) => s.latitude != null && s.longitude != null),
-    [q.data],
+    () => data.stores.filter((s) => s.latitude != null && s.longitude != null),
+    [data],
   );
   const doColors = useMemo(
     () => colorsForDos(mapped.map((s) => s.do_id).filter(Boolean) as string[]),
@@ -74,20 +194,17 @@ export function TerritoryMapPage() {
   // yet), narrowed by the levels above it. Store filtering below still
   // works off each store row's own org ids.
   const byName = (a: { name: string }, b: { name: string }) => a.name.localeCompare(b.name);
-  const regionOptions = useMemo(
-    () => [...(q.data?.regions ?? [])].sort(byName),
-    [q.data],
-  );
+  const regionOptions = useMemo(() => [...(data.regions ?? [])].sort(byName), [data]);
   const areaOptions = useMemo(() => {
-    const all = q.data?.areas ?? [];
+    const all = data.areas ?? [];
     return (region === ALL ? [...all] : all.filter((a) => a.region_id === region)).sort(byName);
-  }, [q.data, region]);
+  }, [data, region]);
   const districtOptions = useMemo(() => {
-    const all = q.data?.districts ?? [];
+    const all = data.districts ?? [];
     const areaIds =
       area !== ALL ? new Set([area]) : region !== ALL ? new Set(areaOptions.map((a) => a.id)) : null;
     return (areaIds ? all.filter((d) => d.area_id && areaIds.has(d.area_id)) : [...all]).sort(byName);
-  }, [q.data, area, region, areaOptions]);
+  }, [data, area, region, areaOptions]);
 
   const areaPool = useMemo(
     () => (region === ALL ? mapped : mapped.filter((s) => s.region_id === region)),
@@ -157,143 +274,115 @@ export function TerritoryMapPage() {
 
   if (!MAPS_KEY) {
     return (
-      <div className="space-y-4">
-        <PageHeader title="Territory Map" description="Stores colored by DO, live from the org data." />
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-          Google Maps isn't configured for the browser yet — set{" "}
-          <code className="font-mono text-xs">VITE_GOOGLE_MAPS_API_KEY</code> in the site's
-          environment (a key with the Maps JavaScript API enabled and HTTP-referrer
-          restrictions) and redeploy.
-        </div>
+      <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        Google Maps isn't configured for the browser yet — set{" "}
+        <code className="font-mono text-xs">VITE_GOOGLE_MAPS_API_KEY</code> in the site's
+        environment (a key with the Maps JavaScript API enabled and HTTP-referrer
+        restrictions) and redeploy.
       </div>
     );
   }
 
   return (
-    <div className="flex h-full min-h-0 flex-col space-y-4">
-      <PageHeader
-        title="Territory Map"
-        description={
-          q.data
-            ? `${visible.length} of ${q.data.total} stores shown` +
-              (q.data.missing_coords > 0 ? ` · ${q.data.missing_coords} missing coordinates` : "")
-            : "Stores colored by DO, live from the org data."
-        }
-      />
-
-      {q.isLoading && (
-        <div className="flex flex-1 items-center justify-center text-sm text-zinc-500">
-          Loading stores…
-        </div>
-      )}
-      {q.isError && (
-        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          {(q.error as Error)?.message ?? "Couldn't load the store list."}
-        </div>
-      )}
-
-      {q.data && (
-        <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[300px_1fr]">
-          {/* legend + filters */}
-          <div className="flex min-h-0 flex-col overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
-            <div className="space-y-2 border-b border-zinc-100 p-3">
-              <div className="flex items-center justify-between">
-                <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Filters</span>
-                {filtersActive && (
-                  <button type="button" onClick={resetAll} className="text-xs font-semibold text-accent hover:underline">
-                    Reset
-                  </button>
-                )}
-              </div>
-              <FilterSelect
-                label="Region"
-                value={region}
-                options={regionOptions}
-                onChange={(v) => { setRegion(v); setArea(ALL); setDistrict(ALL); }}
-              />
-              <FilterSelect
-                label="Area"
-                value={area}
-                options={areaOptions}
-                onChange={(v) => { setArea(v); setDistrict(ALL); }}
-              />
-              <FilterSelect
-                label="District"
-                value={district}
-                options={districtOptions}
-                onChange={setDistrict}
-              />
-            </div>
-
-            <div className="flex items-center justify-between px-3 pb-1 pt-3">
-              <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-                DOs ({legend.length})
-              </span>
-              <span className="text-[11px] tabular-nums text-zinc-400">
-                {visible.length} of {q.data.total} shown
-              </span>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
-              {legend.map((row) => {
-                const hidden = hiddenDos.has(row.key);
-                return (
-                  <button
-                    key={row.key}
-                    type="button"
-                    onClick={() => toggleDo(row.key)}
-                    className={cn(
-                      "flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm transition hover:bg-zinc-50",
-                      hidden && "opacity-40",
-                    )}
-                    title={hidden ? "Show this DO's stores" : "Hide this DO's stores"}
-                  >
-                    <span
-                      className="h-3.5 w-3.5 shrink-0 rounded-full ring-1 ring-black/10"
-                      style={{ background: row.color }}
-                    />
-                    <span className={cn("min-w-0 flex-1 truncate font-medium text-midnight", hidden && "line-through")}>
-                      {row.name}
-                    </span>
-                    <span className="tabular-nums text-xs text-zinc-500">({row.count})</span>
-                    {hidden
-                      ? <EyeOff className="h-3.5 w-3.5 shrink-0 text-zinc-400" strokeWidth={2} />
-                      : <Eye className="h-3.5 w-3.5 shrink-0 text-zinc-300" strokeWidth={2} />}
-                  </button>
-                );
-              })}
-              {legend.length === 0 && (
-                <p className="px-2 py-4 text-center text-xs text-zinc-400">No stores match these filters.</p>
-              )}
-            </div>
+    <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[300px_1fr]">
+      {/* legend + filters */}
+      <div className="flex min-h-0 flex-col overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
+        <div className="space-y-2 border-b border-zinc-100 p-3">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Filters</span>
+            {filtersActive && (
+              <button type="button" onClick={resetAll} className="text-xs font-semibold text-accent hover:underline">
+                Reset
+              </button>
+            )}
           </div>
+          <FilterSelect
+            label="Region"
+            value={region}
+            options={regionOptions}
+            onChange={(v) => { setRegion(v); setArea(ALL); setDistrict(ALL); }}
+          />
+          <FilterSelect
+            label="Area"
+            value={area}
+            options={areaOptions}
+            onChange={(v) => { setArea(v); setDistrict(ALL); }}
+          />
+          <FilterSelect
+            label="District"
+            value={district}
+            options={districtOptions}
+            onChange={setDistrict}
+          />
+        </div>
 
-          {/* map */}
-          <div className="min-h-[480px] overflow-hidden rounded-xl border border-zinc-200">
-            <APIProvider apiKey={MAPS_KEY}>
-              <GoogleMap
-                mapId={MAP_ID}
-                defaultCenter={DFW_CENTER}
-                defaultZoom={DEFAULT_ZOOM}
-                gestureHandling="greedy"
-                disableDefaultUI={false}
-                className="h-full w-full"
+        <div className="flex items-center justify-between px-3 pb-1 pt-3">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
+            DOs ({legend.length})
+          </span>
+          <span className="text-[11px] tabular-nums text-zinc-400">
+            {visible.length} of {data.total} shown
+          </span>
+        </div>
+        <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
+          {legend.map((row) => {
+            const hidden = hiddenDos.has(row.key);
+            return (
+              <button
+                key={row.key}
+                type="button"
+                onClick={() => toggleDo(row.key)}
+                className={cn(
+                  "flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left text-sm transition hover:bg-zinc-50",
+                  hidden && "opacity-40",
+                )}
+                title={hidden ? "Show this DO's stores" : "Hide this DO's stores"}
               >
-                <FitToStores stores={mapped} />
-                <ClusteredStoreMarkers stores={visible} doColors={doColors} onSelect={setSelected} />
-                {selected && selected.latitude != null && selected.longitude != null && (
-                  <InfoWindow
-                    position={{ lat: selected.latitude, lng: selected.longitude }}
-                    pixelOffset={[0, -36]}
-                    onCloseClick={() => setSelected(null)}
-                  >
-                    <StorePopup store={selected} color={selected.do_id ? doColors.get(selected.do_id)! : DO_OPEN_COLOR} />
-                  </InfoWindow>
-                )}
-              </GoogleMap>
-            </APIProvider>
-          </div>
+                <span
+                  className="h-3.5 w-3.5 shrink-0 rounded-full ring-1 ring-black/10"
+                  style={{ background: row.color }}
+                />
+                <span className={cn("min-w-0 flex-1 truncate font-medium text-midnight", hidden && "line-through")}>
+                  {row.name}
+                </span>
+                <span className="tabular-nums text-xs text-zinc-500">({row.count})</span>
+                {hidden
+                  ? <EyeOff className="h-3.5 w-3.5 shrink-0 text-zinc-400" strokeWidth={2} />
+                  : <Eye className="h-3.5 w-3.5 shrink-0 text-zinc-300" strokeWidth={2} />}
+              </button>
+            );
+          })}
+          {legend.length === 0 && (
+            <p className="px-2 py-4 text-center text-xs text-zinc-400">No stores match these filters.</p>
+          )}
         </div>
-      )}
+      </div>
+
+      {/* map */}
+      <div className="min-h-[480px] overflow-hidden rounded-xl border border-zinc-200">
+        <APIProvider apiKey={MAPS_KEY}>
+          <GoogleMap
+            mapId={MAP_ID}
+            defaultCenter={DFW_CENTER}
+            defaultZoom={DEFAULT_ZOOM}
+            gestureHandling="greedy"
+            disableDefaultUI={false}
+            className="h-full w-full"
+          >
+            <FitToStores stores={mapped} />
+            <ClusteredStoreMarkers stores={visible} doColors={doColors} onSelect={setSelected} />
+            {selected && selected.latitude != null && selected.longitude != null && (
+              <InfoWindow
+                position={{ lat: selected.latitude, lng: selected.longitude }}
+                pixelOffset={[0, -36]}
+                onCloseClick={() => setSelected(null)}
+              >
+                <StorePopup store={selected} color={selected.do_id ? doColors.get(selected.do_id)! : DO_OPEN_COLOR} />
+              </InfoWindow>
+            )}
+          </GoogleMap>
+        </APIProvider>
+      </div>
     </div>
   );
 }
