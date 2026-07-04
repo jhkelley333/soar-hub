@@ -460,6 +460,54 @@ export const handler = async (event) => {
       ptd: Object.fromEntries(Object.entries(map.ptd).map(([k, v]) => [k, colLetter(v)])),
     };
     summary.sample = ready.slice(0, 3);
+
+    // Sheet-vs-app verification: compare what the sheet parses to RIGHT NOW
+    // against what's stored for this business date, store by store. Turns
+    // "Friday still isn't pulling correctly" into a concrete verdict:
+    //   - mismatches empty + stored rows exist → app == sheet; if numbers
+    //     still look wrong, the SHEET is what's stale/incorrect.
+    //   - mismatches listed → the parse/upsert path is dropping or mangling
+    //     those rows; the sheet/db value pairs show exactly how.
+    //   - missing_in_db > 0 → parsed stores that have no stored row at all.
+    const { data: stored } = await supa
+      .from("labor_daily_snapshots")
+      .select("store_number, daily_labor_pct, daily_sales, wtd_labor_pct, ptd_labor_pct, source_synced_at")
+      .eq("business_date", businessDate);
+    const storedBy = new Map((stored ?? []).map((r) => [String(r.store_number), r]));
+    const near = (a, b) => {
+      if (a == null && b == null) return true;
+      if (a == null || b == null) return false;
+      return Math.abs(Number(a) - Number(b)) < 0.005;
+    };
+    const FIELDS = ["daily_labor_pct", "daily_sales", "wtd_labor_pct", "ptd_labor_pct"];
+    const mismatches = [];
+    let identical = 0;
+    let missingInDb = 0;
+    for (const p of ready) {
+      const db = storedBy.get(String(p.store_number));
+      if (!db) {
+        missingInDb++;
+        continue;
+      }
+      const diffs = FIELDS.filter((f) => !near(p[f], db[f]));
+      if (diffs.length === 0) identical++;
+      else if (mismatches.length < 25) {
+        mismatches.push({
+          store_number: p.store_number,
+          fields: Object.fromEntries(diffs.map((f) => [f, { sheet: p[f], app: db[f] }])),
+        });
+      }
+    }
+    summary.verify = {
+      stored_rows_for_date: (stored ?? []).length,
+      identical,
+      differing: ready.length - identical - missingInDb,
+      missing_in_db: missingInDb,
+      last_stored_sync: (stored ?? []).reduce(
+        (max, r) => (r.source_synced_at && r.source_synced_at > max ? r.source_synced_at : max), "",
+      ) || null,
+      mismatches,
+    };
     return { statusCode: 200, body: JSON.stringify(summary, null, 2) };
   }
 

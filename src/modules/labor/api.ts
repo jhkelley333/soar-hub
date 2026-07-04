@@ -105,6 +105,19 @@ export interface SyncDryRunResponse {
     ptd: Record<string, string | null>;
   };
   sample: Record<string, unknown>[];
+  // Sheet-vs-app comparison for the sheet's current Sales Date: does what's
+  // stored match what the sheet parses to right now?
+  verify?: {
+    stored_rows_for_date: number;
+    identical: number;
+    differing: number;
+    missing_in_db: number;
+    last_stored_sync: string | null;
+    mismatches: {
+      store_number: string;
+      fields: Record<string, { sheet: number | null; app: number | null }>;
+    }[];
+  };
 }
 export function triggerSyncDryRun(): Promise<SyncDryRunResponse> {
   return request<SyncDryRunResponse>(`${FN}?action=sync-dry`, { method: "POST" });

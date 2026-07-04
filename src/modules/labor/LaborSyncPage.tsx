@@ -313,6 +313,49 @@ function SheetInspectorPanel({
           </pre>
         </details>
       )}
+
+      {/* Sheet-vs-app verdict: is what's stored for this Sales Date the same
+          as what the sheet parses to right now? */}
+      {result.verify && (
+        <div
+          className={cn(
+            "mt-3 rounded-lg p-3 text-xs ring-1 ring-inset",
+            result.verify.differing > 0 || result.verify.missing_in_db > 0
+              ? "bg-red-50 text-red-800 ring-red-200"
+              : "bg-emerald-50 text-emerald-800 ring-emerald-200",
+          )}
+        >
+          <div className="font-semibold">
+            {result.verify.differing > 0 || result.verify.missing_in_db > 0
+              ? `App is OUT OF SYNC with the sheet for ${result.business_date}`
+              : `App matches the sheet for ${result.business_date}`}
+          </div>
+          <div className="mt-1">
+            {result.verify.identical} identical · {result.verify.differing} differing ·{" "}
+            {result.verify.missing_in_db} missing in app · {result.verify.stored_rows_for_date} stored rows
+            {result.verify.last_stored_sync && (
+              <> · last stored sync {new Date(result.verify.last_stored_sync).toLocaleString()}</>
+            )}
+          </div>
+          {result.verify.differing === 0 && result.verify.missing_in_db === 0 && (
+            <div className="mt-1">
+              If the numbers still look wrong, the SHEET itself is holding stale data — the app is
+              faithfully reflecting it.
+            </div>
+          )}
+          {result.verify.mismatches.length > 0 && (
+            <details className="mt-2">
+              <summary className="cursor-pointer font-semibold">
+                Mismatches ({result.verify.mismatches.length}
+                {result.verify.differing > result.verify.mismatches.length ? ` of ${result.verify.differing}` : ""})
+              </summary>
+              <pre className="mt-2 max-h-72 overflow-auto rounded-md bg-white p-3 text-[11px] text-zinc-800 ring-1 ring-zinc-200">
+                {JSON.stringify(result.verify.mismatches, null, 2)}
+              </pre>
+            </details>
+          )}
+        </div>
+      )}
     </div>
   );
 }
