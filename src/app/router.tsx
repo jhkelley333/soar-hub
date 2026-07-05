@@ -50,6 +50,7 @@ import { moduleKeyForPath } from "@/app/nav";
 import { useOverrides } from "@/lib/roleAccess";
 import { RankerPage } from "@/modules/ranker/RankerPage";
 import { TerritoryMapPage } from "@/modules/territory-map/TerritoryMapPage";
+import { SharedTerritoryMapPage } from "@/modules/territory-map/SharedTerritoryMapPage";
 import { MyStoresPage } from "@/modules/my-stores/MyStoresPage";
 import { AccountPage } from "@/modules/account/AccountPage";
 import { WorkOrdersV2Route } from "@/modules/work-orders-v2/WorkOrdersV2Route";
@@ -100,6 +101,9 @@ export const router = createBrowserRouter([
   // Public anonymous vendor portal — opens directly from QR sticker.
   // Token in the URL is the only credential; no login required.
   { path: "/v/:token", element: <VendorPortalPage /> },
+  // Public shared Territory Map — token in the URL is the credential;
+  // scope resolves live to whatever the link's creator can see.
+  { path: "/map/:token", element: <SharedTerritoryMapPage /> },
   // Public ticket-submission page — anyone with the URL can search
   // for a store and file a work order. Lives outside the auth tree.
   { path: "/submit", element: <PublicSubmitPage /> },

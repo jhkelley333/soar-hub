@@ -20,6 +20,7 @@
 //        RVP without an extra round-trip.
 
 import { createClient } from "@supabase/supabase-js";
+import { randomUUID } from "node:crypto";
 import { geocodeAddress, storeAddressString, geocodeConfigured } from "./_lib/geocode.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -1263,8 +1264,105 @@ function unwrap(result) {
   return respond(200, result);
 }
 
+// ----------------------------------------------------------------------------
+// Territory Map share links (migration 0208) — token-in-URL, no login.
+// The viewer sees exactly the stores the link's CREATOR can see, resolved
+// live at request time by running territoryMap() as the creator.
+// ----------------------------------------------------------------------------
+
+// Get-or-create the caller's active share link. One live link per user;
+// revoking and re-sharing mints a fresh token.
+async function getOrCreateMapShare(supa, user) {
+  const canShare = ORG_WIDE.has(user.role) || ["do", "sdo", "rvp", "fbc"].includes(user.role);
+  if (!canShare) return { error: "forbidden", status: 403 };
+
+  const { data: existing } = await supa
+    .from("territory_map_shares")
+    .select("token, created_at")
+    .eq("created_by", user.id)
+    .eq("is_active", true)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (existing) return { token: existing.token, created_at: existing.created_at };
+
+  const token = randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "").slice(0, 8);
+  const { data, error } = await supa
+    .from("territory_map_shares")
+    .insert({ token, created_by: user.id })
+    .select("token, created_at")
+    .single();
+  if (error) return { error: error.message, status: 500 };
+  return { token: data.token, created_at: data.created_at };
+}
+
+async function revokeMapShare(supa, user) {
+  const { error } = await supa
+    .from("territory_map_shares")
+    .update({ is_active: false, revoked_at: new Date().toISOString() })
+    .eq("created_by", user.id)
+    .eq("is_active", true);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
+// PUBLIC (no auth): resolve a share token to the creator's live map view.
+// The token is the credential; the creator's CURRENT scope is re-resolved
+// on every request, so an org change (or deactivation) is reflected — or
+// kills the link — immediately.
+async function sharedTerritoryMap(supa, token) {
+  const t = String(token || "").trim();
+  if (!t) return { error: "token required", status: 400 };
+
+  const { data: share } = await supa
+    .from("territory_map_shares")
+    .select("id, created_by, is_active")
+    .eq("token", t)
+    .maybeSingle();
+  if (!share || !share.is_active) {
+    return { error: "This share link is no longer active.", status: 404 };
+  }
+
+  const { data: creator } = await supa
+    .from("profiles")
+    .select("id, email, full_name, preferred_name, role, is_active")
+    .eq("id", share.created_by)
+    .maybeSingle();
+  if (!creator || !creator.is_active) {
+    return { error: "This share link is no longer active.", status: 404 };
+  }
+
+  // Best-effort usage stamp — never blocks the read.
+  try {
+    await supa
+      .from("territory_map_shares")
+      .update({ last_used_at: new Date().toISOString() })
+      .eq("id", share.id);
+  } catch { /* ignore */ }
+
+  const map = await territoryMap(supa, creator);
+  if (map.error) return map;
+  return {
+    ...map,
+    shared_by: creator.preferred_name || creator.full_name || creator.email,
+  };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
+
+  const params = event.queryStringParameters || {};
+  const action = params.action || "";
+
+  // Public share-link resolution — the ONLY unauthenticated action here.
+  // Handled before the auth gate; the token itself is the credential.
+  if (action === "shared-map" && event.httpMethod === "GET") {
+    try {
+      return unwrap(await sharedTerritoryMap(admin(), params.token));
+    } catch (e) {
+      return respond(500, { error: e.message || "server error" });
+    }
+  }
 
   let user;
   try {
@@ -1273,9 +1371,6 @@ export const handler = async (event) => {
     return respond(500, { error: e.message || "auth failed" });
   }
   if (!user) return respond(401, { error: "unauthorized" });
-
-  const params = event.queryStringParameters || {};
-  const action = params.action || "";
 
   try {
     const supa = admin();
@@ -1286,6 +1381,7 @@ export const handler = async (event) => {
         return unwrap(await getStoreVendorAudit(supa, user, params));
       if (action === "stores-geo") return unwrap(await listStoresGeo(supa, user));
       if (action === "territory-map") return unwrap(await territoryMap(supa, user));
+      if (action === "map-share") return unwrap(await getOrCreateMapShare(supa, user));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {
@@ -1294,6 +1390,9 @@ export const handler = async (event) => {
         body = event.body ? JSON.parse(event.body) : {};
       } catch {
         return respond(400, { error: "invalid JSON body" });
+      }
+      if (action === "map-share-revoke") {
+        return unwrap(await revokeMapShare(supa, user));
       }
       if (action === "update-store-vendor") {
         return unwrap(await updateStoreVendor(supa, user, body));
