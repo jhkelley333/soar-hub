@@ -17,12 +17,13 @@ import { Segmented } from "@/shared/ui/Segmented";
 import { useToast } from "@/shared/ui/Toaster";
 import { fetchMyTree } from "@/modules/my-stores/api";
 import type { MyDistrictNode, MyStoreNode } from "@/modules/my-stores/types";
-import { fetchGms, fetchRollup, fetchStoreRoster, seedFromProfiles, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings } from "./api";
+import { fetchGms, fetchRollup, fetchSuccession, fetchStoreRoster, seedFromProfiles, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings } from "./api";
 import { AccountBadge, MemberDrawerProvider, useMemberDrawer } from "./MemberDrawer";
 import { RosterImport } from "./RosterImport";
 import {
   ASPIRATION_META, LADDER, LADDER_BY_KEY, REQ_STATUS_META, RISK_META, ROLE_MIX, roleBelow,
-  type LadderKey, type Requisition, type RiskCounts, type RollupResponse, type StoreRollup, type TeamMember,
+  type AtRiskMember, type GmSeat, type LadderKey, type Requisition, type RiskCounts,
+  type RollupResponse, type StoreRollup, type SuccessionResponse, type TeamMember,
 } from "./types";
 
 type Nav =
@@ -33,8 +34,11 @@ type Nav =
 const ZERO: StoreRollup = { risk: { immediate: 0, medium: 0, low: 0, na: 0 }, roster: 0, non_gm: 0, open_reqs: 0, gm_risk: null, sales: null, target: null };
 const RISK_RANK: Record<TeamMember["flight_risk"], number> = { na: 0, low: 1, medium: 2, immediate: 3 };
 
+type TopView = "pipeline" | "succession";
+
 export function TeamPipelinePage() {
   const [nav, setNav] = useState<Nav>({ level: "company" });
+  const [view, setView] = useState<TopView>("pipeline");
   const treeQ = useQuery({ queryKey: ["my-tree"], queryFn: fetchMyTree, staleTime: 5 * 60_000 });
   const rollupQ = useQuery({ queryKey: ["tp-rollup"], queryFn: fetchRollup, staleTime: 60_000 });
   const roll = rollupQ.data?.stores ?? {};
@@ -76,20 +80,34 @@ export function TeamPipelinePage() {
   return (
     <MemberDrawerProvider canWrite={rollupQ.data?.can_write ?? false} roleEdit={rollupQ.data?.role_edit ?? false}>
       <div className="mx-auto max-w-[1100px]">
-        <Breadcrumb nav={nav} district={district} store={store} onGo={setNav} />
+        {view === "pipeline" && <Breadcrumb nav={nav} district={district} store={store} onGo={setNav} />}
+
+        <div className="mb-4">
+          <Segmented<TopView>
+            value={view}
+            onChange={setView}
+            options={[{ value: "pipeline", label: "Pipeline" }, { value: "succession", label: "Succession & Risk" }]}
+          />
+        </div>
 
         <div className="mb-5 flex items-center gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[13px] font-medium text-amber-800">
           <Lock className="h-4 w-4 shrink-0" />
           Talent Planning pilot — gated by the <code className="rounded bg-amber-100 px-1 font-mono text-[12px]">team_pipeline</code> flag.
         </div>
 
-        {nav.level === "company" && (
-          <Company districts={districts} roll={roll} meta={districtMeta} canWrite={rollupQ.data?.can_write ?? false} onOpen={(id) => setNav({ level: "district", districtId: id })} />
+        {view === "succession" ? (
+          <SuccessionView districtMeta={districtMeta} districts={districts} />
+        ) : (
+          <>
+            {nav.level === "company" && (
+              <Company districts={districts} roll={roll} meta={districtMeta} canWrite={rollupQ.data?.can_write ?? false} onOpen={(id) => setNav({ level: "district", districtId: id })} />
+            )}
+            {nav.level === "district" && district && (
+              <District district={district} onOpen={(sid) => setNav({ level: "store", districtId: district.id, storeId: sid })} />
+            )}
+            {nav.level === "store" && store && <Store store={store} />}
+          </>
         )}
-        {nav.level === "district" && district && (
-          <District district={district} onOpen={(sid) => setNav({ level: "store", districtId: district.id, storeId: sid })} />
-        )}
-        {nav.level === "store" && store && <Store store={store} />}
       </div>
     </MemberDrawerProvider>
   );
@@ -170,6 +188,171 @@ function Breadcrumb({ nav, district, store, onGo }: { nav: Nav; district: MyDist
 
 // ── Company ─────────────────────────────────────────────────────────────────
 type DistrictMeta = Map<string, { regionName: string | null; doName: string | null }>;
+
+// ── Succession & Risk — leadership view (DO→COO) ──────────────────────────────
+// Named at-risk people in the caller's scope, and GM-seat backfill exposure
+// (at-risk/open seats with no identified successor) + the plan to close each
+// gap. Grouped by district so a leader sees the breakdown across their span.
+function SuccessionView({ districts, districtMeta }: { districts: MyDistrictNode[]; districtMeta: DistrictMeta }) {
+  const { open } = useMemberDrawer();
+  const q = useQuery({ queryKey: ["tp-succession"], queryFn: fetchSuccession, staleTime: 60_000 });
+  const [tab, setTab] = useState<"exposure" | "atrisk">("exposure");
+  const districtName = (id: string | null) => (id ? districts.find((d) => d.id === id)?.name ?? "—" : "Unassigned");
+  const doName = (id: string | null) => (id ? districtMeta.get(id)?.doName ?? null : null);
+
+  if (q.isLoading) return <Skeleton className="h-64 w-full" />;
+  if (q.isError) return <EmptyState title="Couldn't load succession" description={(q.error as Error)?.message ?? "Try again."} />;
+  const data = q.data as SuccessionResponse;
+  const s = data.summary;
+
+  return (
+    <div className="space-y-5">
+      {/* Headline exposure numbers */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <SuccTile label="GM seats exposed" value={s.gm_exposed} sub={`of ${s.gm_at_risk + s.gm_open} at-risk/open`} tone={s.gm_exposed > 0 ? "red" : "ok"} big />
+        <SuccTile label="GMs at risk" value={s.gm_at_risk} tone={s.gm_at_risk > 0 ? "amber" : "ok"} />
+        <SuccTile label="Open GM seats" value={s.gm_open} tone={s.gm_open > 0 ? "amber" : "ok"} />
+        <SuccTile label="People at risk" value={s.at_risk_total} sub={`${s.at_risk_immediate} immediate · ${s.at_risk_medium} medium`} tone={s.at_risk_immediate > 0 ? "red" : s.at_risk_medium > 0 ? "amber" : "ok"} />
+      </div>
+
+      <Segmented<"exposure" | "atrisk">
+        value={tab}
+        onChange={setTab}
+        options={[
+          { value: "exposure", label: "Backfill exposure", count: s.gm_exposed },
+          { value: "atrisk", label: "At-risk people", count: s.at_risk_total },
+        ]}
+      />
+
+      {tab === "exposure" ? (
+        <ExposureTable seats={data.gm_seats} districtName={districtName} doName={doName} onOpenStore={undefined} />
+      ) : (
+        <AtRiskTable people={data.at_risk} districtName={districtName} onOpen={(m) => {
+          // Open the member card. The drawer takes a TeamMember; we synthesize
+          // the minimum it needs from the at-risk row.
+          open({ id: m.member_id, store_id: m.store_id, full_name: m.name, role: m.role, flight_risk: m.risk,
+            risk_reasons: m.reasons, aspiration: m.aspiration, perf: m.perf, potential: m.potential,
+            backfill: m.backfill, status: "active", profile_id: null, external_id: null, email: null,
+            phone: null, hire_date: null, comment: null, comment_by: null, created_at: "", updated_at: "" } as TeamMember);
+        }} />
+      )}
+    </div>
+  );
+}
+
+function SuccTile({ label, value, sub, tone, big }: { label: string; value: number; sub?: string; tone: "red" | "amber" | "ok"; big?: boolean }) {
+  const color = tone === "red" ? "text-red-600" : tone === "amber" ? "text-amber-600" : "text-emerald-600";
+  return (
+    <div className={cn("rounded-xl border bg-surface p-4", big ? "border-border ring-1 ring-inset ring-border" : "border-border")}>
+      <div className="text-[11px] font-bold uppercase tracking-wide text-ink-subtle">{label}</div>
+      <div className={cn("mt-1 font-bold tabular-nums", big ? "text-4xl" : "text-3xl", color)}>{value}</div>
+      {sub && <div className="mt-0.5 text-[11px] text-ink-muted">{sub}</div>}
+    </div>
+  );
+}
+
+const PLAN_META: Record<string, { label: string; chip: string }> = {
+  develop: { label: "Develop successor", chip: "bg-blue-50 text-blue-700 ring-blue-200" },
+  req: { label: "Req open", chip: "bg-amber-50 text-amber-800 ring-amber-200" },
+  none: { label: "No plan", chip: "bg-red-50 text-red-700 ring-red-200" },
+};
+const SEAT_META: Record<GmSeat["seat_status"], { label: string; chip: string }> = {
+  at_risk: { label: "GM at risk", chip: "bg-amber-50 text-amber-800 ring-amber-200" },
+  open: { label: "Seat open", chip: "bg-red-50 text-red-700 ring-red-200" },
+  ok: { label: "Covered", chip: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
+};
+
+function ExposureTable({ seats, districtName, doName }: {
+  seats: GmSeat[];
+  districtName: (id: string | null) => string;
+  doName: (id: string | null) => string | null;
+  onOpenStore?: (id: string) => void;
+}) {
+  // Only the seats that need attention: at-risk or open. Exposed (no plan) first.
+  const rows = seats
+    .filter((s) => s.seat_status !== "ok")
+    .sort((a, b) => (a.covered === b.covered ? 0 : a.covered ? 1 : -1));
+  if (rows.length === 0) {
+    return <EmptyState title="No GM-seat exposure" description="Every at-risk or open GM seat in your scope has an identified backfill." />;
+  }
+  return (
+    <div className="overflow-hidden rounded-xl border border-border bg-surface">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-[10px] uppercase tracking-wide text-ink-subtle">
+              <th className="px-4 py-2">Store</th><th className="px-4 py-2">District / DO</th>
+              <th className="px-4 py-2">GM</th><th className="px-4 py-2">Seat</th>
+              <th className="px-4 py-2">Backfill</th><th className="px-4 py-2">Plan to close</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {rows.map((s) => {
+              const seat = SEAT_META[s.seat_status];
+              const plan = s.plan ? PLAN_META[s.plan.type] : null;
+              return (
+                <tr key={s.store_id} className={cn(!s.covered && "bg-red-50/30")}>
+                  <td className="px-4 py-2.5"><span className="font-semibold text-heading">#{s.store_number}</span><span className="ml-2 text-ink-muted">{s.store_name}</span></td>
+                  <td className="px-4 py-2.5 text-ink-2">{districtName(s.district_id)}{doName(s.district_id) ? <span className="text-ink-muted"> · {doName(s.district_id)}</span> : null}</td>
+                  <td className="px-4 py-2.5 text-ink-2">{s.gm_name ?? <span className="text-ink-muted">—</span>}</td>
+                  <td className="px-4 py-2.5"><SChip {...seat} /></td>
+                  <td className="px-4 py-2.5 text-ink-2">{s.backfill ?? <span className="text-ink-muted">—</span>}</td>
+                  <td className="px-4 py-2.5">
+                    {plan && <SChip {...plan} />}
+                    {s.plan?.detail && <span className="ml-2 text-xs text-ink-muted">{s.plan.type === "req" ? `Req ${s.plan.detail}` : s.plan.type === "develop" ? s.plan.detail : s.plan.detail}</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function AtRiskTable({ people, districtName, onOpen }: {
+  people: AtRiskMember[];
+  districtName: (id: string | null) => string;
+  onOpen: (m: AtRiskMember) => void;
+}) {
+  if (people.length === 0) return <EmptyState title="No one flagged at risk" description="No medium or immediate risk in your scope." />;
+  const tenure = (d: number | null) => (d == null ? "—" : d < 90 ? `${d}d` : d < 730 ? `${Math.round(d / 30)}mo` : `${(d / 365).toFixed(1)}y`);
+  return (
+    <div className="overflow-hidden rounded-xl border border-border bg-surface">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-[10px] uppercase tracking-wide text-ink-subtle">
+              <th className="px-4 py-2">Name</th><th className="px-4 py-2">Role</th><th className="px-4 py-2">Store / District</th>
+              <th className="px-4 py-2">Risk</th><th className="px-4 py-2">Reasons</th>
+              <th className="px-4 py-2">Tenure</th><th className="px-4 py-2">CAP</th><th className="px-4 py-2">Backfill</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {people.map((m) => (
+              <tr key={m.member_id} className={cn("cursor-pointer hover:bg-surface-muted", m.risk === "immediate" && "bg-red-50/30")} onClick={() => onOpen(m)}>
+                <td className="px-4 py-2.5 font-semibold text-heading">{m.name}</td>
+                <td className="px-4 py-2.5 text-ink-2">{LADDER_BY_KEY[m.role]?.label ?? m.role}</td>
+                <td className="px-4 py-2.5 text-ink-2">#{m.store_number} <span className="text-ink-muted">· {districtName(m.district_id)}</span></td>
+                <td className="px-4 py-2.5"><SChip label={RISK_META[m.risk].short} chip={RISK_META[m.risk].chip} /></td>
+                <td className="px-4 py-2.5 text-xs text-ink-muted">{m.reasons.length ? m.reasons.join(", ") : "—"}</td>
+                <td className="px-4 py-2.5 tabular-nums text-ink-2">{tenure(m.tenure_days)}</td>
+                <td className="px-4 py-2.5">{m.cap_level ? <SChip label={m.cap_level.toUpperCase()} chip="bg-red-50 text-red-700 ring-red-200" /> : <span className="text-ink-muted">—</span>}</td>
+                <td className="px-4 py-2.5 text-ink-2">{m.role === "gm" ? (m.backfill ?? <span className="text-red-500">none</span>) : "—"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function SChip({ label, chip }: { label: string; chip: string }) {
+  return <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset", chip)}>{label}</span>;
+}
+
 function Company({ districts, roll, meta, canWrite, onOpen }: { districts: MyDistrictNode[]; roll: RollupResponse["stores"]; meta: DistrictMeta; canWrite: boolean; onOpen: (id: string) => void }) {
   const { profile } = useAuth();
   const qc = useQueryClient();

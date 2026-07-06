@@ -201,6 +201,142 @@ async function rollup(supa, user) {
   return { stores, can_write: VIEW_ROLES.has(String(user.role)), role_edit: await roleEditOn(supa, user), sales_per_member: settings.sales_per_member };
 }
 
+// ── Succession & Risk roll-up ─────────────────────────────────────────────────
+// A leadership view (DO→COO): the named at-risk people in the caller's scope,
+// and GM-seat backfill EXPOSURE — at-risk or open GM seats with no identified
+// successor — plus the plan to close each gap, assembled from data already in
+// the pipeline (risk, backfill, open reqs, corrective actions). Read-only.
+async function succession(supa, user) {
+  const scope = await storesForUser(supa, user);
+  const ids = scope.all ? null : Array.from(scope.ids);
+  const empty = { at_risk: [], gm_seats: [], summary: emptySuccessionSummary() };
+  if (ids && ids.length === 0) return empty;
+
+  const [members, reqs, cas, storeRows] = await Promise.all([
+    fetchAll(() => {
+      let q = supa.from("tp_team_members")
+        .select("id, store_id, full_name, role, flight_risk, risk_reasons, aspiration, perf, potential, backfill, hire_date")
+        .neq("status", "terminated");
+      if (ids) q = q.in("store_id", ids);
+      return q;
+    }),
+    fetchAll(() => {
+      let q = supa.from("tp_requisitions").select("store_id, role, status").neq("status", "filled");
+      if (ids) q = q.in("store_id", ids);
+      return q;
+    }),
+    fetchAll(() => {
+      let q = supa.from("tp_corrective_actions").select("team_member_id, level, status").neq("status", "closed");
+      if (ids) q = q.in("store_id", ids);
+      return q;
+    }),
+    (async () => {
+      let q = supa.from("stores").select("id, number, name, district_id").eq("is_active", true);
+      if (ids) q = q.in("id", ids);
+      const { data } = await q;
+      return data || [];
+    })(),
+  ]);
+
+  const storeById = new Map(storeRows.map((s) => [s.id, s]));
+  const capByMember = new Map();
+  for (const c of cas || []) {
+    // Keep the most serious open level per member (pip > final > written > verbal).
+    const rank = { verbal: 1, written: 2, final: 3, pip: 4 };
+    const cur = capByMember.get(c.team_member_id);
+    if (!cur || (rank[c.level] || 0) > (rank[cur] || 0)) capByMember.set(c.team_member_id, c.level);
+  }
+  const openGmReqByStore = new Map();
+  for (const r of reqs || []) if (r.role === "gm") openGmReqByStore.set(r.store_id, r.status);
+
+  const now = Date.now();
+  const tenureDays = (d) => (d ? Math.max(0, Math.round((now - new Date(d).getTime()) / 86_400_000)) : null);
+  const AT_RISK = new Set(["medium", "immediate"]);
+  const RISK_RANK = { na: 0, low: 1, medium: 2, immediate: 3 };
+  // Ladder order carhop→gm; higher index = more senior, so gm sorts first.
+  const roleRank = { carhop: 0, crew: 1, lead: 2, shift: 3, assoc: 4, fam: 5, gm: 6 };
+
+  // Named at-risk list (everyone flagged medium/immediate), worst-first.
+  const at_risk = (members || [])
+    .filter((m) => AT_RISK.has(m.flight_risk))
+    .map((m) => {
+      const st = storeById.get(m.store_id);
+      return {
+        member_id: m.id,
+        name: m.full_name,
+        store_id: m.store_id,
+        store_number: st?.number ?? null,
+        store_name: st?.name ?? null,
+        district_id: st?.district_id ?? null,
+        role: m.role,
+        risk: m.flight_risk,
+        reasons: m.risk_reasons || [],
+        aspiration: m.aspiration,
+        perf: m.perf,
+        potential: m.potential,
+        tenure_days: tenureDays(m.hire_date),
+        cap_level: capByMember.get(m.id) || null,
+        backfill: m.backfill || null,
+      };
+    })
+    .sort((a, b) =>
+      (RISK_RANK[b.risk] - RISK_RANK[a.risk]) ||
+      ((roleRank[b.role] ?? 0) - (roleRank[a.role] ?? 0)) ||
+      String(a.store_number).localeCompare(String(b.store_number), undefined, { numeric: true }),
+    );
+
+  // GM-seat exposure — one row per store: is the GM seat at-risk / open, and
+  // does it have a backfill? Exposed = at-risk/open AND no backfill identified.
+  const gmByStore = new Map();
+  for (const m of members || []) if (m.role === "gm") gmByStore.set(m.store_id, m);
+
+  const gm_seats = storeRows.map((st) => {
+    const gm = gmByStore.get(st.id) || null;
+    const openReq = openGmReqByStore.get(st.id) || null;
+    let seat_status = "ok";
+    if (!gm) seat_status = "open";
+    else if (AT_RISK.has(gm.flight_risk)) seat_status = "at_risk";
+    const backfill = gm?.backfill || null;
+    const covered = !!backfill;
+    let plan;
+    if (seat_status === "ok") plan = null;
+    else if (covered) plan = { type: "develop", detail: backfill };
+    else if (openReq) plan = { type: "req", detail: openReq };
+    else plan = { type: "none", detail: seat_status === "open" ? "Open seat — no successor identified" : "No successor identified" };
+    return {
+      store_id: st.id,
+      store_number: st.number,
+      store_name: st.name,
+      district_id: st.district_id,
+      gm_name: gm?.full_name ?? null,
+      gm_risk: gm ? gm.flight_risk : null,
+      seat_status,
+      covered,
+      backfill,
+      req_status: openReq,
+      plan,
+    };
+  });
+
+  const exposedSeats = gm_seats.filter((s) => s.seat_status !== "ok" && !s.covered);
+  const summary = {
+    at_risk_immediate: at_risk.filter((m) => m.risk === "immediate").length,
+    at_risk_medium: at_risk.filter((m) => m.risk === "medium").length,
+    at_risk_total: at_risk.length,
+    gm_total: gm_seats.length,
+    gm_at_risk: gm_seats.filter((s) => s.seat_status === "at_risk").length,
+    gm_open: gm_seats.filter((s) => s.seat_status === "open").length,
+    gm_covered: gm_seats.filter((s) => s.seat_status !== "ok" && s.covered).length,
+    gm_exposed: exposedSeats.length,
+  };
+
+  return { at_risk, gm_seats, summary };
+}
+
+function emptySuccessionSummary() {
+  return { at_risk_immediate: 0, at_risk_medium: 0, at_risk_total: 0, gm_total: 0, gm_at_risk: 0, gm_open: 0, gm_covered: 0, gm_exposed: 0 };
+}
+
 async function storeRoster(supa, user, storeId) {
   if (!storeId) return { error: "Missing store.", status: 400 };
   const scope = await storesForUser(supa, user);
@@ -690,6 +826,7 @@ export const handler = async (event) => {
     const supa = admin();
     if (event.httpMethod === "GET") {
       if (action === "rollup") return unwrap(await rollup(supa, user));
+      if (action === "succession") return unwrap(await succession(supa, user));
       if (action === "gms") return unwrap(await gms(supa, user));
       if (action === "store-roster") return unwrap(await storeRoster(supa, user, params.store_id));
       if (action === "notes") return unwrap(await listNotes(supa, user, params.member_id));

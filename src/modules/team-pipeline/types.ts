@@ -52,6 +52,54 @@ export const INVITE_ROLES: LadderKey[] = ["lead", "shift", "assoc", "fam", "gm"]
 
 export interface GmsResponse { gms: TeamMember[] }
 
+// ── Succession & Risk roll-up ────────────────────────────────────────
+export interface AtRiskMember {
+  member_id: string;
+  name: string;
+  store_id: string;
+  store_number: string | null;
+  store_name: string | null;
+  district_id: string | null;
+  role: LadderKey;
+  risk: FlightRisk;
+  reasons: string[];
+  aspiration: Aspiration;
+  perf: number | null;
+  potential: number | null;
+  tenure_days: number | null;
+  cap_level: "verbal" | "written" | "final" | "pip" | null;
+  backfill: string | null;
+}
+export type SeatStatus = "ok" | "at_risk" | "open";
+export interface GmSeat {
+  store_id: string;
+  store_number: string;
+  store_name: string | null;
+  district_id: string | null;
+  gm_name: string | null;
+  gm_risk: FlightRisk | null;
+  seat_status: SeatStatus;
+  covered: boolean;
+  backfill: string | null;
+  req_status: string | null;
+  plan: { type: "develop" | "req" | "none"; detail: string } | null;
+}
+export interface SuccessionSummary {
+  at_risk_immediate: number;
+  at_risk_medium: number;
+  at_risk_total: number;
+  gm_total: number;
+  gm_at_risk: number;
+  gm_open: number;
+  gm_covered: number;
+  gm_exposed: number;
+}
+export interface SuccessionResponse {
+  at_risk: AtRiskMember[];
+  gm_seats: GmSeat[];
+  summary: SuccessionSummary;
+}
+
 export interface Requisition {
   id: string;
   ref: string | null;
