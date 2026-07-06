@@ -264,17 +264,19 @@ function FlagsSection({ store }: { store: string }) {
     staleTime: 5 * 60_000,
     retry: false,
   });
-  const st = q.data?.stores?.[0];
+  // Aggregate across every returned entry for this store — resilient to a
+  // sheet layout that produces more than one entry per store number.
+  const flags = (q.data?.stores ?? []).flatMap((s) => s.flags);
 
   // Quietly absent when the sheet has no flags for this store (or the
   // sheet integration isn't reachable) — the statement is the main event.
-  if (q.isLoading || q.isError || !q.data?.period_end || !st || st.flags.length === 0) return null;
+  if (q.isLoading || q.isError || !q.data?.period_end || flags.length === 0) return null;
 
   return (
     <div className="overflow-hidden rounded-xl bg-white ring-1 ring-amber-200">
       <div className="border-b border-amber-100 bg-amber-50 px-5 py-3">
         <div className="text-sm font-semibold text-amber-900">
-          Walkthrough flags ({st.flags.length})
+          Walkthrough flags ({flags.length})
         </div>
         <div className="text-xs text-amber-700">
           From the period review — add a note per flag; it saves here and writes back to the review
@@ -282,7 +284,7 @@ function FlagsSection({ store }: { store: string }) {
         </div>
       </div>
       <div className="divide-y divide-zinc-100">
-        {st.flags.map((f) => (
+        {flags.map((f) => (
           <FlagRow key={`${f.category}-${f.item}-${f.sheet_row}`} flag={f} store={store} periodEnd={q.data!.period_end!} />
         ))}
       </div>

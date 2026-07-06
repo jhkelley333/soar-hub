@@ -139,11 +139,25 @@ function parseFlagsSheet(rows) {
   };
 
   const stores = [];
+  const byNumber = new Map();
   let current = null;
   for (let r = headerIdx + 1; r < rows.length; r++) {
     const row = rows[r] ?? [];
     const storeNum = cell(row, C.store);
+    // "Top CI:" / "Bottom CI:" summary rows inside each DO block ALSO carry
+    // a store number in the Store # column — they are highlights, not store
+    // rows, and treating them as stores shadowed the real row (the app
+    // then served the flagless duplicate first). Skip them outright.
+    const isSummaryRow = /\b(top|bottom)\s*ci\b/i.test(cell(row, 0));
+    if (isSummaryRow) continue;
     if (isStoreNum(storeNum)) {
+      // Belt & suspenders: if a number somehow repeats, merge into the
+      // existing entry instead of creating a shadow duplicate.
+      const existing = byNumber.get(storeNum);
+      if (existing) {
+        current = existing;
+        continue;
+      }
       current = {
         store_number: storeNum,
         store_name: cell(row, C.name) || null,
@@ -153,6 +167,7 @@ function parseFlagsSheet(rows) {
         ci_amount: cell(row, C.ciAmt) || null,
         flags: [],
       };
+      byNumber.set(storeNum, current);
       stores.push(current);
       continue;
     }
