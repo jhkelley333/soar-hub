@@ -2,7 +2,7 @@
 import { supabase } from "@/lib/supabase";
 import type {
   CaLevel, CaStatus, CorrectiveAction, GmsResponse, MemberPatch, Note,
-  Requisition, RollupResponse, StoreRosterResponse, TeamMember,
+  Requisition, RollupResponse, StoreRosterResponse, SuccessionResponse, TeamMember,
 } from "./types";
 
 const FN = "/.netlify/functions/team-pipeline";
@@ -25,6 +25,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
 export function fetchRollup(): Promise<RollupResponse> {
   return request<RollupResponse>(`${FN}?action=rollup`);
+}
+export function fetchSuccession(): Promise<SuccessionResponse> {
+  return request<SuccessionResponse>(`${FN}?action=succession`);
 }
 export function fetchGms(): Promise<GmsResponse> {
   return request<GmsResponse>(`${FN}?action=gms`);
