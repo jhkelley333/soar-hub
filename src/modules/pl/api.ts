@@ -49,3 +49,43 @@ export function uploadPl(input: {
 }): Promise<{ ok: true; upserted: number; unmatched: string[] }> {
   return request(`${FN}?action=upload`, { method: "POST", body: JSON.stringify(input) });
 }
+
+// ── Walkthrough flags (Google Sheet) + notes write-back ─────────────
+
+const FLAGS_FN = "/.netlify/functions/pl-flags";
+
+export interface PlFlag {
+  sheet_row: number;
+  category: string;
+  item: string | null;
+  value: string | null;
+  rule: string | null;
+  prior_1: string | null;
+  prior_2: string | null;
+  sheet_note: string | null;
+  note?: string;
+  noted_by?: string;
+  noted_at?: string;
+}
+
+export interface PlFlagStore {
+  store_number: string;
+  store_name: string | null;
+  gm: string | null;
+  flags: PlFlag[];
+}
+
+export function fetchPlFlags(store?: string): Promise<{ period_end: string | null; stores: PlFlagStore[] }> {
+  return request(`${FLAGS_FN}?action=flags${store ? `&store=${encodeURIComponent(store)}` : ""}`);
+}
+
+export function savePlFlagNote(input: {
+  period_end: string;
+  store_number: string;
+  category: string;
+  item: string;
+  sheet_row: number;
+  note: string;
+}): Promise<{ ok: true; sheet_written: boolean; sheet_reason: string | null }> {
+  return request(`${FLAGS_FN}?action=note`, { method: "POST", body: JSON.stringify(input) });
+}

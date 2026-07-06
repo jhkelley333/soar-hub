@@ -17,7 +17,7 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
-import { fetchPlOverview, fetchPlPeriods, fetchPlStatement, uploadPl } from "./api";
+import { fetchPlFlags, fetchPlOverview, fetchPlPeriods, fetchPlStatement, savePlFlagNote, uploadPl, type PlFlag } from "./api";
 import type { ParsedWorkbook, PlLine, PlOverviewRow } from "./types";
 
 const money = (v: number | null | undefined, dp = 0) =>
@@ -236,6 +236,9 @@ function StatementView({ store, period, periodLabel, onBack }: {
             <Tile label="Controllable Income %" value={pct(s.ci_pct)} tone={(s.ci_pct ?? 0) < 0 ? "bad" : "ok"} />
           </div>
 
+          {/* Walkthrough flags + notes — write back to the review sheet. */}
+          <FlagsSection store={store} />
+
           {/* Full statement */}
           <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
             <div className="grid grid-cols-[1fr_auto_auto] gap-x-6 border-b border-zinc-100 px-5 py-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
@@ -250,6 +253,107 @@ function StatementView({ store, period, periodLabel, onBack }: {
         </div>
       )}
     </>
+  );
+}
+
+// ── Flags for one store — from the walkthrough sheet, notes write back. ──
+function FlagsSection({ store }: { store: string }) {
+  const q = useQuery({
+    queryKey: ["pl-flags", store],
+    queryFn: () => fetchPlFlags(store),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const st = q.data?.stores?.[0];
+
+  // Quietly absent when the sheet has no flags for this store (or the
+  // sheet integration isn't reachable) — the statement is the main event.
+  if (q.isLoading || q.isError || !q.data?.period_end || !st || st.flags.length === 0) return null;
+
+  return (
+    <div className="overflow-hidden rounded-xl bg-white ring-1 ring-amber-200">
+      <div className="border-b border-amber-100 bg-amber-50 px-5 py-3">
+        <div className="text-sm font-semibold text-amber-900">
+          Walkthrough flags ({st.flags.length})
+        </div>
+        <div className="text-xs text-amber-700">
+          From the period review — add a note per flag; it saves here and writes back to the review
+          sheet.
+        </div>
+      </div>
+      <div className="divide-y divide-zinc-100">
+        {st.flags.map((f) => (
+          <FlagRow key={`${f.category}-${f.item}-${f.sheet_row}`} flag={f} store={store} periodEnd={q.data!.period_end!} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FlagRow({ flag, store, periodEnd }: { flag: PlFlag; store: string; periodEnd: string }) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const [note, setNote] = useState(flag.note ?? "");
+
+  const save = useMutation({
+    mutationFn: () =>
+      savePlFlagNote({
+        period_end: periodEnd,
+        store_number: store,
+        category: flag.category,
+        item: flag.item ?? "",
+        sheet_row: flag.sheet_row,
+        note: note.trim(),
+      }),
+    onSuccess: (r) => {
+      toast.push(
+        r.sheet_written ? "Note saved & written to the review sheet." : `Note saved. ${r.sheet_reason ?? ""}`,
+        r.sheet_written ? "success" : "info",
+      );
+      qc.invalidateQueries({ queryKey: ["pl-flags"] });
+    },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't save the note.", "error"),
+  });
+
+  return (
+    <div className="px-5 py-3">
+      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+        <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-zinc-600">
+          {flag.category}
+        </span>
+        <span className="text-sm font-semibold text-midnight">{flag.item ?? "—"}</span>
+        {flag.value && <span className="text-sm tabular-nums text-zinc-700">{flag.value}</span>}
+        {flag.rule && <span className="text-xs text-amber-700">{flag.rule}</span>}
+        {(flag.prior_1 || flag.prior_2) && (
+          <span className="text-xs text-zinc-400">
+            {[flag.prior_1, flag.prior_2].filter(Boolean).join(" · ")}
+          </span>
+        )}
+      </div>
+      <div className="mt-2 flex items-start gap-2">
+        <textarea
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          rows={1}
+          placeholder="Explain this flag…"
+          className="min-h-[38px] flex-1 rounded-lg border border-zinc-200 px-3 py-2 text-sm focus:border-accent focus:outline-none"
+        />
+        <button
+          type="button"
+          onClick={() => save.mutate()}
+          disabled={save.isPending || !note.trim() || note.trim() === (flag.note ?? "").trim()}
+          className="rounded-lg bg-accent px-3 py-2 text-sm font-semibold text-white hover:brightness-110 disabled:opacity-40"
+        >
+          {save.isPending ? "Saving…" : "Save"}
+        </button>
+      </div>
+      {flag.noted_by && (
+        <div className="mt-1 text-[11px] text-zinc-400">
+          Last note by {flag.noted_by}
+          {flag.noted_at ? ` · ${new Date(flag.noted_at).toLocaleString()}` : ""}
+        </div>
+      )}
+    </div>
   );
 }
 
