@@ -118,7 +118,7 @@ export function RosterImport({ onDone }: { onDone: () => void }) {
               <code>full_name</code>, <code>store_number</code>, and <code>role</code> are required. Role accepts titles
               (General Manager, Shift Manager, Carhop…) or ladder keys (gm, shift, carhop). Stores resolve by number,
               limited to your scope. Rows match existing members by <code>external_id</code> (else store + name) — matches
-              <strong> update</strong>, the rest <strong>create</strong>. Talent data (flight risk, ratings, notes) is never overwritten.
+              <strong> update</strong>, the rest <strong>create</strong>. Talent data (risk, ratings, notes) is never overwritten.
             </p>
           </div>
 
