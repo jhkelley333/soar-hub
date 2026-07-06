@@ -26,7 +26,7 @@ const money = (v: number | null | undefined, dp = 0) =>
     : `${v < 0 ? "−" : ""}$${Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp })}`;
 const pct = (v: number | null | undefined) => (v == null ? "—" : `${v.toFixed(2)}%`);
 
-type SortKey = "store" | "sales" | "ci" | "ci_pct" | "ebitda";
+type SortKey = "store" | "sales" | "ci" | "ci_pct" | "ebitda" | "notes";
 type SortDir = "asc" | "desc";
 
 export function PlPage() {
@@ -51,6 +51,25 @@ export function PlPage() {
   });
   const rows = useMemo(() => overviewQ.data?.rows ?? [], [overviewQ.data]);
 
+  // Walkthrough-flag note status per store, for the Notes pill. Reflects
+  // the CURRENT review sheet (flags are per-month) regardless of which P&L
+  // period is selected. Quietly absent if the sheet isn't reachable.
+  const flagsQ = useQuery({
+    queryKey: ["pl-flags", "summary"],
+    queryFn: () => fetchPlFlags(),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const flagStats = useMemo(() => {
+    const m = new Map<string, { total: number; noted: number }>();
+    for (const s of flagsQ.data?.stores ?? []) {
+      if (!s.flags.length) continue;
+      const noted = s.flags.filter((f) => (f.note ?? "").trim().length > 0).length;
+      m.set(s.store_number, { total: s.flags.length, noted });
+    }
+    return m;
+  }, [flagsQ.data]);
+
   // Single-store viewers (GMs) jump straight into their statement.
   useEffect(() => {
     if (!store && rows.length === 1) setStore(rows[0].store_number);
@@ -64,6 +83,10 @@ export function PlPage() {
         case "ci": return r.ci_amount ?? -Infinity;
         case "ci_pct": return r.ci_pct ?? -Infinity;
         case "ebitda": return r.ebitda ?? -Infinity;
+        case "notes": {
+          const fs = flagStats.get(r.store_number);
+          return fs ? fs.total - fs.noted : -1; // most notes owed first when desc
+        }
       }
     };
     return [...rows].sort((a, b) => {
@@ -71,7 +94,7 @@ export function PlPage() {
       const cmp = typeof av === "string" ? av.localeCompare(bv as string, undefined, { numeric: true }) : (av as number) - (bv as number);
       return sort.dir === "asc" ? cmp : -cmp;
     });
-  }, [rows, sort]);
+  }, [rows, sort, flagStats]);
 
   const activePeriod = periods.find((p) => p.period_end === period);
 
@@ -144,6 +167,7 @@ export function PlPage() {
                   <Th label="CI $" k="ci" sort={sort} onSort={setSort} right />
                   <Th label="CI %" k="ci_pct" sort={sort} onSort={setSort} right />
                   <Th label="EBITDA" k="ebitda" sort={sort} onSort={setSort} right />
+                  <Th label="Notes" k="notes" sort={sort} onSort={setSort} right />
                   <th className="px-4 py-2" />
                 </tr>
               </thead>
@@ -158,6 +182,9 @@ export function PlPage() {
                     <td className={cn("px-4 py-2.5 text-right font-semibold tabular-nums", (r.ci_amount ?? 0) < 0 ? "text-red-600" : "text-midnight")}>{money(r.ci_amount)}</td>
                     <td className={cn("px-4 py-2.5 text-right font-semibold tabular-nums", (r.ci_pct ?? 0) < 0 ? "text-red-600" : "text-emerald-700")}>{pct(r.ci_pct)}</td>
                     <td className={cn("px-4 py-2.5 text-right tabular-nums", (r.ebitda ?? 0) < 0 ? "text-red-600" : "text-zinc-600")}>{money(r.ebitda)}</td>
+                    <td className="px-4 py-2.5 text-right">
+                      <NotesPill stats={flagStats.get(r.store_number)} />
+                    </td>
                     <td className="px-4 py-2.5 text-right text-xs font-semibold text-accent">View →</td>
                   </tr>
                 ))}
@@ -172,6 +199,25 @@ export function PlPage() {
 
 function periodDisplay(label: string | null, end: string, isFinal: boolean): string {
   return `${label ?? end}${isFinal ? " · Final" : " · Prelim"}`;
+}
+
+// Walkthrough-flag note status: amber while notes are owed, green once
+// every flag has one. No pill when the store has no flags this period.
+function NotesPill({ stats }: { stats?: { total: number; noted: number } }) {
+  if (!stats || stats.total === 0) return <span className="text-xs text-zinc-300">—</span>;
+  const needed = stats.total - stats.noted;
+  if (needed > 0) {
+    return (
+      <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">
+        {needed} note{needed === 1 ? "" : "s"} needed
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
+      {stats.noted} noted
+    </span>
+  );
 }
 
 function Th({ label, k, sort, onSort, right }: {
@@ -274,14 +320,19 @@ function FlagsSection({ store }: { store: string }) {
 
   return (
     <div className="overflow-hidden rounded-xl bg-white ring-1 ring-amber-200">
-      <div className="border-b border-amber-100 bg-amber-50 px-5 py-3">
-        <div className="text-sm font-semibold text-amber-900">
-          Walkthrough flags ({flags.length})
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-amber-100 bg-amber-50 px-5 py-3">
+        <div>
+          <div className="text-sm font-semibold text-amber-900">
+            Walkthrough flags ({flags.length})
+          </div>
+          <div className="text-xs text-amber-700">
+            From the period review — add a note per flag; it saves here and writes back to the review
+            sheet.
+          </div>
         </div>
-        <div className="text-xs text-amber-700">
-          From the period review — add a note per flag; it saves here and writes back to the review
-          sheet.
-        </div>
+        <NotesPill
+          stats={{ total: flags.length, noted: flags.filter((f) => (f.note ?? "").trim().length > 0).length }}
+        />
       </div>
       <div className="divide-y divide-zinc-100">
         {flags.map((f) => (
