@@ -7,17 +7,19 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, ArrowLeft, Check, ChevronRight, Clock, FileText,
-  Image as ImageIcon, Plus, Search, Upload, Wrench, X,
+  AlertTriangle, ArrowLeft, Check, ChevronRight, Clock, Download, FileText,
+  Image as ImageIcon, Loader2, Plus, Search, Upload, Wrench, X,
 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Button } from "@/shared/ui/Button";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
+import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
+import { toCSV, downloadCSV } from "@/lib/csv";
 import {
-  createDisruption, fetchDisruptionStores, fetchDisruptions,
+  createDisruption, exportDisruptions, fetchDisruptionStores, fetchDisruptions,
   fileToPayload, lookupWorkOrders, setDisruptionStatus, updateDisruption, type FilePayload,
 } from "./api";
 import {
@@ -67,8 +69,12 @@ function SummaryTile({ label, value, tone }: { label: string; value: string; ton
   );
 }
 
+const EXPORT_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
+
 export function BusinessDisruptionsPage() {
   const qc = useQueryClient();
+  const { profile } = useAuth();
+  const canExport = EXPORT_ROLES.has(profile?.role ?? "");
   const [nav, setNav] = useState<Nav>({ screen: "list" });
   const q = useQuery({ queryKey: ["business-disruptions"], queryFn: fetchDisruptions });
   const reports = q.data?.reports ?? [];
@@ -129,6 +135,7 @@ export function BusinessDisruptionsPage() {
         description="Report a closure or business disruption at a store."
         actions={canWrite ? <Button size="sm" onClick={() => setNav({ screen: "new" })}><Plus className="h-4 w-4" /> New report</Button> : undefined}
       />
+      {canExport && <ExportPanel />}
       {canReview && reports.length > 0 && (
         <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
           <SummaryTile label="Reports" value={String(stats.total)} />
@@ -149,8 +156,8 @@ export function BusinessDisruptionsPage() {
             return (
               <button key={r.id} onClick={() => setNav({ screen: "detail", id: r.id })}
                 className="flex w-full items-center gap-3 rounded-2xl border border-zinc-200 bg-white p-4 text-left shadow-card transition hover:border-accent/60">
-                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent/10 text-accent text-sm font-bold">
-                  #{r.store_number}
+                <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent/10 px-1 font-bold leading-none tabular-nums text-accent text-[13px]">
+                  {r.store_number}
                 </span>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
@@ -159,7 +166,12 @@ export function BusinessDisruptionsPage() {
                     <ClosureChip report={r} />
                   </div>
                   <div className="mt-0.5 truncate text-xs text-zinc-500">{fmtDate(r.disruption_date)} · {r.submitted_by_name || "—"}</div>
-                  <div className="mt-1 truncate text-xs text-zinc-400">{r.closure_types.join(", ") || r.issue_types.join(", ") || "—"}</div>
+                  <div className="mt-1 flex items-center gap-2 text-xs">
+                    <span className="min-w-0 flex-1 truncate text-zinc-400">{r.closure_types.join(", ") || r.issue_types.join(", ") || "—"}</span>
+                    {r.estimated_loss_sales > 0 && (
+                      <span className="shrink-0 font-semibold tabular-nums text-red-600">{fmtUSD(r.estimated_loss_sales)} lost</span>
+                    )}
+                  </div>
                 </div>
                 <ChevronRight className="h-4 w-4 shrink-0 text-zinc-300" />
               </button>
@@ -167,6 +179,73 @@ export function BusinessDisruptionsPage() {
           })}
         </div>
       )}
+    </div>
+  );
+}
+
+// ── CSV date-range export (SDO+) ─────────────────────────────────────────────
+function ExportPanel() {
+  const toast = useToast();
+  const today = new Date().toISOString().slice(0, 10);
+  const monthAgo = new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10);
+  const [start, setStart] = useState(monthAgo);
+  const [end, setEnd] = useState(today);
+
+  const run = useMutation({
+    mutationFn: () => exportDisruptions(start, end),
+    onSuccess: (r) => {
+      if (!r.rows.length) {
+        toast.push("No disruptions in that date range for your scope.", "info");
+        return;
+      }
+      const headers = [
+        "Date", "Store #", "Store", "Status", "Store closed", "Reopen date",
+        "Closure types", "Issue types", "Est. loss sales", "Work order filed",
+        "WO #", "Submitted by", "Description",
+      ];
+      const rows = r.rows.map((d) => ({
+        Date: d.disruption_date,
+        "Store #": d.store_number,
+        Store: d.store_name,
+        Status: d.status,
+        "Store closed": d.store_closed ? "Yes" : "No",
+        "Reopen date": d.reopen_date ?? "",
+        "Closure types": d.closure_types.join("; "),
+        "Issue types": d.issue_types.join("; "),
+        "Est. loss sales": d.estimated_loss_sales != null ? d.estimated_loss_sales.toFixed(2) : "",
+        "Work order filed": d.work_order_filed === true ? "Yes" : d.work_order_filed === false ? "No" : "",
+        "WO #": d.work_order_number ?? "",
+        "Submitted by": d.submitted_by_name ?? "",
+        Description: d.description ?? "",
+      }));
+      downloadCSV(`business-disruptions-${start}_to_${end}.csv`, toCSV(headers, rows));
+      toast.push(`Exported ${r.rows.length} report${r.rows.length === 1 ? "" : "s"}.`, "success");
+    },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Export failed.", "error"),
+  });
+
+  return (
+    <div className="mb-4 rounded-xl border border-zinc-200 bg-white p-3">
+      <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Export CSV</div>
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="text-xs text-zinc-500">
+          <span className="mb-1 block font-semibold">Start</span>
+          <input type="date" value={start} max={end} onChange={(e) => setStart(e.target.value)} className={inputCls} />
+        </label>
+        <label className="text-xs text-zinc-500">
+          <span className="mb-1 block font-semibold">End</span>
+          <input type="date" value={end} min={start} max={today} onChange={(e) => setEnd(e.target.value)} className={inputCls} />
+        </label>
+        <button
+          type="button"
+          onClick={() => run.mutate()}
+          disabled={run.isPending}
+          className="inline-flex h-[38px] items-center gap-1.5 rounded-lg bg-accent px-4 text-sm font-semibold text-white hover:brightness-110 disabled:opacity-50"
+        >
+          {run.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" strokeWidth={2} />}
+          {run.isPending ? "Building…" : "Export"}
+        </button>
+      </div>
     </div>
   );
 }

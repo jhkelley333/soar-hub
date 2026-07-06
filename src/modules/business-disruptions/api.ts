@@ -49,6 +49,25 @@ export interface DisruptionsResponse { reports: import("./types").DisruptionRepo
 export function fetchDisruptions(): Promise<DisruptionsResponse> {
   return request<DisruptionsResponse>(`${FN}?action=list`);
 }
+
+export interface DisruptionExportRow {
+  disruption_date: string;
+  store_number: string;
+  store_name: string;
+  status: string;
+  store_closed: boolean;
+  reopen_date: string | null;
+  closure_types: string[];
+  issue_types: string[];
+  estimated_loss_sales: number;
+  work_order_filed: boolean | null;
+  work_order_number: string | null;
+  submitted_by_name: string | null;
+  description: string | null;
+}
+export function exportDisruptions(start: string, end: string): Promise<{ rows: DisruptionExportRow[] }> {
+  return request(`${FN}?action=export&start=${encodeURIComponent(start)}&end=${encodeURIComponent(end)}`);
+}
 export function fetchDisruptionStores(): Promise<{ stores: StorePick[] }> {
   return request(`${FN}?action=stores`);
 }
