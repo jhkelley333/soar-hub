@@ -1,8 +1,8 @@
 // Typed wrappers around netlify/functions/team-pipeline.
 import { supabase } from "@/lib/supabase";
 import type {
-  CaLevel, CaStatus, CorrectiveAction, GmsResponse, MemberPatch, Note,
-  Requisition, RollupResponse, StoreRosterResponse, SuccessionResponse, TeamMember,
+  CaLevel, CaStatus, CorrectiveAction, GmsResponse, MemberPatch, Note, Readiness,
+  Requisition, RollupResponse, StoreRosterResponse, Successor, SuccessionResponse, TeamMember,
 } from "./types";
 
 const FN = "/.netlify/functions/team-pipeline";
@@ -74,6 +74,26 @@ export function addCorrectiveAction(memberId: string, doc: NewCorrectiveAction):
 }
 export function setCorrectiveActionStatus(actionId: string, status: CaStatus): Promise<{ ok: true; action: CorrectiveAction }> {
   return request(`${FN}?action=corrective-action-status`, { method: "POST", body: JSON.stringify({ action_id: actionId, status }) });
+}
+
+// ── Succession bench (ranked successors + readiness) ─────────────────────────
+export function fetchSuccessors(memberId: string): Promise<{ successors: Successor[] }> {
+  return request(`${FN}?action=successors&member_id=${encodeURIComponent(memberId)}`);
+}
+export interface NewSuccessor {
+  successor_member_id?: string | null;
+  successor_name?: string | null;
+  readiness?: Readiness;
+  note?: string | null;
+}
+export function addSuccessor(memberId: string, s: NewSuccessor): Promise<{ ok: true; successor: Successor }> {
+  return request(`${FN}?action=add-successor`, { method: "POST", body: JSON.stringify({ member_id: memberId, ...s }) });
+}
+export function updateSuccessor(successorId: string, patch: Partial<{ readiness: Readiness; rank: number; note: string | null; successor_name: string | null }>): Promise<{ ok: true; successor: Successor }> {
+  return request(`${FN}?action=update-successor`, { method: "POST", body: JSON.stringify({ successor_id: successorId, patch }) });
+}
+export function removeSuccessor(successorId: string): Promise<{ ok: true }> {
+  return request(`${FN}?action=remove-successor`, { method: "POST", body: JSON.stringify({ successor_id: successorId }) });
 }
 
 // ATS roster import. Rows are the raw CSV cells; the backend resolves stores,

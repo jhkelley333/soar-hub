@@ -71,18 +71,31 @@ export interface AtRiskMember {
   backfill: string | null;
 }
 export type SeatStatus = "ok" | "at_risk" | "open";
+export type Readiness = "now" | "6mo" | "12mo";
+export type SeatCoverage = "ok" | "ready" | "developing" | "exposed";
+export interface BenchEntry {
+  id: string;
+  successor_member_id: string | null;
+  name: string;
+  role: LadderKey | null;
+  readiness: Readiness;
+}
 export interface GmSeat {
   store_id: string;
   store_number: string;
   store_name: string | null;
   district_id: string | null;
   gm_name: string | null;
+  gm_id: string | null;
   gm_risk: FlightRisk | null;
   seat_status: SeatStatus;
   covered: boolean;
+  coverage: SeatCoverage;
+  readiness: Readiness | null;
+  bench: BenchEntry[];
   backfill: string | null;
   req_status: string | null;
-  plan: { type: "develop" | "req" | "none"; detail: string } | null;
+  plan: { type: "ready" | "develop" | "req" | "none"; detail: string } | null;
 }
 export interface SuccessionSummary {
   at_risk_immediate: number;
@@ -91,9 +104,39 @@ export interface SuccessionSummary {
   gm_total: number;
   gm_at_risk: number;
   gm_open: number;
+  gm_ready: number;
+  gm_developing: number;
   gm_covered: number;
   gm_exposed: number;
 }
+
+// A successor bench row (full detail, from the successors CRUD endpoint).
+export interface Successor {
+  id: string;
+  incumbent_member_id: string;
+  store_id: string;
+  successor_member_id: string | null;
+  successor_name: string | null;
+  name: string;
+  successor_role: LadderKey | null;
+  successor_store_id: string | null;
+  readiness: Readiness;
+  rank: number;
+  note: string | null;
+}
+
+export const READINESS_META: Record<Readiness, { label: string; short: string; chip: string }> = {
+  now: { label: "Ready now", short: "Now", chip: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
+  "6mo": { label: "Ready in ~6 months", short: "6 mo", chip: "bg-amber-50 text-amber-800 ring-amber-200" },
+  "12mo": { label: "Ready in ~12 months", short: "12 mo", chip: "bg-zinc-100 text-zinc-600 ring-zinc-200" },
+};
+
+export const SEAT_COVERAGE_META: Record<SeatCoverage, { label: string; chip: string }> = {
+  ok: { label: "GM in place", chip: "bg-zinc-100 text-zinc-600 ring-zinc-200" },
+  ready: { label: "Ready successor", chip: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
+  developing: { label: "Developing", chip: "bg-amber-50 text-amber-800 ring-amber-200" },
+  exposed: { label: "Exposed", chip: "bg-red-50 text-red-700 ring-red-200" },
+};
 export interface SuccessionResponse {
   at_risk: AtRiskMember[];
   gm_seats: GmSeat[];

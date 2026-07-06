@@ -21,7 +21,7 @@ import { fetchGms, fetchRollup, fetchSuccession, fetchStoreRoster, seedFromProfi
 import { AccountBadge, MemberDrawerProvider, useMemberDrawer } from "./MemberDrawer";
 import { RosterImport } from "./RosterImport";
 import {
-  ASPIRATION_META, LADDER, LADDER_BY_KEY, REQ_STATUS_META, RISK_META, ROLE_MIX, roleBelow,
+  ASPIRATION_META, LADDER, LADDER_BY_KEY, READINESS_META, REQ_STATUS_META, RISK_META, ROLE_MIX, roleBelow,
   type AtRiskMember, type GmSeat, type LadderKey, type Requisition, type RiskCounts,
   type RollupResponse, type StoreRollup, type SuccessionResponse, type TeamMember,
 } from "./types";
@@ -207,11 +207,11 @@ function SuccessionView({ districts, districtMeta }: { districts: MyDistrictNode
 
   return (
     <div className="space-y-5">
-      {/* Headline exposure numbers */}
+      {/* Headline exposure numbers — coverage keyed off ready-now successors */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <SuccTile label="GM seats exposed" value={s.gm_exposed} sub={`of ${s.gm_at_risk + s.gm_open} at-risk/open`} tone={s.gm_exposed > 0 ? "red" : "ok"} big />
-        <SuccTile label="GMs at risk" value={s.gm_at_risk} tone={s.gm_at_risk > 0 ? "amber" : "ok"} />
-        <SuccTile label="Open GM seats" value={s.gm_open} tone={s.gm_open > 0 ? "amber" : "ok"} />
+        <SuccTile label="GM seats exposed" value={s.gm_exposed} sub={`of ${s.gm_at_risk + s.gm_open} at-risk/open · no successor`} tone={s.gm_exposed > 0 ? "red" : "ok"} big />
+        <SuccTile label="Ready-now successor" value={s.gm_ready} sub="at an at-risk/open seat" tone={s.gm_ready > 0 ? "ok" : "amber"} />
+        <SuccTile label="Developing" value={s.gm_developing} sub="on the bench, not ready" tone={s.gm_developing > 0 ? "amber" : "ok"} />
         <SuccTile label="People at risk" value={s.at_risk_total} sub={`${s.at_risk_immediate} immediate · ${s.at_risk_medium} medium`} tone={s.at_risk_immediate > 0 ? "red" : s.at_risk_medium > 0 ? "amber" : "ok"} />
       </div>
 
@@ -252,6 +252,7 @@ function SuccTile({ label, value, sub, tone, big }: { label: string; value: numb
 }
 
 const PLAN_META: Record<string, { label: string; chip: string }> = {
+  ready: { label: "Ready now", chip: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
   develop: { label: "Develop successor", chip: "bg-blue-50 text-blue-700 ring-blue-200" },
   req: { label: "Req open", chip: "bg-amber-50 text-amber-800 ring-amber-200" },
   none: { label: "No plan", chip: "bg-red-50 text-red-700 ring-red-200" },
@@ -261,6 +262,8 @@ const SEAT_META: Record<GmSeat["seat_status"], { label: string; chip: string }> 
   open: { label: "Seat open", chip: "bg-red-50 text-red-700 ring-red-200" },
   ok: { label: "Covered", chip: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
 };
+// Exposed seats first, then developing, then ready — worst gap up top.
+const COVERAGE_ORDER: Record<GmSeat["coverage"], number> = { exposed: 0, developing: 1, ready: 2, ok: 3 };
 
 function ExposureTable({ seats, districtName, doName }: {
   seats: GmSeat[];
@@ -268,12 +271,14 @@ function ExposureTable({ seats, districtName, doName }: {
   doName: (id: string | null) => string | null;
   onOpenStore?: (id: string) => void;
 }) {
-  // Only the seats that need attention: at-risk or open. Exposed (no plan) first.
+  // Only the seats that need attention: at-risk or open. Worst coverage first.
   const rows = seats
     .filter((s) => s.seat_status !== "ok")
-    .sort((a, b) => (a.covered === b.covered ? 0 : a.covered ? 1 : -1));
+    .sort((a, b) =>
+      (COVERAGE_ORDER[a.coverage] - COVERAGE_ORDER[b.coverage]) ||
+      String(a.store_number).localeCompare(String(b.store_number), undefined, { numeric: true }));
   if (rows.length === 0) {
-    return <EmptyState title="No GM-seat exposure" description="Every at-risk or open GM seat in your scope has an identified backfill." />;
+    return <EmptyState title="No GM-seat exposure" description="Every at-risk or open GM seat in your scope has a ready successor on the bench." />;
   }
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-surface">
@@ -283,23 +288,36 @@ function ExposureTable({ seats, districtName, doName }: {
             <tr className="border-b border-border text-left text-[10px] uppercase tracking-wide text-ink-subtle">
               <th className="px-4 py-2">Store</th><th className="px-4 py-2">District / DO</th>
               <th className="px-4 py-2">GM</th><th className="px-4 py-2">Seat</th>
-              <th className="px-4 py-2">Backfill</th><th className="px-4 py-2">Plan to close</th>
+              <th className="px-4 py-2">Successor bench</th><th className="px-4 py-2">Plan to close</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {rows.map((s) => {
               const seat = SEAT_META[s.seat_status];
               const plan = s.plan ? PLAN_META[s.plan.type] : null;
+              const top = s.bench[0] ?? null;
               return (
-                <tr key={s.store_id} className={cn(!s.covered && "bg-red-50/30")}>
+                <tr key={s.store_id} className={cn(s.coverage === "exposed" && "bg-red-50/30")}>
                   <td className="px-4 py-2.5"><span className="font-semibold text-heading">#{s.store_number}</span><span className="ml-2 text-ink-muted">{s.store_name}</span></td>
                   <td className="px-4 py-2.5 text-ink-2">{districtName(s.district_id)}{doName(s.district_id) ? <span className="text-ink-muted"> · {doName(s.district_id)}</span> : null}</td>
                   <td className="px-4 py-2.5 text-ink-2">{s.gm_name ?? <span className="text-ink-muted">—</span>}</td>
                   <td className="px-4 py-2.5"><SChip {...seat} /></td>
-                  <td className="px-4 py-2.5 text-ink-2">{s.backfill ?? <span className="text-ink-muted">—</span>}</td>
+                  <td className="px-4 py-2.5">
+                    {top ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="text-ink-2">{top.name}</span>
+                        <SChip label={READINESS_META[top.readiness].short} chip={READINESS_META[top.readiness].chip} />
+                        {s.bench.length > 1 && <span className="text-[11px] text-ink-subtle">+{s.bench.length - 1}</span>}
+                      </span>
+                    ) : s.backfill ? (
+                      <span className="text-ink-2">{s.backfill} <span className="text-[11px] text-ink-subtle">(no readiness)</span></span>
+                    ) : (
+                      <span className="text-ink-muted">— none</span>
+                    )}
+                  </td>
                   <td className="px-4 py-2.5">
                     {plan && <SChip {...plan} />}
-                    {s.plan?.detail && <span className="ml-2 text-xs text-ink-muted">{s.plan.type === "req" ? `Req ${s.plan.detail}` : s.plan.type === "develop" ? s.plan.detail : s.plan.detail}</span>}
+                    {s.plan?.detail && <span className="ml-2 text-xs text-ink-muted">{s.plan.type === "req" ? `Req ${s.plan.detail}` : s.plan.detail}</span>}
                   </td>
                 </tr>
               );

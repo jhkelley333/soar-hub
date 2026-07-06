@@ -212,7 +212,7 @@ async function succession(supa, user) {
   const empty = { at_risk: [], gm_seats: [], summary: emptySuccessionSummary() };
   if (ids && ids.length === 0) return empty;
 
-  const [members, reqs, cas, storeRows] = await Promise.all([
+  const [members, reqs, cas, succRows, storeRows] = await Promise.all([
     fetchAll(() => {
       let q = supa.from("tp_team_members")
         .select("id, store_id, full_name, role, flight_risk, risk_reasons, aspiration, perf, potential, backfill, hire_date")
@@ -230,6 +230,11 @@ async function succession(supa, user) {
       if (ids) q = q.in("store_id", ids);
       return q;
     }),
+    fetchAll(() => {
+      let q = supa.from("tp_successors").select("id, incumbent_member_id, store_id, successor_member_id, successor_name, readiness, rank");
+      if (ids) q = q.in("store_id", ids);
+      return q;
+    }),
     (async () => {
       let q = supa.from("stores").select("id, number, name, district_id").eq("is_active", true);
       if (ids) q = q.in("id", ids);
@@ -239,6 +244,7 @@ async function succession(supa, user) {
   ]);
 
   const storeById = new Map(storeRows.map((s) => [s.id, s]));
+  const memberById = new Map((members || []).map((m) => [m.id, m]));
   const capByMember = new Map();
   for (const c of cas || []) {
     // Keep the most serious open level per member (pip > final > written > verbal).
@@ -255,6 +261,29 @@ async function succession(supa, user) {
   const RISK_RANK = { na: 0, low: 1, medium: 2, immediate: 3 };
   // Ladder order carhop→gm; higher index = more senior, so gm sorts first.
   const roleRank = { carhop: 0, crew: 1, lead: 2, shift: 3, assoc: 4, fam: 5, gm: 6 };
+  // Readiness sort order — ready now first.
+  const READY_RANK = { now: 0, "6mo": 1, "12mo": 2 };
+
+  // Ranked bench per incumbent (usually a GM). Resolve each successor's live
+  // name from the roster when it's an internal member, else the typed name.
+  const benchByIncumbent = new Map();
+  for (const s of (succRows || []).slice().sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0))) {
+    const m = s.successor_member_id ? memberById.get(s.successor_member_id) : null;
+    const entry = {
+      id: s.id,
+      successor_member_id: s.successor_member_id,
+      name: m?.full_name || s.successor_name || "Unnamed successor",
+      role: m?.role ?? null,
+      readiness: s.readiness,
+    };
+    const arr = benchByIncumbent.get(s.incumbent_member_id);
+    if (arr) arr.push(entry); else benchByIncumbent.set(s.incumbent_member_id, [entry]);
+  }
+  // Best (soonest) readiness on a bench, or null when empty.
+  const bestReadiness = (bench) => {
+    if (!bench || !bench.length) return null;
+    return bench.map((b) => b.readiness).sort((a, b) => (READY_RANK[a] ?? 9) - (READY_RANK[b] ?? 9))[0];
+  };
 
   // Named at-risk list (everyone flagged medium/immediate), worst-first.
   const at_risk = (members || [])
@@ -296,29 +325,48 @@ async function succession(supa, user) {
     let seat_status = "ok";
     if (!gm) seat_status = "open";
     else if (AT_RISK.has(gm.flight_risk)) seat_status = "at_risk";
-    const backfill = gm?.backfill || null;
-    const covered = !!backfill;
+
+    const bench = gm ? (benchByIncumbent.get(gm.id) || []) : [];
+    const legacy = gm?.backfill || null; // pre-bench free-text successor
+    const readiness = bestReadiness(bench); // soonest bench readiness, null if none
+    // Coverage: a ranked bench (or legacy backfill) means covered; only a
+    // ready-now successor means truly ready. Legacy text = developing (unknown).
+    const hasBench = bench.length > 0 || !!legacy;
+    const readyNow = readiness === "now";
+    let coverage;
+    if (seat_status === "ok") coverage = "ok";
+    else if (readyNow) coverage = "ready";
+    else if (hasBench) coverage = "developing";
+    else coverage = "exposed";
+
     let plan;
     if (seat_status === "ok") plan = null;
-    else if (covered) plan = { type: "develop", detail: backfill };
+    else if (readyNow) plan = { type: "ready", detail: `${bench.find((b) => b.readiness === "now").name} — ready now` };
+    else if (bench.length) plan = { type: "develop", detail: `${bench[0].name} · ${bench[0].readiness === "6mo" ? "6 mo" : "12 mo"}` };
+    else if (legacy) plan = { type: "develop", detail: legacy };
     else if (openReq) plan = { type: "req", detail: openReq };
     else plan = { type: "none", detail: seat_status === "open" ? "Open seat — no successor identified" : "No successor identified" };
+
     return {
       store_id: st.id,
       store_number: st.number,
       store_name: st.name,
       district_id: st.district_id,
       gm_name: gm?.full_name ?? null,
+      gm_id: gm?.id ?? null,
       gm_risk: gm ? gm.flight_risk : null,
       seat_status,
-      covered,
-      backfill,
+      covered: coverage === "ready" || coverage === "developing",
+      coverage,
+      readiness,
+      bench,
+      backfill: legacy,
       req_status: openReq,
       plan,
     };
   });
 
-  const exposedSeats = gm_seats.filter((s) => s.seat_status !== "ok" && !s.covered);
+  const uncovered = gm_seats.filter((s) => s.seat_status !== "ok");
   const summary = {
     at_risk_immediate: at_risk.filter((m) => m.risk === "immediate").length,
     at_risk_medium: at_risk.filter((m) => m.risk === "medium").length,
@@ -326,15 +374,17 @@ async function succession(supa, user) {
     gm_total: gm_seats.length,
     gm_at_risk: gm_seats.filter((s) => s.seat_status === "at_risk").length,
     gm_open: gm_seats.filter((s) => s.seat_status === "open").length,
-    gm_covered: gm_seats.filter((s) => s.seat_status !== "ok" && s.covered).length,
-    gm_exposed: exposedSeats.length,
+    gm_ready: uncovered.filter((s) => s.coverage === "ready").length,
+    gm_developing: uncovered.filter((s) => s.coverage === "developing").length,
+    gm_covered: uncovered.filter((s) => s.covered).length,
+    gm_exposed: uncovered.filter((s) => s.coverage === "exposed").length,
   };
 
   return { at_risk, gm_seats, summary };
 }
 
 function emptySuccessionSummary() {
-  return { at_risk_immediate: 0, at_risk_medium: 0, at_risk_total: 0, gm_total: 0, gm_at_risk: 0, gm_open: 0, gm_covered: 0, gm_exposed: 0 };
+  return { at_risk_immediate: 0, at_risk_medium: 0, at_risk_total: 0, gm_total: 0, gm_at_risk: 0, gm_open: 0, gm_ready: 0, gm_developing: 0, gm_covered: 0, gm_exposed: 0 };
 }
 
 async function storeRoster(supa, user, storeId) {
@@ -575,6 +625,109 @@ async function setCorrectiveActionStatus(supa, user, body) {
   const { data, error } = await supa.from("tp_corrective_actions").update(patch).eq("id", id).select("*").single();
   if (error) return { error: error.message, status: 500 };
   return { ok: true, action: data };
+}
+
+// ── Succession bench (ranked successors + readiness) ──────────────────────────
+// Each roster member (usually a GM) can carry a ranked bench of successors,
+// each an internal roster member or a free-text name, tagged ready-now / 6mo /
+// 12mo. This replaces the single free-text backfill so the roll-up can tell
+// "covered but not ready" from "ready now".
+const READINESS_VALS = new Set(["now", "6mo", "12mo"]);
+
+// Attach the resolved display name to each bench row: an internal successor's
+// current full_name (kept live), else the typed successor_name.
+async function resolveSuccessorNames(supa, rows) {
+  const memberIds = [...new Set(rows.map((r) => r.successor_member_id).filter(Boolean))];
+  const nameById = new Map();
+  if (memberIds.length) {
+    const { data } = await supa.from("tp_team_members").select("id, full_name, role, store_id").in("id", memberIds);
+    for (const m of data || []) nameById.set(m.id, m);
+  }
+  return rows.map((r) => {
+    const m = r.successor_member_id ? nameById.get(r.successor_member_id) : null;
+    return {
+      id: r.id,
+      incumbent_member_id: r.incumbent_member_id,
+      store_id: r.store_id,
+      successor_member_id: r.successor_member_id,
+      successor_name: r.successor_name,
+      name: m?.full_name || r.successor_name || "Unnamed successor",
+      successor_role: m?.role ?? null,
+      successor_store_id: m?.store_id ?? null,
+      readiness: r.readiness,
+      rank: r.rank,
+      note: r.note,
+    };
+  });
+}
+
+async function listSuccessors(supa, user, incumbentId) {
+  if (!incumbentId) return { error: "Missing team member.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  if (!(await memberInScope(supa, scope, incumbentId))) return { error: "That team member is outside your scope.", status: 403 };
+  const { data } = await supa.from("tp_successors").select("*").eq("incumbent_member_id", incumbentId)
+    .order("rank", { ascending: true }).order("created_at", { ascending: true });
+  return { successors: await resolveSuccessorNames(supa, data || []) };
+}
+
+async function addSuccessor(supa, user, body) {
+  const incumbentId = body?.member_id;
+  if (!incumbentId) return { error: "Missing team member.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  const inc = await memberInScope(supa, scope, incumbentId);
+  if (!inc) return { error: "That team member is outside your scope.", status: 403 };
+  const readiness = READINESS_VALS.has(body?.readiness) ? body.readiness : "6mo";
+  const successorMemberId = body?.successor_member_id || null;
+  const successorName = body?.successor_name == null ? null : String(body.successor_name).trim().slice(0, 200) || null;
+  if (!successorMemberId && !successorName) return { error: "Pick a successor or type a name.", status: 400 };
+  // An internal successor must itself be inside the caller's scope.
+  if (successorMemberId && !(await memberInScope(supa, scope, successorMemberId))) {
+    return { error: "That successor is outside your scope.", status: 403 };
+  }
+  // Next rank = end of the current bench.
+  const { data: existing } = await supa.from("tp_successors").select("rank").eq("incumbent_member_id", incumbentId);
+  const nextRank = (existing || []).reduce((mx, r) => Math.max(mx, (r.rank ?? 0) + 1), 0);
+  const row = {
+    store_id: inc.store_id, incumbent_member_id: incumbentId,
+    successor_member_id: successorMemberId, successor_name: successorMemberId ? null : successorName,
+    readiness, rank: nextRank,
+    note: body?.note == null || body.note === "" ? null : String(body.note).slice(0, 500),
+    created_by: user.id,
+  };
+  const { data, error } = await supa.from("tp_successors").insert(row).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  const [resolved] = await resolveSuccessorNames(supa, [data]);
+  return { ok: true, successor: resolved };
+}
+
+async function updateSuccessor(supa, user, body) {
+  const id = body?.successor_id;
+  if (!id) return { error: "Missing successor.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  const { data: s } = await supa.from("tp_successors").select("id, store_id").eq("id", id).maybeSingle();
+  if (!s || (!scope.all && !scope.ids.has(s.store_id))) return { error: "That successor is outside your scope.", status: 403 };
+  const p = body?.patch && typeof body.patch === "object" ? body.patch : {};
+  const patch = { updated_at: new Date().toISOString() };
+  if ("readiness" in p && READINESS_VALS.has(p.readiness)) patch.readiness = p.readiness;
+  if ("rank" in p) { const n = parseInt(p.rank, 10); if (!Number.isNaN(n)) patch.rank = Math.max(0, Math.min(99, n)); }
+  if ("note" in p) patch.note = p.note == null || p.note === "" ? null : String(p.note).slice(0, 500);
+  if ("successor_name" in p) patch.successor_name = p.successor_name == null ? null : String(p.successor_name).trim().slice(0, 200) || null;
+  if (Object.keys(patch).length === 1) return { error: "Nothing to update.", status: 400 };
+  const { data, error } = await supa.from("tp_successors").update(patch).eq("id", id).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  const [resolved] = await resolveSuccessorNames(supa, [data]);
+  return { ok: true, successor: resolved };
+}
+
+async function removeSuccessor(supa, user, body) {
+  const id = body?.successor_id;
+  if (!id) return { error: "Missing successor.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  const { data: s } = await supa.from("tp_successors").select("id, store_id").eq("id", id).maybeSingle();
+  if (!s || (!scope.all && !scope.ids.has(s.store_id))) return { error: "That successor is outside your scope.", status: 403 };
+  const { error } = await supa.from("tp_successors").delete().eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
 }
 
 // ── ATS roster bulk import ────────────────────────────────────────────────────
@@ -831,6 +984,7 @@ export const handler = async (event) => {
       if (action === "store-roster") return unwrap(await storeRoster(supa, user, params.store_id));
       if (action === "notes") return unwrap(await listNotes(supa, user, params.member_id));
       if (action === "corrective-actions") return unwrap(await listCorrectiveActions(supa, user, params.member_id));
+      if (action === "successors") return unwrap(await listSuccessors(supa, user, params.member_id));
       if (action === "settings") return unwrap(await getSettings(supa, user));
       return respond(400, { error: `Unknown action: ${action}` });
     }
@@ -841,6 +995,9 @@ export const handler = async (event) => {
     if (action === "update-req") return unwrap(await updateReq(supa, user, body));
     if (action === "add-corrective-action") return unwrap(await addCorrectiveAction(supa, user, body));
     if (action === "corrective-action-status") return unwrap(await setCorrectiveActionStatus(supa, user, body));
+    if (action === "add-successor") return unwrap(await addSuccessor(supa, user, body));
+    if (action === "update-successor") return unwrap(await updateSuccessor(supa, user, body));
+    if (action === "remove-successor") return unwrap(await removeSuccessor(supa, user, body));
     if (action === "import-preview") return unwrap(await previewImport(supa, user, body));
     if (action === "import-roster") return unwrap(await importRoster(supa, user, body));
     if (action === "merge-members") return unwrap(await mergeMembers(supa, user, body));
