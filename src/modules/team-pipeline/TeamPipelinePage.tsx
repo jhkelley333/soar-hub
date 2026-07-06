@@ -747,21 +747,38 @@ function FilterChip({ on, onClick, children }: { on: boolean; onClick: () => voi
   );
 }
 
-// ── 9-box ────────────────────────────────────────────────────────────────────
-const NB_COLS = ["Low", "Solid", "Top"];        // performance →
-const NB_ROWS = ["High", "Moderate", "Lower"];  // potential ↓ (high at top)
+// ── 9-box (Sonic Calibration grid) ───────────────────────────────────────────
+// Column = performance (Low/Moderate/High →), row = potential (High/Moderate/
+// Low ↓, high at top). Each cell carries the Sonic 9-Box calibration
+// name + coaching blurb + color, so the grid IS the reference chart and the
+// avatars land in their box. Ratings (1–5) bucket into 3 bands.
+const NB_COLS = ["Low", "Moderate", "High"];    // performance →
+const NB_ROWS = ["High", "Moderate", "Low"];    // potential ↓ (high at top)
+const NB_COL_SUB = ["Partially meets / strays", "Meets expectations", "Exceptional / exceeds"];
+const NB_ROW_SUB = ["Exceptional alignment", "Grows with support", "Strays from values"];
 const perfCol = (p: number) => (p >= 4 ? 2 : p === 3 ? 1 : 0);
 const potRow = (p: number) => (p >= 4 ? 0 : p === 3 ? 1 : 2);
-function cellTone(col: number, row: number): "star" | "good" | "mid" | "watch" {
-  if (col === 2 && row === 0) return "star";
-  if (col === 0 && row === 2) return "watch";
-  if (col + (2 - row) >= 3) return "good";
-  return "mid";
-}
-const TONE_BG: Record<string, string> = {
-  star: "bg-emerald-50 border-emerald-200", good: "bg-emerald-50/50 border-emerald-100",
-  mid: "bg-surface-muted border-border", watch: "bg-red-50/60 border-red-100",
-};
+
+interface NbCell { title: string; desc: string[]; cls: string; icon?: "star" | "warn" }
+// Indexed [row][col] — row 0 = High potential (top), col 0 = Low performance.
+const NINE_BOX: NbCell[][] = [
+  [
+    { title: "Potential Gem", cls: "bg-emerald-600", desc: ["High values alignment", "Needs execution coaching"] },
+    { title: "High Potential", cls: "bg-blue-600", desc: ["Emerging leader", "Developing execution strength"] },
+    { title: "Star", cls: "bg-blue-800", icon: "star", desc: ["Crushes targets, inspires culture", "Ready now for next role"] },
+  ],
+  [
+    { title: "Inconsistent Player", cls: "bg-red-400", desc: ["In and out of expectations", "Needs accountability + planning"] },
+    { title: "Core Player", cls: "bg-emerald-600", desc: ["Consistent contributor", "Growth potential with support"] },
+    { title: "High Performer", cls: "bg-blue-600", desc: ["Hits goals consistently", "Needs growth in team coaching / values leadership"] },
+  ],
+  [
+    { title: "Risk", cls: "bg-red-500", icon: "warn", desc: ["Misaligned on results and leadership", "May require exit or reset"] },
+    { title: "Average Performer", cls: "bg-red-400", desc: ["Hits minimums", "Lacks engagement or coaching presence"] },
+    { title: "Solid Performer", cls: "bg-emerald-600", desc: ["Delivers results", "Misses on leadership, feedback, or culture"] },
+  ],
+];
+
 function NineBox({ roster }: { roster: TeamMember[] }) {
   const { open } = useMemberDrawer();
   const rated = roster.filter((m) => m.perf != null && m.potential != null);
@@ -769,43 +786,77 @@ function NineBox({ roster }: { roster: TeamMember[] }) {
   const unrated = roster.length - rated.length;
 
   return (
-    <div className="flex flex-col gap-5 lg:flex-row lg:items-start">
-      <div className="flex gap-2">
-        <div className="grid w-5 grid-rows-3">
-          {NB_ROWS.map((l) => <div key={l} className="flex items-center justify-center [writing-mode:vertical-rl] rotate-180 text-[11px] font-bold uppercase tracking-wide text-ink-subtle">{l}</div>)}
-        </div>
-        <div>
-          <div className="grid grid-cols-3 gap-2" style={{ gridTemplateRows: "repeat(3, 116px)" }}>
-            {NB_ROWS.map((_, row) => NB_COLS.map((_, col) => {
-              const people = cellOf(col, row);
-              return (
-                <div key={`${row}-${col}`} className={cn("flex flex-col gap-1 overflow-hidden rounded-xl border p-2", TONE_BG[cellTone(col, row)])}>
-                  <div className="flex flex-wrap content-start gap-1">
-                    {people.map((m) => <button key={m.id} onClick={() => open(m)} title={`${m.full_name} · ${LADDER_BY_KEY[m.role]?.abbr}`} className="rounded-full transition hover:ring-2 hover:ring-accent/40"><Avatar name={m.full_name} risk={m.flight_risk} /></button>)}
-                  </div>
-                </div>
-              );
-            }))}
+    <div className="space-y-3">
+      <p className="max-w-3xl text-sm text-ink-muted">
+        The <strong className="text-ink-2">Sonic 9-Box</strong> calibrates team members on two dimensions —{" "}
+        <strong className="text-ink-2">performance</strong> (→) and <strong className="text-ink-2">potential</strong> (↓) — to
+        spot future leaders, recognize top performers, and target coaching where it lands hardest. Each person sits in a box
+        by their rating; tap an avatar to open their card.
+      </p>
+
+      <div className="overflow-x-auto">
+        <div className="flex min-w-[720px] gap-2">
+          {/* potential axis label */}
+          <div className="flex w-6 items-center justify-center">
+            <span className="[writing-mode:vertical-rl] rotate-180 text-[11px] font-bold uppercase tracking-widest text-ink-subtle">Potential</span>
           </div>
-          <div className="mt-2 grid grid-cols-3 gap-2">
-            {NB_COLS.map((l) => <div key={l} className="text-center text-[11px] font-bold uppercase tracking-wide text-ink-subtle">{l}</div>)}
+          {/* row labels */}
+          <div className="grid w-32 shrink-0 grid-rows-3 gap-2 pt-0">
+            {NB_ROWS.map((l, i) => (
+              <div key={l} className="flex flex-col justify-center rounded-lg bg-surface-muted px-2 text-center">
+                <div className="text-xs font-bold text-heading">{l} Potential</div>
+                <div className="text-[10px] leading-tight text-ink-muted">{NB_ROW_SUB[i]}</div>
+              </div>
+            ))}
+          </div>
+          {/* grid */}
+          <div className="flex-1">
+            <div className="grid grid-cols-3 gap-2" style={{ gridTemplateRows: "repeat(3, minmax(150px, auto))" }}>
+              {NINE_BOX.map((rowCells, row) => rowCells.map((cell, col) => {
+                const people = cellOf(col, row);
+                return (
+                  <div key={`${row}-${col}`} className={cn("flex flex-col gap-1.5 overflow-hidden rounded-xl p-2.5 text-white", cell.cls)}>
+                    <div className="text-[13px] font-extrabold leading-tight">
+                      {cell.icon === "star" && "⭐ "}
+                      {cell.icon === "warn" && "⚠️ "}
+                      {cell.title}
+                    </div>
+                    <ul className="space-y-0.5 text-[11px] leading-snug text-white/90">
+                      {cell.desc.map((d) => <li key={d}>• {d}</li>)}
+                    </ul>
+                    {people.length > 0 && (
+                      <div className="mt-auto flex flex-wrap content-start gap-1 pt-1">
+                        {people.map((m) => (
+                          <button key={m.id} onClick={() => open(m)} title={`${m.full_name} · ${LADDER_BY_KEY[m.role]?.abbr}`}
+                            className="rounded-full ring-2 ring-white/70 transition hover:ring-white">
+                            <Avatar name={m.full_name} risk={m.flight_risk} />
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              }))}
+            </div>
+            {/* column labels */}
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              {NB_COLS.map((l, i) => (
+                <div key={l} className="rounded-lg bg-surface-muted px-2 py-1 text-center">
+                  <div className="text-xs font-bold text-heading">{l} Performance</div>
+                  <div className="text-[10px] leading-tight text-ink-muted">{NB_COL_SUB[i]}</div>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 text-center text-[11px] font-bold uppercase tracking-widest text-ink-subtle">Performance →</div>
           </div>
         </div>
       </div>
 
-      <div className="flex flex-col gap-2 text-sm text-ink-2">
-        <div className="text-[11px] font-bold uppercase tracking-wide text-ink-subtle">Legend</div>
-        <Legend sw="bg-emerald-200" label="Star — top perf + high potential" />
-        <Legend sw="bg-emerald-100" label="Strong" />
-        <Legend sw="bg-zinc-200" label="Core" />
-        <Legend sw="bg-red-100" label="Watch — low perf + lower potential" />
-        <div className="mt-2 max-w-[230px] text-xs text-ink-muted">Axes: performance (→) × potential (↓). Avatar ring color = flight risk.{unrated > 0 ? ` ${unrated} not yet rated.` : ""}</div>
-      </div>
+      <p className="text-xs text-ink-muted">
+        Avatar ring color = flight risk.{unrated > 0 ? ` ${unrated} team member${unrated === 1 ? "" : "s"} not yet rated — set Performance + Potential on their card to place them.` : ""}
+      </p>
     </div>
   );
-}
-function Legend({ sw, label }: { sw: string; label: string }) {
-  return <div className="flex items-center gap-2"><span className={cn("h-3.5 w-3.5 rounded", sw)} />{label}</div>;
 }
 
 // ── Staffing planner ─────────────────────────────────────────────────────────
