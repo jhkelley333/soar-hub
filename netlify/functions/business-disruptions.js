@@ -18,6 +18,8 @@ const MAX_FILES = 6;
 const CAPTURE_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]);
 // DO and above may review/close a report (GM is just the reporter).
 const REVIEW_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
+// CSV date-range export — SDO and above only (per request).
+const EXPORT_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
 const ORG_WIDE = new Set(["vp", "coo", "admin"]);
 const CLOSURE_TYPES = new Set([
   "Weather", "Power Outage", "Equipment Failure", "Staffing", "Plumbing",
@@ -322,6 +324,54 @@ async function listDisruptions(supa, user) {
   return { reports: out, can_write: CAPTURE_ROLES.has(role), can_review: REVIEW_ROLES.has(role) };
 }
 
+// Date-range export (SDO+). Same scope as the list, but filtered to
+// [start, end] by disruption_date with no 300-row cap, so a CSV over a
+// window is complete. Returns raw rows + store name; the client builds
+// the CSV so money/date formatting stays in one place.
+async function exportDisruptions(supa, user, params) {
+  const role = String(user.role || "").toLowerCase();
+  if (!EXPORT_ROLES.has(role)) return { error: "Your role can't export reports.", status: 403 };
+  const start = String(params.start || "").trim();
+  const end = String(params.end || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(start) || !/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    return { error: "start and end dates (YYYY-MM-DD) are required.", status: 400 };
+  }
+  if (start > end) return { error: "start date must be on or before the end date.", status: 400 };
+
+  const scope = await storesForUser(supa, user);
+  let q = supa
+    .from("business_disruptions")
+    .select("*")
+    .gte("disruption_date", start)
+    .lte("disruption_date", end)
+    .order("disruption_date", { ascending: true })
+    .order("created_at", { ascending: true });
+  if (!scope.all) {
+    if (scope.ids.size === 0) return { rows: [] };
+    q = q.in("store_id", Array.from(scope.ids));
+  }
+  const { data: rows, error } = await q;
+  if (error) return { error: error.message, status: 500 };
+  const storeName = new Map(scope.rows.map((s) => [s.id, s.name]));
+  return {
+    rows: (rows || []).map((r) => ({
+      disruption_date: r.disruption_date,
+      store_number: r.store_number,
+      store_name: storeName.get(r.store_id) || r.store_name || "",
+      status: r.status,
+      store_closed: r.store_closed,
+      reopen_date: r.reopen_date,
+      closure_types: r.closure_types || [],
+      issue_types: r.issue_types || [],
+      estimated_loss_sales: r.estimated_loss_sales,
+      work_order_filed: r.work_order_filed,
+      work_order_number: r.work_order_number,
+      submitted_by_name: r.submitted_by_name,
+      description: r.description,
+    })),
+  };
+}
+
 // Shared by create + update: resolves the store/DM/RVP and validates every
 // field. Returns { error, status } on failure, or { store, dm, rvp, fields }
 // where `fields` is everything except submitted_by/status/attachments —
@@ -538,6 +588,7 @@ export const handler = async (event) => {
     const supa = admin();
     if (event.httpMethod === "GET") {
       if (action === "list") return unwrap(await listDisruptions(supa, user));
+      if (action === "export") return unwrap(await exportDisruptions(supa, user, params));
       if (action === "stores") return respond(200, await listStores(supa, user));
       if (action === "wo-lookup") return respond(200, await lookupWorkOrders(supa, user, params.store_number, params.q));
       return respond(400, { error: `Unknown action: ${action}` });
