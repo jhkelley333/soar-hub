@@ -30,6 +30,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { extractLaborRows, feedBusinessDate } from "./_lib/kpiLabor.js";
+import { extractCountRows } from "./_lib/kpiCount.js";
 import { upsertLaborCloses } from "./_lib/laborCloses.js";
 import { logPull } from "./_lib/pullLog.js";
 
@@ -122,6 +123,18 @@ export const handler = async (event) => {
     else laborStored = laborRows.length;
   }
 
+  // Also fan the per-store daily COUNT scores into count_daily (same feed,
+  // same business date) so the Daily Count page has trend history.
+  let countStored = 0;
+  const countRows = extractCountRows(payload).map((r) => ({
+    ...r, business_date: businessDate, captured_at: new Date().toISOString(),
+  }));
+  if (countRows.length) {
+    const { error: cerr } = await supa.from("count_daily").upsert(countRows, { onConflict: "store_number,business_date" });
+    if (cerr) console.log(`[kpi-capture] count upsert failed: ${cerr.message}`);
+    else countStored = countRows.length;
+  }
+
   // When the captured day closes a fiscal week / period, snapshot the final
   // WTD / PTD into the close ledgers (idempotent upsert).
   let closes = { weeks: 0, periods: 0 };
@@ -134,8 +147,8 @@ export const handler = async (event) => {
     ptd_rows: extracted.filter((r) => r.ptd_net_sales != null).length,
     kpi_snapshot: true, central_date: centralDate, central_hour: wc.hour, duration_ms: Date.now() - started,
   });
-  console.log(`[kpi-capture] stored snapshot for ${centralDate} ${wc.hour}:00 CT · labor rows ${laborStored} (${businessDate}) · closes w${closes.weeks}/p${closes.periods}`);
-  return { statusCode: 200, body: `captured ${centralDate} ${wc.hour}:00 CT · labor ${laborStored} rows for ${businessDate} · closes ${closes.weeks}w/${closes.periods}p` };
+  console.log(`[kpi-capture] stored snapshot for ${centralDate} ${wc.hour}:00 CT · labor rows ${laborStored} · count rows ${countStored} (${businessDate}) · closes w${closes.weeks}/p${closes.periods}`);
+  return { statusCode: 200, body: `captured ${centralDate} ${wc.hour}:00 CT · labor ${laborStored} · count ${countStored} rows for ${businessDate} · closes ${closes.weeks}w/${closes.periods}p` };
 };
 
 // Fire on every UTC hour that could be 7 AM–2 PM Central (CST or CDT); the

@@ -87,6 +87,9 @@ export const NAV: NavItem[] = [
   // P&L — store income statements per period (Sales / CI focus), uploaded
   // from the accounting workbook. GM sees their store; DO+ their scope.
   { to: "/pl",          label: "P&L",         icon: BarChart3,       roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc", "accounting"] },
+  // Daily Count — inventory count scores (Daily/Completion/Accuracy) from
+  // the KPI feed, captured daily for trends. Store leaders + DO+.
+  { to: "/count",       label: "Daily Count", icon: ClipboardCheck,  roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc", "accounting"] },
   // Note: design-import preview routes (e.g. /region) are deliberately
   // NOT in the sidebar — they're placeholder UIs while real scoring +
   // workflows get built out, and they'd add noise to the daily nav.
@@ -234,6 +237,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/labor-v2": "OPERATIONS",
   "/admin/cash-management": "OPERATIONS",
   "/pl": "OPERATIONS",
+  "/count": "OPERATIONS",
   "/weather": "OPERATIONS",
   "/schedule": "OPERATIONS",
   "/my-walks": "OPERATIONS",

@@ -6,6 +6,7 @@ import { createClient } from "@supabase/supabase-js";
 import { resolveOrg } from "./_lib/kpiOrg.js";
 import { fetchKpiFeed, kpiConfigured } from "./_lib/kpiFeed.js";
 import { extractLaborRows, feedBusinessDate, feedSectionReport, wallClockInTz } from "./_lib/kpiLabor.js";
+import { extractCountRows } from "./_lib/kpiCount.js";
 import { upsertLaborCloses } from "./_lib/laborCloses.js";
 import { fiscalForDate } from "./_lib/fiscal.js";
 import { loadTrainingCreditDates, applyCreditsToRows } from "./_lib/trainingCredit.js";
@@ -249,6 +250,17 @@ async function refreshNow(supa, ctx = {}) {
       // no signal. The Postgres message names the offending column.
       if (error) throw new Error(`Couldn't save labor rows: ${error.message}`);
     }
+    // Same feed carries the per-store daily count scores — fan them into
+    // count_daily so a Labor v2 refresh also backfills the Daily Count page.
+    try {
+      const countRows = extractCountRows(payload).map((r) => ({
+        ...r, business_date: businessDate, captured_at: new Date().toISOString(),
+      }));
+      if (countRows.length) {
+        await supa.from("count_daily").upsert(countRows, { onConflict: "store_number,business_date" });
+      }
+    } catch (e) { console.log(`[labor-v2] count fan-out failed: ${e.message}`); }
+
     // If this business date closes a fiscal week / period, snapshot the final
     // WTD / PTD into the close ledgers (idempotent).
     try { await upsertLaborCloses(supa, extracted, businessDate); }
