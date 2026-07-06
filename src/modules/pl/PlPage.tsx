@@ -10,7 +10,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Loader2, Upload } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Loader2, TrendingDown, TrendingUp, Upload } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -290,10 +290,45 @@ function FlagsSection({ store }: { store: string }) {
   );
 }
 
+// First "$1,234.56"-style amount in a flag value string, or null.
+function flagMoney(s: string | null | undefined): number | null {
+  const m = /\$\s*(-?[\d,]+(?:\.\d+)?)/.exec(String(s ?? ""));
+  return m ? Number(m[1].replace(/,/g, "")) : null;
+}
+
+// Trend vs the prior periods for an EXPENSE flag: rising spend is the bad
+// direction. Compares the flag's current $ against May (prior_1) and Apr
+// (prior_2) when those parse.
+function flagTrend(flag: PlFlag): { dir: "up" | "down"; label: string } | null {
+  const cur = flagMoney(flag.value);
+  const p1 = flagMoney(flag.prior_1);
+  if (cur == null || p1 == null || cur === p1) return null;
+  const p2 = flagMoney(flag.prior_2);
+  const rising = cur > p1;
+  const streak = rising && p2 != null && p1 > p2;
+  return {
+    dir: rising ? "up" : "down",
+    label: streak ? "rising 2 periods" : `${rising ? "up" : "down"} vs May`,
+  };
+}
+
 function FlagRow({ flag, store, periodEnd }: { flag: PlFlag; store: string; periodEnd: string }) {
   const toast = useToast();
   const qc = useQueryClient();
   const [note, setNote] = useState(flag.note ?? "");
+  // Re-seed when the saved note arrives after mount (cached flag data can
+  // render first, then the fresh fetch lands with the note) — but never
+  // clobber text the user is mid-typing.
+  const seeded = useRef(flag.note ?? "");
+  useEffect(() => {
+    const incoming = flag.note ?? "";
+    if (incoming !== seeded.current) {
+      setNote((cur) => (cur.trim() === "" || cur === seeded.current ? incoming : cur));
+      seeded.current = incoming;
+    }
+  }, [flag.note]);
+
+  const trend = flagTrend(flag);
 
   const save = useMutation({
     mutationFn: () =>
@@ -323,6 +358,18 @@ function FlagRow({ flag, store, periodEnd }: { flag: PlFlag; store: string; peri
         </span>
         <span className="text-sm font-semibold text-midnight">{flag.item ?? "—"}</span>
         {flag.value && <span className="text-sm tabular-nums text-zinc-700">{flag.value}</span>}
+        {trend && (
+          <span
+            className={cn(
+              "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold",
+              trend.dir === "up" ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700",
+            )}
+            title="Direction vs the prior periods — for expense flags, up is the wrong way"
+          >
+            {trend.dir === "up" ? <TrendingUp className="h-3 w-3" strokeWidth={2.5} /> : <TrendingDown className="h-3 w-3" strokeWidth={2.5} />}
+            {trend.label}
+          </span>
+        )}
         {flag.rule && <span className="text-xs text-amber-700">{flag.rule}</span>}
         {(flag.prior_1 || flag.prior_2) && (
           <span className="text-xs text-zinc-400">
@@ -330,12 +377,26 @@ function FlagRow({ flag, store, periodEnd }: { flag: PlFlag; store: string; peri
           </span>
         )}
       </div>
+
+      {/* The saved note, visible without touching the editor. */}
+      {flag.note && (
+        <div className="mt-2 rounded-lg bg-zinc-50 px-3 py-2 text-sm text-zinc-700 ring-1 ring-inset ring-zinc-100">
+          <span className="whitespace-pre-wrap">{flag.note}</span>
+          {flag.noted_by && (
+            <span className="mt-0.5 block text-[11px] text-zinc-400">
+              — {flag.noted_by}
+              {flag.noted_at ? ` · ${new Date(flag.noted_at).toLocaleString()}` : ""}
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="mt-2 flex items-start gap-2">
         <textarea
           value={note}
           onChange={(e) => setNote(e.target.value)}
           rows={1}
-          placeholder="Explain this flag…"
+          placeholder={flag.note ? "Update this note…" : "Explain this flag…"}
           className="min-h-[38px] flex-1 rounded-lg border border-zinc-200 px-3 py-2 text-sm focus:border-accent focus:outline-none"
         />
         <button
@@ -347,12 +408,6 @@ function FlagRow({ flag, store, periodEnd }: { flag: PlFlag; store: string; peri
           {save.isPending ? "Saving…" : "Save"}
         </button>
       </div>
-      {flag.noted_by && (
-        <div className="mt-1 text-[11px] text-zinc-400">
-          Last note by {flag.noted_by}
-          {flag.noted_at ? ` · ${new Date(flag.noted_at).toLocaleString()}` : ""}
-        </div>
-      )}
     </div>
   );
 }
