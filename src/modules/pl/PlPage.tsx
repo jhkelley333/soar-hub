@@ -1,0 +1,387 @@
+// /pl — store P&L statements. DO+ land on an overview table of their
+// visible stores' headline metrics (Sales, CI $, CI %) for the selected
+// period and drill into a store's full statement; a GM (single store)
+// jumps straight to their statement. Admins get an Upload panel that
+// parses the accounting side-by-side workbook in the browser (SheetJS,
+// dynamically imported) and batch-saves via netlify/functions/pl.
+//
+// Flags review + notes write-back (Google Sheet column N) is the next
+// phase and will slot into the statement view.
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Loader2, Upload } from "lucide-react";
+import { PageHeader } from "@/shared/ui/PageHeader";
+import { Skeleton } from "@/shared/ui/Skeleton";
+import { EmptyState } from "@/shared/ui/EmptyState";
+import { useToast } from "@/shared/ui/Toaster";
+import { useAuth } from "@/auth/AuthProvider";
+import { cn } from "@/lib/cn";
+import { fetchPlOverview, fetchPlPeriods, fetchPlStatement, uploadPl } from "./api";
+import type { ParsedWorkbook, PlLine, PlOverviewRow } from "./types";
+
+const money = (v: number | null | undefined, dp = 0) =>
+  v == null
+    ? "—"
+    : `${v < 0 ? "−" : ""}$${Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp })}`;
+const pct = (v: number | null | undefined) => (v == null ? "—" : `${v.toFixed(2)}%`);
+
+type SortKey = "store" | "sales" | "ci" | "ci_pct" | "ebitda";
+type SortDir = "asc" | "desc";
+
+export function PlPage() {
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === "admin";
+  const [period, setPeriod] = useState<string>("");
+  const [store, setStore] = useState<string | null>(null);
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "ci_pct", dir: "asc" });
+
+  const periodsQ = useQuery({ queryKey: ["pl-periods"], queryFn: fetchPlPeriods });
+  const periods = useMemo(() => periodsQ.data?.periods ?? [], [periodsQ.data]);
+  useEffect(() => {
+    if (!period && periods.length) setPeriod(periods[0].period_end);
+  }, [period, periods]);
+
+  const overviewQ = useQuery({
+    queryKey: ["pl-overview", period],
+    queryFn: () => fetchPlOverview(period),
+    enabled: !!period,
+    staleTime: 5 * 60_000,
+  });
+  const rows = useMemo(() => overviewQ.data?.rows ?? [], [overviewQ.data]);
+
+  // Single-store viewers (GMs) jump straight into their statement.
+  useEffect(() => {
+    if (!store && rows.length === 1) setStore(rows[0].store_number);
+  }, [store, rows]);
+
+  const sorted = useMemo(() => {
+    const val = (r: PlOverviewRow): number | string => {
+      switch (sort.key) {
+        case "store": return String(r.store_number);
+        case "sales": return r.total_sales ?? -Infinity;
+        case "ci": return r.ci_amount ?? -Infinity;
+        case "ci_pct": return r.ci_pct ?? -Infinity;
+        case "ebitda": return r.ebitda ?? -Infinity;
+      }
+    };
+    return [...rows].sort((a, b) => {
+      const av = val(a), bv = val(b);
+      const cmp = typeof av === "string" ? av.localeCompare(bv as string, undefined, { numeric: true }) : (av as number) - (bv as number);
+      return sort.dir === "asc" ? cmp : -cmp;
+    });
+  }, [rows, sort]);
+
+  const activePeriod = periods.find((p) => p.period_end === period);
+
+  if (store && period) {
+    return (
+      <StatementView
+        store={store}
+        period={period}
+        periodLabel={activePeriod ? periodDisplay(activePeriod.period_label, activePeriod.period_end, activePeriod.is_final) : period}
+        onBack={rows.length > 1 ? () => setStore(null) : undefined}
+      />
+    );
+  }
+
+  return (
+    <>
+      <PageHeader
+        title="P&L"
+        description="Store income statements — sales, controllable income, and the full statement per period."
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            {periods.length > 0 && (
+              <select
+                value={period}
+                onChange={(e) => setPeriod(e.target.value)}
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-midnight focus:border-accent focus:outline-none"
+              >
+                {periods.map((p) => (
+                  <option key={p.period_end} value={p.period_end}>
+                    {periodDisplay(p.period_label, p.period_end, p.is_final)}
+                  </option>
+                ))}
+              </select>
+            )}
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setUploadOpen((o) => !o)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-semibold text-midnight hover:border-accent"
+              >
+                <Upload className="h-4 w-4" strokeWidth={2} />
+                Upload P&L
+              </button>
+            )}
+          </div>
+        }
+      />
+
+      {uploadOpen && isAdmin && <UploadPanel onDone={() => setUploadOpen(false)} />}
+
+      {periodsQ.isLoading || (overviewQ.isLoading && !!period) ? (
+        <Skeleton className="h-64 w-full" />
+      ) : periods.length === 0 ? (
+        <EmptyState
+          title="No P&L uploaded yet"
+          description={isAdmin ? "Use Upload P&L to load the first period from the accounting workbook." : "P&L data appears once accounting's statements are loaded."}
+        />
+      ) : overviewQ.isError ? (
+        <EmptyState title="Couldn't load P&L" description={(overviewQ.error as Error)?.message ?? "Try again."} />
+      ) : rows.length === 0 ? (
+        <EmptyState title="No statements for your stores" description="This period has no P&L rows for stores in your scope." />
+      ) : (
+        <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-100 text-left text-[10px] uppercase tracking-wide text-zinc-400">
+                  <Th label="Store" k="store" sort={sort} onSort={setSort} />
+                  <Th label="Sales" k="sales" sort={sort} onSort={setSort} right />
+                  <Th label="CI $" k="ci" sort={sort} onSort={setSort} right />
+                  <Th label="CI %" k="ci_pct" sort={sort} onSort={setSort} right />
+                  <Th label="EBITDA" k="ebitda" sort={sort} onSort={setSort} right />
+                  <th className="px-4 py-2" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {sorted.map((r) => (
+                  <tr key={r.store_number} className="cursor-pointer hover:bg-zinc-50" onClick={() => setStore(r.store_number)}>
+                    <td className="px-4 py-2.5">
+                      <span className="font-semibold text-midnight">#{r.store_number}</span>
+                      <span className="ml-2 text-zinc-500">{r.store_name ?? ""}</span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-midnight">{money(r.total_sales)}</td>
+                    <td className={cn("px-4 py-2.5 text-right font-semibold tabular-nums", (r.ci_amount ?? 0) < 0 ? "text-red-600" : "text-midnight")}>{money(r.ci_amount)}</td>
+                    <td className={cn("px-4 py-2.5 text-right font-semibold tabular-nums", (r.ci_pct ?? 0) < 0 ? "text-red-600" : "text-emerald-700")}>{pct(r.ci_pct)}</td>
+                    <td className={cn("px-4 py-2.5 text-right tabular-nums", (r.ebitda ?? 0) < 0 ? "text-red-600" : "text-zinc-600")}>{money(r.ebitda)}</td>
+                    <td className="px-4 py-2.5 text-right text-xs font-semibold text-accent">View →</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function periodDisplay(label: string | null, end: string, isFinal: boolean): string {
+  return `${label ?? end}${isFinal ? " · Final" : " · Prelim"}`;
+}
+
+function Th({ label, k, sort, onSort, right }: {
+  label: string;
+  k: SortKey;
+  sort: { key: SortKey; dir: SortDir };
+  onSort: (s: { key: SortKey; dir: SortDir }) => void;
+  right?: boolean;
+}) {
+  const active = sort.key === k;
+  const Icon = !active ? ArrowUpDown : sort.dir === "asc" ? ArrowUp : ArrowDown;
+  return (
+    <th className={cn("px-4 py-2", right && "text-right")}>
+      <button
+        type="button"
+        onClick={() => onSort(active ? { key: k, dir: sort.dir === "asc" ? "desc" : "asc" } : { key: k, dir: k === "store" ? "asc" : "desc" })}
+        className={cn("inline-flex items-center gap-0.5 text-[10px] font-semibold uppercase tracking-wide hover:text-zinc-600", right && "flex-row-reverse", active && "text-accent")}
+      >
+        {label}
+        <Icon className={cn("h-2.5 w-2.5", !active && "opacity-40")} />
+      </button>
+    </th>
+  );
+}
+
+// ── One store's full statement ───────────────────────────────────────
+function StatementView({ store, period, periodLabel, onBack }: {
+  store: string;
+  period: string;
+  periodLabel: string;
+  onBack?: () => void;
+}) {
+  const q = useQuery({
+    queryKey: ["pl-statement", store, period],
+    queryFn: () => fetchPlStatement(store, period),
+    staleTime: 5 * 60_000,
+  });
+  const s = q.data?.statement;
+
+  return (
+    <>
+      {onBack && (
+        <button type="button" onClick={onBack} className="mb-3 inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-midnight">
+          <ArrowLeft className="h-4 w-4" /> All stores
+        </button>
+      )}
+      <PageHeader
+        title={s ? `#${s.store_number}${s.store_name ? ` · ${s.store_name}` : ""}` : `#${store}`}
+        description={`Income statement · ${periodLabel}${s?.uploaded_by_name ? ` · uploaded by ${s.uploaded_by_name}` : ""}`}
+      />
+
+      {q.isLoading ? (
+        <Skeleton className="h-96 w-full" />
+      ) : q.isError || !s ? (
+        <EmptyState title="Couldn't load this statement" description={(q.error as Error)?.message ?? "Try again."} />
+      ) : (
+        <div className="space-y-5">
+          {/* Hero metrics — the focus numbers. */}
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Tile label="Total Sales" value={money(s.total_sales)} tone="neutral" />
+            <Tile label="Controllable Income $" value={money(s.ci_amount)} tone={(s.ci_amount ?? 0) < 0 ? "bad" : "ok"} />
+            <Tile label="Controllable Income %" value={pct(s.ci_pct)} tone={(s.ci_pct ?? 0) < 0 ? "bad" : "ok"} />
+          </div>
+
+          {/* Full statement */}
+          <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
+            <div className="grid grid-cols-[1fr_auto_auto] gap-x-6 border-b border-zinc-100 px-5 py-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
+              <span>Line</span><span className="w-28 text-right">$</span><span className="w-20 text-right">% Sales</span>
+            </div>
+            <div>
+              {s.lines.map((l, i) => (
+                <LineRow key={`${l.label}-${i}`} line={l} />
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function LineRow({ line }: { line: PlLine }) {
+  return (
+    <div
+      className={cn(
+        "grid grid-cols-[1fr_auto_auto] gap-x-6 px-5 py-1.5 text-sm",
+        line.total ? "border-t border-zinc-200 bg-zinc-50 font-bold text-midnight" : "text-zinc-700",
+      )}
+    >
+      <span className={cn(!line.total && "pl-3")}>{line.label}</span>
+      <span className={cn("w-28 text-right tabular-nums", (line.amount ?? 0) < 0 && "text-red-600")}>
+        {money(line.amount, 2)}
+      </span>
+      <span className="w-20 text-right tabular-nums text-zinc-500">{line.pct != null ? `${line.pct.toFixed(1)}%` : ""}</span>
+    </div>
+  );
+}
+
+function Tile({ label, value, tone }: { label: string; value: string; tone: "ok" | "bad" | "neutral" }) {
+  const color = tone === "bad" ? "text-red-600" : tone === "ok" ? "text-emerald-600" : "text-midnight";
+  return (
+    <div className="rounded-xl bg-white p-5 ring-1 ring-zinc-200">
+      <div className="text-[11px] uppercase tracking-wide text-zinc-400">{label}</div>
+      <div className={cn("mt-1 text-3xl font-bold tabular-nums", color)}>{value}</div>
+    </div>
+  );
+}
+
+// ── Admin upload — parse the workbook in the browser, preview, save. ──
+function UploadPanel({ onDone }: { onDone: () => void }) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [parsed, setParsed] = useState<ParsedWorkbook | null>(null);
+  const [parsing, setParsing] = useState(false);
+  const [isFinal, setIsFinal] = useState(false);
+  const [fileName, setFileName] = useState("");
+
+  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    setParsing(true);
+    setParsed(null);
+    setFileName(file.name);
+    // "Final" workbooks usually say so in the filename; Prelim is default.
+    setIsFinal(/final/i.test(file.name));
+    try {
+      const { parsePlWorkbook } = await import("./parseWorkbook");
+      const result = await parsePlWorkbook(await file.arrayBuffer());
+      setParsed(result);
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "Couldn't parse the workbook.", "error");
+    } finally {
+      setParsing(false);
+    }
+  }
+
+  const save = useMutation({
+    mutationFn: () => {
+      if (!parsed) throw new Error("Nothing parsed.");
+      return uploadPl({
+        period_end: parsed.period_end,
+        period_label: parsed.suggested_label,
+        is_final: isFinal,
+        statements: parsed.stores,
+      });
+    },
+    onSuccess: (r) => {
+      toast.push(
+        `Saved ${r.upserted} statement${r.upserted === 1 ? "" : "s"}.` +
+          (r.unmatched.length ? ` ${r.unmatched.length} store number(s) not in the app: ${r.unmatched.slice(0, 8).join(", ")}${r.unmatched.length > 8 ? "…" : ""}` : ""),
+        r.unmatched.length ? "info" : "success",
+      );
+      qc.invalidateQueries({ queryKey: ["pl-periods"] });
+      qc.invalidateQueries({ queryKey: ["pl-overview"] });
+      onDone();
+    },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Upload failed.", "error"),
+  });
+
+  return (
+    <div className="mb-5 rounded-xl border border-accent/30 bg-accent/5 p-4">
+      <div className="text-sm font-semibold text-midnight">Upload P&L workbook</div>
+      <p className="mt-0.5 text-xs text-zinc-600">
+        The accounting side-by-side .xlsx (one $ + % column pair per store). Parsed entirely in your
+        browser; re-uploading the same period overwrites it (Prelim → Final).
+      </p>
+
+      <div className="mt-3 flex flex-wrap items-center gap-3">
+        <input ref={fileRef} type="file" accept=".xlsx" className="hidden" onChange={onPick} />
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          disabled={parsing}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-semibold text-midnight hover:border-accent disabled:opacity-50"
+        >
+          {parsing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" strokeWidth={2} />}
+          {parsing ? "Parsing…" : fileName ? "Pick a different file" : "Choose .xlsx"}
+        </button>
+        <label className="inline-flex cursor-pointer items-center gap-1.5 text-sm text-zinc-700">
+          <input type="checkbox" checked={isFinal} onChange={(e) => setIsFinal(e.target.checked)} className="h-3.5 w-3.5 accent-accent" />
+          This is the Final (not Prelim)
+        </label>
+      </div>
+
+      {parsed && (
+        <div className="mt-3 rounded-lg bg-white p-3 text-sm ring-1 ring-zinc-200">
+          <div className="font-semibold text-midnight">
+            {parsed.suggested_label} · period ending {parsed.period_end} · {parsed.stores.length} stores
+          </div>
+          <div className="mt-1 text-xs text-zinc-500">
+            Sample: {parsed.stores.slice(0, 3).map((s) => `#${s.store_number} sales ${money(s.total_sales)} / CI ${pct(s.ci_pct)}`).join(" · ")}
+          </div>
+          {parsed.skipped_columns.length > 0 && (
+            <div className="mt-1 text-xs text-zinc-400">
+              Skipped rollup columns: {parsed.skipped_columns.join(", ")}
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={() => save.mutate()}
+            disabled={save.isPending}
+            className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-white hover:brightness-110 disabled:opacity-50"
+          >
+            {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+            {save.isPending ? "Saving…" : `Save ${parsed.stores.length} statements (${isFinal ? "Final" : "Prelim"})`}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}

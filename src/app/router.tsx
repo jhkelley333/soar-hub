@@ -51,6 +51,7 @@ import { useOverrides } from "@/lib/roleAccess";
 import { RankerPage } from "@/modules/ranker/RankerPage";
 import { TerritoryMapPage } from "@/modules/territory-map/TerritoryMapPage";
 import { SharedTerritoryMapPage } from "@/modules/territory-map/SharedTerritoryMapPage";
+import { PlPage } from "@/modules/pl/PlPage";
 import { MyStoresPage } from "@/modules/my-stores/MyStoresPage";
 import { AccountPage } from "@/modules/account/AccountPage";
 import { WorkOrdersV2Route } from "@/modules/work-orders-v2/WorkOrdersV2Route";
@@ -610,6 +611,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
             <TerritoryMapPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "pl",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc", "accounting"]}>
+            <PlPage />
           </ProtectedRoute>
         ),
       },
