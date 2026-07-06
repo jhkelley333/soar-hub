@@ -84,6 +84,9 @@ export const NAV: NavItem[] = [
   // run it; DO+ act on alerts. Rolled out by role now (the pilot flag was
   // retired once it shipped to all store leaders).
   { to: "/admin/cash-management", label: "Cash Management", icon: Banknote, roles: ["gm", "shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "do", "sdo", "rvp", "vp", "coo", "admin", "accounting"] },
+  // P&L — store income statements per period (Sales / CI focus), uploaded
+  // from the accounting workbook. GM sees their store; DO+ their scope.
+  { to: "/pl",          label: "P&L",         icon: BarChart3,       roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc", "accounting"] },
   // Note: design-import preview routes (e.g. /region) are deliberately
   // NOT in the sidebar — they're placeholder UIs while real scoring +
   // workflows get built out, and they'd add noise to the daily nav.
@@ -230,6 +233,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/labor": "OPERATIONS",
   "/labor-v2": "OPERATIONS",
   "/admin/cash-management": "OPERATIONS",
+  "/pl": "OPERATIONS",
   "/weather": "OPERATIONS",
   "/schedule": "OPERATIONS",
   "/my-walks": "OPERATIONS",
