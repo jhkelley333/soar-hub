@@ -214,7 +214,7 @@ function Company({ districts, roll, meta, canWrite, onOpen }: { districts: MyDis
           <RiskDonut risk={totals.risk} />
           <div>
             <div className="text-3xl font-bold leading-none text-heading">{totals.immediate}</div>
-            <div className="mt-1.5 text-[11px] font-bold uppercase tracking-wide text-ink-subtle">Immediate flight risk</div>
+            <div className="mt-1.5 text-[11px] font-bold uppercase tracking-wide text-ink-subtle">Immediate risk</div>
           </div>
         </div>
         <StatCard value={totals.gmRisk} label="GM seats at risk" tone={totals.gmRisk ? "red" : undefined} />
@@ -334,7 +334,7 @@ function District({ district, onOpen }: { district: MyDistrictNode; onOpen: (sto
   return (
     <>
       <h1 className="mb-1 text-2xl font-bold tracking-tight text-heading">{district.name || "District"}</h1>
-      <div className="mb-5 text-sm text-ink-muted">GM Bench · flight risk &amp; succession</div>
+      <div className="mb-5 text-sm text-ink-muted">GM Bench · risk &amp; succession</div>
 
       <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
         <Kpi label="Stores" value={district.stores.length} />
@@ -360,7 +360,7 @@ function District({ district, onOpen }: { district: MyDistrictNode; onOpen: (sto
             <table className="w-full border-collapse text-sm">
               <thead>
                 <tr className="text-left text-[11px] font-bold uppercase tracking-wide text-ink-subtle">
-                  <Th>General Manager</Th><Th>Store</Th><Th>Flight risk</Th><Th>Reason</Th><Th>Aspiration</Th><Th>Latest comment</Th><Th>Identified backfill</Th><Th />
+                  <Th>General Manager</Th><Th>Store</Th><Th>Risk</Th><Th>Reason</Th><Th>Aspiration</Th><Th>Latest comment</Th><Th>Identified backfill</Th><Th />
                 </tr>
               </thead>
               <tbody>
@@ -733,7 +733,7 @@ function RosterTable({ roster }: { roster: TeamMember[] }) {
       </div>
       <div className="overflow-hidden rounded-2xl border border-border bg-surface shadow-card">
         <div className="grid grid-cols-[1.6fr_1fr_1fr_0.8fr] gap-3 border-b border-border px-4 py-2.5 text-[11px] font-bold uppercase tracking-wide text-ink-subtle">
-          <span>Team member</span><span>Flight risk</span><span>Aspiration</span><span>Perf</span>
+          <span>Team member</span><span>Risk</span><span>Aspiration</span><span>Perf</span>
         </div>
         {rows.map((m) => <RosterRow key={m.id} m={m} />)}
       </div>
@@ -853,7 +853,7 @@ function NineBox({ roster }: { roster: TeamMember[] }) {
       </div>
 
       <p className="text-xs text-ink-muted">
-        Avatar ring color = flight risk.{unrated > 0 ? ` ${unrated} team member${unrated === 1 ? "" : "s"} not yet rated — set Performance + Potential on their card to place them.` : ""}
+        Avatar ring color = risk.{unrated > 0 ? ` ${unrated} team member${unrated === 1 ? "" : "s"} not yet rated — set Performance + Potential on their card to place them.` : ""}
       </p>
     </div>
   );

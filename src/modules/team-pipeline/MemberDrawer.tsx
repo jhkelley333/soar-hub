@@ -107,8 +107,8 @@ function MemberBody({ member, canWrite, roleEdit }: { member: TeamMember; canWri
         <InviteBlock member={member} />
       )}
 
-      {/* flight risk */}
-      <Field label="Flight risk">
+      {/* risk */}
+      <Field label="Risk">
         <div className="grid grid-cols-4 gap-1.5">
           {(["na", "low", "medium", "immediate"] as FlightRisk[]).map((r) => (
             <SegBtn key={r} on={draft.flight_risk === r} disabled={!canWrite} onClick={() => set({ flight_risk: r })}>{RISK_META[r].short}</SegBtn>

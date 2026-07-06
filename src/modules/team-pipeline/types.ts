@@ -111,8 +111,8 @@ export type MemberPatch = Partial<{
   risk_reasons: string[];
 }>;
 
-// Preset flight-risk drivers (toggle chips); freeform notes go in the thread.
-export const RISK_REASONS = ["Pay", "Commute", "Growth", "Manager fit", "Schedule", "Personal"];
+// Preset risk drivers (toggle chips); freeform notes go in the thread.
+export const RISK_REASONS = ["Performance", "Pay", "Commute", "Growth", "Manager fit", "Schedule", "Personal"];
 
 export const REQ_STATUS_META: Record<Requisition["status"], { label: string; chip: string }> = {
   sourcing: { label: "Sourcing", chip: "bg-zinc-100 text-zinc-600" },
