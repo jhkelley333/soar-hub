@@ -1,8 +1,8 @@
 // Typed wrappers around netlify/functions/team-pipeline.
 import { supabase } from "@/lib/supabase";
 import type {
-  CaLevel, CaStatus, CorrectiveAction, GmsResponse, MemberPatch, Note,
-  Requisition, RollupResponse, StoreRosterResponse, SuccessionResponse, TeamMember,
+  CalibrationSnapshot, CaLevel, CaStatus, CorrectiveAction, GmsResponse, MemberPatch, Note, Readiness,
+  Requisition, RollupResponse, SnapshotRow, StoreRosterResponse, Successor, SuccessionResponse, TeamMember,
 } from "./types";
 
 const FN = "/.netlify/functions/team-pipeline";
@@ -74,6 +74,41 @@ export function addCorrectiveAction(memberId: string, doc: NewCorrectiveAction):
 }
 export function setCorrectiveActionStatus(actionId: string, status: CaStatus): Promise<{ ok: true; action: CorrectiveAction }> {
   return request(`${FN}?action=corrective-action-status`, { method: "POST", body: JSON.stringify({ action_id: actionId, status }) });
+}
+
+// ── Succession bench (ranked successors + readiness) ─────────────────────────
+export function fetchSuccessors(memberId: string): Promise<{ successors: Successor[] }> {
+  return request(`${FN}?action=successors&member_id=${encodeURIComponent(memberId)}`);
+}
+export interface NewSuccessor {
+  successor_member_id?: string | null;
+  successor_name?: string | null;
+  readiness?: Readiness;
+  note?: string | null;
+}
+export function addSuccessor(memberId: string, s: NewSuccessor): Promise<{ ok: true; successor: Successor }> {
+  return request(`${FN}?action=add-successor`, { method: "POST", body: JSON.stringify({ member_id: memberId, ...s }) });
+}
+export function updateSuccessor(successorId: string, patch: Partial<{ readiness: Readiness; rank: number; note: string | null; successor_name: string | null }>): Promise<{ ok: true; successor: Successor }> {
+  return request(`${FN}?action=update-successor`, { method: "POST", body: JSON.stringify({ successor_id: successorId, patch }) });
+}
+export function removeSuccessor(successorId: string): Promise<{ ok: true }> {
+  return request(`${FN}?action=remove-successor`, { method: "POST", body: JSON.stringify({ successor_id: successorId }) });
+}
+
+// ── Quarterly calibration snapshots ──────────────────────────────────────────
+export function fetchSnapshots(): Promise<{ snapshots: CalibrationSnapshot[]; can_manage: boolean }> {
+  return request(`${FN}?action=snapshots`);
+}
+export function fetchSnapshotRows(period: string, storeId?: string): Promise<{ period: string; rows: SnapshotRow[] }> {
+  const q = storeId ? `&store_id=${encodeURIComponent(storeId)}` : "";
+  return request(`${FN}?action=snapshot-rows&period=${encodeURIComponent(period)}${q}`);
+}
+export function takeSnapshot(period: string): Promise<{ ok: true; period: string; member_count: number; replaced: boolean }> {
+  return request(`${FN}?action=take-snapshot`, { method: "POST", body: JSON.stringify({ period }) });
+}
+export function lockSnapshot(period: string): Promise<{ ok: true; period: string; status: "locked" }> {
+  return request(`${FN}?action=lock-snapshot`, { method: "POST", body: JSON.stringify({ period }) });
 }
 
 // ATS roster import. Rows are the raw CSV cells; the backend resolves stores,

@@ -17,13 +17,13 @@ import { Segmented } from "@/shared/ui/Segmented";
 import { useToast } from "@/shared/ui/Toaster";
 import { fetchMyTree } from "@/modules/my-stores/api";
 import type { MyDistrictNode, MyStoreNode } from "@/modules/my-stores/types";
-import { fetchGms, fetchRollup, fetchSuccession, fetchStoreRoster, seedFromProfiles, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings } from "./api";
+import { fetchGms, fetchRollup, fetchSuccession, fetchStoreRoster, fetchSnapshots, fetchSnapshotRows, takeSnapshot, lockSnapshot, seedFromProfiles, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings } from "./api";
 import { AccountBadge, MemberDrawerProvider, useMemberDrawer } from "./MemberDrawer";
 import { RosterImport } from "./RosterImport";
 import {
-  ASPIRATION_META, LADDER, LADDER_BY_KEY, REQ_STATUS_META, RISK_META, ROLE_MIX, roleBelow,
+  ASPIRATION_META, LADDER, LADDER_BY_KEY, READINESS_META, REQ_STATUS_META, RISK_META, ROLE_MIX, roleBelow,
   type AtRiskMember, type GmSeat, type LadderKey, type Requisition, type RiskCounts,
-  type RollupResponse, type StoreRollup, type SuccessionResponse, type TeamMember,
+  type RollupResponse, type SnapshotRow, type StoreRollup, type SuccessionResponse, type TeamMember,
 } from "./types";
 
 type Nav =
@@ -207,11 +207,11 @@ function SuccessionView({ districts, districtMeta }: { districts: MyDistrictNode
 
   return (
     <div className="space-y-5">
-      {/* Headline exposure numbers */}
+      {/* Headline exposure numbers — coverage keyed off ready-now successors */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <SuccTile label="GM seats exposed" value={s.gm_exposed} sub={`of ${s.gm_at_risk + s.gm_open} at-risk/open`} tone={s.gm_exposed > 0 ? "red" : "ok"} big />
-        <SuccTile label="GMs at risk" value={s.gm_at_risk} tone={s.gm_at_risk > 0 ? "amber" : "ok"} />
-        <SuccTile label="Open GM seats" value={s.gm_open} tone={s.gm_open > 0 ? "amber" : "ok"} />
+        <SuccTile label="GM seats exposed" value={s.gm_exposed} sub={`of ${s.gm_at_risk + s.gm_open} at-risk/open · no successor`} tone={s.gm_exposed > 0 ? "red" : "ok"} big />
+        <SuccTile label="Ready-now successor" value={s.gm_ready} sub="at an at-risk/open seat" tone={s.gm_ready > 0 ? "ok" : "amber"} />
+        <SuccTile label="Developing" value={s.gm_developing} sub="on the bench, not ready" tone={s.gm_developing > 0 ? "amber" : "ok"} />
         <SuccTile label="People at risk" value={s.at_risk_total} sub={`${s.at_risk_immediate} immediate · ${s.at_risk_medium} medium`} tone={s.at_risk_immediate > 0 ? "red" : s.at_risk_medium > 0 ? "amber" : "ok"} />
       </div>
 
@@ -252,6 +252,7 @@ function SuccTile({ label, value, sub, tone, big }: { label: string; value: numb
 }
 
 const PLAN_META: Record<string, { label: string; chip: string }> = {
+  ready: { label: "Ready now", chip: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
   develop: { label: "Develop successor", chip: "bg-blue-50 text-blue-700 ring-blue-200" },
   req: { label: "Req open", chip: "bg-amber-50 text-amber-800 ring-amber-200" },
   none: { label: "No plan", chip: "bg-red-50 text-red-700 ring-red-200" },
@@ -261,6 +262,8 @@ const SEAT_META: Record<GmSeat["seat_status"], { label: string; chip: string }> 
   open: { label: "Seat open", chip: "bg-red-50 text-red-700 ring-red-200" },
   ok: { label: "Covered", chip: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
 };
+// Exposed seats first, then developing, then ready — worst gap up top.
+const COVERAGE_ORDER: Record<GmSeat["coverage"], number> = { exposed: 0, developing: 1, ready: 2, ok: 3 };
 
 function ExposureTable({ seats, districtName, doName }: {
   seats: GmSeat[];
@@ -268,12 +271,14 @@ function ExposureTable({ seats, districtName, doName }: {
   doName: (id: string | null) => string | null;
   onOpenStore?: (id: string) => void;
 }) {
-  // Only the seats that need attention: at-risk or open. Exposed (no plan) first.
+  // Only the seats that need attention: at-risk or open. Worst coverage first.
   const rows = seats
     .filter((s) => s.seat_status !== "ok")
-    .sort((a, b) => (a.covered === b.covered ? 0 : a.covered ? 1 : -1));
+    .sort((a, b) =>
+      (COVERAGE_ORDER[a.coverage] - COVERAGE_ORDER[b.coverage]) ||
+      String(a.store_number).localeCompare(String(b.store_number), undefined, { numeric: true }));
   if (rows.length === 0) {
-    return <EmptyState title="No GM-seat exposure" description="Every at-risk or open GM seat in your scope has an identified backfill." />;
+    return <EmptyState title="No GM-seat exposure" description="Every at-risk or open GM seat in your scope has a ready successor on the bench." />;
   }
   return (
     <div className="overflow-hidden rounded-xl border border-border bg-surface">
@@ -283,23 +288,36 @@ function ExposureTable({ seats, districtName, doName }: {
             <tr className="border-b border-border text-left text-[10px] uppercase tracking-wide text-ink-subtle">
               <th className="px-4 py-2">Store</th><th className="px-4 py-2">District / DO</th>
               <th className="px-4 py-2">GM</th><th className="px-4 py-2">Seat</th>
-              <th className="px-4 py-2">Backfill</th><th className="px-4 py-2">Plan to close</th>
+              <th className="px-4 py-2">Successor bench</th><th className="px-4 py-2">Plan to close</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
             {rows.map((s) => {
               const seat = SEAT_META[s.seat_status];
               const plan = s.plan ? PLAN_META[s.plan.type] : null;
+              const top = s.bench[0] ?? null;
               return (
-                <tr key={s.store_id} className={cn(!s.covered && "bg-red-50/30")}>
+                <tr key={s.store_id} className={cn(s.coverage === "exposed" && "bg-red-50/30")}>
                   <td className="px-4 py-2.5"><span className="font-semibold text-heading">#{s.store_number}</span><span className="ml-2 text-ink-muted">{s.store_name}</span></td>
                   <td className="px-4 py-2.5 text-ink-2">{districtName(s.district_id)}{doName(s.district_id) ? <span className="text-ink-muted"> · {doName(s.district_id)}</span> : null}</td>
                   <td className="px-4 py-2.5 text-ink-2">{s.gm_name ?? <span className="text-ink-muted">—</span>}</td>
                   <td className="px-4 py-2.5"><SChip {...seat} /></td>
-                  <td className="px-4 py-2.5 text-ink-2">{s.backfill ?? <span className="text-ink-muted">—</span>}</td>
+                  <td className="px-4 py-2.5">
+                    {top ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className="text-ink-2">{top.name}</span>
+                        <SChip label={READINESS_META[top.readiness].short} chip={READINESS_META[top.readiness].chip} />
+                        {s.bench.length > 1 && <span className="text-[11px] text-ink-subtle">+{s.bench.length - 1}</span>}
+                      </span>
+                    ) : s.backfill ? (
+                      <span className="text-ink-2">{s.backfill} <span className="text-[11px] text-ink-subtle">(no readiness)</span></span>
+                    ) : (
+                      <span className="text-ink-muted">— none</span>
+                    )}
+                  </td>
                   <td className="px-4 py-2.5">
                     {plan && <SChip {...plan} />}
-                    {s.plan?.detail && <span className="ml-2 text-xs text-ink-muted">{s.plan.type === "req" ? `Req ${s.plan.detail}` : s.plan.type === "develop" ? s.plan.detail : s.plan.detail}</span>}
+                    {s.plan?.detail && <span className="ml-2 text-xs text-ink-muted">{s.plan.type === "req" ? `Req ${s.plan.detail}` : s.plan.detail}</span>}
                   </td>
                 </tr>
               );
@@ -668,7 +686,7 @@ function Store({ store }: { store: MyStoreNode }) {
       ) : layout === "roster" ? (
         <RosterTable roster={roster} />
       ) : (
-        <NineBox roster={roster} />
+        <NineBox roster={roster} storeId={store.id} />
       )}
 
       {terminated.length > 0 && <TerminatedPanel storeId={store.id} members={terminated} canWrite={canWrite} />}
@@ -962,11 +980,46 @@ const NINE_BOX: NbCell[][] = [
   ],
 ];
 
-function NineBox({ roster }: { roster: TeamMember[] }) {
+// Box "goodness" score (0–4): higher performance + higher potential = higher.
+// Used only to classify movement direction between two snapshots.
+const potGood = (p: number) => 2 - potRow(p); // high potential → 2
+const boxScore = (perf: number, pot: number) => perfCol(perf) + potGood(pot);
+type MoveKind = "up" | "down" | "lateral" | "same" | "new";
+const MOVE_META: Record<Exclude<MoveKind, "same" | "new">, { badge: string; cls: string }> = {
+  up: { badge: "▲", cls: "bg-emerald-500 text-white" },
+  down: { badge: "▼", cls: "bg-red-500 text-white" },
+  lateral: { badge: "→", cls: "bg-amber-400 text-white" },
+};
+
+function NineBox({ roster, storeId }: { roster: TeamMember[]; storeId: string }) {
   const { open } = useMemberDrawer();
   const rated = roster.filter((m) => m.perf != null && m.potential != null);
   const cellOf = (col: number, row: number) => rated.filter((m) => perfCol(m.perf!) === col && potRow(m.potential!) === row);
   const unrated = roster.length - rated.length;
+
+  // Calibration compare: overlay each member's movement since a prior snapshot.
+  const [compare, setCompare] = useState<string>("");
+  const rowsQ = useQuery({
+    queryKey: ["tp-snapshot-rows", compare, storeId],
+    queryFn: () => fetchSnapshotRows(compare, storeId),
+    enabled: !!compare,
+    staleTime: 60_000,
+  });
+  const priorByMember = useMemo(() => {
+    const m = new Map<string, SnapshotRow>();
+    for (const r of rowsQ.data?.rows ?? []) m.set(r.member_id, r);
+    return m;
+  }, [rowsQ.data]);
+  const moveOf = (mem: TeamMember): MoveKind => {
+    if (!compare || !rowsQ.data) return "same"; // no compare, or snapshot still loading
+    const prior = priorByMember.get(mem.id);
+    if (!prior || prior.perf == null || prior.potential == null) return "new";
+    const sameBox = perfCol(prior.perf) === perfCol(mem.perf!) && potRow(prior.potential) === potRow(mem.potential!);
+    if (sameBox) return "same";
+    const d = boxScore(mem.perf!, mem.potential!) - boxScore(prior.perf, prior.potential);
+    return d > 0 ? "up" : d < 0 ? "down" : "lateral";
+  };
+  const movers = compare ? rated.filter((m) => { const k = moveOf(m); return k === "up" || k === "down" || k === "lateral" || k === "new"; }).length : 0;
 
   return (
     <div className="space-y-3">
@@ -976,6 +1029,8 @@ function NineBox({ roster }: { roster: TeamMember[] }) {
         spot future leaders, recognize top performers, and target coaching where it lands hardest. Each person sits in a box
         by their rating; tap an avatar to open their card.
       </p>
+
+      <CalibrationBar compare={compare} onCompare={setCompare} movers={movers} />
 
       <div className="overflow-x-auto">
         <div className="flex min-w-[720px] gap-2">
@@ -1009,12 +1064,21 @@ function NineBox({ roster }: { roster: TeamMember[] }) {
                     </ul>
                     {people.length > 0 && (
                       <div className="mt-auto flex flex-wrap content-start gap-1 pt-1">
-                        {people.map((m) => (
-                          <button key={m.id} onClick={() => open(m)} title={`${m.full_name} · ${LADDER_BY_KEY[m.role]?.abbr}`}
-                            className="rounded-full ring-2 ring-white/70 transition hover:ring-white">
-                            <Avatar name={m.full_name} risk={m.flight_risk} />
-                          </button>
-                        ))}
+                        {people.map((m) => {
+                          const mv = moveOf(m);
+                          const badge = mv === "new" ? "✦" : mv === "same" ? null : MOVE_META[mv].badge;
+                          const badgeCls = mv === "new" ? "bg-blue-600 text-white" : mv === "same" ? "" : MOVE_META[mv].cls;
+                          const mvTitle = mv === "new" ? " · new since " + compare : mv === "same" ? "" : ` · moved ${mv} since ${compare}`;
+                          return (
+                            <button key={m.id} onClick={() => open(m)} title={`${m.full_name} · ${LADDER_BY_KEY[m.role]?.abbr}${mvTitle}`}
+                              className="relative rounded-full ring-2 ring-white/70 transition hover:ring-white">
+                              <Avatar name={m.full_name} risk={m.flight_risk} />
+                              {badge && (
+                                <span className={cn("absolute -right-1 -top-1 grid h-3.5 w-3.5 place-items-center rounded-full text-[8px] font-bold leading-none ring-1 ring-white", badgeCls)}>{badge}</span>
+                              )}
+                            </button>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -1037,7 +1101,78 @@ function NineBox({ roster }: { roster: TeamMember[] }) {
 
       <p className="text-xs text-ink-muted">
         Avatar ring color = risk.{unrated > 0 ? ` ${unrated} team member${unrated === 1 ? "" : "s"} not yet rated — set Performance + Potential on their card to place them.` : ""}
+        {compare && (
+          <span className="ml-1">Comparing to <strong className="text-ink-2">{compare}</strong>: <span className="font-bold text-emerald-600">▲</span> moved up · <span className="font-bold text-red-600">▼</span> down · <span className="font-bold text-amber-600">→</span> lateral · <span className="font-bold text-blue-600">✦</span> new.</span>
+        )}
       </p>
+    </div>
+  );
+}
+
+// Compact calibration strip above the 9-box: pick a prior snapshot to compare
+// against (everyone), and — for org-wide roles — take / lock company snapshots.
+function currentQuarter(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-Q${Math.floor(d.getMonth() / 3) + 1}`;
+}
+function CalibrationBar({ compare, onCompare, movers }: {
+  compare: string; onCompare: (p: string) => void; movers: number;
+}) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const q = useQuery({ queryKey: ["tp-snapshots"], queryFn: fetchSnapshots, staleTime: 60_000 });
+  const snapshots = q.data?.snapshots ?? [];
+  const canManage = q.data?.can_manage ?? false;
+  const period = currentQuarter();
+  const thisPeriod = snapshots.find((s) => s.period === period);
+  const compareSnap = snapshots.find((s) => s.period === compare) ?? null;
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["tp-snapshots"] });
+    qc.invalidateQueries({ queryKey: ["tp-snapshot-rows"] });
+  };
+  const take = useMutation({
+    mutationFn: () => takeSnapshot(period),
+    onSuccess: (r) => { toast.push(`${r.replaced ? "Updated" : "Captured"} ${period} — ${r.member_count} people.`, "success"); invalidate(); },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't snapshot.", "error"),
+  });
+  const lock = useMutation({
+    mutationFn: (p: string) => lockSnapshot(p),
+    onSuccess: (r) => { toast.push(`${r.period} locked.`, "success"); invalidate(); },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't lock.", "error"),
+  });
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface-muted px-3 py-2">
+      <span className="text-[11px] font-bold uppercase tracking-wide text-ink-subtle">Calibration</span>
+      <label className="flex items-center gap-1.5 text-xs text-ink-2">
+        Compare to
+        <select value={compare} onChange={(e) => onCompare(e.target.value)}
+          className="rounded-lg border border-border bg-surface px-2 py-1 text-xs font-semibold text-heading focus:border-accent focus:outline-none">
+          <option value="">Live (no compare)</option>
+          {snapshots.map((s) => <option key={s.period} value={s.period}>{s.period}{s.status === "locked" ? " 🔒" : ""}</option>)}
+        </select>
+      </label>
+      {compare && (
+        <span className="text-[11px] text-ink-muted">
+          {movers > 0 ? `${movers} moved` : "no movement"}{compareSnap?.locked_at ? " · locked" : ""}
+        </span>
+      )}
+      {canManage && (
+        <div className="ml-auto flex items-center gap-1.5">
+          <button disabled={take.isPending || thisPeriod?.status === "locked"} onClick={() => take.mutate()}
+            title={thisPeriod?.status === "locked" ? `${period} is locked` : `Snapshot all stores for ${period}`}
+            className="rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-semibold text-ink-2 transition hover:bg-surface-sunk disabled:opacity-40">
+            {take.isPending ? "Snapshotting…" : thisPeriod ? `Re-snapshot ${period}` : `Snapshot ${period}`}
+          </button>
+          {compareSnap && compareSnap.status === "open" && (
+            <button disabled={lock.isPending} onClick={() => lock.mutate(compareSnap.period)}
+              className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface px-2.5 py-1 text-xs font-semibold text-ink-2 transition hover:bg-surface-sunk disabled:opacity-40">
+              <Lock className="h-3 w-3" />Lock {compareSnap.period}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }

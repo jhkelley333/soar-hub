@@ -5,16 +5,20 @@
 // open it without prop-drilling.
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BadgeCheck, Copy, FileWarning, Phone, Plus, Star, UserPlus } from "lucide-react";
+import { BadgeCheck, Copy, FileWarning, Phone, Plus, Star, Trash2, UserPlus } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Drawer } from "@/shared/ui/Drawer";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { useToast } from "@/shared/ui/Toaster";
-import { addCorrectiveAction, addNote, fetchCorrectiveActions, fetchNotes, inviteMember, setCorrectiveActionStatus, updateMember } from "./api";
+import {
+  addCorrectiveAction, addNote, addSuccessor, fetchCorrectiveActions, fetchNotes, fetchStoreRoster,
+  fetchSuccessors, inviteMember, removeSuccessor, setCorrectiveActionStatus, updateMember, updateSuccessor,
+} from "./api";
 import {
   ASPIRATION_META, CA_CATEGORIES, CA_LEVEL_META, CA_LEVELS, CA_STATUS_META, CA_TEMPLATES,
-  INVITE_ROLES, LADDER, LADDER_BY_KEY, RATING_COLOR, RISK_META, RISK_REASONS,
-  type Aspiration, type CaLevel, type CorrectiveAction, type FlightRisk, type LadderKey, type MemberPatch, type TeamMember,
+  INVITE_ROLES, LADDER, LADDER_BY_KEY, RATING_COLOR, READINESS_META, RISK_META, RISK_REASONS,
+  type Aspiration, type CaLevel, type CorrectiveAction, type FlightRisk, type LadderKey, type MemberPatch,
+  type Readiness, type TeamMember,
 } from "./types";
 
 type Ctx = { open: (m: TeamMember) => void; canWrite: boolean; roleEdit: boolean };
@@ -140,13 +144,10 @@ function MemberBody({ member, canWrite, roleEdit }: { member: TeamMember; canWri
         <Field label="Potential"><Rating value={draft.potential} disabled={!canWrite} onPick={(n) => set({ potential: n })} /></Field>
       </div>
 
-      {/* backfill */}
+      {/* succession bench */}
       {role?.mgr && (
-        <Field label="Identified backfill / successor">
-          <input defaultValue={draft.backfill ?? ""} disabled={!canWrite} placeholder="Name a ready successor…"
-            onBlur={(e) => { const v = e.target.value.trim(); if (v !== (member.backfill ?? "")) set({ backfill: v || null }); }}
-            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-heading placeholder:text-ink-subtle focus:border-accent focus:outline-none disabled:opacity-60" />
-        </Field>
+        <SuccessionBench member={member} legacyBackfill={draft.backfill} canWrite={canWrite}
+          onClearLegacy={() => set({ backfill: null })} />
       )}
 
       {/* status */}
@@ -295,6 +296,150 @@ function CaForm({ memberId, onDone }: { memberId: string; onDone: () => void }) 
 }
 function CaBtn({ onClick, children }: { onClick: () => void; children: ReactNode }) {
   return <button onClick={onClick} className="rounded-md border border-border bg-surface px-2 py-1 font-semibold text-ink-2 transition hover:bg-surface-sunk">{children}</button>;
+}
+
+const READINESS_ORDER: Readiness[] = ["now", "6mo", "12mo"];
+
+// Ranked succession bench for a manager seat — internal roster members or typed
+// names, each tagged ready-now / 6mo / 12mo. Feeds the Succession & Risk
+// roll-up's "ready vs. developing vs. exposed" coverage.
+function SuccessionBench({ member, legacyBackfill, canWrite, onClearLegacy }: {
+  member: TeamMember; legacyBackfill: string | null; canWrite: boolean; onClearLegacy: () => void;
+}) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [adding, setAdding] = useState(false);
+  const q = useQuery({ queryKey: ["tp-successors", member.id], queryFn: () => fetchSuccessors(member.id) });
+  const bench = q.data?.successors ?? [];
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["tp-successors", member.id] });
+    qc.invalidateQueries({ queryKey: ["tp-succession"] });
+  };
+
+  const setReadiness = useMutation({
+    mutationFn: ({ id, readiness }: { id: string; readiness: Readiness }) => updateSuccessor(id, { readiness }),
+    onSuccess: invalidate,
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't update.", "error"),
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => removeSuccessor(id),
+    onSuccess: invalidate,
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't remove.", "error"),
+  });
+
+  return (
+    <Field label="Succession bench">
+      {canWrite && !adding && (
+        <button onClick={() => setAdding(true)}
+          className="mb-3 inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-ink-2 transition hover:bg-surface-sunk">
+          <Plus className="h-3.5 w-3.5" />Add successor
+        </button>
+      )}
+      {adding && <SuccessorForm member={member} onDone={() => setAdding(false)} onSaved={invalidate} />}
+
+      {q.isLoading ? <Skeleton className="h-12 w-full" /> : bench.length === 0 && !legacyBackfill ? (
+        !adding && <div className="text-sm text-ink-subtle">No successor identified yet.</div>
+      ) : (
+        <ol className="mt-1 flex flex-col gap-2">
+          {bench.map((s, i) => {
+            const rm = READINESS_META[s.readiness];
+            return (
+              <li key={s.id} className="flex items-center gap-2 rounded-xl border border-border bg-surface-muted px-3 py-2">
+                <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-surface-sunk text-[11px] font-bold text-ink-muted">{i + 1}</span>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm font-semibold text-heading">{s.name}</div>
+                  {s.successor_role && <div className="text-[11px] text-ink-subtle">{LADDER_BY_KEY[s.successor_role]?.label}{s.successor_member_id ? "" : " · external"}</div>}
+                  {!s.successor_role && <div className="text-[11px] text-ink-subtle">External candidate</div>}
+                </div>
+                {canWrite ? (
+                  <select value={s.readiness} onChange={(e) => setReadiness.mutate({ id: s.id, readiness: e.target.value as Readiness })}
+                    className={cn("rounded-full px-2 py-1 text-[11px] font-bold ring-1 ring-inset focus:outline-none", rm.chip)}>
+                    {READINESS_ORDER.map((r) => <option key={r} value={r}>{READINESS_META[r].short}</option>)}
+                  </select>
+                ) : (
+                  <span className={cn("rounded-full px-2 py-0.5 text-[11px] font-bold ring-1 ring-inset", rm.chip)}>{rm.short}</span>
+                )}
+                {canWrite && (
+                  <button onClick={() => remove.mutate(s.id)} title="Remove"
+                    className="shrink-0 rounded-md p-1 text-ink-subtle transition hover:bg-red-50 hover:text-red-600">
+                    <Trash2 className="h-3.5 w-3.5" />
+                  </button>
+                )}
+              </li>
+            );
+          })}
+          {legacyBackfill && (
+            <li className="flex items-center gap-2 rounded-xl border border-dashed border-border bg-surface px-3 py-2">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm text-heading">{legacyBackfill}</div>
+                <div className="text-[11px] text-ink-subtle">Legacy note · add above with a readiness to replace</div>
+              </div>
+              {canWrite && (
+                <button onClick={onClearLegacy} title="Clear legacy note"
+                  className="shrink-0 rounded-md p-1 text-ink-subtle transition hover:bg-red-50 hover:text-red-600">
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </li>
+          )}
+        </ol>
+      )}
+    </Field>
+  );
+}
+
+function SuccessorForm({ member, onDone, onSaved }: { member: TeamMember; onDone: () => void; onSaved: () => void }) {
+  const toast = useToast();
+  const [mode, setMode] = useState<"internal" | "external">("internal");
+  const [memberId, setMemberId] = useState("");
+  const [name, setName] = useState("");
+  const [readiness, setReadiness] = useState<Readiness>("6mo");
+
+  // Candidate pool: everyone else on the incumbent's store roster.
+  const rosterQ = useQuery({ queryKey: ["tp-store-roster", member.store_id], queryFn: () => fetchStoreRoster(member.store_id) });
+  const candidates = (rosterQ.data?.roster ?? []).filter((m) => m.id !== member.id);
+
+  const create = useMutation({
+    mutationFn: () => addSuccessor(member.id, mode === "internal"
+      ? { successor_member_id: memberId, readiness }
+      : { successor_name: name.trim(), readiness }),
+    onSuccess: () => { toast.push("Successor added.", "success"); onSaved(); onDone(); },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't add.", "error"),
+  });
+
+  const canSave = mode === "internal" ? !!memberId : !!name.trim();
+
+  return (
+    <div className="mb-3 flex flex-col gap-3 rounded-xl border border-border bg-surface-muted p-3">
+      <div className="grid grid-cols-2 gap-1.5">
+        <SegBtn on={mode === "internal"} onClick={() => setMode("internal")}>From roster</SegBtn>
+        <SegBtn on={mode === "external"} onClick={() => setMode("external")}>External name</SegBtn>
+      </div>
+      {mode === "internal" ? (
+        <select value={memberId} onChange={(e) => setMemberId(e.target.value)}
+          className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-heading focus:border-accent focus:outline-none">
+          <option value="">{rosterQ.isLoading ? "Loading roster…" : "Pick a team member…"}</option>
+          {candidates.map((c) => <option key={c.id} value={c.id}>{c.full_name} · {LADDER_BY_KEY[c.role]?.abbr}</option>)}
+        </select>
+      ) : (
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Candidate name"
+          className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-heading placeholder:text-ink-subtle focus:border-accent focus:outline-none" />
+      )}
+      <div>
+        <div className="mb-1 text-[11px] font-semibold text-ink-muted">Readiness</div>
+        <div className="grid grid-cols-3 gap-1.5">
+          {READINESS_ORDER.map((r) => <SegBtn key={r} on={readiness === r} onClick={() => setReadiness(r)}>{READINESS_META[r].short}</SegBtn>)}
+        </div>
+      </div>
+      <div className="flex justify-end gap-2">
+        <button onClick={onDone} className="rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-ink-2 hover:bg-surface-sunk">Cancel</button>
+        <button disabled={!canSave || create.isPending} onClick={() => create.mutate()}
+          className="rounded-lg bg-midnight px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-midnight/90 disabled:opacity-40">
+          {create.isPending ? "Adding…" : "Add to bench"}
+        </button>
+      </div>
+    </div>
+  );
 }
 
 function NotesThread({ memberId, canWrite }: { memberId: string; canWrite: boolean }) {
