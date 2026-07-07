@@ -17,13 +17,14 @@ import { Segmented } from "@/shared/ui/Segmented";
 import { useToast } from "@/shared/ui/Toaster";
 import { fetchMyTree } from "@/modules/my-stores/api";
 import type { MyDistrictNode, MyStoreNode } from "@/modules/my-stores/types";
-import { fetchGms, fetchRollup, fetchSuccession, fetchStoreRoster, fetchSnapshots, fetchSnapshotRows, fetchRiskReview, takeSnapshot, lockSnapshot, seedFromProfiles, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings } from "./api";
+import { fetchGms, fetchRollup, fetchSuccession, fetchStoreRoster, fetchSnapshots, fetchSnapshotRows, fetchRiskReview, fetchDevRollup, takeSnapshot, lockSnapshot, seedFromProfiles, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings } from "./api";
 import { AccountBadge, MemberDrawerProvider, useMemberDrawer } from "./MemberDrawer";
 import { RosterImport } from "./RosterImport";
 import {
   ASPIRATION_META, LADDER, LADDER_BY_KEY, READINESS_META, REQ_STATUS_META, RISK_META, ROLE_MIX, roleBelow,
   SIGNAL_SEVERITY_META,
-  type AtRiskMember, type GmSeat, type LadderKey, type Requisition, type RiskCounts, type RiskReviewRow,
+  type Aspiration, type AtRiskMember, type DevGapRow, type DevGoalRow, type DevRollupResponse, type GmSeat, type LadderKey,
+  type Requisition, type RiskCounts, type RiskReviewRow,
   type RollupResponse, type SnapshotRow, type StoreRollup, type SuccessionResponse, type TeamMember,
 } from "./types";
 
@@ -35,7 +36,7 @@ type Nav =
 const ZERO: StoreRollup = { risk: { immediate: 0, medium: 0, low: 0, na: 0 }, roster: 0, non_gm: 0, open_reqs: 0, gm_risk: null, sales: null, target: null };
 const RISK_RANK: Record<TeamMember["flight_risk"], number> = { na: 0, low: 1, medium: 2, immediate: 3 };
 
-type TopView = "pipeline" | "succession";
+type TopView = "pipeline" | "succession" | "development";
 
 export function TeamPipelinePage() {
   const [nav, setNav] = useState<Nav>({ level: "company" });
@@ -87,7 +88,7 @@ export function TeamPipelinePage() {
           <Segmented<TopView>
             value={view}
             onChange={setView}
-            options={[{ value: "pipeline", label: "Pipeline" }, { value: "succession", label: "Succession & Risk" }]}
+            options={[{ value: "pipeline", label: "Pipeline" }, { value: "succession", label: "Succession & Risk" }, { value: "development", label: "Development" }]}
           />
         </div>
 
@@ -98,6 +99,8 @@ export function TeamPipelinePage() {
 
         {view === "succession" ? (
           <SuccessionView districtMeta={districtMeta} districts={districts} />
+        ) : view === "development" ? (
+          <DevelopmentView districts={districts} districtMeta={districtMeta} />
         ) : (
           <>
             {nav.level === "company" && (
@@ -438,6 +441,194 @@ function RiskReviewTable({ rows, districtName, onOpen }: {
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Development (PDP roll-up) ─────────────────────────────────────────────────
+// Leadership view of development-plan coverage: how much of the span has a real
+// plan, who most needs one, and which goals are overdue or coming due.
+function DevelopmentView({ districts, districtMeta }: { districts: MyDistrictNode[]; districtMeta: DistrictMeta }) {
+  const { open } = useMemberDrawer();
+  const q = useQuery({ queryKey: ["tp-dev-rollup"], queryFn: fetchDevRollup, staleTime: 60_000 });
+  const [tab, setTab] = useState<"coverage" | "gaps" | "stalled" | "due">("coverage");
+  const districtName = (id: string | null) => (id ? districts.find((d) => d.id === id)?.name ?? "—" : "Unassigned");
+  const doName = (id: string | null) => (id ? districtMeta.get(id)?.doName ?? null : null);
+
+  if (q.isLoading) return <Skeleton className="h-64 w-full" />;
+  if (q.isError) return <EmptyState title="Couldn't load development" description={(q.error as Error)?.message ?? "Try again."} />;
+  const data = q.data as DevRollupResponse;
+  const s = data.summary;
+
+  const openRow = (r: { member_id: string | null; store_id: string; name: string; role: LadderKey | null; perf?: number | null; potential?: number | null; aspiration?: Aspiration; hire_date?: string | null }) => {
+    if (!r.member_id) return;
+    open({ id: r.member_id, store_id: r.store_id, full_name: r.name, role: r.role ?? "crew", flight_risk: "na",
+      risk_reasons: [], aspiration: r.aspiration ?? "current", perf: r.perf ?? null, potential: r.potential ?? null,
+      backfill: null, status: "active", profile_id: null, external_id: null, email: null, phone: null,
+      hire_date: r.hire_date ?? null, comment: null, comment_by: null, created_at: "", updated_at: "" } as TeamMember);
+  };
+
+  const covTone = s.coverage_pct >= 70 ? "text-emerald-600" : s.coverage_pct >= 40 ? "text-amber-600" : "text-red-600";
+
+  return (
+    <div className="space-y-5">
+      {/* Headline coverage numbers */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="rounded-xl border border-border bg-surface p-4 ring-1 ring-inset ring-border">
+          <div className="text-[11px] font-bold uppercase tracking-wide text-ink-subtle">Plan coverage</div>
+          <div className={cn("mt-1 text-4xl font-bold tabular-nums", covTone)}>{s.coverage_pct}%</div>
+          <div className="mt-0.5 text-[11px] text-ink-muted">{s.with_plan} of {s.roster_total} have a plan</div>
+        </div>
+        <SuccTile label="Needs a plan" value={s.key_gap_total} sub="high-potential / aspirant / mgr" tone={s.key_gap_total > 0 ? "amber" : "ok"} />
+        <SuccTile label="Stalled goals" value={s.stalled_total} sub="past target, not done" tone={s.stalled_total > 0 ? "red" : "ok"} />
+        <SuccTile label="Due soon" value={s.due_soon_total} sub="within 30 days" tone={s.due_soon_total > 0 ? "amber" : "ok"} />
+      </div>
+
+      {/* Goal progress bar */}
+      {s.goals_total > 0 && (
+        <div className="rounded-xl border border-border bg-surface px-4 py-3">
+          <div className="mb-1.5 flex items-center justify-between text-[11px] font-semibold text-ink-muted">
+            <span>Development goals</span>
+            <span>{s.goals_done} done · {s.goals_in_progress} in progress · {s.goals_open} not started</span>
+          </div>
+          <div className="flex h-2 overflow-hidden rounded-full bg-surface-sunk">
+            <div className="bg-emerald-500" style={{ width: `${(s.goals_done / s.goals_total) * 100}%` }} />
+            <div className="bg-blue-500" style={{ width: `${(s.goals_in_progress / s.goals_total) * 100}%` }} />
+          </div>
+        </div>
+      )}
+
+      <Segmented<"coverage" | "gaps" | "stalled" | "due">
+        value={tab}
+        onChange={setTab}
+        options={[
+          { value: "coverage", label: "Coverage by district" },
+          { value: "gaps", label: "Needs a plan", count: s.key_gap_total },
+          { value: "stalled", label: "Stalled", count: s.stalled_total },
+          { value: "due", label: "Due soon", count: s.due_soon_total },
+        ]}
+      />
+
+      {tab === "coverage" ? (
+        <DevCoverageTable rows={data.districts} districtName={districtName} doName={doName} />
+      ) : tab === "gaps" ? (
+        <DevGapTable rows={data.gaps} districtName={districtName} onOpen={openRow} />
+      ) : (
+        <DevGoalTable rows={tab === "stalled" ? data.stalled : data.due_soon} overdue={tab === "stalled"} districtName={districtName} onOpen={openRow} />
+      )}
+    </div>
+  );
+}
+
+function DevCoverageTable({ rows, districtName, doName }: {
+  rows: DevRollupResponse["districts"];
+  districtName: (id: string | null) => string;
+  doName: (id: string | null) => string | null;
+}) {
+  if (rows.length === 0) return <EmptyState title="No roster yet" description="No team members in your scope to plan for." />;
+  return (
+    <div className="overflow-hidden rounded-xl border border-border bg-surface">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-[10px] uppercase tracking-wide text-ink-subtle">
+              <th className="px-4 py-2">District / DO</th><th className="px-4 py-2">Roster</th>
+              <th className="px-4 py-2">With plan</th><th className="px-4 py-2">Coverage</th>
+              <th className="px-4 py-2">Needs a plan</th><th className="px-4 py-2">Stalled</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {rows.map((d) => {
+              const tone = d.coverage_pct >= 70 ? "text-emerald-600" : d.coverage_pct >= 40 ? "text-amber-600" : "text-red-600";
+              return (
+                <tr key={d.district_id ?? "none"}>
+                  <td className="px-4 py-2.5 text-ink-2">{districtName(d.district_id)}{doName(d.district_id) ? <span className="text-ink-muted"> · {doName(d.district_id)}</span> : null}</td>
+                  <td className="px-4 py-2.5 tabular-nums text-ink-2">{d.roster}</td>
+                  <td className="px-4 py-2.5 tabular-nums text-ink-2">{d.with_plan}</td>
+                  <td className="px-4 py-2.5">
+                    <div className="flex items-center gap-2">
+                      <div className="h-1.5 w-16 overflow-hidden rounded-full bg-surface-sunk"><div className="h-full bg-accent" style={{ width: `${d.coverage_pct}%` }} /></div>
+                      <span className={cn("text-xs font-bold tabular-nums", tone)}>{d.coverage_pct}%</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-2.5 tabular-nums">{d.key_gap > 0 ? <span className="font-semibold text-amber-700">{d.key_gap}</span> : <span className="text-ink-muted">0</span>}</td>
+                  <td className="px-4 py-2.5 tabular-nums">{d.stalled > 0 ? <span className="font-semibold text-red-600">{d.stalled}</span> : <span className="text-ink-muted">0</span>}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function DevGapTable({ rows, districtName, onOpen }: {
+  rows: DevGapRow[];
+  districtName: (id: string | null) => string;
+  onOpen: (m: DevGapRow) => void;
+}) {
+  if (rows.length === 0) return <EmptyState title="No coverage gaps" description="Everyone who should have a development plan has one." />;
+  return (
+    <div className="overflow-hidden rounded-xl border border-border bg-surface">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-[10px] uppercase tracking-wide text-ink-subtle">
+              <th className="px-4 py-2">Name</th><th className="px-4 py-2">Role</th><th className="px-4 py-2">Store / District</th>
+              <th className="px-4 py-2">Why they need one</th><th className="px-4 py-2">Aspiration</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {rows.map((m) => (
+              <tr key={m.member_id} className="cursor-pointer hover:bg-surface-muted" onClick={() => onOpen(m)}>
+                <td className="px-4 py-2.5 font-semibold text-heading">{m.name}</td>
+                <td className="px-4 py-2.5 text-ink-2">{LADDER_BY_KEY[m.role]?.label ?? m.role}</td>
+                <td className="px-4 py-2.5 text-ink-2">#{m.store_number} <span className="text-ink-muted">· {districtName(m.district_id)}</span></td>
+                <td className="px-4 py-2.5"><SChip label={m.reason} chip="bg-amber-50 text-amber-800 ring-amber-200" /></td>
+                <td className="px-4 py-2.5"><SChip label={ASPIRATION_META[m.aspiration].label} chip={ASPIRATION_META[m.aspiration].chip} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function DevGoalTable({ rows, overdue, districtName, onOpen }: {
+  rows: DevGoalRow[];
+  overdue: boolean;
+  districtName: (id: string | null) => string;
+  onOpen: (m: DevGoalRow) => void;
+}) {
+  if (rows.length === 0) {
+    return <EmptyState title={overdue ? "No stalled goals" : "Nothing due soon"} description={overdue ? "No development goals are past their target date." : "No goals come due in the next 30 days."} />;
+  }
+  const fmt = (d: string) => new Date(d).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  return (
+    <div className="overflow-hidden rounded-xl border border-border bg-surface">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-[10px] uppercase tracking-wide text-ink-subtle">
+              <th className="px-4 py-2">Name</th><th className="px-4 py-2">Goal</th><th className="px-4 py-2">Store / District</th>
+              <th className="px-4 py-2">Target</th><th className="px-4 py-2">Status</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {rows.map((m) => (
+              <tr key={m.item_id} className={cn("cursor-pointer hover:bg-surface-muted", overdue && "bg-red-50/30")} onClick={() => onOpen(m)}>
+                <td className="px-4 py-2.5 font-semibold text-heading">{m.name}</td>
+                <td className="px-4 py-2.5 text-ink-2">{m.focus_area}</td>
+                <td className="px-4 py-2.5 text-ink-2">#{m.store_number} <span className="text-ink-muted">· {districtName(m.district_id)}</span></td>
+                <td className={cn("px-4 py-2.5 tabular-nums", overdue ? "font-semibold text-red-600" : "text-ink-2")}>{fmt(m.target_date)}</td>
+                <td className="px-4 py-2.5"><SChip label={m.status === "in_progress" ? "In progress" : "Not started"} chip={m.status === "in_progress" ? "bg-blue-50 text-blue-700 ring-blue-200" : "bg-zinc-100 text-zinc-600 ring-zinc-200"} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
   );
