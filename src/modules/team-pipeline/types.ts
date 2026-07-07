@@ -155,6 +155,38 @@ export interface SnapshotRow {
   flight_risk: FlightRisk;
   aspiration: Aspiration;
 }
+
+// ── Partner Development Plan (PDP) ────────────────────────────────────────────
+export type DevItemStatus = "open" | "in_progress" | "done";
+export interface DevPlan {
+  id: string;
+  member_id: string;
+  store_id: string;
+  target_role: string | null;
+  target_date: string | null;
+  status: "active" | "archived";
+  created_at: string;
+  updated_at: string;
+}
+export interface DevItem {
+  id: string;
+  plan_id: string;
+  store_id: string;
+  focus_area: string;
+  goal: string | null;
+  actions: string | null;
+  target_date: string | null;
+  progress: string | null;
+  status: DevItemStatus;
+  rank: number;
+  created_at: string;
+  updated_at: string;
+}
+export const DEV_ITEM_META: Record<DevItemStatus, { label: string; chip: string }> = {
+  open: { label: "Not started", chip: "bg-zinc-100 text-zinc-600 ring-zinc-200" },
+  in_progress: { label: "In progress", chip: "bg-blue-50 text-blue-700 ring-blue-200" },
+  done: { label: "Done", chip: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
+};
 export interface SuccessionResponse {
   at_risk: AtRiskMember[];
   gm_seats: GmSeat[];

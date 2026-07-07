@@ -1,8 +1,9 @@
 // Typed wrappers around netlify/functions/team-pipeline.
 import { supabase } from "@/lib/supabase";
 import type {
-  CalibrationSnapshot, CaLevel, CaStatus, CorrectiveAction, GmsResponse, MemberPatch, Note, Readiness,
-  Requisition, RollupResponse, SnapshotRow, StoreRosterResponse, Successor, SuccessionResponse, TeamMember,
+  CalibrationSnapshot, CaLevel, CaStatus, CorrectiveAction, DevItem, DevItemStatus, DevPlan, GmsResponse,
+  MemberPatch, Note, Readiness, Requisition, RollupResponse, SnapshotRow, StoreRosterResponse, Successor,
+  SuccessionResponse, TeamMember,
 } from "./types";
 
 const FN = "/.netlify/functions/team-pipeline";
@@ -109,6 +110,30 @@ export function takeSnapshot(period: string): Promise<{ ok: true; period: string
 }
 export function lockSnapshot(period: string): Promise<{ ok: true; period: string; status: "locked" }> {
   return request(`${FN}?action=lock-snapshot`, { method: "POST", body: JSON.stringify({ period }) });
+}
+
+// ── Partner Development Plan (PDP) ────────────────────────────────────────────
+export function fetchDevPlan(memberId: string): Promise<{ plan: DevPlan | null; items: DevItem[] }> {
+  return request(`${FN}?action=dev-plan&member_id=${encodeURIComponent(memberId)}`);
+}
+export function saveDevPlan(memberId: string, patch: Partial<{ target_role: string | null; target_date: string | null }>): Promise<{ ok: true; plan: DevPlan }> {
+  return request(`${FN}?action=save-dev-plan`, { method: "POST", body: JSON.stringify({ member_id: memberId, ...patch }) });
+}
+export interface NewDevItem {
+  focus_area: string;
+  goal?: string | null;
+  actions?: string | null;
+  target_date?: string | null;
+  progress?: string | null;
+}
+export function addDevItem(memberId: string, item: NewDevItem): Promise<{ ok: true; item: DevItem }> {
+  return request(`${FN}?action=add-dev-item`, { method: "POST", body: JSON.stringify({ member_id: memberId, ...item }) });
+}
+export function updateDevItem(itemId: string, patch: Partial<{ focus_area: string; goal: string | null; actions: string | null; target_date: string | null; progress: string | null; status: DevItemStatus; rank: number }>): Promise<{ ok: true; item: DevItem }> {
+  return request(`${FN}?action=update-dev-item`, { method: "POST", body: JSON.stringify({ item_id: itemId, patch }) });
+}
+export function removeDevItem(itemId: string): Promise<{ ok: true }> {
+  return request(`${FN}?action=remove-dev-item`, { method: "POST", body: JSON.stringify({ item_id: itemId }) });
 }
 
 // ATS roster import. Rows are the raw CSV cells; the backend resolves stores,
