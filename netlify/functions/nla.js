@@ -52,6 +52,92 @@ async function visibleStoreIds(supa, uid) {
   return new Set((data || []).map((r) => (typeof r === "string" ? r : r.id ?? r.store_id)));
 }
 
+// ── Built-in instrument templates ─────────────────────────────────────────────
+// The role rubrics ship in code and self-seed idempotently (insert-if-missing,
+// keyed on target_role+version / template_id+competency_key), so adding a role
+// never requires pasting SQL. The Shift→AGM rubric also lives in migration
+// 0217; its entry here is a no-op wherever that already ran.
+const BUILTIN_TEMPLATES = [
+  {
+    target_role: "gm", version: 1,
+    title: "First Assistant Manager to General Manager",
+    items: [
+      ["Brand Purpose", "listen", "Attentive Listening",
+        "Gives people full attention; uses paraphrasing and repeats things back to ensure understanding; allows people to finish their statements before responding or asking questions.",
+        "Maintains focus on the speaker; uses appropriate verbal and non-verbal cues; treats others how they want to be treated; is candid, open and transparent in response."],
+      ["Brand Purpose", "respect", "Respectful Communication",
+        "All communications are professional and respectful, no hidden agendas; keeps others informed to ensure the most inspiring, engaging working environment.",
+        "All posted communication is clean, current and professional; presents and communicates professionally at all times; handles disappointments and issues calmly; asserts opinions respectfully."],
+      ["Brand Purpose", "team", "Teamwork",
+        "Consistently treats people with respect, maintains a positive attitude and makes work fun; shows appreciation and recognition to team members; works hard with the team and cross-functionally to meet objectives; constantly encourages.",
+        "Achieves service goals by creating a positive, cohesive team environment; involves everyone on the team; supports the team by jumping in and helping when needed."],
+      ["Leadership", "inspire", "Inspiring Others",
+        "Emphasizes the importance of people's contributions; lets people know why their work matters and how it benefits themselves and others; ties work to people's personal and career goals, interests and brand values.",
+        "Is trusted and respected by the team; engenders enthusiasm; is an effective coach and mentor; shares experiences that tie contributions to work."],
+      ["Leadership", "manageperf", "Managing Performance",
+        "Monitors performance and metrics; gives in-the-moment and end-of-shift feedback.",
+        "Completes appraisals on time with specific examples; sets ongoing goals for management and holds them accountable for results; displays high standards in guest service and holds the team accountable to do the same."],
+      ["Leadership", "conflict", "Resolves Conflict",
+        "Addresses conflicts before they escalate into major problems; helps people find common goals and interests; finds mutually agreeable solutions; shows appreciation for the differences of others.",
+        "Regularly checks in with the team; calmly responds to tense situations; addresses issues with the intent to find agreement and acceptance."],
+      ["Leadership", "collab", "Collaborates with Others",
+        "Works well with others; listens to opposing viewpoints; remains composed.",
+        "Asks for and listens to opposing viewpoints; respectfully debates viewpoints; ensures all voices are heard."],
+      ["Gets Results", "decision", "Decision Making",
+        "Bases decisions on a systematic review of relevant facts; avoids assumptions, emotional decisions or rushing to judgment; provides clear rationale for decisions.",
+        "Effectively focuses on facts, not assumptions; requires minimal AS/DM input when making decisions; follows through to ensure decisions are implemented."],
+      ["Gets Results", "accept", "Accepting Responsibility",
+        "Takes accountability for delivering on commitments; owns mistakes and uses them as opportunities for learning and finding solutions; openly discusses actions and their consequences, good and bad.",
+        "Admits when mistakes are made and does not hide them; takes ownership and works toward solutions; accepts responsibility for business performance; does not make excuses."],
+      ["Innovates", "initiative", "Demonstrates Initiative",
+        "Takes action without being prompted; handles problems independently; resolves issues without relying on extensive help; does more than is expected or asked.",
+        "Volunteers to take on projects; works to improve systems, service and quality; open to new ideas."],
+      ["Innovates", "problem", "Problem Solving",
+        "Breaks down large problems into smaller, more manageable components; identifies the key factors that influence the viability of different solutions; clarifies the information needed to solve problems.",
+        "Accurately diagnoses and analyzes problems; effectively brainstorms solutions; identifies when problems are larger than the current scope."],
+      ["Builds Talent", "delegate", "Delegation",
+        "Provides people with clear objectives and lets them take ownership of their goals; gives a mix of tasks that challenge but do not overwhelm; acts as a resource by development level.",
+        "Effectively trains and assigns managers new tasks to provide growth opportunity; follows up on progress and provides feedback."],
+      ["Builds Talent", "develop", "Develops Talent",
+        "Invests time and resources into building team capabilities; helps people define career goals and establish development plans; gives constructive, developmental feedback and advice; delegates tasks that challenge without overwhelming.",
+        "Empowers the team to perform at their best; regularly identifies management talent and uses training programs and tools to prepare team members for the next step."],
+      ["Technical Skills", "pl", "P&L Analysis",
+        "Understands the biggest drivers in food and labor costs. Can speak to the sales budget and TCI. Understands company sales and EBITDA targets. Can effectively troubleshoot problem areas of the P&L.",
+        null],
+      ["Technical Skills", "tech", "Technology Proficiency",
+        "Proficient with the store's core systems: Microsoft Office and calendar, Workday, Cornerstone.",
+        null],
+      ["Technical Skills", "change", "Change Management",
+        "Gains the support of the team when presenting new processes and ideas. Shows flexibility and positivity when new initiatives are introduced.",
+        null],
+    ],
+  },
+];
+
+// Insert any missing built-in template (+ items). Safe to call on every read:
+// one cheap select when everything exists; unique indexes make races harmless.
+let builtinsEnsured = false;
+async function ensureBuiltinTemplates(supa) {
+  if (builtinsEnsured) return;
+  const { data: existing } = await supa.from("tp_nla_templates").select("target_role, version");
+  const have = new Set((existing || []).map((t) => `${t.target_role}:${t.version}`));
+  for (const b of BUILTIN_TEMPLATES) {
+    if (have.has(`${b.target_role}:${b.version}`)) continue;
+    await supa.from("tp_nla_templates").upsert(
+      { target_role: b.target_role, version: b.version, title: b.title, status: "active", effective_date: new Date().toISOString().slice(0, 10) },
+      { onConflict: "target_role,version", ignoreDuplicates: true },
+    );
+    const { data: tpl } = await supa.from("tp_nla_templates")
+      .select("id").eq("target_role", b.target_role).eq("version", b.version).maybeSingle();
+    if (!tpl) continue;
+    const rows = b.items.map(([category, key, name, description, example], i) => ({
+      template_id: tpl.id, category, sort_order: i + 1, competency_key: key, name, description, example,
+    }));
+    await supa.from("tp_nla_template_items").upsert(rows, { onConflict: "template_id,competency_key", ignoreDuplicates: true });
+  }
+  builtinsEnsured = true;
+}
+
 // The current active template for a target role (highest active version).
 async function templateForRole(supa, targetRole) {
   const { data: tpl } = await supa.from("tp_nla_templates")
@@ -73,6 +159,7 @@ async function getTemplate(supa, params) {
 
 // All active templates (one per target role, highest version) — for the picker.
 async function listTemplates(supa) {
+  await ensureBuiltinTemplates(supa);
   const { data } = await supa.from("tp_nla_templates")
     .select("id, target_role, version, title").eq("status", "active")
     .order("target_role", { ascending: true }).order("version", { ascending: false });
