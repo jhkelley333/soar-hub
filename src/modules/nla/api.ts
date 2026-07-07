@@ -1,6 +1,6 @@
 // Typed wrappers around netlify/functions/nla.
 import { supabase } from "@/lib/supabase";
-import type { NlaComparison, NlaGetResponse, NlaListRow, NlaTemplate, NlaTemplateItem, Rating } from "./types";
+import type { NlaAcks, NlaComparison, NlaGetResponse, NlaListRow, NlaPlan, NlaTemplate, NlaTemplateItem, Rating } from "./types";
 
 const FN = "/.netlify/functions/nla";
 
@@ -57,4 +57,15 @@ export function setNlaFocus(input: { assessment_id: string; competency_key: stri
 }
 export function removeNlaFocus(input: { assessment_id: string; competency_key: string }): Promise<{ ok: true }> {
   return request(`${FN}?action=remove-focus`, { method: "POST", body: JSON.stringify(input) });
+}
+
+// ── Acknowledge + plan ───────────────────────────────────────────────────────
+export function fetchNlaAcks(id: string): Promise<NlaAcks> {
+  return request(`${FN}?action=acks&assessment_id=${encodeURIComponent(id)}`);
+}
+export function acknowledgeNla(id: string): Promise<{ ok: true; both_acked: boolean; plan?: { goals: number; milestones: number; band: string } | null }> {
+  return request(`${FN}?action=acknowledge`, { method: "POST", body: JSON.stringify({ assessment_id: id }) });
+}
+export function fetchNlaPlan(id: string): Promise<NlaPlan> {
+  return request(`${FN}?action=plan&assessment_id=${encodeURIComponent(id)}`);
 }
