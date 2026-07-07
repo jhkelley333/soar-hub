@@ -210,8 +210,8 @@ function SuccessionView({ districts, districtMeta }: { districts: MyDistrictNode
       {/* Headline exposure numbers — coverage keyed off ready-now successors */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <SuccTile label="GM seats exposed" value={s.gm_exposed} sub={`of ${s.gm_at_risk + s.gm_open} at-risk/open · no successor`} tone={s.gm_exposed > 0 ? "red" : "ok"} big />
-        <SuccTile label="Ready-now successor" value={s.gm_ready} sub="at an at-risk/open seat" tone={s.gm_ready > 0 ? "ok" : "amber"} />
-        <SuccTile label="Developing" value={s.gm_developing} sub="on the bench, not ready" tone={s.gm_developing > 0 ? "amber" : "ok"} />
+        <SuccTile label="Ready-now successor" value={s.gm_ready ?? 0} sub="at an at-risk/open seat" tone={(s.gm_ready ?? 0) > 0 ? "ok" : "amber"} />
+        <SuccTile label="Developing" value={s.gm_developing ?? 0} sub="on the bench, not ready" tone={(s.gm_developing ?? 0) > 0 ? "amber" : "ok"} />
         <SuccTile label="People at risk" value={s.at_risk_total} sub={`${s.at_risk_immediate} immediate · ${s.at_risk_medium} medium`} tone={s.at_risk_immediate > 0 ? "red" : s.at_risk_medium > 0 ? "amber" : "ok"} />
       </div>
 
@@ -275,7 +275,7 @@ function ExposureTable({ seats, districtName, doName }: {
   const rows = seats
     .filter((s) => s.seat_status !== "ok")
     .sort((a, b) =>
-      (COVERAGE_ORDER[a.coverage] - COVERAGE_ORDER[b.coverage]) ||
+      ((COVERAGE_ORDER[a.coverage] ?? 9) - (COVERAGE_ORDER[b.coverage] ?? 9)) ||
       String(a.store_number).localeCompare(String(b.store_number), undefined, { numeric: true }));
   if (rows.length === 0) {
     return <EmptyState title="No GM-seat exposure" description="Every at-risk or open GM seat in your scope has a ready successor on the bench." />;
@@ -295,7 +295,8 @@ function ExposureTable({ seats, districtName, doName }: {
             {rows.map((s) => {
               const seat = SEAT_META[s.seat_status];
               const plan = s.plan ? PLAN_META[s.plan.type] : null;
-              const top = s.bench[0] ?? null;
+              const bench = s.bench ?? [];
+              const top = bench[0] ?? null;
               return (
                 <tr key={s.store_id} className={cn(s.coverage === "exposed" && "bg-red-50/30")}>
                   <td className="px-4 py-2.5"><span className="font-semibold text-heading">#{s.store_number}</span><span className="ml-2 text-ink-muted">{s.store_name}</span></td>
@@ -307,7 +308,7 @@ function ExposureTable({ seats, districtName, doName }: {
                       <span className="inline-flex items-center gap-1.5">
                         <span className="text-ink-2">{top.name}</span>
                         <SChip label={READINESS_META[top.readiness].short} chip={READINESS_META[top.readiness].chip} />
-                        {s.bench.length > 1 && <span className="text-[11px] text-ink-subtle">+{s.bench.length - 1}</span>}
+                        {bench.length > 1 && <span className="text-[11px] text-ink-subtle">+{bench.length - 1}</span>}
                       </span>
                     ) : s.backfill ? (
                       <span className="text-ink-2">{s.backfill} <span className="text-[11px] text-ink-subtle">(no readiness)</span></span>
