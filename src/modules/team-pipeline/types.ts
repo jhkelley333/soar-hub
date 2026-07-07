@@ -168,6 +168,27 @@ export interface DevPlan {
   created_at: string;
   updated_at: string;
 }
+export type MilestoneStatus = "not_started" | "in_progress" | "done" | "blocked";
+export interface DevMilestone {
+  id: string;
+  item_id: string;
+  store_id: string | null;
+  title: string;
+  description: string | null;
+  due_date: string | null;
+  owner_profile_id: string | null;
+  status: MilestoneStatus;
+  resource_link: string | null;
+  completed_at: string | null;
+  sort_order: number;
+}
+export const MILESTONE_META: Record<MilestoneStatus, { label: string; chip: string }> = {
+  not_started: { label: "Not started", chip: "bg-zinc-100 text-zinc-600 ring-zinc-200" },
+  in_progress: { label: "In progress", chip: "bg-blue-50 text-blue-700 ring-blue-200" },
+  done: { label: "Done", chip: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
+  blocked: { label: "Blocked", chip: "bg-red-50 text-red-700 ring-red-200" },
+};
+
 export interface DevItem {
   id: string;
   plan_id: string;
@@ -181,6 +202,7 @@ export interface DevItem {
   rank: number;
   created_at: string;
   updated_at: string;
+  milestones?: DevMilestone[];
 }
 export const DEV_ITEM_META: Record<DevItemStatus, { label: string; chip: string }> = {
   open: { label: "Not started", chip: "bg-zinc-100 text-zinc-600 ring-zinc-200" },

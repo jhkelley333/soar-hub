@@ -7,22 +7,22 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openNla, fetchNlaTemplates } from "@/modules/nla/api";
-import { BadgeCheck, ChevronDown, Copy, FileWarning, Phone, Plus, Star, Trash2, UserPlus } from "lucide-react";
+import { BadgeCheck, Check, ChevronDown, Copy, FileWarning, Phone, Plus, Star, Trash2, UserPlus } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Drawer } from "@/shared/ui/Drawer";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { useToast } from "@/shared/ui/Toaster";
 import {
-  addCorrectiveAction, addDevItem, addNote, addSuccessor, fetchCorrectiveActions, fetchDevPlan,
-  fetchMemberSignals, fetchNotes, fetchStoreRoster, fetchSuccessors, inviteMember, removeDevItem,
-  removeSuccessor, saveDevPlan, setCorrectiveActionStatus, updateDevItem, updateMember, updateSuccessor,
+  addCorrectiveAction, addDevItem, addDevMilestone, addNote, addSuccessor, fetchCorrectiveActions, fetchDevPlan,
+  fetchMemberSignals, fetchNotes, fetchStoreRoster, fetchSuccessors, inviteMember, removeDevItem, removeDevMilestone,
+  removeSuccessor, saveDevPlan, setCorrectiveActionStatus, updateDevItem, updateDevMilestone, updateMember, updateSuccessor,
 } from "./api";
 import {
   ASPIRATION_META, CA_CATEGORIES, CA_LEVEL_META, CA_LEVELS, CA_STATUS_META, CA_TEMPLATES, DEV_ITEM_META,
-  INVITE_ROLES, LADDER, LADDER_BY_KEY, RATING_COLOR, READINESS_META, RISK_META, RISK_REASONS,
+  INVITE_ROLES, LADDER, LADDER_BY_KEY, MILESTONE_META, RATING_COLOR, READINESS_META, RISK_META, RISK_REASONS,
   SIGNAL_SEVERITY_META,
-  type Aspiration, type CaLevel, type CorrectiveAction, type DevItem, type DevItemStatus, type FlightRisk,
-  type LadderKey, type MemberPatch, type Readiness, type TeamMember,
+  type Aspiration, type CaLevel, type CorrectiveAction, type DevItem, type DevItemStatus,
+  type FlightRisk, type LadderKey, type MemberPatch, type MilestoneStatus, type Readiness, type TeamMember,
 } from "./types";
 
 // Risk severity order for client-side gap checks (mirror backend RISK_ORDER).
@@ -703,6 +703,7 @@ function DevItemCard({ item, canWrite, onChanged }: { item: DevItem; canWrite: b
               onBlur={(e) => { const v = e.target.value.trim(); if (v !== (item.progress ?? "")) patch.mutate({ progress: v || null }); }}
               className={cn(PDP_TA, "mt-1")} />
           </label>
+          <Milestones item={item} canWrite={canWrite} onChanged={onChanged} />
           {canWrite && (
             <div className="flex justify-end">
               <button onClick={() => remove.mutate()} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold text-ink-subtle transition hover:bg-red-50 hover:text-red-600">
@@ -713,6 +714,72 @@ function DevItemCard({ item, canWrite, onChanged }: { item: DevItem; canWrite: b
         </div>
       )}
     </li>
+  );
+}
+
+const MILESTONE_STATUSES: MilestoneStatus[] = ["not_started", "in_progress", "done", "blocked"];
+
+// Day 30/60/90 steps under a development goal. NLA-created plans seed these;
+// leaders can add/edit/complete them.
+function Milestones({ item, canWrite, onChanged }: { item: DevItem; canWrite: boolean; onChanged: () => void }) {
+  const toast = useToast();
+  const [adding, setAdding] = useState(false);
+  const [title, setTitle] = useState("");
+  const [date, setDate] = useState("");
+  const ms = item.milestones ?? [];
+  const err = (e: unknown) => toast.push((e as Error)?.message ?? "Could not save.", "error");
+
+  const add = useMutation({
+    mutationFn: () => addDevMilestone(item.id, { title: title.trim(), due_date: date || null }),
+    onSuccess: () => { setTitle(""); setDate(""); setAdding(false); onChanged(); },
+    onError: err,
+  });
+  const patch = useMutation({
+    mutationFn: (v: { id: string; p: Parameters<typeof updateDevMilestone>[1] }) => updateDevMilestone(v.id, v.p),
+    onSuccess: onChanged, onError: err,
+  });
+  const remove = useMutation({ mutationFn: (id: string) => removeDevMilestone(id), onSuccess: onChanged, onError: err });
+
+  const done = ms.filter((m) => m.status === "done").length;
+  return (
+    <div className="rounded-lg border border-border bg-surface p-2.5">
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-[11px] font-semibold text-ink-muted">Milestones{ms.length > 0 ? ` · ${done}/${ms.length} done` : ""}</span>
+        {canWrite && !adding && <button onClick={() => setAdding(true)} className="inline-flex items-center gap-1 text-[11px] font-semibold text-accent"><Plus className="h-3 w-3" />Add step</button>}
+      </div>
+      {ms.length === 0 && !adding && <div className="text-[11px] text-ink-subtle">No milestones yet.</div>}
+      <ol className="flex flex-col gap-1.5">
+        {ms.map((m) => (
+          <li key={m.id} className="flex items-center gap-2">
+            {canWrite ? (
+              <button onClick={() => patch.mutate({ id: m.id, p: { status: m.status === "done" ? "not_started" : "done" } })}
+                className={cn("grid h-4 w-4 shrink-0 place-items-center rounded-full border", m.status === "done" ? "border-emerald-500 bg-emerald-500" : "border-border")}>
+                {m.status === "done" && <Check className="h-2.5 w-2.5 text-white" />}
+              </button>
+            ) : (
+              <span className={cn("h-2 w-2 shrink-0 rounded-full", m.status === "done" ? "bg-emerald-500" : "bg-zinc-300")} />
+            )}
+            <span className={cn("min-w-0 flex-1 truncate text-xs", m.status === "done" ? "text-ink-subtle line-through" : "text-heading")}>{m.title}</span>
+            {m.due_date && <span className="shrink-0 text-[10px] text-ink-subtle">{new Date(m.due_date).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</span>}
+            {canWrite && (
+              <select value={m.status} onChange={(e) => patch.mutate({ id: m.id, p: { status: e.target.value as MilestoneStatus } })}
+                className={cn("shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-semibold ring-1 ring-inset focus:outline-none", MILESTONE_META[m.status].chip)}>
+                {MILESTONE_STATUSES.map((s) => <option key={s} value={s}>{MILESTONE_META[s].label}</option>)}
+              </select>
+            )}
+            {canWrite && <button onClick={() => remove.mutate(m.id)} className="shrink-0 text-ink-subtle hover:text-red-600"><Trash2 className="h-3 w-3" /></button>}
+          </li>
+        ))}
+      </ol>
+      {adding && (
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Milestone" className="min-w-[8rem] flex-1 rounded-lg border border-border bg-surface px-2 py-1 text-xs text-heading focus:border-accent focus:outline-none" />
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="rounded-lg border border-border bg-surface px-2 py-1 text-xs text-heading focus:border-accent focus:outline-none" />
+          <button disabled={!title.trim() || add.isPending} onClick={() => add.mutate()} className="rounded-lg bg-midnight px-2.5 py-1 text-xs font-semibold text-white disabled:opacity-40">Add</button>
+          <button onClick={() => { setAdding(false); setTitle(""); setDate(""); }} className="rounded-lg border border-border px-2 py-1 text-xs text-ink-2">Cancel</button>
+        </div>
+      )}
+    </div>
   );
 }
 
