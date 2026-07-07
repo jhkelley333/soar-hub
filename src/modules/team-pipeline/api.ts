@@ -3,8 +3,8 @@ import { supabase } from "@/lib/supabase";
 import type {
   CalibrationSnapshot, CaLevel, CaStatus, CorrectiveAction, DevItem, DevItemStatus, DevPlan, DevRollupResponse,
   GmsResponse, MemberPatch, MemberSignals, Note, Readiness, Requisition, RiskReviewResponse, RollupResponse,
-  SnapshotRow, StoreRosterResponse, Successor, SuccessionResponse, TalentExportResponse, TeamMember,
-  TenureRollupResponse,
+  MonthlyReviewResponse, SnapshotRow, StoreRosterResponse, Successor, SuccessionResponse, TalentExportResponse,
+  TeamMember, TenureRollupResponse,
 } from "./types";
 
 const FN = "/.netlify/functions/team-pipeline";
@@ -158,6 +158,14 @@ export function fetchTenureRollup(): Promise<TenureRollupResponse> {
 // ── Talent review packet ──────────────────────────────────────────────────────
 export function fetchTalentExport(districtId: string): Promise<TalentExportResponse> {
   return request(`${FN}?action=talent-export&district_id=${encodeURIComponent(districtId)}`);
+}
+
+// ── Monthly talent-review nudge ───────────────────────────────────────────────
+export function fetchMonthlyReview(): Promise<MonthlyReviewResponse> {
+  return request(`${FN}?action=monthly-review`);
+}
+export function markReviewed(note?: string): Promise<{ ok: true; period: string; reviewed_at: string }> {
+  return request(`${FN}?action=mark-reviewed`, { method: "POST", body: JSON.stringify({ note: note ?? null }) });
 }
 
 // ATS roster import. Rows are the raw CSV cells; the backend resolves stores,

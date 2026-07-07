@@ -337,6 +337,16 @@ export interface TalentExportResponse {
   store_count: number;
   member_rows: TalentExportRow[];
 }
+
+// ── Monthly talent-review nudge ───────────────────────────────────────────────
+export type ReviewView = "succession" | "development" | "tenure";
+export interface MonthlyReviewItem { key: string; label: string; count: number; view: ReviewView }
+export interface MonthlyReviewResponse {
+  period: string;              // 'YYYY-MM'
+  reviewed_at: string | null;
+  open_total: number;
+  items: MonthlyReviewItem[];
+}
 export interface SuccessionResponse {
   at_risk: AtRiskMember[];
   gm_seats: GmSeat[];

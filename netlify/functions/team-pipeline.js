@@ -1332,6 +1332,49 @@ async function talentExport(supa, user, params) {
   };
 }
 
+// ── Monthly talent-review nudge ───────────────────────────────────────────────
+// The one-glance "what needs working this month" for the caller's scope: the
+// open counts across risk / succession / development / tenure, plus whether
+// they've stamped this month reviewed. Reuses the existing roll-ups so the
+// numbers always match the detail views.
+function currentPeriod() { return new Date().toISOString().slice(0, 7); } // YYYY-MM
+
+async function monthlyReview(supa, user) {
+  const [succ, dev, risk, tenure] = await Promise.all([
+    succession(supa, user), devRollup(supa, user), riskReview(supa, user), tenureRollup(supa, user),
+  ]);
+  const period = currentPeriod();
+
+  // Review-log read is best-effort: if the table isn't there yet (migration not
+  // applied), the counts still render — just without a "last reviewed" stamp.
+  let reviewed_at = null;
+  try {
+    const { data } = await supa.from("tp_review_log")
+      .select("reviewed_at").eq("user_id", user.id).eq("period", period).maybeSingle();
+    reviewed_at = data?.reviewed_at ?? null;
+  } catch { /* table not migrated yet */ }
+
+  const items = [
+    { key: "signals", label: "Risk-signal gaps", count: risk.summary.gaps, view: "succession" },
+    { key: "exposed", label: "GM seats exposed", count: succ.summary.gm_exposed, view: "succession" },
+    { key: "needs_plan", label: "Need a development plan", count: dev.summary.key_gap_total, view: "development" },
+    { key: "stalled", label: "Stalled goals", count: dev.summary.stalled_total, view: "development" },
+    { key: "ready", label: "Ready for a move", count: tenure.summary.ready_total, view: "tenure" },
+  ];
+  const open_total = items.reduce((n, i) => n + i.count, 0);
+  return { period, reviewed_at, open_total, items };
+}
+
+async function markReviewed(supa, user, body) {
+  const period = currentPeriod();
+  const note = body?.note == null || body.note === "" ? null : String(body.note).slice(0, 500);
+  const { data, error } = await supa.from("tp_review_log")
+    .upsert({ user_id: user.id, period, reviewed_at: new Date().toISOString(), note }, { onConflict: "user_id,period" })
+    .select("reviewed_at").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, period, reviewed_at: data.reviewed_at };
+}
+
 // ── ATS roster bulk import ────────────────────────────────────────────────────
 // Replaces the seed-from-profiles stop-gap. Rows carry an employee + store
 // number + role; we map the ATS role title onto a ladder key, resolve the
@@ -1596,6 +1639,7 @@ export const handler = async (event) => {
       if (action === "dev-rollup") return unwrap(await devRollup(supa, user));
       if (action === "tenure-rollup") return unwrap(await tenureRollup(supa, user));
       if (action === "talent-export") return unwrap(await talentExport(supa, user, params));
+      if (action === "monthly-review") return unwrap(await monthlyReview(supa, user));
       if (action === "settings") return unwrap(await getSettings(supa, user));
       return respond(400, { error: `Unknown action: ${action}` });
     }
@@ -1606,6 +1650,7 @@ export const handler = async (event) => {
     if (action === "update-req") return unwrap(await updateReq(supa, user, body));
     if (action === "add-corrective-action") return unwrap(await addCorrectiveAction(supa, user, body));
     if (action === "corrective-action-status") return unwrap(await setCorrectiveActionStatus(supa, user, body));
+    if (action === "mark-reviewed") return unwrap(await markReviewed(supa, user, body));
     if (action === "add-successor") return unwrap(await addSuccessor(supa, user, body));
     if (action === "update-successor") return unwrap(await updateSuccessor(supa, user, body));
     if (action === "remove-successor") return unwrap(await removeSuccessor(supa, user, body));
