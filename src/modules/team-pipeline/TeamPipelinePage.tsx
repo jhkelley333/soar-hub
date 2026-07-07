@@ -7,7 +7,7 @@
 // Gated behind the `team_pipeline` feature flag (see router + nav).
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, ChevronRight, Lock, SlidersHorizontal, Upload, Users } from "lucide-react";
+import { Archive, CalendarCheck2, Check, ChevronRight, Lock, SlidersHorizontal, Upload, Users } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/auth/AuthProvider";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -17,7 +17,7 @@ import { Segmented } from "@/shared/ui/Segmented";
 import { useToast } from "@/shared/ui/Toaster";
 import { fetchMyTree } from "@/modules/my-stores/api";
 import type { MyDistrictNode, MyStoreNode } from "@/modules/my-stores/types";
-import { fetchGms, fetchRollup, fetchSuccession, fetchStoreRoster, fetchSnapshots, fetchSnapshotRows, fetchRiskReview, fetchDevRollup, fetchTenureRollup, fetchTalentExport, takeSnapshot, lockSnapshot, seedFromProfiles, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings } from "./api";
+import { fetchGms, fetchRollup, fetchSuccession, fetchStoreRoster, fetchSnapshots, fetchSnapshotRows, fetchRiskReview, fetchDevRollup, fetchTenureRollup, fetchTalentExport, fetchMonthlyReview, markReviewed, takeSnapshot, lockSnapshot, seedFromProfiles, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings } from "./api";
 import { AccountBadge, MemberDrawerProvider, useMemberDrawer } from "./MemberDrawer";
 import { RosterImport } from "./RosterImport";
 import { toCSV, downloadCSV } from "@/lib/csv";
@@ -25,7 +25,7 @@ import {
   ASPIRATION_META, LADDER, LADDER_BY_KEY, READINESS_META, REQ_STATUS_META, RISK_META, ROLE_MIX, roleBelow,
   SIGNAL_SEVERITY_META,
   type Aspiration, type AtRiskMember, type DevGapRow, type DevGoalRow, type DevRollupResponse, type GmSeat, type LadderKey,
-  type Requisition, type RiskCounts, type RiskReviewRow,
+  type Requisition, type ReviewView, type RiskCounts, type RiskReviewRow,
   type RollupResponse, type SnapshotRow, type StoreRollup, type SuccessionResponse, type TalentExportResponse,
   type TeamMember, type TenureMember, type TenureRollupResponse,
 } from "./types";
@@ -108,7 +108,10 @@ export function TeamPipelinePage() {
         ) : (
           <>
             {nav.level === "company" && (
-              <Company districts={districts} roll={roll} meta={districtMeta} canWrite={rollupQ.data?.can_write ?? false} onOpen={(id) => setNav({ level: "district", districtId: id })} />
+              <>
+                <MonthlyReviewCard onGo={(v) => setView(v)} />
+                <Company districts={districts} roll={roll} meta={districtMeta} canWrite={rollupQ.data?.can_write ?? false} onOpen={(id) => setNav({ level: "district", districtId: id })} />
+              </>
             )}
             {nav.level === "district" && district && (
               <District district={district} onOpen={(sid) => setNav({ level: "store", districtId: district.id, storeId: sid })} />
@@ -636,6 +639,60 @@ function DevGoalTable({ rows, overdue, districtName, onOpen }: {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+// ── Monthly talent-review nudge ───────────────────────────────────────────────
+// One-glance "what needs working this month" on the landing, with a stamp so
+// the monthly motion is tracked. Chips jump to the relevant view.
+function MonthlyReviewCard({ onGo }: { onGo: (v: ReviewView) => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const q = useQuery({ queryKey: ["tp-monthly-review"], queryFn: fetchMonthlyReview, staleTime: 60_000 });
+  const mark = useMutation({
+    mutationFn: () => markReviewed(),
+    onSuccess: () => { toast.push("Marked reviewed for this month.", "success"); qc.invalidateQueries({ queryKey: ["tp-monthly-review"] }); },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't save.", "error"),
+  });
+  if (q.isLoading || q.isError || !q.data) return null;
+  const data = q.data;
+  const monthName = new Date(data.period + "-01").toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const reviewed = !!data.reviewed_at;
+  const allClear = data.open_total === 0;
+
+  return (
+    <div className="mb-5 rounded-2xl border border-border bg-surface p-4">
+      <div className="flex flex-wrap items-center gap-2.5">
+        <span className="grid h-9 w-9 place-items-center rounded-xl bg-accent/10 text-accent"><CalendarCheck2 className="h-5 w-5" /></span>
+        <div className="mr-auto min-w-0">
+          <div className="text-sm font-bold text-heading">Monthly talent review · {monthName}</div>
+          <div className="text-[12px] text-ink-muted">
+            {reviewed
+              ? `Reviewed ${new Date(data.reviewed_at as string).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
+              : allClear ? "Queues are clear — nothing open in your span." : `${data.open_total} open across your span`}
+          </div>
+        </div>
+        {reviewed ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200"><Check className="h-3.5 w-3.5" />Reviewed</span>
+        ) : (
+          <button onClick={() => mark.mutate()} disabled={mark.isPending}
+            className="rounded-lg bg-midnight px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-midnight/90 disabled:opacity-40">
+            {mark.isPending ? "Saving…" : "Mark reviewed"}
+          </button>
+        )}
+      </div>
+      {!allClear && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {data.items.filter((i) => i.count > 0).map((i) => (
+            <button key={i.key} onClick={() => onGo(i.view)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface-muted px-2.5 py-1.5 text-xs font-medium text-ink-2 transition hover:bg-surface-sunk">
+              <span className="grid h-5 min-w-[1.25rem] place-items-center rounded-full bg-red-100 px-1 text-[11px] font-bold text-red-700">{i.count}</span>
+              {i.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
