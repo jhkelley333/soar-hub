@@ -284,6 +284,59 @@ export interface DevRollupResponse {
   stalled: DevGoalRow[];
   due_soon: DevGoalRow[];
 }
+
+// ── Time-in-role dashboard ────────────────────────────────────────────────────
+export interface TenureBand { key: string; label: string; count: number }
+export interface TenureLevel { role: LadderKey; count: number; median_months: number }
+export interface TenureMember {
+  member_id: string;
+  name: string;
+  store_id: string;
+  store_number: string | null;
+  district_id: string | null;
+  role: LadderKey;
+  perf: number | null;
+  potential: number | null;
+  aspiration: Aspiration;
+  flight_risk: FlightRisk;
+  hire_date: string | null;
+  role_days: number;
+  role_months: number;
+}
+export interface TenureRollupResponse {
+  summary: { rated: number; unknown: number; median_months: number; new_in_seat: number; ready_total: number };
+  bands: TenureBand[];
+  by_level: TenureLevel[];
+  ready: TenureMember[];
+  longest: TenureMember[];
+}
+
+// ── Talent review packet (per district) ───────────────────────────────────────
+export interface TalentExportRow {
+  store_number: string;
+  store_name: string;
+  member_id: string;
+  name: string;
+  role: LadderKey;
+  tenure_days: number | null;
+  role_days: number | null;
+  perf: number | null;
+  potential: number | null;
+  flight_risk: FlightRisk;
+  risk_reasons: string[];
+  aspiration: Aspiration;
+  successor: string | null;
+  successor_readiness: Readiness | null;
+  open_cas: number;
+  has_plan: boolean;
+  last_note: string | null;
+}
+export interface TalentExportResponse {
+  district: { id: string; name: string | null };
+  generated_by: string | null;
+  store_count: number;
+  member_rows: TalentExportRow[];
+}
 export interface SuccessionResponse {
   at_risk: AtRiskMember[];
   gm_seats: GmSeat[];
