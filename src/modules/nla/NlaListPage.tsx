@@ -19,6 +19,9 @@ export function NlaListPage() {
   const rows = q.data?.assessments ?? [];
   const needsMe = rows.filter((a) => a.my_role && !a.my_submitted && a.status === "awaiting_responses");
   const rest = rows.filter((a) => !needsMe.includes(a));
+  const COMPARE_READY = new Set(["both_submitted", "aligned", "acknowledged"]);
+  const openRow = (a: NlaListRow) =>
+    navigate(a.both_submitted || COMPARE_READY.has(a.status) ? `/nla/${a.id}/compare` : `/nla/${a.id}`);
 
   return (
     <div className="mx-auto max-w-3xl">
@@ -33,10 +36,10 @@ export function NlaListPage() {
       ) : (
         <div className="space-y-6">
           {needsMe.length > 0 && (
-            <Section title="Needs your rating" rows={needsMe} onOpen={(id) => navigate(`/nla/${id}`)} highlight />
+            <Section title="Needs your rating" rows={needsMe} onOpen={openRow} highlight />
           )}
           {rest.length > 0 && (
-            <Section title="All assessments" rows={rest} onOpen={(id) => navigate(`/nla/${id}`)} />
+            <Section title="All assessments" rows={rest} onOpen={openRow} />
           )}
         </div>
       )}
@@ -44,7 +47,7 @@ export function NlaListPage() {
   );
 }
 
-function Section({ title, rows, onOpen, highlight }: { title: string; rows: NlaListRow[]; onOpen: (id: string) => void; highlight?: boolean }) {
+function Section({ title, rows, onOpen, highlight }: { title: string; rows: NlaListRow[]; onOpen: (a: NlaListRow) => void; highlight?: boolean }) {
   return (
     <div>
       <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-ink-subtle">{title}</div>
@@ -52,10 +55,11 @@ function Section({ title, rows, onOpen, highlight }: { title: string; rows: NlaL
         <ul className="divide-y divide-border">
           {rows.map((a) => {
             const sm = NLA_STATUS_META[a.status] ?? { label: a.status, chip: "bg-zinc-100 text-zinc-600 ring-zinc-200" };
-            const cta = a.my_role && !a.my_submitted && a.status === "awaiting_responses" ? "Rate" : "View";
+            const compareReady = a.both_submitted || a.status === "both_submitted" || a.status === "aligned" || a.status === "acknowledged";
+            const cta = a.my_role && !a.my_submitted && a.status === "awaiting_responses" ? "Rate" : compareReady ? "Compare" : "View";
             return (
               <li key={a.id}>
-                <button onClick={() => onOpen(a.id)} className={cn("flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-surface-muted", highlight && "bg-amber-50/40")}>
+                <button onClick={() => onOpen(a)} className={cn("flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-surface-muted", highlight && "bg-amber-50/40")}>
                   <span className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-accent/10 text-accent">
                     {a.my_role === "self" ? <User className="h-4 w-4" /> : <Users className="h-4 w-4" />}
                   </span>
