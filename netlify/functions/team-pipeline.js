@@ -730,6 +730,84 @@ async function removeSuccessor(supa, user, body) {
   return { ok: true };
 }
 
+// ── Quarterly calibration snapshots ───────────────────────────────────────────
+// A company-wide snapshot freezes every roster member's talent overlay for a
+// period ('2026-Q3'), so the 9-box can show quarter-over-quarter movement and a
+// locked period is the calibration record. Taken + locked by org-wide roles
+// (VP+); everyone in scope compares against them.
+const isOrgWide = (user) => ORG_WIDE.has(String(user.role || "").toLowerCase());
+const PERIOD_RE = /^\d{4}-Q[1-4]$/;
+
+async function listSnapshots(supa, user) {
+  const { data } = await supa.from("tp_snapshots")
+    .select("period, status, member_count, created_at, locked_at")
+    .order("created_at", { ascending: false });
+  return { snapshots: data || [], can_manage: isOrgWide(user) };
+}
+
+async function takeSnapshot(supa, user, body) {
+  if (!isOrgWide(user)) return { error: "Company calibration snapshots are for VP and above.", status: 403 };
+  const period = String(body?.period || "").trim();
+  if (!PERIOD_RE.test(period)) return { error: "Period must look like 2026-Q3.", status: 400 };
+  const { data: existing } = await supa.from("tp_snapshots").select("id, status").eq("period", period).maybeSingle();
+  if (existing?.status === "locked") return { error: `${period} is locked. Take a new period instead.`, status: 409 };
+  let snapId = existing?.id;
+  if (snapId) {
+    await supa.from("tp_snapshot_rows").delete().eq("snapshot_id", snapId);
+  } else {
+    const { data, error } = await supa.from("tp_snapshots").insert({ period, created_by: user.id }).select("id").single();
+    if (error) return { error: error.message, status: 500 };
+    snapId = data.id;
+  }
+  // Freeze every non-terminated member's talent overlay, company-wide.
+  const members = await fetchAll(() => supa.from("tp_team_members")
+    .select("id, store_id, role, perf, potential, flight_risk, aspiration").neq("status", "terminated"));
+  const rows = (members || []).map((m) => ({
+    snapshot_id: snapId, member_id: m.id, store_id: m.store_id, role: m.role,
+    perf: m.perf, potential: m.potential, flight_risk: m.flight_risk, aspiration: m.aspiration,
+  }));
+  for (let i = 0; i < rows.length; i += 500) {
+    const { error } = await supa.from("tp_snapshot_rows").insert(rows.slice(i, i + 500));
+    if (error) return { error: error.message, status: 500 };
+  }
+  await supa.from("tp_snapshots").update({ member_count: rows.length }).eq("id", snapId);
+  return { ok: true, period, member_count: rows.length, replaced: !!existing };
+}
+
+async function lockSnapshot(supa, user, body) {
+  if (!isOrgWide(user)) return { error: "Locking a calibration is for VP and above.", status: 403 };
+  const period = String(body?.period || "").trim();
+  const { data: snap } = await supa.from("tp_snapshots").select("id, status").eq("period", period).maybeSingle();
+  if (!snap) return { error: "No snapshot for that period.", status: 404 };
+  if (snap.status === "locked") return { ok: true, period, status: "locked" };
+  const { error } = await supa.from("tp_snapshots")
+    .update({ status: "locked", locked_at: new Date().toISOString(), locked_by: user.id }).eq("id", snap.id);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, period, status: "locked" };
+}
+
+// Frozen rows for a period, scoped to the caller (optional store filter). The
+// 9-box overlays these to draw each member's movement since the snapshot.
+async function snapshotRows(supa, user, params) {
+  const period = String(params?.period || "").trim();
+  if (!period) return { error: "Missing period.", status: 400 };
+  const { data: snap } = await supa.from("tp_snapshots").select("id").eq("period", period).maybeSingle();
+  if (!snap) return { error: "No snapshot for that period.", status: 404 };
+  const scope = await storesForUser(supa, user);
+  const storeId = params?.store_id || null;
+  if (storeId && !scope.all && !scope.ids.has(storeId)) return { error: "That store is outside your scope.", status: 403 };
+  const scopeIds = scope.all ? null : Array.from(scope.ids);
+  if (!storeId && scopeIds && scopeIds.length === 0) return { period, rows: [] };
+  const rows = await fetchAll(() => {
+    let q = supa.from("tp_snapshot_rows")
+      .select("member_id, store_id, role, perf, potential, flight_risk, aspiration").eq("snapshot_id", snap.id);
+    if (storeId) q = q.eq("store_id", storeId);
+    else if (scopeIds) q = q.in("store_id", scopeIds);
+    return q;
+  });
+  return { period, rows: rows || [] };
+}
+
 // ── ATS roster bulk import ────────────────────────────────────────────────────
 // Replaces the seed-from-profiles stop-gap. Rows carry an employee + store
 // number + role; we map the ATS role title onto a ladder key, resolve the
@@ -985,6 +1063,8 @@ export const handler = async (event) => {
       if (action === "notes") return unwrap(await listNotes(supa, user, params.member_id));
       if (action === "corrective-actions") return unwrap(await listCorrectiveActions(supa, user, params.member_id));
       if (action === "successors") return unwrap(await listSuccessors(supa, user, params.member_id));
+      if (action === "snapshots") return unwrap(await listSnapshots(supa, user));
+      if (action === "snapshot-rows") return unwrap(await snapshotRows(supa, user, params));
       if (action === "settings") return unwrap(await getSettings(supa, user));
       return respond(400, { error: `Unknown action: ${action}` });
     }
@@ -998,6 +1078,8 @@ export const handler = async (event) => {
     if (action === "add-successor") return unwrap(await addSuccessor(supa, user, body));
     if (action === "update-successor") return unwrap(await updateSuccessor(supa, user, body));
     if (action === "remove-successor") return unwrap(await removeSuccessor(supa, user, body));
+    if (action === "take-snapshot") return unwrap(await takeSnapshot(supa, user, body));
+    if (action === "lock-snapshot") return unwrap(await lockSnapshot(supa, user, body));
     if (action === "import-preview") return unwrap(await previewImport(supa, user, body));
     if (action === "import-roster") return unwrap(await importRoster(supa, user, body));
     if (action === "merge-members") return unwrap(await mergeMembers(supa, user, body));

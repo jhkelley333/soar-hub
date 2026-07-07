@@ -1,8 +1,8 @@
 // Typed wrappers around netlify/functions/team-pipeline.
 import { supabase } from "@/lib/supabase";
 import type {
-  CaLevel, CaStatus, CorrectiveAction, GmsResponse, MemberPatch, Note, Readiness,
-  Requisition, RollupResponse, StoreRosterResponse, Successor, SuccessionResponse, TeamMember,
+  CalibrationSnapshot, CaLevel, CaStatus, CorrectiveAction, GmsResponse, MemberPatch, Note, Readiness,
+  Requisition, RollupResponse, SnapshotRow, StoreRosterResponse, Successor, SuccessionResponse, TeamMember,
 } from "./types";
 
 const FN = "/.netlify/functions/team-pipeline";
@@ -94,6 +94,21 @@ export function updateSuccessor(successorId: string, patch: Partial<{ readiness:
 }
 export function removeSuccessor(successorId: string): Promise<{ ok: true }> {
   return request(`${FN}?action=remove-successor`, { method: "POST", body: JSON.stringify({ successor_id: successorId }) });
+}
+
+// ── Quarterly calibration snapshots ──────────────────────────────────────────
+export function fetchSnapshots(): Promise<{ snapshots: CalibrationSnapshot[]; can_manage: boolean }> {
+  return request(`${FN}?action=snapshots`);
+}
+export function fetchSnapshotRows(period: string, storeId?: string): Promise<{ period: string; rows: SnapshotRow[] }> {
+  const q = storeId ? `&store_id=${encodeURIComponent(storeId)}` : "";
+  return request(`${FN}?action=snapshot-rows&period=${encodeURIComponent(period)}${q}`);
+}
+export function takeSnapshot(period: string): Promise<{ ok: true; period: string; member_count: number; replaced: boolean }> {
+  return request(`${FN}?action=take-snapshot`, { method: "POST", body: JSON.stringify({ period }) });
+}
+export function lockSnapshot(period: string): Promise<{ ok: true; period: string; status: "locked" }> {
+  return request(`${FN}?action=lock-snapshot`, { method: "POST", body: JSON.stringify({ period }) });
 }
 
 // ATS roster import. Rows are the raw CSV cells; the backend resolves stores,

@@ -137,6 +137,24 @@ export const SEAT_COVERAGE_META: Record<SeatCoverage, { label: string; chip: str
   developing: { label: "Developing", chip: "bg-amber-50 text-amber-800 ring-amber-200" },
   exposed: { label: "Exposed", chip: "bg-red-50 text-red-700 ring-red-200" },
 };
+
+// ── Quarterly calibration snapshots ──────────────────────────────────────────
+export interface CalibrationSnapshot {
+  period: string;                 // '2026-Q3'
+  status: "open" | "locked";
+  member_count: number;
+  created_at: string;
+  locked_at: string | null;
+}
+export interface SnapshotRow {
+  member_id: string;
+  store_id: string;
+  role: LadderKey;
+  perf: number | null;
+  potential: number | null;
+  flight_risk: FlightRisk;
+  aspiration: Aspiration;
+}
 export interface SuccessionResponse {
   at_risk: AtRiskMember[];
   gm_seats: GmSeat[];
