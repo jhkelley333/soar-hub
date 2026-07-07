@@ -4,12 +4,12 @@
 import { useMemo } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, ArrowRight, Check, ChevronLeft, Info, Plus, Target, X } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, CheckCircle2, ChevronLeft, Info, Plus, Target, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
-import { fetchNlaComparison, removeNlaFocus, setNlaFocus } from "./api";
+import { acknowledgeNla, fetchNlaAcks, fetchNlaComparison, fetchNlaPlan, removeNlaFocus, setNlaFocus } from "./api";
 import { GAP_META, RATING_META, RATING_SCORE, type ComparisonRow, type Rating } from "./types";
 
 // Gap track: hollow marker = self, filled = leader. Distance between = the gap.
@@ -178,13 +178,100 @@ export function NlaComparePage() {
               </div>
             )}
 
-            <button disabled className="mt-4 flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-xl bg-surface-sunk py-2.5 text-sm font-semibold text-ink-subtle">
-              Sign-off &amp; create plan <ArrowRight className="h-4 w-4" />
-            </button>
-            <p className="mt-2 text-center text-[11px] text-ink-subtle">Dual sign-off and the auto-built plan ship in the next release.</p>
+            <SignOff assessmentId={id} focusCount={focusKeys.size} canEdit={data.can_edit}
+              status={data.assessment.status} subjectName={data.assessment.subject_name} leaderName={data.assessment.leader_name} />
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Dual sign-off. Each party acknowledges from their own login; the second
+// acknowledgement auto-builds the development plan + readiness snapshot.
+function SignOff({ assessmentId, focusCount, canEdit, status, subjectName, leaderName }: {
+  assessmentId: string; focusCount: number; canEdit: boolean; status: string; subjectName: string; leaderName: string;
+}) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const acksQ = useQuery({ queryKey: ["nla-acks", assessmentId], queryFn: () => fetchNlaAcks(assessmentId) });
+  const planQ = useQuery({ queryKey: ["nla-plan", assessmentId], queryFn: () => fetchNlaPlan(assessmentId), enabled: status === "acknowledged" });
+
+  const ack = useMutation({
+    mutationFn: () => acknowledgeNla(assessmentId),
+    onSuccess: (r) => {
+      toast.push(r.both_acked ? "Acknowledged — development plan created." : "Acknowledged. Awaiting the other party.", "success");
+      qc.invalidateQueries({ queryKey: ["nla-acks", assessmentId] });
+      qc.invalidateQueries({ queryKey: ["nla-comparison", assessmentId] });
+      qc.invalidateQueries({ queryKey: ["nla-plan", assessmentId] });
+      qc.invalidateQueries({ queryKey: ["nla-list"] });
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Could not acknowledge.", "error"),
+  });
+
+  // Plan created — done state.
+  if (status === "acknowledged") {
+    const goals = planQ.data?.goals ?? [];
+    return (
+      <div className="mt-4 border-t border-border pt-4">
+        <div className="flex items-center gap-2 text-emerald-600">
+          <CheckCircle2 className="h-5 w-5" />
+          <h3 className="text-sm font-bold text-heading">Development plan created</h3>
+        </div>
+        <p className="mt-1 text-xs text-ink-muted">Acknowledged by {subjectName} and {leaderName}. This plan lives on their card in Team Pipeline.</p>
+        {planQ.isLoading ? <Skeleton className="mt-3 h-24 w-full" /> : (
+          <div className="mt-3 space-y-3">
+            {goals.map((g) => (
+              <div key={g.focus_area} className="rounded-xl border border-border p-3">
+                <div className="text-sm font-semibold text-heading">{g.focus_area}</div>
+                {g.goal && <p className="mt-0.5 text-xs italic text-ink-muted">{g.goal}</p>}
+                <ol className="mt-2 space-y-1">
+                  {g.milestones.map((m, i) => (
+                    <li key={i} className="flex items-start gap-2 text-xs text-ink-2">
+                      <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded-full border border-border text-[10px] text-ink-subtle">{i + 1}</span>
+                      {m.title}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  const acks = acksQ.data;
+  const rows = [
+    { who: subjectName, role: "Team member", on: acks?.subject_acked ?? false },
+    { who: leaderName, role: "1st level manager", on: acks?.leader_acked ?? false },
+  ];
+  return (
+    <div className="mt-4 border-t border-border pt-4">
+      <h3 className="text-sm font-bold text-heading">Acknowledge &amp; create plan</h3>
+      <p className="mt-1 text-xs text-ink-muted">
+        {focusCount === 0 ? "Pick 2-3 focus areas above to enable sign-off." : `Both parties confirm they discussed the ${focusCount} focus ${focusCount === 1 ? "area" : "areas"}. This locks the assessment and builds the plan.`}
+      </p>
+      <div className="mt-3 space-y-2">
+        {rows.map((r) => (
+          <div key={r.role} className={cn("flex items-center gap-3 rounded-xl border px-3 py-2.5", r.on ? "border-emerald-200 bg-emerald-50/50" : "border-border")}>
+            <span className={cn("grid h-5 w-5 shrink-0 place-items-center rounded-md border", r.on ? "border-emerald-500 bg-emerald-500" : "border-border")}>
+              {r.on && <Check className="h-3 w-3 text-white" />}
+            </span>
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-heading">{r.who}</div>
+              <div className="text-[11px] text-ink-subtle">{r.role} · {r.on ? "acknowledged" : "awaiting"}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+      {canEdit && !acks?.my_acked && (
+        <button disabled={focusCount === 0 || ack.isPending} onClick={() => ack.mutate()}
+          className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-midnight py-2.5 text-sm font-semibold text-white transition hover:bg-midnight/90 disabled:opacity-40">
+          {ack.isPending ? "Saving…" : "I acknowledge"} <ArrowRight className="h-4 w-4" />
+        </button>
+      )}
+      {acks?.my_acked && !acks?.subject_acked && !acks?.leader_acked && <p className="mt-2 text-center text-[11px] text-ink-subtle">You acknowledged — waiting on the other party.</p>}
     </div>
   );
 }

@@ -385,6 +385,151 @@ async function removeFocus(supa, user, body) {
   return { ok: true };
 }
 
+// ── Acknowledge -> auto-build the PDP + readiness snapshot ───────────────────
+const DAY_MS = 86_400_000;
+const addDays = (n) => new Date(Date.now() + n * DAY_MS).toISOString().slice(0, 10);
+
+async function listAcks(supa, user, params) {
+  const id = params?.assessment_id;
+  if (!id) return { error: "Missing assessment.", status: 400 };
+  const acc = await resolveAccess(supa, user, id);
+  if (acc.error) return acc;
+  const { data: acks } = await supa.from("tp_nla_acks").select("user_id, ack_role, acknowledged_at").eq("assessment_id", id);
+  const a = acc.a;
+  return {
+    acks: acks || [],
+    subject_acked: (acks || []).some((k) => k.user_id === a.subject_profile_id),
+    leader_acked: (acks || []).some((k) => k.user_id === a.leader_profile_id),
+    my_acked: (acks || []).some((k) => k.user_id === user.id),
+    status: a.status,
+  };
+}
+
+// On the second acknowledgement, materialize the plan: one goal per focus area
+// (extends the existing PDP), three milestones each (Weeks 1-2 / Day 30 / Day
+// 60), and the readiness snapshot for the pipeline.
+async function buildPlanAndReadiness(supa, a, focus) {
+  const t = await templateForRole(supa, a.target_role);
+  const nameByKey = new Map((t?.items ?? []).map((it) => [it.competency_key, it.name]));
+
+  // Readiness band from the leader's ratings (the objective view).
+  const { data: resps } = await supa.from("tp_nla_responses").select("id, rater_type").eq("assessment_id", a.id);
+  const leaderResp = (resps || []).find((r) => r.rater_type === "leader");
+  const counts = { M: 0, A: 0, O: 0 };
+  if (leaderResp) {
+    const { data: rr } = await supa.from("tp_nla_ratings").select("rating").eq("response_id", leaderResp.id);
+    for (const r of rr || []) counts[r.rating] = (counts[r.rating] || 0) + 1;
+  }
+  const total = counts.M + counts.A + counts.O || 1;
+  const score = (counts.M * 3 + counts.A * 2 + counts.O * 1) / total;
+  const band = counts.O === 0 && score >= 2.6 ? "ready_now" : score >= 2.2 ? "ready_soon" : "developing";
+
+  const { data: cmp } = await supa.from("tp_nla_comparison").select("gap_type").eq("assessment_id", a.id);
+  const gaps = { aligned: 0, blind_spot: 0, confidence_gap: 0 };
+  for (const c of cmp || []) if (c.gap_type in gaps) gaps[c.gap_type]++;
+
+  await supa.from("tp_readiness_snapshots").insert({
+    subject_member_id: a.subject_member_id, subject_profile_id: a.subject_profile_id,
+    source_assessment_id: a.id, target_role: a.target_role,
+    summary: { ratings: counts, gaps, focus: focus.map((f) => f.competency_key) },
+    readiness_band: band,
+  });
+
+  // The plan attaches to the roster member. Without one, the readiness snapshot
+  // still lands but there is no PDP to build.
+  if (!a.subject_member_id) return { goals: 0, milestones: 0, band };
+
+  const { data: leadProf } = await supa.from("profiles").select("full_name, preferred_name, email").eq("id", a.leader_profile_id).maybeSingle();
+  const leaderName = displayName(leadProf);
+
+  let { data: plan } = await supa.from("tp_dev_plans").select("id").eq("member_id", a.subject_member_id).eq("status", "active").maybeSingle();
+  if (!plan) {
+    const { data: p } = await supa.from("tp_dev_plans").insert({
+      member_id: a.subject_member_id, store_id: a.store_id, target_role: a.target_role, created_by: a.leader_profile_id,
+    }).select("id").single();
+    plan = p;
+  }
+
+  let goals = 0, milestones = 0, rank = 0;
+  for (const f of focus) {
+    const compName = nameByKey.get(f.competency_key) || f.competency_key;
+    const { data: existing } = await supa.from("tp_dev_items").select("id").eq("plan_id", plan.id).eq("focus_area", compName).maybeSingle();
+    if (existing) continue;
+    const { data: item } = await supa.from("tp_dev_items").insert({
+      plan_id: plan.id, store_id: a.store_id, focus_area: compName,
+      goal: f.note || null, actions: f.suggested_resource || null, status: "open", rank: rank++, created_by: a.leader_profile_id,
+    }).select("id").single();
+    if (!item) continue;
+    goals++;
+    const res = f.suggested_resource || "the recommended resource";
+    const rows = [
+      { title: `Weeks 1-2: Complete ${res}`, due: 14, sort: 0 },
+      { title: `Day 30: Apply on shift; ${leaderName} observes and coaches`, due: 30, sort: 1 },
+      { title: `Day 60: Reassess ${compName}`, due: 60, sort: 2 },
+    ].map((m) => ({
+      item_id: item.id, store_id: a.store_id, title: m.title, due_date: addDays(m.due),
+      owner_profile_id: a.subject_profile_id, status: "not_started", sort_order: m.sort,
+    }));
+    const { error } = await supa.from("tp_dev_milestones").insert(rows);
+    if (!error) milestones += rows.length;
+  }
+  return { goals, milestones, band };
+}
+
+async function acknowledge(supa, user, body) {
+  const id = body?.assessment_id;
+  if (!id) return { error: "Missing assessment.", status: 400 };
+  const acc = await resolveAccess(supa, user, id);
+  if (acc.error) return acc;
+  if (!acc.isSubject && !acc.isLeader) return { error: "Only the subject or the leader can acknowledge.", status: 403 };
+  const a = acc.a;
+  if (a.status === "acknowledged") return { ok: true, both_acked: true, already: true };
+
+  const { data: focus } = await supa.from("tp_nla_focus_areas")
+    .select("competency_key, note, suggested_resource, template_item_id, sort_order")
+    .eq("assessment_id", id).order("sort_order", { ascending: true });
+  if (!focus || focus.length === 0) return { error: "Select at least one focus area before signing off.", status: 400 };
+
+  const ackRole = acc.isSubject ? "team_member" : "first_level";
+  await supa.from("tp_nla_acks")
+    .upsert({ assessment_id: id, user_id: user.id, ack_role: ackRole }, { onConflict: "assessment_id,user_id", ignoreDuplicates: true });
+
+  const { data: acks } = await supa.from("tp_nla_acks").select("user_id").eq("assessment_id", id);
+  const both = (acks || []).some((k) => k.user_id === a.subject_profile_id) && (acks || []).some((k) => k.user_id === a.leader_profile_id);
+  let built = null;
+  if (both) {
+    built = await buildPlanAndReadiness(supa, a, focus);
+    await supa.from("tp_nla_assessments").update({ status: "acknowledged", acknowledged_at: new Date().toISOString() }).eq("id", id);
+  }
+  return { ok: true, both_acked: both, plan: built };
+}
+
+// The goals + milestones created for this assessment (the "plan created" view).
+async function getPlan(supa, user, params) {
+  const id = params?.assessment_id;
+  if (!id) return { error: "Missing assessment.", status: 400 };
+  const acc = await resolveAccess(supa, user, id);
+  if (acc.error) return acc;
+  const a = acc.a;
+  const { data: focus } = await supa.from("tp_nla_focus_areas").select("competency_key").eq("assessment_id", id);
+  const t = await templateForRole(supa, a.target_role);
+  const names = new Set((focus || [])
+    .map((f) => (t?.items ?? []).find((it) => it.competency_key === f.competency_key)?.name)
+    .filter(Boolean));
+  if (!a.subject_member_id || names.size === 0) return { goals: [] };
+  const { data: plan } = await supa.from("tp_dev_plans").select("id").eq("member_id", a.subject_member_id).eq("status", "active").maybeSingle();
+  if (!plan) return { goals: [] };
+  const { data: items } = await supa.from("tp_dev_items").select("id, focus_area, goal, status").eq("plan_id", plan.id);
+  const goalItems = (items || []).filter((it) => names.has(it.focus_area));
+  const ids = goalItems.map((g) => g.id);
+  const { data: ms } = ids.length
+    ? await supa.from("tp_dev_milestones").select("item_id, title, due_date, status, sort_order").in("item_id", ids).order("sort_order", { ascending: true })
+    : { data: [] };
+  const byItem = new Map();
+  for (const m of ms || []) { const arr = byItem.get(m.item_id) || []; arr.push(m); byItem.set(m.item_id, arr); }
+  return { goals: goalItems.map((g) => ({ focus_area: g.focus_area, goal: g.goal, status: g.status, milestones: byItem.get(g.id) || [] })) };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   let user;
@@ -405,6 +550,8 @@ export const handler = async (event) => {
       if (action === "list") return unwrap(await listAssessments(supa, user));
       if (action === "get") return unwrap(await getAssessment(supa, user, params));
       if (action === "comparison") return unwrap(await comparison(supa, user, params));
+      if (action === "acks") return unwrap(await listAcks(supa, user, params));
+      if (action === "plan") return unwrap(await getPlan(supa, user, params));
       return respond(400, { error: `Unknown action: ${action}` });
     }
     if (action === "open") return unwrap(await openAssessment(supa, user, body));
@@ -412,6 +559,7 @@ export const handler = async (event) => {
     if (action === "submit") return unwrap(await submitResponse(supa, user, body));
     if (action === "set-focus") return unwrap(await setFocus(supa, user, body));
     if (action === "remove-focus") return unwrap(await removeFocus(supa, user, body));
+    if (action === "acknowledge") return unwrap(await acknowledge(supa, user, body));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });

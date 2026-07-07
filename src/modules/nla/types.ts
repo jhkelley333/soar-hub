@@ -103,6 +103,23 @@ export const GAP_META: Record<"aligned" | "blind_spot" | "confidence_gap", { lab
 // Left to right on the gap track: Opportunity -> Aspiring -> Modeling.
 export const RATING_SCORE: Record<Rating, number> = { O: 1, A: 2, M: 3 };
 
+// ── Acknowledge + plan ───────────────────────────────────────────────────────
+export interface NlaAcks {
+  acks: { user_id: string; ack_role: string; acknowledged_at: string }[];
+  subject_acked: boolean;
+  leader_acked: boolean;
+  my_acked: boolean;
+  status: string;
+}
+export interface PlanMilestone { title: string; due_date: string; status: string; sort_order: number }
+export interface PlanGoal { focus_area: string; goal: string | null; status: string; milestones: PlanMilestone[] }
+export interface NlaPlan { goals: PlanGoal[] }
+export const READINESS_BAND_META: Record<string, { label: string; chip: string }> = {
+  ready_now: { label: "Ready now", chip: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
+  ready_soon: { label: "Ready soon", chip: "bg-amber-50 text-amber-800 ring-amber-200" },
+  developing: { label: "Developing", chip: "bg-zinc-100 text-zinc-600 ring-zinc-200" },
+};
+
 export const NLA_STATUS_META: Record<string, { label: string; chip: string }> = {
   awaiting_responses: { label: "Awaiting responses", chip: "bg-amber-50 text-amber-800 ring-amber-200" },
   both_submitted: { label: "Ready to compare", chip: "bg-blue-50 text-blue-700 ring-blue-200" },
