@@ -149,64 +149,66 @@ alter table tp_nla_ratings        enable row level security;
 
 -- Seed: Shift Manager to Assistant GM, v1 (16 competencies).
 -- target_role fam = First Assistant Manager, our ladder Assistant-GM rung.
+-- All strings are dollar-quoted ($c$...$c$) so there is not a single quote
+-- character in the seed - it cannot be corrupted by copy/paste.
 insert into tp_nla_templates (target_role, version, title, status, effective_date)
-values ('fam', 1, 'Shift Manager to Assistant General Manager', 'active', current_date)
+values ($c$fam$c$, 1, $c$Shift Manager to Assistant General Manager$c$, $c$active$c$, current_date)
 on conflict (target_role, version) do nothing;
 
 insert into tp_nla_template_items (template_id, category, sort_order, competency_key, name, description, example)
 select t.id, v.category, v.sort_order, v.competency_key, v.name, v.description, v.example
 from tp_nla_templates t
 cross join (values
-  ('Brand Purpose', 1, 'listen', 'Attentive Listening',
-    'Gives people full attention. Paraphrases and repeats things back to ensure understanding. Lets people finish before responding or asking questions.',
-    'Pays attention to what is being said. Listens until the speaker finishes, then responds. Maintains appropriate body language.'),
-  ('Brand Purpose', 2, 'respect', 'Respectful Communication',
-    'All communication is professional and respectful, with no hidden agendas. Keeps others informed to build an engaging working environment.',
-    'Keeps management and team well informed. Is open and honest. Presents professionally at all times.'),
-  ('Brand Purpose', 3, 'team', 'Teamwork',
-    'Treats people with respect, keeps a positive attitude, and makes work fun. Recognizes team members and works cross-functionally to hit objectives.',
-    'Recognizes team members for accomplishments. Creates positive morale. Participates in meetings.'),
-  ('Leadership', 4, 'inspire', 'Inspiring Others',
-    'Emphasizes the importance of the contributions people make. Ties work to their personal and career goals, interests, and brand values.',
-    'Relates well to people. Prioritizes team and guest service. Assists team with setting and achieving goals.'),
-  ('Leadership', 5, 'manageperf', 'Managing Performance',
-    'Monitors performance and metrics. Gives in-the-moment and end-of-shift feedback.',
-    'Completes appraisals on time with specific examples. Sets goals during the shift and follows up after.'),
-  ('Leadership', 6, 'conflict', 'Resolves Conflict',
-    'Addresses conflict before it escalates. Helps people find common ground and mutually agreeable solutions. Values differences.',
-    'Addresses conflict as it arises. Does not ignore warning signs. Maintains composure.'),
-  ('Leadership', 7, 'collab', 'Collaborates with Others',
-    'Works well with others. Listens to opposing viewpoints. Stays composed.',
-    'Supports different teams across the floor. Holds self and team to be team players.'),
-  ('Gets Results', 8, 'decision', 'Decision Making',
-    'Bases decisions on a systematic review of the facts. Avoids assumptions, emotional decisions, or rushing to judgment. Gives clear rationale.',
-    'Makes good decisions in a timely manner. Effectively reviews facts. Knows when to ask for guidance.'),
-  ('Gets Results', 9, 'accept', 'Accepting Responsibility',
-    'Takes accountability for commitments. Owns mistakes and uses them to learn. Openly discusses actions and consequences, good and bad.',
-    'Accepts accountability for team results. Celebrates successes and works to improve opportunities.'),
-  ('Innovates', 10, 'initiative', 'Demonstrates Initiative',
-    'Acts without being prompted. Handles problems independently. Does more than is expected or asked.',
-    'Seeks and uses feedback to improve. Has a passion for learning. Actively works on team improvement.'),
-  ('Innovates', 11, 'problem', 'Problem Solving',
-    'Breaks large problems into smaller parts. Identifies the factors that influence each solution. Clarifies what is needed to solve them.',
-    'Attentive to details. Identifies potential solutions. Keeps working until the problem is solved.'),
-  ('Builds Talent', 12, 'delegate', 'Delegation',
-    'Gives clear objectives and lets people own their goals. Assigns tasks that challenge but do not overwhelm. Acts as a resource by development level.',
-    'Provides clear direction. Monitors progress and offers timely feedback.'),
-  ('Builds Talent', 13, 'develop', 'Develops Talent',
-    'Invests time in building capabilities. Helps people define career goals and development plans. Gives constructive, developmental feedback.',
-    'Takes initiative with team training. Ensures proper training happens during the shift.'),
-  ('Technical Skills', 14, 'ops', 'Operations Knowledge',
-    'Supports the AGM or GM in procedure execution. Holds the team accountable for maintaining standards at a high level.',
+  ($c$Brand Purpose$c$, 1, $c$listen$c$, $c$Attentive Listening$c$,
+    $c$Gives people full attention. Paraphrases and repeats things back to ensure understanding. Lets people finish before responding or asking questions.$c$,
+    $c$Pays attention to what is being said. Listens until the speaker finishes, then responds. Maintains appropriate body language.$c$),
+  ($c$Brand Purpose$c$, 2, $c$respect$c$, $c$Respectful Communication$c$,
+    $c$All communication is professional and respectful, with no hidden agendas. Keeps others informed to build an engaging working environment.$c$,
+    $c$Keeps management and team well informed. Is open and honest. Presents professionally at all times.$c$),
+  ($c$Brand Purpose$c$, 3, $c$team$c$, $c$Teamwork$c$,
+    $c$Treats people with respect, keeps a positive attitude, and makes work fun. Recognizes team members and works cross-functionally to hit objectives.$c$,
+    $c$Recognizes team members for accomplishments. Creates positive morale. Participates in meetings.$c$),
+  ($c$Leadership$c$, 4, $c$inspire$c$, $c$Inspiring Others$c$,
+    $c$Emphasizes the importance of the contributions people make. Ties work to their personal and career goals, interests, and brand values.$c$,
+    $c$Relates well to people. Prioritizes team and guest service. Assists team with setting and achieving goals.$c$),
+  ($c$Leadership$c$, 5, $c$manageperf$c$, $c$Managing Performance$c$,
+    $c$Monitors performance and metrics. Gives in-the-moment and end-of-shift feedback.$c$,
+    $c$Completes appraisals on time with specific examples. Sets goals during the shift and follows up after.$c$),
+  ($c$Leadership$c$, 6, $c$conflict$c$, $c$Resolves Conflict$c$,
+    $c$Addresses conflict before it escalates. Helps people find common ground and mutually agreeable solutions. Values differences.$c$,
+    $c$Addresses conflict as it arises. Does not ignore warning signs. Maintains composure.$c$),
+  ($c$Leadership$c$, 7, $c$collab$c$, $c$Collaborates with Others$c$,
+    $c$Works well with others. Listens to opposing viewpoints. Stays composed.$c$,
+    $c$Supports different teams across the floor. Holds self and team to be team players.$c$),
+  ($c$Gets Results$c$, 8, $c$decision$c$, $c$Decision Making$c$,
+    $c$Bases decisions on a systematic review of the facts. Avoids assumptions, emotional decisions, or rushing to judgment. Gives clear rationale.$c$,
+    $c$Makes good decisions in a timely manner. Effectively reviews facts. Knows when to ask for guidance.$c$),
+  ($c$Gets Results$c$, 9, $c$accept$c$, $c$Accepting Responsibility$c$,
+    $c$Takes accountability for commitments. Owns mistakes and uses them to learn. Openly discusses actions and consequences, good and bad.$c$,
+    $c$Accepts accountability for team results. Celebrates successes and works to improve opportunities.$c$),
+  ($c$Innovates$c$, 10, $c$initiative$c$, $c$Demonstrates Initiative$c$,
+    $c$Acts without being prompted. Handles problems independently. Does more than is expected or asked.$c$,
+    $c$Seeks and uses feedback to improve. Has a passion for learning. Actively works on team improvement.$c$),
+  ($c$Innovates$c$, 11, $c$problem$c$, $c$Problem Solving$c$,
+    $c$Breaks large problems into smaller parts. Identifies the factors that influence each solution. Clarifies what is needed to solve them.$c$,
+    $c$Attentive to details. Identifies potential solutions. Keeps working until the problem is solved.$c$),
+  ($c$Builds Talent$c$, 12, $c$delegate$c$, $c$Delegation$c$,
+    $c$Gives clear objectives and lets people own their goals. Assigns tasks that challenge but do not overwhelm. Acts as a resource by development level.$c$,
+    $c$Provides clear direction. Monitors progress and offers timely feedback.$c$),
+  ($c$Builds Talent$c$, 13, $c$develop$c$, $c$Develops Talent$c$,
+    $c$Invests time in building capabilities. Helps people define career goals and development plans. Gives constructive, developmental feedback.$c$,
+    $c$Takes initiative with team training. Ensures proper training happens during the shift.$c$),
+  ($c$Technical Skills$c$, 14, $c$ops$c$, $c$Operations Knowledge$c$,
+    $c$Supports the AGM or GM in procedure execution. Holds the team accountable for maintaining standards at a high level.$c$,
     null),
-  ('Technical Skills', 15, 'pl', 'P and L Knowledge',
-    'Understands the biggest drivers in food and bar costs. Can speak to the sales budget and MCI. Schedules effectively to manage labor.',
+  ($c$Technical Skills$c$, 15, $c$pl$c$, $c$P and L Knowledge$c$,
+    $c$Understands the biggest drivers in food and bar costs. Can speak to the sales budget and MCI. Schedules effectively to manage labor.$c$,
     null),
-  ('Technical Skills', 16, 'training', 'Training Execution',
-    'Supports the training program. Ensures team members complete proper training. Keeps training materials and job aids current.',
+  ($c$Technical Skills$c$, 16, $c$training$c$, $c$Training Execution$c$,
+    $c$Supports the training program. Ensures team members complete proper training. Keeps training materials and job aids current.$c$,
     null)
 ) as v(category, sort_order, competency_key, name, description, example)
-where t.target_role = 'fam' and t.version = 1
+where t.target_role = $c$fam$c$ and t.version = 1
 on conflict (template_id, competency_key) do nothing;
 
 notify pgrst, 'reload schema';
