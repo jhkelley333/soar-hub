@@ -4,7 +4,9 @@
 // bench's "latest comment". Exposed through a context so every card/row can
 // open it without prop-drilling.
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
+import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { openNla, fetchNlaTemplates } from "@/modules/nla/api";
 import { BadgeCheck, ChevronDown, Copy, FileWarning, Phone, Plus, Star, Trash2, UserPlus } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Drawer } from "@/shared/ui/Drawer";
@@ -174,6 +176,7 @@ function MemberBody({ member, canWrite, roleEdit }: { member: TeamMember; canWri
         </Field>
       )}
 
+      {canWrite && <NlaLaunch member={member} />}
       <DevPlan member={member} canWrite={canWrite} />
       <NotesThread memberId={member.id} canWrite={canWrite} />
       <CorrectiveActions memberId={member.id} canWrite={canWrite} />
@@ -347,6 +350,52 @@ function CaForm({ memberId, onDone }: { memberId: string; onDone: () => void }) 
 }
 function CaBtn({ onClick, children }: { onClick: () => void; children: ReactNode }) {
   return <button onClick={onClick} className="rounded-md border border-border bg-surface px-2 py-1 font-semibold text-ink-2 transition hover:bg-surface-sunk">{children}</button>;
+}
+
+// Open a Next Level Assessment on this roster member (needs an app account so
+// they can self-assess). Feeds the compare/align + PDP loop.
+function NlaLaunch({ member }: { member: TeamMember }) {
+  const navigate = useNavigate();
+  const toast = useToast();
+  const q = useQuery({ queryKey: ["nla-templates"], queryFn: fetchNlaTemplates, staleTime: 5 * 60_000 });
+  const templates = q.data?.templates ?? [];
+  const [target, setTarget] = useState("");
+  useEffect(() => {
+    const ts = q.data?.templates ?? [];
+    if (!target && ts.length) setTarget(ts[0].target_role);
+  }, [q.data, target]);
+
+  const open = useMutation({
+    mutationFn: () => openNla({
+      subject_profile_id: member.profile_id as string, subject_member_id: member.id,
+      target_role: target, store_id: member.store_id,
+    }),
+    onSuccess: (r) => { toast.push(r.existed ? "Opening the existing assessment." : "Assessment opened.", "success"); navigate(`/nla/${r.assessment_id}`); },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Could not open.", "error"),
+  });
+
+  return (
+    <Field label="Next Level Assessment">
+      {!member.has_account || !member.profile_id ? (
+        <div className="rounded-lg bg-surface-muted px-3 py-2 text-xs text-ink-muted">
+          Invite this person to an app account first — they self-assess as part of the NLA.
+        </div>
+      ) : templates.length === 0 ? (
+        <div className="text-sm text-ink-subtle">No active assessment templates yet.</div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <select value={target} onChange={(e) => setTarget(e.target.value)}
+            className="rounded-lg border border-border bg-surface px-3 py-2 text-sm font-semibold text-heading focus:border-accent focus:outline-none">
+            {templates.map((t) => <option key={t.id} value={t.target_role}>{t.title}</option>)}
+          </select>
+          <button disabled={!target || open.isPending} onClick={() => open.mutate()}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-midnight px-3 py-2 text-xs font-semibold text-white transition hover:bg-midnight/90 disabled:opacity-40">
+            {open.isPending ? "Opening…" : "Open assessment"}
+          </button>
+        </div>
+      )}
+    </Field>
+  );
 }
 
 const READINESS_ORDER: Readiness[] = ["now", "6mo", "12mo"];
