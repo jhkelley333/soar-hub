@@ -1,20 +1,22 @@
 -- 0217_nla_schema_seed.sql
--- Next Level Assessment (NLA) — Phase 1: the instrument + a cycle + the
--- self-vs-leader comparison view, seeded with the Shift Manager → Assistant GM
+-- Next Level Assessment (NLA) - Phase 1: the instrument + a cycle + the
+-- self-vs-leader comparison view, seeded with the Shift Manager to Assistant GM
 -- template v1 (16 competencies). Feeds the PDP + succession loop.
 --
--- Access: service-role gatekeeper — RLS on, NO policies. The `nla` function
+-- Access: service-role gatekeeper - RLS on, NO policies. The nla function
 -- scope-checks every read/write (same pattern as team-pipeline). Immutability of
 -- locked ratings is enforced at the DB via triggers (defense in depth), so a
--- submitted assessment can't be quietly edited even through the service role.
+-- submitted assessment cannot be quietly edited even through the service role.
+-- NOTE: this file is intentionally pure ASCII with no apostrophes so it survives
+-- copy/paste into any SQL client without quote corruption.
 
--- ── Instrument (role-keyed, versioned) ───────────────────────────────────────
+-- Instrument (role-keyed, versioned)
 create table if not exists tp_nla_templates (
   id             uuid primary key default gen_random_uuid(),
-  target_role    text not null,                  -- ladder key of the target role
+  target_role    text not null,
   version        int  not null default 1,
   title          text not null,
-  status         text not null default 'active', -- draft | active | retired
+  status         text not null default 'active',
   effective_date date,
   created_by     uuid references profiles(id) on delete set null,
   created_at     timestamptz not null default now()
@@ -26,7 +28,7 @@ create table if not exists tp_nla_template_items (
   template_id     uuid not null references tp_nla_templates(id) on delete cascade,
   category        text not null,
   sort_order      int  not null default 0,
-  competency_key  text not null,                 -- stable slug, survives versions
+  competency_key  text not null,
   name            text not null,
   description     text,
   example         text
@@ -34,9 +36,8 @@ create table if not exists tp_nla_template_items (
 create unique index if not exists tp_nla_items_tpl_key on tp_nla_template_items (template_id, competency_key);
 create index if not exists tp_nla_items_tpl_idx on tp_nla_template_items (template_id);
 
--- ── A cycle ──────────────────────────────────────────────────────────────────
--- The subject must be able to log in to self-assess, so subject_profile_id is a
--- real profile; subject_member_id links back to the roster row when there is one.
+-- A cycle. The subject must be able to log in to self-assess, so
+-- subject_profile_id is a real profile; subject_member_id links to the roster.
 create table if not exists tp_nla_assessments (
   id                  uuid primary key default gen_random_uuid(),
   subject_member_id   uuid references tp_team_members(id) on delete set null,
@@ -47,7 +48,6 @@ create table if not exists tp_nla_assessments (
   store_id            uuid references stores(id) on delete set null,
   district_id         uuid references districts(id) on delete set null,
   status              text not null default 'awaiting_responses',
-    -- draft | awaiting_responses | both_submitted | aligned | acknowledged | archived
   opened_at           timestamptz not null default now(),
   comparison_ready_at timestamptz,
   acknowledged_at     timestamptz,
@@ -62,7 +62,7 @@ create table if not exists tp_nla_responses (
   id               uuid primary key default gen_random_uuid(),
   assessment_id    uuid not null references tp_nla_assessments(id) on delete cascade,
   rater_profile_id uuid not null references profiles(id) on delete cascade,
-  rater_type       text not null,                -- self | leader | second_level
+  rater_type       text not null,
   submitted_at     timestamptz,
   locked           boolean not null default false,
   created_at       timestamptz not null default now()
@@ -76,7 +76,7 @@ create table if not exists tp_nla_ratings (
   response_id      uuid not null references tp_nla_responses(id) on delete cascade,
   template_item_id uuid not null references tp_nla_template_items(id),
   competency_key   text not null,
-  rating           text not null,                -- M | A | O
+  rating           text not null,
   note             text,
   created_at       timestamptz not null default now(),
   updated_at       timestamptz not null default now()
@@ -84,9 +84,8 @@ create table if not exists tp_nla_ratings (
 create unique index if not exists tp_nla_rating_unique on tp_nla_ratings (response_id, template_item_id);
 create index if not exists tp_nla_rating_assess_idx on tp_nla_ratings (assessment_id);
 
--- ── Comparison view (self vs leader per competency) ──────────────────────────
--- M=3, A=2, O=1; delta = self − leader → >0 blind_spot, <0 confidence_gap,
--- 0 aligned. Consumed only by the service-role function.
+-- Comparison view (self vs leader per competency).
+-- M=3, A=2, O=1; delta = self minus leader. gt 0 blind_spot, lt 0 confidence_gap, 0 aligned.
 create or replace view tp_nla_comparison as
 with r as (
   select rt.assessment_id, rt.competency_key,
@@ -111,8 +110,7 @@ select
   end as gap_type
 from r;
 
--- ── Immutability triggers ────────────────────────────────────────────────────
--- Once a response is locked, its ratings can't change or be deleted.
+-- Immutability triggers. Once a response is locked its ratings cannot change.
 create or replace function tp_nla_ratings_lock_guard() returns trigger language plpgsql as $$
 declare is_locked boolean;
 begin
@@ -127,7 +125,7 @@ drop trigger if exists tp_nla_ratings_lock on tp_nla_ratings;
 create trigger tp_nla_ratings_lock before update or delete on tp_nla_ratings
   for each row execute function tp_nla_ratings_lock_guard();
 
--- A locked response can't be reopened or its submission time rewritten.
+-- A locked response cannot be reopened or its submission time rewritten.
 create or replace function tp_nla_response_lock_guard() returns trigger language plpgsql as $$
 begin
   if old.locked and (new.locked = false or new.submitted_at is distinct from old.submitted_at) then
@@ -139,7 +137,6 @@ drop trigger if exists tp_nla_response_lock on tp_nla_responses;
 create trigger tp_nla_response_lock before update on tp_nla_responses
   for each row execute function tp_nla_response_lock_guard();
 
--- Touch updated_at on ratings (reuses the team-pipeline helper).
 drop trigger if exists tp_nla_ratings_touch on tp_nla_ratings;
 create trigger tp_nla_ratings_touch before update on tp_nla_ratings
   for each row execute function tp_touch_updated_at();
@@ -150,10 +147,10 @@ alter table tp_nla_assessments    enable row level security;
 alter table tp_nla_responses      enable row level security;
 alter table tp_nla_ratings        enable row level security;
 
--- ── Seed: Shift Manager → Assistant GM, v1 (16 competencies) ─────────────────
--- target_role 'fam' = First Assistant Manager (our ladder's Assistant-GM rung).
+-- Seed: Shift Manager to Assistant GM, v1 (16 competencies).
+-- target_role fam = First Assistant Manager, our ladder Assistant-GM rung.
 insert into tp_nla_templates (target_role, version, title, status, effective_date)
-values ('fam', 1, 'Shift Manager → Assistant General Manager', 'active', current_date)
+values ('fam', 1, 'Shift Manager to Assistant General Manager', 'active', current_date)
 on conflict (target_role, version) do nothing;
 
 insert into tp_nla_template_items (template_id, category, sort_order, competency_key, name, description, example)
@@ -202,7 +199,7 @@ cross join (values
   ('Technical Skills', 14, 'ops', 'Operations Knowledge',
     'Supports the AGM or GM in procedure execution. Holds the team accountable for maintaining standards at a high level.',
     null),
-  ('Technical Skills', 15, 'pl', 'P&L Knowledge',
+  ('Technical Skills', 15, 'pl', 'P and L Knowledge',
     'Understands the biggest drivers in food and bar costs. Can speak to the sales budget and MCI. Schedules effectively to manage labor.',
     null),
   ('Technical Skills', 16, 'training', 'Training Execution',
