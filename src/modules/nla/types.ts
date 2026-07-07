@@ -60,6 +60,49 @@ export const RATING_META: Record<Rating, { label: string; hint: string }> = {
 };
 export const RATING_ORDER: Rating[] = ["M", "A", "O"];
 
+// ── Compare + align ──────────────────────────────────────────────────────────
+export type GapType = "aligned" | "blind_spot" | "confidence_gap" | "incomplete";
+export interface ComparisonRow {
+  competency_key: string;
+  name: string;
+  category: string;
+  sort_order: number;
+  self_rating: Rating | null;
+  leader_rating: Rating | null;
+  delta: number | null;
+  gap_type: GapType;
+}
+export interface FocusArea {
+  competency_key: string;
+  gap_type: string | null;
+  note: string | null;
+  suggested_resource: string | null;
+  sort_order: number;
+}
+export interface NlaComparison {
+  assessment: {
+    id: string;
+    status: string;
+    target_role: string;
+    subject_name: string;
+    leader_name: string;
+    comparison_ready_at: string | null;
+    acknowledged_at: string | null;
+  };
+  rows: ComparisonRow[];
+  summary: { aligned: number; blind_spot: number; confidence_gap: number };
+  focus_areas: FocusArea[];
+  can_edit: boolean;
+  locked: boolean;
+}
+export const GAP_META: Record<"aligned" | "blind_spot" | "confidence_gap", { label: string; color: string; chip: string }> = {
+  aligned:        { label: "Aligned",         color: "#10b981", chip: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
+  blind_spot:     { label: "Blind spot",      color: "#f59e0b", chip: "bg-amber-50 text-amber-800 ring-amber-200" },
+  confidence_gap: { label: "Confidence gap",  color: "#0ea5e9", chip: "bg-sky-50 text-sky-700 ring-sky-200" },
+};
+// Left to right on the gap track: Opportunity -> Aspiring -> Modeling.
+export const RATING_SCORE: Record<Rating, number> = { O: 1, A: 2, M: 3 };
+
 export const NLA_STATUS_META: Record<string, { label: string; chip: string }> = {
   awaiting_responses: { label: "Awaiting responses", chip: "bg-amber-50 text-amber-800 ring-amber-200" },
   both_submitted: { label: "Ready to compare", chip: "bg-blue-50 text-blue-700 ring-blue-200" },

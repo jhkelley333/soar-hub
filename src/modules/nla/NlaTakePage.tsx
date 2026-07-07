@@ -95,6 +95,12 @@ export function NlaTakePage() {
           <p className="mt-3 text-xs text-ink-subtle">
             {data.both_submitted ? "Both are in — the comparison is ready to review together." : "When both are in, the comparison unlocks for the sit-down."}
           </p>
+          {data.both_submitted && (
+            <button onClick={() => navigate(`/nla/${id}/compare`)}
+              className="mt-4 inline-flex items-center gap-2 rounded-lg bg-midnight px-4 py-2 text-sm font-semibold text-white transition hover:bg-midnight/90">
+              View comparison <ArrowRight className="h-4 w-4" />
+            </button>
+          )}
         </div>
       </div>
     );

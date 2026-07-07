@@ -1,6 +1,6 @@
 // Typed wrappers around netlify/functions/nla.
 import { supabase } from "@/lib/supabase";
-import type { NlaGetResponse, NlaListRow, NlaTemplate, NlaTemplateItem, Rating } from "./types";
+import type { NlaComparison, NlaGetResponse, NlaListRow, NlaTemplate, NlaTemplateItem, Rating } from "./types";
 
 const FN = "/.netlify/functions/nla";
 
@@ -46,4 +46,15 @@ export function saveNlaRating(input: { assessment_id: string; competency_key: st
 }
 export function submitNla(assessmentId: string): Promise<{ ok: true; both_submitted: boolean }> {
   return request(`${FN}?action=submit`, { method: "POST", body: JSON.stringify({ assessment_id: assessmentId }) });
+}
+
+// ── Compare + align ──────────────────────────────────────────────────────────
+export function fetchNlaComparison(id: string): Promise<NlaComparison> {
+  return request(`${FN}?action=comparison&assessment_id=${encodeURIComponent(id)}`);
+}
+export function setNlaFocus(input: { assessment_id: string; competency_key: string; note?: string | null; suggested_resource?: string | null }): Promise<{ ok: true }> {
+  return request(`${FN}?action=set-focus`, { method: "POST", body: JSON.stringify(input) });
+}
+export function removeNlaFocus(input: { assessment_id: string; competency_key: string }): Promise<{ ok: true }> {
+  return request(`${FN}?action=remove-focus`, { method: "POST", body: JSON.stringify(input) });
 }

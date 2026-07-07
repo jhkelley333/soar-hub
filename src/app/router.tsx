@@ -92,6 +92,7 @@ import { ToolDetailPage } from "@/modules/coaching/ToolDetailPage";
 import { TeamPipelinePage } from "@/modules/team-pipeline/TeamPipelinePage";
 import { NlaListPage } from "@/modules/nla/NlaListPage";
 import { NlaTakePage } from "@/modules/nla/NlaTakePage";
+import { NlaComparePage } from "@/modules/nla/NlaComparePage";
 import { ManualSearchPage } from "@/modules/manuals/ManualSearchPage";
 import { ManualAdminPage } from "@/modules/manuals/ManualAdminPage";
 import { WeatherPage } from "@/modules/weather/WeatherPage";
@@ -442,6 +443,7 @@ export const router = createBrowserRouter([
       // self-assesses); the nla function enforces per-assessment access.
       { path: "nla", element: <NlaListPage /> },
       { path: "nla/:id", element: <NlaTakePage /> },
+      { path: "nla/:id/compare", element: <NlaComparePage /> },
       {
         path: "admin/org",
         element: (
