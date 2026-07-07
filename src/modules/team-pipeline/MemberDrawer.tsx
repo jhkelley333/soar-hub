@@ -14,12 +14,13 @@ import { Skeleton } from "@/shared/ui/Skeleton";
 import { useToast } from "@/shared/ui/Toaster";
 import {
   addCorrectiveAction, addDevItem, addDevMilestone, addNote, addSuccessor, fetchCorrectiveActions, fetchDevPlan,
-  fetchMemberSignals, fetchNotes, fetchStoreRoster, fetchSuccessors, inviteMember, removeDevItem, removeDevMilestone,
-  removeSuccessor, saveDevPlan, setCorrectiveActionStatus, updateDevItem, updateDevMilestone, updateMember, updateSuccessor,
+  fetchMemberReadiness, fetchMemberSignals, fetchNotes, fetchStoreRoster, fetchSuccessors, inviteMember, removeDevItem,
+  removeDevMilestone, removeSuccessor, saveDevPlan, setCorrectiveActionStatus, updateDevItem, updateDevMilestone,
+  updateMember, updateSuccessor,
 } from "./api";
 import {
   ASPIRATION_META, CA_CATEGORIES, CA_LEVEL_META, CA_LEVELS, CA_STATUS_META, CA_TEMPLATES, DEV_ITEM_META,
-  INVITE_ROLES, LADDER, LADDER_BY_KEY, MILESTONE_META, RATING_COLOR, READINESS_META, RISK_META, RISK_REASONS,
+  INVITE_ROLES, LADDER, LADDER_BY_KEY, MILESTONE_META, RATING_COLOR, READINESS_BAND_META, READINESS_META, RISK_META, RISK_REASONS,
   SIGNAL_SEVERITY_META,
   type Aspiration, type CaLevel, type CorrectiveAction, type DevItem, type DevItemStatus,
   type FlightRisk, type LadderKey, type MemberPatch, type MilestoneStatus, type Readiness, type TeamMember,
@@ -86,6 +87,7 @@ function MemberBody({ member, canWrite, roleEdit }: { member: TeamMember; canWri
             {draft.status === "terminated" && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700 ring-1 ring-red-200">Terminated</span>}
           </div>
           <div className="text-sm text-ink-muted">{role?.label}{member.hire_date && ` · since ${new Date(member.hire_date).toLocaleDateString(undefined, { month: "short", year: "numeric" })}`}</div>
+          <ReadinessBadge memberId={member.id} />
           <div className="mt-2 flex flex-wrap gap-2">
             {member.email && (
               <button onClick={() => { navigator.clipboard?.writeText(member.email!); toast.push("Email copied.", "success"); }}
@@ -825,6 +827,23 @@ function NotesThread({ memberId, canWrite }: { memberId: string; canWrite: boole
         </ol>
       )}
     </Field>
+  );
+}
+
+// Latest Next Level Assessment readiness for this member (if any acknowledged).
+function ReadinessBadge({ memberId }: { memberId: string }) {
+  const q = useQuery({ queryKey: ["tp-member-readiness", memberId], queryFn: () => fetchMemberReadiness(memberId) });
+  const r = q.data?.readiness;
+  if (!r) return null;
+  const bm = READINESS_BAND_META[r.readiness_band];
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset", bm.chip)}>
+        NLA: {bm.label} for {r.target_role.toUpperCase()}
+      </span>
+      {r.snapshot_date && <span className="text-[11px] text-ink-subtle">{new Date(r.snapshot_date).toLocaleDateString(undefined, { month: "short", year: "numeric" })}</span>}
+      {r.reassess_due && <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">Reassess due</span>}
+    </div>
   );
 }
 

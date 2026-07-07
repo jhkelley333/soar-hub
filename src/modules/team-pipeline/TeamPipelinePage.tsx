@@ -17,15 +17,15 @@ import { Segmented } from "@/shared/ui/Segmented";
 import { useToast } from "@/shared/ui/Toaster";
 import { fetchMyTree } from "@/modules/my-stores/api";
 import type { MyDistrictNode, MyStoreNode } from "@/modules/my-stores/types";
-import { fetchGms, fetchRollup, fetchSuccession, fetchStoreRoster, fetchSnapshots, fetchSnapshotRows, fetchRiskReview, fetchDevRollup, fetchTenureRollup, fetchTalentExport, fetchMonthlyReview, markReviewed, takeSnapshot, lockSnapshot, seedFromProfiles, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings } from "./api";
+import { fetchGms, fetchRollup, fetchSuccession, fetchStoreRoster, fetchSnapshots, fetchSnapshotRows, fetchRiskReview, fetchDevRollup, fetchReadinessRollup, fetchTenureRollup, fetchTalentExport, fetchMonthlyReview, markReviewed, takeSnapshot, lockSnapshot, seedFromProfiles, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings } from "./api";
 import { AccountBadge, MemberDrawerProvider, useMemberDrawer } from "./MemberDrawer";
 import { RosterImport } from "./RosterImport";
 import { toCSV, downloadCSV } from "@/lib/csv";
 import {
-  ASPIRATION_META, LADDER, LADDER_BY_KEY, READINESS_META, REQ_STATUS_META, RISK_META, ROLE_MIX, roleBelow,
+  ASPIRATION_META, LADDER, LADDER_BY_KEY, READINESS_BAND_META, READINESS_META, REQ_STATUS_META, RISK_META, ROLE_MIX, roleBelow,
   SIGNAL_SEVERITY_META,
   type Aspiration, type AtRiskMember, type DevGapRow, type DevGoalRow, type DevRollupResponse, type GmSeat, type LadderKey,
-  type Requisition, type ReviewView, type RiskCounts, type RiskReviewRow,
+  type ReadinessRow, type Requisition, type ReviewView, type RiskCounts, type RiskReviewRow,
   type RollupResponse, type SnapshotRow, type StoreRollup, type SuccessionResponse, type TalentExportResponse,
   type TeamMember, type TenureMember, type TenureRollupResponse,
 } from "./types";
@@ -459,7 +459,8 @@ function RiskReviewTable({ rows, districtName, onOpen }: {
 function DevelopmentView({ districts, districtMeta }: { districts: MyDistrictNode[]; districtMeta: DistrictMeta }) {
   const { open } = useMemberDrawer();
   const q = useQuery({ queryKey: ["tp-dev-rollup"], queryFn: fetchDevRollup, staleTime: 60_000 });
-  const [tab, setTab] = useState<"coverage" | "gaps" | "stalled" | "due">("coverage");
+  const readyQ = useQuery({ queryKey: ["tp-readiness-rollup"], queryFn: fetchReadinessRollup, staleTime: 60_000 });
+  const [tab, setTab] = useState<"coverage" | "gaps" | "stalled" | "due" | "readiness">("coverage");
   const districtName = (id: string | null) => (id ? districts.find((d) => d.id === id)?.name ?? "—" : "Unassigned");
   const doName = (id: string | null) => (id ? districtMeta.get(id)?.doName ?? null : null);
 
@@ -508,7 +509,7 @@ function DevelopmentView({ districts, districtMeta }: { districts: MyDistrictNod
         </div>
       )}
 
-      <Segmented<"coverage" | "gaps" | "stalled" | "due">
+      <Segmented<"coverage" | "gaps" | "stalled" | "due" | "readiness">
         value={tab}
         onChange={setTab}
         options={[
@@ -516,6 +517,7 @@ function DevelopmentView({ districts, districtMeta }: { districts: MyDistrictNod
           { value: "gaps", label: "Needs a plan", count: s.key_gap_total },
           { value: "stalled", label: "Stalled", count: s.stalled_total },
           { value: "due", label: "Due soon", count: s.due_soon_total },
+          { value: "readiness", label: "Readiness", count: readyQ.data?.summary.ready_now ?? 0 },
         ]}
       />
 
@@ -523,9 +525,63 @@ function DevelopmentView({ districts, districtMeta }: { districts: MyDistrictNod
         <DevCoverageTable rows={data.districts} districtName={districtName} doName={doName} />
       ) : tab === "gaps" ? (
         <DevGapTable rows={data.gaps} districtName={districtName} onOpen={openRow} />
+      ) : tab === "readiness" ? (
+        readyQ.isLoading ? <Skeleton className="h-64 w-full" /> : <ReadinessTable rows={readyQ.data?.rows ?? []} summary={readyQ.data?.summary} districtName={districtName} onOpen={openRow} />
       ) : (
         <DevGoalTable rows={tab === "stalled" ? data.stalled : data.due_soon} overdue={tab === "stalled"} districtName={districtName} onOpen={openRow} />
       )}
+    </div>
+  );
+}
+
+// Assessment readiness from acknowledged NLAs: who the tool says is ready to
+// promote, ready-now first, with a reassessment-due flag for stale snapshots.
+function ReadinessTable({ rows, summary, districtName, onOpen }: {
+  rows: ReadinessRow[];
+  summary?: { total: number; ready_now: number; ready_soon: number; developing: number; reassess_due: number };
+  districtName: (id: string | null) => string;
+  onOpen: (m: { member_id: string | null; store_id: string; name: string; role: LadderKey | null }) => void;
+}) {
+  if (rows.length === 0) return <EmptyState title="No assessment readiness yet" description="When a Next Level Assessment is acknowledged, the person's readiness shows here." />;
+  const fmt = (d: string | null) => (d ? new Date(d).toLocaleDateString(undefined, { month: "short", year: "numeric" }) : "—");
+  return (
+    <div className="space-y-2">
+      {summary && (
+        <p className="text-xs text-ink-muted">
+          <span className="font-semibold text-emerald-600">{summary.ready_now}</span> ready now ·{" "}
+          <span className="font-semibold text-amber-600">{summary.ready_soon}</span> ready soon ·{" "}
+          {summary.developing} developing{summary.reassess_due > 0 ? <> · <span className="font-semibold text-amber-700">{summary.reassess_due}</span> due for reassessment</> : null}
+        </p>
+      )}
+      <div className="overflow-hidden rounded-xl border border-border bg-surface">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-left text-[10px] uppercase tracking-wide text-ink-subtle">
+                <th className="px-4 py-2">Name</th><th className="px-4 py-2">Store / District</th>
+                <th className="px-4 py-2">For</th><th className="px-4 py-2">Readiness</th><th className="px-4 py-2">Assessed</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {rows.map((m) => {
+                const bm = READINESS_BAND_META[m.readiness_band];
+                return (
+                  <tr key={m.member_id} className="cursor-pointer hover:bg-surface-muted" onClick={() => onOpen({ member_id: m.member_id, store_id: m.store_id ?? "", name: m.name, role: m.role })}>
+                    <td className="px-4 py-2.5 font-semibold text-heading">{m.name}</td>
+                    <td className="px-4 py-2.5 text-ink-2">#{m.store_number} <span className="text-ink-muted">· {districtName(m.district_id)}</span></td>
+                    <td className="px-4 py-2.5 text-ink-2">{m.target_role.toUpperCase()}</td>
+                    <td className="px-4 py-2.5"><SChip label={bm.label} chip={bm.chip} /></td>
+                    <td className="px-4 py-2.5 text-ink-2">
+                      {fmt(m.snapshot_date)}
+                      {m.reassess_due && <span className="ml-2 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-800">due</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }

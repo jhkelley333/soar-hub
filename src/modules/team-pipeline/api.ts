@@ -159,6 +159,14 @@ export function fetchDevRollup(): Promise<DevRollupResponse> {
   return request(`${FN}?action=dev-rollup`);
 }
 
+// ── Assessment readiness (from acknowledged NLAs) ─────────────────────────────
+export function fetchReadinessRollup(): Promise<import("./types").ReadinessRollupResponse> {
+  return request(`${FN}?action=readiness-rollup`);
+}
+export function fetchMemberReadiness(memberId: string): Promise<{ readiness: import("./types").MemberReadiness | null }> {
+  return request(`${FN}?action=member-readiness&member_id=${encodeURIComponent(memberId)}`);
+}
+
 // ── Time-in-role dashboard ────────────────────────────────────────────────────
 export function fetchTenureRollup(): Promise<TenureRollupResponse> {
   return request(`${FN}?action=tenure-rollup`);
