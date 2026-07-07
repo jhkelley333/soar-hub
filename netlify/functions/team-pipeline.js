@@ -908,6 +908,124 @@ async function removeDevItem(supa, user, body) {
   return { ok: true };
 }
 
+// ── Signal-assisted risk ──────────────────────────────────────────────────────
+// Surface data-driven risk cues from data already in the pipeline (corrective
+// actions, aspiration, tenure, ratings, development-plan coverage) so leaders
+// flag with evidence instead of guessing — and so we can review people the
+// data flags that a leader hasn't. Pure function; no I/O.
+const RISK_ORDER = { na: 0, low: 1, medium: 2, immediate: 3 };
+const CA_ORDER = { verbal: 1, written: 2, final: 3, pip: 4 };
+const riskFromRank = (rank) => Object.keys(RISK_ORDER).find((k) => RISK_ORDER[k] === rank) || "na";
+
+// m: { role, perf, potential, aspiration, flight_risk, hire_date }
+// capLevels: open corrective-action levels for the member; hasPlan: active PDP.
+function computeSignals(m, capLevels, hasPlan) {
+  const signals = [];
+  const add = (key, severity, label, detail, implies) => signals.push({ key, severity, label, detail, implies });
+  const now = Date.now();
+  const tenureDays = m.hire_date ? Math.max(0, Math.round((now - new Date(m.hire_date).getTime()) / 86_400_000)) : null;
+
+  const levels = capLevels || [];
+  const worstCa = levels.reduce((mx, l) => Math.max(mx, CA_ORDER[l] || 0), 0);
+  if (worstCa >= 3) add("discipline", "elevated", `Active ${worstCa === 4 ? "PIP" : "final warning"}`, "Unresolved corrective action on file", "immediate");
+  else if (levels.length >= 2) add("discipline", "elevated", "Multiple active write-ups", `${levels.length} open corrective actions`, "medium");
+  else if (levels.length === 1) add("discipline", "watch", "Active corrective action", "1 open write-up", "low");
+
+  if (m.aspiration === "looking") add("looking", "elevated", "Signaled they're looking", "Aspiration set to Looking", "immediate");
+
+  if (tenureDays != null && tenureDays < 90) add("newhire", "watch", "New hire (<90 days)", "Onboarding ramp — higher early-attrition risk", "low");
+  else if (tenureDays != null && tenureDays > 1095 && m.aspiration === "current") add("tenure", "watch", "3+ years, aiming to stay", "Long tenure with no stated next step — check engagement", "low");
+
+  const star = (m.perf ?? 0) >= 4 && (m.potential ?? 0) >= 4;
+  if (star && !hasPlan) add("star_noplan", "elevated", "Top talent, no development plan", "High performer + potential with no PDP — retention risk", "medium");
+
+  if (m.perf != null && m.perf <= 2) add("lowperf", "watch", "Low performance rating", `Performance ${m.perf}/5`, "medium");
+
+  const suggestedRank = signals.reduce((mx, s) => Math.max(mx, RISK_ORDER[s.implies] || 0), 0);
+  const suggested = riskFromRank(suggestedRank);
+  const gap = suggestedRank > (RISK_ORDER[m.flight_risk] || 0);
+  return { signals, suggested, gap };
+}
+
+// Open corrective-action levels per member id, for a set of member ids.
+async function openCaLevelsByMember(supa, memberIds) {
+  const out = new Map();
+  if (!memberIds.length) return out;
+  const rows = await fetchAll(() => supa.from("tp_corrective_actions")
+    .select("team_member_id, level").neq("status", "closed").in("team_member_id", memberIds));
+  for (const r of rows || []) {
+    const arr = out.get(r.team_member_id);
+    if (arr) arr.push(r.level); else out.set(r.team_member_id, [r.level]);
+  }
+  return out;
+}
+
+async function memberSignals(supa, user, memberId) {
+  if (!memberId) return { error: "Missing team member.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  if (!(await memberInScope(supa, scope, memberId))) return { error: "That team member is outside your scope.", status: 403 };
+  const { data: m } = await supa.from("tp_team_members")
+    .select("role, perf, potential, aspiration, flight_risk, hire_date").eq("id", memberId).single();
+  const capMap = await openCaLevelsByMember(supa, [memberId]);
+  const { data: plan } = await supa.from("tp_dev_plans").select("id").eq("member_id", memberId).eq("status", "active").maybeSingle();
+  return computeSignals(m, capMap.get(memberId) || [], !!plan);
+}
+
+// Scope-wide review queue: everyone with at least one signal, gaps (data flags
+// higher than the manual risk) first. The leadership "who should I look at?".
+async function riskReview(supa, user) {
+  const scope = await storesForUser(supa, user);
+  const ids = scope.all ? null : Array.from(scope.ids);
+  const empty = { rows: [], summary: { total: 0, gaps: 0 } };
+  if (ids && ids.length === 0) return empty;
+
+  const members = await fetchAll(() => {
+    let q = supa.from("tp_team_members")
+      .select("id, store_id, full_name, role, perf, potential, aspiration, flight_risk, hire_date").neq("status", "terminated");
+    if (ids) q = q.in("store_id", ids);
+    return q;
+  });
+  const memberIds = (members || []).map((m) => m.id);
+  const [capMap, planRows, storeRows] = await Promise.all([
+    openCaLevelsByMember(supa, memberIds),
+    fetchAll(() => {
+      let q = supa.from("tp_dev_plans").select("member_id").eq("status", "active");
+      if (ids) q = q.in("store_id", ids);
+      return q;
+    }),
+    (async () => {
+      let q = supa.from("stores").select("id, number, name, district_id").eq("is_active", true);
+      if (ids) q = q.in("id", ids);
+      const { data } = await q;
+      return data || [];
+    })(),
+  ]);
+  const planned = new Set((planRows || []).map((p) => p.member_id));
+  const storeById = new Map(storeRows.map((s) => [s.id, s]));
+
+  const rows = [];
+  for (const m of members || []) {
+    const { signals, suggested, gap } = computeSignals(m, capMap.get(m.id) || [], planned.has(m.id));
+    if (!signals.length) continue;
+    const st = storeById.get(m.store_id);
+    const top = signals.slice().sort((a, b) => (RISK_ORDER[b.implies] || 0) - (RISK_ORDER[a.implies] || 0))[0];
+    rows.push({
+      member_id: m.id, name: m.full_name, store_id: m.store_id,
+      store_number: st?.number ?? null, store_name: st?.name ?? null, district_id: st?.district_id ?? null,
+      role: m.role, flight_risk: m.flight_risk, suggested, gap,
+      top_signal: top, signal_count: signals.length,
+      // Enough of the member overlay for the drawer to open from the row.
+      perf: m.perf, potential: m.potential, aspiration: m.aspiration, hire_date: m.hire_date,
+    });
+  }
+  rows.sort((a, b) =>
+    (Number(b.gap) - Number(a.gap)) ||
+    ((RISK_ORDER[b.suggested] || 0) - (RISK_ORDER[a.suggested] || 0)) ||
+    (b.signal_count - a.signal_count) ||
+    String(a.store_number).localeCompare(String(b.store_number), undefined, { numeric: true }));
+  return { rows, summary: { total: rows.length, gaps: rows.filter((r) => r.gap).length } };
+}
+
 // ── ATS roster bulk import ────────────────────────────────────────────────────
 // Replaces the seed-from-profiles stop-gap. Rows carry an employee + store
 // number + role; we map the ATS role title onto a ladder key, resolve the
@@ -1166,6 +1284,8 @@ export const handler = async (event) => {
       if (action === "snapshots") return unwrap(await listSnapshots(supa, user));
       if (action === "snapshot-rows") return unwrap(await snapshotRows(supa, user, params));
       if (action === "dev-plan") return unwrap(await getDevPlan(supa, user, params.member_id));
+      if (action === "member-signals") return unwrap(await memberSignals(supa, user, params.member_id));
+      if (action === "risk-review") return unwrap(await riskReview(supa, user));
       if (action === "settings") return unwrap(await getSettings(supa, user));
       return respond(400, { error: `Unknown action: ${action}` });
     }

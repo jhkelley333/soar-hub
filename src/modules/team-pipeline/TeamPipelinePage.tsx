@@ -17,12 +17,13 @@ import { Segmented } from "@/shared/ui/Segmented";
 import { useToast } from "@/shared/ui/Toaster";
 import { fetchMyTree } from "@/modules/my-stores/api";
 import type { MyDistrictNode, MyStoreNode } from "@/modules/my-stores/types";
-import { fetchGms, fetchRollup, fetchSuccession, fetchStoreRoster, fetchSnapshots, fetchSnapshotRows, takeSnapshot, lockSnapshot, seedFromProfiles, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings } from "./api";
+import { fetchGms, fetchRollup, fetchSuccession, fetchStoreRoster, fetchSnapshots, fetchSnapshotRows, fetchRiskReview, takeSnapshot, lockSnapshot, seedFromProfiles, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings } from "./api";
 import { AccountBadge, MemberDrawerProvider, useMemberDrawer } from "./MemberDrawer";
 import { RosterImport } from "./RosterImport";
 import {
   ASPIRATION_META, LADDER, LADDER_BY_KEY, READINESS_META, REQ_STATUS_META, RISK_META, ROLE_MIX, roleBelow,
-  type AtRiskMember, type GmSeat, type LadderKey, type Requisition, type RiskCounts,
+  SIGNAL_SEVERITY_META,
+  type AtRiskMember, type GmSeat, type LadderKey, type Requisition, type RiskCounts, type RiskReviewRow,
   type RollupResponse, type SnapshotRow, type StoreRollup, type SuccessionResponse, type TeamMember,
 } from "./types";
 
@@ -196,9 +197,16 @@ type DistrictMeta = Map<string, { regionName: string | null; doName: string | nu
 function SuccessionView({ districts, districtMeta }: { districts: MyDistrictNode[]; districtMeta: DistrictMeta }) {
   const { open } = useMemberDrawer();
   const q = useQuery({ queryKey: ["tp-succession"], queryFn: fetchSuccession, staleTime: 60_000 });
-  const [tab, setTab] = useState<"exposure" | "atrisk">("exposure");
+  const reviewQ = useQuery({ queryKey: ["tp-risk-review"], queryFn: fetchRiskReview, staleTime: 60_000 });
+  const [tab, setTab] = useState<"exposure" | "atrisk" | "signals">("exposure");
   const districtName = (id: string | null) => (id ? districts.find((d) => d.id === id)?.name ?? "—" : "Unassigned");
   const doName = (id: string | null) => (id ? districtMeta.get(id)?.doName ?? null : null);
+  const openReviewRow = (m: RiskReviewRow) => open({
+    id: m.member_id, store_id: m.store_id, full_name: m.name, role: m.role, flight_risk: m.flight_risk,
+    risk_reasons: [], aspiration: m.aspiration, perf: m.perf, potential: m.potential, backfill: null,
+    status: "active", profile_id: null, external_id: null, email: null, phone: null, hire_date: m.hire_date,
+    comment: null, comment_by: null, created_at: "", updated_at: "",
+  } as TeamMember);
 
   if (q.isLoading) return <Skeleton className="h-64 w-full" />;
   if (q.isError) return <EmptyState title="Couldn't load succession" description={(q.error as Error)?.message ?? "Try again."} />;
@@ -215,18 +223,19 @@ function SuccessionView({ districts, districtMeta }: { districts: MyDistrictNode
         <SuccTile label="People at risk" value={s.at_risk_total} sub={`${s.at_risk_immediate} immediate · ${s.at_risk_medium} medium`} tone={s.at_risk_immediate > 0 ? "red" : s.at_risk_medium > 0 ? "amber" : "ok"} />
       </div>
 
-      <Segmented<"exposure" | "atrisk">
+      <Segmented<"exposure" | "atrisk" | "signals">
         value={tab}
         onChange={setTab}
         options={[
           { value: "exposure", label: "Backfill exposure", count: s.gm_exposed },
           { value: "atrisk", label: "At-risk people", count: s.at_risk_total },
+          { value: "signals", label: "Risk signals", count: reviewQ.data?.summary.gaps ?? 0 },
         ]}
       />
 
       {tab === "exposure" ? (
         <ExposureTable seats={data.gm_seats} districtName={districtName} doName={doName} onOpenStore={undefined} />
-      ) : (
+      ) : tab === "atrisk" ? (
         <AtRiskTable people={data.at_risk} districtName={districtName} onOpen={(m) => {
           // Open the member card. The drawer takes a TeamMember; we synthesize
           // the minimum it needs from the at-risk row.
@@ -235,6 +244,10 @@ function SuccessionView({ districts, districtMeta }: { districts: MyDistrictNode
             backfill: m.backfill, status: "active", profile_id: null, external_id: null, email: null,
             phone: null, hire_date: null, comment: null, comment_by: null, created_at: "", updated_at: "" } as TeamMember);
         }} />
+      ) : reviewQ.isLoading ? (
+        <Skeleton className="h-64 w-full" />
+      ) : (
+        <RiskReviewTable rows={reviewQ.data?.rows ?? []} districtName={districtName} onOpen={openReviewRow} />
       )}
     </div>
   );
@@ -370,6 +383,64 @@ function AtRiskTable({ people, districtName, onOpen }: {
 
 function SChip({ label, chip }: { label: string; chip: string }) {
   return <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset", chip)}>{label}</span>;
+}
+
+// Signal-assisted risk review — people the data flags, gaps (data > manual
+// flag) first. A "who should I look at?" queue; click a row to open the card.
+function RiskReviewTable({ rows, districtName, onOpen }: {
+  rows: RiskReviewRow[];
+  districtName: (id: string | null) => string;
+  onOpen: (m: RiskReviewRow) => void;
+}) {
+  if (rows.length === 0) return <EmptyState title="No risk signals" description="Nobody in your scope is showing data-driven risk cues right now." />;
+  return (
+    <div className="space-y-2">
+      <p className="text-xs text-ink-muted">
+        Cues from the data — discipline, stated aspiration, tenure, ratings, and development-plan coverage. A{" "}
+        <span className="font-semibold text-red-600">gap</span> means the data flags higher than the current manual risk. Click a row to review.
+      </p>
+      <div className="overflow-hidden rounded-xl border border-border bg-surface">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-border text-left text-[10px] uppercase tracking-wide text-ink-subtle">
+                <th className="px-4 py-2">Name</th><th className="px-4 py-2">Role</th><th className="px-4 py-2">Store / District</th>
+                <th className="px-4 py-2">Top signal</th><th className="px-4 py-2">Manual</th><th className="px-4 py-2">Suggested</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {rows.map((m) => {
+                const sev = SIGNAL_SEVERITY_META[m.top_signal.severity];
+                return (
+                  <tr key={m.member_id} className={cn("cursor-pointer hover:bg-surface-muted", m.gap && "bg-red-50/30")} onClick={() => onOpen(m)}>
+                    <td className="px-4 py-2.5 font-semibold text-heading">
+                      {m.name}
+                      {m.gap && <span className="ml-2 rounded-full bg-red-100 px-1.5 py-0.5 text-[10px] font-bold text-red-700">GAP</span>}
+                    </td>
+                    <td className="px-4 py-2.5 text-ink-2">{LADDER_BY_KEY[m.role]?.label ?? m.role}</td>
+                    <td className="px-4 py-2.5 text-ink-2">#{m.store_number} <span className="text-ink-muted">· {districtName(m.district_id)}</span></td>
+                    <td className="px-4 py-2.5">
+                      <span className="inline-flex items-center gap-1.5">
+                        <span className={cn("h-1.5 w-1.5 shrink-0 rounded-full", sev.dot)} />
+                        <span className="text-ink-2">{m.top_signal.label}</span>
+                        {m.signal_count > 1 && <span className="text-[11px] text-ink-subtle">+{m.signal_count - 1}</span>}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5"><SChip label={RISK_META[m.flight_risk].short} chip={RISK_META[m.flight_risk].chip} /></td>
+                    <td className="px-4 py-2.5">
+                      {m.gap
+                        ? <SChip label={RISK_META[m.suggested].short} chip={RISK_META[m.suggested].chip} />
+                        : <span className="text-ink-muted">—</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function Company({ districts, roll, meta, canWrite, onOpen }: { districts: MyDistrictNode[]; roll: RollupResponse["stores"]; meta: DistrictMeta; canWrite: boolean; onOpen: (id: string) => void }) {

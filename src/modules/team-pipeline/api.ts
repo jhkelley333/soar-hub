@@ -2,8 +2,8 @@
 import { supabase } from "@/lib/supabase";
 import type {
   CalibrationSnapshot, CaLevel, CaStatus, CorrectiveAction, DevItem, DevItemStatus, DevPlan, GmsResponse,
-  MemberPatch, Note, Readiness, Requisition, RollupResponse, SnapshotRow, StoreRosterResponse, Successor,
-  SuccessionResponse, TeamMember,
+  MemberPatch, MemberSignals, Note, Readiness, Requisition, RiskReviewResponse, RollupResponse, SnapshotRow,
+  StoreRosterResponse, Successor, SuccessionResponse, TeamMember,
 } from "./types";
 
 const FN = "/.netlify/functions/team-pipeline";
@@ -134,6 +134,14 @@ export function updateDevItem(itemId: string, patch: Partial<{ focus_area: strin
 }
 export function removeDevItem(itemId: string): Promise<{ ok: true }> {
   return request(`${FN}?action=remove-dev-item`, { method: "POST", body: JSON.stringify({ item_id: itemId }) });
+}
+
+// ── Signal-assisted risk ──────────────────────────────────────────────────────
+export function fetchMemberSignals(memberId: string): Promise<MemberSignals> {
+  return request(`${FN}?action=member-signals&member_id=${encodeURIComponent(memberId)}`);
+}
+export function fetchRiskReview(): Promise<RiskReviewResponse> {
+  return request(`${FN}?action=risk-review`);
 }
 
 // ATS roster import. Rows are the raw CSV cells; the backend resolves stores,

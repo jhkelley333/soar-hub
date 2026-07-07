@@ -187,6 +187,47 @@ export const DEV_ITEM_META: Record<DevItemStatus, { label: string; chip: string 
   in_progress: { label: "In progress", chip: "bg-blue-50 text-blue-700 ring-blue-200" },
   done: { label: "Done", chip: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
 };
+
+// ── Signal-assisted risk ──────────────────────────────────────────────────────
+export type SignalSeverity = "watch" | "elevated";
+export interface RiskSignal {
+  key: string;
+  severity: SignalSeverity;
+  label: string;
+  detail: string;
+  implies: FlightRisk;
+}
+export interface MemberSignals {
+  signals: RiskSignal[];
+  suggested: FlightRisk;
+  gap: boolean;
+}
+export interface RiskReviewRow {
+  member_id: string;
+  name: string;
+  store_id: string;
+  store_number: string | null;
+  store_name: string | null;
+  district_id: string | null;
+  role: LadderKey;
+  flight_risk: FlightRisk;
+  suggested: FlightRisk;
+  gap: boolean;
+  top_signal: RiskSignal;
+  signal_count: number;
+  perf: number | null;
+  potential: number | null;
+  aspiration: Aspiration;
+  hire_date: string | null;
+}
+export interface RiskReviewResponse {
+  rows: RiskReviewRow[];
+  summary: { total: number; gaps: number };
+}
+export const SIGNAL_SEVERITY_META: Record<SignalSeverity, { chip: string; dot: string }> = {
+  elevated: { chip: "bg-red-50 text-red-700 ring-red-200", dot: "bg-red-500" },
+  watch: { chip: "bg-amber-50 text-amber-800 ring-amber-200", dot: "bg-amber-500" },
+};
 export interface SuccessionResponse {
   at_risk: AtRiskMember[];
   gm_seats: GmSeat[];
