@@ -402,6 +402,19 @@ function rqWindowStart(iso, cadence) {
   return rqAddDays(RQ_FY_START, sw * 7);
 }
 
+// Last day of the current requirement window — the learner-facing "due" date.
+function rqWindowEnd(iso, cadence) {
+  const fyWeeks = RQ_PERIOD_WEEKS.reduce((a, b) => a + b, 0); // 52
+  if (cadence === "annual") return rqAddDays(RQ_FY_START, fyWeeks * 7 - 1);
+  const period = rqPeriod(iso);
+  if (!period) return rqAddDays(RQ_FY_START, fyWeeks * 7 - 1);
+  const nextQStart = Math.floor((period - 1) / 3) * 3 + 4; // first period of the next quarter
+  if (nextQStart > RQ_PERIOD_WEEKS.length) return rqAddDays(RQ_FY_START, fyWeeks * 7 - 1);
+  let sw = 0;
+  for (let i = 0; i < nextQStart - 1; i++) sw += RQ_PERIOD_WEEKS[i];
+  return rqAddDays(RQ_FY_START, sw * 7 - 1);
+}
+
 // Full "My Training" view: every published course with the caller's status
 // (not started / in progress / completed) plus whether it's required for their
 // role and still outstanding this window. Degrades gracefully pre-0174 (no
@@ -423,10 +436,46 @@ async function getMyTraining(supa, user) {
   if (ids.length) {
     const { data: enr } = await supa
       .from("qsr_enrollments")
-      .select("course_id, status, completed_at")
+      .select("id, course_id, status, completed_at")
       .eq("user_id", user.id).in("course_id", ids);
     for (const e of enr || []) enrByCourse.set(e.course_id, e);
   }
+
+  // Per-course completion percent for the caller's in-progress enrollments:
+  // cards touched / total cards. Only computed for in-progress courses so the
+  // catalog read stays one cheap query per table.
+  const inProg = [...enrByCourse.values()].filter((e) => e.status !== "completed");
+  const pctByCourse = new Map();
+  if (inProg.length) {
+    const courseIds = inProg.map((e) => e.course_id);
+    const { data: lessons } = await supa.from("qsr_lessons").select("id, course_id").in("course_id", courseIds);
+    const courseOfLesson = new Map((lessons || []).map((l) => [l.id, l.course_id]));
+    const lessonIds = (lessons || []).map((l) => l.id);
+    const totalByCourse = new Map();
+    const courseOfCard = new Map();
+    if (lessonIds.length) {
+      const { data: cards } = await supa.from("qsr_cards").select("id, lesson_id").in("lesson_id", lessonIds);
+      for (const cd of cards || []) {
+        const cid = courseOfLesson.get(cd.lesson_id);
+        if (!cid) continue;
+        courseOfCard.set(cd.id, cid);
+        totalByCourse.set(cid, (totalByCourse.get(cid) || 0) + 1);
+      }
+    }
+    const { data: prog } = await supa.from("qsr_card_progress")
+      .select("enrollment_id, card_id").in("enrollment_id", inProg.map((e) => e.id));
+    const doneByCourse = new Map();
+    for (const p of prog || []) {
+      const cid = courseOfCard.get(p.card_id);
+      if (!cid) continue;
+      doneByCourse.set(cid, (doneByCourse.get(cid) || 0) + 1);
+    }
+    for (const [cid, total] of totalByCourse) {
+      if (!total) continue;
+      pctByCourse.set(cid, Math.min(100, Math.round(((doneByCourse.get(cid) || 0) / total) * 100)));
+    }
+  }
+
   const role = String(user.role);
   const today = new Date().toISOString().slice(0, 10);
   const courses = list.map((c) => {
@@ -434,16 +483,20 @@ async function getMyTraining(supa, user) {
     const status = e ? (e.status === "completed" ? "completed" : "in_progress") : "not_started";
     const required = !!(c.requirement_cadence && Array.isArray(c.requirement_roles) && c.requirement_roles.includes(role));
     let outstanding = false;
+    let due_date = null;
     if (required) {
       const windowStart = rqWindowStart(today, c.requirement_cadence);
       const doneThisWindow = !!(e && e.status === "completed" && e.completed_at && e.completed_at >= `${windowStart}T00:00:00Z`);
       outstanding = !doneThisWindow;
+      if (outstanding) due_date = rqWindowEnd(today, c.requirement_cadence);
     }
     return {
       id: c.id, title: c.title, category: c.category, description: c.description,
       est_minutes: c.est_minutes, points: c.points,
       status, completed_at: e?.completed_at ?? null,
       required, cadence: c.requirement_cadence ?? null, outstanding,
+      due_date,
+      progress_pct: status === "completed" ? 100 : status === "in_progress" ? (pctByCourse.get(c.id) ?? null) : 0,
     };
   });
   return { courses };

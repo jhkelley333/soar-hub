@@ -38,7 +38,7 @@ function exportCsv(rows: Record<string, string>[], filename: string) {
   URL.revokeObjectURL(url);
 }
 
-export function ManagerDashboardPage() {
+export function ManagerDashboardPage({ embedded = false }: { embedded?: boolean } = {}) {
   const toast = useToast();
   const { profile } = useAuth();
   const isAdmin = profile?.role === "admin";
@@ -66,9 +66,11 @@ export function ManagerDashboardPage() {
   return (
     <div className="mx-auto max-w-5xl space-y-6">
       <div className="flex items-center justify-between">
-        <Link to={isAdmin ? "/qsr" : "/my-training"} className="inline-flex items-center gap-1.5 font-qsr-ui text-sm text-ink-muted hover:text-ink">
-          <ArrowLeft className="h-4 w-4" /> {isAdmin ? "Soar MyLearning" : "My Training"}
-        </Link>
+        {embedded ? <span /> : (
+          <Link to={isAdmin ? "/qsr" : "/training"} className="inline-flex items-center gap-1.5 font-qsr-ui text-sm text-ink-muted hover:text-ink">
+            <ArrowLeft className="h-4 w-4" /> {isAdmin ? "Soar MyLearning" : "Training"}
+          </Link>
+        )}
         <div className="flex items-center gap-2">
           <Link to="/qsr/share" className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 font-qsr-ui text-sm font-semibold text-ink hover:border-qsr-azure">
             <QrCode className="h-4 w-4" /> Share codes
@@ -79,10 +81,12 @@ export function ManagerDashboardPage() {
         </div>
       </div>
 
-      <div className="flex items-center gap-2">
-        <BarChart3 className="h-5 w-5 text-qsr-azure" />
-        <h1 className="font-qsr-display text-2xl font-bold text-ink">Manager dashboard</h1>
-      </div>
+      {!embedded && (
+        <div className="flex items-center gap-2">
+          <BarChart3 className="h-5 w-5 text-qsr-azure" />
+          <h1 className="font-qsr-display text-2xl font-bold text-ink">Manager dashboard</h1>
+        </div>
+      )}
 
       {/* KPIs */}
       <div className="grid gap-4 sm:grid-cols-4">

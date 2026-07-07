@@ -342,6 +342,8 @@ export interface MyTrainingCourse {
   required: boolean;
   cadence: string | null; // 'quarterly' | 'annual' | null
   outstanding: boolean; // required AND not completed in the current window
+  due_date: string | null; // last day of the current window, when outstanding
+  progress_pct: number | null; // cards touched / total cards (null if unknown)
 }
 export function fetchMyTraining(): Promise<{ courses: MyTrainingCourse[] }> {
   return learnFetch(`${LEARN_FN}?action=mytraining`);

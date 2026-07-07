@@ -58,7 +58,7 @@ export function NlaComparePage() {
   if (q.isLoading) return <div className="mx-auto max-w-5xl space-y-3"><Skeleton className="h-16 w-full" /><Skeleton className="h-64 w-full" /></div>;
   if (q.isError) return (
     <div className="mx-auto max-w-2xl">
-      <BackLink onClick={() => navigate("/nla")} />
+      <BackLink onClick={() => navigate("/training?tab=assessments")} />
       <EmptyState title="Comparison not ready" description={(q.error as Error)?.message ?? "Both sides must submit first."} />
     </div>
   );
@@ -71,7 +71,7 @@ export function NlaComparePage() {
 
   return (
     <div className="mx-auto max-w-5xl">
-      <BackLink onClick={() => navigate("/nla")} />
+      <BackLink onClick={() => navigate("/training?tab=assessments")} />
       {/* header */}
       <div className="mb-5">
         <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-ink-subtle">SOAR Hub · Next Level Assessment</div>
