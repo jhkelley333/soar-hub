@@ -69,3 +69,33 @@ export function acknowledgeNla(id: string): Promise<{ ok: true; both_acked: bool
 export function fetchNlaPlan(id: string): Promise<NlaPlan> {
   return request(`${FN}?action=plan&assessment_id=${encodeURIComponent(id)}`);
 }
+
+// ── Admin: review / edit / preview the instruments ───────────────────────────
+export interface NlaAdminTemplate extends NlaTemplate {
+  status: "draft" | "active" | "retired";
+  effective_date: string | null;
+  created_at: string;
+  item_count: number;
+  assessment_count: number;
+}
+export function fetchNlaAdminTemplates(): Promise<{ templates: NlaAdminTemplate[] }> {
+  return request(`${FN}?action=admin-templates`);
+}
+export function fetchNlaAdminTemplate(id: string): Promise<{ template: NlaAdminTemplate; items: NlaTemplateItem[]; assessment_count: number }> {
+  return request(`${FN}?action=admin-template&template_id=${encodeURIComponent(id)}`);
+}
+export function updateNlaTemplate(id: string, patch: Partial<{ title: string; status: "draft" | "active" | "retired" }>): Promise<{ ok: true }> {
+  return request(`${FN}?action=admin-update-template`, { method: "POST", body: JSON.stringify({ template_id: id, ...patch }) });
+}
+export function updateNlaTemplateItem(itemId: string, patch: Partial<{ name: string; category: string; description: string | null; example: string | null; sort_order: number }>): Promise<{ ok: true }> {
+  return request(`${FN}?action=admin-update-item`, { method: "POST", body: JSON.stringify({ item_id: itemId, patch }) });
+}
+export function addNlaTemplateItem(templateId: string, item: { category: string; name: string; description?: string | null; example?: string | null }): Promise<{ ok: true }> {
+  return request(`${FN}?action=admin-add-item`, { method: "POST", body: JSON.stringify({ template_id: templateId, ...item }) });
+}
+export function removeNlaTemplateItem(itemId: string): Promise<{ ok: true }> {
+  return request(`${FN}?action=admin-remove-item`, { method: "POST", body: JSON.stringify({ item_id: itemId }) });
+}
+export function cloneNlaTemplate(id: string): Promise<{ ok: true; template_id: string; version: number }> {
+  return request(`${FN}?action=admin-clone-template`, { method: "POST", body: JSON.stringify({ template_id: id }) });
+}

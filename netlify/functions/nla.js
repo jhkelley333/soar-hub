@@ -59,6 +59,63 @@ async function visibleStoreIds(supa, uid) {
 // 0217; its entry here is a no-op wherever that already ran.
 const BUILTIN_TEMPLATES = [
   {
+    // From the SONIC NLA "To: Shift Manager" PDF — the step up from Crew
+    // Leader. Two Inspire-template artifacts ("Sports Bar") generalized to
+    // the store, matching how the design prototype rendered the same lines.
+    target_role: "shift", version: 1,
+    title: "Crew Leader to Shift Manager",
+    items: [
+      ["Brand Purpose", "listen", "Attentive Listening",
+        "Gives people full attention; uses paraphrasing and repeats things back to ensure understanding; allows people to finish their statements before responding or asking questions.",
+        "Pays attention to what is being said; listens until the speaker finishes, then responds; maintains appropriate body language and facial expression."],
+      ["Brand Purpose", "respect", "Respectful Communication",
+        "All communications are professional and respectful, no hidden agendas; keeps others informed to ensure the most inspiring, engaging working environment.",
+        "Keeps management and team well informed; is open and honest; presents themselves professionally at all times."],
+      ["Brand Purpose", "team", "Teamwork",
+        "Consistently treats people with respect, maintains a positive attitude and makes work fun; shows appreciation and recognition to team members; works hard with the team and cross-functionally to meet objectives; constantly encourages.",
+        "Recognizes team members for accomplishments; creates positive morale on the team; participates in meetings."],
+      ["Leadership", "inspire", "Inspiring Others",
+        "Emphasizes the importance of people's contributions; lets people know why their work matters and how it benefits themselves and others; ties work to people's personal and career goals, interests and brand values.",
+        "Relates well to people; prioritizes team and guest service; assists team with setting and achieving goals."],
+      ["Leadership", "manageperf", "Managing Performance",
+        "Monitors performance and metrics; gives in-the-moment and end-of-shift feedback.",
+        "Completes team member appraisals on time with specific examples; sets goals for team members throughout the shift and follows up after."],
+      ["Leadership", "conflict", "Resolves Conflict",
+        "Addresses conflicts before they escalate into major problems; helps people find common goals and interests; finds mutually agreeable solutions; shows appreciation for the differences of others.",
+        "Addresses conflict as it arises; does not ignore warning signs; maintains composure."],
+      ["Leadership", "collab", "Collaborates with Others",
+        "Works well with others; listens to opposing viewpoints; remains composed.",
+        "Works well with and supports teams across the store; holds self and team to be team players."],
+      ["Gets Results", "decision", "Decision Making",
+        "Bases decisions on a systematic review of relevant facts; avoids assumptions, emotional decisions or rushing to judgment; provides clear rationale for decisions.",
+        "Makes good decisions in a timely manner; effectively reviews facts; trusts self to make the right decisions; knows when to ask for guidance."],
+      ["Gets Results", "accept", "Accepting Responsibility",
+        "Takes accountability for delivering on commitments; owns mistakes and uses them as opportunities for learning and finding solutions; openly discusses actions and their consequences, good and bad.",
+        "Accepts accountability for team performance and results; celebrates successes and works to improve opportunities."],
+      ["Innovates", "initiative", "Demonstrates Initiative",
+        "Takes action without being prompted; handles problems independently; resolves issues without relying on extensive help; does more than is expected or asked.",
+        "Seeks and uses feedback to improve performance; has a passion for learning and growing; actively works on team improvement."],
+      ["Innovates", "problem", "Problem Solving",
+        "Breaks down large problems into smaller, more manageable components; identifies the key factors that influence the viability of different solutions; clarifies the information needed to solve problems.",
+        "Attentive to the details of the problem; effectively identifies potential solutions; keeps working until the problem is solved."],
+      ["Builds Talent", "delegate", "Delegation",
+        "Provides people with clear objectives and lets them take ownership of their goals; gives a mix of tasks that challenge but do not overwhelm; acts as a resource by development level.",
+        "Provides clear direction; monitors progress and offers timely feedback."],
+      ["Builds Talent", "develop", "Develops Talent",
+        "Invests time and resources into building team capabilities; helps people define career goals and establish development plans; gives constructive, developmental feedback and advice; delegates tasks that challenge without overwhelming.",
+        "Takes initiative with team training; ensures proper training takes place during the shift."],
+      ["Technical Skills", "ops", "Operations Knowledge",
+        "Supports the AGM and GM in store procedure execution. Holds the team accountable for maintaining standards at a high level.",
+        null],
+      ["Technical Skills", "pl", "P&L Knowledge",
+        "Understands the biggest drivers in food costs. Can speak to the sales budget and MCI. Schedules effectively to manage labor costs in their department.",
+        null],
+      ["Technical Skills", "training", "Training Execution",
+        "Supports the management of the training program; ensures all team members complete proper training; keeps training materials and job aids current and available.",
+        null],
+    ],
+  },
+  {
     target_role: "gm", version: 1,
     title: "First Assistant Manager to General Manager",
     items: [
@@ -166,6 +223,133 @@ async function listTemplates(supa) {
   const seen = new Set(); const out = [];
   for (const t of data || []) { if (seen.has(t.target_role)) continue; seen.add(t.target_role); out.push(t); }
   return { templates: out };
+}
+
+// ── Admin: review / edit / preview the instruments ────────────────────────────
+// Text edits apply in place (typo fixes show on historical assessments too —
+// acceptable for wording). Structural changes go through "clone as new
+// version": the picker always serves the highest ACTIVE version per role.
+const isAdminUser = (user) => String(user.role) === "admin";
+const slugify = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "item";
+
+async function adminTemplates(supa, user) {
+  if (!isAdminUser(user)) return { error: "Admins only.", status: 403 };
+  await ensureBuiltinTemplates(supa);
+  const { data: tpls } = await supa.from("tp_nla_templates").select("*")
+    .order("target_role", { ascending: true }).order("version", { ascending: false });
+  const ids = (tpls || []).map((t) => t.id);
+  const counts = new Map(); const uses = new Map();
+  if (ids.length) {
+    const { data: items } = await supa.from("tp_nla_template_items").select("template_id").in("template_id", ids);
+    for (const i of items || []) counts.set(i.template_id, (counts.get(i.template_id) || 0) + 1);
+    const { data: assess } = await supa.from("tp_nla_assessments").select("template_id").in("template_id", ids);
+    for (const a of assess || []) uses.set(a.template_id, (uses.get(a.template_id) || 0) + 1);
+  }
+  return { templates: (tpls || []).map((t) => ({ ...t, item_count: counts.get(t.id) || 0, assessment_count: uses.get(t.id) || 0 })) };
+}
+
+async function adminTemplate(supa, user, params) {
+  if (!isAdminUser(user)) return { error: "Admins only.", status: 403 };
+  const id = params?.template_id;
+  if (!id) return { error: "Missing template.", status: 400 };
+  const { data: tpl } = await supa.from("tp_nla_templates").select("*").eq("id", id).maybeSingle();
+  if (!tpl) return { error: "Template not found.", status: 404 };
+  const { data: items } = await supa.from("tp_nla_template_items")
+    .select("*").eq("template_id", id).order("sort_order", { ascending: true });
+  const { count } = await supa.from("tp_nla_assessments").select("id", { count: "exact", head: true }).eq("template_id", id);
+  return { template: tpl, items: items || [], assessment_count: count || 0 };
+}
+
+const TEMPLATE_STATUS = new Set(["draft", "active", "retired"]);
+async function adminUpdateTemplate(supa, user, body) {
+  if (!isAdminUser(user)) return { error: "Admins only.", status: 403 };
+  const id = body?.template_id;
+  if (!id) return { error: "Missing template.", status: 400 };
+  const patch = {};
+  if ("title" in (body || {})) { const t = String(body.title || "").trim(); if (t) patch.title = t.slice(0, 200); }
+  if ("status" in (body || {}) && TEMPLATE_STATUS.has(body.status)) patch.status = body.status;
+  if (!Object.keys(patch).length) return { error: "Nothing to update.", status: 400 };
+  const { data, error } = await supa.from("tp_nla_templates").update(patch).eq("id", id).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, template: data };
+}
+
+async function adminUpdateItem(supa, user, body) {
+  if (!isAdminUser(user)) return { error: "Admins only.", status: 403 };
+  const id = body?.item_id;
+  if (!id) return { error: "Missing competency.", status: 400 };
+  const p = body?.patch && typeof body.patch === "object" ? body.patch : {};
+  const patch = {};
+  if ("name" in p) { const n = String(p.name || "").trim(); if (n) patch.name = n.slice(0, 200); }
+  if ("category" in p) { const c = String(p.category || "").trim(); if (c) patch.category = c.slice(0, 80); }
+  if ("description" in p) patch.description = p.description == null || p.description === "" ? null : String(p.description).slice(0, 2000);
+  if ("example" in p) patch.example = p.example == null || p.example === "" ? null : String(p.example).slice(0, 2000);
+  if ("sort_order" in p) { const n = parseInt(p.sort_order, 10); if (!Number.isNaN(n)) patch.sort_order = Math.max(0, Math.min(999, n)); }
+  if (!Object.keys(patch).length) return { error: "Nothing to update.", status: 400 };
+  const { data, error } = await supa.from("tp_nla_template_items").update(patch).eq("id", id).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, item: data };
+}
+
+async function adminAddItem(supa, user, body) {
+  if (!isAdminUser(user)) return { error: "Admins only.", status: 403 };
+  const templateId = body?.template_id;
+  const name = String(body?.name || "").trim();
+  const category = String(body?.category || "").trim();
+  if (!templateId || !name || !category) return { error: "Category and competency name are required.", status: 400 };
+  const { data: existing } = await supa.from("tp_nla_template_items")
+    .select("competency_key, sort_order").eq("template_id", templateId);
+  const keys = new Set((existing || []).map((i) => i.competency_key));
+  let key = slugify(name); let n = 2;
+  while (keys.has(key)) key = `${slugify(name)}_${n++}`;
+  const nextSort = (existing || []).reduce((mx, i) => Math.max(mx, (i.sort_order ?? 0) + 1), 1);
+  const { data, error } = await supa.from("tp_nla_template_items").insert({
+    template_id: templateId, category: category.slice(0, 80), sort_order: nextSort,
+    competency_key: key, name: name.slice(0, 200),
+    description: body?.description ? String(body.description).slice(0, 2000) : null,
+    example: body?.example ? String(body.example).slice(0, 2000) : null,
+  }).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, item: data };
+}
+
+async function adminRemoveItem(supa, user, body) {
+  if (!isAdminUser(user)) return { error: "Admins only.", status: 403 };
+  const id = body?.item_id;
+  if (!id) return { error: "Missing competency.", status: 400 };
+  const { error } = await supa.from("tp_nla_template_items").delete().eq("id", id);
+  if (error) {
+    // FK from tp_nla_ratings blocks deleting a competency that has been rated.
+    return { error: "That competency has ratings on record. Clone a new version and remove it there instead.", status: 409 };
+  }
+  return { ok: true };
+}
+
+// Copy a template as the next version (draft). Edit freely, then set it
+// active — the picker serves the highest active version per role.
+async function adminCloneTemplate(supa, user, body) {
+  if (!isAdminUser(user)) return { error: "Admins only.", status: 403 };
+  const id = body?.template_id;
+  if (!id) return { error: "Missing template.", status: 400 };
+  const { data: tpl } = await supa.from("tp_nla_templates").select("*").eq("id", id).maybeSingle();
+  if (!tpl) return { error: "Template not found.", status: 404 };
+  const { data: vers } = await supa.from("tp_nla_templates").select("version").eq("target_role", tpl.target_role);
+  const nextVer = (vers || []).reduce((mx, v) => Math.max(mx, v.version + 1), 1);
+  const { data: created, error } = await supa.from("tp_nla_templates").insert({
+    target_role: tpl.target_role, version: nextVer, title: tpl.title, status: "draft",
+    effective_date: null, created_by: user.id,
+  }).select("id").single();
+  if (error) return { error: error.message, status: 500 };
+  const { data: items } = await supa.from("tp_nla_template_items").select("*").eq("template_id", id);
+  if (items?.length) {
+    const rows = items.map((i) => ({
+      template_id: created.id, category: i.category, sort_order: i.sort_order,
+      competency_key: i.competency_key, name: i.name, description: i.description, example: i.example,
+    }));
+    const { error: iErr } = await supa.from("tp_nla_template_items").insert(rows);
+    if (iErr) return { error: iErr.message, status: 500 };
+  }
+  return { ok: true, template_id: created.id, version: nextVer };
 }
 
 // Assessments where the caller is the subject or the leader.
@@ -639,6 +823,8 @@ export const handler = async (event) => {
       if (action === "comparison") return unwrap(await comparison(supa, user, params));
       if (action === "acks") return unwrap(await listAcks(supa, user, params));
       if (action === "plan") return unwrap(await getPlan(supa, user, params));
+      if (action === "admin-templates") return unwrap(await adminTemplates(supa, user));
+      if (action === "admin-template") return unwrap(await adminTemplate(supa, user, params));
       return respond(400, { error: `Unknown action: ${action}` });
     }
     if (action === "open") return unwrap(await openAssessment(supa, user, body));
@@ -647,6 +833,11 @@ export const handler = async (event) => {
     if (action === "set-focus") return unwrap(await setFocus(supa, user, body));
     if (action === "remove-focus") return unwrap(await removeFocus(supa, user, body));
     if (action === "acknowledge") return unwrap(await acknowledge(supa, user, body));
+    if (action === "admin-update-template") return unwrap(await adminUpdateTemplate(supa, user, body));
+    if (action === "admin-update-item") return unwrap(await adminUpdateItem(supa, user, body));
+    if (action === "admin-add-item") return unwrap(await adminAddItem(supa, user, body));
+    if (action === "admin-remove-item") return unwrap(await adminRemoveItem(supa, user, body));
+    if (action === "admin-clone-template") return unwrap(await adminCloneTemplate(supa, user, body));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });
