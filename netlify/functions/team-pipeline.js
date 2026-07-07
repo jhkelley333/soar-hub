@@ -31,6 +31,8 @@ const LADDER_TO_AUTH = {
 // Invite eligibility: Crew Leader and up get an app login.
 const INVITE_ROLES = new Set(["lead", "shift", "assoc", "fam", "gm"]);
 const ROLE_KEYS = new Set(["carhop", "crew", "lead", "shift", "assoc", "fam", "gm"]);
+// Ladder seniority (carhop → gm); higher = more senior.
+const LADDER_ORDER = { carhop: 0, crew: 1, lead: 2, shift: 3, assoc: 4, fam: 5, gm: 6 };
 
 function admin() {
   if (!SUPABASE_URL || !SERVICE_KEY) throw new Error("team-pipeline env vars not configured");
@@ -458,10 +460,11 @@ async function commitPlan(supa, user, body) {
 
   let promoted = 0, reqsOpened = 0;
   const promotions = Array.isArray(body?.promotions) ? body.promotions : [];
+  const today = new Date().toISOString().slice(0, 10);
   for (const p of promotions) {
     if (!p?.member_id || !p?.to_role || !ROLE_KEYS.has(String(p.to_role))) continue;
     const { error } = await supa.from("tp_team_members")
-      .update({ role: String(p.to_role) }).eq("id", p.member_id).eq("store_id", storeId);
+      .update({ role: String(p.to_role), role_since: today }).eq("id", p.member_id).eq("store_id", storeId);
     if (!error) promoted++;
   }
   const hires = body?.hires && typeof body.hires === "object" ? body.hires : {};
@@ -508,6 +511,9 @@ async function updateMember(supa, user, body) {
     if (!ROLE_KEYS.has(p.role)) return { error: "Unknown role.", status: 400 };
     if (!(await roleEditOn(supa, user))) return { error: "Role editing is turned off in settings.", status: 403 };
     patch.role = p.role;
+    // A real role change resets "time in role".
+    const { data: cur } = await supa.from("tp_team_members").select("role").eq("id", id).maybeSingle();
+    if (cur && cur.role !== p.role) patch.role_since = new Date().toISOString().slice(0, 10);
   }
   if ("flight_risk" in p && RISK_VALS.has(p.flight_risk)) patch.flight_risk = p.flight_risk;
   if ("aspiration" in p && ASPIRATION_VALS.has(p.aspiration)) patch.aspiration = p.aspiration;
@@ -1163,6 +1169,169 @@ async function devRollup(supa, user) {
   };
 }
 
+// ── Time-in-role dashboard ────────────────────────────────────────────────────
+// Distribution of how long people have held their CURRENT role (role_since,
+// falling back to hire_date), by tenure band and by ladder level, plus the
+// people who look "ready for a move" (long in role, aspiring up / high
+// potential) and the longest-tenured seats. Read-only.
+const TENURE_BANDS = [
+  { key: "lt6", label: "< 6 mo", max: 182 },
+  { key: "m6_12", label: "6–12 mo", max: 365 },
+  { key: "y1_2", label: "1–2 yr", max: 730 },
+  { key: "y2_3", label: "2–3 yr", max: 1095 },
+  { key: "y3p", label: "3 yr+", max: Infinity },
+];
+function bandOf(days) {
+  for (const b of TENURE_BANDS) if (days < b.max) return b.key;
+  return "y3p";
+}
+function median(nums) {
+  if (!nums.length) return 0;
+  const a = nums.slice().sort((x, y) => x - y);
+  const mid = Math.floor(a.length / 2);
+  return a.length % 2 ? a[mid] : Math.round((a[mid - 1] + a[mid]) / 2);
+}
+
+async function tenureRollup(supa, user) {
+  const scope = await storesForUser(supa, user);
+  const ids = scope.all ? null : Array.from(scope.ids);
+  const empty = {
+    summary: { rated: 0, unknown: 0, median_months: 0, new_in_seat: 0, ready_total: 0 },
+    bands: TENURE_BANDS.map((b) => ({ key: b.key, label: b.label, count: 0 })),
+    by_level: [], ready: [], longest: [],
+  };
+  if (ids && ids.length === 0) return empty;
+
+  const [members, storeRows] = await Promise.all([
+    fetchAll(() => {
+      let q = supa.from("tp_team_members")
+        .select("id, store_id, full_name, role, perf, potential, aspiration, flight_risk, hire_date, role_since").neq("status", "terminated");
+      if (ids) q = q.in("store_id", ids);
+      return q;
+    }),
+    (async () => {
+      let q = supa.from("stores").select("id, number, name, district_id").eq("is_active", true);
+      if (ids) q = q.in("id", ids);
+      const { data } = await q;
+      return data || [];
+    })(),
+  ]);
+  const storeById = new Map(storeRows.map((s) => [s.id, s]));
+  const now = Date.now();
+  const days = (d) => (d ? Math.max(0, Math.round((now - new Date(d).getTime()) / 86_400_000)) : null);
+  const toMonths = (d) => Math.round((d / 30.44) * 10) / 10;
+
+  const bandCount = Object.fromEntries(TENURE_BANDS.map((b) => [b.key, 0]));
+  const byLevel = new Map(); // role -> days[]
+  const allDays = [];
+  const enriched = [];
+  let unknown = 0, newInSeat = 0;
+
+  for (const m of members || []) {
+    const d = days(m.role_since || m.hire_date);
+    if (d == null) { unknown++; continue; }
+    bandCount[bandOf(d)]++;
+    allDays.push(d);
+    if (!byLevel.has(m.role)) byLevel.set(m.role, []);
+    byLevel.get(m.role).push(d);
+    if (LADDER_ORDER[m.role] >= 3 && d < 90) newInSeat++; // manager seat, still ramping
+    const st = storeById.get(m.store_id);
+    enriched.push({
+      member_id: m.id, name: m.full_name, store_id: m.store_id,
+      store_number: st?.number ?? null, district_id: st?.district_id ?? null,
+      role: m.role, perf: m.perf, potential: m.potential, aspiration: m.aspiration,
+      flight_risk: m.flight_risk, hire_date: m.hire_date, role_days: d, role_months: toMonths(d),
+    });
+  }
+
+  // "Ready for a move": 2+ years in role and either aspiring to next level or
+  // high potential — the people a calibration should be actively planning for.
+  const ready = enriched
+    .filter((m) => m.role_days >= 730 && m.role !== "gm" && (m.aspiration === "next" || (m.potential ?? 0) >= 4))
+    .sort((a, b) => b.role_days - a.role_days);
+
+  const longest = enriched.slice().sort((a, b) => b.role_days - a.role_days).slice(0, 15);
+
+  const by_level = Object.keys(LADDER_ORDER)
+    .filter((r) => byLevel.has(r))
+    .map((r) => ({ role: r, count: byLevel.get(r).length, median_months: toMonths(median(byLevel.get(r))) }))
+    .sort((a, b) => LADDER_ORDER[b.role] - LADDER_ORDER[a.role]);
+
+  return {
+    summary: {
+      rated: allDays.length, unknown, median_months: toMonths(median(allDays)),
+      new_in_seat: newInSeat, ready_total: ready.length,
+    },
+    bands: TENURE_BANDS.map((b) => ({ key: b.key, label: b.label, count: bandCount[b.key] })),
+    by_level, ready: ready.slice(0, 50), longest,
+  };
+}
+
+// ── Talent review packet (per district) ───────────────────────────────────────
+// One district's full roster with the calibration overlay (9-box inputs, risk,
+// aspiration, tenure + time-in-role, successor, plan) — the data behind the
+// one-click CSV / print packet for a talent-review session. Read-only.
+async function talentExport(supa, user, params) {
+  const districtId = params?.district_id;
+  if (!districtId) return { error: "Missing district.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  const { data: srows } = await supa.from("stores")
+    .select("id, number, name, district_id").eq("district_id", districtId).eq("is_active", true);
+  let stores = srows || [];
+  if (!scope.all) stores = stores.filter((s) => scope.ids.has(s.id));
+  if (!stores.length) return { error: "That district is outside your scope.", status: 403 };
+  const storeIds = stores.map((s) => s.id);
+  const storeById = new Map(stores.map((s) => [s.id, s]));
+  const { data: drow } = await supa.from("districts").select("id, name").eq("id", districtId).maybeSingle();
+
+  const members = await fetchAll(() => supa.from("tp_team_members")
+    .select("id, store_id, full_name, role, perf, potential, flight_risk, risk_reasons, aspiration, hire_date, role_since, backfill, comment")
+    .neq("status", "terminated").in("store_id", storeIds));
+  const memberIds = members.map((m) => m.id);
+  const [capMap, planRows, succRows] = await Promise.all([
+    openCaLevelsByMember(supa, memberIds),
+    fetchAll(() => supa.from("tp_dev_plans").select("member_id").eq("status", "active").in("store_id", storeIds)),
+    fetchAll(() => supa.from("tp_successors")
+      .select("incumbent_member_id, successor_member_id, successor_name, readiness, rank").in("store_id", storeIds)),
+  ]);
+  const planned = new Set(planRows.map((p) => p.member_id));
+  const nameById = new Map(members.map((m) => [m.id, m.full_name]));
+  const succByInc = new Map();
+  for (const s of succRows.slice().sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0))) {
+    if (!succByInc.has(s.incumbent_member_id)) succByInc.set(s.incumbent_member_id, s);
+  }
+
+  const now = Date.now();
+  const days = (d) => (d ? Math.max(0, Math.round((now - new Date(d).getTime()) / 86_400_000)) : null);
+
+  const rows = members.map((m) => {
+    const st = storeById.get(m.store_id);
+    const top = succByInc.get(m.id);
+    const successor = top
+      ? (top.successor_member_id ? (nameById.get(top.successor_member_id) || top.successor_name) : top.successor_name)
+      : (m.backfill || null);
+    return {
+      store_number: st?.number ?? "", store_name: st?.name ?? "",
+      member_id: m.id, name: m.full_name, role: m.role,
+      tenure_days: days(m.hire_date), role_days: days(m.role_since || m.hire_date),
+      perf: m.perf, potential: m.potential, flight_risk: m.flight_risk,
+      risk_reasons: m.risk_reasons || [], aspiration: m.aspiration,
+      successor: successor || null, successor_readiness: top?.readiness || null,
+      open_cas: (capMap.get(m.id) || []).length, has_plan: planned.has(m.id),
+      last_note: m.comment || null,
+    };
+  }).sort((a, b) =>
+    String(a.store_number).localeCompare(String(b.store_number), undefined, { numeric: true }) ||
+    ((LADDER_ORDER[b.role] ?? 0) - (LADDER_ORDER[a.role] ?? 0)) ||
+    a.name.localeCompare(b.name));
+
+  return {
+    district: { id: districtId, name: drow?.name || null },
+    generated_by: user.preferred_name || user.full_name || user.email || null,
+    store_count: stores.length, member_rows: rows,
+  };
+}
+
 // ── ATS roster bulk import ────────────────────────────────────────────────────
 // Replaces the seed-from-profiles stop-gap. Rows carry an employee + store
 // number + role; we map the ATS role title onto a ladder key, resolve the
@@ -1293,7 +1462,8 @@ async function importRoster(supa, user, body) {
         ? { row: a.row, status: "error", full_name: a.full_name, message: error.message }
         : { row: a.row, status: "updated", full_name: a.full_name };
     }
-    const { error } = await supa.from("tp_team_members").insert(importFields(a));
+    // New members: seed time-in-role from their hire date (best available proxy).
+    const { error } = await supa.from("tp_team_members").insert({ ...importFields(a), role_since: a.hire_date || null });
     return error
       ? { row: a.row, status: "error", full_name: a.full_name, message: error.message }
       : { row: a.row, status: "created", full_name: a.full_name };
@@ -1424,6 +1594,8 @@ export const handler = async (event) => {
       if (action === "member-signals") return unwrap(await memberSignals(supa, user, params.member_id));
       if (action === "risk-review") return unwrap(await riskReview(supa, user));
       if (action === "dev-rollup") return unwrap(await devRollup(supa, user));
+      if (action === "tenure-rollup") return unwrap(await tenureRollup(supa, user));
+      if (action === "talent-export") return unwrap(await talentExport(supa, user, params));
       if (action === "settings") return unwrap(await getSettings(supa, user));
       return respond(400, { error: `Unknown action: ${action}` });
     }

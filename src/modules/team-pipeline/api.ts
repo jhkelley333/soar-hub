@@ -3,7 +3,8 @@ import { supabase } from "@/lib/supabase";
 import type {
   CalibrationSnapshot, CaLevel, CaStatus, CorrectiveAction, DevItem, DevItemStatus, DevPlan, DevRollupResponse,
   GmsResponse, MemberPatch, MemberSignals, Note, Readiness, Requisition, RiskReviewResponse, RollupResponse,
-  SnapshotRow, StoreRosterResponse, Successor, SuccessionResponse, TeamMember,
+  SnapshotRow, StoreRosterResponse, Successor, SuccessionResponse, TalentExportResponse, TeamMember,
+  TenureRollupResponse,
 } from "./types";
 
 const FN = "/.netlify/functions/team-pipeline";
@@ -147,6 +148,16 @@ export function fetchRiskReview(): Promise<RiskReviewResponse> {
 // ── PDP roll-up ────────────────────────────────────────────────────────────────
 export function fetchDevRollup(): Promise<DevRollupResponse> {
   return request(`${FN}?action=dev-rollup`);
+}
+
+// ── Time-in-role dashboard ────────────────────────────────────────────────────
+export function fetchTenureRollup(): Promise<TenureRollupResponse> {
+  return request(`${FN}?action=tenure-rollup`);
+}
+
+// ── Talent review packet ──────────────────────────────────────────────────────
+export function fetchTalentExport(districtId: string): Promise<TalentExportResponse> {
+  return request(`${FN}?action=talent-export&district_id=${encodeURIComponent(districtId)}`);
 }
 
 // ATS roster import. Rows are the raw CSV cells; the backend resolves stores,

@@ -17,15 +17,17 @@ import { Segmented } from "@/shared/ui/Segmented";
 import { useToast } from "@/shared/ui/Toaster";
 import { fetchMyTree } from "@/modules/my-stores/api";
 import type { MyDistrictNode, MyStoreNode } from "@/modules/my-stores/types";
-import { fetchGms, fetchRollup, fetchSuccession, fetchStoreRoster, fetchSnapshots, fetchSnapshotRows, fetchRiskReview, fetchDevRollup, takeSnapshot, lockSnapshot, seedFromProfiles, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings } from "./api";
+import { fetchGms, fetchRollup, fetchSuccession, fetchStoreRoster, fetchSnapshots, fetchSnapshotRows, fetchRiskReview, fetchDevRollup, fetchTenureRollup, fetchTalentExport, takeSnapshot, lockSnapshot, seedFromProfiles, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings } from "./api";
 import { AccountBadge, MemberDrawerProvider, useMemberDrawer } from "./MemberDrawer";
 import { RosterImport } from "./RosterImport";
+import { toCSV, downloadCSV } from "@/lib/csv";
 import {
   ASPIRATION_META, LADDER, LADDER_BY_KEY, READINESS_META, REQ_STATUS_META, RISK_META, ROLE_MIX, roleBelow,
   SIGNAL_SEVERITY_META,
   type Aspiration, type AtRiskMember, type DevGapRow, type DevGoalRow, type DevRollupResponse, type GmSeat, type LadderKey,
   type Requisition, type RiskCounts, type RiskReviewRow,
-  type RollupResponse, type SnapshotRow, type StoreRollup, type SuccessionResponse, type TeamMember,
+  type RollupResponse, type SnapshotRow, type StoreRollup, type SuccessionResponse, type TalentExportResponse,
+  type TeamMember, type TenureMember, type TenureRollupResponse,
 } from "./types";
 
 type Nav =
@@ -36,7 +38,7 @@ type Nav =
 const ZERO: StoreRollup = { risk: { immediate: 0, medium: 0, low: 0, na: 0 }, roster: 0, non_gm: 0, open_reqs: 0, gm_risk: null, sales: null, target: null };
 const RISK_RANK: Record<TeamMember["flight_risk"], number> = { na: 0, low: 1, medium: 2, immediate: 3 };
 
-type TopView = "pipeline" | "succession" | "development";
+type TopView = "pipeline" | "succession" | "development" | "tenure";
 
 export function TeamPipelinePage() {
   const [nav, setNav] = useState<Nav>({ level: "company" });
@@ -88,7 +90,7 @@ export function TeamPipelinePage() {
           <Segmented<TopView>
             value={view}
             onChange={setView}
-            options={[{ value: "pipeline", label: "Pipeline" }, { value: "succession", label: "Succession & Risk" }, { value: "development", label: "Development" }]}
+            options={[{ value: "pipeline", label: "Pipeline" }, { value: "succession", label: "Succession & Risk" }, { value: "development", label: "Development" }, { value: "tenure", label: "Time in role" }]}
           />
         </div>
 
@@ -101,6 +103,8 @@ export function TeamPipelinePage() {
           <SuccessionView districtMeta={districtMeta} districts={districts} />
         ) : view === "development" ? (
           <DevelopmentView districts={districts} districtMeta={districtMeta} />
+        ) : view === "tenure" ? (
+          <TenureView districts={districts} />
         ) : (
           <>
             {nav.level === "company" && (
@@ -473,6 +477,8 @@ function DevelopmentView({ districts, districtMeta }: { districts: MyDistrictNod
 
   return (
     <div className="space-y-5">
+      <TalentExportBar districts={districts} districtMeta={districtMeta} />
+
       {/* Headline coverage numbers */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <div className="rounded-xl border border-border bg-surface p-4 ring-1 ring-inset ring-border">
@@ -625,6 +631,229 @@ function DevGoalTable({ rows, overdue, districtName, onOpen }: {
                 <td className="px-4 py-2.5 text-ink-2">#{m.store_number} <span className="text-ink-muted">· {districtName(m.district_id)}</span></td>
                 <td className={cn("px-4 py-2.5 tabular-nums", overdue ? "font-semibold text-red-600" : "text-ink-2")}>{fmt(m.target_date)}</td>
                 <td className="px-4 py-2.5"><SChip label={m.status === "in_progress" ? "In progress" : "Not started"} chip={m.status === "in_progress" ? "bg-blue-50 text-blue-700 ring-blue-200" : "bg-zinc-100 text-zinc-600 ring-zinc-200"} /></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ── Talent review packet (per-district CSV + print) ───────────────────────────
+const NINE_BOX_TITLE = (perf: number | null, potential: number | null): string =>
+  perf == null || potential == null ? "" : NINE_BOX[potRow(potential)][perfCol(perf)].title;
+const monthsLabel = (days: number | null): string =>
+  days == null ? "—" : days < 30 ? `${days}d` : days < 365 ? `${Math.round(days / 30.44)}mo` : `${(days / 365).toFixed(1)}y`;
+const esc = (v: unknown) => String(v ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c] as string));
+
+function talentCsv(data: TalentExportResponse): string {
+  const headers = [
+    "Store", "Store name", "Name", "Role", "Tenure", "Time in role", "Perf", "Potential", "9-box",
+    "Risk", "Risk reasons", "Aspiration", "Successor", "Successor readiness", "Open CAs", "Has plan", "Last note",
+  ];
+  const rows = data.member_rows.map((m) => ({
+    "Store": m.store_number, "Store name": m.store_name, "Name": m.name, "Role": LADDER_BY_KEY[m.role]?.label ?? m.role,
+    "Tenure": monthsLabel(m.tenure_days), "Time in role": monthsLabel(m.role_days),
+    "Perf": m.perf ?? "", "Potential": m.potential ?? "", "9-box": NINE_BOX_TITLE(m.perf, m.potential),
+    "Risk": RISK_META[m.flight_risk].short, "Risk reasons": m.risk_reasons.join("; "),
+    "Aspiration": ASPIRATION_META[m.aspiration].label,
+    "Successor": m.successor ?? "", "Successor readiness": m.successor_readiness ? READINESS_META[m.successor_readiness].short : "",
+    "Open CAs": m.open_cas, "Has plan": m.has_plan ? "Yes" : "No", "Last note": m.last_note ?? "",
+  }));
+  return toCSV(headers, rows);
+}
+
+function openTalentPacket(data: TalentExportResponse, doName: string | null, today: string) {
+  const dn = data.district.name || "District";
+  const rows = data.member_rows.map((m) => `
+    <tr class="${m.flight_risk === "immediate" ? "hot" : m.flight_risk === "medium" ? "warm" : ""}">
+      <td>#${esc(m.store_number)}</td><td>${esc(m.name)}</td><td>${esc(LADDER_BY_KEY[m.role]?.abbr ?? m.role)}</td>
+      <td>${esc(monthsLabel(m.tenure_days))}</td><td>${esc(monthsLabel(m.role_days))}</td>
+      <td class="c">${m.perf ?? "—"}</td><td class="c">${m.potential ?? "—"}</td><td>${esc(NINE_BOX_TITLE(m.perf, m.potential))}</td>
+      <td>${esc(RISK_META[m.flight_risk].short)}</td><td>${esc(ASPIRATION_META[m.aspiration].label)}</td>
+      <td>${esc(m.successor ?? "—")}${m.successor_readiness ? ` <span class="tag">${esc(READINESS_META[m.successor_readiness].short)}</span>` : ""}</td>
+      <td class="c">${m.has_plan ? "✓" : "—"}</td>
+    </tr>`).join("");
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>Talent review — ${esc(dn)}</title>
+    <style>
+      * { box-sizing: border-box; }
+      body { font: 12px/1.4 -apple-system, Segoe UI, Roboto, sans-serif; color: #18181b; margin: 32px; }
+      h1 { font-size: 20px; margin: 0 0 2px; } .sub { color: #71717a; font-size: 12px; margin-bottom: 16px; }
+      table { border-collapse: collapse; width: 100%; font-size: 11px; }
+      th, td { border: 1px solid #e4e4e7; padding: 5px 7px; text-align: left; vertical-align: top; }
+      th { background: #f4f4f5; font-size: 9px; text-transform: uppercase; letter-spacing: .04em; color: #52525b; }
+      td.c { text-align: center; } tr.hot { background: #fef2f2; } tr.warm { background: #fffbeb; }
+      .tag { display: inline-block; background: #f4f4f5; border-radius: 8px; padding: 0 5px; font-size: 9px; color: #52525b; }
+      .foot { margin-top: 14px; color: #a1a1aa; font-size: 10px; }
+      @media print { body { margin: 12mm; } button { display: none; } }
+      button { margin-bottom: 16px; padding: 8px 14px; font-size: 13px; font-weight: 600; border: 0; border-radius: 8px; background: #111827; color: #fff; cursor: pointer; }
+    </style></head><body>
+    <button onclick="window.print()">Print / Save as PDF</button>
+    <h1>Talent Review — ${esc(dn)}</h1>
+    <div class="sub">${doName ? `DO ${esc(doName)} · ` : ""}${data.store_count} store${data.store_count === 1 ? "" : "s"} · ${data.member_rows.length} team members · prepared ${esc(today)}${data.generated_by ? ` by ${esc(data.generated_by)}` : ""}</div>
+    <table><thead><tr>
+      <th>Store</th><th>Name</th><th>Role</th><th>Tenure</th><th>In role</th><th>Perf</th><th>Pot</th><th>9-box</th><th>Risk</th><th>Aspiration</th><th>Successor</th><th>Plan</th>
+    </tr></thead><tbody>${rows}</tbody></table>
+    <div class="foot">SOAR Hub · Talent Review packet. Confidential — for calibration use only.</div>
+    </body></html>`;
+  const w = window.open("", "_blank");
+  if (w) { w.document.write(html); w.document.close(); }
+}
+
+function TalentExportBar({ districts, districtMeta }: { districts: MyDistrictNode[]; districtMeta: DistrictMeta }) {
+  const toast = useToast();
+  const [districtId, setDistrictId] = useState<string>(districts[0]?.id ?? "");
+  const [busy, setBusy] = useState<"csv" | "packet" | null>(null);
+  const doName = (id: string) => districtMeta.get(id)?.doName ?? null;
+
+  const run = async (mode: "csv" | "packet") => {
+    if (!districtId) return;
+    setBusy(mode);
+    try {
+      const data = await fetchTalentExport(districtId);
+      if (!data.member_rows.length) { toast.push("No team members in that district yet.", "info"); return; }
+      const dn = data.district.name || "district";
+      if (mode === "csv") {
+        downloadCSV(`talent-review-${dn.replace(/\s+/g, "-").toLowerCase()}.csv`, talentCsv(data));
+      } else {
+        const today = new Date().toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" });
+        openTalentPacket(data, doName(districtId), today);
+      }
+    } catch (e) {
+      toast.push((e as Error)?.message ?? "Couldn't build the packet.", "error");
+    } finally { setBusy(null); }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface-muted px-3 py-2.5">
+      <span className="text-[11px] font-bold uppercase tracking-wide text-ink-subtle">Talent review packet</span>
+      <select value={districtId} onChange={(e) => setDistrictId(e.target.value)}
+        className="rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-semibold text-heading focus:border-accent focus:outline-none">
+        {districts.length === 0 && <option value="">No districts</option>}
+        {districts.map((d) => <option key={d.id} value={d.id}>{d.name || "District"}</option>)}
+      </select>
+      <div className="ml-auto flex items-center gap-1.5">
+        <button disabled={!districtId || busy !== null} onClick={() => run("packet")}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-midnight px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-midnight/90 disabled:opacity-40">
+          {busy === "packet" ? "Building…" : "Open print packet"}
+        </button>
+        <button disabled={!districtId || busy !== null} onClick={() => run("csv")}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-ink-2 transition hover:bg-surface-sunk disabled:opacity-40">
+          {busy === "csv" ? "Building…" : "Download CSV"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Time in role ──────────────────────────────────────────────────────────────
+// How long people have held their current role: distribution, per-level medians,
+// who's "ready for a move", and the longest-tenured seats.
+function TenureView({ districts }: { districts: MyDistrictNode[] }) {
+  const { open } = useMemberDrawer();
+  const q = useQuery({ queryKey: ["tp-tenure-rollup"], queryFn: fetchTenureRollup, staleTime: 60_000 });
+  const [tab, setTab] = useState<"ready" | "longest">("ready");
+  const districtName = (id: string | null) => (id ? districts.find((d) => d.id === id)?.name ?? "—" : "Unassigned");
+
+  if (q.isLoading) return <Skeleton className="h-64 w-full" />;
+  if (q.isError) return <EmptyState title="Couldn't load time in role" description={(q.error as Error)?.message ?? "Try again."} />;
+  const data = q.data as TenureRollupResponse;
+  const s = data.summary;
+  const maxBand = Math.max(1, ...data.bands.map((b) => b.count));
+
+  const openRow = (m: TenureMember) => open({
+    id: m.member_id, store_id: m.store_id, full_name: m.name, role: m.role, flight_risk: m.flight_risk,
+    risk_reasons: [], aspiration: m.aspiration, perf: m.perf, potential: m.potential, backfill: null,
+    status: "active", profile_id: null, external_id: null, email: null, phone: null, hire_date: m.hire_date,
+    comment: null, comment_by: null, created_at: "", updated_at: "",
+  } as TeamMember);
+
+  return (
+    <div className="space-y-5">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <SuccTile label="Median time in role" value={s.median_months} sub="months, across your span" tone="ok" big />
+        <SuccTile label="Ready for a move" value={s.ready_total} sub="2yr+ in role, aspiring up" tone={s.ready_total > 0 ? "amber" : "ok"} />
+        <SuccTile label="New in seat" value={s.new_in_seat} sub="mgr <90 days in role" tone={s.new_in_seat > 0 ? "amber" : "ok"} />
+        <SuccTile label="Undated" value={s.unknown} sub="no hire / role date" tone="ok" />
+      </div>
+
+      {/* Distribution */}
+      <div className="rounded-xl border border-border bg-surface p-4">
+        <div className="mb-3 text-[11px] font-bold uppercase tracking-wide text-ink-subtle">Time in current role</div>
+        <div className="space-y-2">
+          {data.bands.map((b) => (
+            <div key={b.key} className="flex items-center gap-3">
+              <div className="w-16 shrink-0 text-right text-xs font-semibold text-ink-2">{b.label}</div>
+              <div className="h-5 flex-1 overflow-hidden rounded bg-surface-sunk">
+                <div className="h-full rounded bg-accent" style={{ width: `${(b.count / maxBand) * 100}%` }} />
+              </div>
+              <div className="w-8 shrink-0 text-xs font-bold tabular-nums text-heading">{b.count}</div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Median by level */}
+      {data.by_level.length > 0 && (
+        <div className="overflow-hidden rounded-xl border border-border bg-surface">
+          <div className="border-b border-border px-4 py-2 text-[11px] font-bold uppercase tracking-wide text-ink-subtle">Median time in role, by level</div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <tbody className="divide-y divide-border">
+                {data.by_level.map((l) => (
+                  <tr key={l.role}>
+                    <td className="px-4 py-2 font-semibold text-heading">{LADDER_BY_KEY[l.role]?.label ?? l.role}</td>
+                    <td className="px-4 py-2 tabular-nums text-ink-muted">{l.count} {l.count === 1 ? "person" : "people"}</td>
+                    <td className="px-4 py-2 text-right tabular-nums font-semibold text-ink-2">{l.median_months} mo median</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <Segmented<"ready" | "longest">
+        value={tab}
+        onChange={setTab}
+        options={[
+          { value: "ready", label: "Ready for a move", count: data.ready.length },
+          { value: "longest", label: "Longest in role", count: data.longest.length },
+        ]}
+      />
+      <TenureTable rows={tab === "ready" ? data.ready : data.longest} districtName={districtName} onOpen={openRow}
+        emptyTitle={tab === "ready" ? "No one flagged ready" : "No seats yet"}
+        emptyDesc={tab === "ready" ? "Nobody in your span is 2yr+ in role and aspiring up." : "No team members with a role date."} />
+    </div>
+  );
+}
+
+function TenureTable({ rows, districtName, onOpen, emptyTitle, emptyDesc }: {
+  rows: TenureMember[];
+  districtName: (id: string | null) => string;
+  onOpen: (m: TenureMember) => void;
+  emptyTitle: string; emptyDesc: string;
+}) {
+  if (rows.length === 0) return <EmptyState title={emptyTitle} description={emptyDesc} />;
+  return (
+    <div className="overflow-hidden rounded-xl border border-border bg-surface">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-border text-left text-[10px] uppercase tracking-wide text-ink-subtle">
+              <th className="px-4 py-2">Name</th><th className="px-4 py-2">Role</th><th className="px-4 py-2">Store / District</th>
+              <th className="px-4 py-2">Time in role</th><th className="px-4 py-2">Aspiration</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {rows.map((m) => (
+              <tr key={m.member_id} className="cursor-pointer hover:bg-surface-muted" onClick={() => onOpen(m)}>
+                <td className="px-4 py-2.5 font-semibold text-heading">{m.name}</td>
+                <td className="px-4 py-2.5 text-ink-2">{LADDER_BY_KEY[m.role]?.label ?? m.role}</td>
+                <td className="px-4 py-2.5 text-ink-2">#{m.store_number} <span className="text-ink-muted">· {districtName(m.district_id)}</span></td>
+                <td className="px-4 py-2.5 tabular-nums font-semibold text-ink-2">{m.role_months} mo</td>
+                <td className="px-4 py-2.5"><SChip label={ASPIRATION_META[m.aspiration].label} chip={ASPIRATION_META[m.aspiration].chip} /></td>
               </tr>
             ))}
           </tbody>
