@@ -140,6 +140,9 @@ export const NAV: NavItem[] = [
   // roles:[] means it stays dark until the flag resolves true for the user
   // (admins always see it). Scoped to the viewer's org tree in-app.
   { to: "/team-pipeline", label: "Team Pipeline", icon: GitBranch, roles: [], flagKey: "team_pipeline" },
+  // Next Level Assessments. Visible to the manager track (subjects self-assess)
+  // and their leaders; the nla function enforces per-assessment access.
+  { to: "/nla", label: "Assessments", icon: ClipboardCheck, roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/schedule",    label: "Calendar",    icon: CalendarDays,    roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/contacts",    label: "Contacts",    icon: BookUser,        roles: null },
   { to: "/manuals",     label: "Manual Search", icon: BookMarked,    roles: null },
@@ -249,6 +252,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/qsr/manage": "PEOPLE",
   "/qsr/share": "PEOPLE",
   "/team-pipeline": "PEOPLE",
+  "/nla": "PEOPLE",
   "/contacts": "PEOPLE",
   "/team": "PEOPLE",
   "/resources": "WORKSPACE",

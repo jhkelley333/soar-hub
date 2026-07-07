@@ -90,6 +90,8 @@ import { GroupInfoPage } from "@/modules/chat/GroupInfoPage";
 import { CoachingToolkitPage } from "@/modules/coaching/CoachingToolkitPage";
 import { ToolDetailPage } from "@/modules/coaching/ToolDetailPage";
 import { TeamPipelinePage } from "@/modules/team-pipeline/TeamPipelinePage";
+import { NlaListPage } from "@/modules/nla/NlaListPage";
+import { NlaTakePage } from "@/modules/nla/NlaTakePage";
 import { ManualSearchPage } from "@/modules/manuals/ManualSearchPage";
 import { ManualAdminPage } from "@/modules/manuals/ManualAdminPage";
 import { WeatherPage } from "@/modules/weather/WeatherPage";
@@ -436,6 +438,10 @@ export const router = createBrowserRouter([
           </FlagOrRoleRoute>
         ),
       },
+      // Next Level Assessment. Any signed-in user can reach it (a subject
+      // self-assesses); the nla function enforces per-assessment access.
+      { path: "nla", element: <NlaListPage /> },
+      { path: "nla/:id", element: <NlaTakePage /> },
       {
         path: "admin/org",
         element: (
