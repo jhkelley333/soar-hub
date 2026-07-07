@@ -228,6 +228,62 @@ export const SIGNAL_SEVERITY_META: Record<SignalSeverity, { chip: string; dot: s
   elevated: { chip: "bg-red-50 text-red-700 ring-red-200", dot: "bg-red-500" },
   watch: { chip: "bg-amber-50 text-amber-800 ring-amber-200", dot: "bg-amber-500" },
 };
+
+// ── PDP roll-up (development-plan coverage) ────────────────────────────────────
+export interface DevRollupSummary {
+  roster_total: number;
+  with_plan: number;
+  without_plan: number;
+  coverage_pct: number;
+  key_gap_total: number;
+  goals_total: number;
+  goals_open: number;
+  goals_in_progress: number;
+  goals_done: number;
+  stalled_total: number;
+  due_soon_total: number;
+}
+export interface DevDistrictRow {
+  district_id: string | null;
+  roster: number;
+  with_plan: number;
+  coverage_pct: number;
+  key_gap: number;
+  stalled: number;
+}
+export interface DevGapRow {
+  member_id: string;
+  name: string;
+  store_id: string;
+  store_number: string | null;
+  store_name: string | null;
+  district_id: string | null;
+  role: LadderKey;
+  reason: string;
+  perf: number | null;
+  potential: number | null;
+  aspiration: Aspiration;
+  hire_date: string | null;
+}
+export interface DevGoalRow {
+  member_id: string | null;
+  name: string;
+  role: LadderKey | null;
+  store_id: string;
+  store_number: string | null;
+  district_id: string | null;
+  item_id: string;
+  focus_area: string;
+  target_date: string;
+  status: DevItemStatus;
+}
+export interface DevRollupResponse {
+  summary: DevRollupSummary;
+  districts: DevDistrictRow[];
+  gaps: DevGapRow[];
+  stalled: DevGoalRow[];
+  due_soon: DevGoalRow[];
+}
 export interface SuccessionResponse {
   at_risk: AtRiskMember[];
   gm_seats: GmSeat[];

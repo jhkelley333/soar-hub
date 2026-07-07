@@ -1026,6 +1026,143 @@ async function riskReview(supa, user) {
   return { rows, summary: { total: rows.length, gaps: rows.filter((r) => r.gap).length } };
 }
 
+// ── PDP roll-up ───────────────────────────────────────────────────────────────
+// Leadership view of development-plan coverage: who has a real plan vs. not,
+// the people who most need one (high-potential / aspirants / manager seats),
+// and goals that are overdue or coming due. Turns the per-member PDPs into a
+// span-of-control signal. Read-only, computed from tp_dev_plans + tp_dev_items.
+const PDP_MGR_ROLES = new Set(["shift", "assoc", "fam", "gm"]);
+
+async function devRollup(supa, user) {
+  const scope = await storesForUser(supa, user);
+  const ids = scope.all ? null : Array.from(scope.ids);
+  const empty = {
+    summary: { roster_total: 0, with_plan: 0, without_plan: 0, coverage_pct: 0, key_gap_total: 0,
+      goals_total: 0, goals_open: 0, goals_in_progress: 0, goals_done: 0, stalled_total: 0, due_soon_total: 0 },
+    districts: [], gaps: [], stalled: [], due_soon: [],
+  };
+  if (ids && ids.length === 0) return empty;
+
+  const [members, plans, items, storeRows] = await Promise.all([
+    fetchAll(() => {
+      let q = supa.from("tp_team_members")
+        .select("id, store_id, full_name, role, perf, potential, aspiration, hire_date").neq("status", "terminated");
+      if (ids) q = q.in("store_id", ids);
+      return q;
+    }),
+    fetchAll(() => {
+      let q = supa.from("tp_dev_plans").select("id, member_id, store_id, target_date, updated_at").eq("status", "active");
+      if (ids) q = q.in("store_id", ids);
+      return q;
+    }),
+    fetchAll(() => {
+      let q = supa.from("tp_dev_items").select("id, plan_id, store_id, focus_area, target_date, status");
+      if (ids) q = q.in("store_id", ids);
+      return q;
+    }),
+    (async () => {
+      let q = supa.from("stores").select("id, number, name, district_id").eq("is_active", true);
+      if (ids) q = q.in("id", ids);
+      const { data } = await q;
+      return data || [];
+    })(),
+  ]);
+
+  const storeById = new Map(storeRows.map((s) => [s.id, s]));
+  const planByMember = new Map((plans || []).map((p) => [p.member_id, p]));
+  const itemsByPlan = new Map();
+  for (const it of items || []) {
+    const arr = itemsByPlan.get(it.plan_id);
+    if (arr) arr.push(it); else itemsByPlan.set(it.plan_id, [it]);
+  }
+  const planById = new Map((plans || []).map((p) => [p.id, p]));
+
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const in30Str = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+
+  // Per-district accumulators.
+  const dmap = new Map();
+  const dslot = (id) => {
+    const k = id || "none";
+    let d = dmap.get(k);
+    if (!d) { d = { district_id: id || null, roster: 0, with_plan: 0, key_gap: 0, stalled: 0 }; dmap.set(k, d); }
+    return d;
+  };
+
+  const gaps = [];
+  let withPlan = 0, keyGapTotal = 0;
+  const memberById = new Map();
+
+  for (const m of members || []) {
+    memberById.set(m.id, m);
+    const st = storeById.get(m.store_id);
+    const d = dslot(st?.district_id);
+    d.roster++;
+    const plan = planByMember.get(m.id);
+    const planItems = plan ? (itemsByPlan.get(plan.id) || []) : [];
+    const hasRealPlan = !!plan && planItems.length > 0;
+    if (hasRealPlan) { withPlan++; d.with_plan++; }
+    else {
+      // Who most needs a plan: high potential, aspiring up, or a manager seat.
+      let reason = null;
+      if ((m.potential ?? 0) >= 4) reason = "High potential";
+      else if (m.aspiration === "looking") reason = "Looking";
+      else if (m.aspiration === "next") reason = "Aspires to next level";
+      else if (PDP_MGR_ROLES.has(m.role)) reason = "Manager seat";
+      if (reason) {
+        keyGapTotal++; d.key_gap++;
+        gaps.push({
+          member_id: m.id, name: m.full_name, store_id: m.store_id,
+          store_number: st?.number ?? null, store_name: st?.name ?? null, district_id: st?.district_id ?? null,
+          role: m.role, reason, perf: m.perf, potential: m.potential, aspiration: m.aspiration, hire_date: m.hire_date,
+        });
+      }
+    }
+  }
+
+  // Goal-level stats + stalled (overdue) / due-soon queues.
+  let gOpen = 0, gProg = 0, gDone = 0;
+  const stalled = [], dueSoon = [];
+  for (const it of items || []) {
+    if (it.status === "done") gDone++;
+    else if (it.status === "in_progress") gProg++;
+    else gOpen++;
+    if (it.status !== "done" && it.target_date) {
+      const plan = planById.get(it.plan_id);
+      const mid = plan?.member_id ?? null;
+      const mem = mid ? memberById.get(mid) : null;
+      const st = storeById.get(it.store_id);
+      const row = {
+        member_id: mid, name: mem?.full_name ?? "—", role: mem?.role ?? null,
+        store_id: it.store_id, store_number: st?.number ?? null, district_id: st?.district_id ?? null,
+        item_id: it.id, focus_area: it.focus_area, target_date: it.target_date, status: it.status,
+      };
+      if (it.target_date < todayStr) { stalled.push(row); dslot(st?.district_id).stalled++; }
+      else if (it.target_date <= in30Str) dueSoon.push(row);
+    }
+  }
+  const byDate = (a, b) => String(a.target_date).localeCompare(String(b.target_date));
+  stalled.sort(byDate);
+  dueSoon.sort(byDate);
+  gaps.sort((a, b) => (b.potential ?? 0) - (a.potential ?? 0) || String(a.store_number).localeCompare(String(b.store_number), undefined, { numeric: true }));
+
+  const rosterTotal = (members || []).length;
+  const districts = Array.from(dmap.values()).map((d) => ({
+    ...d, coverage_pct: d.roster ? Math.round((d.with_plan / d.roster) * 100) : 0,
+  })).sort((a, b) => a.coverage_pct - b.coverage_pct);
+
+  return {
+    summary: {
+      roster_total: rosterTotal, with_plan: withPlan, without_plan: rosterTotal - withPlan,
+      coverage_pct: rosterTotal ? Math.round((withPlan / rosterTotal) * 100) : 0,
+      key_gap_total: keyGapTotal,
+      goals_total: (items || []).length, goals_open: gOpen, goals_in_progress: gProg, goals_done: gDone,
+      stalled_total: stalled.length, due_soon_total: dueSoon.length,
+    },
+    districts, gaps, stalled, due_soon: dueSoon,
+  };
+}
+
 // ── ATS roster bulk import ────────────────────────────────────────────────────
 // Replaces the seed-from-profiles stop-gap. Rows carry an employee + store
 // number + role; we map the ATS role title onto a ladder key, resolve the
@@ -1286,6 +1423,7 @@ export const handler = async (event) => {
       if (action === "dev-plan") return unwrap(await getDevPlan(supa, user, params.member_id));
       if (action === "member-signals") return unwrap(await memberSignals(supa, user, params.member_id));
       if (action === "risk-review") return unwrap(await riskReview(supa, user));
+      if (action === "dev-rollup") return unwrap(await devRollup(supa, user));
       if (action === "settings") return unwrap(await getSettings(supa, user));
       return respond(400, { error: `Unknown action: ${action}` });
     }

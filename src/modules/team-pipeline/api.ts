@@ -1,9 +1,9 @@
 // Typed wrappers around netlify/functions/team-pipeline.
 import { supabase } from "@/lib/supabase";
 import type {
-  CalibrationSnapshot, CaLevel, CaStatus, CorrectiveAction, DevItem, DevItemStatus, DevPlan, GmsResponse,
-  MemberPatch, MemberSignals, Note, Readiness, Requisition, RiskReviewResponse, RollupResponse, SnapshotRow,
-  StoreRosterResponse, Successor, SuccessionResponse, TeamMember,
+  CalibrationSnapshot, CaLevel, CaStatus, CorrectiveAction, DevItem, DevItemStatus, DevPlan, DevRollupResponse,
+  GmsResponse, MemberPatch, MemberSignals, Note, Readiness, Requisition, RiskReviewResponse, RollupResponse,
+  SnapshotRow, StoreRosterResponse, Successor, SuccessionResponse, TeamMember,
 } from "./types";
 
 const FN = "/.netlify/functions/team-pipeline";
@@ -142,6 +142,11 @@ export function fetchMemberSignals(memberId: string): Promise<MemberSignals> {
 }
 export function fetchRiskReview(): Promise<RiskReviewResponse> {
   return request(`${FN}?action=risk-review`);
+}
+
+// ── PDP roll-up ────────────────────────────────────────────────────────────────
+export function fetchDevRollup(): Promise<DevRollupResponse> {
+  return request(`${FN}?action=dev-rollup`);
 }
 
 // ATS roster import. Rows are the raw CSV cells; the backend resolves stores,
