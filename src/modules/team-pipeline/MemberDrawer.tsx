@@ -5,20 +5,21 @@
 // open it without prop-drilling.
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BadgeCheck, Copy, FileWarning, Phone, Plus, Star, Trash2, UserPlus } from "lucide-react";
+import { BadgeCheck, ChevronDown, Copy, FileWarning, Phone, Plus, Star, Trash2, UserPlus } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Drawer } from "@/shared/ui/Drawer";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { useToast } from "@/shared/ui/Toaster";
 import {
-  addCorrectiveAction, addNote, addSuccessor, fetchCorrectiveActions, fetchNotes, fetchStoreRoster,
-  fetchSuccessors, inviteMember, removeSuccessor, setCorrectiveActionStatus, updateMember, updateSuccessor,
+  addCorrectiveAction, addDevItem, addNote, addSuccessor, fetchCorrectiveActions, fetchDevPlan, fetchNotes,
+  fetchStoreRoster, fetchSuccessors, inviteMember, removeDevItem, removeSuccessor, saveDevPlan,
+  setCorrectiveActionStatus, updateDevItem, updateMember, updateSuccessor,
 } from "./api";
 import {
-  ASPIRATION_META, CA_CATEGORIES, CA_LEVEL_META, CA_LEVELS, CA_STATUS_META, CA_TEMPLATES,
+  ASPIRATION_META, CA_CATEGORIES, CA_LEVEL_META, CA_LEVELS, CA_STATUS_META, CA_TEMPLATES, DEV_ITEM_META,
   INVITE_ROLES, LADDER, LADDER_BY_KEY, RATING_COLOR, READINESS_META, RISK_META, RISK_REASONS,
-  type Aspiration, type CaLevel, type CorrectiveAction, type FlightRisk, type LadderKey, type MemberPatch,
-  type Readiness, type TeamMember,
+  type Aspiration, type CaLevel, type CorrectiveAction, type DevItem, type DevItemStatus, type FlightRisk,
+  type LadderKey, type MemberPatch, type Readiness, type TeamMember,
 } from "./types";
 
 type Ctx = { open: (m: TeamMember) => void; canWrite: boolean; roleEdit: boolean };
@@ -166,6 +167,7 @@ function MemberBody({ member, canWrite, roleEdit }: { member: TeamMember; canWri
         </Field>
       )}
 
+      <DevPlan member={member} canWrite={canWrite} />
       <NotesThread memberId={member.id} canWrite={canWrite} />
       <CorrectiveActions memberId={member.id} canWrite={canWrite} />
     </div>
@@ -439,6 +441,180 @@ function SuccessorForm({ member, onDone, onSaved }: { member: TeamMember; onDone
         </button>
       </div>
     </div>
+  );
+}
+
+const PDP_INPUT = "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-heading placeholder:text-ink-subtle focus:border-accent focus:outline-none disabled:opacity-60";
+const PDP_TA = "w-full resize-none rounded-lg border border-border bg-surface px-3 py-2 text-sm text-heading placeholder:text-ink-subtle focus:border-accent focus:outline-none disabled:opacity-60";
+
+// Partner Development Plan (PDP) — a career development map: a future-role
+// header plus development goals (focus area → goal → actions → date →
+// progress), modeled on the Sonic PDP template with Starbucks' coaching cues.
+function DevPlan({ member, canWrite }: { member: TeamMember; canWrite: boolean }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [adding, setAdding] = useState(false);
+  const q = useQuery({ queryKey: ["tp-dev-plan", member.id], queryFn: () => fetchDevPlan(member.id) });
+  const plan = q.data?.plan ?? null;
+  const items = q.data?.items ?? [];
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["tp-dev-plan", member.id] });
+
+  const saveHeader = useMutation({
+    mutationFn: (patch: Partial<{ target_role: string | null; target_date: string | null }>) => saveDevPlan(member.id, patch),
+    onSuccess: invalidate,
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't save.", "error"),
+  });
+
+  return (
+    <Field label="Development plan (PDP)">
+      <p className="mb-2.5 text-[11px] leading-snug text-ink-subtle">
+        A career development map — the skills to grow toward a future role. Employee-driven; revisit each development conversation.
+      </p>
+
+      {q.isLoading ? <Skeleton className="h-20 w-full" /> : (
+        <>
+          {/* header — future role + target date */}
+          <div key={plan?.id ?? "new"} className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+            <label className="text-[11px] font-semibold text-ink-muted">Future role
+              <input defaultValue={plan?.target_role ?? ""} disabled={!canWrite} placeholder="e.g. General Manager"
+                onBlur={(e) => { const v = e.target.value.trim(); if (v !== (plan?.target_role ?? "")) saveHeader.mutate({ target_role: v || null }); }}
+                className={cn(PDP_INPUT, "mt-1")} />
+            </label>
+            <label className="text-[11px] font-semibold text-ink-muted">Ready by
+              <input type="date" defaultValue={plan?.target_date ?? ""} disabled={!canWrite}
+                onChange={(e) => saveHeader.mutate({ target_date: e.target.value || null })}
+                className={cn(PDP_INPUT, "mt-1")} />
+            </label>
+          </div>
+
+          {canWrite && !adding && (
+            <button onClick={() => setAdding(true)}
+              className="mb-3 inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-ink-2 transition hover:bg-surface-sunk">
+              <Plus className="h-3.5 w-3.5" />Add development goal
+            </button>
+          )}
+          {adding && <DevItemForm member={member} onDone={() => setAdding(false)} onSaved={invalidate} />}
+
+          {items.length === 0 ? (
+            !adding && <div className="text-sm text-ink-subtle">No development goals yet.</div>
+          ) : (
+            <ol className="flex flex-col gap-2">
+              {items.map((it) => <DevItemCard key={it.id} item={it} canWrite={canWrite} onChanged={invalidate} />)}
+            </ol>
+          )}
+        </>
+      )}
+    </Field>
+  );
+}
+
+function DevItemForm({ member, onDone, onSaved }: { member: TeamMember; onDone: () => void; onSaved: () => void }) {
+  const toast = useToast();
+  const [focus, setFocus] = useState("");
+  const [goal, setGoal] = useState("");
+  const [actions, setActions] = useState("");
+  const [date, setDate] = useState("");
+
+  const create = useMutation({
+    mutationFn: () => addDevItem(member.id, {
+      focus_area: focus.trim(), goal: goal.trim() || null, actions: actions.trim() || null, target_date: date || null,
+    }),
+    onSuccess: () => { toast.push("Development goal added.", "success"); onSaved(); onDone(); },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't add.", "error"),
+  });
+
+  return (
+    <div className="mb-3 flex flex-col gap-2.5 rounded-xl border border-border bg-surface-muted p-3">
+      <label className="text-[11px] font-semibold text-ink-muted">Behavior / skill to develop
+        <input value={focus} onChange={(e) => setFocus(e.target.value)} placeholder="A specific skill or behavior (not “get promoted”)" className={cn(PDP_INPUT, "mt-1")} />
+      </label>
+      <label className="text-[11px] font-semibold text-ink-muted">Goal — what does “great” look like?
+        <textarea value={goal} onChange={(e) => setGoal(e.target.value)} rows={2} placeholder="Make it measurable." className={cn(PDP_TA, "mt-1")} />
+      </label>
+      <label className="text-[11px] font-semibold text-ink-muted">Development activities — experiences, people, training
+        <textarea value={actions} onChange={(e) => setActions(e.target.value)} rows={2} placeholder="Who can help? What could they own?" className={cn(PDP_TA, "mt-1")} />
+        <span className="mt-1 block text-[10px] text-ink-subtle">Tip: ~70% of growth is on-the-job, 20% from others, 10% formal training.</span>
+      </label>
+      <label className="text-[11px] font-semibold text-ink-muted">Target date
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className={cn(PDP_INPUT, "mt-1 sm:w-48")} />
+      </label>
+      <div className="flex justify-end gap-2">
+        <button onClick={onDone} className="rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-ink-2 hover:bg-surface-sunk">Cancel</button>
+        <button disabled={!focus.trim() || create.isPending} onClick={() => create.mutate()}
+          className="rounded-lg bg-midnight px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-midnight/90 disabled:opacity-40">
+          {create.isPending ? "Adding…" : "Add goal"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const DEV_STATUSES: DevItemStatus[] = ["open", "in_progress", "done"];
+
+function DevItemCard({ item, canWrite, onChanged }: { item: DevItem; canWrite: boolean; onChanged: () => void }) {
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const patch = useMutation({
+    mutationFn: (p: Parameters<typeof updateDevItem>[1]) => updateDevItem(item.id, p),
+    onSuccess: onChanged,
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't save.", "error"),
+  });
+  const remove = useMutation({
+    mutationFn: () => removeDevItem(item.id),
+    onSuccess: onChanged,
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't remove.", "error"),
+  });
+  const sm = DEV_ITEM_META[item.status];
+
+  return (
+    <li className="rounded-xl border border-border bg-surface-muted">
+      <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-2 px-3 py-2.5 text-left">
+        <ChevronDown className={cn("h-4 w-4 shrink-0 text-ink-subtle transition", open && "rotate-180")} />
+        <span className="min-w-0 flex-1 truncate text-sm font-semibold text-heading">{item.focus_area}</span>
+        {item.target_date && <span className="shrink-0 text-[11px] text-ink-subtle">{new Date(item.target_date).toLocaleDateString(undefined, { month: "short", year: "2-digit" })}</span>}
+        <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset", sm.chip)}>{sm.label}</span>
+      </button>
+
+      {open && (
+        <div className="flex flex-col gap-2.5 border-t border-border px-3 py-3">
+          <label className="text-[11px] font-semibold text-ink-muted">Goal — what does “great” look like?
+            <textarea defaultValue={item.goal ?? ""} disabled={!canWrite} rows={2} placeholder="Make it measurable."
+              onBlur={(e) => { const v = e.target.value.trim(); if (v !== (item.goal ?? "")) patch.mutate({ goal: v || null }); }}
+              className={cn(PDP_TA, "mt-1")} />
+          </label>
+          <label className="text-[11px] font-semibold text-ink-muted">Development activities
+            <textarea defaultValue={item.actions ?? ""} disabled={!canWrite} rows={2} placeholder="Experiences, people, training (70/20/10)."
+              onBlur={(e) => { const v = e.target.value.trim(); if (v !== (item.actions ?? "")) patch.mutate({ actions: v || null }); }}
+              className={cn(PDP_TA, "mt-1")} />
+          </label>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="text-[11px] font-semibold text-ink-muted">Target date
+              <input type="date" defaultValue={item.target_date ?? ""} disabled={!canWrite}
+                onChange={(e) => patch.mutate({ target_date: e.target.value || null })}
+                className={cn(PDP_INPUT, "mt-1 w-44")} />
+            </label>
+            <div className="min-w-[10rem] flex-1">
+              <div className="mb-1 text-[11px] font-semibold text-ink-muted">Status</div>
+              <div className="grid grid-cols-3 gap-1.5">
+                {DEV_STATUSES.map((s) => <SegBtn key={s} on={item.status === s} disabled={!canWrite} onClick={() => patch.mutate({ status: s })}>{DEV_ITEM_META[s].label}</SegBtn>)}
+              </div>
+            </div>
+          </div>
+          <label className="text-[11px] font-semibold text-ink-muted">Progress / conversation notes
+            <textarea defaultValue={item.progress ?? ""} disabled={!canWrite} rows={2} placeholder="Add progress before your next development conversation."
+              onBlur={(e) => { const v = e.target.value.trim(); if (v !== (item.progress ?? "")) patch.mutate({ progress: v || null }); }}
+              className={cn(PDP_TA, "mt-1")} />
+          </label>
+          {canWrite && (
+            <div className="flex justify-end">
+              <button onClick={() => remove.mutate()} className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold text-ink-subtle transition hover:bg-red-50 hover:text-red-600">
+                <Trash2 className="h-3.5 w-3.5" />Remove goal
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </li>
   );
 }
 

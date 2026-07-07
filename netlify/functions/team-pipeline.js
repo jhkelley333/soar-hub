@@ -808,6 +808,106 @@ async function snapshotRows(supa, user, params) {
   return { period, rows: rows || [] };
 }
 
+// ── Partner Development Plans (PDP) ────────────────────────────────────────────
+// A career development map per roster member: a header (future/target role +
+// date) plus ranked development items (focus area → goal → actions → date →
+// progress). Editable by anyone who can write in the member's scope.
+const DEV_ITEM_STATUS = new Set(["open", "in_progress", "done"]);
+
+// Return the member's active plan, lazily creating one when `create` is set.
+async function getActivePlan(supa, member, userId, create) {
+  const { data: existing } = await supa.from("tp_dev_plans")
+    .select("*").eq("member_id", member.id).eq("status", "active").maybeSingle();
+  if (existing || !create) return existing || null;
+  const { data, error } = await supa.from("tp_dev_plans")
+    .insert({ member_id: member.id, store_id: member.store_id, created_by: userId }).select("*").single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+async function getDevPlan(supa, user, memberId) {
+  if (!memberId) return { error: "Missing team member.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  const m = await memberInScope(supa, scope, memberId);
+  if (!m) return { error: "That team member is outside your scope.", status: 403 };
+  const plan = await getActivePlan(supa, m, user.id, false);
+  if (!plan) return { plan: null, items: [] };
+  const { data: items } = await supa.from("tp_dev_items").select("*").eq("plan_id", plan.id)
+    .order("rank", { ascending: true }).order("created_at", { ascending: true });
+  return { plan, items: items || [] };
+}
+
+const clipText = (v, n) => (v == null || v === "" ? null : String(v).slice(0, n));
+
+async function saveDevPlan(supa, user, body) {
+  const memberId = body?.member_id;
+  if (!memberId) return { error: "Missing team member.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  const m = await memberInScope(supa, scope, memberId);
+  if (!m) return { error: "That team member is outside your scope.", status: 403 };
+  const plan = await getActivePlan(supa, m, user.id, true);
+  const patch = { updated_at: new Date().toISOString() };
+  if ("target_role" in (body || {})) patch.target_role = clipText(body.target_role, 120);
+  if ("target_date" in (body || {})) patch.target_date = body.target_date || null;
+  const { data, error } = await supa.from("tp_dev_plans").update(patch).eq("id", plan.id).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, plan: data };
+}
+
+async function addDevItem(supa, user, body) {
+  const memberId = body?.member_id;
+  const focus = String(body?.focus_area || "").trim();
+  if (!memberId) return { error: "Missing team member.", status: 400 };
+  if (!focus) return { error: "Name a behavior or skill to develop.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  const m = await memberInScope(supa, scope, memberId);
+  if (!m) return { error: "That team member is outside your scope.", status: 403 };
+  const plan = await getActivePlan(supa, m, user.id, true);
+  const { data: existing } = await supa.from("tp_dev_items").select("rank").eq("plan_id", plan.id);
+  const nextRank = (existing || []).reduce((mx, r) => Math.max(mx, (r.rank ?? 0) + 1), 0);
+  const row = {
+    plan_id: plan.id, store_id: m.store_id, focus_area: focus.slice(0, 200),
+    goal: clipText(body?.goal, 1000), actions: clipText(body?.actions, 1000),
+    target_date: body?.target_date || null, progress: clipText(body?.progress, 2000),
+    rank: nextRank, created_by: user.id,
+  };
+  const { data, error } = await supa.from("tp_dev_items").insert(row).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, item: data };
+}
+
+async function updateDevItem(supa, user, body) {
+  const id = body?.item_id;
+  if (!id) return { error: "Missing item.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  const { data: it } = await supa.from("tp_dev_items").select("id, store_id").eq("id", id).maybeSingle();
+  if (!it || (!scope.all && !scope.ids.has(it.store_id))) return { error: "That item is outside your scope.", status: 403 };
+  const p = body?.patch && typeof body.patch === "object" ? body.patch : {};
+  const patch = { updated_at: new Date().toISOString() };
+  if ("focus_area" in p) { const f = String(p.focus_area || "").trim(); if (f) patch.focus_area = f.slice(0, 200); }
+  if ("goal" in p) patch.goal = clipText(p.goal, 1000);
+  if ("actions" in p) patch.actions = clipText(p.actions, 1000);
+  if ("progress" in p) patch.progress = clipText(p.progress, 2000);
+  if ("target_date" in p) patch.target_date = p.target_date || null;
+  if ("status" in p && DEV_ITEM_STATUS.has(p.status)) patch.status = p.status;
+  if ("rank" in p) { const n = parseInt(p.rank, 10); if (!Number.isNaN(n)) patch.rank = Math.max(0, Math.min(99, n)); }
+  if (Object.keys(patch).length === 1) return { error: "Nothing to update.", status: 400 };
+  const { data, error } = await supa.from("tp_dev_items").update(patch).eq("id", id).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, item: data };
+}
+
+async function removeDevItem(supa, user, body) {
+  const id = body?.item_id;
+  if (!id) return { error: "Missing item.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  const { data: it } = await supa.from("tp_dev_items").select("id, store_id").eq("id", id).maybeSingle();
+  if (!it || (!scope.all && !scope.ids.has(it.store_id))) return { error: "That item is outside your scope.", status: 403 };
+  const { error } = await supa.from("tp_dev_items").delete().eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
 // ── ATS roster bulk import ────────────────────────────────────────────────────
 // Replaces the seed-from-profiles stop-gap. Rows carry an employee + store
 // number + role; we map the ATS role title onto a ladder key, resolve the
@@ -1065,6 +1165,7 @@ export const handler = async (event) => {
       if (action === "successors") return unwrap(await listSuccessors(supa, user, params.member_id));
       if (action === "snapshots") return unwrap(await listSnapshots(supa, user));
       if (action === "snapshot-rows") return unwrap(await snapshotRows(supa, user, params));
+      if (action === "dev-plan") return unwrap(await getDevPlan(supa, user, params.member_id));
       if (action === "settings") return unwrap(await getSettings(supa, user));
       return respond(400, { error: `Unknown action: ${action}` });
     }
@@ -1080,6 +1181,10 @@ export const handler = async (event) => {
     if (action === "remove-successor") return unwrap(await removeSuccessor(supa, user, body));
     if (action === "take-snapshot") return unwrap(await takeSnapshot(supa, user, body));
     if (action === "lock-snapshot") return unwrap(await lockSnapshot(supa, user, body));
+    if (action === "save-dev-plan") return unwrap(await saveDevPlan(supa, user, body));
+    if (action === "add-dev-item") return unwrap(await addDevItem(supa, user, body));
+    if (action === "update-dev-item") return unwrap(await updateDevItem(supa, user, body));
+    if (action === "remove-dev-item") return unwrap(await removeDevItem(supa, user, body));
     if (action === "import-preview") return unwrap(await previewImport(supa, user, body));
     if (action === "import-roster") return unwrap(await importRoster(supa, user, body));
     if (action === "merge-members") return unwrap(await mergeMembers(supa, user, body));
