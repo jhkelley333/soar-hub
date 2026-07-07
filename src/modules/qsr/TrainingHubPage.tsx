@@ -13,7 +13,6 @@ import { useQuery } from "@tanstack/react-query";
 import { BarChart3, BookOpenCheck, ClipboardCheck, QrCode, Search } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/auth/AuthProvider";
-import { useFlag } from "@/lib/flags";
 import { fetchMyTraining, fetchQsrStats, type MyTrainingCourse } from "./api";
 import { ManagerDashboardPage } from "./manage/ManagerDashboardPage";
 import { NlaListPage } from "@/modules/nla/NlaListPage";
@@ -34,12 +33,13 @@ export function TrainingHubPage() {
   const { profile } = useAuth();
   const [params, setParams] = useSearchParams();
   const [search, setSearch] = useState("");
-  const qsrOn = useFlag("qsr_platform");
 
+  // Role-gated like the old sidebar entries (and the /qsr/manage + /qsr/share
+  // route guards). The qsr_platform flag never gated role-qualifying users —
+  // it only widens roles:[] modules — so it does not apply here.
   const role = String(profile?.role ?? "");
-  const isAdmin = role === "admin";
-  const showTeam = TEAM_ROLES.has(role) && (qsrOn || isAdmin);
-  const showQr = QR_ROLES.has(role) && (qsrOn || isAdmin);
+  const showTeam = TEAM_ROLES.has(role);
+  const showQr = QR_ROLES.has(role);
   const showNla = NLA_ROLES.has(role);
 
   const raw = params.get("tab") as Tab | null;
