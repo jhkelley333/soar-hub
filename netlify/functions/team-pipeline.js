@@ -840,7 +840,68 @@ async function getDevPlan(supa, user, memberId) {
   if (!plan) return { plan: null, items: [] };
   const { data: items } = await supa.from("tp_dev_items").select("*").eq("plan_id", plan.id)
     .order("rank", { ascending: true }).order("created_at", { ascending: true });
-  return { plan, items: items || [] };
+  const itemIds = (items || []).map((i) => i.id);
+  const { data: ms } = itemIds.length
+    ? await supa.from("tp_dev_milestones").select("*").in("item_id", itemIds)
+        .order("sort_order", { ascending: true }).order("created_at", { ascending: true })
+    : { data: [] };
+  const byItem = new Map();
+  for (const mi of ms || []) { const arr = byItem.get(mi.item_id) || []; arr.push(mi); byItem.set(mi.item_id, arr); }
+  return { plan, items: (items || []).map((i) => ({ ...i, milestones: byItem.get(i.id) || [] })) };
+}
+
+const MILESTONE_STATUS = new Set(["not_started", "in_progress", "done", "blocked"]);
+
+async function addDevMilestone(supa, user, body) {
+  const itemId = body?.item_id;
+  const title = String(body?.title || "").trim();
+  if (!itemId) return { error: "Missing goal.", status: 400 };
+  if (!title) return { error: "Give the milestone a title.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  const { data: it } = await supa.from("tp_dev_items").select("id, store_id").eq("id", itemId).maybeSingle();
+  if (!it || (!scope.all && !scope.ids.has(it.store_id))) return { error: "That goal is outside your scope.", status: 403 };
+  const { data: existing } = await supa.from("tp_dev_milestones").select("sort_order").eq("item_id", itemId);
+  const nextSort = (existing || []).reduce((mx, r) => Math.max(mx, (r.sort_order ?? 0) + 1), 0);
+  const row = {
+    item_id: itemId, store_id: it.store_id, title: title.slice(0, 300),
+    description: clipText(body?.description, 1000), due_date: body?.due_date || null,
+    status: "not_started", sort_order: nextSort,
+  };
+  const { data, error } = await supa.from("tp_dev_milestones").insert(row).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, milestone: data };
+}
+
+async function updateDevMilestone(supa, user, body) {
+  const id = body?.milestone_id;
+  if (!id) return { error: "Missing milestone.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  const { data: mi } = await supa.from("tp_dev_milestones").select("id, store_id").eq("id", id).maybeSingle();
+  if (!mi || (!scope.all && !scope.ids.has(mi.store_id))) return { error: "That milestone is outside your scope.", status: 403 };
+  const p = body?.patch && typeof body.patch === "object" ? body.patch : {};
+  const patch = { updated_at: new Date().toISOString() };
+  if ("title" in p) { const t = String(p.title || "").trim(); if (t) patch.title = t.slice(0, 300); }
+  if ("description" in p) patch.description = clipText(p.description, 1000);
+  if ("due_date" in p) patch.due_date = p.due_date || null;
+  if ("status" in p && MILESTONE_STATUS.has(p.status)) {
+    patch.status = p.status;
+    patch.completed_at = p.status === "done" ? new Date().toISOString() : null;
+  }
+  if (Object.keys(patch).length === 1) return { error: "Nothing to update.", status: 400 };
+  const { data, error } = await supa.from("tp_dev_milestones").update(patch).eq("id", id).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, milestone: data };
+}
+
+async function removeDevMilestone(supa, user, body) {
+  const id = body?.milestone_id;
+  if (!id) return { error: "Missing milestone.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  const { data: mi } = await supa.from("tp_dev_milestones").select("id, store_id").eq("id", id).maybeSingle();
+  if (!mi || (!scope.all && !scope.ids.has(mi.store_id))) return { error: "That milestone is outside your scope.", status: 403 };
+  const { error } = await supa.from("tp_dev_milestones").delete().eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
 }
 
 const clipText = (v, n) => (v == null || v === "" ? null : String(v).slice(0, n));
@@ -1656,6 +1717,9 @@ export const handler = async (event) => {
     if (action === "remove-successor") return unwrap(await removeSuccessor(supa, user, body));
     if (action === "take-snapshot") return unwrap(await takeSnapshot(supa, user, body));
     if (action === "lock-snapshot") return unwrap(await lockSnapshot(supa, user, body));
+    if (action === "add-dev-milestone") return unwrap(await addDevMilestone(supa, user, body));
+    if (action === "update-dev-milestone") return unwrap(await updateDevMilestone(supa, user, body));
+    if (action === "remove-dev-milestone") return unwrap(await removeDevMilestone(supa, user, body));
     if (action === "save-dev-plan") return unwrap(await saveDevPlan(supa, user, body));
     if (action === "add-dev-item") return unwrap(await addDevItem(supa, user, body));
     if (action === "update-dev-item") return unwrap(await updateDevItem(supa, user, body));

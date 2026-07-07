@@ -136,6 +136,15 @@ export function updateDevItem(itemId: string, patch: Partial<{ focus_area: strin
 export function removeDevItem(itemId: string): Promise<{ ok: true }> {
   return request(`${FN}?action=remove-dev-item`, { method: "POST", body: JSON.stringify({ item_id: itemId }) });
 }
+export function addDevMilestone(itemId: string, m: { title: string; due_date?: string | null; description?: string | null }): Promise<{ ok: true; milestone: import("./types").DevMilestone }> {
+  return request(`${FN}?action=add-dev-milestone`, { method: "POST", body: JSON.stringify({ item_id: itemId, ...m }) });
+}
+export function updateDevMilestone(milestoneId: string, patch: Partial<{ title: string; due_date: string | null; status: import("./types").MilestoneStatus; description: string | null }>): Promise<{ ok: true; milestone: import("./types").DevMilestone }> {
+  return request(`${FN}?action=update-dev-milestone`, { method: "POST", body: JSON.stringify({ milestone_id: milestoneId, patch }) });
+}
+export function removeDevMilestone(milestoneId: string): Promise<{ ok: true }> {
+  return request(`${FN}?action=remove-dev-milestone`, { method: "POST", body: JSON.stringify({ milestone_id: milestoneId }) });
+}
 
 // ── Signal-assisted risk ──────────────────────────────────────────────────────
 export function fetchMemberSignals(memberId: string): Promise<MemberSignals> {
