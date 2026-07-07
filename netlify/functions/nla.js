@@ -225,6 +225,133 @@ async function listTemplates(supa) {
   return { templates: out };
 }
 
+// ── Admin: review / edit / preview the instruments ────────────────────────────
+// Text edits apply in place (typo fixes show on historical assessments too —
+// acceptable for wording). Structural changes go through "clone as new
+// version": the picker always serves the highest ACTIVE version per role.
+const isAdminUser = (user) => String(user.role) === "admin";
+const slugify = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "item";
+
+async function adminTemplates(supa, user) {
+  if (!isAdminUser(user)) return { error: "Admins only.", status: 403 };
+  await ensureBuiltinTemplates(supa);
+  const { data: tpls } = await supa.from("tp_nla_templates").select("*")
+    .order("target_role", { ascending: true }).order("version", { ascending: false });
+  const ids = (tpls || []).map((t) => t.id);
+  const counts = new Map(); const uses = new Map();
+  if (ids.length) {
+    const { data: items } = await supa.from("tp_nla_template_items").select("template_id").in("template_id", ids);
+    for (const i of items || []) counts.set(i.template_id, (counts.get(i.template_id) || 0) + 1);
+    const { data: assess } = await supa.from("tp_nla_assessments").select("template_id").in("template_id", ids);
+    for (const a of assess || []) uses.set(a.template_id, (uses.get(a.template_id) || 0) + 1);
+  }
+  return { templates: (tpls || []).map((t) => ({ ...t, item_count: counts.get(t.id) || 0, assessment_count: uses.get(t.id) || 0 })) };
+}
+
+async function adminTemplate(supa, user, params) {
+  if (!isAdminUser(user)) return { error: "Admins only.", status: 403 };
+  const id = params?.template_id;
+  if (!id) return { error: "Missing template.", status: 400 };
+  const { data: tpl } = await supa.from("tp_nla_templates").select("*").eq("id", id).maybeSingle();
+  if (!tpl) return { error: "Template not found.", status: 404 };
+  const { data: items } = await supa.from("tp_nla_template_items")
+    .select("*").eq("template_id", id).order("sort_order", { ascending: true });
+  const { count } = await supa.from("tp_nla_assessments").select("id", { count: "exact", head: true }).eq("template_id", id);
+  return { template: tpl, items: items || [], assessment_count: count || 0 };
+}
+
+const TEMPLATE_STATUS = new Set(["draft", "active", "retired"]);
+async function adminUpdateTemplate(supa, user, body) {
+  if (!isAdminUser(user)) return { error: "Admins only.", status: 403 };
+  const id = body?.template_id;
+  if (!id) return { error: "Missing template.", status: 400 };
+  const patch = {};
+  if ("title" in (body || {})) { const t = String(body.title || "").trim(); if (t) patch.title = t.slice(0, 200); }
+  if ("status" in (body || {}) && TEMPLATE_STATUS.has(body.status)) patch.status = body.status;
+  if (!Object.keys(patch).length) return { error: "Nothing to update.", status: 400 };
+  const { data, error } = await supa.from("tp_nla_templates").update(patch).eq("id", id).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, template: data };
+}
+
+async function adminUpdateItem(supa, user, body) {
+  if (!isAdminUser(user)) return { error: "Admins only.", status: 403 };
+  const id = body?.item_id;
+  if (!id) return { error: "Missing competency.", status: 400 };
+  const p = body?.patch && typeof body.patch === "object" ? body.patch : {};
+  const patch = {};
+  if ("name" in p) { const n = String(p.name || "").trim(); if (n) patch.name = n.slice(0, 200); }
+  if ("category" in p) { const c = String(p.category || "").trim(); if (c) patch.category = c.slice(0, 80); }
+  if ("description" in p) patch.description = p.description == null || p.description === "" ? null : String(p.description).slice(0, 2000);
+  if ("example" in p) patch.example = p.example == null || p.example === "" ? null : String(p.example).slice(0, 2000);
+  if ("sort_order" in p) { const n = parseInt(p.sort_order, 10); if (!Number.isNaN(n)) patch.sort_order = Math.max(0, Math.min(999, n)); }
+  if (!Object.keys(patch).length) return { error: "Nothing to update.", status: 400 };
+  const { data, error } = await supa.from("tp_nla_template_items").update(patch).eq("id", id).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, item: data };
+}
+
+async function adminAddItem(supa, user, body) {
+  if (!isAdminUser(user)) return { error: "Admins only.", status: 403 };
+  const templateId = body?.template_id;
+  const name = String(body?.name || "").trim();
+  const category = String(body?.category || "").trim();
+  if (!templateId || !name || !category) return { error: "Category and competency name are required.", status: 400 };
+  const { data: existing } = await supa.from("tp_nla_template_items")
+    .select("competency_key, sort_order").eq("template_id", templateId);
+  const keys = new Set((existing || []).map((i) => i.competency_key));
+  let key = slugify(name); let n = 2;
+  while (keys.has(key)) key = `${slugify(name)}_${n++}`;
+  const nextSort = (existing || []).reduce((mx, i) => Math.max(mx, (i.sort_order ?? 0) + 1), 1);
+  const { data, error } = await supa.from("tp_nla_template_items").insert({
+    template_id: templateId, category: category.slice(0, 80), sort_order: nextSort,
+    competency_key: key, name: name.slice(0, 200),
+    description: body?.description ? String(body.description).slice(0, 2000) : null,
+    example: body?.example ? String(body.example).slice(0, 2000) : null,
+  }).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, item: data };
+}
+
+async function adminRemoveItem(supa, user, body) {
+  if (!isAdminUser(user)) return { error: "Admins only.", status: 403 };
+  const id = body?.item_id;
+  if (!id) return { error: "Missing competency.", status: 400 };
+  const { error } = await supa.from("tp_nla_template_items").delete().eq("id", id);
+  if (error) {
+    // FK from tp_nla_ratings blocks deleting a competency that has been rated.
+    return { error: "That competency has ratings on record. Clone a new version and remove it there instead.", status: 409 };
+  }
+  return { ok: true };
+}
+
+// Copy a template as the next version (draft). Edit freely, then set it
+// active — the picker serves the highest active version per role.
+async function adminCloneTemplate(supa, user, body) {
+  if (!isAdminUser(user)) return { error: "Admins only.", status: 403 };
+  const id = body?.template_id;
+  if (!id) return { error: "Missing template.", status: 400 };
+  const { data: tpl } = await supa.from("tp_nla_templates").select("*").eq("id", id).maybeSingle();
+  if (!tpl) return { error: "Template not found.", status: 404 };
+  const { data: vers } = await supa.from("tp_nla_templates").select("version").eq("target_role", tpl.target_role);
+  const nextVer = (vers || []).reduce((mx, v) => Math.max(mx, v.version + 1), 1);
+  const { data: created, error } = await supa.from("tp_nla_templates").insert({
+    target_role: tpl.target_role, version: nextVer, title: tpl.title, status: "draft",
+    effective_date: null, created_by: user.id,
+  }).select("id").single();
+  if (error) return { error: error.message, status: 500 };
+  const { data: items } = await supa.from("tp_nla_template_items").select("*").eq("template_id", id);
+  if (items?.length) {
+    const rows = items.map((i) => ({
+      template_id: created.id, category: i.category, sort_order: i.sort_order,
+      competency_key: i.competency_key, name: i.name, description: i.description, example: i.example,
+    }));
+    const { error: iErr } = await supa.from("tp_nla_template_items").insert(rows);
+    if (iErr) return { error: iErr.message, status: 500 };
+  }
+  return { ok: true, template_id: created.id, version: nextVer };
+}
+
 // Assessments where the caller is the subject or the leader.
 async function listAssessments(supa, user) {
   const { data } = await supa.from("tp_nla_assessments")
@@ -696,6 +823,8 @@ export const handler = async (event) => {
       if (action === "comparison") return unwrap(await comparison(supa, user, params));
       if (action === "acks") return unwrap(await listAcks(supa, user, params));
       if (action === "plan") return unwrap(await getPlan(supa, user, params));
+      if (action === "admin-templates") return unwrap(await adminTemplates(supa, user));
+      if (action === "admin-template") return unwrap(await adminTemplate(supa, user, params));
       return respond(400, { error: `Unknown action: ${action}` });
     }
     if (action === "open") return unwrap(await openAssessment(supa, user, body));
@@ -704,6 +833,11 @@ export const handler = async (event) => {
     if (action === "set-focus") return unwrap(await setFocus(supa, user, body));
     if (action === "remove-focus") return unwrap(await removeFocus(supa, user, body));
     if (action === "acknowledge") return unwrap(await acknowledge(supa, user, body));
+    if (action === "admin-update-template") return unwrap(await adminUpdateTemplate(supa, user, body));
+    if (action === "admin-update-item") return unwrap(await adminUpdateItem(supa, user, body));
+    if (action === "admin-add-item") return unwrap(await adminAddItem(supa, user, body));
+    if (action === "admin-remove-item") return unwrap(await adminRemoveItem(supa, user, body));
+    if (action === "admin-clone-template") return unwrap(await adminCloneTemplate(supa, user, body));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });

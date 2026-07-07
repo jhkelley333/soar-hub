@@ -92,6 +92,7 @@ import { ToolDetailPage } from "@/modules/coaching/ToolDetailPage";
 import { TeamPipelinePage } from "@/modules/team-pipeline/TeamPipelinePage";
 import { NlaTakePage } from "@/modules/nla/NlaTakePage";
 import { NlaComparePage } from "@/modules/nla/NlaComparePage";
+import { NlaAdminPage } from "@/modules/nla/NlaAdminPage";
 import { ManualSearchPage } from "@/modules/manuals/ManualSearchPage";
 import { ManualAdminPage } from "@/modules/manuals/ManualAdminPage";
 import { WeatherPage } from "@/modules/weather/WeatherPage";
@@ -442,6 +443,14 @@ export const router = createBrowserRouter([
       // Assessments tab; detail routes stay standalone. The nla function
       // enforces per-assessment access.
       { path: "nla", element: <Navigate to="/training?tab=assessments" replace /> },
+      {
+        path: "admin/nla-templates",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <NlaAdminPage />
+          </ProtectedRoute>
+        ),
+      },
       { path: "nla/:id", element: <NlaTakePage /> },
       { path: "nla/:id/compare", element: <NlaComparePage /> },
       {
