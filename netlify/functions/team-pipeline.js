@@ -1230,6 +1230,79 @@ async function devRollup(supa, user) {
   };
 }
 
+// ── Assessment readiness (from acknowledged NLAs) ─────────────────────────────
+// The latest readiness snapshot per roster member in scope: who a completed Next
+// Level Assessment says is ready to promote, and who is due for reassessment
+// (snapshot older than 90 days). Read-only.
+const READY_BAND_ORDER = { ready_now: 0, ready_soon: 1, developing: 2 };
+
+async function memberReadiness(supa, user, memberId) {
+  if (!memberId) return { error: "Missing team member.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  if (!(await memberInScope(supa, scope, memberId))) return { error: "That team member is outside your scope.", status: 403 };
+  const { data } = await supa.from("tp_readiness_snapshots")
+    .select("target_role, readiness_band, snapshot_date, summary, source_assessment_id")
+    .eq("subject_member_id", memberId).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (!data) return { readiness: null };
+  const days = data.snapshot_date ? Math.max(0, Math.round((Date.now() - new Date(data.snapshot_date).getTime()) / 86_400_000)) : null;
+  return { readiness: { ...data, days_since: days, reassess_due: days != null && days > 90 } };
+}
+
+async function readinessRollup(supa, user) {
+  const scope = await storesForUser(supa, user);
+  const ids = scope.all ? null : Array.from(scope.ids);
+  const empty = { rows: [], summary: { total: 0, ready_now: 0, ready_soon: 0, developing: 0, reassess_due: 0 } };
+  if (ids && ids.length === 0) return empty;
+
+  const members = await fetchAll(() => {
+    let q = supa.from("tp_team_members").select("id, store_id, full_name, role").neq("status", "terminated");
+    if (ids) q = q.in("store_id", ids);
+    return q;
+  });
+  const memberById = new Map((members || []).map((m) => [m.id, m]));
+  const memberIds = (members || []).map((m) => m.id);
+  if (!memberIds.length) return empty;
+
+  const snaps = await fetchAll(() => supa.from("tp_readiness_snapshots")
+    .select("subject_member_id, target_role, readiness_band, snapshot_date, created_at, summary").in("subject_member_id", memberIds));
+  const latest = new Map();
+  for (const s of (snaps || []).slice().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))) {
+    if (!latest.has(s.subject_member_id)) latest.set(s.subject_member_id, s);
+  }
+
+  const storeRows = await (async () => {
+    const list = ids || memberIds.map((mid) => memberById.get(mid)?.store_id).filter(Boolean);
+    if (!list.length) return [];
+    const { data } = await supa.from("stores").select("id, number, name, district_id").in("id", list);
+    return data || [];
+  })();
+  const storeById = new Map(storeRows.map((s) => [s.id, s]));
+  const now = Date.now();
+
+  const rows = Array.from(latest.entries()).map(([mid, s]) => {
+    const m = memberById.get(mid);
+    const st = m ? storeById.get(m.store_id) : null;
+    const days = s.snapshot_date ? Math.max(0, Math.round((now - new Date(s.snapshot_date).getTime()) / 86_400_000)) : null;
+    return {
+      member_id: mid, name: m?.full_name ?? "—", store_id: m?.store_id ?? null,
+      store_number: st?.number ?? null, district_id: st?.district_id ?? null, role: m?.role ?? null,
+      target_role: s.target_role, readiness_band: s.readiness_band, snapshot_date: s.snapshot_date,
+      days_since: days, reassess_due: days != null && days > 90,
+    };
+  }).sort((a, b) =>
+    (READY_BAND_ORDER[a.readiness_band] ?? 9) - (READY_BAND_ORDER[b.readiness_band] ?? 9) ||
+    String(a.store_number).localeCompare(String(b.store_number), undefined, { numeric: true }));
+
+  const summary = {
+    total: rows.length,
+    ready_now: rows.filter((r) => r.readiness_band === "ready_now").length,
+    ready_soon: rows.filter((r) => r.readiness_band === "ready_soon").length,
+    developing: rows.filter((r) => r.readiness_band === "developing").length,
+    reassess_due: rows.filter((r) => r.reassess_due).length,
+  };
+  return { rows, summary };
+}
+
 // ── Time-in-role dashboard ────────────────────────────────────────────────────
 // Distribution of how long people have held their CURRENT role (role_since,
 // falling back to hire_date), by tenure band and by ladder level, plus the
@@ -1698,6 +1771,8 @@ export const handler = async (event) => {
       if (action === "member-signals") return unwrap(await memberSignals(supa, user, params.member_id));
       if (action === "risk-review") return unwrap(await riskReview(supa, user));
       if (action === "dev-rollup") return unwrap(await devRollup(supa, user));
+      if (action === "readiness-rollup") return unwrap(await readinessRollup(supa, user));
+      if (action === "member-readiness") return unwrap(await memberReadiness(supa, user, params.member_id));
       if (action === "tenure-rollup") return unwrap(await tenureRollup(supa, user));
       if (action === "talent-export") return unwrap(await talentExport(supa, user, params));
       if (action === "monthly-review") return unwrap(await monthlyReview(supa, user));

@@ -360,6 +360,40 @@ export interface TalentExportResponse {
   member_rows: TalentExportRow[];
 }
 
+// ── Assessment readiness (from acknowledged NLAs) ─────────────────────────────
+export type ReadinessBand = "ready_now" | "ready_soon" | "developing";
+export interface MemberReadiness {
+  target_role: string;
+  readiness_band: ReadinessBand;
+  snapshot_date: string | null;
+  summary: unknown;
+  source_assessment_id: string | null;
+  days_since: number | null;
+  reassess_due: boolean;
+}
+export interface ReadinessRow {
+  member_id: string;
+  name: string;
+  store_id: string | null;
+  store_number: string | null;
+  district_id: string | null;
+  role: LadderKey | null;
+  target_role: string;
+  readiness_band: ReadinessBand;
+  snapshot_date: string | null;
+  days_since: number | null;
+  reassess_due: boolean;
+}
+export interface ReadinessRollupResponse {
+  rows: ReadinessRow[];
+  summary: { total: number; ready_now: number; ready_soon: number; developing: number; reassess_due: number };
+}
+export const READINESS_BAND_META: Record<ReadinessBand, { label: string; chip: string }> = {
+  ready_now: { label: "Ready now", chip: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
+  ready_soon: { label: "Ready soon", chip: "bg-amber-50 text-amber-800 ring-amber-200" },
+  developing: { label: "Developing", chip: "bg-zinc-100 text-zinc-600 ring-zinc-200" },
+};
+
 // ── Monthly talent-review nudge ───────────────────────────────────────────────
 export type ReviewView = "succession" | "development" | "tenure";
 export interface MonthlyReviewItem { key: string; label: string; count: number; view: ReviewView }
