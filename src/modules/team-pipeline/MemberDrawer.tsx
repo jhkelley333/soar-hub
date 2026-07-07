@@ -11,16 +11,20 @@ import { Drawer } from "@/shared/ui/Drawer";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { useToast } from "@/shared/ui/Toaster";
 import {
-  addCorrectiveAction, addDevItem, addNote, addSuccessor, fetchCorrectiveActions, fetchDevPlan, fetchNotes,
-  fetchStoreRoster, fetchSuccessors, inviteMember, removeDevItem, removeSuccessor, saveDevPlan,
-  setCorrectiveActionStatus, updateDevItem, updateMember, updateSuccessor,
+  addCorrectiveAction, addDevItem, addNote, addSuccessor, fetchCorrectiveActions, fetchDevPlan,
+  fetchMemberSignals, fetchNotes, fetchStoreRoster, fetchSuccessors, inviteMember, removeDevItem,
+  removeSuccessor, saveDevPlan, setCorrectiveActionStatus, updateDevItem, updateMember, updateSuccessor,
 } from "./api";
 import {
   ASPIRATION_META, CA_CATEGORIES, CA_LEVEL_META, CA_LEVELS, CA_STATUS_META, CA_TEMPLATES, DEV_ITEM_META,
   INVITE_ROLES, LADDER, LADDER_BY_KEY, RATING_COLOR, READINESS_META, RISK_META, RISK_REASONS,
+  SIGNAL_SEVERITY_META,
   type Aspiration, type CaLevel, type CorrectiveAction, type DevItem, type DevItemStatus, type FlightRisk,
   type LadderKey, type MemberPatch, type Readiness, type TeamMember,
 } from "./types";
+
+// Risk severity order for client-side gap checks (mirror backend RISK_ORDER).
+const RISK_RANK: Record<FlightRisk, number> = { na: 0, low: 1, medium: 2, immediate: 3 };
 
 type Ctx = { open: (m: TeamMember) => void; canWrite: boolean; roleEdit: boolean };
 const MemberDrawerCtx = createContext<Ctx>({ open: () => {}, canWrite: false, roleEdit: false });
@@ -52,6 +56,8 @@ function MemberBody({ member, canWrite, roleEdit }: { member: TeamMember; canWri
       qc.invalidateQueries({ queryKey: ["tp-store-roster"] });
       qc.invalidateQueries({ queryKey: ["tp-gms"] });
       qc.invalidateQueries({ queryKey: ["tp-rollup"] });
+      qc.invalidateQueries({ queryKey: ["tp-member-signals", member.id] });
+      qc.invalidateQueries({ queryKey: ["tp-risk-review"] });
     },
     onError: (e: unknown) => { toast.push((e as Error)?.message ?? "Couldn't save.", "error"); setDraft(member); },
   });
@@ -128,6 +134,7 @@ function MemberBody({ member, canWrite, roleEdit }: { member: TeamMember; canWri
             ))}
           </div>
         )}
+        <RiskSignals memberId={member.id} currentRisk={draft.flight_risk} canWrite={canWrite} onApply={(r) => set({ flight_risk: r })} />
       </Field>
 
       {/* aspiration */}
@@ -170,6 +177,48 @@ function MemberBody({ member, canWrite, roleEdit }: { member: TeamMember; canWri
       <DevPlan member={member} canWrite={canWrite} />
       <NotesThread memberId={member.id} canWrite={canWrite} />
       <CorrectiveActions memberId={member.id} canWrite={canWrite} />
+    </div>
+  );
+}
+
+// Data-driven risk cues (discipline, aspiration, tenure, ratings, PDP coverage)
+// with a one-tap "apply the suggested risk" when the data flags higher than the
+// current manual flag.
+function RiskSignals({ memberId, currentRisk, canWrite, onApply }: {
+  memberId: string; currentRisk: FlightRisk; canWrite: boolean; onApply: (r: FlightRisk) => void;
+}) {
+  const q = useQuery({ queryKey: ["tp-member-signals", memberId], queryFn: () => fetchMemberSignals(memberId) });
+  if (q.isLoading || q.isError) return null;
+  const data = q.data!;
+  if (!data.signals.length) return null;
+  const showApply = canWrite && RISK_RANK[data.suggested] > RISK_RANK[currentRisk];
+
+  return (
+    <div className="mt-3 rounded-xl border border-border bg-surface-muted px-3 py-2.5">
+      <div className="mb-1.5 flex items-center gap-2">
+        <span className="text-[11px] font-bold uppercase tracking-wide text-ink-subtle">Risk signals</span>
+        <span className="text-[11px] text-ink-subtle">from the data</span>
+      </div>
+      <ul className="flex flex-col gap-1.5">
+        {data.signals.map((s) => {
+          const sm = SIGNAL_SEVERITY_META[s.severity];
+          return (
+            <li key={s.key} className="flex items-start gap-2">
+              <span className={cn("mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full", sm.dot)} />
+              <div className="min-w-0">
+                <span className="text-[13px] font-semibold text-heading">{s.label}</span>
+                <span className="text-[12px] text-ink-muted"> — {s.detail}</span>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+      {showApply && (
+        <button onClick={() => onApply(data.suggested)}
+          className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg bg-midnight px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-midnight/90">
+          Set risk to {RISK_META[data.suggested].short}
+        </button>
+      )}
     </div>
   );
 }
