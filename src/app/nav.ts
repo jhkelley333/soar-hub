@@ -30,7 +30,6 @@ import {
   CloudSun,
   BarChart3,
   ScrollText,
-  QrCode,
   AlertTriangle,
   MapPinned,
   type LucideIcon,
@@ -126,23 +125,14 @@ export const NAV: NavItem[] = [
   // Coaching Tool Kit — coaching-for-performance reference cards for hourly
   // managers and above. Lives under People.
   { to: "/coaching",    label: "Coaching Tool Kit", icon: GraduationCap, roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
-  // My Training — learner home for SOAR QSR. Open to everyone signed in; the
-  // list is empty (with a friendly note) for anyone with nothing assigned, and
-  // it's the persistent place to find required training the login pop-up nags about.
-  { to: "/my-training", label: "My Training",  icon: BookOpenCheck,   roles: null },
-  // Team Training — completion rollup scoped to the caller's org (GM → store,
-  // DO → district, RVP → region; admins org-wide). Admins also assign courses.
-  { to: "/qsr/manage",  label: "Team Training", icon: BarChart3,       roles: ["shift_manager", "first_assistant_manager", "associate_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"], flagKey: "qsr_platform" },
-  // Training QR codes — store leaders + up see/print their stores' codes
-  // (scoped by org in qsr-manage); admins also bulk-create + manage all.
-  { to: "/qsr/share",   label: "Training QR Codes", icon: QrCode,      roles: ["shift_manager", "first_assistant_manager", "associate_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"], flagKey: "qsr_platform" },
+  // Training — the consolidated hub: My Training, Team Training, and
+  // Assessments live as tabs inside (each gates itself by role/flag), with the
+  // Training QR launcher in the header. Replaces four separate nav items.
+  { to: "/training", label: "Training", icon: BookOpenCheck, roles: null },
   // Team Pipeline — Talent Planning. Gated behind the team_pipeline flag:
   // roles:[] means it stays dark until the flag resolves true for the user
   // (admins always see it). Scoped to the viewer's org tree in-app.
   { to: "/team-pipeline", label: "Team Pipeline", icon: GitBranch, roles: [], flagKey: "team_pipeline" },
-  // Next Level Assessments. Visible to the manager track (subjects self-assess)
-  // and their leaders; the nla function enforces per-assessment access.
-  { to: "/nla", label: "Assessments", icon: ClipboardCheck, roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/schedule",    label: "Calendar",    icon: CalendarDays,    roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/contacts",    label: "Contacts",    icon: BookUser,        roles: null },
   { to: "/manuals",     label: "Manual Search", icon: BookMarked,    roles: null },
@@ -248,11 +238,8 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/paf": "PEOPLE",
   "/employee-actions": "PEOPLE",
   "/coaching": "PEOPLE",
-  "/my-training": "PEOPLE",
-  "/qsr/manage": "PEOPLE",
-  "/qsr/share": "PEOPLE",
+  "/training": "PEOPLE",
   "/team-pipeline": "PEOPLE",
-  "/nla": "PEOPLE",
   "/contacts": "PEOPLE",
   "/team": "PEOPLE",
   "/resources": "WORKSPACE",

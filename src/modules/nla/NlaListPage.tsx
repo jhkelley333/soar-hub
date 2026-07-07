@@ -9,7 +9,7 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { fetchNlaList } from "./api";
 import { NLA_STATUS_META, type NlaListRow } from "./types";
 
-export function NlaListPage() {
+export function NlaListPage({ embedded = false }: { embedded?: boolean } = {}) {
   const navigate = useNavigate();
   const q = useQuery({ queryKey: ["nla-list"], queryFn: fetchNlaList, staleTime: 30_000 });
 
@@ -24,12 +24,16 @@ export function NlaListPage() {
     navigate(a.both_submitted || COMPARE_READY.has(a.status) ? `/nla/${a.id}/compare` : `/nla/${a.id}`);
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <div className="mb-1 flex items-center gap-2">
-        <ClipboardCheck className="h-5 w-5 text-accent" />
-        <h1 className="text-xl font-bold text-heading">Next Level Assessments</h1>
-      </div>
-      <p className="mb-5 text-sm text-ink-muted">Assess readiness for the next role. You and your leader each rate the same competencies, then compare and build a development plan.</p>
+    <div className={embedded ? "" : "mx-auto max-w-3xl"}>
+      {!embedded && (
+        <>
+          <div className="mb-1 flex items-center gap-2">
+            <ClipboardCheck className="h-5 w-5 text-accent" />
+            <h1 className="text-xl font-bold text-heading">Next Level Assessments</h1>
+          </div>
+          <p className="mb-5 text-sm text-ink-muted">Assess readiness for the next role. You and your leader each rate the same competencies, then compare and build a development plan.</p>
+        </>
+      )}
 
       {rows.length === 0 ? (
         <EmptyState title="No assessments yet" description="When a leader opens a Next Level Assessment on you — or you open one on a team member — it shows up here." />

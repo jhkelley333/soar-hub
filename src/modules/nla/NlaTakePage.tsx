@@ -65,7 +65,7 @@ export function NlaTakePage() {
     const tally = RATING_ORDER.map((k) => ({ k, n: data.my_ratings.filter((r) => r.rating === k).length }));
     return (
       <div className="mx-auto max-w-lg">
-        <BackLink onClick={() => navigate("/nla")} />
+        <BackLink onClick={() => navigate("/training?tab=assessments")} />
         <div className="rounded-2xl border border-border bg-surface p-6">
           <div className="flex items-center gap-2 text-emerald-600">
             <CheckCircle2 className="h-5 w-5" />
@@ -109,7 +109,7 @@ export function NlaTakePage() {
   // ── Rating (main) ──
   return (
     <div className="mx-auto max-w-3xl">
-      <BackLink onClick={() => navigate("/nla")} />
+      <BackLink onClick={() => navigate("/training?tab=assessments")} />
       {/* header */}
       <div className="sticky top-0 z-10 -mx-4 mb-4 border-b border-border bg-surface/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6">
         <div className="flex items-center justify-between gap-4">

@@ -38,7 +38,7 @@ import { LaborV2Page } from "@/modules/labor-v2/LaborV2Page";
 import { PullLogPage } from "@/modules/labor-v2/PullLogPage";
 import { LaborV2Entry } from "@/modules/labor-v2/LaborV2Entry";
 import { QsrHomePage } from "@/modules/qsr/QsrHomePage";
-import { MyTrainingPage } from "@/modules/qsr/MyTrainingPage";
+import { TrainingHubPage } from "@/modules/qsr/TrainingHubPage";
 import { LessonPlayer } from "@/modules/qsr/player/LessonPlayer";
 import { BuilderCoursesPage } from "@/modules/qsr/builder/BuilderCoursesPage";
 import { CourseEditorPage } from "@/modules/qsr/builder/CourseEditorPage";
@@ -90,7 +90,6 @@ import { GroupInfoPage } from "@/modules/chat/GroupInfoPage";
 import { CoachingToolkitPage } from "@/modules/coaching/CoachingToolkitPage";
 import { ToolDetailPage } from "@/modules/coaching/ToolDetailPage";
 import { TeamPipelinePage } from "@/modules/team-pipeline/TeamPipelinePage";
-import { NlaListPage } from "@/modules/nla/NlaListPage";
 import { NlaTakePage } from "@/modules/nla/NlaTakePage";
 import { NlaComparePage } from "@/modules/nla/NlaComparePage";
 import { ManualSearchPage } from "@/modules/manuals/ManualSearchPage";
@@ -439,9 +438,10 @@ export const router = createBrowserRouter([
           </FlagOrRoleRoute>
         ),
       },
-      // Next Level Assessment. Any signed-in user can reach it (a subject
-      // self-assesses); the nla function enforces per-assessment access.
-      { path: "nla", element: <NlaListPage /> },
+      // Next Level Assessment. The list now lives in the Training hub's
+      // Assessments tab; detail routes stay standalone. The nla function
+      // enforces per-assessment access.
+      { path: "nla", element: <Navigate to="/training?tab=assessments" replace /> },
       { path: "nla/:id", element: <NlaTakePage /> },
       { path: "nla/:id/compare", element: <NlaComparePage /> },
       {
@@ -510,11 +510,15 @@ export const router = createBrowserRouter([
         ),
       },
       {
-        // My Training — learner home, open to every signed-in user. Lists the
-        // caller's required + all published courses; the player enforces access.
-        path: "my-training",
-        element: <MyTrainingPage />,
+        // Training hub — the single home for training: My Training, Team
+        // Training, and Assessments as tabs, plus the QR-codes launcher.
+        // Open to every signed-in user; tabs gate themselves by role/flag.
+        path: "training",
+        element: <TrainingHubPage />,
       },
+      // Old entry points redirect into the hub (deep links + the login
+      // required-training prompt keep working).
+      { path: "my-training", element: <Navigate to="/training" replace /> },
       {
         // The course player is open to any signed-in user (it's training
         // content; the server only serves published courses and tracks
