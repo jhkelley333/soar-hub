@@ -63,6 +63,7 @@ import { PublicLearnPage } from "@/modules/qsr/public/PublicLearnPage";
 import { StorePortalPage } from "@/modules/store-portal/StorePortalPage";
 import { StorePortalAdminPage } from "@/modules/store-portal/StorePortalAdminPage";
 import { StorePortalLivePage } from "@/modules/store-portal/StorePortalLivePage";
+import { PhoneUploadPage } from "@/modules/store-portal/PhoneUploadPage";
 import { SharePage } from "@/modules/qsr/share/SharePage";
 import { WorkspacesPage } from "@/modules/workspaces/WorkspacesPage";
 import { WorkspaceDetail } from "@/modules/workspaces/WorkspaceDetail";
@@ -121,6 +122,9 @@ export const router = createBrowserRouter([
   // Store Command Center — the per-store desktop bookmark. Token in the URL,
   // bound to the first device that opens it (store-portal.js enforces).
   { path: "/s/:token", element: <StorePortalPage /> },
+  // Phone side of the Command Center photo handoff — signed short-lived
+  // token from the QR the store screen displays.
+  { path: "/p/:token", element: <PhoneUploadPage /> },
   {
     path: "/",
     element: <RootRoute />,
