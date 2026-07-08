@@ -46,11 +46,20 @@ export interface PortalSnapshot {
 export function fetchPortalSnapshot(token: string): Promise<PortalSnapshot> {
   return publicPost("snapshot", { token, device_id: deviceId() });
 }
-export function sendPortalReport(token: string, input: { kind: string; message: string; reporter_name?: string }): Promise<{ ok: true; notified: number }> {
-  return publicPost("report", { token, device_id: deviceId(), ...input });
+export function sendPortalReport(access: PortalAccess, input: { kind: string; message: string; reporter_name?: string }): Promise<{ ok: true; notified: number }> {
+  return portalPost("report", access, { ...input });
 }
 export function messagePortalLeader(token: string, input: { slot: string; message: string; reporter_name?: string }): Promise<{ ok: true; leader: string | null }> {
   return publicPost("chat-leader", { token, device_id: deviceId(), ...input });
+}
+
+// Store-scoped calls work for two callers: the store screen (token + device)
+// and an admin session (Bearer + store_id) — the admin live view is fully
+// interactive without touching the screen's device binding.
+export type PortalAccess = { token: string } | { store_id: string };
+function portalPost<T>(action: string, access: PortalAccess, body: Record<string, unknown> = {}): Promise<T> {
+  if ("token" in access) return publicPost<T>(action, { token: access.token, device_id: deviceId(), ...body });
+  return adminRequest<T>(action, { method: "POST", body: JSON.stringify({ store_id: access.store_id, ...body }) });
 }
 
 // ── Work orders from the screen ───────────────────────────────────────────────
@@ -69,20 +78,20 @@ export interface PortalTicketDetail {
   messages: { user_name: string | null; user_role: string | null; message: string; created_at: string }[];
   photos: { file_url: string; file_name: string; created_at: string }[];
 }
-export function fetchPortalTickets(token: string): Promise<{ open: PortalTicket[]; recent_closed: PortalTicket[] }> {
-  return publicPost("tickets", { token, device_id: deviceId() });
+export function fetchPortalTickets(access: PortalAccess): Promise<{ open: PortalTicket[]; recent_closed: PortalTicket[] }> {
+  return portalPost("tickets", access);
 }
-export function fetchPortalTicket(token: string, ticketId: string): Promise<PortalTicketDetail> {
-  return publicPost("ticket", { token, device_id: deviceId(), ticket_id: ticketId });
+export function fetchPortalTicket(access: PortalAccess, ticketId: string): Promise<PortalTicketDetail> {
+  return portalPost("ticket", access, { ticket_id: ticketId });
 }
-export function createPortalTicket(token: string, input: { submitter_name: string; issue_description: string; category?: string; priority?: string; troubleshooting_checked?: boolean }): Promise<{ ok: true; ticket_id: string; wo_number: string }> {
-  return publicPost("create-ticket", { token, device_id: deviceId(), ...input });
+export function createPortalTicket(access: PortalAccess, input: { submitter_name: string; issue_description: string; category?: string; priority?: string; troubleshooting_checked?: boolean }): Promise<{ ok: true; ticket_id: string; wo_number: string }> {
+  return portalPost("create-ticket", access, { ...input });
 }
-export function commentPortalTicket(token: string, input: { ticket_id: string; message: string; name?: string }): Promise<{ ok: true }> {
-  return publicPost("comment-ticket", { token, device_id: deviceId(), ...input });
+export function commentPortalTicket(access: PortalAccess, input: { ticket_id: string; message: string; name?: string }): Promise<{ ok: true }> {
+  return portalPost("comment-ticket", access, { ...input });
 }
-export function fetchPhotoQr(token: string, ticketId: string): Promise<{ ok: true; token: string; expires_in_minutes: number; wo_number: string }> {
-  return publicPost("photo-qr", { token, device_id: deviceId(), ticket_id: ticketId });
+export function fetchPhotoQr(access: PortalAccess, ticketId: string): Promise<{ ok: true; token: string; expires_in_minutes: number; wo_number: string }> {
+  return portalPost("photo-qr", access, { ticket_id: ticketId });
 }
 
 // ── Phone side (signed token from the QR; no device binding) ─────────────────

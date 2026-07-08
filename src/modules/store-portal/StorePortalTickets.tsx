@@ -11,7 +11,7 @@ import { ArrowLeft, Camera, Check, MessageSquare, Plus, RefreshCw, X } from "luc
 import { cn } from "@/lib/cn";
 import {
   commentPortalTicket, createPortalTicket, fetchPhotoQr, fetchPortalTicket, fetchPortalTickets,
-  type PortalTicket,
+  type PortalAccess, type PortalTicket,
 } from "./api";
 
 const STATUS_CHIP: Record<string, string> = {
@@ -31,9 +31,9 @@ const PRIORITY_CHIP: Record<string, string> = {
   Urgent: "bg-orange-100 text-orange-700",
 };
 
-export function TicketsView({ token, onBack }: { token: string; onBack: () => void }) {
+export function TicketsView({ access, onBack }: { access: PortalAccess; onBack: () => void }) {
   const [view, setView] = useState<{ kind: "list" } | { kind: "new" } | { kind: "detail"; id: string }>({ kind: "list" });
-  const q = useQuery({ queryKey: ["portal-tickets", token], queryFn: () => fetchPortalTickets(token), refetchInterval: 60_000 });
+  const q = useQuery({ queryKey: ["portal-tickets", access], queryFn: () => fetchPortalTickets(access), refetchInterval: 60_000 });
 
   return (
     <section className="mx-auto max-w-6xl px-6 py-10">
@@ -60,9 +60,9 @@ export function TicketsView({ token, onBack }: { token: string; onBack: () => vo
           onOpen={(id) => setView({ kind: "detail", id })} />
       )}
       {view.kind === "new" && (
-        <NewTicketForm token={token} onCreated={(id) => setView({ kind: "detail", id })} />
+        <NewTicketForm access={access} onCreated={(id) => setView({ kind: "detail", id })} />
       )}
-      {view.kind === "detail" && <TicketDetail token={token} ticketId={view.id} />}
+      {view.kind === "detail" && <TicketDetail access={access} ticketId={view.id} />}
     </section>
   );
 }
@@ -126,7 +126,7 @@ function TicketRow({ t, onOpen }: { t: PortalTicket; onOpen: (id: string) => voi
 }
 
 // ── New ticket (store pre-locked; no picker) ──────────────────────────────────
-function NewTicketForm({ token, onCreated }: { token: string; onCreated: (id: string) => void }) {
+function NewTicketForm({ access, onCreated }: { access: PortalAccess; onCreated: (id: string) => void }) {
   const qc = useQueryClient();
   const [name, setName] = useState("");
   const [category, setCategory] = useState("");
@@ -134,11 +134,11 @@ function NewTicketForm({ token, onCreated }: { token: string; onCreated: (id: st
   const [description, setDescription] = useState("");
   const [checked, setChecked] = useState(false);
   const create = useMutation({
-    mutationFn: () => createPortalTicket(token, {
+    mutationFn: () => createPortalTicket(access, {
       submitter_name: name.trim(), issue_description: description.trim(),
       category: category.trim() || undefined, priority, troubleshooting_checked: checked,
     }),
-    onSuccess: (r) => { qc.invalidateQueries({ queryKey: ["portal-tickets", token] }); onCreated(r.ticket_id); },
+    onSuccess: (r) => { qc.invalidateQueries({ queryKey: ["portal-tickets", access] }); onCreated(r.ticket_id); },
   });
   const input = "w-full rounded-xl border border-zinc-200 px-4 py-3 text-[15px] text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-900 focus:outline-none";
 
@@ -178,19 +178,19 @@ function NewTicketForm({ token, onCreated }: { token: string; onCreated: (id: st
 }
 
 // ── Ticket detail ─────────────────────────────────────────────────────────────
-function TicketDetail({ token, ticketId }: { token: string; ticketId: string }) {
+function TicketDetail({ access, ticketId }: { access: PortalAccess; ticketId: string }) {
   const qc = useQueryClient();
   const [showQr, setShowQr] = useState(false);
   const [comment, setComment] = useState("");
   const [name, setName] = useState("");
   const q = useQuery({
-    queryKey: ["portal-ticket", token, ticketId],
-    queryFn: () => fetchPortalTicket(token, ticketId),
+    queryKey: ["portal-ticket", access, ticketId],
+    queryFn: () => fetchPortalTicket(access, ticketId),
     refetchInterval: 15_000, // phone photos + status changes appear on the big screen
   });
   const post = useMutation({
-    mutationFn: () => commentPortalTicket(token, { ticket_id: ticketId, message: comment.trim(), name: name.trim() || undefined }),
-    onSuccess: () => { setComment(""); qc.invalidateQueries({ queryKey: ["portal-ticket", token, ticketId] }); },
+    mutationFn: () => commentPortalTicket(access, { ticket_id: ticketId, message: comment.trim(), name: name.trim() || undefined }),
+    onSuccess: () => { setComment(""); qc.invalidateQueries({ queryKey: ["portal-ticket", access, ticketId] }); },
   });
 
   if (q.isLoading) return <div className="rounded-2xl border border-zinc-200 bg-white p-10 text-center text-zinc-400">Loading ticket…</div>;
@@ -271,17 +271,17 @@ function TicketDetail({ token, ticketId }: { token: string; ticketId: string }) 
         </div>
       </div>
 
-      {showQr && <PhotoQrModal token={token} ticketId={ticketId} woNumber={ticket.wo_number} onClose={() => setShowQr(false)} />}
+      {showQr && <PhotoQrModal access={access} ticketId={ticketId} woNumber={ticket.wo_number} onClose={() => setShowQr(false)} />}
     </div>
   );
 }
 
 // ── QR handoff modal ──────────────────────────────────────────────────────────
-function PhotoQrModal({ token, ticketId, woNumber, onClose }: { token: string; ticketId: string; woNumber: string; onClose: () => void }) {
+function PhotoQrModal({ access, ticketId, woNumber, onClose }: { access: PortalAccess; ticketId: string; woNumber: string; onClose: () => void }) {
   const [src, setSrc] = useState("");
   const q = useQuery({
-    queryKey: ["portal-photo-qr", token, ticketId],
-    queryFn: () => fetchPhotoQr(token, ticketId),
+    queryKey: ["portal-photo-qr", access, ticketId],
+    queryFn: () => fetchPhotoQr(access, ticketId),
     staleTime: 0, gcTime: 0,
   });
   useEffect(() => {
