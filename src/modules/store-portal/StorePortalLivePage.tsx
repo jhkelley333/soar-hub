@@ -11,7 +11,8 @@ import { cn } from "@/lib/cn";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { fetchPortalAdminSnapshot } from "./api";
-import { Chrome, PortalBody, RightCallSheet } from "./StorePortalPage";
+import { Chrome, PortalBody, ReportSheet, RightCallSheet } from "./StorePortalPage";
+import { TicketsView } from "./StorePortalTickets";
 
 const KIND_CHIP: Record<string, string> = {
   tardiness: "bg-amber-100 text-amber-800",
@@ -23,6 +24,8 @@ const KIND_CHIP: Record<string, string> = {
 export function StorePortalLivePage() {
   const { storeId = "" } = useParams();
   const [showCall, setShowCall] = useState(false);
+  const [showReport, setShowReport] = useState(false);
+  const [showTickets, setShowTickets] = useState(false);
   const q = useQuery({
     queryKey: ["store-portal-live", storeId],
     queryFn: () => fetchPortalAdminSnapshot(storeId),
@@ -58,7 +61,11 @@ export function StorePortalLivePage() {
       </div>
 
       <Chrome store={data.store} dateLabel={today}>
-        <PortalBody data={data} isLoading={false} onCall={() => setShowCall(true)} onReport={() => {}} />
+        {showTickets ? (
+          <TicketsView access={{ store_id: storeId }} onBack={() => setShowTickets(false)} />
+        ) : (
+        <>
+        <PortalBody data={data} isLoading={false} onCall={() => setShowCall(true)} onReport={() => setShowReport(true)} onTickets={() => setShowTickets(true)} />
 
         {/* floor reports — admin-only extra, below the store page content */}
         <section className="mx-auto max-w-6xl px-6 pb-14">
@@ -86,7 +93,10 @@ export function StorePortalLivePage() {
           </div>
         </section>
 
+        </>
+        )}
         {showCall && <RightCallSheet contacts={data.contacts} onClose={() => setShowCall(false)} />}
+        {showReport && <ReportSheet access={{ store_id: storeId }} onClose={() => setShowReport(false)} />}
       </Chrome>
     </div>
   );

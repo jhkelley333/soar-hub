@@ -58,7 +58,7 @@ export function StorePortalPage() {
   if (showTickets) {
     return (
       <Chrome store={data?.store} dateLabel={today}>
-        <TicketsView token={token} onBack={() => setShowTickets(false)} />
+        <TicketsView access={{ token }} onBack={() => setShowTickets(false)} />
       </Chrome>
     );
   }
@@ -66,7 +66,7 @@ export function StorePortalPage() {
     <Chrome store={data?.store} dateLabel={today}>
       <PortalBody data={data} isLoading={q.isLoading} onCall={() => setShowCall(true)} onReport={() => setShowReport(true)} onTickets={() => setShowTickets(true)} />
       {showCall && data && <RightCallSheet contacts={data.contacts} token={token} onClose={() => setShowCall(false)} />}
-      {showReport && <ReportSheet token={token} onClose={() => setShowReport(false)} />}
+      {showReport && <ReportSheet access={{ token }} onClose={() => setShowReport(false)} />}
     </Chrome>
   );
 }
@@ -344,12 +344,12 @@ const KINDS = [
   { key: "issue", label: "Other issue" },
 ];
 
-function ReportSheet({ token, onClose }: { token: string; onClose: () => void }) {
+export function ReportSheet({ access, onClose }: { access: import("./api").PortalAccess; onClose: () => void }) {
   const [kind, setKind] = useState("issue");
   const [message, setMessage] = useState("");
   const [name, setName] = useState("");
   const send = useMutation({
-    mutationFn: () => sendPortalReport(token, { kind, message: message.trim(), reporter_name: name.trim() || undefined }),
+    mutationFn: () => sendPortalReport(access, { kind, message: message.trim(), reporter_name: name.trim() || undefined }),
   });
 
   if (send.isSuccess) {

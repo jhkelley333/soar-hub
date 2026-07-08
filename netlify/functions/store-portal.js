@@ -82,6 +82,21 @@ async function resolve(supa, body) {
   return { ok: true, store: { number: store.number, name: store.name, city: store.city, state: store.state } };
 }
 
+// Store-scoped actions accept EITHER the screen's token+device OR a Bearer
+// admin session + store_id, so the admin live view is fully interactive
+// (file/manage tickets, send reports) without touching the device binding.
+async function resolveAccess(supa, event, body) {
+  if (body?.token) return gate(supa, body);
+  const user = await getSessionUser(event, supa);
+  if (!user) return { error: "unauthorized", status: 401 };
+  const storeId = body?.store_id;
+  if (!storeId) return { error: "Missing store.", status: 400 };
+  const { data: store } = await supa.from("stores")
+    .select("id, number, name, city, state").eq("id", storeId).maybeSingle();
+  if (!store) return { error: "Store not found.", status: 404 };
+  return { store, tokenRow: null, adminUser: user };
+}
+
 // ── Snapshot — everything on the page in one call ─────────────────────────────
 const pct = (v) => (v == null ? null : Math.round(Number(v) * 1000) / 10);
 
@@ -222,14 +237,15 @@ async function snapshot(supa, body) {
 }
 
 const REPORT_KINDS = new Set(["tardiness", "safety", "equipment", "issue"]);
-async function report(supa, body) {
-  const g = await gate(supa, body);
+async function report(supa, event, body) {
+  const g = await resolveAccess(supa, event, body);
   if (g.error) return g;
-  const { store, tokenRow } = g;
+  const { store, tokenRow, adminUser } = g;
   const kind = REPORT_KINDS.has(body?.kind) ? body.kind : "issue";
   const message = String(body?.message || "").trim();
   if (!message) return { error: "Describe what is going on.", status: 400 };
-  const reporter = String(body?.reporter_name || "").trim().slice(0, 120) || null;
+  const reporter = String(body?.reporter_name || "").trim().slice(0, 120)
+    || (adminUser ? (adminUser.preferred_name || adminUser.full_name || null) : null);
 
   const contacts = await leadership(supa, store);
   const to = contacts.filter((c) => (c.slot === "GM" || c.slot === "DO") && c.email).map((c) => c.email);
@@ -248,7 +264,7 @@ async function report(supa, body) {
     ].filter((l) => l !== null).join("\n"),
   });
   const { error } = await supa.from("store_portal_reports").insert({
-    store_id: store.id, token_id: tokenRow.id, kind, message: message.slice(0, 4000),
+    store_id: store.id, token_id: tokenRow?.id ?? null, kind, message: message.slice(0, 4000),
     reporter_name: reporter, emailed_to: to,
   });
   if (error) return { error: error.message, status: 500 };
@@ -302,8 +318,8 @@ const ticketSummary = (t) => ({
   vendor_name: t.vendor_name || null,
 });
 
-async function listStoreTickets(supa, body) {
-  const g = await gate(supa, body);
+async function listStoreTickets(supa, event, body) {
+  const g = await resolveAccess(supa, event, body);
   if (g.error) return g;
   const num = String(g.store.number);
   const { data: open } = await supa.from("tickets")
@@ -324,8 +340,8 @@ async function storeTicket(supa, store, ticketId) {
   return t;
 }
 
-async function getStoreTicket(supa, body) {
-  const g = await gate(supa, body);
+async function getStoreTicket(supa, event, body) {
+  const g = await resolveAccess(supa, event, body);
   if (g.error) return g;
   const t = await storeTicket(supa, g.store, body?.ticket_id);
   if (!t) return { error: "Ticket not found for this store.", status: 404 };
@@ -338,8 +354,8 @@ async function getStoreTicket(supa, body) {
   return { ticket: ticketSummary(t), messages: msgs || [], photos: photos || [] };
 }
 
-async function createStoreTicket(supa, body) {
-  const g = await gate(supa, body);
+async function createStoreTicket(supa, event, body) {
+  const g = await resolveAccess(supa, event, body);
   if (g.error) return g;
   const { store } = g;
   const name = String(body?.submitter_name || "").trim();
@@ -375,8 +391,8 @@ async function createStoreTicket(supa, body) {
   return { ok: true, ticket_id: ticket.id, wo_number: ticket.wo_number };
 }
 
-async function commentStoreTicket(supa, body) {
-  const g = await gate(supa, body);
+async function commentStoreTicket(supa, event, body) {
+  const g = await resolveAccess(supa, event, body);
   if (g.error) return g;
   const t = await storeTicket(supa, g.store, body?.ticket_id);
   if (!t) return { error: "Ticket not found for this store.", status: 404 };
@@ -392,8 +408,8 @@ async function commentStoreTicket(supa, body) {
   return { ok: true };
 }
 
-async function photoQr(supa, body) {
-  const g = await gate(supa, body);
+async function photoQr(supa, event, body) {
+  const g = await resolveAccess(supa, event, body);
   if (g.error) return g;
   const t = await storeTicket(supa, g.store, body?.ticket_id);
   if (!t) return { error: "Ticket not found for this store.", status: 404 };
@@ -512,7 +528,7 @@ async function getSessionUser(event, supa) {
   const { data: userRes, error } = await supa.auth.getUser(header.slice(7).trim());
   if (error || !userRes?.user) return null;
   const { data: profile } = await supa.from("profiles")
-    .select("id, role, is_active").eq("id", userRes.user.id).single();
+    .select("id, role, is_active, full_name, preferred_name").eq("id", userRes.user.id).single();
   if (!profile || profile.is_active === false || String(profile.role) !== "admin") return null;
   return profile;
 }
@@ -599,13 +615,13 @@ export const handler = async (event) => {
     // Public, token-gated actions.
     if (action === "resolve") return unwrap(await resolve(supa, body));
     if (action === "snapshot") return unwrap(await snapshot(supa, body));
-    if (action === "report") return unwrap(await report(supa, body));
+    if (action === "report") return unwrap(await report(supa, event, body));
     if (action === "chat-leader") return unwrap(await chatLeader(supa, body));
-    if (action === "tickets") return unwrap(await listStoreTickets(supa, body));
-    if (action === "ticket") return unwrap(await getStoreTicket(supa, body));
-    if (action === "create-ticket") return unwrap(await createStoreTicket(supa, body));
-    if (action === "comment-ticket") return unwrap(await commentStoreTicket(supa, body));
-    if (action === "photo-qr") return unwrap(await photoQr(supa, body));
+    if (action === "tickets") return unwrap(await listStoreTickets(supa, event, body));
+    if (action === "ticket") return unwrap(await getStoreTicket(supa, event, body));
+    if (action === "create-ticket") return unwrap(await createStoreTicket(supa, event, body));
+    if (action === "comment-ticket") return unwrap(await commentStoreTicket(supa, event, body));
+    if (action === "photo-qr") return unwrap(await photoQr(supa, event, body));
     if (action === "phone-info") return unwrap(await phoneInfo(supa, params));
     if (action === "phone-upload") return unwrap(await phoneUpload(supa, body));
     // Admin actions.
