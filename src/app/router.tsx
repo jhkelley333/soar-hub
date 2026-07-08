@@ -60,6 +60,8 @@ import { CashManagementRoute } from "@/modules/cash-management/CashManagementRou
 import { VendorPortalPage } from "@/modules/vendor-portal/VendorPortalPage";
 import { PublicSubmitPage } from "@/modules/public-submit/PublicSubmitPage";
 import { PublicLearnPage } from "@/modules/qsr/public/PublicLearnPage";
+import { StorePortalPage } from "@/modules/store-portal/StorePortalPage";
+import { StorePortalAdminPage } from "@/modules/store-portal/StorePortalAdminPage";
 import { SharePage } from "@/modules/qsr/share/SharePage";
 import { WorkspacesPage } from "@/modules/workspaces/WorkspacesPage";
 import { WorkspaceDetail } from "@/modules/workspaces/WorkspaceDetail";
@@ -115,6 +117,9 @@ export const router = createBrowserRouter([
   // Public no-login QSR player — crew scan their store's QR, pick their
   // name, and take courses. Token in the URL is the only credential.
   { path: "/learn/:token", element: <PublicLearnPage /> },
+  // Store Command Center — the per-store desktop bookmark. Token in the URL,
+  // bound to the first device that opens it (store-portal.js enforces).
+  { path: "/s/:token", element: <StorePortalPage /> },
   {
     path: "/",
     element: <RootRoute />,
@@ -443,6 +448,14 @@ export const router = createBrowserRouter([
       // Assessments tab; detail routes stay standalone. The nla function
       // enforces per-assessment access.
       { path: "nla", element: <Navigate to="/training?tab=assessments" replace /> },
+      {
+        path: "admin/store-portal",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <StorePortalAdminPage />
+          </ProtectedRoute>
+        ),
+      },
       {
         path: "admin/nla-templates",
         element: (
