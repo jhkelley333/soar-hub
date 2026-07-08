@@ -2,8 +2,9 @@
 // public Store Command Center page (/s/:token), copy the bookmark URL, reset
 // the device binding (new desktop), or revoke. One active link per store.
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, MonitorSmartphone, RotateCcw, XCircle } from "lucide-react";
+import { Check, Copy, Eye, MonitorSmartphone, RotateCcw, XCircle } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -92,6 +93,10 @@ export function StorePortalAdminPage() {
                   </td>
                   <td className="px-4 py-2.5">
                     <div className="flex items-center justify-end gap-1.5">
+                      <Link to={`/admin/store-portal/${s.store_id}`}
+                        className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-semibold text-accent transition hover:border-accent">
+                        <Eye className="h-3.5 w-3.5" /> View live
+                      </Link>
                       {s.token ? (
                         <>
                           <ActBtn onClick={() => copy(s.token!.token)}>

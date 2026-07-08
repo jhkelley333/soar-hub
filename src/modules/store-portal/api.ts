@@ -83,3 +83,7 @@ export function revokePortalToken(tokenId: string): Promise<{ ok: true }> {
 export function resetPortalDevice(tokenId: string): Promise<{ ok: true }> {
   return adminRequest("admin-reset-device", { method: "POST", body: JSON.stringify({ token_id: tokenId }) });
 }
+export interface PortalReport { kind: string; message: string; reporter_name: string | null; created_at: string }
+export function fetchPortalAdminSnapshot(storeId: string): Promise<PortalSnapshot & { reports: PortalReport[] }> {
+  return adminRequest(`admin-snapshot&store_id=${encodeURIComponent(storeId)}`);
+}
