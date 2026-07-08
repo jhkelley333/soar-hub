@@ -49,6 +49,9 @@ export function fetchPortalSnapshot(token: string): Promise<PortalSnapshot> {
 export function sendPortalReport(token: string, input: { kind: string; message: string; reporter_name?: string }): Promise<{ ok: true; notified: number }> {
   return publicPost("report", { token, device_id: deviceId(), ...input });
 }
+export function messagePortalLeader(token: string, input: { slot: string; message: string; reporter_name?: string }): Promise<{ ok: true; leader: string | null }> {
+  return publicPost("chat-leader", { token, device_id: deviceId(), ...input });
+}
 
 // ── Admin (Bearer) ───────────────────────────────────────────────────────────
 async function authHeaders(): Promise<HeadersInit> {
