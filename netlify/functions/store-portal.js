@@ -128,14 +128,17 @@ async function rankerRank(storeNumber) {
 
 async function openWorkOrders(supa, storeNumber) {
   const { data: rows } = await supa.from("tickets")
-    .select("id, title, status, priority, date_submitted")
+    .select("id, category, issue_description, status, priority, date_submitted")
     .eq("store_number", String(storeNumber))
     .not("status", "in", "(completed,closed,cancelled)")
     .order("date_submitted", { ascending: false }).limit(25);
   const open = rows || [];
   return {
     open_count: open.length,
-    latest: open.slice(0, 2).map((t) => ({ title: t.title, status: t.status, priority: t.priority })),
+    latest: open.slice(0, 2).map((t) => ({
+      title: [t.category, (t.issue_description || "").slice(0, 80)].filter(Boolean).join(": "),
+      status: t.status, priority: t.priority,
+    })),
   };
 }
 
@@ -250,6 +253,213 @@ async function report(supa, body) {
   });
   if (error) return { error: error.message, status: 500 };
   return { ok: true, notified: to.length };
+}
+
+// ── Work orders from the store screen ─────────────────────────────────────────
+// The screen knows its store, so tickets list/create/comment are store-locked.
+// Photos ride a QR handoff: the desktop mints a short-lived SIGNED token, the
+// crew scans it, and their phone uploads straight onto the ticket — no login
+// on either device. The token is stateless (HMAC over ticket+store+expiry
+// keyed off the service key), so no table is needed.
+const PHOTOS_BUCKET = "wo2-ticket-photos";
+const PHONE_TOKEN_TTL_MS = 20 * 60_000;
+const MAX_SCREEN_PHOTO_BYTES = 5 * 1024 * 1024;
+const MAX_SCREEN_PHOTOS_PER_TICKET = 10;
+const OPEN_TICKET_FILTER = "(completed,closed,cancelled)";
+
+const signPhone = (payload) =>
+  crypto.createHmac("sha256", `store-portal:${SERVICE_KEY}`).update(payload).digest("base64url");
+function mintPhoneToken(ticketId, storeNumber) {
+  const exp = Date.now() + PHONE_TOKEN_TTL_MS;
+  const payload = `${ticketId}.${storeNumber}.${exp}`;
+  return `${payload}.${signPhone(payload)}`;
+}
+function verifyPhoneToken(token) {
+  const parts = String(token || "").split(".");
+  if (parts.length !== 4) return null;
+  const [ticketId, storeNumber, expStr, sig] = parts;
+  const payload = `${ticketId}.${storeNumber}.${expStr}`;
+  const expected = signPhone(payload);
+  const a = Buffer.from(sig), b = Buffer.from(expected);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) return null;
+  if (Number(expStr) < Date.now()) return { expired: true };
+  return { ticketId, storeNumber };
+}
+
+async function nextWONumber(supa, storeNumber) {
+  const { data, error } = await supa.rpc("next_wo_sequence", { p_store: String(storeNumber) });
+  if (!error && typeof data === "number") return `WO-${storeNumber}-${String(data).padStart(3, "0")}`;
+  const { data: seq } = await supa.from("wo_sequences")
+    .select("last_sequence").eq("store_number", String(storeNumber)).single();
+  const next = ((seq && seq.last_sequence) || 0) + 1;
+  await supa.from("wo_sequences").upsert({ store_number: String(storeNumber), last_sequence: next });
+  return `WO-${storeNumber}-${String(next).padStart(3, "0")}`;
+}
+
+const ticketSummary = (t) => ({
+  id: t.id, wo_number: t.wo_number, category: t.category, issue_description: t.issue_description,
+  status: t.status, priority: t.priority, date_submitted: t.date_submitted,
+  vendor_name: t.vendor_name || null,
+});
+
+async function listStoreTickets(supa, body) {
+  const g = await gate(supa, body);
+  if (g.error) return g;
+  const num = String(g.store.number);
+  const { data: open } = await supa.from("tickets")
+    .select("id, wo_number, category, issue_description, status, priority, date_submitted, vendor_name")
+    .eq("store_number", num).not("status", "in", OPEN_TICKET_FILTER)
+    .order("date_submitted", { ascending: false }).limit(50);
+  const { data: closed } = await supa.from("tickets")
+    .select("id, wo_number, category, issue_description, status, priority, date_submitted, vendor_name")
+    .eq("store_number", num).in("status", ["completed", "closed", "cancelled"])
+    .order("date_submitted", { ascending: false }).limit(10);
+  return { open: (open || []).map(ticketSummary), recent_closed: (closed || []).map(ticketSummary) };
+}
+
+// One ticket, verified to belong to the token's store.
+async function storeTicket(supa, store, ticketId) {
+  const { data: t } = await supa.from("tickets").select("*").eq("id", ticketId).maybeSingle();
+  if (!t || String(t.store_number) !== String(store.number)) return null;
+  return t;
+}
+
+async function getStoreTicket(supa, body) {
+  const g = await gate(supa, body);
+  if (g.error) return g;
+  const t = await storeTicket(supa, g.store, body?.ticket_id);
+  if (!t) return { error: "Ticket not found for this store.", status: 404 };
+  const [{ data: msgs }, { data: photos }] = await Promise.all([
+    supa.from("ticket_messages").select("user_name, user_role, message, created_at")
+      .eq("ticket_id", t.id).eq("thread_type", "internal").order("created_at", { ascending: true }).limit(50),
+    supa.from("ticket_photos").select("file_url, file_name, created_at")
+      .eq("ticket_id", t.id).order("created_at", { ascending: true }).limit(30),
+  ]);
+  return { ticket: ticketSummary(t), messages: msgs || [], photos: photos || [] };
+}
+
+async function createStoreTicket(supa, body) {
+  const g = await gate(supa, body);
+  if (g.error) return g;
+  const { store } = g;
+  const name = String(body?.submitter_name || "").trim();
+  const description = String(body?.issue_description || "").trim();
+  const category = String(body?.category || "").trim().slice(0, 80);
+  const priority = ["Standard", "Urgent", "Emergency"].includes(body?.priority) ? body.priority : "Standard";
+  if (!name) return { error: "Enter your name.", status: 400 };
+  if (description.length < 10) return { error: "Describe the issue in at least 10 characters.", status: 400 };
+
+  const woNumber = await nextWONumber(supa, store.number);
+  const { data: ticket, error } = await supa.from("tickets").insert({
+    wo_number: woNumber,
+    store_number: String(store.number),
+    store_name: store.name || "",
+    store_email: "", do_email: "", sdo_email: "",
+    submitted_by: `Store screen: ${name}`,
+    submitted_by_user_id: null,
+    category: category || "Store screen",
+    asset_type: "", model_number: "",
+    issue_description: description.slice(0, 4000),
+    status: "submitted", priority,
+    is_business_critical: false,
+    troubleshooting_checked: body?.troubleshooting_checked === true,
+    vendor_id: null, vendor_name: "", vendor_contacted: false,
+    needs_vendor_help: true, vendor_help_at: new Date().toISOString(),
+    date_submitted: new Date().toISOString(),
+  }).select("id, wo_number").single();
+  if (error) return { error: error.message, status: 500 };
+  await supa.from("ticket_activities").insert({
+    ticket_id: ticket.id, user_id: null, user_name: `Store screen: ${name}`, user_role: "store",
+    update_type: "created", event_type: "created", event_data: { source: "store_screen" },
+  });
+  return { ok: true, ticket_id: ticket.id, wo_number: ticket.wo_number };
+}
+
+async function commentStoreTicket(supa, body) {
+  const g = await gate(supa, body);
+  if (g.error) return g;
+  const t = await storeTicket(supa, g.store, body?.ticket_id);
+  if (!t) return { error: "Ticket not found for this store.", status: 404 };
+  const name = String(body?.name || "").trim().slice(0, 120);
+  const message = String(body?.message || "").trim();
+  if (!message) return { error: "Write a message.", status: 400 };
+  const { error } = await supa.from("ticket_messages").insert({
+    ticket_id: t.id, user_id: null,
+    user_name: name ? `${name} (store screen)` : "Store screen",
+    user_role: "store", message: message.slice(0, 2000), thread_type: "internal",
+  });
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
+async function photoQr(supa, body) {
+  const g = await gate(supa, body);
+  if (g.error) return g;
+  const t = await storeTicket(supa, g.store, body?.ticket_id);
+  if (!t) return { error: "Ticket not found for this store.", status: 404 };
+  const token = mintPhoneToken(t.id, String(g.store.number));
+  return { ok: true, token, expires_in_minutes: PHONE_TOKEN_TTL_MS / 60_000, wo_number: t.wo_number };
+}
+
+// ── Phone endpoints (signed-token gated; the phone is a different device) ─────
+async function phoneInfo(supa, params) {
+  const v = verifyPhoneToken(params?.token);
+  if (!v) return { error: "This upload link is not valid.", status: 404 };
+  if (v.expired) return { error: "This QR code expired. Ask the screen for a fresh one.", status: 410 };
+  const { data: t } = await supa.from("tickets")
+    .select("id, wo_number, issue_description, store_number, store_name").eq("id", v.ticketId).maybeSingle();
+  if (!t) return { error: "Ticket not found.", status: 404 };
+  const { count } = await supa.from("ticket_photos").select("id", { count: "exact", head: true }).eq("ticket_id", t.id);
+  return {
+    wo_number: t.wo_number, store_number: t.store_number, store_name: t.store_name,
+    issue_description: (t.issue_description || "").slice(0, 200),
+    photo_count: count || 0, max_photos: MAX_SCREEN_PHOTOS_PER_TICKET,
+  };
+}
+
+async function phoneUpload(supa, body) {
+  const v = verifyPhoneToken(body?.token);
+  if (!v) return { error: "This upload link is not valid.", status: 404 };
+  if (v.expired) return { error: "This QR code expired. Ask the screen for a fresh one.", status: 410 };
+  const photoData = String(body?.photo_data || "");
+  const photoName = String(body?.photo_name || "photo.jpg").slice(0, 120);
+  const photoType = String(body?.photo_type || "image/jpeg");
+  if (!photoData) return { error: "No photo received.", status: 400 };
+  if (!/^image\//.test(photoType)) return { error: "Only images are allowed.", status: 400 };
+
+  const { data: t } = await supa.from("tickets").select("id, store_number").eq("id", v.ticketId).maybeSingle();
+  if (!t || String(t.store_number) !== v.storeNumber) return { error: "Ticket not found.", status: 404 };
+
+  const { count } = await supa.from("ticket_photos")
+    .select("id", { count: "exact", head: true }).eq("ticket_id", t.id).eq("upload_type", "store_screen");
+  if ((count || 0) >= MAX_SCREEN_PHOTOS_PER_TICKET) {
+    return { error: `Photo limit reached (${MAX_SCREEN_PHOTOS_PER_TICKET}).`, status: 429 };
+  }
+  const buf = Buffer.from(photoData, "base64");
+  if (!buf.length) return { error: "Empty photo.", status: 400 };
+  if (buf.length > MAX_SCREEN_PHOTO_BYTES) {
+    return { error: `Photo too large; cap is ${MAX_SCREEN_PHOTO_BYTES / 1024 / 1024} MB.`, status: 413 };
+  }
+
+  const ext = (photoName.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+  const fileName = `${t.id}/${Date.now()}_screen.${ext}`;
+  const { error: upErr } = await supa.storage.from(PHOTOS_BUCKET)
+    .upload(fileName, buf, { contentType: photoType, upsert: false });
+  if (upErr) return { error: upErr.message, status: 500 };
+  const { data: { publicUrl } } = supa.storage.from(PHOTOS_BUCKET).getPublicUrl(fileName);
+
+  const { data: photo, error: insErr } = await supa.from("ticket_photos").insert({
+    ticket_id: t.id, file_url: publicUrl || fileName, file_name: photoName,
+    file_size: buf.length, mime_type: photoType,
+    uploaded_by: "Store screen (phone)", upload_type: "store_screen",
+  }).select("id").single();
+  if (insErr) return { error: insErr.message, status: 500 };
+  await supa.from("ticket_activities").insert({
+    ticket_id: t.id, user_id: null, user_name: "Store screen (phone)", user_role: "store",
+    update_type: "photo_added", event_type: "photo_added",
+    event_data: { photo_id: photo?.id, file_name: photoName, source: "store_screen_qr" },
+  });
+  return { ok: true };
 }
 
 // ── Message a leader on Chat ──────────────────────────────────────────────────
@@ -391,6 +601,13 @@ export const handler = async (event) => {
     if (action === "snapshot") return unwrap(await snapshot(supa, body));
     if (action === "report") return unwrap(await report(supa, body));
     if (action === "chat-leader") return unwrap(await chatLeader(supa, body));
+    if (action === "tickets") return unwrap(await listStoreTickets(supa, body));
+    if (action === "ticket") return unwrap(await getStoreTicket(supa, body));
+    if (action === "create-ticket") return unwrap(await createStoreTicket(supa, body));
+    if (action === "comment-ticket") return unwrap(await commentStoreTicket(supa, body));
+    if (action === "photo-qr") return unwrap(await photoQr(supa, body));
+    if (action === "phone-info") return unwrap(await phoneInfo(supa, params));
+    if (action === "phone-upload") return unwrap(await phoneUpload(supa, body));
     // Admin actions.
     const user = await getSessionUser(event, supa);
     if (!user) return respond(401, { error: "unauthorized" });

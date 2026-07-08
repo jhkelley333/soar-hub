@@ -53,6 +53,65 @@ export function messagePortalLeader(token: string, input: { slot: string; messag
   return publicPost("chat-leader", { token, device_id: deviceId(), ...input });
 }
 
+// ── Work orders from the screen ───────────────────────────────────────────────
+export interface PortalTicket {
+  id: string;
+  wo_number: string;
+  category: string | null;
+  issue_description: string;
+  status: string;
+  priority: string | null;
+  date_submitted: string;
+  vendor_name: string | null;
+}
+export interface PortalTicketDetail {
+  ticket: PortalTicket;
+  messages: { user_name: string | null; user_role: string | null; message: string; created_at: string }[];
+  photos: { file_url: string; file_name: string; created_at: string }[];
+}
+export function fetchPortalTickets(token: string): Promise<{ open: PortalTicket[]; recent_closed: PortalTicket[] }> {
+  return publicPost("tickets", { token, device_id: deviceId() });
+}
+export function fetchPortalTicket(token: string, ticketId: string): Promise<PortalTicketDetail> {
+  return publicPost("ticket", { token, device_id: deviceId(), ticket_id: ticketId });
+}
+export function createPortalTicket(token: string, input: { submitter_name: string; issue_description: string; category?: string; priority?: string; troubleshooting_checked?: boolean }): Promise<{ ok: true; ticket_id: string; wo_number: string }> {
+  return publicPost("create-ticket", { token, device_id: deviceId(), ...input });
+}
+export function commentPortalTicket(token: string, input: { ticket_id: string; message: string; name?: string }): Promise<{ ok: true }> {
+  return publicPost("comment-ticket", { token, device_id: deviceId(), ...input });
+}
+export function fetchPhotoQr(token: string, ticketId: string): Promise<{ ok: true; token: string; expires_in_minutes: number; wo_number: string }> {
+  return publicPost("photo-qr", { token, device_id: deviceId(), ticket_id: ticketId });
+}
+
+// ── Phone side (signed token from the QR; no device binding) ─────────────────
+export interface PhoneInfo {
+  wo_number: string; store_number: string; store_name: string | null;
+  issue_description: string; photo_count: number; max_photos: number;
+}
+export async function fetchPhoneInfo(phoneToken: string): Promise<PhoneInfo> {
+  const res = await fetch(`${FN}?action=phone-info&token=${encodeURIComponent(phoneToken)}`);
+  if (!res.ok) {
+    let message = `Request failed (${res.status})`;
+    try { const b = await res.json(); if (b?.error) message = b.error; } catch { /* ignore */ }
+    throw new Error(message);
+  }
+  return res.json() as Promise<PhoneInfo>;
+}
+export async function uploadPhonePhoto(phoneToken: string, file: File): Promise<{ ok: true }> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(new Error("Could not read the photo."));
+    r.readAsDataURL(file);
+  });
+  const base64 = dataUrl.split(",")[1] ?? "";
+  return publicPost("phone-upload", {
+    token: phoneToken, photo_data: base64, photo_name: file.name, photo_type: file.type || "image/jpeg",
+  });
+}
+
 // ── Admin (Bearer) ───────────────────────────────────────────────────────────
 async function authHeaders(): Promise<HeadersInit> {
   const { data } = await supabase.auth.getSession();

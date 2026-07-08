@@ -12,6 +12,7 @@ import {
 import { cn } from "@/lib/cn";
 import { formatPhoneForDisplay } from "@/lib/phone";
 import { fetchPortalSnapshot, messagePortalLeader, sendPortalReport, type PortalSnapshot } from "./api";
+import { TicketsView } from "./StorePortalTickets";
 
 const fmtMoney = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 
@@ -19,6 +20,7 @@ export function StorePortalPage() {
   const { token = "" } = useParams();
   const [showCall, setShowCall] = useState(false);
   const [showReport, setShowReport] = useState(false);
+  const [showTickets, setShowTickets] = useState(false);
   const q = useQuery({
     queryKey: ["store-portal", token],
     queryFn: () => fetchPortalSnapshot(token),
@@ -53,9 +55,16 @@ export function StorePortalPage() {
   }
 
   const data = q.data;
+  if (showTickets) {
+    return (
+      <Chrome store={data?.store} dateLabel={today}>
+        <TicketsView token={token} onBack={() => setShowTickets(false)} />
+      </Chrome>
+    );
+  }
   return (
     <Chrome store={data?.store} dateLabel={today}>
-      <PortalBody data={data} isLoading={q.isLoading} onCall={() => setShowCall(true)} onReport={() => setShowReport(true)} />
+      <PortalBody data={data} isLoading={q.isLoading} onCall={() => setShowCall(true)} onReport={() => setShowReport(true)} onTickets={() => setShowTickets(true)} />
       {showCall && data && <RightCallSheet contacts={data.contacts} token={token} onClose={() => setShowCall(false)} />}
       {showReport && <ReportSheet token={token} onClose={() => setShowReport(false)} />}
     </Chrome>
@@ -64,8 +73,8 @@ export function StorePortalPage() {
 
 // The page content between the chrome and the modals — shared with the admin
 // live view (/admin/store-portal/:storeId), which supplies its own data.
-export function PortalBody({ data, isLoading, onCall, onReport }: {
-  data: PortalSnapshot | undefined; isLoading: boolean; onCall: () => void; onReport: () => void;
+export function PortalBody({ data, isLoading, onCall, onReport, onTickets }: {
+  data: PortalSnapshot | undefined; isLoading: boolean; onCall: () => void; onReport: () => void; onTickets?: () => void;
 }) {
   const q = { isLoading };
   return (
@@ -130,9 +139,13 @@ export function PortalBody({ data, isLoading, onCall, onReport }: {
               ? data.work_orders.latest.map((t) => `${t.title} — ${t.status}.`).join(" ")
               : "No open tickets. File one the moment something breaks."}
           </p>
-          <a href="/submit" className="mt-4 inline-flex items-center gap-1.5 text-[15px] font-bold text-red-600 hover:underline">
-            {data && data.work_orders.open_count > 0 ? "Open tickets" : "File a ticket"} <ArrowRight className="h-4 w-4" />
-          </a>
+          {onTickets ? (
+            <button onClick={onTickets} className="mt-4 inline-flex items-center gap-1.5 text-[15px] font-bold text-red-600 hover:underline">
+              {data && data.work_orders.open_count > 0 ? "Manage tickets" : "File a ticket"} <ArrowRight className="h-4 w-4" />
+            </button>
+          ) : (
+            <span className="mt-4 inline-flex items-center gap-1.5 text-[15px] font-semibold text-zinc-400">Managed from the store screen</span>
+          )}
         </Card>
 
         {/* Notes about today */}
