@@ -5,9 +5,10 @@
 // short-lived QR the crew scans to upload straight from their phone. The
 // detail view refetches every 15s so phone photos appear on the big screen.
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
-import { ArrowLeft, Camera, Check, MessageSquare, Plus, RefreshCw, X } from "lucide-react";
+import { ArrowLeft, Camera, Check, ExternalLink, MessageSquare, Plus, RefreshCw, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import {
   commentPortalTicket, createPortalTicket, fetchPhotoQr, fetchPortalTicket, fetchPortalTickets,
@@ -32,8 +33,16 @@ const PRIORITY_CHIP: Record<string, string> = {
 };
 
 export function TicketsView({ access, onBack }: { access: PortalAccess; onBack: () => void }) {
+  const navigate = useNavigate();
   const [view, setView] = useState<{ kind: "list" } | { kind: "new" } | { kind: "detail"; id: string }>({ kind: "list" });
   const q = useQuery({ queryKey: ["portal-tickets", access], queryFn: () => fetchPortalTickets(access), refetchInterval: 60_000 });
+  // Admin (live view) is logged in: opening a ticket lands in the REAL Work
+  // Orders system with full management. The store screen has no login, so it
+  // keeps the on-screen detail (same tickets underneath).
+  const adminMode = "store_id" in access;
+  const openTicket = adminMode
+    ? (id: string) => navigate(`/admin/work-orders-v2?ticket=${encodeURIComponent(id)}`)
+    : (id: string) => setView({ kind: "detail", id });
 
   return (
     <section className="mx-auto max-w-6xl px-6 py-10">
@@ -48,19 +57,27 @@ export function TicketsView({ access, onBack }: { access: PortalAccess; onBack: 
           </h1>
         </div>
         {view.kind === "list" && (
-          <button onClick={() => setView({ kind: "new" })}
-            className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-red-600/25 transition hover:bg-red-700">
-            <Plus className="h-4 w-4" /> New ticket
-          </button>
+          <div className="flex items-center gap-2">
+            {adminMode && (
+              <button onClick={() => navigate("/admin/work-orders-v2")}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-zinc-200 bg-white px-4 py-2.5 text-sm font-bold text-zinc-700 transition hover:border-zinc-400">
+                <ExternalLink className="h-4 w-4" /> Open Work Orders system
+              </button>
+            )}
+            <button onClick={() => setView({ kind: "new" })}
+              className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-5 py-2.5 text-sm font-bold text-white shadow-lg shadow-red-600/25 transition hover:bg-red-700">
+              <Plus className="h-4 w-4" /> New ticket
+            </button>
+          </div>
         )}
       </div>
 
       {view.kind === "list" && (
         <TicketList loading={q.isLoading} open={q.data?.open ?? []} closed={q.data?.recent_closed ?? []}
-          onOpen={(id) => setView({ kind: "detail", id })} />
+          onOpen={openTicket} />
       )}
       {view.kind === "new" && (
-        <NewTicketForm access={access} onCreated={(id) => setView({ kind: "detail", id })} />
+        <NewTicketForm access={access} onCreated={openTicket} />
       )}
       {view.kind === "detail" && <TicketDetail access={access} ticketId={view.id} />}
     </section>
