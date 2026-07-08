@@ -7,11 +7,11 @@ import { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
-  AlertTriangle, ArrowRight, Check, Megaphone, MessageSquare, Phone, PhoneCall, X,
+  AlertTriangle, ArrowRight, Check, Megaphone, MessageSquare, PhoneCall, X,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { formatPhoneForDisplay } from "@/lib/phone";
-import { fetchPortalSnapshot, sendPortalReport, type PortalSnapshot } from "./api";
+import { fetchPortalSnapshot, messagePortalLeader, sendPortalReport, type PortalSnapshot } from "./api";
 
 const fmtMoney = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 
@@ -56,7 +56,7 @@ export function StorePortalPage() {
   return (
     <Chrome store={data?.store} dateLabel={today}>
       <PortalBody data={data} isLoading={q.isLoading} onCall={() => setShowCall(true)} onReport={() => setShowReport(true)} />
-      {showCall && data && <RightCallSheet contacts={data.contacts} onClose={() => setShowCall(false)} />}
+      {showCall && data && <RightCallSheet contacts={data.contacts} token={token} onClose={() => setShowCall(false)} />}
       {showReport && <ReportSheet token={token} onClose={() => setShowReport(false)} />}
     </Chrome>
   );
@@ -239,37 +239,86 @@ const SLOT_TITLE: Record<string, string> = {
   RVP: "Regional VP",
 };
 
-export function RightCallSheet({ contacts, onClose }: { contacts: PortalSnapshot["contacts"]; onClose: () => void }) {
+// token present = the store screen (compose enabled). The admin live view
+// passes no token, so it shows the sheet read-only.
+export function RightCallSheet({ contacts, token, onClose }: {
+  contacts: PortalSnapshot["contacts"]; token?: string; onClose: () => void;
+}) {
+  const [composeSlot, setComposeSlot] = useState<string | null>(null);
+  const target = contacts.find((c) => c.slot === composeSlot) ?? null;
+
+  if (token && target) {
+    return (
+      <LeaderCompose token={token} contact={target} onBack={() => setComposeSlot(null)} onClose={onClose} />
+    );
+  }
   return (
     <Modal onClose={onClose} title="Make the Right Call" icon={<PhoneCall className="h-5 w-5 text-red-600" />}>
-      <p className="text-sm text-zinc-500">Start at the top. If you can't reach them, move down the list.</p>
+      <p className="text-sm text-zinc-500">
+        Start at the top. Message them on Chat — it lands on their phone. The number is there if you need to dial from yours.
+      </p>
       <ul className="mt-4 flex flex-col gap-2.5">
         {contacts.length === 0 && <li className="text-sm text-zinc-400">No contacts on file — ask your GM.</li>}
         {contacts.map((c) => (
-          <li key={c.slot} className="rounded-xl border border-zinc-200 px-4 py-3">
-            <div className="flex items-start gap-3">
-              <span className="grid h-9 w-14 shrink-0 place-items-center rounded-lg bg-zinc-100 text-xs font-extrabold text-zinc-600">{c.slot}</span>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[15px] font-bold text-zinc-900">{c.name ?? "—"}</div>
-                <div className="text-xs font-medium text-zinc-500">{SLOT_TITLE[c.slot] ?? c.slot}</div>
-                <div className={cn("mt-0.5 text-sm font-semibold tabular-nums", c.phone ? "text-zinc-700" : "font-normal text-zinc-400")}>
-                  {c.phone ? formatPhoneForDisplay(c.phone) : "No phone on file"}
-                </div>
+          <li key={c.slot} className="flex items-center gap-3 rounded-xl border border-zinc-200 px-4 py-3">
+            <span className="grid h-9 w-14 shrink-0 place-items-center rounded-lg bg-zinc-100 text-xs font-extrabold text-zinc-600">{c.slot}</span>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-[15px] font-bold text-zinc-900">{c.name ?? "—"}</div>
+              <div className="text-xs font-medium text-zinc-500">{SLOT_TITLE[c.slot] ?? c.slot}</div>
+              <div className={cn("mt-0.5 text-sm font-semibold tabular-nums", c.phone ? "text-zinc-700" : "font-normal text-zinc-400")}>
+                {c.phone ? formatPhoneForDisplay(c.phone) : "No phone on file"}
               </div>
             </div>
-            {c.phone && (
-              <div className="mt-2.5 grid grid-cols-2 gap-2">
-                <a href={`tel:${c.phone}`} className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-700">
-                  <Phone className="h-4 w-4" /> Call
-                </a>
-                <a href={`sms:${c.phone}`} className="inline-flex items-center justify-center gap-1.5 rounded-lg border border-zinc-300 bg-white px-4 py-2 text-sm font-bold text-zinc-800 transition hover:border-zinc-500">
-                  <MessageSquare className="h-4 w-4" /> Text
-                </a>
-              </div>
+            {token && (
+              <button onClick={() => setComposeSlot(c.slot)}
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-700">
+                <MessageSquare className="h-4 w-4" /> Message
+              </button>
             )}
           </li>
         ))}
       </ul>
+    </Modal>
+  );
+}
+
+function LeaderCompose({ token, contact, onBack, onClose }: {
+  token: string; contact: PortalSnapshot["contacts"][number]; onBack: () => void; onClose: () => void;
+}) {
+  const [message, setMessage] = useState("");
+  const [name, setName] = useState("");
+  const send = useMutation({
+    mutationFn: () => messagePortalLeader(token, { slot: contact.slot, message: message.trim(), reporter_name: name.trim() || undefined }),
+  });
+
+  if (send.isSuccess) {
+    return (
+      <Modal onClose={onClose} title="Message sent" icon={<Check className="h-5 w-5 text-emerald-600" />}>
+        <p className="text-sm text-zinc-500">
+          Sent to {contact.name ?? SLOT_TITLE[contact.slot] ?? contact.slot} on Chat. If it's urgent and they don't answer, dial{" "}
+          {contact.phone ? <strong className="tabular-nums">{formatPhoneForDisplay(contact.phone)}</strong> : "their number"} from your phone.
+        </p>
+        <button onClick={onClose} className="mt-5 w-full rounded-xl bg-zinc-900 py-3 text-sm font-bold text-white transition hover:bg-zinc-800">Done</button>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal onClose={onClose} title={`Message ${contact.name ?? contact.slot}`} icon={<MessageSquare className="h-5 w-5 text-red-600" />}>
+      <p className="text-sm text-zinc-500">{SLOT_TITLE[contact.slot] ?? contact.slot} · arrives in their SOAR Chat</p>
+      <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={4} autoFocus
+        placeholder="What do they need to know?"
+        className="mt-3 w-full resize-none rounded-xl border border-zinc-200 px-4 py-3 text-[15px] text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-900 focus:outline-none" />
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name (optional)"
+        className="mt-2 w-full rounded-xl border border-zinc-200 px-4 py-3 text-[15px] text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-900 focus:outline-none" />
+      {send.isError && <p className="mt-2 text-sm font-medium text-red-600">{(send.error as Error)?.message ?? "Could not send — try again."}</p>}
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <button onClick={onBack} className="rounded-xl border border-zinc-200 py-3 text-sm font-bold text-zinc-700 transition hover:border-zinc-400">Back</button>
+        <button disabled={!message.trim() || send.isPending} onClick={() => send.mutate()}
+          className="rounded-xl bg-red-600 py-3 text-sm font-bold text-white shadow-lg shadow-red-600/25 transition hover:bg-red-700 disabled:opacity-40">
+          {send.isPending ? "Sending…" : "Send"}
+        </button>
+      </div>
     </Modal>
   );
 }

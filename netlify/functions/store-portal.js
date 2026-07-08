@@ -159,7 +159,7 @@ async function storeNotes(supa, storeNumber) {
 async function leadership(supa, store) {
   const out = [];
   const { data: gms } = await supa.from("profiles")
-    .select("full_name, preferred_name, phone, email, role")
+    .select("id, full_name, preferred_name, phone, email, role")
     .eq("primary_store_id", store.id).eq("is_active", true).eq("role", "gm").limit(1);
   if (gms?.[0]) out.push({ slot: "GM", ...pick(gms[0]) });
 
@@ -193,7 +193,9 @@ async function leadership(supa, store) {
   }
   return out;
 }
-const pick = (p) => ({ name: p.preferred_name || p.full_name || null, phone: p.phone || null, email: p.email || null });
+const pick = (p) => ({ id: p.id || null, name: p.preferred_name || p.full_name || null, phone: p.phone || null, email: p.email || null });
+// The public snapshot ships contacts without profile ids.
+const publicContact = ({ slot, name, phone, email }) => ({ slot, name, phone, email });
 
 async function assembleSnapshot(supa, store) {
   const [ls, rank, wo, notes, contacts] = await Promise.all([
@@ -205,7 +207,8 @@ async function assembleSnapshot(supa, store) {
   ]);
   return {
     store: { number: store.number, name: store.name, city: store.city, state: store.state },
-    sales: ls.sales, labor: ls.labor, rank, work_orders: wo, notes, contacts,
+    sales: ls.sales, labor: ls.labor, rank, work_orders: wo, notes,
+    contacts: contacts.map(publicContact),
   };
 }
 
@@ -247,6 +250,49 @@ async function report(supa, body) {
   });
   if (error) return { error: error.message, status: 500 };
   return { ok: true, notified: to.length };
+}
+
+// ── Message a leader on Chat ──────────────────────────────────────────────────
+// The store desktop can't place calls, so the call sheet messages leaders
+// through the app's Chat instead: one dedicated "Store #N screen" thread per
+// (store, leader), with the screen's notes arriving as system messages — the
+// leader gets the normal inbox unread + push path on their own device.
+async function chatLeader(supa, body) {
+  const g = await gate(supa, body);
+  if (g.error) return g;
+  const { store } = g;
+  const slot = String(body?.slot || "").trim().toUpperCase();
+  const message = String(body?.message || "").trim();
+  if (!slot || !message) return { error: "Pick a leader and write a message.", status: 400 };
+  const reporter = String(body?.reporter_name || "").trim().slice(0, 120) || null;
+
+  const contacts = await leadership(supa, store);
+  const leader = contacts.find((c) => c.slot === slot && c.id);
+  if (!leader) return { error: "That leader has no account to message. Try another contact.", status: 404 };
+
+  // Find-or-create the per-(store, leader) thread.
+  const scopeRef = `store-screen:${store.id}:${leader.id}`;
+  let { data: thread } = await supa.from("chat_threads")
+    .select("id").eq("scope_kind", "store").eq("scope_ref", scopeRef).maybeSingle();
+  if (!thread) {
+    const { data: created, error: tErr } = await supa.from("chat_threads").insert({
+      kind: "group",
+      title: `Store #${store.number} screen`,
+      subtitle: [store.name, store.city].filter(Boolean).join(" · "),
+      scope_kind: "store", scope_ref: scopeRef,
+    }).select("id").single();
+    if (tErr) return { error: tErr.message, status: 500 };
+    thread = created;
+    const { error: mErr } = await supa.from("chat_thread_members")
+      .insert({ thread_id: thread.id, user_id: leader.id, role: "owner" });
+    if (mErr) return { error: mErr.message, status: 500 };
+  }
+
+  const text = `${reporter ? `${reporter} at the store` : "The store screen"}: ${message.slice(0, 2000)}`;
+  const { error } = await supa.from("chat_messages")
+    .insert({ thread_id: thread.id, from_user_id: null, system: true, text });
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, leader: leader.name };
 }
 
 // ── Admin (Bearer + role=admin) ───────────────────────────────────────────────
@@ -344,6 +390,7 @@ export const handler = async (event) => {
     if (action === "resolve") return unwrap(await resolve(supa, body));
     if (action === "snapshot") return unwrap(await snapshot(supa, body));
     if (action === "report") return unwrap(await report(supa, body));
+    if (action === "chat-leader") return unwrap(await chatLeader(supa, body));
     // Admin actions.
     const user = await getSessionUser(event, supa);
     if (!user) return respond(401, { error: "unauthorized" });
