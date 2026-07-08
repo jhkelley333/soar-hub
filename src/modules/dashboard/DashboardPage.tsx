@@ -14,14 +14,11 @@ import { useMemo, useState } from "react";
 import { Link, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
-  AlertTriangle,
   ArrowRight,
-  Banknote,
   CalendarOff,
-  ChevronRight,
+  Banknote,
   FileText,
   Gift,
-  Hammer,
   MessageSquare,
   PhoneCall,
   ShieldCheck,
@@ -32,13 +29,12 @@ import {
 import { MakeTheRightCallDrawer } from "@/modules/contacts/MakeTheRightCallDrawer";
 import { useAuth } from "@/auth/AuthProvider";
 import type { UserRole } from "@/types/database";
-import { fetchCallerStores, fetchOpenWorkOrderAlerts, fetchRecentMessages, fetchStats, fetchTickets } from "@/modules/work-orders-v2/api";
+import { fetchCallerStores, fetchRecentMessages, fetchStats, fetchTickets } from "@/modules/work-orders-v2/api";
 import { isOpenStatus } from "@/modules/work-orders-v2/types";
 import type { RecentMessage, Ticket } from "@/modules/work-orders-v2/types";
 import { fetchCfmExpiring } from "@/modules/team/api";
 import { listSdoQueue } from "@/modules/paf/api";
 import { fetchCashBadges } from "@/modules/cash-management/api";
-import { listApprovalQueue } from "@/modules/employee-actions/api";
 import { fetchBirthdays } from "@/modules/my-stores/api";
 import { thisAndNextWeekRange, formatMonthDay } from "@/modules/my-stores/dateRange";
 import type { BirthdayEntry } from "@/modules/my-stores/types";
@@ -50,6 +46,7 @@ import { cn } from "@/lib/cn";
 import { FISCAL, fiscalInfo, fiscalWeekLabel } from "@/lib/fiscal";
 import { BirthdayCelebration } from "@/modules/my-stores/BirthdayCelebration";
 import { MobileHome } from "./MobileHome";
+import { TodayQueue } from "./TodayQueue";
 import { WeatherWidget } from "./WeatherWidget";
 import { MessageBoard } from "@/modules/messages/MessageBoard";
 
@@ -64,7 +61,6 @@ const WO_ROLES = new Set<UserRole>([
   "shift_manager", "first_assistant_manager", "associate_manager", "crew_leader",
   "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin",
 ]);
-const EA_APPROVER_ROLES = new Set<UserRole>(["do", "sdo", "rvp", "admin"]);
 const PTO_APPROVED = new Set(["SDO/RVP Approved", "PAF Submitted", "Closed"]);
 
 // A ticket counts as "escalated" when it's open AND either business-critical
@@ -141,7 +137,6 @@ export function DashboardPage() {
   const isSdoReviewer = !!role && SDO_REVIEW_ROLES.has(role);
   const canPto = !!role && PTO_VIEW_ROLES.has(role);
   const canWo = !!role && WO_ROLES.has(role);
-  const isEaApprover = !!role && EA_APPROVER_ROLES.has(role);
   // Oversight-only roles (currently just FBC — external consultant) get a
   // narrower dashboard: CFMs Expiring + Stores in Scope + Birthdays. The
   // operations-heavy tiles (Open WOs hero, Cash Variances, Bonus PAFs,
@@ -162,8 +157,6 @@ export function DashboardPage() {
 
   const woStatsQ = useQuery({ queryKey: ["wo2", "stats"], queryFn: fetchStats, ...dashQ });
   const ticketsQ = useQuery({ queryKey: ["wo2", "tickets"], queryFn: fetchTickets, enabled: canWo, ...dashQ });
-  const woAlertsQ = useQuery({ queryKey: ["wo2", "alerts"], queryFn: fetchOpenWorkOrderAlerts, enabled: canWo, ...dashQ });
-  const eaQ = useQuery({ queryKey: ["ea-queue"], queryFn: listApprovalQueue, enabled: isEaApprover, ...dashQ });
   const storesQ = useQuery({ queryKey: ["wo2", "caller-stores"], queryFn: fetchCallerStores, ...dashQ });
   const weatherStoreId = profile?.primary_store_id ?? storesQ.data?.stores?.[0]?.id ?? null;
   const cfmQ = useQuery({ queryKey: ["cfm-expiring", 60], queryFn: () => fetchCfmExpiring(60), ...dashQ });
@@ -208,9 +201,6 @@ export function DashboardPage() {
   const closeoutsToValidate = cashQ.data?.pending_deposits ?? 0;
   const depositsVerifiedToday = cashQ.data?.deposits_verified_today ?? 0;
   const bonusPafs = sdoQ.data?.pafs ?? [];
-  const eaCount = (eaQ.data?.trainingCredits.length ?? 0) + (eaQ.data?.ptoRequests.length ?? 0);
-  const woApprovals =
-    woAlertsQ.data?.groups.find((g) => g.key === "awaitingApproval")?.count ?? 0;
 
   return (
     <div className="space-y-6">
@@ -223,6 +213,10 @@ export function DashboardPage() {
 
       {/* Store message board — announcements addressed to the signed-in user. */}
       <MessageBoard />
+
+      {/* Today — the ranked worklist. Every signal competes here; the rest of
+          the dashboard is context. Oversight-only roles keep their slim view. */}
+      {!isOversightOnly && role && <TodayQueue role={role} />}
 
       {/* KPI row: hero + 4 stat cards (operations roles). FBC gets a slim
           two-card row covering just the oversight metrics they care about. */}
@@ -296,21 +290,6 @@ export function DashboardPage() {
             />
           </div>
         </div>
-      )}
-
-      {!isOversightOnly && (
-        <ActionQueue
-          woApprovals={canWo ? woApprovals : 0}
-          pafCount={isSdoReviewer ? bonusPafs.length : 0}
-          cashCount={canCash ? cashAlerts + closeoutsToValidate : 0}
-          eaCount={isEaApprover ? eaCount : 0}
-          loading={
-            (canWo && woAlertsQ.isLoading) ||
-            (isSdoReviewer && sdoQ.isLoading) ||
-            (canCash && cashQ.isLoading) ||
-            (isEaApprover && eaQ.isLoading)
-          }
-        />
       )}
 
       {/* Secondary grid */}
@@ -560,150 +539,6 @@ function KpiCard({
   return <div className={cn(PANEL, "p-4")}>{inner}</div>;
 }
 
-// ── Action Queue ────────────────────────────────────────────────────
-function ActionQueue({
-  woApprovals,
-  pafCount,
-  cashCount,
-  eaCount,
-  loading,
-}: {
-  woApprovals: number;
-  pafCount: number;
-  cashCount: number;
-  eaCount: number;
-  loading: boolean;
-}) {
-  const items: ActionRowData[] = [];
-
-  // One summary row per category: Cash, Employee actions, Work Order
-  // Approvals, PAF Actions — each shown only when it has items, deep-linking
-  // into that module to act.
-  if (cashCount > 0) {
-    items.push({
-      id: "cash",
-      icon: Wallet,
-      tone: "warn",
-      title: `${cashCount} cash item${cashCount === 1 ? "" : "s"} need attention`,
-      meta: "Alerts & deposits to clear",
-      action: { label: "Open", tone: "warn" },
-      to: "/admin/cash-management",
-      time: "",
-    });
-  }
-  if (eaCount > 0) {
-    items.push({
-      id: "ea-approvals",
-      icon: CalendarOff,
-      tone: "sky",
-      title: `${eaCount} employee action${eaCount === 1 ? "" : "s"} to approve`,
-      meta: "Training credits & PTO requests",
-      action: { label: "Review", tone: "sky" },
-      to: "/employee-actions",
-      time: "",
-    });
-  }
-  if (woApprovals > 0) {
-    items.push({
-      id: "wo-approvals",
-      icon: Hammer,
-      tone: "warn",
-      title: `${woApprovals} work order approval${woApprovals === 1 ? "" : "s"}`,
-      meta: "Quotes awaiting your decision",
-      action: { label: "Review", tone: "warn" },
-      to: "/approvals",
-      time: "",
-    });
-  }
-  if (pafCount > 0) {
-    items.push({
-      id: "paf-actions",
-      icon: FileText,
-      tone: "sky",
-      title: `${pafCount} PAF action${pafCount === 1 ? "" : "s"}`,
-      meta: "Bonus PAFs awaiting approval",
-      action: { label: "Review", tone: "sky" },
-      to: "/paf",
-      time: "",
-    });
-  }
-
-  return (
-    <section className={cn(PANEL, "overflow-hidden")}>
-      <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-4 dark:border-night-line">
-        <div className="flex items-center gap-2.5">
-          <AlertTriangle className="h-5 w-5 text-cherry" strokeWidth={1.75} />
-          <div>
-            <div className="text-sm font-semibold text-ink dark:text-night-ink">Action Queue</div>
-            <div className="text-xs text-ink-muted dark:text-night-muted">Decisions waiting on you</div>
-          </div>
-        </div>
-        {items.length > 0 && (
-          <span className="rounded-full bg-cherry/10 px-2.5 py-1 text-xs font-semibold text-cherry tabular-nums">
-            {items.length} item{items.length === 1 ? "" : "s"}
-          </span>
-        )}
-      </div>
-      {loading ? (
-        <div className="px-5 py-8 text-sm text-ink-muted dark:text-night-muted">Loading…</div>
-      ) : items.length === 0 ? (
-        <div className="px-5 py-10 text-center">
-          <div className="text-sm font-medium text-ink dark:text-night-ink">Nothing in your queue</div>
-          <div className="mt-1 text-xs text-ink-muted dark:text-night-muted">
-            You're all caught up — new decisions will surface here.
-          </div>
-        </div>
-      ) : (
-        <ul className="divide-y divide-zinc-100 dark:divide-night-line">
-          {items.map((it) => (
-            <ActionRow key={it.id} {...it} />
-          ))}
-        </ul>
-      )}
-    </section>
-  );
-}
-
-interface ActionRowData {
-  id: string;
-  icon: typeof FileText;
-  tone: "warn" | "sky" | "err";
-  title: string;
-  meta: string;
-  action: { label: string; tone: "warn" | "sky" | "err" };
-  to: string;
-  time: string;
-}
-
-const ACTION_BTN: Record<string, string> = {
-  warn: "bg-warning text-white hover:brightness-105",
-  sky: "bg-accent text-white hover:bg-accent-hover",
-  err: "bg-cherry text-white hover:bg-cherry-hover",
-};
-
-function ActionRow({ icon: Icon, tone, title, meta, action, to, time }: ActionRowData) {
-  return (
-    <li>
-      <Link
-        to={to}
-        className="flex items-center gap-3 px-5 py-3.5 transition hover:bg-zinc-50 dark:hover:bg-white/5"
-      >
-        <span className={cn("inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg", TONE_CHIP[tone])}>
-          <Icon className="h-4 w-4" strokeWidth={1.75} />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-ink dark:text-night-ink">{title}</div>
-          <div className="truncate text-xs text-ink-muted dark:text-night-muted">{meta}</div>
-        </div>
-        {time && <span className="hidden shrink-0 text-xs text-ink-subtle dark:text-night-muted sm:block">{time}</span>}
-        <span className={cn("inline-flex shrink-0 items-center rounded-lg px-3 py-1.5 text-xs font-semibold transition", ACTION_BTN[action.tone])}>
-          {action.label}
-        </span>
-        <ChevronRight className="h-4 w-4 shrink-0 text-ink-subtle dark:text-night-muted" strokeWidth={2} />
-      </Link>
-    </li>
-  );
-}
 
 // ── Secondary cards ─────────────────────────────────────────────────
 function SecondaryHeader({ icon: Icon, title, hint }: { icon: typeof Gift; title: string; hint?: string }) {
