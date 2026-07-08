@@ -195,10 +195,7 @@ async function leadership(supa, store) {
 }
 const pick = (p) => ({ name: p.preferred_name || p.full_name || null, phone: p.phone || null, email: p.email || null });
 
-async function snapshot(supa, body) {
-  const g = await gate(supa, body);
-  if (g.error) return g;
-  const { store } = g;
+async function assembleSnapshot(supa, store) {
   const [ls, rank, wo, notes, contacts] = await Promise.all([
     laborAndSales(supa, store.number),
     rankerRank(store.number),
@@ -210,6 +207,12 @@ async function snapshot(supa, body) {
     store: { number: store.number, name: store.name, city: store.city, state: store.state },
     sales: ls.sales, labor: ls.labor, rank, work_orders: wo, notes, contacts,
   };
+}
+
+async function snapshot(supa, body) {
+  const g = await gate(supa, body);
+  if (g.error) return g;
+  return assembleSnapshot(supa, g.store);
 }
 
 const REPORT_KINDS = new Set(["tardiness", "safety", "equipment", "issue"]);
@@ -300,6 +303,25 @@ async function adminRevoke(supa, _user, body) {
   return { ok: true };
 }
 
+// Live admin view of a store's Command Center: the same snapshot the store
+// screen renders (no token/device needed — Bearer admin instead), plus the
+// recent floor reports so the admin sees what is coming in.
+async function adminSnapshot(supa, params) {
+  const storeId = params?.store_id;
+  if (!storeId) return { error: "Missing store.", status: 400 };
+  const { data: store } = await supa.from("stores")
+    .select("id, number, name, city, state").eq("id", storeId).maybeSingle();
+  if (!store) return { error: "Store not found.", status: 404 };
+  const [snap, reports] = await Promise.all([
+    assembleSnapshot(supa, store),
+    supa.from("store_portal_reports")
+      .select("kind, message, reporter_name, created_at")
+      .eq("store_id", storeId).order("created_at", { ascending: false }).limit(10)
+      .then((r) => r.data || []),
+  ]);
+  return { ...snap, reports };
+}
+
 async function adminResetDevice(supa, _user, body) {
   const id = body?.token_id;
   if (!id) return { error: "Missing token.", status: 400 };
@@ -326,6 +348,7 @@ export const handler = async (event) => {
     const user = await getSessionUser(event, supa);
     if (!user) return respond(401, { error: "unauthorized" });
     if (action === "admin-list") return unwrap(await adminList(supa));
+    if (action === "admin-snapshot") return unwrap(await adminSnapshot(supa, params));
     if (action === "admin-mint") return unwrap(await adminMint(supa, user, body));
     if (action === "admin-revoke") return unwrap(await adminRevoke(supa, user, body));
     if (action === "admin-reset-device") return unwrap(await adminResetDevice(supa, user, body));

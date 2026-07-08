@@ -54,6 +54,21 @@ export function StorePortalPage() {
   const data = q.data;
   return (
     <Chrome store={data?.store} dateLabel={today}>
+      <PortalBody data={data} isLoading={q.isLoading} onCall={() => setShowCall(true)} onReport={() => setShowReport(true)} />
+      {showCall && data && <RightCallSheet contacts={data.contacts} onClose={() => setShowCall(false)} />}
+      {showReport && <ReportSheet token={token} onClose={() => setShowReport(false)} />}
+    </Chrome>
+  );
+}
+
+// The page content between the chrome and the modals — shared with the admin
+// live view (/admin/store-portal/:storeId), which supplies its own data.
+export function PortalBody({ data, isLoading, onCall, onReport }: {
+  data: PortalSnapshot | undefined; isLoading: boolean; onCall: () => void; onReport: () => void;
+}) {
+  const q = { isLoading };
+  return (
+    <>
       {/* ── Hero ── */}
       <section className="mx-auto max-w-6xl px-6 pb-12 pt-14 sm:pt-20">
         <div className="text-[12px] font-bold uppercase tracking-[0.2em] text-red-600">Store Command Center</div>
@@ -64,11 +79,11 @@ export function StorePortalPage() {
           One place for sales, labor, work orders, and the people to call when something needs a decision.
         </p>
         <div className="mt-8 flex flex-wrap gap-3">
-          <button onClick={() => setShowCall(true)}
+          <button onClick={onCall}
             className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-6 py-3.5 text-base font-bold text-white shadow-lg shadow-red-600/25 transition hover:bg-red-700">
             Make the Right Call <ArrowRight className="h-4 w-4" />
           </button>
-          <button onClick={() => setShowReport(true)}
+          <button onClick={onReport}
             className="inline-flex items-center rounded-xl border border-zinc-200 bg-white px-6 py-3.5 text-base font-semibold text-zinc-900 transition hover:border-zinc-400">
             Report to GM
           </button>
@@ -147,21 +162,19 @@ export function StorePortalPage() {
           <p className="mt-3 flex-1 text-[15px] leading-relaxed text-zinc-300">
             Running late? See a safety or equipment issue? Send it straight to your GM.
           </p>
-          <button onClick={() => setShowReport(true)}
+          <button onClick={onReport}
             className="mt-4 inline-flex items-center gap-1.5 text-left text-[15px] font-bold text-amber-400 hover:underline">
             Report tardiness or issue <ArrowRight className="h-4 w-4" />
           </button>
         </div>
       </section>
 
-      {showCall && data && <RightCallSheet contacts={data.contacts} onClose={() => setShowCall(false)} />}
-      {showReport && <ReportSheet token={token} onClose={() => setShowReport(false)} />}
-    </Chrome>
+    </>
   );
 }
 
 // ── chrome ────────────────────────────────────────────────────────────────────
-function Chrome({ store, dateLabel, children }: {
+export function Chrome({ store, dateLabel, children }: {
   store?: PortalSnapshot["store"]; dateLabel?: { weekday: string; date: string }; children: React.ReactNode;
 }) {
   return (
@@ -218,7 +231,7 @@ function Card({ children }: { children: React.ReactNode }) {
 }
 
 // ── Make the Right Call ───────────────────────────────────────────────────────
-function RightCallSheet({ contacts, onClose }: { contacts: PortalSnapshot["contacts"]; onClose: () => void }) {
+export function RightCallSheet({ contacts, onClose }: { contacts: PortalSnapshot["contacts"]; onClose: () => void }) {
   return (
     <Modal onClose={onClose} title="Make the Right Call" icon={<PhoneCall className="h-5 w-5 text-red-600" />}>
       <p className="text-sm text-zinc-500">Start at the top. If you can't reach them, move down the list.</p>

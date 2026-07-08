@@ -62,6 +62,7 @@ import { PublicSubmitPage } from "@/modules/public-submit/PublicSubmitPage";
 import { PublicLearnPage } from "@/modules/qsr/public/PublicLearnPage";
 import { StorePortalPage } from "@/modules/store-portal/StorePortalPage";
 import { StorePortalAdminPage } from "@/modules/store-portal/StorePortalAdminPage";
+import { StorePortalLivePage } from "@/modules/store-portal/StorePortalLivePage";
 import { SharePage } from "@/modules/qsr/share/SharePage";
 import { WorkspacesPage } from "@/modules/workspaces/WorkspacesPage";
 import { WorkspaceDetail } from "@/modules/workspaces/WorkspaceDetail";
@@ -453,6 +454,15 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <StorePortalAdminPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Live admin view of one store's Command Center screen.
+        path: "admin/store-portal/:storeId",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <StorePortalLivePage />
           </ProtectedRoute>
         ),
       },
