@@ -24,6 +24,7 @@ import {
   CalendarDays,
   LayoutGrid,
   GraduationCap,
+  QrCode,
   GitBranch,
   BookMarked,
   BookOpenCheck,
@@ -152,6 +153,7 @@ export const NAV: NavItem[] = [
   // flag broadens access to a pilot cohort at launch (combined with role).
   { to: "/qsr",         label: "Soar MyLearning", icon: Sparkles,    roles: ["admin"], flagKey: "qsr_platform" },
   { to: "/admin/nla-templates", label: "Assessment Templates", icon: ClipboardCheck, roles: ["admin"] },
+  { to: "/admin/store-portal", label: "Command Center Links", icon: QrCode, roles: ["admin"] },
   { to: "/admin/paf-config", label: "PAF Config", icon: Settings,    roles: ["payroll", "admin"] },
   { to: "/admin/labor-sync", label: "Labor Sync", icon: RefreshCw,   roles: ["vp", "coo", "admin"] },
   { to: "/admin/weather-sync", label: "Weather Sync", icon: CloudSun, roles: ["admin"] },
