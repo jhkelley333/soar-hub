@@ -90,24 +90,27 @@ export function PortalBody({ data, isLoading, access, onCall, onReport, onTicket
   return (
     <>
       {/* ── Hero ── */}
-      <section className="mx-auto max-w-6xl px-6 pb-12 pt-14 sm:pt-20">
-        <div className="text-[12px] font-bold uppercase tracking-[0.2em] text-red-600">Store Command Center</div>
-        <h1 className="mt-3 max-w-2xl text-5xl font-extrabold leading-[1.05] tracking-tight text-zinc-900 sm:text-6xl">
-          Everything you need to run today's shift.
-        </h1>
-        <p className="mt-5 max-w-xl text-lg text-zinc-500">
-          One place for sales, labor, work orders, and the people to call when something needs a decision.
-        </p>
-        <div className="mt-8 flex flex-wrap gap-3">
-          <button onClick={onCall}
-            className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-6 py-3.5 text-base font-bold text-white shadow-lg shadow-red-600/25 transition hover:bg-red-700">
-            Make the Right Call <ArrowRight className="h-4 w-4" />
-          </button>
-          <button onClick={onReport}
-            className="inline-flex items-center rounded-xl border border-zinc-200 bg-white px-6 py-3.5 text-base font-semibold text-zinc-900 transition hover:border-zinc-400">
-            Report to GM
-          </button>
+      <section className="mx-auto grid max-w-6xl grid-cols-1 items-center gap-10 px-6 pb-12 pt-14 sm:pt-20 lg:grid-cols-[1fr_380px]">
+        <div>
+          <div className="text-[12px] font-bold uppercase tracking-[0.2em] text-red-600">Store Command Center</div>
+          <h1 className="mt-3 max-w-2xl text-5xl font-extrabold leading-[1.05] tracking-tight text-zinc-900 sm:text-6xl">
+            Everything you need to run today's shift.
+          </h1>
+          <p className="mt-5 max-w-xl text-lg text-zinc-500">
+            One place for sales, labor, work orders, and the people to call when something needs a decision.
+          </p>
+          <div className="mt-8 flex flex-wrap gap-3">
+            <button onClick={onCall}
+              className="inline-flex items-center gap-2 rounded-xl bg-red-600 px-6 py-3.5 text-base font-bold text-white shadow-lg shadow-red-600/25 transition hover:bg-red-700">
+              Make the Right Call <ArrowRight className="h-4 w-4" />
+            </button>
+            <button onClick={onReport}
+              className="inline-flex items-center rounded-xl border border-zinc-200 bg-white px-6 py-3.5 text-base font-semibold text-zinc-900 transition hover:border-zinc-400">
+              Report to GM
+            </button>
+          </div>
         </div>
+        {(data?.whats_cooking?.length ?? 0) > 0 && <WhatsCooking events={data!.whats_cooking!} />}
       </section>
 
       {/* ── KPI strip ── */}
@@ -481,6 +484,41 @@ function Trend({ up, good, text }: { up: boolean; good: boolean; text: string })
 
 function Card({ children }: { children: React.ReactNode }) {
   return <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">{children}</div>;
+}
+
+// ── What's Cooking ────────────────────────────────────────────────────────────
+// Upcoming events from the linked calendar (LTO launches, promos, visits),
+// shown beside the hero. Admin links the iCal feed in Command Center Links.
+const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+function WhatsCooking({ events }: { events: NonNullable<PortalSnapshot["whats_cooking"]> }) {
+  const todayIso = new Date().toLocaleDateString("en-CA");
+  return (
+    <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+      <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-red-600">What's Cooking…</div>
+      <ul className="mt-4 flex flex-col gap-3">
+        {events.map((e, i) => {
+          const [y, m, d] = e.date.split("-").map((n) => parseInt(n, 10));
+          const today = e.date === todayIso;
+          return (
+            <li key={i} className="flex items-center gap-3.5">
+              <span className={cn("flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-xl",
+                today ? "bg-red-600 text-white" : "bg-zinc-100 text-zinc-700")}>
+                <span className={cn("text-[9px] font-extrabold tracking-widest", today ? "text-red-200" : "text-zinc-400")}>{MONTHS[(m || 1) - 1]}</span>
+                <span className="text-lg font-extrabold leading-none">{d || y}</span>
+              </span>
+              <span className="min-w-0">
+                <span className="block truncate text-[15px] font-bold leading-snug text-zinc-900">{e.title}</span>
+                <span className="block text-[12.5px] text-zinc-400">
+                  {today ? "Today" : new Date(`${e.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" })}
+                  {e.time ? ` · ${fmt12(e.time)}` : ""}
+                </span>
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
 }
 
 // ── Quick Links ───────────────────────────────────────────────────────────────

@@ -238,6 +238,115 @@ async function storePtoToday(supa, storeNumber) {
   } catch { return []; }
 }
 
+// ── What's Cooking (linked calendar) ─────────────────────────────────────────
+// Admin links a public iCal/ICS feed (e.g. a Google Calendar secret address);
+// the hero shows the next events from it. Fetched at most every 30 minutes,
+// cached in store_portal_settings, stale cache served on fetch failure.
+const CAL_SETTING_KEY = "whats_cooking";
+const CAL_TTL_MS = 30 * 60 * 1000;
+
+async function getSetting(supa, key) {
+  try {
+    const { data } = await supa.from("store_portal_settings").select("value").eq("key", key).maybeSingle();
+    return data?.value || null;
+  } catch { return null; }
+}
+async function setSetting(supa, key, value, userId) {
+  return supa.from("store_portal_settings")
+    .upsert({ key, value, updated_by: userId ?? null, updated_at: new Date().toISOString() });
+}
+
+// Minimal ICS parsing: unfold wrapped lines, walk VEVENT blocks, read
+// SUMMARY + DTSTART. No RRULE expansion — one-off events only.
+function unescapeIcs(s) {
+  return s.replace(/\\n/gi, " ").replace(/\\([,;\\])/g, "$1").trim();
+}
+function parseIcsDate(params, val) {
+  let m = /^(\d{4})(\d{2})(\d{2})$/.exec(val);
+  if (m) return { date: `${m[1]}-${m[2]}-${m[3]}`, time: null };
+  m = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})?(Z)?$/.exec(val);
+  if (!m) return null;
+  if (m[7] === "Z") {
+    const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], +(m[6] || 0)));
+    return {
+      date: d.toLocaleDateString("en-CA", { timeZone: STORE_TZ }),
+      time: d.toLocaleTimeString("en-GB", { timeZone: STORE_TZ, hour12: false, hour: "2-digit", minute: "2-digit" }),
+    };
+  }
+  // Local / TZID times are taken literally — promo calendars are Central.
+  return { date: `${m[1]}-${m[2]}-${m[3]}`, time: `${m[4]}:${m[5]}` };
+}
+function parseIcs(text) {
+  const unfolded = String(text).replace(/\r?\n[ \t]/g, "");
+  const events = [];
+  for (const block of unfolded.split("BEGIN:VEVENT").slice(1)) {
+    const body = block.split("END:VEVENT")[0];
+    const sum = /^SUMMARY([^:\r\n]*):(.+)$/m.exec(body);
+    const dts = /^DTSTART([^:\r\n]*):([^\r\n]+)$/m.exec(body);
+    if (!sum || !dts) continue;
+    const when = parseIcsDate(dts[1], dts[2].trim());
+    if (!when) continue;
+    events.push({ title: unescapeIcs(sum[2]).slice(0, 160), date: when.date, time: when.time });
+  }
+  return events.sort((a, b) => a.date.localeCompare(b.date) || String(a.time || "").localeCompare(String(b.time || "")));
+}
+
+async function fetchIcs(url) {
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 4500);
+  try {
+    const res = await fetch(url, { signal: ctl.signal, headers: { Accept: "text/calendar, text/plain, */*" } });
+    if (!res.ok) return null;
+    return parseIcs(await res.text());
+  } catch { return null; } finally { clearTimeout(t); }
+}
+
+// Upcoming events for the hero panel — refresh the cache when stale.
+async function whatsCooking(supa) {
+  const s = await getSetting(supa, CAL_SETTING_KEY);
+  if (!s?.url) return [];
+  let events = Array.isArray(s.events) ? s.events : [];
+  const stale = !s.cached_at || Date.now() - new Date(s.cached_at).getTime() > CAL_TTL_MS;
+  if (stale) {
+    const fresh = await fetchIcs(s.url);
+    if (fresh) {
+      events = fresh;
+      await setSetting(supa, CAL_SETTING_KEY, { ...s, events: fresh.slice(0, 100), cached_at: new Date().toISOString() });
+    } else if (s.cached_at) {
+      // Fetch failed — serve stale, but push cached_at forward a bit so we
+      // don't hammer a dead feed on every snapshot.
+      await setSetting(supa, CAL_SETTING_KEY, { ...s, cached_at: new Date(Date.now() - CAL_TTL_MS + 5 * 60 * 1000).toISOString() });
+    }
+  }
+  const { iso } = centralToday();
+  const horizon = new Date(Date.now() + 60 * 86_400_000).toLocaleDateString("en-CA", { timeZone: STORE_TZ });
+  return events.filter((e) => e.date >= iso && e.date <= horizon).slice(0, 6);
+}
+
+async function adminCalendarGet(supa) {
+  const s = await getSetting(supa, CAL_SETTING_KEY);
+  return {
+    url: s?.url || null,
+    last_synced: s?.cached_at || null,
+    event_count: Array.isArray(s?.events) ? s.events.length : 0,
+  };
+}
+
+async function adminCalendarSet(supa, user, body) {
+  const url = String(body?.url || "").trim();
+  if (!url) {
+    await setSetting(supa, CAL_SETTING_KEY, {}, user.id);
+    return { ok: true, url: null, event_count: 0 };
+  }
+  if (!/^https:\/\//i.test(url)) return { error: "Paste a full https:// calendar link (iCal/ICS).", status: 400 };
+  const events = await fetchIcs(url);
+  if (!events) return { error: "Could not read that calendar. Check it is a public iCal/ICS link.", status: 422 };
+  await setSetting(supa, CAL_SETTING_KEY, {
+    url: url.slice(0, 800), events: events.slice(0, 100), cached_at: new Date().toISOString(),
+  }, user.id);
+  return { ok: true, url, event_count: events.length };
+}
+
 // Team birthdays coming up (next 7 days, respecting the show_birthday
 // opt-out). The client renders the Today/weekday label from month+day in the
 // store's own timezone.
@@ -317,7 +426,7 @@ async function quickLinks(supa) {
 }
 
 async function assembleSnapshot(supa, store) {
-  const [ls, rank, wo, notes, contacts, links, storeEmail, actions, birthdays, training, out] = await Promise.all([
+  const [ls, rank, wo, notes, contacts, links, storeEmail, actions, birthdays, training, out, cooking] = await Promise.all([
     laborAndSales(supa, store.number),
     rankerRank(store.number),
     openWorkOrders(supa, store.number),
@@ -329,11 +438,12 @@ async function assembleSnapshot(supa, store) {
     storeBirthdays(supa, store.id),
     storeTrainingToday(supa, store.number),
     storePtoToday(supa, store.number),
+    whatsCooking(supa),
   ]);
   return {
     store: { number: store.number, name: store.name, city: store.city, state: store.state },
     sales: ls.sales, labor: ls.labor, rank, work_orders: wo, notes, actions, birthdays,
-    training_today: training, out_today: out,
+    training_today: training, out_today: out, whats_cooking: cooking,
     // The GM's card carries the store's email address, not their personal
     // one — that is the inbox the store answers. Floor-report emails
     // (report action) still go to the GM's own email via leadership().
@@ -1110,6 +1220,8 @@ export const handler = async (event) => {
     if (!user) return respond(401, { error: "unauthorized" });
     if (action === "admin-list") return unwrap(await adminList(supa));
     if (action === "admin-snapshot") return unwrap(await adminSnapshot(supa, params));
+    if (action === "admin-calendar-get") return unwrap(await adminCalendarGet(supa));
+    if (action === "admin-calendar-set") return unwrap(await adminCalendarSet(supa, user, body));
     if (action === "admin-links") return unwrap(await adminLinksList(supa));
     if (action === "admin-link-save") return unwrap(await adminLinkSave(supa, user, body));
     if (action === "admin-link-upload") return unwrap(await adminLinkUpload(supa, user, body));

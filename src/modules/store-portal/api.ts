@@ -80,7 +80,9 @@ export interface PortalSnapshot {
   birthdays?: PortalBirthday[];
   training_today?: { name: string; type: string | null; start_time: string | null; end_time: string | null }[];
   out_today?: { name: string; position: string | null; until: string }[];
+  whats_cooking?: CookingEvent[];
 }
+export interface CookingEvent { title: string; date: string; time: string | null }
 
 export function fetchPortalSnapshot(token: string): Promise<PortalSnapshot> {
   return publicPost("snapshot", { token, device_id: deviceId() });
@@ -292,6 +294,14 @@ export function resolveStoreReport(reportId: string): Promise<{ ok: true }> {
 }
 export function escalateStoreReport(reportId: string): Promise<{ ok: true; notified: string | null }> {
   return adminRequest("inbox-escalate", { method: "POST", body: JSON.stringify({ report_id: reportId }) });
+}
+
+// What's Cooking — the linked ICS calendar behind the hero panel.
+export function fetchPortalCalendar(): Promise<{ url: string | null; last_synced: string | null; event_count: number }> {
+  return adminRequest("admin-calendar-get");
+}
+export function savePortalCalendar(url: string): Promise<{ ok: true; url: string | null; event_count: number }> {
+  return adminRequest("admin-calendar-set", { method: "POST", body: JSON.stringify({ url }) });
 }
 
 export interface PortalReport { kind: string; message: string; reporter_name: string | null; status?: string; created_at: string }
