@@ -33,6 +33,20 @@ async function publicPost<T>(action: string, body: Record<string, unknown>): Pro
 }
 
 export interface PortalStore { number: string; name: string | null; city: string | null; state: string | null }
+export interface QuickLinkPanel {
+  subtitle: string | null;
+  lines: string[];
+  links: { label: string; description: string | null; url: string }[];
+}
+export interface QuickLink {
+  id: string;
+  label: string;
+  emoji: string | null;
+  description: string | null;
+  kind: "link" | "panel";
+  url: string | null;
+  panel: QuickLinkPanel | null;
+}
 export interface PortalSnapshot {
   store: PortalStore;
   sales: { date: string; net_sales: number | null; wow_pct: number | null } | null;
@@ -41,6 +55,7 @@ export interface PortalSnapshot {
   work_orders: { open_count: number; latest: { title: string; status: string; priority: string | null }[] };
   notes: { title: string; body: string; pinned: boolean; author: string | null; created_at: string }[];
   contacts: { slot: string; name: string | null; phone: string | null; email: string | null }[];
+  quick_links?: QuickLink[];
 }
 
 export function fetchPortalSnapshot(token: string): Promise<PortalSnapshot> {
@@ -190,6 +205,16 @@ export function revokePortalToken(tokenId: string): Promise<{ ok: true }> {
 }
 export function resetPortalDevice(tokenId: string): Promise<{ ok: true }> {
   return adminRequest("admin-reset-device", { method: "POST", body: JSON.stringify({ token_id: tokenId }) });
+}
+export interface AdminQuickLink extends QuickLink { sort_order: number; is_active: boolean }
+export function fetchPortalLinks(): Promise<{ links: AdminQuickLink[] }> {
+  return adminRequest("admin-links");
+}
+export function savePortalLink(input: Partial<AdminQuickLink> & { label: string }): Promise<{ ok: true; link: AdminQuickLink }> {
+  return adminRequest("admin-link-save", { method: "POST", body: JSON.stringify(input) });
+}
+export function deletePortalLink(linkId: string): Promise<{ ok: true }> {
+  return adminRequest("admin-link-delete", { method: "POST", body: JSON.stringify({ link_id: linkId }) });
 }
 export interface PortalReport { kind: string; message: string; reporter_name: string | null; created_at: string }
 export function fetchPortalAdminSnapshot(storeId: string): Promise<PortalSnapshot & { reports: PortalReport[] }> {

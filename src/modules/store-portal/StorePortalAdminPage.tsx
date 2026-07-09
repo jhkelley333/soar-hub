@@ -10,6 +10,7 @@ import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { fetchPortalAdminList, mintPortalToken, resetPortalDevice, revokePortalToken } from "./api";
+import { QuickLinksManager } from "./QuickLinksManager";
 
 const portalUrl = (token: string) => `${window.location.origin}/s/${token}`;
 
@@ -122,6 +123,8 @@ export function StorePortalAdminPage() {
           </table>
         </div>
       </div>
+
+      <QuickLinksManager />
     </div>
   );
 }

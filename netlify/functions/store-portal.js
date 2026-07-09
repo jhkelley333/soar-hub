@@ -215,18 +215,31 @@ const pick = (p) => ({ id: p.id || null, name: p.preferred_name || p.full_name |
 // The public snapshot ships contacts without profile ids.
 const publicContact = ({ slot, name, phone, email }) => ({ slot, name, phone, email });
 
+// Active Quick Links, in order. Best-effort: renders empty before the 0221
+// migration lands instead of failing the whole snapshot.
+async function quickLinks(supa) {
+  try {
+    const { data } = await supa.from("store_portal_links")
+      .select("id, label, emoji, description, kind, url, panel")
+      .eq("is_active", true).order("sort_order", { ascending: true }).limit(30);
+    return data || [];
+  } catch { return []; }
+}
+
 async function assembleSnapshot(supa, store) {
-  const [ls, rank, wo, notes, contacts] = await Promise.all([
+  const [ls, rank, wo, notes, contacts, links] = await Promise.all([
     laborAndSales(supa, store.number),
     rankerRank(store.number),
     openWorkOrders(supa, store.number),
     storeNotes(supa, store.number),
     leadership(supa, store),
+    quickLinks(supa),
   ]);
   return {
     store: { number: store.number, name: store.name, city: store.city, state: store.state },
     sales: ls.sales, labor: ls.labor, rank, work_orders: wo, notes,
     contacts: contacts.map(publicContact),
+    quick_links: links,
   };
 }
 
@@ -621,6 +634,72 @@ async function adminSnapshot(supa, params) {
   return { ...snap, reports };
 }
 
+// ── Admin: Quick Links CRUD ───────────────────────────────────────────────────
+function cleanPanel(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const lines = Array.isArray(raw.lines)
+    ? raw.lines.map((l) => String(l).slice(0, 200)).filter(Boolean).slice(0, 12) : [];
+  const links = Array.isArray(raw.links)
+    ? raw.links
+        .filter((l) => l && l.label && l.url)
+        .map((l) => ({
+          label: String(l.label).slice(0, 120),
+          description: l.description ? String(l.description).slice(0, 240) : null,
+          url: String(l.url).slice(0, 500),
+        })).slice(0, 10)
+    : [];
+  return {
+    subtitle: raw.subtitle ? String(raw.subtitle).slice(0, 240) : null,
+    lines, links,
+  };
+}
+
+async function adminLinksList(supa) {
+  const { data } = await supa.from("store_portal_links")
+    .select("*").order("sort_order", { ascending: true }).order("created_at", { ascending: true });
+  return { links: data || [] };
+}
+
+async function adminLinkSave(supa, user, body) {
+  const label = String(body?.label || "").trim();
+  if (!label) return { error: "Give the link a label.", status: 400 };
+  const kind = body?.kind === "panel" ? "panel" : "link";
+  const url = body?.url ? String(body.url).trim().slice(0, 500) : null;
+  if (kind === "link" && !/^https?:\/\//i.test(url || "")) {
+    return { error: "A redirect link needs a full https:// URL.", status: 400 };
+  }
+  const row = {
+    label: label.slice(0, 120),
+    emoji: body?.emoji ? String(body.emoji).slice(0, 8) : null,
+    description: body?.description ? String(body.description).slice(0, 240) : null,
+    kind,
+    url: kind === "link" ? url : null,
+    panel: kind === "panel" ? cleanPanel(body?.panel) : null,
+    is_active: body?.is_active !== false,
+    updated_at: new Date().toISOString(),
+  };
+  if (body?.id) {
+    if ("sort_order" in (body || {})) { const n = parseInt(body.sort_order, 10); if (!Number.isNaN(n)) row.sort_order = n; }
+    const { data, error } = await supa.from("store_portal_links").update(row).eq("id", body.id).select("*").single();
+    if (error) return { error: error.message, status: 500 };
+    return { ok: true, link: data };
+  }
+  const { data: existing } = await supa.from("store_portal_links").select("sort_order");
+  row.sort_order = (existing || []).reduce((mx, r) => Math.max(mx, (r.sort_order ?? 0) + 1), 0);
+  row.created_by = user.id;
+  const { data, error } = await supa.from("store_portal_links").insert(row).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, link: data };
+}
+
+async function adminLinkDelete(supa, _user, body) {
+  const id = body?.link_id;
+  if (!id) return { error: "Missing link.", status: 400 };
+  const { error } = await supa.from("store_portal_links").delete().eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
 async function adminResetDevice(supa, _user, body) {
   const id = body?.token_id;
   if (!id) return { error: "Missing token.", status: 400 };
@@ -656,6 +735,9 @@ export const handler = async (event) => {
     if (!user) return respond(401, { error: "unauthorized" });
     if (action === "admin-list") return unwrap(await adminList(supa));
     if (action === "admin-snapshot") return unwrap(await adminSnapshot(supa, params));
+    if (action === "admin-links") return unwrap(await adminLinksList(supa));
+    if (action === "admin-link-save") return unwrap(await adminLinkSave(supa, user, body));
+    if (action === "admin-link-delete") return unwrap(await adminLinkDelete(supa, user, body));
     if (action === "admin-mint") return unwrap(await adminMint(supa, user, body));
     if (action === "admin-revoke") return unwrap(await adminRevoke(supa, user, body));
     if (action === "admin-reset-device") return unwrap(await adminResetDevice(supa, user, body));
