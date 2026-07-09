@@ -7,11 +7,11 @@ import { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
-  AlertTriangle, ArrowRight, Check, Megaphone, MessageSquare, PhoneCall, X,
+  AlertTriangle, ArrowRight, Check, FileText, Megaphone, MessageSquare, PhoneCall, X,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { formatPhoneForDisplay } from "@/lib/phone";
-import { fetchPortalSnapshot, messagePortalLeader, sendPortalReport, type PortalSnapshot } from "./api";
+import { fetchPortalSnapshot, messagePortalLeader, panelItems, sendPortalReport, type PortalSnapshot } from "./api";
 import { TicketsView } from "./StorePortalTickets";
 
 const fmtMoney = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
@@ -286,6 +286,7 @@ function QuickLinks({ links }: { links: NonNullable<PortalSnapshot["quick_links"
 
 function LinkPanel({ link, onClose }: { link: NonNullable<PortalSnapshot["quick_links"]>[number]; onClose: () => void }) {
   const p = link.panel!;
+  const items = panelItems(p);
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-zinc-900/50 p-4 sm:items-center" onClick={onClose}>
       <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -308,15 +309,38 @@ function LinkPanel({ link, onClose }: { link: NonNullable<PortalSnapshot["quick_
           </div>
         )}
 
-        {p.links.length > 0 && (
+        {items.length > 0 && (
           <div className="mt-4 flex flex-col gap-2">
-            {p.links.map((sl, i) => (
-              <a key={i} href={sl.url} target="_blank" rel="noreferrer"
-                className="rounded-xl border border-zinc-200 px-4 py-3 text-center transition hover:border-red-300 hover:shadow-sm">
-                <span className="block text-[15px] font-bold text-zinc-900">{sl.label}</span>
-                {sl.description && <span className="mt-0.5 block text-[13px] leading-snug text-zinc-500">{sl.description}</span>}
-              </a>
-            ))}
+            {items.map((it, i) => {
+              if (it.type === "info") {
+                return (
+                  <div key={i} className="rounded-xl bg-zinc-50 px-4 py-3">
+                    <span className="block text-[15px] font-bold text-zinc-900">{it.label}</span>
+                    {it.body && <span className="mt-0.5 block whitespace-pre-line text-[13px] leading-snug text-zinc-600">{it.body}</span>}
+                  </div>
+                );
+              }
+              if (it.type === "doc") {
+                return (
+                  <a key={i} href={it.file_url} target="_blank" rel="noreferrer"
+                    className="flex items-center gap-3 rounded-xl border border-zinc-200 px-4 py-3 transition hover:border-red-300 hover:shadow-sm">
+                    <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-red-50 text-red-600"><FileText className="h-5 w-5" /></span>
+                    <span className="min-w-0 flex-1 text-left">
+                      <span className="block truncate text-[15px] font-bold text-zinc-900">{it.label}</span>
+                      <span className="mt-0.5 block truncate text-[13px] leading-snug text-zinc-500">{it.description || it.file_name || "Open document"}</span>
+                    </span>
+                    <ArrowRight className="h-4 w-4 shrink-0 text-zinc-300" />
+                  </a>
+                );
+              }
+              return (
+                <a key={i} href={it.url} target="_blank" rel="noreferrer"
+                  className="rounded-xl border border-zinc-200 px-4 py-3 text-center transition hover:border-red-300 hover:shadow-sm">
+                  <span className="block text-[15px] font-bold text-zinc-900">{it.label}</span>
+                  {it.description && <span className="mt-0.5 block text-[13px] leading-snug text-zinc-500">{it.description}</span>}
+                </a>
+              );
+            })}
           </div>
         )}
 
