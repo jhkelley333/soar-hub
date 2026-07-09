@@ -257,9 +257,73 @@ async function setSetting(supa, key, value, userId) {
 }
 
 // Minimal ICS parsing: unfold wrapped lines, walk VEVENT blocks, read
-// SUMMARY + DTSTART. No RRULE expansion — one-off events only.
+// SUMMARY + DTSTART, and expand simple RRULEs (DAILY/WEEKLY/MONTHLY/YEARLY
+// with INTERVAL/BYDAY/UNTIL/COUNT) out to the display horizon. EXDATE and
+// exotic rules are ignored.
 function unescapeIcs(s) {
   return s.replace(/\\n/gi, " ").replace(/\\([,;\\])/g, "$1").trim();
+}
+
+const RRULE_DOW = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
+function expandRrule(ev, ruleStr, todayIso, horizonIso) {
+  const rule = {};
+  for (const part of String(ruleStr).split(";")) {
+    const eq = part.indexOf("=");
+    if (eq > 0) rule[part.slice(0, eq).toUpperCase()] = part.slice(eq + 1).toUpperCase();
+  }
+  const freq = rule.FREQ;
+  if (!["DAILY", "WEEKLY", "MONTHLY", "YEARLY"].includes(freq)) return [ev];
+  const interval = Math.max(1, parseInt(rule.INTERVAL || "1", 10) || 1);
+  const count = rule.COUNT ? parseInt(rule.COUNT, 10) : null;
+  const um = rule.UNTIL ? /^(\d{4})(\d{2})(\d{2})/.exec(rule.UNTIL) : null;
+  const untilIso = um ? `${um[1]}-${um[2]}-${um[3]}` : null;
+
+  const DAY = 86_400_000;
+  const [sy, sm, sd] = ev.date.split("-").map(Number);
+  const startTs = Date.UTC(sy, sm - 1, sd);
+  const isoOf = (ts) => new Date(ts).toISOString().slice(0, 10);
+  const out = [];
+  let made = 0;
+  // Emits one occurrence; false = stop enumerating.
+  const emit = (ts) => {
+    const d = isoOf(ts);
+    if (untilIso && d > untilIso) return false;
+    if (count != null && made >= count) return false;
+    made++;
+    if (d > horizonIso) return false;
+    if (d >= todayIso) out.push({ ...ev, date: d });
+    return true;
+  };
+
+  let guard = 0;
+  if (freq === "DAILY") {
+    for (let ts = startTs; guard++ < 20000; ts += interval * DAY) if (!emit(ts)) break;
+  } else if (freq === "WEEKLY") {
+    const dows = rule.BYDAY
+      ? rule.BYDAY.split(",").map((x) => RRULE_DOW[x.slice(-2)]).filter((n) => n != null)
+      : [];
+    if (!dows.length) dows.push(new Date(startTs).getUTCDay());
+    dows.sort((a, b) => a - b);
+    const weekAnchor = startTs - new Date(startTs).getUTCDay() * DAY;
+    outer: for (let w = 0; guard++ < 6000; w += interval) {
+      for (const dow of dows) {
+        const ts = weekAnchor + (w * 7 + dow) * DAY;
+        if (ts < startTs) continue;
+        if (!emit(ts)) break outer;
+      }
+    }
+  } else if (freq === "MONTHLY") {
+    for (let i = 0; guard++ < 2400; i += interval) {
+      const ts = Date.UTC(sy, sm - 1 + i, sd);
+      if (new Date(ts).getUTCDate() !== sd) continue; // day 31 in a short month
+      if (!emit(ts)) break;
+    }
+  } else {
+    for (let i = 0; guard++ < 200; i += interval) {
+      if (!emit(Date.UTC(sy + i, sm - 1, sd))) break;
+    }
+  }
+  return out;
 }
 function parseIcsDate(params, val) {
   let m = /^(\d{4})(\d{2})(\d{2})$/.exec(val);
@@ -278,6 +342,8 @@ function parseIcsDate(params, val) {
 }
 function parseIcs(text) {
   const unfolded = String(text).replace(/\r?\n[ \t]/g, "");
+  const { iso: todayIso } = centralToday();
+  const horizonIso = new Date(Date.now() + 60 * 86_400_000).toISOString().slice(0, 10);
   const events = [];
   for (const block of unfolded.split("BEGIN:VEVENT").slice(1)) {
     const body = block.split("END:VEVENT")[0];
@@ -286,19 +352,25 @@ function parseIcs(text) {
     if (!sum || !dts) continue;
     const when = parseIcsDate(dts[1], dts[2].trim());
     if (!when) continue;
-    events.push({ title: unescapeIcs(sum[2]).slice(0, 160), date: when.date, time: when.time });
+    const base = { title: unescapeIcs(sum[2]).slice(0, 160), date: when.date, time: when.time };
+    const rr = /^RRULE:([^\r\n]+)$/m.exec(body);
+    if (rr) events.push(...expandRrule(base, rr[1], todayIso, horizonIso));
+    else events.push(base);
   }
   return events.sort((a, b) => a.date.localeCompare(b.date) || String(a.time || "").localeCompare(String(b.time || "")));
 }
 
+// → { events } on success, { error } on failure (never throws).
 async function fetchIcs(url) {
   const ctl = new AbortController();
   const t = setTimeout(() => ctl.abort(), 4500);
   try {
     const res = await fetch(url, { signal: ctl.signal, headers: { Accept: "text/calendar, text/plain, */*" } });
-    if (!res.ok) return null;
-    return parseIcs(await res.text());
-  } catch { return null; } finally { clearTimeout(t); }
+    if (!res.ok) return { error: `The feed returned ${res.status}.` };
+    const text = await res.text();
+    if (!/BEGIN:VCALENDAR/i.test(text)) return { error: "not-ics" };
+    return { events: parseIcs(text) };
+  } catch { return { error: "Could not reach the calendar feed." }; } finally { clearTimeout(t); }
 }
 
 // Upcoming events for the hero panel — refresh the cache when stale.
@@ -309,42 +381,53 @@ async function whatsCooking(supa) {
   const stale = !s.cached_at || Date.now() - new Date(s.cached_at).getTime() > CAL_TTL_MS;
   if (stale) {
     const fresh = await fetchIcs(s.url);
-    if (fresh) {
-      events = fresh;
-      await setSetting(supa, CAL_SETTING_KEY, { ...s, events: fresh.slice(0, 100), cached_at: new Date().toISOString() });
+    if (fresh.events) {
+      events = fresh.events;
+      await setSetting(supa, CAL_SETTING_KEY, { ...s, events: fresh.events.slice(0, 100), cached_at: new Date().toISOString() });
     } else if (s.cached_at) {
       // Fetch failed — serve stale, but push cached_at forward a bit so we
       // don't hammer a dead feed on every snapshot.
       await setSetting(supa, CAL_SETTING_KEY, { ...s, cached_at: new Date(Date.now() - CAL_TTL_MS + 5 * 60 * 1000).toISOString() });
     }
   }
+  return upcomingEvents(events).slice(0, 6);
+}
+
+function upcomingEvents(events) {
   const { iso } = centralToday();
   const horizon = new Date(Date.now() + 60 * 86_400_000).toLocaleDateString("en-CA", { timeZone: STORE_TZ });
-  return events.filter((e) => e.date >= iso && e.date <= horizon).slice(0, 6);
+  return (events || []).filter((e) => e.date >= iso && e.date <= horizon);
 }
 
 async function adminCalendarGet(supa) {
   const s = await getSetting(supa, CAL_SETTING_KEY);
+  const upcoming = upcomingEvents(Array.isArray(s?.events) ? s.events : []);
   return {
     url: s?.url || null,
     last_synced: s?.cached_at || null,
     event_count: Array.isArray(s?.events) ? s.events.length : 0,
+    upcoming_count: upcoming.length,
+    upcoming: upcoming.slice(0, 6),
   };
 }
 
 async function adminCalendarSet(supa, user, body) {
-  const url = String(body?.url || "").trim();
+  let url = String(body?.url || "").trim().replace(/^webcal:\/\//i, "https://");
   if (!url) {
     await setSetting(supa, CAL_SETTING_KEY, {}, user.id);
-    return { ok: true, url: null, event_count: 0 };
+    return { ok: true, url: null, event_count: 0, upcoming_count: 0, upcoming: [] };
   }
   if (!/^https:\/\//i.test(url)) return { error: "Paste a full https:// calendar link (iCal/ICS).", status: 400 };
-  const events = await fetchIcs(url);
-  if (!events) return { error: "Could not read that calendar. Check it is a public iCal/ICS link.", status: 422 };
+  const r = await fetchIcs(url);
+  if (r.error === "not-ics") {
+    return { error: "That link returns a web page, not a calendar feed. Use the iCal/ICS address (Google Calendar: Settings, Integrate calendar, Secret address in iCal format).", status: 422 };
+  }
+  if (!r.events) return { error: `Could not read that calendar. ${r.error}`, status: 422 };
   await setSetting(supa, CAL_SETTING_KEY, {
-    url: url.slice(0, 800), events: events.slice(0, 100), cached_at: new Date().toISOString(),
+    url: url.slice(0, 800), events: r.events.slice(0, 100), cached_at: new Date().toISOString(),
   }, user.id);
-  return { ok: true, url, event_count: events.length };
+  const upcoming = upcomingEvents(r.events);
+  return { ok: true, url, event_count: r.events.length, upcoming_count: upcoming.length, upcoming: upcoming.slice(0, 6) };
 }
 
 // Team birthdays coming up (next 7 days, respecting the show_birthday
