@@ -3,12 +3,13 @@
 // button; rows hint at attachments / links and flag unread + edited.
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Megaphone, Plus, Paperclip, Pin, Link2, GraduationCap, ChevronRight } from "lucide-react";
+import { Megaphone, Plus, Paperclip, Pin, Link2, GraduationCap, ChevronRight, ListTodo } from "lucide-react";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { useToast } from "@/shared/ui/Toaster";
 import { listMessages, type MessageBoardView, type StoreMessage } from "./api";
 import { MessageComposeModal } from "./MessageComposeModal";
 import { MessageDetailModal } from "./MessageDetailModal";
+import { StoreActionsManager } from "./StoreActionsManager";
 
 const fmtShort = (s: string) =>
   new Date(s).toLocaleDateString("en-US", { month: "short", day: "numeric" });
@@ -42,6 +43,7 @@ export function MessageBoard() {
   const [composing, setComposing] = useState(false);
   const [editing, setEditing] = useState<StoreMessage | null>(null);
   const [detailId, setDetailId] = useState<string | null>(null);
+  const [actionsOpen, setActionsOpen] = useState(false);
   const [view, setView] = useState<MessageBoardView>("live");
 
   const q = useQuery({
@@ -91,13 +93,23 @@ export function MessageBoard() {
               </button>
             </div>
             {canPost && view === "live" && (
-              <button
-                type="button"
-                onClick={() => { setEditing(null); setComposing(true); }}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-2.5 py-1.5 text-xs font-semibold text-white"
-              >
-                <Plus className="h-3.5 w-3.5" /> New message
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => setActionsOpen(true)}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-accent"
+                  title="Manage the Actions Needed checklist on the store's Command Center screen"
+                >
+                  <ListTodo className="h-3.5 w-3.5" /> Screen actions
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setEditing(null); setComposing(true); }}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-2.5 py-1.5 text-xs font-semibold text-white"
+                >
+                  <Plus className="h-3.5 w-3.5" /> New message
+                </button>
+              </>
             )}
           </div>
         </div>
@@ -160,6 +172,8 @@ export function MessageBoard() {
           onPosted={() => { setComposing(false); setEditing(null); toast.push(editing ? "Message updated." : "Message posted.", "success"); refresh(); }}
         />
       )}
+
+      {actionsOpen && <StoreActionsManager onClose={() => setActionsOpen(false)} />}
     </Card>
   );
 }

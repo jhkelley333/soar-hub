@@ -156,6 +156,44 @@ async function storeNotes(supa, storeNumber) {
     .map((m) => ({ title: m.title, body: (m.body || "").slice(0, 240), pinned: m.is_pinned, author: m.author_name, created_at: m.created_at }));
 }
 
+// Open action items (plus anything checked off in the last 24h, so the day
+// sheet can show them struck through). Best-effort before migration 0224.
+async function storeActions(supa, storeId) {
+  try {
+    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const { data } = await supa.from("store_portal_actions")
+      .select("id, title, due_label, assignee, done, done_at")
+      .eq("store_id", storeId)
+      .or(`done.eq.false,done_at.gte.${since}`)
+      .order("created_at", { ascending: true }).limit(20);
+    return data || [];
+  } catch { return []; }
+}
+
+// Team birthdays coming up (next 7 days, respecting the show_birthday
+// opt-out). The client renders the Today/weekday label from month+day in the
+// store's own timezone.
+async function storeBirthdays(supa, storeId) {
+  const { data } = await supa.from("profiles")
+    .select("full_name, preferred_name, role, birthday, show_birthday")
+    .eq("primary_store_id", storeId).eq("is_active", true).not("birthday", "is", null);
+  const today = new Date();
+  const out = [];
+  for (const p of data || []) {
+    if (p.show_birthday === false) continue;
+    const m = parseInt(String(p.birthday).slice(5, 7), 10);
+    const d = parseInt(String(p.birthday).slice(8, 10), 10);
+    if (!m || !d) continue;
+    let next = new Date(Date.UTC(today.getUTCFullYear(), m - 1, d));
+    const startOfToday = Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate());
+    if (next.getTime() < startOfToday) next = new Date(Date.UTC(today.getUTCFullYear() + 1, m - 1, d));
+    const days = Math.round((next.getTime() - startOfToday) / 86_400_000);
+    if (days > 7) continue;
+    out.push({ name: p.preferred_name || p.full_name || "Team member", role: p.role || null, month: m, day: d, in_days: days });
+  }
+  return out.sort((a, b) => a.in_days - b.in_days).slice(0, 8);
+}
+
 // GM / DO / SDO / RVP for one store — compact version of org.js's resolution
 // (primary scopes only; enough for a call sheet).
 async function leadership(supa, store) {
@@ -211,7 +249,7 @@ async function quickLinks(supa) {
 }
 
 async function assembleSnapshot(supa, store) {
-  const [ls, rank, wo, notes, contacts, links, storeEmail] = await Promise.all([
+  const [ls, rank, wo, notes, contacts, links, storeEmail, actions, birthdays] = await Promise.all([
     laborAndSales(supa, store.number),
     rankerRank(store.number),
     openWorkOrders(supa, store.number),
@@ -219,10 +257,12 @@ async function assembleSnapshot(supa, store) {
     leadership(supa, store),
     quickLinks(supa),
     supa.from("stores").select("email").eq("id", store.id).maybeSingle().then((r) => r.data?.email || null),
+    storeActions(supa, store.id),
+    storeBirthdays(supa, store.id),
   ]);
   return {
     store: { number: store.number, name: store.name, city: store.city, state: store.state },
-    sales: ls.sales, labor: ls.labor, rank, work_orders: wo, notes,
+    sales: ls.sales, labor: ls.labor, rank, work_orders: wo, notes, actions, birthdays,
     // The GM's card carries the store's email address, not their personal
     // one — that is the inbox the store answers. Floor-report emails
     // (report action) still go to the GM's own email via leadership().
@@ -539,6 +579,88 @@ async function postToLeaderThread(supa, store, leaderId, text) {
   }
   const { error } = await supa.from("chat_messages")
     .insert({ thread_id: thread.id, from_user_id: null, system: true, text });
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
+// ── Day-sheet action items ────────────────────────────────────────────────────
+// The store screen (or the admin live view) checks items off; GM and above
+// create and manage them from the dashboard message board.
+async function actionToggle(supa, event, body) {
+  const g = await resolveAccess(supa, event, body);
+  if (g.error) return g;
+  const id = body?.action_id;
+  if (!id) return { error: "Missing action.", status: 400 };
+  const { data: row } = await supa.from("store_portal_actions")
+    .select("id, store_id").eq("id", id).maybeSingle();
+  if (!row || row.store_id !== g.store.id) return { error: "Action not found.", status: 404 };
+  const done = body?.done !== false;
+  const { error } = await supa.from("store_portal_actions")
+    .update({ done, done_at: done ? new Date().toISOString() : null }).eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
+async function leaderCanTouchStore(supa, user, storeId) {
+  const ids = await inboxStoreIds(supa, user);
+  return !ids || ids.includes(storeId);
+}
+
+async function leaderActionStores(supa, user) {
+  const ids = await inboxStoreIds(supa, user);
+  if (ids && ids.length === 0) return { stores: [] };
+  let q = supa.from("stores").select("id, number, name").eq("is_active", true).order("number");
+  if (ids) q = q.in("id", ids);
+  const { data } = await q;
+  return { stores: data || [] };
+}
+
+async function leaderActionsList(supa, user, body) {
+  const storeId = body?.store_id;
+  if (!storeId) return { error: "Missing store.", status: 400 };
+  if (!(await leaderCanTouchStore(supa, user, storeId))) return { error: "Not your store.", status: 403 };
+  const { data } = await supa.from("store_portal_actions")
+    .select("id, title, due_label, assignee, done, done_at, created_at")
+    .eq("store_id", storeId)
+    .order("done", { ascending: true }).order("created_at", { ascending: true }).limit(100);
+  return { actions: data || [] };
+}
+
+async function leaderActionSave(supa, user, body) {
+  const title = String(body?.title || "").trim();
+  if (!title) return { error: "Give the action a title.", status: 400 };
+  const fields = {
+    title: title.slice(0, 200),
+    due_label: body?.due_label ? String(body.due_label).slice(0, 60) : null,
+    assignee: body?.assignee ? String(body.assignee).slice(0, 80) : null,
+  };
+  if (body?.id) {
+    const { data: row } = await supa.from("store_portal_actions")
+      .select("id, store_id").eq("id", body.id).maybeSingle();
+    if (!row) return { error: "Action not found.", status: 404 };
+    if (!(await leaderCanTouchStore(supa, user, row.store_id))) return { error: "Not your store.", status: 403 };
+    const { data, error } = await supa.from("store_portal_actions")
+      .update(fields).eq("id", body.id).select("*").single();
+    if (error) return { error: error.message, status: 500 };
+    return { ok: true, action: data };
+  }
+  const storeId = body?.store_id;
+  if (!storeId) return { error: "Missing store.", status: 400 };
+  if (!(await leaderCanTouchStore(supa, user, storeId))) return { error: "Not your store.", status: 403 };
+  const { data, error } = await supa.from("store_portal_actions")
+    .insert({ ...fields, store_id: storeId, created_by: user.id }).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, action: data };
+}
+
+async function leaderActionDelete(supa, user, body) {
+  const id = body?.action_id;
+  if (!id) return { error: "Missing action.", status: 400 };
+  const { data: row } = await supa.from("store_portal_actions")
+    .select("id, store_id").eq("id", id).maybeSingle();
+  if (!row) return { ok: true };
+  if (!(await leaderCanTouchStore(supa, user, row.store_id))) return { error: "Not your store.", status: 403 };
+  const { error } = await supa.from("store_portal_actions").delete().eq("id", id);
   if (error) return { error: error.message, status: 500 };
   return { ok: true };
 }
@@ -895,13 +1017,22 @@ export const handler = async (event) => {
     if (action === "photo-qr") return unwrap(await photoQr(supa, event, body));
     if (action === "phone-info") return unwrap(await phoneInfo(supa, params));
     if (action === "phone-upload") return unwrap(await phoneUpload(supa, body));
-    // Leader Inbox (Bearer, gm and up).
-    if (action === "inbox-list" || action === "inbox-resolve" || action === "inbox-escalate") {
+    if (action === "action-toggle") return unwrap(await actionToggle(supa, event, body));
+    // Leader Inbox + day-sheet action management (Bearer, gm and up).
+    const LEADER_ACTIONS = new Set([
+      "inbox-list", "inbox-resolve", "inbox-escalate",
+      "actions-stores", "actions-list", "action-save", "action-delete",
+    ]);
+    if (LEADER_ACTIONS.has(action)) {
       const leader = await getLeaderUser(event, supa);
       if (!leader) return respond(401, { error: "unauthorized" });
       if (action === "inbox-list") return unwrap(await inboxList(supa, leader));
       if (action === "inbox-resolve") return unwrap(await inboxResolve(supa, leader, body));
-      return unwrap(await inboxEscalate(supa, leader, body));
+      if (action === "inbox-escalate") return unwrap(await inboxEscalate(supa, leader, body));
+      if (action === "actions-stores") return unwrap(await leaderActionStores(supa, leader));
+      if (action === "actions-list") return unwrap(await leaderActionsList(supa, leader, body));
+      if (action === "action-save") return unwrap(await leaderActionSave(supa, leader, body));
+      return unwrap(await leaderActionDelete(supa, leader, body));
     }
     // Admin actions.
     const user = await getSessionUser(event, supa);

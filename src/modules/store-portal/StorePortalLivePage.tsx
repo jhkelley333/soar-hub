@@ -65,7 +65,7 @@ export function StorePortalLivePage() {
           <TicketsView access={{ store_id: storeId }} storeNumber={data.store.number} onBack={() => setShowTickets(false)} />
         ) : (
         <>
-        <PortalBody data={data} isLoading={false} onCall={() => setShowCall(true)} onReport={() => setShowReport(true)} onTickets={() => setShowTickets(true)} />
+        <PortalBody data={data} isLoading={false} access={{ store_id: storeId }} onCall={() => setShowCall(true)} onReport={() => setShowReport(true)} onTickets={() => setShowTickets(true)} />
 
         {/* floor reports — admin-only extra, below the store page content */}
         <section className="mx-auto max-w-6xl px-6 pb-14">

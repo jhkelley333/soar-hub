@@ -58,6 +58,15 @@ export interface QuickLink {
   url: string | null;
   panel: QuickLinkPanel | null;
 }
+export interface PortalAction {
+  id: string;
+  title: string;
+  due_label: string | null;
+  assignee: string | null;
+  done: boolean;
+  done_at: string | null;
+}
+export interface PortalBirthday { name: string; role: string | null; month: number; day: number; in_days: number }
 export interface PortalSnapshot {
   store: PortalStore;
   sales: { date: string; net_sales: number | null; wow_pct: number | null } | null;
@@ -67,6 +76,8 @@ export interface PortalSnapshot {
   notes: { title: string; body: string; pinned: boolean; author: string | null; created_at: string }[];
   contacts: { slot: string; name: string | null; phone: string | null; email: string | null }[];
   quick_links?: QuickLink[];
+  actions?: PortalAction[];
+  birthdays?: PortalBirthday[];
 }
 
 export function fetchPortalSnapshot(token: string): Promise<PortalSnapshot> {
@@ -240,6 +251,26 @@ export async function uploadPortalDoc(file: File): Promise<{ ok: true; file_url:
     body: JSON.stringify({ file_data: base64, file_name: file.name, file_type: file.type || "application/pdf" }),
   });
 }
+// Check an action item off (or back on) from the screen or the live view.
+export function togglePortalAction(access: PortalAccess, actionId: string, done: boolean): Promise<{ ok: true }> {
+  return portalPost("action-toggle", access, { action_id: actionId, done });
+}
+
+// ── Day-sheet actions management (Bearer, gm and up) ─────────────────────────
+export interface LeaderActionStore { id: string; number: string; name: string | null }
+export function fetchActionStores(): Promise<{ stores: LeaderActionStore[] }> {
+  return adminRequest("actions-stores", { method: "POST", body: "{}" });
+}
+export function fetchLeaderActions(storeId: string): Promise<{ actions: (PortalAction & { created_at: string })[] }> {
+  return adminRequest("actions-list", { method: "POST", body: JSON.stringify({ store_id: storeId }) });
+}
+export function saveLeaderAction(input: { id?: string; store_id?: string; title: string; due_label?: string; assignee?: string }): Promise<{ ok: true; action: PortalAction }> {
+  return adminRequest("action-save", { method: "POST", body: JSON.stringify(input) });
+}
+export function deleteLeaderAction(actionId: string): Promise<{ ok: true }> {
+  return adminRequest("action-delete", { method: "POST", body: JSON.stringify({ action_id: actionId }) });
+}
+
 // ── Leader Inbox (floor reports, worked from Chat; Bearer, gm and up) ────────
 export interface StoreInboxReport {
   id: string;

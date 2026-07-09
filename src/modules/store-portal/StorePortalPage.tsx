@@ -5,14 +5,17 @@
 // data. Light-only, per the design mock. Auto-refreshes every 5 minutes.
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
 import {
   AlertTriangle, ArrowRight, Check, FileText, Megaphone, MessageSquare, PhoneCall, QrCode, X,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { formatPhoneForDisplay } from "@/lib/phone";
-import { fetchPortalSnapshot, messagePortalLeader, panelItems, sendPortalReport, type PortalSnapshot } from "./api";
+import {
+  fetchPortalSnapshot, messagePortalLeader, panelItems, sendPortalReport, togglePortalAction,
+  type PortalAccess, type PortalAction, type PortalSnapshot,
+} from "./api";
 import { TicketsView } from "./StorePortalTickets";
 
 const fmtMoney = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
@@ -65,7 +68,7 @@ export function StorePortalPage() {
   }
   return (
     <Chrome store={data?.store} dateLabel={today}>
-      <PortalBody data={data} isLoading={q.isLoading} onCall={() => setShowCall(true)} onReport={() => setShowReport(true)} onTickets={() => setShowTickets(true)} />
+      <PortalBody data={data} isLoading={q.isLoading} access={{ token }} onCall={() => setShowCall(true)} onReport={() => setShowReport(true)} onTickets={() => setShowTickets(true)} />
       {showCall && data && <RightCallSheet contacts={data.contacts} token={token} onClose={() => setShowCall(false)} />}
       {showReport && <ReportSheet access={{ token }} onClose={() => setShowReport(false)} />}
     </Chrome>
@@ -74,10 +77,14 @@ export function StorePortalPage() {
 
 // The page content between the chrome and the modals — shared with the admin
 // live view (/admin/store-portal/:storeId), which supplies its own data.
-export function PortalBody({ data, isLoading, onCall, onReport, onTickets }: {
-  data: PortalSnapshot | undefined; isLoading: boolean; onCall: () => void; onReport: () => void; onTickets?: () => void;
+// `access` enables checking off day-sheet action items (token or admin).
+export function PortalBody({ data, isLoading, access, onCall, onReport, onTickets }: {
+  data: PortalSnapshot | undefined; isLoading: boolean; access?: PortalAccess;
+  onCall: () => void; onReport: () => void; onTickets?: () => void;
 }) {
   const q = { isLoading };
+  const [showDay, setShowDay] = useState(false);
+  const openActions = (data?.actions ?? []).filter((a) => !a.done);
   return (
     <>
       {/* ── Hero ── */}
@@ -149,44 +156,212 @@ export function PortalBody({ data, isLoading, onCall, onReport, onTickets }: {
           )}
         </Card>
 
-        {/* Notes about today */}
-        <Card>
-          <div className="flex items-center justify-between">
-            <div>
-              <h2 className="text-xl font-bold text-zinc-900">Notes About Today</h2>
-              <div className="mt-0.5 text-[11px] font-bold uppercase tracking-wider text-zinc-400">Set by the GM</div>
+        {/* Notes about today — opens the full day sheet */}
+        <button onClick={() => setShowDay(true)} className="text-left">
+          <Card>
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-xl font-bold text-zinc-900">Notes About Today</h2>
+                <div className="mt-0.5 text-[11px] font-bold uppercase tracking-wider text-zinc-400">Set by the GM</div>
+              </div>
+              {data && data.notes.length > 0 && (
+                <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-700">{data.notes.length} new</span>
+              )}
             </div>
-            {data && data.notes.length > 0 && (
-              <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-700">{data.notes.length} new</span>
+            <ul className="mt-4 flex min-h-[3rem] flex-col gap-2.5">
+              {q.isLoading ? <li className="text-[15px] text-zinc-400">Loading…</li>
+                : data && data.notes.length > 0 ? data.notes.slice(0, 4).map((n, i) => (
+                  <li key={i} className="flex items-start gap-2.5">
+                    <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", n.pinned ? "bg-red-500" : i % 2 === 0 ? "bg-emerald-500" : "bg-amber-400")} />
+                    <span className="text-[15px] leading-snug text-zinc-700">{n.title}</span>
+                  </li>
+                )) : <li className="text-[15px] text-zinc-400">Nothing posted for today yet.</li>}
+            </ul>
+            <span className="mt-4 inline-flex items-center gap-1.5 text-[15px] font-bold text-red-600">
+              Open the day sheet <ArrowRight className="h-4 w-4" />
+            </span>
+          </Card>
+        </button>
+
+        {/* Actions needed — the GM's checklist for the shift. Report to GM
+            stays in the hero, so this card earns its spot with real work. */}
+        <div className="flex flex-col rounded-2xl bg-zinc-900 p-6 text-white shadow-sm">
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-bold">Actions Needed</h2>
+            {data && (
+              <span className={cn("rounded-full px-2.5 py-1 text-xs font-bold",
+                openActions.length > 0 ? "bg-amber-400/20 text-amber-300" : "bg-emerald-400/20 text-emerald-300")}>
+                {openActions.length} open
+              </span>
             )}
           </div>
-          <ul className="mt-4 flex min-h-[3rem] flex-col gap-2.5">
+          <ul className="mt-3 flex-1 space-y-2">
             {q.isLoading ? <li className="text-[15px] text-zinc-400">Loading…</li>
-              : data && data.notes.length > 0 ? data.notes.slice(0, 4).map((n, i) => (
-                <li key={i} className="flex items-start gap-2.5">
-                  <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", n.pinned ? "bg-red-500" : i % 2 === 0 ? "bg-emerald-500" : "bg-amber-400")} />
-                  <span className="text-[15px] leading-snug text-zinc-700">{n.title}</span>
+              : openActions.length > 0 ? openActions.slice(0, 3).map((a) => (
+                <li key={a.id} className="flex items-start gap-2.5">
+                  <span className="mt-1 h-3.5 w-3.5 shrink-0 rounded border border-zinc-600" />
+                  <span className="min-w-0">
+                    <span className="block truncate text-[15px] leading-snug text-zinc-100">{a.title}</span>
+                    {(a.due_label || a.assignee) && (
+                      <span className="text-[12px] text-zinc-400">{[a.due_label && `Due ${a.due_label}`, a.assignee].filter(Boolean).join(" · ")}</span>
+                    )}
+                  </span>
                 </li>
-              )) : <li className="text-[15px] text-zinc-400">Nothing posted for today yet.</li>}
+              )) : <li className="text-[15px] leading-relaxed text-zinc-300">All caught up. Anything the GM adds shows up here.</li>}
           </ul>
-        </Card>
-
-        {/* Report to GM */}
-        <div className="flex flex-col rounded-2xl bg-zinc-900 p-6 text-white shadow-sm">
-          <h2 className="text-xl font-bold">Report to the GM</h2>
-          <p className="mt-3 flex-1 text-[15px] leading-relaxed text-zinc-300">
-            Running late? See a safety or equipment issue? Send it straight to your GM.
-          </p>
-          <button onClick={onReport}
+          <button onClick={() => setShowDay(true)}
             className="mt-4 inline-flex items-center gap-1.5 text-left text-[15px] font-bold text-amber-400 hover:underline">
-            Report tardiness or issue <ArrowRight className="h-4 w-4" />
+            Open today's list <ArrowRight className="h-4 w-4" />
           </button>
         </div>
       </section>
 
       {(data?.quick_links?.length ?? 0) > 0 && <QuickLinks links={data!.quick_links!} />}
 
+      {showDay && data && <DaySheet data={data} access={access} onClose={() => setShowDay(false)} />}
     </>
+  );
+}
+
+// ── Day sheet ─────────────────────────────────────────────────────────────────
+// The full "Notes About Today" view from the design mock: the pinned note as
+// a banner, the rest of the notes, the GM's action checklist (checkable from
+// the screen), and this week's birthdays.
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+function birthdayLabel(b: { month: number; day: number; in_days: number }): string {
+  const now = new Date();
+  if (b.month === now.getMonth() + 1 && b.day === now.getDate()) return "Today";
+  const d = new Date(now);
+  d.setDate(now.getDate() + b.in_days);
+  return WEEKDAYS[d.getDay()];
+}
+const prettyRole = (r: string | null) =>
+  r ? r.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "";
+const initials = (name: string) =>
+  name.split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
+
+function DaySheet({ data, access, onClose }: { data: PortalSnapshot; access?: PortalAccess; onClose: () => void }) {
+  const qc = useQueryClient();
+  const [checked, setChecked] = useState<Record<string, boolean>>({});
+  const notes = data.notes;
+  const banner = notes.find((n) => n.pinned) ?? notes[0] ?? null;
+  const rest = notes.filter((n) => n !== banner);
+  const actions = data.actions ?? [];
+  const birthdays = data.birthdays ?? [];
+  const weekday = WEEKDAYS[new Date().getDay()];
+
+  const isDone = (a: PortalAction) => checked[a.id] ?? a.done;
+  const toggle = useMutation({
+    mutationFn: ({ id, done }: { id: string; done: boolean }) => {
+      if (!access) return Promise.resolve({ ok: true as const });
+      return togglePortalAction(access, id, done);
+    },
+    onMutate: ({ id, done }) => setChecked((c) => ({ ...c, [id]: done })),
+    onError: (_e, { id, done }) => setChecked((c) => ({ ...c, [id]: !done })),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["store-portal"] });
+      qc.invalidateQueries({ queryKey: ["store-portal-live"] });
+    },
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-zinc-900/50 p-4 sm:items-center" onClick={onClose}>
+      <div className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-2xl bg-white p-6 shadow-2xl sm:p-8" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-red-600">Set by the GM · {weekday}</div>
+            <h2 className="mt-1 text-2xl font-extrabold tracking-tight text-zinc-900">Notes About Today</h2>
+          </div>
+          {banner?.author && <span className="text-sm text-zinc-400">{banner.author}</span>}
+        </div>
+
+        {banner && (
+          <div className="mt-4 rounded-xl border-l-4 border-amber-400 bg-zinc-50 px-4 py-3.5">
+            {banner.title && <div className="text-[15px] font-bold text-zinc-900">{banner.title}</div>}
+            {banner.body && <p className="mt-0.5 whitespace-pre-line text-[15px] leading-relaxed text-zinc-700">{banner.body}</p>}
+          </div>
+        )}
+        {rest.length > 0 && (
+          <div className="mt-3 space-y-2">
+            {rest.map((n, i) => (
+              <div key={i} className="rounded-xl bg-zinc-50 px-4 py-3">
+                <div className="text-[14px] font-bold text-zinc-900">{n.title}</div>
+                {n.body && <p className="mt-0.5 whitespace-pre-line text-[13.5px] leading-snug text-zinc-600">{n.body}</p>}
+              </div>
+            ))}
+          </div>
+        )}
+        {!banner && rest.length === 0 && (
+          <p className="mt-4 text-sm text-zinc-400">Nothing posted for today yet.</p>
+        )}
+
+        <SheetHeading dot="bg-red-500" label="Actions Needed" />
+        {actions.length === 0 ? (
+          <p className="text-sm text-zinc-400">No action items for today.</p>
+        ) : (
+          <ul className="divide-y divide-zinc-100">
+            {actions.map((a) => (
+              <li key={a.id} className="flex items-start gap-3 py-3">
+                <button
+                  onClick={() => toggle.mutate({ id: a.id, done: !isDone(a) })}
+                  disabled={!access}
+                  className={cn("mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-md border transition",
+                    isDone(a) ? "border-emerald-500 bg-emerald-500 text-white" : "border-zinc-300 bg-white hover:border-zinc-500")}
+                  aria-label={isDone(a) ? "Mark not done" : "Mark done"}>
+                  {isDone(a) && <Check className="h-4 w-4" />}
+                </button>
+                <div className="min-w-0">
+                  <div className={cn("text-[15px] font-semibold leading-snug", isDone(a) ? "text-zinc-400 line-through" : "text-zinc-900")}>{a.title}</div>
+                  {(a.due_label || a.assignee) && (
+                    <div className="mt-0.5 text-[13px] text-zinc-400">{[a.due_label && `Due ${a.due_label}`, a.assignee].filter(Boolean).join(" · ")}</div>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        {birthdays.length > 0 && (
+          <>
+            <SheetHeading dot="bg-amber-400" label="Birthdays" />
+            <ul className="space-y-2">
+              {birthdays.map((b, i) => {
+                const label = birthdayLabel(b);
+                const today = label === "Today";
+                return (
+                  <li key={i} className={cn("flex items-center gap-3 rounded-xl px-4 py-3", today ? "bg-amber-50" : "bg-zinc-50")}>
+                    <span className={cn("grid h-10 w-10 shrink-0 place-items-center rounded-full text-sm font-bold",
+                      today ? "bg-white text-amber-700" : "bg-white text-zinc-600")}>
+                      {initials(b.name)}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-[15px] font-bold text-zinc-900">{b.name}</span>
+                      {b.role && <span className="block text-[13px] text-zinc-500">{prettyRole(b.role)}</span>}
+                    </span>
+                    <span className={cn("text-sm font-semibold", today ? "text-red-600" : "text-zinc-400")}>{label}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </>
+        )}
+
+        <div className="mt-6 flex justify-end">
+          <button onClick={onClose} className="rounded-xl bg-zinc-100 px-6 py-3 text-sm font-bold text-zinc-800 transition hover:bg-zinc-200">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SheetHeading({ dot, label }: { dot: string; label: string }) {
+  return (
+    <div className="mb-2 mt-7 flex items-center gap-2 border-t border-zinc-100 pt-6">
+      <span className={cn("h-2 w-2 rounded-full", dot)} />
+      <h3 className="text-[13px] font-extrabold uppercase tracking-wider text-zinc-900">{label}</h3>
+    </div>
   );
 }
 
