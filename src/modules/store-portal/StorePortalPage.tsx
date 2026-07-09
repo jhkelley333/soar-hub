@@ -239,6 +239,15 @@ const prettyRole = (r: string | null) =>
   r ? r.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "";
 const initials = (name: string) =>
   name.split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
+// "14:30" → "2:30p"
+const fmt12 = (t: string | null) => {
+  if (!t) return "";
+  const [h, m] = t.split(":").map((n) => parseInt(n, 10));
+  if (Number.isNaN(h)) return t;
+  return `${h % 12 || 12}:${String(m || 0).padStart(2, "0")}${h >= 12 ? "p" : "a"}`;
+};
+const fmtShortDate = (iso: string) =>
+  new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
 function DaySheet({ data, access, onClose }: { data: PortalSnapshot; access?: PortalAccess; onClose: () => void }) {
   const qc = useQueryClient();
@@ -319,6 +328,50 @@ function DaySheet({ data, access, onClose }: { data: PortalSnapshot; access?: Po
               </li>
             ))}
           </ul>
+        )}
+
+        {(data.training_today?.length ?? 0) > 0 && (
+          <>
+            <SheetHeading dot="bg-emerald-500" label="Who's Training Today" />
+            <ul className="space-y-2">
+              {data.training_today!.map((t, i) => (
+                <li key={i} className="flex items-center gap-3 rounded-xl bg-zinc-50 px-4 py-3">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-emerald-100 text-sm font-bold text-emerald-700">
+                    {initials(t.name)}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[15px] font-bold text-zinc-900">{t.name}</span>
+                    {t.type && <span className="block text-[13px] text-zinc-500">{t.type}</span>}
+                  </span>
+                  {t.start_time && (
+                    <span className="rounded-full bg-white px-3 py-1 text-[13px] font-semibold text-zinc-600">
+                      {fmt12(t.start_time)}{t.end_time ? ` – ${fmt12(t.end_time)}` : ""}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {(data.out_today?.length ?? 0) > 0 && (
+          <>
+            <SheetHeading dot="bg-blue-500" label="Out Today — PTO" />
+            <ul className="space-y-2">
+              {data.out_today!.map((p, i) => (
+                <li key={i} className="flex items-center gap-3 rounded-xl bg-zinc-50 px-4 py-3">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-blue-100 text-sm font-bold text-blue-700">
+                    {initials(p.name)}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[15px] font-bold text-zinc-900">{p.name}</span>
+                    {p.position && <span className="block text-[13px] text-zinc-500">{p.position}</span>}
+                  </span>
+                  <span className="text-sm font-semibold text-zinc-400">through {fmtShortDate(p.until)}</span>
+                </li>
+              ))}
+            </ul>
+          </>
         )}
 
         {birthdays.length > 0 && (

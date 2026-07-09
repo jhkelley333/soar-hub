@@ -78,6 +78,8 @@ export interface PortalSnapshot {
   quick_links?: QuickLink[];
   actions?: PortalAction[];
   birthdays?: PortalBirthday[];
+  training_today?: { name: string; type: string | null; start_time: string | null; end_time: string | null }[];
+  out_today?: { name: string; position: string | null; until: string }[];
 }
 
 export function fetchPortalSnapshot(token: string): Promise<PortalSnapshot> {
