@@ -183,6 +183,8 @@ export function PortalBody({ data, isLoading, onCall, onReport, onTickets }: {
         </div>
       </section>
 
+      {(data?.quick_links?.length ?? 0) > 0 && <QuickLinks links={data!.quick_links!} />}
+
     </>
   );
 }
@@ -242,6 +244,88 @@ function Trend({ up, good, text }: { up: boolean; good: boolean; text: string })
 
 function Card({ children }: { children: React.ReactNode }) {
   return <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">{children}</div>;
+}
+
+// ── Quick Links ───────────────────────────────────────────────────────────────
+// Admin-managed pills below the cards. kind = link opens the site in a new
+// tab; kind = panel opens a clean pop-over with contact lines + sub-links
+// (the Coke Support pattern). Managed from Admin → Command Center Links.
+function QuickLinks({ links }: { links: NonNullable<PortalSnapshot["quick_links"]> }) {
+  const [openId, setOpenId] = useState<string | null>(null);
+  const open = links.find((l) => l.id === openId) ?? null;
+
+  return (
+    <section className="mx-auto max-w-6xl px-6 pb-14">
+      <h2 className="mb-4 text-xl font-bold text-zinc-900">Quick Links</h2>
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {links.map((l) => {
+          const inner = (
+            <>
+              <span className="grid h-11 w-11 shrink-0 place-items-center rounded-full bg-zinc-100 text-xl">
+                {l.emoji || "🔗"}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-[15px] font-bold text-zinc-900">{l.label}</span>
+                {l.description && <span className="mt-0.5 block text-[13px] leading-snug text-zinc-500">{l.description}</span>}
+              </span>
+              <ArrowRight className="h-4 w-4 shrink-0 text-zinc-300" />
+            </>
+          );
+          const cls = "flex w-full items-center gap-3.5 rounded-2xl border border-zinc-200 bg-white px-5 py-4 text-left shadow-sm transition hover:border-red-300 hover:shadow";
+          return l.kind === "link" && l.url ? (
+            <a key={l.id} href={l.url} target="_blank" rel="noreferrer" className={cls}>{inner}</a>
+          ) : (
+            <button key={l.id} onClick={() => setOpenId(l.id)} className={cls}>{inner}</button>
+          );
+        })}
+      </div>
+      {open && open.panel && <LinkPanel link={open} onClose={() => setOpenId(null)} />}
+    </section>
+  );
+}
+
+function LinkPanel({ link, onClose }: { link: NonNullable<PortalSnapshot["quick_links"]>[number]; onClose: () => void }) {
+  const p = link.panel!;
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-zinc-900/50 p-4 sm:items-center" onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-start justify-between">
+          <div className="flex items-center gap-3">
+            <span className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-zinc-100 text-2xl">{link.emoji || "🔗"}</span>
+            <div>
+              <h2 className="text-lg font-extrabold text-zinc-900">{link.label}</h2>
+              {p.subtitle && <p className="text-sm text-zinc-500">{p.subtitle}</p>}
+            </div>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"><X className="h-5 w-5" /></button>
+        </div>
+
+        {p.lines.length > 0 && (
+          <div className="mt-4 flex flex-col gap-1.5 rounded-xl bg-zinc-50 px-4 py-3">
+            {p.lines.map((line, i) => (
+              <p key={i} className="text-[15px] leading-snug text-zinc-700">{line}</p>
+            ))}
+          </div>
+        )}
+
+        {p.links.length > 0 && (
+          <div className="mt-4 flex flex-col gap-2">
+            {p.links.map((sl, i) => (
+              <a key={i} href={sl.url} target="_blank" rel="noreferrer"
+                className="rounded-xl border border-zinc-200 px-4 py-3 text-center transition hover:border-red-300 hover:shadow-sm">
+                <span className="block text-[15px] font-bold text-zinc-900">{sl.label}</span>
+                {sl.description && <span className="mt-0.5 block text-[13px] leading-snug text-zinc-500">{sl.description}</span>}
+              </a>
+            ))}
+          </div>
+        )}
+
+        <button onClick={onClose} className="mt-5 w-full rounded-xl bg-zinc-900 py-3 text-sm font-bold text-white transition hover:bg-zinc-800">
+          Back to Command Center
+        </button>
+      </div>
+    </div>
+  );
 }
 
 // ── Make the Right Call ───────────────────────────────────────────────────────
