@@ -422,12 +422,17 @@ export function RightCallSheet({ contacts, token, onClose }: {
   contacts: PortalSnapshot["contacts"]; token?: string; onClose: () => void;
 }) {
   const [composeSlot, setComposeSlot] = useState<string | null>(null);
+  const [vcardSlot, setVcardSlot] = useState<string | null>(null);
   const target = contacts.find((c) => c.slot === composeSlot) ?? null;
+  const vcardTarget = contacts.find((c) => c.slot === vcardSlot) ?? null;
 
   if (token && target) {
     return (
       <LeaderCompose token={token} contact={target} onBack={() => setComposeSlot(null)} onClose={onClose} />
     );
+  }
+  if (vcardTarget) {
+    return <ContactQrModal contact={vcardTarget} onBack={() => setVcardSlot(null)} onClose={onClose} />;
   }
   return (
     <Modal onClose={onClose} title="Make the Right Call" icon={<PhoneCall className="h-5 w-5 text-red-600" />}>
@@ -446,6 +451,12 @@ export function RightCallSheet({ contacts, token, onClose }: {
                 {c.phone ? formatPhoneForDisplay(c.phone) : "No phone on file"}
               </div>
             </div>
+            {c.name && (c.phone || c.email) && (
+              <button onClick={() => setVcardSlot(c.slot)} title="Scan to save this contact on your phone"
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-lg border border-zinc-200 text-zinc-400 transition hover:border-red-300 hover:text-red-600">
+                <QrCode className="h-5 w-5" />
+              </button>
+            )}
             {token && (
               <button onClick={() => setComposeSlot(c.slot)}
                 className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white transition hover:bg-red-700">
@@ -455,6 +466,57 @@ export function RightCallSheet({ contacts, token, onClose }: {
           </li>
         ))}
       </ul>
+    </Modal>
+  );
+}
+
+// Scan-to-save contact card. The QR encodes the vCard itself — phone cameras
+// recognize it and offer "Add to Contacts" on the spot, no download needed.
+const vcEscape = (s: string) => s.replace(/\\/g, "\\\\").replace(/[,;]/g, (m) => `\\${m}`);
+function buildVCard(c: PortalSnapshot["contacts"][number]): string {
+  const name = (c.name ?? "").trim();
+  const parts = name.split(/\s+/);
+  const last = parts.length > 1 ? parts[parts.length - 1] : "";
+  const first = parts.length > 1 ? parts.slice(0, -1).join(" ") : name;
+  const lines = [
+    "BEGIN:VCARD",
+    "VERSION:3.0",
+    `N:${vcEscape(last)};${vcEscape(first)};;;`,
+    `FN:${vcEscape(name)}`,
+    `TITLE:${vcEscape(SLOT_TITLE[c.slot] ?? c.slot)}`,
+    "ORG:SOAR",
+  ];
+  if (c.phone) lines.push(`TEL;TYPE=CELL:${c.phone}`);
+  if (c.email) lines.push(`EMAIL:${vcEscape(c.email)}`);
+  lines.push("END:VCARD");
+  return lines.join("\r\n");
+}
+
+function ContactQrModal({ contact, onBack, onClose }: {
+  contact: PortalSnapshot["contacts"][number]; onBack: () => void; onClose: () => void;
+}) {
+  const [src, setSrc] = useState("");
+  useEffect(() => {
+    QRCode.toDataURL(buildVCard(contact), { width: 260, margin: 1 }).then(setSrc).catch(() => setSrc(""));
+  }, [contact]);
+
+  return (
+    <Modal onClose={onClose} title="Save contact" icon={<QrCode className="h-5 w-5 text-red-600" />}>
+      <p className="text-sm text-zinc-500">
+        Point your phone camera at the code — it will offer to add{" "}
+        <strong className="text-zinc-700">{contact.name}</strong> ({SLOT_TITLE[contact.slot] ?? contact.slot}) to your contacts.
+      </p>
+      {src
+        ? <img src={src} alt={`QR code with contact card for ${contact.name}`} className="mx-auto mt-4 h-[260px] w-[260px] rounded-xl border border-zinc-200" />
+        : <div className="mx-auto mt-4 grid h-[260px] w-[260px] place-items-center rounded-xl border border-zinc-200 text-sm text-zinc-400">Generating…</div>}
+      <div className="mt-3 text-center text-sm text-zinc-500">
+        {contact.phone && <div className="font-semibold tabular-nums text-zinc-700">{formatPhoneForDisplay(contact.phone)}</div>}
+        {contact.email && <div className="break-all text-xs">{contact.email}</div>}
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-2">
+        <button onClick={onBack} className="rounded-xl border border-zinc-200 py-3 text-sm font-bold text-zinc-700 transition hover:border-zinc-400">Back</button>
+        <button onClick={onClose} className="rounded-xl bg-zinc-900 py-3 text-sm font-bold text-white transition hover:bg-zinc-800">Done</button>
+      </div>
     </Modal>
   );
 }
