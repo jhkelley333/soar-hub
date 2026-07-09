@@ -77,6 +77,7 @@ export interface PortalTicketDetail {
   ticket: PortalTicket;
   messages: { user_name: string | null; user_role: string | null; message: string; created_at: string }[];
   photos: { file_url: string; file_name: string; created_at: string }[];
+  activity: { update_type: string | null; event_type: string | null; user_name: string | null; created_at: string }[];
 }
 export function fetchPortalTickets(access: PortalAccess): Promise<{ open: PortalTicket[]; recent_closed: PortalTicket[] }> {
   return portalPost("tickets", access);
@@ -84,8 +85,44 @@ export function fetchPortalTickets(access: PortalAccess): Promise<{ open: Portal
 export function fetchPortalTicket(access: PortalAccess, ticketId: string): Promise<PortalTicketDetail> {
   return portalPost("ticket", access, { ticket_id: ticketId });
 }
-export function createPortalTicket(access: PortalAccess, input: { submitter_name: string; issue_description: string; category?: string; priority?: string; troubleshooting_checked?: boolean }): Promise<{ ok: true; ticket_id: string; wo_number: string }> {
+export interface NewPortalTicket {
+  submitter_name: string;
+  submitter_email?: string;
+  submitter_phone?: string;
+  issue_description: string;
+  category?: string;
+  asset_type?: string;
+  model_number?: string;
+  priority?: string;
+  is_business_critical?: boolean;
+  troubleshooting_checked?: boolean;
+  vendor_id?: string | null;
+  needs_vendor_help?: boolean;
+}
+export function createPortalTicket(access: PortalAccess, input: NewPortalTicket): Promise<{ ok: true; ticket_id: string; wo_number: string }> {
   return portalPost("create-ticket", access, { ...input });
+}
+
+// ── Issue library + store-scoped vendors ─────────────────────────────────────
+// These ride the existing PUBLIC work-order endpoints (the same ones the
+// public submit form uses), so the screen mirrors the real intake exactly.
+const PUBLIC_WO_FN = "/.netlify/functions/public-submit";
+export interface IssueLibraryItem { id: string; category: string | null; asset_type: string | null; display_name: string; troubleshooting_tips: string | null }
+export async function searchIssueLibrary(q: string): Promise<IssueLibraryItem[]> {
+  const res = await fetch(`${PUBLIC_WO_FN}?action=searchIssueLibrary&q=${encodeURIComponent(q)}`);
+  if (!res.ok) return [];
+  const b = await res.json().catch(() => null);
+  return b?.items ?? [];
+}
+export interface StoreVendor { id: string; name: string; category: string | null }
+export async function listStoreVendors(storeNumber: string, category?: string, assetType?: string): Promise<StoreVendor[]> {
+  const params = new URLSearchParams({ store_number: storeNumber });
+  if (category) params.set("category", category);
+  if (assetType) params.set("asset_type", assetType);
+  const res = await fetch(`${PUBLIC_WO_FN}?action=listVendors&${params.toString()}`);
+  if (!res.ok) return [];
+  const b = await res.json().catch(() => null);
+  return b?.vendors ?? [];
 }
 export function commentPortalTicket(access: PortalAccess, input: { ticket_id: string; message: string; name?: string }): Promise<{ ok: true }> {
   return portalPost("comment-ticket", access, { ...input });

@@ -12,7 +12,8 @@ import { ArrowLeft, Camera, Check, ExternalLink, MessageSquare, Plus, RefreshCw,
 import { cn } from "@/lib/cn";
 import {
   commentPortalTicket, createPortalTicket, fetchPhotoQr, fetchPortalTicket, fetchPortalTickets,
-  type PortalAccess, type PortalTicket,
+  listStoreVendors, searchIssueLibrary,
+  type IssueLibraryItem, type PortalAccess, type PortalTicket,
 } from "./api";
 
 const STATUS_CHIP: Record<string, string> = {
@@ -32,7 +33,7 @@ const PRIORITY_CHIP: Record<string, string> = {
   Urgent: "bg-orange-100 text-orange-700",
 };
 
-export function TicketsView({ access, onBack }: { access: PortalAccess; onBack: () => void }) {
+export function TicketsView({ access, storeNumber, onBack }: { access: PortalAccess; storeNumber?: string; onBack: () => void }) {
   const navigate = useNavigate();
   const [view, setView] = useState<{ kind: "list" } | { kind: "new" } | { kind: "detail"; id: string }>({ kind: "list" });
   const q = useQuery({ queryKey: ["portal-tickets", access], queryFn: () => fetchPortalTickets(access), refetchInterval: 60_000 });
@@ -77,7 +78,7 @@ export function TicketsView({ access, onBack }: { access: PortalAccess; onBack: 
           onOpen={openTicket} />
       )}
       {view.kind === "new" && (
-        <NewTicketForm access={access} onCreated={openTicket} />
+        <NewTicketForm access={access} storeNumber={storeNumber} onCreated={openTicket} />
       )}
       {view.kind === "detail" && <TicketDetail access={access} ticketId={view.id} />}
     </section>
@@ -142,34 +143,124 @@ function TicketRow({ t, onOpen }: { t: PortalTicket; onOpen: (id: string) => voi
   );
 }
 
-// ── New ticket (store pre-locked; no picker) ──────────────────────────────────
-function NewTicketForm({ access, onCreated }: { access: PortalAccess; onCreated: (id: string) => void }) {
+// ── New ticket — a mirror of the real Work Order intake, store pre-locked ─────
+// Same fields and behavior as the WO2 / public submit form: issue-library
+// search (sets category + asset + troubleshooting tips), asset/model, priority,
+// business-critical, troubleshooting question, and the store-scoped vendor
+// recommendation (pick one or ask the team to choose).
+const INPUT = "w-full rounded-xl border border-zinc-200 px-4 py-3 text-[15px] text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-900 focus:outline-none";
+const LABEL = "mb-1 block text-xs font-bold uppercase tracking-wider text-zinc-400";
+
+function NewTicketForm({ access, storeNumber, onCreated }: {
+  access: PortalAccess; storeNumber?: string; onCreated: (id: string) => void;
+}) {
   const qc = useQueryClient();
   const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [issueQ, setIssueQ] = useState("");
   const [category, setCategory] = useState("");
-  const [priority, setPriority] = useState("Standard");
+  const [assetType, setAssetType] = useState("");
+  const [modelNumber, setModelNumber] = useState("");
+  const [tips, setTips] = useState<string | null>(null);
   const [description, setDescription] = useState("");
+  const [priority, setPriority] = useState("Standard");
+  const [businessCritical, setBusinessCritical] = useState(false);
   const [checked, setChecked] = useState(false);
+  const [vendorId, setVendorId] = useState<string | null>(null);
+  const [needsHelp, setNeedsHelp] = useState(true);
+
+  // Issue library — same live search the real form uses.
+  const libQ = useQuery({
+    queryKey: ["portal-issue-lib", issueQ],
+    queryFn: () => searchIssueLibrary(issueQ.trim()),
+    enabled: issueQ.trim().length >= 2,
+    staleTime: 60_000,
+  });
+  const pickIssue = (it: IssueLibraryItem) => {
+    setCategory(it.category ?? "");
+    setAssetType(it.asset_type ?? "");
+    setTips(it.troubleshooting_tips || null);
+    setIssueQ(it.display_name);
+  };
+
+  // Store-scoped vendor list — the same set the WO2 picker shows.
+  const vendorsQ = useQuery({
+    queryKey: ["portal-vendors", storeNumber, category, assetType],
+    queryFn: () => listStoreVendors(storeNumber!, category || undefined, assetType || undefined),
+    enabled: !!storeNumber,
+    staleTime: 5 * 60_000,
+  });
+  const vendors = vendorsQ.data ?? [];
+
   const create = useMutation({
     mutationFn: () => createPortalTicket(access, {
-      submitter_name: name.trim(), issue_description: description.trim(),
-      category: category.trim() || undefined, priority, troubleshooting_checked: checked,
+      submitter_name: name.trim(),
+      submitter_email: email.trim() || undefined,
+      submitter_phone: phone.trim() || undefined,
+      issue_description: description.trim(),
+      category: category.trim() || undefined,
+      asset_type: assetType.trim() || undefined,
+      model_number: modelNumber.trim() || undefined,
+      priority,
+      is_business_critical: businessCritical,
+      troubleshooting_checked: checked,
+      vendor_id: needsHelp ? null : vendorId,
+      needs_vendor_help: needsHelp,
     }),
     onSuccess: (r) => { qc.invalidateQueries({ queryKey: ["portal-tickets", access] }); onCreated(r.ticket_id); },
   });
-  const input = "w-full rounded-xl border border-zinc-200 px-4 py-3 text-[15px] text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-900 focus:outline-none";
 
   return (
-    <div className="max-w-2xl rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
-      <p className="text-sm text-zinc-500">Filed for <strong>this store automatically</strong> — no store number needed. Add photos from your phone right after.</p>
-      <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" className={input} />
-        <input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="What's affected (fryer, HVAC, stall…)" className={input} />
+    <div className="max-w-3xl rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
+      <p className="text-sm text-zinc-500">Filed for <strong>this store automatically</strong>. Same form as the Work Order system — add photos from your phone right after.</p>
+
+      {/* who */}
+      <div className="mt-5 grid gap-3 sm:grid-cols-3">
+        <div><span className={LABEL}>Your name *</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="First + last" className={INPUT} /></div>
+        <div><span className={LABEL}>Email (optional)</span><input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="For updates" className={INPUT} /></div>
+        <div><span className={LABEL}>Phone (optional)</span><input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="Callback number" className={INPUT} /></div>
       </div>
-      <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4}
-        placeholder="Describe the issue — what's broken, since when, what it's blocking."
-        className={cn(input, "mt-3 resize-none")} />
-      <div className="mt-3 flex flex-wrap items-center gap-2">
+
+      {/* what's broken — issue library */}
+      <div className="relative mt-4">
+        <span className={LABEL}>What's broken?</span>
+        <input value={issueQ} onChange={(e) => { setIssueQ(e.target.value); setTips(null); }}
+          placeholder="Start typing — fryer, ice machine, HVAC, stall…" className={INPUT} />
+        {issueQ.trim().length >= 2 && !tips && (libQ.data?.length ?? 0) > 0 && (
+          <ul className="absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-xl border border-zinc-200 bg-white shadow-lg">
+            {libQ.data!.map((it) => (
+              <li key={it.id}>
+                <button onClick={() => pickIssue(it)} className="flex w-full items-center justify-between gap-3 px-4 py-2.5 text-left text-sm hover:bg-zinc-50">
+                  <span className="font-medium text-zinc-800">{it.display_name}</span>
+                  <span className="shrink-0 text-xs text-zinc-400">{[it.category, it.asset_type].filter(Boolean).join(" · ")}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+      {tips && (
+        <div className="mt-2 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800">
+          <strong>Try first:</strong> {tips}
+        </div>
+      )}
+
+      <div className="mt-3 grid gap-3 sm:grid-cols-3">
+        <div><span className={LABEL}>Category</span><input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="Equipment, Facility…" className={INPUT} /></div>
+        <div><span className={LABEL}>Asset type</span><input value={assetType} onChange={(e) => setAssetType(e.target.value)} placeholder="Fryer, HVAC…" className={INPUT} /></div>
+        <div><span className={LABEL}>Model # (optional)</span><input value={modelNumber} onChange={(e) => setModelNumber(e.target.value)} placeholder="From the data plate" className={INPUT} /></div>
+      </div>
+
+      <div className="mt-3">
+        <span className={LABEL}>Describe the issue *</span>
+        <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={4}
+          placeholder="What's broken, since when, and what it's blocking."
+          className={cn(INPUT, "resize-none")} />
+      </div>
+
+      {/* priority + flags */}
+      <div className="mt-4 flex flex-wrap items-center gap-2">
         <span className="text-sm font-semibold text-zinc-500">Priority</span>
         {["Standard", "Urgent", "Emergency"].map((p) => (
           <button key={p} onClick={() => setPriority(p)}
@@ -181,10 +272,45 @@ function NewTicketForm({ access, onCreated }: { access: PortalAccess; onCreated:
           </button>
         ))}
       </div>
-      <label className="mt-4 flex items-start gap-2.5 text-sm text-zinc-600">
+      <label className="mt-3 flex items-start gap-2.5 text-sm text-zinc-600">
+        <input type="checkbox" checked={businessCritical} onChange={(e) => setBusinessCritical(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-zinc-300" />
+        <span><strong>Business critical</strong> — this is stopping us from serving (down fryer at rush, no ice, POS down).</span>
+      </label>
+      <label className="mt-2 flex items-start gap-2.5 text-sm text-zinc-600">
         <input type="checkbox" checked={checked} onChange={(e) => setChecked(e.target.checked)} className="mt-0.5 h-4 w-4 rounded border-zinc-300" />
         We tried basic troubleshooting (power cycle, breaker, reset) before filing this.
       </label>
+
+      {/* vendor — same store-scoped list as the WO2 picker */}
+      <div className="mt-5 rounded-xl border border-zinc-200 p-4">
+        <span className={LABEL}>Vendor</span>
+        <label className="flex items-start gap-2.5 text-sm text-zinc-700">
+          <input type="radio" checked={needsHelp} onChange={() => { setNeedsHelp(true); setVendorId(null); }} className="mt-0.5 h-4 w-4" />
+          <span><strong>Help me choose</strong> — flag it for the DO to pick the right vendor.</span>
+        </label>
+        <label className="mt-2 flex items-start gap-2.5 text-sm text-zinc-700">
+          <input type="radio" checked={!needsHelp} onChange={() => setNeedsHelp(false)} className="mt-0.5 h-4 w-4" />
+          <span>Suggest a vendor we've used for this:</span>
+        </label>
+        {!needsHelp && (
+          <div className="mt-2 max-h-44 overflow-auto rounded-lg border border-zinc-100">
+            {vendorsQ.isLoading ? (
+              <p className="px-4 py-3 text-sm text-zinc-400">Loading vendors…</p>
+            ) : vendors.length === 0 ? (
+              <p className="px-4 py-3 text-sm text-zinc-400">No vendors on file for this store — leave it to the DO.</p>
+            ) : (
+              vendors.map((v) => (
+                <label key={v.id} className={cn("flex cursor-pointer items-center gap-2.5 px-4 py-2 text-sm hover:bg-zinc-50", vendorId === v.id && "bg-red-50")}>
+                  <input type="radio" name="vendor" checked={vendorId === v.id} onChange={() => setVendorId(v.id)} className="h-4 w-4" />
+                  <span className="font-medium text-zinc-800">{v.name}</span>
+                  {v.category && <span className="text-xs text-zinc-400">{v.category}</span>}
+                </label>
+              ))
+            )}
+          </div>
+        )}
+      </div>
+
       {create.isError && <p className="mt-3 text-sm font-medium text-red-600">{(create.error as Error)?.message ?? "Could not submit."}</p>}
       <button disabled={!name.trim() || description.trim().length < 10 || create.isPending} onClick={() => create.mutate()}
         className="mt-5 w-full rounded-xl bg-red-600 py-3.5 text-base font-bold text-white shadow-lg shadow-red-600/25 transition hover:bg-red-700 disabled:opacity-40">
@@ -212,7 +338,7 @@ function TicketDetail({ access, ticketId }: { access: PortalAccess; ticketId: st
 
   if (q.isLoading) return <div className="rounded-2xl border border-zinc-200 bg-white p-10 text-center text-zinc-400">Loading ticket…</div>;
   if (q.isError) return <div className="rounded-2xl border border-zinc-200 bg-white p-10 text-center text-red-600">{(q.error as Error)?.message}</div>;
-  const { ticket, messages, photos } = q.data!;
+  const { ticket, messages, photos, activity } = q.data!;
   const input = "w-full rounded-xl border border-zinc-200 px-4 py-3 text-[15px] text-zinc-900 placeholder:text-zinc-400 focus:border-zinc-900 focus:outline-none";
 
   return (
@@ -233,6 +359,21 @@ function TicketDetail({ access, ticketId }: { access: PortalAccess; ticketId: st
           <p className="mt-2 text-xs text-zinc-400">
             {ticket.category || "General"} · filed {new Date(ticket.date_submitted).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
           </p>
+          {activity.length > 0 && (
+            <div className="mt-4 border-t border-zinc-100 pt-3">
+              <div className="text-xs font-bold uppercase tracking-wider text-zinc-400">Activity</div>
+              <ul className="mt-2 flex flex-col gap-1.5">
+                {activity.slice(0, 8).map((a, i) => (
+                  <li key={i} className="flex items-center gap-2 text-xs text-zinc-500">
+                    <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-zinc-300" />
+                    <span className="capitalize text-zinc-700">{(a.event_type || a.update_type || "update").replace(/_/g, " ")}</span>
+                    <span>· {a.user_name ?? "system"}</span>
+                    <span className="ml-auto shrink-0">{new Date(a.created_at).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
 
         <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">

@@ -58,7 +58,7 @@ export function StorePortalPage() {
   if (showTickets) {
     return (
       <Chrome store={data?.store} dateLabel={today}>
-        <TicketsView access={{ token }} onBack={() => setShowTickets(false)} />
+        <TicketsView access={{ token }} storeNumber={data?.store.number} onBack={() => setShowTickets(false)} />
       </Chrome>
     );
   }
