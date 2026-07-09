@@ -3,11 +3,12 @@
 // credential and it binds to the first device that opens it, so a forwarded
 // link shows a clear "registered to a different device" message instead of
 // data. Light-only, per the design mock. Auto-refreshes every 5 minutes.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
+import QRCode from "qrcode";
 import {
-  AlertTriangle, ArrowRight, Check, FileText, Megaphone, MessageSquare, PhoneCall, X,
+  AlertTriangle, ArrowRight, Check, FileText, Megaphone, MessageSquare, PhoneCall, QrCode, X,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { formatPhoneForDisplay } from "@/lib/phone";
@@ -252,6 +253,7 @@ function Card({ children }: { children: React.ReactNode }) {
 // (the Coke Support pattern). Managed from Admin → Command Center Links.
 function QuickLinks({ links }: { links: NonNullable<PortalSnapshot["quick_links"]> }) {
   const [openId, setOpenId] = useState<string | null>(null);
+  const [qr, setQr] = useState<{ label: string; url: string } | null>(null);
   const open = links.find((l) => l.id === openId) ?? null;
 
   return (
@@ -268,6 +270,7 @@ function QuickLinks({ links }: { links: NonNullable<PortalSnapshot["quick_links"
                 <span className="block truncate text-[15px] font-bold text-zinc-900">{l.label}</span>
                 {l.description && <span className="mt-0.5 block text-[13px] leading-snug text-zinc-500">{l.description}</span>}
               </span>
+              {l.kind === "link" && l.url && <QrButton onClick={() => setQr({ label: l.label, url: l.url! })} />}
               <ArrowRight className="h-4 w-4 shrink-0 text-zinc-300" />
             </>
           );
@@ -280,13 +283,60 @@ function QuickLinks({ links }: { links: NonNullable<PortalSnapshot["quick_links"
         })}
       </div>
       {open && open.panel && <LinkPanel link={open} onClose={() => setOpenId(null)} />}
+      {qr && <LinkQrModal label={qr.label} url={qr.url} onClose={() => setQr(null)} />}
     </section>
+  );
+}
+
+// Small QR trigger that lives inside a clickable pill/row: stops the parent
+// link from firing and pops the scan-to-phone modal instead.
+function QrButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      onClick={(e) => { e.preventDefault(); e.stopPropagation(); onClick(); }}
+      title="Show QR code to open on a phone"
+      className="grid h-8 w-8 shrink-0 place-items-center rounded-lg border border-zinc-200 text-zinc-400 transition hover:border-red-300 hover:text-red-600">
+      <QrCode className="h-4 w-4" />
+    </button>
+  );
+}
+
+// Scan-to-phone modal for any link: the store screen is a desktop, so a QR
+// hands the URL to whoever is standing in front of it.
+function LinkQrModal({ label, url, onClose }: { label: string; url: string; onClose: () => void }) {
+  const [src, setSrc] = useState("");
+  useEffect(() => {
+    QRCode.toDataURL(url, { width: 260, margin: 1 }).then(setSrc).catch(() => setSrc(""));
+  }, [url]);
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-zinc-900/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-sm rounded-2xl bg-white p-6 text-center shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-extrabold text-zinc-900">Scan with your phone</h2>
+          <button onClick={onClose} className="rounded-lg p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"><X className="h-5 w-5" /></button>
+        </div>
+        <p className="mt-1 text-left text-sm text-zinc-500">Opens <strong className="text-zinc-700">{label}</strong> on your phone.</p>
+        {src
+          ? <img src={src} alt={`QR code for ${label}`} className="mx-auto mt-4 h-[260px] w-[260px] rounded-xl border border-zinc-200" />
+          : <div className="mx-auto mt-4 grid h-[260px] w-[260px] place-items-center rounded-xl border border-zinc-200 text-sm text-zinc-400">Generating…</div>}
+        <p className="mt-3 break-all text-xs text-zinc-400">{url}</p>
+        <a href={url} target="_blank" rel="noreferrer"
+          className="mt-4 block w-full rounded-xl border border-zinc-200 py-3 text-sm font-bold text-zinc-700 transition hover:border-red-300">
+          Open on this screen instead
+        </a>
+        <button onClick={onClose} className="mt-2 w-full rounded-xl bg-zinc-900 py-3 text-sm font-bold text-white transition hover:bg-zinc-800">
+          Done
+        </button>
+      </div>
+    </div>
   );
 }
 
 function LinkPanel({ link, onClose }: { link: NonNullable<PortalSnapshot["quick_links"]>[number]; onClose: () => void }) {
   const p = link.panel!;
   const items = panelItems(p);
+  const [qr, setQr] = useState<{ label: string; url: string } | null>(null);
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-zinc-900/50 p-4 sm:items-center" onClick={onClose}>
       <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
@@ -329,20 +379,26 @@ function LinkPanel({ link, onClose }: { link: NonNullable<PortalSnapshot["quick_
                       <span className="block truncate text-[15px] font-bold text-zinc-900">{it.label}</span>
                       <span className="mt-0.5 block truncate text-[13px] leading-snug text-zinc-500">{it.description || it.file_name || "Open document"}</span>
                     </span>
+                    <QrButton onClick={() => setQr({ label: it.label, url: it.file_url })} />
                     <ArrowRight className="h-4 w-4 shrink-0 text-zinc-300" />
                   </a>
                 );
               }
               return (
                 <a key={i} href={it.url} target="_blank" rel="noreferrer"
-                  className="rounded-xl border border-zinc-200 px-4 py-3 text-center transition hover:border-red-300 hover:shadow-sm">
-                  <span className="block text-[15px] font-bold text-zinc-900">{it.label}</span>
-                  {it.description && <span className="mt-0.5 block text-[13px] leading-snug text-zinc-500">{it.description}</span>}
+                  className="flex items-center gap-3 rounded-xl border border-zinc-200 px-4 py-3 transition hover:border-red-300 hover:shadow-sm">
+                  <span className="min-w-0 flex-1 text-left">
+                    <span className="block text-[15px] font-bold text-zinc-900">{it.label}</span>
+                    {it.description && <span className="mt-0.5 block text-[13px] leading-snug text-zinc-500">{it.description}</span>}
+                  </span>
+                  <QrButton onClick={() => setQr({ label: it.label, url: it.url })} />
+                  <ArrowRight className="h-4 w-4 shrink-0 text-zinc-300" />
                 </a>
               );
             })}
           </div>
         )}
+        {qr && <LinkQrModal label={qr.label} url={qr.url} onClose={() => setQr(null)} />}
 
         <button onClick={onClose} className="mt-5 w-full rounded-xl bg-zinc-900 py-3 text-sm font-bold text-white transition hover:bg-zinc-800">
           Back to Command Center
