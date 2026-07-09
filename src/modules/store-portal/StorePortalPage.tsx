@@ -83,7 +83,9 @@ export function PortalBody({ data, isLoading, access, onCall, onReport, onTicket
   onCall: () => void; onReport: () => void; onTickets?: () => void;
 }) {
   const q = { isLoading };
-  const [showDay, setShowDay] = useState(false);
+  // "full" = the whole day sheet (from the Notes card); "actions" = just the
+  // checklist (from the Actions card) — no message-board content there.
+  const [showDay, setShowDay] = useState<"full" | "actions" | null>(null);
   const openActions = (data?.actions ?? []).filter((a) => !a.done);
   return (
     <>
@@ -157,7 +159,7 @@ export function PortalBody({ data, isLoading, access, onCall, onReport, onTicket
         </Card>
 
         {/* Notes about today — opens the full day sheet */}
-        <button onClick={() => setShowDay(true)} className="text-left">
+        <button onClick={() => setShowDay("full")} className="text-left">
           <Card>
             <div className="flex items-center justify-between">
               <div>
@@ -209,7 +211,7 @@ export function PortalBody({ data, isLoading, access, onCall, onReport, onTicket
                 </li>
               )) : <li className="text-[15px] leading-relaxed text-zinc-300">All caught up. Anything the GM adds shows up here.</li>}
           </ul>
-          <button onClick={() => setShowDay(true)}
+          <button onClick={() => setShowDay("actions")}
             className="mt-4 inline-flex items-center gap-1.5 text-left text-[15px] font-bold text-amber-400 hover:underline">
             Open today's list <ArrowRight className="h-4 w-4" />
           </button>
@@ -218,7 +220,7 @@ export function PortalBody({ data, isLoading, access, onCall, onReport, onTicket
 
       {(data?.quick_links?.length ?? 0) > 0 && <QuickLinks links={data!.quick_links!} />}
 
-      {showDay && data && <DaySheet data={data} access={access} onClose={() => setShowDay(false)} />}
+      {showDay && data && <DaySheet data={data} access={access} actionsOnly={showDay === "actions"} onClose={() => setShowDay(null)} />}
     </>
   );
 }
@@ -239,15 +241,26 @@ const prettyRole = (r: string | null) =>
   r ? r.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()) : "";
 const initials = (name: string) =>
   name.split(/\s+/).map((w) => w[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
+// "14:30" → "2:30p"
+const fmt12 = (t: string | null) => {
+  if (!t) return "";
+  const [h, m] = t.split(":").map((n) => parseInt(n, 10));
+  if (Number.isNaN(h)) return t;
+  return `${h % 12 || 12}:${String(m || 0).padStart(2, "0")}${h >= 12 ? "p" : "a"}`;
+};
+const fmtShortDate = (iso: string) =>
+  new Date(`${iso}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 
-function DaySheet({ data, access, onClose }: { data: PortalSnapshot; access?: PortalAccess; onClose: () => void }) {
+function DaySheet({ data, access, actionsOnly, onClose }: {
+  data: PortalSnapshot; access?: PortalAccess; actionsOnly?: boolean; onClose: () => void;
+}) {
   const qc = useQueryClient();
   const [checked, setChecked] = useState<Record<string, boolean>>({});
-  const notes = data.notes;
+  const notes = actionsOnly ? [] : data.notes;
   const banner = notes.find((n) => n.pinned) ?? notes[0] ?? null;
   const rest = notes.filter((n) => n !== banner);
   const actions = data.actions ?? [];
-  const birthdays = data.birthdays ?? [];
+  const birthdays = actionsOnly ? [] : data.birthdays ?? [];
   const weekday = WEEKDAYS[new Date().getDay()];
 
   const isDone = (a: PortalAction) => checked[a.id] ?? a.done;
@@ -270,36 +283,40 @@ function DaySheet({ data, access, onClose }: { data: PortalSnapshot; access?: Po
         <div className="flex items-start justify-between">
           <div>
             <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-red-600">Set by the GM · {weekday}</div>
-            <h2 className="mt-1 text-2xl font-extrabold tracking-tight text-zinc-900">Notes About Today</h2>
+            <h2 className="mt-1 text-2xl font-extrabold tracking-tight text-zinc-900">{actionsOnly ? "Actions Needed" : "Notes About Today"}</h2>
           </div>
           {banner?.author && <span className="text-sm text-zinc-400">{banner.author}</span>}
         </div>
 
-        {banner && (
-          <div className="mt-4 rounded-xl border-l-4 border-amber-400 bg-zinc-50 px-4 py-3.5">
-            {banner.title && <div className="text-[15px] font-bold text-zinc-900">{banner.title}</div>}
-            {banner.body && <p className="mt-0.5 whitespace-pre-line text-[15px] leading-relaxed text-zinc-700">{banner.body}</p>}
-          </div>
-        )}
-        {rest.length > 0 && (
-          <div className="mt-3 space-y-2">
-            {rest.map((n, i) => (
-              <div key={i} className="rounded-xl bg-zinc-50 px-4 py-3">
-                <div className="text-[14px] font-bold text-zinc-900">{n.title}</div>
-                {n.body && <p className="mt-0.5 whitespace-pre-line text-[13.5px] leading-snug text-zinc-600">{n.body}</p>}
+        {!actionsOnly && (
+          <>
+            {banner && (
+              <div className="mt-4 rounded-xl border-l-4 border-amber-400 bg-zinc-50 px-4 py-3.5">
+                {banner.title && <div className="text-[15px] font-bold text-zinc-900">{banner.title}</div>}
+                {banner.body && <p className="mt-0.5 whitespace-pre-line text-[15px] leading-relaxed text-zinc-700">{banner.body}</p>}
               </div>
-            ))}
-          </div>
-        )}
-        {!banner && rest.length === 0 && (
-          <p className="mt-4 text-sm text-zinc-400">Nothing posted for today yet.</p>
+            )}
+            {rest.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {rest.map((n, i) => (
+                  <div key={i} className="rounded-xl bg-zinc-50 px-4 py-3">
+                    <div className="text-[14px] font-bold text-zinc-900">{n.title}</div>
+                    {n.body && <p className="mt-0.5 whitespace-pre-line text-[13.5px] leading-snug text-zinc-600">{n.body}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+            {!banner && rest.length === 0 && (
+              <p className="mt-4 text-sm text-zinc-400">Nothing posted for today yet.</p>
+            )}
+          </>
         )}
 
-        <SheetHeading dot="bg-red-500" label="Actions Needed" />
+        {!actionsOnly && <SheetHeading dot="bg-red-500" label="Actions Needed" />}
         {actions.length === 0 ? (
-          <p className="text-sm text-zinc-400">No action items for today.</p>
+          <p className={cn("text-sm text-zinc-400", actionsOnly && "mt-4")}>No action items for today.</p>
         ) : (
-          <ul className="divide-y divide-zinc-100">
+          <ul className={cn("divide-y divide-zinc-100", actionsOnly && "mt-4")}>
             {actions.map((a) => (
               <li key={a.id} className="flex items-start gap-3 py-3">
                 <button
@@ -319,6 +336,50 @@ function DaySheet({ data, access, onClose }: { data: PortalSnapshot; access?: Po
               </li>
             ))}
           </ul>
+        )}
+
+        {!actionsOnly && (data.training_today?.length ?? 0) > 0 && (
+          <>
+            <SheetHeading dot="bg-emerald-500" label="Who's Training Today" />
+            <ul className="space-y-2">
+              {data.training_today!.map((t, i) => (
+                <li key={i} className="flex items-center gap-3 rounded-xl bg-zinc-50 px-4 py-3">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-emerald-100 text-sm font-bold text-emerald-700">
+                    {initials(t.name)}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[15px] font-bold text-zinc-900">{t.name}</span>
+                    {t.type && <span className="block text-[13px] text-zinc-500">{t.type}</span>}
+                  </span>
+                  {t.start_time && (
+                    <span className="rounded-full bg-white px-3 py-1 text-[13px] font-semibold text-zinc-600">
+                      {fmt12(t.start_time)}{t.end_time ? ` – ${fmt12(t.end_time)}` : ""}
+                    </span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {!actionsOnly && (data.out_today?.length ?? 0) > 0 && (
+          <>
+            <SheetHeading dot="bg-blue-500" label="Out Today — PTO" />
+            <ul className="space-y-2">
+              {data.out_today!.map((p, i) => (
+                <li key={i} className="flex items-center gap-3 rounded-xl bg-zinc-50 px-4 py-3">
+                  <span className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-blue-100 text-sm font-bold text-blue-700">
+                    {initials(p.name)}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-[15px] font-bold text-zinc-900">{p.name}</span>
+                    {p.position && <span className="block text-[13px] text-zinc-500">{p.position}</span>}
+                  </span>
+                  <span className="text-sm font-semibold text-zinc-400">through {fmtShortDate(p.until)}</span>
+                </li>
+              ))}
+            </ul>
+          </>
         )}
 
         {birthdays.length > 0 && (

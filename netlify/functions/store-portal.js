@@ -156,17 +156,85 @@ async function storeNotes(supa, storeNumber) {
     .map((m) => ({ title: m.title, body: (m.body || "").slice(0, 240), pinned: m.is_pinned, author: m.author_name, created_at: m.created_at }));
 }
 
-// Open action items (plus anything checked off in the last 24h, so the day
-// sheet can show them struck through). Best-effort before migration 0224.
+// Open action items, plus anything checked off TODAY (store-local) so the
+// day sheet can show it struck through — the list resets clean at midnight.
+// Best-effort before migration 0224.
 async function storeActions(supa, storeId) {
   try {
-    const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const since = new Date(Date.now() - 36 * 3600 * 1000).toISOString();
     const { data } = await supa.from("store_portal_actions")
       .select("id, title, due_label, assignee, done, done_at")
       .eq("store_id", storeId)
       .or(`done.eq.false,done_at.gte.${since}`)
       .order("created_at", { ascending: true }).limit(20);
-    return data || [];
+    const { iso } = centralToday();
+    return (data || []).filter((a) =>
+      !a.done || (a.done_at && new Date(a.done_at).toLocaleDateString("en-CA", { timeZone: STORE_TZ }) === iso));
+  } catch { return []; }
+}
+
+// "Today" in store-local time (all SOAR stores run on US Central), so the
+// day sheet doesn't flip to tomorrow at 6-7pm when the function runs in UTC.
+const STORE_TZ = "America/Chicago";
+function centralToday() {
+  const now = new Date();
+  return {
+    iso: now.toLocaleDateString("en-CA", { timeZone: STORE_TZ }),
+    weekday: now.toLocaleDateString("en-US", { timeZone: STORE_TZ, weekday: "long" }),
+  };
+}
+
+// Who's training today — Training Credit requests (Employee Actions) whose
+// date window covers today and whose weekday schedule includes today.
+// Rejected/withdrawn requests drop out; everything else counts, since the
+// training happens whether or not the credit paperwork has cleared yet.
+async function storeTrainingToday(supa, storeNumber) {
+  try {
+    const { iso, weekday } = centralToday();
+    const { data } = await supa.from("training_credit_requests")
+      .select("employee_name, training_type, training_other, start_date, last_day_date, training_days, status")
+      .eq("store_number", String(storeNumber))
+      .not("status", "in", '("Rejected","Withdrawn")')
+      .lte("start_date", iso)
+      .limit(50);
+    return (data || [])
+      .filter((t) => (t.last_day_date || t.start_date) >= iso)
+      .filter((t) => {
+        const days = Array.isArray(t.training_days) ? t.training_days : [];
+        return days.length === 0 || days.some((d) => d && d.day === weekday);
+      })
+      .slice(0, 8)
+      .map((t) => {
+        const entry = (Array.isArray(t.training_days) ? t.training_days : []).find((d) => d && d.day === weekday) || null;
+        return {
+          name: t.employee_name,
+          type: t.training_type === "Other" && t.training_other ? t.training_other : t.training_type,
+          start_time: entry?.start_time || null,
+          end_time: entry?.end_time || null,
+        };
+      });
+  } catch { return []; }
+}
+
+// Who's out today — locked-in PTO (same statuses the dashboard "Who's Out"
+// widget treats as approved) covering today.
+const PTO_LOCKED = new Set(["SDO/RVP Approved", "PAF Submitted", "Closed"]);
+async function storePtoToday(supa, storeNumber) {
+  try {
+    const { iso } = centralToday();
+    const { data } = await supa.from("pto_requests")
+      .select("employee_name, gm_name, position, pto_start_date, pto_end_date, status")
+      .eq("store_number", String(storeNumber))
+      .lte("pto_start_date", iso).gte("pto_end_date", iso)
+      .limit(20);
+    return (data || [])
+      .filter((p) => PTO_LOCKED.has(p.status))
+      .slice(0, 8)
+      .map((p) => ({
+        name: p.employee_name || p.gm_name || "Team member",
+        position: p.position || null,
+        until: p.pto_end_date,
+      }));
   } catch { return []; }
 }
 
@@ -249,7 +317,7 @@ async function quickLinks(supa) {
 }
 
 async function assembleSnapshot(supa, store) {
-  const [ls, rank, wo, notes, contacts, links, storeEmail, actions, birthdays] = await Promise.all([
+  const [ls, rank, wo, notes, contacts, links, storeEmail, actions, birthdays, training, out] = await Promise.all([
     laborAndSales(supa, store.number),
     rankerRank(store.number),
     openWorkOrders(supa, store.number),
@@ -259,10 +327,13 @@ async function assembleSnapshot(supa, store) {
     supa.from("stores").select("email").eq("id", store.id).maybeSingle().then((r) => r.data?.email || null),
     storeActions(supa, store.id),
     storeBirthdays(supa, store.id),
+    storeTrainingToday(supa, store.number),
+    storePtoToday(supa, store.number),
   ]);
   return {
     store: { number: store.number, name: store.name, city: store.city, state: store.state },
     sales: ls.sales, labor: ls.labor, rank, work_orders: wo, notes, actions, birthdays,
+    training_today: training, out_today: out,
     // The GM's card carries the store's email address, not their personal
     // one — that is the inbox the store answers. Floor-report emails
     // (report action) still go to the GM's own email via leadership().
