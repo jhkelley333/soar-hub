@@ -33,10 +33,21 @@ async function publicPost<T>(action: string, body: Record<string, unknown>): Pro
 }
 
 export interface PortalStore { number: string; name: string | null; city: string | null; state: string | null }
+export type PanelItem =
+  | { type: "link"; label: string; description: string | null; url: string }
+  | { type: "info"; label: string; body: string | null }
+  | { type: "doc"; label: string; description: string | null; file_url: string; file_name: string | null };
 export interface QuickLinkPanel {
   subtitle: string | null;
   lines: string[];
-  links: { label: string; description: string | null; url: string }[];
+  items?: PanelItem[];
+  /** Legacy shape from before composable items — rendered as link items. */
+  links?: { label: string; description: string | null; url: string }[];
+}
+export function panelItems(panel: QuickLinkPanel | null | undefined): PanelItem[] {
+  if (!panel) return [];
+  if (panel.items) return panel.items;
+  return (panel.links ?? []).map((l) => ({ type: "link" as const, ...l }));
 }
 export interface QuickLink {
   id: string;
@@ -215,6 +226,19 @@ export function savePortalLink(input: Partial<AdminQuickLink> & { label: string 
 }
 export function deletePortalLink(linkId: string): Promise<{ ok: true }> {
   return adminRequest("admin-link-delete", { method: "POST", body: JSON.stringify({ link_id: linkId }) });
+}
+export async function uploadPortalDoc(file: File): Promise<{ ok: true; file_url: string; file_name: string }> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result));
+    r.onerror = () => reject(new Error("Could not read the file."));
+    r.readAsDataURL(file);
+  });
+  const base64 = dataUrl.split(",")[1] ?? "";
+  return adminRequest("admin-link-upload", {
+    method: "POST",
+    body: JSON.stringify({ file_data: base64, file_name: file.name, file_type: file.type || "application/pdf" }),
+  });
 }
 export interface PortalReport { kind: string; message: string; reporter_name: string | null; created_at: string }
 export function fetchPortalAdminSnapshot(storeId: string): Promise<PortalSnapshot & { reports: PortalReport[] }> {

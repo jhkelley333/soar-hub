@@ -1,14 +1,15 @@
 // Admin — Quick Links editor for the Store Command Center. Two link kinds:
 // a straight redirect (opens the URL in a new tab on the store screen) or an
-// info panel (subtitle + contact lines + sub-links — the Coke Support
-// pattern). Global across all stores; order with the arrows.
-import { useState } from "react";
+// info panel. A panel is a composable list of items — link buttons, info text
+// cards, and uploaded documents (the Coke Support pattern). Global across all
+// stores; order with the arrows.
+import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowUp, Link2, PanelsTopLeft, Pencil, Plus, Trash2, X } from "lucide-react";
+import { ArrowDown, ArrowUp, FileText, Info, Link2, PanelsTopLeft, Pencil, Plus, Trash2, Upload, X } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { useToast } from "@/shared/ui/Toaster";
-import { deletePortalLink, fetchPortalLinks, savePortalLink, type AdminQuickLink } from "./api";
+import { deletePortalLink, fetchPortalLinks, panelItems, savePortalLink, uploadPortalDoc, type AdminQuickLink, type PanelItem } from "./api";
 
 export function QuickLinksManager() {
   const qc = useQueryClient();
@@ -39,7 +40,7 @@ export function QuickLinksManager() {
         </button>
       </div>
       <p className="mb-4 max-w-2xl text-sm text-ink-muted">
-        Shown on every store's Command Center. A <strong>redirect</strong> opens the site in a new tab; a <strong>panel</strong> pops a clean card with contact lines and sub-links.
+        Shown on every store's Command Center. A <strong>redirect</strong> opens the site in a new tab; a <strong>panel</strong> pops a clean card you build from links, info blocks, and documents.
       </p>
 
       {q.isLoading ? <Skeleton className="h-32 w-full" /> : (
@@ -60,7 +61,9 @@ export function QuickLinksManager() {
                       </span>
                       {!l.is_active && <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-bold text-zinc-500">Hidden</span>}
                     </div>
-                    <div className="truncate text-xs text-ink-subtle">{l.kind === "link" ? l.url : l.panel?.subtitle || `${l.panel?.links.length ?? 0} sub-links`}</div>
+                    <div className="truncate text-xs text-ink-subtle">
+                      {l.kind === "link" ? l.url : l.panel?.subtitle || `${panelItems(l.panel).length} item${panelItems(l.panel).length === 1 ? "" : "s"}`}
+                    </div>
                   </div>
                   <div className="flex shrink-0 items-center gap-1">
                     <IconBtn onClick={() => swap(i, i - 1)} title="Move up"><ArrowUp className="h-3.5 w-3.5" /></IconBtn>
@@ -99,6 +102,29 @@ function IconBtn({ onClick, title, danger, children }: { onClick: () => void; ti
 // ── Editor modal ──────────────────────────────────────────────────────────────
 const FIELD = "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-heading placeholder:text-ink-subtle focus:border-accent focus:outline-none";
 
+// A panel item while being edited: one flat shape covering all three types,
+// narrowed back down on save.
+interface EditItem {
+  type: PanelItem["type"];
+  label: string;
+  description: string;
+  body: string;
+  url: string;
+  file_url: string;
+  file_name: string;
+}
+const emptyItem = (type: PanelItem["type"]): EditItem =>
+  ({ type, label: "", description: "", body: "", url: "", file_url: "", file_name: "" });
+const toEditItem = (it: PanelItem): EditItem => ({
+  type: it.type,
+  label: it.label,
+  description: "description" in it ? it.description ?? "" : "",
+  body: it.type === "info" ? it.body ?? "" : "",
+  url: it.type === "link" ? it.url : "",
+  file_url: it.type === "doc" ? it.file_url : "",
+  file_name: it.type === "doc" ? it.file_name ?? "" : "",
+});
+
 function LinkEditor({ link, onClose, onSaved }: { link: AdminQuickLink | null; onClose: () => void; onSaved: () => void }) {
   const toast = useToast();
   const [label, setLabel] = useState(link?.label ?? "");
@@ -108,10 +134,10 @@ function LinkEditor({ link, onClose, onSaved }: { link: AdminQuickLink | null; o
   const [url, setUrl] = useState(link?.url ?? "");
   const [subtitle, setSubtitle] = useState(link?.panel?.subtitle ?? "");
   const [linesText, setLinesText] = useState((link?.panel?.lines ?? []).join("\n"));
-  const [subs, setSubs] = useState<{ label: string; description: string; url: string }[]>(
-    (link?.panel?.links ?? []).map((s) => ({ label: s.label, description: s.description ?? "", url: s.url })),
-  );
+  const [items, setItems] = useState<EditItem[]>(panelItems(link?.panel).map(toEditItem));
   const [active, setActive] = useState(link?.is_active ?? true);
+
+  const patch = (i: number, p: Partial<EditItem>) => setItems((xs) => xs.map((x, j) => (j === i ? { ...x, ...p } : x)));
 
   const save = useMutation({
     mutationFn: () => savePortalLink({
@@ -124,8 +150,13 @@ function LinkEditor({ link, onClose, onSaved }: { link: AdminQuickLink | null; o
       panel: kind === "panel" ? {
         subtitle: subtitle.trim() || null,
         lines: linesText.split("\n").map((l) => l.trim()).filter(Boolean),
-        links: subs.filter((s) => s.label.trim() && s.url.trim())
-          .map((s) => ({ label: s.label.trim(), description: s.description.trim() || null, url: s.url.trim() })),
+        items: items
+          .filter((it) => it.label.trim() && (it.type === "info" || (it.type === "link" ? it.url.trim() : it.file_url)))
+          .map((it): PanelItem => it.type === "info"
+            ? { type: "info", label: it.label.trim(), body: it.body.trim() || null }
+            : it.type === "doc"
+              ? { type: "doc", label: it.label.trim(), description: it.description.trim() || null, file_url: it.file_url, file_name: it.file_name || null }
+              : { type: "link", label: it.label.trim(), description: it.description.trim() || null, url: it.url.trim() }),
       } : undefined,
       is_active: active,
     }),
@@ -183,21 +214,16 @@ function LinkEditor({ link, onClose, onSaved }: { link: AdminQuickLink | null; o
                 className={cn(FIELD, "mt-1 resize-none")} />
             </label>
             <div>
-              <div className="mb-1 text-[11px] font-semibold text-ink-muted">Sub-links (buttons on the panel)</div>
+              <div className="mb-1 text-[11px] font-semibold text-ink-muted">Panel items — links, info blocks, and documents, in order</div>
               <div className="flex flex-col gap-2">
-                {subs.map((s, i) => (
-                  <div key={i} className="flex items-start gap-1.5">
-                    <div className="grid flex-1 gap-1.5">
-                      <input value={s.label} onChange={(e) => setSubs(subs.map((x, j) => j === i ? { ...x, label: e.target.value } : x))} placeholder="Coke Parts List" className={FIELD} />
-                      <input value={s.url} onChange={(e) => setSubs(subs.map((x, j) => j === i ? { ...x, url: e.target.value } : x))} placeholder="https://…" className={FIELD} />
-                    </div>
-                    <button onClick={() => setSubs(subs.filter((_, j) => j !== i))} className="mt-1 rounded-md p-1.5 text-ink-subtle hover:bg-red-50 hover:text-red-600"><Trash2 className="h-4 w-4" /></button>
-                  </div>
+                {items.map((it, i) => (
+                  <ItemRow key={i} item={it} onChange={(p) => patch(i, p)} onRemove={() => setItems(items.filter((_, j) => j !== i))} />
                 ))}
-                <button onClick={() => setSubs([...subs, { label: "", description: "", url: "" }])}
-                  className="inline-flex w-fit items-center gap-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-semibold text-ink-2 hover:border-accent">
-                  <Plus className="h-3.5 w-3.5" /> Add sub-link
-                </button>
+                <div className="flex flex-wrap gap-1.5">
+                  <AddItemBtn onClick={() => setItems([...items, emptyItem("link")])} icon={<Link2 className="h-3.5 w-3.5" />} label="Add link" />
+                  <AddItemBtn onClick={() => setItems([...items, emptyItem("info")])} icon={<Info className="h-3.5 w-3.5" />} label="Add info block" />
+                  <AddItemBtn onClick={() => setItems([...items, emptyItem("doc")])} icon={<FileText className="h-3.5 w-3.5" />} label="Add document" />
+                </div>
               </div>
             </div>
           </div>
@@ -215,6 +241,76 @@ function LinkEditor({ link, onClose, onSaved }: { link: AdminQuickLink | null; o
             {save.isPending ? "Saving…" : "Save link"}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function AddItemBtn({ onClick, icon, label }: { onClick: () => void; icon: React.ReactNode; label: string }) {
+  return (
+    <button onClick={onClick}
+      className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-semibold text-ink-2 hover:border-accent">
+      {icon} {label}
+    </button>
+  );
+}
+
+const ITEM_META: Record<PanelItem["type"], { icon: React.ReactNode; title: string }> = {
+  link: { icon: <Link2 className="h-3.5 w-3.5" />, title: "Link" },
+  info: { icon: <Info className="h-3.5 w-3.5" />, title: "Info block" },
+  doc: { icon: <FileText className="h-3.5 w-3.5" />, title: "Document" },
+};
+
+function ItemRow({ item, onChange, onRemove }: { item: EditItem; onChange: (p: Partial<EditItem>) => void; onRemove: () => void }) {
+  const toast = useToast();
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploading, setUploading] = useState(false);
+  const meta = ITEM_META[item.type];
+
+  const pickFile = async (file: File | null) => {
+    if (!file) return;
+    setUploading(true);
+    try {
+      const r = await uploadPortalDoc(file);
+      onChange({ file_url: r.file_url, file_name: r.file_name, label: item.label || r.file_name.replace(/\.[a-z0-9]+$/i, "") });
+    } catch (e) {
+      toast.push((e as Error)?.message ?? "Upload failed.", "error");
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-border bg-surface p-2.5">
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide text-ink-muted">{meta.icon} {meta.title}</span>
+        <button onClick={onRemove} className="rounded-md p-1 text-ink-subtle hover:bg-red-50 hover:text-red-600"><Trash2 className="h-3.5 w-3.5" /></button>
+      </div>
+      <div className="grid gap-1.5">
+        <input value={item.label} onChange={(e) => onChange({ label: e.target.value })}
+          placeholder={item.type === "info" ? "myCoke Service Apple App" : item.type === "doc" ? "Coke Parts List" : "Coke Support Site"} className={FIELD} />
+        {item.type === "link" && (
+          <input value={item.url} onChange={(e) => onChange({ url: e.target.value })} placeholder="https://…" className={FIELD} />
+        )}
+        {item.type === "info" && (
+          <textarea value={item.body} onChange={(e) => onChange({ body: e.target.value })} rows={2}
+            placeholder="Download the myCoke Service app from the App Store to place service calls." className={cn(FIELD, "resize-none")} />
+        )}
+        {item.type === "doc" && (
+          <div className="flex items-center gap-2">
+            <input ref={fileRef} type="file" className="hidden"
+              accept=".pdf,.doc,.docx,.xls,.xlsx,image/jpeg,image/png,image/webp"
+              onChange={(e) => pickFile(e.target.files?.[0] ?? null)} />
+            <button onClick={() => fileRef.current?.click()} disabled={uploading}
+              className="inline-flex items-center gap-1 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs font-semibold text-ink-2 hover:border-accent disabled:opacity-50">
+              <Upload className="h-3.5 w-3.5" /> {uploading ? "Uploading…" : item.file_url ? "Replace file" : "Upload file"}
+            </button>
+            {item.file_url
+              ? <span className="min-w-0 truncate text-xs text-ink-muted">{item.file_name || "Uploaded"}</span>
+              : <span className="text-xs text-ink-subtle">PDF, image, Word, or Excel — 10 MB max</span>}
+          </div>
+        )}
       </div>
     </div>
   );

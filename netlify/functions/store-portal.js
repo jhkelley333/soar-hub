@@ -635,23 +635,79 @@ async function adminSnapshot(supa, params) {
 }
 
 // ── Admin: Quick Links CRUD ───────────────────────────────────────────────────
+// A panel is a composable list of items: link buttons, info text cards, and
+// uploaded documents. Older rows stored { links: [...] } — accept that shape
+// on input (converted to link items) and the renderer still reads it on output.
 function cleanPanel(raw) {
   if (!raw || typeof raw !== "object") return null;
   const lines = Array.isArray(raw.lines)
     ? raw.lines.map((l) => String(l).slice(0, 200)).filter(Boolean).slice(0, 12) : [];
-  const links = Array.isArray(raw.links)
-    ? raw.links
-        .filter((l) => l && l.label && l.url)
-        .map((l) => ({
-          label: String(l.label).slice(0, 120),
-          description: l.description ? String(l.description).slice(0, 240) : null,
-          url: String(l.url).slice(0, 500),
-        })).slice(0, 10)
-    : [];
+  const source = Array.isArray(raw.items)
+    ? raw.items
+    : Array.isArray(raw.links)
+      ? raw.links.map((l) => ({ ...l, type: "link" }))
+      : [];
+  const items = source
+    .map((it) => {
+      if (!it || typeof it !== "object") return null;
+      const label = it.label ? String(it.label).slice(0, 120).trim() : "";
+      if (!label) return null;
+      const description = it.description ? String(it.description).slice(0, 240) : null;
+      if (it.type === "info") {
+        return { type: "info", label, body: it.body ? String(it.body).slice(0, 600) : null };
+      }
+      if (it.type === "doc") {
+        if (!/^https?:\/\//i.test(String(it.file_url || ""))) return null;
+        return {
+          type: "doc", label, description,
+          file_url: String(it.file_url).slice(0, 500),
+          file_name: it.file_name ? String(it.file_name).slice(0, 160) : null,
+        };
+      }
+      if (!/^https?:\/\//i.test(String(it.url || ""))) return null;
+      return { type: "link", label, description, url: String(it.url).slice(0, 500) };
+    })
+    .filter(Boolean)
+    .slice(0, 12);
   return {
     subtitle: raw.subtitle ? String(raw.subtitle).slice(0, 240) : null,
-    lines, links,
+    lines, items,
   };
+}
+
+// Upload a document for a panel item (Parts List PDF and the like). Admin
+// Bearer only; lands in the public store-portal-docs bucket and the panel
+// item stores the public URL.
+const DOCS_BUCKET = "store-portal-docs";
+const MAX_DOC_BYTES = 10 * 1024 * 1024;
+const DOC_MIME_TYPES = new Set([
+  "application/pdf", "image/jpeg", "image/png", "image/webp",
+  "application/msword",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/vnd.ms-excel",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+]);
+async function adminLinkUpload(supa, _user, body) {
+  const b64 = body?.file_data;
+  if (!b64) return { error: "Missing file.", status: 400 };
+  const type = String(body?.file_type || "application/pdf");
+  if (!DOC_MIME_TYPES.has(type)) {
+    return { error: "Unsupported file type. Use a PDF, image, Word, or Excel file.", status: 415 };
+  }
+  let buf;
+  try { buf = Buffer.from(b64, "base64"); } catch { return { error: "Bad file data.", status: 400 }; }
+  if (!buf.length) return { error: "Empty file.", status: 400 };
+  if (buf.length > MAX_DOC_BYTES) {
+    return { error: `File too large; cap is ${MAX_DOC_BYTES / 1024 / 1024} MB.`, status: 413 };
+  }
+  const rawName = String(body?.file_name || "document").slice(0, 140);
+  const safeName = rawName.replace(/[^a-zA-Z0-9._-]+/g, "_");
+  const path = `quick-links/${crypto.randomBytes(8).toString("hex")}-${safeName}`;
+  const { error: upErr } = await supa.storage.from(DOCS_BUCKET)
+    .upload(path, buf, { contentType: type, upsert: false });
+  if (upErr) return { error: `Upload failed: ${upErr.message}`, status: 500 };
+  const { data: { publicUrl } } = supa.storage.from(DOCS_BUCKET).getPublicUrl(path);
+  return { ok: true, file_url: publicUrl, file_name: rawName };
 }
 
 async function adminLinksList(supa) {
@@ -737,6 +793,7 @@ export const handler = async (event) => {
     if (action === "admin-snapshot") return unwrap(await adminSnapshot(supa, params));
     if (action === "admin-links") return unwrap(await adminLinksList(supa));
     if (action === "admin-link-save") return unwrap(await adminLinkSave(supa, user, body));
+    if (action === "admin-link-upload") return unwrap(await adminLinkUpload(supa, user, body));
     if (action === "admin-link-delete") return unwrap(await adminLinkDelete(supa, user, body));
     if (action === "admin-mint") return unwrap(await adminMint(supa, user, body));
     if (action === "admin-revoke") return unwrap(await adminRevoke(supa, user, body));
