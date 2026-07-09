@@ -4,12 +4,15 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Copy, Eye, MonitorSmartphone, RotateCcw, XCircle } from "lucide-react";
+import { CalendarDays, Check, Copy, Eye, MonitorSmartphone, RotateCcw, XCircle } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
-import { fetchPortalAdminList, mintPortalToken, resetPortalDevice, revokePortalToken } from "./api";
+import {
+  fetchPortalAdminList, fetchPortalCalendar, mintPortalToken, resetPortalDevice,
+  revokePortalToken, savePortalCalendar,
+} from "./api";
 import { QuickLinksManager } from "./QuickLinksManager";
 
 const portalUrl = (token: string) => `${window.location.origin}/s/${token}`;
@@ -124,7 +127,56 @@ export function StorePortalAdminPage() {
         </div>
       </div>
 
+      <WhatsCookingSettings />
       <QuickLinksManager />
+    </div>
+  );
+}
+
+// What's Cooking — link a public iCal/ICS feed; store screens show its next
+// events beside the hero.
+function WhatsCookingSettings() {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["store-portal-calendar"], queryFn: fetchPortalCalendar });
+  const [url, setUrl] = useState<string | null>(null);
+  const value = url ?? q.data?.url ?? "";
+
+  const save = useMutation({
+    mutationFn: () => savePortalCalendar(value.trim()),
+    onSuccess: (r) => {
+      toast.push(r.url ? `Calendar linked — ${r.event_count} event${r.event_count === 1 ? "" : "s"} found.` : "Calendar unlinked.", "success");
+      setUrl(null);
+      qc.invalidateQueries({ queryKey: ["store-portal-calendar"] });
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Could not save.", "error"),
+  });
+
+  return (
+    <div className="mt-10">
+      <div className="mb-1 flex items-center gap-2">
+        <CalendarDays className="h-4 w-4 text-accent" />
+        <h2 className="text-lg font-bold text-heading">What's Cooking calendar</h2>
+      </div>
+      <p className="mb-3 max-w-2xl text-sm text-ink-muted">
+        Link a public <strong>iCal/ICS</strong> feed and every store screen shows its upcoming events beside the hero — LTO launches, promos, visits.
+        In Google Calendar: Settings → your calendar → Integrate calendar → <em>Secret address in iCal format</em>.
+      </p>
+      <div className="flex max-w-2xl gap-2">
+        <input value={value} onChange={(e) => setUrl(e.target.value)} placeholder="https://calendar.google.com/calendar/ical/…/basic.ics"
+          className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-heading placeholder:text-ink-subtle focus:border-accent focus:outline-none" />
+        <button disabled={save.isPending || value === (q.data?.url ?? "")} onClick={() => save.mutate()}
+          className="rounded-lg bg-midnight px-4 py-2 text-xs font-semibold text-white transition hover:bg-midnight/90 disabled:opacity-40">
+          {save.isPending ? "Checking…" : value.trim() ? "Save" : "Unlink"}
+        </button>
+      </div>
+      {q.data?.url && (
+        <p className="mt-1.5 text-xs text-ink-subtle">
+          {q.data.event_count} event{q.data.event_count === 1 ? "" : "s"} synced
+          {q.data.last_synced ? ` · last checked ${new Date(q.data.last_synced).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : ""}
+          {" "}· refreshes every 30 minutes
+        </p>
+      )}
     </div>
   );
 }
