@@ -291,7 +291,7 @@ function DaySheet({ data, access, actionsOnly, onClose }: {
         {!actionsOnly && (
           <>
             {banner && (
-              <div className="mt-4 rounded-xl border-l-4 border-amber-400 bg-zinc-50 px-4 py-3.5">
+              <div className="mt-4 max-h-72 overflow-y-auto rounded-xl border-l-4 border-amber-400 bg-zinc-50 px-4 py-3.5">
                 {banner.title && <div className="text-[15px] font-bold text-zinc-900">{banner.title}</div>}
                 {banner.body && <p className="mt-0.5 whitespace-pre-line text-[15px] leading-relaxed text-zinc-700">{banner.body}</p>}
               </div>
@@ -299,7 +299,7 @@ function DaySheet({ data, access, actionsOnly, onClose }: {
             {rest.length > 0 && (
               <div className="mt-3 space-y-2">
                 {rest.map((n, i) => (
-                  <div key={i} className="rounded-xl bg-zinc-50 px-4 py-3">
+                  <div key={i} className="max-h-60 overflow-y-auto rounded-xl bg-zinc-50 px-4 py-3">
                     <div className="text-[14px] font-bold text-zinc-900">{n.title}</div>
                     {n.body && <p className="mt-0.5 whitespace-pre-line text-[13.5px] leading-snug text-zinc-600">{n.body}</p>}
                   </div>
