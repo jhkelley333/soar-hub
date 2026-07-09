@@ -153,7 +153,7 @@ async function storeNotes(supa, storeNumber) {
   return (data || [])
     .filter((m) => !m.expires_at || m.expires_at > nowIso)
     .slice(0, 5)
-    .map((m) => ({ title: m.title, body: (m.body || "").slice(0, 240), pinned: m.is_pinned, author: m.author_name, created_at: m.created_at }));
+    .map((m) => ({ title: m.title, body: (m.body || "").slice(0, 8000), pinned: m.is_pinned, author: m.author_name, created_at: m.created_at }));
 }
 
 // Open action items, plus anything checked off TODAY (store-local) so the
