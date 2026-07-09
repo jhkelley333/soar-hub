@@ -582,7 +582,7 @@ export function ReportSheet({ access, onClose }: { access: import("./api").Porta
     return (
       <Modal onClose={onClose} title="Sent to your GM" icon={<Check className="h-5 w-5 text-emerald-600" />}>
         <p className="text-sm text-zinc-500">
-          Your report is on its way{send.data.notified > 1 ? " to your GM and DO" : ""}. If it's urgent, use <strong>Make the Right Call</strong> too.
+          Your report is in your GM's Inbox on SOAR. If it's urgent, use <strong>Make the Right Call</strong> too.
         </p>
         <button onClick={onClose} className="mt-5 w-full rounded-xl bg-zinc-900 py-3 text-sm font-bold text-white transition hover:bg-zinc-800">Done</button>
       </Modal>

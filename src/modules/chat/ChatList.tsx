@@ -4,16 +4,18 @@
 // the active thread (to highlight it) and an onOpen handler.
 
 import { useMemo, useState } from "react";
-import { Search, Plus, Archive } from "lucide-react";
+import { Search, Plus, Archive, Inbox } from "lucide-react";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Drawer } from "@/shared/ui/Drawer";
 import { useToast } from "@/shared/ui/Toaster";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useAuth } from "@/auth/AuthProvider";
 import { ChatTabs } from "./components/ChatTabs";
 import { ActionCard } from "./components/ActionCard";
 import { ConversationRow } from "./components/ConversationRow";
 import { SwipeableRow } from "./components/SwipeableRow";
 import { ComposeModal } from "./components/ComposeModal";
+import { INBOX_VIEWER_ROLES, StoreInboxDrawer, useStoreInbox } from "./components/StoreInboxDrawer";
 import { fetchInbox, setThreadArchived, markThreadRead, type InboxResponse } from "./api";
 import type { ChatTab } from "./types";
 
@@ -28,11 +30,21 @@ export function ChatList({
   onOpen: (id: string) => void;
 }) {
   const toast = useToast();
+  const { profile } = useAuth();
   const [tab, setTab] = useState<ChatTab>("all");
   const [search, setSearch] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
   const [needsYouOpen, setNeedsYouOpen] = useState(false);
   const [archivedOpen, setArchivedOpen] = useState(false);
+  const [storeInboxOpen, setStoreInboxOpen] = useState(false);
+
+  // Leader Inbox — one-way floor reports from the Store Command Center
+  // screens. Only leader roles see the button; the count polls lightly so
+  // the badge stays honest without the drawer open.
+  const role = String(profile?.role ?? "");
+  const isInboxViewer = INBOX_VIEWER_ROLES.has(role);
+  const storeInboxQ = useStoreInbox(isInboxViewer);
+  const storeInboxCount = storeInboxQ.data?.reports.length ?? 0;
 
   const qc = useQueryClient();
   const inboxQ = useQuery({
@@ -165,6 +177,21 @@ export function ChatList({
       <header className="flex shrink-0 items-center justify-between border-b border-midnight-100 px-4 py-3">
         <h1 className="text-[17px] font-semibold text-midnight-900">Chat</h1>
         <div className="flex items-center gap-3">
+          {isInboxViewer && (
+            <button
+              type="button"
+              onClick={() => setStoreInboxOpen(true)}
+              className="inline-flex items-center gap-1 text-[13.5px] font-medium text-midnight-500"
+              aria-label="Store floor report inbox"
+            >
+              <Inbox className="h-4 w-4" strokeWidth={2} /> Inbox
+              {storeInboxCount > 0 && (
+                <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-accent px-1.5 text-[11px] font-semibold text-white">
+                  {storeInboxCount}
+                </span>
+              )}
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setArchivedOpen(true)}
@@ -266,6 +293,12 @@ export function ChatList({
       </button>
 
       <ComposeModal open={composeOpen} onClose={() => setComposeOpen(false)} />
+
+      <StoreInboxDrawer
+        open={storeInboxOpen}
+        onClose={() => setStoreInboxOpen(false)}
+        canEscalate={["gm", "admin", "vp", "coo"].includes(role)}
+      />
 
       <Drawer
         open={needsYouOpen}
