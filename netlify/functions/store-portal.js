@@ -345,25 +345,50 @@ async function getStoreTicket(supa, event, body) {
   if (g.error) return g;
   const t = await storeTicket(supa, g.store, body?.ticket_id);
   if (!t) return { error: "Ticket not found for this store.", status: 404 };
-  const [{ data: msgs }, { data: photos }] = await Promise.all([
+  const [{ data: msgs }, { data: photos }, { data: acts }] = await Promise.all([
     supa.from("ticket_messages").select("user_name, user_role, message, created_at")
       .eq("ticket_id", t.id).eq("thread_type", "internal").order("created_at", { ascending: true }).limit(50),
     supa.from("ticket_photos").select("file_url, file_name, created_at")
       .eq("ticket_id", t.id).order("created_at", { ascending: true }).limit(30),
+    supa.from("ticket_activities").select("update_type, event_type, user_name, created_at")
+      .eq("ticket_id", t.id).order("created_at", { ascending: false }).limit(20),
   ]);
-  return { ticket: ticketSummary(t), messages: msgs || [], photos: photos || [] };
+  return { ticket: ticketSummary(t), messages: msgs || [], photos: photos || [], activity: acts || [] };
 }
 
+// Mirrors the real Work Order intake (same fields and semantics as the WO2 /
+// public-submit form), just with the store locked to the screen's token.
 async function createStoreTicket(supa, event, body) {
   const g = await resolveAccess(supa, event, body);
   if (g.error) return g;
   const { store } = g;
   const name = String(body?.submitter_name || "").trim();
+  const email = String(body?.submitter_email || "").trim();
+  const phone = String(body?.submitter_phone || "").trim();
   const description = String(body?.issue_description || "").trim();
   const category = String(body?.category || "").trim().slice(0, 80);
+  const assetType = String(body?.asset_type || "").trim().slice(0, 80);
+  const modelNumber = String(body?.model_number || "").trim().slice(0, 80);
   const priority = ["Standard", "Urgent", "Emergency"].includes(body?.priority) ? body.priority : "Standard";
+  const isBusinessCritical = body?.is_business_critical === true;
+  const needsVendorHelp = body?.needs_vendor_help === true;
+  const vendorIdInput = body?.vendor_id ? String(body.vendor_id).trim() : "";
   if (!name) return { error: "Enter your name.", status: 400 };
   if (description.length < 10) return { error: "Describe the issue in at least 10 characters.", status: 400 };
+
+  // Vendor preference — validate the id like the public form does (the picker
+  // the screen shows is already store-scoped by the public vendors endpoint).
+  let resolvedVendorId = null;
+  let resolvedVendorName = "";
+  if (vendorIdInput && !needsVendorHelp) {
+    const { data: v } = await supa.from("vendors")
+      .select("id, name, is_active").eq("id", vendorIdInput).maybeSingle();
+    if (v?.is_active) { resolvedVendorId = v.id; resolvedVendorName = v.name || ""; }
+  }
+  const wantsVendorHelp = needsVendorHelp || !resolvedVendorId;
+
+  const submittedBy = `Store screen: ${name}`
+    + (email ? ` <${email}>` : "") + (phone ? ` · ${phone}` : "");
 
   const woNumber = await nextWONumber(supa, store.number);
   const { data: ticket, error } = await supa.from("tickets").insert({
@@ -371,16 +396,18 @@ async function createStoreTicket(supa, event, body) {
     store_number: String(store.number),
     store_name: store.name || "",
     store_email: "", do_email: "", sdo_email: "",
-    submitted_by: `Store screen: ${name}`,
+    submitted_by: submittedBy,
     submitted_by_user_id: null,
     category: category || "Store screen",
-    asset_type: "", model_number: "",
+    asset_type: assetType, model_number: modelNumber,
     issue_description: description.slice(0, 4000),
     status: "submitted", priority,
-    is_business_critical: false,
+    is_business_critical: isBusinessCritical,
     troubleshooting_checked: body?.troubleshooting_checked === true,
-    vendor_id: null, vendor_name: "", vendor_contacted: false,
-    needs_vendor_help: true, vendor_help_at: new Date().toISOString(),
+    vendor_id: resolvedVendorId, vendor_name: resolvedVendorName,
+    vendor_contacted: false,
+    needs_vendor_help: wantsVendorHelp,
+    vendor_help_at: wantsVendorHelp ? new Date().toISOString() : null,
     date_submitted: new Date().toISOString(),
   }).select("id, wo_number").single();
   if (error) return { error: error.message, status: 500 };

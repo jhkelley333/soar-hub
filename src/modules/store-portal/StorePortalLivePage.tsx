@@ -62,7 +62,7 @@ export function StorePortalLivePage() {
 
       <Chrome store={data.store} dateLabel={today}>
         {showTickets ? (
-          <TicketsView access={{ store_id: storeId }} onBack={() => setShowTickets(false)} />
+          <TicketsView access={{ store_id: storeId }} storeNumber={data.store.number} onBack={() => setShowTickets(false)} />
         ) : (
         <>
         <PortalBody data={data} isLoading={false} onCall={() => setShowCall(true)} onReport={() => setShowReport(true)} onTickets={() => setShowTickets(true)} />
