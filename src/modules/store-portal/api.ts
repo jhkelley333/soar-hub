@@ -72,7 +72,7 @@ export interface PortalSnapshot {
 export function fetchPortalSnapshot(token: string): Promise<PortalSnapshot> {
   return publicPost("snapshot", { token, device_id: deviceId() });
 }
-export function sendPortalReport(access: PortalAccess, input: { kind: string; message: string; reporter_name?: string }): Promise<{ ok: true; notified: number }> {
+export function sendPortalReport(access: PortalAccess, input: { kind: string; message: string; reporter_name?: string }): Promise<{ ok: true }> {
   return portalPost("report", access, { ...input });
 }
 export function messagePortalLeader(token: string, input: { slot: string; message: string; reporter_name?: string }): Promise<{ ok: true; leader: string | null }> {
@@ -240,7 +240,28 @@ export async function uploadPortalDoc(file: File): Promise<{ ok: true; file_url:
     body: JSON.stringify({ file_data: base64, file_name: file.name, file_type: file.type || "application/pdf" }),
   });
 }
-export interface PortalReport { kind: string; message: string; reporter_name: string | null; created_at: string }
+// ── Leader Inbox (floor reports, worked from Chat; Bearer, gm and up) ────────
+export interface StoreInboxReport {
+  id: string;
+  kind: string;
+  message: string;
+  reporter_name: string | null;
+  status: "new" | "escalated";
+  created_at: string;
+  escalated_at: string | null;
+  store: { number: string | null; name: string | null };
+}
+export function fetchStoreInbox(): Promise<{ reports: StoreInboxReport[] }> {
+  return adminRequest("inbox-list");
+}
+export function resolveStoreReport(reportId: string): Promise<{ ok: true }> {
+  return adminRequest("inbox-resolve", { method: "POST", body: JSON.stringify({ report_id: reportId }) });
+}
+export function escalateStoreReport(reportId: string): Promise<{ ok: true; notified: string | null }> {
+  return adminRequest("inbox-escalate", { method: "POST", body: JSON.stringify({ report_id: reportId }) });
+}
+
+export interface PortalReport { kind: string; message: string; reporter_name: string | null; status?: string; created_at: string }
 export function fetchPortalAdminSnapshot(storeId: string): Promise<PortalSnapshot & { reports: PortalReport[] }> {
   return adminRequest(`admin-snapshot&store_id=${encodeURIComponent(storeId)}`);
 }

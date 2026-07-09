@@ -15,9 +15,6 @@ import {
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const RESEND_API_KEY = process.env.RESEND_API_KEY;
-const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "notifications@mysoarhub.com";
-const RESEND_FROM_NAME = process.env.RESEND_FROM_NAME || "SOAR Hub";
 
 function admin() {
   if (!SUPABASE_URL || !SERVICE_KEY) throw new Error("store-portal env vars not configured");
@@ -31,19 +28,6 @@ function unwrap(result) {
     return respond(result.status, { error: result.error });
   }
   return respond(200, result);
-}
-
-async function sendEmail({ to, subject, text }) {
-  const recipients = (Array.isArray(to) ? to : [to]).filter(Boolean);
-  if (!RESEND_API_KEY || !recipients.length) return { skipped: true };
-  try {
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ from: `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`, to: recipients, subject, text }),
-    });
-    return { ok: res.ok };
-  } catch { return { ok: false }; }
 }
 
 // ── Token + device gate ───────────────────────────────────────────────────────
@@ -255,6 +239,9 @@ async function snapshot(supa, body) {
 }
 
 const REPORT_KINDS = new Set(["tardiness", "safety", "equipment", "issue"]);
+const REPORT_KIND_LABEL = { tardiness: "Tardiness", safety: "SAFETY", equipment: "Equipment", issue: "Issue" };
+// Floor reports land in the leader Inbox on Chat (status 'new'), not in
+// anyone's email — the GM works the list there and can escalate to the DO.
 async function report(supa, event, body) {
   const g = await resolveAccess(supa, event, body);
   if (g.error) return g;
@@ -265,28 +252,12 @@ async function report(supa, event, body) {
   const reporter = String(body?.reporter_name || "").trim().slice(0, 120)
     || (adminUser ? (adminUser.preferred_name || adminUser.full_name || null) : null);
 
-  const contacts = await leadership(supa, store);
-  const to = contacts.filter((c) => (c.slot === "GM" || c.slot === "DO") && c.email).map((c) => c.email);
-  const kindLabel = { tardiness: "Tardiness", safety: "SAFETY", equipment: "Equipment", issue: "Issue" }[kind];
-  await sendEmail({
-    to,
-    subject: `[Store ${store.number}] ${kindLabel} report from the store floor`,
-    text: [
-      `Store #${store.number}${store.name ? ` - ${store.name}` : ""}`,
-      `Type: ${kindLabel}`,
-      reporter ? `Reported by: ${reporter}` : null,
-      "",
-      message.slice(0, 4000),
-      "",
-      "Sent from the Store Command Center screen.",
-    ].filter((l) => l !== null).join("\n"),
-  });
   const { error } = await supa.from("store_portal_reports").insert({
     store_id: store.id, token_id: tokenRow?.id ?? null, kind, message: message.slice(0, 4000),
-    reporter_name: reporter, emailed_to: to,
+    reporter_name: reporter,
   });
   if (error) return { error: error.message, status: 500 };
-  return { ok: true, notified: to.length };
+  return { ok: true };
 }
 
 // ── Work orders from the store screen ─────────────────────────────────────────
@@ -541,8 +512,16 @@ async function chatLeader(supa, body) {
   const leader = contacts.find((c) => c.slot === slot && c.id);
   if (!leader) return { error: "That leader has no account to message. Try another contact.", status: 404 };
 
-  // Find-or-create the per-(store, leader) thread.
-  const scopeRef = `store-screen:${store.id}:${leader.id}`;
+  const text = `${reporter ? `${reporter} at the store` : "The store screen"}: ${message.slice(0, 2000)}`;
+  const posted = await postToLeaderThread(supa, store, leader.id, text);
+  if (posted.error) return posted;
+  return { ok: true, leader: leader.name };
+}
+
+// Find-or-create the per-(store, leader) "Store #N screen" thread and drop a
+// system message in it — the leader gets the normal unread + push path.
+async function postToLeaderThread(supa, store, leaderId, text) {
+  const scopeRef = `store-screen:${store.id}:${leaderId}`;
   let { data: thread } = await supa.from("chat_threads")
     .select("id").eq("scope_kind", "store").eq("scope_ref", scopeRef).maybeSingle();
   if (!thread) {
@@ -555,15 +534,140 @@ async function chatLeader(supa, body) {
     if (tErr) return { error: tErr.message, status: 500 };
     thread = created;
     const { error: mErr } = await supa.from("chat_thread_members")
-      .insert({ thread_id: thread.id, user_id: leader.id, role: "owner" });
+      .insert({ thread_id: thread.id, user_id: leaderId, role: "owner" });
     if (mErr) return { error: mErr.message, status: 500 };
   }
-
-  const text = `${reporter ? `${reporter} at the store` : "The store screen"}: ${message.slice(0, 2000)}`;
   const { error } = await supa.from("chat_messages")
     .insert({ thread_id: thread.id, from_user_id: null, system: true, text });
   if (error) return { error: error.message, status: 500 };
-  return { ok: true, leader: leader.name };
+  return { ok: true };
+}
+
+// ── Leader Inbox (floor reports, worked from Chat) ────────────────────────────
+// One-way: the store screen writes, leaders read. No replies — a report is
+// either resolved or escalated to the DO. GMs see everything for their store;
+// DO/SDO/RVP see what was escalated into their scope; admin/VP/COO see all.
+const INBOX_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]);
+const INBOX_ALL_ROLES = new Set(["admin", "vp", "coo"]);
+
+async function getLeaderUser(event, supa) {
+  const header = event.headers?.authorization || event.headers?.Authorization;
+  if (!header?.startsWith("Bearer ")) return null;
+  const { data: userRes, error } = await supa.auth.getUser(header.slice(7).trim());
+  if (error || !userRes?.user) return null;
+  const { data: profile } = await supa.from("profiles")
+    .select("id, role, is_active, full_name, preferred_name, primary_store_id")
+    .eq("id", userRes.user.id).single();
+  if (!profile || profile.is_active === false || !INBOX_ROLES.has(String(profile.role))) return null;
+  return profile;
+}
+
+// Store ids the leader's inbox covers. null = every store.
+async function inboxStoreIds(supa, user) {
+  const role = String(user.role);
+  if (INBOX_ALL_ROLES.has(role)) return null;
+  if (role === "gm") return user.primary_store_id ? [user.primary_store_id] : [];
+
+  const { data: scopes } = await supa.from("user_scopes")
+    .select("scope_type, scope_id").eq("user_id", user.id);
+  const districtIds = new Set();
+  let areaIds = [];
+  const regionIds = [];
+  for (const s of scopes || []) {
+    if (s.scope_type === "district") districtIds.add(s.scope_id);
+    else if (s.scope_type === "area") areaIds.push(s.scope_id);
+    else if (s.scope_type === "region") regionIds.push(s.scope_id);
+  }
+  if (regionIds.length) {
+    const { data } = await supa.from("areas").select("id").in("region_id", regionIds);
+    areaIds = areaIds.concat((data || []).map((a) => a.id));
+  }
+  if (areaIds.length) {
+    const { data } = await supa.from("districts").select("id").in("area_id", areaIds);
+    for (const d of data || []) districtIds.add(d.id);
+  }
+  if (!districtIds.size) return [];
+  const { data: stores } = await supa.from("stores").select("id").in("district_id", [...districtIds]);
+  return (stores || []).map((s) => s.id);
+}
+
+async function inboxList(supa, user) {
+  const storeIds = await inboxStoreIds(supa, user);
+  if (storeIds && storeIds.length === 0) return { reports: [] };
+
+  let q = supa.from("store_portal_reports")
+    .select("id, store_id, kind, message, reporter_name, status, created_at, escalated_at")
+    .neq("status", "resolved")
+    .order("created_at", { ascending: false }).limit(100);
+  if (storeIds) q = q.in("store_id", storeIds);
+  // Mid-level leaders only see what a GM pushed up to them.
+  if (["do", "sdo", "rvp"].includes(String(user.role))) q = q.eq("status", "escalated");
+  const { data: rows, error } = await q;
+  if (error) return { error: error.message, status: 500 };
+
+  const ids = [...new Set((rows || []).map((r) => r.store_id))];
+  const { data: stores } = ids.length
+    ? await supa.from("stores").select("id, number, name").in("id", ids)
+    : { data: [] };
+  const byId = new Map((stores || []).map((s) => [s.id, s]));
+  return {
+    reports: (rows || []).map((r) => ({
+      id: r.id, kind: r.kind, message: r.message, reporter_name: r.reporter_name,
+      status: r.status, created_at: r.created_at, escalated_at: r.escalated_at,
+      store: { number: byId.get(r.store_id)?.number ?? null, name: byId.get(r.store_id)?.name ?? null },
+    })),
+  };
+}
+
+// Fetch a report and confirm it is inside the caller's scope.
+async function inboxReport(supa, user, reportId) {
+  if (!reportId) return { error: "Missing report.", status: 400 };
+  const { data: r } = await supa.from("store_portal_reports")
+    .select("id, store_id, kind, message, reporter_name, status").eq("id", reportId).maybeSingle();
+  if (!r) return { error: "Report not found.", status: 404 };
+  const storeIds = await inboxStoreIds(supa, user);
+  if (storeIds && !storeIds.includes(r.store_id)) return { error: "Not your store.", status: 403 };
+  return { report: r };
+}
+
+async function inboxResolve(supa, user, body) {
+  const g = await inboxReport(supa, user, body?.report_id);
+  if (g.error) return g;
+  if (g.report.status === "resolved") return { ok: true };
+  const { error } = await supa.from("store_portal_reports")
+    .update({ status: "resolved", resolved_by: user.id, resolved_at: new Date().toISOString() })
+    .eq("id", g.report.id);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
+async function inboxEscalate(supa, user, body) {
+  const g = await inboxReport(supa, user, body?.report_id);
+  if (g.error) return g;
+  const r = g.report;
+  if (r.status !== "new") return { error: "Already escalated or resolved.", status: 409 };
+
+  const { data: store } = await supa.from("stores")
+    .select("id, number, name, city").eq("id", r.store_id).maybeSingle();
+  if (!store) return { error: "Store not found.", status: 404 };
+
+  const { error } = await supa.from("store_portal_reports")
+    .update({ status: "escalated", escalated_by: user.id, escalated_at: new Date().toISOString() })
+    .eq("id", r.id);
+  if (error) return { error: error.message, status: 500 };
+
+  // Ping the DO on Chat too, so the escalation lands on their phone and not
+  // only in their Inbox list.
+  const contacts = await leadership(supa, store);
+  const doLeader = contacts.find((c) => c.slot === "DO" && c.id);
+  let notified = null;
+  if (doLeader) {
+    const who = user.preferred_name || user.full_name || "A leader";
+    const text = `${who} escalated a ${REPORT_KIND_LABEL[r.kind] || "floor"} report from Store #${store.number}: ${String(r.message).slice(0, 1500)}${r.reporter_name ? ` (reported by ${r.reporter_name})` : ""}`;
+    const posted = await postToLeaderThread(supa, store, doLeader.id, text);
+    if (!posted.error) notified = doLeader.name;
+  }
+  return { ok: true, notified };
 }
 
 // ── Admin (Bearer + role=admin) ───────────────────────────────────────────────
@@ -632,7 +736,7 @@ async function adminSnapshot(supa, params) {
   const [snap, reports] = await Promise.all([
     assembleSnapshot(supa, store),
     supa.from("store_portal_reports")
-      .select("kind, message, reporter_name, created_at")
+      .select("kind, message, reporter_name, status, created_at")
       .eq("store_id", storeId).order("created_at", { ascending: false }).limit(10)
       .then((r) => r.data || []),
   ]);
@@ -791,6 +895,14 @@ export const handler = async (event) => {
     if (action === "photo-qr") return unwrap(await photoQr(supa, event, body));
     if (action === "phone-info") return unwrap(await phoneInfo(supa, params));
     if (action === "phone-upload") return unwrap(await phoneUpload(supa, body));
+    // Leader Inbox (Bearer, gm and up).
+    if (action === "inbox-list" || action === "inbox-resolve" || action === "inbox-escalate") {
+      const leader = await getLeaderUser(event, supa);
+      if (!leader) return respond(401, { error: "unauthorized" });
+      if (action === "inbox-list") return unwrap(await inboxList(supa, leader));
+      if (action === "inbox-resolve") return unwrap(await inboxResolve(supa, leader, body));
+      return unwrap(await inboxEscalate(supa, leader, body));
+    }
     // Admin actions.
     const user = await getSessionUser(event, supa);
     if (!user) return respond(401, { error: "unauthorized" });
