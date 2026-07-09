@@ -145,7 +145,7 @@ function WhatsCookingSettings() {
   const save = useMutation({
     mutationFn: () => savePortalCalendar(value.trim()),
     onSuccess: (r) => {
-      toast.push(r.url ? `Calendar linked — ${r.event_count} event${r.event_count === 1 ? "" : "s"} found.` : "Calendar unlinked.", "success");
+      toast.push(r.url ? `Calendar linked — ${r.upcoming_count} upcoming event${r.upcoming_count === 1 ? "" : "s"}.` : "Calendar unlinked.", "success");
       setUrl(null);
       qc.invalidateQueries({ queryKey: ["store-portal-calendar"] });
     },
@@ -171,11 +171,30 @@ function WhatsCookingSettings() {
         </button>
       </div>
       {q.data?.url && (
-        <p className="mt-1.5 text-xs text-ink-subtle">
-          {q.data.event_count} event{q.data.event_count === 1 ? "" : "s"} synced
-          {q.data.last_synced ? ` · last checked ${new Date(q.data.last_synced).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : ""}
-          {" "}· refreshes every 30 minutes
-        </p>
+        <>
+          <p className="mt-1.5 text-xs text-ink-subtle">
+            {q.data.upcoming_count} upcoming event{q.data.upcoming_count === 1 ? "" : "s"} in the next 60 days ({q.data.event_count} synced total)
+            {q.data.last_synced ? ` · last checked ${new Date(q.data.last_synced).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}` : ""}
+            {" "}· refreshes every 30 minutes
+          </p>
+          {q.data.upcoming_count === 0 ? (
+            <p className="mt-2 max-w-2xl rounded-lg bg-amber-50 px-3 py-2 text-xs font-medium text-amber-800 ring-1 ring-inset ring-amber-200">
+              Linked, but nothing upcoming — the panel stays hidden on store screens. Add events to the calendar, or re-save the link to re-sync now.
+            </p>
+          ) : (
+            <div className="mt-2 max-w-2xl rounded-lg border border-border bg-surface-muted px-3 py-2">
+              <div className="mb-1 text-[10px] font-bold uppercase tracking-wide text-ink-subtle">What the screens show</div>
+              <ul className="space-y-0.5">
+                {q.data.upcoming.map((e, i) => (
+                  <li key={i} className="text-xs text-ink-2">
+                    <span className="font-semibold tabular-nums">{new Date(`${e.date}T00:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}</span>
+                    {" — "}{e.title}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
       )}
     </div>
   );

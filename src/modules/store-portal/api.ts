@@ -297,10 +297,17 @@ export function escalateStoreReport(reportId: string): Promise<{ ok: true; notif
 }
 
 // What's Cooking — the linked ICS calendar behind the hero panel.
-export function fetchPortalCalendar(): Promise<{ url: string | null; last_synced: string | null; event_count: number }> {
+export interface PortalCalendarInfo {
+  url: string | null;
+  last_synced: string | null;
+  event_count: number;
+  upcoming_count: number;
+  upcoming: CookingEvent[];
+}
+export function fetchPortalCalendar(): Promise<PortalCalendarInfo> {
   return adminRequest("admin-calendar-get");
 }
-export function savePortalCalendar(url: string): Promise<{ ok: true; url: string | null; event_count: number }> {
+export function savePortalCalendar(url: string): Promise<PortalCalendarInfo & { ok: true }> {
   return adminRequest("admin-calendar-set", { method: "POST", body: JSON.stringify({ url }) });
 }
 
