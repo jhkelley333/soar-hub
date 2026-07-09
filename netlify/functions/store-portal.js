@@ -227,18 +227,23 @@ async function quickLinks(supa) {
 }
 
 async function assembleSnapshot(supa, store) {
-  const [ls, rank, wo, notes, contacts, links] = await Promise.all([
+  const [ls, rank, wo, notes, contacts, links, storeEmail] = await Promise.all([
     laborAndSales(supa, store.number),
     rankerRank(store.number),
     openWorkOrders(supa, store.number),
     storeNotes(supa, store.number),
     leadership(supa, store),
     quickLinks(supa),
+    supa.from("stores").select("email").eq("id", store.id).maybeSingle().then((r) => r.data?.email || null),
   ]);
   return {
     store: { number: store.number, name: store.name, city: store.city, state: store.state },
     sales: ls.sales, labor: ls.labor, rank, work_orders: wo, notes,
-    contacts: contacts.map(publicContact),
+    // The GM's card carries the store's email address, not their personal
+    // one — that is the inbox the store answers. Floor-report emails
+    // (report action) still go to the GM's own email via leadership().
+    contacts: contacts.map(publicContact).map((c) =>
+      c.slot === "GM" ? { ...c, email: storeEmail || c.email } : c),
     quick_links: links,
   };
 }
