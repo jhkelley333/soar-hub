@@ -16,6 +16,11 @@ import {
 import { QuickLinksManager } from "./QuickLinksManager";
 
 const portalUrl = (token: string) => `${window.location.origin}/s/${token}`;
+// A bound screen refreshes its snapshot every 5 minutes, so last_used_at is a
+// heartbeat: quiet for 24h+ means the desktop is off, closed, or unplugged.
+const daysQuiet = (iso: string | null) => (iso ? Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000) : null);
+const isOffline = (t: { bound: boolean; last_used_at: string | null } | null) =>
+  !!t && t.bound && (daysQuiet(t.last_used_at) ?? 99) >= 1;
 
 export function StorePortalAdminPage() {
   const qc = useQueryClient();
@@ -44,6 +49,7 @@ export function StorePortalAdminPage() {
   const needle = filter.trim().toLowerCase();
   const rows = (q.data?.stores ?? []).filter((s) =>
     !needle || String(s.number).includes(needle) || (s.name ?? "").toLowerCase().includes(needle) || (s.city ?? "").toLowerCase().includes(needle));
+  const offline = (q.data?.stores ?? []).filter((s) => isOffline(s.token));
 
   const copy = async (token: string) => {
     await navigator.clipboard?.writeText(portalUrl(token)).catch(() => {});
@@ -61,6 +67,12 @@ export function StorePortalAdminPage() {
         Each store gets one no-login bookmark for its desktop. The link binds to the <em>first device that opens it</em> — a forwarded copy won't work.
         New desktop? <strong>Reset device</strong>. Link leaked? <strong>Replace</strong> mints a fresh one and kills the old.
       </p>
+      {offline.length > 0 && (
+        <div className="mb-4 max-w-2xl rounded-lg bg-red-50 px-3 py-2 text-sm font-medium text-red-800 ring-1 ring-inset ring-red-200">
+          {offline.length} screen{offline.length === 1 ? "" : "s"} offline — not seen in 24+ hours:{" "}
+          {offline.slice(0, 8).map((s) => `#${s.number}`).join(", ")}{offline.length > 8 ? "…" : ""}. Check the desktop is on with the bookmark open.
+        </div>
+      )}
       <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter by store #, name, or city…"
         className="mb-4 w-72 rounded-lg border border-border bg-surface px-3 py-2 text-sm text-heading placeholder:text-ink-subtle focus:border-accent focus:outline-none" />
 
@@ -87,9 +99,11 @@ export function StorePortalAdminPage() {
                   </td>
                   <td className="px-4 py-2.5">
                     {s.token
-                      ? s.token.bound
-                        ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 ring-1 ring-inset ring-blue-200">Bound</span>
-                        : <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-200">Unclaimed</span>
+                      ? isOffline(s.token)
+                        ? <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700 ring-1 ring-inset ring-red-200">Offline {daysQuiet(s.token.last_used_at)}d</span>
+                        : s.token.bound
+                          ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Live</span>
+                          : <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-200">Unclaimed</span>
                       : <span className="text-ink-subtle">—</span>}
                   </td>
                   <td className="px-4 py-2.5 text-ink-muted">

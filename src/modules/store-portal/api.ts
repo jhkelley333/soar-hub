@@ -65,6 +65,8 @@ export interface PortalAction {
   assignee: string | null;
   done: boolean;
   done_at: string | null;
+  repeat?: "none" | "daily" | "weekly";
+  repeat_dow?: number | null;
 }
 export interface PortalBirthday { name: string; role: string | null; month: number; day: number; in_days: number }
 export interface PortalSnapshot {
@@ -274,7 +276,10 @@ export function fetchActionStores(): Promise<{ stores: LeaderActionStore[] }> {
 export function fetchLeaderActions(storeId: string): Promise<{ actions: (PortalAction & { created_at: string })[] }> {
   return adminRequest("actions-list", { method: "POST", body: JSON.stringify({ store_id: storeId }) });
 }
-export function saveLeaderAction(input: { id?: string; store_id?: string; title: string; due_label?: string; assignee?: string }): Promise<{ ok: true; action: PortalAction }> {
+export function saveLeaderAction(input: {
+  id?: string; store_id?: string; title: string; due_label?: string; assignee?: string;
+  repeat?: "none" | "daily" | "weekly"; repeat_dow?: number;
+}): Promise<{ ok: true; action: PortalAction }> {
   return adminRequest("action-save", { method: "POST", body: JSON.stringify(input) });
 }
 export function deleteLeaderAction(actionId: string): Promise<{ ok: true }> {

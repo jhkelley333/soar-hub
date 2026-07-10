@@ -13,7 +13,7 @@ import { Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle, Banknote, CalendarOff, CheckCircle2, ChevronRight, ClipboardCheck,
-  FileText, GitBranch, GraduationCap, Hammer, ShieldAlert, Siren, Wallet,
+  FileText, GitBranch, GraduationCap, Hammer, MonitorOff, ShieldAlert, Siren, Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { UserRole } from "@/types/database";
@@ -29,6 +29,7 @@ import { fetchDisruptions } from "@/modules/business-disruptions/api";
 import { fetchMonthlyReview } from "@/modules/team-pipeline/api";
 import { fetchMyTraining } from "@/modules/qsr/api";
 import { fetchNlaList } from "@/modules/nla/api";
+import { fetchPortalAdminList } from "@/modules/store-portal/api";
 
 const PANEL =
   "rounded-2xl border border-zinc-200 bg-white shadow-card dark:border-night-line dark:bg-night-raised dark:shadow-none";
@@ -106,6 +107,7 @@ export function TodayQueue({ role }: { role: UserRole }) {
   const talentQ = useQuery({ queryKey: ["tp-monthly-review"], queryFn: fetchMonthlyReview, enabled: canTalent, ...dashQ });
   const trainQ = useQuery({ queryKey: ["qsr-my-training"], queryFn: fetchMyTraining, ...dashQ });
   const nlaQ = useQuery({ queryKey: ["nla-list"], queryFn: fetchNlaList, enabled: canNla, ...dashQ });
+  const screensQ = useQuery({ queryKey: ["store-portal-admin"], queryFn: fetchPortalAdminList, enabled: role === "admin", ...dashQ });
 
   const items: TodayItem[] = [];
 
@@ -164,6 +166,18 @@ export function TodayQueue({ role }: { role: UserRole }) {
       title: `${plural(woApprovals, "work order approval")}`,
       meta: "Quotes awaiting your decision",
       action: "Review", to: "/approvals",
+    });
+  }
+  // Fleet heartbeat: a bound Command Center screen refreshes every 5 minutes,
+  // so 24h of silence means the desktop is dark.
+  const offlineScreens = (screensQ.data?.stores ?? []).filter((s) =>
+    s.token?.bound && s.token.last_used_at && Date.now() - new Date(s.token.last_used_at).getTime() > 86_400_000).length;
+  if (offlineScreens > 0) {
+    items.push({
+      id: "screens-offline", icon: MonitorOff, tone: "warn",
+      title: `${plural(offlineScreens, "store screen")} offline`,
+      meta: "Command Center not seen in 24+ hours",
+      action: "Check", to: "/admin/store-portal",
     });
   }
   const bonusPafs = sdoQ.data?.pafs.length ?? 0;
