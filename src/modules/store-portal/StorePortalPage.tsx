@@ -19,6 +19,7 @@ import {
 import { TicketsView } from "./StorePortalTickets";
 
 const fmtMoney = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
+const word = (n: number, one: string, many: string) => (n === 1 ? one : many);
 
 // Fleet self-update: the store desktops keep this tab open for weeks, so the
 // page code goes stale after every deploy. Every 30 minutes, compare the
@@ -233,7 +234,7 @@ export function PortalBody({ data, isLoading, access, onCall, onReport, onTicket
           )}
         </Card>
 
-        {/* Notes about today — opens the full day sheet */}
+        {/* Notes about today — a digest of the day sheet, not the note titles */}
         <button onClick={() => setShowDay("full")} className="h-full text-left">
           <Card>
             <div className="flex items-center justify-between">
@@ -247,15 +248,28 @@ export function PortalBody({ data, isLoading, access, onCall, onReport, onTicket
             </div>
             <ul className="mt-4 flex flex-1 flex-col gap-2.5">
               {q.isLoading ? <li className="text-[15px] text-zinc-400">Loading…</li>
-                : data && data.notes.length > 0 ? data.notes.slice(0, 3).map((n, i) => (
-                  <li key={i} className="flex items-start gap-2.5">
-                    <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", n.pinned ? "bg-red-500" : i % 2 === 0 ? "bg-emerald-500" : "bg-amber-400")} />
-                    <span className="line-clamp-2 text-[15px] leading-snug text-zinc-700">{n.title}</span>
-                  </li>
-                )) : <li className="text-[15px] text-zinc-400">Nothing posted for today yet.</li>}
+                : data ? (() => {
+                  const bdaysToday = (data.birthdays ?? []).filter((b) => b.in_days === 0).length;
+                  const bdaysWeek = (data.birthdays ?? []).length;
+                  const rows = [
+                    { dot: "bg-red-500", count: openActions.length, label: `${word(openActions.length, "action", "actions")} needed` },
+                    { dot: "bg-emerald-500", count: data.training_today?.length ?? 0, label: "training today" },
+                    bdaysToday > 0
+                      ? { dot: "bg-amber-400", count: bdaysToday, label: `${word(bdaysToday, "birthday", "birthdays")} today` }
+                      : { dot: "bg-amber-400", count: bdaysWeek, label: `${word(bdaysWeek, "birthday", "birthdays")} this week` },
+                  ].filter((r) => r.count > 0);
+                  return rows.length > 0 ? rows.map((r, i) => (
+                    <li key={i} className="flex items-center gap-2.5">
+                      <span className={cn("h-2 w-2 shrink-0 rounded-full", r.dot)} />
+                      <span className="text-[15px] leading-snug text-zinc-600">
+                        <strong className="font-bold text-zinc-900">{r.count}</strong> {r.label}
+                      </span>
+                    </li>
+                  )) : <li className="text-[15px] text-zinc-400">{data.notes.length > 0 ? "Open the day sheet for today's notes." : "Nothing posted for today yet."}</li>;
+                })() : null}
             </ul>
             <span className="mt-4 inline-flex items-center gap-1.5 text-[15px] font-bold text-red-600">
-              Open the day sheet <ArrowRight className="h-4 w-4" />
+              Read all <ArrowRight className="h-4 w-4" />
             </span>
           </Card>
         </button>
