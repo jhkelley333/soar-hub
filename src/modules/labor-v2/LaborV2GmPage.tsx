@@ -134,25 +134,29 @@ export function LaborV2GmPage() {
                 <p className="text-sm text-sonic-700/90">
                   Labor ran <strong>{fmtSignedMoney(day.dollars_over_chart)}</strong> (
                   {fmtSignedHours(day.hours_over_chart)}) over the daily chart —{" "}
-                  <strong>{fmtSignedPts(day.variance_pts)}</strong> above the {fmtPct(goal)} goal. An
+                  <strong>{fmtSignedPts(day.variance_pts)}</strong> above the {fmtPct(day.goal_pct ?? goal)} daily goal. An
                   explanation is required.
                 </p>
               </div>
             </div>
           )}
 
-          {/* Three band cards */}
+          {/* Three band cards — each band carries its OWN target (daily,
+              weekly and period charts differ; never reuse one for another).
+              goal_pct falls back to the headline goal for stale caches. */}
           <div className="grid gap-4 md:grid-cols-3">
-            <BandCard title="Daily" subtitle={fmtDayLabel(day.business_date)} band={day} goal={goal} salesLabel="Daily Sales" highlight />
-            <BandCard title="Week to Date" band={data!.wtd} goal={goal} salesLabel="WTD Sales" />
-            <BandCard title="Period to Date" band={data!.ptd} goal={goal} salesLabel="PTD Sales" />
+            <BandCard title="Daily" subtitle={fmtDayLabel(day.business_date)} band={day} goal={day.goal_pct ?? goal} salesLabel="Daily Sales" highlight />
+            <BandCard title="Week to Date" band={data!.wtd} goal={data!.wtd?.goal_pct ?? goal} salesLabel="WTD Sales" />
+            <BandCard title="Period to Date" band={data!.ptd} goal={data!.ptd?.goal_pct ?? goal} salesLabel="PTD Sales" />
           </div>
 
           {/* Goal footer */}
-          <div className="flex items-center gap-2 rounded-lg bg-white px-4 py-3 text-sm text-zinc-600 ring-1 ring-zinc-200">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-white px-4 py-3 text-sm text-zinc-600 ring-1 ring-zinc-200">
             <span className="text-zinc-400">⚑</span>
             <span>
-              Base PTD labor goal <strong className="text-midnight">{fmtPct(goal)}</strong>
+              Labor goals — Daily <strong className="text-midnight">{fmtPct(day.goal_pct ?? goal)}</strong>
+              {" · "}WTD <strong className="text-midnight">{fmtPct(data!.wtd?.goal_pct ?? goal)}</strong>
+              {" · "}PTD <strong className="text-midnight">{fmtPct(data!.ptd?.goal_pct ?? goal)}</strong>
               {data!.goal_source ? ` · ${data!.goal_source}` : ""}
             </span>
           </div>
