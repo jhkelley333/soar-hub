@@ -110,7 +110,7 @@ export function BandCard({
       </dl>
       {!!band?.training_credit && (
         <p className="mt-2 text-[11px] text-zinc-500">
-          incl. {fmtMoney(band.training_credit)} training credit
+          incl. {fmtMoney(band.training_credit)} labor credit (training / GM PTO)
           {band.labor_pct_pre != null ? ` (labor was ${fmtPct(band.labor_pct_pre)})` : ""}
         </p>
       )}

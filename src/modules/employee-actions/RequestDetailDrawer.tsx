@@ -346,7 +346,18 @@ function PtoDetail({ row }: { row: PtoRow }) {
           </Field>
         </>
       ) : (
-        <Field label="Days used">{row.days_used ?? 0} day(s)</Field>
+        <>
+          <Field label="Days used">{row.days_used ?? 0} day(s)</Field>
+          {(row.vacation_days?.length ?? 0) > 0 && (
+            <Field label="Days out">
+              <ul className="mt-0.5 space-y-0.5">
+                {row.vacation_days.map((d, i) => (
+                  <li key={i} className="tabular-nums">{d.date}</li>
+                ))}
+              </ul>
+            </Field>
+          )}
+        </>
       )}
       {row.do_approved_at && (
         <Field label="DO approved">
