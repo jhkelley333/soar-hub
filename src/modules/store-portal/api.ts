@@ -82,7 +82,13 @@ export interface PortalSnapshot {
   out_today?: { name: string; position: string | null; until: string }[];
   whats_cooking?: CookingEvent[];
 }
-export interface CookingEvent { title: string; date: string; time: string | null }
+export interface CookingEvent {
+  title: string;
+  date: string;
+  time: string | null;
+  description?: string | null;
+  location?: string | null;
+}
 
 export function fetchPortalSnapshot(token: string): Promise<PortalSnapshot> {
   return publicPost("snapshot", { token, device_id: deviceId() });
