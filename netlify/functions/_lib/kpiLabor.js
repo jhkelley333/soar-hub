@@ -43,6 +43,7 @@ export function extractLaborRows(payload) {
     out.push({
       store_number: number,
       net_sales: numOrNull(r.netSales),
+      prev_year_net_sales: numOrNull(r.previousYearNetSales),
       labor_cost: numOrNull(r.laborCost),
       labor_hours: numOrNull(r.laborHours),
       overtime_hours: numOrNull(r.overTimeHours),
@@ -54,6 +55,7 @@ export function extractLaborRows(payload) {
       splh: numOrNull(r.splh),
       // Week to Date band (labor_hours feeds the avg-wage → hours-over calc)
       wtd_net_sales: numOrNull(w?.netSales),
+      wtd_prev_year_net_sales: numOrNull(w?.previousYearNetSales),
       wtd_labor_cost: numOrNull(w?.laborCost),
       wtd_labor_hours: numOrNull(w?.laborHours),
       wtd_labor_pct: numOrNull(w?.laborPercentage),
@@ -63,6 +65,7 @@ export function extractLaborRows(payload) {
       wtd_actual_vs_scheduled_hours: numOrNull(w?.actualVsScheduledHours),
       // Period to Date band
       ptd_net_sales: numOrNull(p?.netSales),
+      ptd_prev_year_net_sales: numOrNull(p?.previousYearNetSales),
       ptd_labor_cost: numOrNull(p?.laborCost),
       ptd_labor_hours: numOrNull(p?.laborHours),
       ptd_labor_pct: numOrNull(p?.laborPercentage),
