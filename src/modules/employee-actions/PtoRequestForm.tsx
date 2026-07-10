@@ -5,7 +5,7 @@ import { Button } from "@/shared/ui/Button";
 import { Badge } from "@/shared/ui/Badge";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
-import { fetchMyStores, submitPto, updatePtoRequest } from "./api";
+import { fetchGmPtoRate, fetchMyStores, submitPto, updatePtoRequest } from "./api";
 import {
   CheckboxRow,
   NumberField,
@@ -20,6 +20,9 @@ import type { PtoInput, PtoRow, PtoVacationDayInput } from "./types";
 const POSITIONS = ["GM", "Associate Manager", "First Assistant"];
 const WEEKLY_HOUR_CAP = 40;
 const MAX_HOURS_PER_DAY = 8;
+// Vacation lead time — first day out must be at least this far away.
+// Admins bypass (corrections / backfill); the server enforces the same rule.
+const PTO_ADVANCE_DAYS = 30;
 
 
 function fmtUSD(n: number): string {
@@ -150,6 +153,22 @@ export function PtoRequestForm({
     }));
   }
 
+  const rateQ = useQuery({ queryKey: ["ea-gm-pto-rate"], queryFn: fetchGmPtoRate, staleTime: 5 * 60_000 });
+  const ptoRate = rateQ.data?.amount ?? 176;
+  const isAdmin = profile?.role === "admin";
+
+  // First day out must be PTO_ADVANCE_DAYS away (server enforces too).
+  function advanceError(dates: string[]): string | null {
+    if (isAdmin) return null;
+    const first = [...dates].sort()[0];
+    if (!first) return null;
+    const today = new Date();
+    const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    const lead = Math.floor((Date.parse(first) - Date.parse(todayIso)) / 86400000);
+    if (lead >= PTO_ADVANCE_DAYS) return null;
+    return `Vacation must be submitted at least ${PTO_ADVANCE_DAYS} days in advance — the first day out (${first}) is ${lead < 0 ? "in the past" : lead === 0 ? "today" : `only ${lead} day${lead === 1 ? "" : "s"} away`}.`;
+  }
+
   const hourly = isHourlyPosition(state.position);
   const wage = Number(state.hourly_wage) || 0;
   const vacationHours = state.vacation_days.reduce((s, d) => s + (Number(d.hours) || 0), 0);
@@ -181,6 +200,8 @@ export function PtoRequestForm({
         return setError(
           `Vacation (${vacationHours}h) + hours worked (${hoursWorked}h) exceeds the ${WEEKLY_HOUR_CAP}-hour weekly limit.`
         );
+      const hourlyAdv = advanceError(state.vacation_days.map((d) => d.date).filter(Boolean));
+      if (hourlyAdv) return setError(hourlyAdv);
 
       submit.mutate({
         store_number: state.store_number,
@@ -198,6 +219,8 @@ export function PtoRequestForm({
     const days = state.gm_days.map((d) => d.trim()).filter(Boolean);
     if (!days.length) return setError("Add at least one day you'll be out.");
     if (new Set(days).size !== days.length) return setError("Remove the duplicate day.");
+    const gmAdv = advanceError(days);
+    if (gmAdv) return setError(gmAdv);
 
     submit.mutate({
       store_number: state.store_number,
@@ -217,8 +240,8 @@ export function PtoRequestForm({
           </h3>
           <p className="mt-0.5 text-xs text-zinc-500">
             Submit vacation requests for approval to the Director of Operations (DO) and
-            Regional Vice President (RVP). Submit at least 2–3 weeks in advance. GMs are
-            tracked by days; hourly managers are tracked by hours (max {MAX_HOURS_PER_DAY}/day).
+            Regional Vice President (RVP). <strong>Vacation must be submitted at least {PTO_ADVANCE_DAYS} days
+            in advance.</strong> GMs are tracked by days; hourly managers are tracked by hours (max {MAX_HOURS_PER_DAY}/day).
           </p>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <StoreSelect
@@ -253,7 +276,7 @@ export function PtoRequestForm({
                   </div>
                   <p className="mt-0.5 text-xs text-zinc-500">
                     Pick each day. Once fully approved, every day credits the store's labor chart
-                    — just like training credit (currently $176.00/day, $880/week).
+                    — just like training credit ({fmtUSD(ptoRate)}/day, {fmtUSD(ptoRate * 5)}/week).
                   </p>
                   <div className="mt-2 flex flex-col gap-1.5">
                     {state.gm_days.map((d, i) => (

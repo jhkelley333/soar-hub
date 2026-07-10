@@ -4,13 +4,13 @@
 // edit & resubmit, and admin delete — whichever apply to the caller.
 
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Drawer } from "@/shared/ui/Drawer";
 import { Button } from "@/shared/ui/Button";
 import { StatusPill } from "@/shared/ui/StatusPill";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
-import { confirmEmployeeAction, decideEmployeeAction, deleteEmployeeAction, withdrawEmployeeAction } from "./api";
+import { confirmEmployeeAction, decideEmployeeAction, deleteEmployeeAction, fetchCreditBalance, withdrawEmployeeAction } from "./api";
 import { statusKind, waitingOn } from "./statusMeta";
 import type { ConfirmStep, PtoRow, TrainingCreditRow } from "./types";
 
@@ -285,8 +285,24 @@ export function RequestDetailDrawer({
 }
 
 function TrainingDetail({ row }: { row: TrainingCreditRow }) {
+  // The store's credit bank balance — approvers see whether the store can
+  // afford this request before deciding.
+  const balQ = useQuery({
+    queryKey: ["ea-credit-balance", row.store_number],
+    queryFn: () => fetchCreditBalance(row.store_number),
+    staleTime: 60_000,
+  });
+  const bal = balQ.data;
   return (
     <>
+      {bal && (
+        <Field label="Store credit bank">
+          <span className={Number(bal.remaining) < 0 ? "font-semibold text-red-600" : "font-semibold text-emerald-700"}>
+            {fmtMoney(bal.remaining)}
+          </span>{" "}
+          of {fmtMoney(bal.budget)} left for {bal.year}
+        </Field>
+      )}
       <Field label="Training">
         {row.training_type}
         {row.training_other ? ` — ${row.training_other}` : ""}

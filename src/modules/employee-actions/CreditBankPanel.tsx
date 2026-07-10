@@ -11,7 +11,7 @@ import { Card, CardBody } from "@/shared/ui/Card";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import {
-  adjustCredit, fetchCreditLedger, fetchCreditRegister, setCreditBudget,
+  adjustCredit, fetchCreditLedger, fetchCreditRegister, fetchGmPtoRate, setCreditBudget, setGmPtoRate,
   type CreditRegisterRow,
 } from "./api";
 
@@ -135,8 +135,46 @@ export function CreditBankPanel() {
           <LedgerModal row={open} year={year} canAdjust={q.data?.can_adjust ?? false}
             canBudget={q.data?.can_budget ?? false} onClose={() => setOpen(null)} />
         )}
+
+        {q.data?.can_budget && <GmPtoRateEditor />}
       </CardBody>
     </Card>
+  );
+}
+
+// Admin: the GM PTO daily labor credit rate ($/day; a 5-day week = 5x this).
+function GmPtoRateEditor() {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["ea-gm-pto-rate"], queryFn: fetchGmPtoRate });
+  const [draft, setDraft] = useState<string | null>(null);
+  const value = draft ?? (q.data ? String(q.data.amount) : "");
+  const save = useMutation({
+    mutationFn: () => setGmPtoRate(parseFloat(value)),
+    onSuccess: (r) => {
+      toast.push(`GM PTO credit set to ${money(r.amount)}/day (${money(r.amount * 5)}/week).`, "success");
+      setDraft(null);
+      qc.invalidateQueries({ queryKey: ["ea-gm-pto-rate"] });
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Could not save.", "error"),
+  });
+
+  return (
+    <div className="mt-5 rounded-xl border border-border bg-surface-muted p-3">
+      <div className="text-[11px] font-semibold text-ink-muted">
+        GM PTO daily labor credit — each approved PTO day credits the store's labor chart this amount
+      </div>
+      <div className="mt-1.5 flex items-center gap-1.5">
+        <span className="text-sm text-ink-muted">$</span>
+        <input value={value} onChange={(e) => setDraft(e.target.value)} type="number" step="0.01" min="0"
+          className={cn(FIELD, "w-28")} />
+        <span className="text-xs text-ink-subtle">/ day · {money((parseFloat(value) || 0) * 5)} per 5-day week</span>
+        <button onClick={() => save.mutate()} disabled={save.isPending || !parseFloat(value) || draft == null}
+          className="rounded-lg bg-midnight px-3 py-2 text-xs font-semibold text-white transition hover:bg-midnight/90 disabled:opacity-40">
+          {save.isPending ? "Saving…" : "Save"}
+        </button>
+      </div>
+    </div>
   );
 }
 

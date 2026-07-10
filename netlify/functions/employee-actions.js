@@ -627,6 +627,29 @@ async function creditLedger(supa, user, params) {
 // market's leaders enter their own historical spend. Admin reaches every
 // store; budget overrides stay admin-only.
 const CREDIT_ADJUST_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
+// GM PTO daily labor credit rate (ea_settings) — read for display, admin set.
+async function gmPtoRateGet(supa, user) {
+  if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  try {
+    const { data } = await supa.from("ea_settings")
+      .select("value").eq("key", "gm_pto_daily_credit").maybeSingle();
+    const amt = Number(data?.value?.amount);
+    return { amount: isFinite(amt) && amt > 0 ? round2(amt) : 176 };
+  } catch { return { amount: 176 }; }
+}
+
+async function gmPtoRateSet(supa, user, body) {
+  if (user.role !== "admin") return { error: "Admins only.", status: 403 };
+  const amount = round2(num(body?.amount));
+  if (amount <= 0 || amount > 10000) return { error: "Enter a daily amount above $0.", status: 400 };
+  const { error } = await supa.from("ea_settings").upsert(
+    { key: "gm_pto_daily_credit", value: { amount }, updated_by: user.id, updated_at: new Date().toISOString() },
+    { onConflict: "key" },
+  );
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, amount };
+}
+
 async function creditAdjust(supa, user, body) {
   if (!CREDIT_ADJUST_ROLES.has(user.role)) return { error: "DO and above can record adjustments.", status: 403 };
   const storeNumber = sanitizeText(body?.store_number, 20);
@@ -999,6 +1022,23 @@ function ptoWorkflowFields(user) {
   return { status: "Submitted", do_approved_at: null, do_approved_by_id: null, do_note: null };
 }
 
+// Vacation lead time: the first day out must be at least this many days from
+// today. Admins bypass (corrections / backfill).
+const PTO_ADVANCE_DAYS = 30;
+function ptoAdvanceError(fields) {
+  const dates = (fields.vacation_days ?? []).map((d) => d.date).filter(Boolean).sort();
+  const first = dates[0] || fields.pto_start_date;
+  if (!first) return null;
+  const todayIso = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+  const lead = Math.floor((Date.parse(first) - Date.parse(todayIso)) / 86400000);
+  if (lead >= PTO_ADVANCE_DAYS) return null;
+  const when = lead < 0 ? "in the past" : lead === 0 ? "today" : `only ${lead} day${lead === 1 ? "" : "s"} away`;
+  return {
+    error: `Vacation must be submitted at least ${PTO_ADVANCE_DAYS} days in advance — the first day out (${first}) is ${when}.`,
+    status: 422,
+  };
+}
+
 async function submitPto(supa, user, body) {
   if (!SUBMIT_ROLES.has(user.role)) {
     return { error: "You don't have permission to submit a PTO request.", status: 403 };
@@ -1010,6 +1050,10 @@ async function submitPto(supa, user, body) {
 
   const built = buildPtoFields(body);
   if (built.error) return built;
+  if (user.role !== "admin") {
+    const advErr = ptoAdvanceError(built.fields);
+    if (advErr) return advErr;
+  }
 
   const insertRow = {
     submitter_id: user.id,
@@ -1684,12 +1728,14 @@ export const handler = async (event) => {
       if (action === "credit-register") return unwrap(await creditRegister(supa, user, params));
       if (action === "credit-balance") return unwrap(await creditBalance(supa, user, params));
       if (action === "credit-ledger") return unwrap(await creditLedger(supa, user, params));
+      if (action === "gm-pto-rate") return unwrap(await gmPtoRateGet(supa, user));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "credit-adjust") return unwrap(await creditAdjust(supa, user, body));
       if (action === "credit-budget") return unwrap(await creditBudgetSet(supa, user, body));
+      if (action === "gm-pto-rate-set") return unwrap(await gmPtoRateSet(supa, user, body));
       if (action === "submit-training") return unwrap(await submitTraining(supa, user, body));
       if (action === "submit-pto") return unwrap(await submitPto(supa, user, body));
       if (action === "update-training") return unwrap(await updateTraining(supa, user, body));
