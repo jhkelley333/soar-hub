@@ -263,6 +263,10 @@ async function setSetting(supa, key, value, userId) {
 function unescapeIcs(s) {
   return s.replace(/\\n/gi, " ").replace(/\\([,;\\])/g, "$1").trim();
 }
+// Same, but keeps \n as real line breaks (event descriptions).
+function unescapeIcsText(s) {
+  return s.replace(/\\n/gi, "\n").replace(/\\([,;\\])/g, "$1").trim();
+}
 
 const RRULE_DOW = { SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6 };
 function expandRrule(ev, ruleStr, todayIso, horizonIso) {
@@ -352,7 +356,15 @@ function parseIcs(text) {
     if (!sum || !dts) continue;
     const when = parseIcsDate(dts[1], dts[2].trim());
     if (!when) continue;
-    const base = { title: unescapeIcs(sum[2]).slice(0, 160), date: when.date, time: when.time };
+    const desc = /^DESCRIPTION([^:\r\n]*):(.+)$/m.exec(body);
+    const loc = /^LOCATION([^:\r\n]*):(.+)$/m.exec(body);
+    const base = {
+      title: unescapeIcs(sum[2]).slice(0, 160),
+      date: when.date,
+      time: when.time,
+      description: desc ? unescapeIcsText(desc[2]).slice(0, 1500) || null : null,
+      location: loc ? unescapeIcs(loc[2]).slice(0, 200) || null : null,
+    };
     const rr = /^RRULE:([^\r\n]+)$/m.exec(body);
     if (rr) events.push(...expandRrule(base, rr[1], todayIso, horizonIso));
     else events.push(base);
@@ -390,7 +402,7 @@ async function whatsCooking(supa) {
       await setSetting(supa, CAL_SETTING_KEY, { ...s, cached_at: new Date(Date.now() - CAL_TTL_MS + 5 * 60 * 1000).toISOString() });
     }
   }
-  return upcomingEvents(events).slice(0, 6);
+  return upcomingEvents(events).slice(0, 20);
 }
 
 function upcomingEvents(events) {

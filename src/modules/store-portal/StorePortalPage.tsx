@@ -14,7 +14,7 @@ import { cn } from "@/lib/cn";
 import { formatPhoneForDisplay } from "@/lib/phone";
 import {
   fetchPortalSnapshot, messagePortalLeader, panelItems, sendPortalReport, togglePortalAction,
-  type PortalAccess, type PortalAction, type PortalSnapshot,
+  type CookingEvent, type PortalAccess, type PortalAction, type PortalSnapshot,
 } from "./api";
 import { TicketsView } from "./StorePortalTickets";
 
@@ -90,7 +90,7 @@ export function PortalBody({ data, isLoading, access, onCall, onReport, onTicket
   return (
     <>
       {/* ── Hero ── */}
-      <section className="mx-auto grid max-w-6xl grid-cols-1 items-center gap-10 px-6 pb-12 pt-14 sm:pt-20 lg:grid-cols-[1fr_380px]">
+      <section className="mx-auto grid max-w-6xl grid-cols-1 items-center gap-10 px-6 pb-12 pt-14 sm:pt-20 lg:grid-cols-[1fr_460px]">
         <div>
           <div className="text-[12px] font-bold uppercase tracking-[0.2em] text-red-600">Store Command Center</div>
           <h1 className="mt-3 max-w-2xl text-5xl font-extrabold leading-[1.05] tracking-tight text-zinc-900 sm:text-6xl">
@@ -490,33 +490,82 @@ function Card({ children }: { children: React.ReactNode }) {
 // Upcoming events from the linked calendar (LTO launches, promos, visits),
 // shown beside the hero. Admin links the iCal feed in Command Center Links.
 const MONTHS = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+function DateTile({ date, today, size = "sm" }: { date: string; today: boolean; size?: "sm" | "lg" }) {
+  const [y, m, d] = date.split("-").map((n) => parseInt(n, 10));
+  return (
+    <span className={cn("flex shrink-0 flex-col items-center justify-center rounded-xl",
+      size === "lg" ? "h-14 w-14" : "h-12 w-12",
+      today ? "bg-red-600 text-white" : "bg-zinc-100 text-zinc-700")}>
+      <span className={cn("text-[9px] font-extrabold tracking-widest", today ? "text-red-200" : "text-zinc-400")}>{MONTHS[(m || 1) - 1]}</span>
+      <span className={cn("font-extrabold leading-none", size === "lg" ? "text-xl" : "text-lg")}>{d || y}</span>
+    </span>
+  );
+}
+
 function WhatsCooking({ events }: { events: NonNullable<PortalSnapshot["whats_cooking"]> }) {
   const todayIso = new Date().toLocaleDateString("en-CA");
+  const [open, setOpen] = useState<CookingEvent | null>(null);
   return (
     <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">
       <div className="text-[11px] font-bold uppercase tracking-[0.18em] text-red-600">What's Cooking…</div>
-      <ul className="mt-4 flex flex-col gap-3">
+      <ul className="-mx-2 mt-3 flex max-h-[340px] flex-col gap-1 overflow-y-auto px-2 py-1">
         {events.map((e, i) => {
-          const [y, m, d] = e.date.split("-").map((n) => parseInt(n, 10));
           const today = e.date === todayIso;
           return (
-            <li key={i} className="flex items-center gap-3.5">
-              <span className={cn("flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-xl",
-                today ? "bg-red-600 text-white" : "bg-zinc-100 text-zinc-700")}>
-                <span className={cn("text-[9px] font-extrabold tracking-widest", today ? "text-red-200" : "text-zinc-400")}>{MONTHS[(m || 1) - 1]}</span>
-                <span className="text-lg font-extrabold leading-none">{d || y}</span>
-              </span>
-              <span className="min-w-0">
-                <span className="block truncate text-[15px] font-bold leading-snug text-zinc-900">{e.title}</span>
-                <span className="block text-[12.5px] text-zinc-400">
-                  {today ? "Today" : new Date(`${e.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" })}
-                  {e.time ? ` · ${fmt12(e.time)}` : ""}
+            <li key={i}>
+              <button onClick={() => setOpen(e)}
+                className="flex w-full items-center gap-3.5 rounded-xl px-2 py-2 text-left transition hover:bg-zinc-50">
+                <DateTile date={e.date} today={today} />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[15px] font-bold leading-snug text-zinc-900">{e.title}</span>
+                  <span className="block text-[12.5px] text-zinc-400">
+                    {today ? "Today" : new Date(`${e.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "long" })}
+                    {e.time ? ` · ${fmt12(e.time)}` : ""}
+                  </span>
                 </span>
-              </span>
+                <ArrowRight className="h-4 w-4 shrink-0 text-zinc-300" />
+              </button>
             </li>
           );
         })}
       </ul>
+      {open && <CookingDetail event={open} onClose={() => setOpen(null)} />}
+    </div>
+  );
+}
+
+function CookingDetail({ event: e, onClose }: { event: CookingEvent; onClose: () => void }) {
+  const today = e.date === new Date().toLocaleDateString("en-CA");
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-zinc-900/50 p-4 sm:items-center" onClick={onClose}>
+      <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl" onClick={(ev) => ev.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-center gap-3.5">
+            <DateTile date={e.date} today={today} size="lg" />
+            <div>
+              <h2 className="text-lg font-extrabold leading-snug text-zinc-900">{e.title}</h2>
+              <p className="mt-0.5 text-sm text-zinc-500">
+                {today ? "Today" : new Date(`${e.date}T00:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" })}
+                {e.time ? ` · ${fmt12(e.time)}` : ""}
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1 text-zinc-400 transition hover:bg-zinc-100 hover:text-zinc-700"><X className="h-5 w-5" /></button>
+        </div>
+        {e.location && (
+          <p className="mt-4 text-sm text-zinc-600"><span className="font-bold text-zinc-800">Where:</span> {e.location}</p>
+        )}
+        {e.description ? (
+          <div className="mt-4 max-h-72 overflow-y-auto rounded-xl bg-zinc-50 px-4 py-3.5">
+            <p className="whitespace-pre-line break-words text-[15px] leading-relaxed text-zinc-700">{e.description}</p>
+          </div>
+        ) : !e.location && (
+          <p className="mt-4 text-sm text-zinc-400">No extra details on this one — check the calendar invite.</p>
+        )}
+        <button onClick={onClose} className="mt-5 w-full rounded-xl bg-zinc-900 py-3 text-sm font-bold text-white transition hover:bg-zinc-800">
+          Close
+        </button>
+      </div>
     </div>
   );
 }
