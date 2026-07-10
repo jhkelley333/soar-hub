@@ -92,6 +92,11 @@ export function StoreActionsManager({ onClose }: { onClose: () => void }) {
                         {a.repeat === "daily" ? "Daily" : `Every ${DOW_NAMES[a.repeat_dow ?? 0]}`}
                       </span>
                     )}
+                    {a.auto_key && (
+                      <span className="rounded-full bg-purple-50 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-purple-700 ring-1 ring-inset ring-purple-200">
+                        Auto
+                      </span>
+                    )}
                   </div>
                   <div className="mt-0.5 text-xs text-ink-subtle">
                     {[a.due_label && `Due ${a.due_label}`, a.assignee,

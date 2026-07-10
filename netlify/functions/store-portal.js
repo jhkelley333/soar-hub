@@ -573,9 +573,30 @@ async function quickLinks(supa) {
   } catch { return []; }
 }
 
+// Closed loop: a KPI breach writes its own action item, so the worklist
+// comes from the data instead of waiting on someone to read a report. One
+// item per signal per store per day (auto_key), checkable like any other.
+// Best-effort before migration 0227.
+async function ensureAutoActions(supa, store, ls) {
+  try {
+    const l = ls?.labor;
+    if (!l || l.labor_pct == null || l.target_pct == null || l.labor_pct <= l.target_pct) return;
+    const { iso } = centralToday();
+    const over = Math.round((l.labor_pct - l.target_pct) * 10) / 10;
+    await supa.from("store_portal_actions").upsert({
+      store_id: store.id,
+      title: `Trim labor today — yesterday ran ${over}% over the ${l.target_pct}% goal`,
+      assignee: "GM / shift lead",
+      auto_key: `labor-over:${store.id}:${iso}`,
+    }, { onConflict: "auto_key", ignoreDuplicates: true });
+  } catch { /* pre-0227 the auto_key column may not exist */ }
+}
+
 async function assembleSnapshot(supa, store) {
-  const [ls, rank, wo, notes, contacts, links, storeEmail, actions, birthdays, training, out, cooking] = await Promise.all([
-    laborAndSales(supa, store.number),
+  // Labor first: a breach seeds today's auto action before the list is read.
+  const ls = await laborAndSales(supa, store.number);
+  await ensureAutoActions(supa, store, ls);
+  const [rank, wo, notes, contacts, links, storeEmail, actions, birthdays, training, out, cooking] = await Promise.all([
     rankerRank(store.number),
     openWorkOrders(supa, store.number),
     storeNotes(supa, store.number),
