@@ -13,6 +13,8 @@ export interface LaborStore {
 // One band (Daily / WTD / PTD) of the GM day view.
 export interface LaborBand {
   labor_pct: number | null;
+  /** This band's OWN target % — daily, WTD and PTD each have their own. */
+  goal_pct?: number | null;
   sales: number | null;
   variance_pts: number | null;
   dollars_over_chart: number | null;

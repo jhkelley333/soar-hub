@@ -105,6 +105,9 @@ function shapeBand(row, prefix) {
   const hoursOver = dollarsOver != null && avgWage ? round1(dollarsOver / avgWage) : null;
   return {
     labor_pct: laborPct == null ? null : round1(laborPct),
+    // Each band carries its OWN target (daily / WTD / PTD differ) — the UI
+    // must not reuse one band's goal for the others.
+    goal_pct: goalPct == null ? null : round1(goalPct),
     sales: sales ?? null,
     variance_pts: laborPct != null && goalPct != null ? round1(laborPct - goalPct) : null,
     dollars_over_chart: dollarsOver,
@@ -380,7 +383,8 @@ async function gmView(supa, user, params) {
   const reviewByDate = new Map((reviews ?? []).map((r) => [r.business_date, r]));
 
   const anchorRow = rowByDate.get(anchorIso) || null;
-  // Headline goal = PTD target if present, else the day's target.
+  // Footer/headline goal = PTD target if present, else the day's target.
+  // Band cards use each band's own goal_pct from shapeBand, not this.
   const goalPct = pct(anchorRow?.ptd_target_labor_pct ?? anchorRow?.target_labor_pct ?? null);
 
   const shapeDay = (row, review) => {
