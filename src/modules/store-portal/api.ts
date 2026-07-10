@@ -67,6 +67,8 @@ export interface PortalAction {
   done_at: string | null;
   repeat?: "none" | "daily" | "weekly";
   repeat_dow?: number | null;
+  /** Set on items the system created from a KPI breach (closed loop). */
+  auto_key?: string | null;
 }
 export interface PortalBirthday { name: string; role: string | null; month: number; day: number; in_days: number }
 export interface PortalSnapshot {
