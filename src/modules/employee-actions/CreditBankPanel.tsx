@@ -121,15 +121,15 @@ export function CreditBankPanel() {
 
         {open && (
           <LedgerModal row={open} year={year} canAdjust={q.data?.can_adjust ?? false}
-            onClose={() => setOpen(null)} />
+            canBudget={q.data?.can_budget ?? false} onClose={() => setOpen(null)} />
         )}
       </CardBody>
     </Card>
   );
 }
 
-function LedgerModal({ row, year, canAdjust, onClose }: {
-  row: CreditRegisterRow; year: number; canAdjust: boolean; onClose: () => void;
+function LedgerModal({ row, year, canAdjust, canBudget, onClose }: {
+  row: CreditRegisterRow; year: number; canAdjust: boolean; canBudget: boolean; onClose: () => void;
 }) {
   const toast = useToast();
   const qc = useQueryClient();
@@ -164,7 +164,7 @@ function LedgerModal({ row, year, canAdjust, onClose }: {
         <div className="mb-4 flex flex-wrap items-center gap-4 text-[13px] text-ink-muted">
           <span className="inline-flex items-center gap-1">
             Budget <strong className="tabular-nums text-heading">{money(row.budget)}</strong>
-            {canAdjust && budgetEdit == null && (
+            {canBudget && budgetEdit == null && (
               <button onClick={() => setBudgetEdit(String(row.budget))} title="Set this store's budget"
                 className="rounded p-0.5 text-ink-subtle hover:text-heading"><Pencil className="h-3 w-3" /></button>
             )}
@@ -225,7 +225,7 @@ function LedgerModal({ row, year, canAdjust, onClose }: {
         {canAdjust && (
           <div className="mt-4 rounded-xl border border-border bg-surface-muted p-3">
             <div className="mb-1.5 text-[11px] font-semibold text-ink-muted">
-              Record an adjustment — positive deducts (historical use), negative gives credit back
+              Record what this store has already spent — positive deducts (historical use), negative gives credit back
             </div>
             <div className="flex items-start gap-1.5">
               <input value={amount} onChange={(e) => setAmount(e.target.value)} type="number" step="0.01" placeholder="850.00" className={cn(FIELD, "w-28")} />

@@ -567,12 +567,14 @@ async function creditRegister(supa, user, params) {
   if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
   const year = parseInt(params?.year, 10) || new Date().getFullYear();
   const stores = await creditStoresFor(supa, user);
-  if (!stores.length) return { year, default_budget: DEFAULT_TRAINING_BUDGET, can_adjust: user.role === "admin", rows: [] };
+  const canAdjust = CREDIT_ADJUST_ROLES.has(user.role);
+  if (!stores.length) return { year, default_budget: DEFAULT_TRAINING_BUDGET, can_adjust: canAdjust, can_budget: user.role === "admin", rows: [] };
   const usage = await creditUsage(supa, stores.map((s) => s.number), year);
   return {
     year,
     default_budget: DEFAULT_TRAINING_BUDGET,
-    can_adjust: user.role === "admin",
+    can_adjust: canAdjust,
+    can_budget: user.role === "admin",
     rows: stores.map((s) => {
       const u = usage.get(s.number) ?? { budget: DEFAULT_TRAINING_BUDGET, used_requests: 0, used_adjustments: 0 };
       const used = round2(u.used_requests + u.used_adjustments);
@@ -621,14 +623,22 @@ async function creditLedger(supa, user, params) {
   return { year, requests, adjustments: adjs ?? [] };
 }
 
+// DO and above record adjustments for stores in their own scope — each
+// market's leaders enter their own historical spend. Admin reaches every
+// store; budget overrides stay admin-only.
+const CREDIT_ADJUST_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
 async function creditAdjust(supa, user, body) {
-  if (user.role !== "admin") return { error: "Admins only.", status: 403 };
+  if (!CREDIT_ADJUST_ROLES.has(user.role)) return { error: "DO and above can record adjustments.", status: 403 };
   const storeNumber = sanitizeText(body?.store_number, 20);
   const year = parseInt(body?.year, 10);
   const amount = round2(num(body?.amount));
   const note = sanitizeText(body?.note, 300) || null;
   if (!storeNumber || !year) return { error: "Store and year are required.", status: 400 };
   if (!amount || Math.abs(amount) > 100000) return { error: "Enter a non-zero amount.", status: 400 };
+  if (user.role !== "admin") {
+    const scopeErr = await assertStoreInScope(supa, user, storeNumber);
+    if (scopeErr) return scopeErr;
+  }
   const { error } = await supa
     .from("training_credit_adjustments")
     .insert({ store_number: storeNumber, year, amount, note, created_by: user.id });
