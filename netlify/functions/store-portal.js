@@ -156,21 +156,49 @@ async function storeNotes(supa, storeNumber) {
     .map((m) => ({ title: m.title, body: (m.body || "").slice(0, 8000), pinned: m.is_pinned, author: m.author_name, created_at: m.created_at }));
 }
 
-// Open action items, plus anything checked off TODAY (store-local) so the
-// day sheet can show it struck through — the list resets clean at midnight.
-// Best-effort before migration 0224.
+// Today's checklist: one-off items until they're checked (struck through
+// until store-local midnight, then gone), plus recurring items (daily, or
+// weekly on their day) that come back fresh each morning — done only counts
+// for the day it was checked. Best-effort before migrations 0224/0226.
+function centralDowNumber() {
+  const short = new Date().toLocaleDateString("en-US", { timeZone: STORE_TZ, weekday: "short" });
+  return { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 }[short] ?? new Date().getDay();
+}
 async function storeActions(supa, storeId) {
   try {
-    const since = new Date(Date.now() - 36 * 3600 * 1000).toISOString();
-    const { data } = await supa.from("store_portal_actions")
-      .select("id, title, due_label, assignee, done, done_at")
+    const { data, error } = await supa.from("store_portal_actions")
+      .select("id, title, due_label, assignee, done, done_at, repeat, repeat_dow")
       .eq("store_id", storeId)
-      .or(`done.eq.false,done_at.gte.${since}`)
-      .order("created_at", { ascending: true }).limit(20);
+      .order("created_at", { ascending: true }).limit(60);
+    if (error) throw error;
     const { iso } = centralToday();
-    return (data || []).filter((a) =>
-      !a.done || (a.done_at && new Date(a.done_at).toLocaleDateString("en-CA", { timeZone: STORE_TZ }) === iso));
-  } catch { return []; }
+    const dow = centralDowNumber();
+    const doneToday = (a) => !!a.done_at && new Date(a.done_at).toLocaleDateString("en-CA", { timeZone: STORE_TZ }) === iso;
+    return (data || [])
+      .filter((a) => {
+        const rep = a.repeat || "none";
+        if (rep === "daily") return true;
+        if (rep === "weekly") return a.repeat_dow === dow;
+        return !a.done || doneToday(a);
+      })
+      .map((a) => ({
+        id: a.id, title: a.title, due_label: a.due_label, assignee: a.assignee,
+        done: (a.repeat && a.repeat !== "none") ? doneToday(a) : a.done,
+        done_at: a.done_at, repeat: a.repeat || "none",
+      }))
+      .slice(0, 25);
+  } catch {
+    // Pre-0226 fallback: the repeat columns don't exist yet.
+    try {
+      const { data } = await supa.from("store_portal_actions")
+        .select("id, title, due_label, assignee, done, done_at")
+        .eq("store_id", storeId)
+        .order("created_at", { ascending: true }).limit(25);
+      const { iso } = centralToday();
+      return (data || []).filter((a) =>
+        !a.done || (a.done_at && new Date(a.done_at).toLocaleDateString("en-CA", { timeZone: STORE_TZ }) === iso));
+    } catch { return []; }
+  }
 }
 
 // "Today" in store-local time (all SOAR stores run on US Central), so the
@@ -921,19 +949,24 @@ async function leaderActionsList(supa, user, body) {
   if (!storeId) return { error: "Missing store.", status: 400 };
   if (!(await leaderCanTouchStore(supa, user, storeId))) return { error: "Not your store.", status: 403 };
   const { data } = await supa.from("store_portal_actions")
-    .select("id, title, due_label, assignee, done, done_at, created_at")
+    .select("*")
     .eq("store_id", storeId)
     .order("done", { ascending: true }).order("created_at", { ascending: true }).limit(100);
   return { actions: data || [] };
 }
 
+const ACTION_REPEATS = new Set(["none", "daily", "weekly"]);
 async function leaderActionSave(supa, user, body) {
   const title = String(body?.title || "").trim();
   if (!title) return { error: "Give the action a title.", status: 400 };
+  const repeat = ACTION_REPEATS.has(body?.repeat) ? body.repeat : "none";
+  const dow = parseInt(body?.repeat_dow, 10);
   const fields = {
     title: title.slice(0, 200),
     due_label: body?.due_label ? String(body.due_label).slice(0, 60) : null,
     assignee: body?.assignee ? String(body.assignee).slice(0, 80) : null,
+    repeat,
+    repeat_dow: repeat === "weekly" && dow >= 0 && dow <= 6 ? dow : null,
   };
   if (body?.id) {
     const { data: row } = await supa.from("store_portal_actions")

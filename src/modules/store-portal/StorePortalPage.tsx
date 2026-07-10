@@ -20,11 +20,45 @@ import { TicketsView } from "./StorePortalTickets";
 
 const fmtMoney = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 
+// Fleet self-update: the store desktops keep this tab open for weeks, so the
+// page code goes stale after every deploy. Every 30 minutes, compare the
+// hashed bundle name in freshly-fetched index.html against the one this tab
+// loaded; when a new build has shipped, reload — but only overnight (2–5am)
+// or after an hour with no touches, never under someone's hands.
+function useFleetAutoUpdate() {
+  useEffect(() => {
+    const current = document.querySelector<HTMLScriptElement>('script[src*="/assets/"]')?.src;
+    if (!current) return;
+    const currentPath = new URL(current, window.location.origin).pathname;
+    let lastTouch = Date.now();
+    const bump = () => { lastTouch = Date.now(); };
+    window.addEventListener("pointerdown", bump);
+    window.addEventListener("keydown", bump);
+    const iv = setInterval(async () => {
+      try {
+        const res = await fetch("/", { cache: "no-store" });
+        if (!res.ok) return;
+        const m = (await res.text()).match(/\/assets\/index-[^"']+\.js/);
+        if (!m || m[0] === currentPath) return;
+        const hour = new Date().getHours();
+        const idleMinutes = (Date.now() - lastTouch) / 60_000;
+        if ((hour >= 2 && hour < 5) || idleMinutes >= 60) window.location.reload();
+      } catch { /* offline — try again next tick */ }
+    }, 30 * 60_000);
+    return () => {
+      clearInterval(iv);
+      window.removeEventListener("pointerdown", bump);
+      window.removeEventListener("keydown", bump);
+    };
+  }, []);
+}
+
 export function StorePortalPage() {
   const { token = "" } = useParams();
   const [showCall, setShowCall] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [showTickets, setShowTickets] = useState(false);
+  useFleetAutoUpdate();
   const q = useQuery({
     queryKey: ["store-portal", token],
     queryFn: () => fetchPortalSnapshot(token),
@@ -133,6 +167,21 @@ export function PortalBody({ data, isLoading, access, onCall, onReport, onTicket
             foot={data?.rank ? <span className="text-zinc-500">across the company</span> : <span className="text-zinc-400">Ranking unavailable</span>} />
         </div>
       </section>
+
+      {/* ── Wins — lead with the positive before the worklist ── */}
+      {data && winsOf(data).length > 0 && (
+        <section className="mx-auto max-w-6xl px-6 pt-6">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl bg-emerald-50 px-4 py-2.5 text-[14px] font-semibold text-emerald-800 ring-1 ring-inset ring-emerald-200">
+            <span>🎉</span>
+            {winsOf(data).map((w, i) => (
+              <span key={i} className="flex items-center gap-2">
+                {i > 0 && <span className="text-emerald-300">·</span>}
+                {w}
+              </span>
+            ))}
+          </div>
+        </section>
+      )}
 
       {/* ── Cards ── */}
       <section className="mx-auto grid max-w-6xl grid-cols-1 gap-5 px-6 py-10 lg:grid-cols-3">
@@ -332,8 +381,12 @@ function DaySheet({ data, access, actionsOnly, onClose }: {
                 </button>
                 <div className="min-w-0">
                   <div className={cn("text-[15px] font-semibold leading-snug", isDone(a) ? "text-zinc-400 line-through" : "text-zinc-900")}>{a.title}</div>
-                  {(a.due_label || a.assignee) && (
-                    <div className="mt-0.5 text-[13px] text-zinc-400">{[a.due_label && `Due ${a.due_label}`, a.assignee].filter(Boolean).join(" · ")}</div>
+                  {(a.due_label || a.assignee || (a.repeat && a.repeat !== "none")) && (
+                    <div className="mt-0.5 text-[13px] text-zinc-400">
+                      {[a.due_label && `Due ${a.due_label}`, a.assignee,
+                        a.repeat === "daily" ? "Every day" : a.repeat === "weekly" ? `Every ${WEEKDAYS[a.repeat_dow ?? 0]}` : null,
+                      ].filter(Boolean).join(" · ")}
+                    </div>
                   )}
                 </div>
               </li>
@@ -484,6 +537,20 @@ function Trend({ up, good, text }: { up: boolean; good: boolean; text: string })
 
 function Card({ children }: { children: React.ReactNode }) {
   return <div className="flex h-full flex-col rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">{children}</div>;
+}
+
+// Small wins from the data already on screen — the board should celebrate,
+// not just alarm. Empty on a rough day (the strip hides).
+function winsOf(data: PortalSnapshot): string[] {
+  const wins: string[] = [];
+  if (data.sales?.wow_pct != null && data.sales.wow_pct > 0) wins.push(`Sales up ${data.sales.wow_pct}% vs last week`);
+  if (data.labor?.labor_pct != null && data.labor?.target_pct != null && data.labor.labor_pct <= data.labor.target_pct) {
+    wins.push(`Labor under the ${data.labor.target_pct}% goal`);
+  }
+  if (data.work_orders.open_count === 0) wins.push("Zero open work orders");
+  const bday = (data.birthdays ?? []).find((b) => b.in_days === 0);
+  if (bday) wins.push(`It's ${bday.name}'s birthday 🎂`);
+  return wins;
 }
 
 // ── What's Cooking ────────────────────────────────────────────────────────────
