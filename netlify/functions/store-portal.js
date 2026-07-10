@@ -383,7 +383,7 @@ async function whatsCooking(supa) {
     const fresh = await fetchIcs(s.url);
     if (fresh.events) {
       events = fresh.events;
-      await setSetting(supa, CAL_SETTING_KEY, { ...s, events: fresh.events.slice(0, 100), cached_at: new Date().toISOString() });
+      await setSetting(supa, CAL_SETTING_KEY, { ...s, events: cacheSlice(fresh.events), cached_at: new Date().toISOString() });
     } else if (s.cached_at) {
       // Fetch failed — serve stale, but push cached_at forward a bit so we
       // don't hammer a dead feed on every snapshot.
@@ -397,6 +397,13 @@ function upcomingEvents(events) {
   const { iso } = centralToday();
   const horizon = new Date(Date.now() + 60 * 86_400_000).toLocaleDateString("en-CA", { timeZone: STORE_TZ });
   return (events || []).filter((e) => e.date >= iso && e.date <= horizon);
+}
+
+// What we persist: the UPCOMING events, capped. Events are sorted oldest
+// first, so a plain slice(0, 100) on a busy calendar kept only past events
+// and dropped everything upcoming — the panel showed nothing.
+function cacheSlice(events) {
+  return upcomingEvents(events).slice(0, 100);
 }
 
 async function adminCalendarGet(supa) {
@@ -420,7 +427,7 @@ async function adminCalendarResync(supa, user) {
   if (r.error === "not-ics") return { error: "The link no longer returns a calendar feed. Re-check the iCal/ICS address.", status: 422 };
   if (!r.events) return { error: `Could not read the calendar. ${r.error}`, status: 422 };
   await setSetting(supa, CAL_SETTING_KEY, {
-    ...s, events: r.events.slice(0, 100), cached_at: new Date().toISOString(),
+    ...s, events: cacheSlice(r.events), cached_at: new Date().toISOString(),
   }, user.id);
   const upcoming = upcomingEvents(r.events);
   return {
@@ -442,7 +449,7 @@ async function adminCalendarSet(supa, user, body) {
   }
   if (!r.events) return { error: `Could not read that calendar. ${r.error}`, status: 422 };
   await setSetting(supa, CAL_SETTING_KEY, {
-    url: url.slice(0, 800), events: r.events.slice(0, 100), cached_at: new Date().toISOString(),
+    url: url.slice(0, 800), events: cacheSlice(r.events), cached_at: new Date().toISOString(),
   }, user.id);
   const upcoming = upcomingEvents(r.events);
   return { ok: true, url, event_count: r.events.length, upcoming_count: upcoming.length, upcoming: upcoming.slice(0, 6) };
