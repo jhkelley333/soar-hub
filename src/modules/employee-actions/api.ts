@@ -171,7 +171,10 @@ export interface CreditRegisterRow {
 export interface CreditRegisterResponse {
   year: number;
   default_budget: number;
+  /** DO and above: record adjustments for stores in scope. */
   can_adjust: boolean;
+  /** Admin only: override a store's yearly budget. */
+  can_budget: boolean;
   rows: CreditRegisterRow[];
 }
 export function fetchCreditRegister(year?: number): Promise<CreditRegisterResponse> {

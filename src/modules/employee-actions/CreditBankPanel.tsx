@@ -18,18 +18,30 @@ import {
 const money = (n: number) => (Number(n) || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
 const FIELD = "rounded-lg border border-border bg-surface px-3 py-2 text-sm text-heading placeholder:text-ink-subtle focus:border-accent focus:outline-none";
 
+type SortKey = "store" | "budget" | "used" | "remaining";
+
 export function CreditBankPanel() {
   const thisYear = new Date().getFullYear();
   const [year, setYear] = useState(thisYear);
   const [open, setOpen] = useState<CreditRegisterRow | null>(null);
   const [filter, setFilter] = useState("");
+  const [sort, setSort] = useState<{ key: SortKey; dir: 1 | -1 }>({ key: "store", dir: 1 });
   const q = useQuery({ queryKey: ["ea-credit-register", year], queryFn: () => fetchCreditRegister(year) });
+
+  const toggleSort = (key: SortKey) =>
+    setSort((s) => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: key === "store" ? 1 : -1 }));
 
   const rows = useMemo(() => {
     const needle = filter.trim().toLowerCase();
-    return (q.data?.rows ?? []).filter((r) =>
+    const filtered = (q.data?.rows ?? []).filter((r) =>
       !needle || r.store_number.includes(needle) || (r.store_name ?? "").toLowerCase().includes(needle));
-  }, [q.data, filter]);
+    const val = (r: CreditRegisterRow) =>
+      sort.key === "store" ? parseInt(r.store_number, 10) || 0
+        : sort.key === "budget" ? r.budget
+        : sort.key === "used" ? r.used
+        : r.remaining;
+    return [...filtered].sort((a, b) => (val(a) - val(b)) * sort.dir);
+  }, [q.data, filter, sort]);
 
   const totals = useMemo(() => {
     const all = q.data?.rows ?? [];
@@ -82,10 +94,10 @@ export function CreditBankPanel() {
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-border text-left text-[10px] uppercase tracking-wide text-ink-subtle">
-                    <th className="px-3 py-2">Store</th>
-                    <th className="px-3 py-2 text-right">Budget</th>
-                    <th className="px-3 py-2 text-right">Used</th>
-                    <th className="px-3 py-2 text-right">Remaining</th>
+                    <SortTh label="Store" k="store" sort={sort} onSort={toggleSort} />
+                    <SortTh label="Budget" k="budget" sort={sort} onSort={toggleSort} right />
+                    <SortTh label="Used" k="used" sort={sort} onSort={toggleSort} right />
+                    <SortTh label="Remaining" k="remaining" sort={sort} onSort={toggleSort} right />
                     <th className="w-40 px-3 py-2"></th>
                   </tr>
                 </thead>
@@ -121,15 +133,30 @@ export function CreditBankPanel() {
 
         {open && (
           <LedgerModal row={open} year={year} canAdjust={q.data?.can_adjust ?? false}
-            onClose={() => setOpen(null)} />
+            canBudget={q.data?.can_budget ?? false} onClose={() => setOpen(null)} />
         )}
       </CardBody>
     </Card>
   );
 }
 
-function LedgerModal({ row, year, canAdjust, onClose }: {
-  row: CreditRegisterRow; year: number; canAdjust: boolean; onClose: () => void;
+function SortTh({ label, k, sort, onSort, right }: {
+  label: string; k: SortKey; sort: { key: SortKey; dir: 1 | -1 }; onSort: (k: SortKey) => void; right?: boolean;
+}) {
+  const active = sort.key === k;
+  return (
+    <th className={cn("px-3 py-2", right && "text-right")}>
+      <button onClick={() => onSort(k)}
+        className={cn("inline-flex items-center gap-0.5 uppercase tracking-wide transition hover:text-heading", active && "text-heading")}>
+        {label}
+        <span className={cn("text-[9px]", !active && "opacity-0")}>{sort.dir === 1 ? "▲" : "▼"}</span>
+      </button>
+    </th>
+  );
+}
+
+function LedgerModal({ row, year, canAdjust, canBudget, onClose }: {
+  row: CreditRegisterRow; year: number; canAdjust: boolean; canBudget: boolean; onClose: () => void;
 }) {
   const toast = useToast();
   const qc = useQueryClient();
@@ -164,7 +191,7 @@ function LedgerModal({ row, year, canAdjust, onClose }: {
         <div className="mb-4 flex flex-wrap items-center gap-4 text-[13px] text-ink-muted">
           <span className="inline-flex items-center gap-1">
             Budget <strong className="tabular-nums text-heading">{money(row.budget)}</strong>
-            {canAdjust && budgetEdit == null && (
+            {canBudget && budgetEdit == null && (
               <button onClick={() => setBudgetEdit(String(row.budget))} title="Set this store's budget"
                 className="rounded p-0.5 text-ink-subtle hover:text-heading"><Pencil className="h-3 w-3" /></button>
             )}
@@ -225,7 +252,7 @@ function LedgerModal({ row, year, canAdjust, onClose }: {
         {canAdjust && (
           <div className="mt-4 rounded-xl border border-border bg-surface-muted p-3">
             <div className="mb-1.5 text-[11px] font-semibold text-ink-muted">
-              Record an adjustment — positive deducts (historical use), negative gives credit back
+              Record what this store has already spent — positive deducts (historical use), negative gives credit back
             </div>
             <div className="flex items-start gap-1.5">
               <input value={amount} onChange={(e) => setAmount(e.target.value)} type="number" step="0.01" placeholder="850.00" className={cn(FIELD, "w-28")} />
