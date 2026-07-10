@@ -199,6 +199,28 @@ export function setCreditBudget(input: { store_number: string; year: number; bud
   return request(`${FN}?action=credit-budget`, { method: "POST", body: JSON.stringify(input) });
 }
 
+// ── PTO report — per-employee quarterly usage vs the allowance ───────────
+export interface PtoReportRow {
+  employee_name: string;
+  store_number: string;
+  position: string;
+  unit: "days" | "hours";
+  quarters: [number, number, number, number];
+  total: number;
+  quota: number;
+  pending: number;
+  over_quota_requests: number;
+}
+export interface PtoReportResponse {
+  year: number;
+  gm_quota_days: number;
+  hourly_quota_hours: number;
+  rows: PtoReportRow[];
+}
+export function fetchPtoReport(year?: number): Promise<PtoReportResponse> {
+  return request(`${FN}?action=pto-report${year ? `&year=${year}` : ""}`);
+}
+
 // GM PTO daily labor credit rate (default $176/day = $880 per 5-day week).
 export function fetchGmPtoRate(): Promise<{ amount: number }> {
   return request(`${FN}?action=gm-pto-rate`);

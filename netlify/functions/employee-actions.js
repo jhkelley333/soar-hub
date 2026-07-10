@@ -627,6 +627,60 @@ async function creditLedger(supa, user, params) {
 // market's leaders enter their own historical spend. Admin reaches every
 // store; budget overrides stay admin-only.
 const CREDIT_ADJUST_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
+// ── PTO report — per-employee quarterly usage vs the allowance ───────────────
+// One row per (employee, store, position) for the year: Q1..Q4 usage (GM in
+// days, hourly in hours; dated vacation_days land in their own quarter,
+// legacy day-count rows land in the start date's quarter), the total, and
+// the quarterly allowance for coloring.
+async function ptoReport(supa, user, params) {
+  if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const year = parseInt(params?.year, 10) || new Date().getFullYear();
+  let numbers = null;
+  if (!ORG_WIDE_READ.has(user.role)) {
+    numbers = await resolveVisibleStoreNumbers(supa, user.id);
+    if (!numbers.length) return { year, gm_quota_days: PTO_QUOTA_GM_DAYS, hourly_quota_hours: PTO_QUOTA_HOURLY_HOURS, rows: [] };
+  }
+  let q = supa.from("pto_requests").select("*")
+    .gte("pto_start_date", `${year}-01-01`).lte("pto_start_date", `${year}-12-31`)
+    .limit(5000);
+  if (numbers) q = q.in("store_number", numbers);
+  const { data } = await q;
+
+  const byKey = new Map();
+  for (const r of data || []) {
+    if (PTO_DEAD_STATUSES.has(r.status)) continue;
+    const isGm = r.position === "GM";
+    const key = `${String(r.employee_name || "").toLowerCase()}|${r.store_number}|${r.position}`;
+    if (!byKey.has(key)) {
+      byKey.set(key, {
+        employee_name: r.employee_name, store_number: String(r.store_number), position: r.position,
+        unit: isGm ? "days" : "hours", quarters: [0, 0, 0, 0], total: 0, pending: 0, over_quota_requests: 0,
+      });
+    }
+    const row = byKey.get(key);
+    const dated = Array.isArray(r.vacation_days) ? r.vacation_days.filter((d) => d && d.date) : [];
+    if (dated.length) {
+      for (const d of dated) {
+        if (+String(d.date).slice(0, 4) !== year) continue;
+        const qi = Math.floor((+String(d.date).slice(5, 7) - 1) / 3);
+        row.quarters[qi] += isGm ? 1 : num(d.hours);
+      }
+    } else {
+      const qi = Math.floor((+String(r.pto_start_date).slice(5, 7) - 1) / 3);
+      row.quarters[qi] += isGm ? num(r.days_used) : num(r.vacation_hours);
+    }
+    row.total = round2(row.quarters.reduce((a, b) => a + b, 0));
+    if (!r.approved_at) row.pending += 1;
+    if (r.over_quota) row.over_quota_requests += 1;
+  }
+  const rows = [...byKey.values()].map((r) => ({
+    ...r,
+    quarters: r.quarters.map(round2),
+    quota: r.unit === "days" ? PTO_QUOTA_GM_DAYS : PTO_QUOTA_HOURLY_HOURS,
+  })).sort((a, b) => b.total - a.total);
+  return { year, gm_quota_days: PTO_QUOTA_GM_DAYS, hourly_quota_hours: PTO_QUOTA_HOURLY_HOURS, rows };
+}
+
 // GM PTO daily labor credit rate (ea_settings) — read for display, admin set.
 async function gmPtoRateGet(supa, user) {
   if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
@@ -1022,6 +1076,58 @@ function ptoWorkflowFields(user) {
   return { status: "Submitted", do_approved_at: null, do_approved_by_id: null, do_note: null };
 }
 
+// Vacation allowance: one week per calendar quarter through the normal flow
+// (GM: 5 days, hourly: 40 hours). A request that pushes the employee over is
+// stamped over_quota and its final approval is restricted to RVP/admin.
+const PTO_QUOTA_GM_DAYS = 5;
+const PTO_QUOTA_HOURLY_HOURS = 40;
+const PTO_DEAD_STATUSES = new Set(["Rejected", "Withdrawn", "Changes Requested"]);
+
+function quarterRange(dateIso) {
+  const y = +String(dateIso).slice(0, 4);
+  const m = +String(dateIso).slice(5, 7);
+  const q = Math.floor((m - 1) / 3);
+  const endMonth = q * 3 + 3;
+  return {
+    start: `${y}-${String(q * 3 + 1).padStart(2, "0")}-01`,
+    end: `${y}-${String(endMonth).padStart(2, "0")}-${endMonth === 6 || endMonth === 9 ? 30 : 31}`,
+    label: `Q${q + 1} ${y}`,
+  };
+}
+
+// Does this request push the employee over the quarterly allowance?
+// Prior use = the employee's other live requests whose start date falls in
+// the same quarter as this request's first day out.
+async function ptoOverQuota(supa, fields, excludeId = null) {
+  const isGm = fields.position === "GM";
+  const first = ((fields.vacation_days ?? []).map((d) => d.date).filter(Boolean).sort()[0]) || fields.pto_start_date;
+  if (!first) return { over: false };
+  const q = quarterRange(first);
+  const { data } = await supa
+    .from("pto_requests")
+    .select("id, position, days_used, vacation_hours, status")
+    .ilike("employee_name", fields.employee_name)
+    .eq("position", fields.position)
+    .gte("pto_start_date", q.start)
+    .lte("pto_start_date", q.end)
+    .limit(200);
+  let prior = 0;
+  for (const r of data || []) {
+    if (r.id === excludeId || PTO_DEAD_STATUSES.has(r.status)) continue;
+    prior += isGm ? num(r.days_used) : num(r.vacation_hours);
+  }
+  const requested = isGm ? num(fields.days_used) : num(fields.vacation_hours);
+  const quota = isGm ? PTO_QUOTA_GM_DAYS : PTO_QUOTA_HOURLY_HOURS;
+  return {
+    over: prior + requested > quota + 0.001,
+    prior: round2(prior),
+    requested: round2(requested),
+    quota,
+    unit: isGm ? "days" : "hours",
+    label: q.label,
+  };
+}
+
 // Vacation lead time: the first day out must be at least this many days from
 // today. Admins bypass (corrections / backfill).
 const PTO_ADVANCE_DAYS = 30;
@@ -1054,6 +1160,7 @@ async function submitPto(supa, user, body) {
     const advErr = ptoAdvanceError(built.fields);
     if (advErr) return advErr;
   }
+  const quota = await ptoOverQuota(supa, built.fields);
 
   const insertRow = {
     submitter_id: user.id,
@@ -1061,14 +1168,20 @@ async function submitPto(supa, user, body) {
     submitter_name: user.full_name ?? null,
     store_number: storeNumber,
     ...built.fields,
+    over_quota: quota.over,
     ...ptoWorkflowFields(user),
   };
 
-  const { data: created, error } = await supa
+  let { data: created, error } = await supa
     .from("pto_requests")
     .insert(insertRow)
     .select("id")
     .single();
+  if (error && /over_quota/.test(error.message)) {
+    // Pre-0231: the column doesn't exist yet — submit without the flag.
+    delete insertRow.over_quota;
+    ({ data: created, error } = await supa.from("pto_requests").insert(insertRow).select("id").single());
+  }
   if (error) return { error: error.message, status: 500 };
 
   await logAudit(supa, {
@@ -1081,17 +1194,20 @@ async function submitPto(supa, user, body) {
   });
 
   const link = `${appBaseUrl()}/employee-actions`;
+  const quotaNote = quota.over
+    ? `OVER ALLOWANCE: ${built.meta.employeeName} already has ${quota.prior} ${quota.unit} of PTO in ${quota.label}; this request adds ${quota.requested} (allowance: ${quota.quota} ${quota.unit}/quarter). Final approval must come from the RVP.\n\n`
+    : "";
   await notifyLeadership(supa, {
     storeNumber,
     sendCopy: built.fields.send_copy,
     submitterEmail: user.email,
-    subject: `PTO Request — ${built.meta.employeeName} (Store ${storeNumber})`,
+    subject: `PTO Request — ${built.meta.employeeName} (Store ${storeNumber})${quota.over ? " — OVER ALLOWANCE" : ""}`,
     text:
       `A PTO request was submitted by ${displayName(user)}.\n\n` +
-      `Store: ${storeNumber}\n${built.meta.summary}Review it here: ${link}`,
+      `Store: ${storeNumber}\n${built.meta.summary}${quotaNote}Review it here: ${link}`,
   });
 
-  return { ok: true, id: created.id, status: insertRow.status };
+  return { ok: true, id: created.id, status: insertRow.status, over_quota: quota.over };
 }
 
 // Resubmit a "Changes Requested" PTO request after the submitter edits it.
@@ -1119,20 +1235,24 @@ async function updatePto(supa, user, body) {
 
   const built = buildPtoFields(body);
   if (built.error) return built;
+  const quota = await ptoOverQuota(supa, built.fields, id);
 
-  const { error } = await supa
-    .from("pto_requests")
-    .update({
-      store_number: storeNumber,
-      ...built.fields,
-      ...ptoWorkflowFields(user),
-      approved_at: null,
-      approved_by_id: null,
-      approved_by_email: null,
-      decision_note: null,
-      rejection_reason: null,
-    })
-    .eq("id", id);
+  const patch = {
+    store_number: storeNumber,
+    ...built.fields,
+    over_quota: quota.over,
+    ...ptoWorkflowFields(user),
+    approved_at: null,
+    approved_by_id: null,
+    approved_by_email: null,
+    decision_note: null,
+    rejection_reason: null,
+  };
+  let { error } = await supa.from("pto_requests").update(patch).eq("id", id);
+  if (error && /over_quota/.test(error.message)) {
+    delete patch.over_quota;
+    ({ error } = await supa.from("pto_requests").update(patch).eq("id", id));
+  }
   if (error) return { error: error.message, status: 500 };
 
   await logAudit(supa, {
@@ -1403,7 +1523,14 @@ async function decide(supa, user, body) {
     return { ok: true, status: "DO Approved" };
   }
 
-  // pto final step (status === "DO Approved")
+  // pto final step (status === "DO Approved"). Over-allowance requests
+  // (more than one week this quarter) need the RVP specifically.
+  if (existing.over_quota && user.role !== "rvp" && user.role !== "admin") {
+    return {
+      error: "This request is over the one-week-per-quarter allowance — final approval must come from the RVP.",
+      status: 403,
+    };
+  }
   const err = await transition(
     {
       status: "SDO/RVP Approved",
@@ -1729,6 +1856,7 @@ export const handler = async (event) => {
       if (action === "credit-balance") return unwrap(await creditBalance(supa, user, params));
       if (action === "credit-ledger") return unwrap(await creditLedger(supa, user, params));
       if (action === "gm-pto-rate") return unwrap(await gmPtoRateGet(supa, user));
+      if (action === "pto-report") return unwrap(await ptoReport(supa, user, params));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {
