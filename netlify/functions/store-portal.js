@@ -84,9 +84,16 @@ async function resolveAccess(supa, event, body) {
 // ── Snapshot — everything on the page in one call ─────────────────────────────
 const pct = (v) => (v == null ? null : Math.round(Number(v) * 1000) / 10);
 
+const growthPct = (now, prev) =>
+  now != null && prev != null && Number(prev) > 0
+    ? Math.round(((Number(now) - Number(prev)) / Number(prev)) * 1000) / 10
+    : null;
+
 async function laborAndSales(supa, storeNumber) {
+  // select(*) keeps this resilient to columns that land in later migrations
+  // (prev-year sales arrived in 0228).
   const { data: rows } = await supa.from("labor_v2_daily")
-    .select("business_date, net_sales, labor_pct, target_labor_pct")
+    .select("*")
     .eq("store_number", String(storeNumber))
     .order("business_date", { ascending: false }).limit(10);
   const latest = rows?.[0];
@@ -98,14 +105,29 @@ async function laborAndSales(supa, storeNumber) {
   const sales = {
     date: latest.business_date,
     net_sales: latest.net_sales == null ? null : Number(latest.net_sales),
-    wow_pct: latest.net_sales != null && wk?.net_sales
-      ? Math.round(((Number(latest.net_sales) - Number(wk.net_sales)) / Number(wk.net_sales)) * 1000) / 10
-      : null,
+    yoy_pct: growthPct(latest.net_sales, latest.prev_year_net_sales),
+    wow_pct: growthPct(latest.net_sales, wk?.net_sales),
+    wtd_net_sales: latest.wtd_net_sales == null ? null : Number(latest.wtd_net_sales),
+    ptd_net_sales: latest.ptd_net_sales == null ? null : Number(latest.ptd_net_sales),
   };
+  // Hours over target: $over = cost − sales × target, avg wage = cost ÷ hours
+  // (the 0187 convention the Labor v2 page uses).
+  let hoursOver = null;
+  if (latest.labor_cost != null && latest.labor_hours != null && Number(latest.labor_hours) > 0
+      && latest.net_sales != null && latest.target_labor_pct != null) {
+    const overDollars = Number(latest.labor_cost) - Number(latest.net_sales) * Number(latest.target_labor_pct);
+    const avgWage = Number(latest.labor_cost) / Number(latest.labor_hours);
+    if (avgWage > 0 && overDollars > 0) hoursOver = Math.round((overDollars / avgWage) * 10) / 10;
+  }
   const labor = {
     date: latest.business_date,
     labor_pct: pct(latest.labor_pct),
     target_pct: pct(latest.target_labor_pct),
+    hours_over: hoursOver,
+    wtd_pct: pct(latest.wtd_labor_pct),
+    wtd_target_pct: pct(latest.wtd_target_labor_pct),
+    ptd_pct: pct(latest.ptd_labor_pct),
+    ptd_target_pct: pct(latest.ptd_target_labor_pct),
   };
   return { sales, labor };
 }
@@ -583,9 +605,12 @@ async function ensureAutoActions(supa, store, ls) {
     if (!l || l.labor_pct == null || l.target_pct == null || l.labor_pct <= l.target_pct) return;
     const { iso } = centralToday();
     const over = Math.round((l.labor_pct - l.target_pct) * 10) / 10;
+    const hrs = l.hours_over != null && l.hours_over >= 0.5
+      ? ` — cut about ${Math.round(l.hours_over)} hr${Math.round(l.hours_over) === 1 ? "" : "s"} at your average wage`
+      : "";
     await supa.from("store_portal_actions").upsert({
       store_id: store.id,
-      title: `Trim labor today — yesterday ran ${over}% over the ${l.target_pct}% goal`,
+      title: `Trim labor today${hrs} (yesterday ran ${over}% over the ${l.target_pct}% goal)`,
       assignee: "GM / shift lead",
       auto_key: `labor-over:${store.id}:${iso}`,
     }, { onConflict: "auto_key", ignoreDuplicates: true });

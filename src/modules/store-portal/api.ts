@@ -73,8 +73,17 @@ export interface PortalAction {
 export interface PortalBirthday { name: string; role: string | null; month: number; day: number; in_days: number }
 export interface PortalSnapshot {
   store: PortalStore;
-  sales: { date: string; net_sales: number | null; wow_pct: number | null } | null;
-  labor: { date: string; labor_pct: number | null; target_pct: number | null } | null;
+  sales: {
+    date: string; net_sales: number | null;
+    yoy_pct?: number | null; wow_pct: number | null;
+    wtd_net_sales?: number | null; ptd_net_sales?: number | null;
+  } | null;
+  labor: {
+    date: string; labor_pct: number | null; target_pct: number | null;
+    hours_over?: number | null;
+    wtd_pct?: number | null; wtd_target_pct?: number | null;
+    ptd_pct?: number | null; ptd_target_pct?: number | null;
+  } | null;
   rank: { rank: number; total: number; week: string } | null;
   work_orders: { open_count: number; latest: { title: string; status: string; priority: string | null }[] };
   notes: { title: string; body: string; pinned: boolean; author: string | null; created_at: string }[];

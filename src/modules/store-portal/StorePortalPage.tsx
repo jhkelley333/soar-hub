@@ -152,16 +152,39 @@ export function PortalBody({ data, isLoading, access, onCall, onReport, onTicket
         <div className="mx-auto grid max-w-6xl grid-cols-1 divide-y divide-zinc-200 sm:grid-cols-3 sm:divide-x sm:divide-y-0">
           <Kpi label="Yesterday's Sales"
             value={data?.sales?.net_sales != null ? fmtMoney(data.sales.net_sales) : q.isLoading ? "…" : "—"}
-            foot={data?.sales?.wow_pct != null ? (
+            foot={data?.sales?.yoy_pct != null ? (
+              <>
+                <Trend up={data.sales.yoy_pct >= 0} good={data.sales.yoy_pct >= 0} text={`${Math.abs(data.sales.yoy_pct)}% vs last year`} />
+                {data.sales.wow_pct != null && (
+                  <span className="ml-2 text-zinc-400">{data.sales.wow_pct >= 0 ? "▲" : "▼"} {Math.abs(data.sales.wow_pct)}% vs last week</span>
+                )}
+              </>
+            ) : data?.sales?.wow_pct != null ? (
               <Trend up={data.sales.wow_pct >= 0} good={data.sales.wow_pct >= 0} text={`${Math.abs(data.sales.wow_pct)}% vs last week`} />
-            ) : <span className="text-zinc-400">No comparison yet</span>} />
+            ) : <span className="text-zinc-400">No comparison yet</span>}
+            sub={(data?.sales?.wtd_net_sales != null || data?.sales?.ptd_net_sales != null) && (
+              <>
+                {data!.sales!.wtd_net_sales != null && <span>WTD <strong className="text-zinc-600">{fmtMoney(data!.sales!.wtd_net_sales!)}</strong></span>}
+                {data!.sales!.ptd_net_sales != null && <span>PTD <strong className="text-zinc-600">{fmtMoney(data!.sales!.ptd_net_sales!)}</strong></span>}
+              </>
+            )} />
           <Kpi label="Labor · Yesterday"
             value={data?.labor?.labor_pct != null ? `${data.labor.labor_pct}%` : q.isLoading ? "…" : "—"}
             foot={data?.labor?.labor_pct != null && data?.labor?.target_pct != null ? (
               data.labor.labor_pct > data.labor.target_pct
                 ? <Trend up good={false} text={`${Math.round((data.labor.labor_pct - data.labor.target_pct) * 10) / 10}% over ${data.labor.target_pct}% goal`} />
                 : <Trend up={false} good text={`under the ${data.labor.target_pct}% goal`} />
-            ) : <span className="text-zinc-400">Goal not set</span>} />
+            ) : <span className="text-zinc-400">Goal not set</span>}
+            sub={(data?.labor?.wtd_pct != null || data?.labor?.ptd_pct != null) && (
+              <>
+                {data!.labor!.wtd_pct != null && (
+                  <span>WTD <strong className={bandTone(data!.labor!.wtd_pct!, data!.labor!.wtd_target_pct)}>{data!.labor!.wtd_pct}%</strong></span>
+                )}
+                {data!.labor!.ptd_pct != null && (
+                  <span>PTD <strong className={bandTone(data!.labor!.ptd_pct!, data!.labor!.ptd_target_pct)}>{data!.labor!.ptd_pct}%</strong></span>
+                )}
+              </>
+            )} />
           <Kpi label="Ranker · Last Week"
             value={data?.rank ? <>#{data.rank.rank} <span className="text-2xl font-semibold text-zinc-400">of {data.rank.total}</span></> : q.isLoading ? "…" : "—"}
             foot={data?.rank ? <span className="text-zinc-500">across the company</span> : <span className="text-zinc-400">Ranking unavailable</span>} />
@@ -517,12 +540,17 @@ export function Chrome({ store, dateLabel, children }: {
   );
 }
 
-function Kpi({ label, value, foot }: { label: string; value: React.ReactNode; foot: React.ReactNode }) {
+// Green under goal, red over — for the WTD/PTD labor mini-figures.
+const bandTone = (v: number, target?: number | null) =>
+  target != null ? (v > target ? "text-red-600" : "text-emerald-600") : "text-zinc-600";
+
+function Kpi({ label, value, foot, sub }: { label: string; value: React.ReactNode; foot: React.ReactNode; sub?: React.ReactNode }) {
   return (
     <div className="px-8 py-7">
       <div className="text-[11px] font-bold uppercase tracking-[0.14em] text-zinc-400">{label}</div>
       <div className="mt-2 text-4xl font-extrabold tabular-nums tracking-tight text-zinc-900">{value}</div>
       <div className="mt-1.5 text-sm font-medium">{foot}</div>
+      {sub && <div className="mt-1 flex gap-4 text-[12.5px] tabular-nums text-zinc-400">{sub}</div>}
     </div>
   );
 }
