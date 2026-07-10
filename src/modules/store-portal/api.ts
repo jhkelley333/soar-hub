@@ -310,6 +310,9 @@ export function fetchPortalCalendar(): Promise<PortalCalendarInfo> {
 export function savePortalCalendar(url: string): Promise<PortalCalendarInfo & { ok: true }> {
   return adminRequest("admin-calendar-set", { method: "POST", body: JSON.stringify({ url }) });
 }
+export function resyncPortalCalendar(): Promise<PortalCalendarInfo & { ok: true }> {
+  return adminRequest("admin-calendar-resync", { method: "POST", body: "{}" });
+}
 
 export interface PortalReport { kind: string; message: string; reporter_name: string | null; status?: string; created_at: string }
 export function fetchPortalAdminSnapshot(storeId: string): Promise<PortalSnapshot & { reports: PortalReport[] }> {
