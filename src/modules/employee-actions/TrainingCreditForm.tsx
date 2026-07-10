@@ -5,7 +5,7 @@ import { Button } from "@/shared/ui/Button";
 import { Badge } from "@/shared/ui/Badge";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
-import { fetchMyStores, submitTrainingCredit, updateTrainingCredit } from "./api";
+import { fetchCreditBalance, fetchMyStores, submitTrainingCredit, updateTrainingCredit } from "./api";
 import {
   calcDayHours,
   CheckboxRow,
@@ -117,6 +117,8 @@ export function TrainingCreditForm({
       );
       qc.invalidateQueries({ queryKey: ["ea-list"] });
       qc.invalidateQueries({ queryKey: ["ea-queue"] });
+      qc.invalidateQueries({ queryKey: ["ea-credit-balance"] });
+      qc.invalidateQueries({ queryKey: ["ea-credit-register"] });
       setState({ ...EMPTY, store_number: defaultStore });
       onSubmitted();
     },
@@ -173,6 +175,18 @@ export function TrainingCreditForm({
     0
   );
 
+  // Live bank balance for the picked store — warns before the server blocks
+  // an overdraw. (Editing gives the request's own amount back, so the strict
+  // check stays server-side.)
+  const balanceQ = useQuery({
+    queryKey: ["ea-credit-balance", state.store_number],
+    queryFn: () => fetchCreditBalance(state.store_number),
+    enabled: !!state.store_number.trim(),
+    staleTime: 60_000,
+  });
+  const bal = balanceQ.data;
+  const overdraws = !isEditing && bal != null && total > bal.remaining + 0.005;
+
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       <Card className="border-t-4 border-accent">
@@ -185,6 +199,15 @@ export function TrainingCreditForm({
             reviewed by the DO and RVP before funds are charged to the store's training
             budget.
           </p>
+          {bal && (
+            <p className={`mt-1.5 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${
+              overdraws ? "bg-red-50 text-red-700 ring-red-200"
+                : bal.remaining < bal.budget * 0.15 ? "bg-amber-50 text-amber-800 ring-amber-200"
+                : "bg-emerald-50 text-emerald-700 ring-emerald-200"}`}>
+              Store #{state.store_number}: {fmtUSD(bal.remaining)} of {fmtUSD(bal.budget)} training credit left for {bal.year}
+              {overdraws ? ` — this request (${fmtUSD(total)}) overdraws it` : ""}
+            </p>
+          )}
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <StoreSelect
               id="tc-store"

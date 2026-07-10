@@ -154,3 +154,44 @@ export function withdrawEmployeeAction(
     body: JSON.stringify({ type, id, reason: reason || undefined }),
   });
 }
+
+// ── Training credit bank ─────────────────────────────────────────────
+// Every store gets a yearly budget (default $2,000) that training credit
+// requests draw down. Adjustments: positive = use recorded by hand
+// (historical backfill), negative = credit given back.
+export interface CreditRegisterRow {
+  store_number: string;
+  store_name: string | null;
+  budget: number;
+  used_requests: number;
+  used_adjustments: number;
+  used: number;
+  remaining: number;
+}
+export interface CreditRegisterResponse {
+  year: number;
+  default_budget: number;
+  can_adjust: boolean;
+  rows: CreditRegisterRow[];
+}
+export function fetchCreditRegister(year?: number): Promise<CreditRegisterResponse> {
+  return request(`${FN}?action=credit-register${year ? `&year=${year}` : ""}`);
+}
+export interface CreditBalance { year: number; budget: number; used: number; remaining: number }
+export function fetchCreditBalance(storeNumber: string, year?: number): Promise<CreditBalance> {
+  return request(`${FN}?action=credit-balance&store_number=${encodeURIComponent(storeNumber)}${year ? `&year=${year}` : ""}`);
+}
+export interface CreditLedgerResponse {
+  year: number;
+  requests: { id: string; employee_name: string; training_type: string; requested_amount: number; status: string; start_date: string | null; created_at: string }[];
+  adjustments: { id: string; amount: number; note: string | null; created_at: string }[];
+}
+export function fetchCreditLedger(storeNumber: string, year: number): Promise<CreditLedgerResponse> {
+  return request(`${FN}?action=credit-ledger&store_number=${encodeURIComponent(storeNumber)}&year=${year}`);
+}
+export function adjustCredit(input: { store_number: string; year: number; amount: number; note?: string }): Promise<{ ok: true; balance: CreditBalance }> {
+  return request(`${FN}?action=credit-adjust`, { method: "POST", body: JSON.stringify(input) });
+}
+export function setCreditBudget(input: { store_number: string; year: number; budget: number }): Promise<{ ok: true; balance: CreditBalance }> {
+  return request(`${FN}?action=credit-budget`, { method: "POST", body: JSON.stringify(input) });
+}
