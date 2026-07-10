@@ -18,6 +18,7 @@ import { listEmployeeActions } from "./api";
 import { TrainingCreditForm } from "./TrainingCreditForm";
 import { PtoRequestForm } from "./PtoRequestForm";
 import { ApprovalQueue } from "./ApprovalQueue";
+import { CreditBankPanel } from "./CreditBankPanel";
 import { RequestDetailDrawer } from "./RequestDetailDrawer";
 import { statusKind, waitingOn } from "./statusMeta";
 import type { PtoRow, TrainingCreditRow } from "./types";
@@ -88,7 +89,7 @@ function overlaps(rowStartIso: string | null, rowEndIso: string | null, fallback
   return true;
 }
 
-type Tab = "training" | "pto" | "history" | "approvals";
+type Tab = "training" | "pto" | "history" | "approvals" | "bank";
 
 const SUBMIT_ROLES = ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"];
 const APPROVER_ROLES = ["do", "sdo", "rvp", "admin"];
@@ -129,6 +130,7 @@ export function EmployeeActionsPage() {
     { value: "pto" as const, label: "PTO Request" },
     ...(canApprove ? [{ value: "approvals" as const, label: "Approvals" }] : []),
     { value: "history" as const, label: "History" },
+    ...(canSubmit ? [{ value: "bank" as const, label: "Credit Bank" }] : []),
   ];
 
   function editTrainingRow(row: TrainingCreditRow) {
@@ -194,6 +196,8 @@ export function EmployeeActionsPage() {
       {tab === "history" && (
         <HistoryList focus={focus} onConsumeFocus={() => setFocus(null)} onEditTraining={editTrainingRow} onEditPto={editPtoRow} />
       )}
+
+      {tab === "bank" && (canSubmit ? <CreditBankPanel /> : <NoAccess />)}
     </>
   );
 }

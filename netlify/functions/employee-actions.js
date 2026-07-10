@@ -502,6 +502,155 @@ function trainingWorkflowFields(user) {
   return { status: "Submitted" };
 }
 
+// ----------------------------------------------------------------------------
+// Training credit bank — every store gets a yearly budget (default 2000.00)
+// that requests draw down. A request counts against the year of its start
+// date (falling back to submission date) unless it is Rejected/Withdrawn.
+// training_credit_adjustments is the manual ledger: positive amount = use
+// recorded by hand (historical backfill), negative = credit given back.
+// ----------------------------------------------------------------------------
+const DEFAULT_TRAINING_BUDGET = 2000;
+const CREDIT_DEAD_STATUSES = new Set(["Rejected", "Withdrawn"]);
+const creditYearOf = (r) =>
+  parseInt(String(r.start_date || r.created_at || "").slice(0, 4), 10) || new Date().getFullYear();
+
+// Aggregate usage for a set of store numbers in one year.
+// → Map(store_number → { budget, used_requests, used_adjustments })
+async function creditUsage(supa, numbers, year) {
+  const usage = new Map();
+  const get = (n) => {
+    if (!usage.has(n)) usage.set(n, { budget: DEFAULT_TRAINING_BUDGET, used_requests: 0, used_adjustments: 0 });
+    return usage.get(n);
+  };
+  const { data: reqs } = await supa
+    .from("training_credit_requests")
+    .select("store_number, requested_amount, status, start_date, created_at")
+    .in("store_number", numbers)
+    .limit(10000);
+  for (const r of reqs ?? []) {
+    if (CREDIT_DEAD_STATUSES.has(r.status)) continue;
+    if (creditYearOf(r) !== year) continue;
+    get(String(r.store_number)).used_requests += Number(r.requested_amount) || 0;
+  }
+  // Best-effort before migration 0229 — the bank tables may not exist yet.
+  const { data: adjs } = await supa
+    .from("training_credit_adjustments")
+    .select("store_number, amount")
+    .in("store_number", numbers).eq("year", year).limit(5000);
+  for (const a of adjs ?? []) get(String(a.store_number)).used_adjustments += Number(a.amount) || 0;
+  const { data: buds } = await supa
+    .from("training_credit_budgets")
+    .select("store_number, budget")
+    .in("store_number", numbers).eq("year", year);
+  for (const b of buds ?? []) get(String(b.store_number)).budget = Number(b.budget) || DEFAULT_TRAINING_BUDGET;
+  return usage;
+}
+
+async function creditBalanceFor(supa, storeNumber, year) {
+  const usage = await creditUsage(supa, [String(storeNumber)], year);
+  const u = usage.get(String(storeNumber)) ?? { budget: DEFAULT_TRAINING_BUDGET, used_requests: 0, used_adjustments: 0 };
+  const used = round2(u.used_requests + u.used_adjustments);
+  return { year, budget: round2(u.budget), used, remaining: round2(u.budget - used) };
+}
+
+// Stores the caller's register covers (admin/org-wide read: every store).
+async function creditStoresFor(supa, user) {
+  if (user.role === "admin" || ORG_WIDE_READ.has(user.role)) {
+    const { data } = await supa.from("stores").select("number, name").eq("is_active", true).order("number");
+    return (data ?? []).map((s) => ({ number: String(s.number), name: s.name ?? null }));
+  }
+  const rows = await resolveVisibleStoreRows(supa, user.id);
+  return rows.map((s) => ({ number: String(s.number), name: s.name ?? null }));
+}
+
+async function creditRegister(supa, user, params) {
+  if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const year = parseInt(params?.year, 10) || new Date().getFullYear();
+  const stores = await creditStoresFor(supa, user);
+  if (!stores.length) return { year, default_budget: DEFAULT_TRAINING_BUDGET, can_adjust: user.role === "admin", rows: [] };
+  const usage = await creditUsage(supa, stores.map((s) => s.number), year);
+  return {
+    year,
+    default_budget: DEFAULT_TRAINING_BUDGET,
+    can_adjust: user.role === "admin",
+    rows: stores.map((s) => {
+      const u = usage.get(s.number) ?? { budget: DEFAULT_TRAINING_BUDGET, used_requests: 0, used_adjustments: 0 };
+      const used = round2(u.used_requests + u.used_adjustments);
+      return {
+        store_number: s.number,
+        store_name: s.name,
+        budget: round2(u.budget),
+        used_requests: round2(u.used_requests),
+        used_adjustments: round2(u.used_adjustments),
+        used,
+        remaining: round2(u.budget - used),
+      };
+    }),
+  };
+}
+
+async function creditBalance(supa, user, params) {
+  if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const storeNumber = sanitizeText(params?.store_number, 20);
+  if (!storeNumber) return { error: "Store is required.", status: 400 };
+  const scopeErr = await assertStoreInScope(supa, user, storeNumber);
+  if (scopeErr) return scopeErr;
+  const year = parseInt(params?.year, 10) || new Date().getFullYear();
+  return creditBalanceFor(supa, storeNumber, year);
+}
+
+async function creditLedger(supa, user, params) {
+  if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const storeNumber = sanitizeText(params?.store_number, 20);
+  if (!storeNumber) return { error: "Store is required.", status: 400 };
+  const scopeErr = await assertStoreInScope(supa, user, storeNumber);
+  if (scopeErr) return scopeErr;
+  const year = parseInt(params?.year, 10) || new Date().getFullYear();
+  const { data: reqs } = await supa
+    .from("training_credit_requests")
+    .select("id, employee_name, training_type, requested_amount, status, start_date, created_at")
+    .eq("store_number", storeNumber)
+    .order("created_at", { ascending: false }).limit(500);
+  const requests = (reqs ?? [])
+    .filter((r) => !CREDIT_DEAD_STATUSES.has(r.status) && creditYearOf(r) === year);
+  const { data: adjs } = await supa
+    .from("training_credit_adjustments")
+    .select("id, amount, note, created_at")
+    .eq("store_number", storeNumber).eq("year", year)
+    .order("created_at", { ascending: false }).limit(200);
+  return { year, requests, adjustments: adjs ?? [] };
+}
+
+async function creditAdjust(supa, user, body) {
+  if (user.role !== "admin") return { error: "Admins only.", status: 403 };
+  const storeNumber = sanitizeText(body?.store_number, 20);
+  const year = parseInt(body?.year, 10);
+  const amount = round2(num(body?.amount));
+  const note = sanitizeText(body?.note, 300) || null;
+  if (!storeNumber || !year) return { error: "Store and year are required.", status: 400 };
+  if (!amount || Math.abs(amount) > 100000) return { error: "Enter a non-zero amount.", status: 400 };
+  const { error } = await supa
+    .from("training_credit_adjustments")
+    .insert({ store_number: storeNumber, year, amount, note, created_by: user.id });
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, balance: await creditBalanceFor(supa, storeNumber, year) };
+}
+
+async function creditBudgetSet(supa, user, body) {
+  if (user.role !== "admin") return { error: "Admins only.", status: 403 };
+  const storeNumber = sanitizeText(body?.store_number, 20);
+  const year = parseInt(body?.year, 10);
+  const budget = round2(num(body?.budget));
+  if (!storeNumber || !year) return { error: "Store and year are required.", status: 400 };
+  if (budget < 0 || budget > 1000000) return { error: "Enter a budget of $0 or more.", status: 400 };
+  const { error } = await supa
+    .from("training_credit_budgets")
+    .upsert({ store_number: storeNumber, year, budget, updated_by: user.id, updated_at: new Date().toISOString() },
+      { onConflict: "store_number,year" });
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, balance: await creditBalanceFor(supa, storeNumber, year) };
+}
+
 async function submitTraining(supa, user, body) {
   if (!SUBMIT_ROLES.has(user.role)) {
     return { error: "You don't have permission to submit a training credit request.", status: 403 };
@@ -513,6 +662,16 @@ async function submitTraining(supa, user, body) {
 
   const built = buildTrainingFields(body);
   if (built.error) return built;
+
+  // The bank: block a request that overdraws the store's yearly credit.
+  const year = creditYearOf({ start_date: built.fields.start_date });
+  const bal = await creditBalanceFor(supa, storeNumber, year);
+  if (built.meta.requestedAmount > bal.remaining + 0.005) {
+    return {
+      error: `Store ${storeNumber} has $${bal.remaining.toFixed(2)} of training credit left for ${year} (of $${bal.budget.toFixed(2)}) — this request is $${built.meta.requestedAmount.toFixed(2)}. Trim the request or have an admin adjust the store's credit bank.`,
+      status: 422,
+    };
+  }
 
   const insertRow = {
     submitter_id: user.id,
@@ -593,6 +752,19 @@ async function updateTraining(supa, user, body) {
 
   const built = buildTrainingFields(body);
   if (built.error) return built;
+
+  // Bank check — the request's own current amount goes back into the pool
+  // before testing the new total (same store + year only).
+  const newYear = creditYearOf({ start_date: built.fields.start_date });
+  const bal = await creditBalanceFor(supa, storeNumber, newYear);
+  const giveBack = String(existing.store_number) === String(storeNumber) && creditYearOf(existing) === newYear
+    ? Number(existing.requested_amount) || 0 : 0;
+  if (built.meta.requestedAmount > bal.remaining + giveBack + 0.005) {
+    return {
+      error: `Store ${storeNumber} has $${round2(bal.remaining + giveBack).toFixed(2)} of training credit available for ${newYear} — this request is $${built.meta.requestedAmount.toFixed(2)}. Trim it or have an admin adjust the store's credit bank.`,
+      status: 422,
+    };
+  }
 
   const { error } = await supa
     .from("training_credit_requests")
@@ -1463,10 +1635,15 @@ export const handler = async (event) => {
       if (action === "list") return unwrap(await listRequests(supa, user));
       if (action === "queue") return unwrap(await listQueue(supa, user));
       if (action === "my-stores") return unwrap(await listMyStores(supa, user));
+      if (action === "credit-register") return unwrap(await creditRegister(supa, user, params));
+      if (action === "credit-balance") return unwrap(await creditBalance(supa, user, params));
+      if (action === "credit-ledger") return unwrap(await creditLedger(supa, user, params));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {
       const body = event.body ? JSON.parse(event.body) : {};
+      if (action === "credit-adjust") return unwrap(await creditAdjust(supa, user, body));
+      if (action === "credit-budget") return unwrap(await creditBudgetSet(supa, user, body));
       if (action === "submit-training") return unwrap(await submitTraining(supa, user, body));
       if (action === "submit-pto") return unwrap(await submitPto(supa, user, body));
       if (action === "update-training") return unwrap(await updateTraining(supa, user, body));
