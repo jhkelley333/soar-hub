@@ -147,7 +147,7 @@ export function PortalBody({ data, isLoading, access, onCall, onReport, onTicket
               </span>
             )}
           </div>
-          <p className="mt-3 min-h-[3rem] text-[15px] leading-relaxed text-zinc-500">
+          <p className="mt-3 line-clamp-4 flex-1 text-[15px] leading-relaxed text-zinc-500">
             {q.isLoading ? "Loading…" : data && data.work_orders.latest.length > 0
               ? data.work_orders.latest.map((t) => `${t.title} — ${t.status}.`).join(" ")
               : "No open tickets. File one the moment something breaks."}
@@ -162,7 +162,7 @@ export function PortalBody({ data, isLoading, access, onCall, onReport, onTicket
         </Card>
 
         {/* Notes about today — opens the full day sheet */}
-        <button onClick={() => setShowDay("full")} className="text-left">
+        <button onClick={() => setShowDay("full")} className="h-full text-left">
           <Card>
             <div className="flex items-center justify-between">
               <div>
@@ -173,12 +173,12 @@ export function PortalBody({ data, isLoading, access, onCall, onReport, onTicket
                 <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-bold text-amber-700">{data.notes.length} new</span>
               )}
             </div>
-            <ul className="mt-4 flex min-h-[3rem] flex-col gap-2.5">
+            <ul className="mt-4 flex flex-1 flex-col gap-2.5">
               {q.isLoading ? <li className="text-[15px] text-zinc-400">Loading…</li>
-                : data && data.notes.length > 0 ? data.notes.slice(0, 4).map((n, i) => (
+                : data && data.notes.length > 0 ? data.notes.slice(0, 3).map((n, i) => (
                   <li key={i} className="flex items-start gap-2.5">
                     <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full", n.pinned ? "bg-red-500" : i % 2 === 0 ? "bg-emerald-500" : "bg-amber-400")} />
-                    <span className="text-[15px] leading-snug text-zinc-700">{n.title}</span>
+                    <span className="line-clamp-2 text-[15px] leading-snug text-zinc-700">{n.title}</span>
                   </li>
                 )) : <li className="text-[15px] text-zinc-400">Nothing posted for today yet.</li>}
             </ul>
@@ -483,7 +483,7 @@ function Trend({ up, good, text }: { up: boolean; good: boolean; text: string })
 }
 
 function Card({ children }: { children: React.ReactNode }) {
-  return <div className="rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">{children}</div>;
+  return <div className="flex h-full flex-col rounded-2xl border border-zinc-200 bg-white p-6 shadow-sm">{children}</div>;
 }
 
 // ── What's Cooking ────────────────────────────────────────────────────────────
