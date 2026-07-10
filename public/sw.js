@@ -16,7 +16,7 @@
 // Bump the version suffix any time we ship a change users need to
 // pick up immediately (e.g. a stuck-cache fix). The activate handler
 // below purges every cache whose name doesn't match this one.
-const CACHE_NAME = "soar-hub-v14";
+const CACHE_NAME = "soar-hub-v15";
 
 // Precache the bare minimum the app needs to render an offline shell.
 // Vite hashes JS/CSS bundle filenames, so we let runtime caching pick
@@ -207,6 +207,11 @@ self.addEventListener("fetch", (event) => {
   // request would never reach the function, so the QR wouldn't redirect AND
   // its scan wouldn't be counted. Let it pass straight through to the network.
   if (url.pathname.startsWith("/q/")) return;
+
+  // Skip standalone static pages that are NOT the SPA (e.g. /preview/, the
+  // shareable Command Center demo). Serving the app shell here would boot
+  // the React app — and its login screen — instead of the static file.
+  if (url.pathname === "/preview" || url.pathname.startsWith("/preview/")) return;
 
   // Network-first for navigation / HTML document requests.
   //
