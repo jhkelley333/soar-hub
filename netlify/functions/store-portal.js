@@ -411,6 +411,24 @@ async function adminCalendarGet(supa) {
   };
 }
 
+// Force a fresh fetch of the linked feed right now, ignoring the 30-minute
+// cache — for "I just added events, show them".
+async function adminCalendarResync(supa, user) {
+  const s = await getSetting(supa, CAL_SETTING_KEY);
+  if (!s?.url) return { error: "No calendar linked yet.", status: 400 };
+  const r = await fetchIcs(s.url);
+  if (r.error === "not-ics") return { error: "The link no longer returns a calendar feed. Re-check the iCal/ICS address.", status: 422 };
+  if (!r.events) return { error: `Could not read the calendar. ${r.error}`, status: 422 };
+  await setSetting(supa, CAL_SETTING_KEY, {
+    ...s, events: r.events.slice(0, 100), cached_at: new Date().toISOString(),
+  }, user.id);
+  const upcoming = upcomingEvents(r.events);
+  return {
+    ok: true, url: s.url, last_synced: new Date().toISOString(),
+    event_count: r.events.length, upcoming_count: upcoming.length, upcoming: upcoming.slice(0, 6),
+  };
+}
+
 async function adminCalendarSet(supa, user, body) {
   let url = String(body?.url || "").trim().replace(/^webcal:\/\//i, "https://");
   if (!url) {
@@ -1305,6 +1323,7 @@ export const handler = async (event) => {
     if (action === "admin-snapshot") return unwrap(await adminSnapshot(supa, params));
     if (action === "admin-calendar-get") return unwrap(await adminCalendarGet(supa));
     if (action === "admin-calendar-set") return unwrap(await adminCalendarSet(supa, user, body));
+    if (action === "admin-calendar-resync") return unwrap(await adminCalendarResync(supa, user));
     if (action === "admin-links") return unwrap(await adminLinksList(supa));
     if (action === "admin-link-save") return unwrap(await adminLinkSave(supa, user, body));
     if (action === "admin-link-upload") return unwrap(await adminLinkUpload(supa, user, body));

@@ -4,14 +4,14 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, Check, Copy, Eye, MonitorSmartphone, RotateCcw, XCircle } from "lucide-react";
+import { CalendarDays, Check, Copy, Eye, MonitorSmartphone, RefreshCw, RotateCcw, XCircle } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import {
   fetchPortalAdminList, fetchPortalCalendar, mintPortalToken, resetPortalDevice,
-  revokePortalToken, savePortalCalendar,
+  resyncPortalCalendar, revokePortalToken, savePortalCalendar,
 } from "./api";
 import { QuickLinksManager } from "./QuickLinksManager";
 
@@ -151,6 +151,14 @@ function WhatsCookingSettings() {
     },
     onError: (e: unknown) => toast.push((e as Error)?.message ?? "Could not save.", "error"),
   });
+  const resync = useMutation({
+    mutationFn: resyncPortalCalendar,
+    onSuccess: (r) => {
+      toast.push(`Resynced — ${r.upcoming_count} upcoming event${r.upcoming_count === 1 ? "" : "s"} (${r.event_count} total).`, "success");
+      qc.invalidateQueries({ queryKey: ["store-portal-calendar"] });
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Could not resync.", "error"),
+  });
 
   return (
     <div className="mt-10">
@@ -169,6 +177,12 @@ function WhatsCookingSettings() {
           className="rounded-lg bg-midnight px-4 py-2 text-xs font-semibold text-white transition hover:bg-midnight/90 disabled:opacity-40">
           {save.isPending ? "Checking…" : value.trim() ? "Save" : "Unlink"}
         </button>
+        {q.data?.url && (
+          <button disabled={resync.isPending} onClick={() => resync.mutate()}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-xs font-semibold text-ink-2 transition hover:border-accent disabled:opacity-40">
+            <RefreshCw className={cn("h-3.5 w-3.5", resync.isPending && "animate-spin")} /> {resync.isPending ? "Syncing…" : "Resync now"}
+          </button>
+        )}
       </div>
       {q.data?.url && (
         <>
