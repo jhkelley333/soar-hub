@@ -198,3 +198,11 @@ export function adjustCredit(input: { store_number: string; year: number; amount
 export function setCreditBudget(input: { store_number: string; year: number; budget: number }): Promise<{ ok: true; balance: CreditBalance }> {
   return request(`${FN}?action=credit-budget`, { method: "POST", body: JSON.stringify(input) });
 }
+
+// GM PTO daily labor credit rate (default $176/day = $880 per 5-day week).
+export function fetchGmPtoRate(): Promise<{ amount: number }> {
+  return request(`${FN}?action=gm-pto-rate`);
+}
+export function setGmPtoRate(amount: number): Promise<{ ok: true; amount: number }> {
+  return request(`${FN}?action=gm-pto-rate-set`, { method: "POST", body: JSON.stringify({ amount }) });
+}
