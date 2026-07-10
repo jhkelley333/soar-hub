@@ -89,11 +89,13 @@ export interface PtoRow {
   action_needed?: string | null;
 }
 
-// One hourly vacation day. amount = hours x hourly wage (server-computed).
+// One vacation day. Hourly path: amount = hours x hourly wage (server-
+// computed). GM path: date only (hours/amount absent) — each approved day
+// credits the store's labor chart.
 export interface PtoVacationDay {
   date: string;
-  hours: number;
-  amount: number;
+  hours?: number | null;
+  amount?: number | null;
 }
 
 // Pending-approval queue for an approver (own submissions excluded).
@@ -149,14 +151,17 @@ export interface PtoVacationDayInput {
   hours: string;
 }
 
-// The position decides which fields are populated. GM uses date range +
-// days_used; hourly positions use hourly_wage + vacation_days + hours_worked.
+// The position decides which fields are populated. GM picks the exact days
+// out (gm_days — these drive the labor credit); hourly positions use
+// hourly_wage + vacation_days + hours_worked.
 export interface PtoInput {
   store_number: string;
   employee_name: string;
   position: string;
   send_copy: boolean;
   // GM path
+  gm_days?: string[];
+  // GM legacy path (old clients)
   pto_start_date?: string;
   pto_end_date?: string;
   days_used?: string;

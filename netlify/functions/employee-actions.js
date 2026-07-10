@@ -837,8 +837,44 @@ function buildPtoFields(body) {
   const sendCopy = body?.send_copy === true || body?.send_copy === "true";
 
   if (position === "GM") {
+    // GMs pick the exact days they'll be out (gm_days) — those dates drive
+    // the labor credit (each approved day credits the store's chart, like
+    // training credit). Legacy start/end + count still accepted from old
+    // clients.
+    const rawGmDays = Array.isArray(body?.gm_days) ? body.gm_days : [];
+    const gmDays = [...new Set(rawGmDays.map((d) => sanitizeDateInput(d)).filter(Boolean))].sort();
+    if (gmDays.length) {
+      if (gmDays.length > 31) {
+        return { error: "That's more than 31 PTO days — double-check the dates.", status: 400 };
+      }
+      return {
+        fields: {
+          employee_name: employeeName,
+          position,
+          send_copy: sendCopy,
+          pto_start_date: gmDays[0],
+          pto_end_date: gmDays[gmDays.length - 1],
+          days_used: gmDays.length,
+          vacation_days: gmDays.map((date) => ({ date })),
+          hourly_wage: null,
+          vacation_hours: null,
+          hours_worked: null,
+          amount: null,
+        },
+        meta: {
+          employeeName,
+          position,
+          auditDetail: { position, days_used: gmDays.length, days: gmDays },
+          summary:
+            `Employee: ${employeeName} (${position})\n` +
+            `Days out (${gmDays.length}): ${gmDays.join(", ")}\n` +
+            `Once fully approved, each day credits the store's labor chart.\n\n`,
+        },
+      };
+    }
+
     const startDate = sanitizeDateInput(body?.pto_start_date);
-    if (!startDate) return { error: "PTO Start Date is required (YYYY-MM-DD).", status: 400 };
+    if (!startDate) return { error: "Add the days you'll be out.", status: 400 };
     const endDate = sanitizeDateInput(body?.pto_end_date);
     if (!endDate) return { error: "PTO End Date is required (YYYY-MM-DD).", status: 400 };
     if (endDate < startDate) {

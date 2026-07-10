@@ -8,7 +8,6 @@ import { useAuth } from "@/auth/AuthProvider";
 import { fetchMyStores, submitPto, updatePtoRequest } from "./api";
 import {
   CheckboxRow,
-  DateField,
   NumberField,
   pickDefaultStoreNumber,
   SelectField,
@@ -22,8 +21,6 @@ const POSITIONS = ["GM", "Associate Manager", "First Assistant"];
 const WEEKLY_HOUR_CAP = 40;
 const MAX_HOURS_PER_DAY = 8;
 
-// Half-day granularity up to three weeks of PTO (GM day-based path).
-const DAY_OPTIONS = Array.from({ length: 30 }, (_, i) => String((i + 1) * 0.5));
 
 function fmtUSD(n: number): string {
   return (Number(n) || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
@@ -37,7 +34,9 @@ interface State {
   store_number: string;
   employee_name: string;
   position: string;
-  // GM path
+  // GM path — the exact days out (drives the labor credit)
+  gm_days: string[];
+  // GM legacy display only
   pto_start_date: string;
   pto_end_date: string;
   days_used: string;
@@ -52,6 +51,7 @@ const EMPTY: State = {
   store_number: "",
   employee_name: "",
   position: "",
+  gm_days: [""],
   pto_start_date: "",
   pto_end_date: "",
   days_used: "",
@@ -63,17 +63,19 @@ const EMPTY: State = {
 
 function stateFromRow(row: PtoRow): State {
   const isGm = row.position === "GM";
+  const gmDays = isGm ? (row.vacation_days ?? []).map((d) => d.date).filter(Boolean) : [];
   return {
     store_number: row.store_number,
     employee_name: row.employee_name,
     position: row.position,
+    gm_days: gmDays.length ? gmDays : [""],
     pto_start_date: isGm ? row.pto_start_date : "",
     pto_end_date: isGm ? row.pto_end_date : "",
     days_used: row.days_used != null ? String(row.days_used) : "",
     hourly_wage: row.hourly_wage != null ? String(row.hourly_wage) : "",
-    vacation_days: (row.vacation_days ?? []).map((d) => ({
+    vacation_days: isGm ? [] : (row.vacation_days ?? []).map((d) => ({
       date: d.date,
-      hours: String(d.hours),
+      hours: String(d.hours ?? ""),
     })),
     hours_worked: row.hours_worked != null ? String(row.hours_worked) : "",
     send_copy: row.send_copy,
@@ -192,20 +194,16 @@ export function PtoRequestForm({
       return;
     }
 
-    // GM path
-    if (!state.pto_start_date.trim()) return setError("PTO Start Date is required.");
-    if (!state.pto_end_date.trim()) return setError("PTO End Date is required.");
-    if (state.pto_end_date < state.pto_start_date)
-      return setError("PTO End Date cannot be before the Start Date.");
-    if (!state.days_used.trim()) return setError("How Many Days PTO Used is required.");
+    // GM path — exact days out.
+    const days = state.gm_days.map((d) => d.trim()).filter(Boolean);
+    if (!days.length) return setError("Add at least one day you'll be out.");
+    if (new Set(days).size !== days.length) return setError("Remove the duplicate day.");
 
     submit.mutate({
       store_number: state.store_number,
       employee_name: state.employee_name,
       position: state.position,
-      pto_start_date: state.pto_start_date,
-      pto_end_date: state.pto_end_date,
-      days_used: state.days_used,
+      gm_days: days,
       send_copy: state.send_copy,
     });
   }
@@ -248,30 +246,42 @@ export function PtoRequestForm({
             />
 
             {state.position && !hourly && (
-              <>
-                <DateField
-                  id="pto-start"
-                  label="PTO Start Date"
-                  required
-                  value={state.pto_start_date}
-                  onChange={(v) => set("pto_start_date", v)}
-                />
-                <DateField
-                  id="pto-end"
-                  label="PTO End Date"
-                  required
-                  value={state.pto_end_date}
-                  onChange={(v) => set("pto_end_date", v)}
-                />
-                <SelectField
-                  id="pto-days"
-                  label="How Many Days PTO Used"
-                  required
-                  value={state.days_used}
-                  onChange={(v) => set("days_used", v)}
-                  options={DAY_OPTIONS}
-                />
-              </>
+              <div className="sm:col-span-2 lg:col-span-3">
+                <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-3">
+                  <div className="text-xs font-semibold text-zinc-700">
+                    Days you'll be out <span className="text-sonic">*</span>
+                  </div>
+                  <p className="mt-0.5 text-xs text-zinc-500">
+                    Pick each day. Once fully approved, every day credits the store's labor chart
+                    — just like training credit (currently $176.00/day, $880/week).
+                  </p>
+                  <div className="mt-2 flex flex-col gap-1.5">
+                    {state.gm_days.map((d, i) => (
+                      <div key={i} className="flex items-center gap-1.5">
+                        <input
+                          type="date"
+                          value={d}
+                          onChange={(e) => set("gm_days", state.gm_days.map((x, j) => (j === i ? e.target.value : x)))}
+                          className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-zinc-900 focus:border-accent focus:outline-none"
+                        />
+                        {state.gm_days.length > 1 && (
+                          <button type="button" onClick={() => set("gm_days", state.gm_days.filter((_, j) => j !== i))}
+                            className="rounded-md px-2 py-1 text-xs font-semibold text-zinc-400 hover:bg-red-50 hover:text-red-600">
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                    <button type="button" onClick={() => set("gm_days", [...state.gm_days, ""])}
+                      className="w-fit rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 hover:border-accent">
+                      + Add another day
+                    </button>
+                  </div>
+                  <p className="mt-2 text-xs font-semibold text-zinc-600">
+                    {state.gm_days.filter((d) => d.trim()).length} day(s) selected
+                  </p>
+                </div>
+              </div>
             )}
 
             {hourly && (

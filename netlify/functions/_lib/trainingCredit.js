@@ -55,6 +55,74 @@ export async function loadTrainingCreditDates(supa, storeNumbers) {
   return map;
 }
 
+// ── GM PTO labor credit ──────────────────────────────────────────────────────
+// A GM on approved PTO credits the store's labor chart the same way training
+// does: a fixed dollar amount per selected PTO day (default 176.00 = 880 for
+// a 5-day week), rate adjustable in ea_settings.gm_pto_daily_credit.
+const GM_PTO_DEFAULT_DAILY = 176;
+
+async function gmPtoDailyRate(supa) {
+  try {
+    const { data } = await supa.from("ea_settings")
+      .select("value").eq("key", "gm_pto_daily_credit").maybeSingle();
+    const amt = Number(data?.value?.amount);
+    return isFinite(amt) && amt > 0 ? amt : GM_PTO_DEFAULT_DAILY;
+  } catch { return GM_PTO_DEFAULT_DAILY; }
+}
+
+// A request's PTO days → [{date, amount, hours}]. New requests carry explicit
+// vacation_days [{date}]; legacy GM rows (start/end + days_used only) credit
+// consecutive days from the start date, days_used long, capped at the end.
+function ptoCreditDates(req, rate) {
+  const picked = Array.isArray(req.vacation_days)
+    ? req.vacation_days.filter((d) => d && d.date).map((d) => String(d.date).slice(0, 10))
+    : [];
+  if (picked.length) return picked.map((date) => ({ date, amount: rate, hours: 0 }));
+  const startMs = parseIso(req.pto_start_date);
+  if (startMs == null) return [];
+  const endMs = parseIso(req.pto_end_date) ?? startMs;
+  const n = Math.min(31, Math.max(0, Math.round(numv(req.days_used))));
+  const out = [];
+  for (let i = 0, ms = startMs; i < n && ms <= endMs; i++, ms += DAY) {
+    out.push({ date: isoOf(ms), amount: rate, hours: 0 });
+  }
+  return out;
+}
+
+export async function loadGmPtoCreditDates(supa, storeNumbers) {
+  const map = new Map();
+  if (!storeNumbers.length) return map;
+  const rate = await gmPtoDailyRate(supa);
+  const { data } = await supa
+    .from("pto_requests")
+    .select("store_number, position, pto_start_date, pto_end_date, days_used, vacation_days, status, approved_at")
+    .in("store_number", storeNumbers)
+    .eq("position", "GM")
+    .not("approved_at", "is", null)
+    .neq("status", "Withdrawn");
+  for (const req of data || []) {
+    const sn = String(req.store_number);
+    const arr = map.get(sn) || [];
+    for (const c of ptoCreditDates(req, rate)) arr.push(c);
+    if (arr.length) map.set(sn, arr);
+  }
+  return map;
+}
+
+// All labor credits for the given stores: training + GM PTO, one merged map
+// for applyCreditsToRows.
+export async function loadLaborCredits(supa, storeNumbers) {
+  const [tc, pto] = await Promise.all([
+    loadTrainingCreditDates(supa, storeNumbers),
+    loadGmPtoCreditDates(supa, storeNumbers),
+  ]);
+  for (const [sn, arr] of pto) {
+    const cur = tc.get(sn) || [];
+    tc.set(sn, cur.concat(arr));
+  }
+  return tc;
+}
+
 // Subtract each store's credit from its labor rows, per band, using each row's
 // own business_date to define the Daily / WTD / PTD windows. Mutates the rows
 // (cost, hours, recomputed labor_pct) and stamps r._tc for display.
