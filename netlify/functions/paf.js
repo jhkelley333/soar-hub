@@ -93,10 +93,20 @@ const BONUS_BYPASS_ROLES = new Set(["rvp", "vp", "coo", "admin"]);
 // (still scope-checked). The original submitter can always resubmit their own.
 const ON_BEHALF_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
 
+// Pay Adjustment (Salary) — SDO/RVP submit a salary change for a GM/DO/SDO;
+// the VP approves it (reusing the SDO-approval machinery: same approver +
+// decision columns, distinct "Pending VP Approval" status). VP and COO are
+// copied on submission.
+const PAY_ADJ_SALARY = "Pay Adjustment (Salary)";
+const PAY_ADJ_SUBMIT_ROLES = new Set(["sdo", "rvp", "admin"]);
+const PAY_ADJ_ROLES = new Set(["GM", "DO", "SDO"]);
+const APPROVAL_PENDING_STATUSES = ["Pending SDO Approval", "Pending VP Approval"];
+
 // Allowed status values (mirrors form_config.lists.statuses).
 const STATUSES = new Set([
   "Pending",
   "Pending SDO Approval",
+  "Pending VP Approval",
   "Approved",
   "Rejected",
   "Needs Approval",
@@ -115,6 +125,7 @@ const PROCESSABLE_STATUSES = new Set(["Pending", "Approved", "Needs Info"]);
 const REJECTABLE_STATUSES = new Set([
   "Pending",
   "Pending SDO Approval",
+  "Pending VP Approval",
   "Approved",
   "Needs Approval",
   "Needs Info",
@@ -122,11 +133,11 @@ const REJECTABLE_STATUSES = new Set([
 
 // Statuses a PAF can be edited from: rejected (the original flow), or still
 // awaiting a decision (pending). Once Approved/Processed it's locked.
-const EDITABLE_STATUSES = new Set(["Rejected", "Pending", "Pending SDO Approval"]);
+const EDITABLE_STATUSES = new Set(["Rejected", "Pending", "Pending SDO Approval", "Pending VP Approval"]);
 
 // Statuses from which the submitter may delete their OWN PAF (before anyone
 // has actioned it). Admins can delete any non-archived PAF.
-const SUBMITTER_DELETABLE_STATUSES = new Set(["Pending", "Pending SDO Approval"]);
+const SUBMITTER_DELETABLE_STATUSES = new Set(["Pending", "Pending SDO Approval", "Pending VP Approval"]);
 
 // Light in-process cache for the form config so list/submit don't hit
 // the DB every call. Same TTL as paf-config.js.
@@ -254,6 +265,31 @@ async function sendEmailViaResend({ to, subject, text }) {
   }
 }
 
+// Built-in templates for keys that may not exist in older form_config
+// versions (config entries with the same key override these).
+const FALLBACK_TEMPLATES = {
+  PAY_ADJ_VP_APPROVAL_REQUEST: {
+    subject: "PAF needs your approval — {{EMPLOYEE}} ({{ROLE}} salary adjustment)",
+    body:
+      "A Pay Adjustment (Salary) PAF needs your approval.\n\n" +
+      "Employee: {{EMPLOYEE}}\nRole: {{ROLE}}\nNew salary: {{NEW_SALARY}}\n" +
+      "New salary start date: {{START_DATE}}\nSubmitted by: {{SUBMITTER}}\n\n" +
+      "Review it in SOAR Hub under PAF.",
+  },
+  PAY_ADJ_VP_APPROVED: {
+    subject: "Pay adjustment approved — {{EMPLOYEE}}",
+    body:
+      "{{APPROVER}} approved the salary pay adjustment for {{EMPLOYEE}} ({{ROLE}}).\n" +
+      "It has moved to the Payroll queue.",
+  },
+  PAY_ADJ_VP_REJECTED: {
+    subject: "Pay adjustment rejected — {{EMPLOYEE}}",
+    body:
+      "{{APPROVER}} rejected the salary pay adjustment for {{EMPLOYEE}} ({{ROLE}}).\n\n" +
+      "Reason: {{REASON}}",
+  },
+};
+
 // Convenience: pull the named template from the active config and send.
 async function sendPafEmail(supa, { templateKey, to, vars }) {
   const recipients = Array.isArray(to) ? to.filter(Boolean) : to ? [to] : [];
@@ -261,7 +297,7 @@ async function sendPafEmail(supa, { templateKey, to, vars }) {
   try {
     const cfg = await getActiveConfig(supa);
     if (cfg.error) return { skipped: true, error: cfg.error };
-    const template = cfg.config_json?.emailTemplates?.[templateKey];
+    const template = cfg.config_json?.emailTemplates?.[templateKey] || FALLBACK_TEMPLATES[templateKey];
     if (!template?.subject || !template?.body) {
       console.warn(`[paf] template "${templateKey}" missing in active config`);
       return { skipped: true };
@@ -286,6 +322,17 @@ async function payrollEmails(supa) {
     .from("profiles")
     .select("email")
     .eq("role", "payroll")
+    .eq("is_active", true);
+  return (data ?? []).map((p) => p.email).filter(Boolean);
+}
+
+// Emails of every active profile holding one of the given roles (e.g.
+// ["vp", "coo"] for the pay-adjustment copy list).
+async function rolesEmails(supa, roles) {
+  const { data } = await supa
+    .from("profiles")
+    .select("email")
+    .in("role", roles)
     .eq("is_active", true);
   return (data ?? []).map((p) => p.email).filter(Boolean);
 }
@@ -715,6 +762,7 @@ async function buildPafRowFromBody(supa, user, body) {
   // Demotion when an SDO+ submitter marks it not applicable.
   const driveInWaived =
     submitCategory === "New Hire (Salary Leader)" ||
+    submitCategory === PAY_ADJ_SALARY ||
     (submitCategory === "Demotion" &&
       DRIVEIN_OVERRIDE_ROLES.has(user.role) &&
       (body?.drivein_na === "yes" || body?.drivein_na === true));
@@ -758,6 +806,24 @@ async function buildPafRowFromBody(supa, user, body) {
   if (!employeeName) return { error: "employee_name is required.", status: 400 };
 
   const category = sanitizeText(body?.category, 100);
+
+  // Pay Adjustment (Salary): SDO/RVP only, and its custom fields are
+  // required (role of the person being adjusted, the new salary, and when
+  // it starts). VP approval is routed later.
+  let paRole = null, paNewSalary = null, paStartDate = null;
+  if (category === PAY_ADJ_SALARY) {
+    if (!PAY_ADJ_SUBMIT_ROLES.has(user.role)) {
+      return { error: "Only SDO/RVP can submit a Pay Adjustment (Salary).", status: 403 };
+    }
+    paRole = sanitizeText(body?.pa_role, 20);
+    if (!PAY_ADJ_ROLES.has(paRole)) {
+      return { error: "pa_role must be GM, DO, or SDO.", status: 400 };
+    }
+    paNewSalary = num(body?.pa_new_salary);
+    if (!(paNewSalary > 0)) return { error: "New salary is required.", status: 400 };
+    paStartDate = sanitizeDateInput(body?.pa_start_date);
+    if (!paStartDate) return { error: "New salary start date is required (YYYY-MM-DD).", status: 400 };
+  }
   if (!category) return { error: "category is required.", status: 400 };
 
   const explanation = sanitizeText(body?.explanation, 5000);
@@ -873,6 +939,11 @@ async function buildPafRowFromBody(supa, user, body) {
     referred_employee_name: sanitizeText(body?.referred_employee_name, 200) || null,
     referral_start_date: sanitizeDateInput(body?.referral_start_date),
 
+    // Pay Adjustment (Salary)
+    pa_role: paRole,
+    pa_new_salary: paNewSalary,
+    pa_start_date: paStartDate,
+
     status: "Pending",
   };
 
@@ -884,6 +955,15 @@ async function buildPafRowFromBody(supa, user, body) {
 // not whoever is editing — so a DO's bonus still routes to the SDO even
 // when an SDO resubmits it on the DO's behalf.
 async function applyBonusRouting(supa, submitterRole, row, driveIn, category) {
+  if (category === PAY_ADJ_SALARY) {
+    // Salary adjustments for GM/DO/SDO are approved by the VP. Reuses the
+    // SDO-approval columns with a distinct status.
+    let approverId = await resolveVpApprover(supa);
+    if (!approverId) approverId = await resolveAdminFallback(supa);
+    row.status = "Pending VP Approval";
+    row.sdo_approver_id = approverId;
+    return;
+  }
   if (category === "Bonus" && !BONUS_BYPASS_ROLES.has(submitterRole)) {
     let approverId = await resolveBonusApprover(supa, driveIn, submitterRole);
     if (!approverId) approverId = await resolveAdminFallback(supa);
@@ -895,6 +975,16 @@ async function applyBonusRouting(supa, submitterRole, row, driveIn, category) {
   }
 }
 
+// The VP who approves salary pay adjustments (first active VP; COO backup).
+async function resolveVpApprover(supa) {
+  for (const role of ["vp", "coo"]) {
+    const { data } = await supa
+      .from("profiles").select("id").eq("role", role).eq("is_active", true).limit(1);
+    if (data?.[0]?.id) return data[0].id;
+  }
+  return null;
+}
+
 // Best-effort routing-aware notification — shared by submit + resubmit.
 // `submitterDisplay` is the PAF's OWNER (not the editor) so the "from"
 // person in the email reads correctly on an on-behalf resubmit.
@@ -903,6 +993,26 @@ async function notifyPafRouted(supa, submitterDisplay, row, ctx) {
   // copied on PAF activity in their own downline — see _lib/pafWatchers.js.
   const watchers = await resolvePafWatchers(supa, ctx.driveIn);
   const watcherEmails = watchers.map((w) => w.email).filter(Boolean);
+
+  if (row.status === "Pending VP Approval") {
+    // Approval request to the VP, with the VP + COO copy list the policy
+    // asks for.
+    const approver = await profileById(supa, row.sdo_approver_id);
+    const copyList = await rolesEmails(supa, ["vp", "coo"]);
+    const to = [approver?.email, ...copyList, ...watcherEmails].filter(Boolean);
+    await sendPafEmail(supa, {
+      templateKey: "PAY_ADJ_VP_APPROVAL_REQUEST",
+      to: [...new Set(to)],
+      vars: {
+        EMPLOYEE: ctx.employeeName,
+        ROLE: row.pa_role ?? "",
+        NEW_SALARY: fmtMoney(row.pa_new_salary),
+        START_DATE: row.pa_start_date ?? "",
+        SUBMITTER: submitterDisplay,
+      },
+    });
+    return;
+  }
 
   if (row.status === "Pending SDO Approval") {
     const approver = await profileById(supa, row.sdo_approver_id);
@@ -1371,7 +1481,7 @@ async function listSdoQueue(supa, user) {
   let q = supa
     .from("paf_submissions")
     .select("*")
-    .eq("status", "Pending SDO Approval")
+    .in("status", APPROVAL_PENDING_STATUSES)
     .eq("archived", false)
     .order("created_at", { ascending: false });
   if (!isAdmin) q = q.eq("sdo_approver_id", user.id);
@@ -1412,17 +1522,18 @@ async function sdoApprovePaf(supa, user, body) {
 
   const { data: existing, error: fetchErr } = await supa
     .from("paf_submissions")
-    .select("id, status, sdo_approver_id, employee_name, drive_in, bonus_type, submitter_email, resubmitted_by_email")
+    .select("id, status, sdo_approver_id, employee_name, drive_in, bonus_type, category, pa_role, pa_new_salary, submitter_email, resubmitted_by_email")
     .eq("id", id)
     .maybeSingle();
   if (fetchErr) return { error: fetchErr.message, status: 500 };
   if (!existing) return { error: "PAF not found.", status: 404 };
-  if (existing.status !== "Pending SDO Approval") {
-    return { error: `PAF is not awaiting SDO approval (status: ${existing.status}).`, status: 400 };
+  if (!APPROVAL_PENDING_STATUSES.includes(existing.status)) {
+    return { error: `PAF is not awaiting approval (status: ${existing.status}).`, status: 400 };
   }
   if (user.role !== "admin" && existing.sdo_approver_id !== user.id) {
     return { error: "You are not the assigned approver for this PAF.", status: 403 };
   }
+  const isVpFlow = existing.status === "Pending VP Approval";
 
   const now = new Date().toISOString();
   const { error } = await supa
@@ -1440,7 +1551,7 @@ async function sdoApprovePaf(supa, user, body) {
     paf_id: id,
     actor_id: user.id,
     actor_email: user.email,
-    action: "sdo-approved",
+    action: isVpFlow ? "vp-approved" : "sdo-approved",
     detail: {
       employee_name: existing.employee_name,
       drive_in: existing.drive_in,
@@ -1450,25 +1561,38 @@ async function sdoApprovePaf(supa, user, body) {
   });
 
   const approver = user.preferred_name || user.full_name || user.email;
-  await sendPafEmail(supa, {
-    templateKey: "BONUS_SDO_APPROVED",
-    to: outcomeRecipients(existing.submitter_email, existing.resubmitted_by_email),
-    vars: {
-      EMPLOYEE: existing.employee_name,
-      STORE: existing.drive_in,
-      APPROVER: approver,
-    },
-  });
-  // Also let Payroll know a bonus has landed in their queue.
+  if (isVpFlow) {
+    const copyList = await rolesEmails(supa, ["vp", "coo"]);
+    await sendPafEmail(supa, {
+      templateKey: "PAY_ADJ_VP_APPROVED",
+      to: [...new Set([...outcomeRecipients(existing.submitter_email, existing.resubmitted_by_email), ...copyList])],
+      vars: {
+        EMPLOYEE: existing.employee_name,
+        ROLE: existing.pa_role ?? "",
+        APPROVER: approver,
+      },
+    });
+  } else {
+    await sendPafEmail(supa, {
+      templateKey: "BONUS_SDO_APPROVED",
+      to: outcomeRecipients(existing.submitter_email, existing.resubmitted_by_email),
+      vars: {
+        EMPLOYEE: existing.employee_name,
+        STORE: existing.drive_in,
+        APPROVER: approver,
+      },
+    });
+  }
+  // Also let Payroll know it has landed in their queue.
   const payroll = await payrollEmails(supa);
   await sendPafEmail(supa, {
     templateKey: "PAF_SUBMITTED",
     to: payroll,
     vars: {
       EMPLOYEE: existing.employee_name,
-      STORE: existing.drive_in,
+      STORE: existing.drive_in ?? "N/A",
       DO: approver,
-      CATEGORY: "Bonus",
+      CATEGORY: isVpFlow ? PAY_ADJ_SALARY : "Bonus",
       AMOUNT: "—",
     },
   });
@@ -1486,17 +1610,18 @@ async function sdoRejectPaf(supa, user, body) {
 
   const { data: existing, error: fetchErr } = await supa
     .from("paf_submissions")
-    .select("id, status, sdo_approver_id, employee_name, drive_in, bonus_type, submitter_email, resubmitted_by_email")
+    .select("id, status, sdo_approver_id, employee_name, drive_in, bonus_type, category, pa_role, submitter_email, resubmitted_by_email")
     .eq("id", id)
     .maybeSingle();
   if (fetchErr) return { error: fetchErr.message, status: 500 };
   if (!existing) return { error: "PAF not found.", status: 404 };
-  if (existing.status !== "Pending SDO Approval") {
-    return { error: `PAF is not awaiting SDO approval (status: ${existing.status}).`, status: 400 };
+  if (!APPROVAL_PENDING_STATUSES.includes(existing.status)) {
+    return { error: `PAF is not awaiting approval (status: ${existing.status}).`, status: 400 };
   }
   if (user.role !== "admin" && existing.sdo_approver_id !== user.id) {
     return { error: "You are not the assigned approver for this PAF.", status: 403 };
   }
+  const isVpFlow = existing.status === "Pending VP Approval";
 
   const now = new Date().toISOString();
   const { error } = await supa
@@ -1515,7 +1640,7 @@ async function sdoRejectPaf(supa, user, body) {
     paf_id: id,
     actor_id: user.id,
     actor_email: user.email,
-    action: "sdo-rejected",
+    action: isVpFlow ? "vp-rejected" : "sdo-rejected",
     detail: {
       employee_name: existing.employee_name,
       drive_in: existing.drive_in,
@@ -1525,16 +1650,30 @@ async function sdoRejectPaf(supa, user, body) {
   });
 
   const approver = user.preferred_name || user.full_name || user.email;
-  await sendPafEmail(supa, {
-    templateKey: "BONUS_SDO_REJECTED",
-    to: outcomeRecipients(existing.submitter_email, existing.resubmitted_by_email),
-    vars: {
-      EMPLOYEE: existing.employee_name,
-      STORE: existing.drive_in,
-      APPROVER: approver,
-      REASON: reason,
-    },
-  });
+  if (isVpFlow) {
+    const copyList = await rolesEmails(supa, ["vp", "coo"]);
+    await sendPafEmail(supa, {
+      templateKey: "PAY_ADJ_VP_REJECTED",
+      to: [...new Set([...outcomeRecipients(existing.submitter_email, existing.resubmitted_by_email), ...copyList])],
+      vars: {
+        EMPLOYEE: existing.employee_name,
+        ROLE: existing.pa_role ?? "",
+        APPROVER: approver,
+        REASON: reason,
+      },
+    });
+  } else {
+    await sendPafEmail(supa, {
+      templateKey: "BONUS_SDO_REJECTED",
+      to: outcomeRecipients(existing.submitter_email, existing.resubmitted_by_email),
+      vars: {
+        EMPLOYEE: existing.employee_name,
+        STORE: existing.drive_in,
+        APPROVER: approver,
+        REASON: reason,
+      },
+    });
+  }
   return { ok: true };
 }
 

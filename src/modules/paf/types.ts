@@ -7,6 +7,7 @@
 export type PafStatus =
   | "Pending"
   | "Pending SDO Approval"
+  | "Pending VP Approval"
   | "Approved"
   | "Rejected"
   | "Needs Approval"
@@ -125,7 +126,13 @@ export interface PafRow {
   resubmitted_by_id: string | null;
   resubmitted_by_email: string | null;
 
-  // SDO bonus approval workflow
+  // Pay Adjustment (Salary)
+  pa_role: string | null;
+  pa_new_salary: number | string | null;
+  pa_start_date: string | null;
+
+  // SDO bonus approval workflow (also carries the VP approval for
+  // Pay Adjustment (Salary) — status "Pending VP Approval")
   sdo_approver_id: string | null;
   sdo_decided_at: string | null;
   sdo_decision: "approved" | "rejected" | null;
