@@ -954,6 +954,66 @@ async function buildPafRowFromBody(supa, user, body) {
 // row.sdo_approver_id). Routing keys off the ORIGINAL submitter's role,
 // not whoever is editing — so a DO's bonus still routes to the SDO even
 // when an SDO resubmits it on the DO's behalf.
+// ── Payroll cutoff — Wednesday 10:00 AM Central by default ────────────────────
+// A PAF submitted after the current week's cutoff is flagged late and stamped
+// into NEXT week's processing batch. paf_cutoffs holds per-week overrides
+// (holiday weeks, planned in advance) keyed by the pay week's Sunday.
+const CENTRAL_TZ = "America/Chicago";
+const DAY_MS = 86400000;
+function centralParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: CENTRAL_TZ, year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(date);
+  const get = (t) => parts.find((x) => x.type === t)?.value;
+  let hour = parseInt(get("hour"), 10);
+  if (hour === 24) hour = 0;
+  return { y: +get("year"), m: +get("month"), d: +get("day"), hour, minute: +get("minute") };
+}
+function isoFromYmd(y, m, d) {
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+}
+function addDaysIso(iso, n) {
+  return new Date(Date.parse(`${iso}T00:00:00Z`) + n * DAY_MS).toISOString().slice(0, 10);
+}
+// Sunday ending the Mon–Sun week containing the given central date.
+function weekSundayIso(y, m, d) {
+  const dow = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return addDaysIso(isoFromYmd(y, m, d), dow === 0 ? 0 : 7 - dow);
+}
+// UTC instant for a Central wall-clock time on a date (DST-safe).
+function centralWallToUtc(dateIso, hour, minute) {
+  const [y, m, d] = dateIso.split("-").map(Number);
+  for (const off of [5, 6]) {
+    const guess = new Date(Date.UTC(y, m - 1, d, hour + off, minute));
+    const p = centralParts(guess);
+    if (p.y === y && p.m === m && p.d === d && p.hour === hour && p.minute === minute) return guess;
+  }
+  return new Date(Date.UTC(y, m - 1, d, hour + 6, minute));
+}
+// The cutoff decision for a submission happening right now.
+async function evaluatePafCutoff(supa) {
+  const now = new Date();
+  const p = centralParts(now);
+  const thisSunday = weekSundayIso(p.y, p.m, p.d);
+  let cutoff = null;
+  let overridden = false;
+  try {
+    const { data } = await supa.from("paf_cutoffs")
+      .select("cutoff_at").eq("week_sunday", thisSunday).maybeSingle();
+    if (data?.cutoff_at) { cutoff = new Date(data.cutoff_at); overridden = true; }
+  } catch { /* pre-0233: table missing */ }
+  if (!cutoff) cutoff = centralWallToUtc(addDaysIso(thisSunday, -4), 10, 0);
+  const late = now.getTime() > cutoff.getTime();
+  return {
+    late,
+    process_week: late ? addDaysIso(thisSunday, 7) : thisSunday,
+    cutoff_at: cutoff.toISOString(),
+    week_sunday: thisSunday,
+    overridden,
+  };
+}
+
 async function applyBonusRouting(supa, submitterRole, row, driveIn, category) {
   if (category === PAY_ADJ_SALARY) {
     // Salary adjustments for GM/DO/SDO are approved by the VP. Reuses the
@@ -1058,12 +1118,21 @@ async function submitPaf(supa, user, body) {
 
   await applyBonusRouting(supa, user.role, insertRow, driveIn, category);
   insertRow.estimated_cost = calcPafCost(insertRow);
+  const cut = await evaluatePafCutoff(supa);
+  insertRow.late_for_week = cut.late;
+  insertRow.process_week = cut.process_week;
 
-  const { data: created, error } = await supa
+  let { data: created, error } = await supa
     .from("paf_submissions")
     .insert(insertRow)
     .select("id")
     .single();
+  if (error && /late_for_week|process_week/.test(error.message)) {
+    // Pre-0233: the cutoff columns don't exist yet.
+    delete insertRow.late_for_week;
+    delete insertRow.process_week;
+    ({ data: created, error } = await supa.from("paf_submissions").insert(insertRow).select("id").single());
+  }
   if (error) return { error: error.message, status: 500 };
 
   await logAudit(supa, {
@@ -1088,7 +1157,10 @@ async function submitPaf(supa, user, body) {
     category,
   });
 
-  return { ok: true, id: created.id, status: insertRow.status };
+  return {
+    ok: true, id: created.id, status: insertRow.status,
+    late: cut.late, process_week: cut.process_week, cutoff_at: cut.cutoff_at,
+  };
 }
 
 // ----------------------------------------------------------------------------
@@ -1159,6 +1231,10 @@ async function resubmitPaf(supa, user, body) {
 
   await applyBonusRouting(supa, submitterRole, row, driveIn, category);
   row.estimated_cost = calcPafCost(row);
+  // The cutoff re-evaluates on resubmit: it is entering the batch NOW.
+  const cut = await evaluatePafCutoff(supa);
+  row.late_for_week = cut.late;
+  row.process_week = cut.process_week;
 
   // Reset all prior-decision + token state so the PAF re-enters its
   // workflow cleanly. created_at / archived are left untouched (update,
@@ -1185,12 +1261,18 @@ async function resubmitPaf(supa, user, body) {
 
   // Guard against a concurrent decision: only update while still in the same
   // editable status it was when we fetched it.
-  const { data: updated, error: updErr } = await supa
+  let { data: updated, error: updErr } = await supa
     .from("paf_submissions")
     .update(updateRow)
     .eq("id", id)
     .eq("status", existing.status)
     .select("id");
+  if (updErr && /late_for_week|process_week/.test(updErr.message)) {
+    delete updateRow.late_for_week;
+    delete updateRow.process_week;
+    ({ data: updated, error: updErr } = await supa
+      .from("paf_submissions").update(updateRow).eq("id", id).eq("status", existing.status).select("id"));
+  }
   if (updErr) return { error: updErr.message, status: 500 };
   if (!updated || updated.length === 0) {
     return { error: "This PAF was just actioned and can no longer be edited.", status: 409 };
@@ -1217,7 +1299,10 @@ async function resubmitPaf(supa, user, body) {
     category,
   });
 
-  return { ok: true, id, status: updateRow.status };
+  return {
+    ok: true, id, status: updateRow.status,
+    late: cut.late, process_week: cut.process_week, cutoff_at: cut.cutoff_at,
+  };
 }
 
 // ----------------------------------------------------------------------------
@@ -1678,6 +1763,59 @@ async function sdoRejectPaf(supa, user, body) {
 }
 
 // ----------------------------------------------------------------------------
+// Payroll cutoff management — payroll/admin plan holiday-week overrides in
+// advance; cutoff-info is readable by anyone who can open the PAF form.
+// ----------------------------------------------------------------------------
+async function cutoffInfo(supa) {
+  return evaluatePafCutoff(supa);
+}
+
+async function listCutoffs(supa, user) {
+  if (!PROCESS_ROLES.has(user.role)) return { error: "Payroll/Admin only.", status: 403 };
+  const p = centralParts(new Date());
+  const thisSunday = weekSundayIso(p.y, p.m, p.d);
+  const { data, error } = await supa
+    .from("paf_cutoffs")
+    .select("week_sunday, cutoff_at, note, created_at")
+    .gte("week_sunday", thisSunday)
+    .order("week_sunday", { ascending: true })
+    .limit(60);
+  if (error) return { error: error.message, status: 500 };
+  return { default_rule: "Wednesday 10:00 AM Central", this_week_sunday: thisSunday, overrides: data ?? [] };
+}
+
+async function setCutoff(supa, user, body) {
+  if (!PROCESS_ROLES.has(user.role)) return { error: "Payroll/Admin only.", status: 403 };
+  const weekSunday = sanitizeDateInput(body?.week_sunday);
+  if (!weekSunday) return { error: "week_sunday is required (YYYY-MM-DD).", status: 400 };
+  if (new Date(`${weekSunday}T00:00:00Z`).getUTCDay() !== 0) {
+    return { error: "week_sunday must be a Sunday.", status: 400 };
+  }
+  const dateIso = sanitizeDateInput(body?.cutoff_date);
+  const time = /^([01]?\d|2[0-3]):([0-5]\d)$/.exec(String(body?.cutoff_time || ""));
+  if (!dateIso || !time) return { error: "cutoff_date (YYYY-MM-DD) and cutoff_time (HH:MM, Central) are required.", status: 400 };
+  // The cutoff must fall on or before its pay week's Sunday.
+  if (dateIso > weekSunday) return { error: "The cutoff must be on or before that week's Sunday.", status: 400 };
+  const cutoffAt = centralWallToUtc(dateIso, +time[1], +time[2]);
+  const note = sanitizeText(body?.note, 200) || null;
+  const { error } = await supa.from("paf_cutoffs").upsert(
+    { week_sunday: weekSunday, cutoff_at: cutoffAt.toISOString(), note, created_by: user.id },
+    { onConflict: "week_sunday" },
+  );
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, week_sunday: weekSunday, cutoff_at: cutoffAt.toISOString() };
+}
+
+async function deleteCutoff(supa, user, body) {
+  if (!PROCESS_ROLES.has(user.role)) return { error: "Payroll/Admin only.", status: 403 };
+  const weekSunday = sanitizeDateInput(body?.week_sunday);
+  if (!weekSunday) return { error: "week_sunday is required.", status: 400 };
+  const { error } = await supa.from("paf_cutoffs").delete().eq("week_sunday", weekSunday);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
+// ----------------------------------------------------------------------------
 // mark-processed — payroll/admin
 // ----------------------------------------------------------------------------
 async function markProcessed(supa, user, body) {
@@ -1935,6 +2073,8 @@ export const handler = async (event) => {
       if (action === "config") return unwrap(await getActiveConfig(supa));
       if (action === "audit-log") return unwrap(await listAuditLog(supa, user, params));
       if (action === "my-stores") return unwrap(await listMyStores(supa, user));
+      if (action === "cutoff-info") return unwrap(await cutoffInfo(supa));
+      if (action === "list-cutoffs") return unwrap(await listCutoffs(supa, user));
       if (action === "offer-letter-url")
         return unwrap(await offerLetterUrl(supa, user, params.id));
       return respond(400, { error: `unknown GET action: ${action}` });
@@ -1946,6 +2086,8 @@ export const handler = async (event) => {
       if (action === "reject") return unwrap(await rejectPaf(supa, user, body));
       if (action === "needs-approval") return unwrap(await needsApprovalPaf(supa, user, body));
       if (action === "mark-processed") return unwrap(await markProcessed(supa, user, body));
+      if (action === "cutoff-set") return unwrap(await setCutoff(supa, user, body));
+      if (action === "cutoff-delete") return unwrap(await deleteCutoff(supa, user, body));
       if (action === "sdo-approve") return unwrap(await sdoApprovePaf(supa, user, body));
       if (action === "sdo-reject") return unwrap(await sdoRejectPaf(supa, user, body));
       if (action === "delete") return unwrap(await deletePaf(supa, user, body));

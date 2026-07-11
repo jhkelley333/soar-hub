@@ -161,6 +161,7 @@ export function PafPage() {
                   state={filters}
                   onChange={setFilters}
                   counts={counts}
+                  lateCount={allRows.filter((r) => r.late_for_week).length}
                 />
               </div>
               {filtered.length === 0 ? (
