@@ -533,7 +533,8 @@ async function saveReview(supa, user, body) {
   }
   if (!storeNumber) return { error: "store_number is required", status: 400 };
   if (!parseIso(businessDate)) return { error: "valid business_date is required", status: 400 };
-  if (!note) return { error: "note is required", status: 400 };
+  // A picked root cause alone is a valid explanation — the note is optional.
+  if (!note && !rootCause) return { error: "Pick a root cause or add a note.", status: 400 };
 
   // Scope check + resolve store_id.
   let storeRow;

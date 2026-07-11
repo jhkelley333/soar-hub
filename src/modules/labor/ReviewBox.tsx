@@ -81,7 +81,9 @@ export function ReviewBox({
                 {ROOT_CAUSE_LABEL[day.review.root_cause] ?? day.review.root_cause}
               </span>
             )}
-            <p className="mt-3 rounded-lg bg-zinc-50 p-3 text-sm text-midnight">{day.review?.note}</p>
+            {day.review?.note && (
+              <p className="mt-3 rounded-lg bg-zinc-50 p-3 text-sm text-midnight">{day.review.note}</p>
+            )}
           </div>
         </div>
       </div>
@@ -102,7 +104,7 @@ export function ReviewBox({
       </h3>
       <p className="text-xs text-zinc-500">
         {dueLane
-          ? `Labor ran over chart on this day${day.hours_over_chart != null && day.hours_over_chart > 0 ? ` by about ${day.hours_over_chart} hours` : ""} — pick the root cause, then explain.`
+          ? `Labor ran over chart on this day${day.hours_over_chart != null && day.hours_over_chart > 0 ? ` by about ${day.hours_over_chart} hours` : ""} — pick the root cause. A note is optional.`
           : "Add a note for this day (optional)."}
       </p>
       <div className="mt-3 flex flex-wrap gap-1.5">
@@ -126,7 +128,7 @@ export function ReviewBox({
         value={note}
         onChange={(e) => setNote(e.target.value)}
         rows={3}
-        placeholder="What drove the variance? (e.g. lunch rush hit 30% above forecast — held an extra crew member through 1:30.)"
+        placeholder="Optional — add detail if it helps. (e.g. lunch rush hit 30% above forecast — held an extra crew member through 1:30.)"
         className="mt-3 w-full rounded-lg border border-zinc-200 p-3 text-sm text-midnight placeholder:text-zinc-400 focus:border-accent focus:outline-none focus:ring-2 focus:ring-accent/20"
       />
       <div className="mt-3 flex items-center justify-end gap-2">
@@ -137,7 +139,7 @@ export function ReviewBox({
         )}
         <Button
           size="sm"
-          disabled={!note.trim() || (dueLane && !rootCause) || save.isPending}
+          disabled={(dueLane ? !rootCause : !note.trim() && !rootCause) || save.isPending}
           onClick={() => save.mutate()}
         >
           {save.isPending ? "Saving…" : "Submit explanation"}

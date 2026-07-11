@@ -424,8 +424,8 @@ function StoreRow({ row, horizon }: { row: DistrictStoreRow; horizon: Horizon })
   return (
     <div>
       <button
-        onClick={() => row.note && setOpen((o) => !o)}
-        className={cn("flex w-full items-center gap-3 p-4 text-left", row.note && "hover:bg-zinc-50")}
+        onClick={() => (row.note || row.root_cause) && setOpen((o) => !o)}
+        className={cn("flex w-full items-center gap-3 p-4 text-left", (row.note || row.root_cause) && "hover:bg-zinc-50")}
       >
         {/* over-chart accent rail — keyed to the active horizon */}
         <span className={cn("h-10 w-1 rounded-full", over ? "bg-sonic" : "bg-transparent")} />
@@ -465,14 +465,14 @@ function StoreRow({ row, horizon }: { row: DistrictStoreRow; horizon: Horizon })
           {statusLabel}
         </span>
       </button>
-      {open && row.note && (
+      {open && (row.note || row.root_cause) && (
         <div className="border-t border-zinc-100 bg-zinc-50 px-4 py-3">
           {row.root_cause && (
-            <span className="mb-1.5 inline-block rounded-full bg-sonic-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sonic-700">
+            <span className="inline-block rounded-full bg-sonic-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sonic-700">
               {ROOT_CAUSE_LABEL[row.root_cause] ?? row.root_cause}
             </span>
           )}
-          <div className="text-sm text-midnight">{row.note}</div>
+          {row.note && <div className={cn("text-sm text-midnight", row.root_cause && "mt-1.5")}>{row.note}</div>}
         </div>
       )}
     </div>
