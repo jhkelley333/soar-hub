@@ -556,13 +556,17 @@ async function missTracker(supa, user, params) {
   const nameByNumber = new Map(visible.map((st) => [String(st.number), st.name]));
 
   const week = Array.from({ length: 7 }, (_, i) => isoOf(shiftDays(weekStart, i)));
-  const [{ data: rows }, { data: reviews }] = await Promise.all([
-    supa.from("labor_v2_daily").select("*")
-      .gte("business_date", week[0]).lte("business_date", week[6]).in("store_number", numbers),
+  // Fetch one day at a time: a whole week across a big scope can exceed
+  // PostgREST's 1000-row response cap, which silently truncates — the earliest
+  // day (Monday) is what falls off. Per-day queries stay well under the cap.
+  const perDay = await Promise.all(week.map((d) => Promise.all([
+    supa.from("labor_v2_daily").select("*").eq("business_date", d).in("store_number", numbers),
     supa.from("labor_reviews").select("store_number, business_date, note, root_cause")
-      .gte("business_date", week[0]).lte("business_date", week[6]).in("store_number", numbers),
-  ]);
-  applyCreditsToRows(rows || [], await loadLaborCredits(supa, numbers));
+      .eq("business_date", d).in("store_number", numbers),
+  ])));
+  const rows = perDay.flatMap(([r]) => r.data || []);
+  const reviews = perDay.flatMap(([, r]) => r.data || []);
+  applyCreditsToRows(rows, await loadLaborCredits(supa, numbers));
 
   const CAUSE_LABEL = {
     poor_projections: "Poor Projections",
@@ -572,10 +576,10 @@ async function missTracker(supa, user, params) {
     other: "Other",
   };
   const reviewKey = (sn, d) => `${sn}|${d}`;
-  const reviewMap = new Map((reviews || []).map((r) => [reviewKey(String(r.store_number), r.business_date), r]));
+  const reviewMap = new Map(reviews.map((r) => [reviewKey(String(r.store_number), r.business_date), r]));
 
   const byStore = new Map();
-  for (const r of rows || []) {
+  for (const r of rows) {
     const sn = String(r.store_number);
     const laborPct = pct(r.labor_pct);
     if (chartStatus(laborPct, pct(r.target_labor_pct)) !== "over") continue;
@@ -612,7 +616,7 @@ async function teamView(supa, user, params) {
 
   const [{ data: rows }, { data: reviews }] = await Promise.all([
     supa.from("labor_v2_daily").select("*").eq("business_date", anchor).in("store_number", numbers),
-    supa.from("labor_reviews").select("store_number, note").eq("business_date", anchor).in("store_number", numbers),
+    supa.from("labor_reviews").select("store_number, note, root_cause").eq("business_date", anchor).in("store_number", numbers),
   ]);
   applyCreditsToRows(rows || [], await loadLaborCredits(supa, numbers));
   const reviewByStore = new Map((reviews || []).map((r) => [String(r.store_number), r]));
@@ -673,6 +677,7 @@ async function teamView(supa, user, params) {
       note_due: day.status === "over" && !explained,
       explained,
       note: review?.note ?? null,
+      root_cause: review?.root_cause ?? null,
     };
   }).sort((a, b) => (b.day.variance_pts ?? -999) - (a.day.variance_pts ?? -999));
 

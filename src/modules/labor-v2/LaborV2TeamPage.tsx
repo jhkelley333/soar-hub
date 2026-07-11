@@ -39,6 +39,29 @@ type SortKey = "name" | "day" | "wtd" | "ptd" | "var" | "over" | "hrsover" | "sc
 
 const STATUS_RANK: Record<string, number> = { over: 3, unknown: 2, on: 1, missing: 0 };
 
+// Same fixed root-cause list the GM picks from when explaining a miss.
+const ROOT_CAUSE_LABEL: Record<string, string> = {
+  poor_projections: "Poor Projections",
+  scheduled_above_chart: "Scheduled Above Chart",
+  didnt_follow_schedule: "Didn't Follow the Schedule",
+  auto_clock: "Auto Clock",
+  other: "Other",
+};
+
+// A filed explanation: root-cause chip (when picked) above the note text.
+function NoteBody({ s }: { s: TeamStore }) {
+  return (
+    <div className="rounded-lg bg-white p-2 text-xs text-zinc-600 ring-1 ring-zinc-200">
+      {s.root_cause && (
+        <span className="mb-1.5 inline-block rounded-full bg-sonic-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sonic-700">
+          {ROOT_CAUSE_LABEL[s.root_cause] ?? s.root_cause}
+        </span>
+      )}
+      <div>{s.note}</div>
+    </div>
+  );
+}
+
 // Last N week-start Mondays (current week first) as ISO dates, for the
 // miss-tracker week picker.
 function recentMondays(n: number): string[] {
@@ -572,7 +595,7 @@ function MobileRow({ row, isStore, period, summary, onDrill }: {
             <MobileMetric label="PTD %" value={fmtPctPts(store.ptd.labor_pct)} />
             <MobileMetric label="OT hrs" value={fmtHrs(b.overtime_hours)} />
           </div>
-          <div className="mt-2 rounded-lg bg-white p-2 text-xs text-zinc-600 ring-1 ring-zinc-200">{store.note}</div>
+          <div className="mt-2"><NoteBody s={store} /></div>
         </div>
       )}
     </div>
@@ -621,7 +644,16 @@ function StoreRow({ s }: { s: TeamStore }) {
           {label}
         </span>
       </button>
-      {open && s.note && <div className="border-t border-zinc-100 bg-zinc-50 px-4 py-3 text-sm text-midnight">{s.note}</div>}
+      {open && s.note && (
+        <div className="border-t border-zinc-100 bg-zinc-50 px-4 py-3">
+          {s.root_cause && (
+            <span className="mb-1.5 inline-block rounded-full bg-sonic-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sonic-700">
+              {ROOT_CAUSE_LABEL[s.root_cause] ?? s.root_cause}
+            </span>
+          )}
+          <div className="text-sm text-midnight">{s.note}</div>
+        </div>
+      )}
     </div>
   );
 }
