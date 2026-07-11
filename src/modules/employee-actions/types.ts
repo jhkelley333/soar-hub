@@ -71,6 +71,8 @@ export interface PtoRow {
   amount: number | null;
   vacation_days: PtoVacationDay[];
   send_copy: boolean;
+  /** Over the one-week-per-quarter allowance — final approval is RVP-only. */
+  over_quota?: boolean;
   status: string;
   notes: string | null;
   // Approval (DO step, then SDO/RVP step)

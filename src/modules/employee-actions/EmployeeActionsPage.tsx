@@ -19,6 +19,7 @@ import { TrainingCreditForm } from "./TrainingCreditForm";
 import { PtoRequestForm } from "./PtoRequestForm";
 import { ApprovalQueue } from "./ApprovalQueue";
 import { CreditBankPanel } from "./CreditBankPanel";
+import { PtoReportPanel } from "./PtoReportPanel";
 import { RequestDetailDrawer } from "./RequestDetailDrawer";
 import { statusKind, waitingOn } from "./statusMeta";
 import type { PtoRow, TrainingCreditRow } from "./types";
@@ -89,7 +90,7 @@ function overlaps(rowStartIso: string | null, rowEndIso: string | null, fallback
   return true;
 }
 
-type Tab = "training" | "pto" | "history" | "approvals" | "bank";
+type Tab = "training" | "pto" | "history" | "approvals" | "bank" | "pto-report";
 
 const SUBMIT_ROLES = ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"];
 const APPROVER_ROLES = ["do", "sdo", "rvp", "admin"];
@@ -131,6 +132,7 @@ export function EmployeeActionsPage() {
     ...(canApprove ? [{ value: "approvals" as const, label: "Approvals" }] : []),
     { value: "history" as const, label: "History" },
     ...(canSubmit ? [{ value: "bank" as const, label: "Credit Bank" }] : []),
+    ...(canSubmit ? [{ value: "pto-report" as const, label: "PTO Report" }] : []),
   ];
 
   function editTrainingRow(row: TrainingCreditRow) {
@@ -198,6 +200,8 @@ export function EmployeeActionsPage() {
       )}
 
       {tab === "bank" && (canSubmit ? <CreditBankPanel /> : <NoAccess />)}
+
+      {tab === "pto-report" && (canSubmit ? <PtoReportPanel /> : <NoAccess />)}
     </>
   );
 }

@@ -241,7 +241,8 @@ export function PtoRequestForm({
           <p className="mt-0.5 text-xs text-zinc-500">
             Submit vacation requests for approval to the Director of Operations (DO) and
             Regional Vice President (RVP). <strong>Vacation must be submitted at least {PTO_ADVANCE_DAYS} days
-            in advance.</strong> GMs are tracked by days; hourly managers are tracked by hours (max {MAX_HOURS_PER_DAY}/day).
+            in advance. Allowance is one week per quarter — anything above needs RVP approval.</strong>{" "}
+            GMs are tracked by days; hourly managers are tracked by hours (max {MAX_HOURS_PER_DAY}/day).
           </p>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <StoreSelect

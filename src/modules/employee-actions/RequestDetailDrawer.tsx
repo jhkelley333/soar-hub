@@ -339,6 +339,11 @@ function PtoDetail({ row }: { row: PtoRow }) {
   const isHourly = row.position === "Associate Manager" || row.position === "First Assistant";
   return (
     <>
+      {row.over_quota && (
+        <div className="rounded-lg bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 ring-1 ring-inset ring-red-200">
+          Over the one-week-per-quarter allowance — final approval must come from the RVP.
+        </div>
+      )}
       <Field label="Dates">
         {row.pto_start_date} → {row.pto_end_date}
       </Field>
