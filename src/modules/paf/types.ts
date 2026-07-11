@@ -138,6 +138,10 @@ export interface PafRow {
   sdo_decision: "approved" | "rejected" | null;
   sdo_decision_note: string | null;
 
+  // Payroll cutoff: submitted after the week's cutoff -> next week's batch
+  late_for_week?: boolean;
+  process_week?: string | null;
+
   archived: boolean;
   archived_at: string | null;
   created_at: string;

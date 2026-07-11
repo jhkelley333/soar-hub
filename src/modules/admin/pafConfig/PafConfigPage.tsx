@@ -17,15 +17,17 @@ import { SectionsEditor } from "./SectionsEditor";
 import { TemplatesEditor } from "./TemplatesEditor";
 import { PreviewForm } from "./PreviewForm";
 import { HistoryDrawer } from "./HistoryDrawer";
+import { CutoffsEditor } from "./CutoffsEditor";
 import type { PafFormConfig } from "./types";
 
-type TabId = "lists" | "fields" | "sections" | "templates" | "preview";
+type TabId = "lists" | "fields" | "sections" | "templates" | "cutoffs" | "preview";
 
 const TABS: { id: TabId; label: string; description: string }[] = [
   { id: "lists", label: "Lists", description: "Categories, positions, statuses, etc." },
   { id: "fields", label: "Fields", description: "Labels, hints, required & visible" },
   { id: "sections", label: "Sections", description: "Headings, descriptions, order" },
   { id: "templates", label: "Email templates", description: "Subjects + bodies" },
+  { id: "cutoffs", label: "Cutoffs", description: "Weekly payroll cutoff + holiday overrides" },
   { id: "preview", label: "Preview", description: "See your unsaved draft" },
 ];
 
@@ -250,6 +252,7 @@ export function PafConfigPage() {
           {tab === "templates" && (
             <TemplatesEditor draft={draft} onChange={setDraft} />
           )}
+          {tab === "cutoffs" && <CutoffsEditor />}
           {tab === "preview" && <PreviewForm draft={draft} />}
         </CardBody>
       </Card>

@@ -104,7 +104,7 @@ export type PafSubmitInput = Partial<
 
 export function submitPaf(
   input: PafSubmitInput
-): Promise<{ ok: true; id: string; status: string }> {
+): Promise<{ ok: true; id: string; status: string; late?: boolean; process_week?: string; cutoff_at?: string }> {
   return request<{ ok: true; id: string; status: string }>(`${FN}?action=submit`, {
     method: "POST",
     body: JSON.stringify(input),
@@ -116,7 +116,7 @@ export function submitPaf(
 export function resubmitPaf(
   id: string,
   input: PafSubmitInput
-): Promise<{ ok: true; id: string; status: string }> {
+): Promise<{ ok: true; id: string; status: string; late?: boolean; process_week?: string; cutoff_at?: string }> {
   return request<{ ok: true; id: string; status: string }>(
     `${FN}?action=resubmit`,
     {
@@ -124,6 +124,28 @@ export function resubmitPaf(
       body: JSON.stringify({ ...input, id }),
     }
   );
+}
+
+// ── Payroll cutoff ────────────────────────────────────────────────────
+export interface CutoffInfo {
+  late: boolean;
+  process_week: string;
+  cutoff_at: string;
+  week_sunday: string;
+  overridden: boolean;
+}
+export function fetchCutoffInfo(): Promise<CutoffInfo> {
+  return request<CutoffInfo>(`${FN}?action=cutoff-info`);
+}
+export interface CutoffOverride { week_sunday: string; cutoff_at: string; note: string | null; created_at: string }
+export function listCutoffs(): Promise<{ default_rule: string; this_week_sunday: string; overrides: CutoffOverride[] }> {
+  return request(`${FN}?action=list-cutoffs`);
+}
+export function setCutoff(input: { week_sunday: string; cutoff_date: string; cutoff_time: string; note?: string }): Promise<{ ok: true }> {
+  return request(`${FN}?action=cutoff-set`, { method: "POST", body: JSON.stringify(input) });
+}
+export function deleteCutoff(weekSunday: string): Promise<{ ok: true }> {
+  return request(`${FN}?action=cutoff-delete`, { method: "POST", body: JSON.stringify({ week_sunday: weekSunday }) });
 }
 
 export function listSdoQueue(): Promise<{ pafs: PafRow[] }> {

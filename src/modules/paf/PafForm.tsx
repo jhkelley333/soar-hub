@@ -13,7 +13,7 @@ import { Badge } from "@/shared/ui/Badge";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { supabase } from "@/lib/supabase";
-import { fetchMyStores, fetchPafConfig, resubmitPaf, submitPaf, type PafSubmitInput } from "./api";
+import { fetchCutoffInfo, fetchMyStores, fetchPafConfig, resubmitPaf, submitPaf, type PafSubmitInput } from "./api";
 import { calcPafCost, formatUSD } from "./cost";
 import type { MyStore, PafConfigDoc, PafFieldDisplay, PafRow, ReferralTier } from "./types";
 
@@ -100,6 +100,15 @@ const NH_ROLES = ["GM", "DO", "SDO"];
 const PAY_ADJ_SALARY = "Pay Adjustment (Salary)";
 const PAY_ADJ_ROLES = ["GM", "DO", "SDO"];
 const PAY_ADJ_SUBMITTER_ROLES = new Set(["sdo", "rvp", "admin"]);
+// "Wed, Jul 15, 10:00 AM CT"
+function fmtCutoff(iso: string): string {
+  return new Date(iso).toLocaleString("en-US", {
+    timeZone: "America/Chicago",
+    weekday: "short", month: "short", day: "numeric",
+    hour: "numeric", minute: "2-digit",
+  }) + " CT";
+}
+
 const NH_INPUT =
   "block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent";
 
@@ -327,6 +336,10 @@ export function PafForm({
   const myStores = storesQuery.data?.stores ?? [];
 
   const { profile } = useAuth();
+  // Weekly payroll cutoff (Wednesday 10:00 AM Central unless overridden) —
+  // shown up front so nobody is surprised their PAF lands in next week.
+  const cutoffQ = useQuery({ queryKey: ["paf-cutoff-info"], queryFn: fetchCutoffInfo, staleTime: 60_000 });
+  const cutoff = cutoffQ.data;
   // True when a leader is editing a rejected PAF someone else submitted.
   const onBehalf = isEdit && !!profile && editPaf!.submitter_id !== profile.id;
   const [state, setState] = useState<FormState>({});
@@ -506,6 +519,12 @@ export function PafForm({
     onSuccess: (res) => {
       const awaitingSdo = res.status === "Pending SDO Approval";
       const awaitingVp = res.status === "Pending VP Approval";
+      if (res.late) {
+        toast.push(
+          `Heads up: submitted after this week's cutoff — it's in the payroll batch for the week of ${res.process_week}.`,
+          "info"
+        );
+      }
       toast.push(
         isEdit
           ? awaitingSdo
@@ -732,6 +751,30 @@ export function PafForm({
               <span className="font-semibold">Rejection reason:</span>{" "}
               {editPaf.rejection_reason}
             </p>
+          )}
+        </div>
+      )}
+
+      {cutoff && (
+        <div
+          className={
+            cutoff.late
+              ? "rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900"
+              : "rounded-md border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-600"
+          }
+        >
+          {cutoff.late ? (
+            <>
+              <span className="font-semibold">Past this week's payroll cutoff</span>{" "}
+              ({fmtCutoff(cutoff.cutoff_at)}) — a PAF submitted now goes into the batch for the
+              week of <span className="font-semibold">{cutoff.process_week}</span>.
+            </>
+          ) : (
+            <>
+              Payroll cutoff this week: <span className="font-semibold">{fmtCutoff(cutoff.cutoff_at)}</span>
+              {cutoff.overridden ? " (holiday schedule)" : ""} · submissions before it process with the week of{" "}
+              <span className="font-semibold">{cutoff.process_week}</span>.
+            </>
           )}
         </div>
       )}

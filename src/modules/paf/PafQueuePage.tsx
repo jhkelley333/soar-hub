@@ -181,6 +181,7 @@ export function PafQueuePage() {
       <Card>
         <div className="p-3">
           <QueueFilters
+            lateCount={visibleSource.filter((r) => r.late_for_week).length}
             state={filters}
             onChange={setFilters}
             counts={counts}

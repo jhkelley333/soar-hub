@@ -11,6 +11,8 @@ import type { PafRow, PafStatus } from "./types";
 export interface QueueFilterState {
   status: PafStatus | "ALL";
   query: string;
+  /** Show only PAFs submitted after the weekly cutoff (next week's batch). */
+  lateOnly?: boolean;
 }
 
 export const ALL_STATUSES: { key: PafStatus | "ALL"; label: string }[] = [
@@ -29,6 +31,7 @@ export function QueueFilters({
   onChange,
   available,
   counts,
+  lateCount = 0,
 }: {
   state: QueueFilterState;
   onChange: (next: QueueFilterState) => void;
@@ -36,6 +39,8 @@ export function QueueFilters({
   available?: (PafStatus | "ALL")[];
   /** Per-status row counts to render alongside the chip label. */
   counts: Partial<Record<PafStatus | "ALL", number>>;
+  /** Count of late (next-week) rows; renders the Late toggle when > 0 or active. */
+  lateCount?: number;
 }) {
   const visible = available
     ? ALL_STATUSES.filter((s) => available.includes(s.key))
@@ -72,6 +77,28 @@ export function QueueFilters({
           </button>
         );
       })}
+      {(lateCount > 0 || state.lateOnly) && (
+        <button
+          type="button"
+          onClick={() => onChange({ ...state, lateOnly: !state.lateOnly })}
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition",
+            state.lateOnly
+              ? "bg-amber-500 text-white"
+              : "bg-amber-50 text-amber-800 ring-1 ring-inset ring-amber-200 hover:bg-amber-100"
+          )}
+        >
+          Late — next week
+          <span
+            className={cn(
+              "rounded-full px-1.5 text-[10px] tabular-nums",
+              state.lateOnly ? "bg-white/20 text-white" : "bg-white text-amber-700"
+            )}
+          >
+            {lateCount}
+          </span>
+        </button>
+      )}
       <div className="relative ml-auto w-64">
         <Search
           className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-zinc-400"
@@ -104,6 +131,7 @@ export function applyFilters(rows: PafRow[], state: QueueFilterState): PafRow[] 
   const q = state.query.trim().toLowerCase();
   return rows.filter((r) => {
     if (state.status !== "ALL" && r.status !== state.status) return false;
+    if (state.lateOnly && !r.late_for_week) return false;
     if (q) {
       const hay = `${r.employee_name} ${r.last4_ssn}`.toLowerCase();
       if (!hay.includes(q)) return false;

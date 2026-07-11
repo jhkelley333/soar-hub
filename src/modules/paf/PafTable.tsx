@@ -230,9 +230,19 @@ export function PafTable({
                   {formatUSD(Number(p.estimated_cost) || 0)}
                 </td>
                 <td className="px-3 py-2">
-                  <Badge tone={STATUS_TONE[p.status] ?? "neutral"}>
-                    {p.status}
-                  </Badge>
+                  <span className="inline-flex flex-wrap items-center gap-1">
+                    <Badge tone={STATUS_TONE[p.status] ?? "neutral"}>
+                      {p.status}
+                    </Badge>
+                    {p.late_for_week && (
+                      <span
+                        className="rounded-full bg-amber-50 px-1.5 py-0.5 text-[10px] font-bold text-amber-800 ring-1 ring-inset ring-amber-200"
+                        title={`Submitted after the weekly cutoff — processes with the week of ${p.process_week ?? "next week"}`}
+                      >
+                        Late — next wk
+                      </span>
+                    )}
+                  </span>
                 </td>
                 <td className="px-3 py-2">
                   <div className="flex flex-wrap gap-1.5">
