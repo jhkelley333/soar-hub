@@ -17,6 +17,7 @@ export const ALL_STATUSES: { key: PafStatus | "ALL"; label: string }[] = [
   { key: "ALL", label: "All" },
   { key: "Pending", label: "Pending" },
   { key: "Pending SDO Approval", label: "Pending SDO" },
+  { key: "Pending VP Approval", label: "Pending VP" },
   { key: "Needs Approval", label: "Needs Approval" },
   { key: "Approved", label: "Approved" },
   { key: "Processed", label: "Processed" },

@@ -184,8 +184,8 @@ export function TodayQueue({ role }: { role: UserRole }) {
   if (bonusPafs > 0) {
     items.push({
       id: "pafs", icon: FileText, tone: "warn",
-      title: `${plural(bonusPafs, "bonus PAF")} awaiting approval`,
-      meta: "Clear before payroll",
+      title: `${plural(bonusPafs, "PAF")} awaiting your approval`,
+      meta: "Bonuses and pay adjustments — clear before payroll",
       action: "Review", to: "/paf",
     });
   }

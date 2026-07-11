@@ -23,6 +23,7 @@ import { cn } from "@/lib/cn";
 const STATUS_TONE: Record<PafStatus, "neutral" | "warning" | "info" | "success" | "danger"> = {
   Pending: "warning",
   "Pending SDO Approval": "warning",
+  "Pending VP Approval": "warning",
   Approved: "info",
   Rejected: "danger",
   "Needs Approval": "warning",
@@ -82,13 +83,13 @@ export function PafTable({
   // anything they can see here is in their scope). Server re-checks.
   const onBehalfRoles = ["sdo", "rvp", "vp", "coo", "admin"];
   // Editable while rejected (the original flow) or still pending a decision.
-  const editableStatuses = ["Rejected", "Pending", "Pending SDO Approval"];
+  const editableStatuses = ["Rejected", "Pending", "Pending SDO Approval", "Pending VP Approval"];
   const canEditResubmit = (p: PafRow) =>
     !!onEdit &&
     editableStatuses.includes(p.status) &&
     (p.submitter_id === profile?.id || onBehalfRoles.includes(profile?.role ?? ""));
   // Admins can delete any PAF; the submitter can delete their own while pending.
-  const pendingStatuses = ["Pending", "Pending SDO Approval"];
+  const pendingStatuses = ["Pending", "Pending SDO Approval", "Pending VP Approval"];
   const canDelete = (p: PafRow) =>
     isAdmin || (p.submitter_id === profile?.id && pendingStatuses.includes(p.status));
   // A heads-up text only makes sense while the PAF is still awaiting its

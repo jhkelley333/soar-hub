@@ -62,6 +62,10 @@ function visibleSections(category: string, bonusType: string): Set<string> {
     // Notes only from config; the custom salary-leader block renders the rest.
     return out;
   }
+  if (c === PAY_ADJ_SALARY) {
+    // Notes only from config; the custom pay-adjustment block renders the rest.
+    return out;
+  }
   if (c === "Cross Store Work") {
     out.add("tips");
     out.add("store");
@@ -92,6 +96,10 @@ const DRIVEIN_OVERRIDE_ROLES = new Set(["sdo", "rvp", "vp", "coo", "payroll", "a
 // New, code-driven category (its fields are custom-rendered, not config).
 const NEW_HIRE_LEADER = "New Hire (Salary Leader)";
 const NH_ROLES = ["GM", "DO", "SDO"];
+// Pay Adjustment (Salary) — SDO/RVP only; VP approves. Also code-driven.
+const PAY_ADJ_SALARY = "Pay Adjustment (Salary)";
+const PAY_ADJ_ROLES = ["GM", "DO", "SDO"];
+const PAY_ADJ_SUBMITTER_ROLES = new Set(["sdo", "rvp", "admin"]);
 const NH_INPUT =
   "block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent";
 
@@ -255,6 +263,9 @@ function pafRowToFormState(p: PafRow): FormState {
     nh_area: s(p.nh_area),
     nh_stores: s(p.nh_stores),
     nh_offer_letter_path: s(p.nh_offer_letter_path),
+    pa_role: s(p.pa_role),
+    pa_new_salary: n(p.pa_new_salary),
+    pa_start_date: s(p.pa_start_date),
   };
 }
 
@@ -266,6 +277,11 @@ function isFieldVisibleForState(fieldKey: string, state: FormState): boolean {
   // identity + pay-period details, so suppress every standard field
   // except the category picker to avoid duplicate data entry.
   if (state.category === NEW_HIRE_LEADER) {
+    return fieldKey === "category";
+  }
+  // Pay Adjustment (Salary): same treatment — the custom block collects
+  // everything, so only the category picker renders from config.
+  if (state.category === PAY_ADJ_SALARY) {
     return fieldKey === "category";
   }
   // Demotion: SDO+ submitters can waive the Drive-In # (hides the field).
@@ -489,14 +505,19 @@ export function PafForm({
       editPaf ? resubmitPaf(editPaf.id, input) : submitPaf(input),
     onSuccess: (res) => {
       const awaitingSdo = res.status === "Pending SDO Approval";
+      const awaitingVp = res.status === "Pending VP Approval";
       toast.push(
         isEdit
           ? awaitingSdo
             ? "PAF resubmitted — awaiting SDO approval."
-            : "PAF resubmitted to Payroll."
+            : awaitingVp
+              ? "PAF resubmitted — awaiting VP approval."
+              : "PAF resubmitted to Payroll."
           : awaitingSdo
             ? "Bonus PAF submitted — awaiting SDO approval."
-            : "PAF submitted to Payroll.",
+            : awaitingVp
+              ? "Pay adjustment submitted — awaiting VP approval (VP + COO copied)."
+              : "PAF submitted to Payroll.",
         "success"
       );
       qc.invalidateQueries({ queryKey: ["paf-list"] });
@@ -598,6 +619,24 @@ export function PafForm({
       }
       if (String(state.nh_offer_letter_path ?? "").trim() === "") {
         setError("Attach the offer letter before submitting.");
+        return;
+      }
+    } else if (state.category === PAY_ADJ_SALARY) {
+      const req: Array<[string, string]> = [
+        ["pa_role", "Role"],
+        ["employee_name", "Employee name"],
+        ["pa_new_salary", "New salary"],
+        ["pa_start_date", "New salary start date"],
+        ["pay_period_end", "Pay period end"],
+      ];
+      for (const [k, lbl] of req) {
+        if (String(state[k] ?? "").trim() === "") {
+          setError(`"${lbl}" is required.`);
+          return;
+        }
+      }
+      if (!(Number(state.pa_new_salary) > 0)) {
+        setError("New salary must be greater than zero.");
         return;
       }
     } else {
@@ -710,6 +749,9 @@ export function PafForm({
           onChange={patch}
           cfg={cfg}
           myStores={myStores}
+          extraCategories={
+            profile && PAY_ADJ_SUBMITTER_ROLES.has(profile.role) ? [PAY_ADJ_SALARY] : []
+          }
         />
         {state.category === "Demotion" &&
           !!profile &&
@@ -808,6 +850,78 @@ export function PafForm({
       )}
 
       {/* New Hire (Salary Leader) — custom, role-conditional section. */}
+      {state.category === PAY_ADJ_SALARY && (
+        <FormSection
+          title="Pay Adjustment — Salary"
+          description="Salary change for a GM, DO, or SDO. The VP approves; VP and COO are copied."
+        >
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <NhField label="Role *">
+              <select
+                value={state.pa_role ?? ""}
+                onChange={(e) => patch("pa_role", e.target.value)}
+                className={NH_INPUT}
+              >
+                <option value="">Select role…</option>
+                {PAY_ADJ_ROLES.map((r) => (
+                  <option key={r}>{r}</option>
+                ))}
+              </select>
+            </NhField>
+
+            <NhField label="Employee name *">
+              <input
+                value={state.employee_name ?? ""}
+                onChange={(e) => patch("employee_name", e.target.value)}
+                className={NH_INPUT}
+                placeholder="Full name"
+              />
+            </NhField>
+
+            <NhField label="Last 4 SSN *">
+              <input
+                value={state.last4_ssn ?? ""}
+                onChange={(e) => patch("last4_ssn", e.target.value.replace(/\D/g, "").slice(0, 4))}
+                inputMode="numeric"
+                maxLength={4}
+                className={NH_INPUT}
+                placeholder="1234"
+              />
+            </NhField>
+
+            <NhField label="New salary (annual) *">
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={state.pa_new_salary ?? ""}
+                onChange={(e) => patch("pa_new_salary", e.target.value)}
+                className={NH_INPUT}
+                placeholder="e.g. 68000"
+              />
+            </NhField>
+
+            <NhField label="New salary start date *">
+              <input
+                type="date"
+                value={state.pa_start_date ?? ""}
+                onChange={(e) => patch("pa_start_date", e.target.value)}
+                className={NH_INPUT}
+              />
+            </NhField>
+
+            <NhField label="Pay period end *">
+              <input
+                type="date"
+                value={state.pay_period_end ?? ""}
+                onChange={(e) => patch("pay_period_end", e.target.value)}
+                className={NH_INPUT}
+              />
+            </NhField>
+          </div>
+        </FormSection>
+      )}
+
       {state.category === NEW_HIRE_LEADER && (
         <FormSection
           title="New Hire — Salary Leader"
@@ -1125,12 +1239,14 @@ function FieldGrid({
   onChange,
   cfg,
   myStores,
+  extraCategories = [],
 }: {
   fields: [string, PafFieldDisplay][];
   state: FormState;
   onChange: (key: string, value: string) => void;
   cfg: PafConfigDoc;
   myStores: MyStore[];
+  extraCategories?: string[];
 }) {
   if (!fields.length) {
     return <div className="text-xs text-zinc-400">(no fields)</div>;
@@ -1147,6 +1263,7 @@ function FieldGrid({
           onChange={(v) => onChange(k, v)}
           lists={cfg.lists}
           myStores={myStores}
+          extraCategories={extraCategories}
         />
       ))}
     </div>
@@ -1185,6 +1302,7 @@ function FieldRender({
   lists,
   readOnly,
   myStores,
+  extraCategories = [],
 }: {
   fieldKey: string;
   cfg: PafFieldDisplay;
@@ -1193,6 +1311,7 @@ function FieldRender({
   lists: PafConfigDoc["lists"];
   readOnly?: boolean;
   myStores: MyStore[];
+  extraCategories?: string[];
 }) {
   const id = `paf-${fieldKey}`;
   // UI-only label override: the config still stores "Drive-In #", but the
@@ -1253,11 +1372,11 @@ function FieldRender({
         label={label}
         value={value}
         onChange={onChange}
-        options={
-          lists.categories.includes(NEW_HIRE_LEADER)
-            ? lists.categories
-            : [...lists.categories, NEW_HIRE_LEADER]
-        }
+        options={[
+          ...lists.categories,
+          ...(lists.categories.includes(NEW_HIRE_LEADER) ? [] : [NEW_HIRE_LEADER]),
+          ...extraCategories.filter((c) => !lists.categories.includes(c)),
+        ]}
         placeholder={cfg.placeholder || "Select..."}
         helpText={cfg.helpText}
       />

@@ -41,6 +41,7 @@ const QUEUE_CHIPS: (PafStatus | "ALL")[] = [
   "ALL",
   "Pending",
   "Pending SDO Approval",
+  "Pending VP Approval",
   "Needs Approval",
   "Approved",
 ];

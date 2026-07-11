@@ -17,6 +17,8 @@ const AUDIT_LABEL: Record<string, string> = {
   "token-approved": "Approval link clicked",
   "mark-processed": "Marked Processed",
   "sdo-approved": "Approved by SDO",
+  "vp-approved": "Approved by VP",
+  "vp-rejected": "Rejected by VP",
   "sdo-rejected": "Rejected by SDO",
   "notify-approver": "Approver notified",
   delete: "Deleted by System Admin",
@@ -345,10 +347,24 @@ export function PafDetail({ paf }: { paf: PafRow }) {
         </Section>
       )}
 
+      {paf.category === "Pay Adjustment (Salary)" && (
+        <Section title="Pay Adjustment — Salary">
+          <Grid>
+            <Field label="Role" value={paf.pa_role ?? "—"} />
+            <Field
+              label="New Salary"
+              value={paf.pa_new_salary != null && paf.pa_new_salary !== "" ? formatUSD(Number(paf.pa_new_salary)) : "—"}
+            />
+            <Field label="New Salary Start Date" value={paf.pa_start_date ?? "—"} />
+          </Grid>
+        </Section>
+      )}
+
       {(paf.status === "Pending SDO Approval" ||
+        paf.status === "Pending VP Approval" ||
         paf.sdo_decided_at ||
         paf.sdo_decision) && (
-        <Section title="SDO Approval">
+        <Section title={paf.category === "Pay Adjustment (Salary)" ? "VP Approval" : "SDO Approval"}>
           <Grid>
             {paf.sdo_decision && (
               <Field
@@ -365,8 +381,12 @@ export function PafDetail({ paf }: { paf: PafRow }) {
             {paf.sdo_decided_at && (
               <Field label="Decided At" value={paf.sdo_decided_at.slice(0, 10)} />
             )}
-            {paf.status === "Pending SDO Approval" && !paf.sdo_decided_at && (
-              <Field label="Status" value="Awaiting SDO action" />
+            {(paf.status === "Pending SDO Approval" || paf.status === "Pending VP Approval") &&
+              !paf.sdo_decided_at && (
+              <Field
+                label="Status"
+                value={paf.status === "Pending VP Approval" ? "Awaiting VP action" : "Awaiting SDO action"}
+              />
             )}
           </Grid>
           {paf.sdo_decision_note && (
@@ -484,6 +504,7 @@ function buildSteps(paf: PafRow): Step[] {
     status === "Rejected" ||
     paf.sdo_decision === "rejected";
   const isBonusFlow = paf.category === "Bonus" && !!paf.sdo_approver_id;
+  const isVpFlow = paf.category === "Pay Adjustment (Salary)" && !!paf.sdo_approver_id;
 
   const submitted: Step = {
     key: "submit",
@@ -492,16 +513,16 @@ function buildSteps(paf: PafRow): Step[] {
     hint: paf.created_at.slice(0, 10),
   };
 
-  const sdo: Step | null = isBonusFlow
+  const sdo: Step | null = isBonusFlow || isVpFlow
     ? {
         key: "sdo",
-        label: "SDO Review",
+        label: isVpFlow ? "VP Review" : "SDO Review",
         state:
           paf.sdo_decision === "approved"
             ? "done"
             : paf.sdo_decision === "rejected"
               ? "rejected"
-              : status === "Pending SDO Approval"
+              : status === "Pending SDO Approval" || status === "Pending VP Approval"
                 ? "current"
                 : "upcoming",
         hint:
@@ -509,8 +530,10 @@ function buildSteps(paf: PafRow): Step[] {
             ? "Approved"
             : paf.sdo_decision === "rejected"
               ? "Rejected"
-              : status === "Pending SDO Approval"
-                ? "Awaiting SDO"
+              : status === "Pending SDO Approval" || status === "Pending VP Approval"
+                ? isVpFlow
+                  ? "Awaiting VP"
+                  : "Awaiting SDO"
                 : undefined,
       }
     : null;
@@ -703,7 +726,7 @@ function renderAuditDetail(
     const reason = detail.reason ?? detail.note;
     return reason ? `Reason: ${String(reason)}` : null;
   }
-  if (action === "sdo-approved" && detail.note) {
+  if ((action === "sdo-approved" || action === "vp-approved") && detail.note) {
     return `Note: ${String(detail.note)}`;
   }
   if (action === "needs-approval" && detail.approval_email) {

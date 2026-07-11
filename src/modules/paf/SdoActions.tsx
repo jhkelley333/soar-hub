@@ -1,4 +1,5 @@
-// Approve / Reject buttons for SDO/RVP bonus review. Inline on the
+// Approve / Reject buttons for the assigned approver (SDO/RVP bonus review,
+// or VP pay-adjustment review — same machinery). Inline on the
 // SDO queue table. Each action opens a small modal.
 
 import { useState } from "react";
@@ -8,6 +9,9 @@ import { Button } from "@/shared/ui/Button";
 import { Label } from "@/shared/ui/Label";
 import { useToast } from "@/shared/ui/Toaster";
 import { sdoApprovePaf, sdoRejectPaf } from "./api";
+
+const kindLabel = (p: { category: string }) =>
+  p.category === "Pay Adjustment (Salary)" ? "Pay adjustment" : "Bonus";
 import type { PafRow } from "./types";
 
 type Mode = null | "approve" | "reject";
@@ -29,7 +33,7 @@ export function SdoActions({
   const approve = useMutation({
     mutationFn: () => sdoApprovePaf(paf.id, note || undefined),
     onSuccess: () => {
-      toast.push("Bonus approved — moved to Payroll queue.", "success");
+      toast.push(`${kindLabel(paf)} approved — moved to Payroll queue.`, "success");
       qc.invalidateQueries({ queryKey: ["paf-list"] });
       qc.invalidateQueries({ queryKey: ["paf-sdo-queue"] });
       close();
@@ -42,7 +46,7 @@ export function SdoActions({
   const reject = useMutation({
     mutationFn: () => sdoRejectPaf(paf.id, reason),
     onSuccess: () => {
-      toast.push("Bonus rejected.", "success");
+      toast.push(`${kindLabel(paf)} rejected.`, "success");
       qc.invalidateQueries({ queryKey: ["paf-list"] });
       qc.invalidateQueries({ queryKey: ["paf-sdo-queue"] });
       close();
@@ -83,7 +87,7 @@ export function SdoActions({
       <Modal
         open={mode === "approve"}
         onClose={close}
-        title={`Approve bonus — ${paf.employee_name}`}
+        title={`Approve ${kindLabel(paf).toLowerCase()} — ${paf.employee_name}`}
         footer={
           <>
             <Button variant="ghost" onClick={close}>
@@ -101,7 +105,7 @@ export function SdoActions({
       >
         <div>
           <p className="text-sm text-zinc-700">
-            Approving moves this bonus PAF into the Payroll queue.
+            Approving moves this PAF into the Payroll queue.
           </p>
           <div className="mt-3">
             <Label htmlFor="sdo-note">Note (optional)</Label>
@@ -120,7 +124,7 @@ export function SdoActions({
       <Modal
         open={mode === "reject"}
         onClose={close}
-        title={`Reject bonus — ${paf.employee_name}`}
+        title={`Reject ${kindLabel(paf).toLowerCase()} — ${paf.employee_name}`}
         footer={
           <>
             <Button variant="ghost" onClick={close}>
