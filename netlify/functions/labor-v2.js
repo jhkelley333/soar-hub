@@ -603,6 +603,123 @@ async function missTracker(supa, user, params) {
   return { week, threshold, rows: out };
 }
 
+// ── No-GM labor credit management (SDO and above) ────────────────────
+// A store without a GM gets a weekly labor credit (default 880.00, in
+// ea_settings.no_gm_weekly_credit). SDO+ tag a store with a reason —
+// LOA / No GM / In Training — and a start date; ending the record stops
+// the credit. The credit itself is applied in _lib/trainingCredit.js.
+const NO_GM_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
+const NO_GM_REASONS = new Set(["loa", "no_gm", "in_training"]);
+
+async function noGmList(supa, user) {
+  if (!NO_GM_ROLES.has(roleOf(user))) return { error: "SDO and above only.", status: 403 };
+  const visible = await resolveVisibleStoreRows(supa, user);
+  if (!visible.length) return { rows: [], weekly: 880 };
+  const numbers = [...new Set(visible.map((s) => String(s.number)))];
+  const nameByNumber = new Map(visible.map((s) => [String(s.number), s.name]));
+  const [{ data, error }, { data: rateRow }] = await Promise.all([
+    supa.from("no_gm_credits").select("*").in("store_number", numbers)
+      .order("start_date", { ascending: false }).limit(500),
+    supa.from("ea_settings").select("value").eq("key", "no_gm_weekly_credit").maybeSingle(),
+  ]);
+  if (error) {
+    if (/no_gm_credits/.test(error.message)) return { error: "Run migration 0236 first (no_gm_credits table is missing).", status: 500 };
+    return { error: error.message, status: 500 };
+  }
+  const weekly = (() => { const a = Number(rateRow?.value?.amount); return isFinite(a) && a > 0 ? a : 880; })();
+  const today = isoOf(new Date());
+  const rows = (data || []).map((r) => ({
+    ...r,
+    store_name: nameByNumber.get(String(r.store_number)) ?? null,
+    active: r.start_date <= today && (!r.end_date || r.end_date >= today),
+  }));
+  return { rows, weekly };
+}
+
+async function noGmAdd(supa, user, body) {
+  if (!NO_GM_ROLES.has(roleOf(user))) return { error: "SDO and above only.", status: 403 };
+  const storeNumber = String(body?.store_number || "").trim();
+  const reason = String(body?.reason || "").trim();
+  const startDate = String(body?.start_date || "").trim();
+  const endDate = body?.end_date ? String(body.end_date).trim() : null;
+  const note = String(body?.note ?? "").trim().slice(0, 500) || null;
+  if (!NO_GM_REASONS.has(reason)) return { error: "reason must be loa, no_gm, or in_training.", status: 400 };
+  if (!parseIso(startDate)) return { error: "valid start_date is required.", status: 400 };
+  if (endDate && (!parseIso(endDate) || endDate < startDate)) return { error: "end_date must be on/after start_date.", status: 400 };
+
+  const visible = await resolveVisibleStoreRows(supa, user);
+  const storeRow = visible.find((s) => String(s.number) === storeNumber) || null;
+  if (!storeRow) return { error: `Store ${storeNumber} is outside your scope.`, status: 403 };
+
+  // One open tag per store at a time — end the existing one first.
+  const { data: open } = await supa.from("no_gm_credits")
+    .select("id").eq("store_number", storeNumber).is("end_date", null).limit(1);
+  if (open?.length && !endDate) {
+    return { error: `Store ${storeNumber} already has an open no-GM tag — end it first.`, status: 409 };
+  }
+
+  const { data, error } = await supa.from("no_gm_credits").insert({
+    store_number: storeNumber,
+    reason,
+    start_date: startDate,
+    end_date: endDate,
+    note,
+    created_by_id: user.id,
+    created_by_email: user.email,
+  }).select("*").single();
+  if (error) {
+    if (/no_gm_credits/.test(error.message)) return { error: "Run migration 0236 first (no_gm_credits table is missing).", status: 500 };
+    return { error: error.message, status: 500 };
+  }
+  return { row: data };
+}
+
+async function noGmEnd(supa, user, body) {
+  if (!NO_GM_ROLES.has(roleOf(user))) return { error: "SDO and above only.", status: 403 };
+  const id = String(body?.id || "").trim();
+  const endDate = String(body?.end_date || "").trim();
+  if (!id) return { error: "id is required.", status: 400 };
+  if (!parseIso(endDate)) return { error: "valid end_date is required.", status: 400 };
+  const { data: rec } = await supa.from("no_gm_credits").select("id, store_number, start_date").eq("id", id).maybeSingle();
+  if (!rec) return { error: "Record not found.", status: 404 };
+  if (endDate < rec.start_date) return { error: "end_date must be on/after the start date.", status: 400 };
+  const visible = await resolveVisibleStoreRows(supa, user);
+  if (!visible.some((s) => String(s.number) === String(rec.store_number))) {
+    return { error: "That store is outside your scope.", status: 403 };
+  }
+  const { error } = await supa.from("no_gm_credits")
+    .update({ end_date: endDate, updated_at: new Date().toISOString() }).eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
+async function noGmDelete(supa, user, body) {
+  if (!NO_GM_ROLES.has(roleOf(user))) return { error: "SDO and above only.", status: 403 };
+  const id = String(body?.id || "").trim();
+  if (!id) return { error: "id is required.", status: 400 };
+  const { data: rec } = await supa.from("no_gm_credits").select("id, store_number").eq("id", id).maybeSingle();
+  if (!rec) return { error: "Record not found.", status: 404 };
+  const visible = await resolveVisibleStoreRows(supa, user);
+  if (!visible.some((s) => String(s.number) === String(rec.store_number))) {
+    return { error: "That store is outside your scope.", status: 403 };
+  }
+  const { error } = await supa.from("no_gm_credits").delete().eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
+async function noGmRateSet(supa, user, body) {
+  if (roleOf(user) !== "admin") return { error: "Admins only.", status: 403 };
+  const amount = round2(numv(body?.amount));
+  if (amount <= 0 || amount > 100000) return { error: "Enter a weekly amount above $0.", status: 400 };
+  const { error } = await supa.from("ea_settings").upsert(
+    { key: "no_gm_weekly_credit", value: { amount }, updated_by: user.id, updated_at: new Date().toISOString() },
+    { onConflict: "key" },
+  );
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, amount };
+}
+
 async function teamView(supa, user, params) {
   if (!TEAM_ROLES.has(roleOf(user))) return { error: "not authorized", status: 403 };
   const empty = { date: null, scope: { stores: 0, dos: [] }, totals: null, startLevel: "district", levels: { region: [], area: [], district: [], store: [] }, missing: [] };
@@ -741,6 +858,10 @@ export const handler = async (event) => {
     if (event.httpMethod === "POST") {
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "review") return unwrap(await saveReview(supa, user, body));
+      if (action === "no-gm-add") return unwrap(await noGmAdd(supa, user, body));
+      if (action === "no-gm-end") return unwrap(await noGmEnd(supa, user, body));
+      if (action === "no-gm-delete") return unwrap(await noGmDelete(supa, user, body));
+      if (action === "no-gm-rate-set") return unwrap(await noGmRateSet(supa, user, body));
       return respond(400, { error: `Unknown action: ${action}` });
     }
 
@@ -749,6 +870,7 @@ export const handler = async (event) => {
     if (action === "team") return unwrap(await teamView(supa, user, params));
     if (action === "miss-tracker") return unwrap(await missTracker(supa, user, params));
     if (action === "my-stores") return unwrap(await listMyStores(supa, user));
+    if (action === "no-gm-list") return unwrap(await noGmList(supa, user));
 
     // Admin-only org rollup.
     if (!isAdmin) return respond(403, { error: "Admins only." });

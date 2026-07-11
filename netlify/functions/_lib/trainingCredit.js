@@ -109,16 +109,61 @@ export async function loadGmPtoCreditDates(supa, storeNumbers) {
   return map;
 }
 
-// All labor credits for the given stores: training + GM PTO, one merged map
-// for applyCreditsToRows.
+// ── No-GM labor credit ───────────────────────────────────────────────────────
+// A store with no GM (LOA / open seat / GM in training) credits its labor
+// chart a fixed weekly amount for as long as the tag is active. Rate lives in
+// ea_settings.no_gm_weekly_credit (default 880.00/week), spread evenly across
+// all 7 days so a full week nets exactly the weekly amount.
+const NO_GM_DEFAULT_WEEKLY = 880;
+
+async function noGmWeeklyRate(supa) {
+  try {
+    const { data } = await supa.from("ea_settings")
+      .select("value").eq("key", "no_gm_weekly_credit").maybeSingle();
+    const amt = Number(data?.value?.amount);
+    return isFinite(amt) && amt > 0 ? amt : NO_GM_DEFAULT_WEEKLY;
+  } catch { return NO_GM_DEFAULT_WEEKLY; }
+}
+
+export async function loadNoGmCreditDates(supa, storeNumbers) {
+  const map = new Map();
+  if (!storeNumbers.length) return map;
+  const weekly = await noGmWeeklyRate(supa);
+  const daily = weekly / 7;
+  const { data } = await supa
+    .from("no_gm_credits")
+    .select("store_number, start_date, end_date")
+    .in("store_number", storeNumbers);
+  const todayMs = Date.now();
+  for (const rec of data || []) {
+    const startMs = parseIso(rec.start_date);
+    if (startMs == null) continue;
+    // Open-ended records credit through today; dates past the queried rows
+    // never match anyway (applyCreditsToRows filters per row). Safety-capped.
+    const endMs = Math.min(parseIso(rec.end_date) ?? todayMs, todayMs);
+    const sn = String(rec.store_number);
+    const arr = map.get(sn) || [];
+    for (let ms = startMs, i = 0; ms <= endMs && i < 400; ms += DAY, i++) {
+      arr.push({ date: isoOf(ms), amount: daily, hours: 0 });
+    }
+    if (arr.length) map.set(sn, arr);
+  }
+  return map;
+}
+
+// All labor credits for the given stores: training + GM PTO + no-GM, one
+// merged map for applyCreditsToRows.
 export async function loadLaborCredits(supa, storeNumbers) {
-  const [tc, pto] = await Promise.all([
+  const [tc, pto, noGm] = await Promise.all([
     loadTrainingCreditDates(supa, storeNumbers),
     loadGmPtoCreditDates(supa, storeNumbers),
+    loadNoGmCreditDates(supa, storeNumbers),
   ]);
-  for (const [sn, arr] of pto) {
-    const cur = tc.get(sn) || [];
-    tc.set(sn, cur.concat(arr));
+  for (const extra of [pto, noGm]) {
+    for (const [sn, arr] of extra) {
+      const cur = tc.get(sn) || [];
+      tc.set(sn, cur.concat(arr));
+    }
   }
   return tc;
 }

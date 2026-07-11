@@ -109,3 +109,39 @@ export function fetchMissTracker(weekStart: string): Promise<MissTrackerResponse
   const p = new URLSearchParams({ action: "miss-tracker", week_start: weekStart });
   return req(`${FN}?${p.toString()}`);
 }
+
+// ── No-GM labor credit (SDO+) ────────────────────────────────────────
+export interface NoGmCreditRow {
+  id: string;
+  store_number: string;
+  store_name: string | null;
+  reason: "loa" | "no_gm" | "in_training";
+  start_date: string;
+  end_date: string | null;
+  note: string | null;
+  created_by_email: string | null;
+  created_at: string;
+  active: boolean;
+}
+
+export function fetchNoGmCredits(): Promise<{ rows: NoGmCreditRow[]; weekly: number }> {
+  return req(`${FN}?action=no-gm-list`);
+}
+
+export function addNoGmCredit(input: {
+  store_number: string; reason: string; start_date: string; end_date?: string; note?: string;
+}): Promise<{ row: NoGmCreditRow }> {
+  return req(`${FN}?action=no-gm-add`, { method: "POST", body: JSON.stringify(input) });
+}
+
+export function endNoGmCredit(id: string, endDate: string): Promise<{ ok: true }> {
+  return req(`${FN}?action=no-gm-end`, { method: "POST", body: JSON.stringify({ id, end_date: endDate }) });
+}
+
+export function deleteNoGmCredit(id: string): Promise<{ ok: true }> {
+  return req(`${FN}?action=no-gm-delete`, { method: "POST", body: JSON.stringify({ id }) });
+}
+
+export function setNoGmWeeklyRate(amount: number): Promise<{ ok: true; amount: number }> {
+  return req(`${FN}?action=no-gm-rate-set`, { method: "POST", body: JSON.stringify({ amount }) });
+}
