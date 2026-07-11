@@ -340,6 +340,10 @@ export function PafForm({
   // shown up front so nobody is surprised their PAF lands in next week.
   const cutoffQ = useQuery({ queryKey: ["paf-cutoff-info"], queryFn: fetchCutoffInfo, staleTime: 60_000 });
   const cutoff = cutoffQ.data;
+  // Config-driven labels for the code-rendered blocks (New Hire / Pay
+  // Adjustment): the admin edits these under PAF Config -> Fields; the code
+  // fallback keeps the form working on older config versions.
+  const cfgLabel = (key: string, fallback: string) => cfg?.fields?.[key]?.label || fallback;
   // True when a leader is editing a rejected PAF someone else submitted.
   const onBehalf = isEdit && !!profile && editPaf!.submitter_id !== profile.id;
   const [state, setState] = useState<FormState>({});
@@ -795,6 +799,9 @@ export function PafForm({
           extraCategories={
             profile && PAY_ADJ_SUBMITTER_ROLES.has(profile.role) ? [PAY_ADJ_SALARY] : []
           }
+          omitCategories={
+            profile && PAY_ADJ_SUBMITTER_ROLES.has(profile.role) ? [] : [PAY_ADJ_SALARY]
+          }
         />
         {state.category === "Demotion" &&
           !!profile &&
@@ -899,7 +906,7 @@ export function PafForm({
           description="Salary change for a GM, DO, or SDO. The VP approves; VP and COO are copied."
         >
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <NhField label="Role *">
+            <NhField label={`${cfgLabel("pa_role", "Role")} *`}>
               <select
                 value={state.pa_role ?? ""}
                 onChange={(e) => patch("pa_role", e.target.value)}
@@ -932,7 +939,7 @@ export function PafForm({
               />
             </NhField>
 
-            <NhField label="New salary (annual) *">
+            <NhField label={`${cfgLabel("pa_new_salary", "New salary (annual)")} *`}>
               <input
                 type="number"
                 min="0"
@@ -944,7 +951,7 @@ export function PafForm({
               />
             </NhField>
 
-            <NhField label="New salary start date *">
+            <NhField label={`${cfgLabel("pa_start_date", "New salary start date")} *`}>
               <input
                 type="date"
                 value={state.pa_start_date ?? ""}
@@ -971,7 +978,7 @@ export function PafForm({
           description="Role, identity, and pay-period details for a new salaried leader."
         >
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <NhField label="Role *">
+            <NhField label={`${cfgLabel("nh_role", "Role")} *`}>
               <select
                 value={state.nh_role ?? ""}
                 onChange={(e) => patch("nh_role", e.target.value)}
@@ -1004,7 +1011,7 @@ export function PafForm({
               />
             </NhField>
 
-            <NhField label="Start date *">
+            <NhField label={`${cfgLabel("nh_start_date", "Start date")} *`}>
               <input
                 type="date"
                 value={state.nh_start_date ?? ""}
@@ -1013,7 +1020,7 @@ export function PafForm({
               />
             </NhField>
 
-            <NhField label="Hours worked last pay period *">
+            <NhField label={`${cfgLabel("nh_hours_last_period", "Hours worked last pay period")} *`}>
               <input
                 type="number"
                 min="0"
@@ -1035,7 +1042,7 @@ export function PafForm({
             </NhField>
 
             {state.nh_role === "GM" && (
-              <NhField label="Home store *">
+              <NhField label={`${cfgLabel("nh_home_store", "Home store")} *`}>
                 <select
                   value={state.nh_home_store ?? ""}
                   onChange={(e) => patch("nh_home_store", e.target.value)}
@@ -1283,6 +1290,7 @@ function FieldGrid({
   cfg,
   myStores,
   extraCategories = [],
+  omitCategories = [],
 }: {
   fields: [string, PafFieldDisplay][];
   state: FormState;
@@ -1290,6 +1298,7 @@ function FieldGrid({
   cfg: PafConfigDoc;
   myStores: MyStore[];
   extraCategories?: string[];
+  omitCategories?: string[];
 }) {
   if (!fields.length) {
     return <div className="text-xs text-zinc-400">(no fields)</div>;
@@ -1307,6 +1316,7 @@ function FieldGrid({
           lists={cfg.lists}
           myStores={myStores}
           extraCategories={extraCategories}
+          omitCategories={omitCategories}
         />
       ))}
     </div>
@@ -1346,6 +1356,7 @@ function FieldRender({
   readOnly,
   myStores,
   extraCategories = [],
+  omitCategories = [],
 }: {
   fieldKey: string;
   cfg: PafFieldDisplay;
@@ -1355,6 +1366,7 @@ function FieldRender({
   readOnly?: boolean;
   myStores: MyStore[];
   extraCategories?: string[];
+  omitCategories?: string[];
 }) {
   const id = `paf-${fieldKey}`;
   // UI-only label override: the config still stores "Drive-In #", but the
@@ -1416,7 +1428,7 @@ function FieldRender({
         value={value}
         onChange={onChange}
         options={[
-          ...lists.categories,
+          ...lists.categories.filter((c) => !omitCategories.includes(c)),
           ...(lists.categories.includes(NEW_HIRE_LEADER) ? [] : [NEW_HIRE_LEADER]),
           ...extraCategories.filter((c) => !lists.categories.includes(c)),
         ]}
