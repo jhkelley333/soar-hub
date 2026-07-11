@@ -87,3 +87,25 @@ export function fetchLaborV2Gm(store: string, date?: string): Promise<GmLaborRes
 export function saveLaborV2Review(input: ReviewInput): Promise<{ ok: true; review: { id: string; note: string } }> {
   return req(`${FN}?action=review`, { method: "POST", body: JSON.stringify(input) });
 }
+
+// ── Weekly Labor Miss Tracker (CSV export) ───────────────────────────
+export interface MissTrackerRow {
+  store_number: string;
+  store_name: string | null;
+  total: number;
+  /** ISO date → hours missed that day (over days only). */
+  days: Record<string, number>;
+  /** ISO date → "Root Cause — note" filed for that day. */
+  explanations: Record<string, string>;
+}
+
+export interface MissTrackerResponse {
+  week: string[]; // the 7 ISO dates, Mon → Sun
+  threshold: number;
+  rows: MissTrackerRow[];
+}
+
+export function fetchMissTracker(weekStart: string): Promise<MissTrackerResponse> {
+  const p = new URLSearchParams({ action: "miss-tracker", week_start: weekStart });
+  return req(`${FN}?${p.toString()}`);
+}
