@@ -11,6 +11,16 @@ import { cn } from "@/lib/cn";
 import { saveLaborReview } from "./api";
 import type { LaborDay } from "./types";
 
+// Fixed root-cause options for a labor miss — pick one, then explain.
+const ROOT_CAUSES: { key: string; label: string }[] = [
+  { key: "poor_projections", label: "Poor Projections" },
+  { key: "scheduled_above_chart", label: "Scheduled Above Chart" },
+  { key: "didnt_follow_schedule", label: "Didn't Follow the Schedule" },
+  { key: "auto_clock", label: "Auto Clock" },
+  { key: "other", label: "Other" },
+];
+const ROOT_CAUSE_LABEL: Record<string, string> = Object.fromEntries(ROOT_CAUSES.map((r) => [r.key, r.label]));
+
 export function ReviewBox({
   storeNumber,
   day,
@@ -21,18 +31,24 @@ export function ReviewBox({
   const qc = useQueryClient();
   const toast = useToast();
   const existing = day.review?.note ?? "";
+  const existingCause = day.review?.root_cause ?? "";
   const [editing, setEditing] = useState(!day.explained);
   const [note, setNote] = useState(existing);
+  const [rootCause, setRootCause] = useState(existingCause);
 
   // Keep local state in sync when the selected day changes.
   useEffect(() => {
     setNote(existing);
+    setRootCause(existingCause);
     setEditing(!day.explained);
-  }, [day.business_date, day.explained, existing]);
+  }, [day.business_date, day.explained, existing, existingCause]);
 
   const save = useMutation({
     mutationFn: () =>
-      saveLaborReview({ store_number: storeNumber, business_date: day.business_date, note: note.trim() }),
+      saveLaborReview({
+        store_number: storeNumber, business_date: day.business_date, note: note.trim(),
+        root_cause: rootCause || undefined,
+      }),
     onSuccess: () => {
       toast.push("Explanation submitted.", "success");
       qc.invalidateQueries({ queryKey: ["labor-gm"] });
@@ -60,6 +76,11 @@ export function ReviewBox({
               Logged for {day.business_date}
               {day.review?.by ? ` · visible to your DO` : ""}
             </p>
+            {day.review?.root_cause && (
+              <span className="mt-3 inline-block rounded-full bg-sonic/10 px-2.5 py-1 text-xs font-bold text-sonic">
+                {ROOT_CAUSE_LABEL[day.review.root_cause] ?? day.review.root_cause}
+              </span>
+            )}
             <p className="mt-3 rounded-lg bg-zinc-50 p-3 text-sm text-midnight">{day.review?.note}</p>
           </div>
         </div>
@@ -81,9 +102,26 @@ export function ReviewBox({
       </h3>
       <p className="text-xs text-zinc-500">
         {dueLane
-          ? "Labor ran over chart on this day — an explanation is required."
+          ? `Labor ran over chart on this day${day.hours_over_chart != null && day.hours_over_chart > 0 ? ` by about ${day.hours_over_chart} hours` : ""} — pick the root cause, then explain.`
           : "Add a note for this day (optional)."}
       </p>
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {ROOT_CAUSES.map((r) => (
+          <button
+            key={r.key}
+            type="button"
+            onClick={() => setRootCause(rootCause === r.key ? "" : r.key)}
+            className={cn(
+              "rounded-full px-3 py-1.5 text-xs font-semibold transition",
+              rootCause === r.key
+                ? "bg-midnight text-white"
+                : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
+            )}
+          >
+            {r.label}
+          </button>
+        ))}
+      </div>
       <textarea
         value={note}
         onChange={(e) => setNote(e.target.value)}
@@ -99,7 +137,7 @@ export function ReviewBox({
         )}
         <Button
           size="sm"
-          disabled={!note.trim() || save.isPending}
+          disabled={!note.trim() || (dueLane && !rootCause) || save.isPending}
           onClick={() => save.mutate()}
         >
           {save.isPending ? "Saving…" : "Submit explanation"}
