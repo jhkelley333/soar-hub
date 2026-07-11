@@ -3,10 +3,10 @@
 // is color-coded by a single hue (only the hue varies, so the palette stays
 // harmonious); the detail bodies live in ToolDetailPage.
 import {
-  RefreshCw, MessageCircle, HelpCircle, Gauge, Footprints, Wind, type LucideIcon,
+  RefreshCw, MessageCircle, HelpCircle, Gauge, Footprints, Wind, SlidersHorizontal, type LucideIcon,
 } from "lucide-react";
 
-export type ToolId = "improve" | "habit" | "telling" | "dial" | "walk" | "mindfulness";
+export type ToolId = "improve" | "habit" | "telling" | "dial" | "walk" | "mindfulness" | "slii";
 
 export interface CoachTool {
   id: ToolId;
@@ -59,6 +59,13 @@ export const TOOLS: CoachTool[] = [
     category: "In the moment", icon: Footprints, hue: 78,
     eyebrow: "On the floor",
     intro: "A guided walk of the store through the Lens of Excellence — and the three positions to coach from.",
+  },
+  {
+    id: "slii", title: "SLII at Sonic", subtitle: "Assess the task, match your leadership style",
+    category: "Match your style", icon: SlidersHorizontal, hue: 160,
+    eyebrow: "Situational leadership",
+    intro: "Development level is per task, not per person. Assess a team member's capability and commitment on one specific goal, task, or skill — then flex your leadership style to what they need right now.",
+    source: "SLII \u00b7 The Ken Blanchard Companies \u2014 adapted for Sonic",
   },
   {
     id: "mindfulness", title: "Practice Mindfulness", subtitle: "Be present, lead clearly",

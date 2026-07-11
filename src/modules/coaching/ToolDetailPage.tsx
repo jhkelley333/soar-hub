@@ -13,6 +13,7 @@ import { useCoachingStore } from "./storage";
 import { AccountabilityDial } from "./widgets/AccountabilityDial";
 import { BoxBreather } from "./widgets/BoxBreather";
 import { WhatWhatWhy } from "./widgets/WhatWhatWhy";
+import { SliiSonic } from "./widgets/SliiSonic";
 
 const FAV = "#E06A55";
 
@@ -88,6 +89,7 @@ function Body({ tool, chip, soft }: { tool: CoachTool; chip: string; soft: strin
     case "telling": return <Telling chip={chip} soft={soft} />;
     case "dial": return <Dial />;
     case "walk": return <Walk chip={chip} soft={soft} />;
+    case "slii": return <SliiSonic chip={chip} soft={soft} />;
     case "mindfulness": return <Mindfulness chip={chip} soft={soft} />;
   }
 }
