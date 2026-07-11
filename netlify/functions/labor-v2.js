@@ -540,6 +540,65 @@ function teamBand(rows, prefix) {
   };
 }
 
+// Weekly Labor Miss Tracker export: for the chosen Mon-Sun week, each store
+// whose total hours missed exceeds the threshold (default 7h), with hours
+// missed by day and the filed explanation (root cause + note) by day.
+async function missTracker(supa, user, params) {
+  if (!READ_ROLES.has(roleOf(user))) return { error: "not authorized", status: 403 };
+  const weekStart = params.week_start && /^\d{4}-\d{2}-\d{2}$/.test(params.week_start)
+    ? parseIso(params.week_start) : null;
+  if (!weekStart) return { error: "week_start (a Monday, YYYY-MM-DD) is required.", status: 400 };
+  const threshold = Math.max(0, Number(params.threshold ?? 7)) || 0;
+
+  const visible = await resolveVisibleStoreRows(supa, user);
+  if (!visible.length) return { week: [], threshold, rows: [] };
+  const numbers = [...new Set(visible.map((st) => String(st.number)))];
+  const nameByNumber = new Map(visible.map((st) => [String(st.number), st.name]));
+
+  const week = Array.from({ length: 7 }, (_, i) => isoOf(shiftDays(weekStart, i)));
+  const [{ data: rows }, { data: reviews }] = await Promise.all([
+    supa.from("labor_v2_daily").select("*")
+      .gte("business_date", week[0]).lte("business_date", week[6]).in("store_number", numbers),
+    supa.from("labor_reviews").select("store_number, business_date, note, root_cause")
+      .gte("business_date", week[0]).lte("business_date", week[6]).in("store_number", numbers),
+  ]);
+  applyCreditsToRows(rows || [], await loadLaborCredits(supa, numbers));
+
+  const CAUSE_LABEL = {
+    poor_projections: "Poor Projections",
+    scheduled_above_chart: "Scheduled Above Chart",
+    didnt_follow_schedule: "Didn't Follow the Schedule",
+    auto_clock: "Auto Clock",
+    other: "Other",
+  };
+  const reviewKey = (sn, d) => `${sn}|${d}`;
+  const reviewMap = new Map((reviews || []).map((r) => [reviewKey(String(r.store_number), r.business_date), r]));
+
+  const byStore = new Map();
+  for (const r of rows || []) {
+    const sn = String(r.store_number);
+    const laborPct = pct(r.labor_pct);
+    if (chartStatus(laborPct, pct(r.target_labor_pct)) !== "over") continue;
+    const h = storeHoursOver(r, "");
+    if (h == null || h <= 0) continue;
+    if (!byStore.has(sn)) {
+      byStore.set(sn, { store_number: sn, store_name: nameByNumber.get(sn) ?? null, total: 0, days: {}, explanations: {} });
+    }
+    const row = byStore.get(sn);
+    row.days[r.business_date] = round1(h);
+    row.total = round1(row.total + h);
+    const rev = reviewMap.get(reviewKey(sn, r.business_date));
+    if (rev) {
+      const cause = rev.root_cause ? CAUSE_LABEL[rev.root_cause] ?? rev.root_cause : "";
+      row.explanations[r.business_date] = [cause, rev.note].filter(Boolean).join(" \u2014 ");
+    }
+  }
+  const out = [...byStore.values()]
+    .filter((r) => r.total > threshold)
+    .sort((a, b) => b.total - a.total);
+  return { week, threshold, rows: out };
+}
+
 async function teamView(supa, user, params) {
   if (!TEAM_ROLES.has(roleOf(user))) return { error: "not authorized", status: 403 };
   const empty = { date: null, scope: { stores: 0, dos: [] }, totals: null, startLevel: "district", levels: { region: [], area: [], district: [], store: [] }, missing: [] };
@@ -683,6 +742,7 @@ export const handler = async (event) => {
     // GM-facing reads — scope enforced per store in the function.
     if (action === "gm") return unwrap(await gmView(supa, user, params));
     if (action === "team") return unwrap(await teamView(supa, user, params));
+    if (action === "miss-tracker") return unwrap(await missTracker(supa, user, params));
     if (action === "my-stores") return unwrap(await listMyStores(supa, user));
 
     // Admin-only org rollup.
