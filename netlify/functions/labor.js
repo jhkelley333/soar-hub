@@ -169,7 +169,7 @@ function shapeDay(snap, review, goalPct) {
     note_due: status === "over" && !explained,
     explained,
     review: review
-      ? { note: review.note, by: review.reviewed_by_email, at: review.updated_at }
+      ? { note: review.note, by: review.reviewed_by_email, at: review.updated_at, root_cause: review.root_cause ?? null }
       : null,
   };
 }
@@ -318,12 +318,14 @@ async function gmView(supa, user, params) {
 
   const weekStrip = week.map((iso) => {
     const s = snapByDate.get(iso);
+    const status = s ? chartStatus(s.daily_labor_pct, s.base_ptd_labor_goal) : "missing";
+    const h = s && status === "over" ? Number(s.daily_hours_over_chart) : null;
     return {
       business_date: iso,
       labor_pct: s?.daily_labor_pct ?? null,
-      status: s ? chartStatus(s.daily_labor_pct, s.base_ptd_labor_goal) : "missing",
-      note_due:
-        s && chartStatus(s.daily_labor_pct, s.base_ptd_labor_goal) === "over" && !reviewByDate.get(iso),
+      status,
+      note_due: status === "over" && !reviewByDate.get(iso),
+      hours_over: h != null && isFinite(h) && h > 0 ? round1(h) : null,
     };
   });
 
@@ -439,6 +441,15 @@ async function districtView(supa, user, params) {
 }
 
 // ── Review write ─────────────────────────────────────────────────────
+// Same fixed root-cause list as Labor v2 — both write labor_reviews.
+const REVIEW_ROOT_CAUSES = new Set([
+  "poor_projections",
+  "scheduled_above_chart",
+  "didnt_follow_schedule",
+  "auto_clock",
+  "other",
+]);
+
 async function saveReview(supa, user, body) {
   if (!REVIEW_ROLES.has(user.role)) {
     return { error: "You don't have permission to add a labor note.", status: 403 };
@@ -446,6 +457,10 @@ async function saveReview(supa, user, body) {
   const storeNumber = String(body?.store_number || "").trim();
   const businessDate = String(body?.business_date || "").trim();
   const note = String(body?.note ?? "").trim().slice(0, 2000);
+  const rootCause = body?.root_cause ? String(body.root_cause).trim() : null;
+  if (rootCause && !REVIEW_ROOT_CAUSES.has(rootCause)) {
+    return { error: "root_cause must be one of the listed reasons.", status: 400 };
+  }
   if (!storeNumber) return { error: "store_number is required", status: 400 };
   if (!parseIso(businessDate)) return { error: "valid business_date is required", status: 400 };
   if (!note) return { error: "note is required", status: 400 };
@@ -462,24 +477,43 @@ async function saveReview(supa, user, body) {
   }
   if (!storeRow) return { error: `Store ${storeNumber} not found.`, status: 404 };
 
+  // Snapshot how many hours the day ran over chart (from the sheet
+  // snapshot) so the record carries the miss size.
+  let hoursOver = null;
+  try {
+    const { data: snap } = await supa.from("labor_daily_snapshots")
+      .select("daily_hours_over_chart")
+      .eq("store_number", storeNumber).eq("business_date", businessDate).maybeSingle();
+    const h = Number(snap?.daily_hours_over_chart);
+    if (isFinite(h) && h > 0) hoursOver = round1(h);
+  } catch { /* best-effort */ }
+
   const now = new Date().toISOString();
-  const { data, error } = await supa
+  const row = {
+    store_id: storeRow.id,
+    store_number: storeNumber,
+    business_date: businessDate,
+    reviewed_by_id: user.id,
+    reviewed_by_email: user.email,
+    note,
+    acknowledged: true,
+    updated_at: now,
+    root_cause: rootCause,
+    hours_over: hoursOver,
+  };
+  let { data, error } = await supa
     .from("labor_reviews")
-    .upsert(
-      {
-        store_id: storeRow.id,
-        store_number: storeNumber,
-        business_date: businessDate,
-        reviewed_by_id: user.id,
-        reviewed_by_email: user.email,
-        note,
-        acknowledged: true,
-        updated_at: now,
-      },
-      { onConflict: "store_id,business_date" }
-    )
+    .upsert(row, { onConflict: "store_id,business_date" })
     .select("id, note, reviewed_by_email, updated_at")
     .single();
+  if (error && /root_cause|hours_over/.test(error.message)) {
+    // Pre-0235: the columns don't exist yet.
+    delete row.root_cause;
+    delete row.hours_over;
+    ({ data, error } = await supa.from("labor_reviews")
+      .upsert(row, { onConflict: "store_id,business_date" })
+      .select("id, note, reviewed_by_email, updated_at").single());
+  }
   if (error) return { error: error.message, status: 500 };
   return { ok: true, review: data };
 }
