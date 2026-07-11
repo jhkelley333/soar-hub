@@ -89,6 +89,8 @@ export interface DistrictStoreRow {
   explained: boolean;
   note_due: boolean;
   note: string | null;
+  /** Structured miss reason filed with the note. */
+  root_cause: string | null;
 }
 
 export interface DistrictRollup {
