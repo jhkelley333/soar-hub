@@ -58,6 +58,9 @@ export function WeekStrip({
               >
                 {missing ? "–" : fmtPct(d.labor_pct)}
               </div>
+              {over && d.hours_over != null && d.hours_over > 0 && (
+                <div className="text-[10px] font-semibold tabular-nums text-sonic">+{d.hours_over} h</div>
+              )}
             </button>
           );
         })}

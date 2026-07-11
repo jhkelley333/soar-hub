@@ -30,6 +30,8 @@ export interface LaborReviewSummary {
   note: string;
   by: string | null;
   at: string | null;
+  /** Structured miss reason (Labor v2): poor_projections | scheduled_above_chart | didnt_follow_schedule | auto_clock | other */
+  root_cause?: string | null;
 }
 
 // The anchor day card (extends a band with the note state).
@@ -45,6 +47,8 @@ export interface WeekStripDay {
   labor_pct: number | null;
   status: ChartStatus;
   note_due: boolean;
+  /** Hours the day ran over chart (Labor v2, over days only). */
+  hours_over?: number | null;
 }
 
 export interface GmLaborResponse {
@@ -114,6 +118,8 @@ export interface ReviewInput {
   store_number: string;
   business_date: string;
   note: string;
+  /** Structured miss reason — required by the UI when the day is over chart. */
+  root_cause?: string;
 }
 
 export interface LaborDistrict {

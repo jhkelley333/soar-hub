@@ -171,20 +171,36 @@ export function LaborV2GmPage() {
 
 // Note entry/edit box — posts to the labor-v2 review endpoint (labor_reviews)
 // and refreshes the GM query so a saved note clears the miss in place.
+// Fixed root-cause options for a labor miss — pick one, then explain.
+const ROOT_CAUSES: { key: string; label: string }[] = [
+  { key: "poor_projections", label: "Poor Projections" },
+  { key: "scheduled_above_chart", label: "Scheduled Above Chart" },
+  { key: "didnt_follow_schedule", label: "Didn't Follow the Schedule" },
+  { key: "auto_clock", label: "Auto Clock" },
+  { key: "other", label: "Other" },
+];
+const ROOT_CAUSE_LABEL: Record<string, string> = Object.fromEntries(ROOT_CAUSES.map((r) => [r.key, r.label]));
+
 function ReviewBox({ storeNumber, day }: { storeNumber: string; day: LaborDay }) {
   const qc = useQueryClient();
   const toast = useToast();
   const existing = day.review?.note ?? "";
+  const existingCause = day.review?.root_cause ?? "";
   const [editing, setEditing] = useState(!day.explained);
   const [note, setNote] = useState(existing);
+  const [rootCause, setRootCause] = useState(existingCause);
 
   useEffect(() => {
     setNote(existing);
+    setRootCause(existingCause);
     setEditing(!day.explained);
-  }, [day.business_date, day.explained, existing]);
+  }, [day.business_date, day.explained, existing, existingCause]);
 
   const save = useMutation({
-    mutationFn: () => saveLaborV2Review({ store_number: storeNumber, business_date: day.business_date, note: note.trim() }),
+    mutationFn: () => saveLaborV2Review({
+      store_number: storeNumber, business_date: day.business_date, note: note.trim(),
+      root_cause: rootCause || undefined,
+    }),
     onSuccess: () => {
       toast.push("Explanation submitted.", "success");
       qc.invalidateQueries({ queryKey: [GM_QK] });
@@ -209,6 +225,11 @@ function ReviewBox({ storeNumber, day }: { storeNumber: string; day: LaborDay })
               Logged for {day.business_date}
               {day.review?.by ? ` · visible to your DO` : ""}
             </p>
+            {day.review?.root_cause && (
+              <span className="mt-3 inline-block rounded-full bg-sonic/10 px-2.5 py-1 text-xs font-bold text-sonic">
+                {ROOT_CAUSE_LABEL[day.review.root_cause] ?? day.review.root_cause}
+              </span>
+            )}
             <p className="mt-3 rounded-lg bg-zinc-50 p-3 text-sm text-midnight">{day.review?.note}</p>
           </div>
         </div>
@@ -221,8 +242,27 @@ function ReviewBox({ storeNumber, day }: { storeNumber: string; day: LaborDay })
     <div className={cn("rounded-xl bg-white p-5 ring-1", dueLane ? "ring-warn/40" : "ring-zinc-200")}>
       <h3 className="text-sm font-semibold text-midnight">{day.explained ? "Edit explanation" : "Explain this miss"}</h3>
       <p className="text-xs text-zinc-500">
-        {dueLane ? "Labor ran over chart on this day — an explanation is required." : "Add a note for this day (optional)."}
+        {dueLane
+          ? `Labor ran over chart on this day${day.hours_over_chart != null && day.hours_over_chart > 0 ? ` by about ${day.hours_over_chart} hours` : ""} — pick the root cause, then explain.`
+          : "Add a note for this day (optional)."}
       </p>
+      <div className="mt-3 flex flex-wrap gap-1.5">
+        {ROOT_CAUSES.map((r) => (
+          <button
+            key={r.key}
+            type="button"
+            onClick={() => setRootCause(rootCause === r.key ? "" : r.key)}
+            className={cn(
+              "rounded-full px-3 py-1.5 text-xs font-semibold transition",
+              rootCause === r.key
+                ? "bg-midnight text-white"
+                : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200"
+            )}
+          >
+            {r.label}
+          </button>
+        ))}
+      </div>
       <textarea
         value={note}
         onChange={(e) => setNote(e.target.value)}
@@ -234,7 +274,7 @@ function ReviewBox({ storeNumber, day }: { storeNumber: string; day: LaborDay })
         {day.explained && (
           <Button variant="ghost" size="sm" onClick={() => { setEditing(false); setNote(existing); }}>Cancel</Button>
         )}
-        <Button size="sm" disabled={!note.trim() || save.isPending} onClick={() => save.mutate()}>
+        <Button size="sm" disabled={!note.trim() || (dueLane && !rootCause) || save.isPending} onClick={() => save.mutate()}>
           {save.isPending ? "Saving…" : "Submit explanation"}
         </Button>
       </div>
