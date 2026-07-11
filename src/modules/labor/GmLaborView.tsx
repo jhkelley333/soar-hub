@@ -7,7 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, Clock } from "lucide-react";
+import { AlertTriangle, ChevronLeft, ChevronRight, Clock } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -16,6 +16,13 @@ import { BandCard } from "./BandCard";
 import { WeekStrip } from "./WeekStrip";
 import { ReviewBox } from "./ReviewBox";
 import { fmtDayLabel, fmtPct, fmtSignedMoney, fmtSignedHours, fmtSignedPts } from "./format";
+
+const addDaysIso = (iso: string, n: number) => {
+  const d = new Date(`${iso}T12:00:00`);
+  d.setDate(d.getDate() + n);
+  return d.toLocaleDateString("en-CA");
+};
+const todayIso = () => new Date().toLocaleDateString("en-CA");
 
 export function GmLaborView() {
   const [store, setStore] = useState<string>("");
@@ -95,13 +102,51 @@ export function GmLaborView() {
         />
       ) : (
         <div className="space-y-5">
-          {data!.week.length > 0 && (
-            <WeekStrip
-              week={data!.week}
-              selected={data!.date}
-              onSelect={(d) => setDate(d)}
-            />
-          )}
+          {data!.week.length > 0 && (() => {
+            // Week navigation: anchor to the previous week's Sunday (its last
+            // day) or the next week's Monday. Any day the strip shows can be
+            // selected and explained — including past misses.
+            const monday = data!.week[0].business_date;
+            const nextMonday = addDaysIso(monday, 7);
+            const isCurrentWeek = nextMonday > todayIso();
+            return (
+              <div>
+                <div className="mb-2 flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDate(addDaysIso(monday, -1))}
+                    className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-600 hover:border-accent hover:text-midnight"
+                  >
+                    <ChevronLeft className="h-3.5 w-3.5" /> Prev week
+                  </button>
+                  {!isCurrentWeek && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={() => setDate(nextMonday)}
+                        className="inline-flex items-center gap-1 rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-600 hover:border-accent hover:text-midnight"
+                      >
+                        Next week <ChevronRight className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDate(undefined)}
+                        className="inline-flex items-center rounded-lg border border-zinc-200 bg-white px-2.5 py-1 text-xs font-semibold text-zinc-600 hover:border-accent hover:text-midnight"
+                      >
+                        Latest
+                      </button>
+                    </>
+                  )}
+                </div>
+                <WeekStrip
+                  week={data!.week}
+                  selected={data!.date}
+                  onSelect={(d) => setDate(d)}
+                  label={isCurrentWeek ? "This week · Labor %" : `Week of ${fmtDayLabel(monday)} · Labor %`}
+                />
+              </div>
+            );
+          })()}
 
           {/* Miss banner */}
           {day.note_due && (

@@ -10,16 +10,19 @@ export function WeekStrip({
   week,
   selected,
   onSelect,
+  label = "This week · Labor %",
 }: {
   week: WeekStripDay[];
   selected: string | null;
   onSelect: (date: string) => void;
+  /** Header label — pass e.g. "Week of Jul 6" when the strip can show past weeks. */
+  label?: string;
 }) {
   return (
     <div>
       <div className="mb-2 flex items-center justify-between">
         <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">
-          This week · Labor %
+          {label}
         </span>
         <div className="flex items-center gap-3 text-[11px] text-zinc-500">
           <Legend dot="bg-ok" label="on chart" />
