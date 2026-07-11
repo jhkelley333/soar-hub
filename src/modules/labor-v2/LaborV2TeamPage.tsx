@@ -5,7 +5,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Clock, Copy, Download, RefreshCw, Share2 } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Clock, Copy, RefreshCw, Share2 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -13,7 +13,7 @@ import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { toCSV, downloadCSV } from "@/lib/csv";
+import { MissTrackerExport } from "@/modules/labor/MissTrackerExport";
 import { fetchLaborV2Team, fetchMissTracker } from "./api";
 import type { LaborPeriod, TeamBand, TeamDisplayLevel, TeamGroup, TeamStore } from "./types";
 
@@ -62,27 +62,6 @@ function NoteBody({ s }: { s: TeamStore }) {
   );
 }
 
-// Last N week-start Mondays (current week first) as ISO dates, for the
-// miss-tracker week picker.
-function recentMondays(n: number): string[] {
-  const d = new Date();
-  d.setHours(12, 0, 0, 0);
-  d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); // back up to Monday
-  return Array.from({ length: n }, (_, i) => {
-    const m = new Date(d);
-    m.setDate(d.getDate() - i * 7);
-    return m.toLocaleDateString("en-CA");
-  });
-}
-
-const fmtWeekLabel = (monday: string) => {
-  const mon = new Date(`${monday}T12:00:00`);
-  const sun = new Date(mon);
-  sun.setDate(mon.getDate() + 6);
-  const f = (dt: Date) => dt.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-  return `Mon ${f(mon)} – Sun ${f(sun)}`;
-};
-
 // Sort accessor shared by group rows and store rows (both carry day/wtd/ptd
 // bands and a status).
 function sortVal(r: TeamGroup | TeamStore, k: SortKey): number | string {
@@ -112,10 +91,6 @@ export function LaborV2TeamPage() {
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "var", dir: "desc" });
   const [period, setPeriod] = useState<LaborPeriod>("day"); // mobile cards: which period headlines
   const [shareDraft, setShareDraft] = useState<string | null>(null);
-  const [missOpen, setMissOpen] = useState(false);
-  const [missWeek, setMissWeek] = useState<string>(() => recentMondays(1)[0]);
-  const [missBusy, setMissBusy] = useState(false);
-  const mondays = useMemo(() => recentMondays(12), []);
 
   const q = useQuery({ queryKey: ["labor-v2-team"], queryFn: () => fetchLaborV2Team(), staleTime: 5 * 60_000, refetchOnWindowFocus: true, refetchInterval: 10 * 60_000 });
   const data = q.data;
@@ -190,46 +165,6 @@ export function LaborV2TeamPage() {
     if (rows.length > cap) out.push(`…and ${rows.length - cap} more`);
     return out.join("\n");
   }
-  // Build + download the Weekly Labor Miss Tracker CSV for the chosen week.
-  // Columns mirror the paper tracker: store, weekly total, hours missed by
-  // day (Mon–Sun), then the filed explanation by day.
-  async function exportMissTracker() {
-    setMissBusy(true);
-    try {
-      const res = await fetchMissTracker(missWeek);
-      if (!res.rows.length) {
-        toast.push(`No stores missed labor by more than ${res.threshold} hours that week.`, "info");
-        return;
-      }
-      const dayNames = res.week.map((d) =>
-        new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { weekday: "long" }));
-      const headers = [
-        "Store #", "Store", "Weekly Total Miss (Hrs)",
-        ...dayNames.map((n) => `${n} (Hrs)`),
-        ...dayNames.map((n) => `${n} Explanation`),
-      ];
-      const csvRows = res.rows.map((r) => {
-        const row: Record<string, unknown> = {
-          "Store #": r.store_number,
-          "Store": r.store_name ?? "",
-          "Weekly Total Miss (Hrs)": r.total,
-        };
-        res.week.forEach((d, i) => {
-          row[`${dayNames[i]} (Hrs)`] = r.days[d] ?? "";
-          row[`${dayNames[i]} Explanation`] = r.explanations[d] ?? "";
-        });
-        return row;
-      });
-      downloadCSV(`labor-miss-tracker-${missWeek}.csv`, toCSV(headers, csvRows));
-      toast.push(`Downloaded — ${res.rows.length} store${res.rows.length === 1 ? "" : "s"} over ${res.threshold} hrs.`, "success");
-      setMissOpen(false);
-    } catch (e) {
-      toast.push(e instanceof Error ? e.message : "Export failed.", "error");
-    } finally {
-      setMissBusy(false);
-    }
-  }
-
   function openShare() { setShareDraft(buildShareText()); }
   function shareToWhatsApp() {
     if (shareDraft == null) return;
@@ -266,11 +201,7 @@ export function LaborV2TeamPage() {
                 {t.notesDue} {t.notesDue === 1 ? "note" : "notes"} to review
               </span>
             )}
-            {t && (
-              <Button variant="secondary" size="sm" onClick={() => setMissOpen(true)}>
-                <Download className="mr-1 h-3.5 w-3.5" /> Miss tracker
-              </Button>
-            )}
+            {t && <MissTrackerExport fetcher={fetchMissTracker} />}
             {t && (
               <Button variant="secondary" size="sm" onClick={openShare}>
                 <Share2 className="mr-1 h-3.5 w-3.5" /> Share
@@ -282,31 +213,6 @@ export function LaborV2TeamPage() {
           </div>
         }
       />
-
-      <Modal open={missOpen} onClose={() => setMissOpen(false)} title="Weekly Labor Miss Tracker"
-        footer={
-          <Button size="sm" onClick={exportMissTracker} disabled={missBusy}>
-            <Download className={cn("mr-1 h-3.5 w-3.5", missBusy && "animate-pulse")} />
-            {missBusy ? "Building…" : "Download CSV"}
-          </Button>
-        }>
-        <p className="mb-3 text-xs text-zinc-500">
-          Stores that missed labor by more than 7 hours in the chosen week — hours missed by day, with the root cause
-          and explanation the GM filed. Opens in Excel or Google Sheets.
-        </p>
-        <label className="mb-1 block text-xs font-semibold text-zinc-600">Week</label>
-        <select
-          value={missWeek}
-          onChange={(e) => setMissWeek(e.target.value)}
-          className="w-full rounded-lg border-0 bg-zinc-50 px-3 py-2 text-sm text-zinc-800 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
-        >
-          {mondays.map((m, i) => (
-            <option key={m} value={m}>
-              {fmtWeekLabel(m)}{i === 0 ? " (this week)" : i === 1 ? " (last week)" : ""}
-            </option>
-          ))}
-        </select>
-      </Modal>
 
       <Modal open={shareDraft != null} onClose={() => setShareDraft(null)} title="Share labor to WhatsApp"
         footer={

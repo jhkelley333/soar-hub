@@ -13,7 +13,8 @@ import { Segmented } from "@/shared/ui/Segmented";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
-import { fetchDistrictLabor, fetchLaborDistricts, triggerSyncNow } from "./api";
+import { fetchDistrictLabor, fetchLaborDistricts, fetchLegacyMissTracker, triggerSyncNow } from "./api";
+import { MissTrackerExport } from "./MissTrackerExport";
 import {
   fmtDayLabel,
   fmtPct,
@@ -38,6 +39,15 @@ type SortDir = "asc" | "desc";
 interface SortState { key: SortKey; dir: SortDir }
 
 const HORIZON_LABEL: Record<Horizon, string> = { day: "Day %", wtd: "WTD %", mtd: "MTD %" };
+
+// Same fixed root-cause list the GM picks from when explaining a miss.
+const ROOT_CAUSE_LABEL: Record<string, string> = {
+  poor_projections: "Poor Projections",
+  scheduled_above_chart: "Scheduled Above Chart",
+  didnt_follow_schedule: "Didn't Follow the Schedule",
+  auto_clock: "Auto Clock",
+  other: "Other",
+};
 
 // The two non-active horizons, in fixed day → wtd → mtd order.
 function altHorizons(active: Horizon): Horizon[] {
@@ -165,6 +175,7 @@ export function DistrictLaborView() {
         }
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            <MissTrackerExport fetcher={fetchLegacyMissTracker} />
             {canSync && (
               <button
                 type="button"
@@ -455,7 +466,14 @@ function StoreRow({ row, horizon }: { row: DistrictStoreRow; horizon: Horizon })
         </span>
       </button>
       {open && row.note && (
-        <div className="border-t border-zinc-100 bg-zinc-50 px-4 py-3 text-sm text-midnight">{row.note}</div>
+        <div className="border-t border-zinc-100 bg-zinc-50 px-4 py-3">
+          {row.root_cause && (
+            <span className="mb-1.5 inline-block rounded-full bg-sonic-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-sonic-700">
+              {ROOT_CAUSE_LABEL[row.root_cause] ?? row.root_cause}
+            </span>
+          )}
+          <div className="text-sm text-midnight">{row.note}</div>
+        </div>
       )}
     </div>
   );

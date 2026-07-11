@@ -1,6 +1,7 @@
 // Typed wrappers around netlify/functions/labor.
 
 import { supabase } from "@/lib/supabase";
+import type { MissTrackerResponse } from "@/modules/labor-v2/api";
 import type {
   DistrictLaborResponse,
   GmLaborResponse,
@@ -64,6 +65,12 @@ export function fetchDistrictLabor(
   if (date) q.set("date", date);
   if (district) q.set("district", district);
   return request<DistrictLaborResponse>(`${FN}?${q.toString()}`);
+}
+
+// Weekly Labor Miss Tracker — same response shape as the Labor v2 endpoint.
+export function fetchLegacyMissTracker(weekStart: string): Promise<MissTrackerResponse> {
+  const q = new URLSearchParams({ action: "miss-tracker", week_start: weekStart });
+  return request<MissTrackerResponse>(`${FN}?${q.toString()}`);
 }
 
 export function saveLaborReview(

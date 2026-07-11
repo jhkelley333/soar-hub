@@ -366,7 +366,7 @@ async function districtView(supa, user, params) {
   const numbers = stores.map((s) => String(s.number));
   const [{ data: snaps }, { data: reviews }] = await Promise.all([
     supa.from("labor_daily_snapshots").select("*").eq("business_date", anchorIso).in("store_number", numbers),
-    supa.from("labor_reviews").select("store_number, note, reviewed_by_email, updated_at")
+    supa.from("labor_reviews").select("store_number, note, root_cause, reviewed_by_email, updated_at")
       .eq("business_date", anchorIso).in("store_number", numbers),
   ]);
   const reviewBy = new Map((reviews ?? []).map((r) => [String(r.store_number), r]));
@@ -403,6 +403,7 @@ async function districtView(supa, user, params) {
       explained: !!review,
       note_due: status === "over" && !review,
       note: review?.note ?? null,
+      root_cause: review?.root_cause ?? null,
     };
   });
   // Worst-first (highest variance over goal at the top).
@@ -438,6 +439,75 @@ async function districtView(supa, user, params) {
     },
     stores: rows,
   };
+}
+
+// ── Weekly Labor Miss Tracker export ─────────────────────────────────
+// For the chosen Mon–Sun week, each store whose total hours missed exceeds
+// the threshold (default 7h), with hours missed by day and the filed
+// explanation (root cause + note) by day. Same shape as the Labor v2 one.
+async function missTracker(supa, user, params) {
+  if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const weekStart = params.week_start && /^\d{4}-\d{2}-\d{2}$/.test(params.week_start)
+    ? parseIso(params.week_start) : null;
+  if (!weekStart) return { error: "week_start (a Monday, YYYY-MM-DD) is required.", status: 400 };
+  const threshold = Math.max(0, Number(params.threshold ?? 7)) || 0;
+
+  let stores;
+  if (user.role === "admin" || ORG_WIDE.has(user.role)) {
+    const { data } = await supa.from("stores").select("id, number, name").eq("is_active", true).order("number");
+    stores = data ?? [];
+  } else {
+    stores = await resolveVisibleStoreRows(supa, user.id);
+  }
+  if (!stores.length) return { week: [], threshold, rows: [] };
+  const numbers = [...new Set(stores.map((s) => String(s.number)))];
+  const nameByNumber = new Map(stores.map((s) => [String(s.number), s.name]));
+
+  const week = Array.from({ length: 7 }, (_, i) => isoOf(shiftDays(weekStart, i)));
+  // One query per day — a whole week across a big scope can exceed
+  // PostgREST's 1000-row response cap, which silently drops the earliest day.
+  const perDay = await Promise.all(week.map((d) => Promise.all([
+    supa.from("labor_daily_snapshots")
+      .select("store_number, business_date, daily_labor_pct, base_ptd_labor_goal, daily_hours_over_chart")
+      .eq("business_date", d).in("store_number", numbers),
+    supa.from("labor_reviews").select("store_number, business_date, note, root_cause")
+      .eq("business_date", d).in("store_number", numbers),
+  ])));
+  const snaps = perDay.flatMap(([r]) => r.data || []);
+  const reviews = perDay.flatMap(([, r]) => r.data || []);
+
+  const CAUSE_LABEL = {
+    poor_projections: "Poor Projections",
+    scheduled_above_chart: "Scheduled Above Chart",
+    didnt_follow_schedule: "Didn't Follow the Schedule",
+    auto_clock: "Auto Clock",
+    other: "Other",
+  };
+  const reviewKey = (sn, d) => `${sn}|${d}`;
+  const reviewMap = new Map(reviews.map((r) => [reviewKey(String(r.store_number), r.business_date), r]));
+
+  const byStore = new Map();
+  for (const s of snaps) {
+    const sn = String(s.store_number);
+    if (chartStatus(s.daily_labor_pct, s.base_ptd_labor_goal) !== "over") continue;
+    const h = Number(s.daily_hours_over_chart);
+    if (!isFinite(h) || h <= 0) continue;
+    if (!byStore.has(sn)) {
+      byStore.set(sn, { store_number: sn, store_name: nameByNumber.get(sn) ?? null, total: 0, days: {}, explanations: {} });
+    }
+    const row = byStore.get(sn);
+    row.days[s.business_date] = round1(h);
+    row.total = round1(row.total + h);
+    const rev = reviewMap.get(reviewKey(sn, s.business_date));
+    if (rev) {
+      const cause = rev.root_cause ? CAUSE_LABEL[rev.root_cause] ?? rev.root_cause : "";
+      row.explanations[s.business_date] = [cause, rev.note].filter(Boolean).join(" — ");
+    }
+  }
+  const out = [...byStore.values()]
+    .filter((r) => r.total > threshold)
+    .sort((a, b) => b.total - a.total);
+  return { week, threshold, rows: out };
 }
 
 // ── Review write ─────────────────────────────────────────────────────
@@ -580,6 +650,7 @@ export const handler = async (event) => {
     if (event.httpMethod === "GET") {
       if (action === "gm") return unwrap(await gmView(supa, user, params));
       if (action === "district") return unwrap(await districtView(supa, user, params));
+      if (action === "miss-tracker") return unwrap(await missTracker(supa, user, params));
       if (action === "my-stores") return unwrap(await listMyStores(supa, user));
       if (action === "districts") return unwrap(await listDistricts(supa, user));
       if (action === "sync-status") return unwrap(await syncStatus(supa, user));
