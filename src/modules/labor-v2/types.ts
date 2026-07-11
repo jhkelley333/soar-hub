@@ -93,6 +93,8 @@ export interface TeamStore {
   note_due: boolean;
   explained: boolean;
   note: string | null;
+  /** Structured miss reason filed with the note (poor_projections | scheduled_above_chart | …). */
+  root_cause: string | null;
 }
 
 export interface TeamLaborResponse {
