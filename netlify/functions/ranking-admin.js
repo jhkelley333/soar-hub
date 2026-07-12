@@ -8,6 +8,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { runRankingNow, latestRun } from "./_lib/ranking/run.js";
+import { backfillLaborWindow } from "./_lib/kpiBackfill.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -115,6 +116,7 @@ export const handler = async (event) => {
       if (action === "config-add") return unwrap(await configAdd(supa, user, body));
       if (action === "pad-set") return unwrap(await padSet(supa, user, body));
       if (action === "run-now") return unwrap(await runRankingNow(supa, user));
+      if (action === "backfill") return unwrap(await backfillLaborWindow(supa, { days: Number(body?.days) || 35 }));
       return respond(400, { error: `Unknown action: ${action}` });
     }
     if (action === "overview") return unwrap(await overview(supa));

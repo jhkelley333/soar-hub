@@ -91,3 +91,17 @@ export function fetchRankingLatest(scope: RankScope, tier: RankTier): Promise<{
 export function triggerRankingRun(): Promise<{ run_id: string; week_ending: string; period: number; week: number; rows: number; issues: RankingIssue[] }> {
   return req(`${FN}?action=run-now`, { method: "POST", body: "{}" });
 }
+
+export interface BackfillResult {
+  filled: number;
+  already: number;
+  failed: { date: string; error: string }[];
+  remaining: string[];
+}
+
+// Re-extract stored KPI snapshots into labor_v2_daily's 0238 fields
+// (tickets / on-time / voids) for recent days. Budget-limited server-side;
+// call again with the same days while `remaining` is non-empty.
+export function backfillRankingFields(days: number): Promise<BackfillResult> {
+  return req(`${FN}?action=backfill`, { method: "POST", body: JSON.stringify({ days }) });
+}
