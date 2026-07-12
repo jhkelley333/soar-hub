@@ -1,5 +1,17 @@
 # KPI feed (Skunkworks snapshot) — full field inventory
 
+## THE ARCHIVE GUARANTEE — do not add retention/pruning to kpi_snapshots
+
+`kpi_snapshots` stores the COMPLETE raw feed payload every capture hour
+(7 AM–2 PM CT) and nothing ever deletes from it — deliberately (Heath,
+2026-07-13). Every field below is therefore recoverable for any past day
+even if we never broke it into columns: add columns, then re-extract via
+the pattern in `_lib/kpiBackfill.js` (proven 7/13 when tickets/on-time/
+voids were backfilled months after capture began). Storage cost is a few
+MB per day — cheap insurance for a replayable history. If storage ever
+becomes a real problem, compact to one final snapshot per business date;
+never drop dates.
+
 Every field available on a `businessDateData` row, transcribed from a raw
 snapshot payload (2026-07-11, "Total" rollup row, 271 stores). Store rows
 carry the same shape. Reference for anything we build on the feed —
