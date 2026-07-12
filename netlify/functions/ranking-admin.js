@@ -7,6 +7,7 @@
 // effective_from; runs stamp the slice they used, so history reproduces.
 
 import { createClient } from "@supabase/supabase-js";
+import { runRankingNow, latestRun } from "./_lib/ranking/run.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -113,9 +114,11 @@ export const handler = async (event) => {
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "config-add") return unwrap(await configAdd(supa, user, body));
       if (action === "pad-set") return unwrap(await padSet(supa, user, body));
+      if (action === "run-now") return unwrap(await runRankingNow(supa, user));
       return respond(400, { error: `Unknown action: ${action}` });
     }
     if (action === "overview") return unwrap(await overview(supa));
+    if (action === "run-latest") return unwrap(await latestRun(supa, params));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: `ranking-admin error: ${e?.message || String(e)}` });

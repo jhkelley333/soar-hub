@@ -62,6 +62,38 @@ status board as a fill-me list rather than importing a stale CSV.
 `do:<uuid>` / `sdo:<uuid>` / `rvp:<uuid>` from user_scopes; display names
 resolve in the UI. Engine treats them as opaque strings.
 
+### B8. avgWage comes LIVE from Labor v2 (Heath, 7/13). Config pin removed.
+
+Each run computes the company average wage from its anchor rows: total
+PTD labor cost ÷ total PTD labor hours (credit-adjusted — the same numbers
+Labor v2 shows). The pinned 12.84 config row is deleted (migration 0240)
+and avg wage is no longer a system setting; 12.84 survives only as the
+fallback if the computation ever fails (with a run issue raised). The
+engine still receives ONE scalar `cfg.avgWage` — no per-store wage at
+leader tiers, so the engine's math is untouched.
+
+### B2 addendum (7/13). Interim chart2 = chart1 so WTD/entity labor scores exist.
+
+`laborScoreChart` needs a second, tighter threshold that has no source
+(chart2 on hold). Feeding chart2 = chart1 collapses the 5/4 bands: under
+target scores 5 (a 4 is unreachable), barely-over scores 3/2, over scores 1.
+Transparent, reversible the day chart2 gets a source, and it keeps WTD and
+entity tiers rankable instead of blank.
+
+### B4 addendum (7/13). v1 leader keys are display names, not UUIDs yet.
+
+The first working runs key leaders by resolved org names (what resolveOrg
+returns) — same as the sheet. The UUID key upgrade (`do:<uuid>`) happens
+before cutover; ranking history restarts cleanly at that point.
+
+### B1 addendum (7/13). The sanctioned engine change is in.
+
+Per brief §4.3, `computeStorePtd`/`computeStoreWtd` now accept per-store
+`chart1`/`chart2` inputs that win over the workbook volume lookup (which
+remains intact as the fallback). Two guarded lines per scope, commented
+`HUB CHANGE`, covered by smoke assertions. This is the only edit ever made
+to the ported engine.
+
 ### B7. Labor comes CREDIT-ADJUSTED from Labor v2 (Heath, 7/13).
 
 The sheet feeds raw labor % and subtracts training-credit / PTO dollars
