@@ -134,4 +134,37 @@ assert.equal(out.ptd.company.rank, null, "company row unranked");
 // Engine treats leader keys as opaque strings (brief 4.2)
 assert.ok(out.ptd.dos.every((d) => d.name.startsWith("do:")), "opaque UUID-style keys flow through");
 
+// ── config resolution + the REAL seeded bands (migration 0239) ───────
+const { resolveConfigSlice } = await import("../../netlify/functions/_lib/ranking/config.js");
+
+const cfgRows = [
+  { key: "avg_wage", value: { amount: 12.84 }, effective_from: "2025-12-29" },
+  { key: "avg_wage", value: { amount: 14.0 }, effective_from: "2026-09-01" }, // future change
+  { key: "bands.vog", value: [[0, 1], [0.4, 2]], effective_from: "2025-12-29" },
+];
+const slice = resolveConfigSlice(cfgRows, "2026-07-05");
+assert.equal(slice.values["avg_wage"].amount, 12.84, "future-dated config row ignored");
+assert.equal(slice.version, "2025-12-29", "version = max effective_from used");
+const later = resolveConfigSlice(cfgRows, "2026-09-15");
+assert.equal(later.values["avg_wage"].amount, 14.0, "dated change takes over on/after its date");
+
+// Real Config-tab bands (seeded by 0239) behave as the sheet intends:
+const REAL = {
+  sales_vs_ly: [[-6.6, 1], [-0.1, 2], [0, 3], [0.1, 4], [0.2, 5]],
+  food_cost: [[0, 1], [0.92, 2], [0.96, 3], [0.97, 4], [0.985, 5]],
+  on_time: [[0, 1], [0.6501, 2], [0.7001, 3], [0.7501, 4], [0.8001, 5]],
+  complaints: [[0, 5], [1.3001, 4], [1.701, 3], [2.001, 2], [2.5, 1]],
+  food_safety: [[0, 1], [0.84, 2], [0.88, 3], [0.92, 4], [0.950001, 5]],
+  vog: [[0, 1], [0.4, 2], [0.5, 3], [0.6, 4], [0.7, 5]],
+};
+assert.equal(bandScore(0.97, REAL.food_cost), 4, "97% FC eff -> 4");
+assert.equal(bandScore(-0.05, REAL.sales_vs_ly), 2, "-5% vs LY -> 2");
+assert.equal(bandScore(0.15, REAL.sales_vs_ly), 4, "+15% vs LY -> 4");
+assert.equal(bandScore(0.80, REAL.on_time), 4, "80% on-time -> 4");
+assert.equal(bandScore(0.5, REAL.complaints), 5, "0.5 calls/10k -> 5 (lower is better)");
+assert.equal(bandScore(2.2, REAL.complaints), 2, "2.2 calls/10k -> 2");
+assert.equal(bandScore(3.0, REAL.complaints), 1, "3.0 calls/10k -> 1 (past 2.5)");
+assert.equal(bandScore(0.95, REAL.food_safety), 4, "95.0% EcoSure -> 4 (5 needs > 0.950001)");
+assert.equal(bandScore(0.65, REAL.vog), 4, "65% VOG -> 4");
+
 console.log("ranking engine smoke: ALL PASS");

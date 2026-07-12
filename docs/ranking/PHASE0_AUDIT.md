@@ -110,10 +110,15 @@ Only `RANKING_MODULE_BRIEF.md` was provided. Still needed, per §11:
   built here against them
 - [ ] `seed/validation_snapshot.csv` (271 PTD rows) + `seed/validation_snapshot_wtd.csv`
 - [x] ~~`seed/entities.csv`~~ — not needed; entity = `stores.soar_company_name` (DEVIATIONS.md B3)
-- [ ] band thresholds (machine-readable) — still needed for the 8 scoring bands. ~~chart2 column~~ on hold (B2)
+- [x] band thresholds — **received 7/13** (Config tab), seeded by migration
+  0239 (8 engine bands + shops + DRY_RUN/test email; labor_variance band
+  confirmed = the engine's hard-coded laborScoreChart thresholds, not
+  seeded). Loader: `_lib/ranking/config.js` (versioned slice by
+  effective_from, stamps configVersion). ~~chart2 column~~ on hold (B2)
 - [x] ~~labor-pad column~~ — on hold; IX target replaces chart+pad (B1)
 - [ ] one raw sample of each of the six source files (IX ×2 CSVs, EcoSure, VOG ×2, shops, BSC xlsx, TotZone xlsx) — Heath loading "the ranker file… it has the 6"
 - [x] raw KPI feed payload — received 7/12, inventoried in `docs/kpi-feed-fields.md`. `complaints`/`likelyToReturn*` exist but null on the Total row; check store level
+- [x] complaints source — **ON HOLD (Heath 7/13, DEVIATIONS B6)**: run without it; engine defaults every store to a neutral 3; placeholder lives on `/admin/ranking`
 
 ## 4b. Intel from the sheet's Dashboard (received 7/12)
 
@@ -142,6 +147,42 @@ Engine input surface confirmed beyond the brief: `msCount`/`msScore`
 (mystery shops), `totalTrainingPct`, `vogResponses`, `custCount`,
 `leaderTrainingCredit` map (leader names + `'SOAR QSR'`), `leaders` tenure
 map, and measured IX `rollups` (do/sdo/rvp/company + `wtd*` variants).
+
+## 4d. Adapter design notes (traps found reading the engine against our data)
+
+1. **Feed RAW labor %, never the credit-adjusted one.** `labor_v2_daily`
+   stores raw values and Hub applies training/PTO/no-GM credits at read time
+   (`applyCreditsToRows`). The engine subtracts credit dollars itself
+   (`trainingCreditPct`/`ptoPct` in `varianceToChart`). The adapter must read
+   the raw table and pass credit dollars separately — feeding the
+   credit-adjusted labor % AND the dollars would double-count every credit.
+2. **Credits default to 0, not null.** The engine's `varianceToChart`
+   requires `isNum(trainingCreditPct) && isNum(ptoPct)` — a store with no
+   credits fed `null` gets a null variance → null labor score → null total
+   points → unranked. Adapter sends `0` dollars for credit-less stores.
+3. **`custCount` = tickets** (now persisted per band via 0238).
+4. **On-time is stored as numerator/denominator** (0238); adapter computes
+   the pct so leader tiers can re-derive rates correctly later.
+5. **Hub kills the Monday snapshot-lag failure mode for API data**: the
+   sheet reads "whatever week the snapshot serves today" (it mis-served this
+   very week); Hub has per-day history in `labor_v2_daily`, so the run reads
+   the fiscal Sunday's row directly. The §5.5 guard stays (freshness can
+   still lag) but wrong-week WTD from the API source is structurally gone.
+
+## 4c2. Fiscal date verification (7/13)
+
+`fiscalForDate` agrees with the sheet exactly: 2026-07-05 → P7 W1
+(weekStart 2026-06-29, period 2026-06-29 → 2026-07-26, 4 weeks), and the
+sheet's flagged misalignment reproduces (snapshot weekStart 2026-07-06 =
+P7 W2). Same calendar on both sides.
+
+## 4c. Placement (Heath, 7/12): admin-only until ready
+
+The ranking UI ships under **`/admin/ranking`** (admin role only) for the
+whole build + parallel-run period. Leaders keep using the sheet-fed
+`/ranker`. Only after the parallel run agrees and Heath calls cutover does
+it move to the leader-facing `/ranking` route with scope-checked visibility
+(§3.6). No leader sees a Hub-computed rank until it's ready.
 
 ## 5. Build order (adapted from §9 to this repo)
 

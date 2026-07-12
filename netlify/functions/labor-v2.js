@@ -5,7 +5,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { resolveOrg } from "./_lib/kpiOrg.js";
 import { fetchKpiFeed, kpiConfigured } from "./_lib/kpiFeed.js";
-import { extractLaborRows, feedBusinessDate, feedSectionReport, wallClockInTz } from "./_lib/kpiLabor.js";
+import { extractLaborRows, feedBusinessDate, feedSectionReport, wallClockInTz, isPre0238Error, stripRankingCols } from "./_lib/kpiLabor.js";
 import { extractCountRows } from "./_lib/kpiCount.js";
 import { upsertLaborCloses } from "./_lib/laborCloses.js";
 import { fiscalForDate } from "./_lib/fiscal.js";
@@ -247,7 +247,11 @@ async function refreshNow(supa, ctx = {}) {
     const extracted = extractLaborRows(payload);
     const rows = extracted.map((r) => ({ ...r, business_date: businessDate, captured_at: new Date().toISOString() }));
     if (rows.length) {
-      const { error } = await supa.from("labor_v2_daily").upsert(rows, { onConflict: "store_number,business_date" });
+      let { error } = await supa.from("labor_v2_daily").upsert(rows, { onConflict: "store_number,business_date" });
+      if (error && isPre0238Error(error)) {
+        // Migration 0238 (ranking fields) not applied yet — land the old set.
+        ({ error } = await supa.from("labor_v2_daily").upsert(stripRankingCols(rows), { onConflict: "store_number,business_date" }));
+      }
       // Surface write failures instead of swallowing them — a missing column
       // (e.g. migration 0187 not applied) would otherwise leave stale rows with
       // no signal. The Postgres message names the offending column.
