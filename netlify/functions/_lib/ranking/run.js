@@ -120,6 +120,7 @@ export async function runRankingNow(supa, user) {
   // 5. Engine inputs.
   const stores = [];
   const unmatched = [];
+  const onTimeSuspect = [];
   let onTimeMissing = 0;
   for (const r of rows) {
     const num = String(r.store_number);
@@ -129,6 +130,10 @@ export async function runRankingNow(supa, user) {
     const ptd = bandInput(r, "ptd_");
     const wtd = bandInput(r, "wtd_");
     if (ptd.onTimePct == null) onTimeMissing++;
+    // The feed sometimes reports an on-time numerator above its denominator.
+    // The score is unaffected (>=80% is already a 5) but suspect data never
+    // passes silently.
+    else if (ptd.onTimePct > 1) onTimeSuspect.push(`${num} (${(ptd.onTimePct * 100).toFixed(0)}%)`);
     stores.push({
       store: num,
       location: meta?.name ?? org.store ?? num,
@@ -150,6 +155,9 @@ export async function runRankingNow(supa, user) {
     issues.push({ level: "bad", msg: "No on-time data captured yet (run migration 0238, then wait for the next KPI capture) — ops scores and total points will be blank." });
   } else if (onTimeMissing) {
     issues.push({ level: "warn", msg: `${onTimeMissing} store(s) missing on-time — they show without total points.` });
+  }
+  if (onTimeSuspect.length) {
+    issues.push({ level: "warn", msg: `${onTimeSuspect.length} store(s) report PTD on-time above 100% — feed data suspect: ${onTimeSuspect.slice(0, 8).join(", ")}${onTimeSuspect.length > 8 ? " …" : ""}` });
   }
   const entityMissing = stores.filter((s) => s.entity === "Unassigned").length;
   if (entityMissing) {
