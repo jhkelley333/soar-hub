@@ -111,6 +111,7 @@ The user sees `Stop hook feedback: ...There are N unpushed commit(s)...` after a
 
 ## Other useful context
 
+- **KPI feed field inventory lives at `docs/kpi-feed-fields.md`** — every field the Skunkworks snapshot exposes (sales/dayparts/labor/on-time/voids/refunds/IntelliCost/count/complaints/L2R), transcribed from a raw payload 2026-07-11. Check it before assuming the feed lacks something; Labor v2 persists only a slice. Ranking-module audit: `docs/ranking/PHASE0_AUDIT.md`.
 - Existing TeamPage uses **email-copy buttons + tel: phone links**. New `MemberProfileDrawer` follows the same pattern.
 - PAF history on the member profile drawer is gated to viewers with role >= DO (do, sdo, rvp, vp, coo, admin, payroll). Two tabs: "Submitted" (exact match on submitter_id/email) and "Mentioned as employee" (fuzzy `ilike` on employee_name).
 - Confetti library: `canvas-confetti` (already in package.json).
