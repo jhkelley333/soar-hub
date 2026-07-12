@@ -71,10 +71,10 @@ the two seed columns (chart2, labor pad), entity coverage, and the six parsers.
    No-GM already applied); the engine's own credit inputs are zeroed and no
    leader-grain training credit is needed. The SDO sheet's Training Credit
    tab is NOT ingested.
-2. **Wage grain: PER-STORE** (cost ÷ hours per band, computed on read).
-   There is no company scalar in Hub. Phase 0 pins `12.84` per the brief;
-   the post-cutover flip needs the weighted-average decision at leader tiers
-   before it happens. → decision stands, deferred by design.
+2. **Wage: RESOLVED (Heath 7/13, DEVIATIONS B8)** — each run computes the
+   live company average from Labor v2 (Σ PTD cost ÷ Σ PTD hours,
+   credit-adjusted). Config pin removed (migration 0240); 12.84 survives
+   only as a guarded fallback. Engine still gets one scalar — untouched.
 3. **chart2: ON HOLD (Heath, 7/12).** PTD ships first; WTD/entity labor
    score gated until chart2 is sourced or Labor v3 ships. DEVIATIONS.md B2.
 4. **Labor target: DECIDED (Heath, 7/12) — IX target IS the goal.** The

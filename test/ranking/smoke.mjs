@@ -134,6 +134,20 @@ assert.equal(out.ptd.company.rank, null, "company row unranked");
 // Engine treats leader keys as opaque strings (brief 4.2)
 assert.ok(out.ptd.dos.every((d) => d.name.startsWith("do:")), "opaque UUID-style keys flow through");
 
+// ── per-store chart input (brief 4.3 / B1: IX target replaces the lookup) ──
+const ixStore = mkStore("2001", "do:C", "sdo:Y", "rvp:R", "LLC Three", {
+  chart1: 0.20, chart2: 0.20, laborPct: 0.21,
+  trainingCreditDollars: 0, ptoDollars: 0,
+});
+ixStore.wtd.chart1 = 0.20; ixStore.wtd.chart2 = 0.20;
+const ixOut = runRanking({ config: { ...cfg, laborChart: [] }, stores: [ixStore], leaderTrainingCredit: {}, leaders: {}, rollups: {} });
+const ixRow = ixOut.ptd.stores[0];
+assert.ok(Math.abs(ixRow.varianceToChart - 0.01) < 1e-12, "per-store chart1 wins over empty lookup (PTD)");
+assert.ok(Math.abs(ixRow.chart - 0.20) < 1e-12, "chart column = IX target");
+const ixWtd = ixOut.wtd.stores[0];
+assert.ok(Math.abs(ixWtd.chart - 0.20) < 1e-12, "per-store chart1 wins (WTD)");
+assert.equal(ixWtd.laborScore, 1, "WTD 21% vs 20% chart (chart2=chart1 interim) -> 1");
+
 // ── config resolution + the REAL seeded bands (migration 0239) ───────
 const { resolveConfigSlice } = await import("../../netlify/functions/_lib/ranking/config.js");
 

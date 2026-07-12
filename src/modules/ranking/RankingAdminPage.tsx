@@ -1,9 +1,11 @@
-// /admin/ranking — Ranking module system settings (admin only, build phase).
-// Three panels: versioned config (append-only), per-store labor pad editor
-// (held for the future — B1 uses the IX target today), and the complaints
-// placeholder (source on hold, engine defaults the score to a neutral 3).
+// /admin/ranking — the Ranking module home (admin only, build phase).
+// Two views: the live ranking (mockup made real — run bar, source board,
+// score-chip table, action report) and System settings (versioned config,
+// labor pad, complaints hold).
 
 import { useMemo, useState } from "react";
+import { Segmented } from "@/shared/ui/Segmented";
+import { RankingResultsView } from "./RankingResultsView";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, PauseCircle, Plus, Save } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -24,7 +26,34 @@ const fmtDate = (s: string) =>
   new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const todayIso = () => new Date().toLocaleDateString("en-CA");
 
+type AdminView = "ranking" | "settings";
+
 export function RankingAdminPage() {
+  const [view, setView] = useState<AdminView>("ranking");
+  return (
+    <>
+      <PageHeader
+        title={
+          <span className="inline-flex items-center gap-2">
+            Ranking
+            <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent">Build</span>
+          </span>
+        }
+        description="Admin-only while the module is in build — leaders keep the sheet-fed Ranker until cutover."
+      />
+      <div className="mb-4">
+        <Segmented<AdminView>
+          value={view}
+          onChange={setView}
+          options={[{ value: "ranking", label: "Ranking" }, { value: "settings", label: "System settings" }]}
+        />
+      </div>
+      {view === "ranking" ? <RankingResultsView /> : <SettingsView />}
+    </>
+  );
+}
+
+function SettingsView() {
   const toast = useToast();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ["ranking-admin"], queryFn: fetchRankingOverview });
@@ -32,31 +61,27 @@ export function RankingAdminPage() {
   const [addOpen, setAddOpen] = useState(false);
   const [padSearch, setPadSearch] = useState("");
 
-  if (q.isLoading) return <><PageHeader title="Ranking · System settings" /><Skeleton className="h-64 w-full" /></>;
+  if (q.isLoading) return <Skeleton className="h-64 w-full" />;
   if (q.isError) {
-    return (
-      <>
-        <PageHeader title="Ranking · System settings" />
-        <EmptyState title="Couldn't load" description={(q.error as Error)?.message ?? "Try again."} />
-      </>
-    );
+    return <EmptyState title="Couldn't load" description={(q.error as Error)?.message ?? "Try again."} />;
   }
   const config = q.data?.config ?? [];
   const stores = q.data?.stores ?? [];
 
   return (
     <>
-      <PageHeader
-        title="Ranking · System settings"
-        description="Admin-only while the ranking module is in build. Config is append-only and versioned — runs stamp the slice they used, so history always reproduces."
-        actions={
-          <Button size="sm" onClick={() => setAddOpen(true)}>
-            <Plus className="mr-1 h-3.5 w-3.5" /> Add config change
-          </Button>
-        }
-      />
+      <div className="mb-4 flex justify-end">
+        <Button size="sm" onClick={() => setAddOpen(true)}>
+          <Plus className="mr-1 h-3.5 w-3.5" /> Add config change
+        </Button>
+      </div>
 
       <div className="space-y-6">
+        {/* Avg wage note — no longer a setting */}
+        <div className="rounded-xl bg-white p-4 text-xs text-zinc-500 ring-1 ring-zinc-200">
+          <b className="text-midnight">Average wage</b> is no longer a setting — each run computes the live company
+          average from Labor v2 (total labor cost ÷ total labor hours, credit-adjusted) for its week.
+        </div>
         {/* Complaints placeholder */}
         <div className="flex items-start gap-3 rounded-xl bg-amber-50 p-4 ring-1 ring-amber-200">
           <PauseCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />

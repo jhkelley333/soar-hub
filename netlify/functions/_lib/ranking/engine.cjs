@@ -186,8 +186,10 @@ function computeStorePtd(st, cfg, issues) {
   // volume key = (N/(B4*7)) * B7 * 7
   var volume = isNum(r.sales) ? (r.sales / (cfg.week * 7)) * cfg.weeksInPeriod * 7 : null;
   var chartRowHit = laborChartRow(volume, cfg.laborChart);
-  var chart1raw = chartRowHit ? chartRowHit.chart1 : null;
-  var chart2raw = chartRowHit ? chartRowHit.chart2 : null;
+  // HUB CHANGE (brief 4.3 / DEVIATIONS B1): per-store chart from the input
+  // (Labor v2's IX target) when provided; workbook volume lookup otherwise.
+  var chart1raw = isNum(p.chart1) ? p.chart1 : (chartRowHit ? chartRowHit.chart1 : null);
+  var chart2raw = isNum(p.chart2) ? p.chart2 : (chartRowHit ? chartRowHit.chart2 : null);
   r.chart = (isNum(chart1raw) && isNum(padPct)) ? chart1raw + padPct : null;           // AA
   r._chart2 = (isNum(chart2raw) && isNum(padPct)) ? chart2raw + padPct : null;         // AB (internal only)
   // AC = X - chart1raw - padPct - Y - Z (formula order preserved)
@@ -299,8 +301,11 @@ function computeStoreWtd(st, cfg, issues) {
   var padPct = (isNum(st.laborPad) ? st.laborPad : 0);
   padPct = (isNum(r.sales) && r.sales !== 0) ? padPct / r.sales : null;
   var chartRowHit = laborChartRow(isNum(r.sales) ? r.sales * 4 : null, cfg.laborChart);
-  r.chart = (chartRowHit && isNum(padPct)) ? chartRowHit.chart1 + padPct : null;   // V
-  r._chart2 = (chartRowHit && isNum(padPct)) ? chartRowHit.chart2 + padPct : null; // W (internal)
+  // HUB CHANGE (brief 4.3 / DEVIATIONS B1): per-store chart input wins.
+  var wChart1 = isNum(w.chart1) ? w.chart1 : (chartRowHit ? chartRowHit.chart1 : null);
+  var wChart2 = isNum(w.chart2) ? w.chart2 : (chartRowHit ? chartRowHit.chart2 : null);
+  r.chart = (isNum(wChart1) && isNum(padPct)) ? wChart1 + padPct : null;   // V
+  r._chart2 = (isNum(wChart2) && isNum(padPct)) ? wChart2 + padPct : null; // W (internal)
   r.ptoPct = (isNum(w.ptoDollars) && isNum(r.sales) && r.sales !== 0) ? w.ptoDollars / r.sales : null; // X
   r.varianceToChart = (isNum(r.laborPct) && isNum(r.chart) && isNum(r.ptoPct))
     ? r.laborPct - r.chart - r.ptoPct : null; // Y = U - V - X
