@@ -62,6 +62,15 @@ status board as a fill-me list rather than importing a stale CSV.
 `do:<uuid>` / `sdo:<uuid>` / `rvp:<uuid>` from user_scopes; display names
 resolve in the UI. Engine treats them as opaque strings.
 
+### B6. Complaints data ON HOLD (Heath, 7/13).
+
+No complaints source is wired for run 1. The engine's own fallback keeps
+this neutral: a missing `callsPer10k` renders as `'-'` and
+`complaintsScore` defaults to 3 for every store, so nobody gains or loses
+rank from the hold. The `/admin/ranking` settings page carries the
+placeholder; when a source lands (feed store-level field, or an export),
+it plugs into the adapter without touching the engine.
+
 ### B5. Runtime is Netlify Functions (Node ESM), not Supabase Edge (Deno).
 
 Matches every other module in this repo; the engine is pure JS and does not

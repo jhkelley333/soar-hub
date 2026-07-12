@@ -118,6 +118,7 @@ Only `RANKING_MODULE_BRIEF.md` was provided. Still needed, per §11:
 - [x] ~~labor-pad column~~ — on hold; IX target replaces chart+pad (B1)
 - [ ] one raw sample of each of the six source files (IX ×2 CSVs, EcoSure, VOG ×2, shops, BSC xlsx, TotZone xlsx) — Heath loading "the ranker file… it has the 6"
 - [x] raw KPI feed payload — received 7/12, inventoried in `docs/kpi-feed-fields.md`. `complaints`/`likelyToReturn*` exist but null on the Total row; check store level
+- [x] complaints source — **ON HOLD (Heath 7/13, DEVIATIONS B6)**: run without it; engine defaults every store to a neutral 3; placeholder lives on `/admin/ranking`
 
 ## 4b. Intel from the sheet's Dashboard (received 7/12)
 
