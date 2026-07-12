@@ -9,6 +9,7 @@
 import { fiscalForDate } from "../fiscal.js";
 import { resolveOrg } from "../kpiOrg.js";
 import { loadLaborCredits, applyCreditsToRows } from "../trainingCredit.js";
+import { backfillLaborDate } from "../kpiBackfill.js";
 import { loadRankingConfig } from "./config.js";
 import engine from "./engine.cjs";
 
@@ -68,7 +69,23 @@ export async function runRankingNow(supa, user) {
     issues.push({ level: "info", msg: `Latest data is ${latest} (mid-week) — reporting the last completed week, ending ${weekEnding}.` });
   }
 
-  // 2. Anchor rows, credit-adjusted through the same pipeline the labor pages use.
+  // 2. Anchor rows. If the anchor Sunday predates migration 0238's fields
+  // (tickets/on-time/voids), self-heal by re-extracting the stored KPI
+  // snapshot for that date - the raw payloads carried them all along.
+  const { data: probe } = await supa
+    .from("labor_v2_daily")
+    .select("ptd_tickets, on_time_denominator")
+    .eq("business_date", weekEnding)
+    .not("net_sales", "is", null)
+    .limit(1);
+  const p0 = probe?.[0];
+  if (p0 && p0.ptd_tickets == null && p0.on_time_denominator == null) {
+    const bf = await backfillLaborDate(supa, weekEnding);
+    if (bf.ok) issues.push({ level: "info", msg: `Backfilled tickets/on-time/voids for ${weekEnding} from the stored KPI snapshot (${bf.from}).` });
+    else issues.push({ level: "warn", msg: `Couldn't backfill ${weekEnding} from stored snapshots (${bf.error}).` });
+  }
+
+  // Credit-adjusted through the same pipeline the labor pages use.
   const { data: rows, error: rowsErr } = await supa.from("labor_v2_daily").select("*").eq("business_date", weekEnding);
   if (rowsErr) return { error: rowsErr.message, status: 500 };
   if (!rows?.length) {

@@ -16,7 +16,7 @@ import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
-  addRankingConfig, fetchRankingOverview, setLaborPad,
+  addRankingConfig, backfillRankingFields, fetchRankingOverview, setLaborPad,
   type RankingConfigRow, type RankingStoreRow,
 } from "./api";
 
@@ -82,6 +82,8 @@ function SettingsView() {
           <b className="text-midnight">Average wage</b> is no longer a setting — each run computes the live company
           average from Labor v2 (total labor cost ÷ total labor hours, credit-adjusted) for its week.
         </div>
+
+        <BackfillPanel />
         {/* Complaints placeholder */}
         <div className="flex items-start gap-3 rounded-xl bg-amber-50 p-4 ring-1 ring-amber-200">
           <PauseCircle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
@@ -103,6 +105,59 @@ function SettingsView() {
       <AddConfigModal open={addOpen} onClose={() => setAddOpen(false)} existingKeys={[...new Set(config.map((c) => c.key))]}
         onSaved={() => { setAddOpen(false); qc.invalidateQueries({ queryKey: ["ranking-admin"] }); toast.push("Config change added.", "success"); }} />
     </>
+  );
+}
+
+// ── Data backfill — recover 0238 fields from stored KPI snapshots ─────
+function BackfillPanel() {
+  const toast = useToast();
+  const [days, setDays] = useState("35");
+  const [progress, setProgress] = useState<string | null>(null);
+  const [running, setRunning] = useState(false);
+
+  async function runBackfill() {
+    setRunning(true);
+    setProgress("Starting…");
+    let filled = 0, already = 0, failed = 0;
+    try {
+      // The server works within a time budget; keep calling while it reports
+      // unprocessed dates.
+      for (let round = 0; round < 20; round++) {
+        const r = await backfillRankingFields(Number(days) || 35);
+        filled += r.filled; already += r.already; failed += r.failed.length;
+        setProgress(`${filled} day(s) backfilled · ${already} already had data · ${failed} not recoverable${r.remaining.length ? ` · ${r.remaining.length} to go…` : ""}`);
+        if (!r.remaining.length) break;
+      }
+      toast.push("Backfill finished.", "success");
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : "Backfill failed.", "error");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-midnight">Data backfill — tickets · on-time · voids</div>
+          <p className="text-xs text-zinc-500">
+            The stored KPI snapshots carried these fields all along; capture only started landing them with
+            migration 0238. This re-extracts past days into Labor v2 so the ranking (and trends) have history.
+            Safe to re-run — days that already have data are skipped.
+          </p>
+          {progress && <p className="mt-1 font-mono text-xs text-zinc-600">{progress}</p>}
+        </div>
+        <div className="flex items-center gap-2">
+          <input type="number" min={1} max={120} value={days} onChange={(e) => setDays(e.target.value)}
+            className={cn(inputCls, "w-20 text-right")} />
+          <span className="text-xs text-zinc-400">days</span>
+          <Button size="sm" onClick={runBackfill} disabled={running}>
+            {running ? "Backfilling…" : "Backfill"}
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 
