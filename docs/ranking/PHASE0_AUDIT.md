@@ -16,7 +16,7 @@ Audited 2026-07-12 against `main`.
 | `laborPct` | KPI feed | `labor_v2_daily.labor_pct` (+ bands) | ✅ reuse |
 | `onTimePct` | KPI feed | Feed carries `onTimePercentageNumerator/Denominator` — **not persisted per store/day** | ⚠️ extend capture |
 | `voids` | KPI feed | Feed carries `voidTotal` — **not persisted per store/day** | ⚠️ extend capture |
-| `complaints` | KPI feed | **Not seen in any Hub extraction.** The existing `/ranker` module reads complaints from the *sheet*, not the feed. Need one raw feed payload to confirm the field exists | ❓ confirm |
+| `complaints` | KPI feed | **Field exists in the feed** (`complaints`, `complaintsPer10k`) but was null on the 2026-07-11 Total row — confirm it populates at store level. Feed also carries `likelyToReturn*` (VOG L2R). Full inventory: `docs/kpi-feed-fields.md` | ⚠️ verify store-level, then extend capture |
 | `custCount` (→ calls/10k) | = tickets | Same as tickets | ⚠️ extend capture |
 | `period, week, weeksInPeriod, weekEnding` | fiscal calendar | `_lib/fiscal.js` `fiscalForDate(iso)` → `{period, weekInPeriod, weekStart, weekEnd, periodStart, periodEnd}`; `weeksInPeriod` from the 4-4-5 table. FY2026 starts 2025-12-29 | ✅ reuse |
 | `store, location, gm, doName, sdoName, rvpName` | Org table | `stores → districts → areas → regions` + `user_scopes` → `profiles` (UUIDs). `_lib/kpiOrg.js resolveOrg()` walks it | ✅ reuse — **UUID keys available**, see §4.2 answer |
