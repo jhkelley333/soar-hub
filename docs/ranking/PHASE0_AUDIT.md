@@ -23,8 +23,8 @@ Audited 2026-07-12 against `main`.
 | `avgWage` | Labor v2 | Per-store, per-band: `labor_cost / labor_hours` computed on read. **No single company wage exists** | ✅ per-store (decision needed at leader tiers — §3 below) |
 | `chart` (labor target %) | Labor v2 | `labor_v2_daily.target_labor_pct` (+ `wtd_`, `ptd_`) — Expressway's own target, **not** the workbook's normalized-volume lookup | ✅ **DECIDED (Heath 7/12): IX target IS the goal.** Chart lookup + pad not ported — see DEVIATIONS.md B1 |
 | `chart2` | seed table | Nothing in Hub | ⏸ **ON HOLD (Heath 7/12)** — WTD/entity labor score gated, DEVIATIONS.md B2 |
-| `trainingCreditDollars` | Labor v2 | `training_credit_requests` — **store grain only**. No leader-grain rows exist anywhere in Hub | ⚠️ see §3 |
-| `ptoDollars` | Labor v2 | `pto_requests` GM rows → per-day dollar credit (`_lib/trainingCredit.js loadGmPtoCreditDates`) — store grain | ✅ matches |
+| `trainingCreditDollars` | Labor v2 | **Fed as 0 (B7)** — labor arrives credit-adjusted from Labor v2; the engine subtracts nothing further | ✅ resolved |
+| `ptoDollars` | Labor v2 | **Fed as 0 (B7)** — GM PTO + No-GM (open store) credits are already inside Labor v2's adjusted labor | ✅ resolved |
 | `laborPad` | seed | Nothing in Hub | ⏸ **ON HOLD (Heath 7/12)** — not seeded; IX target replaces chart+pad, DEVIATIONS.md B1 |
 | `tenureSoar/tenureLoc` | placeholder | `profiles` has hire dates but per the brief run 1 ships null | ✅ null |
 | `entity` | Org or entities.csv | **`stores.soar_company_name`** — "legal entity / Soar company name on file" (migration 0024, shown on My Stores) | ✅ **RESOLVED (Heath 7/12)** — read it directly; null values surface as a fill-me list. No entities.csv import. DEVIATIONS.md B3 |
@@ -66,13 +66,11 @@ the two seed columns (chart2, labor pad), entity coverage, and the six parsers.
 
 ## 3. §10 open decisions — answered from the code where possible
 
-1. **Training credit grain: STORE ONLY.** `training_credit_requests` is keyed
-   by `store_number`; no leader-grain rows exist. The engine's leader-tier
-   rule (leader's own row ÷ leader's sales, `'SOAR QSR'` company key) has no
-   Hub source. Options: (a) ingest the sheet's leader training-credit rows as
-   a seed/source for parity, or (b) change the rule to sales-weighted store
-   rollup — which is a math change and will fail leader-tier validation.
-   **Recommend (a) for run 1**; revisit after cutover. → Heath to confirm.
+1. **Training credit grain: RESOLVED — MOOT (Heath 7/13, DEVIATIONS B7).**
+   Labor feeds the engine credit-adjusted from Labor v2 (training + PTO +
+   No-GM already applied); the engine's own credit inputs are zeroed and no
+   leader-grain training credit is needed. The SDO sheet's Training Credit
+   tab is NOT ingested.
 2. **Wage grain: PER-STORE** (cost ÷ hours per band, computed on read).
    There is no company scalar in Hub. Phase 0 pins `12.84` per the brief;
    the post-cutover flip needs the weighted-average decision at leader tiers
@@ -129,7 +127,7 @@ source board and two things worth keeping:
 |---|---|---|
 | Skunkworks API — sales/labor/on-time/voids | 273 | The same KPI feed Hub already captures |
 | SDO Sheet — Hierarchy / GMs | 796 | `stores→districts→areas→regions` + `user_scopes` |
-| SDO Sheet — Training Credit | 395 | `training_credit_requests` (store grain) — **the sheet's 395 rows include the leader-grain rows; sample needed for §3.1** |
+| SDO Sheet — Training Credit | 395 | NOT ingested — labor arrives credit-adjusted from Labor v2 (B7); leader grain moot |
 | SDO Sheet — PTO / **Open Store** | 331 | `pto_requests` + `no_gm_credits` (built 7/12 — the Hub-native "open store" concept) |
 | IX (COGS/DOH) | 678 | parser (incl. leader rollup rows) |
 | EcoSure | 175 | parser |
@@ -150,16 +148,15 @@ map, and measured IX `rollups` (do/sdo/rvp/company + `wtd*` variants).
 
 ## 4d. Adapter design notes (traps found reading the engine against our data)
 
-1. **Feed RAW labor %, never the credit-adjusted one.** `labor_v2_daily`
-   stores raw values and Hub applies training/PTO/no-GM credits at read time
-   (`applyCreditsToRows`). The engine subtracts credit dollars itself
-   (`trainingCreditPct`/`ptoPct` in `varianceToChart`). The adapter must read
-   the raw table and pass credit dollars separately — feeding the
-   credit-adjusted labor % AND the dollars would double-count every credit.
-2. **Credits default to 0, not null.** The engine's `varianceToChart`
-   requires `isNum(trainingCreditPct) && isNum(ptoPct)` — a store with no
-   credits fed `null` gets a null variance → null labor score → null total
-   points → unranked. Adapter sends `0` dollars for credit-less stores.
+1. **Labor is CREDIT-ADJUSTED from Labor v2 (superseded 7/13 — B7).** The
+   adapter reads `labor_v2_daily` and applies the shared credit pipeline
+   (`loadLaborCredits` → `applyCreditsToRows`) exactly like the labor pages,
+   then feeds the adjusted `laborPct` per band. The engine's own credit
+   subtraction is disarmed by feeding **zero** credit dollars. Never feed
+   adjusted labor AND real credit dollars — that double-counts.
+2. **Zeroed means numeric 0, not null.** The engine's `varianceToChart`
+   requires `isNum(trainingCreditPct) && isNum(ptoPct)` — nulls would leave
+   every store unranked. The adapter sends `0` dollars, always.
 3. **`custCount` = tickets** (now persisted per band via 0238).
 4. **On-time is stored as numerator/denominator** (0238); adapter computes
    the pct so leader tiers can re-derive rates correctly later.

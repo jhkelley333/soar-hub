@@ -62,6 +62,33 @@ status board as a fill-me list rather than importing a stale CSV.
 `do:<uuid>` / `sdo:<uuid>` / `rvp:<uuid>` from user_scopes; display names
 resolve in the UI. Engine treats them as opaque strings.
 
+### B7. Labor comes CREDIT-ADJUSTED from Labor v2 (Heath, 7/13).
+
+The sheet feeds raw labor % and subtracts training-credit / PTO dollars
+inside the engine (store Y/Z columns, leader-grain training credit rows).
+The Hub inverts this: **Labor v2 is the labor truth** — its WTD/PTD labor
+already has training credit, GM PTO, and No-GM (open store) credit applied
+through the one shared pipeline (`loadLaborCredits` → `applyCreditsToRows`),
+the same numbers every labor page shows.
+
+The adapter therefore:
+- feeds the engine the credit-ADJUSTED `laborPct` per band,
+- zeroes `trainingCreditDollars` / `ptoDollars` (numeric 0, not null — the
+  engine's variance needs numbers) and passes no `leaderTrainingCredit`,
+- lets `varianceToChart = adjustedLaborPct − chart(IX target)`.
+
+Consequences:
+- **Open decision §10.1 (leader-grain training credit) is MOOT** — leader
+  rollups inherit credits through the sales-weighted store numbers. The SDO
+  sheet's Training Credit tab is NOT needed.
+- The ranking's labor always equals Labor v2's labor — one pipeline, no
+  drift between what a GM sees on /labor-v2 and what ranks them.
+- The output's trainingCreditPct/ptoPct columns read 0; credit visibility
+  in the ranking UI (if wanted) comes from Labor v2 data, not the engine.
+- Falls under the B1 two-tier validation: labor-derived columns diff
+  against the sheet rather than hard-match (the sheet's credit math and
+  chart both differ by design).
+
 ### B6. Complaints data ON HOLD (Heath, 7/13).
 
 No complaints source is wired for run 1. The engine's own fallback keeps
