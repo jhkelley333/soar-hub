@@ -53,6 +53,12 @@ export function extractLaborRows(payload) {
       scheduled_labor_hours: numOrNull(r.scheduledLaborHours),
       actual_vs_scheduled_hours: numOrNull(r.actualVsScheduledHours),
       splh: numOrNull(r.splh),
+      // Ranking-module fields (migration 0238): traffic, on-time, voids.
+      tickets: numOrNull(r.tickets),
+      prev_year_tickets: numOrNull(r.previousYearTickets),
+      on_time_numerator: numOrNull(r.onTimePercentageNumerator),
+      on_time_denominator: numOrNull(r.onTimePercentageDenominator),
+      void_total: numOrNull(r.voidTotal),
       // Week to Date band (labor_hours feeds the avg-wage → hours-over calc)
       wtd_net_sales: numOrNull(w?.netSales),
       wtd_prev_year_net_sales: numOrNull(w?.previousYearNetSales),
@@ -63,6 +69,11 @@ export function extractLaborRows(payload) {
       wtd_scheduled_labor_hours: numOrNull(w?.scheduledLaborHours),
       wtd_overtime_hours: numOrNull(w?.overTimeHours),
       wtd_actual_vs_scheduled_hours: numOrNull(w?.actualVsScheduledHours),
+      wtd_tickets: numOrNull(w?.tickets),
+      wtd_prev_year_tickets: numOrNull(w?.previousYearTickets),
+      wtd_on_time_numerator: numOrNull(w?.onTimePercentageNumerator),
+      wtd_on_time_denominator: numOrNull(w?.onTimePercentageDenominator),
+      wtd_void_total: numOrNull(w?.voidTotal),
       // Period to Date band
       ptd_net_sales: numOrNull(p?.netSales),
       ptd_prev_year_net_sales: numOrNull(p?.previousYearNetSales),
@@ -73,9 +84,35 @@ export function extractLaborRows(payload) {
       ptd_scheduled_labor_hours: numOrNull(p?.scheduledLaborHours),
       ptd_overtime_hours: numOrNull(p?.overTimeHours),
       ptd_actual_vs_scheduled_hours: numOrNull(p?.actualVsScheduledHours),
+      ptd_tickets: numOrNull(p?.tickets),
+      ptd_prev_year_tickets: numOrNull(p?.previousYearTickets),
+      ptd_on_time_numerator: numOrNull(p?.onTimePercentageNumerator),
+      ptd_on_time_denominator: numOrNull(p?.onTimePercentageDenominator),
+      ptd_void_total: numOrNull(p?.voidTotal),
     });
   }
   return out;
+}
+
+// Columns added by migration 0238 (ranking fields). If a labor_v2_daily upsert
+// fails because the migration hasn't run yet, strip these and retry so the
+// hourly capture keeps landing the pre-0238 column set instead of erroring.
+const RANKING_COLS_0238 = [
+  "tickets", "prev_year_tickets", "on_time_numerator", "on_time_denominator", "void_total",
+  "wtd_tickets", "wtd_prev_year_tickets", "wtd_on_time_numerator", "wtd_on_time_denominator", "wtd_void_total",
+  "ptd_tickets", "ptd_prev_year_tickets", "ptd_on_time_numerator", "ptd_on_time_denominator", "ptd_void_total",
+];
+
+export function isPre0238Error(error) {
+  return !!error && /column/i.test(String(error.message)) && /tickets|on_time|void_total/.test(String(error.message));
+}
+
+export function stripRankingCols(rows) {
+  return rows.map((r) => {
+    const c = { ...r };
+    for (const k of RANKING_COLS_0238) delete c[k];
+    return c;
+  });
 }
 
 // Diagnostic: what the feed actually contains, so a refresh can self-report why

@@ -143,6 +143,34 @@ Engine input surface confirmed beyond the brief: `msCount`/`msScore`
 `leaderTrainingCredit` map (leader names + `'SOAR QSR'`), `leaders` tenure
 map, and measured IX `rollups` (do/sdo/rvp/company + `wtd*` variants).
 
+## 4d. Adapter design notes (traps found reading the engine against our data)
+
+1. **Feed RAW labor %, never the credit-adjusted one.** `labor_v2_daily`
+   stores raw values and Hub applies training/PTO/no-GM credits at read time
+   (`applyCreditsToRows`). The engine subtracts credit dollars itself
+   (`trainingCreditPct`/`ptoPct` in `varianceToChart`). The adapter must read
+   the raw table and pass credit dollars separately — feeding the
+   credit-adjusted labor % AND the dollars would double-count every credit.
+2. **Credits default to 0, not null.** The engine's `varianceToChart`
+   requires `isNum(trainingCreditPct) && isNum(ptoPct)` — a store with no
+   credits fed `null` gets a null variance → null labor score → null total
+   points → unranked. Adapter sends `0` dollars for credit-less stores.
+3. **`custCount` = tickets** (now persisted per band via 0238).
+4. **On-time is stored as numerator/denominator** (0238); adapter computes
+   the pct so leader tiers can re-derive rates correctly later.
+5. **Hub kills the Monday snapshot-lag failure mode for API data**: the
+   sheet reads "whatever week the snapshot serves today" (it mis-served this
+   very week); Hub has per-day history in `labor_v2_daily`, so the run reads
+   the fiscal Sunday's row directly. The §5.5 guard stays (freshness can
+   still lag) but wrong-week WTD from the API source is structurally gone.
+
+## 4c2. Fiscal date verification (7/13)
+
+`fiscalForDate` agrees with the sheet exactly: 2026-07-05 → P7 W1
+(weekStart 2026-06-29, period 2026-06-29 → 2026-07-26, 4 weeks), and the
+sheet's flagged misalignment reproduces (snapshot weekStart 2026-07-06 =
+P7 W2). Same calendar on both sides.
+
 ## 4c. Placement (Heath, 7/12): admin-only until ready
 
 The ranking UI ships under **`/admin/ranking`** (admin role only) for the

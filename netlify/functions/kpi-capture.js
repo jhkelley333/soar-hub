@@ -29,7 +29,7 @@
 // regardless of the hour.
 
 import { createClient } from "@supabase/supabase-js";
-import { extractLaborRows, feedBusinessDate } from "./_lib/kpiLabor.js";
+import { extractLaborRows, feedBusinessDate, isPre0238Error, stripRankingCols } from "./_lib/kpiLabor.js";
 import { extractCountRows } from "./_lib/kpiCount.js";
 import { upsertLaborCloses } from "./_lib/laborCloses.js";
 import { logPull } from "./_lib/pullLog.js";
@@ -118,7 +118,11 @@ export const handler = async (event) => {
   const extracted = extractLaborRows(payload);
   const laborRows = extracted.map((r) => ({ ...r, business_date: businessDate, captured_at: new Date().toISOString() }));
   if (laborRows.length) {
-    const { error: lerr } = await supa.from("labor_v2_daily").upsert(laborRows, { onConflict: "store_number,business_date" });
+    let { error: lerr } = await supa.from("labor_v2_daily").upsert(laborRows, { onConflict: "store_number,business_date" });
+    if (lerr && isPre0238Error(lerr)) {
+      // Migration 0238 (ranking fields) not applied yet — land the old column set.
+      ({ error: lerr } = await supa.from("labor_v2_daily").upsert(stripRankingCols(laborRows), { onConflict: "store_number,business_date" }));
+    }
     if (lerr) console.log(`[kpi-capture] labor upsert failed: ${lerr.message}`);
     else laborStored = laborRows.length;
   }
