@@ -143,6 +143,14 @@ Engine input surface confirmed beyond the brief: `msCount`/`msScore`
 `leaderTrainingCredit` map (leader names + `'SOAR QSR'`), `leaders` tenure
 map, and measured IX `rollups` (do/sdo/rvp/company + `wtd*` variants).
 
+## 4c. Placement (Heath, 7/12): admin-only until ready
+
+The ranking UI ships under **`/admin/ranking`** (admin role only) for the
+whole build + parallel-run period. Leaders keep using the sheet-fed
+`/ranker`. Only after the parallel run agrees and Heath calls cutover does
+it move to the leader-facing `/ranking` route with scope-checked visibility
+(§3.6). No leader sees a Hub-computed rank until it's ready.
+
 ## 5. Build order (adapted from §9 to this repo)
 
 | PR | Scope | Gate |
