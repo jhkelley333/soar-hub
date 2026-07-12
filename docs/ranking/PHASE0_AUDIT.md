@@ -21,13 +21,13 @@ Audited 2026-07-12 against `main`.
 | `period, week, weeksInPeriod, weekEnding` | fiscal calendar | `_lib/fiscal.js` `fiscalForDate(iso)` → `{period, weekInPeriod, weekStart, weekEnd, periodStart, periodEnd}`; `weeksInPeriod` from the 4-4-5 table. FY2026 starts 2025-12-29 | ✅ reuse |
 | `store, location, gm, doName, sdoName, rvpName` | Org table | `stores → districts → areas → regions` + `user_scopes` → `profiles` (UUIDs). `_lib/kpiOrg.js resolveOrg()` walks it | ✅ reuse — **UUID keys available**, see §4.2 answer |
 | `avgWage` | Labor v2 | Per-store, per-band: `labor_cost / labor_hours` computed on read. **No single company wage exists** | ✅ per-store (decision needed at leader tiers — §3 below) |
-| `chart` (labor target %) | Labor v2 | `labor_v2_daily.target_labor_pct` (+ `wtd_`, `ptd_`) — Expressway's own target, **not** the workbook's normalized-volume lookup | ⚠️ 0c diff mandatory |
-| `chart2` | seed table | Nothing in Hub | ➕ seed (need the Config tab column) |
+| `chart` (labor target %) | Labor v2 | `labor_v2_daily.target_labor_pct` (+ `wtd_`, `ptd_`) — Expressway's own target, **not** the workbook's normalized-volume lookup | ✅ **DECIDED (Heath 7/12): IX target IS the goal.** Chart lookup + pad not ported — see DEVIATIONS.md B1 |
+| `chart2` | seed table | Nothing in Hub | ⏸ **ON HOLD (Heath 7/12)** — WTD/entity labor score gated, DEVIATIONS.md B2 |
 | `trainingCreditDollars` | Labor v2 | `training_credit_requests` — **store grain only**. No leader-grain rows exist anywhere in Hub | ⚠️ see §3 |
 | `ptoDollars` | Labor v2 | `pto_requests` GM rows → per-day dollar credit (`_lib/trainingCredit.js loadGmPtoCreditDates`) — store grain | ✅ matches |
-| `laborPad` | seed | Nothing in Hub | ➕ seed (need the store-map pad column) |
+| `laborPad` | seed | Nothing in Hub | ⏸ **ON HOLD (Heath 7/12)** — not seeded; IX target replaces chart+pad, DEVIATIONS.md B1 |
 | `tenureSoar/tenureLoc` | placeholder | `profiles` has hire dates but per the brief run 1 ships null | ✅ null |
-| `entity` | Org or entities.csv | **`stores` has no entity/LLC column** (has `food_vendor_name`, `pos_system`, `security_vendor`, `acquisition_date`) | ➕ seed table (`ranking_store_seed.entity`) |
+| `entity` | Org or entities.csv | **`stores.soar_company_name`** — "legal entity / Soar company name on file" (migration 0024, shown on My Stores) | ✅ **RESOLVED (Heath 7/12)** — read it directly; null values surface as a fill-me list. No entities.csv import. DEVIATIONS.md B3 |
 | `bands` | NEW | Nothing | ➕ build (`ranking_config`) |
 | IX / EcoSure / VOG / shops / BSC / TotZone | NEW | Nothing parses these. Upload + parser surface is greenfield | ➕ build |
 
@@ -77,17 +77,15 @@ the two seed columns (chart2, labor pad), entity coverage, and the six parsers.
    There is no company scalar in Hub. Phase 0 pins `12.84` per the brief;
    the post-cutover flip needs the weighted-average decision at leader tiers
    before it happens. → decision stands, deferred by design.
-3. **chart2:** no source in Hub, as expected. Seed it from the sheet's Config
-   tab (~20 rows) — need that column in the file bundle. If unavailable,
-   ship PTD-only Phase 1 per the brief's fallback.
-4. **Labor target volume basis: DIFFERENT.** Labor v2's target is
-   Expressway's own `targetLaborPercentage`, not the workbook's normalized-
-   volume chart lookup. The 0c store-by-store diff is **mandatory** and is
-   the first thing to run once the engine + Config chart arrive. If they
-   disagree we escalate — two systems already quote DOs labor targets today.
-5. **Entity coverage:** `stores` has no LLC column; `entities.csv` covers
-   191/271. Seed what we have into `ranking_store_seed.entity`, surface the
-   ~80 gaps as an issue list on the status board, let ops fill them in.
+3. **chart2: ON HOLD (Heath, 7/12).** PTD ships first; WTD/entity labor
+   score gated until chart2 is sourced or Labor v3 ships. DEVIATIONS.md B2.
+4. **Labor target: DECIDED (Heath, 7/12) — IX target IS the goal.** The
+   workbook chart lookup + labor pad are not ported. Labor-derived columns
+   validate as a published diff instead of a hard equality gate; everything
+   else keeps the 100% gate. DEVIATIONS.md B1.
+5. **Entity: RESOLVED (Heath, 7/12)** — `stores.soar_company_name` is the
+   legal entity, already in My Stores data. Nulls surface as a fill-me
+   list. DEVIATIONS.md B3.
 6. **Peer visibility:** genuinely open — Heath decides. Default proposal:
    leaders see the full table at their own tier and below within their scope
    (a DO sees all stores in-district ranked; sees their own DO row but not
@@ -101,14 +99,14 @@ the two seed columns (chart2, labor pad), entity coverage, and the six parsers.
 Only `RANKING_MODULE_BRIEF.md` was provided. Still needed, per §11:
 
 - [ ] `src/Engine.js` (798 lines) — the port target
-- [ ] `src/Guardrails.js` — for `buildActionReport()`
+- [x] `src/Guardrails.js` — received 7/12, banked at `docs/ranking/reference/Guardrails.js`
 - [ ] `test/validate.js` — the harness
 - [ ] `seed/validation_snapshot.csv` (271 PTD rows) + `seed/validation_snapshot_wtd.csv`
-- [ ] `seed/entities.csv`
-- [ ] `SPEC_config_tabs.md` or equivalent — machine-readable band thresholds + the chart2 column
-- [ ] the labor-pad column (store number → $/period)
-- [ ] one raw sample of each of the six source files (IX ×2 CSVs, EcoSure, VOG ×2, shops, BSC xlsx, TotZone xlsx)
-- [ ] one raw KPI feed payload (to confirm `complaints` exists in the feed)
+- [x] ~~`seed/entities.csv`~~ — not needed; entity = `stores.soar_company_name` (DEVIATIONS.md B3)
+- [ ] band thresholds (machine-readable) — still needed for the 8 scoring bands. ~~chart2 column~~ on hold (B2)
+- [x] ~~labor-pad column~~ — on hold; IX target replaces chart+pad (B1)
+- [ ] one raw sample of each of the six source files (IX ×2 CSVs, EcoSure, VOG ×2, shops, BSC xlsx, TotZone xlsx) — Heath loading "the ranker file… it has the 6"
+- [x] raw KPI feed payload — received 7/12, inventoried in `docs/kpi-feed-fields.md`. `complaints`/`likelyToReturn*` exist but null on the Total row; check store level
 
 ## 5. Build order (adapted from §9 to this repo)
 
