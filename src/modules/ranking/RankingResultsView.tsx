@@ -40,7 +40,7 @@ function ScoreChip({ v }: { v: unknown }) {
 }
 
 // ── column model ──────────────────────────────────────────────────────
-type Kind = "rank" | "id" | "pts" | "money" | "spct" | "pct1" | "score" | "tot" | "int" | "text";
+type Kind = "rank" | "id" | "pts" | "money" | "spct" | "varpct" | "hrsover" | "pct1" | "score" | "tot" | "int" | "text";
 interface Col { g: string; label: string; key: string; kind: Kind }
 
 const GROUPS: Record<string, string> = { id: "Info", sales: "Sales", fc: "Food cost", labor: "Labor", fin: "Financial", ops: "Operations" };
@@ -60,8 +60,8 @@ const STORE_COLS: Col[] = [
   { g: "fc", label: "Score", key: "fcScore", kind: "score" },
   { g: "labor", label: "Labor %", key: "laborPct", kind: "pct1" },
   { g: "labor", label: "Chart", key: "chart", kind: "pct1" },
-  { g: "labor", label: "Var", key: "varianceToChart", kind: "spct" },
-  { g: "labor", label: "Hrs over", key: "hoursOver", kind: "int" },
+  { g: "labor", label: "Var", key: "varianceToChart", kind: "varpct" },
+  { g: "labor", label: "Hrs over", key: "hoursOver", kind: "hrsover" },
   { g: "labor", label: "Score", key: "laborScore", kind: "score" },
   { g: "fin", label: "Fin score", key: "finScore", kind: "tot" },
   { g: "fin", label: "$ miss", key: "finMiss", kind: "money" },
@@ -90,7 +90,7 @@ const LEADER_COLS: Col[] = [
   { g: "fc", label: "COGS eff", key: "cogsEff", kind: "pct1" },
   { g: "fc", label: "Score", key: "fcScore", kind: "score" },
   { g: "labor", label: "Labor %", key: "laborPct", kind: "pct1" },
-  { g: "labor", label: "Hrs/store", key: "avgHoursOverPerStore", kind: "int" },
+  { g: "labor", label: "Hrs/store", key: "avgHoursOverPerStore", kind: "hrsover" },
   { g: "labor", label: "Score", key: "laborScore", kind: "score" },
   { g: "fin", label: "Fin score", key: "finScore", kind: "tot" },
   { g: "fin", label: "Annualized", key: "finAnnualized", kind: "money" },
@@ -129,6 +129,16 @@ function Cell({ v, kind }: { v: unknown; kind: Kind }) {
     case "spct": {
       const cls = isNum(v) ? (v > 0 ? "text-emerald-700" : v < 0 ? "text-red-600" : "") : "text-zinc-400";
       return <span className={cn("font-mono text-xs", cls)}>{fmtSignedPct(v)}</span>;
+    }
+    case "varpct": {
+      // Labor variance is inverted: OVER chart (positive) is bad -> red;
+      // UNDER chart (negative) is good -> green.
+      const cls = isNum(v) ? (v > 0 ? "text-red-600" : v < 0 ? "text-emerald-700" : "") : "text-zinc-400";
+      return <span className={cn("font-mono text-xs", cls)}>{fmtSignedPct(v)}</span>;
+    }
+    case "hrsover": {
+      const cls = isNum(v) ? (v > 0 ? "text-red-600" : "text-emerald-700") : "text-zinc-400";
+      return <span className={cn("font-mono text-xs", cls)}>{fmtInt(v)}</span>;
     }
     case "pct1": return <span className={cn("font-mono text-xs", !isNum(v) && "text-zinc-400")}>{fmtPct1(v)}</span>;
     case "score": return <ScoreChip v={v} />;
