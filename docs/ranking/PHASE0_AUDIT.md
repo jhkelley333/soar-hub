@@ -110,7 +110,11 @@ Only `RANKING_MODULE_BRIEF.md` was provided. Still needed, per §11:
   built here against them
 - [ ] `seed/validation_snapshot.csv` (271 PTD rows) + `seed/validation_snapshot_wtd.csv`
 - [x] ~~`seed/entities.csv`~~ — not needed; entity = `stores.soar_company_name` (DEVIATIONS.md B3)
-- [ ] band thresholds (machine-readable) — still needed for the 8 scoring bands. ~~chart2 column~~ on hold (B2)
+- [x] band thresholds — **received 7/13** (Config tab), seeded by migration
+  0239 (8 engine bands + shops + DRY_RUN/test email; labor_variance band
+  confirmed = the engine's hard-coded laborScoreChart thresholds, not
+  seeded). Loader: `_lib/ranking/config.js` (versioned slice by
+  effective_from, stamps configVersion). ~~chart2 column~~ on hold (B2)
 - [x] ~~labor-pad column~~ — on hold; IX target replaces chart+pad (B1)
 - [ ] one raw sample of each of the six source files (IX ×2 CSVs, EcoSure, VOG ×2, shops, BSC xlsx, TotZone xlsx) — Heath loading "the ranker file… it has the 6"
 - [x] raw KPI feed payload — received 7/12, inventoried in `docs/kpi-feed-fields.md`. `complaints`/`likelyToReturn*` exist but null on the Total row; check store level
