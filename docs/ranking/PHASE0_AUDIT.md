@@ -98,15 +98,50 @@ the two seed columns (chart2, labor pad), entity coverage, and the six parsers.
 
 Only `RANKING_MODULE_BRIEF.md` was provided. Still needed, per §11:
 
-- [ ] `src/Engine.js` (798 lines) — the port target
+- [x] `src/Engine.js` — **received 7/12, ported verbatim** to
+  `netlify/functions/_lib/ranking/engine.cjs` (`.cjs` keeps `module.exports`
+  byte-for-byte under the repo's ESM `"type":"module"`). Smoke test at
+  `test/ranking/smoke.mjs` (`node test/ranking/smoke.mjs`) proves load +
+  primitives + tier assembly on synthetic inputs. The received engine is the
+  post-deviation version (FC≥1.01 all tiers, dynamic counts, ticketsVsLy).
 - [x] `src/Guardrails.js` — received 7/12, banked at `docs/ranking/reference/Guardrails.js`
-- [ ] `test/validate.js` — the harness
+- [ ] `test/validate.js` — the harness. **Or**: export the sheet's
+  'SOAR ALL RANKING PTD' + WEEKLY tabs for P7-W1 as CSV and the harness gets
+  built here against them
 - [ ] `seed/validation_snapshot.csv` (271 PTD rows) + `seed/validation_snapshot_wtd.csv`
 - [x] ~~`seed/entities.csv`~~ — not needed; entity = `stores.soar_company_name` (DEVIATIONS.md B3)
 - [ ] band thresholds (machine-readable) — still needed for the 8 scoring bands. ~~chart2 column~~ on hold (B2)
 - [x] ~~labor-pad column~~ — on hold; IX target replaces chart+pad (B1)
 - [ ] one raw sample of each of the six source files (IX ×2 CSVs, EcoSure, VOG ×2, shops, BSC xlsx, TotZone xlsx) — Heath loading "the ranker file… it has the 6"
 - [x] raw KPI feed payload — received 7/12, inventoried in `docs/kpi-feed-fields.md`. `complaints`/`likelyToReturn*` exist but null on the Total row; check store level
+
+## 4b. Intel from the sheet's Dashboard (received 7/12)
+
+The live Dashboard CSV (P7-W1, last run 2026-07-12) confirms the sheet's
+source board and two things worth keeping:
+
+| Sheet source | Rows | Hub replacement |
+|---|---|---|
+| Skunkworks API — sales/labor/on-time/voids | 273 | The same KPI feed Hub already captures |
+| SDO Sheet — Hierarchy / GMs | 796 | `stores→districts→areas→regions` + `user_scopes` |
+| SDO Sheet — Training Credit | 395 | `training_credit_requests` (store grain) — **the sheet's 395 rows include the leader-grain rows; sample needed for §3.1** |
+| SDO Sheet — PTO / **Open Store** | 331 | `pto_requests` + `no_gm_credits` (built 7/12 — the Hub-native "open store" concept) |
+| IX (COGS/DOH) | 678 | parser (incl. leader rollup rows) |
+| EcoSure | 175 | parser |
+| VOG | 524 | parser (check feed's `likelyToReturn*` first) |
+| Mystery Shops | 24 | parser (the brief's `shops`) |
+| BSC Training | 272 | parser |
+| TotZone | 272 | parser |
+
+And the week-misalignment guard **fired in production this very week**:
+"API snapshot covers wrong week (snapshot weekStart 2026-07-06 vs intended
+2026-06-29) — WTD numbers are SUSPECT." Exactly the guard §5.5 says must
+never be dropped.
+
+Engine input surface confirmed beyond the brief: `msCount`/`msScore`
+(mystery shops), `totalTrainingPct`, `vogResponses`, `custCount`,
+`leaderTrainingCredit` map (leader names + `'SOAR QSR'`), `leaders` tenure
+map, and measured IX `rollups` (do/sdo/rvp/company + `wtd*` variants).
 
 ## 5. Build order (adapted from §9 to this repo)
 
