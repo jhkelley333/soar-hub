@@ -248,10 +248,12 @@ export function RankingResultsView() {
                 : "border-zinc-200 bg-zinc-50",
             )}>
               <span className={cn("h-1.5 w-1.5 rounded-full",
-                s.status === "ok" ? "bg-emerald-600" : s.status === "on_hold" ? "bg-amber-500" : "bg-zinc-300")} />
+                s.status === "ok" ? "bg-emerald-600" : s.status === "stale" ? "bg-amber-500" : s.status === "on_hold" ? "bg-amber-500" : "bg-zinc-300")} />
               <b>{SOURCE_LABEL[key] ?? key}</b>
               <span className="text-zinc-500">
-                {s.status === "ok" ? `${s.stores ?? ""} stores` : s.status === "on_hold" ? "on hold" : "not wired"}
+                {s.status === "ok" ? `${s.stores ?? ""} stores`
+                  : s.status === "stale" ? `stale — ${(s as { week_ending?: string }).week_ending ?? "old week"}`
+                  : s.status === "on_hold" ? "on hold" : "not wired"}
               </span>
             </span>
           ))}

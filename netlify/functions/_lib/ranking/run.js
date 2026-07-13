@@ -24,8 +24,9 @@ function isoAddDays(iso, n) {
 
 const REQUIRED_BANDS = ["sales_vs_ly", "food_cost", "bsc_training", "on_time", "complaints", "food_safety", "vog", "total_training"];
 
-// One band's engine input from a labor_v2_daily row (prefix "wtd_"/"ptd_").
-function bandInput(r, p) {
+// One band's engine input from a labor_v2_daily row (prefix "wtd_"/"ptd_")
+// plus that store's IX payload for the matching scope (null until ingested).
+function bandInput(r, p, ix) {
   const otDen = Number(r[p + "on_time_denominator"]);
   const otNum = Number(r[p + "on_time_numerator"]);
   return {
@@ -39,15 +40,60 @@ function bandInput(r, p) {
     chart2: numOrNull(r[p + "target_labor_pct"]),            // interim: = chart1 (B2 addendum)
     trainingCreditDollars: 0,                                 // B7: already inside laborPct
     ptoDollars: 0,                                            // B7
-    cogsEff: 0.96,                                            // missing IX rule (A) until parser
-    fcMiss: 0,
+    // IX category export when ingested; the sheet's missing-IX rule (96.0%)
+    // otherwise. A store absent from the file also gets 96.0%.
+    cogsEff: isNum(ix?.cogs_eff) ? ix.cogs_eff : 0.96,
+    fcMiss: isNum(ix?.fc_miss) ? ix.fc_miss : 0,
     onTimePct: isFinite(otDen) && otDen > 0 && isFinite(otNum) ? otNum / otDen : null,
     voids: numOrNull(r[p + "void_total"]),
     callsPer10k: null,                                        // B6: on hold -> neutral 3
     ecosure: null, vogScore: null, vogResponses: null,        // parsers not wired yet
     totalTrainingPct: null, msCount: null, msScore: null,
-    doh: null, dohGoal: null, endingDollars: null, dollarsOverGoal: null,
+    doh: isNum(ix?.doh) ? ix.doh : null,
+    dohGoal: null,
+    endingDollars: isNum(ix?.ending_dollars) ? ix.ending_dollars : null,
+    dollarsOverGoal: isNum(ix?.excess_dollars) ? ix.excess_dollars : null,
   };
+}
+
+// Latest ingested IX file per scope, preferring an exact week match. Returns
+// { ptd, wtd } where each is { week, stale, stores: Map, rollups, flash }.
+async function loadIxForWeek(supa, weekEnding, issues) {
+  const out = { ptd: null, wtd: null };
+  const { data: files, error } = await supa
+    .from("ranking_source_files")
+    .select("id, week_ending, uploaded_at")
+    .eq("source", "ix").eq("status", "parsed")
+    .order("uploaded_at", { ascending: false }).limit(24);
+  if (error || !files?.length) return out;
+
+  const withScope = [];
+  for (const f of files) {
+    const { data: probe } = await supa.from("ranking_src_rows").select("payload").eq("file_id", f.id).limit(1);
+    withScope.push({ ...f, scope: probe?.[0]?.payload?.scope === "wtd" ? "wtd" : "ptd" });
+  }
+  for (const scope of ["ptd", "wtd"]) {
+    const cands = withScope.filter((f) => f.scope === scope);
+    if (!cands.length) continue;
+    const pick = cands.find((f) => f.week_ending === weekEnding) ?? cands[0];
+    const { data: rows } = await supa.from("ranking_src_rows").select("payload").eq("file_id", pick.id).limit(2000);
+    const storeMap = new Map();
+    const rollups = { do: {}, sdo: {}, rvp: {}, company: null };
+    let flash = 0;
+    for (const { payload: p } of rows || []) {
+      if (String(p.status || "").toLowerCase() === "flash") flash++;
+      if (p.level === "store" && p.store_code) storeMap.set(String(p.store_code), p);
+      else if (p.level === "do" && p.leader) rollups.do[p.leader] = { cogsEff: p.cogs_eff, doh: p.doh };
+      else if (p.level === "sdo" && p.leader) rollups.sdo[p.leader] = { cogsEff: p.cogs_eff, doh: p.doh };
+      else if (p.level === "rvp" && p.leader) rollups.rvp[p.leader] = { cogsEff: p.cogs_eff, doh: p.doh };
+      else if (p.level === "company") rollups.company = { cogsEff: p.cogs_eff, doh: p.doh };
+    }
+    out[scope] = { week: pick.week_ending, stale: pick.week_ending !== weekEnding, stores: storeMap, rollups, flash };
+    if (pick.week_ending !== weekEnding) {
+      issues.push({ level: "warn", msg: `IX ${scope.toUpperCase()} file is for week ending ${pick.week_ending} — food cost carries that week's numbers (stale).` });
+    }
+  }
+  return out;
 }
 
 export async function runRankingNow(supa, user) {
@@ -117,18 +163,30 @@ export async function runRankingNow(supa, user) {
   }
   const weeksInPeriod = Math.round(((Date.parse(fi.periodEnd) - Date.parse(fi.periodStart)) / 86400000 + 1) / 7);
 
-  // 5. Engine inputs.
+  // 5. Engine inputs (IX food cost joins here when a file has been ingested).
+  const ix = await loadIxForWeek(supa, weekEnding, issues);
   const stores = [];
   const unmatched = [];
+  const onTimeSuspect = [];
+  const badIx = [];
+  let ixMissing = 0;
   let onTimeMissing = 0;
   for (const r of rows) {
     const num = String(r.store_number);
     const org = orgMap.get(num);
     if (!org) { unmatched.push(num); continue; }
     const meta = metaByNumber.get(num);
-    const ptd = bandInput(r, "ptd_");
-    const wtd = bandInput(r, "wtd_");
+    const ixPtd = ix.ptd?.stores.get(num) ?? null;
+    const ixWtd = ix.wtd?.stores.get(num) ?? null;
+    if (ix.ptd && !ixPtd) ixMissing++;
+    if (isNum(ixPtd?.cogs_eff) && ixPtd.cogs_eff <= 0) badIx.push(`${num} (${(ixPtd.cogs_eff * 100).toFixed(1)}%)`);
+    const ptd = bandInput(r, "ptd_", ixPtd);
+    const wtd = bandInput(r, "wtd_", ixWtd);
     if (ptd.onTimePct == null) onTimeMissing++;
+    // The feed sometimes reports an on-time numerator above its denominator.
+    // The score is unaffected (>=80% is already a 5) but suspect data never
+    // passes silently.
+    else if (ptd.onTimePct > 1) onTimeSuspect.push(`${num} (${(ptd.onTimePct * 100).toFixed(0)}%)`);
     stores.push({
       store: num,
       location: meta?.name ?? org.store ?? num,
@@ -151,6 +209,15 @@ export async function runRankingNow(supa, user) {
   } else if (onTimeMissing) {
     issues.push({ level: "warn", msg: `${onTimeMissing} store(s) missing on-time — they show without total points.` });
   }
+  if (onTimeSuspect.length) {
+    issues.push({ level: "warn", msg: `${onTimeSuspect.length} store(s) report PTD on-time above 100% — feed data suspect: ${onTimeSuspect.slice(0, 8).join(", ")}${onTimeSuspect.length > 8 ? " …" : ""}` });
+  }
+  if (badIx.length) {
+    issues.push({ level: "bad", msg: `${badIx.length} store(s) excluded from ranking — IX efficiency at or below zero: ${badIx.join(", ")}. Fix the IX row or they stay unranked.` });
+  }
+  if (ixMissing) {
+    issues.push({ level: "warn", msg: `${ixMissing} store(s) not in the IX file — they default to 96.0% efficiency (the sheet's missing-IX rule).` });
+  }
   const entityMissing = stores.filter((s) => s.entity === "Unassigned").length;
   if (entityMissing) {
     issues.push({ level: "warn", msg: `${entityMissing} store(s) have no legal entity on My Stores (soar_company_name) — grouped as "Unassigned" on the Entities tab.` });
@@ -158,13 +225,28 @@ export async function runRankingNow(supa, user) {
 
   const out = engine.runRanking({
     config: { bands: rc.bands, laborChart: [], avgWage, period: fi.period, week: fi.weekInPeriod, weeksInPeriod, weekEnding },
-    stores, leaderTrainingCredit: {}, leaders: {}, rollups: {},
+    stores,
+    leaderTrainingCredit: {},
+    leaders: {},
+    // Measured IX rollups (brief section 6: prefer measured over computed).
+    rollups: {
+      do: ix.ptd?.rollups.do ?? {},
+      sdo: ix.ptd?.rollups.sdo ?? {},
+      rvp: ix.ptd?.rollups.rvp ?? {},
+      company: ix.ptd?.rollups.company ?? {},
+      wtdDo: ix.wtd?.rollups.do ?? {},
+      wtdSdo: ix.wtd?.rollups.sdo ?? {},
+      wtdRvp: ix.wtd?.rollups.rvp ?? {},
+      wtdCompany: ix.wtd?.rollups.company ?? {},
+    },
   });
 
   // 6. Persist run + rows.
   const sourceStatus = {
     skunkworks: { status: "ok", stores: stores.length, week_ending: weekEnding, snapshot_latest: latest },
-    ix: { status: "not_wired", note: "COGS defaults to 96.0% (sheet's missing-IX rule)" },
+    ix: ix.ptd
+      ? { status: ix.ptd.stale ? "stale" : "ok", week_ending: ix.ptd.week, stores: ix.ptd.stores.size, flash: ix.ptd.flash, wtd: ix.wtd ? (ix.wtd.stale ? "stale" : "ok") : "missing" }
+      : { status: "missing", note: "COGS defaults to 96.0% (sheet's missing-IX rule)" },
     ecosure: { status: "not_wired" },
     vog: { status: "not_wired" },
     shops: { status: "not_wired" },

@@ -16,7 +16,7 @@ import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
-  addRankingConfig, backfillRankingFields, fetchRankingOverview, setLaborPad,
+  addRankingConfig, backfillRankingFields, fetchRankingOverview, ingestIxFile, setLaborPad,
   type RankingConfigRow, type RankingStoreRow,
 } from "./api";
 
@@ -83,6 +83,8 @@ function SettingsView() {
           average from Labor v2 (total labor cost ÷ total labor hours, credit-adjusted) for its week.
         </div>
 
+        <IxUploadPanel />
+
         <BackfillPanel />
         {/* Complaints placeholder */}
         <div className="flex items-start gap-3 rounded-xl bg-amber-50 p-4 ring-1 ring-amber-200">
@@ -105,6 +107,68 @@ function SettingsView() {
       <AddConfigModal open={addOpen} onClose={() => setAddOpen(false)} existingKeys={[...new Set(config.map((c) => c.key))]}
         onSaved={() => { setAddOpen(false); qc.invalidateQueries({ queryKey: ["ranking-admin"] }); toast.push("Config change added.", "success"); }} />
     </>
+  );
+}
+
+// ── Inventory Expressway upload ───────────────────────────────────────
+function IxUploadPanel() {
+  const toast = useToast();
+  const [scope, setScope] = useState<"ptd" | "wtd" | "auto">("auto");
+  const [busy, setBusy] = useState(false);
+  const [summary, setSummary] = useState<string | null>(null);
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    setBusy(true);
+    setSummary(null);
+    try {
+      const content = await f.text();
+      const detected: "ptd" | "wtd" =
+        scope !== "auto" ? scope : /week[_ ]?to[_ ]?date|wtd/i.test(f.name) ? "wtd" : "ptd";
+      const r = await ingestIxFile({ filename: f.name, content, scope: detected });
+      setSummary(
+        `${detected.toUpperCase()} · week ending ${r.week_ending ?? "?"} · ${r.stores} stores` +
+        (r.flash ? ` · ${r.flash} flash row(s)` : "") +
+        (r.unresolved.length ? ` · unresolved: ${r.unresolved.join(", ")}` : ""),
+      );
+      toast.push("IX file ingested — hit Run now on the Ranking tab to apply.", "success");
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "Ingest failed.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-midnight">Inventory Expressway — food cost</div>
+          <p className="text-xs text-zinc-500">
+            Upload the IX category export (CSV). Store efficiency, $ miss, DOH and the file's own
+            DO/SDO/RVP/company rollups feed the next run. Duplicate files are rejected by content hash.
+          </p>
+          {summary && <p className="mt-1 font-mono text-xs text-zinc-600">{summary}</p>}
+        </div>
+        <div className="flex items-center gap-2">
+          <select value={scope} onChange={(e) => setScope(e.target.value as "ptd" | "wtd" | "auto")}
+            className={cn(inputCls)}>
+            <option value="auto">Detect from filename</option>
+            <option value="ptd">Period to date</option>
+            <option value="wtd">Week to date</option>
+          </select>
+          <label className={cn(
+            "cursor-pointer rounded-lg bg-midnight px-3 py-2 text-sm font-semibold text-white hover:bg-zinc-800",
+            busy && "pointer-events-none opacity-50",
+          )}>
+            {busy ? "Ingesting…" : "Upload CSV"}
+            <input type="file" accept=".csv,text/csv" className="hidden" onChange={onFile} />
+          </label>
+        </div>
+      </div>
+    </div>
   );
 }
 
