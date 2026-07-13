@@ -19,7 +19,7 @@ import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
-  addRankingConfig, backfillRankingFields, fetchRankingOverview, ingestBscRows, ingestEcosureRows, ingestIxFile, ingestShopRows, ingestTotzoneRows, ingestVogRows, setLaborPad,
+  addRankingConfig, backfillRankingFields, fetchRankingOverview, ingestBscRows, ingestEcosureRows, ingestIxFile, ingestShopRows, ingestTotzoneRows, ingestVogRows, setFcTargetEfficiency, setLaborPad,
   type RankingConfigRow, type RankingStoreRow,
 } from "./api";
 
@@ -96,6 +96,9 @@ function SettingsView() {
           average from Labor v2 (total labor cost ÷ total labor hours, credit-adjusted) for its week.
         </div>
 
+        <FcTargetEditor current={q.data?.fc_target_efficiency ?? 0.96}
+          onSaved={() => qc.invalidateQueries({ queryKey: ["ranking-admin"] })} />
+
         <IxUploadPanel />
 
         <TotzoneUploadPanel />
@@ -130,6 +133,52 @@ function SettingsView() {
       <AddConfigModal open={addOpen} onClose={() => setAddOpen(false)} existingKeys={[...new Set(config.map((c) => c.key))]}
         onSaved={() => { setAddOpen(false); qc.invalidateQueries({ queryKey: ["ranking-admin"] }); toast.push("Config change added.", "success"); }} />
     </>
+  );
+}
+
+// ── Food-cost miss target efficiency ─────────────────────────────────
+function FcTargetEditor({ current, onSaved }: { current: number; onSaved: () => void }) {
+  const toast = useToast();
+  const [pct, setPct] = useState<string>((current * 100).toFixed(1));
+  const [busy, setBusy] = useState(false);
+
+  async function save() {
+    const eff = Number(pct) / 100;
+    if (!isFinite(eff) || eff < 0.5 || eff > 1.5) {
+      toast.push("Enter a percent between 50 and 150.", "error");
+      return;
+    }
+    setBusy(true);
+    try {
+      await setFcTargetEfficiency(eff);
+      toast.push(`Food-cost miss target set to ${Number(pct).toFixed(1)}% — hit Run now to apply.`, "success");
+      onSaved();
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : "Couldn't save.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-midnight">Food-cost miss target</div>
+          <p className="text-xs text-zinc-500">
+            FC $ Miss = dollars run <b>below this efficiency</b> — actual food cost minus what it would have been at
+            the target. At or above the target the miss is $0. Default <b>96%</b>. Absolute; savings never offset
+            losses. Changing it applies to the next run (past runs keep the target they used).
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <input type="number" min={50} max={150} step="0.1" value={pct} onChange={(e) => setPct(e.target.value)}
+            className={cn(inputCls, "w-24 text-right")} />
+          <span className="text-sm text-zinc-400">%</span>
+          <Button size="sm" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save"}</Button>
+        </div>
+      </div>
+    </div>
   );
 }
 

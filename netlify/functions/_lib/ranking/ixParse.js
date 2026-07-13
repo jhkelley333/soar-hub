@@ -59,6 +59,8 @@ export function parseIxCsv(text) {
     netSales: firstIdx("MTD Net Sales", "Net Sales"),
     ending: firstIdx("MTD Ending $", "Ending $"),
     variance: firstIdx("MTD $ Variance", "$ Variance"),
+    actual: firstIdx("MTD Actual $", "Actual $"),
+    ideal: firstIdx("MTD Ideal $", "Ideal $"),
     eff: firstIdx("MTD_Efficiency", "Efficiency"),
     doh: idx("DOH"),
     excess: firstIdx("Excess $", "Excess $"),
@@ -96,6 +98,8 @@ export function parseIxCsv(text) {
       status,
       net_sales: num(r[col.netSales]),
       ending_dollars: num(r[col.ending]),
+      actual_dollars: col.actual >= 0 ? num(r[col.actual]) : null, // for the FC-miss-vs-target calc
+      ideal_dollars: col.ideal >= 0 ? num(r[col.ideal]) : null,
       fc_variance: variance,
       // Positive dollars MISSED: actual above ideal -> negative variance.
       // A saving row misses $0 (dollar misses are absolute, DEVIATIONS A).

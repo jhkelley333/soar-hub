@@ -39,9 +39,12 @@ export async function loadRankingConfig(supa, asOfDate) {
     const v = values[`bands.${k}`];
     if (Array.isArray(v)) bands[k] = v;
   }
+  const fcTarget = Number(values["fc_target_efficiency"]?.efficiency);
   return {
     bands,
     avgWage: Number(values["avg_wage"]?.amount) || null,
+    // FC miss threshold: actual minus ideal/target, floored at 0. Default 96%.
+    fcTargetEfficiency: isFinite(fcTarget) && fcTarget > 0 ? fcTarget : 0.96,
     dryRun: values["distribution.dry_run"]?.enabled !== false, // default SAFE (dry run)
     testEmail: values["distribution.test_email"]?.email || null,
     configVersion: version,

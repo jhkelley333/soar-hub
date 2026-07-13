@@ -34,8 +34,12 @@ export interface RankingStoreRow {
   labor_pad: number | null;
 }
 
-export function fetchRankingOverview(): Promise<{ config: RankingConfigRow[]; stores: RankingStoreRow[] }> {
+export function fetchRankingOverview(): Promise<{ config: RankingConfigRow[]; stores: RankingStoreRow[]; fc_target_efficiency: number }> {
   return req(`${FN}?action=overview`);
+}
+
+export function setFcTargetEfficiency(efficiency: number): Promise<{ ok: true; efficiency: number }> {
+  return req(`${FN}?action=fc-target-set`, { method: "POST", body: JSON.stringify({ efficiency }) });
 }
 
 export function addRankingConfig(input: {
