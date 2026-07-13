@@ -68,10 +68,13 @@ async function loadLatestUpload(supa, source) {
   if (!f) return null;
   const { data: rows } = await supa.from("ranking_src_rows").select("payload").eq("file_id", f.id).limit(2500);
   const stores = new Map();
+  const list = [];
   for (const { payload: p } of rows || []) {
-    if (p?.store_code) stores.set(String(p.store_code), p);
+    if (!p?.store_code) continue;
+    stores.set(String(p.store_code), p); // last-wins map (single-row-per-store sources)
+    list.push(p);                        // full list (multi-row sources, e.g. assessments)
   }
-  return { file: f, stores };
+  return { file: f, stores, list };
 }
 
 // Latest ingested IX file per scope, preferring an exact week match. Returns
@@ -192,6 +195,24 @@ export async function runRankingNow(supa, user) {
       issues.push({ level: "info", msg: `Total Training uses TotZone status as of ${asOf}.` });
     }
   }
+
+  // EcoSure: YTD assessments — a store's input is the AVERAGE of its
+  // assessment scores (brief section 6); unaudited stores stay null and the
+  // engine renders "No Audit" with a neutral 3.
+  const eco = await loadLatestUpload(supa, "ecosure");
+  const ecoAvgByStore = new Map();
+  if (eco) {
+    const sums = new Map();
+    for (const p of eco.list) {
+      const s = Number(p.score);
+      if (!isFinite(s)) continue;
+      const cur = sums.get(String(p.store_code)) || { sum: 0, n: 0 };
+      cur.sum += s; cur.n++;
+      sums.set(String(p.store_code), cur);
+    }
+    for (const [sn, { sum, n }] of sums) ecoAvgByStore.set(sn, sum / n / 100); // fraction, engine unit
+    issues.push({ level: "info", msg: `EcoSure covers ${ecoAvgByStore.size} store(s) (YTD through ${eco.file.week_ending ?? "?"}) — unaudited stores score a neutral 3 ("No Audit").` });
+  }
   const stores = [];
   const unmatched = [];
   const onTimeSuspect = [];
@@ -213,6 +234,9 @@ export async function runRankingNow(supa, user) {
     // never counted toward Total Points (DEVIATIONS A).
     const tzRow = tz?.stores.get(num);
     if (isNum(tzRow?.total_training_pct)) ptd.totalTrainingPct = tzRow.total_training_pct;
+    // EcoSure YTD average (PTD-only, same contract).
+    const ecoAvg = ecoAvgByStore.get(num);
+    if (isNum(ecoAvg)) ptd.ecosure = ecoAvg;
     if (ptd.onTimePct == null) onTimeMissing++;
     // The feed sometimes reports an on-time numerator above its denominator.
     // The score is unaffected (>=80% is already a 5) but suspect data never
@@ -278,7 +302,9 @@ export async function runRankingNow(supa, user) {
     ix: ix.ptd
       ? { status: ix.ptd.stale ? "stale" : "ok", week_ending: ix.ptd.week, stores: ix.ptd.stores.size, flash: ix.ptd.flash, wtd: ix.wtd ? (ix.wtd.stale ? "stale" : "ok") : "missing" }
       : { status: "missing", note: "COGS defaults to 96.0% (sheet's missing-IX rule)" },
-    ecosure: { status: "not_wired" },
+    ecosure: eco
+      ? { status: "ok", as_of: eco.file.week_ending, stores: ecoAvgByStore.size }
+      : { status: "missing" },
     vog: { status: "not_wired" },
     shops: { status: "not_wired" },
     bsc: { status: "not_wired" },
