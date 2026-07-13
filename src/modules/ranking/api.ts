@@ -180,6 +180,19 @@ export function ingestBscRows(input: {
   return req(`${FN}?action=ingest-bsc`, { method: "POST", body: JSON.stringify(input) });
 }
 
+export interface ShopRowInput {
+  store_code: string;
+  store_name?: string | null;
+  visit_date: string | null;
+  score: number | null;
+}
+
+export function ingestShopRows(input: {
+  filename: string; sha256: string; rows: ShopRowInput[];
+}): Promise<{ file_id: string; as_of: string | null; rows: number; stores: number; unresolved: string[] }> {
+  return req(`${FN}?action=ingest-shops`, { method: "POST", body: JSON.stringify(input) });
+}
+
 // ── Legacy history + trends ──────────────────────────────────────────
 export interface LegacyImportResult {
   available: number;

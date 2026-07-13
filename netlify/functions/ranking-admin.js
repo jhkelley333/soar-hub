@@ -337,6 +337,64 @@ async function ingestBsc(supa, user, body) {
   return { file_id: file.id, as_of: asOf, rows: bscRows.length, stores: codes.length, unresolved };
 }
 
+// Ingest Mystery Shops (KnowledgeForce "DataDump"). One src row PER SHOP,
+// each keeping its visit date + score — the RUN filters to shops that fell
+// within the ranked fiscal period and averages per store (Heath: "only use
+// those that fell within the period"). sha256 dedupe.
+async function ingestShops(supa, user, body) {
+  const filename = String(body?.filename || "shops.csv").slice(0, 200);
+  const sha = String(body?.sha256 || "");
+  if (!/^[a-f0-9]{64}$/i.test(sha)) return { error: "sha256 of the file is required.", status: 400 };
+  const raw = Array.isArray(body?.rows) ? body.rows : [];
+  const clean = raw
+    .map((r) => ({
+      level: "store",
+      store_code: String(r?.store_code ?? "").replace(/\D/g, "").replace(/^0+/, ""),
+      store_name: String(r?.store_name ?? "").trim().slice(0, 120) || null,
+      visit_date: /^\d{4}-\d{2}-\d{2}$/.test(String(r?.visit_date || "")) ? String(r.visit_date) : null,
+      score: Number.isFinite(Number(r?.score)) ? Number(r.score) : null,
+    }))
+    .filter((r) => r.store_code && r.visit_date && r.score != null && r.score >= 0 && r.score <= 1.5);
+  if (!clean.length) return { error: "No usable shop rows (need store #, visit date, score).", status: 400 };
+  if (clean.length > 4000) return { error: "Too many rows.", status: 400 };
+
+  // Latest visit date drives the file's "as of" for the source board.
+  const asOf = clean.map((r) => r.visit_date).sort().pop() ?? null;
+  const codes = [...new Set(clean.map((r) => r.store_code))];
+  const { data: sts } = await supa.from("stores").select("id, number").in("number", codes);
+  const idByNum = new Map((sts || []).map((s) => [String(s.number), s.id]));
+
+  const { data: file, error: fe } = await supa.from("ranking_source_files").insert({
+    source: "shops",
+    storage_path: `inline:${filename}`,
+    sha256: sha.toLowerCase(),
+    week_ending: asOf,
+    row_count: clean.length,
+    status: "parsed",
+    uploaded_by: user.id,
+  }).select("id").single();
+  if (fe) {
+    if (/duplicate|unique/i.test(fe.message)) return { error: "This exact file was already ingested — no double-count.", status: 409 };
+    if (/ranking_source_files/.test(fe.message) && /does not exist|relation/i.test(fe.message)) {
+      return { error: "Run migration 0237 first (ranking tables are missing).", status: 500 };
+    }
+    return { error: fe.message, status: 500 };
+  }
+  const rows = clean.map((r) => ({
+    file_id: file.id,
+    source: "shops",
+    store_id: idByNum.get(r.store_code) ?? null,
+    store_code: r.store_code,
+    payload: r,
+  }));
+  for (let i = 0; i < rows.length; i += 300) {
+    const { error } = await supa.from("ranking_src_rows").insert(rows.slice(i, i + 300));
+    if (error) return { error: `File saved but rows failed: ${error.message}`, status: 500 };
+  }
+  const unresolved = codes.filter((c) => !idByNum.get(c));
+  return { file_id: file.id, as_of: asOf, rows: rows.length, stores: codes.length, unresolved };
+}
+
 export const handler = async (event) => {
   let supa;
   try { supa = admin(); } catch (e) { return respond(500, { error: e.message }); }
@@ -359,6 +417,7 @@ export const handler = async (event) => {
       if (action === "ingest-totzone") return unwrap(await ingestTotzone(supa, user, body));
       if (action === "ingest-ecosure") return unwrap(await ingestEcosure(supa, user, body));
       if (action === "ingest-bsc") return unwrap(await ingestBsc(supa, user, body));
+      if (action === "ingest-shops") return unwrap(await ingestShops(supa, user, body));
       if (action === "import-legacy") return unwrap(await importLegacyWeeks(supa));
       return respond(400, { error: `Unknown action: ${action}` });
     }

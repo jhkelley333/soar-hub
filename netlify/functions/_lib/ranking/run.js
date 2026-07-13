@@ -206,6 +206,25 @@ export async function runRankingNow(supa, user) {
     else if (asOf) issues.push({ level: "info", msg: `BSC training uses status as of ${asOf}.` });
   }
 
+  // Mystery Shops: keep only shops whose visit fell WITHIN this run's fiscal
+  // period (Heath), then per store: msCount = # in-period shops, msScore =
+  // average score. Information only — never counted toward Total Points.
+  const shops = await loadLatestUpload(supa, "shops");
+  const shopByStore = new Map();
+  if (shops) {
+    let inPeriod = 0;
+    for (const p of shops.list) {
+      if (!p.visit_date || p.visit_date < fi.periodStart || p.visit_date > fi.periodEnd) continue;
+      const s = Number(p.score);
+      if (!isFinite(s)) continue;
+      inPeriod++;
+      const cur = shopByStore.get(String(p.store_code)) || { sum: 0, n: 0 };
+      cur.sum += s; cur.n++;
+      shopByStore.set(String(p.store_code), cur);
+    }
+    issues.push({ level: "info", msg: `Mystery Shops: ${inPeriod} shop(s) within the period (${fi.periodStart}–${fi.periodEnd}) across ${shopByStore.size} store(s); shops outside the period are ignored.` });
+  }
+
   const eco = await loadLatestUpload(supa, "ecosure");
   const ecoAvgByStore = new Map();
   if (eco) {
@@ -247,6 +266,9 @@ export async function runRankingNow(supa, user) {
     // BSC LTO training % — an ops-scoring category on both PTD and WTD.
     const bscRow = bsc?.stores.get(num);
     if (isNum(bscRow?.bsc_pct)) { ptd.bscTrainingPct = bscRow.bsc_pct; wtd.bscTrainingPct = bscRow.bsc_pct; }
+    // Mystery Shops (in-period): count + average, informational.
+    const sh = shopByStore.get(num);
+    if (sh && sh.n) { ptd.msCount = sh.n; ptd.msScore = sh.sum / sh.n; }
     if (ptd.onTimePct == null) onTimeMissing++;
     // The feed sometimes reports an on-time numerator above its denominator.
     // The score is unaffected (>=80% is already a 5) but suspect data never
@@ -316,7 +338,9 @@ export async function runRankingNow(supa, user) {
       ? { status: "ok", as_of: eco.file.week_ending, stores: ecoAvgByStore.size }
       : { status: "missing" },
     vog: { status: "not_wired" },
-    shops: { status: "not_wired" },
+    shops: shops
+      ? { status: "ok", as_of: shops.file.week_ending, stores: shopByStore.size, in_period: [...shopByStore.values()].reduce((a, b) => a + b.n, 0) }
+      : { status: "missing" },
     bsc: bsc
       ? { status: bsc.file.week_ending && bsc.file.week_ending < weekEnding ? "stale" : "ok", as_of: bsc.file.week_ending, stores: bsc.stores.size }
       : { status: "missing" },
