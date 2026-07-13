@@ -8,7 +8,7 @@
 
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
-import { runRankingNow, latestRun } from "./_lib/ranking/run.js";
+import { runRankingNow, latestRun, listRuns } from "./_lib/ranking/run.js";
 import { backfillLaborWindow } from "./_lib/kpiBackfill.js";
 import { parseIxCsv } from "./_lib/ranking/ixParse.js";
 import { importLegacyWeeks, trendsData } from "./_lib/ranking/legacy.js";
@@ -185,6 +185,7 @@ export const handler = async (event) => {
     }
     if (action === "overview") return unwrap(await overview(supa));
     if (action === "run-latest") return unwrap(await latestRun(supa, params));
+    if (action === "runs") return unwrap(await listRuns(supa));
     if (action === "trends") return unwrap(await trendsData(supa, params));
     if (action === "risk") return unwrap(await riskData(supa));
     return respond(400, { error: `Unknown action: ${action}` });

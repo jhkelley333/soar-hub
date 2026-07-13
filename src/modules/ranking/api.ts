@@ -81,11 +81,25 @@ export interface RankingResultRow {
   metrics: RankMetrics;
 }
 
-export function fetchRankingLatest(scope: RankScope, tier: RankTier): Promise<{
+export function fetchRankingLatest(scope: RankScope, tier: RankTier, runId?: string | null): Promise<{
   run: RankingRun | null; scope: RankScope; tier: RankTier; rows: RankingResultRow[];
 }> {
   const p = new URLSearchParams({ action: "run-latest", scope, tier });
+  if (runId) p.set("run_id", runId);
   return req(`${FN}?${p.toString()}`);
+}
+
+export interface RankingRunSummary {
+  id: string;
+  week_ending: string;
+  period: number;
+  week: number;
+  started_at: string;
+  completed_at: string | null;
+}
+
+export function fetchRankingRuns(): Promise<{ runs: RankingRunSummary[] }> {
+  return req(`${FN}?action=runs`);
 }
 
 export function triggerRankingRun(): Promise<{ run_id: string; week_ending: string; period: number; week: number; rows: number; issues: RankingIssue[] }> {

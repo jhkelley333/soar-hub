@@ -307,18 +307,52 @@ export async function runRankingNow(supa, user) {
 
 const TIERS = new Set(["store", "do", "sdo", "rvp", "entity", "company"]);
 
-export async function latestRun(supa, params) {
-  const scope = params.scope === "wtd" ? "wtd" : "ptd";
-  const tier = TIERS.has(params.tier) ? params.tier : "store";
-  const { data: runs, error } = await supa
-    .from("ranking_runs").select("*")
+// Completed runs, one per week (newest run wins a re-run week) — the week
+// picker's source, mirroring the legacy ranker's week tabs.
+export async function listRuns(supa) {
+  const { data, error } = await supa
+    .from("ranking_runs")
+    .select("id, week_ending, period, week, started_at, completed_at")
     .eq("status", "complete")
-    .order("started_at", { ascending: false }).limit(1);
+    .order("week_ending", { ascending: false })
+    .order("started_at", { ascending: false })
+    .limit(200);
   if (error) {
     if (/ranking_runs/.test(error.message)) return { error: "Run migration 0237 first (ranking tables are missing).", status: 500 };
     return { error: error.message, status: 500 };
   }
-  const run = runs?.[0] ?? null;
+  const seen = new Set();
+  const runs = [];
+  for (const r of data || []) {
+    if (seen.has(r.week_ending)) continue;
+    seen.add(r.week_ending);
+    runs.push(r);
+  }
+  return { runs };
+}
+
+// One run's rows — the latest by default, or a specific run via run_id
+// (the week picker's navigation).
+export async function latestRun(supa, params) {
+  const scope = params.scope === "wtd" ? "wtd" : "ptd";
+  const tier = TIERS.has(params.tier) ? params.tier : "store";
+  let run = null;
+  if (params.run_id) {
+    const { data, error } = await supa.from("ranking_runs").select("*").eq("id", params.run_id).maybeSingle();
+    if (error) return { error: error.message, status: 500 };
+    if (!data) return { error: "Run not found.", status: 404 };
+    run = data;
+  } else {
+    const { data: runs, error } = await supa
+      .from("ranking_runs").select("*")
+      .eq("status", "complete")
+      .order("started_at", { ascending: false }).limit(1);
+    if (error) {
+      if (/ranking_runs/.test(error.message)) return { error: "Run migration 0237 first (ranking tables are missing).", status: 500 };
+      return { error: error.message, status: 500 };
+    }
+    run = runs?.[0] ?? null;
+  }
   if (!run) return { run: null, scope, tier, rows: [] };
   const { data: rows, error: rowsErr } = await supa
     .from("ranking_rows")
