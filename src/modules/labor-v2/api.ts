@@ -92,6 +92,8 @@ export function saveLaborV2Review(input: ReviewInput): Promise<{ ok: true; revie
 export interface MissTrackerRow {
   store_number: string;
   store_name: string | null;
+  do_name: string | null;
+  sdo_name: string | null;
   total: number;
   /** ISO date → hours missed that day (over days only). */
   days: Record<string, number>;

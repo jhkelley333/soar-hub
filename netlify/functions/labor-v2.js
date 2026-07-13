@@ -558,6 +558,7 @@ async function missTracker(supa, user, params) {
   if (!visible.length) return { week: [], threshold, rows: [] };
   const numbers = [...new Set(visible.map((st) => String(st.number)))];
   const nameByNumber = new Map(visible.map((st) => [String(st.number), st.name]));
+  const orgMap = await resolveOrg(supa, numbers); // DO / SDO names per store
 
   const week = Array.from({ length: 7 }, (_, i) => isoOf(shiftDays(weekStart, i)));
   // Fetch one day at a time: a whole week across a big scope can exceed
@@ -590,7 +591,14 @@ async function missTracker(supa, user, params) {
     const h = storeHoursOver(r, "");
     if (h == null || h <= 0) continue;
     if (!byStore.has(sn)) {
-      byStore.set(sn, { store_number: sn, store_name: nameByNumber.get(sn) ?? null, total: 0, days: {}, explanations: {} });
+      const org = orgMap.get(sn);
+      byStore.set(sn, {
+        store_number: sn,
+        store_name: nameByNumber.get(sn) ?? null,
+        do_name: org?.doName ?? null,
+        sdo_name: org?.sdoName ?? null,
+        total: 0, days: {}, explanations: {},
+      });
     }
     const row = byStore.get(sn);
     row.days[r.business_date] = round1(h);

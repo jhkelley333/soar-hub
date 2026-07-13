@@ -51,7 +51,7 @@ export function MissTrackerExport({ fetcher }: { fetcher: (weekStart: string) =>
       const dayNames = res.week.map((d) =>
         new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { weekday: "long" }));
       const headers = [
-        "Store #", "Store", "Weekly Total Miss (Hrs)",
+        "Store #", "Store", "DO", "SDO", "Weekly Total Miss (Hrs)",
         ...dayNames.map((n) => `${n} (Hrs)`),
         ...dayNames.map((n) => `${n} Explanation`),
       ];
@@ -59,6 +59,8 @@ export function MissTrackerExport({ fetcher }: { fetcher: (weekStart: string) =>
         const row: Record<string, unknown> = {
           "Store #": r.store_number,
           "Store": r.store_name ?? "",
+          "DO": r.do_name ?? "",
+          "SDO": r.sdo_name ?? "",
           "Weekly Total Miss (Hrs)": r.total,
         };
         res.week.forEach((d, i) => {
