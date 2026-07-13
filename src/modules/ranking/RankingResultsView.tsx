@@ -229,6 +229,20 @@ export function RankingResultsView() {
     [baseCols, groupsOn, scope],
   );
 
+  // Frozen identity columns (Rank, Store/Name, GM/Stores): cumulative left
+  // offsets so they stay pinned while the metric columns scroll under them.
+  const idw = (key: string): number =>
+    ({ rank: 46, __store: 176, gm: 128, name: 184, storeCount: 62 } as Record<string, number>)[key] ?? 96;
+  const { stickyLeft, idBlockWidth, lastIdIdx } = useMemo(() => {
+    const offsets: (number | null)[] = [];
+    let acc = 0, last = -1;
+    cols.forEach((c, i) => {
+      if (c.g === "id") { offsets.push(acc); acc += idw(c.key); last = i; }
+      else offsets.push(null);
+    });
+    return { stickyLeft: offsets, idBlockWidth: acc, lastIdIdx: last };
+  }, [cols]);
+
   // Download the shown week + scope + tier as CSV (opens in Excel). Every
   // column ships regardless of the on-screen group toggles; search filters
   // are ignored — the file is the full board.
@@ -427,37 +441,53 @@ export function RankingResultsView() {
         ))}
       </div>
 
-      {/* Table */}
+      {/* Table — header rows + the identity (Store/GM) columns stay locked
+          so the numbers keep their context while you scroll both ways. */}
       <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
-        <div className="overflow-x-auto">
+        <div className="max-h-[72vh] overflow-auto">
           <table className="w-full border-collapse">
             <thead>
               <tr>
                 {(() => {
                   const out: React.ReactNode[] = [];
                   let g = "", span = 0;
+                  const flush = (grp: string, sp: number, key: string) => {
+                    const isId = grp === "id";
+                    out.push(
+                      <th key={key} colSpan={sp}
+                        style={isId ? { left: 0, minWidth: idBlockWidth } : undefined}
+                        className={cn("h-7 px-2.5 text-left text-[10px] font-bold uppercase tracking-widest text-white sticky top-0",
+                          isId ? "bg-zinc-900 z-40 left-0" : "bg-midnight z-30")}>
+                        {GROUPS[grp]}
+                      </th>,
+                    );
+                  };
                   cols.forEach((c, i) => {
-                    if (c.g !== g) { if (g) out.push(<th key={g + i} colSpan={span} className={cn("bg-midnight px-2.5 py-1 text-left text-[10px] font-bold uppercase tracking-widest text-white", g === "id" && "bg-zinc-900")}>{GROUPS[g]}</th>); g = c.g; span = 0; }
+                    if (c.g !== g) { if (g) flush(g, span, g + i); g = c.g; span = 0; }
                     span++;
-                    if (i === cols.length - 1) out.push(<th key={g + "end"} colSpan={span} className={cn("bg-midnight px-2.5 py-1 text-left text-[10px] font-bold uppercase tracking-widest text-white", g === "id" && "bg-zinc-900")}>{GROUPS[g]}</th>);
+                    if (i === cols.length - 1) flush(g, span, g + "end");
                   });
                   return out;
                 })()}
               </tr>
               <tr>
-                {cols.map((c, i) => (
-                  <th key={i} onClick={() => setSort((s) => s?.key === c.key
-                    ? { key: c.key, dir: s.dir === 1 ? -1 : 1 }
-                    // Rank 1 is BEST — rank, store and name sort ascending on
-                    // first click (best/alphabetical first); metrics start
-                    // descending (biggest first).
-                    : { key: c.key, dir: c.key === "rank" || c.key === "__store" || c.key === "name" ? 1 : -1 })}
-                    className={cn("cursor-pointer whitespace-nowrap border-b border-zinc-200 bg-zinc-50 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide text-zinc-500 hover:text-zinc-800",
-                      c.kind === "id" || c.kind === "text" ? "text-left" : "text-right",
-                      sort?.key === c.key && "text-midnight")}>
-                    {c.label}{sort?.key === c.key ? (sort.dir === 1 ? " ▴" : " ▾") : ""}
-                  </th>
-                ))}
+                {cols.map((c, i) => {
+                  const left = stickyLeft[i];
+                  const sticky = left != null;
+                  return (
+                    <th key={i} onClick={() => setSort((s) => s?.key === c.key
+                      ? { key: c.key, dir: s.dir === 1 ? -1 : 1 }
+                      : { key: c.key, dir: c.key === "rank" || c.key === "__store" || c.key === "name" ? 1 : -1 })}
+                      style={sticky ? { left, minWidth: idw(c.key) } : undefined}
+                      className={cn("cursor-pointer whitespace-nowrap border-b border-zinc-200 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide text-zinc-500 hover:text-zinc-800 sticky top-7",
+                        c.kind === "id" || c.kind === "text" ? "text-left" : "text-right",
+                        sticky ? "bg-zinc-100 z-30" : "bg-zinc-50 z-20",
+                        i === lastIdIdx && "border-r border-zinc-200",
+                        sort?.key === c.key && "text-midnight")}>
+                      {c.label}{sort?.key === c.key ? (sort.dir === 1 ? " ▴" : " ▾") : ""}
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
@@ -468,23 +498,28 @@ export function RankingResultsView() {
                 return (
                   <Fragment key={rowKey}>
                     <tr onClick={() => setOpenRow(isOpen ? null : rowKey)}
-                      className="cursor-pointer border-b border-zinc-100 hover:bg-zinc-50">
+                      className="group cursor-pointer border-b border-zinc-100">
                       {cols.map((c, i) => {
+                        const left = stickyLeft[i];
+                        const stickyCls = left != null
+                          ? cn("sticky z-10 bg-white group-hover:bg-zinc-50", i === lastIdIdx && "border-r border-zinc-200")
+                          : "group-hover:bg-zinc-50";
+                        const style = left != null ? { left, minWidth: idw(c.key) } : undefined;
                         if (c.key === "__store") {
                           return (
-                            <td key={i} className="whitespace-nowrap px-2.5 py-2 text-left">
+                            <td key={i} style={style} className={cn("whitespace-nowrap px-2.5 py-2 text-left", stickyCls)}>
                               <span className="font-mono text-sm font-bold">{r.entity_key}</span>
                               <div className="text-xs text-zinc-500">{String(m.location ?? "")}</div>
                             </td>
                           );
                         }
                         if (c.key === "name") {
-                          return <td key={i} className="whitespace-nowrap px-2.5 py-2 text-left text-sm font-semibold text-midnight">{String(m.name ?? r.entity_key)}</td>;
+                          return <td key={i} style={style} className={cn("whitespace-nowrap px-2.5 py-2 text-left text-sm font-semibold text-midnight", stickyCls)}>{String(m.name ?? r.entity_key)}</td>;
                         }
                         if (c.kind === "text") {
-                          return <td key={i} className="whitespace-nowrap px-2.5 py-2 text-left text-xs text-zinc-500">{String(m[c.key] ?? "—")}</td>;
+                          return <td key={i} style={style} className={cn("whitespace-nowrap px-2.5 py-2 text-left text-xs text-zinc-500", stickyCls)}>{String(m[c.key] ?? "—")}</td>;
                         }
-                        return <td key={i} className="whitespace-nowrap px-2.5 py-2 text-right"><Cell v={cellValue(r, c)} kind={c.kind} /></td>;
+                        return <td key={i} style={style} className={cn("whitespace-nowrap px-2.5 py-2 text-right", stickyCls)}><Cell v={cellValue(r, c)} kind={c.kind} /></td>;
                       })}
                     </tr>
                     {isOpen && (
