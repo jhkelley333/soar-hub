@@ -203,11 +203,15 @@ export function RankingResultsView() {
       });
     }
     if (sort) {
+      const valOf = (x: RankingResultRow) =>
+        sort.key === "rank" ? x.rank
+          : sort.key === "totalPoints" ? x.total_points
+          : sort.key === "__store" ? x.entity_key
+          : x.metrics[sort.key];
       r.sort((a, b) => {
-        const av = sort.key === "rank" ? a.rank : sort.key === "totalPoints" ? a.total_points : a.metrics[sort.key];
-        const bv = sort.key === "rank" ? b.rank : sort.key === "totalPoints" ? b.total_points : b.metrics[sort.key];
-        if (!isNum(av) && !isNum(bv)) return String(av ?? "").localeCompare(String(bv ?? ""));
-        if (!isNum(av)) return 1;
+        const av = valOf(a), bv = valOf(b);
+        if (!isNum(av) && !isNum(bv)) return String(av ?? "").localeCompare(String(bv ?? ""), undefined, { numeric: true }) * sort.dir;
+        if (!isNum(av)) return 1; // no-data rows always sink to the bottom
         if (!isNum(bv)) return -1;
         return (av - bv) * sort.dir;
       });
@@ -356,7 +360,12 @@ export function RankingResultsView() {
               </tr>
               <tr>
                 {cols.map((c, i) => (
-                  <th key={i} onClick={() => setSort((s) => s?.key === c.key ? { key: c.key, dir: s.dir === 1 ? -1 : 1 } : { key: c.key, dir: -1 })}
+                  <th key={i} onClick={() => setSort((s) => s?.key === c.key
+                    ? { key: c.key, dir: s.dir === 1 ? -1 : 1 }
+                    // Rank 1 is BEST — rank, store and name sort ascending on
+                    // first click (best/alphabetical first); metrics start
+                    // descending (biggest first).
+                    : { key: c.key, dir: c.key === "rank" || c.key === "__store" || c.key === "name" ? 1 : -1 })}
                     className={cn("cursor-pointer whitespace-nowrap border-b border-zinc-200 bg-zinc-50 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide text-zinc-500 hover:text-zinc-800",
                       c.kind === "id" || c.kind === "text" ? "text-left" : "text-right",
                       sort?.key === c.key && "text-midnight")}>
