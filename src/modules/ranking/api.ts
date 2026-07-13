@@ -135,6 +135,22 @@ export function ingestIxFile(input: { filename: string; content: string; scope: 
   return req(`${FN}?action=ingest-ix`, { method: "POST", body: JSON.stringify(input) });
 }
 
+export interface TotzoneRowInput {
+  store_code: string;
+  store_name?: string | null;
+  do_name?: string | null;
+  sdo_name?: string | null;
+  crew_pct?: number | null;
+  manager_pct?: number | null;
+  total_training_pct: number | null;
+}
+
+export function ingestTotzoneRows(input: {
+  filename: string; sha256: string; as_of: string | null; rows: TotzoneRowInput[];
+}): Promise<{ file_id: string; as_of: string | null; rows: number; stores: number; unresolved: string[] }> {
+  return req(`${FN}?action=ingest-totzone`, { method: "POST", body: JSON.stringify(input) });
+}
+
 // ── Legacy history + trends ──────────────────────────────────────────
 export interface LegacyImportResult {
   available: number;

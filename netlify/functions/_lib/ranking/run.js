@@ -56,6 +56,24 @@ function bandInput(r, p, ix) {
   };
 }
 
+// Latest parsed upload of a store-keyed source (totzone, bsc, ...): newest
+// file wins; rows map by store code.
+async function loadLatestUpload(supa, source) {
+  const { data: files } = await supa
+    .from("ranking_source_files")
+    .select("id, week_ending, uploaded_at")
+    .eq("source", source).eq("status", "parsed")
+    .order("uploaded_at", { ascending: false }).limit(1);
+  const f = files?.[0];
+  if (!f) return null;
+  const { data: rows } = await supa.from("ranking_src_rows").select("payload").eq("file_id", f.id).limit(2500);
+  const stores = new Map();
+  for (const { payload: p } of rows || []) {
+    if (p?.store_code) stores.set(String(p.store_code), p);
+  }
+  return { file: f, stores };
+}
+
 // Latest ingested IX file per scope, preferring an exact week match. Returns
 // { ptd, wtd } where each is { week, stale, stores: Map, rollups, flash }.
 async function loadIxForWeek(supa, weekEnding, issues) {
@@ -163,8 +181,17 @@ export async function runRankingNow(supa, user) {
   }
   const weeksInPeriod = Math.round(((Date.parse(fi.periodEnd) - Date.parse(fi.periodStart)) / 86400000 + 1) / 7);
 
-  // 5. Engine inputs (IX food cost joins here when a file has been ingested).
+  // 5. Engine inputs (IX food cost + TotZone training join here when ingested).
   const ix = await loadIxForWeek(supa, weekEnding, issues);
+  const tz = await loadLatestUpload(supa, "totzone");
+  if (tz) {
+    const asOf = tz.file.week_ending;
+    if (asOf && asOf < weekEnding) {
+      issues.push({ level: "warn", msg: `TotZone status is as of ${asOf} — older than the week being ranked (stale).` });
+    } else if (asOf) {
+      issues.push({ level: "info", msg: `Total Training uses TotZone status as of ${asOf}.` });
+    }
+  }
   const stores = [];
   const unmatched = [];
   const onTimeSuspect = [];
@@ -182,6 +209,10 @@ export async function runRankingNow(supa, user) {
     if (isNum(ixPtd?.cogs_eff) && ixPtd.cogs_eff <= 0) badIx.push(`${num} (${(ixPtd.cogs_eff * 100).toFixed(1)}%)`);
     const ptd = bandInput(r, "ptd_", ixPtd);
     const wtd = bandInput(r, "wtd_", ixWtd);
+    // Total Training (PTD-only; WTD's contract excludes it). Scored 1-5 but
+    // never counted toward Total Points (DEVIATIONS A).
+    const tzRow = tz?.stores.get(num);
+    if (isNum(tzRow?.total_training_pct)) ptd.totalTrainingPct = tzRow.total_training_pct;
     if (ptd.onTimePct == null) onTimeMissing++;
     // The feed sometimes reports an on-time numerator above its denominator.
     // The score is unaffected (>=80% is already a 5) but suspect data never
@@ -251,7 +282,9 @@ export async function runRankingNow(supa, user) {
     vog: { status: "not_wired" },
     shops: { status: "not_wired" },
     bsc: { status: "not_wired" },
-    totzone: { status: "not_wired" },
+    totzone: tz
+      ? { status: tz.file.week_ending && tz.file.week_ending < weekEnding ? "stale" : "ok", as_of: tz.file.week_ending, stores: tz.stores.size }
+      : { status: "missing" },
     complaints: { status: "on_hold" },
   };
   const { data: run, error: runErr } = await supa.from("ranking_runs").insert({

@@ -18,7 +18,7 @@ import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
-  addRankingConfig, backfillRankingFields, fetchRankingOverview, ingestIxFile, setLaborPad,
+  addRankingConfig, backfillRankingFields, fetchRankingOverview, ingestIxFile, ingestTotzoneRows, setLaborPad,
   type RankingConfigRow, type RankingStoreRow,
 } from "./api";
 
@@ -94,6 +94,8 @@ function SettingsView() {
         </div>
 
         <IxUploadPanel />
+
+        <TotzoneUploadPanel />
 
         <BackfillPanel />
         {/* Complaints placeholder */}
@@ -177,6 +179,103 @@ function IxUploadPanel() {
             <input type="file" accept=".csv,text/csv" className="hidden" onChange={onFile} />
           </label>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ── TotZone training upload (xlsx, parsed in the browser) ────────────
+function TotzoneUploadPanel() {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [summary, setSummary] = useState<string | null>(null);
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    setBusy(true);
+    setSummary(null);
+    try {
+      const buf = await f.arrayBuffer();
+      const shaBytes = await crypto.subtle.digest("SHA-256", buf);
+      const sha256 = [...new Uint8Array(shaBytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
+
+      const XLSX = await import("xlsx"); // lazy — keeps the main bundle lean
+      const wb = XLSX.read(buf, { type: "array", cellDates: true });
+      const sheetName = wb.SheetNames.find((n) => /station\s*completion/i.test(n));
+      if (!sheetName) throw new Error('No "Station Completion Percentage" sheet in this file.');
+      const grid = XLSX.utils.sheet_to_json<(string | number | Date | null)[]>(wb.Sheets[sheetName], { header: 1, raw: true });
+
+      // Header row = the one starting with "Store #"; the as-of date sits above it.
+      const hIdx = grid.findIndex((r) => String(r?.[0] ?? "").trim().toLowerCase().startsWith("store #"));
+      if (hIdx < 0) throw new Error('Couldn\'t find the "Store #" header row.');
+      let asOf: string | null = null;
+      for (let i = 0; i < hIdx; i++) {
+        for (const cell of grid[i] ?? []) {
+          if (cell instanceof Date && !isNaN(cell.getTime())) { asOf = cell.toISOString().slice(0, 10); break; }
+        }
+        if (asOf) break;
+      }
+      const headers = (grid[hIdx] ?? []).map((h) => String(h ?? "").replace(/\s+/g, " ").trim().toLowerCase());
+      const colOf = (frag: string) => headers.findIndex((h) => h.includes(frag));
+      const cols = {
+        store: 0,
+        name: colOf("store name"),
+        doName: colOf("do name"),
+        sdoName: colOf("sdo name"),
+        crew: colOf("annual & station"),
+        mgr: colOf("total manager"),
+        total: colOf("total crew"),
+      };
+      if (cols.total < 0) throw new Error('Couldn\'t find the "Total Crew and Manager Completion" column.');
+
+      const num = (v: unknown) => (typeof v === "number" && isFinite(v) ? v : null);
+      const rows = grid.slice(hIdx + 1)
+        .map((r) => ({
+          store_code: String(r?.[cols.store] ?? "").replace(/\D/g, ""),
+          store_name: cols.name >= 0 ? String(r?.[cols.name] ?? "").trim() : null,
+          do_name: cols.doName >= 0 ? String(r?.[cols.doName] ?? "").trim() : null,
+          sdo_name: cols.sdoName >= 0 ? String(r?.[cols.sdoName] ?? "").trim() : null,
+          crew_pct: cols.crew >= 0 ? num(r?.[cols.crew]) : null,
+          manager_pct: cols.mgr >= 0 ? num(r?.[cols.mgr]) : null,
+          total_training_pct: num(r?.[cols.total]),
+        }))
+        .filter((r) => /^\d+$/.test(r.store_code) && r.total_training_pct != null);
+      if (!rows.length) throw new Error("No store rows with a total completion % found.");
+
+      const res = await ingestTotzoneRows({ filename: f.name, sha256, as_of: asOf, rows });
+      setSummary(
+        `as of ${res.as_of ?? "?"} · ${res.stores} stores` +
+        (res.unresolved.length ? ` · unresolved: ${res.unresolved.join(", ")}` : ""),
+      );
+      toast.push("TotZone ingested — hit Run now on the Ranking tab to apply.", "success");
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "Ingest failed.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-midnight">TotZone — Total Training</div>
+          <p className="text-xs text-zinc-500">
+            Upload the "TotZone Training Status — Team Members" xlsx. The Station Completion sheet feeds each
+            store's Total Crew &amp; Manager completion % (scored 1–5, informational — never counts toward Total
+            Points). Duplicate files are rejected by content hash.
+          </p>
+          {summary && <p className="mt-1 font-mono text-xs text-zinc-600">{summary}</p>}
+        </div>
+        <label className={cn(
+          "cursor-pointer rounded-lg bg-midnight px-3 py-2 text-sm font-semibold text-white hover:bg-zinc-800",
+          busy && "pointer-events-none opacity-50",
+        )}>
+          {busy ? "Ingesting…" : "Upload XLSX"}
+          <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={onFile} />
+        </label>
       </div>
     </div>
   );
