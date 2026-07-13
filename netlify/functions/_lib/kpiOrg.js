@@ -34,37 +34,51 @@ export async function resolveOrg(supa, numbers) {
 
   const nameOf = (p) => (p ? p.preferred_name || p.full_name || p.email || null : null);
   const nodeIds = [...storeIds, ...districtIds, ...areaIds, ...regionIds];
-  const { data: scopeRows } = nodeIds.length
-    ? await supa.from("user_scopes").select("user_id, scope_type, scope_id").in("scope_id", nodeIds) : { data: [] };
-  const scopeUserIds = [...new Set((scopeRows || []).map((s) => s.user_id))];
+  // Primary scopes AND active "additional" (acting) coverage — the same two
+  // sources the Org chart's leadership card reads, so an RVP covering an area
+  // as acting SDO (e.g. Narda over Area 12) resolves here identically.
+  const nowIso = new Date().toISOString();
+  const [{ data: scopeRows }, { data: addlRows }] = await Promise.all([
+    nodeIds.length ? supa.from("user_scopes").select("user_id, scope_type, scope_id").in("scope_id", nodeIds) : Promise.resolve({ data: [] }),
+    nodeIds.length ? supa.from("additional_scopes").select("user_id, scope_type, scope_id, expires_at").in("scope_id", nodeIds) : Promise.resolve({ data: [] }),
+  ]);
+  const activeAddl = (addlRows || []).filter((r) => !r.expires_at || r.expires_at > nowIso);
+  const scopeUserIds = [...new Set([...(scopeRows || []).map((s) => s.user_id), ...activeAddl.map((s) => s.user_id)])];
   const { data: scopeProfiles } = scopeUserIds.length
     ? await supa.from("profiles").select("id, full_name, preferred_name, email, role").in("id", scopeUserIds).eq("is_active", true) : { data: [] };
   const { data: gmProfiles } = storeIds.length
     ? await supa.from("profiles").select("id, full_name, preferred_name, email, primary_store_id").eq("role", "gm").eq("is_active", true).in("primary_store_id", storeIds) : { data: [] };
   const profById = new Map((scopeProfiles || []).map((p) => [p.id, p]));
-  const expectedRole = { district: "do", area: "sdo", region: "rvp", store: "gm" };
-  // Seniority so a higher-level leader who manages a node DIRECTLY (e.g. an
-  // RVP over an area with no SDO — as shown in the org chart) is chosen as
-  // that node's leader when no exact-role match exists.
   const roleRank = { gm: 1, do: 2, sdo: 3, rvp: 4, vp: 5, coo: 6, admin: 6 };
-  const leaderByNode = new Map();   // exact-role match (preferred)
-  const fallbackByNode = new Map(); // any scoped leader; most senior wins
-  for (const s of scopeRows || []) {
-    const p = profById.get(s.user_id);
-    if (!p) continue;
-    const role = String(p.role || "").toLowerCase();
-    if (role === expectedRole[s.scope_type]) {
-      if (!leaderByNode.has(s.scope_id)) leaderByNode.set(s.scope_id, nameOf(p));
-    } else {
-      const cur = fallbackByNode.get(s.scope_id);
-      if (!cur || (roleRank[role] ?? 0) > cur.rank) {
-        fallbackByNode.set(s.scope_id, { name: nameOf(p), rank: roleRank[role] ?? 0 });
-      }
+
+  // Candidate leaders per node: { role, acting, name, rank }.
+  const candByNode = new Map();
+  const addCand = (rows, acting) => {
+    for (const s of rows || []) {
+      const p = profById.get(s.user_id);
+      if (!p) continue;
+      const role = String(p.role || "").toLowerCase();
+      (candByNode.get(s.scope_id) || candByNode.set(s.scope_id, []).get(s.scope_id))
+        .push({ role, acting, name: nameOf(p), rank: roleRank[role] ?? 0 });
     }
-  }
-  // A node's leader: exact-role match, else the most-senior directly-scoped
-  // leader (matches the org chart's "next level manages this level" case).
-  const leadOf = (id) => leaderByNode.get(id) ?? fallbackByNode.get(id)?.name ?? null;
+  };
+  addCand(scopeRows, false);
+  addCand(activeAddl, true);
+
+  // Node leader, mirroring org.js findManager: primary exact-role, then acting
+  // exact-role, then most-senior primary, then most-senior acting. This is
+  // what puts an RVP-as-acting-SDO into the area's SDO slot.
+  const leadOf = (id, expectedRole) => {
+    const cs = candByNode.get(id);
+    if (!cs || !cs.length) return null;
+    const bySenior = (a, b) => b.rank - a.rank;
+    const pick =
+      cs.find((c) => !c.acting && c.role === expectedRole) ||
+      cs.find((c) => c.acting && c.role === expectedRole) ||
+      [...cs.filter((c) => !c.acting)].sort(bySenior)[0] ||
+      [...cs.filter((c) => c.acting)].sort(bySenior)[0];
+    return pick?.name ?? null;
+  };
   const gmByStore = new Map();
   for (const p of gmProfiles || []) if (p.primary_store_id) gmByStore.set(p.primary_store_id, nameOf(p));
 
@@ -78,13 +92,13 @@ export async function resolveOrg(supa, numbers) {
     map.set(String(s.number), {
       number: String(s.number),
       store: s.name || `#${s.number}`,
-      gmName: gmByStore.get(s.id) || leadOf(s.id) || null,
+      gmName: gmByStore.get(s.id) || leadOf(s.id, "gm") || null,
       district: d?.name ?? null,
-      doName: d ? leadOf(d.id) : null,
+      doName: d ? leadOf(d.id, "do") : null,
       area: a?.name ?? null,
-      sdoName: a ? leadOf(a.id) : null,
+      sdoName: a ? leadOf(a.id, "sdo") : null,
       region: r?.name ?? null,
-      rvpName: r ? leadOf(r.id) : null,
+      rvpName: r ? leadOf(r.id, "rvp") : null,
     });
   }
   return map;
