@@ -221,6 +221,65 @@ async function ingestTotzone(supa, user, body) {
   return { file_id: file.id, as_of: asOf, rows: rows.length, stores: codes.length, unresolved };
 }
 
+// Ingest EcoSure (Ecolab TrueView "List of Assessments"). Parsed client-side;
+// one src row PER ASSESSMENT (a store can have several YTD — the run
+// averages them). sha256 of the raw file bytes dedupes.
+async function ingestEcosure(supa, user, body) {
+  const filename = String(body?.filename || "ecosure.xlsx").slice(0, 200);
+  const sha = String(body?.sha256 || "");
+  if (!/^[a-f0-9]{64}$/i.test(sha)) return { error: "sha256 of the file is required.", status: 400 };
+  const asOf = /^\d{4}-\d{2}-\d{2}/.test(String(body?.as_of || "")) ? String(body.as_of).slice(0, 10) : null;
+  const raw = Array.isArray(body?.rows) ? body.rows : [];
+  const clean = raw
+    .map((r) => ({
+      level: "store",
+      store_code: String(r?.store_code ?? "").replace(/\D/g, ""),
+      store_name: String(r?.store_name ?? "").trim().slice(0, 120) || null,
+      assessment_type: String(r?.assessment_type ?? "").trim().slice(0, 80) || null,
+      date: /^\d{4}-\d{2}-\d{2}/.test(String(r?.date || "")) ? String(r.date).slice(0, 10) : null,
+      score: Number.isFinite(Number(r?.score)) ? Number(r.score) : null,
+      rating: String(r?.rating ?? "").trim().slice(0, 60) || null,
+      as_of: asOf,
+    }))
+    .filter((r) => r.store_code && r.score != null && r.score >= 0 && r.score <= 100);
+  if (!clean.length) return { error: "No usable assessment rows (need store # + score).", status: 400 };
+  if (clean.length > 3000) return { error: "Too many rows.", status: 400 };
+
+  const codes = [...new Set(clean.map((r) => r.store_code))];
+  const { data: sts } = await supa.from("stores").select("id, number").in("number", codes);
+  const idByNum = new Map((sts || []).map((s) => [String(s.number), s.id]));
+
+  const { data: file, error: fe } = await supa.from("ranking_source_files").insert({
+    source: "ecosure",
+    storage_path: `inline:${filename}`,
+    sha256: sha.toLowerCase(),
+    week_ending: asOf,
+    row_count: clean.length,
+    status: "parsed",
+    uploaded_by: user.id,
+  }).select("id").single();
+  if (fe) {
+    if (/duplicate|unique/i.test(fe.message)) return { error: "This exact file was already ingested — no double-count.", status: 409 };
+    if (/ranking_source_files/.test(fe.message) && /does not exist|relation/i.test(fe.message)) {
+      return { error: "Run migration 0237 first (ranking tables are missing).", status: 500 };
+    }
+    return { error: fe.message, status: 500 };
+  }
+  const rows = clean.map((r) => ({
+    file_id: file.id,
+    source: "ecosure",
+    store_id: idByNum.get(r.store_code) ?? null,
+    store_code: r.store_code,
+    payload: r,
+  }));
+  for (let i = 0; i < rows.length; i += 300) {
+    const { error } = await supa.from("ranking_src_rows").insert(rows.slice(i, i + 300));
+    if (error) return { error: `File saved but rows failed: ${error.message}`, status: 500 };
+  }
+  const unresolved = codes.filter((c) => !idByNum.get(c));
+  return { file_id: file.id, as_of: asOf, rows: rows.length, stores: codes.length, unresolved };
+}
+
 export const handler = async (event) => {
   let supa;
   try { supa = admin(); } catch (e) { return respond(500, { error: e.message }); }
@@ -241,6 +300,7 @@ export const handler = async (event) => {
       if (action === "backfill") return unwrap(await backfillLaborWindow(supa, { days: Number(body?.days) || 35 }));
       if (action === "ingest-ix") return unwrap(await ingestIx(supa, user, body));
       if (action === "ingest-totzone") return unwrap(await ingestTotzone(supa, user, body));
+      if (action === "ingest-ecosure") return unwrap(await ingestEcosure(supa, user, body));
       if (action === "import-legacy") return unwrap(await importLegacyWeeks(supa));
       return respond(400, { error: `Unknown action: ${action}` });
     }

@@ -151,6 +151,21 @@ export function ingestTotzoneRows(input: {
   return req(`${FN}?action=ingest-totzone`, { method: "POST", body: JSON.stringify(input) });
 }
 
+export interface EcosureRowInput {
+  store_code: string;
+  store_name?: string | null;
+  assessment_type?: string | null;
+  date?: string | null;
+  score: number | null;
+  rating?: string | null;
+}
+
+export function ingestEcosureRows(input: {
+  filename: string; sha256: string; as_of: string | null; rows: EcosureRowInput[];
+}): Promise<{ file_id: string; as_of: string | null; rows: number; stores: number; unresolved: string[] }> {
+  return req(`${FN}?action=ingest-ecosure`, { method: "POST", body: JSON.stringify(input) });
+}
+
 // ── Legacy history + trends ──────────────────────────────────────────
 export interface LegacyImportResult {
   available: number;
