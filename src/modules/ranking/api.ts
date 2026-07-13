@@ -105,3 +105,18 @@ export interface BackfillResult {
 export function backfillRankingFields(days: number): Promise<BackfillResult> {
   return req(`${FN}?action=backfill`, { method: "POST", body: JSON.stringify({ days }) });
 }
+
+// ── Source ingestion ─────────────────────────────────────────────────
+export interface IxIngestResult {
+  file_id: string;
+  week_ending: string | null;
+  scope: RankScope;
+  rows: number;
+  stores: number;
+  unresolved: string[];
+  flash: number;
+}
+
+export function ingestIxFile(input: { filename: string; content: string; scope: RankScope }): Promise<IxIngestResult> {
+  return req(`${FN}?action=ingest-ix`, { method: "POST", body: JSON.stringify(input) });
+}

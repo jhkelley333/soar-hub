@@ -6,9 +6,11 @@
 // ranking_config is APPEND-ONLY (brief 2.5): changes are new rows with a later
 // effective_from; runs stamp the slice they used, so history reproduces.
 
+import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { runRankingNow, latestRun } from "./_lib/ranking/run.js";
 import { backfillLaborWindow } from "./_lib/kpiBackfill.js";
+import { parseIxCsv } from "./_lib/ranking/ixParse.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -99,6 +101,64 @@ async function padSet(supa, user, body) {
   return { ok: true, store_id: storeId, labor_pad: pad };
 }
 
+// Ingest an Inventory Expressway category export (CSV pasted/uploaded as
+// text). Dedupes by content hash; store codes resolve at ingest (brief 6).
+async function ingestIx(supa, user, body) {
+  const content = String(body?.content || "");
+  const filename = String(body?.filename || "ix.csv").slice(0, 200);
+  const scope = body?.scope === "wtd" ? "wtd" : "ptd";
+  if (!content.trim()) return { error: "Empty file.", status: 400 };
+  if (content.length > 8_000_000) return { error: "File too large (8 MB max).", status: 400 };
+
+  let parsed;
+  try { parsed = parseIxCsv(content); }
+  catch (e) { return { error: e.message, status: 400 }; }
+
+  const sha = createHash("sha256").update(content).digest("hex");
+  const codes = [...new Set(parsed.rows.filter((r) => r.level === "store" && r.store_code).map((r) => r.store_code))];
+  const { data: sts } = await supa.from("stores").select("id, number").in("number", codes);
+  const idByNum = new Map((sts || []).map((s) => [String(s.number), s.id]));
+
+  const { data: file, error: fe } = await supa.from("ranking_source_files").insert({
+    source: "ix",
+    storage_path: `inline:${filename}`,
+    sha256: sha,
+    week_ending: parsed.weekEnding,
+    row_count: parsed.rows.length,
+    status: "parsed",
+    uploaded_by: user.id,
+  }).select("id").single();
+  if (fe) {
+    if (/duplicate|unique/i.test(fe.message)) return { error: "This exact file was already ingested (same content hash) — no double-count.", status: 409 };
+    if (/ranking_source_files.*does not exist|relation/i.test(fe.message)) {
+      return { error: "Run migration 0237 first (ranking tables are missing).", status: 500 };
+    }
+    return { error: fe.message, status: 500 };
+  }
+
+  const rows = parsed.rows.map((r) => ({
+    file_id: file.id,
+    source: "ix",
+    store_id: r.level === "store" ? (idByNum.get(String(r.store_code)) ?? null) : null,
+    store_code: r.store_code || r.leader || "rollup",
+    payload: { ...r, scope },
+  }));
+  for (let i = 0; i < rows.length; i += 300) {
+    const { error } = await supa.from("ranking_src_rows").insert(rows.slice(i, i + 300));
+    if (error) return { error: `File saved but rows failed: ${error.message}`, status: 500 };
+  }
+  const unresolved = codes.filter((c) => !idByNum.get(c));
+  return {
+    file_id: file.id,
+    week_ending: parsed.weekEnding,
+    scope,
+    rows: rows.length,
+    stores: codes.length,
+    unresolved,
+    flash: parsed.flashCount,
+  };
+}
+
 export const handler = async (event) => {
   let supa;
   try { supa = admin(); } catch (e) { return respond(500, { error: e.message }); }
@@ -117,6 +177,7 @@ export const handler = async (event) => {
       if (action === "pad-set") return unwrap(await padSet(supa, user, body));
       if (action === "run-now") return unwrap(await runRankingNow(supa, user));
       if (action === "backfill") return unwrap(await backfillLaborWindow(supa, { days: Number(body?.days) || 35 }));
+      if (action === "ingest-ix") return unwrap(await ingestIx(supa, user, body));
       return respond(400, { error: `Unknown action: ${action}` });
     }
     if (action === "overview") return unwrap(await overview(supa));
