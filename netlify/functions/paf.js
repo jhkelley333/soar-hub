@@ -1636,6 +1636,25 @@ async function listSdoQueue(supa, user) {
 // sdo-approve — caller (the assigned SDO/RVP, or admin) approves a bonus
 // PAF. Flips status to Pending so it moves into the Payroll queue.
 // ----------------------------------------------------------------------------
+// Who may approve/reject a pending PAF: the assigned approver, an admin, or a
+// role senior to the approval tier whose scope covers the store — so an RVP
+// can act on a bonus sitting in their SDO's queue (they only see PAFs in
+// their reach, so seeing it already implies scope). VP flow escalates only to
+// COO/admin; SDO/bonus flow escalates to RVP/VP/COO/admin.
+async function canApprovePaf(supa, user, existing, isVpFlow) {
+  if (user.role === "admin") return true;
+  if (existing.sdo_approver_id && existing.sdo_approver_id === user.id) return true;
+  const escalate = isVpFlow
+    ? new Set(["vp", "coo"])
+    : new Set(["rvp", "vp", "coo"]);
+  if (!escalate.has(user.role)) return false;
+  // Org-wide roles see everything; RVP must have the store in scope.
+  if (ORG_WIDE_READ.has(user.role)) return true;
+  if (!existing.drive_in) return false;
+  const visible = await resolveVisibleStoreNumbers(supa, user.id);
+  return visible.includes(String(existing.drive_in));
+}
+
 async function sdoApprovePaf(supa, user, body) {
   const id = body?.id;
   const note = sanitizeText(body?.note, 2000) || null;
@@ -1651,10 +1670,11 @@ async function sdoApprovePaf(supa, user, body) {
   if (!APPROVAL_PENDING_STATUSES.includes(existing.status)) {
     return { error: `PAF is not awaiting approval (status: ${existing.status}).`, status: 400 };
   }
-  if (user.role !== "admin" && existing.sdo_approver_id !== user.id) {
-    return { error: "You are not the assigned approver for this PAF.", status: 403 };
-  }
   const isVpFlow = existing.status === "Pending VP Approval";
+  const okApprove = await canApprovePaf(supa, user, existing, isVpFlow);
+  if (!okApprove) {
+    return { error: "You are not authorized to approve this PAF.", status: 403 };
+  }
 
   const now = new Date().toISOString();
   const { error } = await supa
@@ -1739,10 +1759,11 @@ async function sdoRejectPaf(supa, user, body) {
   if (!APPROVAL_PENDING_STATUSES.includes(existing.status)) {
     return { error: `PAF is not awaiting approval (status: ${existing.status}).`, status: 400 };
   }
-  if (user.role !== "admin" && existing.sdo_approver_id !== user.id) {
-    return { error: "You are not the assigned approver for this PAF.", status: 403 };
-  }
   const isVpFlow = existing.status === "Pending VP Approval";
+  const okApprove = await canApprovePaf(supa, user, existing, isVpFlow);
+  if (!okApprove) {
+    return { error: "You are not authorized to approve this PAF.", status: 403 };
+  }
 
   const now = new Date().toISOString();
   const { error } = await supa
