@@ -6,6 +6,7 @@
 import { useMemo, useState } from "react";
 import { Segmented } from "@/shared/ui/Segmented";
 import { RankingResultsView } from "./RankingResultsView";
+import { RankingTrendsView } from "./RankingTrendsView";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, PauseCircle, Plus, Save } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -26,7 +27,7 @@ const fmtDate = (s: string) =>
   new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const todayIso = () => new Date().toLocaleDateString("en-CA");
 
-type AdminView = "ranking" | "settings";
+type AdminView = "ranking" | "trends" | "settings";
 
 export function RankingAdminPage() {
   const [view, setView] = useState<AdminView>("ranking");
@@ -45,10 +46,14 @@ export function RankingAdminPage() {
         <Segmented<AdminView>
           value={view}
           onChange={setView}
-          options={[{ value: "ranking", label: "Ranking" }, { value: "settings", label: "System settings" }]}
+          options={[
+            { value: "ranking", label: "Ranking" },
+            { value: "trends", label: "Trends" },
+            { value: "settings", label: "System settings" },
+          ]}
         />
       </div>
-      {view === "ranking" ? <RankingResultsView /> : <SettingsView />}
+      {view === "ranking" ? <RankingResultsView /> : view === "trends" ? <RankingTrendsView /> : <SettingsView />}
     </>
   );
 }
