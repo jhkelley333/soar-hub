@@ -367,8 +367,9 @@ export function RankingResultsView() {
               <b>{SOURCE_LABEL[key] ?? key}</b>
               <span className="text-zinc-500">
                 {s.status === "ok" ? `${s.stores ?? ""} stores`
-                  : s.status === "stale" ? `stale — ${(s as { week_ending?: string }).week_ending ?? "old week"}`
-                  : s.status === "on_hold" ? "on hold" : "not wired"}
+                  : s.status === "stale" ? `stale — ${(s as { week_ending?: string; as_of?: string }).week_ending ?? (s as { as_of?: string }).as_of ?? "old"}`
+                  : s.status === "on_hold" ? "on hold"
+                  : s.status === "missing" ? "missing" : "not wired"}
               </span>
             </span>
           ))}
