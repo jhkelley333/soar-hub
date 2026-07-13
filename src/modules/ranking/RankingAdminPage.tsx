@@ -8,6 +8,7 @@ import { Segmented } from "@/shared/ui/Segmented";
 import { RankingResultsView } from "./RankingResultsView";
 import { RankingTrendsView } from "./RankingTrendsView";
 import { RankingRiskView } from "./RankingRiskView";
+import { RankingWatchlistView } from "./RankingWatchlistView";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, PauseCircle, Plus, Save } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -28,7 +29,7 @@ const fmtDate = (s: string) =>
   new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const todayIso = () => new Date().toLocaleDateString("en-CA");
 
-type AdminView = "ranking" | "trends" | "risk" | "settings";
+type AdminView = "ranking" | "watchlist" | "trends" | "risk" | "settings";
 
 export function RankingAdminPage() {
   const [view, setView] = useState<AdminView>("ranking");
@@ -49,6 +50,7 @@ export function RankingAdminPage() {
           onChange={setView}
           options={[
             { value: "ranking", label: "Ranking" },
+            { value: "watchlist", label: "Watchlist" },
             { value: "trends", label: "Trends" },
             { value: "risk", label: "Risk" },
             { value: "settings", label: "System settings" },
@@ -56,6 +58,7 @@ export function RankingAdminPage() {
         />
       </div>
       {view === "ranking" ? <RankingResultsView />
+        : view === "watchlist" ? <RankingWatchlistView />
         : view === "trends" ? <RankingTrendsView />
         : view === "risk" ? <RankingRiskView />
         : <SettingsView />}
