@@ -25,7 +25,7 @@ const OFFER_MAX_BYTES = 10 * 1024 * 1024;
 // visible for the current form state. Branches on category and
 // bonus_type so the bonus sub-section reveals after the user picks a
 // type.
-function visibleSections(category: string, bonusType: string): Set<string> {
+function visibleSections(category: string, bonusType: string, crossClockedOther = ""): Set<string> {
   const out = new Set<string>(["notes"]);
   const c = category.trim();
 
@@ -67,9 +67,13 @@ function visibleSections(category: string, bonusType: string): Set<string> {
     return out;
   }
   if (c === "Cross Store Work") {
-    out.add("tips");
     out.add("store");
-    out.add("pay");
+    // Pay + tips only when the team member did NOT clock in at the other
+    // store — clocked-in hours pay through that store's own payroll.
+    if (crossClockedOther === "no") {
+      out.add("tips");
+      out.add("pay");
+    }
     return out;
   }
   if (c === "POS Adjustment" || c === "Backpay") {
@@ -238,6 +242,8 @@ function pafRowToFormState(p: PafRow): FormState {
     original_store: s(p.original_store),
     temp_new_store: s(p.temp_new_store),
     store_chrged_ot: s(p.store_chrged_ot),
+    cross_clocked_other:
+      p.cross_clocked_other === true ? "yes" : p.cross_clocked_other === false ? "no" : "",
     current_store: s(p.current_store),
     new_store: s(p.new_store),
     current_position: s(p.current_position),
@@ -443,9 +449,9 @@ export function PafForm({
   const visible = useMemo(
     () =>
       cfg
-        ? visibleSections(state.category ?? "", state.bonus_type ?? "")
+        ? visibleSections(state.category ?? "", state.bonus_type ?? "", state.cross_clocked_other ?? "")
         : new Set<string>(),
-    [cfg, state.category, state.bonus_type]
+    [cfg, state.category, state.bonus_type, state.cross_clocked_other]
   );
 
   const orderedSections = useMemo(() => {
@@ -688,6 +694,17 @@ export function PafForm({
       return;
     }
 
+    if (state.category === "Cross Store Work") {
+      if (state.cross_clocked_other !== "yes" && state.cross_clocked_other !== "no") {
+        setError('Answer "Did the team member clock in at the other store?"');
+        return;
+      }
+      if (state.cross_clocked_other === "yes" && String(state.store_chrged_ot ?? "").trim() === "") {
+        setError('"Store Charged OT" is required when the team member clocked in at the other store.');
+        return;
+      }
+    }
+
     if (
       state.category === "Demotion" &&
       String(state.demotion_effective_date ?? "").trim() === ""
@@ -822,6 +839,59 @@ export function PafForm({
             </div>
           )}
       </FormSection>
+
+      {/* Cross Store Work — the clock question decides the flow. Clocked in at
+          the other store = paid through that store's clock: no additional pay
+          here, payroll just gets told where the OT charges. Not clocked in =
+          the hours process as pay, as before. */}
+      {state.category === "Cross Store Work" && (
+        <FormSection
+          title="Cross store clock check"
+          description="Did the team member clock in at the other store?"
+        >
+          <div className="flex flex-col gap-3">
+            <div className="flex flex-wrap gap-2">
+              {([["yes", "Yes — they clocked in there"], ["no", "No — they did not clock in"]] as [string, string][]).map(([val, label]) => (
+                <button
+                  key={val}
+                  type="button"
+                  onClick={() => {
+                    patch("cross_clocked_other", val);
+                    if (val === "yes") {
+                      // Their hours pay through the other store's clock —
+                      // clear any pay entered so nothing double-pays.
+                      patch("reg_pay_rate", "");
+                      patch("reg_hours", "");
+                      patch("ot_hours", "");
+                      patch("cc_tips", "");
+                      patch("declared_tips", "");
+                    }
+                  }}
+                  className={`rounded-md px-3 py-1.5 text-sm font-semibold ring-1 ring-inset transition ${
+                    state.cross_clocked_other === val
+                      ? "bg-midnight text-white ring-midnight"
+                      : "bg-white text-zinc-600 ring-zinc-200 hover:text-midnight"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {state.cross_clocked_other === "yes" && (
+              <div className="rounded-md bg-amber-50 px-3 py-2.5 text-sm text-amber-800 ring-1 ring-inset ring-amber-200">
+                <strong>No additional pay goes on this PAF</strong> — their hours already pay through the other
+                store's clock. Fill in <strong>Store Charged OT</strong> below; a note is added automatically so
+                payroll knows which store the overtime charges to.
+              </div>
+            )}
+            {state.cross_clocked_other === "no" && (
+              <p className="text-xs text-zinc-500">
+                They didn't clock in at the other store — enter the hours below and they'll process as pay.
+              </p>
+            )}
+          </div>
+        </FormSection>
+      )}
 
       {/* Conditional sections in their configured order */}
       {orderedSections

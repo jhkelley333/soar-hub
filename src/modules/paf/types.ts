@@ -67,6 +67,9 @@ export interface PafRow {
   original_store: string | null;
   temp_new_store: string | null;
   store_chrged_ot: string | null;
+  /** Did the team member clock in at the other store? true = no additional
+   *  pay on the PAF (paid through that store's clock); payroll gets a note. */
+  cross_clocked_other?: boolean | null;
 
   // Transfer
   current_store: string | null;

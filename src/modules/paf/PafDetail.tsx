@@ -144,7 +144,7 @@ export function PafDetail({ paf }: { paf: PafRow }) {
         </Section>
       )}
 
-      {(paf.original_store || paf.temp_new_store || paf.store_chrged_ot) && (
+      {(paf.original_store || paf.temp_new_store || paf.store_chrged_ot || paf.cross_clocked_other != null) && (
         <Section title="Cross Store Work">
           <Grid>
             {paf.original_store && (
@@ -156,7 +156,20 @@ export function PafDetail({ paf }: { paf: PafRow }) {
             {paf.store_chrged_ot && (
               <Field label="Store Charged OT" value={`#${paf.store_chrged_ot}`} />
             )}
+            {paf.cross_clocked_other != null && (
+              <Field
+                label="Clocked in at other store?"
+                value={paf.cross_clocked_other ? "Yes" : "No"}
+              />
+            )}
           </Grid>
+          {paf.cross_clocked_other === true && (
+            <div className="mt-3 rounded-md bg-amber-50 px-3 py-2.5 text-sm text-amber-800 ring-1 ring-inset ring-amber-200">
+              <strong>Notify payroll:</strong> overtime charges to store
+              {paf.store_chrged_ot ? ` #${paf.store_chrged_ot}` : " (see notes)"} — no additional pay is entered
+              on this PAF; hours paid through the other store's clock.
+            </div>
+          )}
         </Section>
       )}
 
