@@ -45,6 +45,9 @@ export function parseIxCsv(text) {
   if (rows.length < 2) throw new Error("Empty or unreadable CSV.");
   const header = rows[0].map((h) => h.trim().toLowerCase());
   const idx = (name) => header.indexOf(name.toLowerCase());
+  // Period export prefixes the metric columns "MTD "; the weekly Cycle export
+  // uses the bare names. Accept either.
+  const firstIdx = (...names) => { for (const n of names) { const i = idx(n); if (i >= 0) return i; } return -1; };
   const col = {
     status: idx("Status"),
     date: idx("Cycle End Date"),
@@ -53,15 +56,15 @@ export function parseIxCsv(text) {
     district: idx("District"),
     store: idx("Store"),
     category: idx("Category"),
-    netSales: idx("MTD Net Sales"),
-    ending: idx("MTD Ending $"),
-    variance: idx("MTD $ Variance"),
-    eff: idx("MTD_Efficiency"),
+    netSales: firstIdx("MTD Net Sales", "Net Sales"),
+    ending: firstIdx("MTD Ending $", "Ending $"),
+    variance: firstIdx("MTD $ Variance", "$ Variance"),
+    eff: firstIdx("MTD_Efficiency", "Efficiency"),
     doh: idx("DOH"),
-    excess: idx("Excess $"),
+    excess: firstIdx("Excess $", "Excess $"),
   };
   if (col.store < 0 || col.eff < 0 || col.category < 0) {
-    throw new Error("Doesn't look like an IX category export — missing Store / Category / MTD_Efficiency columns.");
+    throw new Error("Doesn't look like an IX category export — missing Store / Category / Efficiency columns.");
   }
 
   const out = [];
