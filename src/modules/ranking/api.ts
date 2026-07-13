@@ -102,6 +102,16 @@ export function fetchRankingRuns(): Promise<{ runs: RankingRunSummary[] }> {
   return req(`${FN}?action=runs`);
 }
 
+export type FullRunScope = Partial<Record<RankTier, RankingResultRow[]>>;
+export function fetchRankingFull(runId?: string | null): Promise<{
+  run: RankingRun | null;
+  scopes: { ptd: FullRunScope; wtd: FullRunScope };
+}> {
+  const p = new URLSearchParams({ action: "run-full" });
+  if (runId) p.set("run_id", runId);
+  return req(`${FN}?${p.toString()}`);
+}
+
 export function triggerRankingRun(): Promise<{ run_id: string; week_ending: string; period: number; week: number; rows: number; issues: RankingIssue[] }> {
   return req(`${FN}?action=run-now`, { method: "POST", body: "{}" });
 }

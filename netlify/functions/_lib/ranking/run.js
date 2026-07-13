@@ -464,3 +464,36 @@ export async function latestRun(supa, params) {
   if (rowsErr) return { error: rowsErr.message, status: 500 };
   return { run, scope, tier, rows: rows || [] };
 }
+
+// One run's ENTIRE board — every scope and tier, in a single response — for
+// the Excel workbook export. Latest complete run, or a specific run_id.
+export async function fullRun(supa, params) {
+  let run = null;
+  if (params.run_id) {
+    const { data } = await supa.from("ranking_runs").select("*").eq("id", params.run_id).maybeSingle();
+    run = data ?? null;
+  } else {
+    const { data: runs, error } = await supa
+      .from("ranking_runs").select("*").eq("status", "complete")
+      .order("started_at", { ascending: false }).limit(1);
+    if (error) {
+      if (/ranking_runs/.test(error.message)) return { error: "Run migration 0237 first (ranking tables are missing).", status: 500 };
+      return { error: error.message, status: 500 };
+    }
+    run = runs?.[0] ?? null;
+  }
+  if (!run) return { run: null, scopes: {} };
+  const { data: rows, error } = await supa
+    .from("ranking_rows")
+    .select("scope, tier, entity_key, store_id, rank, total_points, metrics")
+    .eq("run_id", run.id)
+    .order("rank", { ascending: true })
+    .limit(5000);
+  if (error) return { error: error.message, status: 500 };
+  const scopes = { ptd: {}, wtd: {} };
+  for (const r of rows || []) {
+    const s = r.scope === "wtd" ? "wtd" : "ptd";
+    (scopes[s][r.tier] ||= []).push({ entity_key: r.entity_key, rank: r.rank, total_points: r.total_points, metrics: r.metrics });
+  }
+  return { run, scopes };
+}
