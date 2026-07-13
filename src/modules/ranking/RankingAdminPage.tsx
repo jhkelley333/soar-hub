@@ -18,7 +18,7 @@ import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
-  addRankingConfig, backfillRankingFields, fetchRankingOverview, ingestBscRows, ingestEcosureRows, ingestIxFile, ingestTotzoneRows, setLaborPad,
+  addRankingConfig, backfillRankingFields, fetchRankingOverview, ingestBscRows, ingestEcosureRows, ingestIxFile, ingestShopRows, ingestTotzoneRows, setLaborPad,
   type RankingConfigRow, type RankingStoreRow,
 } from "./api";
 
@@ -100,6 +100,8 @@ function SettingsView() {
         <EcosureUploadPanel />
 
         <BscUploadPanel />
+
+        <ShopsUploadPanel />
 
         <BackfillPanel />
         {/* Complaints placeholder */}
@@ -458,6 +460,88 @@ function BscUploadPanel() {
         )}>
           {busy ? "Ingesting…" : "Upload XLSX"}
           <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={onFile} />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+// ── Mystery Shops upload (KnowledgeForce DataDump CSV) ───────────────
+function ShopsUploadPanel() {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [summary, setSummary] = useState<string | null>(null);
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    setBusy(true);
+    setSummary(null);
+    try {
+      const buf = await f.arrayBuffer();
+      const shaBytes = await crypto.subtle.digest("SHA-256", buf);
+      const sha256 = [...new Uint8Array(shaBytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
+
+      const XLSX = await import("xlsx");
+      const wb = XLSX.read(new Uint8Array(buf), { type: "array", raw: true });
+      const grid = XLSX.utils.sheet_to_json<(string | number | null)[]>(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true });
+      const hIdx = grid.findIndex((r) => String(r?.[2] ?? "").toLowerCase().includes("visit date"));
+      if (hIdx < 0) throw new Error('Couldn\'t find the "Visit Date" header — is this the Mystery Shops DataDump?');
+      // Site ID at col 4 (#001242 → 1242), Visit Date at col 2 (M/D/YY or MM/DD/YYYY), Score at col 12 (percent).
+      const code = (v: unknown) => String(v ?? "").replace(/\D/g, "").replace(/^0+/, "");
+      const parseDate = (v: unknown) => {
+        const m = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/.exec(String(v ?? "").trim());
+        if (!m) return null;
+        const yr = m[3].length === 2 ? `20${m[3]}` : m[3];
+        return `${yr}-${m[1].padStart(2, "0")}-${m[2].padStart(2, "0")}`;
+      };
+      const parseScore = (v: unknown) => {
+        const n = parseFloat(String(v ?? "").replace("%", ""));
+        return isFinite(n) ? n / 100 : null;
+      };
+      const rows = grid.slice(hIdx + 1)
+        .filter((r) => r && r[4])
+        .map((r) => ({
+          store_code: code(r[4]),
+          store_name: String(r[5] ?? "").trim() || null,
+          visit_date: parseDate(r[2]),
+          score: parseScore(r[12]),
+        }))
+        .filter((r) => /^\d+$/.test(r.store_code) && r.visit_date && r.score != null);
+      if (!rows.length) throw new Error("No shop rows with a store #, visit date and score found.");
+
+      const res = await ingestShopRows({ filename: f.name, sha256, rows });
+      setSummary(
+        `${res.rows} shops · ${res.stores} stores · latest visit ${res.as_of ?? "?"}` +
+        (res.unresolved.length ? ` · unresolved: ${res.unresolved.join(", ")}` : ""),
+      );
+      toast.push("Mystery Shops ingested — the run keeps only shops within its period.", "success");
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "Ingest failed.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-midnight">Mystery Shops</div>
+          <p className="text-xs text-zinc-500">
+            Upload the KnowledgeForce "DataDump" CSV. Each shop keeps its visit date; the run counts and averages
+            only shops that <strong>fell within its fiscal period</strong> — the rest are ignored. Informational
+            (not scored into Total Points). Duplicates rejected by content hash.
+          </p>
+          {summary && <p className="mt-1 font-mono text-xs text-zinc-600">{summary}</p>}
+        </div>
+        <label className={cn(
+          "cursor-pointer rounded-lg bg-midnight px-3 py-2 text-sm font-semibold text-white hover:bg-zinc-800",
+          busy && "pointer-events-none opacity-50",
+        )}>
+          {busy ? "Ingesting…" : "Upload CSV"}
+          <input type="file" accept=".csv,text/csv" className="hidden" onChange={onFile} />
         </label>
       </div>
     </div>

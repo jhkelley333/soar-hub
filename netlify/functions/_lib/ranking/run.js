@@ -206,6 +206,25 @@ export async function runRankingNow(supa, user) {
     else if (asOf) issues.push({ level: "info", msg: `BSC training uses status as of ${asOf}.` });
   }
 
+  // Mystery Shops: keep only shops whose visit fell WITHIN this run's fiscal
+  // period (Heath), then per store: msCount = # in-period shops, msScore =
+  // average score. Information only — never counted toward Total Points.
+  const shops = await loadLatestUpload(supa, "shops");
+  const shopByStore = new Map();
+  if (shops) {
+    let inPeriod = 0;
+    for (const p of shops.list) {
+      if (!p.visit_date || p.visit_date < fi.periodStart || p.visit_date > fi.periodEnd) continue;
+      const s = Number(p.score);
+      if (!isFinite(s)) continue;
+      inPeriod++;
+      const cur = shopByStore.get(String(p.store_code)) || { sum: 0, n: 0 };
+      cur.sum += s; cur.n++;
+      shopByStore.set(String(p.store_code), cur);
+    }
+    issues.push({ level: "info", msg: `Mystery Shops: ${inPeriod} shop(s) within the period (${fi.periodStart}–${fi.periodEnd}) across ${shopByStore.size} store(s); shops outside the period are ignored.` });
+  }
+
   const eco = await loadLatestUpload(supa, "ecosure");
   const ecoAvgByStore = new Map();
   if (eco) {
@@ -247,6 +266,9 @@ export async function runRankingNow(supa, user) {
     // BSC LTO training % — an ops-scoring category on both PTD and WTD.
     const bscRow = bsc?.stores.get(num);
     if (isNum(bscRow?.bsc_pct)) { ptd.bscTrainingPct = bscRow.bsc_pct; wtd.bscTrainingPct = bscRow.bsc_pct; }
+    // Mystery Shops (in-period): count + average, informational.
+    const sh = shopByStore.get(num);
+    if (sh && sh.n) { ptd.msCount = sh.n; ptd.msScore = sh.sum / sh.n; }
     if (ptd.onTimePct == null) onTimeMissing++;
     // The feed sometimes reports an on-time numerator above its denominator.
     // The score is unaffected (>=80% is already a 5) but suspect data never
@@ -316,7 +338,9 @@ export async function runRankingNow(supa, user) {
       ? { status: "ok", as_of: eco.file.week_ending, stores: ecoAvgByStore.size }
       : { status: "missing" },
     vog: { status: "not_wired" },
-    shops: { status: "not_wired" },
+    shops: shops
+      ? { status: "ok", as_of: shops.file.week_ending, stores: shopByStore.size, in_period: [...shopByStore.values()].reduce((a, b) => a + b.n, 0) }
+      : { status: "missing" },
     bsc: bsc
       ? { status: bsc.file.week_ending && bsc.file.week_ending < weekEnding ? "stale" : "ok", as_of: bsc.file.week_ending, stores: bsc.stores.size }
       : { status: "missing" },
@@ -334,11 +358,10 @@ export async function runRankingNow(supa, user) {
     snapshot_date: latest,
     snapshot_week_start: fiLatest.weekStart,
     week_misaligned: false,
-    status: "complete",
+    status: "running", // flips to complete only after every row lands
     issues,
     source_status: sourceStatus,
     started_by: user.id,
-    completed_at: new Date().toISOString(),
   }).select("id").single();
   if (runErr) {
     if (/ranking_runs/.test(runErr.message)) return { error: "Run migration 0237 first (ranking tables are missing).", status: 500 };
@@ -370,8 +393,16 @@ export async function runRankingNow(supa, user) {
   }
   for (let i = 0; i < rowsOut.length; i += 200) {
     const { error } = await supa.from("ranking_rows").insert(rowsOut.slice(i, i + 200));
-    if (error) return { error: `Run saved but rows failed: ${error.message}`, status: 500 };
+    if (error) {
+      // Mark the run failed so latestRun (which serves only complete runs)
+      // never picks a partially-written board.
+      await supa.from("ranking_runs").update({ status: "failed" }).eq("id", run.id);
+      const hint = /integer/.test(error.message) ? " — run migration 0243 on Soar Hub v2." : "";
+      return { error: `Row insert failed: ${error.message}${hint}`, status: 500 };
+    }
   }
+  // All rows landed — publish the run.
+  await supa.from("ranking_runs").update({ status: "complete", completed_at: new Date().toISOString() }).eq("id", run.id);
 
   return { run_id: run.id, week_ending: weekEnding, period: fi.period, week: fi.weekInPeriod, rows: rowsOut.length, issues };
 }

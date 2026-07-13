@@ -77,6 +77,8 @@ const STORE_COLS: Col[] = [
   { g: "ops", label: "Score", key: "vogScore", kind: "score" },
   { g: "ops", label: "Training", key: "totalTrainingPct", kind: "pct1" },
   { g: "ops", label: "Score", key: "totalTrainingScore", kind: "score" },
+  { g: "ops", label: "Shops", key: "msCount", kind: "int" },
+  { g: "ops", label: "Shop avg", key: "msScore", kind: "pct1" },
   { g: "ops", label: "Ops score", key: "opsScore", kind: "tot" },
 ];
 
@@ -104,7 +106,7 @@ const LEADER_COLS: Col[] = [
 ];
 
 // WTD hides the sources the engine's WTD contract excludes.
-const WTD_HIDE = new Set(["ecosure", "ecosureScore", "totalTrainingPct", "totalTrainingScore", "vogResponses"]);
+const WTD_HIDE = new Set(["ecosure", "ecosureScore", "totalTrainingPct", "totalTrainingScore", "vogResponses", "msCount", "msScore"]);
 
 const TIER_TABS: { id: RankTier; label: string }[] = [
   { id: "store", label: "Stores" }, { id: "do", label: "DOs" }, { id: "sdo", label: "SDOs" },
