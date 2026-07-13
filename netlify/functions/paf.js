@@ -966,12 +966,13 @@ async function buildPafRowFromBody(supa, user, body) {
 
   // Clocked at the other store: their pay flows through that store's clock,
   // so no additional pay is entered here — and the record says so loudly.
+  // Zeros, not nulls: these columns are NOT NULL in paf_submissions.
   if (crossClockedOther === true) {
-    insertRow.reg_pay_rate = null;
-    insertRow.reg_hours = null;
-    insertRow.ot_hours = null;
-    insertRow.cc_tips = null;
-    insertRow.declared_tips = null;
+    insertRow.reg_pay_rate = 0;
+    insertRow.reg_hours = 0;
+    insertRow.ot_hours = 0;
+    insertRow.cc_tips = 0;
+    insertRow.declared_tips = 0;
     const marker = "[CROSS STORE — CLOCKED AT OTHER STORE]";
     if (!insertRow.explanation.includes(marker)) {
       insertRow.explanation =

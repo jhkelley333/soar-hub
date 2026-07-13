@@ -6,13 +6,14 @@
 import { Fragment, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ChevronLeft, ChevronRight, Play, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, Download, Play, RefreshCw } from "lucide-react";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Button } from "@/shared/ui/Button";
 import { Segmented } from "@/shared/ui/Segmented";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
+import { toCSV, downloadCSV } from "@/lib/csv";
 import {
   fetchRankingLatest, fetchRankingRuns, triggerRankingRun,
   type RankMetrics, type RankScope, type RankTier, type RankingResultRow,
@@ -121,6 +122,37 @@ function cellValue(r: RankingResultRow, c: Col): unknown {
   return r.metrics[c.key];
 }
 
+// ── CSV export (opens in Excel) ───────────────────────────────────────
+// Every column regardless of the on-screen group toggles (WTD still hides
+// its excluded sources). Headers are disambiguated — "Sales: Score",
+// "Operations: BSC Score" — because the grid reuses "Score" everywhere.
+function exportHeaders(cols: Col[]): { col: Col | null; header: string }[] {
+  const out: { col: Col | null; header: string }[] = [];
+  let prev = "";
+  for (const c of cols) {
+    if (c.key === "__store") {
+      out.push({ col: c, header: "Store #" }, { col: null, header: "Location" });
+      prev = c.label;
+      continue;
+    }
+    const base = c.label === "Score" ? `${prev} Score` : c.label;
+    out.push({ col: c, header: c.g === "id" ? base : `${GROUPS[c.g]}: ${base}` });
+    prev = c.label;
+  }
+  return out;
+}
+
+function csvValue(r: RankingResultRow, c: Col): string | number {
+  const v = cellValue(r, c);
+  switch (c.kind) {
+    case "money": return isNum(v) ? Math.round(v * 100) / 100 : "";
+    case "spct":
+    case "pct1": return isNum(v) ? Math.round(v * 1000) / 10 : typeof v === "string" ? v : "";
+    case "rank": case "pts": case "score": case "tot": case "int": return isNum(v) ? v : "";
+    default: return v == null ? "" : String(v);
+  }
+}
+
 function Cell({ v, kind }: { v: unknown; kind: Kind }) {
   switch (kind) {
     case "rank": return <span className="font-mono text-xs text-zinc-400">{isNum(v) ? v : "–"}</span>;
@@ -193,6 +225,32 @@ export function RankingResultsView() {
     [baseCols, groupsOn, scope],
   );
 
+  // Download the shown week + scope + tier as CSV (opens in Excel). Every
+  // column ships regardless of the on-screen group toggles; search filters
+  // are ignored — the file is the full board.
+  function exportExcel() {
+    if (!run) return;
+    const allRows = q.data?.rows ?? [];
+    const exportCols = baseCols.filter((c) => !(scope === "wtd" && WTD_HIDE.has(c.key)));
+    const spec = exportHeaders(exportCols);
+    const headers = spec.map((s) => s.header);
+    const csvRows = allRows.map((r) => {
+      const row: Record<string, unknown> = {};
+      for (const s of spec) {
+        if (s.header === "Store #") row[s.header] = r.entity_key;
+        else if (s.col === null) row[s.header] = String(r.metrics.location ?? "");
+        else row[s.header] = csvValue(r, s.col);
+      }
+      return row;
+    });
+    const tierLabel = (TIER_TABS.find((t) => t.id === tier)?.label ?? tier).toLowerCase().replace(/\s+/g, "-");
+    downloadCSV(
+      `soar-ranking-P${run.period}W${run.week}-${scope}-${tierLabel}.csv`,
+      toCSV(headers, csvRows),
+    );
+    toast.push(`Downloaded P${run.period}W${run.week} · ${scope.toUpperCase()} · ${tierLabel} (${allRows.length} rows).`, "success");
+  }
+
   const rows = useMemo(() => {
     let r = [...(q.data?.rows ?? [])];
     const needle = search.trim().toLowerCase();
@@ -261,6 +319,9 @@ export function RankingResultsView() {
               </button>
             </div>
           )}
+          <Button variant="secondary" size="sm" onClick={exportExcel} disabled={!run || rows.length === 0}>
+            <Download className="mr-1 h-3.5 w-3.5" /> Excel
+          </Button>
           <Button size="sm" onClick={() => runNow.mutate()} disabled={runNow.isPending}>
             {runNow.isPending
               ? <><RefreshCw className="mr-1 h-3.5 w-3.5 animate-spin" /> Running…</>
