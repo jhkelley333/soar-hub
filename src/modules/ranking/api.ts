@@ -120,3 +120,32 @@ export interface IxIngestResult {
 export function ingestIxFile(input: { filename: string; content: string; scope: RankScope }): Promise<IxIngestResult> {
   return req(`${FN}?action=ingest-ix`, { method: "POST", body: JSON.stringify(input) });
 }
+
+// ── Legacy history + trends ──────────────────────────────────────────
+export interface LegacyImportResult {
+  available: number;
+  imported: { week: number; rows: number }[];
+  skipped: number;
+  remaining: number[];
+}
+
+export function importLegacyHistory(): Promise<LegacyImportResult> {
+  return req(`${FN}?action=import-legacy`, { method: "POST", body: "{}" });
+}
+
+export interface TrendWeek { fiscal_week: number; week_ending: string; label: string; source: "sheet" | "hub" }
+export interface TrendStore {
+  name: string | null;
+  gm: string | null;
+  rank: (number | null)[];
+  labor: (number | null)[];
+  vsly: (number | null)[];
+  cogs: (number | null)[];
+  ontime: (number | null)[];
+  sales: (number | null)[];
+}
+
+export function fetchRankingTrends(weeks = 26): Promise<{ weeks: TrendWeek[]; stores: Record<string, TrendStore> }> {
+  const p = new URLSearchParams({ action: "trends", weeks: String(weeks) });
+  return req(`${FN}?${p.toString()}`);
+}

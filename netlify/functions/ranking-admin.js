@@ -11,6 +11,7 @@ import { createClient } from "@supabase/supabase-js";
 import { runRankingNow, latestRun } from "./_lib/ranking/run.js";
 import { backfillLaborWindow } from "./_lib/kpiBackfill.js";
 import { parseIxCsv } from "./_lib/ranking/ixParse.js";
+import { importLegacyWeeks, trendsData } from "./_lib/ranking/legacy.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -178,10 +179,12 @@ export const handler = async (event) => {
       if (action === "run-now") return unwrap(await runRankingNow(supa, user));
       if (action === "backfill") return unwrap(await backfillLaborWindow(supa, { days: Number(body?.days) || 35 }));
       if (action === "ingest-ix") return unwrap(await ingestIx(supa, user, body));
+      if (action === "import-legacy") return unwrap(await importLegacyWeeks(supa));
       return respond(400, { error: `Unknown action: ${action}` });
     }
     if (action === "overview") return unwrap(await overview(supa));
     if (action === "run-latest") return unwrap(await latestRun(supa, params));
+    if (action === "trends") return unwrap(await trendsData(supa, params));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: `ranking-admin error: ${e?.message || String(e)}` });
