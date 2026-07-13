@@ -43,13 +43,28 @@ export async function resolveOrg(supa, numbers) {
     ? await supa.from("profiles").select("id, full_name, preferred_name, email, primary_store_id").eq("role", "gm").eq("is_active", true).in("primary_store_id", storeIds) : { data: [] };
   const profById = new Map((scopeProfiles || []).map((p) => [p.id, p]));
   const expectedRole = { district: "do", area: "sdo", region: "rvp", store: "gm" };
-  const leaderByNode = new Map();
+  // Seniority so a higher-level leader who manages a node DIRECTLY (e.g. an
+  // RVP over an area with no SDO — as shown in the org chart) is chosen as
+  // that node's leader when no exact-role match exists.
+  const roleRank = { gm: 1, do: 2, sdo: 3, rvp: 4, vp: 5, coo: 6, admin: 6 };
+  const leaderByNode = new Map();   // exact-role match (preferred)
+  const fallbackByNode = new Map(); // any scoped leader; most senior wins
   for (const s of scopeRows || []) {
     const p = profById.get(s.user_id);
-    if (p && String(p.role || "").toLowerCase() === expectedRole[s.scope_type] && !leaderByNode.has(s.scope_id)) {
-      leaderByNode.set(s.scope_id, nameOf(p));
+    if (!p) continue;
+    const role = String(p.role || "").toLowerCase();
+    if (role === expectedRole[s.scope_type]) {
+      if (!leaderByNode.has(s.scope_id)) leaderByNode.set(s.scope_id, nameOf(p));
+    } else {
+      const cur = fallbackByNode.get(s.scope_id);
+      if (!cur || (roleRank[role] ?? 0) > cur.rank) {
+        fallbackByNode.set(s.scope_id, { name: nameOf(p), rank: roleRank[role] ?? 0 });
+      }
     }
   }
+  // A node's leader: exact-role match, else the most-senior directly-scoped
+  // leader (matches the org chart's "next level manages this level" case).
+  const leadOf = (id) => leaderByNode.get(id) ?? fallbackByNode.get(id)?.name ?? null;
   const gmByStore = new Map();
   for (const p of gmProfiles || []) if (p.primary_store_id) gmByStore.set(p.primary_store_id, nameOf(p));
 
@@ -63,13 +78,13 @@ export async function resolveOrg(supa, numbers) {
     map.set(String(s.number), {
       number: String(s.number),
       store: s.name || `#${s.number}`,
-      gmName: gmByStore.get(s.id) || leaderByNode.get(s.id) || null,
+      gmName: gmByStore.get(s.id) || leadOf(s.id) || null,
       district: d?.name ?? null,
-      doName: d ? leaderByNode.get(d.id) || null : null,
+      doName: d ? leadOf(d.id) : null,
       area: a?.name ?? null,
-      sdoName: a ? leaderByNode.get(a.id) || null : null,
+      sdoName: a ? leadOf(a.id) : null,
       region: r?.name ?? null,
-      rvpName: r ? leaderByNode.get(r.id) || null : null,
+      rvpName: r ? leadOf(r.id) : null,
     });
   }
   return map;
