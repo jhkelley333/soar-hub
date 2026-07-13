@@ -6,7 +6,7 @@
 import { Fragment, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
-import { ChevronRight, Play, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, Play, RefreshCw } from "lucide-react";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Button } from "@/shared/ui/Button";
@@ -14,7 +14,7 @@ import { Segmented } from "@/shared/ui/Segmented";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
-  fetchRankingLatest, triggerRankingRun,
+  fetchRankingLatest, fetchRankingRuns, triggerRankingRun,
   type RankMetrics, type RankScope, type RankTier, type RankingResultRow,
 } from "./api";
 
@@ -158,19 +158,31 @@ export function RankingResultsView() {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
   const [openRow, setOpenRow] = useState<string | null>(null);
+  // null = the latest run; a run id = the picked week (legacy-ranker-style).
+  const [runId, setRunId] = useState<string | null>(null);
+
+  const runsQ = useQuery({ queryKey: ["ranking-runs-list"], queryFn: fetchRankingRuns, staleTime: 60_000 });
+  const weekRuns = runsQ.data?.runs ?? [];
 
   const q = useQuery({
-    queryKey: ["ranking-run", scope, tier],
-    queryFn: () => fetchRankingLatest(scope, tier),
+    queryKey: ["ranking-run", scope, tier, runId ?? "latest"],
+    queryFn: () => fetchRankingLatest(scope, tier, runId),
     staleTime: 60_000,
   });
   const run = q.data?.run ?? null;
+
+  // Where the shown run sits in the per-week list (0 = newest).
+  const weekIdx = run ? weekRuns.findIndex((r) => r.id === run.id || r.week_ending === run.week_ending) : -1;
+  const canOlder = weekIdx >= 0 && weekIdx < weekRuns.length - 1;
+  const canNewer = weekIdx > 0;
 
   const runNow = useMutation({
     mutationFn: triggerRankingRun,
     onSuccess: (r) => {
       toast.push(`Ranked P${r.period} W${r.week} (week ending ${r.week_ending}) — ${r.rows} rows.`, "success");
+      setRunId(null); // jump back to the latest
       qc.invalidateQueries({ queryKey: ["ranking-run"] });
+      qc.invalidateQueries({ queryKey: ["ranking-runs-list"] });
     },
     onError: (e) => toast.push(e instanceof Error ? e.message : "Run failed.", "error"),
   });
@@ -218,12 +230,50 @@ export function RankingResultsView() {
               : "No runs yet — hit Run now to rank the last completed week from live Hub data."}
           </p>
         </div>
-        <Button size="sm" onClick={() => runNow.mutate()} disabled={runNow.isPending}>
-          {runNow.isPending
-            ? <><RefreshCw className="mr-1 h-3.5 w-3.5 animate-spin" /> Running…</>
-            : <><Play className="mr-1 h-3.5 w-3.5" /> Run now</>}
-        </Button>
+        <div className="flex items-center gap-2">
+          {/* Week picker — browse past runs like the legacy ranker's week tabs */}
+          {weekRuns.length > 0 && (
+            <div className="flex items-center gap-1">
+              <button type="button" title="Older week" disabled={!canOlder}
+                onClick={() => canOlder && setRunId(weekRuns[weekIdx + 1].id)}
+                className="rounded-lg border border-zinc-200 bg-white p-1.5 text-zinc-500 hover:border-zinc-300 disabled:opacity-30">
+                <ChevronLeft className="h-4 w-4" />
+              </button>
+              <select
+                value={run?.id && weekRuns.some((r) => r.id === run.id) ? run.id : weekRuns[Math.max(weekIdx, 0)]?.id ?? ""}
+                onChange={(e) => setRunId(e.target.value === weekRuns[0]?.id ? null : e.target.value)}
+                className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm font-semibold text-midnight focus:border-accent focus:outline-none"
+              >
+                {weekRuns.map((r, i) => (
+                  <option key={r.id} value={r.id}>
+                    P{r.period}W{r.week} · {fmtDate(r.week_ending)}{i === 0 ? " (latest)" : ""}
+                  </option>
+                ))}
+              </select>
+              <button type="button" title="Newer week" disabled={!canNewer}
+                onClick={() => canNewer && setRunId(weekIdx - 1 === 0 ? null : weekRuns[weekIdx - 1].id)}
+                className="rounded-lg border border-zinc-200 bg-white p-1.5 text-zinc-500 hover:border-zinc-300 disabled:opacity-30">
+                <ChevronRight className="h-4 w-4" />
+              </button>
+            </div>
+          )}
+          <Button size="sm" onClick={() => runNow.mutate()} disabled={runNow.isPending}>
+            {runNow.isPending
+              ? <><RefreshCw className="mr-1 h-3.5 w-3.5 animate-spin" /> Running…</>
+              : <><Play className="mr-1 h-3.5 w-3.5" /> Run now</>}
+          </Button>
+        </div>
       </div>
+
+      {/* Viewing-history banner */}
+      {runId && run && (
+        <div className="rounded-lg border-l-4 border-accent bg-accent/5 px-3.5 py-2 text-xs text-zinc-600">
+          Viewing a past week — <b>P{run.period}W{run.week}, week ending {fmtDate(run.week_ending)}</b>.{" "}
+          <button className="font-semibold text-accent hover:underline" onClick={() => setRunId(null)}>
+            Jump to latest
+          </button>
+        </div>
+      )}
 
       {/* Alerts */}
       {(run?.issues ?? []).map((iss, i) => (
