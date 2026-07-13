@@ -15,9 +15,10 @@ import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { toCSV, downloadCSV } from "@/lib/csv";
 import {
-  fetchRankingLatest, fetchRankingRuns, triggerRankingRun,
+  fetchRankingFull, fetchRankingLatest, fetchRankingRuns, triggerRankingRun,
   type RankMetrics, type RankScope, type RankTier, type RankingResultRow,
 } from "./api";
+import { downloadRankingWorkbook } from "./rankingWorkbook";
 
 // ── formatting ────────────────────────────────────────────────────────
 const isNum = (v: unknown): v is number => typeof v === "number" && isFinite(v);
@@ -194,6 +195,7 @@ export function RankingResultsView() {
   const [openRow, setOpenRow] = useState<string | null>(null);
   // null = the latest run; a run id = the picked week (legacy-ranker-style).
   const [runId, setRunId] = useState<string | null>(null);
+  const [wbBusy, setWbBusy] = useState(false);
 
   const runsQ = useQuery({ queryKey: ["ranking-runs-list"], queryFn: fetchRankingRuns, staleTime: 60_000 });
   const weekRuns = runsQ.data?.runs ?? [];
@@ -251,6 +253,23 @@ export function RankingResultsView() {
       toCSV(headers, csvRows),
     );
     toast.push(`Downloaded P${run.period}W${run.week} · ${scope.toUpperCase()} · ${tierLabel} (${allRows.length} rows).`, "success");
+  }
+
+  // Full formatted .xlsx workbook — every tier, both scopes, styled like the
+  // sheet (colored score cells, grouped headers). Fetches the whole run.
+  async function exportWorkbook() {
+    if (!run) return;
+    setWbBusy(true);
+    try {
+      const full = await fetchRankingFull(runId);
+      if (!full.run) { toast.push("No run to export.", "error"); return; }
+      await downloadRankingWorkbook(full.run, full.scopes);
+      toast.push(`Workbook downloaded — P${full.run.period}W${full.run.week}.`, "success");
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : "Workbook export failed.", "error");
+    } finally {
+      setWbBusy(false);
+    }
   }
 
   const rows = useMemo(() => {
@@ -322,7 +341,10 @@ export function RankingResultsView() {
             </div>
           )}
           <Button variant="secondary" size="sm" onClick={exportExcel} disabled={!run || rows.length === 0}>
-            <Download className="mr-1 h-3.5 w-3.5" /> Excel
+            <Download className="mr-1 h-3.5 w-3.5" /> CSV
+          </Button>
+          <Button variant="secondary" size="sm" onClick={exportWorkbook} disabled={!run || wbBusy}>
+            <Download className="mr-1 h-3.5 w-3.5" /> {wbBusy ? "Building…" : "Workbook"}
           </Button>
           <Button size="sm" onClick={() => runNow.mutate()} disabled={runNow.isPending}>
             {runNow.isPending
