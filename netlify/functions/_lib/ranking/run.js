@@ -199,6 +199,13 @@ export async function runRankingNow(supa, user) {
   // EcoSure: YTD assessments — a store's input is the AVERAGE of its
   // assessment scores (brief section 6); unaudited stores stay null and the
   // engine renders "No Audit" with a neutral 3.
+  const bsc = await loadLatestUpload(supa, "bsc");
+  if (bsc) {
+    const asOf = bsc.file.week_ending;
+    if (asOf && asOf < weekEnding) issues.push({ level: "warn", msg: `BSC training is as of ${asOf} — older than the week being ranked (stale).` });
+    else if (asOf) issues.push({ level: "info", msg: `BSC training uses status as of ${asOf}.` });
+  }
+
   const eco = await loadLatestUpload(supa, "ecosure");
   const ecoAvgByStore = new Map();
   if (eco) {
@@ -237,6 +244,9 @@ export async function runRankingNow(supa, user) {
     // EcoSure YTD average (PTD-only, same contract).
     const ecoAvg = ecoAvgByStore.get(num);
     if (isNum(ecoAvg)) ptd.ecosure = ecoAvg;
+    // BSC LTO training % — an ops-scoring category on both PTD and WTD.
+    const bscRow = bsc?.stores.get(num);
+    if (isNum(bscRow?.bsc_pct)) { ptd.bscTrainingPct = bscRow.bsc_pct; wtd.bscTrainingPct = bscRow.bsc_pct; }
     if (ptd.onTimePct == null) onTimeMissing++;
     // The feed sometimes reports an on-time numerator above its denominator.
     // The score is unaffected (>=80% is already a 5) but suspect data never
@@ -307,7 +317,9 @@ export async function runRankingNow(supa, user) {
       : { status: "missing" },
     vog: { status: "not_wired" },
     shops: { status: "not_wired" },
-    bsc: { status: "not_wired" },
+    bsc: bsc
+      ? { status: bsc.file.week_ending && bsc.file.week_ending < weekEnding ? "stale" : "ok", as_of: bsc.file.week_ending, stores: bsc.stores.size }
+      : { status: "missing" },
     totzone: tz
       ? { status: tz.file.week_ending && tz.file.week_ending < weekEnding ? "stale" : "ok", as_of: tz.file.week_ending, stores: tz.stores.size }
       : { status: "missing" },
