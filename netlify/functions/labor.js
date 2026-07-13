@@ -468,7 +468,7 @@ async function missTracker(supa, user, params) {
   // PostgREST's 1000-row response cap, which silently drops the earliest day.
   const perDay = await Promise.all(week.map((d) => Promise.all([
     supa.from("labor_daily_snapshots")
-      .select("store_number, business_date, daily_labor_pct, base_ptd_labor_goal, daily_hours_over_chart")
+      .select("store_number, business_date, daily_labor_pct, base_ptd_labor_goal, daily_hours_over_chart, do_name, sdo_name")
       .eq("business_date", d).in("store_number", numbers),
     supa.from("labor_reviews").select("store_number, business_date, note, root_cause")
       .eq("business_date", d).in("store_number", numbers),
@@ -493,7 +493,13 @@ async function missTracker(supa, user, params) {
     const h = Number(s.daily_hours_over_chart);
     if (!isFinite(h) || h <= 0) continue;
     if (!byStore.has(sn)) {
-      byStore.set(sn, { store_number: sn, store_name: nameByNumber.get(sn) ?? null, total: 0, days: {}, explanations: {} });
+      byStore.set(sn, {
+        store_number: sn,
+        store_name: nameByNumber.get(sn) ?? null,
+        do_name: s.do_name ?? null,
+        sdo_name: s.sdo_name ?? null,
+        total: 0, days: {}, explanations: {},
+      });
     }
     const row = byStore.get(sn);
     row.days[s.business_date] = round1(h);
