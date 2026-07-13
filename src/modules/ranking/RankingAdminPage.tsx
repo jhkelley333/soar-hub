@@ -144,7 +144,7 @@ function IxUploadPanel() {
     try {
       const content = await f.text();
       const detected: "ptd" | "wtd" =
-        scope !== "auto" ? scope : /week[_ ]?to[_ ]?date|wtd/i.test(f.name) ? "wtd" : "ptd";
+        scope !== "auto" ? scope : /week[_ ]?to[_ ]?date|wtd|cycle/i.test(f.name) ? "wtd" : "ptd";
       const r = await ingestIxFile({ filename: f.name, content, scope: detected });
       setSummary(
         `${detected.toUpperCase()} · week ending ${r.week_ending ?? "?"} · ${r.stores} stores` +
