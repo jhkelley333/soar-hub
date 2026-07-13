@@ -826,6 +826,22 @@ async function buildPafRowFromBody(supa, user, body) {
   }
   if (!category) return { error: "category is required.", status: 400 };
 
+  // Cross Store Work: the clock question decides the flow. If the team
+  // member clocked in at the other store, their hours already pay through
+  // that store's payroll — no additional pay goes on this PAF; payroll just
+  // needs to know which store the OT charges to.
+  let crossClockedOther = null;
+  if (category === "Cross Store Work") {
+    const ans = String(body?.cross_clocked_other ?? "").toLowerCase();
+    if (ans !== "yes" && ans !== "no") {
+      return { error: 'Answer "Did the team member clock in at the other store?"', status: 400 };
+    }
+    crossClockedOther = ans === "yes";
+    if (crossClockedOther && !sanitizeText(body?.store_chrged_ot, 20)) {
+      return { error: '"Store Charged OT" is required when the team member clocked in at the other store.', status: 400 };
+    }
+  }
+
   const explanation = sanitizeText(body?.explanation, 5000);
   if (!explanation) return { error: "explanation is required.", status: 400 };
 
@@ -891,6 +907,7 @@ async function buildPafRowFromBody(supa, user, body) {
     original_store: sanitizeText(body?.original_store, 20) || null,
     temp_new_store: sanitizeText(body?.temp_new_store, 20) || null,
     store_chrged_ot: sanitizeText(body?.store_chrged_ot, 20) || null,
+    cross_clocked_other: crossClockedOther,
 
     // Transfer
     current_store: sanitizeText(body?.current_store, 20) || null,
@@ -946,6 +963,22 @@ async function buildPafRowFromBody(supa, user, body) {
 
     status: "Pending",
   };
+
+  // Clocked at the other store: their pay flows through that store's clock,
+  // so no additional pay is entered here — and the record says so loudly.
+  if (crossClockedOther === true) {
+    insertRow.reg_pay_rate = null;
+    insertRow.reg_hours = null;
+    insertRow.ot_hours = null;
+    insertRow.cc_tips = null;
+    insertRow.declared_tips = null;
+    const marker = "[CROSS STORE — CLOCKED AT OTHER STORE]";
+    if (!insertRow.explanation.includes(marker)) {
+      insertRow.explanation =
+        `${insertRow.explanation}\n\n${marker} NOTIFY PAYROLL: charge OT to store #${insertRow.store_chrged_ot}. ` +
+        "No additional pay entered on this PAF — hours paid through the other store's clock.";
+    }
+  }
 
   return { row: insertRow, driveIn, effectiveDriveIn, employeeName, category };
 }
@@ -1127,10 +1160,11 @@ async function submitPaf(supa, user, body) {
     .insert(insertRow)
     .select("id")
     .single();
-  if (error && /late_for_week|process_week/.test(error.message)) {
-    // Pre-0233: the cutoff columns don't exist yet.
+  if (error && /late_for_week|process_week|cross_clocked_other/.test(error.message)) {
+    // Pre-0233 / pre-0242: the newer columns don't exist yet.
     delete insertRow.late_for_week;
     delete insertRow.process_week;
+    delete insertRow.cross_clocked_other;
     ({ data: created, error } = await supa.from("paf_submissions").insert(insertRow).select("id").single());
   }
   if (error) return { error: error.message, status: 500 };
@@ -1267,9 +1301,10 @@ async function resubmitPaf(supa, user, body) {
     .eq("id", id)
     .eq("status", existing.status)
     .select("id");
-  if (updErr && /late_for_week|process_week/.test(updErr.message)) {
+  if (updErr && /late_for_week|process_week|cross_clocked_other/.test(updErr.message)) {
     delete updateRow.late_for_week;
     delete updateRow.process_week;
+    delete updateRow.cross_clocked_other;
     ({ data: updated, error: updErr } = await supa
       .from("paf_submissions").update(updateRow).eq("id", id).eq("status", existing.status).select("id"));
   }
