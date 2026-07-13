@@ -63,6 +63,23 @@ function cmp(a: string | number, b: string | number): number {
   return 0;
 }
 
+// Can this viewer approve/reject the PAF? The assigned approver always; plus a
+// role senior to the tier (RVP+ on a bonus SDO review, VP+ on a pay-adjustment
+// VP review). The list is already scope-filtered, so seeing a pending PAF
+// implies reach — the server re-checks scope on the action.
+function canApprove(
+  paf: PafRow,
+  profile: { id?: string; role?: string } | null | undefined,
+): boolean {
+  if (!profile) return false;
+  const isVpFlow = paf.status === "Pending VP Approval";
+  if (paf.status !== "Pending SDO Approval" && !isVpFlow) return false;
+  if (profile.role === "admin") return true;
+  if (paf.sdo_approver_id && paf.sdo_approver_id === profile.id) return true;
+  const escalate = isVpFlow ? ["vp", "coo"] : ["rvp", "vp", "coo"];
+  return escalate.includes(profile.role ?? "");
+}
+
 export function PafTable({
   rows,
   actions,
@@ -300,7 +317,7 @@ export function PafTable({
                 />
               </div>
             )}
-            {detail && actions === "sdo" && (
+            {detail && canApprove(detail, profile) && (
               <div className="flex flex-wrap items-center gap-1.5">
                 <SdoActions
                   paf={detail}
