@@ -149,3 +149,25 @@ export function fetchRankingTrends(weeks = 26): Promise<{ weeks: TrendWeek[]; st
   const p = new URLSearchParams({ action: "trends", weeks: String(weeks) });
   return req(`${FN}?${p.toString()}`);
 }
+
+// ── Risk ─────────────────────────────────────────────────────────────
+export type RiskKind = "performance" | "people" | "data";
+export interface RiskReason { kind: RiskKind; pts: number; label: string }
+export interface RiskStore {
+  number: string;
+  name: string | null;
+  gm: string | null;
+  rank: number | null;
+  points: number | null;
+  score: number;
+  bucket: "high" | "watch" | "low";
+  reasons: RiskReason[];
+}
+
+export function fetchRankingRisk(): Promise<{
+  generated_from_weeks: number;
+  counts: { high: number; watch: number; low: number; stable: number };
+  stores: RiskStore[];
+}> {
+  return req(`${FN}?action=risk`);
+}
