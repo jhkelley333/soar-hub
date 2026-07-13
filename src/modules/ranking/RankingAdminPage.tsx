@@ -19,7 +19,7 @@ import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
-  addRankingConfig, backfillRankingFields, fetchRankingOverview, ingestBscRows, ingestEcosureRows, ingestIxFile, ingestShopRows, ingestTotzoneRows, setLaborPad,
+  addRankingConfig, backfillRankingFields, fetchRankingOverview, ingestBscRows, ingestEcosureRows, ingestIxFile, ingestShopRows, ingestTotzoneRows, ingestVogRows, setLaborPad,
   type RankingConfigRow, type RankingStoreRow,
 } from "./api";
 
@@ -105,6 +105,8 @@ function SettingsView() {
         <BscUploadPanel />
 
         <ShopsUploadPanel />
+
+        <VogUploadPanel />
 
         <BackfillPanel />
         {/* Complaints placeholder */}
@@ -546,6 +548,88 @@ function ShopsUploadPanel() {
           {busy ? "Ingesting…" : "Upload CSV"}
           <input type="file" accept=".csv,text/csv" className="hidden" onChange={onFile} />
         </label>
+      </div>
+    </div>
+  );
+}
+
+// ── VOG upload (Qualtrics dashboard export CSV) — scoped wtd/ptd ──────
+function VogUploadPanel() {
+  const toast = useToast();
+  const [scope, setScope] = useState<"ptd" | "wtd" | "auto">("auto");
+  const [busy, setBusy] = useState(false);
+  const [summary, setSummary] = useState<string | null>(null);
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    setBusy(true);
+    setSummary(null);
+    try {
+      const text = await f.text();
+      const shaBytes = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+      const sha256 = [...new Uint8Array(shaBytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
+
+      const lines = text.trim().split(/\r?\n/);
+      const header = lines[0].split(",").map((h) => h.trim().toLowerCase());
+      const ci = (name: string) => header.indexOf(name);
+      const cStore = ci("storeid"), cCount = ci("count"), cL2r = ci("l2r"), cOsat = ci("osat");
+      if (cStore < 0 || cL2r < 0) throw new Error('Not a VOG export — missing StoreID / L2R columns.');
+      const num = (v: string) => { const n = Number(v); return isFinite(n) ? n : null; };
+      const rows = lines.slice(1)
+        .map((l) => l.split(","))
+        .filter((r) => /^\d+$/.test(String(r[cStore] ?? "").trim())) // drops the "Average" footer
+        .map((r) => ({
+          store_code: String(r[cStore]).trim(),
+          l2r: num(r[cL2r]),
+          count: cCount >= 0 ? num(r[cCount]) : null,
+          osat: cOsat >= 0 ? num(r[cOsat]) : null,
+        }))
+        .filter((r) => r.l2r != null);
+      if (!rows.length) throw new Error("No store rows with L2R found.");
+
+      const detected: "ptd" | "wtd" =
+        scope !== "auto" ? scope : /wtd|week/i.test(f.name) ? "wtd" : /mtd|ptd|month|period/i.test(f.name) ? "ptd" : "wtd";
+      const res = await ingestVogRows({ filename: f.name, sha256, scope: detected, rows });
+      setSummary(
+        `${detected.toUpperCase()} · ${res.stores} stores` +
+        (res.unresolved.length ? ` · unresolved: ${res.unresolved.join(", ")}` : ""),
+      );
+      toast.push("VOG ingested — hit Run now on the Ranking tab to apply.", "success");
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "Ingest failed.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-midnight">VOG — Voice of Guest</div>
+          <p className="text-xs text-zinc-500">
+            Upload the Qualtrics dashboard export CSV. Each store scores on L2R (likely-to-return top-box);
+            Count feeds the response weighting. Comes in WTD and MTD (period) — upload both. Duplicates rejected
+            by content hash.
+          </p>
+          {summary && <p className="mt-1 font-mono text-xs text-zinc-600">{summary}</p>}
+        </div>
+        <div className="flex items-center gap-2">
+          <select value={scope} onChange={(e) => setScope(e.target.value as "ptd" | "wtd" | "auto")} className={cn(inputCls)}>
+            <option value="auto">Detect from filename</option>
+            <option value="wtd">Week to date</option>
+            <option value="ptd">Period (MTD)</option>
+          </select>
+          <label className={cn(
+            "cursor-pointer rounded-lg bg-midnight px-3 py-2 text-sm font-semibold text-white hover:bg-zinc-800",
+            busy && "pointer-events-none opacity-50",
+          )}>
+            {busy ? "Ingesting…" : "Upload CSV"}
+            <input type="file" accept=".csv,text/csv" className="hidden" onChange={onFile} />
+          </label>
+        </div>
       </div>
     </div>
   );

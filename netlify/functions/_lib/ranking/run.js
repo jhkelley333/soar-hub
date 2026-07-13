@@ -225,6 +225,27 @@ export async function runRankingNow(supa, user) {
     issues.push({ level: "info", msg: `Mystery Shops: ${inPeriod} shop(s) within the period (${fi.periodStart}–${fi.periodEnd}) across ${shopByStore.size} store(s); shops outside the period are ignored.` });
   }
 
+  // VOG per scope: newest file for each of wtd/ptd (the "MTD" export = PTD).
+  // A store's VOG input is L2R (likely-to-return top-box); responses = Count.
+  const vog = { ptd: new Map(), wtd: new Map() };
+  {
+    const { data: vfiles } = await supa.from("ranking_source_files")
+      .select("id, uploaded_at").eq("source", "vog").eq("status", "parsed")
+      .order("uploaded_at", { ascending: false }).limit(12);
+    const seenScope = new Set();
+    for (const f of vfiles || []) {
+      const { data: probe } = await supa.from("ranking_src_rows").select("payload").eq("file_id", f.id).limit(1);
+      const sc = probe?.[0]?.payload?.scope === "wtd" ? "wtd" : "ptd";
+      if (seenScope.has(sc)) continue;
+      seenScope.add(sc);
+      const { data: vrows } = await supa.from("ranking_src_rows").select("payload").eq("file_id", f.id).limit(2000);
+      for (const { payload: p } of vrows || []) if (p?.store_code) vog[sc].set(String(p.store_code), p);
+    }
+    if (vog.ptd.size || vog.wtd.size) {
+      issues.push({ level: "info", msg: `VOG loaded — PTD ${vog.ptd.size} store(s), WTD ${vog.wtd.size} store(s).` });
+    }
+  }
+
   const eco = await loadLatestUpload(supa, "ecosure");
   const ecoAvgByStore = new Map();
   if (eco) {
@@ -269,6 +290,11 @@ export async function runRankingNow(supa, user) {
     // Mystery Shops (in-period): count + average, informational.
     const sh = shopByStore.get(num);
     if (sh && sh.n) { ptd.msCount = sh.n; ptd.msScore = sh.sum / sh.n; }
+    // VOG L2R + response count, per scope.
+    const vp = vog.ptd.get(num);
+    if (vp && isNum(vp.l2r)) { ptd.vogScore = vp.l2r; ptd.vogResponses = isNum(vp.count) ? vp.count : null; }
+    const vw = vog.wtd.get(num);
+    if (vw && isNum(vw.l2r)) { wtd.vogScore = vw.l2r; wtd.vogResponses = isNum(vw.count) ? vw.count : null; }
     if (ptd.onTimePct == null) onTimeMissing++;
     // The feed sometimes reports an on-time numerator above its denominator.
     // The score is unaffected (>=80% is already a 5) but suspect data never
@@ -337,7 +363,9 @@ export async function runRankingNow(supa, user) {
     ecosure: eco
       ? { status: "ok", as_of: eco.file.week_ending, stores: ecoAvgByStore.size }
       : { status: "missing" },
-    vog: { status: "not_wired" },
+    vog: (vog.ptd.size || vog.wtd.size)
+      ? { status: "ok", ptd: vog.ptd.size, wtd: vog.wtd.size }
+      : { status: "missing" },
     shops: shops
       ? { status: "ok", as_of: shops.file.week_ending, stores: shopByStore.size, in_period: [...shopByStore.values()].reduce((a, b) => a + b.n, 0) }
       : { status: "missing" },

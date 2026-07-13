@@ -203,6 +203,19 @@ export function ingestShopRows(input: {
   return req(`${FN}?action=ingest-shops`, { method: "POST", body: JSON.stringify(input) });
 }
 
+export interface VogRowInput {
+  store_code: string;
+  l2r: number | null;
+  count: number | null;
+  osat?: number | null;
+}
+
+export function ingestVogRows(input: {
+  filename: string; sha256: string; scope: RankScope; rows: VogRowInput[];
+}): Promise<{ file_id: string; scope: RankScope; rows: number; stores: number; unresolved: string[] }> {
+  return req(`${FN}?action=ingest-vog`, { method: "POST", body: JSON.stringify(input) });
+}
+
 // ── Legacy history + trends ──────────────────────────────────────────
 export interface LegacyImportResult {
   available: number;

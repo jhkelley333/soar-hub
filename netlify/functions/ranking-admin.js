@@ -395,6 +395,63 @@ async function ingestShops(supa, user, body) {
   return { file_id: file.id, as_of: asOf, rows: rows.length, stores: codes.length, unresolved };
 }
 
+// Ingest VOG (Qualtrics dashboard export). One row per store; the run's VOG
+// input is L2R (likely-to-return top-box), responses = Count. Scoped wtd/ptd
+// (the "MTD" export = our PTD). sha256 dedupe.
+async function ingestVog(supa, user, body) {
+  const filename = String(body?.filename || "vog.csv").slice(0, 200);
+  const sha = String(body?.sha256 || "");
+  if (!/^[a-f0-9]{64}$/i.test(sha)) return { error: "sha256 of the file is required.", status: 400 };
+  const scope = body?.scope === "wtd" ? "wtd" : "ptd";
+  const raw = Array.isArray(body?.rows) ? body.rows : [];
+  const clean = raw
+    .map((r) => ({
+      level: "store",
+      store_code: String(r?.store_code ?? "").replace(/\D/g, ""),
+      l2r: Number.isFinite(Number(r?.l2r)) ? Number(r.l2r) : null,
+      count: Number.isFinite(Number(r?.count)) ? Math.round(Number(r.count)) : null,
+      osat: Number.isFinite(Number(r?.osat)) ? Number(r.osat) : null,
+      scope,
+    }))
+    .filter((r) => r.store_code && r.l2r != null && r.l2r >= 0 && r.l2r <= 1.5);
+  if (!clean.length) return { error: "No usable VOG rows (need StoreID + L2R).", status: 400 };
+  if (clean.length > 2000) return { error: "Too many rows.", status: 400 };
+
+  const codes = [...new Set(clean.map((r) => r.store_code))];
+  const { data: sts } = await supa.from("stores").select("id, number").in("number", codes);
+  const idByNum = new Map((sts || []).map((s) => [String(s.number), s.id]));
+
+  const { data: file, error: fe } = await supa.from("ranking_source_files").insert({
+    source: "vog",
+    storage_path: `inline:${filename}`,
+    sha256: sha.toLowerCase(),
+    week_ending: null,
+    row_count: clean.length,
+    status: "parsed",
+    uploaded_by: user.id,
+  }).select("id").single();
+  if (fe) {
+    if (/duplicate|unique/i.test(fe.message)) return { error: "This exact file was already ingested — no double-count.", status: 409 };
+    if (/ranking_source_files/.test(fe.message) && /does not exist|relation/i.test(fe.message)) {
+      return { error: "Run migration 0237 first (ranking tables are missing).", status: 500 };
+    }
+    return { error: fe.message, status: 500 };
+  }
+  const rows = clean.map((r) => ({
+    file_id: file.id,
+    source: "vog",
+    store_id: idByNum.get(r.store_code) ?? null,
+    store_code: r.store_code,
+    payload: r,
+  }));
+  for (let i = 0; i < rows.length; i += 300) {
+    const { error } = await supa.from("ranking_src_rows").insert(rows.slice(i, i + 300));
+    if (error) return { error: `File saved but rows failed: ${error.message}`, status: 500 };
+  }
+  const unresolved = codes.filter((c) => !idByNum.get(c));
+  return { file_id: file.id, scope, rows: rows.length, stores: codes.length, unresolved };
+}
+
 export const handler = async (event) => {
   let supa;
   try { supa = admin(); } catch (e) { return respond(500, { error: e.message }); }
@@ -418,6 +475,7 @@ export const handler = async (event) => {
       if (action === "ingest-ecosure") return unwrap(await ingestEcosure(supa, user, body));
       if (action === "ingest-bsc") return unwrap(await ingestBsc(supa, user, body));
       if (action === "ingest-shops") return unwrap(await ingestShops(supa, user, body));
+      if (action === "ingest-vog") return unwrap(await ingestVog(supa, user, body));
       if (action === "import-legacy") return unwrap(await importLegacyWeeks(supa));
       return respond(400, { error: `Unknown action: ${action}` });
     }
