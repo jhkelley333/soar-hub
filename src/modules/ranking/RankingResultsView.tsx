@@ -275,7 +275,9 @@ export function RankingResultsView() {
     if (!run) return;
     setWbBusy(true);
     try {
-      const full = await fetchRankingFull(runId);
+      // Pin to the exact run the board is showing (run.id), so the workbook
+      // can never resolve a different "latest" than what's on screen.
+      const full = await fetchRankingFull(run.id);
       if (!full.run) { toast.push("No run to export.", "error"); return; }
       await downloadRankingWorkbook(full.run, full.scopes);
       toast.push(`Workbook downloaded — P${full.run.period}W${full.run.week}.`, "success");
@@ -323,7 +325,7 @@ export function RankingResultsView() {
           <h2 className="text-lg font-black text-midnight">Weekly ranking</h2>
           <p className="text-xs text-zinc-500">
             {run
-              ? <>Period <b className="text-midnight">{run.period}</b> · Week <b className="text-midnight">{run.week}</b> · Week ending <b className="text-midnight">{fmtDate(run.week_ending)}</b> · Last run <b className="text-midnight">{fmtStamp(run.completed_at)}</b> · config {run.config_version}</>
+              ? <>Period <b className="text-midnight">{run.period}</b> · Week <b className="text-midnight">{run.week}</b> · Week ending <b className="text-midnight">{fmtDate(run.week_ending)}</b> · Last run <b className="text-midnight">{fmtStamp(run.completed_at)}</b> · run <b className="text-midnight">{String(run.id).slice(0, 8)}</b> · config {run.config_version}</>
               : "No runs yet — hit Run now to rank the last completed week from live Hub data."}
           </p>
         </div>

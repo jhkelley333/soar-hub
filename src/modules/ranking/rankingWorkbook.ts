@@ -175,7 +175,10 @@ export async function downloadRankingWorkbook(
   const wb = new ExcelJS.Workbook();
   wb.creator = "SOAR Hub";
 
-  const stamp = new Date().toLocaleString("en-US");
+  // Stamp the RUN identity (not the export time) so a workbook can be matched
+  // to the board's run bar. run.id short-hash is the definitive key.
+  const runStamp = run.completed_at ? new Date(run.completed_at).toLocaleString("en-US") : "?";
+  const runId = String(run.id ?? "").slice(0, 8);
   for (const scope of ["ptd", "wtd"] as const) {
     const data = scopes[scope];
     if (!data || !data.store?.length) continue;
@@ -184,7 +187,7 @@ export async function downloadRankingWorkbook(
     // Title banner.
     ws.mergeCells(1, 1, 1, 12);
     const banner = ws.getCell(1, 1);
-    banner.value = `SOAR RANKING — ${scope === "wtd" ? "WEEK TO DATE" : "PERIOD TO DATE"} — Period ${run.period} Week ${run.week} · generated ${stamp}`;
+    banner.value = `SOAR RANKING — ${scope === "wtd" ? "WEEK TO DATE" : "PERIOD TO DATE"} — Period ${run.period} Week ${run.week} · week ending ${run.week_ending} · run ${runId} · completed ${runStamp}`;
     banner.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
     banner.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 12 };
     ws.getRow(1).height = 20;
