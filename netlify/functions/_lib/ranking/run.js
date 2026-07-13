@@ -334,11 +334,10 @@ export async function runRankingNow(supa, user) {
     snapshot_date: latest,
     snapshot_week_start: fiLatest.weekStart,
     week_misaligned: false,
-    status: "complete",
+    status: "running", // flips to complete only after every row lands
     issues,
     source_status: sourceStatus,
     started_by: user.id,
-    completed_at: new Date().toISOString(),
   }).select("id").single();
   if (runErr) {
     if (/ranking_runs/.test(runErr.message)) return { error: "Run migration 0237 first (ranking tables are missing).", status: 500 };
@@ -370,8 +369,16 @@ export async function runRankingNow(supa, user) {
   }
   for (let i = 0; i < rowsOut.length; i += 200) {
     const { error } = await supa.from("ranking_rows").insert(rowsOut.slice(i, i + 200));
-    if (error) return { error: `Run saved but rows failed: ${error.message}`, status: 500 };
+    if (error) {
+      // Mark the run failed so latestRun (which serves only complete runs)
+      // never picks a partially-written board.
+      await supa.from("ranking_runs").update({ status: "failed" }).eq("id", run.id);
+      const hint = /integer/.test(error.message) ? " — run migration 0243 on Soar Hub v2." : "";
+      return { error: `Row insert failed: ${error.message}${hint}`, status: 500 };
+    }
   }
+  // All rows landed — publish the run.
+  await supa.from("ranking_runs").update({ status: "complete", completed_at: new Date().toISOString() }).eq("id", run.id);
 
   return { run_id: run.id, week_ending: weekEnding, period: fi.period, week: fi.weekInPeriod, rows: rowsOut.length, issues };
 }
