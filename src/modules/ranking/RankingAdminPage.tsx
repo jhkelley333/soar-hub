@@ -18,7 +18,7 @@ import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
-  addRankingConfig, backfillRankingFields, fetchRankingOverview, ingestEcosureRows, ingestIxFile, ingestTotzoneRows, setLaborPad,
+  addRankingConfig, backfillRankingFields, fetchRankingOverview, ingestBscRows, ingestEcosureRows, ingestIxFile, ingestTotzoneRows, setLaborPad,
   type RankingConfigRow, type RankingStoreRow,
 } from "./api";
 
@@ -98,6 +98,8 @@ function SettingsView() {
         <TotzoneUploadPanel />
 
         <EcosureUploadPanel />
+
+        <BscUploadPanel />
 
         <BackfillPanel />
         {/* Complaints placeholder */}
@@ -364,6 +366,89 @@ function EcosureUploadPanel() {
             Upload the Ecolab TrueView "List of Assessments" xlsx. Each store scores on its YTD assessment
             average; stores without an audit show "No Audit" and take a neutral 3. Duplicates rejected by
             content hash.
+          </p>
+          {summary && <p className="mt-1 font-mono text-xs text-zinc-600">{summary}</p>}
+        </div>
+        <label className={cn(
+          "cursor-pointer rounded-lg bg-midnight px-3 py-2 text-sm font-semibold text-white hover:bg-zinc-800",
+          busy && "pointer-events-none opacity-50",
+        )}>
+          {busy ? "Ingesting…" : "Upload XLSX"}
+          <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={onFile} />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+// ── BSC Training upload (the LTO training % — column G of the BSC sheet) ─
+function BscUploadPanel() {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [summary, setSummary] = useState<string | null>(null);
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    setBusy(true);
+    setSummary(null);
+    try {
+      const buf = await f.arrayBuffer();
+      const shaBytes = await crypto.subtle.digest("SHA-256", buf);
+      const sha256 = [...new Uint8Array(shaBytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
+
+      const XLSX = await import("xlsx");
+      const wb = XLSX.read(buf, { type: "array" });
+      const ws = wb.Sheets.BSC ?? wb.Sheets[wb.SheetNames[0]];
+      const grid = XLSX.utils.sheet_to_json<(string | number | null)[]>(ws, { header: 1, raw: true });
+      const hIdx = grid.findIndex((r) => String(r?.[0] ?? "").trim().toLowerCase().startsWith("store #"));
+      if (hIdx < 0) throw new Error('Couldn\'t find the "Store #" header row on the BSC sheet.');
+      // As-of date from the title block (Excel serial).
+      let asOf: string | null = null;
+      for (let i = 0; i < hIdx && !asOf; i++) {
+        for (const c of grid[i] ?? []) {
+          if (typeof c === "number" && c > 20000 && c < 60000) {
+            asOf = new Date(Math.round((c - 25569) * 86400000)).toISOString().slice(0, 10);
+            break;
+          }
+        }
+      }
+      // BSC score = column G (index 6), the LTO Training Module % Heath pointed to.
+      const G = 6;
+      const num = (v: unknown) => (typeof v === "number" && isFinite(v) ? v : null);
+      const rows = grid.slice(hIdx + 1)
+        .map((r) => ({
+          store_code: String(r?.[0] ?? "").replace(/\D/g, ""),
+          store_name: String(r?.[1] ?? "").trim() || null,
+          do_name: String(r?.[2] ?? "").trim() || null,
+          sdo_name: String(r?.[3] ?? "").trim() || null,
+          bsc_pct: num(r?.[G]),
+        }))
+        .filter((r) => /^\d+$/.test(r.store_code) && r.bsc_pct != null); // drops the footer blocks
+      if (!rows.length) throw new Error("No store rows with a BSC % in column G found.");
+
+      const res = await ingestBscRows({ filename: f.name, sha256, as_of: asOf, rows });
+      setSummary(
+        `as of ${res.as_of ?? "?"} · ${res.stores} stores` +
+        (res.unresolved.length ? ` · unresolved: ${res.unresolved.join(", ")}` : ""),
+      );
+      toast.push("BSC ingested — hit Run now on the Ranking tab to apply.", "success");
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "Ingest failed.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-midnight">BSC — LTO Training</div>
+          <p className="text-xs text-zinc-500">
+            Upload the "BSC Training" xlsx. Each store's LTO Training Module completion % (column G of the BSC
+            sheet) scores 1–5 in Operations. Duplicates rejected by content hash.
           </p>
           {summary && <p className="mt-1 font-mono text-xs text-zinc-600">{summary}</p>}
         </div>
