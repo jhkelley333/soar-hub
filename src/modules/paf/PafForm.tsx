@@ -68,10 +68,13 @@ function visibleSections(category: string, bonusType: string, crossClockedOther 
   }
   if (c === "Cross Store Work") {
     out.add("store");
-    // Pay + tips only when the team member did NOT clock in at the other
-    // store — clocked-in hours pay through that store's own payroll.
     if (crossClockedOther === "no") {
+      // Not clocked in at the other store — hours pay here, tips included.
       out.add("tips");
+      out.add("pay");
+    } else if (crossClockedOther === "yes") {
+      // Clocked in there — record the hours to charge the other store, but no
+      // pay accrues here (rate + tips are cleared/hidden).
       out.add("pay");
     }
     return out;
@@ -308,6 +311,8 @@ function isFieldVisibleForState(fieldKey: string, state: FormState): boolean {
     return false;
   }
   if (fieldKey === "reg_pay_rate") {
+    // Clocked in at the other store: no pay accrues here, so no rate to enter.
+    if (state.category === "Cross Store Work" && state.cross_clocked_other === "yes") return false;
     return state.pay_basis !== "Salary";
   }
   if (fieldKey === "new_location") {
@@ -858,11 +863,10 @@ export function PafForm({
                   onClick={() => {
                     patch("cross_clocked_other", val);
                     if (val === "yes") {
-                      // Their hours pay through the other store's clock —
-                      // clear any pay entered so nothing double-pays.
+                      // Pay flows through the other store's clock — clear the
+                      // rate + tips so nothing double-pays, but KEEP the hours
+                      // (payroll needs them to charge the other store).
                       patch("reg_pay_rate", "");
-                      patch("reg_hours", "");
-                      patch("ot_hours", "");
                       patch("cc_tips", "");
                       patch("declared_tips", "");
                     }
@@ -879,9 +883,9 @@ export function PafForm({
             </div>
             {state.cross_clocked_other === "yes" && (
               <div className="rounded-md bg-amber-50 px-3 py-2.5 text-sm text-amber-800 ring-1 ring-inset ring-amber-200">
-                <strong>No additional pay goes on this PAF</strong> — their hours already pay through the other
-                store's clock. Fill in <strong>Store Charged OT</strong> below; a note is added automatically so
-                payroll knows which store the overtime charges to.
+                <strong>No pay is added on this PAF</strong> — their hours already pay through the other store's
+                clock. Enter the <strong>hours worked</strong> below and the <strong>Store Charged OT</strong> so
+                payroll knows how many OT hours to charge, and which store. The PAF still nets $0.
               </div>
             )}
             {state.cross_clocked_other === "no" && (
