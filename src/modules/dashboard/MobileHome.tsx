@@ -265,7 +265,7 @@ export function MobileHome() {
           sub="Audits & walks"
         />
         <QuickAction
-          to="/ranker"
+          to="/admin/ranking"
           Icon={Trophy}
           gradient="linear-gradient(135deg,#5cc6e2,#2196b8)"
           title="Ranker"

@@ -46,13 +46,8 @@ export function RankingAdminPage() {
     return (
       <>
         <PageHeader
-          title={
-            <span className="inline-flex items-center gap-2">
-              My Store Ranking
-              <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent">Build</span>
-            </span>
-          }
-          description="Your store's ranking, the way the Ranker showed it. In build — the sheet-fed Ranker stays live until cutover."
+          title="My Store Ranking"
+          description="Your store's weekly ranking and scorecard."
         />
         <MyStoreView />
       </>
@@ -72,13 +67,8 @@ export function RankingAdminPage() {
   return (
     <>
       <PageHeader
-        title={
-          <span className="inline-flex items-center gap-2">
-            Ranking
-            <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent">Build</span>
-          </span>
-        }
-        description="Scoped to your stores and team, like the rest of the Hub. In build — the sheet-fed Ranker stays live until cutover."
+        title="Ranker"
+        description="Weekly performance ranking, scoped to your stores and team."
       />
       <div className="mb-4">
         <Segmented<AdminView> value={active} onChange={setView} options={options} />
