@@ -5,7 +5,7 @@
 
 import { Fragment, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Download, Play, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Download, Play, RefreshCw } from "lucide-react";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Button } from "@/shared/ui/Button";
@@ -232,6 +232,7 @@ export function RankingResultsView() {
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
   const [openRow, setOpenRow] = useState<string | null>(null);
   const [modalRow, setModalRow] = useState<RankingResultRow | null>(null); // store dashboard popup
+  const [showIssues, setShowIssues] = useState(false); // run-notes panel, collapsed by default
   // Selected week: null = newest. The picker spans hub runs AND sheet-era
   // legacy weeks (before the P7W2 cutover); legacy weeks are store-tier only.
   const [weekKey, setWeekKey] = useState<string | null>(null);
@@ -440,17 +441,38 @@ export function RankingResultsView() {
         </div>
       )}
 
-      {/* Alerts */}
-      {(run?.issues ?? []).map((iss, i) => (
-        <div key={i} className={cn(
-          "rounded-lg border-l-4 px-3.5 py-2.5 text-xs",
-          iss.level === "bad" ? "border-red-500 bg-red-50 text-red-800"
-            : iss.level === "warn" ? "border-amber-500 bg-amber-50 text-amber-800"
-            : "border-zinc-300 bg-zinc-50 text-zinc-600",
-        )}>
-          {iss.msg}
-        </div>
-      ))}
+      {/* Run notes — collapsible (kept out of the way; the header flags how
+          many need attention so nothing important is buried). */}
+      {(run?.issues ?? []).length > 0 && (() => {
+        const issues = run?.issues ?? [];
+        const flags = issues.filter((i) => i.level === "warn" || i.level === "bad").length;
+        return (
+          <div className="overflow-hidden rounded-lg border border-zinc-200 bg-white">
+            <button onClick={() => setShowIssues((v) => !v)}
+              className="flex w-full items-center justify-between gap-2 px-3.5 py-2 text-xs font-semibold text-zinc-600 hover:bg-zinc-50">
+              <span className="inline-flex items-center gap-2">
+                <span className={cn("h-1.5 w-1.5 rounded-full", flags ? "bg-amber-500" : "bg-emerald-500")} />
+                Run notes · {issues.length}{flags ? <span className="text-amber-600"> · {flags} need attention</span> : ""}
+              </span>
+              {showIssues ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+            </button>
+            {showIssues && (
+              <div className="space-y-1.5 border-t border-zinc-100 p-2">
+                {issues.map((iss, i) => (
+                  <div key={i} className={cn(
+                    "rounded-lg border-l-4 px-3.5 py-2 text-xs",
+                    iss.level === "bad" ? "border-red-500 bg-red-50 text-red-800"
+                      : iss.level === "warn" ? "border-amber-500 bg-amber-50 text-amber-800"
+                      : "border-zinc-300 bg-zinc-50 text-zinc-600",
+                  )}>
+                    {iss.msg}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })()}
 
       {/* Source board (hub runs only; legacy weeks have no source status) */}
       {run?.source_status && (
