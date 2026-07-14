@@ -24,9 +24,28 @@ function isoAddDays(iso, n) {
 
 const REQUIRED_BANDS = ["sales_vs_ly", "food_cost", "bsc_training", "on_time", "complaints", "food_safety", "vog", "total_training"];
 
+// Food-cost dollars run over the TARGET efficiency (default 96%):
+// actual - ideal/target, floored at 0. Prefers the IX actual/ideal dollars;
+// reconstructs them from variance + efficiency for files ingested before
+// those columns were captured. Savers (eff >= target) miss $0.
+function fcMissVsTarget(ix, target) {
+  if (!ix) return 0;
+  const n = (v) => (typeof v === "number" && isFinite(v) ? v : Number.isFinite(Number(v)) ? Number(v) : 0);
+  let actual = n(ix.actual_dollars);
+  let ideal = n(ix.ideal_dollars);
+  if (!(actual > 0) || !(ideal > 0)) {
+    // Reconstruct: fc_variance = ideal - actual; cogs_eff = ideal / actual.
+    const eff = n(ix.cogs_eff), variance = n(ix.fc_variance);
+    if (eff > 0 && eff < 1) { actual = -variance / (1 - eff); ideal = eff * actual; }
+    else return 0; // eff >= 1 (saver) or unusable -> no miss
+  }
+  if (!(actual > 0) || !(ideal > 0) || !(target > 0)) return 0;
+  return Math.max(0, actual - ideal / target);
+}
+
 // One band's engine input from a labor_v2_daily row (prefix "wtd_"/"ptd_")
 // plus that store's IX payload for the matching scope (null until ingested).
-function bandInput(r, p, ix) {
+function bandInput(r, p, ix, fcTarget) {
   const otDen = Number(r[p + "on_time_denominator"]);
   const otNum = Number(r[p + "on_time_numerator"]);
   return {
@@ -43,7 +62,8 @@ function bandInput(r, p, ix) {
     // IX category export when ingested; the sheet's missing-IX rule (96.0%)
     // otherwise. A store absent from the file also gets 96.0%.
     cogsEff: isNum(ix?.cogs_eff) ? ix.cogs_eff : 0.96,
-    fcMiss: isNum(ix?.fc_miss) ? ix.fc_miss : 0,
+    // FC $ miss = actual over the target-efficiency cost (default 96%), $0 at/above.
+    fcMiss: ix ? fcMissVsTarget(ix, fcTarget) : 0,
     onTimePct: isFinite(otDen) && otDen > 0 && isFinite(otNum) ? otNum / otDen : null,
     voids: numOrNull(r[p + "void_total"]),
     callsPer10k: null,                                        // B6: on hold -> neutral 3
@@ -183,6 +203,7 @@ export async function runRankingNow(supa, user) {
     issues.push({ level: "warn", msg: "Couldn't compute company avg wage from Labor v2 — fell back to 12.84." });
   }
   const weeksInPeriod = Math.round(((Date.parse(fi.periodEnd) - Date.parse(fi.periodStart)) / 86400000 + 1) / 7);
+  issues.push({ level: "info", msg: `Food cost miss measured against ${(rc.fcTargetEfficiency * 100).toFixed(1)}% target efficiency (adjustable in System Settings).` });
 
   // 5. Engine inputs (IX food cost + TotZone training join here when ingested).
   const ix = await loadIxForWeek(supa, weekEnding, issues);
@@ -275,8 +296,8 @@ export async function runRankingNow(supa, user) {
     const ixWtd = ix.wtd?.stores.get(num) ?? null;
     if (ix.ptd && !ixPtd) ixMissing++;
     if (isNum(ixPtd?.cogs_eff) && ixPtd.cogs_eff <= 0) badIx.push(`${num} (${(ixPtd.cogs_eff * 100).toFixed(1)}%)`);
-    const ptd = bandInput(r, "ptd_", ixPtd);
-    const wtd = bandInput(r, "wtd_", ixWtd);
+    const ptd = bandInput(r, "ptd_", ixPtd, rc.fcTargetEfficiency);
+    const wtd = bandInput(r, "wtd_", ixWtd, rc.fcTargetEfficiency);
     // Total Training (PTD-only; WTD's contract excludes it). Scored 1-5 but
     // never counted toward Total Points (DEVIATIONS A).
     const tzRow = tz?.stores.get(num);

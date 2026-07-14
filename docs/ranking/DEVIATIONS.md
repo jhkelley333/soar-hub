@@ -94,6 +94,22 @@ remains intact as the fallback). Two guarded lines per scope, commented
 `HUB CHANGE`, covered by smoke assertions. This is the only edit ever made
 to the ported engine.
 
+### B9. FC $ Miss is measured vs a TARGET efficiency (96%), not ideal (Heath, 7/13).
+
+Corrects an earlier mistake. FC $ Miss = `max(0, Actual − Ideal ÷ target)`,
+target default **0.96**, matching the SOAR Ranking category definition:
+"dollars lost by running below 96% efficiency; at/above 96% the miss is $0."
+The earlier build measured vs ideal (100%), which over-counted every store
+below ideal. Verified against Alex's mockup: store 2243 → $3,680 and 5122 →
+$3,595 match exactly with the 96% target (vs-ideal gave $3,946 / $3,716).
+
+The target is a versioned config key `fc_target_efficiency`, adjustable in
+Ranking System Settings (past runs keep the target they used). Migration
+0244 seeds 0.96. The IX parser now captures Actual $ / Ideal $ directly;
+files ingested before that reconstruct them from variance + efficiency, so
+no re-upload is required. Food-cost SCORE bands are unchanged (separate from
+the miss).
+
 ### B7. Labor comes CREDIT-ADJUSTED from Labor v2 (Heath, 7/13).
 
 The sheet feeds raw labor % and subtracts training-credit / PTO dollars

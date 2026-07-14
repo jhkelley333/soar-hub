@@ -39,6 +39,17 @@ async function getSessionUser(supa, event) {
 
 const isMissingTable = (error) => !!error && /ranking_config|ranking_store_seed/.test(String(error.message)) && /does not exist|relation/i.test(String(error.message));
 
+// Current value of a versioned config key (newest effective_from <= today).
+function currentConfig(rows, key) {
+  const today = new Date().toISOString().slice(0, 10);
+  let best = null;
+  for (const r of rows || []) {
+    if (r.key !== key || r.effective_from > today) continue;
+    if (!best || r.effective_from > best.effective_from) best = r;
+  }
+  return best?.value ?? null;
+}
+
 async function overview(supa) {
   const [cfg, seeds, stores] = await Promise.all([
     supa.from("ranking_config").select("id, key, value, effective_from, note, created_at").order("key").order("effective_from", { ascending: false }),
@@ -57,7 +68,28 @@ async function overview(supa) {
     entity: s.soar_company_name ?? null, // legal entity comes from My Stores data (DEVIATIONS B3)
     labor_pad: padByStore.get(s.id)?.labor_pad ?? null,
   }));
-  return { config: cfg.data || [], stores: storeRows };
+  const fcTarget = Number(currentConfig(cfg.data, "fc_target_efficiency")?.efficiency);
+  return {
+    config: cfg.data || [],
+    stores: storeRows,
+    fc_target_efficiency: isFinite(fcTarget) && fcTarget > 0 ? fcTarget : 0.96,
+  };
+}
+
+// Set the food-cost miss target efficiency — appends a versioned config row
+// effective today (past runs keep the target they used).
+async function setFcTarget(supa, user, body) {
+  const eff = Number(body?.efficiency);
+  if (!isFinite(eff) || eff < 0.5 || eff > 1.5) {
+    return { error: "Enter a target efficiency between 50% and 150% (e.g. 0.96).", status: 400 };
+  }
+  const today = new Date().toISOString().slice(0, 10);
+  const { error } = await supa.from("ranking_config").upsert(
+    { key: "fc_target_efficiency", value: { efficiency: Math.round(eff * 10000) / 10000 }, effective_from: today, note: "Set via System Settings", created_by: user.id },
+    { onConflict: "key,effective_from" },
+  );
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, efficiency: eff };
 }
 
 async function configAdd(supa, user, body) {
@@ -468,6 +500,7 @@ export const handler = async (event) => {
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "config-add") return unwrap(await configAdd(supa, user, body));
       if (action === "pad-set") return unwrap(await padSet(supa, user, body));
+      if (action === "fc-target-set") return unwrap(await setFcTarget(supa, user, body));
       if (action === "run-now") return unwrap(await runRankingNow(supa, user));
       if (action === "backfill") return unwrap(await backfillLaborWindow(supa, { days: Number(body?.days) || 35 }));
       if (action === "ingest-ix") return unwrap(await ingestIx(supa, user, body));
