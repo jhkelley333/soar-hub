@@ -17,6 +17,8 @@ const fmtUSD = (v: unknown) => (isNum(v) ? `$${Math.round(v).toLocaleString("en-
 const fmtSignedPct = (v: unknown) =>
   isNum(v) ? `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)}%` : typeof v === "string" ? v : "—";
 const fmtPct1 = (v: unknown) => (isNum(v) ? `${(v * 100).toFixed(1)}%` : "—");
+const fmtInt = (v: unknown) => (isNum(v) ? Math.round(v).toLocaleString("en-US") : "—");
+const fmtNum1 = (v: unknown) => (isNum(v) ? v.toFixed(1) : typeof v === "string" ? v : "—");
 
 const SCORE_BG: Record<number, string> = {
   1: "bg-red-600", 2: "bg-amber-500", 3: "bg-zinc-400", 4: "bg-emerald-500", 5: "bg-emerald-700",
@@ -190,16 +192,37 @@ function EntityCard({ r, level, expanded, onTap }: {
       </button>
       {expanded && (
         <div className="grid grid-cols-2 gap-x-4 gap-y-1 border-t border-zinc-100 bg-zinc-50/60 px-3 py-3 text-xs">
+          {/* Full metric dump — parity with the board + workbook */}
           <Detail l="Sales" v={fmtUSD(m.sales)} />
+          <Detail l="LY sales" v={fmtUSD(m.lySales)} />
           <Detail l="vs LY" v={fmtSignedPct(m.pctVsLy)} />
+          <Detail l="Tickets" v={fmtInt(m.tickets)} />
+          <Detail l="Tickets vs LY" v={fmtSignedPct(m.ticketsVsLyPct)} />
+          <Detail l="COGS eff" v={fmtPct1(m.cogsEff)} />
+          <Detail l="FC $ miss" v={fmtUSD(m.fcMiss)} />
+          <Detail l="FC annualized" v={fmtUSD(m.fcAnnualized)} />
           <Detail l="Labor %" v={fmtPct1(m.laborPct)} />
+          <Detail l="PTO %" v={fmtPct1(m.ptoPct)} />
           <Detail l="Chart" v={fmtPct1(m.chart)} />
           <Detail l="Var to chart" v={fmtSignedPct(m.varianceToChart)} />
-          <Detail l="COGS eff" v={fmtPct1(m.cogsEff)} />
+          <Detail l="Labor $ miss" v={fmtUSD(m.laborMiss)} />
+          <Detail l="Hrs over" v={fmtInt(m.hoursOver)} />
+          <Detail l="Labor annualized" v={fmtUSD(m.laborAnnualized)} />
           <Detail l="Fin $ miss" v={fmtUSD(m.finMiss)} />
           <Detail l="Fin annualized" v={fmtUSD(m.finAnnualized)} />
+          <Detail l="BSC training" v={fmtPct1(m.bscTrainingPct)} />
           <Detail l="On time" v={fmtPct1(m.onTimePct)} />
+          <Detail l="Calls /10k" v={fmtNum1(m.callsPer10k)} />
+          <Detail l="EcoSure" v={fmtPct1(m.ecosure)} />
           <Detail l="VOG" v={fmtPct1(m.vog)} />
+          <Detail l="Training %" v={fmtPct1(m.totalTrainingPct)} />
+          <Detail l="Shops" v={fmtInt(m.msCount)} />
+          <Detail l="Shop avg" v={fmtPct1(m.msScore)} />
+          <Detail l="Voids $" v={fmtUSD(m.voids)} />
+          <Detail l="Voids %" v={fmtPct1(m.voidsPct)} />
+          <Detail l="DOH" v={fmtNum1(m.doh)} />
+          <Detail l="Ending $" v={fmtUSD(m.endingDollars)} />
+          <Detail l="$ over goal" v={fmtUSD(m.dollarsOverGoal)} />
         </div>
       )}
     </div>
