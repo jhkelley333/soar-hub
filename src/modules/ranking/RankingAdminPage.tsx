@@ -7,7 +7,7 @@ import { useMemo, useState } from "react";
 import { Segmented } from "@/shared/ui/Segmented";
 import { RankingResultsView } from "./RankingResultsView";
 import { RankingDrillView } from "./RankingDrillView";
-import { MyStoreView } from "./RankingStoreView";
+import { MyStoreView } from "./RankingStoreDetail";
 import { RankingTrendsView } from "./RankingTrendsView";
 import { RankingRiskView } from "./RankingRiskView";
 import { RankingWatchlistView } from "./RankingWatchlistView";
