@@ -9,6 +9,7 @@
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { runRankingNow, latestRun, listRuns, fullRun } from "./_lib/ranking/run.js";
+import { callerStoreNumbers } from "./_lib/ranking/scope.js";
 import { backfillLaborWindow } from "./_lib/kpiBackfill.js";
 import { parseIxCsv } from "./_lib/ranking/ixParse.js";
 import { importLegacyWeeks, trendsData } from "./_lib/ranking/legacy.js";
@@ -489,11 +490,10 @@ export const handler = async (event) => {
   try { supa = admin(); } catch (e) { return respond(500, { error: e.message }); }
   const user = await getSessionUser(supa, event);
   if (!user) return respond(401, { error: "unauthorized" });
-  // VP / COO can READ the ranking (board, drill-down, trends, risk) during the
-  // parallel run; the build ACTIONS (run, uploads, config) stay admin-only.
+  // Ranking READS are open to every active user, scoped to what they manage
+  // (like the rest of the Hub — see scope.js). Build ACTIONS (run, uploads,
+  // config) and System Settings (overview) stay admin-only.
   const role = String(user.role).toLowerCase();
-  const canRead = role === "admin" || role === "vp" || role === "coo";
-  if (!canRead) return respond(403, { error: "Ranking is limited to VP, COO, and admins during the build." });
 
   const params = event.queryStringParameters || {};
   const action = params.action || "overview";
@@ -501,7 +501,7 @@ export const handler = async (event) => {
 
   try {
     if (event.httpMethod === "POST") {
-      if (role !== "admin") return respond(403, { error: "Only admins can run the ranking or change its data during the build." });
+      if (role !== "admin") return respond(403, { error: "Only admins can run the ranking or change its data." });
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "config-add") return unwrap(await configAdd(supa, user, body));
       if (action === "pad-set") return unwrap(await padSet(supa, user, body));
@@ -517,12 +517,19 @@ export const handler = async (event) => {
       if (action === "import-legacy") return unwrap(await importLegacyWeeks(supa));
       return respond(400, { error: `Unknown action: ${action}` });
     }
-    if (action === "overview") return unwrap(await overview(supa));
-    if (action === "run-latest") return unwrap(await latestRun(supa, params));
+    // System Settings payload (all stores + config) — admin only.
+    if (action === "overview") {
+      if (role !== "admin") return respond(403, { error: "System settings are admin-only." });
+      return unwrap(await overview(supa));
+    }
+    // Scope every board/analytics read to what the caller manages (null = the
+    // org-wide roles payroll/admin/vp/coo, who see the whole company).
+    const storeNums = await callerStoreNumbers(supa, user);
+    if (action === "run-latest") return unwrap(await latestRun(supa, params, storeNums));
     if (action === "runs") return unwrap(await listRuns(supa));
-    if (action === "run-full") return unwrap(await fullRun(supa, params));
-    if (action === "trends") return unwrap(await trendsData(supa, params));
-    if (action === "risk") return unwrap(await riskData(supa));
+    if (action === "run-full") return unwrap(await fullRun(supa, params, storeNums));
+    if (action === "trends") return unwrap(await trendsData(supa, { ...params, storeNums }));
+    if (action === "risk") return unwrap(await riskData(supa, storeNums));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: `ranking-admin error: ${e?.message || String(e)}` });

@@ -37,7 +37,8 @@ export function RankingAdminPage() {
   const { profile } = useAuth();
   const isAdmin = profile?.role === "admin";
   const [view, setView] = useState<AdminView>("ranking");
-  // Non-admins (VP/COO) get read views only — no System settings.
+  // Every leader sees the board/drill/analytics scoped to what they manage
+  // (backend enforces the scope). Only admins get System settings.
   const options: { value: AdminView; label: string }[] = [
     { value: "ranking", label: "Ranking" },
     { value: "drill", label: "Drill" },
@@ -56,7 +57,7 @@ export function RankingAdminPage() {
             <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent">Build</span>
           </span>
         }
-        description="In build — VP, COO, and admins can view; leaders keep the sheet-fed Ranker until cutover."
+        description="Scoped to your stores and team, like the rest of the Hub. In build — the sheet-fed Ranker stays live until cutover."
       />
       <div className="mb-4">
         <Segmented<AdminView> value={active} onChange={setView} options={options} />

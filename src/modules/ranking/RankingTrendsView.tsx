@@ -11,6 +11,7 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
+import { useAuth } from "@/auth/AuthProvider";
 import { fetchRankingTrends, importLegacyHistory, type TrendStore, type TrendWeek } from "./api";
 
 const isNum = (v: unknown): v is number => typeof v === "number" && isFinite(v);
@@ -88,6 +89,8 @@ function rankMove(s: TrendStore): number | null {
 export function RankingTrendsView() {
   const toast = useToast();
   const qc = useQueryClient();
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === "admin"; // archiving legacy history is an admin write
   const q = useQuery({ queryKey: ["ranking-trends"], queryFn: () => fetchRankingTrends(26), staleTime: 5 * 60_000 });
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
@@ -123,11 +126,11 @@ export function RankingTrendsView() {
       <EmptyState
         title="No history yet"
         description="Archive the legacy ranker's weekly history from the Google Sheet — do this before the sheet retires, or the trend history dies with it."
-        action={
+        action={isAdmin ? (
           <Button onClick={runImport} disabled={importing}>
             <Download className="mr-1 h-4 w-4" /> {importing ? "Importing…" : "Import legacy history"}
           </Button>
-        }
+        ) : undefined}
       />
     );
   }
@@ -154,9 +157,11 @@ export function RankingTrendsView() {
           {weeks.length} weeks on the axis — <b className="text-zinc-700">{sheetWeeks} sheet-era</b> (muted) ·{" "}
           <b className="text-accent">{hubWeeks} hub-era</b> (shaded). Rank moves compare the last ~4 weeks.
         </p>
-        <Button size="sm" variant="secondary" onClick={runImport} disabled={importing}>
-          <Download className="mr-1 h-3.5 w-3.5" /> {importing ? "Syncing…" : "Sync sheet history"}
-        </Button>
+        {isAdmin && (
+          <Button size="sm" variant="secondary" onClick={runImport} disabled={importing}>
+            <Download className="mr-1 h-3.5 w-3.5" /> {importing ? "Syncing…" : "Sync sheet history"}
+          </Button>
+        )}
       </div>
 
       {/* Movers */}

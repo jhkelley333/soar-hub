@@ -215,6 +215,13 @@ export function RankingResultsView() {
   const qc = useQueryClient();
   const { profile } = useAuth();
   const isAdmin = profile?.role === "admin";
+  // Org-wide roles see the Company + Entity roll-ups; scoped leaders don't
+  // (the backend returns nothing there), so hide those tabs for them.
+  const isOrgWide = ["payroll", "admin", "vp", "coo"].includes(String(profile?.role ?? ""));
+  const tierTabs = useMemo(
+    () => (isOrgWide ? TIER_TABS : TIER_TABS.filter((t) => t.id !== "entity" && t.id !== "company")),
+    [isOrgWide],
+  );
   const [scope, setScope] = useState<RankScope>("ptd");
   const [tier, setTier] = useState<RankTier>("store");
   const [groupsOn, setGroupsOn] = useState<Record<string, boolean>>({ sales: true, fc: false, labor: false, fin: true, ops: true, info: false });
@@ -457,7 +464,7 @@ export function RankingResultsView() {
         <Segmented<RankScope> dense value={scope} onChange={setScope}
           options={[{ value: "ptd", label: "Period to date" }, { value: "wtd", label: "Week to date" }]} />
         <div className="ml-auto flex gap-0.5">
-          {TIER_TABS.map((t) => (
+          {tierTabs.map((t) => (
             <button key={t.id} onClick={() => { setTier(t.id); setSort(null); setOpenRow(null); }}
               className={cn("border-b-2 px-3 pb-2 pt-1.5 text-sm font-bold transition",
                 tier === t.id ? "border-midnight text-midnight" : "border-transparent text-zinc-400 hover:text-zinc-600")}>

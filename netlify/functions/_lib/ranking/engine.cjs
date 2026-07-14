@@ -10,7 +10,7 @@
  *   - NEW ticketsVsLy fields (tickets, lyTickets, ticketsVsLyPct) at every tier.
  *
  * Entry point: runRanking(inputs) -> { ptd: TierSet, wtd: TierSet, issues: Issue[] }
- *   TierSet = { stores, dos, sdos, rvps, company, entities }  (wtd.entities = [] — no WTD entity block)
+ *   TierSet = { stores, dos, sdos, rvps, company, entities }  (WTD entities built via the tier-generic aggregate — Hub deviation, workbook had none)
  *
  * inputs = {
  *   config: { bands, laborChart, avgWage, period, week, weeksInPeriod, weekEnding },
@@ -759,7 +759,11 @@ function buildTierSet(storeRows, mode, cfg, inputs) {
   var dos = groupRows(function (s) { return s.doName; }, 'do');
   var sdos = groupRows(function (s) { return s.sdoName; }, 'sdo');
   var rvps = groupRows(function (s) { return s.rvpName; }, 'rvp');
-  var entities = (mode === 'ptd') ? groupRows(function (s) { return s.entity; }, 'entity') : [];
+  // DEVIATION (B-series): the workbook has no WTD entity block, but the Hub
+  // scopes every tier to org/user, so an entity-level viewer needs WTD data
+  // too. Build it with the same aggregate machinery as DO/SDO/RVP (entity
+  // falls into the tier-generic WTD branches — only 'sdo' is special-cased).
+  var entities = groupRows(function (s) { return s.entity; }, 'entity');
   var company = (mode === 'ptd')
     ? companyPtd(sdos, storeRows, cfg, inputs)
     : companyWtd(sdos, storeRows, cfg, inputs);

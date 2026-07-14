@@ -223,7 +223,7 @@ export const router = createBrowserRouter([
       {
         path: "admin/ranking",
         element: (
-          <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
             <RankingAdminPage />
           </ProtectedRoute>
         ),

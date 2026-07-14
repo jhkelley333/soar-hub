@@ -11,6 +11,7 @@ import { resolveOrg } from "../kpiOrg.js";
 import { loadLaborCredits, applyCreditsToRows } from "../trainingCredit.js";
 import { backfillLaborDate } from "../kpiBackfill.js";
 import { loadRankingConfig } from "./config.js";
+import { deriveVisibleNames, filterTier } from "./scope.js";
 import engine from "./engine.cjs";
 
 const isNum = (v) => typeof v === "number" && isFinite(v);
@@ -492,7 +493,7 @@ export async function listRuns(supa) {
 
 // One run's rows — the latest by default, or a specific run via run_id
 // (the week picker's navigation).
-export async function latestRun(supa, params) {
+export async function latestRun(supa, params, storeNums = null) {
   const scope = params.scope === "wtd" ? "wtd" : "ptd";
   const tier = TIERS.has(params.tier) ? params.tier : "store";
   let run = null;
@@ -519,12 +520,27 @@ export async function latestRun(supa, params) {
     .eq("run_id", run.id).eq("scope", scope).eq("tier", tier)
     .order("rank", { ascending: true });
   if (rowsErr) return { error: rowsErr.message, status: 500 };
-  return { run, scope, tier, rows: rows || [] };
+
+  // Scope to the caller (null = org-wide, unrestricted). Leader tiers need the
+  // chain names above the caller's stores; load this run's store rows once.
+  let out = rows || [];
+  if (storeNums != null) {
+    let vis = { dos: new Set(), sdos: new Set(), rvps: new Set(), ents: new Set() };
+    if (tier !== "store" && tier !== "company" && tier !== "entity") {
+      const { data: storeRows } = await supa
+        .from("ranking_rows")
+        .select("entity_key, metrics")
+        .eq("run_id", run.id).eq("scope", scope).eq("tier", "store");
+      vis = deriveVisibleNames(storeRows || [], storeNums);
+    }
+    out = filterTier(out, tier, storeNums, vis);
+  }
+  return { run, scope, tier, rows: out };
 }
 
 // One run's ENTIRE board — every scope and tier, in a single response — for
 // the Excel workbook export. Latest complete run, or a specific run_id.
-export async function fullRun(supa, params) {
+export async function fullRun(supa, params, storeNums = null) {
   let run = null;
   if (params.run_id) {
     const { data } = await supa.from("ranking_runs").select("*").eq("id", params.run_id).maybeSingle();
@@ -547,10 +563,24 @@ export async function fullRun(supa, params) {
     .order("rank", { ascending: true })
     .limit(5000);
   if (error) return { error: error.message, status: 500 };
+
+  // Chain names above the caller's stores (scope-independent — derived from the
+  // PTD store rows). null storeNums = org-wide, no restriction.
+  const vis = storeNums != null
+    ? deriveVisibleNames((rows || []).filter((r) => r.scope === "ptd" && r.tier === "store"), storeNums)
+    : null;
+
   const scopes = { ptd: {}, wtd: {} };
   for (const r of rows || []) {
     const s = r.scope === "wtd" ? "wtd" : "ptd";
     (scopes[s][r.tier] ||= []).push({ entity_key: r.entity_key, rank: r.rank, total_points: r.total_points, metrics: r.metrics });
+  }
+  if (storeNums != null) {
+    for (const s of ["ptd", "wtd"]) {
+      for (const tier of Object.keys(scopes[s])) {
+        scopes[s][tier] = filterTier(scopes[s][tier], tier, storeNums, vis);
+      }
+    }
   }
   return { run, scopes };
 }
