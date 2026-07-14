@@ -19,7 +19,7 @@ import {
   type RankMetrics, type RankScope, type RankTier, type RankingResultRow,
 } from "./api";
 import { downloadRankingWorkbook } from "./rankingWorkbook";
-import { RankingStoreView } from "./RankingStoreView";
+import { RankingStoreDetail } from "./RankingStoreDetail";
 
 // ── formatting ────────────────────────────────────────────────────────
 const isNum = (v: unknown): v is number => typeof v === "number" && isFinite(v);
@@ -582,10 +582,11 @@ export function RankingResultsView() {
                     {isOpen && (
                       <tr className="border-b border-zinc-100 bg-zinc-50/70">
                         <td colSpan={cols.length} className="px-4 py-3">
-                          {/* Stores open the legacy-style store dashboard; leader
-                              tiers keep the compact metric grid. */}
+                          {/* Stores open the full store dashboard (with week
+                              history back to P1W1); leader tiers keep the
+                              compact metric grid. */}
                           {tier === "store"
-                            ? <RankingStoreView row={r} />
+                            ? <RankingStoreDetail store={r.entity_key} />
                             : <DetailGrid m={m} />}
                         </td>
                       </tr>
