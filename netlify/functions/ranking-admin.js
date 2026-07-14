@@ -12,7 +12,7 @@ import { runRankingNow, latestRun, listRuns, fullRun } from "./_lib/ranking/run.
 import { callerStoreNumbers } from "./_lib/ranking/scope.js";
 import { backfillLaborWindow } from "./_lib/kpiBackfill.js";
 import { parseIxCsv } from "./_lib/ranking/ixParse.js";
-import { importLegacyWeeks, trendsData } from "./_lib/ranking/legacy.js";
+import { importLegacyWeeks, trendsData, unifiedWeeks, legacyWeekStores } from "./_lib/ranking/legacy.js";
 import { riskData } from "./_lib/ranking/risk.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -527,6 +527,8 @@ export const handler = async (event) => {
     const storeNums = await callerStoreNumbers(supa, user);
     if (action === "run-latest") return unwrap(await latestRun(supa, params, storeNums));
     if (action === "runs") return unwrap(await listRuns(supa));
+    if (action === "weeks") return unwrap(await unifiedWeeks(supa));         // hub + legacy timeline
+    if (action === "legacy-week") return unwrap(await legacyWeekStores(supa, params, storeNums)); // one sheet-era week (store tier)
     if (action === "run-full") return unwrap(await fullRun(supa, params, storeNums));
     if (action === "trends") return unwrap(await trendsData(supa, { ...params, storeNums }));
     if (action === "risk") return unwrap(await riskData(supa, storeNums));
