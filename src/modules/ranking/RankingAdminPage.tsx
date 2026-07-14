@@ -7,6 +7,7 @@ import { useMemo, useState } from "react";
 import { Segmented } from "@/shared/ui/Segmented";
 import { RankingResultsView } from "./RankingResultsView";
 import { RankingDrillView } from "./RankingDrillView";
+import { MyStoreView } from "./RankingStoreView";
 import { RankingTrendsView } from "./RankingTrendsView";
 import { RankingRiskView } from "./RankingRiskView";
 import { RankingWatchlistView } from "./RankingWatchlistView";
@@ -36,7 +37,27 @@ type AdminView = "ranking" | "drill" | "watchlist" | "trends" | "risk" | "settin
 export function RankingAdminPage() {
   const { profile } = useAuth();
   const isAdmin = profile?.role === "admin";
+  const isGm = profile?.role === "gm";
   const [view, setView] = useState<AdminView>("ranking");
+
+  // A GM owns a single store — land them straight on the legacy-style store
+  // dashboard, no tier tabs or board to wade through.
+  if (isGm) {
+    return (
+      <>
+        <PageHeader
+          title={
+            <span className="inline-flex items-center gap-2">
+              My Store Ranking
+              <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent">Build</span>
+            </span>
+          }
+          description="Your store's ranking, the way the Ranker showed it. In build — the sheet-fed Ranker stays live until cutover."
+        />
+        <MyStoreView />
+      </>
+    );
+  }
   // Every leader sees the board/drill/analytics scoped to what they manage
   // (backend enforces the scope). Only admins get System settings.
   const options: { value: AdminView; label: string }[] = [

@@ -5,7 +5,6 @@
 
 import { Fragment, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "react-router-dom";
 import { ChevronLeft, ChevronRight, Download, Play, RefreshCw } from "lucide-react";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -20,6 +19,7 @@ import {
   type RankMetrics, type RankScope, type RankTier, type RankingResultRow,
 } from "./api";
 import { downloadRankingWorkbook } from "./rankingWorkbook";
+import { RankingStoreView } from "./RankingStoreView";
 
 // ── formatting ────────────────────────────────────────────────────────
 const isNum = (v: unknown): v is number => typeof v === "number" && isFinite(v);
@@ -582,12 +582,11 @@ export function RankingResultsView() {
                     {isOpen && (
                       <tr className="border-b border-zinc-100 bg-zinc-50/70">
                         <td colSpan={cols.length} className="px-4 py-3">
-                          <DetailGrid m={m} />
-                          {tier === "store" && (
-                            <Link to="/labor-v2" className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-accent hover:underline">
-                              Open Labor v2 <ChevronRight className="h-3 w-3" />
-                            </Link>
-                          )}
+                          {/* Stores open the legacy-style store dashboard; leader
+                              tiers keep the compact metric grid. */}
+                          {tier === "store"
+                            ? <RankingStoreView row={r} />
+                            : <DetailGrid m={m} />}
                         </td>
                       </tr>
                     )}
