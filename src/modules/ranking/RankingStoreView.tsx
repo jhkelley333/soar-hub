@@ -36,9 +36,11 @@ function ScoreChip({ label, v }: { label: string; v: unknown }) {
   );
 }
 
-// Tiny inline sparkline. `invert` flips the y-axis so "lower is better" series
-// (rank) still read as up = good.
-function Sparkline({ data, invert }: { data: (number | null)[]; invert?: boolean }) {
+// Tiny inline sparkline. The line always follows the RAW value (higher value =
+// higher on the chart), so it moves the same way the hero delta arrow does.
+// `lowerIsBetter` only flips the good/bad color (rank, labor): a rising line is
+// red for those, green for everything else.
+function Sparkline({ data, lowerIsBetter }: { data: (number | null)[]; lowerIsBetter?: boolean }) {
   const pts = data.map((v, i) => ({ v, i })).filter((p): p is { v: number; i: number } => isNum(p.v));
   if (pts.length < 2) return <div className="h-7 text-[10px] text-zinc-300">—</div>;
   const xs = pts.map((p) => p.i), ys = pts.map((p) => p.v);
@@ -47,11 +49,11 @@ function Sparkline({ data, invert }: { data: (number | null)[]; invert?: boolean
   const sx = (x: number) => (maxX === minX ? W / 2 : pad + ((x - minX) / (maxX - minX)) * (W - 2 * pad));
   const sy = (y: number) => {
     const t = maxY === minY ? 0.5 : (y - minY) / (maxY - minY);
-    return pad + (invert ? t : 1 - t) * (H - 2 * pad);
+    return pad + (1 - t) * (H - 2 * pad); // higher value always plots higher
   };
   const d = pts.map((p, idx) => `${idx ? "L" : "M"}${sx(p.i).toFixed(1)},${sy(p.v).toFixed(1)}`).join(" ");
   const first = pts[0].v, last = pts[pts.length - 1].v;
-  const better = invert ? last < first : last > first;
+  const better = lowerIsBetter ? last < first : last > first;
   const stroke = last === first ? "#a1a1aa" : better ? "#059669" : "#dc2626";
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="h-7 w-full" preserveAspectRatio="none">
@@ -72,14 +74,14 @@ function HeroStat({ label, value, sub, tone }: { label: string; value: string; s
   );
 }
 
-function KpiCard({ label, value, series, invert }: { label: string; value: string; series?: (number | null)[]; invert?: boolean }) {
+function KpiCard({ label, value, series, lowerIsBetter }: { label: string; value: string; series?: (number | null)[]; lowerIsBetter?: boolean }) {
   return (
     <div className="rounded-xl bg-white p-3 ring-1 ring-zinc-200">
       <div className="flex items-baseline justify-between">
         <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">{label}</span>
       </div>
       <div className="mt-0.5 font-mono text-lg font-bold text-midnight">{value}</div>
-      {series && <div className="mt-1"><Sparkline data={series} invert={invert} /></div>}
+      {series && <div className="mt-1"><Sparkline data={series} lowerIsBetter={lowerIsBetter} /></div>}
     </div>
   );
 }
@@ -96,11 +98,16 @@ export function RankingStoreView({ row, showLaborLink = true }: { row: RankingRe
   });
   const t: TrendStore | undefined = trendsQ.data?.stores?.[num];
 
-  // Rank delta from the trend tail (lower rank number = better).
+  // Rank movement, week over week (current run vs the immediately prior ranked
+  // week). rankMove follows the rank NUMBER: positive = the number rose (e.g.
+  // 8 -> 9), which is WORSE. The arrow points the way the number moved; the
+  // color says whether that was good or bad (lower rank number = better).
   const rankSeries = (t?.rank ?? []).filter(isNum);
-  const rankDelta = rankSeries.length >= 2 ? rankSeries[0] - rankSeries[rankSeries.length - 1] : null;
+  const rankCur = rankSeries.length >= 1 ? rankSeries[rankSeries.length - 1] : null;
+  const rankPrev = rankSeries.length >= 2 ? rankSeries[rankSeries.length - 2] : null;
+  const rankMove = isNum(rankCur) && isNum(rankPrev) ? rankCur - rankPrev : null;
   const salesSeries = (t?.sales ?? []).filter(isNum);
-  const salesDelta = salesSeries.length >= 2 ? salesSeries[salesSeries.length - 1] - salesSeries[0] : null;
+  const salesDelta = salesSeries.length >= 2 ? salesSeries[salesSeries.length - 1] - salesSeries[salesSeries.length - 2] : null;
 
   const CHIPS: [string, string][] = [
     ["Sales", "salesScore"], ["Food", "fcScore"], ["Labor", "laborScore"],
@@ -108,13 +115,13 @@ export function RankingStoreView({ row, showLaborLink = true }: { row: RankingRe
     ["VOG", "vogScore"], ["Complaints", "complaintsScore"],
   ];
 
-  const KPIS: { label: string; value: string; series?: (number | null)[]; invert?: boolean }[] = [
+  const KPIS: { label: string; value: string; series?: (number | null)[]; lowerIsBetter?: boolean }[] = [
     { label: "Weekly Sales", value: fmtMoney(m.sales), series: t?.sales },
     { label: "% vs LY", value: fmtSignedPct(m.pctVsLy), series: t?.vsly },
     { label: "COGS eff", value: fmtPct1(m.cogsEff), series: t?.cogs },
-    { label: "Labor %", value: fmtPct1(m.laborPct), series: t?.labor, invert: true },
+    { label: "Labor %", value: fmtPct1(m.laborPct), series: t?.labor, lowerIsBetter: true },
     { label: "On time", value: fmtPct1(m.onTimePct), series: t?.ontime },
-    { label: "Rank", value: isNum(row.rank) ? `#${row.rank}` : "—", series: t?.rank, invert: true },
+    { label: "Rank", value: isNum(row.rank) ? `#${row.rank}` : "—", series: t?.rank, lowerIsBetter: true },
     { label: "FC $ miss", value: fmtMoney(m.fcMiss) },
     { label: "FC annualized", value: fmtMoney(m.fcAnnualized) },
     { label: "Var to chart", value: fmtSignedPct(m.varianceToChart) },
@@ -134,8 +141,9 @@ export function RankingStoreView({ row, showLaborLink = true }: { row: RankingRe
           <div className="mt-1 text-xs text-white/60">GM: <span className="font-semibold text-white/90">{String(m.gm ?? "—")}</span></div>
         </div>
         <HeroStat label="Rank" value={isNum(row.rank) ? `#${row.rank}` : "—"}
-          sub={rankDelta == null ? undefined : rankDelta === 0 ? "no change" : rankDelta > 0 ? `▲ ${rankDelta} places` : `▼ ${-rankDelta} places`}
-          tone={rankDelta == null ? undefined : rankDelta > 0 ? "good" : rankDelta < 0 ? "bad" : "warn"} />
+          sub={rankMove == null ? undefined : rankMove === 0 ? "no change"
+            : `${rankMove > 0 ? "▲" : "▼"} ${Math.abs(rankMove)} place${Math.abs(rankMove) === 1 ? "" : "s"}`}
+          tone={rankMove == null ? undefined : rankMove > 0 ? "bad" : rankMove < 0 ? "good" : "warn"} />
         <HeroStat label="Total points" value={isNum(row.total_points) ? String(row.total_points) : "—"} />
         <HeroStat label="Weekly sales" value={fmtMoney(m.sales)}
           sub={salesDelta == null ? undefined : `${salesDelta >= 0 ? "▲" : "▼"} ${fmtMoney(Math.abs(salesDelta))} vs prior`}
