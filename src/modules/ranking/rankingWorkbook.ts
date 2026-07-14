@@ -80,8 +80,14 @@ const SCORE_FILL: Record<number, string> = {
   1: "FFC4443C", 2: "FFD98A2B", 3: "FFEAD25A", 4: "FF8FBF6B", 5: "FF2F7A47",
 };
 const NAVY = "FF132A45";
-const GOLD = "FFF2C94C";
 const HEAD = "FFEEF1F4";
+// Each metric group shaded distinctly (mirrors the on-screen board), identity
+// blocks stay navy. White header text on every band.
+const GROUP_FILL: Record<string, string> = {
+  "Store Info": NAVY, "Info": NAVY,
+  "Sales": "FF4338CA", "Food Cost": "FFB45309", "Labor": "FF6D28D9",
+  "Financial": "FF0F766E", "Operations": "FF475569", "Info Only": "FF64748B",
+};
 
 function cellVal(r: RankingResultRow, c: Col): unknown {
   if (c.key === "rank") return r.rank ?? null;
@@ -131,8 +137,8 @@ function addSection(ws: any, startRow: number, title: string | null, cols: Col[]
     ws.mergeCells(row, gi + 1, row, gj + 1);
     const gc = ws.getCell(row, gi + 1);
     gc.value = cols[gi].group;
-    gc.fill = { type: "pattern", pattern: "solid", fgColor: { argb: cols[gi].group === "Store Info" || cols[gi].group === "Info" ? NAVY : GOLD } };
-    gc.font = { bold: true, color: { argb: cols[gi].group === "Store Info" || cols[gi].group === "Info" ? "FFFFFFFF" : "FF1C2733" } };
+    gc.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GROUP_FILL[cols[gi].group] ?? NAVY } };
+    gc.font = { bold: true, color: { argb: "FFFFFFFF" } };
     gc.alignment = { horizontal: "left" };
     gi = gj + 1;
   }

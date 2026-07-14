@@ -48,6 +48,23 @@ interface Col { g: string; label: string; key: string; kind: Kind }
 
 const GROUPS: Record<string, string> = { id: "Info", sales: "Sales", fc: "Food cost", labor: "Labor", fin: "Financial", ops: "Operations" };
 
+// Each metric group gets its own shade so the eye can jump straight to a
+// section. Header band color + a matching soft tint for the column-header
+// row and the active toggle chip.
+const GROUP_HEAD: Record<string, string> = {
+  id: "bg-zinc-900", sales: "bg-indigo-700", fc: "bg-amber-700",
+  labor: "bg-violet-700", fin: "bg-teal-700", ops: "bg-slate-600",
+};
+const GROUP_TINT: Record<string, string> = {
+  sales: "bg-indigo-50", fc: "bg-amber-50", labor: "bg-violet-50",
+  fin: "bg-teal-50", ops: "bg-slate-100",
+};
+const GROUP_CHIP: Record<string, string> = {
+  sales: "border-indigo-700 bg-indigo-700", fc: "border-amber-700 bg-amber-700",
+  labor: "border-violet-700 bg-violet-700", fin: "border-teal-700 bg-teal-700",
+  ops: "border-slate-600 bg-slate-600",
+};
+
 const STORE_COLS: Col[] = [
   { g: "id", label: "#", key: "rank", kind: "rank" },
   { g: "id", label: "Store", key: "__store", kind: "id" },
@@ -200,6 +217,8 @@ export function RankingResultsView() {
   const [scope, setScope] = useState<RankScope>("ptd");
   const [tier, setTier] = useState<RankTier>("store");
   const [groupsOn, setGroupsOn] = useState<Record<string, boolean>>({ sales: true, fc: false, labor: false, fin: true, ops: true });
+  const [showScores, setShowScores] = useState(true); // 1–5 chips + Fin/Ops score totals
+  const [showPoints, setShowPoints] = useState(true); // the Points column
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
   const [openRow, setOpenRow] = useState<string | null>(null);
@@ -235,8 +254,12 @@ export function RankingResultsView() {
 
   const baseCols = tier === "store" ? STORE_COLS : LEADER_COLS;
   const cols = useMemo(
-    () => baseCols.filter((c) => (c.g === "id" || groupsOn[c.g]) && !(scope === "wtd" && WTD_HIDE.has(c.key))),
-    [baseCols, groupsOn, scope],
+    () => baseCols.filter((c) =>
+      (c.g === "id" || groupsOn[c.g])
+      && !(scope === "wtd" && WTD_HIDE.has(c.key))
+      && !(!showScores && (c.kind === "score" || c.kind === "tot")) // hide 1–5 chips + Fin/Ops totals
+      && !(!showPoints && c.kind === "pts")),                        // hide Points column
+    [baseCols, groupsOn, scope, showScores, showPoints],
   );
 
   // Frozen identity columns (Rank, Store/Name, GM/Stores): cumulative left
@@ -449,10 +472,21 @@ export function RankingResultsView() {
         {Object.entries(GROUPS).filter(([k]) => k !== "id").map(([k, label]) => (
           <button key={k} onClick={() => setGroupsOn((g) => ({ ...g, [k]: !g[k] }))}
             className={cn("rounded-full border px-2.5 py-1 text-xs font-bold transition",
-              groupsOn[k] ? "border-midnight bg-midnight text-white" : "border-zinc-200 bg-white text-zinc-500 hover:border-zinc-300")}>
+              groupsOn[k] ? cn(GROUP_CHIP[k] ?? "border-midnight bg-midnight", "text-white") : "border-zinc-200 bg-white text-zinc-500 hover:border-zinc-300")}>
             {label}
           </button>
         ))}
+        <span className="ml-2 text-[10px] font-bold uppercase tracking-wider text-zinc-400">Show</span>
+        <button onClick={() => setShowScores((v) => !v)}
+          className={cn("rounded-full border px-2.5 py-1 text-xs font-bold transition",
+            showScores ? "border-midnight bg-midnight text-white" : "border-zinc-200 bg-white text-zinc-500 hover:border-zinc-300")}>
+          Scores
+        </button>
+        <button onClick={() => setShowPoints((v) => !v)}
+          className={cn("rounded-full border px-2.5 py-1 text-xs font-bold transition",
+            showPoints ? "border-midnight bg-midnight text-white" : "border-zinc-200 bg-white text-zinc-500 hover:border-zinc-300")}>
+          Points
+        </button>
       </div>
 
       {/* Table — header rows + the identity (Store/GM) columns stay locked
@@ -471,7 +505,8 @@ export function RankingResultsView() {
                       <th key={key} colSpan={sp}
                         style={isId ? { left: 0, minWidth: idBlockWidth } : undefined}
                         className={cn("h-7 px-2.5 text-left text-[10px] font-bold uppercase tracking-widest text-white sticky top-0",
-                          isId ? "bg-zinc-900 z-40 left-0" : "bg-midnight z-30")}>
+                          GROUP_HEAD[grp] ?? "bg-midnight",
+                          isId ? "z-40 left-0" : "z-30")}>
                         {GROUPS[grp]}
                       </th>,
                     );
@@ -495,7 +530,7 @@ export function RankingResultsView() {
                       style={sticky ? { left, minWidth: idw(c.key) } : undefined}
                       className={cn("cursor-pointer whitespace-nowrap border-b border-zinc-200 px-2.5 py-1.5 text-[11px] font-bold uppercase tracking-wide text-zinc-500 hover:text-zinc-800 sticky top-7",
                         c.kind === "id" || c.kind === "text" ? "text-left" : "text-right",
-                        sticky ? "bg-zinc-100 z-30" : "bg-zinc-50 z-20",
+                        sticky ? "bg-zinc-100 z-30" : cn(GROUP_TINT[c.g] ?? "bg-zinc-50", "z-20"),
                         i === lastIdIdx && "border-r border-zinc-200",
                         sort?.key === c.key && "text-midnight")}>
                       {c.label}{sort?.key === c.key ? (sort.dir === 1 ? " ▴" : " ▾") : ""}
