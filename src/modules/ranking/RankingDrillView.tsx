@@ -19,16 +19,21 @@ const fmtSignedPct = (v: unknown) =>
 const fmtPct1 = (v: unknown) => (isNum(v) ? `${(v * 100).toFixed(1)}%` : "—");
 const fmtInt = (v: unknown) => (isNum(v) ? Math.round(v).toLocaleString("en-US") : "—");
 const fmtNum1 = (v: unknown) => (isNum(v) ? v.toFixed(1) : typeof v === "string" ? v : "—");
+// Points: whole numbers stay whole (PTD); WTD's fractional totals show one decimal.
+const fmtPts = (v: unknown) => (isNum(v) ? (Number.isInteger(v) ? String(v) : v.toFixed(1)) : "–");
 
 const SCORE_BG: Record<number, string> = {
   1: "bg-red-600", 2: "bg-amber-500", 3: "bg-zinc-400", 4: "bg-emerald-500", 5: "bg-emerald-700",
 };
 function Chip({ label, v }: { label: string; v: unknown }) {
+  // WTD leader aggregates are fractional (averaged scores) — round to a whole
+  // number so it fits the chip and colors by band.
+  const rv = isNum(v) ? Math.round(v) : null;
   return (
     <div className="flex flex-col items-center gap-0.5">
-      <span className={cn("flex h-7 w-7 items-center justify-center rounded-md font-mono text-sm font-bold text-white",
-        isNum(v) ? SCORE_BG[v] ?? "bg-zinc-400" : "bg-zinc-200 !text-zinc-400")}>
-        {isNum(v) ? v : "–"}
+      <span className={cn("flex h-7 w-7 items-center justify-center rounded-md font-mono text-sm font-bold text-white tabular-nums",
+        rv != null ? SCORE_BG[rv] ?? "bg-zinc-400" : "bg-zinc-200 !text-zinc-400")}>
+        {rv ?? "–"}
       </span>
       <span className="text-[9px] font-semibold uppercase tracking-wide text-zinc-400">{label}</span>
     </div>
@@ -150,7 +155,7 @@ function SummaryCard({ row, label }: { row: RankingResultRow; label: string }) {
           <div className="text-base font-bold">{String(m.name ?? row.entity_key)}</div>
         </div>
         <div className="text-right">
-          <div className="font-mono text-2xl font-black">{isNum(row.total_points) ? row.total_points : "–"}</div>
+          <div className="font-mono text-2xl font-black">{fmtPts(row.total_points)}</div>
           <div className="text-[10px] text-white/60">points{isNum(row.rank) ? ` · rank ${row.rank}` : ""}</div>
         </div>
       </div>
@@ -187,7 +192,7 @@ function EntityCard({ r, level, expanded, onTap }: {
           <Chip label="Ops" v={m.opsScore} />
         </div>
         <div className="shrink-0 text-right">
-          <div className="font-mono text-lg font-black text-midnight">{isNum(r.total_points) ? r.total_points : "–"}</div>
+          <div className="font-mono text-lg font-black text-midnight">{fmtPts(r.total_points)}</div>
           {!isStore && <ChevronRight className="ml-auto h-4 w-4 text-zinc-300" />}
         </div>
       </button>

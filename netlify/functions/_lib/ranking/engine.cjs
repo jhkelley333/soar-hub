@@ -589,6 +589,9 @@ function companyPtd(sdoRows, storeRows, cfg, inputs) {
 function aggregateWtd(name, members, opts, cfg, inputs) {
   var tier = opts.tier;
   var r = { tier: tier, name: name, storeCount: members.length };
+  // Parent-chain names (as PTD does) so the drill-down can filter children.
+  if (tier === 'do') r.sdoName = members.length ? members[0].sdoName : null;
+  if (tier === 'do' || tier === 'sdo') r.rvpName = members.length ? members[0].rvpName : null;
   var roll = opts.rollup || {};
   var wSales = function (m) { return m.sales; };
 
