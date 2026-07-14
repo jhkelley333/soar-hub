@@ -28,6 +28,7 @@ const fmtPct1 = (v: unknown) => (isNum(v) ? `${(v * 100).toFixed(1)}%` : typeof 
 const fmtSignedPct = (v: unknown) =>
   isNum(v) ? `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)}%` : typeof v === "string" ? v : "—";
 const fmtInt = (v: unknown) => (isNum(v) ? Math.round(v).toLocaleString("en-US") : "—");
+const fmtNum1 = (v: unknown) => (isNum(v) ? v.toFixed(1) : typeof v === "string" ? v : "—");
 const fmtDate = (s: string | null | undefined) =>
   s ? new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }) : "—";
 const fmtStamp = (s: string | null | undefined) =>
@@ -43,28 +44,32 @@ function ScoreChip({ v }: { v: unknown }) {
 }
 
 // ── column model ──────────────────────────────────────────────────────
-type Kind = "rank" | "id" | "pts" | "money" | "spct" | "varpct" | "hrsover" | "pct1" | "score" | "tot" | "int" | "text";
+type Kind = "rank" | "id" | "pts" | "money" | "spct" | "varpct" | "hrsover" | "pct1" | "num1" | "score" | "tot" | "int" | "text";
 interface Col { g: string; label: string; key: string; kind: Kind }
 
-const GROUPS: Record<string, string> = { id: "Info", sales: "Sales", fc: "Food cost", labor: "Labor", fin: "Financial", ops: "Operations" };
+const GROUPS: Record<string, string> = { id: "Info", sales: "Sales", fc: "Food cost", labor: "Labor", fin: "Financial", ops: "Operations", info: "Info only" };
 
 // Each metric group gets its own shade so the eye can jump straight to a
 // section. Header band color + a matching soft tint for the column-header
 // row and the active toggle chip.
 const GROUP_HEAD: Record<string, string> = {
   id: "bg-zinc-900", sales: "bg-indigo-700", fc: "bg-amber-700",
-  labor: "bg-violet-700", fin: "bg-teal-700", ops: "bg-slate-600",
+  labor: "bg-violet-700", fin: "bg-teal-700", ops: "bg-slate-600", info: "bg-neutral-600",
 };
 const GROUP_TINT: Record<string, string> = {
   sales: "bg-indigo-50", fc: "bg-amber-50", labor: "bg-violet-50",
-  fin: "bg-teal-50", ops: "bg-slate-100",
+  fin: "bg-teal-50", ops: "bg-slate-100", info: "bg-neutral-100",
 };
 const GROUP_CHIP: Record<string, string> = {
   sales: "border-indigo-700 bg-indigo-700", fc: "border-amber-700 bg-amber-700",
   labor: "border-violet-700 bg-violet-700", fin: "border-teal-700 bg-teal-700",
-  ops: "border-slate-600 bg-slate-600",
+  ops: "border-slate-600 bg-slate-600", info: "border-neutral-600 bg-neutral-600",
 };
 
+// Full parity with the .xlsx workbook: every metric it exports has an
+// on-screen column, grouped and toggleable. Location rides inside the Store
+// cell rather than its own column. Leaders derive from this same list so the
+// board can never expose fewer metrics than the download.
 const STORE_COLS: Col[] = [
   { g: "id", label: "#", key: "rank", kind: "rank" },
   { g: "id", label: "Store", key: "__store", kind: "id" },
@@ -73,47 +78,17 @@ const STORE_COLS: Col[] = [
   { g: "sales", label: "Sales", key: "sales", kind: "money" },
   { g: "sales", label: "LY", key: "lySales", kind: "money" },
   { g: "sales", label: "vs LY", key: "pctVsLy", kind: "spct" },
+  { g: "sales", label: "Tickets", key: "tickets", kind: "int" },
+  { g: "sales", label: "LY Tickets", key: "lyTickets", kind: "int" },
   { g: "sales", label: "Tickets vs LY %", key: "ticketsVsLyPct", kind: "spct" },
-  { g: "sales", label: "Score", key: "salesScore", kind: "score" },
-  { g: "fc", label: "COGS eff", key: "cogsEff", kind: "pct1" },
-  { g: "fc", label: "$ miss", key: "fcMiss", kind: "money" },
-  { g: "fc", label: "Score", key: "fcScore", kind: "score" },
-  { g: "labor", label: "Labor %", key: "laborPct", kind: "pct1" },
-  { g: "labor", label: "Chart", key: "chart", kind: "pct1" },
-  { g: "labor", label: "Var", key: "varianceToChart", kind: "varpct" },
-  { g: "labor", label: "Hrs over", key: "hoursOver", kind: "hrsover" },
-  { g: "labor", label: "Score", key: "laborScore", kind: "score" },
-  { g: "fin", label: "$ miss", key: "finMiss", kind: "money" },
-  { g: "fin", label: "Annualized", key: "finAnnualized", kind: "money" },
-  { g: "fin", label: "Fin score", key: "finScore", kind: "tot" },
-  { g: "ops", label: "BSC", key: "bscTrainingPct", kind: "pct1" },
-  { g: "ops", label: "Score", key: "bscScore", kind: "score" },
-  { g: "ops", label: "On time", key: "onTimePct", kind: "pct1" },
-  { g: "ops", label: "Score", key: "onTimeScore", kind: "score" },
-  { g: "ops", label: "EcoSure", key: "ecosure", kind: "pct1" },
-  { g: "ops", label: "Score", key: "ecosureScore", kind: "score" },
-  { g: "ops", label: "VOG", key: "vog", kind: "pct1" },
-  { g: "ops", label: "Score", key: "vogScore", kind: "score" },
-  { g: "ops", label: "Training", key: "totalTrainingPct", kind: "pct1" },
-  { g: "ops", label: "Score", key: "totalTrainingScore", kind: "score" },
-  { g: "ops", label: "Shops", key: "msCount", kind: "int" },
-  { g: "ops", label: "Shop avg", key: "msScore", kind: "pct1" },
-  { g: "ops", label: "Ops score", key: "opsScore", kind: "tot" },
-];
-
-const LEADER_COLS: Col[] = [
-  { g: "id", label: "#", key: "rank", kind: "rank" },
-  { g: "id", label: "Name", key: "name", kind: "id" },
-  { g: "id", label: "Stores", key: "storeCount", kind: "int" },
-  { g: "id", label: "Points", key: "totalPoints", kind: "pts" },
-  { g: "sales", label: "Sales", key: "sales", kind: "money" },
-  { g: "sales", label: "vs LY", key: "pctVsLy", kind: "spct" },
   { g: "sales", label: "Score", key: "salesScore", kind: "score" },
   { g: "fc", label: "COGS eff", key: "cogsEff", kind: "pct1" },
   { g: "fc", label: "$ miss", key: "fcMiss", kind: "money" },
   { g: "fc", label: "Annualized", key: "fcAnnualized", kind: "money" },
   { g: "fc", label: "Score", key: "fcScore", kind: "score" },
   { g: "labor", label: "Labor %", key: "laborPct", kind: "pct1" },
+  { g: "labor", label: "PTO %", key: "ptoPct", kind: "pct1" },
+  { g: "labor", label: "Chart", key: "chart", kind: "pct1" },
   { g: "labor", label: "Var", key: "varianceToChart", kind: "varpct" },
   { g: "labor", label: "$ miss", key: "laborMiss", kind: "money" },
   { g: "labor", label: "Hrs over", key: "hoursOver", kind: "hrsover" },
@@ -123,12 +98,36 @@ const LEADER_COLS: Col[] = [
   { g: "fin", label: "$ miss", key: "finMiss", kind: "money" },
   { g: "fin", label: "Annualized", key: "finAnnualized", kind: "money" },
   { g: "fin", label: "Fin score", key: "finScore", kind: "tot" },
-  { g: "ops", label: "BSC", key: "bscScore", kind: "score" },
-  { g: "ops", label: "On time", key: "onTimeScore", kind: "score" },
+  { g: "ops", label: "BSC", key: "bscTrainingPct", kind: "pct1" },
+  { g: "ops", label: "Score", key: "bscScore", kind: "score" },
+  { g: "ops", label: "On time", key: "onTimePct", kind: "pct1" },
+  { g: "ops", label: "Score", key: "onTimeScore", kind: "score" },
+  { g: "ops", label: "Calls /10k", key: "callsPer10k", kind: "num1" },
   { g: "ops", label: "Complaints", key: "complaintsScore", kind: "score" },
-  { g: "ops", label: "EcoSure", key: "ecosureScore", kind: "score" },
-  { g: "ops", label: "VOG", key: "vogScore", kind: "score" },
+  { g: "ops", label: "EcoSure", key: "ecosure", kind: "pct1" },
+  { g: "ops", label: "Score", key: "ecosureScore", kind: "score" },
+  { g: "ops", label: "VOG", key: "vog", kind: "pct1" },
+  { g: "ops", label: "Score", key: "vogScore", kind: "score" },
+  { g: "ops", label: "Training", key: "totalTrainingPct", kind: "pct1" },
+  { g: "ops", label: "Score", key: "totalTrainingScore", kind: "score" },
+  { g: "ops", label: "Shops", key: "msCount", kind: "int" },
+  { g: "ops", label: "Shop avg", key: "msScore", kind: "pct1" },
   { g: "ops", label: "Ops score", key: "opsScore", kind: "tot" },
+  { g: "info", label: "Voids $", key: "voids", kind: "money" },
+  { g: "info", label: "Voids %", key: "voidsPct", kind: "pct1" },
+  { g: "info", label: "DOH", key: "doh", kind: "num1" },
+  { g: "info", label: "Ending $", key: "endingDollars", kind: "money" },
+  { g: "info", label: "$ over goal", key: "dollarsOverGoal", kind: "money" },
+];
+
+// Leaders (DO / SDO / RVP / Entity / Company) carry every store metric — the
+// engine rolls each one up — with Name/Stores swapped in for Store/GM.
+const LEADER_COLS: Col[] = [
+  { g: "id", label: "#", key: "rank", kind: "rank" },
+  { g: "id", label: "Name", key: "name", kind: "id" },
+  { g: "id", label: "Stores", key: "storeCount", kind: "int" },
+  { g: "id", label: "Points", key: "totalPoints", kind: "pts" },
+  ...STORE_COLS.filter((c) => c.g !== "id"),
 ];
 
 // WTD hides the sources the engine's WTD contract excludes.
@@ -176,6 +175,7 @@ function csvValue(r: RankingResultRow, c: Col): string | number {
     case "money": return isNum(v) ? Math.round(v * 100) / 100 : "";
     case "spct":
     case "pct1": return isNum(v) ? Math.round(v * 1000) / 10 : typeof v === "string" ? v : "";
+    case "num1": return isNum(v) ? Math.round(v * 10) / 10 : typeof v === "string" ? v : "";
     case "rank": case "pts": case "score": case "tot": case "int": return isNum(v) ? v : "";
     default: return v == null ? "" : String(v);
   }
@@ -201,6 +201,7 @@ function Cell({ v, kind }: { v: unknown; kind: Kind }) {
       return <span className={cn("font-mono text-xs", cls)}>{fmtInt(v)}</span>;
     }
     case "pct1": return <span className={cn("font-mono text-xs", !isNum(v) && "text-zinc-400")}>{fmtPct1(v)}</span>;
+    case "num1": return <span className={cn("font-mono text-xs", !isNum(v) && "text-zinc-400")}>{fmtNum1(v)}</span>;
     case "score": return <ScoreChip v={v} />;
     case "tot": return <span className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs font-semibold">{isNum(v) ? v : "–"}</span>;
     case "int": return <span className="font-mono text-xs">{fmtInt(v)}</span>;
@@ -216,7 +217,7 @@ export function RankingResultsView() {
   const isAdmin = profile?.role === "admin";
   const [scope, setScope] = useState<RankScope>("ptd");
   const [tier, setTier] = useState<RankTier>("store");
-  const [groupsOn, setGroupsOn] = useState<Record<string, boolean>>({ sales: true, fc: false, labor: false, fin: true, ops: true });
+  const [groupsOn, setGroupsOn] = useState<Record<string, boolean>>({ sales: true, fc: false, labor: false, fin: true, ops: true, info: false });
   const [showScores, setShowScores] = useState(true); // 1–5 chips + Fin/Ops score totals
   const [showPoints, setShowPoints] = useState(true); // the Points column
   const [search, setSearch] = useState("");
@@ -605,12 +606,16 @@ export function RankingResultsView() {
 const DETAIL_LABELS: [string, string, (v: unknown) => string][] = [
   ["sales", "Sales", fmtMoney], ["lySales", "LY sales", fmtMoney], ["pctVsLy", "vs LY", fmtSignedPct],
   ["tickets", "Tickets", fmtInt], ["lyTickets", "LY tickets", fmtInt], ["ticketsVsLyPct", "Tickets vs LY", fmtSignedPct],
-  ["laborPct", "Labor %", fmtPct1], ["chart", "Chart (IX target)", fmtPct1], ["varianceToChart", "Variance", fmtSignedPct],
-  ["laborMiss", "Labor $ miss", fmtMoney], ["hoursOver", "Hours over", fmtInt], ["laborAnnualized", "Labor annualized", fmtMoney],
+  ["laborPct", "Labor %", fmtPct1], ["ptoPct", "PTO %", fmtPct1], ["chart", "Chart (IX target)", fmtPct1], ["varianceToChart", "Variance", fmtSignedPct],
+  ["laborMiss", "Labor $ miss", fmtMoney], ["hoursOver", "Hours over", fmtInt], ["avgHoursOverPerStore", "Hrs over/store", fmtNum1], ["laborAnnualized", "Labor annualized", fmtMoney],
   ["cogsEff", "COGS efficiency", fmtPct1], ["fcMiss", "FC $ miss", fmtMoney], ["fcAnnualized", "FC annualized", fmtMoney],
   ["finMiss", "Financial $ miss", fmtMoney], ["finAnnualized", "Fin annualized", fmtMoney],
   ["bscTrainingPct", "BSC training", fmtPct1], ["onTimePct", "On time", fmtPct1],
-  ["ecosure", "EcoSure", fmtPct1], ["vog", "VOG", fmtPct1], ["voidsPct", "Voids %", fmtPct1],
+  ["callsPer10k", "Calls /10k tkts", fmtNum1], ["complaints", "Complaints", fmtNum1],
+  ["ecosure", "EcoSure", fmtPct1], ["vog", "VOG", fmtPct1],
+  ["totalTrainingPct", "Training %", fmtPct1], ["msCount", "Shops", fmtInt], ["msScore", "Shop avg", fmtPct1],
+  ["voids", "Voids $", fmtMoney], ["voidsPct", "Voids %", fmtPct1], ["doh", "DOH", fmtNum1],
+  ["endingDollars", "Ending $", fmtMoney], ["dollarsOverGoal", "$ over goal", fmtMoney],
 ];
 function DetailGrid({ m }: { m: RankMetrics }) {
   return (
