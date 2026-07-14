@@ -61,28 +61,43 @@ const STORE_COLS: Col[] = [
   { group: "Info Only", header: "$ Over Goal", key: "dollarsOverGoal", fmt: "money" },
 ];
 
-// Leader columns (DO / SDO / RVP / Company) — name + store count, then the
-// scored metrics that aggregate.
+// Leader columns (DO / SDO / RVP / Company) — mirror the store grid so every
+// dollar/percent column totals at the leader tiers. Name + Stores replace
+// Store #/Location/GM; everything else lines up with STORE_COLS.
 const LEADER_COLS: Col[] = [
   { group: "Info", header: "Rank", key: "rank", fmt: "int" },
   { group: "Info", header: "Name", key: "name", fmt: "text" },
   { group: "Info", header: "Stores", key: "storeCount", fmt: "int" },
   { group: "Sales", header: "Total Points", key: "totalPoints", fmt: "tot" },
   { group: "Sales", header: "Sales", key: "sales", fmt: "money" },
+  { group: "Sales", header: "LY Sales", key: "lySales", fmt: "money" },
   { group: "Sales", header: "% vs LY", key: "pctVsLy", fmt: "pct" },
+  { group: "Sales", header: "Tickets", key: "tickets", fmt: "int" },
+  { group: "Sales", header: "LY Tickets", key: "lyTickets", fmt: "int" },
+  { group: "Sales", header: "Tickets vs LY %", key: "ticketsVsLyPct", fmt: "pct" },
   { group: "Sales", header: "Sales Score", key: "salesScore", fmt: "score" },
   { group: "Food Cost", header: "COGS Eff %", key: "cogsEff", fmt: "pct" },
+  { group: "Food Cost", header: "FC $ Miss", key: "fcMiss", fmt: "money" },
+  { group: "Food Cost", header: "FC Annualized", key: "fcAnnualized", fmt: "money" },
   { group: "Food Cost", header: "FC Score", key: "fcScore", fmt: "score" },
   { group: "Labor", header: "Labor %", key: "laborPct", fmt: "pct" },
+  { group: "Labor", header: "PTO %", key: "ptoPct", fmt: "pct" },
+  { group: "Labor", header: "Chart", key: "chart", fmt: "pct" },
   { group: "Labor", header: "Var to Chart", key: "varianceToChart", fmt: "pct" },
   { group: "Labor", header: "Labor $ Miss", key: "laborMiss", fmt: "money" },
   { group: "Labor", header: "Hours Over", key: "hoursOver", fmt: "int" },
+  { group: "Labor", header: "Avg Hrs Over/Store", key: "avgHoursOverPerStore", fmt: "num1" },
+  { group: "Labor", header: "Labor Annualized", key: "laborAnnualized", fmt: "money" },
   { group: "Labor", header: "Labor Score", key: "laborScore", fmt: "score" },
+  { group: "Financial", header: "Fin $ Miss", key: "finMiss", fmt: "money" },
   { group: "Financial", header: "Fin Annualized", key: "finAnnualized", fmt: "money" },
   { group: "Financial", header: "Fin Score", key: "finScore", fmt: "tot" },
+  { group: "Operations", header: "BSC Training %", key: "bscTrainingPct", fmt: "pct" },
   { group: "Operations", header: "BSC Score", key: "bscScore", fmt: "score" },
+  { group: "Operations", header: "On Time %", key: "onTimePct", fmt: "pct" },
   { group: "Operations", header: "On Time Score", key: "onTimeScore", fmt: "score" },
   { group: "Operations", header: "Complaints Score", key: "complaintsScore", fmt: "score" },
+  { group: "Operations", header: "VOG", key: "vog", fmt: "pct" },
   { group: "Operations", header: "VOG Score", key: "vogScore", fmt: "score" },
   { group: "Operations", header: "Ops Score", key: "opsScore", fmt: "tot" },
 ];
