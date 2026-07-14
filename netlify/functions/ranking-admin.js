@@ -489,7 +489,11 @@ export const handler = async (event) => {
   try { supa = admin(); } catch (e) { return respond(500, { error: e.message }); }
   const user = await getSessionUser(supa, event);
   if (!user) return respond(401, { error: "unauthorized" });
-  if (String(user.role).toLowerCase() !== "admin") return respond(403, { error: "Admins only." });
+  // VP / COO can READ the ranking (board, drill-down, trends, risk) during the
+  // parallel run; the build ACTIONS (run, uploads, config) stay admin-only.
+  const role = String(user.role).toLowerCase();
+  const canRead = role === "admin" || role === "vp" || role === "coo";
+  if (!canRead) return respond(403, { error: "Ranking is limited to VP, COO, and admins during the build." });
 
   const params = event.queryStringParameters || {};
   const action = params.action || "overview";
@@ -497,6 +501,7 @@ export const handler = async (event) => {
 
   try {
     if (event.httpMethod === "POST") {
+      if (role !== "admin") return respond(403, { error: "Only admins can run the ranking or change its data during the build." });
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "config-add") return unwrap(await configAdd(supa, user, body));
       if (action === "pad-set") return unwrap(await padSet(supa, user, body));

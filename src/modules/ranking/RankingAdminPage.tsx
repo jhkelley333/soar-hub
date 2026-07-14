@@ -6,6 +6,7 @@
 import { useMemo, useState } from "react";
 import { Segmented } from "@/shared/ui/Segmented";
 import { RankingResultsView } from "./RankingResultsView";
+import { RankingDrillView } from "./RankingDrillView";
 import { RankingTrendsView } from "./RankingTrendsView";
 import { RankingRiskView } from "./RankingRiskView";
 import { RankingWatchlistView } from "./RankingWatchlistView";
@@ -18,6 +19,7 @@ import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
+import { useAuth } from "@/auth/AuthProvider";
 import {
   addRankingConfig, backfillRankingFields, fetchRankingOverview, ingestBscRows, ingestEcosureRows, ingestIxFile, ingestShopRows, ingestTotzoneRows, ingestVogRows, setFcTargetEfficiency, setLaborPad,
   type RankingConfigRow, type RankingStoreRow,
@@ -29,10 +31,22 @@ const fmtDate = (s: string) =>
   new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const todayIso = () => new Date().toLocaleDateString("en-CA");
 
-type AdminView = "ranking" | "watchlist" | "trends" | "risk" | "settings";
+type AdminView = "ranking" | "drill" | "watchlist" | "trends" | "risk" | "settings";
 
 export function RankingAdminPage() {
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === "admin";
   const [view, setView] = useState<AdminView>("ranking");
+  // Non-admins (VP/COO) get read views only — no System settings.
+  const options: { value: AdminView; label: string }[] = [
+    { value: "ranking", label: "Ranking" },
+    { value: "drill", label: "Drill" },
+    { value: "watchlist", label: "Watchlist" },
+    { value: "trends", label: "Trends" },
+    { value: "risk", label: "Risk" },
+    ...(isAdmin ? [{ value: "settings" as AdminView, label: "System settings" }] : []),
+  ];
+  const active = view === "settings" && !isAdmin ? "ranking" : view;
   return (
     <>
       <PageHeader
@@ -42,25 +56,16 @@ export function RankingAdminPage() {
             <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent">Build</span>
           </span>
         }
-        description="Admin-only while the module is in build — leaders keep the sheet-fed Ranker until cutover."
+        description="In build — VP, COO, and admins can view; leaders keep the sheet-fed Ranker until cutover."
       />
       <div className="mb-4">
-        <Segmented<AdminView>
-          value={view}
-          onChange={setView}
-          options={[
-            { value: "ranking", label: "Ranking" },
-            { value: "watchlist", label: "Watchlist" },
-            { value: "trends", label: "Trends" },
-            { value: "risk", label: "Risk" },
-            { value: "settings", label: "System settings" },
-          ]}
-        />
+        <Segmented<AdminView> value={active} onChange={setView} options={options} />
       </div>
-      {view === "ranking" ? <RankingResultsView />
-        : view === "watchlist" ? <RankingWatchlistView />
-        : view === "trends" ? <RankingTrendsView />
-        : view === "risk" ? <RankingRiskView />
+      {active === "ranking" ? <RankingResultsView />
+        : active === "drill" ? <RankingDrillView />
+        : active === "watchlist" ? <RankingWatchlistView />
+        : active === "trends" ? <RankingTrendsView />
+        : active === "risk" ? <RankingRiskView />
         : <SettingsView />}
     </>
   );
