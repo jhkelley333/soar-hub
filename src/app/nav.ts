@@ -6,7 +6,6 @@ import {
   Building2,
   Users,
   Network,
-  TrendingUp,
   UserCircle,
   Settings,
   Layers,
@@ -71,9 +70,12 @@ export const NAV: NavItem[] = [
   // Reporting" form. GM and above report a closure/disruption; it routes to
   // the selected DO by email and lands in a DO+ queue scoped like Site Audits.
   { to: "/business-disruptions", label: "Business Disruptions", icon: AlertTriangle, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
-  { to: "/ranker",      label: "Ranker",      icon: TrendingUp,      roles: ["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
+  // Ranker — the new weekly performance ranking (route /admin/ranking). Takes
+  // over the Operations slot; the legacy sheet-fed Ranker (/ranker) is archived
+  // off the sidebar, its route kept alive only for old deep links.
+  { to: "/admin/ranking", label: "Ranker", icon: Trophy, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
   // Territory Map — stores plotted on Google Maps, pin color keyed to the
-  // DO resolved live from the org data. Same audience as Ranker.
+  // DO resolved live from the org data.
   { to: "/territory-map", label: "Territory Map", icon: MapPinned,   roles: ["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
   // Labor — daily labor review. GMs review their store's numbers against
   // chart and explain misses; DO+ get the district rollup. Backend
@@ -144,7 +146,6 @@ export const NAV: NavItem[] = [
   { to: "/my-stores",   label: "My Stores",   icon: Building2,       roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll", "fbc"] },
   { to: "/admin/org",   label: "Org Admin",   icon: Network,         roles: ["vp", "coo", "admin"] },
   { to: "/admin/kpi",   label: "KPI Dashboard", icon: BarChart3,   roles: ["admin"] },
-  { to: "/admin/ranking", label: "Ranking (Build)", icon: Trophy, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
   { to: "/admin/labor-v2", label: "Labor v2 (Beta) · Rollup", icon: Gauge, roles: ["admin"] },
   { to: "/admin/labor-v2/log", label: "Pull Log", icon: ScrollText, roles: ["admin"] },
   { to: "/admin/bulk-attributes", label: "Bulk Attributes", icon: Layers, roles: ["admin"] },
@@ -229,7 +230,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/chat": "MAIN",
   "/operations": "OPERATIONS",
   "/business-disruptions": "OPERATIONS",
-  "/ranker": "OPERATIONS",
+  "/admin/ranking": "OPERATIONS",
   "/territory-map": "OPERATIONS",
   "/labor": "OPERATIONS",
   "/labor-v2": "OPERATIONS",
