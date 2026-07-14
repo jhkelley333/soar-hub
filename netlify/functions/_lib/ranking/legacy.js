@@ -166,5 +166,9 @@ export async function trendsData(supa, params) {
       }
     }
   }
+  // Scope to the caller's stores (a Set of numbers); null/absent = org-wide.
+  if (params.storeNums instanceof Set) {
+    for (const num of Object.keys(stores)) if (!params.storeNums.has(num)) delete stores[num];
+  }
   return { weeks, stores };
 }

@@ -35,11 +35,13 @@ function tail(arr, k) {
 }
 const last = (arr) => (tail(arr, 1)[0] ?? null);
 
-export async function riskData(supa) {
-  // Trend axis (sheet + hub) and the latest hub run.
-  const t = await trendsData(supa, { weeks: 9 });
+export async function riskData(supa, storeNums = null) {
+  // Trend axis (sheet + hub) and the latest hub run — both scoped to the caller
+  // (null = org-wide). Risk buckets derive from these, so the output inherits
+  // the scope without any extra filtering.
+  const t = await trendsData(supa, { weeks: 9, storeNums });
   if (t.error) return t;
-  const lr = await latestRun(supa, { scope: "ptd", tier: "store" });
+  const lr = await latestRun(supa, { scope: "ptd", tier: "store" }, storeNums);
   if (lr.error) return lr;
   const latestByStore = new Map((lr.rows || []).map((r) => [String(r.entity_key), r]));
 
