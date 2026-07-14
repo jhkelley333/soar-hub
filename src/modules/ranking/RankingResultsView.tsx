@@ -19,7 +19,8 @@ import {
   type RankMetrics, type RankScope, type RankTier, type RankingResultRow,
 } from "./api";
 import { downloadRankingWorkbook } from "./rankingWorkbook";
-import { RankingStoreDetail } from "./RankingStoreDetail";
+import { RankingStoreView } from "./RankingStoreView";
+import { Modal } from "@/shared/ui/Modal";
 
 // ── formatting ────────────────────────────────────────────────────────
 const isNum = (v: unknown): v is number => typeof v === "number" && isFinite(v);
@@ -230,6 +231,7 @@ export function RankingResultsView() {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
   const [openRow, setOpenRow] = useState<string | null>(null);
+  const [modalRow, setModalRow] = useState<RankingResultRow | null>(null); // store dashboard popup
   // null = the latest run; a run id = the picked week (legacy-ranker-style).
   const [runId, setRunId] = useState<string | null>(null);
   const [wbBusy, setWbBusy] = useState(false);
@@ -554,7 +556,7 @@ export function RankingResultsView() {
                 const isOpen = openRow === rowKey;
                 return (
                   <Fragment key={rowKey}>
-                    <tr onClick={() => setOpenRow(isOpen ? null : rowKey)}
+                    <tr onClick={() => (tier === "store" ? setModalRow(r) : setOpenRow(isOpen ? null : rowKey))}
                       className="group cursor-pointer border-b border-zinc-100">
                       {cols.map((c, i) => {
                         const left = stickyLeft[i];
@@ -579,15 +581,12 @@ export function RankingResultsView() {
                         return <td key={i} style={style} className={cn("whitespace-nowrap px-2.5 py-2 text-right", stickyCls)}><Cell v={cellValue(r, c)} kind={c.kind} /></td>;
                       })}
                     </tr>
-                    {isOpen && (
+                    {/* Leader tiers expand inline to the compact metric grid;
+                        stores open the dashboard in a popup (below). */}
+                    {isOpen && tier !== "store" && (
                       <tr className="border-b border-zinc-100 bg-zinc-50/70">
                         <td colSpan={cols.length} className="px-4 py-3">
-                          {/* Stores open the full store dashboard (with week
-                              history back to P1W1); leader tiers keep the
-                              compact metric grid. */}
-                          {tier === "store"
-                            ? <RankingStoreDetail store={r.entity_key} />
-                            : <DetailGrid m={m} />}
+                          <DetailGrid m={m} />
                         </td>
                       </tr>
                     )}
@@ -605,6 +604,16 @@ export function RankingResultsView() {
 
       {/* Action report — computed from the PTD store rows of this run */}
       {tier === "store" && rows.length > 0 && <ActionReport rows={q.data?.rows ?? []} />}
+
+      {/* Store dashboard popup */}
+      <Modal
+        open={!!modalRow}
+        onClose={() => setModalRow(null)}
+        maxWidth="max-w-5xl"
+        title={modalRow ? `Store ${modalRow.entity_key}${modalRow.metrics.location ? ` · ${String(modalRow.metrics.location)}` : ""}` : ""}
+      >
+        {modalRow && <RankingStoreView row={modalRow} run={run} />}
+      </Modal>
     </div>
   );
 }
