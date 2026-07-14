@@ -15,7 +15,7 @@ import { cn } from "@/lib/cn";
 import { useAuth } from "@/auth/AuthProvider";
 import { toCSV, downloadCSV } from "@/lib/csv";
 import {
-  fetchRankingFull, fetchRankingLatest, fetchRankingRuns, triggerRankingRun,
+  fetchRankingFull, fetchRankingLatest, fetchRankingWeeks, fetchLegacyWeek, triggerRankingRun,
   type RankMetrics, type RankScope, type RankTier, type RankingResultRow,
 } from "./api";
 import { downloadRankingWorkbook } from "./rankingWorkbook";
@@ -232,37 +232,44 @@ export function RankingResultsView() {
   const [sort, setSort] = useState<{ key: string; dir: 1 | -1 } | null>(null);
   const [openRow, setOpenRow] = useState<string | null>(null);
   const [modalRow, setModalRow] = useState<RankingResultRow | null>(null); // store dashboard popup
-  // null = the latest run; a run id = the picked week (legacy-ranker-style).
-  const [runId, setRunId] = useState<string | null>(null);
+  // Selected week: null = newest. The picker spans hub runs AND sheet-era
+  // legacy weeks (before the P7W2 cutover); legacy weeks are store-tier only.
+  const [weekKey, setWeekKey] = useState<string | null>(null);
   const [wbBusy, setWbBusy] = useState(false);
 
-  const runsQ = useQuery({ queryKey: ["ranking-runs-list"], queryFn: fetchRankingRuns, staleTime: 60_000 });
-  const weekRuns = runsQ.data?.runs ?? [];
+  const weeksQ = useQuery({ queryKey: ["ranking-weeks"], queryFn: fetchRankingWeeks, staleTime: 60_000 });
+  const weeks = weeksQ.data?.weeks ?? [];
+  const wIdx = weekKey ? weeks.findIndex((w) => w.key === weekKey) : 0;
+  const weekIdx = wIdx < 0 ? 0 : wIdx;
+  const selectedWeek = weeks[weekIdx] ?? null;
+  const isLegacy = selectedWeek?.source === "legacy";
+  const effectiveTier: RankTier = isLegacy ? "store" : tier;
 
   const q = useQuery({
-    queryKey: ["ranking-run", scope, tier, runId ?? "latest"],
-    queryFn: () => fetchRankingLatest(scope, tier, runId),
+    queryKey: ["ranking-week", scope, effectiveTier, selectedWeek?.key ?? "latest"],
+    queryFn: () =>
+      !selectedWeek ? fetchRankingLatest(scope, effectiveTier, null)
+        : selectedWeek.source === "legacy" ? fetchLegacyWeek(selectedWeek.fiscal_week as number)
+        : fetchRankingLatest(scope, effectiveTier, selectedWeek.run_id),
     staleTime: 60_000,
   });
   const run = q.data?.run ?? null;
 
-  // Where the shown run sits in the per-week list (0 = newest).
-  const weekIdx = run ? weekRuns.findIndex((r) => r.id === run.id || r.week_ending === run.week_ending) : -1;
-  const canOlder = weekIdx >= 0 && weekIdx < weekRuns.length - 1;
+  const canOlder = weeks.length > 0 && weekIdx < weeks.length - 1;
   const canNewer = weekIdx > 0;
 
   const runNow = useMutation({
     mutationFn: triggerRankingRun,
     onSuccess: (r) => {
       toast.push(`Ranked P${r.period} W${r.week} (week ending ${r.week_ending}) — ${r.rows} rows.`, "success");
-      setRunId(null); // jump back to the latest
-      qc.invalidateQueries({ queryKey: ["ranking-run"] });
-      qc.invalidateQueries({ queryKey: ["ranking-runs-list"] });
+      setWeekKey(null); // jump back to the latest
+      qc.invalidateQueries({ queryKey: ["ranking-week"] });
+      qc.invalidateQueries({ queryKey: ["ranking-weeks"] });
     },
     onError: (e) => toast.push(e instanceof Error ? e.message : "Run failed.", "error"),
   });
 
-  const baseCols = tier === "store" ? STORE_COLS : LEADER_COLS;
+  const baseCols = effectiveTier === "store" ? STORE_COLS : LEADER_COLS;
   const cols = useMemo(
     () => baseCols.filter((c) =>
       (c.g === "id" || groupsOn[c.g])
@@ -304,7 +311,7 @@ export function RankingResultsView() {
       }
       return row;
     });
-    const tierLabel = (TIER_TABS.find((t) => t.id === tier)?.label ?? tier).toLowerCase().replace(/\s+/g, "-");
+    const tierLabel = (TIER_TABS.find((t) => t.id === effectiveTier)?.label ?? effectiveTier).toLowerCase().replace(/\s+/g, "-");
     downloadCSV(
       `soar-ranking-P${run.period}W${run.week}-${scope}-${tierLabel}.csv`,
       toCSV(headers, csvRows),
@@ -373,27 +380,27 @@ export function RankingResultsView() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {/* Week picker — browse past runs like the legacy ranker's week tabs */}
-          {weekRuns.length > 0 && (
+          {/* Week picker — hub runs + sheet-era legacy weeks on one timeline */}
+          {weeks.length > 0 && (
             <div className="flex items-center gap-1">
               <button type="button" title="Older week" disabled={!canOlder}
-                onClick={() => canOlder && setRunId(weekRuns[weekIdx + 1].id)}
+                onClick={() => canOlder && setWeekKey(weeks[weekIdx + 1].key)}
                 className="rounded-lg border border-zinc-200 bg-white p-1.5 text-zinc-500 hover:border-zinc-300 disabled:opacity-30">
                 <ChevronLeft className="h-4 w-4" />
               </button>
               <select
-                value={run?.id && weekRuns.some((r) => r.id === run.id) ? run.id : weekRuns[Math.max(weekIdx, 0)]?.id ?? ""}
-                onChange={(e) => setRunId(e.target.value === weekRuns[0]?.id ? null : e.target.value)}
+                value={selectedWeek?.key ?? ""}
+                onChange={(e) => setWeekKey(e.target.value === weeks[0]?.key ? null : e.target.value)}
                 className="rounded-lg border border-zinc-200 bg-white px-2 py-1.5 text-sm font-semibold text-midnight focus:border-accent focus:outline-none"
               >
-                {weekRuns.map((r, i) => (
-                  <option key={r.id} value={r.id}>
-                    P{r.period}W{r.week} · {fmtDate(r.week_ending)}{i === 0 ? " (latest)" : ""}
+                {weeks.map((w, i) => (
+                  <option key={w.key} value={w.key}>
+                    P{w.period}W{w.week} · {fmtDate(w.week_ending)}{i === 0 ? " (latest)" : w.source === "legacy" ? " · sheet" : ""}
                   </option>
                 ))}
               </select>
               <button type="button" title="Newer week" disabled={!canNewer}
-                onClick={() => canNewer && setRunId(weekIdx - 1 === 0 ? null : weekRuns[weekIdx - 1].id)}
+                onClick={() => canNewer && setWeekKey(weekIdx - 1 === 0 ? null : weeks[weekIdx - 1].key)}
                 className="rounded-lg border border-zinc-200 bg-white p-1.5 text-zinc-500 hover:border-zinc-300 disabled:opacity-30">
                 <ChevronRight className="h-4 w-4" />
               </button>
@@ -402,7 +409,8 @@ export function RankingResultsView() {
           <Button variant="secondary" size="sm" onClick={exportExcel} disabled={!run || rows.length === 0}>
             <Download className="mr-1 h-3.5 w-3.5" /> CSV
           </Button>
-          <Button variant="secondary" size="sm" onClick={exportWorkbook} disabled={!run || wbBusy}>
+          <Button variant="secondary" size="sm" onClick={exportWorkbook} disabled={!run || wbBusy || isLegacy}
+            title={isLegacy ? "Workbook export is for hub-run weeks" : undefined}>
             <Download className="mr-1 h-3.5 w-3.5" /> {wbBusy ? "Building…" : "Workbook"}
           </Button>
           {isAdmin && (
@@ -416,12 +424,19 @@ export function RankingResultsView() {
       </div>
 
       {/* Viewing-history banner */}
-      {runId && run && (
-        <div className="rounded-lg border-l-4 border-accent bg-accent/5 px-3.5 py-2 text-xs text-zinc-600">
-          Viewing a past week — <b>P{run.period}W{run.week}, week ending {fmtDate(run.week_ending)}</b>.{" "}
-          <button className="font-semibold text-accent hover:underline" onClick={() => setRunId(null)}>
-            Jump to latest
-          </button>
+      {weekKey && run && (
+        <div className={cn("rounded-lg border-l-4 px-3.5 py-2 text-xs",
+          isLegacy ? "border-amber-500 bg-amber-50 text-amber-800" : "border-accent bg-accent/5 text-zinc-600")}>
+          {isLegacy
+            ? <>Sheet-era week — <b>P{run.period}W{run.week}, week ending {fmtDate(run.week_ending)}</b>. From the archived Ranker history: <b>store level only</b>, some metrics unavailable.{" "}</>
+            : <>Viewing a past week — <b>P{run.period}W{run.week}, week ending {fmtDate(run.week_ending)}</b>.{" "}</>}
+          <button className="font-semibold text-accent hover:underline" onClick={() => setWeekKey(null)}>Jump to latest</button>
+        </div>
+      )}
+      {/* Legacy-import nudge (admins only) */}
+      {isAdmin && weeksQ.data && !weeksQ.data.legacyImported && (
+        <div className="rounded-lg border-l-4 border-zinc-300 bg-zinc-50 px-3.5 py-2 text-xs text-zinc-600">
+          Weeks before the P7W2 cutover aren't in the picker yet — run <b>Import legacy history</b> on the Trends tab to archive the sheet's history and browse it here.
         </div>
       )}
 
@@ -437,8 +452,8 @@ export function RankingResultsView() {
         </div>
       ))}
 
-      {/* Source board */}
-      {run && (
+      {/* Source board (hub runs only; legacy weeks have no source status) */}
+      {run?.source_status && (
         <div className="flex flex-wrap gap-1.5">
           {Object.entries(run.source_status).map(([key, s]) => (
             <span key={key} className={cn(
@@ -466,10 +481,11 @@ export function RankingResultsView() {
         <Segmented<RankScope> dense value={scope} onChange={setScope}
           options={[{ value: "ptd", label: "Period to date" }, { value: "wtd", label: "Week to date" }]} />
         <div className="ml-auto flex gap-0.5">
-          {tierTabs.map((t) => (
+          {/* Legacy weeks are store-tier only. */}
+          {(isLegacy ? tierTabs.filter((t) => t.id === "store") : tierTabs).map((t) => (
             <button key={t.id} onClick={() => { setTier(t.id); setSort(null); setOpenRow(null); }}
               className={cn("border-b-2 px-3 pb-2 pt-1.5 text-sm font-bold transition",
-                tier === t.id ? "border-midnight text-midnight" : "border-transparent text-zinc-400 hover:text-zinc-600")}>
+                effectiveTier === t.id ? "border-midnight text-midnight" : "border-transparent text-zinc-400 hover:text-zinc-600")}>
               {t.label}
             </button>
           ))}
@@ -556,7 +572,7 @@ export function RankingResultsView() {
                 const isOpen = openRow === rowKey;
                 return (
                   <Fragment key={rowKey}>
-                    <tr onClick={() => (tier === "store" ? setModalRow(r) : setOpenRow(isOpen ? null : rowKey))}
+                    <tr onClick={() => (effectiveTier === "store" ? setModalRow(r) : setOpenRow(isOpen ? null : rowKey))}
                       className="group cursor-pointer border-b border-zinc-100">
                       {cols.map((c, i) => {
                         const left = stickyLeft[i];
@@ -583,7 +599,7 @@ export function RankingResultsView() {
                     </tr>
                     {/* Leader tiers expand inline to the compact metric grid;
                         stores open the dashboard in a popup (below). */}
-                    {isOpen && tier !== "store" && (
+                    {isOpen && effectiveTier !== "store" && (
                       <tr className="border-b border-zinc-100 bg-zinc-50/70">
                         <td colSpan={cols.length} className="px-4 py-3">
                           <DetailGrid m={m} />
@@ -603,7 +619,7 @@ export function RankingResultsView() {
       </div>
 
       {/* Action report — computed from the PTD store rows of this run */}
-      {tier === "store" && rows.length > 0 && <ActionReport rows={q.data?.rows ?? []} />}
+      {effectiveTier === "store" && !isLegacy && rows.length > 0 && <ActionReport rows={q.data?.rows ?? []} />}
 
       {/* Store dashboard popup */}
       <Modal

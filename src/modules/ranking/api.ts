@@ -106,6 +106,27 @@ export function fetchRankingRuns(): Promise<{ runs: RankingRunSummary[] }> {
   return req(`${FN}?action=runs`);
 }
 
+// Unified week timeline: hub runs + sheet-era legacy weeks before the cutover.
+export interface RankingWeek {
+  key: string;
+  source: "hub" | "legacy";
+  run_id: string | null;
+  fiscal_week: number | null;
+  period: number | null;
+  week: number | null;
+  week_ending: string;
+}
+export function fetchRankingWeeks(): Promise<{ weeks: RankingWeek[]; legacyImported: boolean }> {
+  return req(`${FN}?action=weeks`);
+}
+
+// One sheet-era week's store rows (mapped to the new-engine shape, store tier).
+export function fetchLegacyWeek(fiscalWeek: number): Promise<{
+  run: RankingRun | null; scope: RankScope; tier: RankTier; rows: RankingResultRow[];
+}> {
+  return req(`${FN}?action=legacy-week&fiscal_week=${fiscalWeek}`);
+}
+
 export type FullRunScope = Partial<Record<RankTier, RankingResultRow[]>>;
 export function fetchRankingFull(runId?: string | null): Promise<{
   run: RankingRun | null;
