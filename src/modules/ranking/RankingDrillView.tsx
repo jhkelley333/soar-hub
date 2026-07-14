@@ -83,7 +83,8 @@ export function RankingDrillView() {
   const drillInto = (name: string) => { setPath((p) => [...p, { level, name }]); setOpenStore(null); };
 
   return (
-    <div className="mx-auto max-w-lg space-y-3">
+    // Phone/PWA stays compact; the desktop drill gets progressively wider.
+    <div className="mx-auto w-full max-w-lg space-y-3 md:max-w-2xl lg:max-w-4xl">
       {/* Scope + run */}
       <div className="flex items-center justify-between gap-2">
         <Segmented<RankScope> dense value={scope} onChange={(s) => { setScope(s); }}
@@ -119,7 +120,7 @@ export function RankingDrillView() {
         </button>
       )}
       <div className="text-[11px] font-bold uppercase tracking-widest text-zinc-400">
-        {rows.length} {LEVEL_LABEL[level]}{rows.length === 1 ? "" : "s"}{level !== "rvp" && parentName ? ` in ${parentName}` : ""} · worst-first is bottom
+        {rows.length} {LEVEL_LABEL[level]}{rows.length === 1 ? "" : "s"}{level !== "rvp" && parentName ? ` in ${parentName}` : ""} · rank 1 is best
       </div>
 
       {/* Cards */}
