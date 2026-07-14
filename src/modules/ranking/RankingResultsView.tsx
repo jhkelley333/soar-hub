@@ -13,6 +13,7 @@ import { Button } from "@/shared/ui/Button";
 import { Segmented } from "@/shared/ui/Segmented";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
+import { useAuth } from "@/auth/AuthProvider";
 import { toCSV, downloadCSV } from "@/lib/csv";
 import {
   fetchRankingFull, fetchRankingLatest, fetchRankingRuns, triggerRankingRun,
@@ -187,6 +188,8 @@ function Cell({ v, kind }: { v: unknown; kind: Kind }) {
 export function RankingResultsView() {
   const toast = useToast();
   const qc = useQueryClient();
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === "admin";
   const [scope, setScope] = useState<RankScope>("ptd");
   const [tier, setTier] = useState<RankTier>("store");
   const [groupsOn, setGroupsOn] = useState<Record<string, boolean>>({ sales: true, fc: false, labor: false, fin: true, ops: true });
@@ -362,11 +365,13 @@ export function RankingResultsView() {
           <Button variant="secondary" size="sm" onClick={exportWorkbook} disabled={!run || wbBusy}>
             <Download className="mr-1 h-3.5 w-3.5" /> {wbBusy ? "Building…" : "Workbook"}
           </Button>
-          <Button size="sm" onClick={() => runNow.mutate()} disabled={runNow.isPending}>
-            {runNow.isPending
-              ? <><RefreshCw className="mr-1 h-3.5 w-3.5 animate-spin" /> Running…</>
-              : <><Play className="mr-1 h-3.5 w-3.5" /> Run now</>}
-          </Button>
+          {isAdmin && (
+            <Button size="sm" onClick={() => runNow.mutate()} disabled={runNow.isPending}>
+              {runNow.isPending
+                ? <><RefreshCw className="mr-1 h-3.5 w-3.5 animate-spin" /> Running…</>
+                : <><Play className="mr-1 h-3.5 w-3.5" /> Run now</>}
+            </Button>
+          )}
         </div>
       </div>
 

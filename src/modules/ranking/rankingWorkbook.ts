@@ -179,10 +179,12 @@ export async function downloadRankingWorkbook(
   // to the board's run bar. run.id short-hash is the definitive key.
   const runStamp = run.completed_at ? new Date(run.completed_at).toLocaleString("en-US") : "?";
   const runId = String(run.id ?? "").slice(0, 8);
+  // Always emit both tabs so the workbook is consistent (a scope with no
+  // rows gets a "not run" note rather than a missing tab).
   for (const scope of ["ptd", "wtd"] as const) {
-    const data = scopes[scope];
-    if (!data || !data.store?.length) continue;
-    const ws = wb.addWorksheet(scope.toUpperCase(), { views: [{ state: "frozen", xSplit: 3, ySplit: 4 }] });
+    const data = scopes[scope] ?? {};
+    const tabName = scope === "wtd" ? "Week to Date" : "Period to Date";
+    const ws = wb.addWorksheet(tabName, { views: [{ state: "frozen", xSplit: 3, ySplit: 4 }] });
 
     // Title banner.
     ws.mergeCells(1, 1, 1, 12);
@@ -191,6 +193,13 @@ export async function downloadRankingWorkbook(
     banner.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
     banner.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 12 };
     ws.getRow(1).height = 20;
+
+    if (!data.store?.length) {
+      ws.getCell(3, 1).value = `No ${scope.toUpperCase()} data in this run.`;
+      ws.getCell(3, 1).font = { italic: true, color: { argb: "FF6B7A89" } };
+      ws.columns.forEach((col: { width?: number }, i: number) => { col.width = i === 2 ? 26 : 12; });
+      continue;
+    }
 
     let row = 3;
     addSection(ws, row, null, STORE_COLS, data.store);
