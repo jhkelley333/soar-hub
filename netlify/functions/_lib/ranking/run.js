@@ -24,6 +24,14 @@ function isoAddDays(iso, n) {
 
 const REQUIRED_BANDS = ["sales_vs_ly", "food_cost", "bsc_training", "on_time", "complaints", "food_safety", "vog", "total_training"];
 
+// B6: complaints data is on hold. Feed a neutral placeholder that lands in the
+// 3-band ([1.701, 2.001) with the default seed) so EVERY tier scores a
+// consistent neutral 3. A literal null makes stores default to 3 (IFERROR) but
+// leaders sum the nulls to 0, which bands to 5 (best) and inflates their Ops
+// Score / Total Points. A per-store rate averages to itself at every roll-up,
+// so store rows and leader rows agree. Replace with live data when B6 lands.
+const COMPLAINTS_HOLD_PLACEHOLDER = 1.8;
+
 // Food-cost dollars run over the TARGET efficiency (default 96%):
 // actual - ideal/target, floored at 0. Prefers the IX actual/ideal dollars;
 // reconstructs them from variance + efficiency for files ingested before
@@ -66,7 +74,7 @@ function bandInput(r, p, ix, fcTarget) {
     fcMiss: ix ? fcMissVsTarget(ix, fcTarget) : 0,
     onTimePct: isFinite(otDen) && otDen > 0 && isFinite(otNum) ? otNum / otDen : null,
     voids: numOrNull(r[p + "void_total"]),
-    callsPer10k: null,                                        // B6: on hold -> neutral 3
+    callsPer10k: COMPLAINTS_HOLD_PLACEHOLDER,                 // B6: on hold -> neutral 3 at every tier
     ecosure: null, vogScore: null, vogResponses: null,        // parsers not wired yet
     totalTrainingPct: null, msCount: null, msScore: null,
     doh: isNum(ix?.doh) ? ix.doh : null,
