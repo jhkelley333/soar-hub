@@ -232,6 +232,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/operations": "OPERATIONS",
   "/business-disruptions": "OPERATIONS",
   "/admin/ranking": "OPERATIONS",
+  "/coo-map": "OPERATIONS",
   "/territory-map": "OPERATIONS",
   "/labor-v2": "OPERATIONS",
   "/admin/cash-management": "OPERATIONS",

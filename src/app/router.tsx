@@ -50,6 +50,7 @@ import { WalkthroughBuilderPage } from "@/modules/walkthrough/builder/Walkthroug
 import { moduleKeyForPath } from "@/app/nav";
 import { useOverrides } from "@/lib/roleAccess";
 import { RankerPage } from "@/modules/ranker/RankerPage";
+import { CooMapPage } from "@/modules/coo-map/CooMapPage";
 import { TerritoryMapPage } from "@/modules/territory-map/TerritoryMapPage";
 import { SharedTerritoryMapPage } from "@/modules/territory-map/SharedTerritoryMapPage";
 import { PlPage } from "@/modules/pl/PlPage";
@@ -661,6 +662,17 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
             <RankerPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Cross-brand executive map. Authenticated route; the page itself gates
+        // on company_access > 1 (and the backend enforces it too), so a normal
+        // user who reaches the URL is redirected home.
+        path: "coo-map",
+        element: (
+          <ProtectedRoute>
+            <CooMapPage />
           </ProtectedRoute>
         ),
       },

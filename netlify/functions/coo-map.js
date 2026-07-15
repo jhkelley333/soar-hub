@@ -29,6 +29,51 @@ async function getSessionUser(supa, event) {
   return profile;
 }
 
+// The companies the caller has been granted (service-role read of their own
+// grants). The COO map is for multi-company users only.
+async function grantedCompanies(supa, userId) {
+  const { data } = await supa
+    .from("company_access")
+    .select("company_id, companies(id, slug, name)")
+    .eq("user_id", userId);
+  return (data || [])
+    .map((r) => r.companies)
+    .filter(Boolean);
+}
+
+// COO map read: Apricus (Little Caesars) stores in the caller's granted
+// companies. Sonic stores come from the existing territory-map endpoint (already
+// DO-colored + scoped), so this keeps the cross-company read off the base stores
+// policy — only Apricus flows through here, gated on multi-company access.
+async function cooMapStores(supa, user) {
+  const companies = await grantedCompanies(supa, user.id);
+  if (companies.length < 2) {
+    return { error: "The COO map is limited to users with cross-company access.", status: 403 };
+  }
+  const slugs = companies.map((c) => c.slug);
+  const apricusCo = companies.find((c) => c.slug === "apricus");
+  let apricus = [];
+  if (apricusCo && slugs.includes("apricus")) {
+    const { data, error } = await supa
+      .from("stores")
+      .select("number, name, address, state, zip, latitude, longitude, brand_meta")
+      .eq("company_id", apricusCo.id)
+      .eq("is_active", true);
+    if (error) return { error: error.message, status: 500 };
+    apricus = (data || []).map((s) => ({
+      number: s.number, name: s.name, address: s.address, state: s.state, zip: s.zip,
+      latitude: s.latitude, longitude: s.longitude,
+      market: s.brand_meta?.market ?? null,
+      do_name: s.brand_meta?.director_of_operations ?? null,
+      dm_name: s.brand_meta?.district_manager ?? null,
+      gm_name: s.brand_meta?.general_manager ?? null,
+      phone: s.brand_meta?.store_phone ?? null,
+      drive_thru: s.brand_meta?.drive_thru ?? null,
+    }));
+  }
+  return { companies, apricus };
+}
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // AL stores with no ZIP on import — surface them for a manual eyeball.
 const AL_FLAG = new Set(["0039", "0040", "0041"]);
@@ -84,6 +129,11 @@ export const handler = async (event) => {
 
   const params = event.queryStringParameters || {};
   const action = params.action || "";
+
+  if (event.httpMethod === "GET" && action === "stores") {
+    const out = await cooMapStores(supa, user);
+    return out?.error ? respond(out.status || 500, { error: out.error }) : respond(200, { ok: true, ...out });
+  }
 
   if (event.httpMethod === "POST" && action === "geocode-apricus") {
     if (String(user.role).toLowerCase() !== "admin") {

@@ -29,6 +29,21 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
+export interface CooCompany { id: string; slug: string; name: string }
+export interface ApricusStore {
+  number: string; name: string; address: string | null; state: string | null; zip: string | null;
+  latitude: number | null; longitude: number | null;
+  market: string | null; do_name: string | null; dm_name: string | null; gm_name: string | null;
+  phone: string | null; drive_thru: string | null;
+}
+export interface CooMapResponse { ok: true; companies: CooCompany[]; apricus: ApricusStore[] }
+
+// Cross-brand map data (Apricus side). Sonic comes from the territory map.
+// 403s for users without multi-company access.
+export function fetchCooMapStores(): Promise<CooMapResponse> {
+  return req<CooMapResponse>(`${FN}?action=stores`);
+}
+
 export interface GeocodeResult {
   ok: true;
   geocoded: number;
