@@ -35,7 +35,7 @@ export function PullLogPage() {
     <>
       <PageHeader
         title="Pull log"
-        description="KPI feed capture + Labor v2 pulls — status, what landed, and errors."
+        description="KPI feed capture + labor pulls — status, what landed, and errors."
         actions={
           <button onClick={() => q.refetch()} disabled={q.isFetching}
             className="inline-flex items-center gap-1.5 rounded-md bg-white px-3 py-1.5 text-sm font-medium text-zinc-700 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50">

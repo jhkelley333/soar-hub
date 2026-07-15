@@ -50,14 +50,7 @@ export function LaborV2GmPage() {
   return (
     <>
       <PageHeader
-        title={
-          <span className="inline-flex items-center gap-2">
-            Yesterday&apos;s labor
-            <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-accent">
-              Beta
-            </span>
-          </span>
-        }
+        title="Yesterday's labor"
         description={
           <>
             <span className="block text-accent">Testing pulling from IX</span>
