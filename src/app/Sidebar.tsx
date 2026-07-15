@@ -1,9 +1,10 @@
 import { useState } from "react";
 import { createPortal } from "react-dom";
 import { NavLink } from "react-router-dom";
-import { LogOut } from "lucide-react";
+import { Globe2, LogOut } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/auth/AuthProvider";
+import { useCompanyAccess } from "@/modules/coo-map/useCompanyAccess";
 import { RollerGame } from "@/auth/RollerGame";
 import { groupedNav, visibleNav } from "@/app/nav";
 import { fetchResolvedFlags } from "@/lib/flags";
@@ -108,9 +109,14 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void } = {}) {
   });
   const { overrides } = useOverrides();
   const { overrides: regionOverrides, myRegionIds } = useRegionAccess();
+  const { multiCompany } = useCompanyAccess();
   const navItems = visibleNav(effectiveRole, flagsQ.data?.flags, overrides).filter(
     (item) => effectiveRole === "admin" || regionVisible(item.to, myRegionIds, regionOverrides),
   );
+  // Cross-brand COO map — shown only to users granted more than one company.
+  if (multiCompany && !navItems.some((n) => n.to === "/coo-map")) {
+    navItems.push({ to: "/coo-map", label: "COO Map", icon: Globe2, roles: null });
+  }
   const sections = groupedNav(navItems);
   const pafBadge = usePafBadgeCount(effectiveRole);
   const eaBadge = useEmployeeActionsBadgeCount(effectiveRole);
