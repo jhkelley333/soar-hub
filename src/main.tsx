@@ -7,6 +7,7 @@ import { router } from "@/app/router";
 import { queryClient } from "@/lib/queryClient";
 import { persistOptions } from "@/lib/queryPersister";
 import { ToastProvider } from "@/shared/ui/Toaster";
+import { UpdateBanner } from "@/lib/UpdateBanner";
 import { registerServiceWorker } from "@/lib/registerSW";
 import { requestPersistentStorage } from "@/lib/persistStorage";
 import { initChimeUnlock } from "@/lib/chime";
@@ -44,6 +45,7 @@ createRoot(root).render(
         <AuthProvider>
           <RouterProvider router={router} />
         </AuthProvider>
+        <UpdateBanner />
       </ToastProvider>
     </PersistQueryClientProvider>
   </StrictMode>
