@@ -964,21 +964,22 @@ async function buildPafRowFromBody(supa, user, body) {
     status: "Pending",
   };
 
-  // Clocked at the other store: their pay flows through that store's clock, so
-  // this PAF adds NO pay — but the hours are KEPT on the record so payroll
-  // knows what to charge the other store. Zero the rate + tips (not the hours)
-  // so the PAF still nets $0 and can't double-pay. Zeros, not nulls: these
-  // columns are NOT NULL in paf_submissions.
+  // Clocked at the other store: base pay runs through that store's clock, so
+  // this PAF documents the OT PREMIUM to charge the other store. Charge OT
+  // only: keep reg_pay_rate + ot_hours, zero reg_hours + tips. The PAF's cost
+  // is then ot_hours × rate × 1.5 — the amount payroll charges the other store.
+  // Zeros, not nulls: these columns are NOT NULL in paf_submissions.
   if (crossClockedOther === true) {
-    insertRow.reg_pay_rate = 0;
+    insertRow.reg_hours = 0;
     insertRow.cc_tips = 0;
     insertRow.declared_tips = 0;
-    // reg_hours / ot_hours kept as entered (informational — charged elsewhere).
+    const otCharge = num(insertRow.ot_hours) * num(insertRow.reg_pay_rate) * 1.5;
     const marker = "[CROSS STORE — CLOCKED AT OTHER STORE]";
     if (!insertRow.explanation.includes(marker)) {
       insertRow.explanation =
-        `${insertRow.explanation}\n\n${marker} NOTIFY PAYROLL: charge ${num(insertRow.ot_hours)} OT hour(s) to store #${insertRow.store_chrged_ot}. ` +
-        "Hours are recorded for reference; no pay is added on this PAF (they pay through the other store's clock).";
+        `${insertRow.explanation}\n\n${marker} NOTIFY PAYROLL: charge $${otCharge.toFixed(2)} ` +
+        `(${num(insertRow.ot_hours)} OT hr × $${num(insertRow.reg_pay_rate).toFixed(2)} × 1.5) to store #${insertRow.store_chrged_ot}. ` +
+        "Base pay runs through the other store's clock; this PAF charges the OT premium only.";
     }
   }
 

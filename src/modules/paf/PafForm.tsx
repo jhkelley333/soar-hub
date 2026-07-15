@@ -72,11 +72,9 @@ function visibleSections(category: string, bonusType: string, crossClockedOther 
       // Not clocked in at the other store — hours pay here, tips included.
       out.add("tips");
       out.add("pay");
-    } else if (crossClockedOther === "yes") {
-      // Clocked in there — record the hours to charge the other store, but no
-      // pay accrues here (rate + tips are cleared/hidden).
-      out.add("pay");
     }
+    // crossClockedOther === "yes": a focused OT-hours block (custom, below)
+    // captures the OT to charge the other store — no generic pay section.
     return out;
   }
   if (c === "POS Adjustment" || c === "Backpay") {
@@ -863,10 +861,10 @@ export function PafForm({
                   onClick={() => {
                     patch("cross_clocked_other", val);
                     if (val === "yes") {
-                      // Pay flows through the other store's clock — clear the
-                      // rate + tips so nothing double-pays, but KEEP the hours
-                      // (payroll needs them to charge the other store).
-                      patch("reg_pay_rate", "");
+                      // Base pay runs through the other store's clock — clear
+                      // reg hours + tips so only the OT premium is charged.
+                      // Keep rate + OT hours (they drive the charge amount).
+                      patch("reg_hours", "");
                       patch("cc_tips", "");
                       patch("declared_tips", "");
                     }
@@ -883,9 +881,9 @@ export function PafForm({
             </div>
             {state.cross_clocked_other === "yes" && (
               <div className="rounded-md bg-amber-50 px-3 py-2.5 text-sm text-amber-800 ring-1 ring-inset ring-amber-200">
-                <strong>No pay is added on this PAF</strong> — their hours already pay through the other store's
-                clock. Enter the <strong>hours worked</strong> below and the <strong>Store Charged OT</strong> so
-                payroll knows how many OT hours to charge, and which store. The PAF still nets $0.
+                Base pay runs through the other store's clock. This PAF <strong>charges the OT premium</strong> to
+                that store — enter the <strong>OT hours + pay rate</strong> below and the <strong>Store Charged
+                OT</strong>; the amount to charge is calculated automatically.
               </div>
             )}
             {state.cross_clocked_other === "no" && (
@@ -893,6 +891,50 @@ export function PafForm({
                 They didn't clock in at the other store — enter the hours below and they'll process as pay.
               </p>
             )}
+          </div>
+        </FormSection>
+      )}
+
+      {/* Cross store OT — clocked-in flow. Regular pay runs through the other
+          store's clock; only the OT premium needs charging there. Capture the
+          OT hours and show the 1.5× so payroll knows what to charge. No pay is
+          added to this PAF (cost stays $0). */}
+      {state.category === "Cross Store Work" && state.cross_clocked_other === "yes" && (
+        <FormSection
+          title="Cross store OT"
+          description="Base pay runs through the other store's clock; this PAF charges the OT premium. Enter the OT hours and pay rate to compute the amount to charge."
+        >
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="w-32">
+              <NhField label="OT Hours">
+                <input
+                  inputMode="decimal"
+                  value={state.ot_hours ?? ""}
+                  onChange={(e) => patch("ot_hours", e.target.value.replace(/[^0-9.]/g, ""))}
+                  placeholder="0"
+                  className={NH_INPUT}
+                />
+              </NhField>
+            </div>
+            <div className="w-40">
+              <NhField label="Pay Rate">
+                <div className="relative">
+                  <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-sm text-zinc-400">$</span>
+                  <input
+                    inputMode="decimal"
+                    value={state.reg_pay_rate ?? ""}
+                    onChange={(e) => patch("reg_pay_rate", e.target.value.replace(/[^0-9.]/g, ""))}
+                    placeholder="0.00"
+                    className={`${NH_INPUT} pl-6`}
+                  />
+                </div>
+              </NhField>
+            </div>
+            <div className="rounded-md bg-emerald-50 px-3 py-2 text-sm text-emerald-900 ring-1 ring-inset ring-emerald-200">
+              Amount to charge{String(state.store_chrged_ot ?? "").trim() ? <> store #{state.store_chrged_ot}</> : null}:{" "}
+              <strong>{formatUSD(Number(state.ot_hours || 0) * Number(state.reg_pay_rate || 0) * 1.5)}</strong>
+              <span className="ml-1 text-emerald-700/70">({Number(state.ot_hours || 0)} OT hr × ${Number(state.reg_pay_rate || 0).toFixed(2)} × 1.5)</span>
+            </div>
           </div>
         </FormSection>
       )}
