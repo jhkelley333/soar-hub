@@ -72,11 +72,9 @@ function visibleSections(category: string, bonusType: string, crossClockedOther 
       // Not clocked in at the other store — hours pay here, tips included.
       out.add("tips");
       out.add("pay");
-    } else if (crossClockedOther === "yes") {
-      // Clocked in there — record the hours to charge the other store, but no
-      // pay accrues here (rate + tips are cleared/hidden).
-      out.add("pay");
     }
+    // crossClockedOther === "yes": a focused OT-hours block (custom, below)
+    // captures the OT to charge the other store — no generic pay section.
     return out;
   }
   if (c === "POS Adjustment" || c === "Backpay") {
@@ -893,6 +891,35 @@ export function PafForm({
                 They didn't clock in at the other store — enter the hours below and they'll process as pay.
               </p>
             )}
+          </div>
+        </FormSection>
+      )}
+
+      {/* Cross store OT — clocked-in flow. Regular pay runs through the other
+          store's clock; only the OT premium needs charging there. Capture the
+          OT hours and show the 1.5× so payroll knows what to charge. No pay is
+          added to this PAF (cost stays $0). */}
+      {state.category === "Cross Store Work" && state.cross_clocked_other === "yes" && (
+        <FormSection
+          title="Cross store OT"
+          description="OT hours worked at the other store — charged there at 1.5×. No pay is added on this PAF."
+        >
+          <div className="flex flex-wrap items-end gap-4">
+            <div className="w-40">
+              <NhField label="OT Hours">
+                <input
+                  inputMode="decimal"
+                  value={state.ot_hours ?? ""}
+                  onChange={(e) => patch("ot_hours", e.target.value.replace(/[^0-9.]/g, ""))}
+                  placeholder="0"
+                  className={NH_INPUT}
+                />
+              </NhField>
+            </div>
+            <div className="rounded-md bg-zinc-50 px-3 py-2 text-sm text-zinc-700 ring-1 ring-inset ring-zinc-100">
+              At 1.5× = <strong className="text-midnight">{(Number(state.ot_hours || 0) * 1.5).toFixed(2)}</strong> OT-equivalent hour(s)
+              {String(state.store_chrged_ot ?? "").trim() ? <> to charge store #{state.store_chrged_ot}</> : null}
+            </div>
           </div>
         </FormSection>
       )}
