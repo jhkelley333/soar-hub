@@ -8,7 +8,7 @@
 delete from pto_requests where notes like 'P7 PTO import%';
 
 insert into pto_requests
-  (submitter_id, submitter_email, submitter_name, store_number, gm_name, pto_start_date, pto_end_date, days_used, position, status, approved_at, notes)
+  (submitter_id, submitter_email, submitter_name, store_number, employee_name, pto_start_date, pto_end_date, days_used, position, status, approved_at, notes)
 select sub.id, 'info@heathkelley.com', 'Historical Import',
        v.store_number, v.gm_name, v.s::date, v.e::date, 5, 'GM', 'SDO/RVP Approved', now(),
        'P7 PTO import (wk '||v.wk||')'
