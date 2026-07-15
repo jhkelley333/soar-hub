@@ -15,6 +15,18 @@ export function registerServiceWorker(): void {
   if (import.meta.env.DEV) return;
 
   window.addEventListener("load", () => {
+    // If this page is already controlled by a SW, a later controllerchange
+    // means a NEW SW (bumped CACHE_NAME) took over — reload once to pick up
+    // the fresh shell. Guarded so the FIRST install (uncontrolled → controlled
+    // via clients.claim) doesn't trigger a reload loop.
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (!hadController || reloaded) return;
+      reloaded = true;
+      window.location.reload();
+    });
+
     navigator.serviceWorker.register("/sw.js").catch((err) => {
       // Log so we notice on deploys, but don't surface to users.
       console.warn("[sw] registration failed:", err);
