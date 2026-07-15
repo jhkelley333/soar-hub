@@ -54,6 +54,7 @@ export interface TeamBand {
   variance_pts: number | null;
   dollars_over_chart: number | null;
   hours_over_chart: number | null;
+  sales: number | null;            // net sales for the window
   scheduled_hours: number | null;
   actual_hours: number | null;
   overtime_hours: number | null;

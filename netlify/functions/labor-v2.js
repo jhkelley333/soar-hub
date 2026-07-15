@@ -535,6 +535,7 @@ function teamBand(rows, prefix) {
     variance_pts: laborPct != null && targetPct != null ? round1(laborPct - targetPct) : null,
     dollars_over_chart: dollarsOver,
     hours_over_chart: hoursPerUnit(rows, prefix),
+    sales: sales ? round2(sales) : (sales === 0 ? 0 : null),
     scheduled_hours: s("scheduled_labor_hours"),
     actual_hours: hours,
     overtime_hours: s("overtime_hours"),

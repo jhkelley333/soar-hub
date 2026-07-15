@@ -5,7 +5,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Clock, Copy, RefreshCw, Share2 } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Clock, Copy, Download, RefreshCw, Share2 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -15,6 +15,7 @@ import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { MissTrackerExport } from "@/modules/labor/MissTrackerExport";
 import { fetchLaborV2Team, fetchMissTracker } from "./api";
+import { downloadLaborWorkbook } from "./laborWorkbook";
 import type { LaborPeriod, TeamBand, TeamDisplayLevel, TeamGroup, TeamStore } from "./types";
 
 const fmtPctPts = (v: number | null) => (v == null ? "—" : `${v.toFixed(1)}%`);
@@ -91,6 +92,7 @@ export function LaborV2TeamPage() {
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "var", dir: "desc" });
   const [period, setPeriod] = useState<LaborPeriod>("day"); // mobile cards: which period headlines
   const [shareDraft, setShareDraft] = useState<string | null>(null);
+  const [wbBusy, setWbBusy] = useState(false);
 
   const q = useQuery({ queryKey: ["labor-v2-team"], queryFn: () => fetchLaborV2Team(), staleTime: 5 * 60_000, refetchOnWindowFocus: true, refetchInterval: 10 * 60_000 });
   const data = q.data;
@@ -192,6 +194,12 @@ export function LaborV2TeamPage() {
               </span>
             )}
             {t && <MissTrackerExport fetcher={fetchMissTracker} />}
+            {data && (
+              <Button variant="secondary" size="sm" disabled={wbBusy}
+                onClick={async () => { setWbBusy(true); try { await downloadLaborWorkbook(data); } finally { setWbBusy(false); } }}>
+                <Download className="mr-1 h-3.5 w-3.5" /> {wbBusy ? "Building…" : "Workbook"}
+              </Button>
+            )}
             {t && (
               <Button variant="secondary" size="sm" onClick={openShare}>
                 <Share2 className="mr-1 h-3.5 w-3.5" /> Share
