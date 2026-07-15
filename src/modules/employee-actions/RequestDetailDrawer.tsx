@@ -20,10 +20,8 @@ function fmtMoney(n: number | null | undefined): string {
   return (Number(n) || 0).toLocaleString("en-US", { style: "currency", currency: "USD" });
 }
 
-// Fallback link to the DO closeout Google Form, shown in the drawer in case
-// the alert email isn't handy. Keep in sync with the function default.
-const CLOSEOUT_FORM_URL =
-  "https://docs.google.com/forms/d/e/1FAIpQLSeovlvWNQiJ2UDd5rlIqTkf7UEIVeZ88VkrJgdKUAd9Vso5Xw/viewform";
+const ROLE_RANK: Record<string, number> = { gm: 1, do: 2, sdo: 3, rvp: 4, vp: 5, coo: 6, admin: 7 };
+const rankOf = (r: string) => ROLE_RANK[r] ?? 0;
 
 // What the caller can do — mirrors the server's actionableStep exactly. A
 // senior submitter (SDO/RVP/admin) may take every step on their OWN request,
@@ -32,15 +30,15 @@ function availableAction(
   kind: Kind,
   status: string,
   role: string,
-  isOwner: boolean
+  isOwner: boolean,
+  overBank = false
 ): "decide" | ConfirmStep | null {
   const isApprover = role === "sdo" || role === "rvp" || role === "admin";
   const isDo = role === "do" || role === "admin";
   const canOps = isDo || (isOwner && isApprover);
   if (kind === "training") {
-    if (status === "Submitted") return isApprover ? "decide" : null;
-    if (status === "Approved") return isApprover ? "entered" : null;
-    if (status === "On Weekly Sheet") return canOps ? "closed-out" : null;
+    // Approval is the only step now — DO within bank, RVP over bank.
+    if (status === "Submitted") return rankOf(role) >= (overBank ? ROLE_RANK.rvp : ROLE_RANK.do) ? "decide" : null;
     return null;
   }
   if (status === "Submitted") return isDo || (isOwner && isApprover) ? "decide" : null;
@@ -81,7 +79,7 @@ export function RequestDetailDrawer({
   const role = profile?.role ?? "";
   const isAdmin = role === "admin";
   const isOwner = !!row && row.submitter_id === profile?.id;
-  const action = row ? availableAction(kind, row.status, role, isOwner) : null;
+  const action = row ? availableAction(kind, row.status, role, isOwner, "over_bank" in row ? !!(row as { over_bank?: boolean }).over_bank : false) : null;
   const canEdit = !!row && row.status === "Changes Requested" && (isOwner || isAdmin) && !!onEdit;
 
   // DO & above can correct/withdraw any in-flight (non-terminal) request.
@@ -219,8 +217,11 @@ export function RequestDetailDrawer({
         <dl className="divide-y divide-zinc-100">
           <div className="flex items-center gap-2 pb-2">
             <StatusPill kind={statusKind(row.status)}>{row.status}</StatusPill>
-            {waitingOn(kind, row.status) && (
-              <span className="text-xs font-medium text-sonic-700">→ Waiting on {waitingOn(kind, row.status)}</span>
+            {waitingOn(kind, row.status, !!(row as { over_bank?: boolean }).over_bank) && (
+              <span className="text-xs font-medium text-sonic-700">→ Waiting on {waitingOn(kind, row.status, !!(row as { over_bank?: boolean }).over_bank)}</span>
+            )}
+            {kind === "training" && !!(row as { over_bank?: boolean }).over_bank && (
+              <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-amber-700">Over bank</span>
             )}
             {kind === "pto" && (row as PtoRow).position && (
               <span className="text-xs text-zinc-400">{(row as PtoRow).position}</span>
@@ -264,20 +265,6 @@ export function RequestDetailDrawer({
             </div>
           )}
 
-          {action === "closed-out" && (
-            <p className="pt-3 text-xs text-zinc-500">
-              Complete the closeout form, then mark it completed.{" "}
-              <a
-                href={CLOSEOUT_FORM_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="font-medium text-accent underline"
-              >
-                Open the closeout form
-              </a>{" "}
-              (also linked in your email).
-            </p>
-          )}
         </dl>
       )}
     </Drawer>

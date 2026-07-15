@@ -19,13 +19,13 @@ export function statusKind(status: string): StatusPillKind {
 
 // The role/party the request is currently waiting on, or null when it's done.
 // Rendered as "→ Waiting on {who}" next to the status.
-export function waitingOn(kind: "training" | "pto", status: string): string | null {
+export function waitingOn(kind: "training" | "pto", status: string, overBank = false): string | null {
   if (status === "Withdrawn") return null; // no longer in flight
   if (status === "Changes Requested") return "submitter";
   if (kind === "training") {
-    if (status === "Submitted" || status === "Approved") return "SDO/RVP";
-    if (status === "On Weekly Sheet") return "DO";
-    return null; // Completed
+    // Approval is the only step now: DO within bank, RVP over bank.
+    if (status === "Submitted") return overBank ? "RVP" : "DO";
+    return null; // Completed / terminal
   }
   // pto
   if (status === "Submitted") return "DO";
