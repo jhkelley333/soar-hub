@@ -32,6 +32,9 @@ const READ_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "pay
 const ORG_WIDE_READ = new Set(["payroll", "admin", "vp", "coo"]);
 // Roles that can act on an approval step.
 const APPROVER_ROLES = new Set(["do", "sdo", "rvp", "admin"]);
+// Role tiers for approver escalation (training: DO within bank, RVP over bank).
+const ROLE_RANK = { gm: 1, do: 2, sdo: 3, rvp: 4, vp: 5, coo: 6, admin: 7 };
+const rankOf = (role) => ROLE_RANK[String(role || "").toLowerCase()] ?? 0;
 // Finished states — can't be corrected or withdrawn.
 const TERMINAL_STATUSES = new Set(["Completed", "Closed", "Withdrawn"]);
 
@@ -104,11 +107,8 @@ function appBaseUrl() {
   return (process.env.URL || process.env.DEPLOY_URL || "").replace(/\/$/, "");
 }
 
-// Google Form the DO completes to close out a finished training. Defaults to
-// the current form; override with TRAINING_CLOSEOUT_FORM_URL in Netlify.
-const CLOSEOUT_FORM_URL =
-  process.env.TRAINING_CLOSEOUT_FORM_URL ||
-  "https://docs.google.com/forms/d/e/1FAIpQLSeovlvWNQiJ2UDd5rlIqTkf7UEIVeZ88VkrJgdKUAd9Vso5Xw/viewform";
+// (The DO weekly-sheet + closeout-form steps were retired — training now
+// flows from TotZone, so approval is the final step.)
 
 async function sendEmailViaResend({ to, subject, text }) {
   const recipients = Array.isArray(to) ? to.filter(Boolean) : to ? [to] : [];
@@ -443,7 +443,7 @@ function buildTrainingFields(body) {
 
   const lastDayDate = sanitizeDateInput(body?.last_day_date);
   if (!lastDayDate) {
-    return { error: "Last Training Day date is required (used for closeout).", status: 400 };
+    return { error: "Last Training Day date is required.", status: 400 };
   }
 
   return {
@@ -482,21 +482,21 @@ function trainingEmailText(user, storeNumber, fields, meta, link, verb) {
   );
 }
 
-// A GM's or DO's training credit needs SDO/RVP approval. An SDO/RVP/admin
-// submitting clears their own (only) approval tier — mirroring the PTO
-// skip — so the credit lands Approved, ready for the weekly-sheet step,
-// instead of stalling at "Submitted" with no one able to approve it
-// (they can't approve their own).
-function trainingWorkflowFields(user) {
-  const isApprover = user.role === "sdo" || user.role === "rvp" || user.role === "admin";
-  if (isApprover) {
+// Training credit approval: DO approves within the store's bank; RVP approves
+// when the request is over bank. Approval is the FINAL step — it lands
+// "Completed" and the labor credit applies (loadTrainingCreditDates keys off
+// approved_at). A submitter who already clears the required tier auto-approves
+// their own request (they outrank every approver below them).
+function trainingWorkflowFields(user, overBank) {
+  const neededRank = overBank ? ROLE_RANK.rvp : ROLE_RANK.do;
+  if (rankOf(user.role) >= neededRank) {
     const now = new Date().toISOString();
     return {
-      status: "Approved",
+      status: "Completed",
       approved_at: now,
       approved_by_id: user.id,
       approved_by_email: user.email,
-      decision_note: "Auto — submitter is SDO/RVP or above",
+      decision_note: "Auto — submitter clears the approval tier",
     };
   }
   return { status: "Submitted" };
@@ -750,15 +750,11 @@ async function submitTraining(supa, user, body) {
   const built = buildTrainingFields(body);
   if (built.error) return built;
 
-  // The bank: block a request that overdraws the store's yearly credit.
+  // The bank no longer blocks a request that overdraws the store's yearly
+  // credit — it escalates approval from the DO to the RVP instead.
   const year = creditYearOf({ start_date: built.fields.start_date });
   const bal = await creditBalanceFor(supa, storeNumber, year);
-  if (built.meta.requestedAmount > bal.remaining + 0.005) {
-    return {
-      error: `Store ${storeNumber} has $${bal.remaining.toFixed(2)} of training credit left for ${year} (of $${bal.budget.toFixed(2)}) — this request is $${built.meta.requestedAmount.toFixed(2)}. Trim the request or have an admin adjust the store's credit bank.`,
-      status: 422,
-    };
-  }
+  const overBank = built.meta.requestedAmount > bal.remaining + 0.005;
 
   const insertRow = {
     submitter_id: user.id,
@@ -766,7 +762,8 @@ async function submitTraining(supa, user, body) {
     submitter_name: user.full_name ?? null,
     store_number: storeNumber,
     ...built.fields,
-    ...trainingWorkflowFields(user),
+    over_bank: overBank,
+    ...trainingWorkflowFields(user, overBank),
   };
 
   const { data: created, error } = await supa
@@ -791,7 +788,8 @@ async function submitTraining(supa, user, body) {
     sendCopy: insertRow.send_copy,
     submitterEmail: user.email,
     subject: `Training Credit Request — ${built.meta.employeeName} (Store ${storeNumber})`,
-    text: trainingEmailText(user, storeNumber, built.fields, built.meta, link, "submitted"),
+    text: trainingEmailText(user, storeNumber, built.fields, built.meta, link, "submitted")
+      + (overBank ? `\n\n⚠ Over the store's training bank ($${bal.remaining.toFixed(2)} left of $${bal.budget.toFixed(2)}) — this needs RVP approval.` : ""),
   });
 
   return { ok: true, id: created.id, status: insertRow.status };
@@ -846,24 +844,21 @@ async function updateTraining(supa, user, body) {
   const bal = await creditBalanceFor(supa, storeNumber, newYear);
   const giveBack = String(existing.store_number) === String(storeNumber) && creditYearOf(existing) === newYear
     ? Number(existing.requested_amount) || 0 : 0;
-  if (built.meta.requestedAmount > bal.remaining + giveBack + 0.005) {
-    return {
-      error: `Store ${storeNumber} has $${round2(bal.remaining + giveBack).toFixed(2)} of training credit available for ${newYear} — this request is $${built.meta.requestedAmount.toFixed(2)}. Trim it or have an admin adjust the store's credit bank.`,
-      status: 422,
-    };
-  }
+  // Over bank re-routes to RVP approval (no longer blocked); recompute the flag.
+  const overBank = built.meta.requestedAmount > bal.remaining + giveBack + 0.005;
 
   const { error } = await supa
     .from("training_credit_requests")
     .update({
       store_number: storeNumber,
       ...built.fields,
-      status: "Submitted",
+      over_bank: overBank,
       rejection_reason: null,
       approved_at: null,
       approved_by_id: null,
       approved_by_email: null,
       decision_note: null,
+      ...trainingWorkflowFields(user, overBank),
     })
     .eq("id", id);
   if (error) return { error: error.message, status: 500 };
@@ -1292,21 +1287,21 @@ const AUDIT_TYPE = {
 
 // The action a given role can take on a request at its current status, or
 // null. Covers approvals ("decide") and the post-approval confirmations.
-//   training: Submitted→decide(SDO/RVP) Approved→entered(SDO/RVP) "On Weekly Sheet"→closed-out(DO)
+//   training: Submitted→decide (DO within bank / RVP over bank) → Completed
 //   pto:      Submitted→decide(DO) "DO Approved"→decide(SDO/RVP) "SDO/RVP Approved"→paf-submitted(DO) "PAF Submitted"→close(DO)
-function actionableStep(type, status, role, isOwner = false) {
+function actionableStep(type, status, role, isOwner = false, overBank = false) {
   const isApprover = role === "sdo" || role === "rvp" || role === "admin";
   const isDo = role === "do" || role === "admin";
-  // The post-approval operational steps (weekly sheet / PAF filing / closeout)
-  // are normally a DO's job. But a senior submitter (SDO/RVP/admin) must also
-  // be able to run them on their OWN request — they outrank every approver, so
-  // there's no one below to hand the request down to. Without this their
-  // request dead-ends with no actionable button for anyone reachable.
+  // The post-approval operational steps (PAF filing / closeout) are normally a
+  // DO's job. But a senior submitter (SDO/RVP/admin) must also be able to run
+  // them on their OWN request — they outrank every approver, so there's no one
+  // below to hand the request down to.
   const canOps = isDo || (isOwner && isApprover);
   if (type === "training") {
-    if (status === "Submitted") return isApprover ? "decide" : null;
-    if (status === "Approved") return isApprover ? "entered" : null;
-    if (status === "On Weekly Sheet") return canOps ? "closed-out" : null;
+    // Approval is the only step now — DO within bank, RVP over bank.
+    if (status === "Submitted") {
+      return rankOf(role) >= (overBank ? ROLE_RANK.rvp : ROLE_RANK.do) ? "decide" : null;
+    }
     return null;
   }
   // pto. The DO step is a DO's job for others, but a senior owner clears it on
@@ -1339,7 +1334,7 @@ async function listQueue(supa, user) {
     return (data ?? [])
       .map((r) => ({
         ...r,
-        action_needed: actionableStep(type, r.status, user.role, r.submitter_id === user.id),
+        action_needed: actionableStep(type, r.status, user.role, r.submitter_id === user.id, r.over_bank),
       }))
       .filter((r) => {
         if (!r.action_needed) return false;
@@ -1350,7 +1345,7 @@ async function listQueue(supa, user) {
 
   try {
     const [training, pto] = await Promise.all([
-      fetchActionable("training", ["Submitted", "Approved", "On Weekly Sheet"]),
+      fetchActionable("training", ["Submitted"]),
       fetchActionable("pto", ["Submitted", "DO Approved", "SDO/RVP Approved", "PAF Submitted"]),
     ]);
     const distinct = Array.from(
@@ -1402,7 +1397,7 @@ async function decide(supa, user, body) {
   // strand it. Anyone below the required tier is still rejected by the step
   // check below (e.g. a GM or DO can't self-approve a tier above them).
   const isOwner = existing.submitter_id === user.id;
-  if (actionableStep(type, existing.status, user.role, isOwner) !== "decide") {
+  if (actionableStep(type, existing.status, user.role, isOwner, existing.over_bank) !== "decide") {
     return {
       error: `This request is ${existing.status} and isn't yours to approve.`,
       status: 409,
@@ -1455,14 +1450,17 @@ async function decide(supa, user, body) {
     return { ok: true, status: "Changes Requested" };
   }
 
-  // approve
+  // approve — training approval is the final step: it lands Completed and the
+  // labor credit applies. The store's SDO is notified (FYI, not an approver).
   if (type === "training") {
     const err = await transition(
       {
-        status: "Approved",
+        status: "Completed",
         approved_at: nowIso,
         approved_by_id: user.id,
         approved_by_email: user.email,
+        closed_out_at: nowIso,
+        closed_out_by_id: user.id,
         decision_note: note || null,
       },
       existing.status
@@ -1474,16 +1472,17 @@ async function decide(supa, user, body) {
       actor_id: user.id,
       actor_email: user.email,
       action: "approve",
-      detail: { note: note || null },
+      detail: { note: note || null, over_bank: !!existing.over_bank },
     });
+    const { sdos } = await resolveStoreLeadership(supa, existing.store_number);
     await sendEmailViaResend({
-      to: existing.submitter_email,
+      to: [existing.submitter_email, ...sdos.map((p) => p.email)].filter(Boolean),
       subject: `Training credit approved — ${employeeName} (Store ${existing.store_number})`,
       text:
-        `${displayName(user)} approved the training credit request.\n\n` +
-        `View it here: ${link}`,
+        `${displayName(user)} approved the training credit for ${employeeName}. ` +
+        `It's complete and the store's labor credit is applied.\n\nView it here: ${link}`,
     });
-    return { ok: true, status: "Approved" };
+    return { ok: true, status: "Completed" };
   }
 
   // pto
@@ -1601,55 +1600,7 @@ async function confirm(supa, user, body) {
     return null;
   }
 
-  if (step === "entered") {
-    const err = await transition(
-      { status: "On Weekly Sheet", entered_at: nowIso, entered_by_id: user.id },
-      existing.status
-    );
-    if (err) return err;
-    await logAudit(supa, {
-      request_type: AUDIT_TYPE.training,
-      request_id: id,
-      actor_id: user.id,
-      actor_email: user.email,
-      action: "entered",
-      detail: {},
-    });
-    // Alert the store's DO to close it out after the last training day.
-    const { dos } = await resolveStoreLeadership(supa, existing.store_number);
-    await sendEmailViaResend({
-      to: dos.map((p) => p.email).filter(Boolean),
-      subject: `Close out training — ${employeeName} (Store ${existing.store_number})`,
-      text:
-        `${displayName(user)} entered ${employeeName}'s training credit in the tracking sheet.\n\n` +
-        `After the last training day${existing.last_day_date ? ` (${existing.last_day_date})` : ""}, ` +
-        `please complete the closeout form:\n${CLOSEOUT_FORM_URL}\n\n` +
-        `Then mark it completed here: ${link}`,
-    });
-    return { ok: true, status: "On Weekly Sheet" };
-  }
-
-  if (step === "closed-out") {
-    const err = await transition(
-      { status: "Completed", closed_out_at: nowIso, closed_out_by_id: user.id },
-      existing.status
-    );
-    if (err) return err;
-    await logAudit(supa, {
-      request_type: AUDIT_TYPE.training,
-      request_id: id,
-      actor_id: user.id,
-      actor_email: user.email,
-      action: "closed-out",
-      detail: {},
-    });
-    await sendEmailViaResend({
-      to: existing.submitter_email,
-      subject: `Training completed — ${employeeName} (Store ${existing.store_number})`,
-      text: `${displayName(user)} completed the closeout for ${employeeName}'s training.\n\n${link}`,
-    });
-    return { ok: true, status: "Completed" };
-  }
+  // (training "entered" / "closed-out" steps retired — approval is final now)
 
   if (step === "paf-submitted") {
     const err = await transition(

@@ -195,17 +195,17 @@ export function TrainingCreditForm({
             Training Credit Request
           </h3>
           <p className="mt-0.5 text-xs text-zinc-500">
-            Each store has a $2,000 annual budget for hourly team training. Requests are
-            reviewed by the DO and RVP before funds are charged to the store's training
-            budget.
+            Each store has a $2,000 annual budget for hourly team training. Your <strong>DO</strong> approves it;
+            if it's over the store's remaining bank it goes to the <strong>RVP</strong> instead. Approval is final —
+            the labor credit applies right away.
           </p>
           {bal && (
             <p className={`mt-1.5 inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1 text-xs font-semibold ring-1 ring-inset ${
-              overdraws ? "bg-red-50 text-red-700 ring-red-200"
+              overdraws ? "bg-amber-50 text-amber-800 ring-amber-200"
                 : bal.remaining < bal.budget * 0.15 ? "bg-amber-50 text-amber-800 ring-amber-200"
                 : "bg-emerald-50 text-emerald-700 ring-emerald-200"}`}>
               Store #{state.store_number}: {fmtUSD(bal.remaining)} of {fmtUSD(bal.budget)} training credit left for {bal.year}
-              {overdraws ? ` — this request (${fmtUSD(total)}) overdraws it` : ""}
+              {overdraws ? ` — this request (${fmtUSD(total)}) is over bank, so it needs RVP approval` : ""}
             </p>
           )}
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -263,7 +263,7 @@ export function TrainingCreditForm({
               required
               value={state.last_day_date}
               onChange={(v) => set("last_day_date", v)}
-              helpText="Final training day — used to time the DO's closeout."
+              helpText="Final training day for this request."
             />
             <TrainingDaysEditor
               label="First Three Training Days"

@@ -408,8 +408,8 @@ function TrainingRow({ row, onOpen }: { row: TrainingCreditRow; onOpen: () => vo
           <div className="flex items-center gap-2">
             <span className="text-sm font-medium text-zinc-900">{row.employee_name}</span>
             <StatusPill kind={statusKind(row.status)}>{row.status}</StatusPill>
-            {waitingOn("training", row.status) && (
-              <span className="text-xs font-medium text-sonic-700">→ Waiting on {waitingOn("training", row.status)}</span>
+            {waitingOn("training", row.status, !!(row as { over_bank?: boolean }).over_bank) && (
+              <span className="text-xs font-medium text-sonic-700">→ Waiting on {waitingOn("training", row.status, !!(row as { over_bank?: boolean }).over_bank)}</span>
             )}
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5">
