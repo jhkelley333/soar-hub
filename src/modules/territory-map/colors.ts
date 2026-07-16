@@ -61,3 +61,7 @@ export function colorsForDos(doIds: string[]): Map<string, string> {
   });
   return out;
 }
+
+// Same deterministic assignment for any stable key set (e.g. Little Caesars
+// markets), not just DO ids — the algorithm never cared that the keys were uuids.
+export const colorsForKeys = colorsForDos;

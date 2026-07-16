@@ -1,14 +1,14 @@
 // COO Map — cross-brand executive view at /coo-map. Sonic + Apricus Little
 // Caesars stores on one Google Map, for users with multi-company access only.
-// Sonic markers keep the territory map's DO colors (round pins); Little Caesars
-// gets a distinct SQUARE glyph in LC orange (no DO-color reuse — they have no
-// SOAR DO). Route + nav are gated on company_access > 1 (data-driven).
+// Markers are grouped by "district" (Sonic = DO, Little Caesars = market); each
+// group's shape + color is customizable (persisted per browser) so an exec can
+// tune the view like Google My Maps. Route + nav are gated on company_access > 1.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { APIProvider, Map as GoogleMap, AdvancedMarker, Pin, InfoWindow, useMap } from "@vis.gl/react-google-maps";
-import { RefreshCw } from "lucide-react";
+import { APIProvider, Map as GoogleMap, AdvancedMarker, InfoWindow, useMap } from "@vis.gl/react-google-maps";
+import { RefreshCw, SlidersHorizontal, Navigation, ExternalLink, RotateCcw } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -17,9 +17,14 @@ import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import { fetchTerritoryMap, type TerritoryStore } from "@/modules/territory-map/api";
-import { colorsForDos, DO_OPEN_COLOR } from "@/modules/territory-map/colors";
+import { colorsForDos, colorsForKeys, DO_OPEN_COLOR } from "@/modules/territory-map/colors";
 import { useCompanyAccess } from "./useCompanyAccess";
 import { fetchCooMapStores, geocodeApricus, type ApricusStore } from "./api";
+import {
+  MARKER_SHAPES, asHexInput, loadMarkerStyles, saveMarkerStyles,
+  type MarkerShape, type GroupStyle,
+} from "./markerStyles";
+import { appleMapsDirections, googleMapsDirections, googleMapsMultiStop, GMAPS_MAX_STOPS } from "./mapLinks";
 
 const MAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 const MAP_ID = (import.meta.env.VITE_GOOGLE_MAPS_MAP_ID as string | undefined) || "DEMO_MAP_ID";
@@ -30,6 +35,52 @@ type Sel =
   | { brand: "sonic"; s: TerritoryStore }
   | { brand: "lc"; s: ApricusStore }
   | null;
+
+// A "district" bucket spanning both brands — Sonic DOs and LC markets share the
+// same styling model.
+interface Group {
+  key: string;
+  label: string;
+  brand: "sonic" | "lc";
+  count: number;
+  defColor: string;
+  defShape: MarkerShape;
+}
+
+const sonicKey = (s: TerritoryStore) => `sonic:${s.do_id ?? "open"}`;
+const lcKey = (s: ApricusStore) => `lc:${s.market ?? "—"}`;
+
+// A single map marker glyph in the chosen shape + color. CSS-only so it stays
+// crisp at any zoom and needs no image assets.
+function MarkerGlyph({ shape, color, size = 16 }: { shape: MarkerShape; color: string; size?: number }) {
+  const base: CSSProperties = {
+    width: size, height: size, background: color,
+    border: "2px solid #fff", boxSizing: "border-box",
+    boxShadow: "0 1px 3px rgba(0,0,0,.4)",
+  };
+  if (shape === "circle") return <div style={{ ...base, borderRadius: "50%" }} />;
+  if (shape === "square") return <div style={{ ...base, borderRadius: 3 }} />;
+  if (shape === "diamond") return <div style={{ ...base, borderRadius: 2, transform: "rotate(45deg)" }} />;
+  if (shape === "pin") return <div style={{ ...base, borderRadius: "50% 50% 50% 0", transform: "rotate(-45deg)" }} />;
+  if (shape === "triangle")
+    return (
+      <div style={{
+        width: 0, height: 0,
+        borderLeft: `${size / 2}px solid transparent`,
+        borderRight: `${size / 2}px solid transparent`,
+        borderBottom: `${size}px solid ${color}`,
+        filter: "drop-shadow(0 1px 1px rgba(0,0,0,.45))",
+      }} />
+    );
+  // star
+  return (
+    <div style={{
+      width: size + 4, height: size + 4, background: color,
+      clipPath: "polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 91%,50% 70%,21% 91%,32% 57%,2% 35%,39% 35%)",
+      filter: "drop-shadow(0 1px 1px rgba(0,0,0,.45))",
+    }} />
+  );
+}
 
 // Fit the viewport to all plotted stores once per load.
 function FitAll({ pts }: { pts: { lat: number; lng: number }[] }) {
@@ -50,8 +101,11 @@ export function CooMapPage() {
   const toast = useToast();
   const [showSonic, setShowSonic] = useState(true);
   const [showLc, setShowLc] = useState(true);
+  const [showStyle, setShowStyle] = useState(false);
   const [sel, setSel] = useState<Sel>(null);
   const [geoBusy, setGeoBusy] = useState(false);
+  const [overrides, setOverrides] = useState<Record<string, GroupStyle>>(() => loadMarkerStyles());
+  useEffect(() => saveMarkerStyles(overrides), [overrides]);
 
   const sonicQ = useQuery({ queryKey: ["coo-territory"], queryFn: fetchTerritoryMap, staleTime: 5 * 60_000, enabled: multiCompany });
   const lcQ = useQuery({ queryKey: ["coo-lc"], queryFn: fetchCooMapStores, staleTime: 5 * 60_000, enabled: multiCompany });
@@ -60,6 +114,47 @@ export function CooMapPage() {
   const lc = useMemo(() => (lcQ.data?.apricus ?? []), [lcQ.data]);
   const lcPlotted = useMemo(() => lc.filter((s) => s.latitude != null && s.longitude != null), [lc]);
   const doColors = useMemo(() => colorsForDos(sonic.map((s) => s.do_id).filter(Boolean) as string[]), [sonic]);
+  const marketColors = useMemo(() => colorsForKeys([...new Set(lc.map((s) => s.market ?? "—"))]), [lc]);
+
+  // Build the district groups + their default styles, then resolve overrides.
+  const groups = useMemo<Group[]>(() => {
+    const m = new Map<string, Group>();
+    for (const s of sonic) {
+      const key = sonicKey(s);
+      const e = m.get(key) ?? {
+        key, label: s.do_name ?? "Open", brand: "sonic" as const, count: 0,
+        defColor: s.do_id ? (doColors.get(s.do_id) ?? DO_OPEN_COLOR) : DO_OPEN_COLOR, defShape: "pin" as MarkerShape,
+      };
+      e.count++; m.set(key, e);
+    }
+    for (const s of lc) {
+      const key = lcKey(s);
+      const e = m.get(key) ?? {
+        key, label: s.market ?? "—", brand: "lc" as const, count: 0,
+        defColor: marketColors.get(s.market ?? "—") ?? LC_ORANGE, defShape: "square" as MarkerShape,
+      };
+      e.count++; m.set(key, e);
+    }
+    return [...m.values()].sort((a, b) => (a.brand === b.brand ? a.label.localeCompare(b.label) : a.brand.localeCompare(b.brand)));
+  }, [sonic, lc, doColors, marketColors]);
+
+  const resolved = useMemo(() => {
+    const m = new Map<string, GroupStyle>();
+    for (const g of groups) {
+      const o = overrides[g.key];
+      m.set(g.key, { color: o?.color ?? g.defColor, shape: o?.shape ?? g.defShape });
+    }
+    return m;
+  }, [groups, overrides]);
+
+  const styleOf = (key: string): GroupStyle => resolved.get(key) ?? { color: DO_OPEN_COLOR, shape: "pin" };
+
+  function updateGroup(g: Group, patch: Partial<GroupStyle>) {
+    setOverrides((prev) => {
+      const cur = prev[g.key] ?? { color: g.defColor, shape: g.defShape };
+      return { ...prev, [g.key]: { ...cur, ...patch } };
+    });
+  }
 
   const states = useMemo(() => {
     const set = new Set<string>();
@@ -97,11 +192,23 @@ export function CooMapPage() {
     }
   }
 
+  // "See all {brand} stores in Google Maps" — routes through every plotted store
+  // of that brand, warning when Google's stop cap truncates the list.
+  function openAllInGoogle(brand: "sonic" | "lc") {
+    const addrs = (brand === "sonic" ? sonic.map((s) => s.address) : lcPlotted.map((s) => s.address))
+      .filter((a): a is string => !!a);
+    if (!addrs.length) { toast.push("No plotted stores to open.", "error"); return; }
+    const { url, truncated } = googleMapsMultiStop(addrs);
+    if (truncated) toast.push(`Google Maps caps routes at ${GMAPS_MAX_STOPS} stops — showing the first ${GMAPS_MAX_STOPS} of ${addrs.length}.`, "info");
+    window.open(url, "_blank", "noopener");
+  }
+
   if (accessLoading) return <Skeleton className="h-96 w-full" />;
   if (!multiCompany) return <Navigate to="/" replace />;
   if (!MAPS_KEY) return <EmptyState title="Map key missing" description="Set VITE_GOOGLE_MAPS_API_KEY to render the map." />;
 
   const lcMissing = lc.length - lcPlotted.length;
+  const selAddr = sel?.s.address ?? null;
 
   return (
     <>
@@ -109,12 +216,18 @@ export function CooMapPage() {
         title="COO Map"
         description="SOAR Sonic + Apricus Little Caesars on one map."
         actions={
-          isAdmin && lcMissing > 0 ? (
-            <Button variant="secondary" size="sm" onClick={runGeocode} disabled={geoBusy}>
-              <RefreshCw className={cn("mr-1 h-3.5 w-3.5", geoBusy && "animate-spin")} />
-              {geoBusy ? "Geocoding…" : `Geocode ${lcMissing} missing`}
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setShowStyle((v) => !v)}>
+              <SlidersHorizontal className="mr-1 h-3.5 w-3.5" />
+              Customize
             </Button>
-          ) : undefined
+            {isAdmin && lcMissing > 0 ? (
+              <Button variant="secondary" size="sm" onClick={runGeocode} disabled={geoBusy}>
+                <RefreshCw className={cn("mr-1 h-3.5 w-3.5", geoBusy && "animate-spin")} />
+                {geoBusy ? "Geocoding…" : `Geocode ${lcMissing} missing`}
+              </Button>
+            ) : null}
+          </div>
         }
       />
 
@@ -136,6 +249,52 @@ export function CooMapPage() {
         </label>
       </div>
 
+      {/* Customize markers panel — per-district shape + color, saved to this browser */}
+      {showStyle && (
+        <div className="mb-3 rounded-xl bg-white p-3 ring-1 ring-zinc-200">
+          <div className="mb-2 flex items-center justify-between">
+            <div className="text-xs font-semibold uppercase tracking-wider text-zinc-500">Marker style · by district</div>
+            <button
+              type="button"
+              onClick={() => setOverrides({})}
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium text-zinc-500 hover:bg-zinc-100 hover:text-zinc-700"
+            >
+              <RotateCcw className="h-3 w-3" /> Reset all
+            </button>
+          </div>
+          <div className="grid gap-x-6 gap-y-1.5 sm:grid-cols-2 lg:grid-cols-3">
+            {groups.map((g) => {
+              const st = styleOf(g.key);
+              return (
+                <div key={g.key} className="flex items-center gap-2">
+                  <span className="grid h-6 w-6 shrink-0 place-items-center"><MarkerGlyph shape={st.shape} color={st.color} size={13} /></span>
+                  <span className="min-w-0 flex-1 truncate text-xs" title={g.label}>
+                    <span className={cn("mr-1 rounded px-1 py-0.5 text-[9px] font-semibold uppercase", g.brand === "sonic" ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700")}>
+                      {g.brand === "sonic" ? "SON" : "LC"}
+                    </span>
+                    {g.label} <span className="text-zinc-400">· {g.count}</span>
+                  </span>
+                  <select
+                    value={st.shape}
+                    onChange={(e) => updateGroup(g, { shape: e.target.value as MarkerShape })}
+                    className="rounded-md border border-zinc-200 bg-white px-1 py-0.5 text-[11px]"
+                  >
+                    {MARKER_SHAPES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+                  </select>
+                  <input
+                    type="color"
+                    value={asHexInput(st.color)}
+                    onChange={(e) => updateGroup(g, { color: e.target.value })}
+                    className="h-6 w-7 shrink-0 cursor-pointer rounded border border-zinc-200 bg-white p-0.5"
+                    aria-label={`Color for ${g.label}`}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="grid gap-3 lg:grid-cols-[1fr_320px]">
         {/* Map */}
         <div className="min-h-[520px] overflow-hidden rounded-xl border border-zinc-200">
@@ -143,28 +302,70 @@ export function CooMapPage() {
             <Skeleton className="h-[520px] w-full" />
           ) : (
             <APIProvider apiKey={MAPS_KEY}>
-              <GoogleMap mapId={MAP_ID} defaultCenter={US_CENTER} defaultZoom={5} gestureHandling="greedy" className="h-full min-h-[520px] w-full">
+              <GoogleMap
+                mapId={MAP_ID}
+                defaultCenter={US_CENTER}
+                defaultZoom={5}
+                gestureHandling="greedy"
+                mapTypeControl
+                streetViewControl
+                fullscreenControl
+                className="h-full min-h-[520px] w-full"
+              >
                 <FitAll pts={fitPts} />
-                {showSonic && sonic.map((s) => (
-                  <AdvancedMarker key={`s-${s.id}`} position={{ lat: s.latitude!, lng: s.longitude! }} onClick={() => setSel({ brand: "sonic", s })}>
-                    <Pin background={s.do_id ? doColors.get(s.do_id)! : DO_OPEN_COLOR} borderColor="#ffffff" glyphColor="#ffffff" />
-                  </AdvancedMarker>
-                ))}
-                {showLc && lcPlotted.map((s) => (
-                  <AdvancedMarker key={`lc-${s.number}`} position={{ lat: s.latitude!, lng: s.longitude! }} onClick={() => setSel({ brand: "lc", s })}>
-                    {/* Distinct square glyph for Little Caesars */}
-                    <div style={{ width: 16, height: 16, background: LC_ORANGE, border: "2px solid #fff", borderRadius: 3, boxShadow: "0 1px 3px rgba(0,0,0,.4)" }} />
-                  </AdvancedMarker>
-                ))}
+                {showSonic && sonic.map((s) => {
+                  const st = styleOf(sonicKey(s));
+                  return (
+                    <AdvancedMarker key={`s-${s.id}`} position={{ lat: s.latitude!, lng: s.longitude! }} onClick={() => setSel({ brand: "sonic", s })}>
+                      <MarkerGlyph shape={st.shape} color={st.color} />
+                    </AdvancedMarker>
+                  );
+                })}
+                {showLc && lcPlotted.map((s) => {
+                  const st = styleOf(lcKey(s));
+                  return (
+                    <AdvancedMarker key={`lc-${s.number}`} position={{ lat: s.latitude!, lng: s.longitude! }} onClick={() => setSel({ brand: "lc", s })}>
+                      <MarkerGlyph shape={st.shape} color={st.color} />
+                    </AdvancedMarker>
+                  );
+                })}
                 {sel && sel.s.latitude != null && sel.s.longitude != null && (
                   <InfoWindow position={{ lat: sel.s.latitude!, lng: sel.s.longitude! }} pixelOffset={[0, -30]} onCloseClick={() => setSel(null)}>
-                    <div className="min-w-[180px] text-xs">
+                    <div className="min-w-[190px] text-xs">
                       <div className="font-bold text-midnight">
                         {sel.brand === "sonic" ? <>#{sel.s.number} {sel.s.name}</> : <>LC #{sel.s.number} · {sel.s.name}</>}
                       </div>
                       {sel.brand === "sonic"
                         ? <div className="text-zinc-500">DO: {sel.s.do_name ?? "—"}</div>
                         : <div className="text-zinc-500">{sel.s.market ?? "—"} · DO {sel.s.do_name ?? "—"} · DM {sel.s.dm_name ?? "—"}<br />GM: {sel.s.gm_name ?? "—"}</div>}
+                      {selAddr && <div className="mt-1 text-zinc-400">{selAddr}</div>}
+
+                      {/* Directions + open-all actions */}
+                      <div className="mt-2 flex flex-col gap-1 border-t border-zinc-100 pt-2">
+                        {selAddr && (
+                          <div className="flex gap-1.5">
+                            <a
+                              href={appleMapsDirections(selAddr)} target="_blank" rel="noopener noreferrer"
+                              className="inline-flex flex-1 items-center justify-center gap-1 rounded-md bg-zinc-100 px-2 py-1 font-medium text-zinc-700 hover:bg-zinc-200"
+                            >
+                              <Navigation className="h-3 w-3" /> Apple Maps
+                            </a>
+                            <a
+                              href={googleMapsDirections(selAddr)} target="_blank" rel="noopener noreferrer"
+                              className="inline-flex flex-1 items-center justify-center gap-1 rounded-md bg-zinc-100 px-2 py-1 font-medium text-zinc-700 hover:bg-zinc-200"
+                            >
+                              <Navigation className="h-3 w-3" /> Google
+                            </a>
+                          </div>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => openAllInGoogle(sel.brand)}
+                          className="inline-flex items-center justify-center gap-1 rounded-md px-2 py-1 font-medium text-frost hover:bg-frost/10"
+                        >
+                          <ExternalLink className="h-3 w-3" /> All {sel.brand === "sonic" ? "Sonic" : "LC"} stores in Google Maps
+                        </button>
+                      </div>
                     </div>
                   </InfoWindow>
                 )}
@@ -177,14 +378,20 @@ export function CooMapPage() {
         <div className="max-h-[520px] space-y-3 overflow-auto rounded-xl bg-white p-3 ring-1 ring-zinc-200">
           <div>
             <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-zinc-400">Little Caesars · by market</div>
-            {lcByMarket.map(([market, rows]) => (
-              <div key={market} className="mb-2">
-                <div className="text-xs font-semibold text-midnight">{market} <span className="font-normal text-zinc-400">· {rows.length}</span></div>
-                <div className="text-[11px] text-zinc-500">
-                  {[...new Set(rows.map((r) => r.do_name).filter(Boolean))].join(", ") || "—"}
+            {lcByMarket.map(([market, rows]) => {
+              const st = styleOf(`lc:${market}`);
+              return (
+                <div key={market} className="mb-2">
+                  <div className="flex items-center gap-1.5 text-xs font-semibold text-midnight">
+                    <MarkerGlyph shape={st.shape} color={st.color} size={11} />
+                    {market} <span className="font-normal text-zinc-400">· {rows.length}</span>
+                  </div>
+                  <div className="text-[11px] text-zinc-500">
+                    {[...new Set(rows.map((r) => r.do_name).filter(Boolean))].join(", ") || "—"}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </div>
