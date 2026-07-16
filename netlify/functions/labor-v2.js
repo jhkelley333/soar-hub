@@ -754,9 +754,14 @@ async function teamView(supa, user, params) {
 
   // Visible stores with no Expressway poll for this date (no row, or a row
   // with no daily sales) — surfaced so the numbers can be flagged as skewed.
+  // Only flag stores that resolve into the Sonic org tree: non-Sonic brands
+  // (Apricus / Little Caesars) and corporate/hold stores like #8100 sit outside
+  // it and never receive Expressway polling, so they'd falsely inflate the skew
+  // count. `district` is null for exactly those, which is our filter.
   const polled = new Set((rows || []).filter((r) => r.net_sales != null).map((r) => String(r.store_number)));
   const missing = visible
     .filter((s) => !polled.has(String(s.number)))
+    .filter((s) => orgMap.get(String(s.number))?.district)
     .map((s) => ({ number: String(s.number), name: s.name }))
     .sort((a, b) => a.number.localeCompare(b.number));
 
