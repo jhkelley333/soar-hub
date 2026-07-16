@@ -8,7 +8,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { APIProvider, Map as GoogleMap, AdvancedMarker, InfoWindow, useMap } from "@vis.gl/react-google-maps";
-import { RefreshCw, SlidersHorizontal, Navigation, ExternalLink, RotateCcw } from "lucide-react";
+import { RefreshCw, SlidersHorizontal, Navigation, RotateCcw, Download } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -24,7 +24,8 @@ import {
   MARKER_SHAPES, asHexInput, loadMarkerStyles, saveMarkerStyles,
   type MarkerShape, type GroupStyle,
 } from "./markerStyles";
-import { appleMapsDirections, googleMapsDirections, googleMapsMultiStop, GMAPS_MAX_STOPS } from "./mapLinks";
+import { appleMapsDirections, googleMapsDirections } from "./mapLinks";
+import { buildStoresKml, downloadKml, type KmlPoint } from "./kmlExport";
 
 const MAPS_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string | undefined;
 const MAP_ID = (import.meta.env.VITE_GOOGLE_MAPS_MAP_ID as string | undefined) || "DEMO_MAP_ID";
@@ -192,15 +193,35 @@ export function CooMapPage() {
     }
   }
 
-  // "See all {brand} stores in Google Maps" — routes through every plotted store
-  // of that brand, warning when Google's stop cap truncates the list.
-  function openAllInGoogle(brand: "sonic" | "lc") {
-    const addrs = (brand === "sonic" ? sonic.map((s) => s.address) : lcPlotted.map((s) => s.address))
-      .filter((a): a is string => !!a);
-    if (!addrs.length) { toast.push("No plotted stores to open.", "error"); return; }
-    const { url, truncated } = googleMapsMultiStop(addrs);
-    if (truncated) toast.push(`Google Maps caps routes at ${GMAPS_MAX_STOPS} stops — showing the first ${GMAPS_MAX_STOPS} of ${addrs.length}.`, "info");
-    window.open(url, "_blank", "noopener");
+  // Export every plotted (visible) store to a KML the user imports into Google
+  // My Maps — the only way to see hundreds of pins at once. Colors match the
+  // on-screen district styling; the imported map opens in the Google Maps app.
+  function exportKml() {
+    const pts: KmlPoint[] = [];
+    if (showSonic) {
+      for (const s of sonic) {
+        const st = styleOf(sonicKey(s));
+        pts.push({
+          name: `#${s.number} ${s.name}`,
+          description: `Sonic · DO: ${s.do_name ?? "—"}\n${s.address ?? ""}`.trim(),
+          lat: s.latitude!, lng: s.longitude!, colorHex: st.color, folder: "Sonic",
+        });
+      }
+    }
+    if (showLc) {
+      for (const s of lcPlotted) {
+        const st = styleOf(lcKey(s));
+        pts.push({
+          name: `LC #${s.number} ${s.name}`,
+          description: `Little Caesars · ${s.market ?? "—"} · DO ${s.do_name ?? "—"} · DM ${s.dm_name ?? "—"} · GM ${s.gm_name ?? "—"}\n${s.address ?? ""}`.trim(),
+          lat: s.latitude!, lng: s.longitude!, colorHex: st.color, folder: "Little Caesars",
+        });
+      }
+    }
+    if (!pts.length) { toast.push("No plotted stores to export.", "error"); return; }
+    downloadKml("soar-coo-map", buildStoresKml("SOAR + Little Caesars stores", pts));
+    toast.push(`Exported ${pts.length} stores. Import the .kml at mymaps.google.com (Create map → Import) to see every pin.`, "success");
+    window.open("https://www.google.com/maps/d/", "_blank", "noopener");
   }
 
   if (accessLoading) return <Skeleton className="h-96 w-full" />;
@@ -220,6 +241,10 @@ export function CooMapPage() {
             <Button variant="secondary" size="sm" onClick={() => setShowStyle((v) => !v)}>
               <SlidersHorizontal className="mr-1 h-3.5 w-3.5" />
               Customize
+            </Button>
+            <Button variant="secondary" size="sm" onClick={exportKml}>
+              <Download className="mr-1 h-3.5 w-3.5" />
+              Export to My Maps
             </Button>
             {isAdmin && lcMissing > 0 ? (
               <Button variant="secondary" size="sm" onClick={runGeocode} disabled={geoBusy}>
@@ -340,32 +365,23 @@ export function CooMapPage() {
                         : <div className="text-zinc-500">{sel.s.market ?? "—"} · DO {sel.s.do_name ?? "—"} · DM {sel.s.dm_name ?? "—"}<br />GM: {sel.s.gm_name ?? "—"}</div>}
                       {selAddr && <div className="mt-1 text-zinc-400">{selAddr}</div>}
 
-                      {/* Directions + open-all actions */}
-                      <div className="mt-2 flex flex-col gap-1 border-t border-zinc-100 pt-2">
-                        {selAddr && (
-                          <div className="flex gap-1.5">
-                            <a
-                              href={appleMapsDirections(selAddr)} target="_blank" rel="noopener noreferrer"
-                              className="inline-flex flex-1 items-center justify-center gap-1 rounded-md bg-zinc-100 px-2 py-1 font-medium text-zinc-700 hover:bg-zinc-200"
-                            >
-                              <Navigation className="h-3 w-3" /> Apple Maps
-                            </a>
-                            <a
-                              href={googleMapsDirections(selAddr)} target="_blank" rel="noopener noreferrer"
-                              className="inline-flex flex-1 items-center justify-center gap-1 rounded-md bg-zinc-100 px-2 py-1 font-medium text-zinc-700 hover:bg-zinc-200"
-                            >
-                              <Navigation className="h-3 w-3" /> Google
-                            </a>
-                          </div>
-                        )}
-                        <button
-                          type="button"
-                          onClick={() => openAllInGoogle(sel.brand)}
-                          className="inline-flex items-center justify-center gap-1 rounded-md px-2 py-1 font-medium text-frost hover:bg-frost/10"
-                        >
-                          <ExternalLink className="h-3 w-3" /> All {sel.brand === "sonic" ? "Sonic" : "LC"} stores in Google Maps
-                        </button>
-                      </div>
+                      {/* Directions */}
+                      {selAddr && (
+                        <div className="mt-2 flex gap-1.5 border-t border-zinc-100 pt-2">
+                          <a
+                            href={appleMapsDirections(selAddr)} target="_blank" rel="noopener noreferrer"
+                            className="inline-flex flex-1 items-center justify-center gap-1 rounded-md bg-zinc-100 px-2 py-1 font-medium text-zinc-700 hover:bg-zinc-200"
+                          >
+                            <Navigation className="h-3 w-3" /> Apple Maps
+                          </a>
+                          <a
+                            href={googleMapsDirections(selAddr)} target="_blank" rel="noopener noreferrer"
+                            className="inline-flex flex-1 items-center justify-center gap-1 rounded-md bg-zinc-100 px-2 py-1 font-medium text-zinc-700 hover:bg-zinc-200"
+                          >
+                            <Navigation className="h-3 w-3" /> Google
+                          </a>
+                        </div>
+                      )}
                     </div>
                   </InfoWindow>
                 )}
