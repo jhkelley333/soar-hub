@@ -62,7 +62,11 @@ export function SdoActions({
     setReason("");
   }
 
-  if (paf.status !== "Pending SDO Approval") return null;
+  // Assigned-approver review covers both tiers: SDO/RVP bonus review and VP
+  // pay-adjustment review. The backend approve/reject endpoints branch on the
+  // status (logging vp-approved / vp-rejected for the VP flow), so both belong
+  // here — gating to SDO-only left VPs with no buttons on their queue.
+  if (paf.status !== "Pending SDO Approval" && paf.status !== "Pending VP Approval") return null;
 
   return (
     <>
