@@ -9,10 +9,14 @@ export interface PlLine {
   total?: boolean;
 }
 
+export type PlStage = "prelim" | "final";
+
 export interface PlPeriod {
   period_end: string; // YYYY-MM-DD
   period_label: string | null;
-  is_final: boolean;
+  is_final: boolean; // true once a Final exists for the period
+  has_prelim?: boolean;
+  has_final?: boolean;
 }
 
 export interface PlOverviewRow {
@@ -25,6 +29,8 @@ export interface PlOverviewRow {
   ci_amount: number | null;
   ci_pct: number | null;
   ebitda: number | null;
+  stage?: PlStage;
+  compare_available?: boolean;
 }
 
 export interface PlStatement extends PlOverviewRow {
@@ -32,6 +38,34 @@ export interface PlStatement extends PlOverviewRow {
   lines: PlLine[];
   uploaded_by_name: string | null;
   updated_at: string;
+}
+
+// ── Prelim vs Final comparison ──────────────────────────────────────
+export interface PlCompareLine {
+  label: string;
+  total: boolean;
+  prelim_amount: number | null;
+  final_amount: number | null;
+  delta: number | null;
+  prelim_pct: number | null;
+  final_pct: number | null;
+  changed: boolean;
+}
+
+export interface PlHeadlineDelta {
+  prelim: number | null;
+  final: number | null;
+  delta: number | null;
+}
+
+export interface PlCompare {
+  store_number: string;
+  store_name: string | null;
+  period_end: string;
+  period_label: string | null;
+  headline: Record<"total_sales" | "gross_profit" | "ci_amount" | "ci_pct" | "ebitda", PlHeadlineDelta>;
+  lines: PlCompareLine[];
+  changed_count: number;
 }
 
 // Client-side workbook parse result (see parseWorkbook.ts).

@@ -10,15 +10,15 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowLeft, ArrowUp, ArrowUpDown, Loader2, TrendingDown, TrendingUp, Upload } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowLeftRight, ArrowUp, ArrowUpDown, Download, Loader2, TrendingDown, TrendingUp, Upload } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
-import { fetchPlFlags, fetchPlOverview, fetchPlPeriods, fetchPlStatement, savePlFlagNote, uploadPl, type PlFlag } from "./api";
-import type { ParsedWorkbook, PlLine, PlOverviewRow } from "./types";
+import { fetchPlCompare, fetchPlFlags, fetchPlOverview, fetchPlPeriods, fetchPlStatement, savePlFlagNote, uploadPl, type PlFlag } from "./api";
+import type { ParsedWorkbook, PlCompareLine, PlLine, PlOverviewRow, PlStage } from "./types";
 
 const money = (v: number | null | undefined, dp = 0) =>
   v == null
@@ -250,12 +250,24 @@ function StatementView({ store, period, periodLabel, onBack }: {
   periodLabel: string;
   onBack?: () => void;
 }) {
+  // undefined = "auto" (Final when it exists, else Prelim). A toggle forces one.
+  const [stage, setStage] = useState<PlStage | undefined>(undefined);
+  const [compareOpen, setCompareOpen] = useState(false);
+
   const q = useQuery({
-    queryKey: ["pl-statement", store, period],
-    queryFn: () => fetchPlStatement(store, period),
+    queryKey: ["pl-statement", store, period, stage ?? "auto"],
+    queryFn: () => fetchPlStatement(store, period, stage),
     staleTime: 5 * 60_000,
   });
   const s = q.data?.statement;
+  const available = q.data?.available;
+  const bothStages = !!(available?.prelim && available?.final);
+
+  if (compareOpen) {
+    return (
+      <CompareView store={store} period={period} periodLabel={periodLabel} onBack={() => setCompareOpen(false)} />
+    );
+  }
 
   return (
     <>
@@ -267,6 +279,45 @@ function StatementView({ store, period, periodLabel, onBack }: {
       <PageHeader
         title={s ? `#${s.store_number}${s.store_name ? ` · ${s.store_name}` : ""}` : `#${store}`}
         description={`Income statement · ${periodLabel}${s?.uploaded_by_name ? ` · uploaded by ${s.uploaded_by_name}` : ""}`}
+        actions={
+          bothStages ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-zinc-200">
+                {(["prelim", "final"] as PlStage[]).map((st) => {
+                  const activeStage = (s?.stage ?? "final") === st;
+                  return (
+                    <button
+                      key={st}
+                      type="button"
+                      onClick={() => setStage(st)}
+                      className={cn(
+                        "px-3 py-1.5 text-sm font-semibold capitalize transition",
+                        activeStage ? "bg-accent text-white" : "bg-white text-zinc-600 hover:bg-zinc-50",
+                      )}
+                    >
+                      {st}
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                type="button"
+                onClick={() => setCompareOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-semibold text-midnight hover:border-accent"
+              >
+                <ArrowLeftRight className="h-4 w-4" strokeWidth={2} />
+                Compare Prelim → Final
+              </button>
+            </div>
+          ) : s ? (
+            <span className={cn(
+              "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset",
+              s.stage === "final" ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-amber-50 text-amber-700 ring-amber-200",
+            )}>
+              {s.stage === "final" ? "Final" : "Prelim"} only
+            </span>
+          ) : undefined
+        }
       />
 
       {q.isLoading ? (
@@ -299,6 +350,175 @@ function StatementView({ store, period, periodLabel, onBack }: {
         </div>
       )}
     </>
+  );
+}
+
+// ── Prelim → Final side-by-side comparison ───────────────────────────
+function CompareView({ store, period, periodLabel, onBack }: {
+  store: string;
+  period: string;
+  periodLabel: string;
+  onBack: () => void;
+}) {
+  const [changedOnly, setChangedOnly] = useState(false);
+  const q = useQuery({
+    queryKey: ["pl-compare", store, period],
+    queryFn: () => fetchPlCompare(store, period),
+    staleTime: 5 * 60_000,
+  });
+  const c = q.data;
+
+  const rows = useMemo(
+    () => (c ? (changedOnly ? c.lines.filter((l) => l.changed) : c.lines) : []),
+    [c, changedOnly],
+  );
+
+  function exportCsv() {
+    if (!c) return;
+    const esc = (v: string | number | null) => {
+      const s = v == null ? "" : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const head = ["Line", "Prelim $", "Final $", "Δ $", "Δ %", "Prelim %", "Final %"];
+    const body = c.lines.map((l) => [
+      l.label,
+      l.prelim_amount ?? "",
+      l.final_amount ?? "",
+      l.delta ?? "",
+      pctChange(l.prelim_amount, l.final_amount) ?? "",
+      l.prelim_pct ?? "",
+      l.final_pct ?? "",
+    ]);
+    const csv = [head, ...body].map((r) => r.map(esc).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `pl-compare-${store}-${period}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  return (
+    <>
+      <button type="button" onClick={onBack} className="mb-3 inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-midnight">
+        <ArrowLeft className="h-4 w-4" /> Back to statement
+      </button>
+      <PageHeader
+        title={c ? `#${c.store_number}${c.store_name ? ` · ${c.store_name}` : ""} — Prelim → Final` : `#${store} — Prelim → Final`}
+        description={`What changed between Preliminary and Final · ${periodLabel}`}
+        actions={
+          c ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="inline-flex cursor-pointer items-center gap-1.5 text-sm text-zinc-700">
+                <input type="checkbox" checked={changedOnly} onChange={(e) => setChangedOnly(e.target.checked)} className="h-3.5 w-3.5 accent-accent" />
+                Changed lines only ({c.changed_count})
+              </label>
+              <button
+                type="button"
+                onClick={exportCsv}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-semibold text-midnight hover:border-accent"
+              >
+                <Download className="h-4 w-4" strokeWidth={2} /> Export CSV
+              </button>
+            </div>
+          ) : undefined
+        }
+      />
+
+      {q.isLoading ? (
+        <Skeleton className="h-96 w-full" />
+      ) : q.isError || !c ? (
+        <EmptyState
+          title="Couldn't compare"
+          description={(q.error as Error)?.message ?? "Both a Preliminary and a Final P&L are required."}
+        />
+      ) : (
+        <div className="space-y-5">
+          {/* Headline movers */}
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            <MoverTile label="Total Sales" d={c.headline.total_sales} />
+            <MoverTile label="Gross Profit" d={c.headline.gross_profit} />
+            <MoverTile label="CI $" d={c.headline.ci_amount} />
+            <MoverTile label="CI %" d={c.headline.ci_pct} isPct />
+            <MoverTile label="EBITDA" d={c.headline.ebitda} />
+          </div>
+
+          {/* Line-by-line */}
+          <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-zinc-100 text-[10px] uppercase tracking-wide text-zinc-400">
+                    <th className="px-5 py-2 text-left">Line</th>
+                    <th className="px-3 py-2 text-right">Prelim</th>
+                    <th className="px-3 py-2 text-right">Final</th>
+                    <th className="px-3 py-2 text-right">Δ $</th>
+                    <th className="px-5 py-2 text-right">Δ %</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((l, i) => (
+                    <CompareRow key={`${l.label}-${i}`} line={l} />
+                  ))}
+                  {rows.length === 0 && (
+                    <tr><td colSpan={5} className="px-5 py-8 text-center text-sm text-zinc-400">No changed lines — Prelim and Final match.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// % change of a line from prelim to final (relative to prelim), or null.
+function pctChange(prelim: number | null, final: number | null): number | null {
+  if (prelim == null || final == null || prelim === 0) return null;
+  return ((final - prelim) / Math.abs(prelim)) * 100;
+}
+
+function CompareRow({ line }: { line: PlCompareLine }) {
+  const changed = line.changed;
+  const up = (line.delta ?? 0) > 0;
+  const pc = pctChange(line.prelim_amount, line.final_amount);
+  return (
+    <tr className={cn("border-b border-zinc-50", line.total && "bg-zinc-50 font-bold text-midnight", changed && !line.total && "bg-amber-50/40")}>
+      <td className={cn("px-5 py-1.5", !line.total && "pl-8 text-zinc-700")}>{line.label}</td>
+      <td className="px-3 py-1.5 text-right tabular-nums text-zinc-500">{money(line.prelim_amount, 2)}</td>
+      <td className="px-3 py-1.5 text-right tabular-nums text-midnight">{money(line.final_amount, 2)}</td>
+      <td className={cn("px-3 py-1.5 text-right tabular-nums font-semibold", !changed ? "text-zinc-300" : up ? "text-emerald-700" : "text-red-600")}>
+        {line.delta == null ? "—" : `${up ? "+" : "−"}${money(Math.abs(line.delta), 2).replace(/^−/, "")}`}
+      </td>
+      <td className={cn("px-5 py-1.5 text-right tabular-nums", !changed ? "text-zinc-300" : up ? "text-emerald-700" : "text-red-600")}>
+        {pc == null ? "—" : `${pc > 0 ? "+" : ""}${pc.toFixed(1)}%`}
+      </td>
+    </tr>
+  );
+}
+
+function MoverTile({ label, d, isPct }: { label: string; d: { prelim: number | null; final: number | null; delta: number | null }; isPct?: boolean }) {
+  const fmt = (v: number | null) => (v == null ? "—" : isPct ? pct(v) : money(v));
+  const moved = d.delta != null && Math.abs(d.delta) >= (isPct ? 0.005 : 0.005);
+  const up = (d.delta ?? 0) > 0;
+  return (
+    <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
+      <div className="text-[11px] uppercase tracking-wide text-zinc-400">{label}</div>
+      <div className="mt-1 text-lg font-bold tabular-nums text-midnight">{fmt(d.final)}</div>
+      <div className="mt-0.5 flex items-center gap-1.5 text-xs">
+        <span className="text-zinc-400">from {fmt(d.prelim)}</span>
+        {moved && (
+          <span className={cn("inline-flex items-center gap-0.5 font-semibold", up ? "text-emerald-700" : "text-red-600")}>
+            {up ? <TrendingUp className="h-3 w-3" strokeWidth={2.5} /> : <TrendingDown className="h-3 w-3" strokeWidth={2.5} />}
+            {up ? "+" : "−"}{isPct ? `${Math.abs(d.delta!).toFixed(2)} pts` : money(Math.abs(d.delta!)).replace(/^−/, "")}
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
 

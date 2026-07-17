@@ -1,7 +1,7 @@
 // P&L — typed wrappers around netlify/functions/pl.
 
 import { supabase } from "@/lib/supabase";
-import type { ParsedPlStore, PlOverviewRow, PlPeriod, PlStatement } from "./types";
+import type { ParsedPlStore, PlCompare, PlOverviewRow, PlPeriod, PlStage, PlStatement } from "./types";
 
 const FN = "/.netlify/functions/pl";
 
@@ -35,9 +35,20 @@ export function fetchPlOverview(period: string): Promise<{ period: string; rows:
   return request(`${FN}?action=overview&period=${encodeURIComponent(period)}`);
 }
 
-export function fetchPlStatement(store: string, period: string): Promise<{ statement: PlStatement }> {
+export function fetchPlStatement(
+  store: string,
+  period: string,
+  stage?: PlStage,
+): Promise<{ statement: PlStatement; available: { prelim: boolean; final: boolean } }> {
+  const stageQ = stage ? `&stage=${stage}` : "";
   return request(
-    `${FN}?action=statement&store=${encodeURIComponent(store)}&period=${encodeURIComponent(period)}`,
+    `${FN}?action=statement&store=${encodeURIComponent(store)}&period=${encodeURIComponent(period)}${stageQ}`,
+  );
+}
+
+export function fetchPlCompare(store: string, period: string): Promise<PlCompare> {
+  return request(
+    `${FN}?action=compare&store=${encodeURIComponent(store)}&period=${encodeURIComponent(period)}`,
   );
 }
 
