@@ -67,15 +67,20 @@ function weekDates(anchor) {
 }
 
 // Stores the caller may view labor for (admins/org-wide see all active).
+// Labor v2 is the Sonic Expressway feed, so it's Sonic-only: exclude other
+// brands (Apricus / Little Caesars, which are also `is_active` in the shared
+// stores table). `brand is null` counts as Sonic — legacy rows predate the
+// column (which defaults to 'sonic').
+const SONIC_ONLY = "brand.eq.sonic,brand.is.null";
 async function resolveVisibleStoreRows(supa, user) {
   if (roleOf(user) === "admin" || ORG_WIDE.has(roleOf(user))) {
-    const { data } = await supa.from("stores").select("id, number, name, district_id, is_active").eq("is_active", true).order("number");
+    const { data } = await supa.from("stores").select("id, number, name, district_id, is_active").eq("is_active", true).or(SONIC_ONLY).order("number");
     return data ?? [];
   }
   const { data: visibleIds } = await supa.rpc("user_visible_stores", { uid: user.id });
   const ids = (visibleIds ?? []).map((v) => (typeof v === "string" ? v : v?.user_visible_stores ?? null)).filter(Boolean);
   if (!ids.length) return [];
-  const { data } = await supa.from("stores").select("id, number, name, district_id, is_active").in("id", ids).eq("is_active", true).order("number");
+  const { data } = await supa.from("stores").select("id, number, name, district_id, is_active").in("id", ids).eq("is_active", true).or(SONIC_ONLY).order("number");
   return data ?? [];
 }
 
