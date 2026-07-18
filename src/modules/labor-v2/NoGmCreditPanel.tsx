@@ -94,10 +94,15 @@ export function NoGmCreditPanel() {
     onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't save rate.", "error"),
   });
 
+  const [search, setSearch] = useState("");
   const rows = q.data?.rows ?? [];
   const weekly = q.data?.weekly ?? 880;
-  const activeRows = rows.filter((r) => r.active);
-  const pastRows = rows.filter((r) => !r.active);
+  const matchesSearch = (r: NoGmCreditRow) => {
+    const s = search.trim().toLowerCase();
+    return !s || `${r.store_number} ${r.store_name ?? ""}`.toLowerCase().includes(s);
+  };
+  const activeRows = rows.filter((r) => r.active && matchesSearch(r));
+  const pastRows = rows.filter((r) => !r.active && matchesSearch(r));
 
   if (q.isLoading) return <div className="space-y-3"><Skeleton className="h-16 w-full" /><Skeleton className="h-40 w-full" /></div>;
   if (q.isError) return <EmptyState title="Couldn't load" description={(q.error as Error)?.message ?? "Try again."} />;
@@ -134,10 +139,18 @@ export function NoGmCreditPanel() {
         </Button>
       </div>
 
+      {/* Search by store */}
+      <input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search by store # or name…"
+        className={cn(inputCls, "w-full max-w-sm")}
+      />
+
       {/* Active tags */}
       <Section title={`Active (${activeRows.length})`}>
         {activeRows.length === 0
-          ? <p className="p-4 text-sm text-zinc-500">No stores are tagged right now.</p>
+          ? <p className="p-4 text-sm text-zinc-500">{search ? "No active tags match that search." : "No stores are tagged right now."}</p>
           : activeRows.map((r) => (
               <Row key={r.id} r={r}
                 onEnd={() => { setEndTarget(r); setEndOn(todayIso()); }}
