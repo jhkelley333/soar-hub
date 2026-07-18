@@ -168,7 +168,7 @@ function HoursFlag({ trend, light }: { trend: HoursTrend; light?: boolean }) {
       ? (light ? "bg-emerald-400/20 text-emerald-200" : "bg-emerald-50 text-emerald-700")
       : (light ? "bg-red-400/20 text-red-200" : "bg-red-50 text-red-700");
   return (
-    <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums", tone)} title="Hours over chart vs last week">
+    <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums", tone)} title="WTD hours over vs same point last week">
       <Icon className="h-3 w-3" strokeWidth={2.5} />
       {flat ? "Hrs flat vs LW" : `${improving ? "Improving" : "Worse"} ${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(1)}h`}
     </span>
