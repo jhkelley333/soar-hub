@@ -7,9 +7,10 @@
 import { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, TrendingDown, TrendingUp, Minus } from "lucide-react";
+import { ChevronRight, TrendingDown, TrendingUp, Minus, Download } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { fetchSharedLabor, type HoursTrend, type ShareBand, type ShareNode, type SharedLaborResponse } from "./api";
+import { downloadSharedLaborFile } from "./sharedLaborWorkbook";
 
 const fmtPct = (v: number | null) => (v == null ? "—" : `${v.toFixed(1)}%`);
 const fmtVar = (v: number | null) => (v == null ? "" : `${v >= 0 ? "+" : ""}${v.toFixed(1)}`);
@@ -47,6 +48,7 @@ const childOf = (l: Chain): Chain | null => CHAIN[CHAIN.indexOf(l) + 1] ?? null;
 
 export function SharedLaborPage() {
   const { token = "" } = useParams();
+  const [dl, setDl] = useState(false);
   const q = useQuery({
     queryKey: ["shared-labor", token],
     queryFn: () => fetchSharedLabor(token),
@@ -56,17 +58,36 @@ export function SharedLaborPage() {
     retry: false,
   });
 
+  async function download() {
+    if (!q.data) return;
+    setDl(true);
+    try { await downloadSharedLaborFile(q.data); } finally { setDl(false); }
+  }
+
   return (
     <div className="min-h-screen bg-zinc-50">
       <div className="mx-auto max-w-3xl px-4 py-6 sm:px-6">
-        <div className="mb-4">
-          <div className="text-[11px] font-semibold uppercase tracking-wider text-accent">SOAR Hub</div>
-          <h1 className="text-2xl font-bold tracking-tight text-midnight">Labor</h1>
-          <p className="mt-0.5 text-sm text-zinc-500">
-            {q.data
-              ? `${q.data.label ? `${q.data.label} · ` : ""}Business day ${fmtDate(q.data.date)} · read-only`
-              : "Read-only shared labor view."}
-          </p>
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-accent">SOAR Hub</div>
+            <h1 className="text-2xl font-bold tracking-tight text-midnight">Labor</h1>
+            <p className="mt-0.5 text-sm text-zinc-500">
+              {q.data
+                ? `${q.data.label ? `${q.data.label} · ` : ""}Business day ${fmtDate(q.data.date)} · read-only`
+                : "Read-only shared labor view."}
+            </p>
+          </div>
+          {q.data && (
+            <button
+              type="button"
+              onClick={download}
+              disabled={dl}
+              className="inline-flex shrink-0 items-center gap-1.5 rounded-lg bg-midnight px-3 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:opacity-60"
+            >
+              <Download className="h-4 w-4" strokeWidth={2} />
+              {dl ? "Building…" : "Labor File"}
+            </button>
+          )}
         </div>
 
         {q.isLoading && <div className="py-16 text-center text-sm text-zinc-500">Loading labor…</div>}
@@ -145,9 +166,14 @@ function SharedLaborExplorer({ data }: { data: SharedLaborResponse }) {
         </div>
       )}
 
-      <p className="pt-2 text-center text-[11px] text-zinc-400">
-        Labor % vs target · AvS = actual − scheduled hours
-      </p>
+      <div className="mt-4 space-y-2 rounded-xl bg-white p-4 text-[11px] leading-relaxed text-zinc-500 ring-1 ring-zinc-200">
+        <p><span className="font-semibold text-zinc-600">Labor %</span> vs target · <span className="font-semibold text-zinc-600">AvS</span> = actual − scheduled hours · <span className="font-semibold text-zinc-600">$ / Hrs Over</span> = over the labor chart (red = over, green = on/under).</p>
+        <p>
+          <span className="inline-flex items-center gap-1 font-semibold text-emerald-700"><TrendingDown className="h-3 w-3" strokeWidth={2.5} />Improving</span>{" "}
+          means <b>hours over chart are down vs last week</b> — it compares this week through the latest day (Mon → yesterday) against last week through the <b>same weekday</b>, so it's apples-to-apples. Fewer hours over = <span className="text-emerald-700 font-semibold">Improving</span> (green), more = <span className="text-red-600 font-semibold">Worse</span> (red).
+        </p>
+        <p>The <b>$ Over</b> shown on a district/region rollup counts only stores that are <b>over</b> chart — a store beating its chart won't mask the overspend.</p>
+      </div>
     </div>
   );
 }
