@@ -887,6 +887,16 @@ function liteBand(rows, prefix) {
   };
 }
 
+// Week-over-week hours-over flag: this week's WTD hours over vs last week's
+// closed week (labor_v2_week_close, whose columns are unprefixed). Improving =
+// fewer hours over than last week. Null until last week's close exists.
+function hoursOverTrend(rows, lastWkRows) {
+  const thisWtd = totalHoursOver(rows, "wtd_");
+  const lastWeek = totalHoursOver(lastWkRows, "");
+  const delta = thisWtd != null && lastWeek != null ? round1(thisWtd - lastWeek) : null;
+  return { this_wtd: thisWtd, last_week: lastWeek, delta, improving: delta == null ? null : delta < 0 };
+}
+
 // Build the public drill-down for a scope (whole company or one region).
 async function laborSharePayload(supa, { scopeKind, regionName, label }) {
   const anchor = await latestBusinessDate(supa);
@@ -908,9 +918,15 @@ async function laborSharePayload(supa, { scopeKind, regionName, label }) {
   if (scopeKind === "region" && regionName) numbers = numbers.filter((n) => orgMap.get(n)?.region === regionName);
   if (!numbers.length) return { ...empty, date: anchor };
 
-  const { data: daily } = await supa.from("labor_v2_daily").select("*").eq("business_date", anchor).in("store_number", numbers);
+  const fi = fiscalForDate(anchor);
+  const [{ data: daily }, { data: lastWk }] = await Promise.all([
+    supa.from("labor_v2_daily").select("*").eq("business_date", anchor).in("store_number", numbers),
+    supa.from("labor_v2_week_close").select("store_number, net_sales, labor_cost, labor_hours, target_labor_pct")
+      .eq("fiscal_year", fi.fiscalYear).eq("fiscal_week", (fi.fiscalWeek || 1) - 1).in("store_number", numbers),
+  ]);
   applyCreditsToRows(daily || [], await loadLaborCredits(supa, numbers));
   const dailyByStore = new Map((daily || []).map((r) => [String(r.store_number), r]));
+  const lastWkByStore = new Map((lastWk || []).map((r) => [String(r.store_number), r]));
 
   // Rollup participates only for stores that actually polled today.
   const activeNums = numbers.filter((n) => dailyByStore.has(n));
@@ -918,6 +934,7 @@ async function laborSharePayload(supa, { scopeKind, regionName, label }) {
 
   const nodeFor = (nums, level, name, leader, parents) => {
     const rows = nums.map((n) => dailyByStore.get(n)).filter(Boolean);
+    const lwRows = nums.map((n) => lastWkByStore.get(n)).filter(Boolean);
     return {
       level, name, leader: leader ?? null, storeCount: nums.length,
       region: parents.region ?? null, area: parents.area ?? null, district: parents.district ?? null,
@@ -926,6 +943,7 @@ async function laborSharePayload(supa, { scopeKind, regionName, label }) {
       daily: liteBand(rows, ""),
       wtd: liteBand(rows, "wtd_"),
       ptd: liteBand(rows, "ptd_"),
+      hours_trend: hoursOverTrend(rows, lwRows),
     };
   };
 
