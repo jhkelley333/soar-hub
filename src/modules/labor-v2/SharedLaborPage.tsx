@@ -7,7 +7,7 @@
 import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, TrendingDown, TrendingUp, Minus, Download, X } from "lucide-react";
+import { ChevronRight, TrendingDown, TrendingUp, Minus, Download, X, SlidersHorizontal } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { fetchSharedLabor, fetchSharedLaborStore, submitSharedLaborReview, type HoursTrend, type ShareBand, type ShareNode, type SharedLaborResponse, type StoreDay } from "./api";
 import { downloadSharedLaborFile } from "./sharedLaborWorkbook";
@@ -142,11 +142,15 @@ function SharedLaborExplorer({ data, path, setPath, token }: {
   token: string;
 }) {
   const [dayStore, setDayStore] = useState<string | null>(null);
+  const [tableOpen, setTableOpen] = useState(false);
   const startLevel: Chain = data.scope.kind === "region" ? "area" : "region";
   const displayLevel: Chain = path.length ? (childOf(path[path.length - 1].level) ?? "store") : startLevel;
 
   const matchesPath = (n: ShareNode) =>
     path.every((c) => (n as unknown as Record<string, unknown>)[c.level] === c.name);
+
+  // Every store in the current scope — feeds the filterable Table view.
+  const scopedStores = useMemo(() => (data.levels.store ?? []).filter(matchesPath), [data, path]);
 
   const rows = useMemo(() => {
     const src = data.levels[displayLevel] ?? [];
@@ -190,7 +194,15 @@ function SharedLaborExplorer({ data, path, setPath, token }: {
         ))}
       </div>
 
-      <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">{LEVEL_LABEL[displayLevel]}</div>
+      <div className="flex items-center justify-between">
+        <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">{LEVEL_LABEL[displayLevel]}</div>
+        {scopedStores.length > 0 && (
+          <button type="button" onClick={() => setTableOpen(true)}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-midnight hover:border-accent">
+            <SlidersHorizontal className="h-3.5 w-3.5" /> Table view
+          </button>
+        )}
+      </div>
 
       {rows.length === 0 ? (
         <div className="rounded-xl bg-white p-8 text-center text-sm text-zinc-500 ring-1 ring-zinc-200">Nothing to show here.</div>
@@ -203,6 +215,7 @@ function SharedLaborExplorer({ data, path, setPath, token }: {
       )}
 
       {dayStore && <StoreDayModal token={token} store={dayStore} onClose={() => setDayStore(null)} />}
+      {tableOpen && <LaborTableModal stores={scopedStores} onClose={() => setTableOpen(false)} />}
 
       <div className="mt-4 space-y-2 rounded-xl bg-white p-4 text-[11px] leading-relaxed text-zinc-500 ring-1 ring-zinc-200">
         <p><span className="font-semibold text-zinc-600">Labor %</span> vs target · <span className="font-semibold text-zinc-600">AvS</span> = actual − scheduled hours · <span className="font-semibold text-zinc-600">$ / Hrs Over</span> = over the labor chart (red = over, green = on/under).</p>
@@ -425,6 +438,111 @@ function DayRow({ day, name, setName, onSave, saving }: {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// Filterable table view — the Labor File, live: set a minimum hours-over, pick a
+// window to filter on, and toggle which windows' columns show. Client-side over
+// the already-loaded store rows for the current scope.
+type Win = "daily" | "wtd" | "ptd";
+const WIN_LABEL: Record<Win, string> = { daily: "Daily", wtd: "WTD", ptd: "PTD" };
+const TABLE_METRICS: { key: keyof ShareBand; label: string; fmt: (v: number | null) => string }[] = [
+  { key: "labor_pct", label: "Labor %", fmt: fmtPct },
+  { key: "variance_pts", label: "Var", fmt: fmtVar },
+  { key: "dollars_over", label: "$ Over", fmt: fmtOverUsd },
+  { key: "hours_over", label: "Hrs Over", fmt: fmtHrsOver },
+  { key: "act_vs_sched", label: "AvS", fmt: fmtAvs },
+];
+
+function LaborTableModal({ stores, onClose }: { stores: ShareNode[]; onClose: () => void }) {
+  const [minHrs, setMinHrs] = useState(0);
+  const [basis, setBasis] = useState<Win>("wtd");
+  const [cols, setCols] = useState<Record<Win, boolean>>({ daily: true, wtd: true, ptd: true });
+  const wins = (["daily", "wtd", "ptd"] as Win[]).filter((w) => cols[w]);
+
+  const rows = useMemo(() =>
+    stores
+      .filter((s) => (s[basis].hours_over ?? 0) >= minHrs)
+      .slice()
+      .sort((a, b) => (b[basis].hours_over ?? -Infinity) - (a[basis].hours_over ?? -Infinity)),
+    [stores, basis, minHrs]);
+
+  const cellTone = (m: keyof ShareBand, b: ShareBand): string => {
+    const v = m === "labor_pct" ? b.variance_pts : b[m];
+    return (v ?? 0) > 0 ? "text-red-600" : "text-emerald-600";
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/40 sm:items-center sm:p-4" onClick={onClose}>
+      <div className="flex max-h-screen w-full flex-col bg-white shadow-xl sm:max-h-[90vh] sm:max-w-5xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-zinc-100 p-3">
+          <div className="text-sm font-bold text-midnight">Labor table · {rows.length} store{rows.length === 1 ? "" : "s"}</div>
+          <button type="button" onClick={onClose} className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-100"><X className="h-5 w-5" /></button>
+        </div>
+
+        {/* Controls */}
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-zinc-100 p-3 text-xs">
+          <label className="flex items-center gap-1.5 font-semibold text-zinc-600">
+            Min hrs over
+            <input type="number" step="0.1" value={minHrs} onChange={(e) => setMinHrs(Number(e.target.value) || 0)}
+              className="w-16 rounded-md border border-zinc-200 px-2 py-1 text-xs focus:border-accent focus:outline-none" />
+            <span className="font-normal text-zinc-400">on</span>
+            <span className="inline-flex overflow-hidden rounded-md ring-1 ring-inset ring-zinc-200">
+              {(["daily", "wtd", "ptd"] as Win[]).map((w) => (
+                <button key={w} type="button" onClick={() => setBasis(w)}
+                  className={cn("px-2 py-1 font-semibold", basis === w ? "bg-accent text-white" : "bg-white text-zinc-500 hover:bg-zinc-50")}>
+                  {WIN_LABEL[w]}
+                </button>
+              ))}
+            </span>
+          </label>
+          <div className="flex items-center gap-2 font-semibold text-zinc-600">
+            Columns:
+            {(["daily", "wtd", "ptd"] as Win[]).map((w) => (
+              <label key={w} className="flex items-center gap-1 font-normal">
+                <input type="checkbox" checked={cols[w]} onChange={(e) => setCols((c) => ({ ...c, [w]: e.target.checked }))} className="h-3.5 w-3.5 accent-accent" />
+                {WIN_LABEL[w]}
+              </label>
+            ))}
+          </div>
+        </div>
+
+        {/* Table */}
+        <div className="min-h-0 flex-1 overflow-auto">
+          <table className="w-full text-xs tabular-nums">
+            <thead className="sticky top-0 z-10 bg-white shadow-sm">
+              <tr className="text-[10px] uppercase tracking-wide text-zinc-400">
+                <th rowSpan={2} className="sticky left-0 z-10 bg-white px-3 py-1.5 text-left">Store</th>
+                {wins.map((w) => (
+                  <th key={w} colSpan={TABLE_METRICS.length} className="border-l border-zinc-100 bg-amber-50/60 px-2 py-1 text-center font-bold text-zinc-500">{WIN_LABEL[w]}</th>
+                ))}
+              </tr>
+              <tr className="text-[9px] uppercase tracking-wide text-zinc-400">
+                {wins.map((w) => TABLE_METRICS.map((m, i) => (
+                  <th key={`${w}-${m.key}`} className={cn("px-2 py-1 text-right", i === 0 && "border-l border-zinc-100")}>{m.label}</th>
+                )))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-50">
+              {rows.length === 0 ? (
+                <tr><td colSpan={1 + wins.length * TABLE_METRICS.length} className="p-8 text-center text-sm text-zinc-400">No stores match — lower the minimum.</td></tr>
+              ) : rows.map((s) => (
+                <tr key={s.store_number} className="hover:bg-zinc-50">
+                  <td className="sticky left-0 z-10 bg-white px-3 py-1.5 text-left font-semibold text-midnight">
+                    #{s.store_number} <span className="font-normal text-zinc-500">{s.store_name}</span>
+                  </td>
+                  {wins.map((w) => TABLE_METRICS.map((m, i) => (
+                    <td key={`${w}-${m.key}`} className={cn("px-2 py-1.5 text-right", i === 0 && "border-l border-zinc-100", cellTone(m.key, s[w]))}>
+                      {m.fmt(s[w][m.key])}
+                    </td>
+                  )))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
