@@ -115,6 +115,7 @@ async function buildTree(supa) {
     { data: districts },
     { data: stores },
     { data: scopes },
+    { data: rosterRows },
   ] = await Promise.all([
     supa.from("regions").select("id, code, name, is_active").order("code"),
     supa.from("areas").select("id, code, name, region_id, is_active").order("code"),
@@ -138,7 +139,13 @@ async function buildTree(supa) {
     supa
       .from("user_scopes")
       .select("user_id, scope_type, scope_id"),
+    // GM roster — the ops "who's the GM" per store, so a store with no Hub
+    // account shows the roster name (placeholder) instead of a bare "Vacant".
+    supa.from("gm_roster").select("store_number, gm_name, status").then((r) => r, () => ({ data: [] })),
   ]);
+  const rosterByNumber = new Map((rosterRows ?? [])
+    .filter((r) => r.status === "named" && r.gm_name)
+    .map((r) => [String(r.store_number), r.gm_name]));
 
   // Additional ("acting") coverage shows alongside primary managers on each
   // node — e.g. an RVP covering an area as acting SDO. Non-expired only.
@@ -241,6 +248,9 @@ async function buildTree(supa) {
       trailer_stall_number: s.trailer_stall_number,
       third_party_delivery: s.third_party_delivery ?? [],
       managers: lookup("store", s.id),
+      // Placeholder GM from the ops roster — shown when the store has no GM
+      // account, or flagged when the account name doesn't match the roster.
+      roster_gm: rosterByNumber.get(String(s.number)) ?? null,
     });
   }
 

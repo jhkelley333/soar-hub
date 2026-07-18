@@ -60,6 +60,8 @@ export interface OrgStore {
   // Third-party delivery (jsonb array of provider keys)
   third_party_delivery: string[];
   managers: OrgManager[];
+  // GM name from the ops roster (placeholder for a GM without a Hub account).
+  roster_gm: string | null;
 }
 
 export interface OrgDistrict {
