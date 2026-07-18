@@ -147,3 +147,61 @@ export function deleteNoGmCredit(id: string): Promise<{ ok: true }> {
 export function setNoGmWeeklyRate(amount: number): Promise<{ ok: true; amount: number }> {
   return req(`${FN}?action=no-gm-rate-set`, { method: "POST", body: JSON.stringify({ amount }) });
 }
+
+// ── Public labor share links (Company → RVP → SDO → DO → Store) ───────
+export interface ShareBand {
+  labor_pct: number | null;
+  target_pct: number | null;
+  variance_pts: number | null;
+  act_vs_sched: number | null;
+}
+export interface ShareNode {
+  level: "company" | "region" | "area" | "district" | "store";
+  name: string;
+  leader: string | null;
+  storeCount: number;
+  region: string | null;
+  area: string | null;
+  district: string | null;
+  store_number?: string;
+  store_name?: string;
+  daily: ShareBand;
+  wtd: ShareBand;
+  ptd: ShareBand;
+}
+export interface SharedLaborResponse {
+  ok: true;
+  date: string | null;
+  scope: { kind: "company" | "region"; region: string | null };
+  label: string | null;
+  company: ShareNode | null;
+  levels: { region: ShareNode[]; area: ShareNode[]; district: ShareNode[]; store: ShareNode[] };
+}
+
+// PUBLIC — no auth header; the token in the URL is the credential.
+export async function fetchSharedLabor(token: string): Promise<SharedLaborResponse> {
+  const res = await fetch(`${FN}?action=shared-labor&token=${encodeURIComponent(token)}`);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((body as { error?: string })?.error || `Request failed (${res.status})`);
+  return body as SharedLaborResponse;
+}
+
+export interface LaborShare {
+  id: string;
+  token: string;
+  scope_kind: "company" | "region";
+  region_id: string | null;
+  region_name: string | null;
+  label: string | null;
+  created_at: string;
+  last_used_at: string | null;
+}
+export function fetchLaborShares(): Promise<{ shares: LaborShare[]; regions: { id: string; name: string }[] }> {
+  return req(`${FN}?action=labor-shares`);
+}
+export function mintLaborShare(input: { region_id?: string | null; label?: string }): Promise<{ token: string; id: string; reused: boolean }> {
+  return req(`${FN}?action=labor-share-mint`, { method: "POST", body: JSON.stringify(input) });
+}
+export function revokeLaborShare(id: string): Promise<{ ok: true }> {
+  return req(`${FN}?action=labor-share-revoke`, { method: "POST", body: JSON.stringify({ id }) });
+}

@@ -5,7 +5,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Clock, Copy, Download, RefreshCw, Share2 } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Clock, Copy, Download, Link2, RefreshCw, Share2 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -13,8 +13,10 @@ import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
+import { useAuth } from "@/auth/AuthProvider";
 import { MissTrackerExport } from "@/modules/labor/MissTrackerExport";
 import { fetchLaborV2Team, fetchMissTracker } from "./api";
+import { LaborShareLinksModal } from "./LaborShareLinksModal";
 import { downloadLaborWorkbook } from "./laborWorkbook";
 import type { LaborPeriod, TeamBand, TeamDisplayLevel, TeamGroup, TeamStore } from "./types";
 
@@ -88,6 +90,9 @@ function sortVal(r: TeamGroup | TeamStore, k: SortKey): number | string {
 
 export function LaborV2TeamPage() {
   const toast = useToast();
+  const { profile } = useAuth();
+  const canShareLinks = ["admin", "vp", "coo"].includes(profile?.role ?? "");
+  const [shareLinksOpen, setShareLinksOpen] = useState(false);
   const [baseLevel, setBaseLevel] = useState<TeamDisplayLevel | null>(null);
   const [path, setPath] = useState<{ level: TeamDisplayLevel; name: string }[]>([]);
   const [filter, setFilter] = useState<Filter>("all");
@@ -241,12 +246,19 @@ export function LaborV2TeamPage() {
                 <Share2 className="mr-1 h-3.5 w-3.5" /> Share
               </Button>
             )}
+            {canShareLinks && (
+              <Button variant="secondary" size="sm" onClick={() => setShareLinksOpen(true)}>
+                <Link2 className="mr-1 h-3.5 w-3.5" /> Share links
+              </Button>
+            )}
             <Button variant="secondary" size="sm" onClick={() => q.refetch()} disabled={q.isFetching}>
               <RefreshCw className={cn("mr-1 h-3.5 w-3.5", q.isFetching && "animate-spin")} /> Refresh
             </Button>
           </div>
         }
       />
+
+      {canShareLinks && <LaborShareLinksModal open={shareLinksOpen} onClose={() => setShareLinksOpen(false)} />}
 
       <Modal open={shareDraft != null} onClose={() => setShareDraft(null)} title="Share labor to WhatsApp"
         footer={
