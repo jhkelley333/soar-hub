@@ -100,13 +100,13 @@ function addSection(ws: any, startRow: number, title: string, rows: Row[]): numb
   return row + 1;
 }
 
-export async function downloadSharedLaborFile(data: SharedLaborResponse): Promise<void> {
+export async function downloadSharedLaborFile(data: SharedLaborResponse, scopeLabel?: string): Promise<void> {
   const ExcelJS = (await import("exceljs")).default;
   const wb = new ExcelJS.Workbook();
   wb.creator = "SOAR Hub";
   const ws = wb.addWorksheet("Labor", { views: [{ state: "frozen", ySplit: 1, xSplit: 1 }] });
 
-  const scope = data.scope.kind === "region" ? (data.scope.region ?? "Region") : "Company";
+  const scope = scopeLabel || (data.scope.kind === "region" ? (data.scope.region ?? "Region") : "Company");
   ws.mergeCells(1, 1, 1, COLS.length);
   const banner = ws.getCell(1, 1);
   banner.value = `SOAR Labor File — ${scope} — ${data.date ?? "—"}`;
@@ -136,7 +136,8 @@ export async function downloadSharedLaborFile(data: SharedLaborResponse): Promis
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `Labor File - ${scope} - ${data.date ?? "current"}.xlsx`;
+  const safeScope = scope.replace(/[\\/:*?"<>|]+/g, "-").trim();
+  a.download = `Labor File - ${safeScope} - ${data.date ?? "current"}.xlsx`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
