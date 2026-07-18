@@ -359,6 +359,33 @@ async function getMyTree(supa, user) {
     };
   }
 
+  // Overlay the GM roster (gm_roster): stores whose GM has no Hub account yet
+  // show a placeholder name (flagged no_account) instead of "Not assigned"; when
+  // an account exists but its name doesn't match the roster, flag the mismatch.
+  try {
+    const { data: roster } = await supa
+      .from("gm_roster")
+      .select("store_number, gm_name, status, gm_email, gm_cell")
+      .in("store_number", stores.map((s) => String(s.number)));
+    const rosterByNumber = new Map((roster ?? []).map((r) => [String(r.store_number), r]));
+    const nrm = (v) => String(v || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+    for (const s of stores) {
+      const r = rosterByNumber.get(String(s.number));
+      if (!r || r.status !== "named" || !r.gm_name) continue;
+      const lead = leadership[s.id];
+      if (!lead.gm) {
+        lead.gm = {
+          id: null, email: r.gm_email || "", phone: r.gm_cell || null,
+          full_name: r.gm_name, preferred_name: null, role: "gm",
+          placeholder: true, no_account: true,
+        };
+      } else {
+        const acctName = lead.gm.preferred_name || lead.gm.full_name || lead.gm.email || "";
+        if (nrm(acctName) !== nrm(r.gm_name)) lead.gm.roster_mismatch = r.gm_name;
+      }
+    }
+  } catch { /* gm_roster may not exist yet — leave leadership untouched */ }
+
   // Build nested tree structure: regions → areas → districts → stores.
   const tree = regions.map((r) => ({
     ...r,

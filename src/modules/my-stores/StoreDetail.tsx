@@ -1312,6 +1312,23 @@ function LeadershipSlot({
     );
   }
 
+  // Roster GM with no Hub account yet — show the name as a greyed placeholder
+  // with a "No account" flag rather than a live contact card.
+  if (person.placeholder || person.no_account) {
+    return (
+      <div className="rounded-md border border-dashed border-amber-300 bg-amber-50/40 px-3 py-2.5">
+        <div className="flex items-center gap-1.5">
+          <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-500">{label}</div>
+          <span className="rounded bg-amber-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-amber-700">
+            No account
+          </span>
+        </div>
+        <div className="mt-1 text-sm font-semibold text-zinc-500">{person.full_name || person.email}</div>
+        <div className="mt-0.5 text-[11px] text-zinc-400">On the roster — hasn't signed up for the Hub yet.</div>
+      </div>
+    );
+  }
+
   return (
     <div className="rounded-md border border-zinc-200 px-3 py-2.5">
       <div className="flex items-center gap-1.5">
@@ -1323,10 +1340,21 @@ function LeadershipSlot({
             Acting
           </span>
         )}
+        {person.roster_mismatch && (
+          <span
+            className="rounded bg-red-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-red-700"
+            title={`Roster says "${person.roster_mismatch}"`}
+          >
+            Name differs
+          </span>
+        )}
       </div>
       <div className="mt-1 text-sm font-semibold text-midnight">
         {person.preferred_name || person.full_name || person.email}
       </div>
+      {person.roster_mismatch && (
+        <div className="mt-0.5 text-[11px] text-red-600">Roster: {person.roster_mismatch}</div>
+      )}
       <div className="mt-1 flex flex-wrap gap-1.5">
         <button
           type="button"

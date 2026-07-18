@@ -30,6 +30,7 @@ import { OrgPage } from "@/modules/admin/OrgPage";
 import { BulkImportPage } from "@/modules/admin/BulkImportPage";
 import { BulkOrgImportPage } from "@/modules/admin/BulkOrgImportPage";
 import { BulkAttributesPage } from "@/modules/admin/BulkAttributesPage";
+import { GmRosterPage } from "@/modules/admin/GmRosterPage";
 import { FeatureFlagsPage } from "@/modules/admin/FeatureFlagsPage";
 import { RoleAccessPage } from "@/modules/admin/RoleAccessPage";
 import { RegionAccessPage } from "@/modules/admin/RegionAccessPage";
@@ -522,6 +523,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <BulkAttributesPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/gm-roster",
+        element: (
+          <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
+            <GmRosterPage />
           </ProtectedRoute>
         ),
       },
