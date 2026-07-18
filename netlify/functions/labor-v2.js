@@ -866,10 +866,24 @@ async function backfillCloses(supa) {
 // token is the credential. Minting is limited to above-store leadership.
 const LABOR_SHARE_ROLES = new Set(["admin", "vp", "coo"]);
 
-function liteBand(b) {
+// Total hours over chart for a set of rows = $ over ÷ blended avg wage (cost ÷
+// hours). Signed (negative = under), unlike teamBand.hours_over_chart which is a
+// per-unit average that hides under-chart nodes — the shared sheet wants the
+// actual hours-over total that pairs with $ over.
+function totalHoursOver(rows, prefix) {
+  const sum = (k) => rows.reduce((a, r) => a + numv(r[prefix + k]), 0);
+  const sales = sum("net_sales"), cost = sum("labor_cost"), hours = sum("labor_hours");
+  const chartAllowed = rows.reduce((a, r) => a + numv(r[prefix + "target_labor_pct"]) * numv(r[prefix + "net_sales"]), 0);
+  const avgWage = cost && hours ? cost / hours : null;
+  const dollarsOver = sales ? cost - chartAllowed : null;
+  return dollarsOver != null && avgWage ? round1(dollarsOver / avgWage) : null;
+}
+
+function liteBand(rows, prefix) {
+  const b = teamBand(rows, prefix);
   return {
     labor_pct: b.labor_pct, target_pct: b.target_pct, variance_pts: b.variance_pts,
-    dollars_over: b.dollars_over_chart, hours_over: b.hours_over_chart, act_vs_sched: b.act_vs_sched,
+    dollars_over: b.dollars_over_chart, hours_over: totalHoursOver(rows, prefix), act_vs_sched: b.act_vs_sched,
   };
 }
 
@@ -909,9 +923,9 @@ async function laborSharePayload(supa, { scopeKind, regionName, label }) {
       region: parents.region ?? null, area: parents.area ?? null, district: parents.district ?? null,
       store_number: level === "store" ? nums[0] : undefined,
       store_name: level === "store" ? (nameByNumber.get(nums[0]) || `#${nums[0]}`) : undefined,
-      daily: liteBand(teamBand(rows, "")),
-      wtd: liteBand(teamBand(rows, "wtd_")),
-      ptd: liteBand(teamBand(rows, "ptd_")),
+      daily: liteBand(rows, ""),
+      wtd: liteBand(rows, "wtd_"),
+      ptd: liteBand(rows, "ptd_"),
     };
   };
 
