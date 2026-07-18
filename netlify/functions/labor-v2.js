@@ -867,7 +867,10 @@ async function backfillCloses(supa) {
 const LABOR_SHARE_ROLES = new Set(["admin", "vp", "coo"]);
 
 function liteBand(b) {
-  return { labor_pct: b.labor_pct, target_pct: b.target_pct, variance_pts: b.variance_pts, act_vs_sched: b.act_vs_sched };
+  return {
+    labor_pct: b.labor_pct, target_pct: b.target_pct, variance_pts: b.variance_pts,
+    dollars_over: b.dollars_over_chart, hours_over: b.hours_over_chart, act_vs_sched: b.act_vs_sched,
+  };
 }
 
 // Build the public drill-down for a scope (whole company or one region).

@@ -153,6 +153,8 @@ export interface ShareBand {
   labor_pct: number | null;
   target_pct: number | null;
   variance_pts: number | null;
+  dollars_over: number | null;
+  hours_over: number | null;
   act_vs_sched: number | null;
 }
 export interface ShareNode {
