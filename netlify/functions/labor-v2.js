@@ -866,34 +866,25 @@ async function backfillCloses(supa) {
 // token is the credential. Minting is limited to above-store leadership.
 const LABOR_SHARE_ROLES = new Set(["admin", "vp", "coo"]);
 
-// Total hours over chart for a set of rows = $ over ÷ blended avg wage (cost ÷
-// hours). Signed (negative = under), unlike teamBand.hours_over_chart which is a
-// per-unit average that hides under-chart nodes — the shared sheet wants the
-// actual hours-over total that pairs with $ over.
-function totalHoursOver(rows, prefix) {
-  const sum = (k) => rows.reduce((a, r) => a + numv(r[prefix + k]), 0);
-  const sales = sum("net_sales"), cost = sum("labor_cost"), hours = sum("labor_hours");
-  const chartAllowed = rows.reduce((a, r) => a + numv(r[prefix + "target_labor_pct"]) * numv(r[prefix + "net_sales"]), 0);
-  const avgWage = cost && hours ? cost / hours : null;
-  const dollarsOver = sales ? cost - chartAllowed : null;
-  return dollarsOver != null && avgWage ? round1(dollarsOver / avgWage) : null;
-}
-
+// $ over and hours over use teamBand's own figures so the shared sheet matches
+// the hub Labor rollup + workbook exactly (hours_over_chart is the same "Hrs
+// Over" metric shown there).
 function liteBand(rows, prefix) {
   const b = teamBand(rows, prefix);
   return {
     labor_pct: b.labor_pct, target_pct: b.target_pct, variance_pts: b.variance_pts,
-    dollars_over: b.dollars_over_chart, hours_over: totalHoursOver(rows, prefix), act_vs_sched: b.act_vs_sched,
+    dollars_over: b.dollars_over_chart, hours_over: b.hours_over_chart, act_vs_sched: b.act_vs_sched,
   };
 }
 
 // Week-over-week hours-over flag — apples-to-apples: this week's WTD hours over
 // (Mon→anchor) vs last week THROUGH THE SAME WEEKDAY. Last week's daily row on
 // the same weekday carries cumulative wtd_ fields (Mon→that day), so both sides
-// cover the same number of days. Improving = fewer hours over than last week.
+// cover the same number of days. Uses the same hours_over_chart metric as the
+// hub. Improving = fewer hours over than last week.
 function hoursOverTrend(rows, lastWkRows) {
-  const thisWtd = totalHoursOver(rows, "wtd_");
-  const lastWtd = totalHoursOver(lastWkRows, "wtd_");
+  const thisWtd = teamBand(rows, "wtd_").hours_over_chart;
+  const lastWtd = teamBand(lastWkRows, "wtd_").hours_over_chart;
   const delta = thisWtd != null && lastWtd != null ? round1(thisWtd - lastWtd) : null;
   return { this_wtd: thisWtd, last_week: lastWtd, delta, improving: delta == null ? null : delta < 0 };
 }
