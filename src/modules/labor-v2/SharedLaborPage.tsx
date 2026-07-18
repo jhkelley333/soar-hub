@@ -14,6 +14,8 @@ import { fetchSharedLabor, type ShareBand, type ShareNode, type SharedLaborRespo
 const fmtPct = (v: number | null) => (v == null ? "—" : `${v.toFixed(1)}%`);
 const fmtVar = (v: number | null) => (v == null ? "" : `${v >= 0 ? "+" : ""}${v.toFixed(1)}`);
 const fmtAvs = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(Math.round(v))}h`);
+const fmtOverUsd = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}$${Math.abs(Math.round(v)).toLocaleString("en-US")}`);
+const fmtHrsOver = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}`);
 const fmtDate = (s: string | null) =>
   s ? new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "—";
 
@@ -171,6 +173,7 @@ function NodeCard({ node, canDrill, onDrill }: { node: ShareNode; canDrill: bool
 }
 
 function BandBox({ label, b, light, withAvs }: { label: string; b: ShareBand; light?: boolean; withAvs?: boolean }) {
+  const overCls = (v: number | null) => (light ? "text-white/60" : (v ?? 0) > 0 ? "text-red-500" : "text-emerald-600");
   return (
     <div className={cn("rounded-lg px-2 py-1.5", light ? "bg-white/10" : "bg-zinc-50")}>
       <div className={cn("text-[9px] font-semibold uppercase tracking-wide", light ? "text-white/50" : "text-zinc-400")}>{label}</div>
@@ -178,10 +181,10 @@ function BandBox({ label, b, light, withAvs }: { label: string; b: ShareBand; li
       <div className={cn("text-[10px] tabular-nums", light ? "text-white/60" : "text-zinc-400")}>
         tgt {fmtPct(b.target_pct)} · {fmtVar(b.variance_pts)}
       </div>
+      <div className={cn("text-[10px] tabular-nums", overCls(b.dollars_over))}>$ over {fmtOverUsd(b.dollars_over)}</div>
+      <div className={cn("text-[10px] tabular-nums", overCls(b.hours_over))}>hrs over {fmtHrsOver(b.hours_over)}</div>
       {withAvs && (
-        <div className={cn("text-[10px] tabular-nums", light ? "text-white/60" : (b.act_vs_sched ?? 0) > 0 ? "text-red-500" : "text-emerald-600")}>
-          AvS {fmtAvs(b.act_vs_sched)}
-        </div>
+        <div className={cn("text-[10px] tabular-nums", overCls(b.act_vs_sched))}>AvS {fmtAvs(b.act_vs_sched)}</div>
       )}
     </div>
   );
