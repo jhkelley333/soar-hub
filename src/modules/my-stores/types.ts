@@ -105,6 +105,12 @@ export interface LeadershipPerson {
   // True when this person fills the slot via additional ("acting") coverage
   // rather than their primary role (e.g. an RVP covering an area as SDO).
   acting?: boolean;
+  // GM roster overlay: `placeholder`/`no_account` mark a roster GM with no Hub
+  // account yet; `roster_mismatch` carries the roster name when it differs from
+  // the linked account's name.
+  placeholder?: boolean;
+  no_account?: boolean;
+  roster_mismatch?: string;
 }
 
 export interface StoreLeadership {
