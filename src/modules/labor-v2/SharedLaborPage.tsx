@@ -7,10 +7,19 @@
 import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, TrendingDown, TrendingUp, Minus, Download } from "lucide-react";
+import { ChevronRight, TrendingDown, TrendingUp, Minus, Download, X } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { fetchSharedLabor, type HoursTrend, type ShareBand, type ShareNode, type SharedLaborResponse } from "./api";
+import { fetchSharedLabor, fetchSharedLaborStore, type HoursTrend, type ShareBand, type ShareNode, type SharedLaborResponse, type StoreDay } from "./api";
 import { downloadSharedLaborFile } from "./sharedLaborWorkbook";
+
+// Same fixed miss-reason list the GM picks from in the hub.
+const ROOT_CAUSE_LABEL: Record<string, string> = {
+  poor_projections: "Poor Projections",
+  scheduled_above_chart: "Scheduled Above Chart",
+  didnt_follow_schedule: "Didn't Follow the Schedule",
+  auto_clock: "Auto Clock",
+  other: "Other",
+};
 
 const fmtPct = (v: number | null) => (v == null ? "—" : `${v.toFixed(1)}%`);
 const fmtVar = (v: number | null) => (v == null ? "" : `${v >= 0 ? "+" : ""}${v.toFixed(1)}`);
@@ -120,17 +129,19 @@ export function SharedLaborPage() {
             <p className="mt-1 text-xs text-red-600">Ask whoever sent it for a fresh link.</p>
           </div>
         )}
-        {q.data && <SharedLaborExplorer data={q.data} path={path} setPath={setPath} />}
+        {q.data && <SharedLaborExplorer data={q.data} path={path} setPath={setPath} token={token} />}
       </div>
     </div>
   );
 }
 
-function SharedLaborExplorer({ data, path, setPath }: {
+function SharedLaborExplorer({ data, path, setPath, token }: {
   data: SharedLaborResponse;
   path: PathItem[];
   setPath: Dispatch<SetStateAction<PathItem[]>>;
+  token: string;
 }) {
+  const [dayStore, setDayStore] = useState<string | null>(null);
   const startLevel: Chain = data.scope.kind === "region" ? "area" : "region";
   const displayLevel: Chain = path.length ? (childOf(path[path.length - 1].level) ?? "store") : startLevel;
 
@@ -153,8 +164,9 @@ function SharedLaborExplorer({ data, path, setPath }: {
     return (data.levels[lvl] ?? []).find(matchesPath) ?? data.company;
   }, [data, path]);
 
-  function drill(n: ShareNode) {
-    if (displayLevel === "store") return;
+  // Group rows drill deeper; a store row opens its per-day popup.
+  function onRow(n: ShareNode) {
+    if (displayLevel === "store") { if (n.store_number) setDayStore(n.store_number); return; }
     setPath((p) => [...p, { level: displayLevel, name: n.name }]);
   }
 
@@ -185,10 +197,12 @@ function SharedLaborExplorer({ data, path, setPath }: {
       ) : (
         <div className="space-y-2">
           {rows.map((n) => (
-            <NodeCard key={n.store_number ?? n.name} node={n} canDrill={displayLevel !== "store"} onDrill={() => drill(n)} />
+            <NodeCard key={n.store_number ?? n.name} node={n} showChevron={displayLevel !== "store"} onClick={() => onRow(n)} />
           ))}
         </div>
       )}
+
+      {dayStore && <StoreDayModal token={token} store={dayStore} onClose={() => setDayStore(null)} />}
 
       <div className="mt-4 space-y-2 rounded-xl bg-white p-4 text-[11px] leading-relaxed text-zinc-500 ring-1 ring-zinc-200">
         <p><span className="font-semibold text-zinc-600">Labor %</span> vs target · <span className="font-semibold text-zinc-600">AvS</span> = actual − scheduled hours · <span className="font-semibold text-zinc-600">$ / Hrs Over</span> = over the labor chart (red = over, green = on/under).</p>
@@ -197,6 +211,7 @@ function SharedLaborExplorer({ data, path, setPath }: {
           means <b>hours over chart are down vs last week</b> — it compares this week through the latest day (Mon → yesterday) against last week through the <b>same weekday</b>, so it's apples-to-apples. Fewer hours over = <span className="text-emerald-700 font-semibold">Improving</span> (green), more = <span className="text-red-600 font-semibold">Worse</span> (red).
         </p>
         <p>The <b>$ Over</b> shown on a district/region rollup counts only stores that are <b>over</b> chart — a store beating its chart won't mask the overspend.</p>
+        <p className="text-zinc-400">Labor is pulled each morning, so these numbers reflect the prior business day.</p>
       </div>
     </div>
   );
@@ -244,21 +259,21 @@ function HoursFlag({ trend, light }: { trend: HoursTrend; light?: boolean }) {
   );
 }
 
-function NodeCard({ node, canDrill, onDrill }: { node: ShareNode; canDrill: boolean; onDrill: () => void }) {
+function NodeCard({ node, showChevron, onClick }: { node: ShareNode; showChevron: boolean; onClick: () => void }) {
   const over = (node.daily.variance_pts ?? 0) > 0;
   const title = node.store_number ? `#${node.store_number} ${node.store_name ?? ""}` : node.name;
   return (
     <button
       type="button"
-      onClick={canDrill ? onDrill : undefined}
-      className={cn("w-full overflow-hidden rounded-xl bg-white text-left ring-1 ring-zinc-200", canDrill && "active:bg-zinc-50", over && "ring-red-200")}
+      onClick={onClick}
+      className={cn("w-full overflow-hidden rounded-xl bg-white text-left ring-1 ring-zinc-200 active:bg-zinc-50", over && "ring-red-200")}
     >
       <div className="flex items-start gap-3 p-3.5">
         <span className={cn("mt-0.5 h-9 w-1 shrink-0 rounded-full", over ? "bg-red-500" : "bg-emerald-500")} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 text-sm font-semibold text-midnight">
             <span className="truncate">{title}</span>
-            {canDrill && <ChevronRight className="h-4 w-4 shrink-0 text-zinc-300" />}
+            {showChevron && <ChevronRight className="h-4 w-4 shrink-0 text-zinc-300" />}
           </div>
           <div className="mt-0.5 truncate text-xs text-zinc-500">
             {node.leader ? node.leader : "—"}{node.store_number ? "" : ` · ${node.storeCount} store${node.storeCount === 1 ? "" : "s"}`}
@@ -275,6 +290,75 @@ function NodeCard({ node, canDrill, onDrill }: { node: ShareNode; canDrill: bool
         <div className="border-t border-zinc-100 px-2.5 py-1.5"><CreditsLine credits={node.credits} /></div>
       )}
     </button>
+  );
+}
+
+// Store popup — the current week's daily labor for one store, with any filed
+// miss reason shown (read-only; reasons are filed by the GM/DO in the hub).
+function StoreDayModal({ token, store, onClose }: { token: string; store: string; onClose: () => void }) {
+  const q = useQuery({
+    queryKey: ["shared-labor-store", token, store],
+    queryFn: () => fetchSharedLaborStore(token, store),
+    staleTime: 60_000,
+    retry: false,
+  });
+  const d = q.data;
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/40 sm:items-center sm:p-4" onClick={onClose}>
+      <div className="max-h-[85vh] w-full overflow-auto rounded-t-2xl bg-white p-4 shadow-xl sm:max-w-lg sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-3 flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-bold text-midnight">{d ? `#${d.store_number} ${d.store_name ?? ""}` : `#${store}`}</div>
+            <div className="text-xs text-zinc-500">This week · daily labor</div>
+          </div>
+          <button type="button" onClick={onClose} className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-100"><X className="h-5 w-5" /></button>
+        </div>
+        {q.isLoading ? (
+          <div className="py-10 text-center text-sm text-zinc-500">Loading…</div>
+        ) : q.isError || !d ? (
+          <div className="py-8 text-center text-sm text-red-600">{(q.error as Error)?.message ?? "Couldn't load this store."}</div>
+        ) : (
+          <div className="space-y-2">{d.days.map((day) => <DayRow key={day.date} day={day} />)}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function DayRow({ day }: { day: StoreDay }) {
+  const label = new Date(`${day.date}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "numeric", day: "numeric" });
+  if (!day.polled) {
+    return (
+      <div className="flex items-center justify-between rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-400">
+        <span className="font-semibold text-zinc-500">{label}</span><span>No polling</span>
+      </div>
+    );
+  }
+  const over = (day.variance_pts ?? 0) > 0;
+  const oc = (v: number | null) => ((v ?? 0) > 0 ? "text-red-600" : "text-emerald-600");
+  return (
+    <div className={cn("rounded-lg px-3 py-2 ring-1", over ? "bg-red-50/40 ring-red-100" : "bg-zinc-50 ring-zinc-100")}>
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-semibold text-midnight">{label}</span>
+        <span className={cn("text-sm font-bold tabular-nums", over ? "text-red-600" : "text-emerald-600")}>{fmtPct(day.labor_pct)}</span>
+      </div>
+      <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] tabular-nums text-zinc-500">
+        <span>tgt {fmtPct(day.target_pct)} · {fmtVar(day.variance_pts)}</span>
+        <span className={oc(day.dollars_over)}>$ over {fmtOverUsd(day.dollars_over)}</span>
+        <span className={oc(day.hours_over)}>hrs over {fmtHrsOver(day.hours_over)}</span>
+        <span className={oc(day.act_vs_sched)}>AvS {fmtAvs(day.act_vs_sched)}</span>
+      </div>
+      {(day.root_cause || day.note) && (
+        <div className="mt-1.5 rounded-md bg-white px-2 py-1.5 text-[11px] ring-1 ring-zinc-100">
+          {day.root_cause && (
+            <span className="mr-1.5 inline-block rounded-full bg-sonic-50 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-sonic-700">
+              {ROOT_CAUSE_LABEL[day.root_cause] ?? day.root_cause}
+            </span>
+          )}
+          {day.note && <span className="text-zinc-600">{day.note}</span>}
+        </div>
+      )}
+    </div>
   );
 }
 

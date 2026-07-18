@@ -196,6 +196,33 @@ export async function fetchSharedLabor(token: string): Promise<SharedLaborRespon
   return body as SharedLaborResponse;
 }
 
+export interface StoreDay {
+  date: string;
+  polled: boolean;
+  labor_pct: number | null;
+  target_pct: number | null;
+  variance_pts: number | null;
+  dollars_over: number | null;
+  hours_over: number | null;
+  act_vs_sched: number | null;
+  root_cause: string | null;
+  note: string | null;
+}
+export interface SharedLaborStoreResponse {
+  ok: true;
+  store_number: string;
+  store_name: string | null;
+  days: StoreDay[];
+}
+
+// PUBLIC — one store's current-week daily labor + any filed miss reason.
+export async function fetchSharedLaborStore(token: string, store: string): Promise<SharedLaborStoreResponse> {
+  const res = await fetch(`${FN}?action=shared-labor-store&token=${encodeURIComponent(token)}&store=${encodeURIComponent(store)}`);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((body as { error?: string })?.error || `Request failed (${res.status})`);
+  return body as SharedLaborStoreResponse;
+}
+
 export interface LaborShare {
   id: string;
   token: string;
