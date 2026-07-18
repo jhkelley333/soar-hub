@@ -39,7 +39,6 @@ const fmtDate = (s: string | null) =>
   s ? new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "—";
 
 // Over chart (labor above target) is bad → red; on/under is good → emerald.
-const bandTone = (b: ShareBand) => ((b.variance_pts ?? 0) > 0 ? "text-red-600" : "text-emerald-600");
 
 const CHAIN = ["region", "area", "district", "store"] as const;
 type Chain = (typeof CHAIN)[number];
@@ -230,11 +229,18 @@ function NodeCard({ node, canDrill, onDrill }: { node: ShareNode; canDrill: bool
 }
 
 function BandBox({ label, b, light, withAvs }: { label: string; b: ShareBand; light?: boolean; withAvs?: boolean }) {
-  const overCls = (v: number | null) => (light ? "text-white/60" : (v ?? 0) > 0 ? "text-red-500" : "text-emerald-600");
+  // Over chart = bad = red; on/under = good = green. Lighter tones on the dark
+  // summary card so they stay legible.
+  const overCls = (v: number | null) => ((v ?? 0) > 0
+    ? (light ? "text-red-300" : "text-red-600")
+    : (light ? "text-emerald-300" : "text-emerald-600"));
+  const pctCls = (b.variance_pts ?? 0) > 0
+    ? (light ? "text-red-300" : "text-red-600")
+    : (light ? "text-emerald-300" : "text-emerald-600");
   return (
     <div className={cn("rounded-lg px-2 py-1.5", light ? "bg-white/10" : "bg-zinc-50")}>
       <div className={cn("text-[9px] font-semibold uppercase tracking-wide", light ? "text-white/50" : "text-zinc-400")}>{label}</div>
-      <div className={cn("mt-0.5 text-base font-bold tabular-nums", light ? "text-white" : bandTone(b))}>{fmtPct(b.labor_pct)}</div>
+      <div className={cn("mt-0.5 text-base font-bold tabular-nums", pctCls)}>{fmtPct(b.labor_pct)}</div>
       <div className={cn("text-[10px] tabular-nums", light ? "text-white/60" : "text-zinc-400")}>
         tgt {fmtPct(b.target_pct)} · {fmtVar(b.variance_pts)}
       </div>

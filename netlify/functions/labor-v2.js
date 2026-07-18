@@ -866,14 +866,25 @@ async function backfillCloses(supa) {
 // token is the credential. Minting is limited to above-store leadership.
 const LABOR_SHARE_ROLES = new Set(["admin", "vp", "coo"]);
 
-// $ over and hours over use teamBand's own figures so the shared sheet matches
-// the hub Labor rollup + workbook exactly (hours_over_chart is the same "Hrs
-// Over" metric shown there).
+// Rollup $ over excludes UNDER-chart stores: a store beating its chart (negative
+// $ over) is zeroed out of the sum, so one great store can't offset — and mask —
+// a district's real overspend. A single store keeps its own net (can go green
+// negative). hours over uses teamBand's per-unit figure (already positive-only).
+function dollarsOverForNode(rows, prefix, net) {
+  if (rows.length <= 1) return net;
+  const sum = rows.reduce((a, r) => {
+    const over = numv(r[prefix + "labor_cost"]) - numv(r[prefix + "target_labor_pct"]) * numv(r[prefix + "net_sales"]);
+    return a + (over > 0 ? over : 0);
+  }, 0);
+  return round2(sum);
+}
+
 function liteBand(rows, prefix) {
   const b = teamBand(rows, prefix);
   return {
     labor_pct: b.labor_pct, target_pct: b.target_pct, variance_pts: b.variance_pts,
-    dollars_over: b.dollars_over_chart, hours_over: b.hours_over_chart, act_vs_sched: b.act_vs_sched,
+    dollars_over: dollarsOverForNode(rows, prefix, b.dollars_over_chart),
+    hours_over: b.hours_over_chart, act_vs_sched: b.act_vs_sched,
   };
 }
 
