@@ -2,6 +2,7 @@
 // per-day history. Reads labor_v2_daily (populated by kpi-capture and by the
 // refresh action here). Mirrors the KPI dashboard's org roll-up + drill-down.
 
+import { randomUUID } from "crypto";
 import { createClient } from "@supabase/supabase-js";
 import { resolveOrg } from "./_lib/kpiOrg.js";
 import { fetchKpiFeed, kpiConfigured } from "./_lib/kpiFeed.js";
@@ -860,11 +861,194 @@ async function backfillCloses(supa) {
   return { scannedDates: dates.length, closeDates: closeDates.length, weeksWritten: weeks, periodsWritten: periods };
 }
 
+// ── Public labor share links (per-RVP / company drill-down) ──────────
+// Mints/reads live under labor-v2 but the READ (`shared-labor`) is public — the
+// token is the credential. Minting is limited to above-store leadership.
+const LABOR_SHARE_ROLES = new Set(["admin", "vp", "coo"]);
+
+function liteBand(b) {
+  return { labor_pct: b.labor_pct, target_pct: b.target_pct, variance_pts: b.variance_pts, act_vs_sched: b.act_vs_sched };
+}
+
+// YTD = closed periods this FY (labor_v2_period_close) + the current period-to-
+// date (daily ptd_ fields). Act-vs-schedule isn't carried on the close tables,
+// so YTD shows labor % vs target only.
+function ytdBand(dailyRows, closeRows) {
+  const sum = (arr, k) => arr.reduce((a, r) => a + numv(r[k]), 0);
+  const salesC = sum(closeRows, "net_sales"), costC = sum(closeRows, "labor_cost");
+  const tgtC = closeRows.reduce((a, r) => a + numv(r.target_labor_pct) * numv(r.net_sales), 0);
+  const salesP = sum(dailyRows, "ptd_net_sales"), costP = sum(dailyRows, "ptd_labor_cost");
+  const tgtP = dailyRows.reduce((a, r) => a + numv(r.ptd_target_labor_pct) * numv(r.ptd_net_sales), 0);
+  const sales = salesC + salesP, cost = costC + costP, tgt = tgtC + tgtP;
+  const labor_pct = sales ? round1((cost / sales) * 100) : null;
+  const target_pct = sales ? round1((tgt / sales) * 100) : null;
+  return { labor_pct, target_pct, variance_pts: labor_pct != null && target_pct != null ? round1(labor_pct - target_pct) : null, act_vs_sched: null };
+}
+
+// This week's WTD labor % vs last week's closed WTD (labor_v2_week_close).
+function wowTrend(dailyRows, lastWkRows) {
+  const sum = (arr, k) => arr.reduce((a, r) => a + numv(r[k]), 0);
+  const ts = sum(dailyRows, "wtd_net_sales"), tc = sum(dailyRows, "wtd_labor_cost");
+  const ls = sum(lastWkRows, "net_sales"), lc = sum(lastWkRows, "labor_cost");
+  const this_pct = ts ? round1((tc / ts) * 100) : null;
+  const last_pct = ls ? round1((lc / ls) * 100) : null;
+  return { this_pct, last_pct, delta_pts: this_pct != null && last_pct != null ? round1(this_pct - last_pct) : null };
+}
+
+// Build the public drill-down for a scope (whole company or one region).
+async function laborSharePayload(supa, { scopeKind, regionName, label }) {
+  const anchor = await latestBusinessDate(supa);
+  const empty = {
+    date: null, scope: { kind: scopeKind, region: regionName ?? null }, label: label ?? null,
+    company: null, levels: { region: [], area: [], district: [], store: [] },
+  };
+  if (!anchor) return empty;
+
+  const { data: storeRows } = await supa.from("stores")
+    .select("number, name, is_active, brand").eq("is_active", true).or("brand.eq.sonic,brand.is.null");
+  let numbers = [...new Set((storeRows || []).map((s) => String(s.number)))];
+  const nameByNumber = new Map((storeRows || []).map((s) => [String(s.number), s.name]));
+  if (!numbers.length) return { ...empty, date: anchor };
+  const orgMap = await resolveOrg(supa, numbers);
+
+  // Only stores that resolve into the Sonic org tree; region links narrow to one.
+  numbers = numbers.filter((n) => orgMap.get(n)?.region);
+  if (scopeKind === "region" && regionName) numbers = numbers.filter((n) => orgMap.get(n)?.region === regionName);
+  if (!numbers.length) return { ...empty, date: anchor };
+
+  const fi = fiscalForDate(anchor);
+  const [{ data: daily }, { data: closes }, { data: lastWk }] = await Promise.all([
+    supa.from("labor_v2_daily").select("*").eq("business_date", anchor).in("store_number", numbers),
+    supa.from("labor_v2_period_close").select("store_number, period, net_sales, labor_cost, target_labor_pct")
+      .eq("fiscal_year", fi.fiscalYear).lt("period", fi.period).in("store_number", numbers),
+    supa.from("labor_v2_week_close").select("store_number, net_sales, labor_cost")
+      .eq("fiscal_year", fi.fiscalYear).eq("fiscal_week", fi.fiscalWeek - 1).in("store_number", numbers),
+  ]);
+  applyCreditsToRows(daily || [], await loadLaborCredits(supa, numbers));
+  const dailyByStore = new Map((daily || []).map((r) => [String(r.store_number), r]));
+  const closesByStore = new Map();
+  for (const c of closes || []) {
+    const k = String(c.store_number);
+    (closesByStore.get(k) || closesByStore.set(k, []).get(k)).push(c);
+  }
+  const lastWkByStore = new Map((lastWk || []).map((r) => [String(r.store_number), r]));
+
+  // Rollup participates only for stores that actually polled today.
+  const activeNums = numbers.filter((n) => dailyByStore.has(n));
+  if (!activeNums.length) return { ...empty, date: anchor };
+
+  const nodeFor = (nums, level, name, leader, parents) => {
+    const rows = nums.map((n) => dailyByStore.get(n)).filter(Boolean);
+    const closeRows = nums.flatMap((n) => closesByStore.get(n) || []);
+    const lwRows = nums.map((n) => lastWkByStore.get(n)).filter(Boolean);
+    return {
+      level, name, leader: leader ?? null, storeCount: nums.length,
+      region: parents.region ?? null, area: parents.area ?? null, district: parents.district ?? null,
+      store_number: level === "store" ? nums[0] : undefined,
+      store_name: level === "store" ? (nameByNumber.get(nums[0]) || `#${nums[0]}`) : undefined,
+      yesterday: liteBand(teamBand(rows, "")),
+      ptd: liteBand(teamBand(rows, "ptd_")),
+      ytd: ytdBand(rows, closeRows),
+      trend: wowTrend(rows, lwRows),
+    };
+  };
+
+  const push = (map, key, n) => (map.get(key) || map.set(key, []).get(key)).push(n);
+  const regionMap = new Map(), areaMap = new Map(), districtMap = new Map();
+  for (const n of activeNums) {
+    const o = orgMap.get(n); if (!o) continue;
+    push(regionMap, o.region, n);
+    push(areaMap, `${o.region}|||${o.area}`, n);
+    push(districtMap, `${o.region}|||${o.area}|||${o.district}`, n);
+  }
+  const leaderOf = (nums, field) => { for (const n of nums) { const v = orgMap.get(n)?.[field]; if (v) return v; } return null; };
+  const byName = (a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true });
+
+  const region = [...regionMap].map(([rn, nums]) => nodeFor(nums, "region", rn, leaderOf(nums, "rvpName"), { region: rn })).sort(byName);
+  const area = [...areaMap].map(([k, nums]) => { const [rn, an] = k.split("|||"); return nodeFor(nums, "area", an, leaderOf(nums, "sdoName"), { region: rn, area: an }); }).sort(byName);
+  const district = [...districtMap].map(([k, nums]) => { const [rn, an, dn] = k.split("|||"); return nodeFor(nums, "district", dn, leaderOf(nums, "doName"), { region: rn, area: an, district: dn }); }).sort(byName);
+  const store = activeNums.map((n) => { const o = orgMap.get(n); return nodeFor([n], "store", nameByNumber.get(n) || `#${n}`, o?.gmName || null, { region: o.region, area: o.area, district: o.district }); }).sort(byName);
+
+  const company = nodeFor(
+    activeNums, "company",
+    scopeKind === "region" ? (regionName ?? "Region") : "SOAR — Company",
+    scopeKind === "region" ? leaderOf(activeNums, "rvpName") : null, {},
+  );
+
+  return { date: anchor, scope: { kind: scopeKind, region: regionName ?? null }, label: label ?? null, company, levels: { region, area, district, store } };
+}
+
+// PUBLIC — resolve a share token to its live drill-down. Token is the credential.
+async function sharedLabor(supa, token) {
+  const t = String(token || "").trim();
+  if (!t) return { error: "token required", status: 400 };
+  const { data: share } = await supa.from("labor_share_tokens")
+    .select("id, scope_kind, region_id, label, is_active").eq("token", t).maybeSingle();
+  if (!share || !share.is_active) return { error: "This labor link is no longer active.", status: 404 };
+  let regionName = null;
+  if (share.region_id) {
+    const { data: r } = await supa.from("regions").select("name").eq("id", share.region_id).maybeSingle();
+    regionName = r?.name ?? null;
+  }
+  try { await supa.from("labor_share_tokens").update({ last_used_at: new Date().toISOString() }).eq("id", share.id); } catch { /* ignore */ }
+  return laborSharePayload(supa, { scopeKind: share.scope_kind, regionName, label: share.label });
+}
+
+// Admin/VP: list existing links + the region list to mint against.
+async function listLaborShares(supa, user) {
+  if (!LABOR_SHARE_ROLES.has(roleOf(user))) return { error: "forbidden", status: 403 };
+  const [{ data: shares }, { data: regions }] = await Promise.all([
+    supa.from("labor_share_tokens").select("id, token, scope_kind, region_id, label, created_at, last_used_at").eq("is_active", true).order("created_at"),
+    supa.from("regions").select("id, name").order("name"),
+  ]);
+  const rn = new Map((regions || []).map((r) => [r.id, r.name]));
+  return {
+    shares: (shares || []).map((s) => ({ ...s, region_name: s.region_id ? (rn.get(s.region_id) ?? null) : null })),
+    regions: (regions || []).map((r) => ({ id: r.id, name: r.name })),
+  };
+}
+
+async function mintLaborShare(supa, user, body) {
+  if (!LABOR_SHARE_ROLES.has(roleOf(user))) return { error: "forbidden", status: 403 };
+  const regionId = body?.region_id || null;
+  const scopeKind = regionId ? "region" : "company";
+  const label = (body?.label || "").trim() || null;
+  const base = supa.from("labor_share_tokens").select("id, token").eq("is_active", true);
+  const { data: existing } = regionId ? await base.eq("region_id", regionId).maybeSingle() : await base.is("region_id", null).maybeSingle();
+  if (existing) return { token: existing.token, id: existing.id, reused: true };
+  const token = randomUUID().replace(/-/g, "") + randomUUID().replace(/-/g, "").slice(0, 8);
+  const { data, error } = await supa.from("labor_share_tokens")
+    .insert({ token, scope_kind: scopeKind, region_id: regionId, label, created_by: user.id })
+    .select("id, token").single();
+  if (error) return { error: error.message, status: 500 };
+  return { token: data.token, id: data.id, reused: false };
+}
+
+async function revokeLaborShare(supa, user, body) {
+  if (!LABOR_SHARE_ROLES.has(roleOf(user))) return { error: "forbidden", status: 403 };
+  const id = body?.id;
+  if (!id) return { error: "id required", status: 400 };
+  const { error } = await supa.from("labor_share_tokens").update({ is_active: false, revoked_at: new Date().toISOString() }).eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   let supa;
   try { supa = admin(); }
   catch (e) { return respond(500, { error: e.message }); }
+
+  // PUBLIC labor share read — handled before the auth gate; token is credential.
+  const preParams = event.queryStringParameters || {};
+  if (event.httpMethod === "GET" && preParams.action === "shared-labor") {
+    try {
+      const out = await sharedLabor(supa, preParams.token);
+      return out?.error ? respond(out.status || 500, { error: out.error }) : respond(200, { ok: true, ...out });
+    } catch (e) {
+      return respond(500, { error: e.message || "server error" });
+    }
+  }
 
   let user;
   try { user = await getSessionUser(supa, event); }
@@ -885,6 +1069,8 @@ export const handler = async (event) => {
       if (action === "no-gm-end") return unwrap(await noGmEnd(supa, user, body));
       if (action === "no-gm-delete") return unwrap(await noGmDelete(supa, user, body));
       if (action === "no-gm-rate-set") return unwrap(await noGmRateSet(supa, user, body));
+      if (action === "labor-share-mint") return unwrap(await mintLaborShare(supa, user, body));
+      if (action === "labor-share-revoke") return unwrap(await revokeLaborShare(supa, user, body));
       return respond(400, { error: `Unknown action: ${action}` });
     }
 
@@ -894,6 +1080,7 @@ export const handler = async (event) => {
     if (action === "miss-tracker") return unwrap(await missTracker(supa, user, params));
     if (action === "my-stores") return unwrap(await listMyStores(supa, user));
     if (action === "no-gm-list") return unwrap(await noGmList(supa, user));
+    if (action === "labor-shares") return unwrap(await listLaborShares(supa, user));
 
     // Admin-only org rollup.
     if (!isAdmin) return respond(403, { error: "Admins only." });

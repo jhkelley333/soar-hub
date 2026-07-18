@@ -53,6 +53,7 @@ import { RankerPage } from "@/modules/ranker/RankerPage";
 import { CooMapPage } from "@/modules/coo-map/CooMapPage";
 import { TerritoryMapPage } from "@/modules/territory-map/TerritoryMapPage";
 import { SharedTerritoryMapPage } from "@/modules/territory-map/SharedTerritoryMapPage";
+import { SharedLaborPage } from "@/modules/labor-v2/SharedLaborPage";
 import { PlPage } from "@/modules/pl/PlPage";
 import { CountPage } from "@/modules/count/CountPage";
 import { MyStoresPage } from "@/modules/my-stores/MyStoresPage";
@@ -115,6 +116,8 @@ export const router = createBrowserRouter([
   // Public shared Territory Map — token in the URL is the credential;
   // scope resolves live to whatever the link's creator can see.
   { path: "/map/:token", element: <SharedTerritoryMapPage /> },
+  // Public shared Labor sheet — per-RVP or company drill-down; read-only.
+  { path: "/labor/:token", element: <SharedLaborPage /> },
   // Public ticket-submission page — anyone with the URL can search
   // for a store and file a work order. Lives outside the auth tree.
   { path: "/submit", element: <PublicSubmitPage /> },
