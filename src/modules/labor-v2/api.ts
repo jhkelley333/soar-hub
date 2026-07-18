@@ -157,6 +157,12 @@ export interface ShareBand {
   hours_over: number | null;
   act_vs_sched: number | null;
 }
+export interface HoursTrend {
+  this_wtd: number | null;
+  last_week: number | null;
+  delta: number | null;
+  improving: boolean | null;
+}
 export interface ShareNode {
   level: "company" | "region" | "area" | "district" | "store";
   name: string;
@@ -170,6 +176,7 @@ export interface ShareNode {
   daily: ShareBand;
   wtd: ShareBand;
   ptd: ShareBand;
+  hours_trend: HoursTrend;
 }
 export interface SharedLaborResponse {
   ok: true;

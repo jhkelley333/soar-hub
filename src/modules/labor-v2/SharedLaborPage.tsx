@@ -7,9 +7,9 @@
 import { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, TrendingDown, TrendingUp, Minus } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { fetchSharedLabor, type ShareBand, type ShareNode, type SharedLaborResponse } from "./api";
+import { fetchSharedLabor, type HoursTrend, type ShareBand, type ShareNode, type SharedLaborResponse } from "./api";
 
 const fmtPct = (v: number | null) => (v == null ? "—" : `${v.toFixed(1)}%`);
 const fmtVar = (v: number | null) => (v == null ? "" : `${v >= 0 ? "+" : ""}${v.toFixed(1)}`);
@@ -82,6 +82,14 @@ function SharedLaborExplorer({ data }: { data: SharedLaborResponse }) {
       .sort((a, b) => (b.ptd.variance_pts ?? -Infinity) - (a.ptd.variance_pts ?? -Infinity));
   }, [data, displayLevel, path]);
 
+  // The node you've drilled INTO — its metrics stay pinned above the children
+  // as you go deeper (company at the root, then the RVP / SDO / DO you opened).
+  const parentNode = useMemo<ShareNode | null>(() => {
+    if (!path.length) return data.company;
+    const lvl = path[path.length - 1].level;
+    return (data.levels[lvl] ?? []).find(matchesPath) ?? data.company;
+  }, [data, path]);
+
   function drill(n: ShareNode) {
     if (displayLevel === "store") return;
     setPath((p) => [...p, { level: displayLevel, name: n.name }]);
@@ -89,8 +97,8 @@ function SharedLaborExplorer({ data }: { data: SharedLaborResponse }) {
 
   return (
     <div className="space-y-4">
-      {/* Scope summary (company or region total) */}
-      {data.company && <SummaryCard node={data.company} />}
+      {/* Scope / drilled-into summary — stays visible as you go deeper */}
+      {parentNode && <SummaryCard node={parentNode} />}
 
       {/* Breadcrumb */}
       <div className="flex flex-wrap items-center gap-1 text-sm">
@@ -129,9 +137,12 @@ function SharedLaborExplorer({ data }: { data: SharedLaborResponse }) {
 function SummaryCard({ node }: { node: ShareNode }) {
   return (
     <div className="rounded-xl bg-midnight p-4 text-white ring-1 ring-black/10">
-      <div className="min-w-0">
-        <div className="truncate text-sm font-bold">{node.name}</div>
-        <div className="truncate text-xs text-white/60">{node.leader ? `${node.leader} · ` : ""}{node.storeCount} stores</div>
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-bold">{node.name}</div>
+          <div className="truncate text-xs text-white/60">{node.leader ? `${node.leader} · ` : ""}{node.storeCount} stores</div>
+        </div>
+        <HoursFlag trend={node.hours_trend} light />
       </div>
       <div className="mt-3 grid grid-cols-3 gap-2">
         <BandBox label="Daily" b={node.daily} light withAvs />
@@ -139,6 +150,28 @@ function SummaryCard({ node }: { node: ShareNode }) {
         <BandBox label="PTD" b={node.ptd} light withAvs />
       </div>
     </div>
+  );
+}
+
+// Week-over-week flag on hours over chart: are they improving? Fewer hours over
+// than last week = improving (green ▼). Shows "—" until last week's close lands.
+function HoursFlag({ trend, light }: { trend: HoursTrend; light?: boolean }) {
+  const { delta, improving } = trend;
+  if (delta == null) {
+    return <span className={cn("inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-[10px] font-semibold", light ? "bg-white/10 text-white/50" : "bg-zinc-100 text-zinc-400")}>Hrs WoW —</span>;
+  }
+  const flat = Math.abs(delta) < 0.05;
+  const Icon = flat ? Minus : improving ? TrendingDown : TrendingUp;
+  const tone = flat
+    ? (light ? "bg-white/10 text-white/70" : "bg-zinc-100 text-zinc-500")
+    : improving
+      ? (light ? "bg-emerald-400/20 text-emerald-200" : "bg-emerald-50 text-emerald-700")
+      : (light ? "bg-red-400/20 text-red-200" : "bg-red-50 text-red-700");
+  return (
+    <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold tabular-nums", tone)} title="Hours over chart vs last week">
+      <Icon className="h-3 w-3" strokeWidth={2.5} />
+      {flat ? "Hrs flat vs LW" : `${improving ? "Improving" : "Worse"} ${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(1)}h`}
+    </span>
   );
 }
 
@@ -161,6 +194,7 @@ function NodeCard({ node, canDrill, onDrill }: { node: ShareNode; canDrill: bool
           <div className="mt-0.5 truncate text-xs text-zinc-500">
             {node.leader ? node.leader : "—"}{node.store_number ? "" : ` · ${node.storeCount} store${node.storeCount === 1 ? "" : "s"}`}
           </div>
+          <div className="mt-1"><HoursFlag trend={node.hours_trend} /></div>
         </div>
       </div>
       <div className="grid grid-cols-3 gap-2 border-t border-zinc-100 p-2.5">
