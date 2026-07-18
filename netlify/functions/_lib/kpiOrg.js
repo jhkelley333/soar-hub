@@ -21,6 +21,17 @@ export async function resolveOrg(supa, numbers) {
   const map = new Map();
   if (!numbers.length) return map;
   const { data: stores } = await supa.from("stores").select("id, number, name, district_id").in("number", numbers);
+
+  // GM roster fallback — when a store has no GM account, use the uploaded roster
+  // name so every org-driven report (labor, KPI, ranking, …) still shows who the
+  // GM is. An actual account always wins; the roster only fills the gap.
+  let rosterGm = new Map();
+  try {
+    const { data: rosterRows } = await supa.from("gm_roster").select("store_number, gm_name, status").in("store_number", numbers.map(String));
+    rosterGm = new Map((rosterRows || [])
+      .filter((r) => r.status === "named" && r.gm_name)
+      .map((r) => [String(r.store_number), r.gm_name]));
+  } catch { /* gm_roster may not exist yet */ }
   const storeIds = [...new Set((stores || []).map((s) => s.id).filter(Boolean))];
   const districtIds = [...new Set((stores || []).map((s) => s.district_id).filter(Boolean))];
   const { data: districts } = districtIds.length
@@ -92,7 +103,7 @@ export async function resolveOrg(supa, numbers) {
     map.set(String(s.number), {
       number: String(s.number),
       store: s.name || `#${s.number}`,
-      gmName: gmByStore.get(s.id) || leadOf(s.id, "gm") || null,
+      gmName: gmByStore.get(s.id) || leadOf(s.id, "gm") || rosterGm.get(String(s.number)) || null,
       district: d?.name ?? null,
       doName: d ? leadOf(d.id, "do") : null,
       area: a?.name ?? null,
