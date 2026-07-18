@@ -25,6 +25,8 @@ const fmtSignedUSD0 = (v: number | null) =>
 const fmtSignedHrs = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(Math.round(v)).toLocaleString("en-US")}`);
 const fmtRate2 = (v: number | null) => (v == null ? "—" : `+${v.toFixed(2)}`); // Hrs/Unit: per-store avg of over-stores, 2 dp (negatives hidden upstream)
 const fmtHrs = (v: number | null) => (v == null ? "—" : Math.round(v).toLocaleString("en-US"));
+// Signed 1-dp hours-over-chart, matching the workbook's "Hrs Over" column.
+const fmtHrsOver = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}`);
 const fmtDate = (s: string | null) =>
   s ? new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "—";
 
@@ -167,6 +169,35 @@ export function LaborV2TeamPage() {
     if (rows.length > cap) out.push(`…and ${rows.length - cap} more`);
     return out.join("\n");
   }
+  // Per-store Hours Over Chart (Day / WTD / PTD) with company numbers, formatted
+  // for a WhatsApp paste. Covers every store in the current scope (the whole
+  // region/market/district drilled into), sorted by PTD hours over — worst first.
+  function buildHoursOverText(): string {
+    if (!data || !t) return "";
+    const scope = path.length ? path.map((c) => c.name).join(" › ") : "All my stores";
+    const stores = [...scopedStores].sort(
+      (a, b) => (b.ptd.hours_over_chart ?? -Infinity) - (a.ptd.hours_over_chart ?? -Infinity),
+    );
+    const out: string[] = [
+      "*SOAR Labor — Hours Over Chart*",
+      `${fmtDate(data.date)} · ${scope} · ${stores.length} stores`,
+      `Totals — Day ${fmtHrsOver(t.day.hours_over_chart)} · WTD ${fmtHrsOver(t.wtd.hours_over_chart)} · PTD ${fmtHrsOver(t.ptd.hours_over_chart)}`,
+      "",
+    ];
+    for (const s of stores) {
+      out.push(
+        `#${s.store_number} ${s.store_name} — Day ${fmtHrsOver(s.day.hours_over_chart)} · WTD ${fmtHrsOver(s.wtd.hours_over_chart)} · PTD ${fmtHrsOver(s.ptd.hours_over_chart)}`,
+      );
+    }
+    return out.join("\n");
+  }
+  async function copyHoursOver() {
+    const text = buildHoursOverText();
+    if (!text) return;
+    try { await navigator.clipboard.writeText(text); toast.push("Hours-over copied — paste into WhatsApp.", "success"); }
+    catch { setShareDraft(text); toast.push("Couldn't copy automatically — copy from the box.", "info"); }
+  }
+
   function openShare() { setShareDraft(buildShareText()); }
   function shareToWhatsApp() {
     if (shareDraft == null) return;
@@ -198,6 +229,11 @@ export function LaborV2TeamPage() {
               <Button variant="secondary" size="sm" disabled={wbBusy}
                 onClick={async () => { setWbBusy(true); try { await downloadLaborWorkbook(data); } finally { setWbBusy(false); } }}>
                 <Download className="mr-1 h-3.5 w-3.5" /> {wbBusy ? "Building…" : "Workbook"}
+              </Button>
+            )}
+            {t && (
+              <Button variant="secondary" size="sm" onClick={copyHoursOver}>
+                <Copy className="mr-1 h-3.5 w-3.5" /> Copy hrs over
               </Button>
             )}
             {t && (
