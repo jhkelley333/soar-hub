@@ -81,11 +81,19 @@ async function listPeriods(supa) {
   if (error) return { error: error.message, status: 500 };
   const byEnd = new Map();
   for (const r of data ?? []) {
-    if (!byEnd.has(r.period_end)) {
-      byEnd.set(r.period_end, { period_end: r.period_end, period_label: r.period_label, is_final: r.is_final });
-    }
+    const cur = byEnd.get(r.period_end) || {
+      period_end: r.period_end,
+      period_label: r.period_label,
+      has_prelim: false,
+      has_final: false,
+    };
+    if (r.period_label && !cur.period_label) cur.period_label = r.period_label;
+    if (r.is_final) cur.has_final = true; else cur.has_prelim = true;
+    byEnd.set(r.period_end, cur);
   }
-  return { periods: Array.from(byEnd.values()) };
+  // is_final kept for back-compat (badge shows "Final" once a Final exists).
+  const periods = Array.from(byEnd.values()).map((p) => ({ ...p, is_final: p.has_final }));
+  return { periods };
 }
 
 async function overview(supa, user, params) {
@@ -106,13 +114,29 @@ async function overview(supa, user, params) {
     .order("store_number");
   if (error) return { error: error.message, status: 500 };
 
-  return {
-    period,
-    rows: (data ?? []).map((r) => ({
-      ...r,
-      store_name: nameByNumber.get(String(r.store_number)) ?? null,
-    })),
-  };
+  // A store may now have both a Prelim and a Final row. Show the Final when it
+  // exists (else Prelim), and flag whether both are present so the UI can offer
+  // the side-by-side comparison.
+  const byStore = new Map();
+  for (const r of data ?? []) {
+    const key = String(r.store_number);
+    const cur = byStore.get(key) || { prelim: null, final: null };
+    if (r.is_final) cur.final = r; else cur.prelim = r;
+    byStore.set(key, cur);
+  }
+  const rows = [];
+  for (const [num, { prelim, final }] of byStore) {
+    const chosen = final || prelim;
+    if (!chosen) continue;
+    rows.push({
+      ...chosen,
+      store_name: nameByNumber.get(num) ?? null,
+      stage: chosen.is_final ? "final" : "prelim",
+      compare_available: !!(prelim && final),
+    });
+  }
+  rows.sort((a, b) => String(a.store_number).localeCompare(String(b.store_number), undefined, { numeric: true }));
+  return { period, rows };
 }
 
 async function statement(supa, user, params) {
@@ -129,11 +153,99 @@ async function statement(supa, user, params) {
     .from("pl_statements")
     .select("*")
     .eq("store_number", storeNumber)
-    .eq("period_end", period)
-    .maybeSingle();
+    .eq("period_end", period);
   if (error) return { error: error.message, status: 500 };
-  if (!data) return { error: "No P&L uploaded for this store and period.", status: 404 };
-  return { statement: { ...data, store_name: store.name } };
+  const prelim = (data ?? []).find((r) => !r.is_final) || null;
+  const final = (data ?? []).find((r) => r.is_final) || null;
+  if (!prelim && !final) return { error: "No P&L uploaded for this store and period.", status: 404 };
+
+  // Default to Final; ?stage=prelim forces the Prelim view.
+  const wantPrelim = String(params.stage || "").toLowerCase() === "prelim";
+  const chosen = (wantPrelim ? prelim : final) || final || prelim;
+  return {
+    statement: { ...chosen, store_name: store.name, stage: chosen.is_final ? "final" : "prelim" },
+    available: { prelim: !!prelim, final: !!final },
+  };
+}
+
+// Side-by-side Prelim vs Final for one store/period: both statements plus a
+// line-by-line delta and headline movers, for the "what changed" report.
+async function compare(supa, user, params) {
+  if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const storeNumber = String(params.store || "").trim();
+  const period = String(params.period || "").trim();
+  if (!storeNumber || !period) return { error: "store and period are required", status: 400 };
+
+  const stores = await callerVisibleStores(supa, user);
+  const store = stores.find((s) => String(s.number) === storeNumber);
+  if (!store) return { error: `Store ${storeNumber} is outside your scope.`, status: 403 };
+
+  const { data, error } = await supa
+    .from("pl_statements")
+    .select("*")
+    .eq("store_number", storeNumber)
+    .eq("period_end", period);
+  if (error) return { error: error.message, status: 500 };
+  const prelim = (data ?? []).find((r) => !r.is_final) || null;
+  const final = (data ?? []).find((r) => r.is_final) || null;
+  if (!prelim || !final) {
+    return { error: "Both a Preliminary and a Final P&L are required to compare.", status: 409 };
+  }
+
+  const delta = (a, b) => (a == null || b == null ? null : round2(b - a));
+  const headlineKeys = ["total_sales", "gross_profit", "ci_amount", "ci_pct", "ebitda"];
+  const headline = {};
+  for (const k of headlineKeys) {
+    headline[k] = { prelim: prelim[k] ?? null, final: final[k] ?? null, delta: delta(prelim[k], final[k]) };
+  }
+
+  // Line-by-line: match Prelim and Final rows by label (statements come from the
+  // same workbook layout, so labels align). Preserve Final's order, then append
+  // any Prelim-only lines that dropped out.
+  const prelimByLabel = new Map((prelim.lines || []).map((l) => [l.label, l]));
+  const finalLabels = new Set((final.lines || []).map((l) => l.label));
+  const lines = [];
+  for (const fl of final.lines || []) {
+    const pl = prelimByLabel.get(fl.label) || null;
+    const d = delta(pl?.amount, fl.amount);
+    lines.push({
+      label: fl.label,
+      total: !!fl.total,
+      prelim_amount: pl?.amount ?? null,
+      final_amount: fl.amount ?? null,
+      delta: d,
+      prelim_pct: pl?.pct ?? null,
+      final_pct: fl.pct ?? null,
+      changed: d != null && Math.abs(d) >= 0.005,
+    });
+  }
+  for (const pl of prelim.lines || []) {
+    if (finalLabels.has(pl.label)) continue;
+    lines.push({
+      label: pl.label,
+      total: !!pl.total,
+      prelim_amount: pl.amount ?? null,
+      final_amount: null,
+      delta: delta(pl.amount, 0),
+      prelim_pct: pl.pct ?? null,
+      final_pct: null,
+      changed: true,
+    });
+  }
+
+  return {
+    store_number: storeNumber,
+    store_name: store.name,
+    period_end: period,
+    period_label: final.period_label || prelim.period_label || null,
+    headline,
+    lines,
+    changed_count: lines.filter((l) => l.changed).length,
+  };
+}
+
+function round2(n) {
+  return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 }
 
 // Batch upsert from the client-parsed workbook. Re-uploading the same
@@ -180,9 +292,12 @@ async function upload(supa, user, body) {
   }
   if (!ready.length) return { error: "nothing parseable in the upload", status: 400 };
 
+  // Keyed on the stage too (is_final), so a Final upload no longer clobbers the
+  // Prelim — both are retained for side-by-side comparison. Re-uploading the
+  // same stage overwrites just that stage.
   const { error } = await supa
     .from("pl_statements")
-    .upsert(ready, { onConflict: "store_number,period_end" });
+    .upsert(ready, { onConflict: "store_number,period_end,is_final" });
   if (error) return { error: error.message, status: 500 };
 
   return { ok: true, upserted: ready.length, unmatched };
@@ -220,6 +335,7 @@ export const handler = async (event) => {
       if (action === "periods") return unwrap(await listPeriods(supa));
       if (action === "overview") return unwrap(await overview(supa, user, params));
       if (action === "statement") return unwrap(await statement(supa, user, params));
+      if (action === "compare") return unwrap(await compare(supa, user, params));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {
