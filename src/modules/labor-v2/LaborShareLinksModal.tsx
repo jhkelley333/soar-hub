@@ -53,8 +53,8 @@ export function LaborShareLinksModal({ open, onClose }: { open: boolean; onClose
       footer={<Button variant="secondary" size="sm" onClick={onClose}>Done</Button>}>
       <p className="mb-3 text-xs text-zinc-500">
         Public, read-only links your team can open without logging in. Each shows a live drill-down —
-        Company → RVP → SDO → DO → Store — with Yesterday / PTD / YTD labor, Act vs Schedule, and the
-        week-over-week trend. A region link is scoped to that RVP; the company link shows everything.
+        Company → RVP → SDO → DO → Store — with Daily / WTD / PTD labor vs target and Act vs Schedule.
+        A region link is scoped to that RVP; the company link shows everything.
       </p>
 
       {q.isLoading ? (

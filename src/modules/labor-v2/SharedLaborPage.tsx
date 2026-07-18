@@ -7,7 +7,7 @@
 import { useMemo, useState } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronRight, TrendingDown, TrendingUp, Minus } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { fetchSharedLabor, type ShareBand, type ShareNode, type SharedLaborResponse } from "./api";
 
@@ -118,7 +118,7 @@ function SharedLaborExplorer({ data }: { data: SharedLaborResponse }) {
       )}
 
       <p className="pt-2 text-center text-[11px] text-zinc-400">
-        Labor % vs target · AvS = actual − scheduled hours · trend = this week vs last week
+        Labor % vs target · AvS = actual − scheduled hours
       </p>
     </div>
   );
@@ -127,24 +127,21 @@ function SharedLaborExplorer({ data }: { data: SharedLaborResponse }) {
 function SummaryCard({ node }: { node: ShareNode }) {
   return (
     <div className="rounded-xl bg-midnight p-4 text-white ring-1 ring-black/10">
-      <div className="flex items-center justify-between">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-bold">{node.name}</div>
-          <div className="truncate text-xs text-white/60">{node.leader ? `${node.leader} · ` : ""}{node.storeCount} stores</div>
-        </div>
-        <TrendChip trend={node.trend} light />
+      <div className="min-w-0">
+        <div className="truncate text-sm font-bold">{node.name}</div>
+        <div className="truncate text-xs text-white/60">{node.leader ? `${node.leader} · ` : ""}{node.storeCount} stores</div>
       </div>
       <div className="mt-3 grid grid-cols-3 gap-2">
-        <BandBox label="Yesterday" b={node.yesterday} light withAvs />
+        <BandBox label="Daily" b={node.daily} light withAvs />
+        <BandBox label="WTD" b={node.wtd} light withAvs />
         <BandBox label="PTD" b={node.ptd} light withAvs />
-        <BandBox label="YTD" b={node.ytd} light />
       </div>
     </div>
   );
 }
 
 function NodeCard({ node, canDrill, onDrill }: { node: ShareNode; canDrill: boolean; onDrill: () => void }) {
-  const over = (node.yesterday.variance_pts ?? 0) > 0;
+  const over = (node.daily.variance_pts ?? 0) > 0;
   const title = node.store_number ? `#${node.store_number} ${node.store_name ?? ""}` : node.name;
   return (
     <button
@@ -163,12 +160,11 @@ function NodeCard({ node, canDrill, onDrill }: { node: ShareNode; canDrill: bool
             {node.leader ? node.leader : "—"}{node.store_number ? "" : ` · ${node.storeCount} store${node.storeCount === 1 ? "" : "s"}`}
           </div>
         </div>
-        <TrendChip trend={node.trend} />
       </div>
       <div className="grid grid-cols-3 gap-2 border-t border-zinc-100 p-2.5">
-        <BandBox label="Yesterday" b={node.yesterday} withAvs />
+        <BandBox label="Daily" b={node.daily} withAvs />
+        <BandBox label="WTD" b={node.wtd} withAvs />
         <BandBox label="PTD" b={node.ptd} withAvs />
-        <BandBox label="YTD" b={node.ytd} />
       </div>
     </button>
   );
@@ -188,22 +184,5 @@ function BandBox({ label, b, light, withAvs }: { label: string; b: ShareBand; li
         </div>
       )}
     </div>
-  );
-}
-
-// Week-over-week: labor % this week vs last week. Lower is better, so a drop
-// (negative delta) is the good direction.
-function TrendChip({ trend, light }: { trend: { this_pct: number | null; last_pct: number | null; delta_pts: number | null }; light?: boolean }) {
-  const d = trend.delta_pts;
-  if (d == null) return <span className={cn("text-[11px]", light ? "text-white/40" : "text-zinc-300")}>—</span>;
-  const improved = d < 0;
-  const flat = Math.abs(d) < 0.05;
-  const Icon = flat ? Minus : improved ? TrendingDown : TrendingUp;
-  const tone = flat ? (light ? "text-white/60" : "text-zinc-400") : improved ? "text-emerald-500" : "text-red-500";
-  return (
-    <span className={cn("inline-flex shrink-0 items-center gap-1 text-[11px] font-semibold tabular-nums", tone)} title="This week vs last week (labor %)">
-      <Icon className="h-3.5 w-3.5" strokeWidth={2.5} />
-      {flat ? "flat" : `${d >= 0 ? "+" : "−"}${Math.abs(d).toFixed(1)} vs LW`}
-    </span>
   );
 }

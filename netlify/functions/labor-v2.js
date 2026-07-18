@@ -870,31 +870,6 @@ function liteBand(b) {
   return { labor_pct: b.labor_pct, target_pct: b.target_pct, variance_pts: b.variance_pts, act_vs_sched: b.act_vs_sched };
 }
 
-// YTD = closed periods this FY (labor_v2_period_close) + the current period-to-
-// date (daily ptd_ fields). Act-vs-schedule isn't carried on the close tables,
-// so YTD shows labor % vs target only.
-function ytdBand(dailyRows, closeRows) {
-  const sum = (arr, k) => arr.reduce((a, r) => a + numv(r[k]), 0);
-  const salesC = sum(closeRows, "net_sales"), costC = sum(closeRows, "labor_cost");
-  const tgtC = closeRows.reduce((a, r) => a + numv(r.target_labor_pct) * numv(r.net_sales), 0);
-  const salesP = sum(dailyRows, "ptd_net_sales"), costP = sum(dailyRows, "ptd_labor_cost");
-  const tgtP = dailyRows.reduce((a, r) => a + numv(r.ptd_target_labor_pct) * numv(r.ptd_net_sales), 0);
-  const sales = salesC + salesP, cost = costC + costP, tgt = tgtC + tgtP;
-  const labor_pct = sales ? round1((cost / sales) * 100) : null;
-  const target_pct = sales ? round1((tgt / sales) * 100) : null;
-  return { labor_pct, target_pct, variance_pts: labor_pct != null && target_pct != null ? round1(labor_pct - target_pct) : null, act_vs_sched: null };
-}
-
-// This week's WTD labor % vs last week's closed WTD (labor_v2_week_close).
-function wowTrend(dailyRows, lastWkRows) {
-  const sum = (arr, k) => arr.reduce((a, r) => a + numv(r[k]), 0);
-  const ts = sum(dailyRows, "wtd_net_sales"), tc = sum(dailyRows, "wtd_labor_cost");
-  const ls = sum(lastWkRows, "net_sales"), lc = sum(lastWkRows, "labor_cost");
-  const this_pct = ts ? round1((tc / ts) * 100) : null;
-  const last_pct = ls ? round1((lc / ls) * 100) : null;
-  return { this_pct, last_pct, delta_pts: this_pct != null && last_pct != null ? round1(this_pct - last_pct) : null };
-}
-
 // Build the public drill-down for a scope (whole company or one region).
 async function laborSharePayload(supa, { scopeKind, regionName, label }) {
   const anchor = await latestBusinessDate(supa);
@@ -916,22 +891,9 @@ async function laborSharePayload(supa, { scopeKind, regionName, label }) {
   if (scopeKind === "region" && regionName) numbers = numbers.filter((n) => orgMap.get(n)?.region === regionName);
   if (!numbers.length) return { ...empty, date: anchor };
 
-  const fi = fiscalForDate(anchor);
-  const [{ data: daily }, { data: closes }, { data: lastWk }] = await Promise.all([
-    supa.from("labor_v2_daily").select("*").eq("business_date", anchor).in("store_number", numbers),
-    supa.from("labor_v2_period_close").select("store_number, period, net_sales, labor_cost, target_labor_pct")
-      .eq("fiscal_year", fi.fiscalYear).lt("period", fi.period).in("store_number", numbers),
-    supa.from("labor_v2_week_close").select("store_number, net_sales, labor_cost")
-      .eq("fiscal_year", fi.fiscalYear).eq("fiscal_week", fi.fiscalWeek - 1).in("store_number", numbers),
-  ]);
+  const { data: daily } = await supa.from("labor_v2_daily").select("*").eq("business_date", anchor).in("store_number", numbers);
   applyCreditsToRows(daily || [], await loadLaborCredits(supa, numbers));
   const dailyByStore = new Map((daily || []).map((r) => [String(r.store_number), r]));
-  const closesByStore = new Map();
-  for (const c of closes || []) {
-    const k = String(c.store_number);
-    (closesByStore.get(k) || closesByStore.set(k, []).get(k)).push(c);
-  }
-  const lastWkByStore = new Map((lastWk || []).map((r) => [String(r.store_number), r]));
 
   // Rollup participates only for stores that actually polled today.
   const activeNums = numbers.filter((n) => dailyByStore.has(n));
@@ -939,17 +901,14 @@ async function laborSharePayload(supa, { scopeKind, regionName, label }) {
 
   const nodeFor = (nums, level, name, leader, parents) => {
     const rows = nums.map((n) => dailyByStore.get(n)).filter(Boolean);
-    const closeRows = nums.flatMap((n) => closesByStore.get(n) || []);
-    const lwRows = nums.map((n) => lastWkByStore.get(n)).filter(Boolean);
     return {
       level, name, leader: leader ?? null, storeCount: nums.length,
       region: parents.region ?? null, area: parents.area ?? null, district: parents.district ?? null,
       store_number: level === "store" ? nums[0] : undefined,
       store_name: level === "store" ? (nameByNumber.get(nums[0]) || `#${nums[0]}`) : undefined,
-      yesterday: liteBand(teamBand(rows, "")),
+      daily: liteBand(teamBand(rows, "")),
+      wtd: liteBand(teamBand(rows, "wtd_")),
       ptd: liteBand(teamBand(rows, "ptd_")),
-      ytd: ytdBand(rows, closeRows),
-      trend: wowTrend(rows, lwRows),
     };
   };
 

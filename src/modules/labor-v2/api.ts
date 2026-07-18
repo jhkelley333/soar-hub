@@ -155,11 +155,6 @@ export interface ShareBand {
   variance_pts: number | null;
   act_vs_sched: number | null;
 }
-export interface ShareTrend {
-  this_pct: number | null;
-  last_pct: number | null;
-  delta_pts: number | null;
-}
 export interface ShareNode {
   level: "company" | "region" | "area" | "district" | "store";
   name: string;
@@ -170,10 +165,9 @@ export interface ShareNode {
   district: string | null;
   store_number?: string;
   store_name?: string;
-  yesterday: ShareBand;
+  daily: ShareBand;
+  wtd: ShareBand;
   ptd: ShareBand;
-  ytd: ShareBand;
-  trend: ShareTrend;
 }
 export interface SharedLaborResponse {
   ok: true;
