@@ -456,7 +456,10 @@ const TABLE_METRICS: { key: keyof ShareBand; label: string; fmt: (v: number | nu
 ];
 
 function LaborTableModal({ stores, onClose }: { stores: ShareNode[]; onClose: () => void }) {
-  const [minHrs, setMinHrs] = useState(0);
+  // String-backed so mobile can clear + retype freely (a numeric state coerced
+  // the empty field to 0 and blocked typing). Defaults to a 2-hour minimum.
+  const [minInput, setMinInput] = useState("2");
+  const minHrs = (() => { const n = Number.parseFloat(minInput); return Number.isFinite(n) ? n : 0; })();
   const [basis, setBasis] = useState<Win>("wtd");
   const [cols, setCols] = useState<Record<Win, boolean>>({ daily: true, wtd: true, ptd: true });
   const wins = (["daily", "wtd", "ptd"] as Win[]).filter((w) => cols[w]);
@@ -485,7 +488,7 @@ function LaborTableModal({ stores, onClose }: { stores: ShareNode[]; onClose: ()
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-zinc-100 p-3 text-xs">
           <label className="flex items-center gap-1.5 font-semibold text-zinc-600">
             Min hrs over
-            <input type="number" step="0.1" value={minHrs} onChange={(e) => setMinHrs(Number(e.target.value) || 0)}
+            <input type="text" inputMode="decimal" value={minInput} onChange={(e) => setMinInput(e.target.value)}
               className="w-16 rounded-md border border-zinc-200 px-2 py-1 text-xs focus:border-accent focus:outline-none" />
             <span className="font-normal text-zinc-400">on</span>
             <span className="inline-flex overflow-hidden rounded-md ring-1 ring-inset ring-zinc-200">
