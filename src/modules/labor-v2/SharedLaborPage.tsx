@@ -401,11 +401,15 @@ function DayRow({ day, name, setName, onSave, saving }: {
         </button>
       ) : (
         <div className="mt-2 space-y-2 rounded-md bg-white p-2 ring-1 ring-zinc-200">
-          <select value={reason} onChange={(e) => setReason(e.target.value)}
-            className="w-full rounded-md border border-zinc-200 bg-white px-2 py-1.5 text-xs focus:border-accent focus:outline-none">
-            <option value="">Reason (optional)…</option>
-            {Object.entries(ROOT_CAUSE_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-          </select>
+          <div className="flex flex-wrap gap-1.5">
+            {Object.entries(ROOT_CAUSE_LABEL).map(([k, v]) => (
+              <button key={k} type="button" onClick={() => setReason(reason === k ? "" : k)}
+                className={cn("rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset transition",
+                  reason === k ? "bg-accent text-white ring-accent" : "bg-zinc-50 text-zinc-600 ring-zinc-200 hover:bg-zinc-100")}>
+                {v}
+              </button>
+            ))}
+          </div>
           <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2} placeholder="Add a note…"
             className="w-full resize-y rounded-md border border-zinc-200 px-2 py-1.5 text-xs focus:border-accent focus:outline-none" />
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name"
