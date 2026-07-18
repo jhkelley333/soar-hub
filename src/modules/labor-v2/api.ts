@@ -177,6 +177,7 @@ export interface ShareNode {
   wtd: ShareBand;
   ptd: ShareBand;
   hours_trend: HoursTrend;
+  credits: { no_gm: number; pto: number; training: number };
 }
 export interface SharedLaborResponse {
   ok: true;

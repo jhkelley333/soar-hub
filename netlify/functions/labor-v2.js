@@ -10,7 +10,7 @@ import { extractLaborRows, feedBusinessDate, feedSectionReport, wallClockInTz, i
 import { extractCountRows } from "./_lib/kpiCount.js";
 import { upsertLaborCloses } from "./_lib/laborCloses.js";
 import { fiscalForDate } from "./_lib/fiscal.js";
-import { loadLaborCredits, applyCreditsToRows } from "./_lib/trainingCredit.js";
+import { loadLaborCredits, applyCreditsToRows, loadTrainingCreditDates, loadGmPtoCreditDates, loadNoGmCreditDates } from "./_lib/trainingCredit.js";
 import { logPull } from "./_lib/pullLog.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -922,14 +922,26 @@ async function laborSharePayload(supa, { scopeKind, regionName, label }) {
   // Same weekday one week back — its cumulative wtd_ fields give last week
   // Mon→(same day), the apples-to-apples comparison for this week's WTD.
   const lastWeekDate = isoOf(shiftDays(parseIso(anchor), -7));
-  const [{ data: daily }, { data: lastWk }] = await Promise.all([
+  // Load the three credit types separately so we can show the breakdown, then
+  // merge them exactly as loadLaborCredits does to adjust the labor rows.
+  const [{ data: daily }, { data: lastWk }, tcMap, ptoMap, noGmMap] = await Promise.all([
     supa.from("labor_v2_daily").select("*").eq("business_date", anchor).in("store_number", numbers),
     supa.from("labor_v2_daily").select("store_number, wtd_net_sales, wtd_labor_cost, wtd_labor_hours, wtd_target_labor_pct")
       .eq("business_date", lastWeekDate).in("store_number", numbers),
+    loadTrainingCreditDates(supa, numbers),
+    loadGmPtoCreditDates(supa, numbers),
+    loadNoGmCreditDates(supa, numbers),
   ]);
-  applyCreditsToRows(daily || [], await loadLaborCredits(supa, numbers));
+  const mergedCredits = new Map();
+  for (const src of [tcMap, ptoMap, noGmMap]) for (const [sn, arr] of src) mergedCredits.set(sn, (mergedCredits.get(sn) || []).concat(arr));
+  applyCreditsToRows(daily || [], mergedCredits);
   const dailyByStore = new Map((daily || []).map((r) => [String(r.store_number), r]));
   const lastWkByStore = new Map((lastWk || []).map((r) => [String(r.store_number), r]));
+
+  // Period-to-date credit $ by store, per type (window matches applyCreditsToRows'
+  // PTD band: periodStart → anchor).
+  const periodStart = fiscalForDate(anchor)?.periodStart ?? anchor;
+  const creditPtd = (map, sn) => (map.get(sn) || []).reduce((a, c) => (c.date >= periodStart && c.date <= anchor ? a + numv(c.amount) : a), 0);
 
   // Rollup participates only for stores that actually polled today.
   const activeNums = numbers.filter((n) => dailyByStore.has(n));
@@ -947,6 +959,11 @@ async function laborSharePayload(supa, { scopeKind, regionName, label }) {
       wtd: liteBand(rows, "wtd_"),
       ptd: liteBand(rows, "ptd_"),
       hours_trend: hoursOverTrend(rows, lwRows),
+      credits: {
+        no_gm: round2(nums.reduce((a, n) => a + creditPtd(noGmMap, n), 0)),
+        pto: round2(nums.reduce((a, n) => a + creditPtd(ptoMap, n), 0)),
+        training: round2(nums.reduce((a, n) => a + creditPtd(tcMap, n), 0)),
+      },
     };
   };
 
