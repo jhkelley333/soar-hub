@@ -1061,6 +1061,53 @@ async function sharedLaborStore(supa, token, storeNumber) {
   return { store_number: num, store_name: org.store, days };
 }
 
+// PUBLIC — file a miss reason + note from the shared sheet's store popup. There's
+// no login on a share link, so we attribute it to the typed name and mark it as
+// filed via the shared link; the token scope-checks the store.
+async function sharedLaborStoreReview(supa, token, body) {
+  const t = String(token || "").trim();
+  const num = String(body?.store || "").trim();
+  const businessDate = String(body?.date || "").trim();
+  const note = String(body?.note ?? "").trim().slice(0, 2000);
+  const rootCause = body?.root_cause ? String(body.root_cause).trim() : null;
+  const filedBy = (String(body?.filed_by ?? "").trim().slice(0, 80) || "Shared link") + " · shared link";
+  if (!t) return { error: "token required", status: 400 };
+  if (!num || !parseIso(businessDate)) return { error: "store and date are required", status: 400 };
+  if (!note) return { error: "A note is required.", status: 400 };
+  if (rootCause && !REVIEW_ROOT_CAUSES.has(rootCause)) return { error: "Pick one of the listed reasons.", status: 400 };
+
+  const { data: share } = await supa.from("labor_share_tokens").select("scope_kind, region_id, is_active").eq("token", t).maybeSingle();
+  if (!share || !share.is_active) return { error: "This labor link is no longer active.", status: 404 };
+  let regionName = null;
+  if (share.region_id) { const { data: r } = await supa.from("regions").select("name").eq("id", share.region_id).maybeSingle(); regionName = r?.name ?? null; }
+  const org = (await resolveOrg(supa, [num])).get(num);
+  if (!org || !org.region) return { error: "Store not found.", status: 404 };
+  if (share.scope_kind === "region" && org.region !== regionName) return { error: "Store is outside this link's scope.", status: 403 };
+
+  const { data: storeRow } = await supa.from("stores").select("id").eq("number", num).maybeSingle();
+  if (!storeRow) return { error: "Store not found.", status: 404 };
+
+  let hoursOver = null;
+  try {
+    const { data: dayRow } = await supa.from("labor_v2_daily").select("*").eq("store_number", num).eq("business_date", businessDate).maybeSingle();
+    if (dayRow) { applyCreditsToRows([dayRow], await loadLaborCredits(supa, [num])); const h = storeHoursOver(dayRow, ""); if (h != null && h > 0) hoursOver = round1(h); }
+  } catch { /* best-effort */ }
+
+  const now = new Date().toISOString();
+  const row = {
+    store_id: storeRow.id, store_number: num, business_date: businessDate,
+    reviewed_by_id: null, reviewed_by_email: filedBy, note, acknowledged: true, updated_at: now,
+    root_cause: rootCause, hours_over: hoursOver,
+  };
+  let { error } = await supa.from("labor_reviews").upsert(row, { onConflict: "store_id,business_date" });
+  if (error && /root_cause|hours_over/.test(error.message)) {
+    delete row.root_cause; delete row.hours_over;
+    ({ error } = await supa.from("labor_reviews").upsert(row, { onConflict: "store_id,business_date" }));
+  }
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
 // Admin/VP: list existing links + the region list to mint against.
 async function listLaborShares(supa, user) {
   if (!LABOR_SHARE_ROLES.has(roleOf(user))) return { error: "forbidden", status: 403 };
@@ -1106,13 +1153,22 @@ export const handler = async (event) => {
   try { supa = admin(); }
   catch (e) { return respond(500, { error: e.message }); }
 
-  // PUBLIC labor share reads — handled before the auth gate; token is credential.
+  // PUBLIC labor share endpoints — handled before the auth gate; token is credential.
   const preParams = event.queryStringParameters || {};
   if (event.httpMethod === "GET" && (preParams.action === "shared-labor" || preParams.action === "shared-labor-store")) {
     try {
       const out = preParams.action === "shared-labor-store"
         ? await sharedLaborStore(supa, preParams.token, preParams.store)
         : await sharedLabor(supa, preParams.token);
+      return out?.error ? respond(out.status || 500, { error: out.error }) : respond(200, { ok: true, ...out });
+    } catch (e) {
+      return respond(500, { error: e.message || "server error" });
+    }
+  }
+  if (event.httpMethod === "POST" && preParams.action === "shared-labor-store-review") {
+    try {
+      const body = event.body ? JSON.parse(event.body) : {};
+      const out = await sharedLaborStoreReview(supa, preParams.token || body.token, body);
       return out?.error ? respond(out.status || 500, { error: out.error }) : respond(200, { ok: true, ...out });
     } catch (e) {
       return respond(500, { error: e.message || "server error" });

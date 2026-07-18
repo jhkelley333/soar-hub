@@ -223,6 +223,20 @@ export async function fetchSharedLaborStore(token: string, store: string): Promi
   return body as SharedLaborStoreResponse;
 }
 
+// PUBLIC — file a miss reason + note from the shared store popup.
+export async function submitSharedLaborReview(token: string, input: {
+  store: string; date: string; root_cause: string | null; note: string; filed_by: string;
+}): Promise<{ ok: true }> {
+  const res = await fetch(`${FN}?action=shared-labor-store-review&token=${encodeURIComponent(token)}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((body as { error?: string })?.error || `Request failed (${res.status})`);
+  return body as { ok: true };
+}
+
 export interface LaborShare {
   id: string;
   token: string;
