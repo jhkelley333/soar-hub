@@ -380,8 +380,9 @@ function DayRow({ day, name, setName, onSave, saving }: {
       </div>
       <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] tabular-nums text-zinc-500">
         <span>tgt {fmtPct(day.target_pct)} · {fmtVar(day.variance_pts)}</span>
-        <span className={oc(day.dollars_over)}>$ over {fmtOverUsd(day.dollars_over)}</span>
-        <span className={oc(day.hours_over)}>hrs over {fmtHrsOver(day.hours_over)}</span>
+        {/* Only show the overage — when a store is under chart there's nothing over. */}
+        {(day.dollars_over ?? 0) > 0 && <span className="text-red-600">$ over {fmtOverUsd(day.dollars_over)}</span>}
+        {(day.hours_over ?? 0) > 0 && <span className="text-red-600">hrs over {fmtHrsOver(day.hours_over)}</span>}
         <span className={oc(day.act_vs_sched)}>AvS {fmtAvs(day.act_vs_sched)}</span>
       </div>
       {(day.root_cause || day.note) && !open && (
