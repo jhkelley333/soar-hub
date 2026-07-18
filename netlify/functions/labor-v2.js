@@ -887,14 +887,15 @@ function liteBand(rows, prefix) {
   };
 }
 
-// Week-over-week hours-over flag: this week's WTD hours over vs last week's
-// closed week (labor_v2_week_close, whose columns are unprefixed). Improving =
-// fewer hours over than last week. Null until last week's close exists.
+// Week-over-week hours-over flag — apples-to-apples: this week's WTD hours over
+// (Mon→anchor) vs last week THROUGH THE SAME WEEKDAY. Last week's daily row on
+// the same weekday carries cumulative wtd_ fields (Mon→that day), so both sides
+// cover the same number of days. Improving = fewer hours over than last week.
 function hoursOverTrend(rows, lastWkRows) {
   const thisWtd = totalHoursOver(rows, "wtd_");
-  const lastWeek = totalHoursOver(lastWkRows, "");
-  const delta = thisWtd != null && lastWeek != null ? round1(thisWtd - lastWeek) : null;
-  return { this_wtd: thisWtd, last_week: lastWeek, delta, improving: delta == null ? null : delta < 0 };
+  const lastWtd = totalHoursOver(lastWkRows, "wtd_");
+  const delta = thisWtd != null && lastWtd != null ? round1(thisWtd - lastWtd) : null;
+  return { this_wtd: thisWtd, last_week: lastWtd, delta, improving: delta == null ? null : delta < 0 };
 }
 
 // Build the public drill-down for a scope (whole company or one region).
@@ -918,11 +919,13 @@ async function laborSharePayload(supa, { scopeKind, regionName, label }) {
   if (scopeKind === "region" && regionName) numbers = numbers.filter((n) => orgMap.get(n)?.region === regionName);
   if (!numbers.length) return { ...empty, date: anchor };
 
-  const fi = fiscalForDate(anchor);
+  // Same weekday one week back — its cumulative wtd_ fields give last week
+  // Mon→(same day), the apples-to-apples comparison for this week's WTD.
+  const lastWeekDate = isoOf(shiftDays(parseIso(anchor), -7));
   const [{ data: daily }, { data: lastWk }] = await Promise.all([
     supa.from("labor_v2_daily").select("*").eq("business_date", anchor).in("store_number", numbers),
-    supa.from("labor_v2_week_close").select("store_number, net_sales, labor_cost, labor_hours, target_labor_pct")
-      .eq("fiscal_year", fi.fiscalYear).eq("fiscal_week", (fi.fiscalWeek || 1) - 1).in("store_number", numbers),
+    supa.from("labor_v2_daily").select("store_number, wtd_net_sales, wtd_labor_cost, wtd_labor_hours, wtd_target_labor_pct")
+      .eq("business_date", lastWeekDate).in("store_number", numbers),
   ]);
   applyCreditsToRows(daily || [], await loadLaborCredits(supa, numbers));
   const dailyByStore = new Map((daily || []).map((r) => [String(r.store_number), r]));
