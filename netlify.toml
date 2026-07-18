@@ -15,6 +15,15 @@
   to = "/.netlify/functions/qr-redirect?code=:splat"
   status = 200
 
+# Public labor share links — serve an OG-tagged shell (labor icon + words) so
+# WhatsApp/iMessage/Slack previews show a labor card, not the generic app card.
+# The function re-injects tags into the real index.html so the SPA still boots.
+# Must precede the SPA fallback.
+[[redirects]]
+  from = "/labor/*"
+  to = "/.netlify/functions/labor-preview"
+  status = 200
+
 # SPA fallback — react-router handles all client-side routes.
 [[redirects]]
   from = "/*"
