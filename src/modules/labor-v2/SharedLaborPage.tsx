@@ -16,6 +16,25 @@ const fmtVar = (v: number | null) => (v == null ? "" : `${v >= 0 ? "+" : ""}${v.
 const fmtAvs = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(Math.round(v))}h`);
 const fmtOverUsd = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}$${Math.abs(Math.round(v)).toLocaleString("en-US")}`);
 const fmtHrsOver = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}`);
+const fmtUsd0 = (v: number) => `$${Math.round(v).toLocaleString("en-US")}`;
+
+// Applied labor credits (period-to-date) — No GM / PTO / Training. These are
+// already baked into the labor %, $ over and hrs over above; this line just
+// makes the adjustment visible, like the hub does.
+function CreditsLine({ credits, light }: { credits: ShareNode["credits"]; light?: boolean }) {
+  const parts: string[] = [];
+  if (credits.no_gm) parts.push(`No GM ${fmtUsd0(credits.no_gm)}`);
+  if (credits.pto) parts.push(`PTO ${fmtUsd0(credits.pto)}`);
+  if (credits.training) parts.push(`Training ${fmtUsd0(credits.training)}`);
+  if (!parts.length) return null;
+  return (
+    <div className={cn("text-[10px] tabular-nums", light ? "text-white/70" : "text-zinc-500")}>
+      <span className={cn("font-semibold uppercase tracking-wide", light ? "text-white/50" : "text-zinc-400")}>Credits · PTD</span>{" "}
+      {parts.join(" · ")}
+    </div>
+  );
+}
+const hasCredits = (c: ShareNode["credits"]) => !!(c.no_gm || c.pto || c.training);
 const fmtDate = (s: string | null) =>
   s ? new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "—";
 
@@ -149,6 +168,7 @@ function SummaryCard({ node }: { node: ShareNode }) {
         <BandBox label="WTD" b={node.wtd} light withAvs />
         <BandBox label="PTD" b={node.ptd} light withAvs />
       </div>
+      {hasCredits(node.credits) && <div className="mt-2"><CreditsLine credits={node.credits} light /></div>}
     </div>
   );
 }
@@ -202,6 +222,9 @@ function NodeCard({ node, canDrill, onDrill }: { node: ShareNode; canDrill: bool
         <BandBox label="WTD" b={node.wtd} withAvs />
         <BandBox label="PTD" b={node.ptd} withAvs />
       </div>
+      {hasCredits(node.credits) && (
+        <div className="border-t border-zinc-100 px-2.5 py-1.5"><CreditsLine credits={node.credits} /></div>
+      )}
     </button>
   );
 }
