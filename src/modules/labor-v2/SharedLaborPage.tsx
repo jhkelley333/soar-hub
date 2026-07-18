@@ -4,7 +4,7 @@
 // YTD labor %, Act vs Schedule (Yesterday + PTD), and a this-week-vs-last-week
 // trend. An RVP's link is scoped to their region; the company link shows all.
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, TrendingDown, TrendingUp, Minus, Download } from "lucide-react";
@@ -43,12 +43,30 @@ const fmtDate = (s: string | null) =>
 
 const CHAIN = ["region", "area", "district", "store"] as const;
 type Chain = (typeof CHAIN)[number];
+type PathItem = { level: Chain; name: string };
 const LEVEL_LABEL: Record<Chain, string> = { region: "RVP · Region", area: "SDO · Market", district: "DO · District", store: "Store" };
 const childOf = (l: Chain): Chain | null => CHAIN[CHAIN.indexOf(l) + 1] ?? null;
+
+// Narrow the dataset to whatever the viewer has drilled into, so the Labor File
+// covers exactly the on-screen scope: the whole link at the top, or just one
+// RVP's region / SDO's market / DO's district after drilling.
+function buildScopedDownload(data: SharedLaborResponse, path: PathItem[]): { data: SharedLaborResponse; label: string } {
+  const matches = (n: ShareNode) => path.every((c) => (n as unknown as Record<string, unknown>)[c.level] === c.name);
+  const parentLevel = path.length ? path[path.length - 1].level : null;
+  const parent: ShareNode | null = !path.length
+    ? data.company
+    : (data.levels[parentLevel as Chain].find(matches) ?? data.company);
+  const levels: SharedLaborResponse["levels"] = { region: [], area: [], district: [], store: [] };
+  for (const lvl of CHAIN) levels[lvl] = (data.levels[lvl] || []).filter(matches);
+  if (parentLevel) levels[parentLevel] = []; // the drilled node is the total row — don't repeat it as a section
+  const label = parent?.name || (data.scope.kind === "region" ? data.scope.region ?? "Region" : "Company");
+  return { data: { ...data, company: parent, levels }, label };
+}
 
 export function SharedLaborPage() {
   const { token = "" } = useParams();
   const [dl, setDl] = useState(false);
+  const [path, setPath] = useState<PathItem[]>([]);
   const q = useQuery({
     queryKey: ["shared-labor", token],
     queryFn: () => fetchSharedLabor(token),
@@ -61,7 +79,10 @@ export function SharedLaborPage() {
   async function download() {
     if (!q.data) return;
     setDl(true);
-    try { await downloadSharedLaborFile(q.data); } finally { setDl(false); }
+    try {
+      const { data: scoped, label } = buildScopedDownload(q.data, path);
+      await downloadSharedLaborFile(scoped, label);
+    } finally { setDl(false); }
   }
 
   return (
@@ -99,14 +120,17 @@ export function SharedLaborPage() {
             <p className="mt-1 text-xs text-red-600">Ask whoever sent it for a fresh link.</p>
           </div>
         )}
-        {q.data && <SharedLaborExplorer data={q.data} />}
+        {q.data && <SharedLaborExplorer data={q.data} path={path} setPath={setPath} />}
       </div>
     </div>
   );
 }
 
-function SharedLaborExplorer({ data }: { data: SharedLaborResponse }) {
-  const [path, setPath] = useState<{ level: Chain; name: string }[]>([]);
+function SharedLaborExplorer({ data, path, setPath }: {
+  data: SharedLaborResponse;
+  path: PathItem[];
+  setPath: Dispatch<SetStateAction<PathItem[]>>;
+}) {
   const startLevel: Chain = data.scope.kind === "region" ? "area" : "region";
   const displayLevel: Chain = path.length ? (childOf(path[path.length - 1].level) ?? "store") : startLevel;
 
