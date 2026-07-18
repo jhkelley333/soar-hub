@@ -185,6 +185,20 @@ function leadersCell(managers: OrgManager[]): string {
     .join("; ");
 }
 
+// Does any linked manager match the roster GM name? Punctuation-insensitive,
+// first/last-based (so middle names / suffixes don't trip it). True when there's
+// no roster name or no manager to compare — only an actual clash flags.
+function rosterMatchesManager(store: OrgStore): boolean {
+  if (!store.roster_gm || !store.managers.length) return true;
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const firstLast = (t: string[]) => (t.length >= 2 ? `${t[0]} ${t[t.length - 1]}` : t[0]);
+  const roster = norm(store.roster_gm);
+  return store.managers.some((m) => {
+    const nm = norm(m.full_name || m.email || "");
+    return !!nm && (nm === roster || firstLast(nm.split(" ")) === firstLast(roster.split(" ")));
+  });
+}
+
 function bool(v: boolean): string {
   return v ? "true" : "false";
 }
@@ -797,7 +811,20 @@ function StoreRow({
           </span>
           <span className="text-sm text-zinc-700">{store.name}</span>
           {!store.is_active && <Badge tone="neutral">Inactive</Badge>}
-          {store.managers.length === 0 && <Badge tone="warning">Vacant</Badge>}
+          {store.managers.length === 0 ? (
+            store.roster_gm ? (
+              <span className="inline-flex items-center gap-1.5">
+                <Badge tone="warning">No account</Badge>
+                <span className="text-sm italic text-zinc-500">{store.roster_gm}</span>
+              </span>
+            ) : (
+              <Badge tone="warning">Vacant</Badge>
+            )
+          ) : (
+            store.roster_gm && !rosterMatchesManager(store) && (
+              <span title={`Roster: ${store.roster_gm}`}><Badge tone="danger">Name differs</Badge></span>
+            )
+          )}
         </div>
         <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-600">
           {(store.address || store.city) && (
