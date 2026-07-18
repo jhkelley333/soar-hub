@@ -45,14 +45,17 @@ function writeCell(cell: any, r: Row, c: Col) {
   if (c.credit) v = r.credits[c.credit] ?? null;
   else if (c.band && c.key) v = r[c.band][c.key];
   if (!isNum(v)) { cell.value = ""; return; }
-  cell.value = v;
   cell.alignment = { horizontal: "right" };
-  if (c.fmt === "pct" || c.fmt === "var") cell.numFmt = '0.0"%"';
-  else if (c.fmt === "over") cell.numFmt = '"$"#,##0';
-  else if (c.fmt === "hrs") cell.numFmt = "0.0";
-  else if (c.fmt === "avs") cell.numFmt = "0";
-  else cell.numFmt = '"$"#,##0';
-  // Over chart = red, under = green (variance / $ over / hrs over / AvS).
+  // Percentages: store the FRACTION with a real "%" format (value/100 + "0.0%").
+  // A literal-% custom format renders fine on desktop but mobile viewers (the
+  // phone) multiply it anyway, so 17.3 showed as 1730%. This is viewer-proof.
+  if (c.fmt === "pct" || c.fmt === "var") { cell.value = v / 100; cell.numFmt = "0.0%"; }
+  else {
+    cell.value = v;
+    cell.numFmt = c.fmt === "over" ? '"$"#,##0' : c.fmt === "hrs" ? "0.0" : c.fmt === "avs" ? "0" : '"$"#,##0';
+  }
+  // Over chart = red, under = green (variance / $ over / hrs over / AvS). Uses
+  // the original percent-point / dollar value for the threshold.
   if (c.fmt === "var" || c.fmt === "over" || c.fmt === "hrs" || c.fmt === "avs") {
     cell.font = { color: { argb: v > 0.05 ? OVER : v < -0.05 ? UNDER : "FF1C2733" }, bold: c.fmt === "var" };
   }

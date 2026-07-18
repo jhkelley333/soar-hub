@@ -1010,6 +1010,57 @@ async function sharedLabor(supa, token) {
   return laborSharePayload(supa, { scopeKind: share.scope_kind, regionName, label: share.label });
 }
 
+// PUBLIC — one store's current-week daily labor + any filed miss reason, for the
+// store popup on the shared sheet. Scope-checked against the token (region links
+// can only open their own stores). Read-only; reasons are filed in the hub.
+async function sharedLaborStore(supa, token, storeNumber) {
+  const t = String(token || "").trim();
+  const num = String(storeNumber || "").trim();
+  if (!t || !num) return { error: "token and store required", status: 400 };
+  const { data: share } = await supa.from("labor_share_tokens")
+    .select("scope_kind, region_id, is_active").eq("token", t).maybeSingle();
+  if (!share || !share.is_active) return { error: "This labor link is no longer active.", status: 404 };
+  let regionName = null;
+  if (share.region_id) {
+    const { data: r } = await supa.from("regions").select("name").eq("id", share.region_id).maybeSingle();
+    regionName = r?.name ?? null;
+  }
+  const org = (await resolveOrg(supa, [num])).get(num);
+  if (!org || !org.region) return { error: "Store not found.", status: 404 };
+  if (share.scope_kind === "region" && org.region !== regionName) return { error: "Store is outside this link's scope.", status: 403 };
+
+  const anchor = await latestBusinessDate(supa);
+  if (!anchor) return { store_number: num, store_name: org.store, days: [] };
+  const week = weekDates(parseIso(anchor)).filter((d) => d <= anchor);
+
+  const [{ data: rows }, { data: reviews }] = await Promise.all([
+    supa.from("labor_v2_daily").select("*").eq("store_number", num).in("business_date", week),
+    supa.from("labor_reviews").select("business_date, note, root_cause").eq("store_number", num).in("business_date", week),
+  ]);
+  applyCreditsToRows(rows || [], await loadLaborCredits(supa, [num]));
+  const rowByDate = new Map((rows || []).map((r) => [String(r.business_date), r]));
+  const reviewByDate = new Map((reviews || []).map((r) => [String(r.business_date), r]));
+
+  const days = week.map((d) => {
+    const r = rowByDate.get(d);
+    const rev = reviewByDate.get(d) || null;
+    const b = r ? teamBand([r], "") : null;
+    return {
+      date: d,
+      polled: !!r,
+      labor_pct: b?.labor_pct ?? null,
+      target_pct: b?.target_pct ?? null,
+      variance_pts: b?.variance_pts ?? null,
+      dollars_over: b?.dollars_over_chart ?? null,
+      hours_over: b?.hours_over_chart ?? null,
+      act_vs_sched: b?.act_vs_sched ?? null,
+      root_cause: rev?.root_cause ?? null,
+      note: rev?.note ?? null,
+    };
+  });
+  return { store_number: num, store_name: org.store, days };
+}
+
 // Admin/VP: list existing links + the region list to mint against.
 async function listLaborShares(supa, user) {
   if (!LABOR_SHARE_ROLES.has(roleOf(user))) return { error: "forbidden", status: 403 };
@@ -1055,11 +1106,13 @@ export const handler = async (event) => {
   try { supa = admin(); }
   catch (e) { return respond(500, { error: e.message }); }
 
-  // PUBLIC labor share read — handled before the auth gate; token is credential.
+  // PUBLIC labor share reads — handled before the auth gate; token is credential.
   const preParams = event.queryStringParameters || {};
-  if (event.httpMethod === "GET" && preParams.action === "shared-labor") {
+  if (event.httpMethod === "GET" && (preParams.action === "shared-labor" || preParams.action === "shared-labor-store")) {
     try {
-      const out = await sharedLabor(supa, preParams.token);
+      const out = preParams.action === "shared-labor-store"
+        ? await sharedLaborStore(supa, preParams.token, preParams.store)
+        : await sharedLabor(supa, preParams.token);
       return out?.error ? respond(out.status || 500, { error: out.error }) : respond(200, { ok: true, ...out });
     } catch (e) {
       return respond(500, { error: e.message || "server error" });

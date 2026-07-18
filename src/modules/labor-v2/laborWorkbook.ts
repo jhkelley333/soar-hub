@@ -50,11 +50,12 @@ function writeCell(cell: any, r: Row, c: Col) {
   const band = bandOf(r, c.band);
   const v = band && c.key ? band[c.key] : null;
   if (!isNum(v)) { cell.value = v == null ? "" : String(v); return; }
-  cell.value = v;
   cell.alignment = { horizontal: "right" };
-  if (c.fmt === "pct" || c.fmt === "var") cell.numFmt = '0.0"%"'; // value is percent points
-  else if (c.fmt === "money" || c.fmt === "over") cell.numFmt = c.header === "Hrs Over" ? "0.0" : '"$"#,##0';
-  else cell.numFmt = "0.0";
+  // Percent points → fraction + real "%" format so mobile viewers don't multiply
+  // a literal-% custom format again (17.3 was showing as 1730% on phones).
+  if (c.fmt === "pct" || c.fmt === "var") { cell.value = v / 100; cell.numFmt = "0.0%"; }
+  else if (c.fmt === "money" || c.fmt === "over") { cell.value = v; cell.numFmt = c.header === "Hrs Over" ? "0.0" : '"$"#,##0'; }
+  else { cell.value = v; cell.numFmt = "0.0"; }
   // Red over chart, green under. Applies to variance + $/hrs over.
   if (c.fmt === "var" || c.fmt === "over") {
     cell.font = { color: { argb: v > 0.05 ? OVER : v < -0.05 ? UNDER : "FF1C2733" }, bold: c.fmt === "var" };
