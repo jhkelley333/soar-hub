@@ -705,6 +705,9 @@ function WeekCell({ day, onDark }: { day: WeekDay; onDark?: boolean }) {
       {(day.hours_over ?? 0) > 0 && (
         <div className={cn("text-[10px] tabular-nums", onDark ? "text-red-300" : "text-red-600")}>+{day.hours_over!.toFixed(1)}h</div>
       )}
+      {day.wtd_pct != null && (
+        <div className={cn("mt-0.5 text-[9px] tabular-nums", onDark ? "text-white/50" : "text-zinc-400")}>WTD {fmtPct(day.wtd_pct)}</div>
+      )}
     </div>
   );
 }
