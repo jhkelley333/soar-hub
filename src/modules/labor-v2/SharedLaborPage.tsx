@@ -7,9 +7,9 @@
 import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, TrendingDown, TrendingUp, Minus, Download, X, SlidersHorizontal } from "lucide-react";
+import { ChevronRight, TrendingDown, TrendingUp, Minus, Download, X, SlidersHorizontal, CalendarDays } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { fetchSharedLabor, fetchSharedLaborStore, submitSharedLaborReview, type HoursTrend, type ShareBand, type ShareNode, type SharedLaborResponse, type StoreDay } from "./api";
+import { fetchSharedLabor, fetchSharedLaborStore, fetchSharedLaborWeek, submitSharedLaborReview, type HoursTrend, type ShareBand, type ShareNode, type SharedLaborResponse, type StoreDay, type WeekDay, type WeekNode } from "./api";
 import { downloadSharedLaborFile } from "./sharedLaborWorkbook";
 
 // Same fixed miss-reason list the GM picks from in the hub.
@@ -143,6 +143,7 @@ function SharedLaborExplorer({ data, path, setPath, token }: {
 }) {
   const [dayStore, setDayStore] = useState<string | null>(null);
   const [tableOpen, setTableOpen] = useState(false);
+  const [weekOpen, setWeekOpen] = useState(false);
   const startLevel: Chain = data.scope.kind === "region" ? "area" : "region";
   const displayLevel: Chain = path.length ? (childOf(path[path.length - 1].level) ?? "store") : startLevel;
 
@@ -194,13 +195,19 @@ function SharedLaborExplorer({ data, path, setPath, token }: {
         ))}
       </div>
 
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <div className="text-[11px] font-semibold uppercase tracking-wider text-zinc-400">{LEVEL_LABEL[displayLevel]}</div>
         {scopedStores.length > 0 && (
-          <button type="button" onClick={() => setTableOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-midnight hover:border-accent">
-            <SlidersHorizontal className="h-3.5 w-3.5" /> Table view
-          </button>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => setWeekOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-midnight hover:border-accent">
+              <CalendarDays className="h-3.5 w-3.5" /> Week Trend
+            </button>
+            <button type="button" onClick={() => setTableOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-midnight hover:border-accent">
+              <SlidersHorizontal className="h-3.5 w-3.5" /> Table view
+            </button>
+          </div>
         )}
       </div>
 
@@ -216,6 +223,15 @@ function SharedLaborExplorer({ data, path, setPath, token }: {
 
       {dayStore && <StoreDayModal token={token} store={dayStore} onClose={() => setDayStore(null)} />}
       {tableOpen && <LaborTableModal stores={scopedStores} onClose={() => setTableOpen(false)} />}
+      {weekOpen && (
+        <WeekTrendModal token={token} level={displayLevel}
+          filter={{
+            region: path.find((c) => c.level === "region")?.name ?? null,
+            area: path.find((c) => c.level === "area")?.name ?? null,
+            district: path.find((c) => c.level === "district")?.name ?? null,
+          }}
+          onClose={() => setWeekOpen(false)} />
+      )}
 
       <div className="mt-4 space-y-2 rounded-xl bg-white p-4 text-[11px] leading-relaxed text-zinc-500 ring-1 ring-zinc-200">
         <p><span className="font-semibold text-zinc-600">Labor %</span> vs target · <span className="font-semibold text-zinc-600">AvS</span> = actual − scheduled hours · <span className="font-semibold text-zinc-600">$ / Hrs Over</span> = over the labor chart (red = over, green = on/under).</p>
@@ -546,6 +562,89 @@ function LaborTableModal({ stores, onClose }: { stores: ShareNode[]; onClose: ()
           </table>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Week Trend — a Mon→Sun daily strip per node at the current level, plus the
+// scope total, each day rolled up (the "average for each parent level").
+function WeekTrendModal({ token, level, filter, onClose }: {
+  token: string;
+  level: Chain;
+  filter: { region: string | null; area: string | null; district: string | null };
+  onClose: () => void;
+}) {
+  const q = useQuery({
+    queryKey: ["shared-labor-week", token, level, filter.region, filter.area, filter.district],
+    queryFn: () => fetchSharedLaborWeek(token, { level, ...filter }),
+    staleTime: 60_000,
+    retry: false,
+  });
+  const d = q.data;
+  return (
+    <div className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/40 sm:items-center sm:p-4" onClick={onClose}>
+      <div className="flex max-h-screen w-full flex-col bg-white shadow-xl sm:max-h-[90vh] sm:max-w-3xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-zinc-100 p-3">
+          <div className="text-sm font-bold text-midnight">Week trend · {LEVEL_LABEL[level].split(" · ")[0]} · this week labor %</div>
+          <button type="button" onClick={onClose} className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-100"><X className="h-5 w-5" /></button>
+        </div>
+        <div className="min-h-0 flex-1 space-y-3 overflow-auto p-3">
+          {q.isLoading ? (
+            <div className="py-10 text-center text-sm text-zinc-500">Loading…</div>
+          ) : q.isError || !d ? (
+            <div className="py-8 text-center text-sm text-red-600">{(q.error as Error)?.message ?? "Couldn't load."}</div>
+          ) : (
+            <>
+              {d.scope_total && <WeekStrip node={d.scope_total} total />}
+              {d.nodes.map((n) => <WeekStrip key={n.name} node={n} />)}
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function WeekStrip({ node, total }: { node: WeekNode; total?: boolean }) {
+  return (
+    <div className={cn("rounded-xl p-2.5 ring-1", total ? "bg-midnight text-white ring-black/10" : "bg-white ring-zinc-200")}>
+      <div className="mb-2 flex items-baseline gap-2 px-1">
+        <span className={cn("truncate text-sm font-bold", total ? "text-white" : "text-midnight")}>{node.name}</span>
+        {node.leader && <span className={cn("truncate text-xs", total ? "text-white/60" : "text-zinc-500")}>{node.leader}</span>}
+      </div>
+      <div className="flex gap-1.5 overflow-x-auto pb-1">
+        {node.week.map((day) => <WeekCell key={day.date} day={day} onDark={total} />)}
+      </div>
+    </div>
+  );
+}
+
+function WeekCell({ day, onDark }: { day: WeekDay; onDark?: boolean }) {
+  const dt = new Date(`${day.date}T12:00:00`);
+  const wd = dt.toLocaleDateString("en-US", { weekday: "short" });
+  const dom = dt.getDate();
+  if (day.status === "future" || day.status === "missing") {
+    return (
+      <div className={cn("min-w-[58px] shrink-0 rounded-lg px-2 py-1.5 text-center ring-1", onDark ? "bg-white/5 ring-white/10" : "bg-zinc-50 ring-zinc-100")}>
+        <div className={cn("text-[11px] font-semibold", onDark ? "text-white/70" : "text-zinc-500")}>{wd}</div>
+        <div className={cn("text-[10px]", onDark ? "text-white/40" : "text-zinc-400")}>{dom}</div>
+        <div className={cn("mt-1 text-sm", onDark ? "text-white/30" : "text-zinc-300")}>—</div>
+      </div>
+    );
+  }
+  const over = day.status === "over";
+  const pctCls = onDark ? (over ? "text-red-300" : "text-emerald-300") : (over ? "text-red-600" : "text-emerald-600");
+  return (
+    <div className={cn("min-w-[58px] shrink-0 rounded-lg px-2 py-1.5 text-center ring-1", onDark ? "bg-white/10 ring-white/10" : over ? "bg-red-50/40 ring-red-100" : "bg-zinc-50 ring-zinc-100")}>
+      <div className="flex items-center justify-center gap-1">
+        <span className={cn("text-[11px] font-semibold", onDark ? "text-white/80" : "text-zinc-600")}>{wd}</span>
+        <span className={cn("h-1.5 w-1.5 rounded-full", over ? "bg-red-500" : "bg-emerald-500")} />
+      </div>
+      <div className={cn("text-[10px]", onDark ? "text-white/50" : "text-zinc-400")}>{dom}</div>
+      <div className={cn("mt-0.5 text-sm font-bold tabular-nums", pctCls)}>{fmtPct(day.labor_pct)}</div>
+      {(day.hours_over ?? 0) > 0 && (
+        <div className={cn("text-[10px] tabular-nums", onDark ? "text-red-300" : "text-red-600")}>+{day.hours_over!.toFixed(1)}h</div>
+      )}
     </div>
   );
 }
