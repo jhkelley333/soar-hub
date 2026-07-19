@@ -1037,13 +1037,15 @@ async function sharedLaborStore(supa, token, storeNumber) {
   if (!anchor) return { store_number: num, store_name: org.store, days: [] };
   const week = weekDates(parseIso(anchor)).filter((d) => d <= anchor);
 
-  const [{ data: rows }, { data: reviews }] = await Promise.all([
+  const [{ data: rows }, { data: reviews }, { data: st }] = await Promise.all([
     supa.from("labor_v2_daily").select("*").eq("store_number", num).in("business_date", week),
     supa.from("labor_reviews").select("business_date, note, root_cause").eq("store_number", num).in("business_date", week),
+    supa.from("stores").select("latitude, longitude").eq("number", num).maybeSingle(),
   ]);
   applyCreditsToRows(rows || [], await loadLaborCredits(supa, [num]));
   const rowByDate = new Map((rows || []).map((r) => [String(r.business_date), r]));
   const reviewByDate = new Map((reviews || []).map((r) => [String(r.business_date), r]));
+  const wx = await fetchDailyWeather(st?.latitude, st?.longitude, week[0], week[week.length - 1]);
 
   const days = week.map((d) => {
     const r = rowByDate.get(d);
@@ -1060,9 +1062,34 @@ async function sharedLaborStore(supa, token, storeNumber) {
       act_vs_sched: b?.act_vs_sched ?? null,
       root_cause: rev?.root_cause ?? null,
       note: rev?.note ?? null,
+      weather: wx.get(d) ?? null,
     };
   });
   return { store_number: num, store_name: org.store, days };
+}
+
+// Daily weather (hi/lo °F, precip in, WMO code) for a lat/lng over a date range,
+// from Open-Meteo's free forecast API (recent-past dates included, no key). Best-
+// effort — returns an empty map on any failure so weather never blocks the popup.
+async function fetchDailyWeather(lat, lng, start, end) {
+  const la = Number(lat), lo = Number(lng);
+  if (!Number.isFinite(la) || !Number.isFinite(lo) || !start || !end) return new Map();
+  try {
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${la}&longitude=${lo}`
+      + `&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_sum`
+      + `&temperature_unit=fahrenheit&precipitation_unit=inch&timezone=auto&start_date=${start}&end_date=${end}`;
+    const res = await fetch(url);
+    if (!res.ok) return new Map();
+    const j = await res.json();
+    const t = j?.daily?.time || [], hi = j?.daily?.temperature_2m_max || [], low = j?.daily?.temperature_2m_min || [],
+      code = j?.daily?.weather_code || [], pr = j?.daily?.precipitation_sum || [];
+    const nOrNull = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+    const m = new Map();
+    for (let i = 0; i < t.length; i++) {
+      m.set(String(t[i]), { hi: nOrNull(hi[i]), lo: nOrNull(low[i]), code: nOrNull(code[i]), precip_in: nOrNull(pr[i]) });
+    }
+    return m;
+  } catch { return new Map(); }
 }
 
 // PUBLIC — file a miss reason + note from the shared sheet's store popup. There's

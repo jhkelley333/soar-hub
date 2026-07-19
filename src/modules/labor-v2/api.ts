@@ -196,6 +196,12 @@ export async function fetchSharedLabor(token: string): Promise<SharedLaborRespon
   return body as SharedLaborResponse;
 }
 
+export interface DayWeather {
+  hi: number | null;
+  lo: number | null;
+  code: number | null;   // WMO weather code
+  precip_in: number | null;
+}
 export interface StoreDay {
   date: string;
   polled: boolean;
@@ -207,6 +213,7 @@ export interface StoreDay {
   act_vs_sched: number | null;
   root_cause: string | null;
   note: string | null;
+  weather: DayWeather | null;
 }
 export interface SharedLaborStoreResponse {
   ok: true;
