@@ -9,7 +9,7 @@ import { useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { ChevronRight, TrendingDown, TrendingUp, Minus, Download, X, SlidersHorizontal, CalendarDays } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { fetchSharedLabor, fetchSharedLaborStore, fetchSharedLaborWeek, submitSharedLaborReview, type HoursTrend, type ShareBand, type ShareNode, type SharedLaborResponse, type StoreDay, type WeekDay, type WeekNode } from "./api";
+import { fetchSharedLabor, fetchSharedLaborStore, fetchSharedLaborWeek, submitSharedLaborReview, type DayWeather, type HoursTrend, type ShareBand, type ShareNode, type SharedLaborResponse, type StoreDay, type WeekDay, type WeekNode } from "./api";
 import { downloadSharedLaborFile } from "./sharedLaborWorkbook";
 
 // Same fixed miss-reason list the GM picks from in the hub.
@@ -414,6 +414,7 @@ function DayRow({ day, name, setName, onSave, saving }: {
         {(day.hours_over ?? 0) > 0 && <span className="text-red-600">hrs over {fmtHrsOver(day.hours_over)}</span>}
         <span className={oc(day.act_vs_sched)}>AvS {fmtAvs(day.act_vs_sched)}</span>
       </div>
+      <WeatherLine weather={day.weather} />
       {(day.root_cause || day.note) && !open && (
         <div className="mt-1.5 rounded-md bg-white px-2 py-1.5 text-[11px] ring-1 ring-zinc-100">
           {day.root_cause && (
@@ -455,6 +456,65 @@ function DayRow({ day, name, setName, onSave, saving }: {
         </div>
       )}
     </div>
+  );
+}
+
+// Daily weather under each day — condition, high/low, and rain when it fell.
+// WMO weather codes map to a small icon set. Best-effort: absent if no data.
+function weatherInfo(code: number | null): { cat: string; label: string } | null {
+  if (code == null) return null;
+  if (code === 0) return { cat: "clear", label: "Sunny" };
+  if (code <= 2) return { cat: "partly", label: "Partly cloudy" };
+  if (code === 3) return { cat: "cloudy", label: "Cloudy" };
+  if (code === 45 || code === 48) return { cat: "fog", label: "Fog" };
+  if (code >= 51 && code <= 57) return { cat: "rain", label: "Drizzle" };
+  if (code >= 61 && code <= 67) return { cat: "rain", label: "Rain" };
+  if (code >= 71 && code <= 77) return { cat: "snow", label: "Snow" };
+  if (code >= 80 && code <= 82) return { cat: "rain", label: "Showers" };
+  if (code === 85 || code === 86) return { cat: "snow", label: "Snow showers" };
+  if (code >= 95) return { cat: "storm", label: "Thunderstorms" };
+  return { cat: "cloudy", label: "Cloudy" };
+}
+
+function WeatherLine({ weather }: { weather: DayWeather | null }) {
+  const wi = weather ? weatherInfo(weather.code) : null;
+  if (!weather || !wi) return null;
+  return (
+    <div className="mt-1.5 flex items-center gap-2 border-t border-dashed border-zinc-100 pt-1.5 text-[11px] text-zinc-500">
+      <WeatherIcon cat={wi.cat} />
+      <span className="font-semibold text-zinc-600">{wi.label}</span>
+      {weather.hi != null && (
+        <span className="tabular-nums">{Math.round(weather.hi)}° / {weather.lo != null ? Math.round(weather.lo) : "—"}°</span>
+      )}
+      {(weather.precip_in ?? 0) > 0.005 && (
+        <span className="tabular-nums text-sky-600">{weather.precip_in!.toFixed(2)}" rain</span>
+      )}
+    </div>
+  );
+}
+
+function WeatherIcon({ cat }: { cat: string }) {
+  const p = { width: 20, height: 20, viewBox: "0 0 24 24", fill: "none" } as const;
+  if (cat === "clear") return (
+    <svg {...p}><circle cx="12" cy="12" r="4.2" fill="#f4b942" /><g stroke="#f4b942" strokeWidth="1.7" strokeLinecap="round"><line x1="12" y1="3" x2="12" y2="5.2" /><line x1="12" y1="18.8" x2="12" y2="21" /><line x1="3" y1="12" x2="5.2" y2="12" /><line x1="18.8" y1="12" x2="21" y2="12" /><line x1="5.6" y1="5.6" x2="7.2" y2="7.2" /><line x1="16.8" y1="16.8" x2="18.4" y2="18.4" /><line x1="18.4" y1="5.6" x2="16.8" y2="7.2" /><line x1="7.2" y1="16.8" x2="5.6" y2="18.4" /></g></svg>
+  );
+  if (cat === "partly") return (
+    <svg {...p}><circle cx="9" cy="9.5" r="3" fill="#f4b942" /><g stroke="#f4b942" strokeWidth="1.4" strokeLinecap="round"><line x1="9" y1="4" x2="9" y2="5.6" /><line x1="3.6" y1="9.5" x2="5.2" y2="9.5" /><line x1="5.2" y1="5.7" x2="6.3" y2="6.8" /></g><path d="M9 17.6a3.5 3.5 0 0 1 .3-6.9 4.6 4.6 0 0 1 8.7 1.1A3.1 3.1 0 0 1 17.4 17.6H9Z" fill="#9aa7b4" /></svg>
+  );
+  if (cat === "fog") return (
+    <svg {...p}><path d="M7 13a4 4 0 0 1 .3-7.9 5.2 5.2 0 0 1 9.9 1.2A3.6 3.6 0 0 1 17 13H7Z" fill="#aab6c2" /><g stroke="#9aa7b4" strokeWidth="1.7" strokeLinecap="round"><line x1="5" y1="16.5" x2="19" y2="16.5" /><line x1="7" y1="19.5" x2="17" y2="19.5" /></g></svg>
+  );
+  if (cat === "rain") return (
+    <svg {...p}><path d="M7 14.5a4 4 0 0 1 .3-7.9 5.2 5.2 0 0 1 9.9 1.2A3.6 3.6 0 0 1 17 14.5H7Z" fill="#9aa7b4" /><g stroke="#3f86cf" strokeWidth="1.7" strokeLinecap="round"><line x1="8.5" y1="16.5" x2="7.7" y2="19" /><line x1="12" y1="16.5" x2="11.2" y2="19" /><line x1="15.5" y1="16.5" x2="14.7" y2="19" /></g></svg>
+  );
+  if (cat === "storm") return (
+    <svg {...p}><path d="M7 14a4 4 0 0 1 .3-7.9 5.2 5.2 0 0 1 9.9 1.2A3.6 3.6 0 0 1 17 14H7Z" fill="#8794a2" /><path d="M12.4 14l-1.8 3h1.9l-1.5 3" stroke="#f4b942" strokeWidth="1.5" fill="none" strokeLinejoin="round" strokeLinecap="round" /></svg>
+  );
+  if (cat === "snow") return (
+    <svg {...p}><path d="M7 14.5a4 4 0 0 1 .3-7.9 5.2 5.2 0 0 1 9.9 1.2A3.6 3.6 0 0 1 17 14.5H7Z" fill="#aab6c2" /><g fill="#7fb2e6"><circle cx="9" cy="18" r="1" /><circle cx="12" cy="19.5" r="1" /><circle cx="15" cy="18" r="1" /></g></svg>
+  );
+  return (
+    <svg {...p}><path d="M7 16.5a4 4 0 0 1 .3-7.9 5.2 5.2 0 0 1 9.9 1.2A3.6 3.6 0 0 1 17 16.5H7Z" fill="#aab6c2" /></svg>
   );
 }
 
