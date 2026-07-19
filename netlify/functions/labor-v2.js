@@ -866,6 +866,10 @@ async function backfillCloses(supa) {
 // token is the credential. Minting is limited to above-store leadership.
 const LABOR_SHARE_ROLES = new Set(["admin", "vp", "coo"]);
 
+// Corporate / hold stores are excluded from the shared labor sheet — they're not
+// operating restaurants and shouldn't skew a scope's numbers.
+const CORPORATE_STORE_NUMBERS = new Set(["8100"]);
+
 // Rollup $ over excludes UNDER-chart stores: a store beating its chart (negative
 // $ over) is zeroed out of the sum, so one great store can't offset — and mask —
 // a district's real overspend. A single store keeps its own net (can go green
@@ -917,7 +921,7 @@ async function laborSharePayload(supa, { scopeKind, regionName, label }) {
   const orgMap = await resolveOrg(supa, numbers);
 
   // Only stores that resolve into the Sonic org tree; region links narrow to one.
-  numbers = numbers.filter((n) => orgMap.get(n)?.region);
+  numbers = numbers.filter((n) => orgMap.get(n)?.region && !CORPORATE_STORE_NUMBERS.has(n));
   if (scopeKind === "region" && regionName) numbers = numbers.filter((n) => orgMap.get(n)?.region === regionName);
   if (!numbers.length) return { ...empty, date: anchor };
 
@@ -1026,7 +1030,7 @@ async function sharedLaborStore(supa, token, storeNumber) {
     regionName = r?.name ?? null;
   }
   const org = (await resolveOrg(supa, [num])).get(num);
-  if (!org || !org.region) return { error: "Store not found.", status: 404 };
+  if (!org || !org.region || CORPORATE_STORE_NUMBERS.has(num)) return { error: "Store not found.", status: 404 };
   if (share.scope_kind === "region" && org.region !== regionName) return { error: "Store is outside this link's scope.", status: 403 };
 
   const anchor = await latestBusinessDate(supa);
@@ -1081,7 +1085,7 @@ async function sharedLaborStoreReview(supa, token, body) {
   let regionName = null;
   if (share.region_id) { const { data: r } = await supa.from("regions").select("name").eq("id", share.region_id).maybeSingle(); regionName = r?.name ?? null; }
   const org = (await resolveOrg(supa, [num])).get(num);
-  if (!org || !org.region) return { error: "Store not found.", status: 404 };
+  if (!org || !org.region || CORPORATE_STORE_NUMBERS.has(num)) return { error: "Store not found.", status: 404 };
   if (share.scope_kind === "region" && org.region !== regionName) return { error: "Store is outside this link's scope.", status: 403 };
 
   const { data: storeRow } = await supa.from("stores").select("id").eq("number", num).maybeSingle();
@@ -1129,7 +1133,7 @@ async function sharedLaborWeek(supa, token, params) {
   let numbers = [...new Set((storeRows || []).map((s) => String(s.number)))];
   const nameByNumber = new Map((storeRows || []).map((s) => [String(s.number), s.name]));
   const orgMap = await resolveOrg(supa, numbers);
-  numbers = numbers.filter((n) => orgMap.get(n)?.region);
+  numbers = numbers.filter((n) => orgMap.get(n)?.region && !CORPORATE_STORE_NUMBERS.has(n));
   if (share.scope_kind === "region" && regionName) numbers = numbers.filter((n) => orgMap.get(n)?.region === regionName);
   // Path filter — narrow to the region / market / district being viewed.
   const fReg = params.region ? String(params.region) : null;
