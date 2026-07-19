@@ -1108,6 +1108,73 @@ async function sharedLaborStoreReview(supa, token, body) {
   return { ok: true };
 }
 
+// PUBLIC — Mon→Sun daily-labor strip for each node at a level (region/area/
+// district/store), rolled up. Scoped to the token + an optional path filter, so
+// the Week Trend popup can show the average per RVP / SDO / DO / store.
+async function sharedLaborWeek(supa, token, params) {
+  const t = String(token || "").trim();
+  if (!t) return { error: "token required", status: 400 };
+  const level = ["region", "area", "district", "store"].includes(params.level) ? params.level : "region";
+  const { data: share } = await supa.from("labor_share_tokens").select("scope_kind, region_id, is_active").eq("token", t).maybeSingle();
+  if (!share || !share.is_active) return { error: "This labor link is no longer active.", status: 404 };
+  let regionName = null;
+  if (share.region_id) { const { data: r } = await supa.from("regions").select("name").eq("id", share.region_id).maybeSingle(); regionName = r?.name ?? null; }
+
+  const anchor = await latestBusinessDate(supa);
+  const empty = { level, dates: [], scope_total: null, nodes: [] };
+  if (!anchor) return empty;
+  const week = weekDates(parseIso(anchor)); // Mon → Sun
+
+  const { data: storeRows } = await supa.from("stores").select("number, name, is_active, brand").eq("is_active", true).or("brand.eq.sonic,brand.is.null");
+  let numbers = [...new Set((storeRows || []).map((s) => String(s.number)))];
+  const nameByNumber = new Map((storeRows || []).map((s) => [String(s.number), s.name]));
+  const orgMap = await resolveOrg(supa, numbers);
+  numbers = numbers.filter((n) => orgMap.get(n)?.region);
+  if (share.scope_kind === "region" && regionName) numbers = numbers.filter((n) => orgMap.get(n)?.region === regionName);
+  // Path filter — narrow to the region / market / district being viewed.
+  const fReg = params.region ? String(params.region) : null;
+  const fArea = params.area ? String(params.area) : null;
+  const fDist = params.district ? String(params.district) : null;
+  numbers = numbers.filter((n) => { const o = orgMap.get(n); return (!fReg || o.region === fReg) && (!fArea || o.area === fArea) && (!fDist || o.district === fDist); });
+  if (!numbers.length) return { ...empty, dates: week };
+
+  // Per-day fetch (a whole week across a big scope can exceed the 1000-row cap).
+  const past = week.filter((d) => d <= anchor);
+  const perDay = await Promise.all(past.map((d) => supa.from("labor_v2_daily").select("*").eq("business_date", d).in("store_number", numbers).then((r) => r.data || [])));
+  const credits = await loadLaborCredits(supa, numbers);
+  const rowsByDate = new Map();
+  past.forEach((d, i) => { const rows = perDay[i]; applyCreditsToRows(rows, credits); rowsByDate.set(d, new Map(rows.map((r) => [String(r.store_number), r]))); });
+
+  const keyOf = (o) => (level === "region" ? o.region : level === "area" ? o.area : level === "district" ? o.district : null);
+  const leaderField = level === "region" ? "rvpName" : level === "area" ? "sdoName" : level === "district" ? "doName" : "gmName";
+  const groups = new Map();
+  for (const n of numbers) {
+    const key = level === "store" ? n : (keyOf(orgMap.get(n)) || "—");
+    (groups.get(key) || groups.set(key, []).get(key)).push(n);
+  }
+  const leaderOf = (nums, field) => { for (const n of nums) { const v = orgMap.get(n)?.[field]; if (v) return v; } return null; };
+
+  const seriesFor = (nums) => week.map((d) => {
+    if (d > anchor) return { date: d, labor_pct: null, hours_over: null, status: "future" };
+    const rows = nums.map((n) => (rowsByDate.get(d) || new Map()).get(n)).filter(Boolean);
+    if (!rows.length) return { date: d, labor_pct: null, hours_over: null, status: "missing" };
+    const b = teamBand(rows, "");
+    return { date: d, labor_pct: b.labor_pct, hours_over: b.hours_over_chart, status: b.status };
+  });
+
+  const nodes = [...groups].map(([key, nums]) => ({
+    name: level === "store" ? `#${key} ${nameByNumber.get(key) || ""}`.trim() : key,
+    leader: level === "store" ? (orgMap.get(key)?.gmName || null) : leaderOf(nums, leaderField),
+    week: seriesFor(nums),
+  })).sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true }));
+
+  const scope_total = {
+    name: fDist || fArea || fReg || (share.scope_kind === "region" ? regionName : "Company"),
+    leader: null, week: seriesFor(numbers),
+  };
+  return { level, dates: week, scope_total, nodes };
+}
+
 // Admin/VP: list existing links + the region list to mint against.
 async function listLaborShares(supa, user) {
   if (!LABOR_SHARE_ROLES.has(roleOf(user))) return { error: "forbidden", status: 403 };
@@ -1155,11 +1222,13 @@ export const handler = async (event) => {
 
   // PUBLIC labor share endpoints — handled before the auth gate; token is credential.
   const preParams = event.queryStringParameters || {};
-  if (event.httpMethod === "GET" && (preParams.action === "shared-labor" || preParams.action === "shared-labor-store")) {
+  if (event.httpMethod === "GET" && (preParams.action === "shared-labor" || preParams.action === "shared-labor-store" || preParams.action === "shared-labor-week")) {
     try {
       const out = preParams.action === "shared-labor-store"
         ? await sharedLaborStore(supa, preParams.token, preParams.store)
-        : await sharedLabor(supa, preParams.token);
+        : preParams.action === "shared-labor-week"
+          ? await sharedLaborWeek(supa, preParams.token, preParams)
+          : await sharedLabor(supa, preParams.token);
       return out?.error ? respond(out.status || 500, { error: out.error }) : respond(200, { ok: true, ...out });
     } catch (e) {
       return respond(500, { error: e.message || "server error" });

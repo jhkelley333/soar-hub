@@ -223,6 +223,35 @@ export async function fetchSharedLaborStore(token: string, store: string): Promi
   return body as SharedLaborStoreResponse;
 }
 
+export interface WeekDay {
+  date: string;
+  labor_pct: number | null;
+  hours_over: number | null;
+  status: "over" | "on" | "unknown" | "missing" | "future";
+}
+export interface WeekNode { name: string; leader: string | null; week: WeekDay[] }
+export interface SharedLaborWeekResponse {
+  ok: true;
+  level: "region" | "area" | "district" | "store";
+  dates: string[];
+  scope_total: WeekNode | null;
+  nodes: WeekNode[];
+}
+
+// PUBLIC — Mon→Sun daily strip per node at a level, scoped to the drill path.
+export async function fetchSharedLaborWeek(token: string, opts: {
+  level: string; region?: string | null; area?: string | null; district?: string | null;
+}): Promise<SharedLaborWeekResponse> {
+  const p = new URLSearchParams({ action: "shared-labor-week", token, level: opts.level });
+  if (opts.region) p.set("region", opts.region);
+  if (opts.area) p.set("area", opts.area);
+  if (opts.district) p.set("district", opts.district);
+  const res = await fetch(`${FN}?${p.toString()}`);
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((body as { error?: string })?.error || `Request failed (${res.status})`);
+  return body as SharedLaborWeekResponse;
+}
+
 // PUBLIC — file a miss reason + note from the shared store popup.
 export async function submitSharedLaborReview(token: string, input: {
   store: string; date: string; root_cause: string | null; note: string; filed_by: string;
