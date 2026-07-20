@@ -1151,10 +1151,15 @@ async function sharedLaborWeek(supa, token, params) {
   let regionName = null;
   if (share.region_id) { const { data: r } = await supa.from("regions").select("name").eq("id", share.region_id).maybeSingle(); regionName = r?.name ?? null; }
 
-  const anchor = await latestBusinessDate(supa);
-  const empty = { level, dates: [], scope_total: null, nodes: [] };
-  if (!anchor) return empty;
-  const week = weekDates(parseIso(anchor)); // Mon → Sun
+  const latest = await latestBusinessDate(supa);
+  const empty = { level, dates: [], week_start: null, has_prev: false, has_next: false, scope_total: null, nodes: [] };
+  if (!latest) return empty;
+  // Which week to show — a specific Monday-containing date, else the latest.
+  const weekOf = /^\d{4}-\d{2}-\d{2}$/.test(String(params.weekOf || "")) ? parseIso(params.weekOf) : parseIso(latest);
+  if (!weekOf) return empty;
+  const week = weekDates(weekOf); // Mon → Sun
+  const weekStart = week[0];
+  const currentWeekStart = weekDates(parseIso(latest))[0];
 
   const { data: storeRows } = await supa.from("stores").select("number, name, is_active, brand").eq("is_active", true).or("brand.eq.sonic,brand.is.null");
   let numbers = [...new Set((storeRows || []).map((s) => String(s.number)))];
@@ -1167,10 +1172,16 @@ async function sharedLaborWeek(supa, token, params) {
   const fArea = params.area ? String(params.area) : null;
   const fDist = params.district ? String(params.district) : null;
   numbers = numbers.filter((n) => { const o = orgMap.get(n); return (!fReg || o.region === fReg) && (!fArea || o.area === fArea) && (!fDist || o.district === fDist); });
-  if (!numbers.length) return { ...empty, dates: week };
+  if (!numbers.length) return { ...empty, dates: week, week_start: weekStart };
+
+  // Earliest day with data in this scope — bounds how far back you can page.
+  const { data: earliestRow } = await supa.from("labor_v2_daily").select("business_date").in("store_number", numbers).order("business_date", { ascending: true }).limit(1);
+  const earliest = earliestRow?.[0]?.business_date || null;
+  const has_prev = earliest ? earliest < weekStart : false;
+  const has_next = weekStart < currentWeekStart;
 
   // Per-day fetch (a whole week across a big scope can exceed the 1000-row cap).
-  const past = week.filter((d) => d <= anchor);
+  const past = week.filter((d) => d <= latest);
   const perDay = await Promise.all(past.map((d) => supa.from("labor_v2_daily").select("*").eq("business_date", d).in("store_number", numbers).then((r) => r.data || [])));
   const credits = await loadLaborCredits(supa, numbers);
   const rowsByDate = new Map();
@@ -1186,7 +1197,7 @@ async function sharedLaborWeek(supa, token, params) {
   const leaderOf = (nums, field) => { for (const n of nums) { const v = orgMap.get(n)?.[field]; if (v) return v; } return null; };
 
   const seriesFor = (nums) => week.map((d) => {
-    if (d > anchor) return { date: d, labor_pct: null, wtd_pct: null, hours_over: null, status: "future" };
+    if (d > latest) return { date: d, labor_pct: null, wtd_pct: null, hours_over: null, status: "future" };
     const rows = nums.map((n) => (rowsByDate.get(d) || new Map()).get(n)).filter(Boolean);
     if (!rows.length) return { date: d, labor_pct: null, wtd_pct: null, hours_over: null, status: "missing" };
     const b = teamBand(rows, "");
@@ -1204,7 +1215,7 @@ async function sharedLaborWeek(supa, token, params) {
     name: fDist || fArea || fReg || (share.scope_kind === "region" ? regionName : "Company"),
     leader: null, week: seriesFor(numbers),
   };
-  return { level, dates: week, scope_total, nodes };
+  return { level, dates: week, week_start: weekStart, has_prev, has_next, scope_total, nodes };
 }
 
 // Admin/VP: list existing links + the region list to mint against.
