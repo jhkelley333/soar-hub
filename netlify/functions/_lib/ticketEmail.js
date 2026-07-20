@@ -73,11 +73,16 @@ export async function findUsersForStore(supabase, storeNumber, roleFilter) {
     }
   }
 
-  const { data: scopes } = await supabase
-    .from("user_scopes")
-    .select("user_id")
-    .in("scope_id", ids);
-  const userIds = [...new Set((scopes || []).map((s) => s.user_id))];
+  // Primary seats (user_scopes) PLUS active "additional" / acting coverage
+  // (additional_scopes) — so a leader covering a scope as acting SDO/RVP is
+  // found the same as a primary holder (the Org chart resolves both this way).
+  const nowIso = new Date().toISOString();
+  const [{ data: scopes }, { data: addl }] = await Promise.all([
+    supabase.from("user_scopes").select("user_id").in("scope_id", ids),
+    supabase.from("additional_scopes").select("user_id, expires_at").in("scope_id", ids),
+  ]);
+  const activeAddl = (addl || []).filter((a) => !a.expires_at || a.expires_at > nowIso);
+  const userIds = [...new Set([...(scopes || []).map((s) => s.user_id), ...activeAddl.map((a) => a.user_id)])];
   if (!userIds.length) return [];
 
   let q = supabase
