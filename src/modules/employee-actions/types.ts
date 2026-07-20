@@ -73,6 +73,8 @@ export interface PtoRow {
   send_copy: boolean;
   /** Over the one-week-per-quarter allowance — final approval is RVP-only. */
   over_quota?: boolean;
+  /** Submitted inside the 30-day window — needs SDO/RVP approval. */
+  short_notice?: boolean;
   status: string;
   notes: string | null;
   // Approval (DO step, then SDO/RVP step)

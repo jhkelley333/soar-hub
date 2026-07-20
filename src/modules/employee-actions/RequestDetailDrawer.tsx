@@ -331,6 +331,11 @@ function PtoDetail({ row }: { row: PtoRow }) {
           Over the one-week-per-quarter allowance — final approval must come from the RVP.
         </div>
       )}
+      {row.short_notice && (
+        <div className="rounded-lg bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-700 ring-1 ring-inset ring-amber-200">
+          Short notice — submitted inside the 30-day window. Needs SDO or RVP approval.
+        </div>
+      )}
       <Field label="Dates">
         {row.pto_start_date} → {row.pto_end_date}
       </Field>
