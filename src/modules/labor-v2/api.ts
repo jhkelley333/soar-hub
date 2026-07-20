@@ -233,6 +233,7 @@ export async function fetchSharedLaborStore(token: string, store: string): Promi
 export interface WeekDay {
   date: string;
   labor_pct: number | null;
+  wtd_pct: number | null;   // week-to-date labor % through this day
   hours_over: number | null;
   status: "over" | "on" | "unknown" | "missing" | "future";
 }

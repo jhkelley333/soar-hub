@@ -1186,11 +1186,12 @@ async function sharedLaborWeek(supa, token, params) {
   const leaderOf = (nums, field) => { for (const n of nums) { const v = orgMap.get(n)?.[field]; if (v) return v; } return null; };
 
   const seriesFor = (nums) => week.map((d) => {
-    if (d > anchor) return { date: d, labor_pct: null, hours_over: null, status: "future" };
+    if (d > anchor) return { date: d, labor_pct: null, wtd_pct: null, hours_over: null, status: "future" };
     const rows = nums.map((n) => (rowsByDate.get(d) || new Map()).get(n)).filter(Boolean);
-    if (!rows.length) return { date: d, labor_pct: null, hours_over: null, status: "missing" };
+    if (!rows.length) return { date: d, labor_pct: null, wtd_pct: null, hours_over: null, status: "missing" };
     const b = teamBand(rows, "");
-    return { date: d, labor_pct: b.labor_pct, hours_over: b.hours_over_chart, status: b.status };
+    // WTD through this day — each store's wtd_ fields are cumulative Mon→d.
+    return { date: d, labor_pct: b.labor_pct, wtd_pct: teamBand(rows, "wtd_").labor_pct, hours_over: b.hours_over_chart, status: b.status };
   });
 
   const nodes = [...groups].map(([key, nums]) => ({

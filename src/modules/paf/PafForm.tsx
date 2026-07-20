@@ -101,10 +101,10 @@ const DRIVEIN_OVERRIDE_ROLES = new Set(["sdo", "rvp", "vp", "coo", "payroll", "a
 // New, code-driven category (its fields are custom-rendered, not config).
 const NEW_HIRE_LEADER = "New Hire (Salary Leader)";
 const NH_ROLES = ["GM", "DO", "SDO"];
-// Pay Adjustment (Salary) — SDO/RVP only; VP approves. Also code-driven.
+// Pay Adjustment (Salary) — SDO/RVP+ submit; VP approves. Also code-driven.
 const PAY_ADJ_SALARY = "Pay Adjustment (Salary)";
 const PAY_ADJ_ROLES = ["GM", "DO", "SDO"];
-const PAY_ADJ_SUBMITTER_ROLES = new Set(["sdo", "rvp", "admin"]);
+const PAY_ADJ_SUBMITTER_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
 // "Wed, Jul 15, 10:00 AM CT"
 function fmtCutoff(iso: string): string {
   return new Date(iso).toLocaleString("en-US", {
@@ -702,9 +702,16 @@ export function PafForm({
         setError('Answer "Did the team member clock in at the other store?"');
         return;
       }
-      if (state.cross_clocked_other === "yes" && String(state.store_chrged_ot ?? "").trim() === "") {
-        setError('"Store Charged OT" is required when the team member clocked in at the other store.');
-        return;
+      if (state.cross_clocked_other === "yes") {
+        if (String(state.store_chrged_ot ?? "").trim() === "") {
+          setError('"Store Charged OT" is required when the team member clocked in at the other store.');
+          return;
+        }
+        if (!(Number(state.ot_hours) > 0)) { setError('"OT Hours" is required — enter the overtime hours to charge.'); return; }
+        if (!(Number(state.reg_pay_rate) > 0)) { setError('"Pay Rate" is required.'); return; }
+      } else {
+        if (!(Number(state.reg_hours) > 0)) { setError('"Reg Hours" is required.'); return; }
+        if (!(Number(state.reg_pay_rate) > 0)) { setError('"Pay Rate" is required.'); return; }
       }
     }
 
