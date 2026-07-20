@@ -98,7 +98,7 @@ const ON_BEHALF_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
 // decision columns, distinct "Pending VP Approval" status). VP and COO are
 // copied on submission.
 const PAY_ADJ_SALARY = "Pay Adjustment (Salary)";
-const PAY_ADJ_SUBMIT_ROLES = new Set(["sdo", "rvp", "admin"]);
+const PAY_ADJ_SUBMIT_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
 const PAY_ADJ_ROLES = new Set(["GM", "DO", "SDO"]);
 const APPROVAL_PENDING_STATUSES = ["Pending SDO Approval", "Pending VP Approval"];
 
@@ -813,7 +813,7 @@ async function buildPafRowFromBody(supa, user, body) {
   let paRole = null, paNewSalary = null, paStartDate = null;
   if (category === PAY_ADJ_SALARY) {
     if (!PAY_ADJ_SUBMIT_ROLES.has(user.role)) {
-      return { error: "Only SDO/RVP can submit a Pay Adjustment (Salary).", status: 403 };
+      return { error: "You don't have permission to submit a Pay Adjustment (Salary).", status: 403 };
     }
     paRole = sanitizeText(body?.pa_role, 20);
     if (!PAY_ADJ_ROLES.has(paRole)) {
