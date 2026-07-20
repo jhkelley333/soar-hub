@@ -363,13 +363,22 @@ export function PafDetail({ paf }: { paf: PafRow }) {
       {paf.category === "Pay Adjustment (Salary)" && (
         <Section title="Pay Adjustment — Salary">
           <Grid>
-            <Field label="Role" value={paf.pa_role ?? "—"} />
+            <Field label="Promote to" value={paf.pa_role ?? "—"} />
             <Field
               label="New Salary"
               value={paf.pa_new_salary != null && paf.pa_new_salary !== "" ? formatUSD(Number(paf.pa_new_salary)) : "—"}
             />
             <Field label="New Salary Start Date" value={paf.pa_start_date ?? "—"} />
           </Grid>
+          {paf.nh_offer_letter_path && (
+            <button
+              type="button"
+              onClick={openOfferLetter}
+              className="mt-3 inline-flex items-center rounded-md bg-white px-3 py-2 text-sm font-medium text-accent ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50"
+            >
+              View attached file
+            </button>
+          )}
         </Section>
       )}
 
