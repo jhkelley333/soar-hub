@@ -932,7 +932,10 @@ async function laborSharePayload(supa, { scopeKind, regionName, label }) {
   // merge them exactly as loadLaborCredits does to adjust the labor rows.
   const [{ data: daily }, { data: lastWk }, tcMap, ptoMap, noGmMap] = await Promise.all([
     supa.from("labor_v2_daily").select("*").eq("business_date", anchor).in("store_number", numbers),
-    supa.from("labor_v2_daily").select("store_number, wtd_net_sales, wtd_labor_cost, wtd_labor_hours, wtd_target_labor_pct")
+    // Include business_date so applyCreditsToRows can window last week's own
+    // WTD credits (its weekStart → that day) — otherwise last week's WTD hours
+    // over is uncredited while this week's is, skewing the Improving flag.
+    supa.from("labor_v2_daily").select("business_date, store_number, net_sales, labor_cost, labor_hours, wtd_net_sales, wtd_labor_cost, wtd_labor_hours, wtd_target_labor_pct, ptd_net_sales, ptd_labor_cost, ptd_labor_hours")
       .eq("business_date", lastWeekDate).in("store_number", numbers),
     loadTrainingCreditDates(supa, numbers),
     loadGmPtoCreditDates(supa, numbers),
@@ -941,6 +944,8 @@ async function laborSharePayload(supa, { scopeKind, regionName, label }) {
   const mergedCredits = new Map();
   for (const src of [tcMap, ptoMap, noGmMap]) for (const [sn, arr] of src) mergedCredits.set(sn, (mergedCredits.get(sn) || []).concat(arr));
   applyCreditsToRows(daily || [], mergedCredits);
+  // Credit last week's rows the same way, so the WoW comparison is like-for-like.
+  applyCreditsToRows(lastWk || [], mergedCredits);
   const dailyByStore = new Map((daily || []).map((r) => [String(r.store_number), r]));
   const lastWkByStore = new Map((lastWk || []).map((r) => [String(r.store_number), r]));
 
