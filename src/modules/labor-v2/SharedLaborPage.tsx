@@ -7,7 +7,7 @@
 import { useMemo, useState, type Dispatch, type SetStateAction } from "react";
 import { useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronRight, TrendingDown, TrendingUp, Minus, Download, X, SlidersHorizontal, CalendarDays } from "lucide-react";
+import { ChevronRight, ChevronLeft, TrendingDown, TrendingUp, Minus, Download, X, SlidersHorizontal, CalendarDays } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { fetchSharedLabor, fetchSharedLaborStore, fetchSharedLaborWeek, submitSharedLaborReview, type DayWeather, type HoursTrend, type ShareBand, type ShareNode, type SharedLaborResponse, type StoreDay, type WeekDay, type WeekNode } from "./api";
 import { downloadSharedLaborFile } from "./sharedLaborWorkbook";
@@ -628,25 +628,101 @@ function LaborTableModal({ stores, onClose }: { stores: ShareNode[]; onClose: ()
 
 // Week Trend — a Mon→Sun daily strip per node at the current level, plus the
 // scope total, each day rolled up (the "average for each parent level").
+// Monday ISO → "Jul 13 – Jul 19" label for the week header.
+function weekRangeLabel(mondayIso: string | null): string {
+  if (!mondayIso) return "";
+  const mon = new Date(`${mondayIso}T12:00:00`);
+  const sun = new Date(mon);
+  sun.setDate(sun.getDate() + 6);
+  const f = (x: Date) => x.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return `${f(mon)} – ${f(sun)}`;
+}
+function addDaysIso(iso: string, n: number): string {
+  const d = new Date(`${iso}T12:00:00`);
+  d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 function WeekTrendModal({ token, level, filter, onClose }: {
   token: string;
   level: Chain;
   filter: { region: string | null; area: string | null; district: string | null };
   onClose: () => void;
 }) {
+  // null weekOf = latest week; otherwise a Monday we've paged to.
+  const [weekOf, setWeekOf] = useState<string | null>(null);
+  // Expand each strip to show the week before it, for a direct WoW compare.
+  const [showPrev, setShowPrev] = useState(false);
+
   const q = useQuery({
-    queryKey: ["shared-labor-week", token, level, filter.region, filter.area, filter.district],
-    queryFn: () => fetchSharedLaborWeek(token, { level, ...filter }),
+    queryKey: ["shared-labor-week", token, level, filter.region, filter.area, filter.district, weekOf],
+    queryFn: () => fetchSharedLaborWeek(token, { level, ...filter, weekOf }),
     staleTime: 60_000,
     retry: false,
   });
   const d = q.data;
+  const prevStart = d?.week_start ? addDaysIso(d.week_start, -7) : null;
+
+  // Previous week (one before the one on screen) — only fetched when expanded.
+  const qPrev = useQuery({
+    queryKey: ["shared-labor-week", token, level, filter.region, filter.area, filter.district, "prev", prevStart],
+    queryFn: () => fetchSharedLaborWeek(token, { level, ...filter, weekOf: prevStart }),
+    enabled: showPrev && !!prevStart && !!d?.has_prev,
+    staleTime: 60_000,
+    retry: false,
+  });
+  const prevByName = useMemo(() => {
+    const m = new Map<string, WeekNode>();
+    if (qPrev.data) {
+      if (qPrev.data.scope_total) m.set(qPrev.data.scope_total.name, qPrev.data.scope_total);
+      for (const n of qPrev.data.nodes) m.set(n.name, n);
+    }
+    return m;
+  }, [qPrev.data]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/40 sm:items-center sm:p-4" onClick={onClose}>
       <div className="flex max-h-screen w-full flex-col bg-white shadow-xl sm:max-h-[90vh] sm:max-w-3xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-zinc-100 p-3">
-          <div className="text-sm font-bold text-midnight">Week trend · {LEVEL_LABEL[level].split(" · ")[0]} · this week labor %</div>
-          <button type="button" onClick={onClose} className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-100"><X className="h-5 w-5" /></button>
+        <div className="flex items-center justify-between gap-2 border-b border-zinc-100 p-3">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-bold text-midnight">Week trend · {LEVEL_LABEL[level].split(" · ")[0]} · daily labor %</div>
+            <div className="text-[11px] text-zinc-500">{weekRangeLabel(d?.week_start ?? null)}{d && !d.has_next ? " · this week" : ""}</div>
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={() => prevStart && setWeekOf(prevStart)}
+              disabled={!d?.has_prev}
+              title="Previous week"
+              className="rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-100 disabled:opacity-30"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => d?.week_start && setWeekOf(addDaysIso(d.week_start, 7))}
+              disabled={!d?.has_next}
+              title="Next week"
+              className="rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-100 disabled:opacity-30"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+            <button type="button" onClick={onClose} className="ml-1 rounded-lg p-1 text-zinc-400 hover:bg-zinc-100"><X className="h-5 w-5" /></button>
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-2 border-b border-zinc-100 px-3 py-2">
+          <button
+            type="button"
+            onClick={() => setShowPrev((v) => !v)}
+            className={cn("rounded-lg px-2.5 py-1 text-xs font-semibold ring-1 ring-inset", showPrev ? "bg-midnight text-white ring-black/10" : "bg-white text-zinc-600 ring-zinc-200 hover:border-accent")}
+          >
+            {showPrev ? "Hide previous week" : "Compare previous week"}
+          </button>
+          {d?.has_next && (
+            <button type="button" onClick={() => setWeekOf(null)} className="text-xs font-semibold text-accent hover:underline">
+              Jump to this week
+            </button>
+          )}
         </div>
         <div className="min-h-0 flex-1 space-y-3 overflow-auto p-3">
           {q.isLoading ? (
@@ -655,8 +731,8 @@ function WeekTrendModal({ token, level, filter, onClose }: {
             <div className="py-8 text-center text-sm text-red-600">{(q.error as Error)?.message ?? "Couldn't load."}</div>
           ) : (
             <>
-              {d.scope_total && <WeekStrip node={d.scope_total} total />}
-              {d.nodes.map((n) => <WeekStrip key={n.name} node={n} />)}
+              {d.scope_total && <WeekStrip node={d.scope_total} total prev={showPrev ? prevByName.get(d.scope_total.name) : undefined} prevLoading={showPrev && qPrev.isLoading} />}
+              {d.nodes.map((n) => <WeekStrip key={n.name} node={n} prev={showPrev ? prevByName.get(n.name) : undefined} prevLoading={showPrev && qPrev.isLoading} />)}
             </>
           )}
         </div>
@@ -665,7 +741,7 @@ function WeekTrendModal({ token, level, filter, onClose }: {
   );
 }
 
-function WeekStrip({ node, total }: { node: WeekNode; total?: boolean }) {
+function WeekStrip({ node, total, prev, prevLoading }: { node: WeekNode; total?: boolean; prev?: WeekNode; prevLoading?: boolean }) {
   return (
     <div className={cn("rounded-xl p-2.5 ring-1", total ? "bg-midnight text-white ring-black/10" : "bg-white ring-zinc-200")}>
       <div className="mb-2 flex items-baseline gap-2 px-1">
@@ -675,6 +751,18 @@ function WeekStrip({ node, total }: { node: WeekNode; total?: boolean }) {
       <div className="flex gap-1.5 overflow-x-auto pb-1">
         {node.week.map((day) => <WeekCell key={day.date} day={day} onDark={total} />)}
       </div>
+      {(prev || prevLoading) && (
+        <div className={cn("mt-2 border-t pt-2", total ? "border-white/15" : "border-zinc-100")}>
+          <div className={cn("mb-1.5 px-1 text-[10px] font-semibold uppercase tracking-wide", total ? "text-white/50" : "text-zinc-400")}>Previous week</div>
+          {prev ? (
+            <div className="flex gap-1.5 overflow-x-auto pb-1">
+              {prev.week.map((day) => <WeekCell key={day.date} day={day} onDark={total} />)}
+            </div>
+          ) : (
+            <div className={cn("px-1 pb-1 text-[11px]", total ? "text-white/40" : "text-zinc-400")}>Loading…</div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

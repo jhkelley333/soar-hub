@@ -242,18 +242,23 @@ export interface SharedLaborWeekResponse {
   ok: true;
   level: "region" | "area" | "district" | "store";
   dates: string[];
+  week_start: string | null;   // Monday of the returned week
+  has_prev: boolean;           // is there data before this week
+  has_next: boolean;           // is this week earlier than the latest week
   scope_total: WeekNode | null;
   nodes: WeekNode[];
 }
 
 // PUBLIC — Mon→Sun daily strip per node at a level, scoped to the drill path.
+// weekOf (any date in the target week) pages to older weeks; omit for latest.
 export async function fetchSharedLaborWeek(token: string, opts: {
-  level: string; region?: string | null; area?: string | null; district?: string | null;
+  level: string; region?: string | null; area?: string | null; district?: string | null; weekOf?: string | null;
 }): Promise<SharedLaborWeekResponse> {
   const p = new URLSearchParams({ action: "shared-labor-week", token, level: opts.level });
   if (opts.region) p.set("region", opts.region);
   if (opts.area) p.set("area", opts.area);
   if (opts.district) p.set("district", opts.district);
+  if (opts.weekOf) p.set("weekOf", opts.weekOf);
   const res = await fetch(`${FN}?${p.toString()}`);
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((body as { error?: string })?.error || `Request failed (${res.status})`);
