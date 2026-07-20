@@ -55,6 +55,8 @@ import { CooMapPage } from "@/modules/coo-map/CooMapPage";
 import { TerritoryMapPage } from "@/modules/territory-map/TerritoryMapPage";
 import { SharedTerritoryMapPage } from "@/modules/territory-map/SharedTerritoryMapPage";
 import { SharedLaborPage } from "@/modules/labor-v2/SharedLaborPage";
+import { AccessLinkPage } from "@/modules/access-link/AccessLinkPage";
+import { AccessLinksPage } from "@/modules/access-link/AccessLinksPage";
 import { PlPage } from "@/modules/pl/PlPage";
 import { CountPage } from "@/modules/count/CountPage";
 import { MyStoresPage } from "@/modules/my-stores/MyStoresPage";
@@ -131,6 +133,9 @@ export const router = createBrowserRouter([
   // Phone side of the Command Center photo handoff — signed short-lived
   // token from the QR the store screen displays.
   { path: "/p/:token", element: <PhoneUploadPage /> },
+  // Standing "stay logged in" link — token in the URL signs the bound user in
+  // on this device and keeps it logged in until the link is revoked.
+  { path: "/go/:token", element: <AccessLinkPage /> },
   {
     path: "/",
     element: <RootRoute />,
@@ -531,6 +536,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
             <GmRosterPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/access-links",
+        element: (
+          <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
+            <AccessLinksPage />
           </ProtectedRoute>
         ),
       },
