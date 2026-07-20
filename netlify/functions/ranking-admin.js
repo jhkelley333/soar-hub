@@ -8,7 +8,7 @@
 
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
-import { runRankingNow, latestRun, listRuns, fullRun } from "./_lib/ranking/run.js";
+import { runRankingNow, latestRun, listRuns, fullRun, moversData } from "./_lib/ranking/run.js";
 import { callerStoreNumbers } from "./_lib/ranking/scope.js";
 import { backfillLaborWindow } from "./_lib/kpiBackfill.js";
 import { parseIxCsv } from "./_lib/ranking/ixParse.js";
@@ -532,6 +532,11 @@ export const handler = async (event) => {
     if (action === "run-full") return unwrap(await fullRun(supa, params, storeNums));
     if (action === "trends") return unwrap(await trendsData(supa, { ...params, storeNums }));
     if (action === "risk") return unwrap(await riskData(supa, storeNums));
+    // Week-over-week movers — VP-only for now (admin included for build/support).
+    if (action === "movers") {
+      if (role !== "vp" && role !== "admin") return respond(403, { error: "The Movers view is VP-only for now." });
+      return unwrap(await moversData(supa, { ...params, storeNums }));
+    }
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: `ranking-admin error: ${e?.message || String(e)}` });

@@ -127,6 +127,34 @@ export function fetchLegacyWeek(fiscalWeek: number): Promise<{
   return req(`${FN}?action=legacy-week&fiscal_week=${fiscalWeek}`);
 }
 
+// Week-over-week movers (VP-only): change in points/rank/category scores vs the
+// prior week, at one scope + tier.
+export interface MoverRun { id: string; period: number; week: number; week_ending: string; completed_at: string | null }
+export interface MoverRow {
+  entity_key: string;
+  name: string | null;
+  location: string | null;
+  gm: string | null;
+  rank_now: number | null;
+  rank_prev: number | null;
+  d_rank: number | null;     // + = moved up (rank number went down)
+  points_now: number | null;
+  points_prev: number | null;
+  d_points: number | null;   // + = improved
+  is_new: boolean;
+  cat: { sales: [number | null, number | null]; fc: [number | null, number | null]; labor: [number | null, number | null]; fin: [number | null, number | null]; ops: [number | null, number | null] };
+}
+export interface MoversResponse {
+  scope: RankScope;
+  tier: RankTier;
+  current: MoverRun | null;
+  previous: MoverRun | null;
+  rows: MoverRow[];
+}
+export function fetchRankingMovers(scope: RankScope, tier: RankTier): Promise<MoversResponse> {
+  return req(`${FN}?action=movers&scope=${scope}&tier=${tier}`);
+}
+
 export type FullRunScope = Partial<Record<RankTier, RankingResultRow[]>>;
 export function fetchRankingFull(runId?: string | null): Promise<{
   run: RankingRun | null;

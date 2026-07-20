@@ -584,3 +584,83 @@ export async function fullRun(supa, params, storeNums = null) {
   }
   return { run, scopes };
 }
+
+// Week-over-week movers — the latest complete week vs the prior distinct week,
+// at one scope + tier. For each entity present this week, the change in total
+// points and rank (and a few headline category scores) since last week. Scoped
+// to the caller like every other read. Positive d_points / d_rank = improved.
+export async function moversData(supa, params, storeNums = null) {
+  const scope = params.scope === "wtd" ? "wtd" : "ptd";
+  const tier = TIERS.has(params.tier) ? params.tier : "store";
+
+  const { data: runsRaw, error: runsErr } = await supa
+    .from("ranking_runs").select("id, period, week, week_ending, completed_at, started_at, status")
+    .eq("status", "complete")
+    .order("week_ending", { ascending: false })
+    .order("started_at", { ascending: false })
+    .limit(50);
+  if (runsErr) {
+    if (/ranking_runs/.test(runsErr.message)) return { error: "Run migration 0237 first (ranking tables are missing).", status: 500 };
+    return { error: runsErr.message, status: 500 };
+  }
+  // Collapse to one run per week_ending (the newest), newest first.
+  const seen = new Set(), distinct = [];
+  for (const r of runsRaw || []) {
+    if (seen.has(r.week_ending)) continue;
+    seen.add(r.week_ending); distinct.push(r);
+    if (distinct.length >= 2) break;
+  }
+  const current = distinct[0] ?? null;
+  const previous = distinct[1] ?? null;
+  if (!current) return { scope, tier, current: null, previous: null, rows: [] };
+
+  const loadRows = async (runId) => {
+    const { data } = await supa.from("ranking_rows")
+      .select("entity_key, rank, total_points, metrics")
+      .eq("run_id", runId).eq("scope", scope).eq("tier", tier);
+    return data || [];
+  };
+  const [curRows, prevRows] = await Promise.all([
+    loadRows(current.id),
+    previous ? loadRows(previous.id) : Promise.resolve([]),
+  ]);
+
+  // Scope leader tiers to the caller's chain (org-wide callers pass through).
+  let vis = null;
+  if (storeNums != null && tier !== "store" && tier !== "company" && tier !== "entity") {
+    const { data: storeRows } = await supa.from("ranking_rows")
+      .select("entity_key, metrics").eq("run_id", current.id).eq("scope", scope).eq("tier", "store");
+    vis = deriveVisibleNames(storeRows || [], storeNums);
+  }
+  const curScoped = filterTier(curRows, tier, storeNums, vis);
+  const prevByKey = new Map(prevRows.map((r) => [String(r.entity_key), r]));
+
+  const numOr = (v) => (typeof v === "number" && isFinite(v) ? v : null);
+  const cat = (m, pm, k) => [numOr(m?.[k]), numOr(pm?.[k])];
+  const rows = curScoped.map((r) => {
+    const key = String(r.entity_key);
+    const p = prevByKey.get(key) || null;
+    const m = r.metrics || {}, pm = p?.metrics || {};
+    const pNow = numOr(r.total_points), pPrev = numOr(p?.total_points);
+    const rNow = numOr(r.rank), rPrev = numOr(p?.rank);
+    return {
+      entity_key: key,
+      name: m.name ?? null, location: m.location ?? null, gm: m.gm ?? null,
+      rank_now: rNow, rank_prev: rPrev,
+      d_rank: rNow != null && rPrev != null ? rPrev - rNow : null,   // + = moved up
+      points_now: pNow, points_prev: pPrev,
+      d_points: pNow != null && pPrev != null ? Math.round((pNow - pPrev) * 10) / 10 : null,
+      is_new: !p,
+      cat: {
+        sales: cat(m, pm, "salesScore"),
+        fc: cat(m, pm, "fcScore"),
+        labor: cat(m, pm, "laborScore"),
+        fin: cat(m, pm, "finScore"),
+        ops: cat(m, pm, "opsScore"),
+      },
+    };
+  });
+
+  const pick = (x) => x && { id: x.id, period: x.period, week: x.week, week_ending: x.week_ending, completed_at: x.completed_at };
+  return { scope, tier, current: pick(current), previous: pick(previous), rows };
+}
