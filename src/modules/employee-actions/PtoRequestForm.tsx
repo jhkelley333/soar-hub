@@ -157,16 +157,16 @@ export function PtoRequestForm({
   const ptoRate = rateQ.data?.amount ?? 176;
   const isAdmin = profile?.role === "admin";
 
-  // First day out must be PTO_ADVANCE_DAYS away (server enforces too).
-  function advanceError(dates: string[]): string | null {
-    if (isAdmin) return null;
+  // Short notice: first day out is inside the 30-day window. Allowed, but it
+  // will need SDO/RVP approval (server flags it too). Admins never trip it.
+  function isShortNotice(dates: string[]): boolean {
+    if (isAdmin) return false;
     const first = [...dates].sort()[0];
-    if (!first) return null;
+    if (!first) return false;
     const today = new Date();
     const todayIso = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
     const lead = Math.floor((Date.parse(first) - Date.parse(todayIso)) / 86400000);
-    if (lead >= PTO_ADVANCE_DAYS) return null;
-    return `Vacation must be submitted at least ${PTO_ADVANCE_DAYS} days in advance — the first day out (${first}) is ${lead < 0 ? "in the past" : lead === 0 ? "today" : `only ${lead} day${lead === 1 ? "" : "s"} away`}.`;
+    return lead < PTO_ADVANCE_DAYS;
   }
 
   const hourly = isHourlyPosition(state.position);
@@ -176,6 +176,10 @@ export function PtoRequestForm({
   const hoursWorked = Number(state.hours_worked) || 0;
   const weekTotal = vacationHours + hoursWorked;
   const over40 = weekTotal > WEEKLY_HOUR_CAP;
+  const selectedDates = hourly
+    ? state.vacation_days.map((d) => d.date).filter(Boolean)
+    : state.gm_days.map((d) => d.trim()).filter(Boolean);
+  const shortNotice = isShortNotice(selectedDates);
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -200,8 +204,6 @@ export function PtoRequestForm({
         return setError(
           `Vacation (${vacationHours}h) + hours worked (${hoursWorked}h) exceeds the ${WEEKLY_HOUR_CAP}-hour weekly limit.`
         );
-      const hourlyAdv = advanceError(state.vacation_days.map((d) => d.date).filter(Boolean));
-      if (hourlyAdv) return setError(hourlyAdv);
 
       submit.mutate({
         store_number: state.store_number,
@@ -219,8 +221,6 @@ export function PtoRequestForm({
     const days = state.gm_days.map((d) => d.trim()).filter(Boolean);
     if (!days.length) return setError("Add at least one day you'll be out.");
     if (new Set(days).size !== days.length) return setError("Remove the duplicate day.");
-    const gmAdv = advanceError(days);
-    if (gmAdv) return setError(gmAdv);
 
     submit.mutate({
       store_number: state.store_number,
@@ -240,8 +240,9 @@ export function PtoRequestForm({
           </h3>
           <p className="mt-0.5 text-xs text-zinc-500">
             Submit vacation requests for approval to the Director of Operations (DO) and
-            Regional Vice President (RVP). <strong>Vacation must be submitted at least {PTO_ADVANCE_DAYS} days
-            in advance. Allowance is one week per quarter — anything above needs RVP approval.</strong>{" "}
+            Regional Vice President (RVP). <strong>Vacation should be submitted at least {PTO_ADVANCE_DAYS} days
+            in advance; shorter notice is allowed but needs SDO or RVP approval. Allowance is one week per
+            quarter — anything above needs RVP approval.</strong>{" "}
             GMs are tracked by days; hourly managers are tracked by hours (max {MAX_HOURS_PER_DAY}/day).
           </p>
           <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
@@ -354,6 +355,13 @@ export function PtoRequestForm({
                 {" "}({vacationHours} vacation + {hoursWorked} worked) of {WEEKLY_HOUR_CAP}
               </span>
               {over40 && <span className="font-semibold">Over the 40-hour limit</span>}
+            </div>
+          )}
+
+          {shortNotice && (
+            <div className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-inset ring-amber-200">
+              <span className="font-semibold">Short notice.</span> This is inside the {PTO_ADVANCE_DAYS}-day window.
+              You can still submit it — it will need SDO or RVP approval.
             </div>
           )}
 

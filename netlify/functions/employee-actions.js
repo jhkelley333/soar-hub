@@ -1123,21 +1123,31 @@ async function ptoOverQuota(supa, fields, excludeId = null) {
   };
 }
 
-// Vacation lead time: the first day out must be at least this many days from
-// today. Admins bypass (corrections / backfill).
+// Vacation lead time: 30 days is the normal expectation, but a shorter-notice
+// request is allowed — it's stamped short_notice and needs an SDO/RVP to
+// approve it deliberately (the normal PTO final tier). Admins never trip it.
 const PTO_ADVANCE_DAYS = 30;
-function ptoAdvanceError(fields) {
+function ptoShortNotice(fields) {
   const dates = (fields.vacation_days ?? []).map((d) => d.date).filter(Boolean).sort();
   const first = dates[0] || fields.pto_start_date;
-  if (!first) return null;
+  if (!first) return { short: false };
   const todayIso = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
   const lead = Math.floor((Date.parse(first) - Date.parse(todayIso)) / 86400000);
-  if (lead >= PTO_ADVANCE_DAYS) return null;
-  const when = lead < 0 ? "in the past" : lead === 0 ? "today" : `only ${lead} day${lead === 1 ? "" : "s"} away`;
-  return {
-    error: `Vacation must be submitted at least ${PTO_ADVANCE_DAYS} days in advance — the first day out (${first}) is ${when}.`,
-    status: 422,
-  };
+  return { short: lead < PTO_ADVANCE_DAYS, lead, first };
+}
+
+// Insert a PTO row, gracefully dropping optional flag columns (over_quota /
+// short_notice) if the migration adding them hasn't run yet.
+async function insertPtoRow(supa, row) {
+  let insertRow = { ...row };
+  for (let i = 0; i < 3; i++) {
+    const res = await supa.from("pto_requests").insert(insertRow).select("id").single();
+    if (!res.error) return res;
+    const m = /(over_quota|short_notice)/.exec(res.error.message || "");
+    if (!m || !(m[1] in insertRow)) return res;
+    delete insertRow[m[1]];
+  }
+  return await supa.from("pto_requests").insert(insertRow).select("id").single();
 }
 
 async function submitPto(supa, user, body) {
@@ -1151,11 +1161,9 @@ async function submitPto(supa, user, body) {
 
   const built = buildPtoFields(body);
   if (built.error) return built;
-  if (user.role !== "admin") {
-    const advErr = ptoAdvanceError(built.fields);
-    if (advErr) return advErr;
-  }
   const quota = await ptoOverQuota(supa, built.fields);
+  // Short-notice (< 30 days) is allowed but flagged (admins never trip it).
+  const shortNotice = user.role === "admin" ? { short: false } : ptoShortNotice(built.fields);
 
   const insertRow = {
     submitter_id: user.id,
@@ -1164,19 +1172,11 @@ async function submitPto(supa, user, body) {
     store_number: storeNumber,
     ...built.fields,
     over_quota: quota.over,
+    short_notice: shortNotice.short,
     ...ptoWorkflowFields(user),
   };
 
-  let { data: created, error } = await supa
-    .from("pto_requests")
-    .insert(insertRow)
-    .select("id")
-    .single();
-  if (error && /over_quota/.test(error.message)) {
-    // Pre-0231: the column doesn't exist yet — submit without the flag.
-    delete insertRow.over_quota;
-    ({ data: created, error } = await supa.from("pto_requests").insert(insertRow).select("id").single());
-  }
+  let { data: created, error } = await insertPtoRow(supa, insertRow);
   if (error) return { error: error.message, status: 500 };
 
   await logAudit(supa, {
@@ -1192,17 +1192,21 @@ async function submitPto(supa, user, body) {
   const quotaNote = quota.over
     ? `OVER ALLOWANCE: ${built.meta.employeeName} already has ${quota.prior} ${quota.unit} of PTO in ${quota.label}; this request adds ${quota.requested} (allowance: ${quota.quota} ${quota.unit}/quarter). Final approval must come from the RVP.\n\n`
     : "";
+  const shortNote = shortNotice.short
+    ? `SHORT NOTICE: the first day out (${shortNotice.first}) is ${shortNotice.lead < 0 ? "in the past" : `only ${shortNotice.lead} day${shortNotice.lead === 1 ? "" : "s"} away`} — inside the ${PTO_ADVANCE_DAYS}-day window. This needs SDO or RVP approval.\n\n`
+    : "";
+  const flags = [quota.over ? "OVER ALLOWANCE" : null, shortNotice.short ? "SHORT NOTICE" : null].filter(Boolean).join(" · ");
   await notifyLeadership(supa, {
     storeNumber,
     sendCopy: built.fields.send_copy,
     submitterEmail: user.email,
-    subject: `PTO Request — ${built.meta.employeeName} (Store ${storeNumber})${quota.over ? " — OVER ALLOWANCE" : ""}`,
+    subject: `PTO Request — ${built.meta.employeeName} (Store ${storeNumber})${flags ? ` — ${flags}` : ""}`,
     text:
       `A PTO request was submitted by ${displayName(user)}.\n\n` +
-      `Store: ${storeNumber}\n${built.meta.summary}${quotaNote}Review it here: ${link}`,
+      `Store: ${storeNumber}\n${built.meta.summary}${quotaNote}${shortNote}Review it here: ${link}`,
   });
 
-  return { ok: true, id: created.id, status: insertRow.status, over_quota: quota.over };
+  return { ok: true, id: created.id, status: insertRow.status, over_quota: quota.over, short_notice: shortNotice.short };
 }
 
 // Resubmit a "Changes Requested" PTO request after the submitter edits it.
@@ -1231,11 +1235,13 @@ async function updatePto(supa, user, body) {
   const built = buildPtoFields(body);
   if (built.error) return built;
   const quota = await ptoOverQuota(supa, built.fields, id);
+  const shortNotice = user.role === "admin" ? { short: false } : ptoShortNotice(built.fields);
 
   const patch = {
     store_number: storeNumber,
     ...built.fields,
     over_quota: quota.over,
+    short_notice: shortNotice.short,
     ...ptoWorkflowFields(user),
     approved_at: null,
     approved_by_id: null,
@@ -1243,10 +1249,17 @@ async function updatePto(supa, user, body) {
     decision_note: null,
     rejection_reason: null,
   };
-  let { error } = await supa.from("pto_requests").update(patch).eq("id", id);
-  if (error && /over_quota/.test(error.message)) {
-    delete patch.over_quota;
-    ({ error } = await supa.from("pto_requests").update(patch).eq("id", id));
+  let error;
+  {
+    let p = { ...patch };
+    for (let i = 0; i < 3; i++) {
+      const res = await supa.from("pto_requests").update(p).eq("id", id);
+      error = res.error;
+      if (!error) break;
+      const m = /(over_quota|short_notice)/.exec(error.message || "");
+      if (!m || !(m[1] in p)) break;
+      delete p[m[1]];
+    }
   }
   if (error) return { error: error.message, status: 500 };
 
