@@ -103,7 +103,7 @@ const NEW_HIRE_LEADER = "New Hire (Salary Leader)";
 const NH_ROLES = ["GM", "DO", "SDO"];
 // Pay Adjustment (Salary) — SDO/RVP+ submit; VP approves. Also code-driven.
 const PAY_ADJ_SALARY = "Pay Adjustment (Salary)";
-const PAY_ADJ_ROLES = ["GM", "DO", "SDO"];
+const PAY_ADJ_ROLES = ["GM", "SDO", "RVP"];
 const PAY_ADJ_SUBMITTER_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
 // "Wed, Jul 15, 10:00 AM CT"
 function fmtCutoff(iso: string): string {
@@ -1026,10 +1026,10 @@ export function PafForm({
       {state.category === PAY_ADJ_SALARY && (
         <FormSection
           title="Pay Adjustment — Salary"
-          description="Salary change for a GM, DO, or SDO. The VP approves; VP and COO are copied."
+          description="Salary change or promotion to GM, SDO, or RVP. The VP approves; VP and COO are copied."
         >
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-            <NhField label={`${cfgLabel("pa_role", "Role")} *`}>
+            <NhField label={`${cfgLabel("pa_role", "Promote to")} *`}>
               <select
                 value={state.pa_role ?? ""}
                 onChange={(e) => patch("pa_role", e.target.value)}
@@ -1091,6 +1091,32 @@ export function PafForm({
                 className={NH_INPUT}
               />
             </NhField>
+          </div>
+
+          <div className="mt-4">
+            <label className="mb-1 block text-sm font-medium text-zinc-700">
+              Supporting file <span className="font-normal text-zinc-400">(optional)</span>
+            </label>
+            <div className="flex flex-wrap items-center gap-3">
+              <label
+                className={`inline-flex cursor-pointer items-center rounded-md px-3 py-2 text-sm ring-1 ring-inset ring-zinc-200 ${
+                  offerUploading ? "bg-zinc-100 text-zinc-400" : "bg-white text-zinc-700 hover:bg-zinc-50"
+                }`}
+              >
+                <input
+                  type="file"
+                  accept=".pdf,image/jpeg,image/png,application/pdf"
+                  onChange={handleOfferPick}
+                  disabled={offerUploading}
+                  className="hidden"
+                />
+                {offerUploading ? "Uploading…" : state.nh_offer_letter_path ? "Replace file" : "Attach file"}
+              </label>
+              {state.nh_offer_letter_path && offerName && (
+                <span className="text-sm text-zinc-600">{offerName}</span>
+              )}
+            </div>
+            <p className="mt-1 text-[11px] text-zinc-500">Promotion approval, justification, etc. — PDF, JPG, or PNG, up to 10 MB.</p>
           </div>
         </FormSection>
       )}

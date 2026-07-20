@@ -99,7 +99,7 @@ const ON_BEHALF_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
 // copied on submission.
 const PAY_ADJ_SALARY = "Pay Adjustment (Salary)";
 const PAY_ADJ_SUBMIT_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
-const PAY_ADJ_ROLES = new Set(["GM", "DO", "SDO"]);
+const PAY_ADJ_ROLES = new Set(["GM", "DO", "SDO", "RVP"]);
 const APPROVAL_PENDING_STATUSES = ["Pending SDO Approval", "Pending VP Approval"];
 
 // Allowed status values (mirrors form_config.lists.statuses).
