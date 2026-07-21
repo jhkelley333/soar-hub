@@ -517,6 +517,24 @@ async function logChange(supa, { actor_id, target_id, action, before, after }) {
 // ----------------------------------------------------------------------------
 
 async function scopeOptions(supa, manager) {
+  // Org-wide roles (admin / COO / VP) can assign anywhere. They're org-wide by
+  // ROLE, not by an explicit user_scopes row, so user_visible_stores can come
+  // back empty for them — return the whole tree directly instead. (This matches
+  // assignScope, which already lets org-wide roles pick any scope.)
+  if (ORG_WIDE_SCOPE_ROLES.includes(manager.role)) {
+    const [{ data: stores }, { data: districts }, { data: areas }, { data: regions }] = await Promise.all([
+      supa.from("stores").select("id, number, name, district_id, is_active").eq("is_active", true).order("number"),
+      supa.from("districts").select("id, name, code, area_id").order("name"),
+      supa.from("areas").select("id, name, code, region_id").order("name"),
+      supa.from("regions").select("id, name, code").order("name"),
+    ]);
+    return {
+      stores: stores ?? [], districts: districts ?? [], areas: areas ?? [], regions: regions ?? [],
+      canSetGlobal: manager.role === "admin",
+    };
+  }
+
+  // Scoped managers: only the slice of the tree under their visible stores.
   // user_visible_stores returns setof uuid (bare values).
   const { data: storeIds } = await supa.rpc("user_visible_stores", {
     uid: manager.id,
@@ -652,8 +670,10 @@ async function addUser(supa, manager, body) {
     };
   }
 
-  // For non-admin manager, verify the chosen scope is fully within their reach
-  if (manager.role !== "admin" && expectedScope !== "global") {
+  // For a scoped (non org-wide) manager, verify the chosen scope is fully
+  // within their reach. Org-wide roles (admin/COO/VP) can assign anywhere and
+  // have no user_visible_stores set to check against.
+  if (!ORG_WIDE_SCOPE_ROLES.includes(manager.role) && expectedScope !== "global") {
     const { data: managerStoreIds } = await supa.rpc("user_visible_stores", {
       uid: manager.id,
     });
@@ -965,7 +985,7 @@ async function updateUser(supa, manager, body) {
         status: 403,
       };
     }
-    if (manager.role !== "admin" && expectedScope !== "global") {
+    if (!ORG_WIDE_SCOPE_ROLES.includes(manager.role) && expectedScope !== "global") {
       const { data: managerStoreIds } = await supa.rpc("user_visible_stores", {
         uid: manager.id,
       });
