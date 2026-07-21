@@ -34,6 +34,7 @@ export function TeamPage() {
 
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState<RoleFilter>("all");
+  const [marketFilter, setMarketFilter] = useState<string>("all");
   const [includeInactive, setIncludeInactive] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [editing, setEditing] = useState<ManagedUser | null>(null);
@@ -80,16 +81,23 @@ export function TeamPage() {
     let list = allMembers;
     if (!includeInactive) list = list.filter((m) => m.is_active);
     if (roleFilter !== "all") list = list.filter((m) => m.role === roleFilter);
+    if (marketFilter !== "all") list = list.filter((m) => (m.markets ?? []).includes(marketFilter));
     const q = search.trim().toLowerCase();
     if (q) {
       list = list.filter((m) =>
-        [m.full_name, m.email, m.phone, ...m.scopes.map((s) => s.label)]
+        [m.full_name, m.email, m.phone, ROLE_LABELS[m.role] ?? m.role, ...(m.markets ?? []), ...m.scopes.map((s) => s.label)]
           .filter(Boolean)
           .some((v) => String(v).toLowerCase().includes(q))
       );
     }
     return list;
-  }, [allMembers, search, roleFilter, includeInactive]);
+  }, [allMembers, search, roleFilter, marketFilter, includeInactive]);
+
+  // Markets present across the visible team, for the market dropdown.
+  const marketsPresent = useMemo(
+    () => [...new Set(allMembers.flatMap((m) => m.markets ?? []))].sort((a, b) => a.localeCompare(b)),
+    [allMembers]
+  );
 
   // Every role, not just ones currently present in the result set — a role
   // with zero visible members right now (a brand-new hire's role, or a
@@ -215,6 +223,19 @@ export function TeamPage() {
           ))}
         </select>
 
+        {marketsPresent.length > 0 && (
+          <select
+            value={marketFilter}
+            onChange={(e) => setMarketFilter(e.target.value)}
+            className="rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+          >
+            <option value="all">All markets</option>
+            {marketsPresent.map((mk) => (
+              <option key={mk} value={mk}>{mk}</option>
+            ))}
+          </select>
+        )}
+
         <label className="flex items-center gap-2 text-sm text-zinc-700">
           <input
             type="checkbox"
@@ -233,7 +254,7 @@ export function TeamPage() {
           />
           <input
             type="search"
-            placeholder="Search name, email, phone, store…"
+            placeholder="Search name, email, phone, store, role, market…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             className="block w-full rounded-md border-0 bg-white pl-9 pr-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 placeholder:text-zinc-400 focus:outline-none focus:ring-2 focus:ring-accent"
