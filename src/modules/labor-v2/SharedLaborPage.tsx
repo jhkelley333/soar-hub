@@ -539,13 +539,28 @@ function LaborTableModal({ stores, onClose }: { stores: ShareNode[]; onClose: ()
   const [basis, setBasis] = useState<Win>("wtd");
   const [cols, setCols] = useState<Record<Win, boolean>>({ daily: true, wtd: true, ptd: true });
   const wins = (["daily", "wtd", "ptd"] as Win[]).filter((w) => cols[w]);
+  // Sort: null = default (basis Hrs Over, worst first). Otherwise "store" or
+  // "<win>:<metric>". Click a header to sort, click again to flip direction.
+  const [sort, setSort] = useState<{ col: string; dir: 1 | -1 } | null>(null);
+  const toggleSort = (col: string, defaultDir: 1 | -1 = -1) =>
+    setSort((s) => (s?.col === col ? { col, dir: s.dir === 1 ? -1 : 1 } : { col, dir: defaultDir }));
+  const sortMark = (col: string) => (sort?.col === col ? (sort.dir === 1 ? " ▲" : " ▾") : "");
 
-  const rows = useMemo(() =>
-    stores
-      .filter((s) => (s[basis].hours_over ?? 0) >= minHrs)
-      .slice()
-      .sort((a, b) => (b[basis].hours_over ?? -Infinity) - (a[basis].hours_over ?? -Infinity)),
-    [stores, basis, minHrs]);
+  const rows = useMemo(() => {
+    const filtered = stores.filter((s) => (s[basis].hours_over ?? 0) >= minHrs).slice();
+    if (!sort) return filtered.sort((a, b) => (b[basis].hours_over ?? -Infinity) - (a[basis].hours_over ?? -Infinity));
+    if (sort.col === "store") {
+      return filtered.sort((a, b) => String(a.store_number).localeCompare(String(b.store_number), undefined, { numeric: true }) * sort.dir);
+    }
+    const [win, key] = sort.col.split(":") as [Win, keyof ShareBand];
+    return filtered.sort((a, b) => {
+      const av = a[win]?.[key], bv = b[win]?.[key];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;   // no-data rows sink to the bottom either way
+      if (bv == null) return -1;
+      return ((av as number) - (bv as number)) * sort.dir;
+    });
+  }, [stores, basis, minHrs, sort]);
 
   const cellTone = (m: keyof ShareBand, b: ShareBand): string => {
     const v = m === "labor_pct" ? b.variance_pts : b[m];
@@ -556,7 +571,7 @@ function LaborTableModal({ stores, onClose }: { stores: ShareNode[]; onClose: ()
     <div className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/40 sm:items-center sm:p-4" onClick={onClose}>
       <div className="flex max-h-screen w-full flex-col bg-white shadow-xl sm:max-h-[90vh] sm:max-w-5xl sm:rounded-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between border-b border-zinc-100 p-3">
-          <div className="text-sm font-bold text-midnight">Labor table · {rows.length} store{rows.length === 1 ? "" : "s"}</div>
+          <div className="text-sm font-bold text-midnight">Labor table · {rows.length} store{rows.length === 1 ? "" : "s"} <span className="font-normal text-[11px] text-zinc-400">· tap a column to sort</span></div>
           <button type="button" onClick={onClose} className="rounded-lg p-1 text-zinc-400 hover:bg-zinc-100"><X className="h-5 w-5" /></button>
         </div>
 
@@ -592,15 +607,25 @@ function LaborTableModal({ stores, onClose }: { stores: ShareNode[]; onClose: ()
           <table className="w-full text-xs tabular-nums">
             <thead className="sticky top-0 z-10 bg-white shadow-sm">
               <tr className="text-[10px] uppercase tracking-wide text-zinc-400">
-                <th rowSpan={2} className="sticky left-0 z-10 bg-white px-3 py-1.5 text-left">Store</th>
+                <th rowSpan={2} onClick={() => toggleSort("store", 1)}
+                  className="sticky left-0 z-10 cursor-pointer select-none bg-white px-3 py-1.5 text-left hover:text-zinc-600">
+                  Store{sortMark("store")}
+                </th>
                 {wins.map((w) => (
                   <th key={w} colSpan={TABLE_METRICS.length} className="border-l border-zinc-100 bg-amber-50/60 px-2 py-1 text-center font-bold text-zinc-500">{WIN_LABEL[w]}</th>
                 ))}
               </tr>
               <tr className="text-[9px] uppercase tracking-wide text-zinc-400">
-                {wins.map((w) => TABLE_METRICS.map((m, i) => (
-                  <th key={`${w}-${m.key}`} className={cn("px-2 py-1 text-right", i === 0 && "border-l border-zinc-100")}>{m.label}</th>
-                )))}
+                {wins.map((w) => TABLE_METRICS.map((m, i) => {
+                  const col = `${w}:${m.key}`;
+                  return (
+                    <th key={`${w}-${m.key}`} onClick={() => toggleSort(col)}
+                      className={cn("cursor-pointer select-none whitespace-nowrap px-2 py-1 text-right hover:text-zinc-600",
+                        i === 0 && "border-l border-zinc-100", sort?.col === col && "text-midnight")}>
+                      {m.label}{sortMark(col)}
+                    </th>
+                  );
+                }))}
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-50">
