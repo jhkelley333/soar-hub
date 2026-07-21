@@ -539,28 +539,33 @@ function LaborTableModal({ stores, onClose }: { stores: ShareNode[]; onClose: ()
   const [basis, setBasis] = useState<Win>("wtd");
   const [cols, setCols] = useState<Record<Win, boolean>>({ daily: true, wtd: true, ptd: true });
   const wins = (["daily", "wtd", "ptd"] as Win[]).filter((w) => cols[w]);
-  // Sort: null = default (basis Hrs Over, worst first). Otherwise "store" or
-  // "<win>:<metric>". Click a header to sort, click again to flip direction.
+  // Sort: null falls back to the basis Hrs Over (worst first). Explicit sort is
+  // "store" or "<win>:<metric>". Click a header to sort, click again to flip.
+  // The effective sort always drives BOTH the ordering and the header arrow, so
+  // the active column is always marked — even the default.
   const [sort, setSort] = useState<{ col: string; dir: 1 | -1 } | null>(null);
+  const effSort = sort ?? { col: `${basis}:hours_over`, dir: -1 as 1 | -1 };
   const toggleSort = (col: string, defaultDir: 1 | -1 = -1) =>
-    setSort((s) => (s?.col === col ? { col, dir: s.dir === 1 ? -1 : 1 } : { col, dir: defaultDir }));
-  const sortMark = (col: string) => (sort?.col === col ? (sort.dir === 1 ? " ▲" : " ▾") : "");
+    setSort((s) => {
+      const cur = s ?? { col: `${basis}:hours_over`, dir: -1 as 1 | -1 };
+      return cur.col === col ? { col, dir: cur.dir === 1 ? -1 : 1 } : { col, dir: defaultDir };
+    });
+  const sortMark = (col: string) => (effSort.col === col ? (effSort.dir === 1 ? " ▲" : " ▾") : "");
 
   const rows = useMemo(() => {
     const filtered = stores.filter((s) => (s[basis].hours_over ?? 0) >= minHrs).slice();
-    if (!sort) return filtered.sort((a, b) => (b[basis].hours_over ?? -Infinity) - (a[basis].hours_over ?? -Infinity));
-    if (sort.col === "store") {
-      return filtered.sort((a, b) => String(a.store_number).localeCompare(String(b.store_number), undefined, { numeric: true }) * sort.dir);
+    if (effSort.col === "store") {
+      return filtered.sort((a, b) => String(a.store_number).localeCompare(String(b.store_number), undefined, { numeric: true }) * effSort.dir);
     }
-    const [win, key] = sort.col.split(":") as [Win, keyof ShareBand];
+    const [win, key] = effSort.col.split(":") as [Win, keyof ShareBand];
     return filtered.sort((a, b) => {
       const av = a[win]?.[key], bv = b[win]?.[key];
       if (av == null && bv == null) return 0;
       if (av == null) return 1;   // no-data rows sink to the bottom either way
       if (bv == null) return -1;
-      return ((av as number) - (bv as number)) * sort.dir;
+      return ((av as number) - (bv as number)) * effSort.dir;
     });
-  }, [stores, basis, minHrs, sort]);
+  }, [stores, basis, minHrs, effSort.col, effSort.dir]);
 
   const cellTone = (m: keyof ShareBand, b: ShareBand): string => {
     const v = m === "labor_pct" ? b.variance_pts : b[m];
@@ -621,7 +626,7 @@ function LaborTableModal({ stores, onClose }: { stores: ShareNode[]; onClose: ()
                   return (
                     <th key={`${w}-${m.key}`} onClick={() => toggleSort(col)}
                       className={cn("cursor-pointer select-none whitespace-nowrap px-2 py-1 text-right hover:text-zinc-600",
-                        i === 0 && "border-l border-zinc-100", sort?.col === col && "text-midnight")}>
+                        i === 0 && "border-l border-zinc-100", effSort.col === col && "font-bold text-midnight")}>
                       {m.label}{sortMark(col)}
                     </th>
                   );
