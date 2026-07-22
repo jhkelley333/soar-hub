@@ -1,0 +1,381 @@
+// Store Visit — mobile-first app for DO+. Phase 1: Today (computed Top-3 gaps +
+// review requests + funds reminder), Walk (checklist Pass/Gap/N-A + notes),
+// Summary (shared summary + leadership-only private note + submit), Actions,
+// Store. Camera/photos, offline queue, and WO conversion land in Phase 2.
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  ArrowDownRight, ArrowUpRight, Minus, CheckCircle2, CircleSlash, AlertTriangle,
+  ClipboardList, Home, Store as StoreIcon, ListChecks, Camera, Loader2, ChevronRight, Lock,
+} from "lucide-react";
+import { useAuth } from "@/auth/AuthProvider";
+import { useToast } from "@/shared/ui/Toaster";
+import { cn } from "@/lib/cn";
+import {
+  fetchVisitStores, fetchToday, fetchActions, startVisit, saveWalk, submitVisit,
+  type ChecklistItem, type Gap, type StartVisitResponse, type WalkStatus,
+} from "./api";
+
+const NAVY = "#0b3b66";
+const OK = "#0e7a5a", WARN = "#9a5b00", DANGER = "#b8402f";
+
+type Screen = "today" | "walk" | "summary" | "actions" | "store";
+const PRIVATE_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
+
+export function StoreVisitPage() {
+  const { profile } = useAuth();
+  const toast = useToast();
+  const qc = useQueryClient();
+  const role = String(profile?.role ?? "").toLowerCase();
+
+  const [storeId, setStoreId] = useState<string | null>(null);
+  const [screen, setScreen] = useState<Screen>("today");
+  const [visit, setVisit] = useState<StartVisitResponse | null>(null);
+  const [results, setResults] = useState<Record<string, { status: WalkStatus; note: string }>>({});
+
+  const storesQ = useQuery({ queryKey: ["visit-stores"], queryFn: fetchVisitStores, staleTime: 5 * 60_000 });
+  const stores = storesQ.data?.stores ?? [];
+  useEffect(() => { if (!storeId && stores.length) setStoreId(stores[0].id); }, [stores, storeId]);
+
+  const todayQ = useQuery({ queryKey: ["visit-today", storeId], queryFn: () => fetchToday(storeId!), enabled: !!storeId, staleTime: 60_000 });
+  const actionsQ = useQuery({ queryKey: ["visit-actions", storeId], queryFn: () => fetchActions(storeId!), enabled: !!storeId && screen === "actions", staleTime: 60_000 });
+
+  const start = useMutation({
+    mutationFn: () => startVisit(storeId!),
+    onSuccess: (r) => { setVisit(r); setResults({}); setScreen("walk"); },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't start the visit.", "error"),
+  });
+
+  // Debounced per-item save (resilient to spotty wifi — a failed save is retried on next change).
+  function setResult(item: ChecklistItem, status: WalkStatus, note?: string) {
+    setResults((prev) => {
+      const next = { ...prev, [item.id]: { status, note: note ?? prev[item.id]?.note ?? "" } };
+      return next;
+    });
+    if (visit) {
+      saveWalk({ visit_id: visit.visit_id, item_id: item.id, category: item.category, label: item.label, status, note: note ?? results[item.id]?.note ?? "" })
+        .catch(() => {/* queued client-side in P2; ignore transient failure for now */});
+    }
+  }
+
+  const submit = useMutation({
+    mutationFn: (input: { summary: string; private_note: string; funds_reviewed: boolean }) =>
+      submitVisit({ visit_id: visit!.visit_id, ...input }),
+    onSuccess: () => {
+      toast.push("Visit submitted.", "success");
+      setVisit(null); setResults({}); setScreen("today");
+      qc.invalidateQueries({ queryKey: ["visit-today", storeId] });
+    },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Submit failed.", "error"),
+  });
+
+  const store = todayQ.data?.store ?? null;
+  const canPrivate = PRIVATE_ROLES.has(role) || role === "do"; // DO+ authors write it; store never sees it
+
+  return (
+    <div className="mx-auto flex min-h-[calc(100vh-4rem)] max-w-md flex-col" style={{ fontFamily: "'Geist', system-ui, sans-serif" }}>
+      {/* Header */}
+      <div className="sticky top-0 z-20 px-4 pb-2 pt-3" style={{ background: NAVY }}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <span className="grid h-6 w-6 place-items-center rounded-md text-[11px] font-black text-white" style={{ background: "#d7282f" }}>S</span>
+            <span className="text-sm font-bold text-white">Store Visit</span>
+          </div>
+          {todayQ.data?.last_visit_at && (
+            <span className="text-[11px] text-white/60">last {new Date(todayQ.data.last_visit_at).toLocaleDateString()}</span>
+          )}
+        </div>
+        <select
+          value={storeId ?? ""}
+          onChange={(e) => { setStoreId(e.target.value); setVisit(null); setScreen("today"); }}
+          className="mt-2 w-full rounded-lg border-0 bg-white/10 px-3 py-2 text-sm font-semibold text-white focus:outline-none"
+        >
+          {stores.map((s) => <option key={s.id} value={s.id} className="text-black">#{s.number} — {s.name}{s.city ? `, ${s.city}` : ""}</option>)}
+        </select>
+      </div>
+
+      {/* Body */}
+      <div className="flex-1 overflow-y-auto bg-[#f4f6f9] px-4 py-3 pb-24">
+        {screen === "today" && <TodayScreen q={todayQ} onStart={() => start.mutate()} starting={start.isPending} hasVisit={!!visit} onResume={() => setScreen("walk")} />}
+        {screen === "walk" && <WalkScreen visit={visit} results={results} setResult={setResult} onReview={() => setScreen("summary")} />}
+        {screen === "summary" && <SummaryScreen canPrivate={canPrivate} onBack={() => setScreen("walk")} onSubmit={(v) => submit.mutate(v)} submitting={submit.isPending} />}
+        {screen === "actions" && <ActionsScreen actions={actionsQ.data?.actions ?? []} loading={actionsQ.isLoading} />}
+        {screen === "store" && <StoreScreen store={store} openActions={todayQ.data?.open_actions ?? 0} lastVisitAt={todayQ.data?.last_visit_at ?? null} />}
+      </div>
+
+      {/* Bottom tab bar */}
+      <nav className="fixed inset-x-0 bottom-0 z-20 mx-auto flex max-w-md items-stretch border-t border-zinc-200 bg-white">
+        {([
+          { id: "today", label: "Today", icon: Home },
+          { id: "walk", label: "Walk", icon: ListChecks },
+          { id: "actions", label: "Actions", icon: ClipboardList },
+          { id: "store", label: "Store", icon: StoreIcon },
+        ] as { id: Screen; label: string; icon: typeof Home }[]).map((t) => {
+          const active = screen === t.id || (t.id === "walk" && screen === "summary");
+          return (
+            <button key={t.id} type="button" onClick={() => setScreen(t.id)}
+              className="flex flex-1 flex-col items-center gap-0.5 py-2.5 text-[11px] font-semibold"
+              style={{ color: active ? NAVY : "#9aa3af", minHeight: 44 }}>
+              <t.icon className="h-5 w-5" strokeWidth={active ? 2.4 : 1.8} />
+              {t.label}
+            </button>
+          );
+        })}
+      </nav>
+    </div>
+  );
+}
+
+// ── Today ────────────────────────────────────────────────────────────
+function TodayScreen({ q, onStart, starting, hasVisit, onResume }: {
+  q: ReturnType<typeof useQuery<Awaited<ReturnType<typeof fetchToday>>>>;
+  onStart: () => void; starting: boolean; hasVisit: boolean; onResume: () => void;
+}) {
+  if (q.isLoading) return <Centered><Loader2 className="h-6 w-6 animate-spin text-zinc-400" /></Centered>;
+  if (q.isError || !q.data) return <Centered><span className="text-sm text-red-600">{(q.error as Error)?.message ?? "Couldn't load."}</span></Centered>;
+  const d = q.data;
+  return (
+    <div className="space-y-3">
+      <div className="rounded-2xl bg-white p-4 shadow-sm">
+        <div className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Store #{d.store.number}</div>
+        <div className="text-lg font-bold" style={{ color: NAVY }}>{d.store.name}</div>
+        <div className="text-sm text-zinc-500">{[d.store.city, d.store.state].filter(Boolean).join(", ")}</div>
+      </div>
+
+      {!d.funds_reviewed && (
+        <div className="flex items-center gap-2 rounded-xl px-3 py-2.5 text-sm font-semibold" style={{ background: "#fff4e5", color: WARN }}>
+          <AlertTriangle className="h-4 w-4" /> Store Funds not yet reviewed this visit.
+        </div>
+      )}
+
+      {d.reviews.length > 0 && (
+        <div className="rounded-2xl bg-white p-3 shadow-sm">
+          <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-zinc-400">Review requests</div>
+          <div className="space-y-1.5">
+            {d.reviews.map((r) => (
+              <div key={r.id} className="flex items-start gap-2 rounded-lg bg-[#eef4fb] px-3 py-2 text-sm">
+                <span className="mt-0.5 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase text-white" style={{ background: NAVY }}>{r.by_role ?? "lead"}</span>
+                <span className="text-zinc-700">{r.text}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div>
+        <div className="mb-1.5 flex items-center justify-between px-1">
+          <span className="text-xs font-bold uppercase tracking-wide text-zinc-400">Top 3 gaps</span>
+          <span className="text-[11px] text-zinc-400">vs. last visit</span>
+        </div>
+        {d.gaps.length === 0 ? (
+          <div className="rounded-2xl bg-white p-4 text-center text-sm text-zinc-500 shadow-sm">No metrics under target — clean board.</div>
+        ) : (
+          <div className="space-y-2">{d.gaps.map((g) => <GapCard key={g.metric} g={g} />)}</div>
+        )}
+      </div>
+
+      <button type="button" onClick={hasVisit ? onResume : onStart} disabled={starting}
+        className="flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-bold text-white shadow-sm"
+        style={{ background: NAVY, minHeight: 44 }}>
+        {starting ? <Loader2 className="h-4 w-4 animate-spin" /> : <ListChecks className="h-4 w-4" />}
+        {hasVisit ? "Resume store walk" : "Start store walk"}
+      </button>
+    </div>
+  );
+}
+
+function GapCard({ g }: { g: Gap }) {
+  const sevPct = Math.min(100, Math.round(g.severity * 100));
+  const TrendIcon = g.dir === "up" ? ArrowUpRight : g.dir === "down" ? ArrowDownRight : Minus;
+  const trendColor = g.dir === "up" ? OK : g.dir === "down" ? DANGER : "#9aa3af";
+  return (
+    <div className="rounded-2xl bg-white p-3.5 shadow-sm">
+      <div className="flex items-baseline justify-between">
+        <span className="text-sm font-bold" style={{ color: NAVY }}>{g.label}</span>
+        <span className="flex items-center gap-1 text-xs font-semibold" style={{ color: trendColor, fontFamily: "'Geist Mono', ui-monospace, monospace" }}>
+          <TrendIcon className="h-3.5 w-3.5" />{g.delta ?? ""}
+        </span>
+      </div>
+      <div className="mt-1 flex items-baseline gap-2">
+        <span className="text-2xl font-black" style={{ color: DANGER, fontFamily: "'Geist Mono', ui-monospace, monospace" }}>{g.value}</span>
+        <span className="text-xs text-zinc-400">target {g.target}</span>
+      </div>
+      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-zinc-100">
+        <div className="h-full rounded-full" style={{ width: `${sevPct}%`, background: DANGER }} />
+      </div>
+    </div>
+  );
+}
+
+// ── Walk ─────────────────────────────────────────────────────────────
+function WalkScreen({ visit, results, setResult, onReview }: {
+  visit: StartVisitResponse | null;
+  results: Record<string, { status: WalkStatus; note: string }>;
+  setResult: (item: ChecklistItem, status: WalkStatus, note?: string) => void;
+  onReview: () => void;
+}) {
+  if (!visit) return <Centered><span className="text-sm text-zinc-500">Start a walk from the Today tab.</span></Centered>;
+  const catMap = new Map<string, ChecklistItem[]>();
+  for (const it of visit.items) (catMap.get(it.category) || catMap.set(it.category, []).get(it.category))!.push(it);
+  const cats = [...catMap.entries()];
+  const done = Object.keys(results).length;
+  const total = visit.items.length;
+
+  return (
+    <div className="space-y-3">
+      <div className="sticky top-0 z-10 -mx-4 flex items-center justify-between bg-[#f4f6f9] px-4 py-1.5">
+        <span className="text-sm font-bold" style={{ color: NAVY }}>Store walk</span>
+        <span className="text-xs font-semibold text-zinc-500" style={{ fontFamily: "'Geist Mono', monospace" }}>{done}/{total}</span>
+      </div>
+      {cats.map(([cat, items]) => (
+        <div key={cat} className="rounded-2xl bg-white p-3 shadow-sm">
+          <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-zinc-400">{cat}</div>
+          <div className="space-y-2.5">
+            {items.map((it) => {
+              const r = results[it.id];
+              return (
+                <div key={it.id}>
+                  <div className="text-sm text-zinc-800">{it.label}</div>
+                  <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+                    {(["pass", "gap", "na"] as WalkStatus[]).map((st) => {
+                      const active = r?.status === st;
+                      const meta = st === "pass" ? { c: OK, Icon: CheckCircle2, t: "Pass" } : st === "gap" ? { c: DANGER, Icon: AlertTriangle, t: "Gap" } : { c: "#6b7280", Icon: CircleSlash, t: "N/A" };
+                      return (
+                        <button key={st} type="button" onClick={() => setResult(it, st)}
+                          className="flex items-center justify-center gap-1 rounded-lg py-2 text-xs font-bold"
+                          style={{ minHeight: 44, background: active ? meta.c : "#f1f3f6", color: active ? "white" : "#6b7280" }}>
+                          <meta.Icon className="h-3.5 w-3.5" />{meta.t}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {r?.status === "gap" && (
+                    <div className="mt-1.5">
+                      <textarea value={r.note} onChange={(e) => setResult(it, "gap", e.target.value)}
+                        placeholder="What's the gap? (note)" rows={2}
+                        className="w-full rounded-lg border border-zinc-200 px-2.5 py-1.5 text-sm focus:border-[#0b3b66] focus:outline-none" />
+                      <button type="button" disabled className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-zinc-300">
+                        <Camera className="h-3.5 w-3.5" /> Add photo (soon)
+                      </button>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ))}
+      <button type="button" onClick={onReview}
+        className="flex w-full items-center justify-center gap-1 rounded-xl py-3.5 text-sm font-bold text-white shadow-sm"
+        style={{ background: NAVY, minHeight: 44 }}>
+        Review &amp; submit <ChevronRight className="h-4 w-4" />
+      </button>
+    </div>
+  );
+}
+
+// ── Summary ──────────────────────────────────────────────────────────
+function SummaryScreen({ canPrivate, onBack, onSubmit, submitting }: {
+  canPrivate: boolean;
+  onBack: () => void;
+  onSubmit: (v: { summary: string; private_note: string; funds_reviewed: boolean }) => void;
+  submitting: boolean;
+}) {
+  const [summary, setSummary] = useState("");
+  const [priv, setPriv] = useState("");
+  const [funds, setFunds] = useState(false);
+  return (
+    <div className="space-y-3">
+      <button type="button" onClick={onBack} className="text-sm font-semibold text-zinc-500">← Back to walk</button>
+      <div className="rounded-2xl bg-white p-3 shadow-sm">
+        <div className="text-sm font-bold" style={{ color: NAVY }}>Visit summary</div>
+        <div className="text-[11px] text-zinc-400">Shared — the store sees this.</div>
+        <textarea value={summary} onChange={(e) => setSummary(e.target.value)} rows={4} placeholder="What went well, what to work on…"
+          className="mt-2 w-full rounded-lg border border-zinc-200 px-2.5 py-2 text-sm focus:border-[#0b3b66] focus:outline-none" />
+        <button type="button" disabled className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-zinc-300">
+          <Camera className="h-3.5 w-3.5" /> Add photos (soon)
+        </button>
+      </div>
+
+      {canPrivate && (
+        <div className="rounded-2xl bg-white p-3 shadow-sm">
+          <div className="flex items-center gap-1.5 text-sm font-bold" style={{ color: NAVY }}>
+            <Lock className="h-3.5 w-3.5" /> Private note
+          </div>
+          <div className="text-[11px] text-zinc-400">Leadership only — never shown to the store.</div>
+          <textarea value={priv} onChange={(e) => setPriv(e.target.value)} rows={3} placeholder="For SDO/VP eyes only…"
+            className="mt-2 w-full rounded-lg border border-amber-200 bg-amber-50/40 px-2.5 py-2 text-sm focus:border-amber-400 focus:outline-none" />
+        </div>
+      )}
+
+      <label className="flex items-center gap-2 rounded-2xl bg-white p-3 text-sm shadow-sm">
+        <input type="checkbox" checked={funds} onChange={(e) => setFunds(e.target.checked)} className="h-4 w-4 accent-[#0b3b66]" />
+        Store Funds reviewed
+      </label>
+
+      <button type="button" onClick={() => onSubmit({ summary, private_note: priv, funds_reviewed: funds })} disabled={submitting}
+        className="flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-bold text-white shadow-sm"
+        style={{ background: OK, minHeight: 44 }}>
+        {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Submit visit
+      </button>
+    </div>
+  );
+}
+
+// ── Actions ──────────────────────────────────────────────────────────
+function ActionsScreen({ actions, loading }: { actions: Awaited<ReturnType<typeof fetchActions>>["actions"]; loading: boolean }) {
+  if (loading) return <Centered><Loader2 className="h-6 w-6 animate-spin text-zinc-400" /></Centered>;
+  if (!actions.length) return <Centered><span className="text-sm text-zinc-500">No open action items.</span></Centered>;
+  const tone = (p: string) => (p === "high" ? DANGER : p === "low" ? "#6b7280" : WARN);
+  return (
+    <div className="space-y-2">
+      {actions.map((a) => (
+        <div key={a.id} className="rounded-2xl bg-white p-3 shadow-sm">
+          <div className="flex items-start justify-between gap-2">
+            <span className="text-sm text-zinc-800">{a.text}</span>
+            <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase text-white" style={{ background: tone(a.priority) }}>{a.priority}</span>
+          </div>
+          <div className="mt-1 text-[11px] text-zinc-400">
+            {a.owner ? `${a.owner} · ` : ""}{a.due ? `due ${a.due} · ` : ""}{a.status}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Store ────────────────────────────────────────────────────────────
+function StoreScreen({ store, openActions, lastVisitAt }: {
+  store: { number: string; name: string; city: string | null; state: string | null; address: string | null } | null;
+  openActions: number; lastVisitAt: string | null;
+}) {
+  if (!store) return <Centered><Loader2 className="h-6 w-6 animate-spin text-zinc-400" /></Centered>;
+  return (
+    <div className="space-y-3">
+      <div className="rounded-2xl bg-white p-4 shadow-sm">
+        <div className="text-xs font-semibold uppercase tracking-wide text-zinc-400">Store #{store.number}</div>
+        <div className="text-lg font-bold" style={{ color: NAVY }}>{store.name}</div>
+        <div className="text-sm text-zinc-500">{store.address ?? [store.city, store.state].filter(Boolean).join(", ")}</div>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <Stat label="Open actions" value={String(openActions)} />
+        <Stat label="Last visit" value={lastVisitAt ? new Date(lastVisitAt).toLocaleDateString() : "—"} />
+      </div>
+      <div className="rounded-2xl bg-white p-4 text-center text-sm text-zinc-400 shadow-sm">
+        Visit history &amp; trend — coming in the next build.
+      </div>
+    </div>
+  );
+}
+function Stat({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-2xl bg-white p-3 text-center shadow-sm">
+      <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">{label}</div>
+      <div className="text-lg font-black" style={{ color: NAVY, fontFamily: "'Geist Mono', monospace" }}>{value}</div>
+    </div>
+  );
+}
+
+function Centered({ children }: { children: React.ReactNode }) {
+  return <div className="grid min-h-[40vh] place-items-center">{children}</div>;
+}
