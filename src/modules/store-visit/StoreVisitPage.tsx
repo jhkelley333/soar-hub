@@ -2,7 +2,7 @@
 // review requests + funds reminder), Walk (checklist Pass/Gap/N-A + notes),
 // Summary (shared summary + leadership-only private note + submit), Actions,
 // Store. Camera/photos, offline queue, and WO conversion land in Phase 2.
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownRight, ArrowUpRight, Minus, CheckCircle2, CircleSlash, AlertTriangle,
@@ -15,8 +15,11 @@ import {
   fetchVisitStores, fetchToday, fetchActions, startVisit, saveWalk, submitVisit, uploadVisitPhoto,
   type ChecklistItem, type Gap, type PhotoRec, type StartVisitResponse, type WalkStatus,
 } from "./api";
+import { enqueue, listQueue, removeQueued, clearQueueFor, saveActive, loadActive, clearActive } from "./visitStore";
+import { WifiOff, RefreshCw } from "lucide-react";
 
 type WalkResult = { status: WalkStatus; note: string; photos: PhotoRec[] };
+type WalkSavePayload = { visit_id: string; item_id: string; category: string; label: string; status: WalkStatus; note: string; photos: PhotoRec[] };
 
 const NAVY = "#0b3b66";
 const OK = "#0e7a5a", WARN = "#9a5b00", DANGER = "#b8402f";
@@ -34,6 +37,39 @@ export function StoreVisitPage() {
   const [screen, setScreen] = useState<Screen>("today");
   const [visit, setVisit] = useState<StartVisitResponse | null>(null);
   const [results, setResults] = useState<Record<string, WalkResult>>({});
+  const [online, setOnline] = useState(typeof navigator === "undefined" ? true : navigator.onLine);
+  const [pending, setPending] = useState(0);
+
+  const refreshPending = useCallback(() => { listQueue().then((q) => setPending(q.length)); }, []);
+
+  // Replay queued walk-saves in order; stop on the first failure (still offline).
+  const flush = useCallback(async () => {
+    if (typeof navigator !== "undefined" && !navigator.onLine) return;
+    const ops = await listQueue();
+    for (const op of ops) {
+      try { await saveWalk(op.payload as WalkSavePayload); if (op.id != null) await removeQueued(op.id); }
+      catch { break; }
+    }
+    refreshPending();
+  }, [refreshPending]);
+
+  // Online/offline wiring + initial flush + restore an in-progress visit.
+  useEffect(() => {
+    const on = () => { setOnline(true); flush(); };
+    const off = () => setOnline(false);
+    window.addEventListener("online", on);
+    window.addEventListener("offline", off);
+    refreshPending();
+    flush();
+    loadActive<{ visit: StartVisitResponse; results: Record<string, WalkResult> }>().then((a) => {
+      if (a?.visit?.visit_id) { setVisit(a.visit); setResults(a.results ?? {}); }
+    });
+    const t = setInterval(flush, 20_000);
+    return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); clearInterval(t); };
+  }, [flush, refreshPending]);
+
+  // Persist the in-progress visit so a reload/kill mid-walk can resume it.
+  useEffect(() => { if (visit) saveActive({ visit, results }); }, [visit, results]);
 
   const storesQ = useQuery({ queryKey: ["visit-stores"], queryFn: fetchVisitStores, staleTime: 5 * 60_000 });
   const stores = storesQ.data?.stores ?? [];
@@ -44,34 +80,50 @@ export function StoreVisitPage() {
 
   const start = useMutation({
     mutationFn: () => startVisit(storeId!),
-    onSuccess: (r) => { setVisit(r); setResults({}); setScreen("walk"); },
+    onSuccess: (r) => { setVisit(r); setResults({}); saveActive({ visit: r, results: {} }); setScreen("walk"); },
     onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't start the visit.", "error"),
   });
 
-  // Per-item patch + save (resilient to spotty wifi — a failed save is retried
-  // on the next change; a full offline queue lands later in P2).
+  // Per-item patch + save. Offline (or a failed save) queues to IndexedDB and
+  // flushes on reconnect, so a spotty-wifi walk never loses data.
   function patchResult(item: ChecklistItem, patch: Partial<WalkResult>) {
     setResults((prev) => {
       const cur: WalkResult = prev[item.id] ?? { status: "pass", note: "", photos: [] };
       const next: WalkResult = { ...cur, ...patch };
       if (visit) {
-        saveWalk({ visit_id: visit.visit_id, item_id: item.id, category: item.category, label: item.label, status: next.status, note: next.note, photos: next.photos })
-          .catch(() => {/* transient — retried on next change */});
+        const payload: WalkSavePayload = { visit_id: visit.visit_id, item_id: item.id, category: item.category, label: item.label, status: next.status, note: next.note, photos: next.photos };
+        const target = `${visit.visit_id}:${item.id}`;
+        if (typeof navigator !== "undefined" && !navigator.onLine) {
+          enqueue({ target, payload }).then(refreshPending);
+        } else {
+          saveWalk(payload).catch(() => enqueue({ target, payload }).then(refreshPending));
+        }
       }
       return { ...prev, [item.id]: next };
     });
   }
 
   const submit = useMutation({
-    mutationFn: (input: { summary: string; private_note: string; funds_reviewed: boolean; summary_photos: PhotoRec[] }) =>
-      submitVisit({ visit_id: visit!.visit_id, ...input }),
-    onSuccess: () => {
+    mutationFn: async (input: { summary: string; private_note: string; funds_reviewed: boolean; summary_photos: PhotoRec[] }) => {
+      await flush(); // land any queued walk results before finalizing
+      return submitVisit({ visit_id: visit!.visit_id, ...input });
+    },
+    onSuccess: async () => {
       toast.push("Visit submitted.", "success");
-      setVisit(null); setResults({}); setScreen("today");
+      if (visit) await clearQueueFor(visit.visit_id);
+      await clearActive();
+      setVisit(null); setResults({}); setScreen("today"); refreshPending();
       qc.invalidateQueries({ queryKey: ["visit-today", storeId] });
     },
     onError: (e) => toast.push(e instanceof Error ? e.message : "Submit failed.", "error"),
   });
+  function trySubmit(input: { summary: string; private_note: string; funds_reviewed: boolean; summary_photos: PhotoRec[] }) {
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      toast.push("You're offline — reconnect to submit. Your walk is saved on this device.", "error");
+      return;
+    }
+    submit.mutate(input);
+  }
 
   const store = todayQ.data?.store ?? null;
   const canPrivate = PRIVATE_ROLES.has(role) || role === "do"; // DO+ authors write it; store never sees it
@@ -98,11 +150,22 @@ export function StoreVisitPage() {
         </select>
       </div>
 
+      {/* Offline / sync banner */}
+      {(!online || pending > 0) && (
+        <div className="flex items-center gap-2 px-4 py-1.5 text-[12px] font-semibold text-white"
+          style={{ background: !online ? WARN : NAVY }}>
+          {!online ? <WifiOff className="h-3.5 w-3.5" /> : <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
+          {!online
+            ? <>Offline — changes save on this device{pending > 0 ? ` (${pending} pending)` : ""}. They’ll sync when you’re back.</>
+            : <>Syncing {pending} change{pending === 1 ? "" : "s"}…</>}
+        </div>
+      )}
+
       {/* Body */}
       <div className="flex-1 overflow-y-auto bg-[#f4f6f9] px-4 py-3 pb-24">
         {screen === "today" && <TodayScreen q={todayQ} onStart={() => start.mutate()} starting={start.isPending} hasVisit={!!visit} onResume={() => setScreen("walk")} />}
         {screen === "walk" && <WalkScreen visit={visit} results={results} patchResult={patchResult} onReview={() => setScreen("summary")} />}
-        {screen === "summary" && <SummaryScreen visitId={visit?.visit_id ?? null} canPrivate={canPrivate} onBack={() => setScreen("walk")} onSubmit={(v) => submit.mutate(v)} submitting={submit.isPending} />}
+        {screen === "summary" && <SummaryScreen visitId={visit?.visit_id ?? null} canPrivate={canPrivate} onBack={() => setScreen("walk")} onSubmit={trySubmit} submitting={submit.isPending} />}
         {screen === "actions" && <ActionsScreen actions={actionsQ.data?.actions ?? []} loading={actionsQ.isLoading} />}
         {screen === "store" && <StoreScreen store={store} openActions={todayQ.data?.open_actions ?? 0} lastVisitAt={todayQ.data?.last_visit_at ?? null} />}
       </div>
@@ -391,6 +454,10 @@ function PhotoStrip({ visitId, kind, photos, onChange }: {
     const files = Array.from(e.target.files ?? []);
     e.target.value = "";
     if (!files.length) return;
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      toast.push("You're offline — reconnect to add photos.", "error");
+      return;
+    }
     setBusy(true);
     try {
       const recs: PhotoRec[] = [];
