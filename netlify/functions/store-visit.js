@@ -19,6 +19,8 @@ const VISIT_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
 const PRIVATE_READ_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
 const ORG_WIDE = new Set(["vp", "coo", "admin"]);
 const REVIEW_PUSH_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]); // who can push a review down
+const PHOTO_BUCKET = "store-visit-photos";
+const PHOTO_TTL = 60 * 60 * 24 * 7; // signed download URLs live a week
 
 function admin() {
   if (!SUPABASE_URL || !SERVICE_KEY) throw new Error("store-visit env vars not configured");
@@ -203,6 +205,35 @@ async function getTemplate(supa) {
   return { template: tpl, items: items ?? [] };
 }
 
+// Photo records persist as { path, at, lat, lng }. On read we attach a fresh
+// signed download URL so the client can render the thumbnail.
+async function signPhotos(supa, arr) {
+  const out = [];
+  for (const p of arr || []) {
+    const path = typeof p === "string" ? p : p?.path;
+    if (!path) continue;
+    const { data } = await supa.storage.from(PHOTO_BUCKET).createSignedUrl(path, PHOTO_TTL);
+    out.push({ ...(typeof p === "object" && p ? p : {}), path, url: data?.signedUrl ?? null });
+  }
+  return out;
+}
+
+// A signed PUT URL for one visit photo. Caller must be the visitor (or org-wide).
+async function photoUploadUrl(supa, user, body) {
+  const visitId = body?.visit_id;
+  if (!visitId) return { error: "visit_id required", status: 400 };
+  const { data: visit } = await supa.from("store_visits").select("id, visitor_id, status").eq("id", visitId).maybeSingle();
+  if (!visit) return { error: "Visit not found.", status: 404 };
+  if (visit.visitor_id !== user.id && !ORG_WIDE.has(roleOf(user))) return { error: "Not your visit.", status: 403 };
+  const kind = body?.kind === "summary" ? "summary" : "walk";
+  const ext = /^(jpe?g|png|webp|heic)$/i.test(String(body?.ext || "")) ? String(body.ext).toLowerCase() : "jpg";
+  const rand = Math.random().toString(36).slice(2, 8);
+  const path = `${visitId}/${kind}/${Date.now()}-${rand}.${ext}`;
+  const { data, error } = await supa.storage.from(PHOTO_BUCKET).createSignedUploadUrl(path);
+  if (error) return { error: error.message, status: 500 };
+  return { upload_url: data.signedUrl, token: data.token, path };
+}
+
 function stripPrivate(visit, user) {
   const canRead = PRIVATE_READ_ROLES.has(roleOf(user)) || visit.visitor_id === user.id;
   if (canRead) return visit;
@@ -216,7 +247,10 @@ async function getVisit(supa, user, params) {
   const { data: visit } = await supa.from("store_visits").select("*").eq("id", id).maybeSingle();
   if (!visit) return { error: "Visit not found.", status: 404 };
   const { data: results } = await supa.from("walk_results").select("*").eq("visit_id", id);
-  return { visit: stripPrivate(visit, user), results: results ?? [] };
+  const signedResults = [];
+  for (const r of results ?? []) signedResults.push({ ...r, photos: await signPhotos(supa, r.photos) });
+  const safe = stripPrivate(visit, user);
+  return { visit: { ...safe, summary_photos: await signPhotos(supa, visit.summary_photos) }, results: signedResults };
 }
 
 async function listActions(supa, user, params) {
@@ -360,6 +394,7 @@ export const handler = async (event) => {
       if (a === "walk-save") return unwrap(await saveWalk(supa, user, body));
       if (a === "visit-submit") return unwrap(await submitVisit(supa, user, body));
       if (a === "review-create") return unwrap(await createReview(supa, user, body));
+      if (a === "photo-upload-url") return unwrap(await photoUploadUrl(supa, user, body));
       return respond(400, { error: `Unknown action: ${a}` });
     }
     if (action === "stores") return unwrap(await listStores(supa, user));
