@@ -664,3 +664,102 @@ export async function moversData(supa, params, storeNums = null) {
   const pick = (x) => x && { id: x.id, period: x.period, week: x.week, week_ending: x.week_ending, completed_at: x.completed_at };
   return { scope, tier, current: pick(current), previous: pick(previous), rows };
 }
+
+// Communication Board — a read-only mirror of the in-store weekly comms board
+// for one store + period. Each week's card is that week's ISOLATED numbers,
+// which is exactly the WTD scope of the run for P<period>W<week>. Also returns
+// the store's PTD company + region rank and header info. Scoped to the caller
+// (a GM only their store; leaders any store they manage).
+export async function commsBoard(supa, params, storeNums = null) {
+  const { data: runsRaw, error } = await supa
+    .from("ranking_runs")
+    .select("id, period, week, week_ending, started_at, status")
+    .eq("status", "complete")
+    .order("period", { ascending: false })
+    .order("week", { ascending: false })
+    .order("started_at", { ascending: false })
+    .limit(300);
+  if (error) {
+    if (/ranking_runs/.test(error.message)) return { error: "Run migration 0237 first (ranking tables are missing).", status: 500 };
+    return { error: error.message, status: 500 };
+  }
+  if (!runsRaw?.length) return { periods: [], period: null, stores: [], store: null, weeks: [], ranks: {}, ptd: null };
+
+  const periods = [...new Set(runsRaw.map((r) => r.period))].sort((a, b) => b - a);
+  const period = params.period != null && periods.includes(Number(params.period)) ? Number(params.period) : periods[0];
+
+  // Newest run per week within the period (Mon→Sun weeks 1..5).
+  const inPeriod = runsRaw.filter((r) => r.period === period);
+  const byWeek = new Map();
+  for (const r of inPeriod) if (!byWeek.has(r.week)) byWeek.set(r.week, r); // runsRaw already newest-first
+  const weekRuns = [...byWeek.entries()].sort((a, b) => a[0] - b[0]).map(([week, run]) => ({ week, run }));
+  const latest = weekRuns.length ? weekRuns[weekRuns.length - 1].run : inPeriod[0];
+
+  // Scoped store list (for the picker) + rank context, from the latest run's PTD store rows.
+  const { data: allPtd } = await supa
+    .from("ranking_rows")
+    .select("entity_key, rank, total_points, metrics")
+    .eq("run_id", latest.id).eq("scope", "ptd").eq("tier", "store");
+  let storeList = (allPtd || []).map((r) => ({ number: String(r.entity_key), name: r.metrics?.location || null }));
+  if (storeNums != null) storeList = storeList.filter((s) => storeNums.has(s.number));
+  storeList.sort((a, b) => String(a.number).localeCompare(String(b.number), undefined, { numeric: true }));
+
+  // Target store: requested (if in scope) else the caller's first store.
+  const requested = params.store ? String(params.store).trim() : null;
+  const inScope = (n) => storeList.some((s) => s.number === n);
+  const storeNum = requested && inScope(requested) ? requested : (storeList[0]?.number ?? null);
+  if (!storeNum) return { periods, period, stores: storeList, store: null, weeks: [], ranks: {}, ptd: null };
+  if (requested && !inScope(requested)) return { error: "That store is outside your scope.", status: 403 };
+
+  const storeRow = async (runId, scope) => {
+    const { data } = await supa
+      .from("ranking_rows")
+      .select("entity_key, rank, total_points, metrics")
+      .eq("run_id", runId).eq("scope", scope).eq("tier", "store").eq("entity_key", storeNum).maybeSingle();
+    return data || null;
+  };
+
+  const weeks = [];
+  for (const { week, run } of weekRuns) {
+    const row = await storeRow(run.id, "wtd");
+    weeks.push({ week, week_ending: run.week_ending, metrics: row?.metrics ?? null });
+  }
+
+  // PTD row + company/region rank from the latest run.
+  const ptdRow = await storeRow(latest.id, "ptd");
+  const ranks = {};
+  const meRow = (allPtd || []).find((r) => String(r.entity_key) === storeNum) || null;
+  if (meRow) {
+    ranks.company = meRow.rank ?? null;
+    ranks.company_of = (allPtd || []).filter((r) => typeof r.total_points === "number").length || null;
+    const region = meRow.metrics?.rvpName || meRow.metrics?.region || null;
+    ranks.region_name = region;
+    if (region) {
+      const peers = (allPtd || [])
+        .filter((r) => (r.metrics?.rvpName || r.metrics?.region) === region && typeof r.total_points === "number")
+        .sort((a, b) => b.total_points - a.total_points);
+      const idx = peers.findIndex((r) => String(r.entity_key) === storeNum);
+      ranks.region = idx >= 0 ? idx + 1 : null;
+      ranks.region_of = peers.length || null;
+    }
+  }
+
+  const meta = ptdRow?.metrics || weeks.find((w) => w.metrics)?.metrics || {};
+  return {
+    periods,
+    period,
+    week_ending: latest?.week_ending ?? null,
+    stores: storeList,
+    store: {
+      number: storeNum,
+      location: meta.location ?? null,
+      gm: meta.gm ?? null,
+      region: meta.rvpName ?? null,
+      area: meta.sdoName ?? null,
+      district: meta.doName ?? null,
+    },
+    weeks,
+    ptd: ptdRow?.metrics ?? null,
+    ranks,
+  };
+}

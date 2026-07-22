@@ -155,6 +155,30 @@ export function fetchRankingMovers(scope: RankScope, tier: RankTier): Promise<Mo
   return req(`${FN}?action=movers&scope=${scope}&tier=${tier}`);
 }
 
+// Communication Board — read-only mirror of the in-store weekly comms board.
+export interface CommsStoreOption { number: string; name: string | null }
+export interface CommsWeek { week: number; week_ending: string; metrics: RankMetrics | null }
+export interface CommsRanks {
+  company?: number | null; company_of?: number | null;
+  region?: number | null; region_of?: number | null; region_name?: string | null;
+}
+export interface CommsBoardResponse {
+  periods: number[];
+  period: number | null;
+  week_ending: string | null;
+  stores: CommsStoreOption[];
+  store: { number: string; location: string | null; gm: string | null; region: string | null; area: string | null; district: string | null } | null;
+  weeks: CommsWeek[];
+  ptd: RankMetrics | null;
+  ranks: CommsRanks;
+}
+export function fetchCommsBoard(opts: { store?: string | null; period?: number | null }): Promise<CommsBoardResponse> {
+  const p = new URLSearchParams({ action: "comms-board" });
+  if (opts.store) p.set("store", opts.store);
+  if (opts.period != null) p.set("period", String(opts.period));
+  return req(`${FN}?${p.toString()}`);
+}
+
 export type FullRunScope = Partial<Record<RankTier, RankingResultRow[]>>;
 export function fetchRankingFull(runId?: string | null): Promise<{
   run: RankingRun | null;
