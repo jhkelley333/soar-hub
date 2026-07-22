@@ -52,6 +52,10 @@ export const submitVisit = (input: { visit_id: string; summary?: string; private
   req<{ ok: true; walk_score: number | null }>(`${FN}`, { method: "POST", body: JSON.stringify({ action: "visit-submit", ...input, summary_photos: stripPreview(input.summary_photos) }) });
 export const createReview = (input: { store_id: string; text: string; item_id?: string }) =>
   req<{ ok: true; id: string }>(`${FN}`, { method: "POST", body: JSON.stringify({ action: "review-create", ...input }) });
+export const createAction = (input: { store_id: string; text: string; priority?: string; owner?: string; due?: string }) =>
+  req<{ ok: true; id: string }>(`${FN}`, { method: "POST", body: JSON.stringify({ action: "action-create", ...input }) });
+export const updateAction = (input: { id: string; status?: "open" | "improved" | "worse" | "resolved"; note?: string; priority?: string; text?: string }) =>
+  req<{ ok: true }>(`${FN}`, { method: "POST", body: JSON.stringify({ action: "action-update", ...input }) });
 
 // ── photo capture ────────────────────────────────────────────────────
 // Drop the local object-URL before persisting; the server re-signs on read.
