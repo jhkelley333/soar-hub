@@ -21,6 +21,8 @@ export interface TodayResponse {
 export interface ChecklistItem { id: string; category: string; label: string; sort: number; required_by_role: string | null }
 export interface StartVisitResponse { visit_id: string; template: { id: string; name: string } | null; items: ChecklistItem[] }
 export type WalkStatus = "pass" | "gap" | "na";
+export interface PhotoRec { path: string; at?: string; lat?: number | null; lng?: number | null; url?: string | null; previewUrl?: string }
+const PHOTO_BUCKET = "store-visit-photos";
 export interface ActionItem {
   id: string; text: string; owner: string | null; priority: "high" | "med" | "low";
   due: string | null; status: string; work_order_id: string | null; created_at: string;
@@ -44,9 +46,39 @@ export const fetchVisitStores = () => req<{ stores: VisitStore[] }>(`${FN}?actio
 export const fetchToday = (storeId: string) => req<TodayResponse>(`${FN}?action=today&store_id=${encodeURIComponent(storeId)}`);
 export const fetchActions = (storeId: string) => req<{ actions: ActionItem[] }>(`${FN}?action=actions&store_id=${encodeURIComponent(storeId)}`);
 export const startVisit = (storeId: string) => req<StartVisitResponse>(`${FN}`, { method: "POST", body: JSON.stringify({ action: "visit-start", store_id: storeId }) });
-export const saveWalk = (input: { visit_id: string; item_id: string; category: string; label: string; status: WalkStatus; note?: string }) =>
-  req<{ ok: true }>(`${FN}`, { method: "POST", body: JSON.stringify({ action: "walk-save", ...input }) });
-export const submitVisit = (input: { visit_id: string; summary?: string; private_note?: string; funds_reviewed?: boolean; actions?: { text: string; priority?: string }[] }) =>
-  req<{ ok: true; walk_score: number | null }>(`${FN}`, { method: "POST", body: JSON.stringify({ action: "visit-submit", ...input }) });
+export const saveWalk = (input: { visit_id: string; item_id: string; category: string; label: string; status: WalkStatus; note?: string; photos?: PhotoRec[] }) =>
+  req<{ ok: true }>(`${FN}`, { method: "POST", body: JSON.stringify({ action: "walk-save", ...input, photos: stripPreview(input.photos) }) });
+export const submitVisit = (input: { visit_id: string; summary?: string; private_note?: string; funds_reviewed?: boolean; summary_photos?: PhotoRec[]; actions?: { text: string; priority?: string }[] }) =>
+  req<{ ok: true; walk_score: number | null }>(`${FN}`, { method: "POST", body: JSON.stringify({ action: "visit-submit", ...input, summary_photos: stripPreview(input.summary_photos) }) });
 export const createReview = (input: { store_id: string; text: string; item_id?: string }) =>
   req<{ ok: true; id: string }>(`${FN}`, { method: "POST", body: JSON.stringify({ action: "review-create", ...input }) });
+
+// ── photo capture ────────────────────────────────────────────────────
+// Drop the local object-URL before persisting; the server re-signs on read.
+const stripPreview = (photos?: PhotoRec[]) =>
+  (photos ?? []).map(({ previewUrl, url, ...keep }) => keep); // eslint-disable-line @typescript-eslint/no-unused-vars
+
+function captureGeo(): Promise<{ lat: number; lng: number } | null> {
+  return new Promise((resolve) => {
+    if (!navigator.geolocation) return resolve(null);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      () => resolve(null),
+      { enableHighAccuracy: true, timeout: 4000, maximumAge: 60_000 }
+    );
+  });
+}
+
+// Upload one photo for a visit and return the record to keep in state (with a
+// local preview URL for instant display). EXIF rides inside the file itself.
+export async function uploadVisitPhoto(visitId: string, kind: "walk" | "summary", file: File): Promise<PhotoRec> {
+  const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
+  const { upload_url, token, path } = await req<{ upload_url: string; token: string; path: string }>(
+    `${FN}`, { method: "POST", body: JSON.stringify({ action: "photo-upload-url", visit_id: visitId, kind, ext }) }
+  );
+  void upload_url;
+  const { error } = await supabase.storage.from(PHOTO_BUCKET).uploadToSignedUrl(path, token, file);
+  if (error) throw new Error(error.message);
+  const geo = await captureGeo();
+  return { path, at: new Date().toISOString(), lat: geo?.lat ?? null, lng: geo?.lng ?? null, previewUrl: URL.createObjectURL(file) };
+}

@@ -12,9 +12,11 @@ import { useAuth } from "@/auth/AuthProvider";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
-  fetchVisitStores, fetchToday, fetchActions, startVisit, saveWalk, submitVisit,
-  type ChecklistItem, type Gap, type StartVisitResponse, type WalkStatus,
+  fetchVisitStores, fetchToday, fetchActions, startVisit, saveWalk, submitVisit, uploadVisitPhoto,
+  type ChecklistItem, type Gap, type PhotoRec, type StartVisitResponse, type WalkStatus,
 } from "./api";
+
+type WalkResult = { status: WalkStatus; note: string; photos: PhotoRec[] };
 
 const NAVY = "#0b3b66";
 const OK = "#0e7a5a", WARN = "#9a5b00", DANGER = "#b8402f";
@@ -31,7 +33,7 @@ export function StoreVisitPage() {
   const [storeId, setStoreId] = useState<string | null>(null);
   const [screen, setScreen] = useState<Screen>("today");
   const [visit, setVisit] = useState<StartVisitResponse | null>(null);
-  const [results, setResults] = useState<Record<string, { status: WalkStatus; note: string }>>({});
+  const [results, setResults] = useState<Record<string, WalkResult>>({});
 
   const storesQ = useQuery({ queryKey: ["visit-stores"], queryFn: fetchVisitStores, staleTime: 5 * 60_000 });
   const stores = storesQ.data?.stores ?? [];
@@ -46,20 +48,22 @@ export function StoreVisitPage() {
     onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't start the visit.", "error"),
   });
 
-  // Debounced per-item save (resilient to spotty wifi — a failed save is retried on next change).
-  function setResult(item: ChecklistItem, status: WalkStatus, note?: string) {
+  // Per-item patch + save (resilient to spotty wifi — a failed save is retried
+  // on the next change; a full offline queue lands later in P2).
+  function patchResult(item: ChecklistItem, patch: Partial<WalkResult>) {
     setResults((prev) => {
-      const next = { ...prev, [item.id]: { status, note: note ?? prev[item.id]?.note ?? "" } };
-      return next;
+      const cur: WalkResult = prev[item.id] ?? { status: "pass", note: "", photos: [] };
+      const next: WalkResult = { ...cur, ...patch };
+      if (visit) {
+        saveWalk({ visit_id: visit.visit_id, item_id: item.id, category: item.category, label: item.label, status: next.status, note: next.note, photos: next.photos })
+          .catch(() => {/* transient — retried on next change */});
+      }
+      return { ...prev, [item.id]: next };
     });
-    if (visit) {
-      saveWalk({ visit_id: visit.visit_id, item_id: item.id, category: item.category, label: item.label, status, note: note ?? results[item.id]?.note ?? "" })
-        .catch(() => {/* queued client-side in P2; ignore transient failure for now */});
-    }
   }
 
   const submit = useMutation({
-    mutationFn: (input: { summary: string; private_note: string; funds_reviewed: boolean }) =>
+    mutationFn: (input: { summary: string; private_note: string; funds_reviewed: boolean; summary_photos: PhotoRec[] }) =>
       submitVisit({ visit_id: visit!.visit_id, ...input }),
     onSuccess: () => {
       toast.push("Visit submitted.", "success");
@@ -97,8 +101,8 @@ export function StoreVisitPage() {
       {/* Body */}
       <div className="flex-1 overflow-y-auto bg-[#f4f6f9] px-4 py-3 pb-24">
         {screen === "today" && <TodayScreen q={todayQ} onStart={() => start.mutate()} starting={start.isPending} hasVisit={!!visit} onResume={() => setScreen("walk")} />}
-        {screen === "walk" && <WalkScreen visit={visit} results={results} setResult={setResult} onReview={() => setScreen("summary")} />}
-        {screen === "summary" && <SummaryScreen canPrivate={canPrivate} onBack={() => setScreen("walk")} onSubmit={(v) => submit.mutate(v)} submitting={submit.isPending} />}
+        {screen === "walk" && <WalkScreen visit={visit} results={results} patchResult={patchResult} onReview={() => setScreen("summary")} />}
+        {screen === "summary" && <SummaryScreen visitId={visit?.visit_id ?? null} canPrivate={canPrivate} onBack={() => setScreen("walk")} onSubmit={(v) => submit.mutate(v)} submitting={submit.isPending} />}
         {screen === "actions" && <ActionsScreen actions={actionsQ.data?.actions ?? []} loading={actionsQ.isLoading} />}
         {screen === "store" && <StoreScreen store={store} openActions={todayQ.data?.open_actions ?? 0} lastVisitAt={todayQ.data?.last_visit_at ?? null} />}
       </div>
@@ -208,10 +212,10 @@ function GapCard({ g }: { g: Gap }) {
 }
 
 // ── Walk ─────────────────────────────────────────────────────────────
-function WalkScreen({ visit, results, setResult, onReview }: {
+function WalkScreen({ visit, results, patchResult, onReview }: {
   visit: StartVisitResponse | null;
-  results: Record<string, { status: WalkStatus; note: string }>;
-  setResult: (item: ChecklistItem, status: WalkStatus, note?: string) => void;
+  results: Record<string, WalkResult>;
+  patchResult: (item: ChecklistItem, patch: Partial<WalkResult>) => void;
   onReview: () => void;
 }) {
   if (!visit) return <Centered><span className="text-sm text-zinc-500">Start a walk from the Today tab.</span></Centered>;
@@ -241,7 +245,7 @@ function WalkScreen({ visit, results, setResult, onReview }: {
                       const active = r?.status === st;
                       const meta = st === "pass" ? { c: OK, Icon: CheckCircle2, t: "Pass" } : st === "gap" ? { c: DANGER, Icon: AlertTriangle, t: "Gap" } : { c: "#6b7280", Icon: CircleSlash, t: "N/A" };
                       return (
-                        <button key={st} type="button" onClick={() => setResult(it, st)}
+                        <button key={st} type="button" onClick={() => patchResult(it, { status: st })}
                           className="flex items-center justify-center gap-1 rounded-lg py-2 text-xs font-bold"
                           style={{ minHeight: 44, background: active ? meta.c : "#f1f3f6", color: active ? "white" : "#6b7280" }}>
                           <meta.Icon className="h-3.5 w-3.5" />{meta.t}
@@ -251,12 +255,10 @@ function WalkScreen({ visit, results, setResult, onReview }: {
                   </div>
                   {r?.status === "gap" && (
                     <div className="mt-1.5">
-                      <textarea value={r.note} onChange={(e) => setResult(it, "gap", e.target.value)}
+                      <textarea value={r.note} onChange={(e) => patchResult(it, { note: e.target.value })}
                         placeholder="What's the gap? (note)" rows={2}
                         className="w-full rounded-lg border border-zinc-200 px-2.5 py-1.5 text-sm focus:border-[#0b3b66] focus:outline-none" />
-                      <button type="button" disabled className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-zinc-300">
-                        <Camera className="h-3.5 w-3.5" /> Add photo (soon)
-                      </button>
+                      {visit && <PhotoStrip visitId={visit.visit_id} kind="walk" photos={r.photos ?? []} onChange={(ph) => patchResult(it, { photos: ph })} />}
                     </div>
                   )}
                 </div>
@@ -275,15 +277,17 @@ function WalkScreen({ visit, results, setResult, onReview }: {
 }
 
 // ── Summary ──────────────────────────────────────────────────────────
-function SummaryScreen({ canPrivate, onBack, onSubmit, submitting }: {
+function SummaryScreen({ visitId, canPrivate, onBack, onSubmit, submitting }: {
+  visitId: string | null;
   canPrivate: boolean;
   onBack: () => void;
-  onSubmit: (v: { summary: string; private_note: string; funds_reviewed: boolean }) => void;
+  onSubmit: (v: { summary: string; private_note: string; funds_reviewed: boolean; summary_photos: PhotoRec[] }) => void;
   submitting: boolean;
 }) {
   const [summary, setSummary] = useState("");
   const [priv, setPriv] = useState("");
   const [funds, setFunds] = useState(false);
+  const [photos, setPhotos] = useState<PhotoRec[]>([]);
   return (
     <div className="space-y-3">
       <button type="button" onClick={onBack} className="text-sm font-semibold text-zinc-500">← Back to walk</button>
@@ -292,9 +296,7 @@ function SummaryScreen({ canPrivate, onBack, onSubmit, submitting }: {
         <div className="text-[11px] text-zinc-400">Shared — the store sees this.</div>
         <textarea value={summary} onChange={(e) => setSummary(e.target.value)} rows={4} placeholder="What went well, what to work on…"
           className="mt-2 w-full rounded-lg border border-zinc-200 px-2.5 py-2 text-sm focus:border-[#0b3b66] focus:outline-none" />
-        <button type="button" disabled className="mt-1 flex items-center gap-1 text-[11px] font-semibold text-zinc-300">
-          <Camera className="h-3.5 w-3.5" /> Add photos (soon)
-        </button>
+        {visitId && <PhotoStrip visitId={visitId} kind="summary" photos={photos} onChange={setPhotos} />}
       </div>
 
       {canPrivate && (
@@ -313,7 +315,7 @@ function SummaryScreen({ canPrivate, onBack, onSubmit, submitting }: {
         Store Funds reviewed
       </label>
 
-      <button type="button" onClick={() => onSubmit({ summary, private_note: priv, funds_reviewed: funds })} disabled={submitting}
+      <button type="button" onClick={() => onSubmit({ summary, private_note: priv, funds_reviewed: funds, summary_photos: photos })} disabled={submitting}
         className="flex w-full items-center justify-center gap-2 rounded-xl py-3.5 text-sm font-bold text-white shadow-sm"
         style={{ background: OK, minHeight: 44 }}>
         {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />} Submit visit
@@ -372,6 +374,41 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div className="rounded-2xl bg-white p-3 text-center shadow-sm">
       <div className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">{label}</div>
       <div className="text-lg font-black" style={{ color: NAVY, fontFamily: "'Geist Mono', monospace" }}>{value}</div>
+    </div>
+  );
+}
+
+// Camera-first photo capture. Native camera via file-capture (reliable on
+// mobile, EXIF preserved); GPS + timestamp captured at upload. Instant preview
+// via object URL; the server re-signs on read. Full custom viewfinder is a
+// later polish.
+function PhotoStrip({ visitId, kind, photos, onChange }: {
+  visitId: string; kind: "walk" | "summary"; photos: PhotoRec[]; onChange: (p: PhotoRec[]) => void;
+}) {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  async function onPick(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    if (!files.length) return;
+    setBusy(true);
+    try {
+      const recs: PhotoRec[] = [];
+      for (const f of files) recs.push(await uploadVisitPhoto(visitId, kind, f));
+      onChange([...photos, ...recs]);
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "Photo upload failed.", "error");
+    } finally { setBusy(false); }
+  }
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      {photos.map((p, i) => (
+        <img key={i} src={p.previewUrl || p.url || ""} alt="" className="h-14 w-14 rounded-lg object-cover ring-1 ring-zinc-200" />
+      ))}
+      <label className="grid h-14 w-14 cursor-pointer place-items-center rounded-lg border-2 border-dashed border-zinc-300 text-zinc-400 active:bg-zinc-50" style={{ minHeight: 44 }}>
+        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}
+        <input type="file" accept="image/*" capture="environment" multiple className="hidden" onChange={onPick} disabled={busy} />
+      </label>
     </div>
   );
 }
