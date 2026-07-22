@@ -57,6 +57,7 @@ import { SharedTerritoryMapPage } from "@/modules/territory-map/SharedTerritoryM
 import { SharedLaborPage } from "@/modules/labor-v2/SharedLaborPage";
 import { AccessLinkPage } from "@/modules/access-link/AccessLinkPage";
 import { AccessLinksPage } from "@/modules/access-link/AccessLinksPage";
+import { StoreVisitPage } from "@/modules/store-visit/StoreVisitPage";
 import { PlPage } from "@/modules/pl/PlPage";
 import { CountPage } from "@/modules/count/CountPage";
 import { MyStoresPage } from "@/modules/my-stores/MyStoresPage";
@@ -293,6 +294,15 @@ export const router = createBrowserRouter([
       },
       { path: "account", element: <AccountPage /> },
       { path: "my-stores", element: <MyStoresPage /> },
+      {
+        // Store Visit — mobile-first visit app for DO+ (District Ops and above).
+        path: "visit",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <StoreVisitPage />
+          </ProtectedRoute>
+        ),
+      },
       {
         // Region rollup (mobile-first preview). Visible to DO+ — GMs
         // only see one store and don't need a rollup. Placeholder
