@@ -121,16 +121,16 @@ async function listManaged(supa, manager) {
   const areaIds = allScopeRows.filter((s) => s.scope_type === "area").map((s) => s.scope_id);
   const regionIds = allScopeRows.filter((s) => s.scope_type === "region").map((s) => s.scope_id);
 
-  const [{ data: stores }, { data: districts }, { data: areas }, { data: regions }] =
+  const [{ data: stores }, { data: dDirect }, { data: aDirect }, { data: rDirect }] =
     await Promise.all([
       storeIds.length
-        ? supa.from("stores").select("id, number, name").in("id", storeIds)
+        ? supa.from("stores").select("id, number, name, district_id").in("id", storeIds)
         : Promise.resolve({ data: [] }),
       districtIds.length
-        ? supa.from("districts").select("id, name, code").in("id", districtIds)
+        ? supa.from("districts").select("id, name, code, area_id").in("id", districtIds)
         : Promise.resolve({ data: [] }),
       areaIds.length
-        ? supa.from("areas").select("id, name, code").in("id", areaIds)
+        ? supa.from("areas").select("id, name, code, region_id").in("id", areaIds)
         : Promise.resolve({ data: [] }),
       regionIds.length
         ? supa.from("regions").select("id, name, code").in("id", regionIds)
@@ -138,9 +138,41 @@ async function listManaged(supa, manager) {
     ]);
 
   const storeMap = Object.fromEntries((stores ?? []).map((s) => [s.id, s]));
-  const districtMap = Object.fromEntries((districts ?? []).map((d) => [d.id, d]));
-  const areaMap = Object.fromEntries((areas ?? []).map((a) => [a.id, a]));
-  const regionMap = Object.fromEntries((regions ?? []).map((r) => [r.id, r]));
+  const districtMap = Object.fromEntries((dDirect ?? []).map((d) => [d.id, d]));
+  const areaMap = Object.fromEntries((aDirect ?? []).map((a) => [a.id, a]));
+  const regionMap = Object.fromEntries((rDirect ?? []).map((r) => [r.id, r]));
+
+  // Walk the district → area → region chain up from store scopes so a
+  // "market" (region) can be attached to EVERY member, not just region-scoped
+  // leaders. Each hop only loads the parents not already in hand.
+  const extraDistrictIds = [...new Set((stores ?? []).map((s) => s.district_id).filter((id) => id && !districtMap[id]))];
+  if (extraDistrictIds.length) {
+    const { data } = await supa.from("districts").select("id, name, code, area_id").in("id", extraDistrictIds);
+    for (const d of data ?? []) districtMap[d.id] = d;
+  }
+  const extraAreaIds = [...new Set(Object.values(districtMap).map((d) => d.area_id).filter((id) => id && !areaMap[id]))];
+  if (extraAreaIds.length) {
+    const { data } = await supa.from("areas").select("id, name, code, region_id").in("id", extraAreaIds);
+    for (const a of data ?? []) areaMap[a.id] = a;
+  }
+  const extraRegionIds = [...new Set(Object.values(areaMap).map((a) => a.region_id).filter((id) => id && !regionMap[id]))];
+  if (extraRegionIds.length) {
+    const { data } = await supa.from("regions").select("id, name, code").in("id", extraRegionIds);
+    for (const r of data ?? []) regionMap[r.id] = r;
+  }
+
+  // The region (market) a scope rolls up to — store→district→area→region, or
+  // the scope itself for higher tiers. null for global.
+  function regionNameForScope(scope) {
+    if (scope.scope_type === "region") return regionMap[scope.scope_id]?.name ?? null;
+    if (scope.scope_type === "area") return regionMap[areaMap[scope.scope_id]?.region_id]?.name ?? null;
+    if (scope.scope_type === "district") return regionMap[areaMap[districtMap[scope.scope_id]?.area_id]?.region_id]?.name ?? null;
+    if (scope.scope_type === "store") {
+      const d = districtMap[storeMap[scope.scope_id]?.district_id];
+      return regionMap[areaMap[d?.area_id]?.region_id]?.name ?? null;
+    }
+    return null;
+  }
 
   function labelFor(scope) {
     if (scope.scope_type === "global") return "All stores";
@@ -195,6 +227,19 @@ async function listManaged(supa, manager) {
       label: labelFor(s),
       code: codeFor(s),
     });
+  }
+
+  // Market(s) each member belongs to — the region their primary scope(s) plus
+  // any active additional coverage roll up to. A member can span more than one.
+  const nowIso = new Date().toISOString();
+  const marketsByUser = {};
+  const addMarket = (userId, scope) => {
+    const name = regionNameForScope(scope);
+    if (name) (marketsByUser[userId] ||= new Set()).add(name);
+  };
+  for (const s of scopes ?? []) addMarket(s.user_id, s);
+  for (const a of addlScopes ?? []) {
+    if (!a.expires_at || a.expires_at > nowIso) addMarket(a.user_id, a);
   }
 
   // Additional coverage, labeled, grouped by user.
@@ -260,6 +305,7 @@ async function listManaged(supa, manager) {
     email_confirmed_at: confirmedMap[m.id] ?? null,
     scopes: scopesByUser[m.id] ?? [],
     additional_scopes: additionalByUser[m.id] ?? [],
+    markets: [...(marketsByUser[m.id] ?? [])].sort((a, b) => a.localeCompare(b)),
   }));
 
   // Pull the rest of the per-profile fields the My Team UI surfaces:
@@ -471,6 +517,24 @@ async function logChange(supa, { actor_id, target_id, action, before, after }) {
 // ----------------------------------------------------------------------------
 
 async function scopeOptions(supa, manager) {
+  // Org-wide roles (admin / COO / VP) can assign anywhere. They're org-wide by
+  // ROLE, not by an explicit user_scopes row, so user_visible_stores can come
+  // back empty for them — return the whole tree directly instead. (This matches
+  // assignScope, which already lets org-wide roles pick any scope.)
+  if (ORG_WIDE_SCOPE_ROLES.includes(manager.role)) {
+    const [{ data: stores }, { data: districts }, { data: areas }, { data: regions }] = await Promise.all([
+      supa.from("stores").select("id, number, name, district_id, is_active").eq("is_active", true).order("number"),
+      supa.from("districts").select("id, name, code, area_id").order("name"),
+      supa.from("areas").select("id, name, code, region_id").order("name"),
+      supa.from("regions").select("id, name, code").order("name"),
+    ]);
+    return {
+      stores: stores ?? [], districts: districts ?? [], areas: areas ?? [], regions: regions ?? [],
+      canSetGlobal: manager.role === "admin",
+    };
+  }
+
+  // Scoped managers: only the slice of the tree under their visible stores.
   // user_visible_stores returns setof uuid (bare values).
   const { data: storeIds } = await supa.rpc("user_visible_stores", {
     uid: manager.id,
@@ -606,8 +670,10 @@ async function addUser(supa, manager, body) {
     };
   }
 
-  // For non-admin manager, verify the chosen scope is fully within their reach
-  if (manager.role !== "admin" && expectedScope !== "global") {
+  // For a scoped (non org-wide) manager, verify the chosen scope is fully
+  // within their reach. Org-wide roles (admin/COO/VP) can assign anywhere and
+  // have no user_visible_stores set to check against.
+  if (!ORG_WIDE_SCOPE_ROLES.includes(manager.role) && expectedScope !== "global") {
     const { data: managerStoreIds } = await supa.rpc("user_visible_stores", {
       uid: manager.id,
     });
@@ -919,7 +985,7 @@ async function updateUser(supa, manager, body) {
         status: 403,
       };
     }
-    if (manager.role !== "admin" && expectedScope !== "global") {
+    if (!ORG_WIDE_SCOPE_ROLES.includes(manager.role) && expectedScope !== "global") {
       const { data: managerStoreIds } = await supa.rpc("user_visible_stores", {
         uid: manager.id,
       });

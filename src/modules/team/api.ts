@@ -61,6 +61,8 @@ export interface ManagedUser {
   email_confirmed_at: string | null;
   scopes: ScopeBadge[];
   additional_scopes: AdditionalScope[];
+  /** Region(s) this member's scope(s) roll up to — their "market". */
+  markets: string[];
   // Extended profile fields from Account Settings, surfaced read-only
   // to leadership viewing this team member's card.
   preferred_name: string | null;

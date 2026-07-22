@@ -12,6 +12,7 @@ import { RankingTrendsView } from "./RankingTrendsView";
 import { RankingRiskView } from "./RankingRiskView";
 import { RankingWatchlistView } from "./RankingWatchlistView";
 import { RankingMoversView } from "./RankingMoversView";
+import { RankingCommsBoardView } from "./RankingCommsBoardView";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, PauseCircle, Plus, Save } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -33,7 +34,7 @@ const fmtDate = (s: string) =>
   new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const todayIso = () => new Date().toLocaleDateString("en-CA");
 
-type AdminView = "ranking" | "drill" | "watchlist" | "trends" | "risk" | "movers" | "settings";
+type AdminView = "ranking" | "drill" | "watchlist" | "trends" | "risk" | "movers" | "comms" | "settings";
 
 export function RankingAdminPage() {
   const { profile } = useAuth();
@@ -66,6 +67,7 @@ export function RankingAdminPage() {
     { value: "watchlist", label: "Watchlist" },
     { value: "trends", label: "Trends" },
     { value: "risk", label: "Risk" },
+    { value: "comms", label: "Comms Board" },
     ...(canMovers ? [{ value: "movers" as AdminView, label: "Movers" }] : []),
     ...(isAdmin ? [{ value: "settings" as AdminView, label: "System settings" }] : []),
   ];
@@ -86,6 +88,7 @@ export function RankingAdminPage() {
         : active === "trends" ? <RankingTrendsView />
         : active === "risk" ? <RankingRiskView />
         : active === "movers" ? <RankingMoversView />
+        : active === "comms" ? <RankingCommsBoardView />
         : <SettingsView />}
     </>
   );
