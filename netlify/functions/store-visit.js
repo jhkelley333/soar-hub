@@ -263,6 +263,48 @@ async function listActions(supa, user, params) {
   return { actions: data ?? [] };
 }
 
+async function storeHistory(supa, user, params) {
+  const { store } = await resolveStore(supa, user, params);
+  if (!store) return { error: "Pick a store you manage.", status: 404 };
+  const { data: visits } = await supa.from("store_visits")
+    .select("id, visitor_id, visitor_role, submitted_at, walk_score, summary, private_note")
+    .eq("store_id", store.id).eq("status", "submitted")
+    .order("submitted_at", { ascending: true });
+  const list = visits ?? [];
+  const ids = [...new Set(list.map((v) => v.visitor_id).filter(Boolean))];
+  const nameById = new Map();
+  if (ids.length) {
+    const { data: profs } = await supa.from("profiles").select("id, full_name, preferred_name").in("id", ids);
+    for (const p of profs ?? []) nameById.set(p.id, p.preferred_name || p.full_name || null);
+  }
+  const { data: acts } = await supa.from("action_items").select("origin_visit_id").eq("store_id", store.id);
+  const actCount = new Map();
+  for (const a of acts ?? []) if (a.origin_visit_id) actCount.set(a.origin_visit_id, (actCount.get(a.origin_visit_id) || 0) + 1);
+
+  const canReadPrivate = PRIVATE_READ_ROLES.has(roleOf(user));
+  let prevScore = null;
+  const out = list.map((v) => {
+    const score = v.walk_score == null ? null : Number(v.walk_score);
+    const trend = score != null && prevScore != null ? (score > prevScore ? "up" : score < prevScore ? "down" : "flat") : null;
+    const delta = score != null && prevScore != null ? Math.round((score - prevScore) * 100) : null;
+    if (score != null) prevScore = score;
+    return {
+      id: v.id,
+      visitor: nameById.get(v.visitor_id) ?? null,
+      role: v.visitor_role,
+      submitted_at: v.submitted_at,
+      walk_score: score,
+      trend, delta,
+      summary: v.summary,
+      has_private_note: !!v.private_note,
+      private_note: canReadPrivate || v.visitor_id === user.id ? v.private_note : null,
+      actions: actCount.get(v.id) || 0,
+    };
+  });
+  out.reverse(); // newest first
+  return { visits: out };
+}
+
 async function listReviews(supa, user, params) {
   const { store } = await resolveStore(supa, user, params);
   if (!store) return { error: "Pick a store you manage.", status: 404 };
@@ -449,6 +491,7 @@ export const handler = async (event) => {
     if (action === "visit-get") return unwrap(await getVisit(supa, user, params));
     if (action === "actions") return unwrap(await listActions(supa, user, params));
     if (action === "reviews") return unwrap(await listReviews(supa, user, params));
+    if (action === "history") return unwrap(await storeHistory(supa, user, params));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: `store-visit error: ${e?.message || String(e)}` });

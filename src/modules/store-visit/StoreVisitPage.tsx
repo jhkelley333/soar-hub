@@ -12,7 +12,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
-  fetchVisitStores, fetchToday, fetchActions, startVisit, saveWalk, submitVisit, uploadVisitPhoto,
+  fetchVisitStores, fetchToday, fetchActions, fetchVisitHistory, startVisit, saveWalk, submitVisit, uploadVisitPhoto,
   createReview, createAction, updateAction,
   type ChecklistItem, type Gap, type PhotoRec, type StartVisitResponse, type WalkStatus,
 } from "./api";
@@ -490,9 +490,59 @@ function StoreScreen({ store, storeId, canPush, openActions, lastVisitAt }: {
         </div>
       )}
 
-      <div className="rounded-2xl bg-white p-4 text-center text-sm text-zinc-400 shadow-sm">
-        Visit history &amp; trend — coming in the next build.
-      </div>
+      <VisitHistory storeId={storeId} />
+    </div>
+  );
+}
+
+function VisitHistory({ storeId }: { storeId: string | null }) {
+  const q = useQuery({ queryKey: ["visit-history", storeId], queryFn: () => fetchVisitHistory(storeId!), enabled: !!storeId, staleTime: 60_000 });
+  const [open, setOpen] = useState<string | null>(null);
+  const visits = q.data?.visits ?? [];
+  const pct = (v: number | null) => (v == null ? "—" : `${Math.round(v * 100)}%`);
+  return (
+    <div className="rounded-2xl bg-white p-3 shadow-sm">
+      <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-zinc-400">Visit history</div>
+      {q.isLoading ? (
+        <div className="py-6 text-center"><Loader2 className="mx-auto h-5 w-5 animate-spin text-zinc-300" /></div>
+      ) : visits.length === 0 ? (
+        <div className="py-4 text-center text-sm text-zinc-400">No submitted visits yet.</div>
+      ) : (
+        <div className="divide-y divide-zinc-100">
+          {visits.map((v) => {
+            const TrendIcon = v.trend === "up" ? ArrowUpRight : v.trend === "down" ? ArrowDownRight : Minus;
+            const tc = v.trend === "up" ? OK : v.trend === "down" ? DANGER : "#9aa3af";
+            const isOpen = open === v.id;
+            return (
+              <div key={v.id} className="py-2">
+                <button type="button" onClick={() => setOpen(isOpen ? null : v.id)} className="flex w-full items-center gap-2 text-left">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-1.5 text-sm font-semibold text-midnight">
+                      {new Date(v.submitted_at).toLocaleDateString()}
+                      {v.has_private_note && <Lock className="h-3 w-3 text-amber-500" />}
+                    </div>
+                    <div className="text-[11px] text-zinc-400">{[v.visitor, v.role?.toUpperCase()].filter(Boolean).join(" · ")}{v.actions ? ` · ${v.actions} action${v.actions === 1 ? "" : "s"}` : ""}</div>
+                  </div>
+                  <span className="text-sm font-bold tabular-nums" style={{ color: NAVY, fontFamily: "'Geist Mono', monospace" }}>{pct(v.walk_score)}</span>
+                  <span className="flex w-10 items-center justify-end gap-0.5 text-[11px] font-semibold tabular-nums" style={{ color: tc }}>
+                    {v.trend && <TrendIcon className="h-3.5 w-3.5" />}{v.delta != null && v.delta !== 0 ? `${v.delta > 0 ? "+" : ""}${v.delta}` : ""}
+                  </span>
+                </button>
+                {isOpen && (
+                  <div className="mt-1.5 space-y-1.5 rounded-lg bg-zinc-50 p-2.5 text-sm">
+                    {v.summary ? <div className="text-zinc-700">{v.summary}</div> : <div className="text-zinc-400">No summary.</div>}
+                    {v.has_private_note && (
+                      v.private_note
+                        ? <div className="rounded-md bg-amber-50 px-2 py-1.5 text-[13px] text-amber-800"><Lock className="mr-1 inline h-3 w-3" />{v.private_note}</div>
+                        : <div className="text-[11px] italic text-zinc-400"><Lock className="mr-1 inline h-3 w-3" />Private note (SDO+ only)</div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
