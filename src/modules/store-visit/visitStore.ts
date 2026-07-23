@@ -4,7 +4,7 @@
 //   kv    — the in-progress visit snapshot, so a mid-visit reload (or an
 //           app kill on bad signal) restores the walk instead of dropping it.
 const DB = "store-visit";
-const VERSION = 1;
+const VERSION = 2;
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
@@ -13,6 +13,7 @@ function openDb(): Promise<IDBDatabase> {
       const db = r.result;
       if (!db.objectStoreNames.contains("queue")) db.createObjectStore("queue", { keyPath: "id", autoIncrement: true });
       if (!db.objectStoreNames.contains("kv")) db.createObjectStore("kv");
+      if (!db.objectStoreNames.contains("blobs")) db.createObjectStore("blobs"); // key -> Blob (photos captured offline)
     };
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
@@ -52,6 +53,11 @@ export function clearQueueFor(visitId: string): Promise<void> {
     for (const o of all) if (o.id != null && String(o.target).startsWith(`${visitId}:`)) s.delete(o.id);
   }));
 }
+
+// Photo blobs captured offline — uploaded on reconnect, then deleted.
+export function putBlob(key: string, blob: Blob): Promise<void> { return run("blobs", "readwrite", (s) => s.put(blob, key)); }
+export function getBlob(key: string): Promise<Blob | null> { return run<Blob>("blobs", "readonly", (s) => s.get(key)).then((r) => (r ?? null) as Blob | null); }
+export function delBlob(key: string): Promise<void> { return run("blobs", "readwrite", (s) => s.delete(key)); }
 
 // In-progress visit snapshot (restore on reload).
 const ACTIVE = "active-visit";

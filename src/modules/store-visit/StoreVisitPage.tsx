@@ -2,7 +2,7 @@
 // review requests + funds reminder), Walk (checklist Pass/Gap/N-A + notes),
 // Summary (shared summary + leadership-only private note + submit), Actions,
 // Store. Camera/photos, offline queue, and WO conversion land in Phase 2.
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownRight, ArrowUpRight, Minus, CheckCircle2, CircleSlash, AlertTriangle,
@@ -15,8 +15,8 @@ import {
   createReview, createAction, updateAction,
   type ChecklistItem, type Gap, type PhotoRec, type StartVisitResponse, type WalkStatus,
 } from "./api";
-import { enqueue, listQueue, removeQueued, clearQueueFor, saveActive, loadActive, clearActive } from "./visitStore";
-import { WifiOff, RefreshCw } from "lucide-react";
+import { enqueue, listQueue, removeQueued, clearQueueFor, saveActive, loadActive, clearActive, putBlob, getBlob, delBlob } from "./visitStore";
+import { WifiOff, RefreshCw, Clock } from "lucide-react";
 
 type WalkResult = { status: WalkStatus; note: string; photos: PhotoRec[] };
 type WalkSavePayload = { visit_id: string; item_id: string; category: string; label: string; status: WalkStatus; note: string; photos: PhotoRec[] };
@@ -42,13 +42,44 @@ export function StoreVisitPage() {
 
   const refreshPending = useCallback(() => { listQueue().then((q) => setPending(q.length)); }, []);
 
-  // Replay queued walk-saves in order; stop on the first failure (still offline).
+  // Latest visit/results for the flusher (which is a stable callback).
+  const visitRef = useRef(visit);
+  const resultsRef = useRef(results);
+  useEffect(() => { visitRef.current = visit; resultsRef.current = results; }, [visit, results]);
+
+  // Replay queued walk-saves in order, then upload any photos captured offline
+  // and re-save those items with real paths. Stop on the first failure.
   const flush = useCallback(async () => {
     if (typeof navigator !== "undefined" && !navigator.onLine) return;
     const ops = await listQueue();
     for (const op of ops) {
       try { await saveWalk(op.payload as WalkSavePayload); if (op.id != null) await removeQueued(op.id); }
       catch { break; }
+    }
+    // Reconcile offline photo blobs: upload → replace pendingKey with a path.
+    const v = visitRef.current;
+    if (v) {
+      const cur = resultsRef.current;
+      const itemById = new Map(v.items.map((i) => [i.id, i]));
+      const patched: Record<string, WalkResult> = {};
+      let changed = false;
+      for (const [itemId, r] of Object.entries(cur)) {
+        if (!r.photos?.some((p) => p.pendingKey && !p.path)) continue;
+        const next: PhotoRec[] = [];
+        for (const p of r.photos) {
+          if (p.pendingKey && !p.path) {
+            try {
+              const blob = await getBlob(p.pendingKey);
+              if (blob) { const rec = await uploadVisitPhoto(v.visit_id, "walk", blob, "jpg"); await delBlob(p.pendingKey); next.push(rec); changed = true; }
+              else next.push(p);
+            } catch { next.push(p); }
+          } else next.push(p);
+        }
+        patched[itemId] = { ...r, photos: next };
+        const it = itemById.get(itemId);
+        try { await saveWalk({ visit_id: v.visit_id, item_id: itemId, category: it?.category ?? "", label: it?.label ?? "", status: r.status, note: r.note, photos: next }); } catch { /* retry next flush */ }
+      }
+      if (changed) setResults((prev) => ({ ...prev, ...patched }));
     }
     refreshPending();
   }, [refreshPending]);
@@ -61,8 +92,17 @@ export function StoreVisitPage() {
     window.addEventListener("offline", off);
     refreshPending();
     flush();
-    loadActive<{ visit: StartVisitResponse; results: Record<string, WalkResult> }>().then((a) => {
-      if (a?.visit?.visit_id) { setVisit(a.visit); setResults(a.results ?? {}); }
+    loadActive<{ visit: StartVisitResponse; results: Record<string, WalkResult> }>().then(async (a) => {
+      if (!a?.visit?.visit_id) return;
+      const restored = a.results ?? {};
+      // Regenerate previews for photos captured offline (their object URLs died with the old page).
+      for (const r of Object.values(restored)) {
+        for (const p of r.photos ?? []) {
+          if (p.pendingKey && !p.path) { const b = await getBlob(p.pendingKey); if (b) p.previewUrl = URL.createObjectURL(b); }
+        }
+      }
+      setVisit(a.visit); setResults(restored);
+      flush();
     });
     const t = setInterval(flush, 20_000);
     return () => { window.removeEventListener("online", on); window.removeEventListener("offline", off); clearInterval(t); };
@@ -321,7 +361,7 @@ function WalkScreen({ visit, results, patchResult, onReview }: {
                       <textarea value={r.note} onChange={(e) => patchResult(it, { note: e.target.value })}
                         placeholder="What's the gap? (note)" rows={2}
                         className="w-full rounded-lg border border-zinc-200 px-2.5 py-1.5 text-sm focus:border-[#0b3b66] focus:outline-none" />
-                      {visit && <PhotoStrip visitId={visit.visit_id} kind="walk" photos={r.photos ?? []} onChange={(ph) => patchResult(it, { photos: ph })} />}
+                      {visit && <PhotoStrip visitId={visit.visit_id} kind="walk" photos={r.photos ?? []} onChange={(ph) => patchResult(it, { photos: ph })} allowOffline />}
                     </div>
                   )}
                 </div>
@@ -558,8 +598,8 @@ function Stat({ label, value }: { label: string; value: string }) {
 // mobile, EXIF preserved); GPS + timestamp captured at upload. Instant preview
 // via object URL; the server re-signs on read. Full custom viewfinder is a
 // later polish.
-function PhotoStrip({ visitId, kind, photos, onChange }: {
-  visitId: string; kind: "walk" | "summary"; photos: PhotoRec[]; onChange: (p: PhotoRec[]) => void;
+function PhotoStrip({ visitId, kind, photos, onChange, allowOffline }: {
+  visitId: string; kind: "walk" | "summary"; photos: PhotoRec[]; onChange: (p: PhotoRec[]) => void; allowOffline?: boolean;
 }) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -567,14 +607,24 @@ function PhotoStrip({ visitId, kind, photos, onChange }: {
     const files = Array.from(e.target.files ?? []);
     e.target.value = "";
     if (!files.length) return;
-    if (typeof navigator !== "undefined" && !navigator.onLine) {
-      toast.push("You're offline — reconnect to add photos.", "error");
+    const offline = typeof navigator !== "undefined" && !navigator.onLine;
+    if (offline && !allowOffline) {
+      toast.push("You're offline — reconnect to add photos here.", "error");
       return;
     }
     setBusy(true);
     try {
       const recs: PhotoRec[] = [];
-      for (const f of files) recs.push(await uploadVisitPhoto(visitId, kind, f));
+      for (const f of files) {
+        if (offline) {
+          // Stash the blob locally; it uploads on reconnect (see flush()).
+          const key = `${visitId}:${kind}:${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+          await putBlob(key, f);
+          recs.push({ pendingKey: key, previewUrl: URL.createObjectURL(f), at: new Date().toISOString() });
+        } else {
+          recs.push(await uploadVisitPhoto(visitId, kind, f));
+        }
+      }
       onChange([...photos, ...recs]);
     } catch (err) {
       toast.push(err instanceof Error ? err.message : "Photo upload failed.", "error");
@@ -583,7 +633,14 @@ function PhotoStrip({ visitId, kind, photos, onChange }: {
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
       {photos.map((p, i) => (
-        <img key={i} src={p.previewUrl || p.url || ""} alt="" className="h-14 w-14 rounded-lg object-cover ring-1 ring-zinc-200" />
+        <div key={i} className="relative h-14 w-14">
+          <img src={p.previewUrl || p.url || ""} alt="" className="h-14 w-14 rounded-lg object-cover ring-1 ring-zinc-200" />
+          {p.pendingKey && !p.path && (
+            <span className="absolute bottom-0.5 right-0.5 grid h-4 w-4 place-items-center rounded-full bg-amber-500 text-white" title="Uploads when you're back online">
+              <Clock className="h-2.5 w-2.5" />
+            </span>
+          )}
+        </div>
       ))}
       <label className="grid h-14 w-14 cursor-pointer place-items-center rounded-lg border-2 border-dashed border-zinc-300 text-zinc-400 active:bg-zinc-50" style={{ minHeight: 44 }}>
         {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Camera className="h-4 w-4" />}

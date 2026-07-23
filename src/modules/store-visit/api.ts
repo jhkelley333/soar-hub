@@ -21,7 +21,7 @@ export interface TodayResponse {
 export interface ChecklistItem { id: string; category: string; label: string; sort: number; required_by_role: string | null }
 export interface StartVisitResponse { visit_id: string; template: { id: string; name: string } | null; items: ChecklistItem[] }
 export type WalkStatus = "pass" | "gap" | "na";
-export interface PhotoRec { path: string; at?: string; lat?: number | null; lng?: number | null; url?: string | null; previewUrl?: string }
+export interface PhotoRec { path?: string; at?: string; lat?: number | null; lng?: number | null; url?: string | null; previewUrl?: string; pendingKey?: string }
 const PHOTO_BUCKET = "store-visit-photos";
 export interface ActionItem {
   id: string; text: string; owner: string | null; priority: "high" | "med" | "low";
@@ -73,9 +73,12 @@ export const updateAction = (input: { id: string; status?: "open" | "improved" |
   req<{ ok: true }>(`${FN}`, { method: "POST", body: JSON.stringify({ action: "action-update", ...input }) });
 
 // ── photo capture ────────────────────────────────────────────────────
-// Drop the local object-URL before persisting; the server re-signs on read.
+// Only persist photos that have a real uploaded path — pending offline blobs
+// are dropped until they upload — and strip local-only fields.
 const stripPreview = (photos?: PhotoRec[]) =>
-  (photos ?? []).map(({ previewUrl, url, ...keep }) => keep); // eslint-disable-line @typescript-eslint/no-unused-vars
+  (photos ?? [])
+    .filter((p) => p.path)
+    .map(({ previewUrl, url, pendingKey, ...keep }) => keep); // eslint-disable-line @typescript-eslint/no-unused-vars
 
 function captureGeo(): Promise<{ lat: number; lng: number } | null> {
   return new Promise((resolve) => {
@@ -88,14 +91,13 @@ function captureGeo(): Promise<{ lat: number; lng: number } | null> {
   });
 }
 
-// Upload one photo for a visit and return the record to keep in state (with a
-// local preview URL for instant display). EXIF rides inside the file itself.
-export async function uploadVisitPhoto(visitId: string, kind: "walk" | "summary", file: File): Promise<PhotoRec> {
-  const ext = (file.name.split(".").pop() || "jpg").toLowerCase();
-  const { upload_url, token, path } = await req<{ upload_url: string; token: string; path: string }>(
+// Upload one photo (File or offline Blob) for a visit and return the record to
+// keep in state. EXIF rides inside the file itself.
+export async function uploadVisitPhoto(visitId: string, kind: "walk" | "summary", file: Blob, extHint?: string): Promise<PhotoRec> {
+  const ext = (extHint || (file instanceof File ? file.name.split(".").pop() : "") || "jpg").toLowerCase();
+  const { token, path } = await req<{ upload_url: string; token: string; path: string }>(
     `${FN}`, { method: "POST", body: JSON.stringify({ action: "photo-upload-url", visit_id: visitId, kind, ext }) }
   );
-  void upload_url;
   const { error } = await supabase.storage.from(PHOTO_BUCKET).uploadToSignedUrl(path, token, file);
   if (error) throw new Error(error.message);
   const geo = await captureGeo();
