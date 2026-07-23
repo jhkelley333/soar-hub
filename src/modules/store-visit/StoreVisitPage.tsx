@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { useToast } from "@/shared/ui/Toaster";
-import { cn } from "@/lib/cn";
 import {
   fetchVisitStores, fetchToday, fetchActions, fetchVisitHistory, startVisit, saveWalk, submitVisit, uploadVisitPhoto,
   createReview, createAction, updateAction,
