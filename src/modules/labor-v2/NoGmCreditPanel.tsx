@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, Download } from "lucide-react";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Button } from "@/shared/ui/Button";
@@ -12,6 +12,7 @@ import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
+import { toCSV, downloadCSV } from "@/lib/csv";
 import {
   addNoGmCredit, deleteNoGmCredit, endNoGmCredit, fetchLaborV2Stores,
   fetchNoGmCredits, setNoGmWeeklyRate, type NoGmCreditRow,
@@ -95,14 +96,37 @@ export function NoGmCreditPanel() {
   });
 
   const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState<"store" | "date">("store");
   const rows = q.data?.rows ?? [];
   const weekly = q.data?.weekly ?? 880;
   const matchesSearch = (r: NoGmCreditRow) => {
     const s = search.trim().toLowerCase();
     return !s || `${r.store_number} ${r.store_name ?? ""}`.toLowerCase().includes(s);
   };
-  const activeRows = rows.filter((r) => r.active && matchesSearch(r));
-  const pastRows = rows.filter((r) => !r.active && matchesSearch(r));
+  const byStore = (a: NoGmCreditRow, b: NoGmCreditRow) =>
+    String(a.store_number).localeCompare(String(b.store_number), undefined, { numeric: true });
+  const byDate = (a: NoGmCreditRow, b: NoGmCreditRow) => String(b.start_date).localeCompare(String(a.start_date));
+  const sorter = sortBy === "store" ? byStore : byDate;
+  const activeRows = rows.filter((r) => r.active && matchesSearch(r)).sort(sorter);
+  const pastRows = rows.filter((r) => !r.active && matchesSearch(r)).sort(sorter);
+
+  function exportCsv() {
+    const all = rows.filter(matchesSearch).slice().sort(byStore);
+    const headers = ["Store #", "Store Name", "Reason", "Start", "End", "Status", "Weekly Credit", "Created By", "Note"];
+    const csvRows = all.map((r) => ({
+      "Store #": r.store_number,
+      "Store Name": r.store_name ?? "",
+      "Reason": REASON_LABEL[r.reason] ?? r.reason,
+      "Start": r.start_date,
+      "End": r.end_date ?? "",
+      "Status": r.active ? "Active" : "Ended/Upcoming",
+      "Weekly Credit": weekly,
+      "Created By": r.created_by_email ?? "",
+      "Note": r.note ?? "",
+    }));
+    downloadCSV(`no-gm-credits-${todayIso()}.csv`, toCSV(headers, csvRows));
+    toast.push(`Exported ${all.length} tag${all.length === 1 ? "" : "s"}.`, "success");
+  }
 
   if (q.isLoading) return <div className="space-y-3"><Skeleton className="h-16 w-full" /><Skeleton className="h-40 w-full" /></div>;
   if (q.isError) return <EmptyState title="Couldn't load" description={(q.error as Error)?.message ?? "Try again."} />;
@@ -134,18 +158,36 @@ export function NoGmCreditPanel() {
             </div>
           )}
         </div>
-        <Button size="sm" onClick={() => setAddOpen(true)}>
-          <Plus className="mr-1 h-3.5 w-3.5" /> Tag a store
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="secondary" onClick={exportCsv} disabled={rows.length === 0}>
+            <Download className="mr-1 h-3.5 w-3.5" /> Export
+          </Button>
+          <Button size="sm" onClick={() => setAddOpen(true)}>
+            <Plus className="mr-1 h-3.5 w-3.5" /> Tag a store
+          </Button>
+        </div>
       </div>
 
-      {/* Search by store */}
-      <input
-        value={search}
-        onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search by store # or name…"
-        className={cn(inputCls, "w-full max-w-sm")}
-      />
+      {/* Search + sort by store */}
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Search by store # or name…"
+          className={cn(inputCls, "w-full max-w-sm")}
+        />
+        <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+          <span className="font-semibold">Sort</span>
+          <div className="flex overflow-hidden rounded-lg ring-1 ring-inset ring-zinc-200">
+            {([["store", "Store #"], ["date", "Start date"]] as const).map(([k, label]) => (
+              <button key={k} type="button" onClick={() => setSortBy(k)}
+                className={cn("px-2.5 py-1.5 font-semibold", sortBy === k ? "bg-accent text-white" : "bg-white text-zinc-500 hover:bg-zinc-50")}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
 
       {/* Active tags */}
       <Section title={`Active (${activeRows.length})`}>
