@@ -30,6 +30,7 @@ function respond(statusCode, payload) {
   return { statusCode, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) };
 }
 const roleOf = (u) => String(u?.role || "").toLowerCase();
+const displayName = (u) => u?.preferred_name || u?.full_name || u?.email || "someone";
 const numOr = (v) => (v == null || isNaN(Number(v)) ? null : Number(v));
 
 async function getSessionUser(supa, event) {
@@ -359,6 +360,44 @@ async function submitVisit(supa, user, body) {
   return { ok: true, visit_id: visitId, walk_score: walkScore };
 }
 
+async function createAction(supa, user, body) {
+  const { store } = await resolveStore(supa, user, body);
+  if (!store) return { error: "Pick a store you manage.", status: 403 };
+  const text = String(body?.text ?? "").trim();
+  if (!text) return { error: "Enter the action.", status: 400 };
+  const priority = ["high", "med", "low"].includes(body?.priority) ? body.priority : "med";
+  const { data, error } = await supa.from("action_items").insert({
+    store_id: store.id,
+    origin_visit_id: body?.visit_id ?? null,
+    text,
+    owner: (body?.owner ?? "").trim() || null,
+    priority,
+    due: body?.due || null,
+    log: [{ who: displayName(user), at: new Date().toISOString(), text: "Created" }],
+  }).select("id").single();
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, id: data.id };
+}
+
+async function updateAction(supa, user, body) {
+  const id = body?.id;
+  if (!id) return { error: "id required", status: 400 };
+  const { data: existing } = await supa.from("action_items").select("id, store_id, log, status").eq("id", id).maybeSingle();
+  if (!existing) return { error: "Action not found.", status: 404 };
+  const { store } = await resolveStore(supa, user, { store_id: existing.store_id });
+  if (!store) return { error: "That store is outside your scope.", status: 403 };
+  const patch = { updated_at: new Date().toISOString() };
+  const STATUSES = new Set(["open", "improved", "worse", "resolved"]);
+  if (body?.status && STATUSES.has(body.status)) patch.status = body.status;
+  if (typeof body?.text === "string" && body.text.trim()) patch.text = body.text.trim();
+  if (["high", "med", "low"].includes(body?.priority)) patch.priority = body.priority;
+  const logText = body?.status ? `Marked ${body.status}` : "Updated";
+  patch.log = [...(existing.log ?? []), { who: displayName(user), at: new Date().toISOString(), text: (body?.note ?? "").trim() || logText }];
+  const { error } = await supa.from("action_items").update(patch).eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
 async function createReview(supa, user, body) {
   if (!REVIEW_PUSH_ROLES.has(roleOf(user))) return { error: "Only SDO and above can push a review request.", status: 403 };
   const { store } = await resolveStore(supa, user, body);
@@ -394,6 +433,8 @@ export const handler = async (event) => {
       if (a === "walk-save") return unwrap(await saveWalk(supa, user, body));
       if (a === "visit-submit") return unwrap(await submitVisit(supa, user, body));
       if (a === "review-create") return unwrap(await createReview(supa, user, body));
+      if (a === "action-create") return unwrap(await createAction(supa, user, body));
+      if (a === "action-update") return unwrap(await updateAction(supa, user, body));
       if (a === "photo-upload-url") return unwrap(await photoUploadUrl(supa, user, body));
       return respond(400, { error: `Unknown action: ${a}` });
     }

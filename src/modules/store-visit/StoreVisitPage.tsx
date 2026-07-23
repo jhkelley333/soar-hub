@@ -13,6 +13,7 @@ import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
   fetchVisitStores, fetchToday, fetchActions, startVisit, saveWalk, submitVisit, uploadVisitPhoto,
+  createReview, createAction, updateAction,
   type ChecklistItem, type Gap, type PhotoRec, type StartVisitResponse, type WalkStatus,
 } from "./api";
 import { enqueue, listQueue, removeQueued, clearQueueFor, saveActive, loadActive, clearActive } from "./visitStore";
@@ -166,8 +167,8 @@ export function StoreVisitPage() {
         {screen === "today" && <TodayScreen q={todayQ} onStart={() => start.mutate()} starting={start.isPending} hasVisit={!!visit} onResume={() => setScreen("walk")} />}
         {screen === "walk" && <WalkScreen visit={visit} results={results} patchResult={patchResult} onReview={() => setScreen("summary")} />}
         {screen === "summary" && <SummaryScreen visitId={visit?.visit_id ?? null} canPrivate={canPrivate} onBack={() => setScreen("walk")} onSubmit={trySubmit} submitting={submit.isPending} />}
-        {screen === "actions" && <ActionsScreen actions={actionsQ.data?.actions ?? []} loading={actionsQ.isLoading} />}
-        {screen === "store" && <StoreScreen store={store} openActions={todayQ.data?.open_actions ?? 0} lastVisitAt={todayQ.data?.last_visit_at ?? null} />}
+        {screen === "actions" && <ActionsScreen storeId={storeId} actions={actionsQ.data?.actions ?? []} loading={actionsQ.isLoading} />}
+        {screen === "store" && <StoreScreen store={store} storeId={storeId} canPush={PRIVATE_ROLES.has(role)} openActions={todayQ.data?.open_actions ?? 0} lastVisitAt={todayQ.data?.last_visit_at ?? null} />}
       </div>
 
       {/* Bottom tab bar */}
@@ -388,32 +389,81 @@ function SummaryScreen({ visitId, canPrivate, onBack, onSubmit, submitting }: {
 }
 
 // ── Actions ──────────────────────────────────────────────────────────
-function ActionsScreen({ actions, loading }: { actions: Awaited<ReturnType<typeof fetchActions>>["actions"]; loading: boolean }) {
-  if (loading) return <Centered><Loader2 className="h-6 w-6 animate-spin text-zinc-400" /></Centered>;
-  if (!actions.length) return <Centered><span className="text-sm text-zinc-500">No open action items.</span></Centered>;
+function ActionsScreen({ storeId, actions, loading }: { storeId: string | null; actions: Awaited<ReturnType<typeof fetchActions>>["actions"]; loading: boolean }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [text, setText] = useState("");
+  const [priority, setPriority] = useState<"high" | "med" | "low">("med");
+  const invalidate = () => { qc.invalidateQueries({ queryKey: ["visit-actions", storeId] }); qc.invalidateQueries({ queryKey: ["visit-today", storeId] }); };
+  const add = useMutation({
+    mutationFn: () => createAction({ store_id: storeId!, text: text.trim(), priority }),
+    onSuccess: () => { setText(""); setPriority("med"); invalidate(); },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't add.", "error"),
+  });
+  const upd = useMutation({
+    mutationFn: (v: { id: string; status: "resolved" }) => updateAction(v),
+    onSuccess: invalidate,
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't update.", "error"),
+  });
   const tone = (p: string) => (p === "high" ? DANGER : p === "low" ? "#6b7280" : WARN);
+
   return (
     <div className="space-y-2">
-      {actions.map((a) => (
-        <div key={a.id} className="rounded-2xl bg-white p-3 shadow-sm">
-          <div className="flex items-start justify-between gap-2">
-            <span className="text-sm text-zinc-800">{a.text}</span>
-            <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase text-white" style={{ background: tone(a.priority) }}>{a.priority}</span>
+      {/* Add action */}
+      <div className="rounded-2xl bg-white p-3 shadow-sm">
+        <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-zinc-400">New action item</div>
+        <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} placeholder="What needs to happen…"
+          className="w-full rounded-lg border border-zinc-200 px-2.5 py-1.5 text-sm focus:border-[#0b3b66] focus:outline-none" />
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <div className="flex overflow-hidden rounded-lg ring-1 ring-inset ring-zinc-200">
+            {(["high", "med", "low"] as const).map((p) => (
+              <button key={p} type="button" onClick={() => setPriority(p)}
+                className="px-2.5 py-1 text-xs font-bold" style={{ background: priority === p ? tone(p) : "white", color: priority === p ? "white" : "#6b7280" }}>
+                {p}
+              </button>
+            ))}
           </div>
-          <div className="mt-1 text-[11px] text-zinc-400">
-            {a.owner ? `${a.owner} · ` : ""}{a.due ? `due ${a.due} · ` : ""}{a.status}
-          </div>
+          <button type="button" onClick={() => text.trim() && storeId && add.mutate()} disabled={!text.trim() || add.isPending}
+            className="ml-auto rounded-lg px-3 py-1.5 text-xs font-bold text-white disabled:opacity-40" style={{ background: NAVY, minHeight: 44 }}>
+            {add.isPending ? "Adding…" : "Add"}
+          </button>
         </div>
-      ))}
+      </div>
+
+      {loading ? <Centered><Loader2 className="h-6 w-6 animate-spin text-zinc-400" /></Centered>
+        : actions.length === 0 ? <div className="rounded-2xl bg-white p-4 text-center text-sm text-zinc-400 shadow-sm">No open action items.</div>
+        : actions.map((a) => (
+          <div key={a.id} className="rounded-2xl bg-white p-3 shadow-sm">
+            <div className="flex items-start justify-between gap-2">
+              <span className="text-sm text-zinc-800">{a.text}</span>
+              <span className="shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase text-white" style={{ background: tone(a.priority) }}>{a.priority}</span>
+            </div>
+            <div className="mt-1 flex items-center justify-between">
+              <span className="text-[11px] text-zinc-400">{a.owner ? `${a.owner} · ` : ""}{a.due ? `due ${a.due} · ` : ""}{a.status}</span>
+              <button type="button" onClick={() => upd.mutate({ id: a.id, status: "resolved" })} disabled={upd.isPending}
+                className="rounded-md px-2 py-1 text-[11px] font-bold" style={{ color: OK }}>
+                Resolve
+              </button>
+            </div>
+          </div>
+        ))}
     </div>
   );
 }
 
 // ── Store ────────────────────────────────────────────────────────────
-function StoreScreen({ store, openActions, lastVisitAt }: {
+function StoreScreen({ store, storeId, canPush, openActions, lastVisitAt }: {
   store: { number: string; name: string; city: string | null; state: string | null; address: string | null } | null;
-  openActions: number; lastVisitAt: string | null;
+  storeId: string | null; canPush: boolean; openActions: number; lastVisitAt: string | null;
 }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [flag, setFlag] = useState("");
+  const push = useMutation({
+    mutationFn: () => createReview({ store_id: storeId!, text: flag.trim() }),
+    onSuccess: () => { setFlag(""); toast.push("Flagged for the next visit.", "success"); qc.invalidateQueries({ queryKey: ["visit-today", storeId] }); },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't flag.", "error"),
+  });
   if (!store) return <Centered><Loader2 className="h-6 w-6 animate-spin text-zinc-400" /></Centered>;
   return (
     <div className="space-y-3">
@@ -426,6 +476,20 @@ function StoreScreen({ store, openActions, lastVisitAt }: {
         <Stat label="Open actions" value={String(openActions)} />
         <Stat label="Last visit" value={lastVisitAt ? new Date(lastVisitAt).toLocaleDateString() : "—"} />
       </div>
+
+      {canPush && (
+        <div className="rounded-2xl bg-white p-3 shadow-sm">
+          <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-zinc-400">Flag for next visit</div>
+          <div className="text-[11px] text-zinc-400">Pushes a review request onto the next visitor's Today screen.</div>
+          <textarea value={flag} onChange={(e) => setFlag(e.target.value)} rows={2} placeholder="e.g. Check walk-in temps and the DT timer setup."
+            className="mt-2 w-full rounded-lg border border-zinc-200 px-2.5 py-1.5 text-sm focus:border-[#0b3b66] focus:outline-none" />
+          <button type="button" onClick={() => flag.trim() && storeId && push.mutate()} disabled={!flag.trim() || push.isPending}
+            className="mt-1.5 w-full rounded-lg py-2.5 text-sm font-bold text-white disabled:opacity-40" style={{ background: NAVY, minHeight: 44 }}>
+            {push.isPending ? "Flagging…" : "Push review request"}
+          </button>
+        </div>
+      )}
+
       <div className="rounded-2xl bg-white p-4 text-center text-sm text-zinc-400 shadow-sm">
         Visit history &amp; trend — coming in the next build.
       </div>
