@@ -42,7 +42,22 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
+export interface HistoryVisit {
+  id: string;
+  visitor: string | null;
+  role: string | null;
+  submitted_at: string;
+  walk_score: number | null;
+  trend: "up" | "down" | "flat" | null;
+  delta: number | null;
+  summary: string | null;
+  has_private_note: boolean;
+  private_note: string | null;
+  actions: number;
+}
+
 export const fetchVisitStores = () => req<{ stores: VisitStore[] }>(`${FN}?action=stores`);
+export const fetchVisitHistory = (storeId: string) => req<{ visits: HistoryVisit[] }>(`${FN}?action=history&store_id=${encodeURIComponent(storeId)}`);
 export const fetchToday = (storeId: string) => req<TodayResponse>(`${FN}?action=today&store_id=${encodeURIComponent(storeId)}`);
 export const fetchActions = (storeId: string) => req<{ actions: ActionItem[] }>(`${FN}?action=actions&store_id=${encodeURIComponent(storeId)}`);
 export const startVisit = (storeId: string) => req<StartVisitResponse>(`${FN}`, { method: "POST", body: JSON.stringify({ action: "visit-start", store_id: storeId }) });
