@@ -626,6 +626,86 @@ async function missTracker(supa, user, params) {
   return { week, threshold, rows: out };
 }
 
+// ── Per-RVP labor scorecard ──────────────────────────────────────────
+// Each region's WTD Hours Over Chart, credit-adjusted, averaged over the last
+// N completed fiscal weeks (default 4). "Hours over chart per store" is the
+// same Hrs/Unit metric the region cards show (positive store overages ÷ every
+// store); "region total" sums the positive store overages. Compares every RVP
+// in the caller's scope — a cross-region leadership view (VP / COO / admin see
+// all five; an RVP sees only their own region).
+const SCORECARD_ROLES = new Set(["rvp", "vp", "coo", "admin"]);
+async function rvpScorecard(supa, user, params) {
+  if (!SCORECARD_ROLES.has(roleOf(user))) return { error: "not authorized", status: 403 };
+  const weeksBack = Math.min(Math.max(Math.round(Number(params.weeks) || 4), 1), 12);
+
+  const visible = await resolveVisibleStoreRows(supa, user);
+  if (!visible.length) return { anchor: null, weeks: [], rvps: [] };
+  const numbers = [...new Set(visible.map((s) => String(s.number)))];
+
+  const { data: latest } = await supa.from("labor_v2_daily")
+    .select("business_date").order("business_date", { ascending: false }).limit(1);
+  const anchor = latest?.[0]?.business_date ?? null;
+  if (!anchor) return { anchor: null, weeks: [], rvps: [] };
+
+  // Anchor the series to the most recent CLOSED fiscal week, then walk back in
+  // 7-day steps (fiscal weeks are contiguous 7-day blocks, so this stays aligned).
+  const aw = fiscalForDate(anchor);
+  const endIso = aw
+    ? (aw.weekEnd <= anchor ? aw.weekEnd : isoOf(shiftDays(parseIso(aw.weekStart), -1)))
+    : anchor;
+  const weekEnds = Array.from({ length: weeksBack }, (_, i) => isoOf(shiftDays(parseIso(endIso), -7 * i)));
+
+  const orgMap = await resolveOrg(supa, numbers);
+  const credits = await loadLaborCredits(supa, numbers);
+
+  // Each week's closing (Sunday) rows carry that week's full WTD; credit-adjust,
+  // then aggregate by region exactly as the team rollup does.
+  const perWeek = await Promise.all(weekEnds.map((weekEnd) =>
+    supa.from("labor_v2_daily").select("*").eq("business_date", weekEnd).in("store_number", numbers)
+      .then(({ data }) => {
+        const rows = data || [];
+        applyCreditsToRows(rows, credits);
+        return { weekEnd, rows };
+      })));
+
+  const regions = new Map(); // region name -> { region, rvpName, weekly: Map }
+  for (const { weekEnd, rows } of perWeek) {
+    const byRegion = new Map();
+    for (const r of rows) {
+      const org = orgMap.get(String(r.store_number));
+      const region = org?.region || "Unassigned";
+      if (!byRegion.has(region)) byRegion.set(region, { rvpName: org?.rvpName ?? null, rows: [] });
+      byRegion.get(region).rows.push(r);
+    }
+    for (const [region, grp] of byRegion) {
+      if (!regions.has(region)) regions.set(region, { region, rvpName: grp.rvpName, weekly: new Map() });
+      const reg = regions.get(region);
+      if (grp.rvpName && !reg.rvpName) reg.rvpName = grp.rvpName;
+      const perStore = hoursPerUnit(grp.rows, "wtd_");
+      const total = round2(grp.rows.reduce((a, r) => { const h = storeHoursOver(r, "wtd_"); return a + (h && h > 0 ? h : 0); }, 0));
+      reg.weekly.set(weekEnd, { perStore, total, stores: grp.rows.length });
+    }
+  }
+
+  const avg = (a) => (a.length ? round2(a.reduce((x, y) => x + y, 0) / a.length) : null);
+  const rvps = [...regions.values()].map((reg) => {
+    const weekly = weekEnds.map((wk) => ({ weekEnd: wk, ...(reg.weekly.get(wk) || { perStore: null, total: null, stores: 0 }) }));
+    const perStoreVals = weekly.map((w) => w.perStore).filter((v) => v != null);
+    const totalVals = weekly.map((w) => w.total).filter((v) => v != null);
+    return {
+      region: reg.region,
+      rvp_name: reg.rvpName,
+      stores: weekly.reduce((m, w) => Math.max(m, w.stores), 0),
+      weeks_with_data: perStoreVals.length,
+      avg_hours_over_per_store: avg(perStoreVals),
+      avg_hours_over_total: avg(totalVals),
+      weekly,
+    };
+  }).sort((a, b) => (b.avg_hours_over_per_store ?? -Infinity) - (a.avg_hours_over_per_store ?? -Infinity));
+
+  return { anchor, weeks: weekEnds, rvps };
+}
+
 // ── No-GM labor credit management (SDO and above) ────────────────────
 // A store without a GM gets a weekly labor credit (default 880.00, in
 // ea_settings.no_gm_weekly_credit). SDO+ tag a store with a reason —
@@ -1446,6 +1526,7 @@ export const handler = async (event) => {
     // GM-facing reads — scope enforced per store in the function.
     if (action === "gm") return unwrap(await gmView(supa, user, params));
     if (action === "team") return unwrap(await teamView(supa, user, params));
+    if (action === "rvp-scorecard") return unwrap(await rvpScorecard(supa, user, params));
     if (action === "miss-tracker") return unwrap(await missTracker(supa, user, params));
     if (action === "my-stores") return unwrap(await listMyStores(supa, user));
     if (action === "no-gm-list") return unwrap(await noGmList(supa, user));
