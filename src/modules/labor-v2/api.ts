@@ -217,7 +217,8 @@ export interface GmSupportCreditRow {
   id: string;
   store_number: string;
   store_name: string | null;
-  weekly_hours: number;
+  weekly_hours: number | null;   // set when basis = hours
+  buffer_pct: number | null;     // set when basis = % buffer off labor
   start_date: string;
   end_date: string | null;
   note: string | null;
@@ -225,17 +226,22 @@ export interface GmSupportCreditRow {
   created_at: string;
   active: boolean;
 }
+// One of weekly_hours (basis "hours") or buffer_pct (basis "buffer").
+export interface GmSupportInput {
+  basis: "hours" | "buffer";
+  weekly_hours?: number;
+  buffer_pct?: number;
+  start_date: string;
+  end_date?: string | null;
+  note?: string;
+}
 export function fetchGmSupportCredits(): Promise<{ rows: GmSupportCreditRow[] }> {
   return req(`${FN}?action=gm-support-list`);
 }
-export function addGmSupportCredit(input: {
-  store_number: string; weekly_hours: number; start_date: string; end_date?: string | null; note?: string;
-}): Promise<{ row: GmSupportCreditRow }> {
+export function addGmSupportCredit(input: GmSupportInput & { store_number: string }): Promise<{ row: GmSupportCreditRow }> {
   return req(`${FN}?action=gm-support-add`, { method: "POST", body: JSON.stringify(input) });
 }
-export function updateGmSupportCredit(id: string, input: {
-  weekly_hours: number; start_date: string; end_date?: string | null; note?: string;
-}): Promise<{ row: GmSupportCreditRow }> {
+export function updateGmSupportCredit(id: string, input: GmSupportInput): Promise<{ row: GmSupportCreditRow }> {
   return req(`${FN}?action=gm-support-update`, { method: "POST", body: JSON.stringify({ id, ...input }) });
 }
 export function endGmSupportCredit(id: string, endDate: string): Promise<{ ok: true }> {

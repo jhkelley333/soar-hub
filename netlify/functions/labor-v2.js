@@ -1172,14 +1172,28 @@ async function gmSupportList(supa, user) {
   return { rows };
 }
 
+// A GM-support tag is one of two bases: fixed weekly hours OR a % buffer off
+// labor. Exactly one; `basis` disambiguates ("hours" | "buffer").
+function parseGmSupportBasis(body) {
+  const basis = String(body?.basis || (numv(body?.buffer_pct) > 0 && !(numv(body?.weekly_hours) > 0) ? "buffer" : "hours"));
+  if (basis === "buffer") {
+    const bufferPct = round2(numv(body?.buffer_pct));
+    if (!(bufferPct > 0 && bufferPct <= 100)) return { error: "Buffer % must be between 0 and 100." };
+    return { fields: { weekly_hours: null, buffer_pct: bufferPct } };
+  }
+  const weeklyHours = round2(numv(body?.weekly_hours));
+  if (!(weeklyHours > 0 && weeklyHours <= 80)) return { error: "Weekly hours must be between 0 and 80." };
+  return { fields: { weekly_hours: weeklyHours, buffer_pct: null } };
+}
+
 async function gmSupportAdd(supa, user, body) {
   if (roleOf(user) !== "admin") return { error: "Admins only.", status: 403 };
   const storeNumber = String(body?.store_number || "").trim();
-  const weeklyHours = round2(numv(body?.weekly_hours));
   const startDate = String(body?.start_date || "").trim();
   const endDate = body?.end_date ? String(body.end_date).trim() : null;
   const note = String(body?.note ?? "").trim().slice(0, 500) || null;
-  if (!(weeklyHours > 0 && weeklyHours <= 80)) return { error: "Weekly hours must be between 0 and 80.", status: 400 };
+  const basis = parseGmSupportBasis(body);
+  if (basis.error) return { error: basis.error, status: 400 };
   if (!parseIso(startDate)) return { error: "valid start_date is required.", status: 400 };
   if (endDate && (!parseIso(endDate) || endDate < startDate)) return { error: "end_date must be on/after start_date.", status: 400 };
 
@@ -1194,7 +1208,7 @@ async function gmSupportAdd(supa, user, body) {
   }
 
   const { data, error } = await supa.from("gm_support_hours_credits").insert({
-    store_number: storeNumber, weekly_hours: weeklyHours, start_date: startDate, end_date: endDate, note,
+    store_number: storeNumber, ...basis.fields, start_date: startDate, end_date: endDate, note,
     created_by_id: user.id, created_by_email: user.email,
   }).select("*").single();
   if (error) {
@@ -1209,11 +1223,11 @@ async function gmSupportUpdate(supa, user, body) {
   if (roleOf(user) !== "admin") return { error: "Admins only.", status: 403 };
   const id = String(body?.id || "").trim();
   if (!id) return { error: "id is required.", status: 400 };
-  const weeklyHours = round2(numv(body?.weekly_hours));
   const startDate = String(body?.start_date || "").trim();
   const endDate = body?.end_date ? String(body.end_date).trim() : null;
   const note = String(body?.note ?? "").trim().slice(0, 500) || null;
-  if (!(weeklyHours > 0 && weeklyHours <= 80)) return { error: "Weekly hours must be between 0 and 80.", status: 400 };
+  const basis = parseGmSupportBasis(body);
+  if (basis.error) return { error: basis.error, status: 400 };
   if (!parseIso(startDate)) return { error: "valid start_date is required.", status: 400 };
   if (endDate && (!parseIso(endDate) || endDate < startDate)) return { error: "end_date must be on/after start_date.", status: 400 };
 
@@ -1231,7 +1245,7 @@ async function gmSupportUpdate(supa, user, body) {
   }
 
   const { data, error } = await supa.from("gm_support_hours_credits")
-    .update({ weekly_hours: weeklyHours, start_date: startDate, end_date: endDate, note, updated_at: new Date().toISOString() })
+    .update({ ...basis.fields, start_date: startDate, end_date: endDate, note, updated_at: new Date().toISOString() })
     .eq("id", id).select("*").single();
   if (error) return { error: error.message, status: 500 };
   return { row: data };
