@@ -66,7 +66,8 @@ export function RvpCommitmentsPage() {
           <p className="text-xs text-zinc-500">
             Labor metrics are this fiscal week to date
             {q.data.week ? <> ({fmtWeek(q.data.week.start)}–{fmtWeek(q.data.week.end)})</> : null}.
-            COGS Efficiency is the latest weekly food-cost upload. Click a target to edit.
+            COGS Efficiency is the latest ranking run. <strong>4-wk base</strong> is each metric's
+            last-four-weeks average — click it to seed the target, or click a target to edit.
           </p>
           <div className="space-y-4">
             {q.data.rows.map((row) => <RvpCard key={row.region} row={row} />)}
@@ -99,6 +100,7 @@ function MetricRow({ row, m }: { row: RvpCommitmentRow; m: MetricDef }) {
   const qc = useQueryClient();
   const actual = row.actuals[m.key];
   const target = row.targets[m.key];
+  const baseline = row.baselines[m.key];
   const status = track(actual, target, m.dir);
   const st = TRACK_STYLE[status];
 
@@ -125,6 +127,21 @@ function MetricRow({ row, m }: { row: RvpCommitmentRow; m: MetricDef }) {
           <span className="text-[10px] font-normal uppercase tracking-wide text-zinc-400">{m.grain}</span>
         </div>
         <div className="mt-0.5 text-[11px] text-zinc-400">{m.hint}</div>
+      </div>
+
+      {/* 4-week baseline */}
+      <div className="w-24 text-right">
+        <div className="text-[10px] uppercase tracking-wide text-zinc-400">4-wk base</div>
+        {baseline == null ? (
+          <div className="text-sm tabular-nums text-zinc-400">—</div>
+        ) : (
+          <button
+            title="Use as target"
+            onClick={() => { setVal(String(baseline)); setEditing(true); }}
+            className="text-sm font-medium tabular-nums text-zinc-600 underline decoration-dotted underline-offset-2 hover:text-accent-700">
+            {fmtVal(baseline, m)}
+          </button>
+        )}
       </div>
 
       {/* Actual */}
