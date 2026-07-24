@@ -105,6 +105,7 @@ export interface RvpCommitmentRow {
   rvp_name: string | null;
   stores: number;
   actuals: Record<CommitMetric, number | null>;
+  baselines: Record<CommitMetric, number | null>; // last-4-weeks average
   cogs_week: string | null;
   targets: Record<CommitMetric, number | null>;
 }

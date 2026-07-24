@@ -714,21 +714,71 @@ async function rvpScorecard(supa, user, params) {
 const COMMIT_ROLES = new Set(["rvp", "vp", "coo", "admin"]);
 const COMMIT_METRICS = new Set(["labor_hours_over", "labor_avs_pct", "cogs_efficiency"]);
 
-// Latest IX file's per-RVP COGS efficiency %, read straight from the stored
-// rows (level='rvp'). Returns Map(rvpName -> { cogs_pct, week }).
-async function latestCogsByRvp(supa) {
-  const out = new Map();
-  const { data: files } = await supa.from("ix_files")
-    .select("id, week_ending, uploaded_at").order("uploaded_at", { ascending: false }).limit(1);
-  const file = files?.[0];
-  if (!file) return out;
-  const { data: rows } = await supa.from("ranking_src_rows").select("payload").eq("file_id", file.id).limit(2000);
-  for (const { payload: p } of rows || []) {
-    if (p?.level === "rvp" && p.leader && p.cogs_eff != null) {
-      out.set(String(p.leader), { cogs_pct: round2(Number(p.cogs_eff) * 100), week: file.week_ending });
-    }
+// Per-RVP COGS efficiency from the ranking board — the same numbers the Ranker
+// shows. Reads the latest complete run's rvp-tier rows (metrics.cogsEff, a
+// fraction) keyed by RVP name (entity_key == resolveOrg rvpName), plus a
+// baseline = average across the last `weeksBack` complete runs (PTD).
+async function cogsByRvpFromRuns(supa, weeksBack = 4) {
+  const empty = { latest: new Map(), baseline: new Map() };
+  const { data: runs } = await supa.from("ranking_runs")
+    .select("id, week_ending").eq("status", "complete")
+    .order("started_at", { ascending: false }).limit(weeksBack);
+  if (!runs?.length) return empty;
+  const latestRunId = runs[0].id;
+  const weekByRun = new Map(runs.map((r) => [r.id, r.week_ending]));
+  const { data: rows } = await supa.from("ranking_rows")
+    .select("run_id, entity_key, metrics")
+    .in("run_id", runs.map((r) => r.id)).eq("scope", "ptd").eq("tier", "rvp");
+  const latest = new Map();
+  const acc = new Map();
+  for (const r of rows || []) {
+    const eff = Number(r.metrics?.cogsEff);
+    if (!isFinite(eff)) continue;
+    const name = String(r.entity_key);
+    const pctv = round2(eff * 100);
+    (acc.get(name) || acc.set(name, []).get(name)).push(pctv);
+    if (r.run_id === latestRunId) latest.set(name, { cogs_pct: pctv, week: weekByRun.get(r.run_id) });
   }
-  return out;
+  const baseline = new Map();
+  for (const [name, arr] of acc) baseline.set(name, round2(arr.reduce((a, b) => a + b, 0) / arr.length));
+  return { latest, baseline };
+}
+
+// 4-week labor baseline per region: avg WTD Hours Over Chart (credit-adjusted)
+// and avg WTD Actual-vs-Scheduled % (raw), over the last N completed fiscal weeks.
+async function laborBaselineByRegion(supa, numbers, orgMap, weeksBack = 4) {
+  const empty = { hours_over: new Map(), avs_pct: new Map() };
+  const { data: latest } = await supa.from("labor_v2_daily")
+    .select("business_date").order("business_date", { ascending: false }).limit(1);
+  const anchor = latest?.[0]?.business_date ?? null;
+  if (!anchor) return empty;
+  const aw = fiscalForDate(anchor);
+  const endIso = aw ? (aw.weekEnd <= anchor ? aw.weekEnd : isoOf(shiftDays(parseIso(aw.weekStart), -1))) : anchor;
+  const weekEnds = Array.from({ length: weeksBack }, (_, i) => isoOf(shiftDays(parseIso(endIso), -7 * i)));
+  const credits = await loadLaborCredits(supa, numbers);
+  const acc = { hours_over: new Map(), avs_pct: new Map() };
+  const push = (m, region, v) => { if (v != null) (m.get(region) || m.set(region, []).get(region)).push(v); };
+  for (const weekEnd of weekEnds) {
+    const { data } = await supa.from("labor_v2_daily").select("*").eq("business_date", weekEnd).in("store_number", numbers);
+    const rows = data || [];
+    const rawByRegion = new Map();
+    for (const r of rows) {
+      const region = orgMap.get(String(r.store_number))?.region || "Unassigned";
+      const a = rawByRegion.get(region) || { actual: 0, sched: 0 };
+      a.actual += numv(r.wtd_labor_hours); a.sched += numv(r.wtd_scheduled_labor_hours);
+      rawByRegion.set(region, a);
+    }
+    for (const [region, a] of rawByRegion) push(acc.avs_pct, region, a.sched ? round2((a.actual / a.sched) * 100) : null);
+    applyCreditsToRows(rows, credits);
+    const byRegion = new Map();
+    for (const r of rows) {
+      const region = orgMap.get(String(r.store_number))?.region || "Unassigned";
+      (byRegion.get(region) || byRegion.set(region, []).get(region)).push(r);
+    }
+    for (const [region, rrows] of byRegion) push(acc.hours_over, region, hoursPerUnit(rrows, "wtd_"));
+  }
+  const avg = (m) => { const r = new Map(); for (const [k, arr] of m) r.set(k, arr.length ? round2(arr.reduce((a, b) => a + b, 0) / arr.length) : null); return r; };
+  return { hours_over: avg(acc.hours_over), avs_pct: avg(acc.avs_pct) };
 }
 
 // The caller's in-scope region names, from their visible stores' org.
@@ -772,7 +822,8 @@ async function rvpCommitments(supa, user) {
     (rowsByRegion.get(region) || rowsByRegion.set(region, []).get(region)).push(r);
   }
 
-  const cogsByRvp = await latestCogsByRvp(supa);
+  const cogs = await cogsByRvpFromRuns(supa);
+  const laborBase = await laborBaselineByRegion(supa, numbers, orgMap);
   const { data: commits } = await supa.from("rvp_commitments").select("*");
   const targetOf = (region, metric) => {
     const c = (commits || []).find((x) => x.region === region && x.metric === metric);
@@ -787,15 +838,20 @@ async function rvpCommitments(supa, user) {
     const rrows = rowsByRegion.get(region) || [];
     const raw = rawByRegion.get(region) || { actual: 0, sched: 0 };
     const rvpName = rvpForRegion(region);
-    const cogs = rvpName ? cogsByRvp.get(String(rvpName)) : null;
+    const cogsLatest = rvpName ? cogs.latest.get(String(rvpName)) : null;
     return {
       region, rvp_name: rvpName, stores: rrows.length,
       actuals: {
         labor_hours_over: hoursPerUnit(rrows, "wtd_"),
         labor_avs_pct: raw.sched ? round2((raw.actual / raw.sched) * 100) : null,
-        cogs_efficiency: cogs?.cogs_pct ?? null,
+        cogs_efficiency: cogsLatest?.cogs_pct ?? null,
       },
-      cogs_week: cogs?.week ?? null,
+      baselines: {
+        labor_hours_over: laborBase.hours_over.get(region) ?? null,
+        labor_avs_pct: laborBase.avs_pct.get(region) ?? null,
+        cogs_efficiency: rvpName ? (cogs.baseline.get(String(rvpName)) ?? null) : null,
+      },
+      cogs_week: cogsLatest?.week ?? null,
       targets: {
         labor_hours_over: targetOf(region, "labor_hours_over"),
         labor_avs_pct: targetOf(region, "labor_avs_pct"),
