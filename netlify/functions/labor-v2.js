@@ -706,6 +706,142 @@ async function rvpScorecard(supa, user, params) {
   return { anchor, weeks: weekEnds, rvps };
 }
 
+// ── RVP Commitments ──────────────────────────────────────────────────
+// Per-region target vs. live actual for three metrics. Labor metrics come from
+// the labor engine (current fiscal week WTD); COGS Efficiency comes from the
+// most recent IX food-cost upload (weekly, per-RVP rows). Targets live in
+// rvp_commitments and are edited by the region's RVP or VP/COO/admin.
+const COMMIT_ROLES = new Set(["rvp", "vp", "coo", "admin"]);
+const COMMIT_METRICS = new Set(["labor_hours_over", "labor_avs_pct", "cogs_efficiency"]);
+
+// Latest IX file's per-RVP COGS efficiency %, read straight from the stored
+// rows (level='rvp'). Returns Map(rvpName -> { cogs_pct, week }).
+async function latestCogsByRvp(supa) {
+  const out = new Map();
+  const { data: files } = await supa.from("ix_files")
+    .select("id, week_ending, uploaded_at").order("uploaded_at", { ascending: false }).limit(1);
+  const file = files?.[0];
+  if (!file) return out;
+  const { data: rows } = await supa.from("ranking_src_rows").select("payload").eq("file_id", file.id).limit(2000);
+  for (const { payload: p } of rows || []) {
+    if (p?.level === "rvp" && p.leader && p.cogs_eff != null) {
+      out.set(String(p.leader), { cogs_pct: round2(Number(p.cogs_eff) * 100), week: file.week_ending });
+    }
+  }
+  return out;
+}
+
+// The caller's in-scope region names, from their visible stores' org.
+async function callerRegions(supa, user) {
+  const visible = await resolveVisibleStoreRows(supa, user);
+  const numbers = [...new Set(visible.map((s) => String(s.number)))];
+  const orgMap = await resolveOrg(supa, numbers);
+  const regions = new Set(numbers.map((n) => orgMap.get(n)?.region).filter(Boolean));
+  return { numbers, orgMap, regions };
+}
+
+async function rvpCommitments(supa, user) {
+  if (!COMMIT_ROLES.has(roleOf(user))) return { error: "not authorized", status: 403 };
+  const { numbers, orgMap, regions } = await callerRegions(supa, user);
+  if (!regions.size) return { anchor: null, week: null, rows: [] };
+
+  const { data: latest } = await supa.from("labor_v2_daily")
+    .select("business_date").order("business_date", { ascending: false }).limit(1);
+  const anchor = latest?.[0]?.business_date ?? null;
+  const fi = anchor ? fiscalForDate(anchor) : null;
+
+  let rows = [];
+  if (anchor) {
+    const { data } = await supa.from("labor_v2_daily").select("*").eq("business_date", anchor).in("store_number", numbers);
+    rows = data || [];
+  }
+  // AvS% is scheduling adherence — compute from RAW WTD hours BEFORE credits.
+  const rawByRegion = new Map();
+  for (const r of rows) {
+    const region = orgMap.get(String(r.store_number))?.region || "Unassigned";
+    const a = rawByRegion.get(region) || { actual: 0, sched: 0 };
+    a.actual += numv(r.wtd_labor_hours);
+    a.sched += numv(r.wtd_scheduled_labor_hours);
+    rawByRegion.set(region, a);
+  }
+  // Hours Over Chart is credit-adjusted, same as everywhere else.
+  applyCreditsToRows(rows, await loadLaborCredits(supa, numbers));
+  const rowsByRegion = new Map();
+  for (const r of rows) {
+    const region = orgMap.get(String(r.store_number))?.region || "Unassigned";
+    (rowsByRegion.get(region) || rowsByRegion.set(region, []).get(region)).push(r);
+  }
+
+  const cogsByRvp = await latestCogsByRvp(supa);
+  const { data: commits } = await supa.from("rvp_commitments").select("*");
+  const targetOf = (region, metric) => {
+    const c = (commits || []).find((x) => x.region === region && x.metric === metric);
+    return c ? Number(c.target_value) : null;
+  };
+  const rvpForRegion = (region) => {
+    for (const n of numbers) { const o = orgMap.get(n); if (o?.region === region && o.rvpName) return o.rvpName; }
+    return null;
+  };
+
+  const out = [...regions].map((region) => {
+    const rrows = rowsByRegion.get(region) || [];
+    const raw = rawByRegion.get(region) || { actual: 0, sched: 0 };
+    const rvpName = rvpForRegion(region);
+    const cogs = rvpName ? cogsByRvp.get(String(rvpName)) : null;
+    return {
+      region, rvp_name: rvpName, stores: rrows.length,
+      actuals: {
+        labor_hours_over: hoursPerUnit(rrows, "wtd_"),
+        labor_avs_pct: raw.sched ? round2((raw.actual / raw.sched) * 100) : null,
+        cogs_efficiency: cogs?.cogs_pct ?? null,
+      },
+      cogs_week: cogs?.week ?? null,
+      targets: {
+        labor_hours_over: targetOf(region, "labor_hours_over"),
+        labor_avs_pct: targetOf(region, "labor_avs_pct"),
+        cogs_efficiency: targetOf(region, "cogs_efficiency"),
+      },
+    };
+  }).sort((a, b) => (a.rvp_name ?? a.region).localeCompare(b.rvp_name ?? b.region));
+
+  return { anchor, week: fi ? { start: fi.weekStart, end: fi.weekEnd } : null, rows: out };
+}
+
+async function rvpCommitmentSet(supa, user, body) {
+  if (!COMMIT_ROLES.has(roleOf(user))) return { error: "not authorized", status: 403 };
+  const region = String(body?.region || "").trim();
+  const metric = String(body?.metric || "").trim();
+  const target = Number(body?.target_value);
+  const note = String(body?.note ?? "").trim().slice(0, 500) || null;
+  if (!region) return { error: "region is required.", status: 400 };
+  if (!COMMIT_METRICS.has(metric)) return { error: "unknown metric.", status: 400 };
+  if (!isFinite(target)) return { error: "target_value must be a number.", status: 400 };
+  const { regions } = await callerRegions(supa, user);
+  if (!regions.has(region)) return { error: `Region ${region} is outside your scope.`, status: 403 };
+
+  const { data, error } = await supa.from("rvp_commitments").upsert({
+    region, metric, target_value: target, note,
+    created_by_id: user.id, created_by_email: user.email, updated_at: new Date().toISOString(),
+  }, { onConflict: "region,metric" }).select("*").single();
+  if (error) {
+    if (/rvp_commitments/.test(error.message)) return { error: "Run migration 0258 first (rvp_commitments table is missing).", status: 500 };
+    return { error: error.message, status: 500 };
+  }
+  return { row: data };
+}
+
+async function rvpCommitmentDelete(supa, user, body) {
+  if (!COMMIT_ROLES.has(roleOf(user))) return { error: "not authorized", status: 403 };
+  const region = String(body?.region || "").trim();
+  const metric = String(body?.metric || "").trim();
+  if (!region || !COMMIT_METRICS.has(metric)) return { error: "region and a valid metric are required.", status: 400 };
+  const { regions } = await callerRegions(supa, user);
+  if (!regions.has(region)) return { error: "That region is outside your scope.", status: 403 };
+  const { error } = await supa.from("rvp_commitments").delete().eq("region", region).eq("metric", metric);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
 // ── No-GM labor credit management (SDO and above) ────────────────────
 // A store without a GM gets a weekly labor credit (default 880.00, in
 // ea_settings.no_gm_weekly_credit). SDO+ tag a store with a reason —
@@ -1518,6 +1654,8 @@ export const handler = async (event) => {
       if (action === "gm-support-update") return unwrap(await gmSupportUpdate(supa, user, body));
       if (action === "gm-support-end") return unwrap(await gmSupportEnd(supa, user, body));
       if (action === "gm-support-delete") return unwrap(await gmSupportDelete(supa, user, body));
+      if (action === "rvp-commitment-set") return unwrap(await rvpCommitmentSet(supa, user, body));
+      if (action === "rvp-commitment-delete") return unwrap(await rvpCommitmentDelete(supa, user, body));
       if (action === "labor-share-mint") return unwrap(await mintLaborShare(supa, user, body));
       if (action === "labor-share-revoke") return unwrap(await revokeLaborShare(supa, user, body));
       return respond(400, { error: `Unknown action: ${action}` });
@@ -1527,6 +1665,7 @@ export const handler = async (event) => {
     if (action === "gm") return unwrap(await gmView(supa, user, params));
     if (action === "team") return unwrap(await teamView(supa, user, params));
     if (action === "rvp-scorecard") return unwrap(await rvpScorecard(supa, user, params));
+    if (action === "rvp-commitments") return unwrap(await rvpCommitments(supa, user));
     if (action === "miss-tracker") return unwrap(await missTracker(supa, user, params));
     if (action === "my-stores") return unwrap(await listMyStores(supa, user));
     if (action === "no-gm-list") return unwrap(await noGmList(supa, user));

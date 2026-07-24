@@ -39,6 +39,7 @@ import { LaborV2Page } from "@/modules/labor-v2/LaborV2Page";
 import { RankingAdminPage } from "@/modules/ranking/RankingAdminPage";
 import { PullLogPage } from "@/modules/labor-v2/PullLogPage";
 import { LaborV2Entry } from "@/modules/labor-v2/LaborV2Entry";
+import { RvpCommitmentsPage } from "@/modules/labor-v2/RvpCommitmentsPage";
 import { QsrHomePage } from "@/modules/qsr/QsrHomePage";
 import { TrainingHubPage } from "@/modules/qsr/TrainingHubPage";
 import { LessonPlayer } from "@/modules/qsr/player/LessonPlayer";
@@ -260,6 +261,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <LaborV2Entry />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "rvp-commitments",
+        element: (
+          <ProtectedRoute requireRoles={["rvp", "vp", "coo", "admin"]}>
+            <RvpCommitmentsPage />
           </ProtectedRoute>
         ),
       },

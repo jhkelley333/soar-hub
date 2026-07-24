@@ -34,6 +34,7 @@ import {
   AlertTriangle,
   MapPinned,
   Trophy,
+  Target,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -87,6 +88,7 @@ export const NAV: NavItem[] = [
   // The legacy sheet-fed Labor (/labor) is archived off the sidebar; its
   // route stays alive for old deep links.
   { to: "/labor-v2",    label: "Labor",       icon: Gauge,           roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  { to: "/rvp-commitments", label: "RVP Commitments", icon: Target,  roles: ["rvp", "vp", "coo", "admin"] },
   // Cash Management — night-close + next-day deposit cycle. Store leaders
   // run it; DO+ act on alerts. Rolled out by role now (the pilot flag was
   // retired once it shipped to all store leaders).
