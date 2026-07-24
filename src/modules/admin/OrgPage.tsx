@@ -51,6 +51,7 @@ const EXPORT_HEADERS = [
   "zip",
   "parent_code",
   "is_active",
+  "gm_name",
 ];
 
 // Flatten the nested tree into a single CSV with a `kind` column, ordered
@@ -115,6 +116,7 @@ function exportTreeCsv(tree: OrgTreeResponse | null) {
             zip: s.zip ?? "",
             parent_code: d.code,
             is_active: s.is_active ? "true" : "false",
+            gm_name: gmNameOf(s),
           });
         }
       }
@@ -139,6 +141,8 @@ const FULL_EXPORT_HEADERS = [
   "is_active",
   // People — joined "Name <email> (Role)" for every leader on the node.
   "leaders",
+  // Store GM name (linked account, else roster name).
+  "gm_name",
   // Store contact / location
   "phone",
   "email",
@@ -174,6 +178,13 @@ const FULL_EXPORT_HEADERS = [
   // Third-party delivery
   "third_party_delivery",
 ];
+
+// The store's GM name: the linked GM account if there is one, else the roster
+// name (so stores without a GM account still export a name).
+function gmNameOf(store: OrgStore): string {
+  const gm = store.managers.find((m) => String(m.role).toLowerCase() === "gm");
+  return (gm?.full_name?.trim() || store.roster_gm || "").trim();
+}
 
 function leadersCell(managers: OrgManager[]): string {
   return managers
@@ -315,6 +326,7 @@ function exportFullCsv(tree: OrgTreeResponse | null) {
             parent_code: d.code,
             is_active: bool(s.is_active),
             leaders: leadersCell(s.managers),
+            gm_name: gmNameOf(s),
             ...storeFields(s),
           });
         }
