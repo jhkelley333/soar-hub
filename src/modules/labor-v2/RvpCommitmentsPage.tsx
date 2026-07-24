@@ -93,7 +93,6 @@ export function RvpCommitmentsPage() {
   const q = useQuery({ queryKey: ["rvp-commitments"], queryFn: fetchRvpCommitments });
 
   const hidden = q.data?.hidden_metrics ?? [];
-  const visibleMetrics = METRICS.filter((m) => !hidden.includes(m.key));
 
   const setBuckets = useMutation({
     mutationFn: (next: CommitMetric[]) => setRvpCommitmentBuckets(next),
@@ -126,8 +125,8 @@ export function RvpCommitmentsPage() {
               {q.data.tracking.end ? <> through {fmtWeek(q.data.tracking.end)}</> : null}; each week fills in with an up/down ticker as it closes.
             </p>
             {canEditBuckets && (
-              <div className="flex flex-wrap items-center gap-1.5">
-                <span className="text-[10px] uppercase tracking-wide text-zinc-400">Buckets</span>
+              <div className="flex flex-wrap items-center gap-1.5" title="Default buckets — applies to any RVP you haven't customized below.">
+                <span className="text-[10px] uppercase tracking-wide text-zinc-400">Default buckets</span>
                 {METRICS.map((m) => {
                   const on = !hidden.includes(m.key);
                   return (
@@ -151,20 +150,30 @@ export function RvpCommitmentsPage() {
               </div>
             </div>
           )}
-          {visibleMetrics.length === 0 ? (
-            <EmptyState title="All buckets hidden" description="Turn a bucket back on above to track it." />
-          ) : (
-            <div className="space-y-4">
-              {q.data.rows.map((row) => <RvpCard key={row.region} row={row} metrics={visibleMetrics} />)}
-            </div>
-          )}
+          <div className="space-y-4">
+            {q.data.rows.map((row) => <RvpCard key={row.region} row={row} canEdit={canEditBuckets} />)}
+          </div>
         </>
       )}
     </div>
   );
 }
 
-function RvpCard({ row, metrics }: { row: RvpCommitmentRow; metrics: MetricDef[] }) {
+function RvpCard({ row, canEdit }: { row: RvpCommitmentRow; canEdit: boolean }) {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const [editBuckets, setEditBuckets] = useState(false);
+  const hidden = row.hidden_metrics ?? [];
+  const metrics = METRICS.filter((m) => !hidden.includes(m.key));
+
+  const setBuckets = useMutation({
+    mutationFn: (next: CommitMetric[]) => setRvpCommitmentBuckets(next, row.region),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["rvp-commitments"] }),
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't update buckets.", "error"),
+  });
+  const toggle = (key: CommitMetric) =>
+    setBuckets.mutate(hidden.includes(key) ? hidden.filter((h) => h !== key) : [...hidden, key]);
+
   return (
     <div className="rounded-xl bg-white ring-1 ring-zinc-200">
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-zinc-100 px-4 py-3">
@@ -172,10 +181,36 @@ function RvpCard({ row, metrics }: { row: RvpCommitmentRow; metrics: MetricDef[]
           <div className="text-sm font-semibold text-midnight">{row.rvp_name ?? "Unassigned RVP"}</div>
           <div className="text-xs text-zinc-400">{row.region} · {row.stores} store{row.stores === 1 ? "" : "s"}</div>
         </div>
-        {row.cogs_week && <div className="text-[11px] text-zinc-400">COGS wk {fmtWeek(row.cogs_week)}</div>}
+        <div className="flex items-center gap-2">
+          {row.cogs_week && <div className="text-[11px] text-zinc-400">COGS wk {fmtWeek(row.cogs_week)}</div>}
+          {canEdit && (
+            <button onClick={() => setEditBuckets((v) => !v)}
+              className={cn("rounded-md px-2 py-0.5 text-[11px] font-medium ring-1 transition",
+                editBuckets ? "bg-accent-50 text-accent-700 ring-accent-200" : "text-zinc-500 ring-zinc-200 hover:bg-zinc-50")}>
+              Buckets
+            </button>
+          )}
+        </div>
       </div>
+      {canEdit && editBuckets && (
+        <div className="flex flex-wrap items-center gap-1.5 border-b border-zinc-100 bg-zinc-50/60 px-4 py-2">
+          <span className="text-[10px] uppercase tracking-wide text-zinc-400">Track for this RVP</span>
+          {METRICS.map((m) => {
+            const on = !hidden.includes(m.key);
+            return (
+              <button key={m.key} onClick={() => toggle(m.key)} disabled={setBuckets.isPending}
+                className={cn("rounded-full border px-2 py-0.5 text-[11px] font-medium transition",
+                  on ? "border-accent-200 bg-accent-50 text-accent-700" : "border-zinc-200 bg-white text-zinc-400 line-through")}>
+                {m.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
       <div className="divide-y divide-zinc-100">
-        {metrics.map((m) => <MetricRow key={m.key} row={row} m={m} />)}
+        {metrics.length === 0
+          ? <div className="px-4 py-4 text-xs text-zinc-400">No buckets selected for this RVP.</div>
+          : metrics.map((m) => <MetricRow key={m.key} row={row} m={m} />)}
       </div>
       {row.dollars.total_annual != null && (
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-zinc-100 bg-zinc-50/60 px-4 py-2.5">

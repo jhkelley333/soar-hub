@@ -114,6 +114,7 @@ export interface RvpCommitmentRow {
   baselines: Record<CommitMetric, number | null>; // last-4-weeks average
   weekly: Record<CommitMetric, RvpCommitWeek[]>;   // per tracked week
   dollars: CommitDollars;                          // $ to bottom line if gap closes
+  hidden_metrics: CommitMetric[];                  // buckets hidden for THIS rvp
   cogs_week: string | null;
   targets: Record<CommitMetric, number | null>;
 }
@@ -128,8 +129,9 @@ export interface RvpCommitmentsResponse {
 export function fetchRvpCommitments(): Promise<RvpCommitmentsResponse> {
   return req(`${FN}?action=rvp-commitments`);
 }
-export function setRvpCommitmentBuckets(hidden: CommitMetric[]): Promise<{ ok: true; hidden: CommitMetric[] }> {
-  return req(`${FN}?action=rvp-commitment-buckets-set`, { method: "POST", body: JSON.stringify({ hidden }) });
+// Omit region to set the global default; pass a region to set that RVP's override.
+export function setRvpCommitmentBuckets(hidden: CommitMetric[], region?: string): Promise<{ ok: true; hidden: CommitMetric[] }> {
+  return req(`${FN}?action=rvp-commitment-buckets-set`, { method: "POST", body: JSON.stringify({ hidden, region }) });
 }
 export function setRvpCommitment(input: { region: string; metric: CommitMetric; target_value: number; note?: string }): Promise<{ row: unknown }> {
   return req(`${FN}?action=rvp-commitment-set`, { method: "POST", body: JSON.stringify(input) });

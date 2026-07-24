@@ -831,11 +831,20 @@ async function trackingWindow(supa) {
   return weekEnds;
 }
 
-async function hiddenMetrics(supa) {
+// Bucket visibility: a global default plus per-region overrides. A region uses
+// its own list if it has one, else the global default. Stored in one setting.
+async function bucketSettings(supa) {
   const { data: row } = await supa.from("ea_settings").select("value").eq("key", "rvp_commitment_hidden_metrics").maybeSingle();
-  const hidden = row?.value?.hidden;
-  return Array.isArray(hidden) ? hidden.filter((m) => COMMIT_METRICS.has(m)) : [];
+  const v = row?.value || {};
+  const clean = (a) => (Array.isArray(a) ? a.filter((m) => COMMIT_METRICS.has(m)) : []);
+  const byRegion = {};
+  if (v.byRegion && typeof v.byRegion === "object") {
+    for (const [rg, arr] of Object.entries(v.byRegion)) byRegion[rg] = clean(arr);
+  }
+  return { global: clean(v.hidden), byRegion };
 }
+const effectiveHidden = (buckets, region) =>
+  Object.prototype.hasOwnProperty.call(buckets.byRegion, region) ? buckets.byRegion[region] : buckets.global;
 
 // The caller's in-scope region names, from their visible stores' org.
 async function callerRegions(supa, user) {
@@ -885,11 +894,11 @@ async function rvpCommitments(supa, user) {
   const allWeekEnds = [...new Set([...baseWeekEnds, ...trackWeekEnds])];
 
   const credits = await loadLaborCredits(supa, numbers);
-  const [cogs, laborWk, cogsWk, hidden] = await Promise.all([
+  const [cogs, laborWk, cogsWk, buckets] = await Promise.all([
     cogsByRvpFromRuns(supa),
     laborWeeklyByRegion(supa, numbers, orgMap, allWeekEnds, credits),
     cogsWeeklyByRvp(supa, trackWeekEnds),
-    hiddenMetrics(supa),
+    bucketSettings(supa),
   ]);
   const { data: commits } = await supa.from("rvp_commitments").select("*");
   const targetOf = (region, metric) => {
@@ -900,12 +909,17 @@ async function rvpCommitments(supa, user) {
     for (const n of numbers) { const o = orgMap.get(n); if (o?.region === region && o.rvpName) return o.rvpName; }
     return null;
   };
+  // Store count from the org (stable), not just this week's rows.
+  const storeCount = new Map();
+  for (const n of numbers) { const rg = orgMap.get(n)?.region; if (rg) storeCount.set(rg, (storeCount.get(rg) || 0) + 1); }
   const avg = (arr) => (arr.length ? round2(arr.reduce((a, b) => a + b, 0) / arr.length) : null);
   const baseAvg = (region, field) =>
     avg(baseWeekEnds.map((we) => laborWk.get(region)?.get(we)?.[field]).filter((v) => v != null));
 
-  // Skip the "Unassigned" bucket (unmapped stores like 8100).
-  const out = [...regions].filter((r) => r && r !== "Unassigned").map((region) => {
+  // Only real RVP regions: has an assigned RVP and at least one store.
+  const out = [...regions]
+    .filter((r) => r && r !== "Unassigned" && rvpForRegion(r) && (storeCount.get(r) || 0) > 0)
+    .map((region) => {
     const rrows = rowsByRegion.get(region) || [];
     const raw = rawByRegion.get(region) || { actual: 0, sched: 0 };
     const rvpName = rvpForRegion(region);
@@ -913,7 +927,8 @@ async function rvpCommitments(supa, user) {
     const laborSeries = (field) => trackWeekEnds.map((we) => ({ weekEnd: we, value: laborWk.get(region)?.get(we)?.[field] ?? null }));
     const cogsSeries = () => trackWeekEnds.map((we) => ({ weekEnd: we, value: (rvpName ? cogsWk.get(String(rvpName))?.get(we) : null) ?? null }));
     return {
-      region, rvp_name: rvpName, stores: rrows.length,
+      region, rvp_name: rvpName, stores: storeCount.get(region) ?? rrows.length,
+      hidden_metrics: effectiveHidden(buckets, region),
       actuals: {
         labor_hours_over: hoursPerUnit(rrows, "wtd_"),
         labor_avs_pct: raw.sched ? round2((raw.actual / raw.sched) * 100) : null,
@@ -952,22 +967,34 @@ async function rvpCommitments(supa, user) {
     anchor,
     week: fi ? { start: fi.weekStart, end: fi.weekEnd } : null,
     tracking: { week_ends: trackWeekEnds, end: trackWeekEnds[trackWeekEnds.length - 1] ?? null },
-    hidden_metrics: hidden,
+    hidden_metrics: buckets.global,
     totals,
     rows: out,
   };
 }
 
-// Set which metric buckets are hidden org-wide (VP/COO/admin).
+// Set which metric buckets are hidden. With `region`, sets that RVP's override;
+// without, sets the global default. VP/COO/admin only.
 async function rvpCommitmentBucketsSet(supa, user, body) {
   if (!new Set(["vp", "coo", "admin"]).has(roleOf(user))) return { error: "VP and above only.", status: 403 };
   const hidden = Array.isArray(body?.hidden) ? [...new Set(body.hidden.filter((m) => COMMIT_METRICS.has(m)))] : [];
+  const region = body?.region ? String(body.region).trim() : null;
+  const buckets = await bucketSettings(supa);
+  const value = { hidden: buckets.global, byRegion: { ...buckets.byRegion } };
+  if (region) {
+    // Scope check: caller must see the region.
+    const { regions } = await callerRegions(supa, user);
+    if (!regions.has(region)) return { error: `Region ${region} is outside your scope.`, status: 403 };
+    value.byRegion[region] = hidden;
+  } else {
+    value.hidden = hidden;
+  }
   const { error } = await supa.from("ea_settings").upsert(
-    { key: "rvp_commitment_hidden_metrics", value: { hidden }, updated_by: user.id, updated_at: new Date().toISOString() },
+    { key: "rvp_commitment_hidden_metrics", value, updated_by: user.id, updated_at: new Date().toISOString() },
     { onConflict: "key" },
   );
   if (error) return { error: error.message, status: 500 };
-  return { ok: true, hidden };
+  return { ok: true, hidden, region };
 }
 
 async function rvpCommitmentSet(supa, user, body) {
