@@ -744,20 +744,12 @@ async function cogsByRvpFromRuns(supa, weeksBack = 4) {
   return { latest, baseline };
 }
 
-// 4-week labor baseline per region: avg WTD Hours Over Chart (credit-adjusted)
-// and avg WTD Actual-vs-Scheduled % (raw), over the last N completed fiscal weeks.
-async function laborBaselineByRegion(supa, numbers, orgMap, weeksBack = 4) {
-  const empty = { hours_over: new Map(), avs_pct: new Map() };
-  const { data: latest } = await supa.from("labor_v2_daily")
-    .select("business_date").order("business_date", { ascending: false }).limit(1);
-  const anchor = latest?.[0]?.business_date ?? null;
-  if (!anchor) return empty;
-  const aw = fiscalForDate(anchor);
-  const endIso = aw ? (aw.weekEnd <= anchor ? aw.weekEnd : isoOf(shiftDays(parseIso(aw.weekStart), -1))) : anchor;
-  const weekEnds = Array.from({ length: weeksBack }, (_, i) => isoOf(shiftDays(parseIso(endIso), -7 * i)));
-  const credits = await loadLaborCredits(supa, numbers);
-  const acc = { hours_over: new Map(), avs_pct: new Map() };
-  const push = (m, region, v) => { if (v != null) (m.get(region) || m.set(region, []).get(region)).push(v); };
+// Per-region labor values for a list of fiscal week-ending dates. Returns
+// Map(region -> Map(weekEnd -> { hours_over, avs_pct })). Hours Over Chart is
+// credit-adjusted; AvS % is raw actual/scheduled. Future/empty weeks are simply
+// absent (the caller treats missing as null placeholder).
+async function laborWeeklyByRegion(supa, numbers, orgMap, weekEnds, credits) {
+  const out = new Map();
   for (const weekEnd of weekEnds) {
     const { data } = await supa.from("labor_v2_daily").select("*").eq("business_date", weekEnd).in("store_number", numbers);
     const rows = data || [];
@@ -768,17 +760,69 @@ async function laborBaselineByRegion(supa, numbers, orgMap, weeksBack = 4) {
       a.actual += numv(r.wtd_labor_hours); a.sched += numv(r.wtd_scheduled_labor_hours);
       rawByRegion.set(region, a);
     }
-    for (const [region, a] of rawByRegion) push(acc.avs_pct, region, a.sched ? round2((a.actual / a.sched) * 100) : null);
     applyCreditsToRows(rows, credits);
     const byRegion = new Map();
     for (const r of rows) {
       const region = orgMap.get(String(r.store_number))?.region || "Unassigned";
       (byRegion.get(region) || byRegion.set(region, []).get(region)).push(r);
     }
-    for (const [region, rrows] of byRegion) push(acc.hours_over, region, hoursPerUnit(rrows, "wtd_"));
+    for (const region of new Set([...rawByRegion.keys(), ...byRegion.keys()])) {
+      const a = rawByRegion.get(region);
+      const rrows = byRegion.get(region) || [];
+      const wk = {
+        hours_over: rrows.length ? hoursPerUnit(rrows, "wtd_") : null,
+        avs_pct: a && a.sched ? round2((a.actual / a.sched) * 100) : null,
+      };
+      (out.get(region) || out.set(region, new Map()).get(region)).set(weekEnd, wk);
+    }
   }
-  const avg = (m) => { const r = new Map(); for (const [k, arr] of m) r.set(k, arr.length ? round2(arr.reduce((a, b) => a + b, 0) / arr.length) : null); return r; };
-  return { hours_over: avg(acc.hours_over), avs_pct: avg(acc.avs_pct) };
+  return out;
+}
+
+// Per-RVP COGS efficiency % for a list of week-ending dates, from each week's
+// latest complete ranking run. Returns Map(rvpName -> Map(weekEnd -> cogs_pct)).
+async function cogsWeeklyByRvp(supa, weekEnds) {
+  const out = new Map();
+  if (!weekEnds.length) return out;
+  const { data: runs } = await supa.from("ranking_runs")
+    .select("id, week_ending, started_at").eq("status", "complete")
+    .in("week_ending", weekEnds).order("started_at", { ascending: false });
+  const runByWeek = new Map();
+  for (const r of runs || []) if (!runByWeek.has(r.week_ending)) runByWeek.set(r.week_ending, r.id);
+  const runIds = [...runByWeek.values()];
+  if (!runIds.length) return out;
+  const weekByRun = new Map([...runByWeek.entries()].map(([w, id]) => [id, w]));
+  const { data: rows } = await supa.from("ranking_rows")
+    .select("run_id, entity_key, metrics").in("run_id", runIds).eq("scope", "ptd").eq("tier", "rvp");
+  for (const r of rows || []) {
+    const eff = Number(r.metrics?.cogsEff);
+    if (!isFinite(eff)) continue;
+    const name = String(r.entity_key);
+    (out.get(name) || out.set(name, new Map()).get(name)).set(weekByRun.get(r.run_id), round2(eff * 100));
+  }
+  return out;
+}
+
+// The shared 30-day tracking window (4 fiscal weeks). Stored in ea_settings so
+// it stays fixed once set; computed + persisted the first time from today's
+// fiscal week (the next 4 full weeks).
+async function trackingWindow(supa) {
+  const { data: row } = await supa.from("ea_settings").select("value").eq("key", "rvp_commitment_window").maybeSingle();
+  const stored = Array.isArray(row?.value?.week_ends) ? row.value.week_ends : null;
+  if (stored && stored.length) return stored;
+  const wc = wallClockInTz(new Date(), TZ);
+  const todayIso = `${wc.year}-${String(wc.month).padStart(2, "0")}-${String(wc.day).padStart(2, "0")}`;
+  const fi = fiscalForDate(todayIso);
+  if (!fi) return [];
+  const weekEnds = Array.from({ length: 4 }, (_, i) => isoOf(shiftDays(parseIso(fi.weekEnd), 7 * (i + 1))));
+  await supa.from("ea_settings").upsert({ key: "rvp_commitment_window", value: { week_ends: weekEnds } }, { onConflict: "key" });
+  return weekEnds;
+}
+
+async function hiddenMetrics(supa) {
+  const { data: row } = await supa.from("ea_settings").select("value").eq("key", "rvp_commitment_hidden_metrics").maybeSingle();
+  const hidden = row?.value?.hidden;
+  return Array.isArray(hidden) ? hidden.filter((m) => COMMIT_METRICS.has(m)) : [];
 }
 
 // The caller's in-scope region names, from their visible stores' org.
@@ -822,8 +866,19 @@ async function rvpCommitments(supa, user) {
     (rowsByRegion.get(region) || rowsByRegion.set(region, []).get(region)).push(r);
   }
 
-  const cogs = await cogsByRvpFromRuns(supa);
-  const laborBase = await laborBaselineByRegion(supa, numbers, orgMap);
+  // Baseline = last 4 completed fiscal weeks; tracking = the shared 30-day window.
+  const baseEnd = fi ? (fi.weekEnd <= anchor ? fi.weekEnd : isoOf(shiftDays(parseIso(fi.weekStart), -1))) : anchor;
+  const baseWeekEnds = anchor ? Array.from({ length: 4 }, (_, i) => isoOf(shiftDays(parseIso(baseEnd), -7 * i))) : [];
+  const trackWeekEnds = await trackingWindow(supa);
+  const allWeekEnds = [...new Set([...baseWeekEnds, ...trackWeekEnds])];
+
+  const credits = await loadLaborCredits(supa, numbers);
+  const [cogs, laborWk, cogsWk, hidden] = await Promise.all([
+    cogsByRvpFromRuns(supa),
+    laborWeeklyByRegion(supa, numbers, orgMap, allWeekEnds, credits),
+    cogsWeeklyByRvp(supa, trackWeekEnds),
+    hiddenMetrics(supa),
+  ]);
   const { data: commits } = await supa.from("rvp_commitments").select("*");
   const targetOf = (region, metric) => {
     const c = (commits || []).find((x) => x.region === region && x.metric === metric);
@@ -833,12 +888,18 @@ async function rvpCommitments(supa, user) {
     for (const n of numbers) { const o = orgMap.get(n); if (o?.region === region && o.rvpName) return o.rvpName; }
     return null;
   };
+  const avg = (arr) => (arr.length ? round2(arr.reduce((a, b) => a + b, 0) / arr.length) : null);
+  const baseAvg = (region, field) =>
+    avg(baseWeekEnds.map((we) => laborWk.get(region)?.get(we)?.[field]).filter((v) => v != null));
 
-  const out = [...regions].map((region) => {
+  // Skip the "Unassigned" bucket (unmapped stores like 8100).
+  const out = [...regions].filter((r) => r && r !== "Unassigned").map((region) => {
     const rrows = rowsByRegion.get(region) || [];
     const raw = rawByRegion.get(region) || { actual: 0, sched: 0 };
     const rvpName = rvpForRegion(region);
     const cogsLatest = rvpName ? cogs.latest.get(String(rvpName)) : null;
+    const laborSeries = (field) => trackWeekEnds.map((we) => ({ weekEnd: we, value: laborWk.get(region)?.get(we)?.[field] ?? null }));
+    const cogsSeries = () => trackWeekEnds.map((we) => ({ weekEnd: we, value: (rvpName ? cogsWk.get(String(rvpName))?.get(we) : null) ?? null }));
     return {
       region, rvp_name: rvpName, stores: rrows.length,
       actuals: {
@@ -847,9 +908,14 @@ async function rvpCommitments(supa, user) {
         cogs_efficiency: cogsLatest?.cogs_pct ?? null,
       },
       baselines: {
-        labor_hours_over: laborBase.hours_over.get(region) ?? null,
-        labor_avs_pct: laborBase.avs_pct.get(region) ?? null,
+        labor_hours_over: baseAvg(region, "hours_over"),
+        labor_avs_pct: baseAvg(region, "avs_pct"),
         cogs_efficiency: rvpName ? (cogs.baseline.get(String(rvpName)) ?? null) : null,
+      },
+      weekly: {
+        labor_hours_over: laborSeries("hours_over"),
+        labor_avs_pct: laborSeries("avs_pct"),
+        cogs_efficiency: cogsSeries(),
       },
       cogs_week: cogsLatest?.week ?? null,
       targets: {
@@ -860,7 +926,25 @@ async function rvpCommitments(supa, user) {
     };
   }).sort((a, b) => (a.rvp_name ?? a.region).localeCompare(b.rvp_name ?? b.region));
 
-  return { anchor, week: fi ? { start: fi.weekStart, end: fi.weekEnd } : null, rows: out };
+  return {
+    anchor,
+    week: fi ? { start: fi.weekStart, end: fi.weekEnd } : null,
+    tracking: { week_ends: trackWeekEnds, end: trackWeekEnds[trackWeekEnds.length - 1] ?? null },
+    hidden_metrics: hidden,
+    rows: out,
+  };
+}
+
+// Set which metric buckets are hidden org-wide (VP/COO/admin).
+async function rvpCommitmentBucketsSet(supa, user, body) {
+  if (!new Set(["vp", "coo", "admin"]).has(roleOf(user))) return { error: "VP and above only.", status: 403 };
+  const hidden = Array.isArray(body?.hidden) ? [...new Set(body.hidden.filter((m) => COMMIT_METRICS.has(m)))] : [];
+  const { error } = await supa.from("ea_settings").upsert(
+    { key: "rvp_commitment_hidden_metrics", value: { hidden }, updated_by: user.id, updated_at: new Date().toISOString() },
+    { onConflict: "key" },
+  );
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, hidden };
 }
 
 async function rvpCommitmentSet(supa, user, body) {
@@ -1712,6 +1796,7 @@ export const handler = async (event) => {
       if (action === "gm-support-delete") return unwrap(await gmSupportDelete(supa, user, body));
       if (action === "rvp-commitment-set") return unwrap(await rvpCommitmentSet(supa, user, body));
       if (action === "rvp-commitment-delete") return unwrap(await rvpCommitmentDelete(supa, user, body));
+      if (action === "rvp-commitment-buckets-set") return unwrap(await rvpCommitmentBucketsSet(supa, user, body));
       if (action === "labor-share-mint") return unwrap(await mintLaborShare(supa, user, body));
       if (action === "labor-share-revoke") return unwrap(await revokeLaborShare(supa, user, body));
       return respond(400, { error: `Unknown action: ${action}` });

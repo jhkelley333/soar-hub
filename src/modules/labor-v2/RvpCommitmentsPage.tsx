@@ -9,11 +9,14 @@ import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
+import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import {
-  fetchRvpCommitments, setRvpCommitment, deleteRvpCommitment,
-  type CommitMetric, type RvpCommitmentRow,
+  fetchRvpCommitments, setRvpCommitment, deleteRvpCommitment, setRvpCommitmentBuckets,
+  type CommitMetric, type RvpCommitmentRow, type RvpCommitWeek,
 } from "./api";
+
+const BUCKET_ROLES = ["vp", "coo", "admin"];
 
 type Dir = "up" | "down";
 interface MetricDef { key: CommitMetric; group: "Labor" | "COGS"; label: string; unit: "h" | "%"; dir: Dir; grain: string; hint: string; }
@@ -48,12 +51,61 @@ const TRACK_STYLE: Record<Track, { label: string; cls: string }> = {
   "no-data": { label: "No data", cls: "bg-amber-50 text-amber-700 ring-amber-200" },
 };
 
+// Trend ticker: ▲/▼ vs the previous point, colored green if the move is good for
+// this metric (up-good vs down-good), red if worse, grey if flat.
+function tick(value: number, prev: number, dir: Dir): { sym: string; good: boolean | null } {
+  if (value === prev) return { sym: "→", good: null };
+  const up = value > prev;
+  return { sym: up ? "▲" : "▼", good: dir === "up" ? up : !up };
+}
+
+function WeeklyStrip({ series, baseline, m }: { series: RvpCommitWeek[]; baseline: number | null; m: MetricDef }) {
+  let last = baseline;
+  return (
+    <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+      <span className="text-[10px] uppercase tracking-wide text-zinc-300">Track</span>
+      {series.map((w) => {
+        const val = w.value;
+        const arrow = val != null && last != null ? tick(val, last, m.dir) : null;
+        if (val != null) last = val;
+        return (
+          <div key={w.weekEnd}
+            title={`Week ending ${w.weekEnd}`}
+            className={cn("flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px] tabular-nums",
+              val == null ? "border-dashed border-zinc-200 text-zinc-300" : "border-zinc-200 text-zinc-600")}>
+            <span className="text-zinc-400">{fmtWeek(w.weekEnd)}</span>
+            <span>{val == null ? "—" : fmtVal(val, m)}</span>
+            {arrow && <span className={arrow.good == null ? "text-zinc-400" : arrow.good ? "text-emerald-600" : "text-red-600"}>{arrow.sym}</span>}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function RvpCommitmentsPage() {
+  const { profile } = useAuth();
+  const canEditBuckets = BUCKET_ROLES.includes(profile?.role ?? "");
+  const toast = useToast();
+  const qc = useQueryClient();
   const q = useQuery({ queryKey: ["rvp-commitments"], queryFn: fetchRvpCommitments });
+
+  const hidden = q.data?.hidden_metrics ?? [];
+  const visibleMetrics = METRICS.filter((m) => !hidden.includes(m.key));
+
+  const setBuckets = useMutation({
+    mutationFn: (next: CommitMetric[]) => setRvpCommitmentBuckets(next),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["rvp-commitments"] }),
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't update buckets.", "error"),
+  });
+  const toggleBucket = (key: CommitMetric) => {
+    const next = hidden.includes(key) ? hidden.filter((h) => h !== key) : [...hidden, key];
+    setBuckets.mutate(next);
+  };
 
   return (
     <div className="mx-auto max-w-5xl space-y-5 p-4 sm:p-6">
-      <PageHeader title="RVP Commitments" description="Each region's committed target vs. its live actual." />
+      <PageHeader title="RVP Commitments" description="Each region's committed target vs. its live actual, tracked weekly." />
 
       {q.isLoading && <div className="space-y-3"><Skeleton className="h-24 w-full" /><Skeleton className="h-40 w-full" /></div>}
       {q.isError && <EmptyState title="Couldn't load" description={(q.error as Error)?.message ?? "Try again."} />}
@@ -63,22 +115,44 @@ export function RvpCommitmentsPage() {
 
       {q.data && q.data.rows.length > 0 && (
         <>
-          <p className="text-xs text-zinc-500">
-            Labor metrics are this fiscal week to date
-            {q.data.week ? <> ({fmtWeek(q.data.week.start)}–{fmtWeek(q.data.week.end)})</> : null}.
-            COGS Efficiency is the latest ranking run. <strong>4-wk base</strong> is each metric's
-            last-four-weeks average — click it to seed the target, or click a target to edit.
-          </p>
-          <div className="space-y-4">
-            {q.data.rows.map((row) => <RvpCard key={row.region} row={row} />)}
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="max-w-2xl text-xs text-zinc-500">
+              Labor metrics are this fiscal week to date
+              {q.data.week ? <> ({fmtWeek(q.data.week.start)}–{fmtWeek(q.data.week.end)})</> : null}.
+              COGS Efficiency is the latest ranking run. <strong>4-wk base</strong> is the last-four-weeks
+              average (click to seed a target). <strong>Track</strong> = the 30-day window
+              {q.data.tracking.end ? <> through {fmtWeek(q.data.tracking.end)}</> : null}; each week fills in with an up/down ticker as it closes.
+            </p>
+            {canEditBuckets && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] uppercase tracking-wide text-zinc-400">Buckets</span>
+                {METRICS.map((m) => {
+                  const on = !hidden.includes(m.key);
+                  return (
+                    <button key={m.key} onClick={() => toggleBucket(m.key)} disabled={setBuckets.isPending}
+                      className={cn("rounded-full border px-2 py-0.5 text-[11px] font-medium transition",
+                        on ? "border-accent-200 bg-accent-50 text-accent-700" : "border-zinc-200 bg-white text-zinc-400 line-through")}>
+                      {m.label}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
+          {visibleMetrics.length === 0 ? (
+            <EmptyState title="All buckets hidden" description="Turn a bucket back on above to track it." />
+          ) : (
+            <div className="space-y-4">
+              {q.data.rows.map((row) => <RvpCard key={row.region} row={row} metrics={visibleMetrics} />)}
+            </div>
+          )}
         </>
       )}
     </div>
   );
 }
 
-function RvpCard({ row }: { row: RvpCommitmentRow }) {
+function RvpCard({ row, metrics }: { row: RvpCommitmentRow; metrics: MetricDef[] }) {
   return (
     <div className="rounded-xl bg-white ring-1 ring-zinc-200">
       <div className="flex flex-wrap items-baseline justify-between gap-2 border-b border-zinc-100 px-4 py-3">
@@ -89,7 +163,7 @@ function RvpCard({ row }: { row: RvpCommitmentRow }) {
         {row.cogs_week && <div className="text-[11px] text-zinc-400">COGS wk {fmtWeek(row.cogs_week)}</div>}
       </div>
       <div className="divide-y divide-zinc-100">
-        {METRICS.map((m) => <MetricRow key={m.key} row={row} m={m} />)}
+        {metrics.map((m) => <MetricRow key={m.key} row={row} m={m} />)}
       </div>
     </div>
   );
@@ -119,7 +193,8 @@ function MetricRow({ row, m }: { row: RvpCommitmentRow; m: MetricDef }) {
   });
 
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 px-4 py-3">
+    <div className="px-4 py-3">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
       <div className="min-w-[150px] flex-1">
         <div className="flex items-center gap-2 text-sm font-medium text-midnight">
           <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">{m.group}</span>
@@ -184,6 +259,8 @@ function MetricRow({ row, m }: { row: RvpCommitmentRow; m: MetricDef }) {
       <div className="w-20 text-right">
         <span className={cn("inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1", st.cls)}>{st.label}</span>
       </div>
+    </div>
+      <WeeklyStrip series={row.weekly[m.key] ?? []} baseline={baseline} m={m} />
     </div>
   );
 }
