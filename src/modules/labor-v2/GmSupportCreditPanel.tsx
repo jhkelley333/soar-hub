@@ -33,7 +33,9 @@ export function GmSupportCreditPanel() {
   const [formOpen, setFormOpen] = useState(false);
   const [editId, setEditId] = useState<string | null>(null); // null = adding
   const [store, setStore] = useState("");
+  const [basis, setBasis] = useState<"hours" | "buffer">("hours");
   const [hours, setHours] = useState("20");
+  const [buffer, setBuffer] = useState("2");
   const [startDate, setStartDate] = useState(todayIso());
   const [endDate, setEndDate] = useState("");
   const [note, setNote] = useState("");
@@ -42,11 +44,14 @@ export function GmSupportCreditPanel() {
   const [search, setSearch] = useState("");
 
   const openAdd = () => {
-    setEditId(null); setStore(""); setHours("20"); setStartDate(todayIso()); setEndDate(""); setNote("");
+    setEditId(null); setStore(""); setBasis("hours"); setHours("20"); setBuffer("2");
+    setStartDate(todayIso()); setEndDate(""); setNote("");
     setFormOpen(true);
   };
   const openEdit = (r: GmSupportCreditRow) => {
-    setEditId(r.id); setStore(r.store_number); setHours(String(r.weekly_hours));
+    setEditId(r.id); setStore(r.store_number);
+    if (r.buffer_pct != null) { setBasis("buffer"); setBuffer(String(r.buffer_pct)); setHours("20"); }
+    else { setBasis("hours"); setHours(String(r.weekly_hours ?? 20)); setBuffer("2"); }
     setStartDate(r.start_date); setEndDate(r.end_date ?? ""); setNote(r.note ?? "");
     setFormOpen(true);
   };
@@ -59,15 +64,16 @@ export function GmSupportCreditPanel() {
   const save = useMutation({
     mutationFn: () => {
       const payload = {
-        weekly_hours: Number(hours), start_date: startDate,
+        basis, start_date: startDate,
         end_date: endDate || (editId ? null : undefined), note: note.trim() || undefined,
-      };
+        ...(basis === "buffer" ? { buffer_pct: Number(buffer) } : { weekly_hours: Number(hours) }),
+      } as const;
       return editId
         ? updateGmSupportCredit(editId, payload)
         : addGmSupportCredit({ store_number: store, ...payload });
     },
     onSuccess: () => {
-      toast.push(editId ? "Tag updated." : "Store tagged — the weekly hours credit applies from the start date.", "success");
+      toast.push(editId ? "Tag updated." : "Store tagged — the credit applies from the start date.", "success");
       setFormOpen(false);
       invalidate();
     },
@@ -103,9 +109,9 @@ export function GmSupportCreditPanel() {
         <div>
           <div className="text-sm font-semibold text-midnight">GM support-hours credit</div>
           <div className="text-xs text-zinc-500">
-            For a GM who supports other stores. The tagged store is credited the set{" "}
-            <strong className="text-midnight">hours/week</strong> on its labor chart — converted to dollars using the
-            store's own blended wage — for as long as the tag is active.
+            For a GM who supports other stores. Credit the tagged store either a set{" "}
+            <strong className="text-midnight">hours/week</strong> (at its blended wage) or a{" "}
+            <strong className="text-midnight">% buffer off labor</strong> — for as long as the tag is active.
           </div>
         </div>
         <Button size="sm" onClick={openAdd}>
@@ -140,7 +146,8 @@ export function GmSupportCreditPanel() {
       <Modal open={formOpen} onClose={() => setFormOpen(false)}
         title={editId ? "Edit tag — GM support hours" : "Tag a store — GM support hours"}
         footer={
-          <Button size="sm" onClick={() => save.mutate()} disabled={!store || !startDate || !(Number(hours) > 0) || save.isPending}>
+          <Button size="sm" onClick={() => save.mutate()}
+            disabled={!store || !startDate || save.isPending || (basis === "buffer" ? !(Number(buffer) > 0) : !(Number(hours) > 0))}>
             {save.isPending ? "Saving…" : editId ? "Save changes" : "Start credit"}
           </Button>
         }>
@@ -154,16 +161,42 @@ export function GmSupportCreditPanel() {
             </select>
             {editId && <p className="mt-1 text-[11px] text-zinc-400">Store can't be changed — delete and re-tag to move it.</p>}
           </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-zinc-600">Credit basis</label>
+            <div className="flex gap-2">
+              {(["hours", "buffer"] as const).map((b) => (
+                <button key={b} type="button" onClick={() => setBasis(b)}
+                  className={cn("flex-1 rounded-lg border px-3 py-2 text-sm font-medium transition",
+                    basis === b ? "border-accent bg-accent-50 text-accent-700" : "border-zinc-200 bg-white text-zinc-500 hover:bg-zinc-50")}>
+                  {b === "hours" ? "Weekly hours" : "% buffer"}
+                </button>
+              ))}
+            </div>
+          </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="mb-1 block text-xs font-semibold text-zinc-600">Hours / week</label>
-              <input type="number" min={1} max={80} step="0.5" value={hours} onChange={(e) => setHours(e.target.value)} className={cn(inputCls, "w-full")} />
+              {basis === "buffer" ? (
+                <>
+                  <label className="mb-1 block text-xs font-semibold text-zinc-600">Buffer % off labor</label>
+                  <input type="number" min={0.1} max={100} step="0.1" value={buffer} onChange={(e) => setBuffer(e.target.value)} className={cn(inputCls, "w-full")} />
+                </>
+              ) : (
+                <>
+                  <label className="mb-1 block text-xs font-semibold text-zinc-600">Hours / week</label>
+                  <input type="number" min={1} max={80} step="0.5" value={hours} onChange={(e) => setHours(e.target.value)} className={cn(inputCls, "w-full")} />
+                </>
+              )}
             </div>
             <div>
               <label className="mb-1 block text-xs font-semibold text-zinc-600">Start date</label>
               <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className={cn(inputCls, "w-full")} />
             </div>
           </div>
+          <p className="text-[11px] text-zinc-400">
+            {basis === "buffer"
+              ? "Reduces the store's labor (cost + hours) by this percent each day the tag is active, sized from its recent labor."
+              : "Credits this many hours/week, converted to dollars at the store's own blended wage."}
+          </p>
           <div>
             <label className="mb-1 block text-xs font-semibold text-zinc-600">End date (optional)</label>
             <input type="date" value={endDate} min={startDate} onChange={(e) => setEndDate(e.target.value)} className={cn(inputCls, "w-full")} />
@@ -206,7 +239,7 @@ function Row({ r, onEdit, onEnd, onDelete }: { r: GmSupportCreditRow; onEdit: ()
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold text-midnight">#{r.store_number}{r.store_name ? ` · ${r.store_name}` : ""}</span>
           <span className="rounded-full bg-accent-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-accent-700">
-            {r.weekly_hours} hrs/wk
+            {r.buffer_pct != null ? `${r.buffer_pct}% buffer` : `${r.weekly_hours} hrs/wk`}
           </span>
         </div>
         <div className="mt-0.5 text-xs text-zinc-500">

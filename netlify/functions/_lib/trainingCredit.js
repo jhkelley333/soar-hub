@@ -173,11 +173,12 @@ export async function loadGmSupportCreditDates(supa, storeNumbers) {
   if (!storeNumbers.length) return map;
   const { data: tags } = await supa
     .from("gm_support_hours_credits")
-    .select("store_number, weekly_hours, start_date, end_date")
+    .select("store_number, weekly_hours, buffer_pct, start_date, end_date")
     .in("store_number", storeNumbers);
   if (!tags || !tags.length) return map;
 
-  // Blended wage per tagged store from the last ~35 days of labor.
+  // Recent labor per tagged store (last ~35 days): blended wage for hours-based
+  // tags, plus average daily cost/hours for % buffer tags.
   const tagStores = [...new Set(tags.map((t) => String(t.store_number)))];
   const since = isoOf(Date.now() - 35 * DAY);
   const { data: rows } = await supa
@@ -188,9 +189,10 @@ export async function loadGmSupportCreditDates(supa, storeNumbers) {
   const agg = new Map();
   for (const r of rows || []) {
     const sn = String(r.store_number);
-    const a = agg.get(sn) || { cost: 0, hours: 0 };
+    const a = agg.get(sn) || { cost: 0, hours: 0, days: 0 };
     a.cost += Number(r.labor_cost) || 0;
     a.hours += Number(r.labor_hours) || 0;
+    a.days += 1;
     agg.set(sn, a);
   }
   const fallbackWage = await gmSupportDefaultWage(supa);
@@ -201,10 +203,25 @@ export async function loadGmSupportCreditDates(supa, storeNumbers) {
     const endMs = Math.min(parseIso(t.end_date) ?? todayMs, todayMs);
     const sn = String(t.store_number);
     const a = agg.get(sn);
-    const wage = a && a.hours > 0 ? a.cost / a.hours : fallbackWage;
-    const weeklyHours = Number(t.weekly_hours) > 0 ? Number(t.weekly_hours) : GM_SUPPORT_DEFAULT_WEEKLY_HOURS;
-    const dailyHours = weeklyHours / 7;
-    const dailyAmount = dailyHours * wage;
+    const bufferPct = Number(t.buffer_pct);
+    let dailyHours, dailyAmount;
+    if (isFinite(bufferPct) && bufferPct > 0) {
+      // % credit off labor: buffer_pct of the store's typical daily labor
+      // (cost + hours), from recent data. Falls back to the hours default if the
+      // store has no history to size the percentage against.
+      if (a && a.days > 0) {
+        dailyAmount = (bufferPct / 100) * (a.cost / a.days);
+        dailyHours = (bufferPct / 100) * (a.hours / a.days);
+      } else {
+        dailyHours = GM_SUPPORT_DEFAULT_WEEKLY_HOURS / 7;
+        dailyAmount = dailyHours * fallbackWage;
+      }
+    } else {
+      const wage = a && a.hours > 0 ? a.cost / a.hours : fallbackWage;
+      const weeklyHours = Number(t.weekly_hours) > 0 ? Number(t.weekly_hours) : GM_SUPPORT_DEFAULT_WEEKLY_HOURS;
+      dailyHours = weeklyHours / 7;
+      dailyAmount = dailyHours * wage;
+    }
     const arr = map.get(sn) || [];
     for (let ms = startMs, i = 0; ms <= endMs && i < 400; ms += DAY, i++) {
       arr.push({ date: isoOf(ms), amount: dailyAmount, hours: dailyHours });
