@@ -101,6 +101,11 @@ export function fetchRvpScorecard(weeks = 4): Promise<RvpScorecardResponse> {
 // ── RVP Commitments (target vs. live actual per region) ──────────────────────
 export type CommitMetric = "labor_hours_over" | "labor_avs_pct" | "cogs_efficiency";
 export interface RvpCommitWeek { weekEnd: string; value: number | null; }
+export interface CommitDollars {
+  labor_weekly: number | null; labor_annual: number | null;
+  cogs_weekly: number | null; cogs_annual: number | null;
+  total_weekly: number | null; total_annual: number | null;
+}
 export interface RvpCommitmentRow {
   region: string;
   rvp_name: string | null;
@@ -108,6 +113,7 @@ export interface RvpCommitmentRow {
   actuals: Record<CommitMetric, number | null>;
   baselines: Record<CommitMetric, number | null>; // last-4-weeks average
   weekly: Record<CommitMetric, RvpCommitWeek[]>;   // per tracked week
+  dollars: CommitDollars;                          // $ to bottom line if gap closes
   cogs_week: string | null;
   targets: Record<CommitMetric, number | null>;
 }
@@ -116,6 +122,7 @@ export interface RvpCommitmentsResponse {
   week: { start: string; end: string } | null;
   tracking: { week_ends: string[]; end: string | null };
   hidden_metrics: CommitMetric[];
+  totals: CommitDollars;
   rows: RvpCommitmentRow[];
 }
 export function fetchRvpCommitments(): Promise<RvpCommitmentsResponse> {

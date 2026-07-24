@@ -731,13 +731,25 @@ async function cogsByRvpFromRuns(supa, weeksBack = 4) {
     .in("run_id", runs.map((r) => r.id)).eq("scope", "ptd").eq("tier", "rvp");
   const latest = new Map();
   const acc = new Map();
+  const num = (v) => (isFinite(Number(v)) ? Math.round(Number(v)) : null);
   for (const r of rows || []) {
-    const eff = Number(r.metrics?.cogsEff);
-    if (!isFinite(eff)) continue;
     const name = String(r.entity_key);
-    const pctv = round2(eff * 100);
-    (acc.get(name) || acc.set(name, []).get(name)).push(pctv);
-    if (r.run_id === latestRunId) latest.set(name, { cogs_pct: pctv, week: weekByRun.get(r.run_id) });
+    const m = r.metrics || {};
+    const eff = Number(m.cogsEff);
+    if (isFinite(eff)) (acc.get(name) || acc.set(name, []).get(name)).push(round2(eff * 100));
+    if (r.run_id === latestRunId) {
+      // FC $ miss (to 96% target) + labor $ over chart + combined, weekly and
+      // annualized — the "$ to the bottom line if the gap closes", from the Ranker.
+      latest.set(name, {
+        cogs_pct: isFinite(eff) ? round2(eff * 100) : null,
+        week: weekByRun.get(r.run_id),
+        dollars: {
+          labor_weekly: num(m.laborMiss), labor_annual: num(m.laborAnnualized),
+          cogs_weekly: num(m.fcMiss), cogs_annual: num(m.fcAnnualized),
+          total_weekly: num(m.finMiss), total_annual: num(m.finAnnualized),
+        },
+      });
+    }
   }
   const baseline = new Map();
   for (const [name, arr] of acc) baseline.set(name, round2(arr.reduce((a, b) => a + b, 0) / arr.length));
@@ -917,6 +929,9 @@ async function rvpCommitments(supa, user) {
         labor_avs_pct: laborSeries("avs_pct"),
         cogs_efficiency: cogsSeries(),
       },
+      // $ that flows to the bottom line if the gap to standard closes (Ranker:
+      // labor over chart + food cost over 96% target), weekly + annualized.
+      dollars: cogsLatest?.dollars ?? { labor_weekly: null, labor_annual: null, cogs_weekly: null, cogs_annual: null, total_weekly: null, total_annual: null },
       cogs_week: cogsLatest?.week ?? null,
       targets: {
         labor_hours_over: targetOf(region, "labor_hours_over"),
@@ -926,11 +941,19 @@ async function rvpCommitments(supa, user) {
     };
   }).sort((a, b) => (a.rvp_name ?? a.region).localeCompare(b.rvp_name ?? b.region));
 
+  const sum = (field) => { const vals = out.map((r) => r.dollars?.[field]).filter((v) => v != null); return vals.length ? vals.reduce((a, b) => a + b, 0) : null; };
+  const totals = {
+    labor_weekly: sum("labor_weekly"), labor_annual: sum("labor_annual"),
+    cogs_weekly: sum("cogs_weekly"), cogs_annual: sum("cogs_annual"),
+    total_weekly: sum("total_weekly"), total_annual: sum("total_annual"),
+  };
+
   return {
     anchor,
     week: fi ? { start: fi.weekStart, end: fi.weekEnd } : null,
     tracking: { week_ends: trackWeekEnds, end: trackWeekEnds[trackWeekEnds.length - 1] ?? null },
     hidden_metrics: hidden,
+    totals,
     rows: out,
   };
 }

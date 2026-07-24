@@ -37,6 +37,8 @@ const fmtVal = (v: number | null, m: MetricDef) => {
 const fmtTarget = (v: number | null, m: MetricDef) =>
   v == null ? "—" : `${m.dir === "up" ? "≥" : "≤"} ${m.unit === "h" ? `${v}h` : `${v}%`}`;
 const fmtWeek = (s: string) => new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+const fmtUsd = (v: number | null) =>
+  v == null ? "—" : v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 
 type Track = "on" | "off" | "no-target" | "no-data";
 function track(actual: number | null, target: number | null, dir: Dir): Track {
@@ -139,6 +141,16 @@ export function RvpCommitmentsPage() {
               </div>
             )}
           </div>
+          {q.data.totals.total_annual != null && (
+            <div className="rounded-xl bg-midnight px-4 py-3 text-white ring-1 ring-black/5">
+              <div className="text-[11px] uppercase tracking-wide text-white/60">Bottom-line opportunity if every gap closes</div>
+              <div className="mt-0.5 flex flex-wrap items-baseline gap-x-4 gap-y-1">
+                <span className="text-2xl font-semibold tabular-nums">{fmtUsd(q.data.totals.total_annual)}<span className="ml-1 text-sm font-normal text-white/60">/yr</span></span>
+                <span className="text-sm tabular-nums text-white/80">{fmtUsd(q.data.totals.total_weekly)}<span className="text-white/50">/wk</span></span>
+                <span className="text-[11px] text-white/50">Labor {fmtUsd(q.data.totals.labor_annual)}/yr · COGS {fmtUsd(q.data.totals.cogs_annual)}/yr · to chart / 96% target</span>
+              </div>
+            </div>
+          )}
           {visibleMetrics.length === 0 ? (
             <EmptyState title="All buckets hidden" description="Turn a bucket back on above to track it." />
           ) : (
@@ -165,6 +177,17 @@ function RvpCard({ row, metrics }: { row: RvpCommitmentRow; metrics: MetricDef[]
       <div className="divide-y divide-zinc-100">
         {metrics.map((m) => <MetricRow key={m.key} row={row} m={m} />)}
       </div>
+      {row.dollars.total_annual != null && (
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-zinc-100 bg-zinc-50/60 px-4 py-2.5">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">$ if gap closes</span>
+          <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-xs tabular-nums text-zinc-600">
+            <span>Labor <b className="text-midnight">{fmtUsd(row.dollars.labor_annual)}</b>/yr</span>
+            <span>COGS <b className="text-midnight">{fmtUsd(row.dollars.cogs_annual)}</b>/yr</span>
+            <span className="text-emerald-700">Total <b>{fmtUsd(row.dollars.total_annual)}</b>/yr</span>
+            <span className="text-zinc-400">({fmtUsd(row.dollars.total_weekly)}/wk)</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
