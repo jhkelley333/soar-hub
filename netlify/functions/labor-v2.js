@@ -110,19 +110,23 @@ function shapeBand(row, prefix) {
   const avgWage = cost != null && hours ? Number(cost) / Number(hours) : null;
   const hoursOver = dollarsOver != null && avgWage ? round1(dollarsOver / avgWage) : null;
   return {
-    labor_pct: laborPct == null ? null : round1(laborPct),
+    // Percentages carry 2 decimals so they match the raw KPI snapshot exactly
+    // (e.g. 18.24%, not 18.2 shown as "18.20"). The $ / hours figures below are
+    // computed from raw cost/sales, unaffected. status stays on the 1-decimal
+    // miss threshold so over/under detection (and notes-due) is unchanged.
+    labor_pct: laborPct == null ? null : round2(laborPct),
     // Each band carries its OWN target (daily / WTD / PTD differ) — the UI
     // must not reuse one band's goal for the others.
-    goal_pct: goalPct == null ? null : round1(goalPct),
+    goal_pct: goalPct == null ? null : round2(goalPct),
     sales: sales ?? null,
-    variance_pts: laborPct != null && goalPct != null ? round1(laborPct - goalPct) : null,
+    variance_pts: laborPct != null && goalPct != null ? round2(laborPct - goalPct) : null,
     dollars_over_chart: dollarsOver,
     hours_over_chart: hoursOver,
     chart_dollars_allowed: chartAllowed,
     avg_wage: avgWage == null ? null : round2(avgWage),
     training_credit: round2((row._tc?.[prefix === "" ? "day" : prefix === "wtd_" ? "wtd" : "ptd"]?.amt) ?? 0),
     labor_pct_pre: row._tcPre?.[prefix === "" ? "day" : prefix === "wtd_" ? "wtd" : "ptd"] != null
-      ? round1(Number(row._tcPre[prefix === "" ? "day" : prefix === "wtd_" ? "wtd" : "ptd"]) * 100) : null,
+      ? round2(Number(row._tcPre[prefix === "" ? "day" : prefix === "wtd_" ? "wtd" : "ptd"]) * 100) : null,
     status: chartStatus(laborPct, goalPct),
   };
 }
@@ -420,7 +424,7 @@ async function gmView(supa, user, params) {
     const h = r && status === "over" ? storeHoursOver(r, "") : null;
     return {
       business_date: iso,
-      labor_pct: laborPct == null ? null : round1(laborPct),
+      labor_pct: laborPct == null ? null : round2(laborPct),
       status,
       note_due: status === "over" && !reviewByDate.get(iso),
       hours_over: h != null && h > 0 ? round1(h) : null,
@@ -430,7 +434,7 @@ async function gmView(supa, user, params) {
   return {
     store: { number: storeRow.number, name: storeRow.name, district_id: storeRow.district_id },
     date: anchorIso,
-    goal: goalPct == null ? null : round1(goalPct),
+    goal: goalPct == null ? null : round2(goalPct),
     goal_source: "store chart target",
     gm_name: null,
     day: shapeDay(anchorRow, reviewByDate.get(anchorIso)),
