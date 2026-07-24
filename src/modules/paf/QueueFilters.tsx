@@ -108,7 +108,7 @@ export function QueueFilters({
           type="search"
           value={state.query}
           onChange={(e) => onChange({ ...state, query: e.target.value })}
-          placeholder="Employee or last 4 SSN"
+          placeholder="Employee, SSN, or description"
           className="pl-7 pr-7"
         />
         {state.query && (
@@ -133,7 +133,9 @@ export function applyFilters(rows: PafRow[], state: QueueFilterState): PafRow[] 
     if (state.status !== "ALL" && r.status !== state.status) return false;
     if (state.lateOnly && !r.late_for_week) return false;
     if (q) {
-      const hay = `${r.employee_name} ${r.last4_ssn}`.toLowerCase();
+      // Search employee + SSN plus the PAF's description: its category (e.g.
+      // "Pay Adjustment") and the free-text explanation, and the store name.
+      const hay = `${r.employee_name} ${r.last4_ssn} ${r.category ?? ""} ${r.explanation ?? ""} ${r.store_name ?? ""}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
