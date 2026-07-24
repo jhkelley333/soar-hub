@@ -98,6 +98,31 @@ export function fetchRvpScorecard(weeks = 4): Promise<RvpScorecardResponse> {
   return req(`${FN}?action=rvp-scorecard&weeks=${weeks}`);
 }
 
+// ── RVP Commitments (target vs. live actual per region) ──────────────────────
+export type CommitMetric = "labor_hours_over" | "labor_avs_pct" | "cogs_efficiency";
+export interface RvpCommitmentRow {
+  region: string;
+  rvp_name: string | null;
+  stores: number;
+  actuals: Record<CommitMetric, number | null>;
+  cogs_week: string | null;
+  targets: Record<CommitMetric, number | null>;
+}
+export interface RvpCommitmentsResponse {
+  anchor: string | null;
+  week: { start: string; end: string } | null;
+  rows: RvpCommitmentRow[];
+}
+export function fetchRvpCommitments(): Promise<RvpCommitmentsResponse> {
+  return req(`${FN}?action=rvp-commitments`);
+}
+export function setRvpCommitment(input: { region: string; metric: CommitMetric; target_value: number; note?: string }): Promise<{ row: unknown }> {
+  return req(`${FN}?action=rvp-commitment-set`, { method: "POST", body: JSON.stringify(input) });
+}
+export function deleteRvpCommitment(region: string, metric: CommitMetric): Promise<{ ok: true }> {
+  return req(`${FN}?action=rvp-commitment-delete`, { method: "POST", body: JSON.stringify({ region, metric }) });
+}
+
 // ── GM day view ──────────────────────────────────────────────────────
 export function fetchLaborV2Stores(): Promise<{ stores: LaborStore[] }> {
   return req(`${FN}?action=my-stores`);
