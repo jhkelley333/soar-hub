@@ -144,6 +144,35 @@ export function deleteNoGmCredit(id: string): Promise<{ ok: true }> {
   return req(`${FN}?action=no-gm-delete`, { method: "POST", body: JSON.stringify({ id }) });
 }
 
+// GM support-hours credit — a GM supporting other stores gets weekly hours
+// credited to their own store (converted to $ via the store's blended wage).
+export interface GmSupportCreditRow {
+  id: string;
+  store_number: string;
+  store_name: string | null;
+  weekly_hours: number;
+  start_date: string;
+  end_date: string | null;
+  note: string | null;
+  created_by_email: string | null;
+  created_at: string;
+  active: boolean;
+}
+export function fetchGmSupportCredits(): Promise<{ rows: GmSupportCreditRow[] }> {
+  return req(`${FN}?action=gm-support-list`);
+}
+export function addGmSupportCredit(input: {
+  store_number: string; weekly_hours: number; start_date: string; end_date?: string; note?: string;
+}): Promise<{ row: GmSupportCreditRow }> {
+  return req(`${FN}?action=gm-support-add`, { method: "POST", body: JSON.stringify(input) });
+}
+export function endGmSupportCredit(id: string, endDate: string): Promise<{ ok: true }> {
+  return req(`${FN}?action=gm-support-end`, { method: "POST", body: JSON.stringify({ id, end_date: endDate }) });
+}
+export function deleteGmSupportCredit(id: string): Promise<{ ok: true }> {
+  return req(`${FN}?action=gm-support-delete`, { method: "POST", body: JSON.stringify({ id }) });
+}
+
 export function setNoGmWeeklyRate(amount: number): Promise<{ ok: true; amount: number }> {
   return req(`${FN}?action=no-gm-rate-set`, { method: "POST", body: JSON.stringify({ amount }) });
 }
@@ -177,7 +206,7 @@ export interface ShareNode {
   wtd: ShareBand;
   ptd: ShareBand;
   hours_trend: HoursTrend;
-  credits: { no_gm: number; pto: number; training: number };
+  credits: { no_gm: number; pto: number; training: number; gm_support?: number };
 }
 export interface SharedLaborResponse {
   ok: true;

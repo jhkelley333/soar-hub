@@ -11,18 +11,21 @@ import { useAuth } from "@/auth/AuthProvider";
 import { LaborV2GmPage } from "./LaborV2GmPage";
 import { LaborV2TeamPage } from "./LaborV2TeamPage";
 import { NoGmCreditPanel } from "./NoGmCreditPanel";
+import { GmSupportCreditPanel } from "./GmSupportCreditPanel";
 
 const ROLLUP_ROLES = ["do", "sdo", "rvp", "vp", "coo", "admin"];
 // Who can manage the no-GM weekly labor credit tags.
 const NO_GM_ROLES = ["sdo", "rvp", "vp", "coo", "admin"];
 
-type View = "team" | "store" | "no-gm";
+type View = "team" | "store" | "no-gm" | "gm-support";
 
 export function LaborV2Entry() {
   const { profile } = useAuth();
   const role = profile?.role ?? "";
   const canRollup = ROLLUP_ROLES.includes(role);
   const canNoGm = NO_GM_ROLES.includes(role);
+  // GM support-hours credit is Admin-only to prevent abuse.
+  const canGmSupport = role === "admin";
   const [view, setView] = useState<View>("team");
 
   if (!canRollup) {
@@ -40,10 +43,14 @@ export function LaborV2Entry() {
             { value: "team", label: "Team" },
             { value: "store", label: "By store" },
             ...(canNoGm ? [{ value: "no-gm" as const, label: "No-GM credit" }] : []),
+            ...(canGmSupport ? [{ value: "gm-support" as const, label: "GM support hrs" }] : []),
           ]}
         />
       </div>
-      {view === "team" ? <LaborV2TeamPage /> : view === "store" ? <LaborV2GmPage /> : <NoGmCreditPanel />}
+      {view === "team" ? <LaborV2TeamPage />
+        : view === "store" ? <LaborV2GmPage />
+        : view === "gm-support" ? <GmSupportCreditPanel />
+        : <NoGmCreditPanel />}
     </>
   );
 }

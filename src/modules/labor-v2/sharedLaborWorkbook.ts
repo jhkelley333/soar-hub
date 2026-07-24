@@ -6,7 +6,7 @@
 import type { ShareBand, ShareNode, SharedLaborResponse } from "./api";
 
 type Fmt = "text" | "pct" | "var" | "over" | "hrs" | "avs" | "money";
-interface Col { group: string; header: string; band?: "daily" | "wtd" | "ptd"; key?: keyof ShareBand; fmt: Fmt; credit?: "no_gm" | "pto" | "training" }
+interface Col { group: string; header: string; band?: "daily" | "wtd" | "ptd"; key?: keyof ShareBand; fmt: Fmt; credit?: "no_gm" | "pto" | "training" | "gm_support" }
 
 const WINDOW = (band: "daily" | "wtd" | "ptd", group: string): Col[] => [
   { group, header: "Labor %", band, key: "labor_pct", fmt: "pct" },
@@ -25,6 +25,7 @@ const COLS: Col[] = [
   { group: "Credits (PTD)", header: "No GM", fmt: "money", credit: "no_gm" },
   { group: "Credits (PTD)", header: "PTO", fmt: "money", credit: "pto" },
   { group: "Credits (PTD)", header: "Training", fmt: "money", credit: "training" },
+  { group: "Credits (PTD)", header: "GM Support", fmt: "money", credit: "gm_support" },
 ];
 
 const NAVY = "FF1F4E79";

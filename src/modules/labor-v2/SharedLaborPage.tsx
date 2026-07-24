@@ -36,6 +36,7 @@ function CreditsLine({ credits, light }: { credits: ShareNode["credits"]; light?
   if (credits.no_gm) parts.push(`No GM ${fmtUsd0(credits.no_gm)}`);
   if (credits.pto) parts.push(`PTO ${fmtUsd0(credits.pto)}`);
   if (credits.training) parts.push(`Training ${fmtUsd0(credits.training)}`);
+  if (credits.gm_support) parts.push(`GM support ${fmtUsd0(credits.gm_support)}`);
   if (!parts.length) return null;
   return (
     <div className={cn("text-[10px] tabular-nums", light ? "text-white/70" : "text-zinc-500")}>
@@ -44,7 +45,7 @@ function CreditsLine({ credits, light }: { credits: ShareNode["credits"]; light?
     </div>
   );
 }
-const hasCredits = (c: ShareNode["credits"]) => !!(c.no_gm || c.pto || c.training);
+const hasCredits = (c: ShareNode["credits"]) => !!(c.no_gm || c.pto || c.training || c.gm_support);
 const fmtDate = (s: string | null) =>
   s ? new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "—";
 
