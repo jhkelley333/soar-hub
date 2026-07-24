@@ -719,12 +719,13 @@ const COMMIT_METRICS = new Set(["labor_hours_over", "labor_avs_pct", "cogs_effic
 // fraction) keyed by RVP name (entity_key == resolveOrg rvpName), plus a
 // baseline = average across the last `weeksBack` complete runs (PTD).
 async function cogsByRvpFromRuns(supa, weeksBack = 4) {
-  const empty = { latest: new Map(), baseline: new Map() };
+  const empty = { latest: new Map(), baseline: new Map(), weekInPeriod: 1 };
   const { data: runs } = await supa.from("ranking_runs")
-    .select("id, week_ending").eq("status", "complete")
+    .select("id, week_ending, week").eq("status", "complete")
     .order("started_at", { ascending: false }).limit(weeksBack);
   if (!runs?.length) return empty;
   const latestRunId = runs[0].id;
+  const weekInPeriod = Math.max(1, Number(runs[0].week) || 1);
   const weekByRun = new Map(runs.map((r) => [r.id, r.week_ending]));
   const { data: rows } = await supa.from("ranking_rows")
     .select("run_id, entity_key, metrics")
@@ -738,22 +739,57 @@ async function cogsByRvpFromRuns(supa, weeksBack = 4) {
     const eff = Number(m.cogsEff);
     if (isFinite(eff)) (acc.get(name) || acc.set(name, []).get(name)).push(round2(eff * 100));
     if (r.run_id === latestRunId) {
-      // FC $ miss (to 96% target) + labor $ over chart + combined, weekly and
-      // annualized — the "$ to the bottom line if the gap closes", from the Ranker.
+      // Labor $ over chart + food-cost $ over the 96% target + combined. The
+      // Ranker's *Miss fields are period-to-date; the *Annualized fields are the
+      // true annual rate. Derive weekly from annual (/52) so weekly and 30-day
+      // aren't inflated by however many weeks into the period we are.
+      const la = num(m.laborAnnualized), fa = num(m.fcAnnualized), na = num(m.finAnnualized);
+      const wk = (annual) => (annual == null ? null : Math.round(annual / 52));
       latest.set(name, {
         cogs_pct: isFinite(eff) ? round2(eff * 100) : null,
         week: weekByRun.get(r.run_id),
         dollars: {
-          labor_weekly: num(m.laborMiss), labor_annual: num(m.laborAnnualized),
-          cogs_weekly: num(m.fcMiss), cogs_annual: num(m.fcAnnualized),
-          total_weekly: num(m.finMiss), total_annual: num(m.finAnnualized),
+          labor_weekly: wk(la), labor_annual: la,
+          cogs_weekly: wk(fa), cogs_annual: fa,
+          total_weekly: wk(na), total_annual: na,
         },
       });
     }
   }
   const baseline = new Map();
   for (const [name, arr] of acc) baseline.set(name, round2(arr.reduce((a, b) => a + b, 0) / arr.length));
-  return { latest, baseline };
+  return { latest, baseline, weekInPeriod };
+}
+
+// Per-RVP actual food-cost dollars (period-to-date) from the latest IX upload,
+// so COGS savings can be computed for ANY target — including one above the
+// Ranker's 96% standard (where fcMiss is 0 and can't scale). Reconstructs actual
+// cost from fc_variance + efficiency when the dollar columns are blank:
+// eff = ideal/actual and variance = ideal - actual  =>  actual = -variance/(1-eff).
+// Returns Map(rvpName -> actualPeriodFoodCost$).
+async function ixCogsActualByRvp(supa) {
+  const out = new Map();
+  const { data: files } = await supa.from("ranking_source_files")
+    .select("id, uploaded_at").eq("source", "ix").eq("status", "parsed")
+    .order("uploaded_at", { ascending: false }).limit(24);
+  if (!files?.length) return out;
+  // Prefer a period-to-date file (matches the PTD annualization); else newest.
+  let pick = files[0];
+  for (const f of files) {
+    const { data: probe } = await supa.from("ranking_src_rows").select("payload").eq("file_id", f.id).limit(1);
+    if (probe?.[0]?.payload?.scope !== "wtd") { pick = f; break; }
+  }
+  const { data: rows } = await supa.from("ranking_src_rows").select("payload").eq("file_id", pick.id).limit(2500);
+  for (const { payload: p } of rows || []) {
+    if (p?.level !== "rvp" || !p.leader) continue;
+    let actual = Number(p.actual_dollars);
+    if (!(actual > 0)) {
+      const eff = Number(p.cogs_eff), variance = Number(p.fc_variance);
+      if (isFinite(eff) && eff > 0 && eff < 1 && isFinite(variance)) actual = -variance / (1 - eff);
+    }
+    if (actual > 0) out.set(String(p.leader), actual);
+  }
+  return out;
 }
 
 // Per-region labor values for a list of fiscal week-ending dates. Returns
@@ -846,41 +882,39 @@ async function bucketSettings(supa) {
 const effectiveHidden = (buckets, region) =>
   Object.prototype.hasOwnProperty.call(buckets.byRegion, region) ? buckets.byRegion[region] : buckets.global;
 
-// Food-cost target efficiency % (the COGS "standard", default 96) — used to
-// scale the Ranker's fc-miss (which is measured to this target) to a custom
-// commitment target.
-async function fcTargetPct(supa) {
-  const { data } = await supa.from("ranking_config").select("value, effective_from")
-    .eq("key", "fc_target_efficiency").order("effective_from", { ascending: false }).limit(1).maybeSingle();
-  const e = Number(data?.value?.efficiency);
-  return isFinite(e) && e > 0 ? e * 100 : 96;
-}
-
 // The $ that closing the gap TO THEIR TARGET accomplishes, counting only the
-// buckets this RVP is tracking. Prorates the Ranker's to-standard miss by how
-// much of the gap the target closes. Labor $ derives from the Hours Over Chart
-// bucket (AvS is a discipline lever, no separate $, to avoid double-counting).
-function targetDollars({ tracked, actuals, targets, dollars, configCogsTarget }) {
-  let laborWk = 0;
+// buckets this RVP is tracking. Worked in ANNUAL terms (the Ranker's *Annualized
+// fields are the reliable rate); weekly = annual/52. Labor $ derives from the
+// Hours Over Chart bucket (AvS is a discipline lever, no separate $, to avoid
+// double-counting). COGS $ = annualized actual food cost x (1 - effActual/effTarget)
+// — works for any target, above or below the 96% standard.
+function targetDollars({ tracked, actuals, targets, dollars, ixActualFood, weekInPeriod }) {
+  let laborAnnual = 0;
   if (tracked.has("labor_hours_over")) {
     const A = actuals.labor_hours_over, T = targets.labor_hours_over;
-    if (A != null && T != null && A > 0 && A > T && dollars.labor_weekly != null) {
-      laborWk = dollars.labor_weekly * ((A - T) / A);
+    if (A != null && T != null && A > 0 && A > T && dollars.labor_annual != null) {
+      laborAnnual = dollars.labor_annual * ((A - T) / A);
     }
   }
-  let cogsWk = 0;
+  let cogsAnnual = 0;
   if (tracked.has("cogs_efficiency")) {
-    const A = actuals.cogs_efficiency, T = targets.cogs_efficiency;
-    if (A != null && T != null && T > A && dollars.cogs_weekly != null && dollars.cogs_weekly > 0) {
-      const configGap = configCogsTarget - A;
-      if (configGap > 0.01) cogsWk = dollars.cogs_weekly * ((T - A) / configGap);
+    const A = actuals.cogs_efficiency, T = targets.cogs_efficiency; // percents
+    if (A != null && T != null && T > A) {
+      const effA = A / 100, effT = T / 100;
+      let annualFood = ixActualFood > 0 ? ixActualFood * (52 / Math.max(1, weekInPeriod)) : 0;
+      // Fallback (below the 96% standard only): back out the food base from the
+      // Ranker's annualized fc-miss = annualFood x (1 - effA/0.96).
+      if (!(annualFood > 0) && dollars.cogs_annual > 0 && effA < 0.96) {
+        annualFood = dollars.cogs_annual / (1 - effA / 0.96);
+      }
+      if (annualFood > 0) cogsAnnual = Math.max(0, annualFood * (1 - effA / effT));
     }
   }
   const r = (v) => (isFinite(v) ? Math.round(v) : null);
   return {
-    labor_weekly: r(laborWk), labor_annual: r(laborWk * 52),
-    cogs_weekly: r(cogsWk), cogs_annual: r(cogsWk * 52),
-    total_weekly: r(laborWk + cogsWk), total_annual: r((laborWk + cogsWk) * 52),
+    labor_weekly: r(laborAnnual / 52), labor_annual: r(laborAnnual),
+    cogs_weekly: r(cogsAnnual / 52), cogs_annual: r(cogsAnnual),
+    total_weekly: r((laborAnnual + cogsAnnual) / 52), total_annual: r(laborAnnual + cogsAnnual),
   };
 }
 
@@ -932,13 +966,14 @@ async function rvpCommitments(supa, user) {
   const allWeekEnds = [...new Set([...baseWeekEnds, ...trackWeekEnds])];
 
   const credits = await loadLaborCredits(supa, numbers);
-  const [cogs, laborWk, cogsWk, buckets, configCogsTarget] = await Promise.all([
+  const [cogs, laborWk, cogsWk, buckets, ixActualFood] = await Promise.all([
     cogsByRvpFromRuns(supa),
     laborWeeklyByRegion(supa, numbers, orgMap, allWeekEnds, credits),
     cogsWeeklyByRvp(supa, trackWeekEnds),
     bucketSettings(supa),
-    fcTargetPct(supa),
+    ixCogsActualByRvp(supa),
   ]);
+  const weekInPeriod = cogs.weekInPeriod ?? 1;
   const { data: commits } = await supa.from("rvp_commitments").select("*");
   const targetOf = (region, metric) => {
     const c = (commits || []).find((x) => x.region === region && x.metric === metric);
@@ -995,7 +1030,11 @@ async function rvpCommitments(supa, user) {
       // Full opportunity to standard (labor over chart + food cost over target).
       dollars,
       // What closing the gap to THEIR target accomplishes — tracked buckets only.
-      target_dollars: targetDollars({ tracked, actuals, targets, dollars, configCogsTarget }),
+      target_dollars: targetDollars({
+        tracked, actuals, targets, dollars,
+        ixActualFood: rvpName ? (ixActualFood.get(String(rvpName)) ?? 0) : 0,
+        weekInPeriod,
+      }),
       cogs_week: cogsLatest?.week ?? null,
       targets,
     };
