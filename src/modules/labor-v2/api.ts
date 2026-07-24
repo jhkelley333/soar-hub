@@ -100,22 +100,29 @@ export function fetchRvpScorecard(weeks = 4): Promise<RvpScorecardResponse> {
 
 // ── RVP Commitments (target vs. live actual per region) ──────────────────────
 export type CommitMetric = "labor_hours_over" | "labor_avs_pct" | "cogs_efficiency";
+export interface RvpCommitWeek { weekEnd: string; value: number | null; }
 export interface RvpCommitmentRow {
   region: string;
   rvp_name: string | null;
   stores: number;
   actuals: Record<CommitMetric, number | null>;
   baselines: Record<CommitMetric, number | null>; // last-4-weeks average
+  weekly: Record<CommitMetric, RvpCommitWeek[]>;   // per tracked week
   cogs_week: string | null;
   targets: Record<CommitMetric, number | null>;
 }
 export interface RvpCommitmentsResponse {
   anchor: string | null;
   week: { start: string; end: string } | null;
+  tracking: { week_ends: string[]; end: string | null };
+  hidden_metrics: CommitMetric[];
   rows: RvpCommitmentRow[];
 }
 export function fetchRvpCommitments(): Promise<RvpCommitmentsResponse> {
   return req(`${FN}?action=rvp-commitments`);
+}
+export function setRvpCommitmentBuckets(hidden: CommitMetric[]): Promise<{ ok: true; hidden: CommitMetric[] }> {
+  return req(`${FN}?action=rvp-commitment-buckets-set`, { method: "POST", body: JSON.stringify({ hidden }) });
 }
 export function setRvpCommitment(input: { region: string; metric: CommitMetric; target_value: number; note?: string }): Promise<{ row: unknown }> {
   return req(`${FN}?action=rvp-commitment-set`, { method: "POST", body: JSON.stringify(input) });
