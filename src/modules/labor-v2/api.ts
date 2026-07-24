@@ -73,6 +73,31 @@ export function fetchLaborV2Team(date?: string): Promise<TeamLaborResponse> {
   return req(`${FN}?${p.toString()}`);
 }
 
+// ── Per-RVP Hours Over Chart scorecard (last N fiscal weeks) ─────────────────
+export interface RvpScorecardWeek {
+  weekEnd: string;
+  perStore: number | null; // avg positive hours over chart per store (Hrs/Unit)
+  total: number | null;    // sum of positive store overages for the region
+  stores: number;
+}
+export interface RvpScorecardRow {
+  region: string;
+  rvp_name: string | null;
+  stores: number;
+  weeks_with_data: number;
+  avg_hours_over_per_store: number | null;
+  avg_hours_over_total: number | null;
+  weekly: RvpScorecardWeek[];
+}
+export interface RvpScorecardResponse {
+  anchor: string | null;
+  weeks: string[]; // week-ending dates, most recent first
+  rvps: RvpScorecardRow[];
+}
+export function fetchRvpScorecard(weeks = 4): Promise<RvpScorecardResponse> {
+  return req(`${FN}?action=rvp-scorecard&weeks=${weeks}`);
+}
+
 // ── GM day view ──────────────────────────────────────────────────────
 export function fetchLaborV2Stores(): Promise<{ stores: LaborStore[] }> {
   return req(`${FN}?action=my-stores`);

@@ -12,12 +12,15 @@ import { LaborV2GmPage } from "./LaborV2GmPage";
 import { LaborV2TeamPage } from "./LaborV2TeamPage";
 import { NoGmCreditPanel } from "./NoGmCreditPanel";
 import { GmSupportCreditPanel } from "./GmSupportCreditPanel";
+import { RvpScorecardPanel } from "./RvpScorecardPanel";
 
 const ROLLUP_ROLES = ["do", "sdo", "rvp", "vp", "coo", "admin"];
 // Who can manage the no-GM weekly labor credit tags.
 const NO_GM_ROLES = ["sdo", "rvp", "vp", "coo", "admin"];
+// Cross-region RVP scorecard: for those who oversee multiple RVPs.
+const SCORECARD_ROLES = ["vp", "coo", "admin"];
 
-type View = "team" | "store" | "no-gm" | "gm-support";
+type View = "team" | "store" | "no-gm" | "gm-support" | "rvp-scorecard";
 
 export function LaborV2Entry() {
   const { profile } = useAuth();
@@ -26,6 +29,7 @@ export function LaborV2Entry() {
   const canNoGm = NO_GM_ROLES.includes(role);
   // GM support-hours credit is Admin-only to prevent abuse.
   const canGmSupport = role === "admin";
+  const canScorecard = SCORECARD_ROLES.includes(role);
   const [view, setView] = useState<View>("team");
 
   if (!canRollup) {
@@ -42,6 +46,7 @@ export function LaborV2Entry() {
           options={[
             { value: "team", label: "Team" },
             { value: "store", label: "By store" },
+            ...(canScorecard ? [{ value: "rvp-scorecard" as const, label: "RVP scorecard" }] : []),
             ...(canNoGm ? [{ value: "no-gm" as const, label: "No-GM credit" }] : []),
             ...(canGmSupport ? [{ value: "gm-support" as const, label: "GM support hrs" }] : []),
           ]}
@@ -49,6 +54,7 @@ export function LaborV2Entry() {
       </div>
       {view === "team" ? <LaborV2TeamPage />
         : view === "store" ? <LaborV2GmPage />
+        : view === "rvp-scorecard" ? <RvpScorecardPanel />
         : view === "gm-support" ? <GmSupportCreditPanel />
         : <NoGmCreditPanel />}
     </>
