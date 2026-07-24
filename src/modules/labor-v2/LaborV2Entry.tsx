@@ -24,6 +24,8 @@ export function LaborV2Entry() {
   const role = profile?.role ?? "";
   const canRollup = ROLLUP_ROLES.includes(role);
   const canNoGm = NO_GM_ROLES.includes(role);
+  // GM support-hours credit is Admin-only to prevent abuse.
+  const canGmSupport = role === "admin";
   const [view, setView] = useState<View>("team");
 
   if (!canRollup) {
@@ -41,7 +43,7 @@ export function LaborV2Entry() {
             { value: "team", label: "Team" },
             { value: "store", label: "By store" },
             ...(canNoGm ? [{ value: "no-gm" as const, label: "No-GM credit" }] : []),
-            ...(canNoGm ? [{ value: "gm-support" as const, label: "GM support hrs" }] : []),
+            ...(canGmSupport ? [{ value: "gm-support" as const, label: "GM support hrs" }] : []),
           ]}
         />
       </div>

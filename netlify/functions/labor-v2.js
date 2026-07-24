@@ -746,7 +746,7 @@ async function noGmRateSet(supa, user, body) {
 // ── GM support-hours credit (SDO+) — a GM supporting other stores gets weekly
 // hours credited to their own store; mirrors the no-GM tag CRUD.
 async function gmSupportList(supa, user) {
-  if (!NO_GM_ROLES.has(roleOf(user))) return { error: "SDO and above only.", status: 403 };
+  if (roleOf(user) !== "admin") return { error: "Admins only.", status: 403 };
   const visible = await resolveVisibleStoreRows(supa, user);
   if (!visible.length) return { rows: [] };
   const numbers = [...new Set(visible.map((s) => String(s.number)))];
@@ -767,7 +767,7 @@ async function gmSupportList(supa, user) {
 }
 
 async function gmSupportAdd(supa, user, body) {
-  if (!NO_GM_ROLES.has(roleOf(user))) return { error: "SDO and above only.", status: 403 };
+  if (roleOf(user) !== "admin") return { error: "Admins only.", status: 403 };
   const storeNumber = String(body?.store_number || "").trim();
   const weeklyHours = round2(numv(body?.weekly_hours));
   const startDate = String(body?.start_date || "").trim();
@@ -799,7 +799,7 @@ async function gmSupportAdd(supa, user, body) {
 }
 
 async function gmSupportEnd(supa, user, body) {
-  if (!NO_GM_ROLES.has(roleOf(user))) return { error: "SDO and above only.", status: 403 };
+  if (roleOf(user) !== "admin") return { error: "Admins only.", status: 403 };
   const id = String(body?.id || "").trim();
   const endDate = String(body?.end_date || "").trim();
   if (!id) return { error: "id is required.", status: 400 };
@@ -815,7 +815,7 @@ async function gmSupportEnd(supa, user, body) {
 }
 
 async function gmSupportDelete(supa, user, body) {
-  if (!NO_GM_ROLES.has(roleOf(user))) return { error: "SDO and above only.", status: 403 };
+  if (roleOf(user) !== "admin") return { error: "Admins only.", status: 403 };
   const id = String(body?.id || "").trim();
   if (!id) return { error: "id is required.", status: 400 };
   const { data: rec } = await supa.from("gm_support_hours_credits").select("id, store_number").eq("id", id).maybeSingle();
