@@ -798,6 +798,39 @@ async function gmSupportAdd(supa, user, body) {
   return { row: data };
 }
 
+// Edit an existing tag in place — hours / start / end / note. Admin only.
+async function gmSupportUpdate(supa, user, body) {
+  if (roleOf(user) !== "admin") return { error: "Admins only.", status: 403 };
+  const id = String(body?.id || "").trim();
+  if (!id) return { error: "id is required.", status: 400 };
+  const weeklyHours = round2(numv(body?.weekly_hours));
+  const startDate = String(body?.start_date || "").trim();
+  const endDate = body?.end_date ? String(body.end_date).trim() : null;
+  const note = String(body?.note ?? "").trim().slice(0, 500) || null;
+  if (!(weeklyHours > 0 && weeklyHours <= 80)) return { error: "Weekly hours must be between 0 and 80.", status: 400 };
+  if (!parseIso(startDate)) return { error: "valid start_date is required.", status: 400 };
+  if (endDate && (!parseIso(endDate) || endDate < startDate)) return { error: "end_date must be on/after start_date.", status: 400 };
+
+  const { data: rec } = await supa.from("gm_support_hours_credits").select("id, store_number").eq("id", id).maybeSingle();
+  if (!rec) return { error: "Record not found.", status: 404 };
+  const visible = await resolveVisibleStoreRows(supa, user);
+  if (!visible.some((s) => String(s.number) === String(rec.store_number))) return { error: "That store is outside your scope.", status: 403 };
+
+  // Keep the one-open-tag-per-store rule: reopening this tag (clearing end_date)
+  // is only allowed if no other tag for the store is already open.
+  if (!endDate) {
+    const { data: open } = await supa.from("gm_support_hours_credits")
+      .select("id").eq("store_number", rec.store_number).is("end_date", null).neq("id", id).limit(1);
+    if (open?.length) return { error: `Store ${rec.store_number} already has another open support-hours tag — end it first.`, status: 409 };
+  }
+
+  const { data, error } = await supa.from("gm_support_hours_credits")
+    .update({ weekly_hours: weeklyHours, start_date: startDate, end_date: endDate, note, updated_at: new Date().toISOString() })
+    .eq("id", id).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { row: data };
+}
+
 async function gmSupportEnd(supa, user, body) {
   if (roleOf(user) !== "admin") return { error: "Admins only.", status: 403 };
   const id = String(body?.id || "").trim();
@@ -1402,6 +1435,7 @@ export const handler = async (event) => {
       if (action === "no-gm-delete") return unwrap(await noGmDelete(supa, user, body));
       if (action === "no-gm-rate-set") return unwrap(await noGmRateSet(supa, user, body));
       if (action === "gm-support-add") return unwrap(await gmSupportAdd(supa, user, body));
+      if (action === "gm-support-update") return unwrap(await gmSupportUpdate(supa, user, body));
       if (action === "gm-support-end") return unwrap(await gmSupportEnd(supa, user, body));
       if (action === "gm-support-delete") return unwrap(await gmSupportDelete(supa, user, body));
       if (action === "labor-share-mint") return unwrap(await mintLaborShare(supa, user, body));

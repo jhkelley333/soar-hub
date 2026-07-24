@@ -162,9 +162,14 @@ export function fetchGmSupportCredits(): Promise<{ rows: GmSupportCreditRow[] }>
   return req(`${FN}?action=gm-support-list`);
 }
 export function addGmSupportCredit(input: {
-  store_number: string; weekly_hours: number; start_date: string; end_date?: string; note?: string;
+  store_number: string; weekly_hours: number; start_date: string; end_date?: string | null; note?: string;
 }): Promise<{ row: GmSupportCreditRow }> {
   return req(`${FN}?action=gm-support-add`, { method: "POST", body: JSON.stringify(input) });
+}
+export function updateGmSupportCredit(id: string, input: {
+  weekly_hours: number; start_date: string; end_date?: string | null; note?: string;
+}): Promise<{ row: GmSupportCreditRow }> {
+  return req(`${FN}?action=gm-support-update`, { method: "POST", body: JSON.stringify({ id, ...input }) });
 }
 export function endGmSupportCredit(id: string, endDate: string): Promise<{ ok: true }> {
   return req(`${FN}?action=gm-support-end`, { method: "POST", body: JSON.stringify({ id, end_date: endDate }) });
