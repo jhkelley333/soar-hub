@@ -5,7 +5,7 @@
 // is active. Mirrors the No-GM credit panel.
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2 } from "lucide-react";
+import { Pencil, Plus, Trash2 } from "lucide-react";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Button } from "@/shared/ui/Button";
@@ -14,7 +14,7 @@ import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
   addGmSupportCredit, deleteGmSupportCredit, endGmSupportCredit, fetchLaborV2Stores,
-  fetchGmSupportCredits, type GmSupportCreditRow,
+  fetchGmSupportCredits, updateGmSupportCredit, type GmSupportCreditRow,
 } from "./api";
 
 const fmtDate = (s: string | null) =>
@@ -30,7 +30,8 @@ export function GmSupportCreditPanel() {
   const storesQ = useQuery({ queryKey: ["labor-v2-stores"], queryFn: fetchLaborV2Stores });
   const stores = storesQ.data?.stores ?? [];
 
-  const [addOpen, setAddOpen] = useState(false);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null); // null = adding
   const [store, setStore] = useState("");
   const [hours, setHours] = useState("20");
   const [startDate, setStartDate] = useState(todayIso());
@@ -40,19 +41,34 @@ export function GmSupportCreditPanel() {
   const [endOn, setEndOn] = useState(todayIso());
   const [search, setSearch] = useState("");
 
+  const openAdd = () => {
+    setEditId(null); setStore(""); setHours("20"); setStartDate(todayIso()); setEndDate(""); setNote("");
+    setFormOpen(true);
+  };
+  const openEdit = (r: GmSupportCreditRow) => {
+    setEditId(r.id); setStore(r.store_number); setHours(String(r.weekly_hours));
+    setStartDate(r.start_date); setEndDate(r.end_date ?? ""); setNote(r.note ?? "");
+    setFormOpen(true);
+  };
+
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["gm-support-credits"] });
     qc.invalidateQueries({ predicate: (query) => String(query.queryKey[0] ?? "").startsWith("labor") });
   };
 
-  const add = useMutation({
-    mutationFn: () => addGmSupportCredit({
-      store_number: store, weekly_hours: Number(hours), start_date: startDate,
-      end_date: endDate || undefined, note: note.trim() || undefined,
-    }),
+  const save = useMutation({
+    mutationFn: () => {
+      const payload = {
+        weekly_hours: Number(hours), start_date: startDate,
+        end_date: endDate || (editId ? null : undefined), note: note.trim() || undefined,
+      };
+      return editId
+        ? updateGmSupportCredit(editId, payload)
+        : addGmSupportCredit({ store_number: store, ...payload });
+    },
     onSuccess: () => {
-      toast.push("Store tagged — the weekly hours credit applies from the start date.", "success");
-      setAddOpen(false); setStore(""); setHours("20"); setStartDate(todayIso()); setEndDate(""); setNote("");
+      toast.push(editId ? "Tag updated." : "Store tagged — the weekly hours credit applies from the start date.", "success");
+      setFormOpen(false);
       invalidate();
     },
     onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't save.", "error"),
@@ -92,7 +108,7 @@ export function GmSupportCreditPanel() {
             store's own blended wage — for as long as the tag is active.
           </div>
         </div>
-        <Button size="sm" onClick={() => setAddOpen(true)}>
+        <Button size="sm" onClick={openAdd}>
           <Plus className="mr-1 h-3.5 w-3.5" /> Tag a store
         </Button>
       </div>
@@ -104,6 +120,7 @@ export function GmSupportCreditPanel() {
           ? <p className="p-4 text-sm text-zinc-500">{search ? "No active tags match that search." : "No stores are tagged right now."}</p>
           : activeRows.map((r) => (
             <Row key={r.id} r={r}
+              onEdit={() => openEdit(r)}
               onEnd={() => { setEndTarget(r); setEndOn(todayIso()); }}
               onDelete={() => { if (window.confirm(`Delete the support-hours tag for #${r.store_number}? The credit is removed for its whole date range.`)) remove.mutate(r.id); }} />
           ))}
@@ -113,25 +130,29 @@ export function GmSupportCreditPanel() {
         <Section title={`Ended / upcoming (${pastRows.length})`}>
           {pastRows.map((r) => (
             <Row key={r.id} r={r}
+              onEdit={() => openEdit(r)}
               onDelete={() => { if (window.confirm(`Delete the support-hours tag for #${r.store_number}? The credit is removed for its whole date range.`)) remove.mutate(r.id); }} />
           ))}
         </Section>
       )}
 
-      {/* Add modal */}
-      <Modal open={addOpen} onClose={() => setAddOpen(false)} title="Tag a store — GM support hours"
+      {/* Add / edit modal */}
+      <Modal open={formOpen} onClose={() => setFormOpen(false)}
+        title={editId ? "Edit tag — GM support hours" : "Tag a store — GM support hours"}
         footer={
-          <Button size="sm" onClick={() => add.mutate()} disabled={!store || !startDate || !(Number(hours) > 0) || add.isPending}>
-            {add.isPending ? "Saving…" : "Start credit"}
+          <Button size="sm" onClick={() => save.mutate()} disabled={!store || !startDate || !(Number(hours) > 0) || save.isPending}>
+            {save.isPending ? "Saving…" : editId ? "Save changes" : "Start credit"}
           </Button>
         }>
         <div className="space-y-3">
           <div>
             <label className="mb-1 block text-xs font-semibold text-zinc-600">Store</label>
-            <select value={store} onChange={(e) => setStore(e.target.value)} className={cn(inputCls, "w-full")}>
+            <select value={store} onChange={(e) => setStore(e.target.value)} disabled={!!editId}
+              className={cn(inputCls, "w-full", editId && "cursor-not-allowed bg-zinc-50 text-zinc-500")}>
               <option value="">Pick a store…</option>
               {stores.map((s) => <option key={s.id} value={s.number}>#{s.number} · {s.name}</option>)}
             </select>
+            {editId && <p className="mt-1 text-[11px] text-zinc-400">Store can't be changed — delete and re-tag to move it.</p>}
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -178,7 +199,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Row({ r, onEnd, onDelete }: { r: GmSupportCreditRow; onEnd?: () => void; onDelete: () => void }) {
+function Row({ r, onEdit, onEnd, onDelete }: { r: GmSupportCreditRow; onEdit: () => void; onEnd?: () => void; onDelete: () => void }) {
   return (
     <div className="flex flex-wrap items-center gap-3 p-4">
       <div className="min-w-0 flex-1">
@@ -195,6 +216,9 @@ function Row({ r, onEnd, onDelete }: { r: GmSupportCreditRow; onEnd?: () => void
         </div>
       </div>
       {onEnd && r.active && !r.end_date && <Button size="sm" variant="secondary" onClick={onEnd}>End</Button>}
+      <button onClick={onEdit} title="Edit tag" className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-50 hover:text-accent-700">
+        <Pencil className="h-4 w-4" />
+      </button>
       <button onClick={onDelete} title="Delete tag" className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-50 hover:text-red-600">
         <Trash2 className="h-4 w-4" />
       </button>
