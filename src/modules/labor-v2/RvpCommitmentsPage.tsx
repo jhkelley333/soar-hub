@@ -144,11 +144,11 @@ export function RvpCommitmentsPage() {
           </div>
           {q.data.totals.total_weekly != null && (
             <div className="rounded-xl bg-midnight px-4 py-3 text-white ring-1 ring-black/5">
-              <div className="text-[11px] uppercase tracking-wide text-white/60">Savings if every gap closes · next 30 days</div>
+              <div className="text-[11px] uppercase tracking-wide text-white/60">Savings if every RVP hits their target · next 30 days</div>
               <div className="mt-0.5 flex flex-wrap items-baseline gap-x-4 gap-y-1">
                 <span className="text-2xl font-semibold tabular-nums">{fmtUsd(per30(q.data.totals.total_weekly))}<span className="ml-1 text-sm font-normal text-white/60">/ 30 days</span></span>
                 <span className="text-sm tabular-nums text-white/80">{fmtUsd(q.data.totals.total_annual)}<span className="text-white/50">/yr</span></span>
-                <span className="text-[11px] text-white/50">Labor {fmtUsd(per30(q.data.totals.labor_weekly))} · COGS {fmtUsd(per30(q.data.totals.cogs_weekly))} over 30 days · to chart / 96% target</span>
+                <span className="text-[11px] text-white/50">Labor {fmtUsd(per30(q.data.totals.labor_weekly))} · COGS {fmtUsd(per30(q.data.totals.cogs_weekly))} over 30 days · gap to each RVP's committed target, tracked buckets only</span>
               </div>
             </div>
           )}
@@ -215,17 +215,19 @@ function RvpCard({ row, canEdit }: { row: RvpCommitmentRow; canEdit: boolean }) 
           ? <div className="px-4 py-4 text-xs text-zinc-400">No buckets selected for this RVP.</div>
           : metrics.map((m) => <MetricRow key={m.key} row={row} m={m} />)}
       </div>
-      {row.dollars.total_weekly != null && (
-        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-zinc-100 bg-zinc-50/60 px-4 py-2.5">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">$ if gap closes · 30 days</span>
+      <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-zinc-100 bg-zinc-50/60 px-4 py-2.5">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">$ if they hit target · 30 days</span>
+        {row.target_dollars.total_weekly ? (
           <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-xs tabular-nums text-zinc-600">
-            <span>Labor <b className="text-midnight">{fmtUsd(per30(row.dollars.labor_weekly))}</b></span>
-            <span>COGS <b className="text-midnight">{fmtUsd(per30(row.dollars.cogs_weekly))}</b></span>
-            <span className="text-emerald-700">Total <b>{fmtUsd(per30(row.dollars.total_weekly))}</b> / 30d</span>
-            <span className="text-zinc-400">({fmtUsd(row.dollars.total_annual)}/yr)</span>
+            {row.target_dollars.labor_weekly ? <span>Labor <b className="text-midnight">{fmtUsd(per30(row.target_dollars.labor_weekly))}</b></span> : null}
+            {row.target_dollars.cogs_weekly ? <span>COGS <b className="text-midnight">{fmtUsd(per30(row.target_dollars.cogs_weekly))}</b></span> : null}
+            <span className="text-emerald-700">Total <b>{fmtUsd(per30(row.target_dollars.total_weekly))}</b> / 30d</span>
+            <span className="text-zinc-400">({fmtUsd(row.target_dollars.total_annual)}/yr)</span>
           </div>
-        </div>
-      )}
+        ) : (
+          <span className="text-xs text-zinc-400">Set a target on a tracked bucket to see the savings.</span>
+        )}
+      </div>
     </div>
   );
 }
