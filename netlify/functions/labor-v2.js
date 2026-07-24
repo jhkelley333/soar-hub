@@ -846,6 +846,44 @@ async function bucketSettings(supa) {
 const effectiveHidden = (buckets, region) =>
   Object.prototype.hasOwnProperty.call(buckets.byRegion, region) ? buckets.byRegion[region] : buckets.global;
 
+// Food-cost target efficiency % (the COGS "standard", default 96) — used to
+// scale the Ranker's fc-miss (which is measured to this target) to a custom
+// commitment target.
+async function fcTargetPct(supa) {
+  const { data } = await supa.from("ranking_config").select("value, effective_from")
+    .eq("key", "fc_target_efficiency").order("effective_from", { ascending: false }).limit(1).maybeSingle();
+  const e = Number(data?.value?.efficiency);
+  return isFinite(e) && e > 0 ? e * 100 : 96;
+}
+
+// The $ that closing the gap TO THEIR TARGET accomplishes, counting only the
+// buckets this RVP is tracking. Prorates the Ranker's to-standard miss by how
+// much of the gap the target closes. Labor $ derives from the Hours Over Chart
+// bucket (AvS is a discipline lever, no separate $, to avoid double-counting).
+function targetDollars({ tracked, actuals, targets, dollars, configCogsTarget }) {
+  let laborWk = 0;
+  if (tracked.has("labor_hours_over")) {
+    const A = actuals.labor_hours_over, T = targets.labor_hours_over;
+    if (A != null && T != null && A > 0 && A > T && dollars.labor_weekly != null) {
+      laborWk = dollars.labor_weekly * ((A - T) / A);
+    }
+  }
+  let cogsWk = 0;
+  if (tracked.has("cogs_efficiency")) {
+    const A = actuals.cogs_efficiency, T = targets.cogs_efficiency;
+    if (A != null && T != null && T > A && dollars.cogs_weekly != null && dollars.cogs_weekly > 0) {
+      const configGap = configCogsTarget - A;
+      if (configGap > 0.01) cogsWk = dollars.cogs_weekly * ((T - A) / configGap);
+    }
+  }
+  const r = (v) => (isFinite(v) ? Math.round(v) : null);
+  return {
+    labor_weekly: r(laborWk), labor_annual: r(laborWk * 52),
+    cogs_weekly: r(cogsWk), cogs_annual: r(cogsWk * 52),
+    total_weekly: r(laborWk + cogsWk), total_annual: r((laborWk + cogsWk) * 52),
+  };
+}
+
 // The caller's in-scope region names, from their visible stores' org.
 async function callerRegions(supa, user) {
   const visible = await resolveVisibleStoreRows(supa, user);
@@ -894,11 +932,12 @@ async function rvpCommitments(supa, user) {
   const allWeekEnds = [...new Set([...baseWeekEnds, ...trackWeekEnds])];
 
   const credits = await loadLaborCredits(supa, numbers);
-  const [cogs, laborWk, cogsWk, buckets] = await Promise.all([
+  const [cogs, laborWk, cogsWk, buckets, configCogsTarget] = await Promise.all([
     cogsByRvpFromRuns(supa),
     laborWeeklyByRegion(supa, numbers, orgMap, allWeekEnds, credits),
     cogsWeeklyByRvp(supa, trackWeekEnds),
     bucketSettings(supa),
+    fcTargetPct(supa),
   ]);
   const { data: commits } = await supa.from("rvp_commitments").select("*");
   const targetOf = (region, metric) => {
@@ -926,14 +965,23 @@ async function rvpCommitments(supa, user) {
     const cogsLatest = rvpName ? cogs.latest.get(String(rvpName)) : null;
     const laborSeries = (field) => trackWeekEnds.map((we) => ({ weekEnd: we, value: laborWk.get(region)?.get(we)?.[field] ?? null }));
     const cogsSeries = () => trackWeekEnds.map((we) => ({ weekEnd: we, value: (rvpName ? cogsWk.get(String(rvpName))?.get(we) : null) ?? null }));
+    const hidden = effectiveHidden(buckets, region);
+    const tracked = new Set([...COMMIT_METRICS].filter((m) => !hidden.includes(m)));
+    const actuals = {
+      labor_hours_over: hoursPerUnit(rrows, "wtd_"),
+      labor_avs_pct: raw.sched ? round2((raw.actual / raw.sched) * 100) : null,
+      cogs_efficiency: cogsLatest?.cogs_pct ?? null,
+    };
+    const targets = {
+      labor_hours_over: targetOf(region, "labor_hours_over"),
+      labor_avs_pct: targetOf(region, "labor_avs_pct"),
+      cogs_efficiency: targetOf(region, "cogs_efficiency"),
+    };
+    const dollars = cogsLatest?.dollars ?? { labor_weekly: null, labor_annual: null, cogs_weekly: null, cogs_annual: null, total_weekly: null, total_annual: null };
     return {
       region, rvp_name: rvpName, stores: storeCount.get(region) ?? rrows.length,
-      hidden_metrics: effectiveHidden(buckets, region),
-      actuals: {
-        labor_hours_over: hoursPerUnit(rrows, "wtd_"),
-        labor_avs_pct: raw.sched ? round2((raw.actual / raw.sched) * 100) : null,
-        cogs_efficiency: cogsLatest?.cogs_pct ?? null,
-      },
+      hidden_metrics: hidden,
+      actuals,
       baselines: {
         labor_hours_over: baseAvg(region, "hours_over"),
         labor_avs_pct: baseAvg(region, "avs_pct"),
@@ -944,19 +992,16 @@ async function rvpCommitments(supa, user) {
         labor_avs_pct: laborSeries("avs_pct"),
         cogs_efficiency: cogsSeries(),
       },
-      // $ that flows to the bottom line if the gap to standard closes (Ranker:
-      // labor over chart + food cost over 96% target), weekly + annualized.
-      dollars: cogsLatest?.dollars ?? { labor_weekly: null, labor_annual: null, cogs_weekly: null, cogs_annual: null, total_weekly: null, total_annual: null },
+      // Full opportunity to standard (labor over chart + food cost over target).
+      dollars,
+      // What closing the gap to THEIR target accomplishes — tracked buckets only.
+      target_dollars: targetDollars({ tracked, actuals, targets, dollars, configCogsTarget }),
       cogs_week: cogsLatest?.week ?? null,
-      targets: {
-        labor_hours_over: targetOf(region, "labor_hours_over"),
-        labor_avs_pct: targetOf(region, "labor_avs_pct"),
-        cogs_efficiency: targetOf(region, "cogs_efficiency"),
-      },
+      targets,
     };
   }).sort((a, b) => (a.rvp_name ?? a.region).localeCompare(b.rvp_name ?? b.region));
 
-  const sum = (field) => { const vals = out.map((r) => r.dollars?.[field]).filter((v) => v != null); return vals.length ? vals.reduce((a, b) => a + b, 0) : null; };
+  const sum = (field) => { const vals = out.map((r) => r.target_dollars?.[field]).filter((v) => v != null); return vals.length ? vals.reduce((a, b) => a + b, 0) : null; };
   const totals = {
     labor_weekly: sum("labor_weekly"), labor_annual: sum("labor_annual"),
     cogs_weekly: sum("cogs_weekly"), cogs_annual: sum("cogs_annual"),

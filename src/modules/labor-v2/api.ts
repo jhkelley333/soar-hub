@@ -113,7 +113,8 @@ export interface RvpCommitmentRow {
   actuals: Record<CommitMetric, number | null>;
   baselines: Record<CommitMetric, number | null>; // last-4-weeks average
   weekly: Record<CommitMetric, RvpCommitWeek[]>;   // per tracked week
-  dollars: CommitDollars;                          // $ to bottom line if gap closes
+  dollars: CommitDollars;                          // full opportunity to standard
+  target_dollars: CommitDollars;                   // closing gap to THEIR target, tracked buckets only
   hidden_metrics: CommitMetric[];                  // buckets hidden for THIS rvp
   cogs_week: string | null;
   targets: Record<CommitMetric, number | null>;
