@@ -10,7 +10,7 @@ import { extractLaborRows, feedBusinessDate, feedSectionReport, wallClockInTz, i
 import { extractCountRows } from "./_lib/kpiCount.js";
 import { upsertLaborCloses } from "./_lib/laborCloses.js";
 import { fiscalForDate } from "./_lib/fiscal.js";
-import { loadLaborCredits, applyCreditsToRows, loadTrainingCreditDates, loadGmPtoCreditDates, loadNoGmCreditDates } from "./_lib/trainingCredit.js";
+import { loadLaborCredits, applyCreditsToRows, loadTrainingCreditDates, loadGmPtoCreditDates, loadNoGmCreditDates, loadGmSupportCreditDates } from "./_lib/trainingCredit.js";
 import { logPull } from "./_lib/pullLog.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -743,6 +743,90 @@ async function noGmRateSet(supa, user, body) {
   return { ok: true, amount };
 }
 
+// ── GM support-hours credit (SDO+) — a GM supporting other stores gets weekly
+// hours credited to their own store; mirrors the no-GM tag CRUD.
+async function gmSupportList(supa, user) {
+  if (!NO_GM_ROLES.has(roleOf(user))) return { error: "SDO and above only.", status: 403 };
+  const visible = await resolveVisibleStoreRows(supa, user);
+  if (!visible.length) return { rows: [] };
+  const numbers = [...new Set(visible.map((s) => String(s.number)))];
+  const nameByNumber = new Map(visible.map((s) => [String(s.number), s.name]));
+  const { data, error } = await supa.from("gm_support_hours_credits").select("*").in("store_number", numbers)
+    .order("start_date", { ascending: false }).limit(500);
+  if (error) {
+    if (/gm_support_hours_credits/.test(error.message)) return { error: "Run migration 0257 first (gm_support_hours_credits table is missing).", status: 500 };
+    return { error: error.message, status: 500 };
+  }
+  const today = isoOf(new Date());
+  const rows = (data || []).map((r) => ({
+    ...r,
+    store_name: nameByNumber.get(String(r.store_number)) ?? null,
+    active: r.start_date <= today && (!r.end_date || r.end_date >= today),
+  }));
+  return { rows };
+}
+
+async function gmSupportAdd(supa, user, body) {
+  if (!NO_GM_ROLES.has(roleOf(user))) return { error: "SDO and above only.", status: 403 };
+  const storeNumber = String(body?.store_number || "").trim();
+  const weeklyHours = round2(numv(body?.weekly_hours));
+  const startDate = String(body?.start_date || "").trim();
+  const endDate = body?.end_date ? String(body.end_date).trim() : null;
+  const note = String(body?.note ?? "").trim().slice(0, 500) || null;
+  if (!(weeklyHours > 0 && weeklyHours <= 80)) return { error: "Weekly hours must be between 0 and 80.", status: 400 };
+  if (!parseIso(startDate)) return { error: "valid start_date is required.", status: 400 };
+  if (endDate && (!parseIso(endDate) || endDate < startDate)) return { error: "end_date must be on/after start_date.", status: 400 };
+
+  const visible = await resolveVisibleStoreRows(supa, user);
+  const storeRow = visible.find((s) => String(s.number) === storeNumber) || null;
+  if (!storeRow) return { error: `Store ${storeNumber} is outside your scope.`, status: 403 };
+
+  const { data: open } = await supa.from("gm_support_hours_credits")
+    .select("id").eq("store_number", storeNumber).is("end_date", null).limit(1);
+  if (open?.length && !endDate) {
+    return { error: `Store ${storeNumber} already has an open support-hours tag — end it first.`, status: 409 };
+  }
+
+  const { data, error } = await supa.from("gm_support_hours_credits").insert({
+    store_number: storeNumber, weekly_hours: weeklyHours, start_date: startDate, end_date: endDate, note,
+    created_by_id: user.id, created_by_email: user.email,
+  }).select("*").single();
+  if (error) {
+    if (/gm_support_hours_credits/.test(error.message)) return { error: "Run migration 0257 first (gm_support_hours_credits table is missing).", status: 500 };
+    return { error: error.message, status: 500 };
+  }
+  return { row: data };
+}
+
+async function gmSupportEnd(supa, user, body) {
+  if (!NO_GM_ROLES.has(roleOf(user))) return { error: "SDO and above only.", status: 403 };
+  const id = String(body?.id || "").trim();
+  const endDate = String(body?.end_date || "").trim();
+  if (!id) return { error: "id is required.", status: 400 };
+  if (!parseIso(endDate)) return { error: "valid end_date is required.", status: 400 };
+  const { data: rec } = await supa.from("gm_support_hours_credits").select("id, store_number, start_date").eq("id", id).maybeSingle();
+  if (!rec) return { error: "Record not found.", status: 404 };
+  if (endDate < rec.start_date) return { error: "end_date must be on/after the start date.", status: 400 };
+  const visible = await resolveVisibleStoreRows(supa, user);
+  if (!visible.some((s) => String(s.number) === String(rec.store_number))) return { error: "That store is outside your scope.", status: 403 };
+  const { error } = await supa.from("gm_support_hours_credits").update({ end_date: endDate, updated_at: new Date().toISOString() }).eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
+async function gmSupportDelete(supa, user, body) {
+  if (!NO_GM_ROLES.has(roleOf(user))) return { error: "SDO and above only.", status: 403 };
+  const id = String(body?.id || "").trim();
+  if (!id) return { error: "id is required.", status: 400 };
+  const { data: rec } = await supa.from("gm_support_hours_credits").select("id, store_number").eq("id", id).maybeSingle();
+  if (!rec) return { error: "Record not found.", status: 404 };
+  const visible = await resolveVisibleStoreRows(supa, user);
+  if (!visible.some((s) => String(s.number) === String(rec.store_number))) return { error: "That store is outside your scope.", status: 403 };
+  const { error } = await supa.from("gm_support_hours_credits").delete().eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
 async function teamView(supa, user, params) {
   if (!TEAM_ROLES.has(roleOf(user))) return { error: "not authorized", status: 403 };
   const empty = { date: null, scope: { stores: 0, dos: [] }, totals: null, startLevel: "district", levels: { region: [], area: [], district: [], store: [] }, missing: [] };
@@ -932,9 +1016,9 @@ async function laborSharePayload(supa, { scopeKind, regionName, label }) {
   // Same weekday one week back — its cumulative wtd_ fields give last week
   // Mon→(same day), the apples-to-apples comparison for this week's WTD.
   const lastWeekDate = isoOf(shiftDays(parseIso(anchor), -7));
-  // Load the three credit types separately so we can show the breakdown, then
+  // Load each credit type separately so we can show the breakdown, then
   // merge them exactly as loadLaborCredits does to adjust the labor rows.
-  const [{ data: daily }, { data: lastWk }, tcMap, ptoMap, noGmMap] = await Promise.all([
+  const [{ data: daily }, { data: lastWk }, tcMap, ptoMap, noGmMap, gmSupMap] = await Promise.all([
     supa.from("labor_v2_daily").select("*").eq("business_date", anchor).in("store_number", numbers),
     // Include business_date so applyCreditsToRows can window last week's own
     // WTD credits (its weekStart → that day) — otherwise last week's WTD hours
@@ -944,9 +1028,10 @@ async function laborSharePayload(supa, { scopeKind, regionName, label }) {
     loadTrainingCreditDates(supa, numbers),
     loadGmPtoCreditDates(supa, numbers),
     loadNoGmCreditDates(supa, numbers),
+    loadGmSupportCreditDates(supa, numbers),
   ]);
   const mergedCredits = new Map();
-  for (const src of [tcMap, ptoMap, noGmMap]) for (const [sn, arr] of src) mergedCredits.set(sn, (mergedCredits.get(sn) || []).concat(arr));
+  for (const src of [tcMap, ptoMap, noGmMap, gmSupMap]) for (const [sn, arr] of src) mergedCredits.set(sn, (mergedCredits.get(sn) || []).concat(arr));
   applyCreditsToRows(daily || [], mergedCredits);
   // Credit last week's rows the same way, so the WoW comparison is like-for-like.
   applyCreditsToRows(lastWk || [], mergedCredits);
@@ -978,6 +1063,7 @@ async function laborSharePayload(supa, { scopeKind, regionName, label }) {
         no_gm: round2(nums.reduce((a, n) => a + creditPtd(noGmMap, n), 0)),
         pto: round2(nums.reduce((a, n) => a + creditPtd(ptoMap, n), 0)),
         training: round2(nums.reduce((a, n) => a + creditPtd(tcMap, n), 0)),
+        gm_support: round2(nums.reduce((a, n) => a + creditPtd(gmSupMap, n), 0)),
       },
     };
   };
@@ -1315,6 +1401,9 @@ export const handler = async (event) => {
       if (action === "no-gm-end") return unwrap(await noGmEnd(supa, user, body));
       if (action === "no-gm-delete") return unwrap(await noGmDelete(supa, user, body));
       if (action === "no-gm-rate-set") return unwrap(await noGmRateSet(supa, user, body));
+      if (action === "gm-support-add") return unwrap(await gmSupportAdd(supa, user, body));
+      if (action === "gm-support-end") return unwrap(await gmSupportEnd(supa, user, body));
+      if (action === "gm-support-delete") return unwrap(await gmSupportDelete(supa, user, body));
       if (action === "labor-share-mint") return unwrap(await mintLaborShare(supa, user, body));
       if (action === "labor-share-revoke") return unwrap(await revokeLaborShare(supa, user, body));
       return respond(400, { error: `Unknown action: ${action}` });
@@ -1326,6 +1415,7 @@ export const handler = async (event) => {
     if (action === "miss-tracker") return unwrap(await missTracker(supa, user, params));
     if (action === "my-stores") return unwrap(await listMyStores(supa, user));
     if (action === "no-gm-list") return unwrap(await noGmList(supa, user));
+    if (action === "gm-support-list") return unwrap(await gmSupportList(supa, user));
     if (action === "labor-shares") return unwrap(await listLaborShares(supa, user));
 
     // Admin-only org rollup.

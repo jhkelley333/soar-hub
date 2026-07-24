@@ -11,12 +11,13 @@ import { useAuth } from "@/auth/AuthProvider";
 import { LaborV2GmPage } from "./LaborV2GmPage";
 import { LaborV2TeamPage } from "./LaborV2TeamPage";
 import { NoGmCreditPanel } from "./NoGmCreditPanel";
+import { GmSupportCreditPanel } from "./GmSupportCreditPanel";
 
 const ROLLUP_ROLES = ["do", "sdo", "rvp", "vp", "coo", "admin"];
 // Who can manage the no-GM weekly labor credit tags.
 const NO_GM_ROLES = ["sdo", "rvp", "vp", "coo", "admin"];
 
-type View = "team" | "store" | "no-gm";
+type View = "team" | "store" | "no-gm" | "gm-support";
 
 export function LaborV2Entry() {
   const { profile } = useAuth();
@@ -40,10 +41,14 @@ export function LaborV2Entry() {
             { value: "team", label: "Team" },
             { value: "store", label: "By store" },
             ...(canNoGm ? [{ value: "no-gm" as const, label: "No-GM credit" }] : []),
+            ...(canNoGm ? [{ value: "gm-support" as const, label: "GM support hrs" }] : []),
           ]}
         />
       </div>
-      {view === "team" ? <LaborV2TeamPage /> : view === "store" ? <LaborV2GmPage /> : <NoGmCreditPanel />}
+      {view === "team" ? <LaborV2TeamPage />
+        : view === "store" ? <LaborV2GmPage />
+        : view === "gm-support" ? <GmSupportCreditPanel />
+        : <NoGmCreditPanel />}
     </>
   );
 }

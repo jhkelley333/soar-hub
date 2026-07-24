@@ -151,15 +151,79 @@ export async function loadNoGmCreditDates(supa, storeNumbers) {
   return map;
 }
 
-// All labor credits for the given stores: training + GM PTO + no-GM, one
-// merged map for applyCreditsToRows.
+// ── GM support-hours labor credit ────────────────────────────────────────────
+// A GM who supports other stores gets N labor hours/week credited to their own
+// store (default 20). The hours convert to dollars using the store's own blended
+// wage (recent labor_cost / labor_hours), so both cost and hours drop — the same
+// units the chart is measured in. Falls back to ea_settings.gm_support_default_wage
+// when a store has no recent labor to blend from.
+const GM_SUPPORT_DEFAULT_WEEKLY_HOURS = 20;
+const GM_SUPPORT_DEFAULT_WAGE = 13;
+
+async function gmSupportDefaultWage(supa) {
+  try {
+    const { data } = await supa.from("ea_settings").select("value").eq("key", "gm_support_default_wage").maybeSingle();
+    const amt = Number(data?.value?.amount);
+    return isFinite(amt) && amt > 0 ? amt : GM_SUPPORT_DEFAULT_WAGE;
+  } catch { return GM_SUPPORT_DEFAULT_WAGE; }
+}
+
+export async function loadGmSupportCreditDates(supa, storeNumbers) {
+  const map = new Map();
+  if (!storeNumbers.length) return map;
+  const { data: tags } = await supa
+    .from("gm_support_hours_credits")
+    .select("store_number, weekly_hours, start_date, end_date")
+    .in("store_number", storeNumbers);
+  if (!tags || !tags.length) return map;
+
+  // Blended wage per tagged store from the last ~35 days of labor.
+  const tagStores = [...new Set(tags.map((t) => String(t.store_number)))];
+  const since = isoOf(Date.now() - 35 * DAY);
+  const { data: rows } = await supa
+    .from("labor_v2_daily")
+    .select("store_number, labor_cost, labor_hours")
+    .in("store_number", tagStores)
+    .gte("business_date", since);
+  const agg = new Map();
+  for (const r of rows || []) {
+    const sn = String(r.store_number);
+    const a = agg.get(sn) || { cost: 0, hours: 0 };
+    a.cost += Number(r.labor_cost) || 0;
+    a.hours += Number(r.labor_hours) || 0;
+    agg.set(sn, a);
+  }
+  const fallbackWage = await gmSupportDefaultWage(supa);
+  const todayMs = Date.now();
+  for (const t of tags) {
+    const startMs = parseIso(t.start_date);
+    if (startMs == null) continue;
+    const endMs = Math.min(parseIso(t.end_date) ?? todayMs, todayMs);
+    const sn = String(t.store_number);
+    const a = agg.get(sn);
+    const wage = a && a.hours > 0 ? a.cost / a.hours : fallbackWage;
+    const weeklyHours = Number(t.weekly_hours) > 0 ? Number(t.weekly_hours) : GM_SUPPORT_DEFAULT_WEEKLY_HOURS;
+    const dailyHours = weeklyHours / 7;
+    const dailyAmount = dailyHours * wage;
+    const arr = map.get(sn) || [];
+    for (let ms = startMs, i = 0; ms <= endMs && i < 400; ms += DAY, i++) {
+      arr.push({ date: isoOf(ms), amount: dailyAmount, hours: dailyHours });
+    }
+    if (arr.length) map.set(sn, arr);
+  }
+  return map;
+}
+
+// All labor credits for the given stores: training + GM PTO + no-GM + GM
+// support-hours, one merged map for applyCreditsToRows.
 export async function loadLaborCredits(supa, storeNumbers) {
-  const [tc, pto, noGm] = await Promise.all([
+  const [tc, pto, noGm, gmSup] = await Promise.all([
     loadTrainingCreditDates(supa, storeNumbers),
     loadGmPtoCreditDates(supa, storeNumbers),
     loadNoGmCreditDates(supa, storeNumbers),
+    loadGmSupportCreditDates(supa, storeNumbers),
   ]);
-  for (const extra of [pto, noGm]) {
+  for (const extra of [pto, noGm, gmSup]) {
     for (const [sn, arr] of extra) {
       const cur = tc.get(sn) || [];
       tc.set(sn, cur.concat(arr));
