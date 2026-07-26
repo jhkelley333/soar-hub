@@ -35,6 +35,7 @@ import { FeatureFlagsPage } from "@/modules/admin/FeatureFlagsPage";
 import { RoleAccessPage } from "@/modules/admin/RoleAccessPage";
 import { RegionAccessPage } from "@/modules/admin/RegionAccessPage";
 import { KpiDashboardPage } from "@/modules/kpi/KpiDashboardPage";
+import { MetricsBoardPage } from "@/modules/kpi/MetricsBoardPage";
 import { LaborV2Page } from "@/modules/labor-v2/LaborV2Page";
 import { RankingAdminPage } from "@/modules/ranking/RankingAdminPage";
 import { PullLogPage } from "@/modules/labor-v2/PullLogPage";
@@ -229,6 +230,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <KpiDashboardPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/metrics-board",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <MetricsBoardPage />
           </ProtectedRoute>
         ),
       },

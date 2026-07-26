@@ -154,6 +154,7 @@ export const NAV: NavItem[] = [
   { to: "/admin/gm-roster", label: "GM Roster", icon: Users,         roles: ["vp", "coo", "admin"] },
   { to: "/admin/access-links", label: "Stay-Logged-In Links", icon: Link2, roles: ["vp", "coo", "admin"] },
   { to: "/admin/kpi",   label: "KPI Dashboard", icon: BarChart3,   roles: ["admin"] },
+  { to: "/admin/metrics-board", label: "Metrics Board", icon: LayoutGrid, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/admin/labor-v2", label: "Labor Rollup", icon: Gauge, roles: ["admin"] },
   { to: "/admin/labor-v2/log", label: "Pull Log", icon: ScrollText, roles: ["admin"] },
   { to: "/admin/bulk-attributes", label: "Bulk Attributes", icon: Layers, roles: ["admin"] },
