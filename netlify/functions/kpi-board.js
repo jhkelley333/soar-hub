@@ -9,7 +9,8 @@ import { createClient } from "@supabase/supabase-js";
 import { fiscalForDate } from "./_lib/fiscal.js";
 import { resolveOrg } from "./_lib/kpiOrg.js";
 
-const TZ = "America/Chicago";
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const BOARD_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
 const DAY = 86400000;
 const numv = (v) => (typeof v === "number" && isFinite(v) ? v : Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -80,9 +81,10 @@ const METRIC_IDS = [
   "training_compliance", "new_hire_certified", "cross_trained", "ninety_day_retention",
 ];
 
-export async function handler(event) {
-  const supa = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false } });
+export const handler = async (event) => {
   try {
+    if (!SUPABASE_URL || !SERVICE_KEY) return respond(500, { error: "kpi-board env vars not configured" });
+    const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
     const user = await userFromAuth(supa, event);
     if (!user) return respond(401, { error: "unauthorized" });
     if (!BOARD_ROLES.has(user.role)) return respond(403, { error: "Not authorized." });
