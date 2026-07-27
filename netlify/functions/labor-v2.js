@@ -246,6 +246,36 @@ async function listDates(supa) {
 
 // Pull the feed now and upsert into labor_v2_daily; returns the business date.
 // ctx = { source, triggeredBy } for the pull log.
+// Compare the incoming rows against what's already stored for this business
+// date; return field-level revisions (a previously-captured numeric value that
+// changed). First captures (no existing row) and null->value backfills aren't
+// revisions — only an actual value change counts.
+const REVISION_EXCLUDE = new Set(["id", "store_number", "business_date", "captured_at", "created_at", "updated_at", "store_name"]);
+async function computeRevisions(supa, table, source, newRows, businessDate) {
+  const nums = [...new Set(newRows.map((r) => String(r.store_number)))];
+  if (!nums.length) return [];
+  const revs = [];
+  // Per-store chunks keep the IN() query under the row cap at company scale.
+  for (let i = 0; i < nums.length; i += 300) {
+    const chunk = nums.slice(i, i + 300);
+    const { data: existing } = await supa.from(table).select("*").eq("business_date", businessDate).in("store_number", chunk);
+    const byStore = new Map((existing || []).map((r) => [String(r.store_number), r]));
+    for (const nr of newRows) {
+      const old = byStore.get(String(nr.store_number));
+      if (!old) continue;
+      for (const [k, v] of Object.entries(nr)) {
+        if (REVISION_EXCLUDE.has(k) || typeof v !== "number" || !isFinite(v)) continue;
+        const ov = old[k];
+        if (ov == null || typeof Number(ov) !== "number" || !isFinite(Number(ov))) continue;
+        if (Math.abs(v - Number(ov)) > 1e-6) {
+          revs.push({ source, store_number: String(nr.store_number), business_date: businessDate, field: k, old_value: Number(ov), new_value: v });
+        }
+      }
+    }
+  }
+  return revs;
+}
+
 async function refreshNow(supa, ctx = {}) {
   const started = Date.now();
   const source = ctx.source || "refresh";
@@ -256,7 +286,11 @@ async function refreshNow(supa, ctx = {}) {
     const businessDate = feedBusinessDate(payload, wc);
     const extracted = extractLaborRows(payload);
     const rows = extracted.map((r) => ({ ...r, business_date: businessDate, captured_at: new Date().toISOString() }));
+    const revisions = [];
     if (rows.length) {
+      // Detect restatements BEFORE the upsert overwrites the stored values.
+      try { revisions.push(...await computeRevisions(supa, "labor_v2_daily", "labor", rows, businessDate)); }
+      catch (e) { console.log(`[labor-v2] labor revision check failed: ${e.message}`); }
       let { error } = await supa.from("labor_v2_daily").upsert(rows, { onConflict: "store_number,business_date" });
       if (error && isPre0238Error(error)) {
         // Migration 0238 (ranking fields) not applied yet — land the old set.
@@ -274,9 +308,20 @@ async function refreshNow(supa, ctx = {}) {
         ...r, business_date: businessDate, captured_at: new Date().toISOString(),
       }));
       if (countRows.length) {
+        try { revisions.push(...await computeRevisions(supa, "count_daily", "count", countRows, businessDate)); }
+        catch (e) { console.log(`[labor-v2] count revision check failed: ${e.message}`); }
         await supa.from("count_daily").upsert(countRows, { onConflict: "store_number,business_date" });
       }
     } catch (e) { console.log(`[labor-v2] count fan-out failed: ${e.message}`); }
+
+    // Record any restatements (sheet already updated — latest wins — this is the
+    // audit trail). Capped so a wholesale feed shift can't flood the table.
+    if (revisions.length) {
+      try {
+        const stamped = revisions.slice(0, 5000).map((r) => ({ ...r, pull_source: source, detected_at: new Date().toISOString() }));
+        await supa.from("labor_data_revisions").insert(stamped);
+      } catch (e) { console.log(`[labor-v2] revision log failed: ${e.message}`); }
+    }
 
     // If this business date closes a fiscal week / period, snapshot the final
     // WTD / PTD into the close ledgers (idempotent).
@@ -302,6 +347,19 @@ async function refreshNow(supa, ctx = {}) {
 // Recent pull-log rows for the admin log page.
 async function pullLog(supa) {
   const { data } = await supa.from("kpi_pull_log").select("*").order("created_at", { ascending: false }).limit(200);
+  return { entries: data || [] };
+}
+
+// Recent restatements (a re-pull changed an already-captured value). Admin.
+async function dataRevisions(supa, params) {
+  const bd = params?.business_date && /^\d{4}-\d{2}-\d{2}$/.test(params.business_date) ? params.business_date : null;
+  let q = supa.from("labor_data_revisions").select("*").order("detected_at", { ascending: false }).limit(500);
+  if (bd) q = q.eq("business_date", bd);
+  const { data, error } = await q;
+  if (error) {
+    if (/labor_data_revisions/.test(error.message)) return { entries: [], note: "Run migration 0261 (labor_data_revisions table is missing)." };
+    return { error: error.message, status: 500 };
+  }
   return { entries: data || [] };
 }
 
@@ -1965,6 +2023,7 @@ export const handler = async (event) => {
     if (!isAdmin) return respond(403, { error: "Admins only." });
     if (action === "dates") return respond(200, await listDates(supa));
     if (action === "pull-log") return respond(200, { ok: true, ...(await pullLog(supa)) });
+    if (action === "data-revisions") return unwrap(await dataRevisions(supa, params));
     if (action === "backfill-closes") return unwrap(await backfillCloses(supa));
     if (action === "summary") {
       const out = await summary(supa, params, user);
