@@ -17,7 +17,7 @@ import { Segmented } from "@/shared/ui/Segmented";
 import { useToast } from "@/shared/ui/Toaster";
 import { fetchMyTree } from "@/modules/my-stores/api";
 import type { MyDistrictNode, MyStoreNode } from "@/modules/my-stores/types";
-import { fetchGms, fetchRollup, fetchSuccession, fetchStoreRoster, fetchSnapshots, fetchSnapshotRows, fetchRiskReview, fetchDevRollup, fetchReadinessRollup, fetchTenureRollup, fetchTalentExport, fetchMonthlyReview, markReviewed, takeSnapshot, lockSnapshot, seedFromProfiles, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings } from "./api";
+import { fetchGms, fetchRollup, fetchSuccession, fetchStoreRoster, fetchSnapshots, fetchSnapshotRows, fetchRiskReview, fetchDevRollup, fetchReadinessRollup, fetchTenureRollup, fetchTalentExport, fetchMonthlyReview, markReviewed, takeSnapshot, lockSnapshot, reconcileRoster, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings } from "./api";
 import { AccountBadge, MemberDrawerProvider, useMemberDrawer } from "./MemberDrawer";
 import { RosterImport } from "./RosterImport";
 import { toCSV, downloadCSV } from "@/lib/csv";
@@ -979,10 +979,16 @@ function Company({ districts, roll, meta, canWrite, onOpen }: { districts: MyDis
   const allStores = districts.flatMap((d) => d.stores);
   const totals = sumRisk(allStores, roll);
 
-  const seed = useMutation({
-    mutationFn: seedFromProfiles,
-    onSuccess: (r) => { toast.push(`Seeded ${r.created} team member${r.created === 1 ? "" : "s"} from profiles.`, "success"); qc.invalidateQueries({ queryKey: ["tp-rollup"] }); },
-    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't seed.", "error"),
+  // Reconcile every account-linked seat with its live profile — repairs stale
+  // GM seats and pulls in newly-assigned accounts. Superset of the old
+  // seed-from-profiles (kept in the API for back-compat).
+  const sync = useMutation({
+    mutationFn: reconcileRoster,
+    onSuccess: (r) => {
+      toast.push(`Synced ${r.profiles.toLocaleString()} account${r.profiles === 1 ? "" : "s"} into the pipeline.`, "success");
+      qc.invalidateQueries({ predicate: (q) => String(q.queryKey[0] ?? "").startsWith("tp") });
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't sync.", "error"),
   });
 
   if (importing) return <RosterImport onDone={() => setImporting(false)} />;
@@ -1003,8 +1009,8 @@ function Company({ districts, roll, meta, canWrite, onOpen }: { districts: MyDis
             </Button>
           )}
           {profile?.role === "admin" && (
-            <Button size="sm" variant="secondary" disabled={seed.isPending} onClick={() => seed.mutate()}>
-              {seed.isPending ? "Seeding…" : "Seed from profiles"}
+            <Button size="sm" variant="secondary" disabled={sync.isPending} onClick={() => sync.mutate()}>
+              {sync.isPending ? "Syncing…" : "Sync from accounts"}
             </Button>
           )}
         </div>
@@ -1279,7 +1285,7 @@ function Store({ store }: { store: MyStoreNode }) {
         <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-border bg-surface-muted px-6 py-14 text-center">
           <span className="grid h-12 w-12 place-items-center rounded-full bg-accent/10 text-accent"><Users className="h-6 w-6" /></span>
           <div className="text-base font-semibold text-heading">No team members yet</div>
-          <p className="max-w-md text-sm text-ink-muted">This store's roster is empty. It fills from the ATS import (or the admin "Seed from profiles" action).</p>
+          <p className="max-w-md text-sm text-ink-muted">This store's roster is empty. It fills from the ATS import (or the admin "Sync from accounts" action).</p>
         </div>
       ) : layout === "ladder" ? (
         <BenchLadder roster={roster} />

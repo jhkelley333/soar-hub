@@ -40,6 +40,11 @@ export function fetchStoreRoster(storeId: string): Promise<StoreRosterResponse> 
 export function seedFromProfiles(): Promise<{ ok: true; created: number }> {
   return request(`${FN}?action=seed-from-profiles`, { method: "POST", body: "{}" });
 }
+// Reconcile every account-linked seat with its live profile (store, role,
+// active/terminated). Superset of seed — also moves/terminates stale seats.
+export function reconcileRoster(): Promise<{ ok: true; profiles: number; failed: number }> {
+  return request(`${FN}?action=reconcile-roster`, { method: "POST", body: "{}" });
+}
 export interface CommitPlanInput {
   store_id: string;
   hires: Record<string, number>;

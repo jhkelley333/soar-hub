@@ -10,6 +10,7 @@ import {
   getSheetsClient, getAvailableWeeks, batchGetWeeks,
   findRowByStore, getMetricRaw, parseNum,
 } from "./_lib/ranker-sheets.js";
+import { reconcileAllProfiles } from "./_lib/tpSync.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -446,6 +447,14 @@ async function seedFromProfiles(supa, user) {
     if (!error) created++;
   }
   return { ok: true, created };
+}
+
+// Admin-only: reconcile every account-linked roster seat with its live profile
+// (store, role, active/terminated). Fixes drift from any write path — Org Admin,
+// GM Roster, bulk — and repairs stale seats in one pass. Idempotent.
+async function reconcileRoster(supa, user) {
+  if (String(user.role) !== "admin") return { error: "Admin only.", status: 403 };
+  return reconcileAllProfiles(supa);
 }
 
 // Commit a staffing plan: apply promotions (role changes) and open one
@@ -1780,6 +1789,7 @@ export const handler = async (event) => {
       return respond(400, { error: `Unknown action: ${action}` });
     }
     if (action === "seed-from-profiles") return unwrap(await seedFromProfiles(supa, user));
+    if (action === "reconcile-roster") return unwrap(await reconcileRoster(supa, user));
     if (action === "commit-plan") return unwrap(await commitPlan(supa, user, body));
     if (action === "update-member") return unwrap(await updateMember(supa, user, body));
     if (action === "add-note") return unwrap(await addNote(supa, user, body));
