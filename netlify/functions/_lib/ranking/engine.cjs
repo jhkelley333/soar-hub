@@ -623,9 +623,9 @@ function aggregateWtd(name, members, opts, cfg, inputs) {
   r.hoursOver = r.laborMiss / cfg.avgWage;                             // AA
   // AB: DO = AA/count; SDO/RVP = AA/count (workbook /H)  — all per-store, no /week on WEEKLY
   r.avgHoursOverPerStore = r.storeCount ? r.hoursOver / r.storeCount : null;
-  // AC: SDO tier divides the summed annualized miss by store count (workbook quirk); DO/RVP plain SUMIF
-  var annSum = sumBy(members, function (m) { return m.laborAnnualized; });
-  r.laborAnnualized = (tier === 'sdo') ? (r.storeCount ? annSum / r.storeCount : null) : annSum;
+  // AC: plain SUM of stores at every leader tier — same basis as FC Annualized
+  // and the PTD sheet, so Fin Annualized (= Labor + FC) rolls up consistently.
+  r.laborAnnualized = sumBy(members, function (m) { return m.laborAnnualized; });
   r.laborScore = laborScoreChart(r.laborPct, r.chart, r._chart2);      // AD chart-comparison
 
   r.finScore = sumScores([r.laborScore, r.fcScore, r.salesScore]); // AF
@@ -696,7 +696,7 @@ function companyWtd(sdoRows, storeRows, cfg, inputs) {
   r.laborMiss = sumBy(sdoRows, function (m) { return m.laborMiss; });   // Z
   r.hoursOver = r.laborMiss / cfg.avgWage;                              // AA
   r.avgHoursOverPerStore = r.storeCount ? r.hoursOver / r.storeCount : null; // AB (dynamic count)
-  r.laborAnnualized = r.storeCount ? sumBy(storeRows, function (m) { return m.laborAnnualized; }) / r.storeCount : null; // AC = SUM(stores)/count
+  r.laborAnnualized = sumBy(storeRows, function (m) { return m.laborAnnualized; }); // AC = SUM(stores), consistent with FC + PTD
   r.laborScore = laborScoreChart(r.laborPct, r.chart, r._chart2);       // AD
 
   r.finScore = sumScores([r.laborScore, r.fcScore, r.salesScore]);
