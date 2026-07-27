@@ -96,26 +96,34 @@ export function NoGmCreditPanel() {
   });
 
   const [search, setSearch] = useState("");
-  const [sortBy, setSortBy] = useState<"store" | "date">("store");
+  const [sortBy, setSortBy] = useState<"store" | "date" | "rvp">("store");
   const rows = q.data?.rows ?? [];
   const weekly = q.data?.weekly ?? 880;
   const matchesSearch = (r: NoGmCreditRow) => {
     const s = search.trim().toLowerCase();
-    return !s || `${r.store_number} ${r.store_name ?? ""}`.toLowerCase().includes(s);
+    return !s || `${r.store_number} ${r.store_name ?? ""} ${r.rvp_name ?? ""} ${r.region ?? ""}`.toLowerCase().includes(s);
   };
   const byStore = (a: NoGmCreditRow, b: NoGmCreditRow) =>
     String(a.store_number).localeCompare(String(b.store_number), undefined, { numeric: true });
   const byDate = (a: NoGmCreditRow, b: NoGmCreditRow) => String(b.start_date).localeCompare(String(a.start_date));
-  const sorter = sortBy === "store" ? byStore : byDate;
+  // RVP name asc, unassigned last; store # breaks ties so a region stays ordered.
+  const byRvp = (a: NoGmCreditRow, b: NoGmCreditRow) => {
+    const ar = a.rvp_name ?? a.region ?? "", br = b.rvp_name ?? b.region ?? "";
+    if (!ar !== !br) return ar ? -1 : 1;
+    return ar.localeCompare(br) || byStore(a, b);
+  };
+  const sorter = sortBy === "store" ? byStore : sortBy === "date" ? byDate : byRvp;
   const activeRows = rows.filter((r) => r.active && matchesSearch(r)).sort(sorter);
   const pastRows = rows.filter((r) => !r.active && matchesSearch(r)).sort(sorter);
 
   function exportCsv() {
     const all = rows.filter(matchesSearch).slice().sort(byStore);
-    const headers = ["Store #", "Store Name", "Reason", "Start", "End", "Status", "Weekly Credit", "Created By", "Note"];
+    const headers = ["Store #", "Store Name", "RVP", "Region", "Reason", "Start", "End", "Status", "Weekly Credit", "Created By", "Note"];
     const csvRows = all.map((r) => ({
       "Store #": r.store_number,
       "Store Name": r.store_name ?? "",
+      "RVP": r.rvp_name ?? "",
+      "Region": r.region ?? "",
       "Reason": REASON_LABEL[r.reason] ?? r.reason,
       "Start": r.start_date,
       "End": r.end_date ?? "",
@@ -179,7 +187,7 @@ export function NoGmCreditPanel() {
         <div className="flex items-center gap-1.5 text-xs text-zinc-500">
           <span className="font-semibold">Sort</span>
           <div className="flex overflow-hidden rounded-lg ring-1 ring-inset ring-zinc-200">
-            {([["store", "Store #"], ["date", "Start date"]] as const).map(([k, label]) => (
+            {([["store", "Store #"], ["rvp", "RVP"], ["date", "Start date"]] as const).map(([k, label]) => (
               <button key={k} type="button" onClick={() => setSortBy(k)}
                 className={cn("px-2.5 py-1.5 font-semibold", sortBy === k ? "bg-accent text-white" : "bg-white text-zinc-500 hover:bg-zinc-50")}>
                 {label}
@@ -295,6 +303,7 @@ function Row({ r, onEnd, onDelete }: { r: NoGmCreditRow; onEnd?: () => void; onD
           </span>
         </div>
         <div className="mt-0.5 text-xs text-zinc-500">
+          {r.rvp_name || r.region ? `${r.rvp_name ?? r.region} · ` : ""}
           {fmtDate(r.start_date)} → {r.end_date ? fmtDate(r.end_date) : "open"}
           {r.created_by_email ? ` · by ${r.created_by_email}` : ""}
           {r.note ? ` · ${r.note}` : ""}

@@ -1188,10 +1188,11 @@ async function noGmList(supa, user) {
   if (!visible.length) return { rows: [], weekly: 880 };
   const numbers = [...new Set(visible.map((s) => String(s.number)))];
   const nameByNumber = new Map(visible.map((s) => [String(s.number), s.name]));
-  const [{ data, error }, { data: rateRow }] = await Promise.all([
+  const [{ data, error }, { data: rateRow }, orgMap] = await Promise.all([
     supa.from("no_gm_credits").select("*").in("store_number", numbers)
       .order("start_date", { ascending: false }).limit(500),
     supa.from("ea_settings").select("value").eq("key", "no_gm_weekly_credit").maybeSingle(),
+    resolveOrg(supa, numbers), // region + rvpName per store, so the UI can sort by RVP
   ]);
   if (error) {
     if (/no_gm_credits/.test(error.message)) return { error: "Run migration 0236 first (no_gm_credits table is missing).", status: 500 };
@@ -1199,11 +1200,16 @@ async function noGmList(supa, user) {
   }
   const weekly = (() => { const a = Number(rateRow?.value?.amount); return isFinite(a) && a > 0 ? a : 880; })();
   const today = isoOf(new Date());
-  const rows = (data || []).map((r) => ({
-    ...r,
-    store_name: nameByNumber.get(String(r.store_number)) ?? null,
-    active: r.start_date <= today && (!r.end_date || r.end_date >= today),
-  }));
+  const rows = (data || []).map((r) => {
+    const org = orgMap.get(String(r.store_number));
+    return {
+      ...r,
+      store_name: nameByNumber.get(String(r.store_number)) ?? null,
+      region: org?.region ?? null,
+      rvp_name: org?.rvpName ?? null,
+      active: r.start_date <= today && (!r.end_date || r.end_date >= today),
+    };
+  });
   return { rows, weekly };
 }
 
