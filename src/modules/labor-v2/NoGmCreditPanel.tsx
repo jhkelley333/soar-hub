@@ -4,7 +4,7 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Plus, Trash2, Download } from "lucide-react";
+import { Plus, Trash2, Download, Pencil } from "lucide-react";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Button } from "@/shared/ui/Button";
@@ -15,7 +15,8 @@ import { cn } from "@/lib/cn";
 import { toCSV, downloadCSV } from "@/lib/csv";
 import {
   addNoGmCredit, deleteNoGmCredit, endNoGmCredit, fetchLaborV2Stores,
-  fetchNoGmCredits, setNoGmWeeklyRate, type NoGmCreditRow,
+  fetchNoGmCredits, setNoGmWeeklyRate, updateNoGmCredit,
+  type NoGmCreditRow, type NoGmEdit,
 } from "./api";
 
 const REASONS: { key: string; label: string }[] = [
@@ -58,6 +59,19 @@ export function NoGmCreditPanel() {
   const [endOn, setEndOn] = useState(todayIso());
   const [rateDraft, setRateDraft] = useState<string | null>(null);
 
+  // Edit an existing tag (any status). Drafts seed from the row on open.
+  const [editTarget, setEditTarget] = useState<NoGmCreditRow | null>(null);
+  const [eReason, setEReason] = useState("no_gm");
+  const [eStart, setEStart] = useState(todayIso());
+  const [eEnd, setEEnd] = useState("");
+  const [eNote, setENote] = useState("");
+  const [eEditNote, setEEditNote] = useState("");
+  const openEdit = (r: NoGmCreditRow) => {
+    setEditTarget(r);
+    setEReason(r.reason); setEStart(r.start_date); setEEnd(r.end_date ?? "");
+    setENote(r.note ?? ""); setEEditNote("");
+  };
+
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["no-gm-credits"] });
     // Credits change the labor math everywhere.
@@ -87,6 +101,15 @@ export function NoGmCreditPanel() {
     mutationFn: (id: string) => deleteNoGmCredit(id),
     onSuccess: () => { toast.push("Deleted.", "success"); invalidate(); },
     onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't delete.", "error"),
+  });
+
+  const save = useMutation({
+    mutationFn: () => updateNoGmCredit({
+      id: editTarget!.id, reason: eReason, start_date: eStart,
+      end_date: eEnd || null, note: eNote.trim() || undefined, edit_note: eEditNote.trim(),
+    }),
+    onSuccess: () => { toast.push("Saved — the edit is logged.", "success"); setEditTarget(null); invalidate(); },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't save.", "error"),
   });
 
   const saveRate = useMutation({
@@ -204,6 +227,7 @@ export function NoGmCreditPanel() {
           : activeRows.map((r) => (
               <Row key={r.id} r={r}
                 onEnd={() => { setEndTarget(r); setEndOn(todayIso()); }}
+                onEdit={() => openEdit(r)}
                 onDelete={() => { if (window.confirm(`Delete the ${REASON_LABEL[r.reason]} tag for #${r.store_number}? The credit is removed for its whole date range.`)) remove.mutate(r.id); }} />
             ))}
       </Section>
@@ -213,6 +237,7 @@ export function NoGmCreditPanel() {
         <Section title={`Ended / upcoming (${pastRows.length})`}>
           {pastRows.map((r) => (
             <Row key={r.id} r={r}
+              onEdit={() => openEdit(r)}
               onDelete={() => { if (window.confirm(`Delete the ${REASON_LABEL[r.reason]} tag for #${r.store_number}? The credit is removed for its whole date range.`)) remove.mutate(r.id); }} />
           ))}
         </Section>
@@ -279,6 +304,57 @@ export function NoGmCreditPanel() {
         </p>
         <input type="date" value={endOn} min={endTarget?.start_date} onChange={(e) => setEndOn(e.target.value)} className={cn(inputCls, "w-full")} />
       </Modal>
+
+      {/* Edit modal — works on any tag (active, ended, or upcoming) */}
+      <Modal open={editTarget != null} onClose={() => setEditTarget(null)}
+        title={editTarget ? `Edit tag — #${editTarget.store_number}` : ""}
+        footer={
+          <Button size="sm" onClick={() => save.mutate()} disabled={!eStart || !eEditNote.trim() || save.isPending}>
+            {save.isPending ? "Saving…" : "Save changes"}
+          </Button>
+        }>
+        <div className="space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-zinc-600">Reason</label>
+            <div className="flex flex-wrap gap-1.5">
+              {REASONS.map((r) => (
+                <button key={r.key} type="button" onClick={() => setEReason(r.key)}
+                  className={cn("rounded-full px-3 py-1.5 text-xs font-semibold transition",
+                    eReason === r.key ? "bg-midnight text-white" : "bg-zinc-100 text-zinc-700 hover:bg-zinc-200")}>
+                  {r.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-zinc-600">Start date</label>
+              <input type="date" value={eStart} onChange={(e) => setEStart(e.target.value)} className={cn(inputCls, "w-full")} />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-zinc-600">End date</label>
+              <input type="date" value={eEnd} min={eStart} onChange={(e) => setEEnd(e.target.value)} className={cn(inputCls, "w-full")} />
+              {eEnd && <button type="button" onClick={() => setEEnd("")} className="mt-1 text-[11px] font-semibold text-accent hover:underline">Clear (reopen tag)</button>}
+            </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-zinc-600">Note (optional)</label>
+            <input value={eNote} onChange={(e) => setENote(e.target.value)} maxLength={500}
+              placeholder="e.g. GM resigned 7/3 — posting open" className={cn(inputCls, "w-full")} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-zinc-600">Edit note <span className="text-red-500">*</span></label>
+            <input value={eEditNote} onChange={(e) => setEEditNote(e.target.value)} maxLength={500}
+              placeholder="Why are you changing this? (recorded in the log)" className={cn(inputCls, "w-full")} />
+          </div>
+          {editTarget?.edit_log && editTarget.edit_log.length > 0 && (
+            <div>
+              <div className="mb-1.5 text-xs font-semibold text-zinc-600">Edit history</div>
+              <EditHistory log={editTarget.edit_log} />
+            </div>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 }
@@ -292,7 +368,8 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function Row({ r, onEnd, onDelete }: { r: NoGmCreditRow; onEnd?: () => void; onDelete: () => void }) {
+function Row({ r, onEnd, onEdit, onDelete }: { r: NoGmCreditRow; onEnd?: () => void; onEdit?: () => void; onDelete: () => void }) {
+  const edits = r.edit_log?.length ?? 0;
   return (
     <div className="flex flex-wrap items-center gap-3 p-4">
       <div className="min-w-0 flex-1">
@@ -301,6 +378,11 @@ function Row({ r, onEnd, onDelete }: { r: NoGmCreditRow; onEnd?: () => void; onD
           <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide", REASON_TONE[r.reason] ?? "bg-zinc-100 text-zinc-600")}>
             {REASON_LABEL[r.reason] ?? r.reason}
           </span>
+          {edits > 0 && (
+            <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-500" title={`Edited ${edits} time${edits === 1 ? "" : "s"}`}>
+              edited{edits > 1 ? ` ×${edits}` : ""}
+            </span>
+          )}
         </div>
         <div className="mt-0.5 text-xs text-zinc-500">
           {r.rvp_name || r.region ? `${r.rvp_name ?? r.region} · ` : ""}
@@ -312,9 +394,35 @@ function Row({ r, onEnd, onDelete }: { r: NoGmCreditRow; onEnd?: () => void; onD
       {onEnd && r.active && !r.end_date && (
         <Button size="sm" variant="secondary" onClick={onEnd}>End</Button>
       )}
+      {onEdit && (
+        <button onClick={onEdit} title="Edit tag" className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-50 hover:text-accent">
+          <Pencil className="h-4 w-4" />
+        </button>
+      )}
       <button onClick={onDelete} title="Delete tag" className="rounded-lg p-2 text-zinc-400 hover:bg-zinc-50 hover:text-red-600">
         <Trash2 className="h-4 w-4" />
       </button>
+    </div>
+  );
+}
+
+// Compact one-line summary of what an edit changed.
+const CHANGE_LABEL: Record<string, string> = { reason: "reason", start_date: "start", end_date: "end", note: "note" };
+function EditHistory({ log }: { log: NoGmEdit[] }) {
+  return (
+    <div className="space-y-2">
+      {[...log].reverse().map((e, i) => {
+        const fields = Object.keys(e.changes ?? {}).map((k) => CHANGE_LABEL[k] ?? k);
+        return (
+          <div key={i} className="rounded-lg bg-zinc-50 p-2.5 text-xs">
+            <div className="text-zinc-700">{e.note}</div>
+            <div className="mt-0.5 text-[11px] text-zinc-400">
+              {fmtDate((e.at || "").slice(0, 10))}{e.by_email ? ` · ${e.by_email}` : ""}
+              {fields.length ? ` · changed ${fields.join(", ")}` : ""}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
