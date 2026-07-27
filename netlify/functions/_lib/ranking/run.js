@@ -405,8 +405,9 @@ export async function runRankingNow(supa, user) {
     },
   });
 
-  // Attach % Late Sends over 8 Min to the store rows (display-only, not scored),
-  // per scope, from the OTT upload. Leader tiers aren't rolled up yet.
+  // Attach % Late Sends over 8 Min from the OTT upload (display-only, not
+  // scored), per scope. Stores get their own value; DO/SDO/RVP/Company roll up
+  // as Σ(late sends) / Σ(tickets), where a store's tickets = count / pct.
   for (const sc of ["ptd", "wtd"]) {
     for (const m of out[sc]?.stores || []) {
       const o = ott[sc].get(String(m.store));
@@ -417,6 +418,26 @@ export async function runRankingNow(supa, user) {
         if (o.avg_sos) m.avgSos = String(o.avg_sos);
       }
     }
+    const agg = { doName: new Map(), sdoName: new Map(), rvpName: new Map() };
+    const co = { c: 0, d: 0 };
+    for (const s of stores) {
+      const o = ott[sc].get(String(s.store));
+      if (!o || !isNum(o.late_sends_pct) || !(o.late_sends_pct > 0) || !isNum(o.late_sends_count)) continue;
+      const denom = o.late_sends_count / o.late_sends_pct;
+      for (const key of ["doName", "sdoName", "rvpName"]) {
+        const name = s[key];
+        if (!name) continue;
+        const cur = agg[key].get(name) || { c: 0, d: 0 };
+        cur.c += o.late_sends_count; cur.d += denom; agg[key].set(name, cur);
+      }
+      co.c += o.late_sends_count; co.d += denom;
+    }
+    const pctOf = (x) => (x && x.d > 0 ? x.c / x.d : null);
+    const applyTier = (rows, map) => { for (const m of rows || []) { const p = pctOf(map.get(String(m.name))); if (p != null) m.lateSendsPct = p; } };
+    applyTier(out[sc]?.dos, agg.doName);
+    applyTier(out[sc]?.sdos, agg.sdoName);
+    applyTier(out[sc]?.rvps, agg.rvpName);
+    if (out[sc]?.company) { const p = pctOf(co); if (p != null) out[sc].company.lateSendsPct = p; }
   }
 
   // 6. Persist run + rows.
