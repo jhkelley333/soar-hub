@@ -24,6 +24,7 @@
 //   SUPABASE_SERVICE_ROLE_KEY
 
 import { createClient } from "@supabase/supabase-js";
+import { syncProfileToRoster } from "./_lib/tpSync.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -782,6 +783,10 @@ async function addUser(supa, manager, body) {
     },
   });
 
+  // Mirror the new account into the Talent Pipeline seat (best-effort — the
+  // nightly reconcile backstops any failure here).
+  try { await syncProfileToRoster(supa, newUserId); } catch { /* non-fatal */ }
+
   return { ok: true, user_id: newUserId, email };
 }
 
@@ -1121,6 +1126,11 @@ async function updateUser(supa, manager, body) {
     });
   }
 
+  // Push the change into the Talent Pipeline seat: deactivation terminates it,
+  // a store/scope change moves it, a role change re-slots it, reactivation
+  // revives it. Best-effort — the nightly reconcile backstops any failure.
+  try { await syncProfileToRoster(supa, target_id); } catch { /* non-fatal */ }
+
   return { ok: true, email_reissued: reissuedTo };
 }
 
@@ -1290,6 +1300,11 @@ async function deleteUser(supa, manager, body) {
     },
     after: null,
   });
+
+  // Terminate the pipeline seat BEFORE the delete — profile_id is ON DELETE SET
+  // NULL, so after the delete we'd never find the row and it'd orphan as an
+  // active seat with no account. Best-effort.
+  try { await syncProfileToRoster(supa, target_id); } catch { /* non-fatal */ }
 
   const { error: delErr } = await supa.auth.admin.deleteUser(target_id);
   if (delErr) {

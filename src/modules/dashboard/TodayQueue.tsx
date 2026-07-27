@@ -17,7 +17,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { UserRole } from "@/types/database";
-import { useFlag } from "@/lib/flags";
 import { fetchOpenWorkOrderAlerts, fetchTickets } from "@/modules/work-orders-v2/api";
 import { isOpenStatus } from "@/modules/work-orders-v2/types";
 import type { Ticket } from "@/modules/work-orders-v2/types";
@@ -84,13 +83,12 @@ const ACTION_BTN: Record<Tone, string> = {
 const plural = (n: number, s: string, p?: string) => `${n} ${n === 1 ? s : p ?? `${s}s`}`;
 
 export function TodayQueue({ role }: { role: UserRole }) {
-  const teamPipelineOn = useFlag("team_pipeline");
   const canWo = WO_ROLES.has(role);
   const canCash = CASH_ROLES.has(role);
   const isSdoReviewer = SDO_REVIEW_ROLES.has(role);
   const isEaApprover = EA_APPROVER_ROLES.has(role);
   const canDisruptions = DISRUPTION_REVIEW_ROLES.has(role);
-  const canTalent = TALENT_ROLES.has(role) && (teamPipelineOn || role === "admin");
+  const canTalent = TALENT_ROLES.has(role);
   const canNla = NLA_ROLES.has(role);
 
   const dashQ = { staleTime: 3 * 60_000, refetchOnWindowFocus: false as const };

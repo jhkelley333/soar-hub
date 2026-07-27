@@ -486,12 +486,11 @@ export const router = createBrowserRouter([
         ),
       },
       {
-        // Team Pipeline (Talent Planning) — gated behind the team_pipeline
-        // feature flag. roles:[] means access comes only from the flag
-        // (global enable or per-user/store allowlist) — admin always in.
+        // Team Pipeline (Talent Planning) — GM and up. Scoped to the viewer's
+        // own org tree in-app (a GM sees only their store). Pilot flag removed.
         path: "team-pipeline",
         element: (
-          <FlagOrRoleRoute roles={[]} flagKey="team_pipeline">
+          <FlagOrRoleRoute roles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <TeamPipelinePage />
           </FlagOrRoleRoute>
         ),
@@ -905,11 +904,11 @@ function FlagOrRoleRoute({
   children,
 }: {
   roles: UserRole[];
-  flagKey: string;
+  flagKey?: string;
   children: ReactNode;
 }) {
   const { session, profile, loading } = useAuth();
-  const flagOn = useFlag(flagKey);
+  const flagOn = useFlag(flagKey ?? "");
   const { overrides, isLoaded } = useOverrides();
   const location = useLocation();
 
