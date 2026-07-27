@@ -41,8 +41,13 @@ const SCORE_BG: Record<number, string> = {
 };
 function ScoreChip({ v }: { v: unknown }) {
   if (!isNum(v)) return <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded bg-zinc-100 font-mono text-xs text-zinc-400">–</span>;
-  return <span className={cn("inline-flex h-[22px] w-[22px] items-center justify-center rounded font-mono text-xs font-semibold text-white", SCORE_BG[v] ?? "bg-zinc-400")}>{v}</span>;
+  // Leader tiers average their children's 1–5 scores, so v can be fractional
+  // (e.g. 4.63). The chip is a 1–5 indicator — round + clamp for display/color.
+  const n = Math.min(5, Math.max(1, Math.round(v)));
+  return <span className={cn("inline-flex h-[22px] w-[22px] items-center justify-center rounded font-mono text-xs font-semibold text-white", SCORE_BG[n] ?? "bg-zinc-400")}>{n}</span>;
 }
+
+const round1 = (v: number) => (Number.isInteger(v) ? v : Math.round(v * 10) / 10);
 
 // ── column model ──────────────────────────────────────────────────────
 type Kind = "rank" | "id" | "pts" | "money" | "spct" | "varpct" | "hrsover" | "pct1" | "num1" | "score" | "tot" | "int" | "text";
@@ -186,7 +191,7 @@ function csvValue(r: RankingResultRow, c: Col): string | number {
 function Cell({ v, kind }: { v: unknown; kind: Kind }) {
   switch (kind) {
     case "rank": return <span className="font-mono text-xs text-zinc-400">{isNum(v) ? v : "–"}</span>;
-    case "pts": return <span className="font-mono text-[15px] font-bold text-midnight">{isNum(v) ? v : "–"}</span>;
+    case "pts": return <span className="font-mono text-[15px] font-bold text-midnight">{isNum(v) ? round1(v) : "–"}</span>;
     case "money": return <span className="font-mono text-xs">{fmtMoney(v)}</span>;
     case "spct": {
       const cls = isNum(v) ? (v > 0 ? "text-emerald-700" : v < 0 ? "text-red-600" : "") : "text-zinc-400";
@@ -205,7 +210,7 @@ function Cell({ v, kind }: { v: unknown; kind: Kind }) {
     case "pct1": return <span className={cn("font-mono text-xs", !isNum(v) && "text-zinc-400")}>{fmtPct1(v)}</span>;
     case "num1": return <span className={cn("font-mono text-xs", !isNum(v) && "text-zinc-400")}>{fmtNum1(v)}</span>;
     case "score": return <ScoreChip v={v} />;
-    case "tot": return <span className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs font-semibold">{isNum(v) ? v : "–"}</span>;
+    case "tot": return <span className="rounded bg-zinc-100 px-1.5 py-0.5 font-mono text-xs font-semibold">{isNum(v) ? round1(v) : "–"}</span>;
     case "int": return <span className="font-mono text-xs">{fmtInt(v)}</span>;
     default: return <span className="text-xs text-zinc-500">{v == null ? "—" : String(v)}</span>;
   }
