@@ -31,6 +31,10 @@ function getSupabase() {
   });
 }
 
+// ticket_messages.thread_type is constrained to these (migration 0079). Any
+// other inbound channel (e.g. "store") must map onto one of them for the insert.
+const DB_THREAD_TYPES = new Set(["internal", "vendor", "requester"]);
+
 function resp(statusCode, body) {
   return {
     statusCode,
@@ -179,54 +183,75 @@ export const handler = async (event) => {
     return resp(200, { ok: true, ignored: payload?.type || "unknown" });
   }
 
-  const data = payload.data || {};
-  const ref = extractRef(data.to);
-  if (!ref) return resp(200, { ok: true, ignored: "no recognized inbound address" });
+  // Everything past here is best-effort. On any unexpected failure we log the
+  // reason and still return 200: a real bug (e.g. a constraint violation) can't
+  // be fixed by Resend re-delivering, so returning 500 would only spin the
+  // webhook in a retry storm ("Attempting"/"Failed"). Reasons land in the
+  // Netlify function logs.
+  try {
+    const data = payload.data || {};
+    const ref = extractRef(data.to);
+    if (!ref) return resp(200, { ok: true, ignored: "no recognized inbound address" });
 
-  const supabase = getSupabase();
-  const full = await fetchReceivedEmail(data.email_id || data.id);
-  const from = addrString(data.from) || addrString(full?.from) || "Reply";
-  const fromName = String(from).replace(/<[^>]*>/, "").trim() || from;
-  const body = topReply(full?.text || htmlToText(full?.html) || "");
-  const message = body || `(Reply received from ${fromName} — open it in Resend; body unavailable.)`;
+    const supabase = getSupabase();
+    const full = await fetchReceivedEmail(data.email_id || data.id);
+    const from = addrString(data.from) || addrString(full?.from) || "Reply";
+    const fromName = String(from).replace(/<[^>]*>/, "").trim() || from;
+    const body = topReply(full?.text || htmlToText(full?.html) || "");
+    const message = body || `(Reply received from ${fromName} — open it in Resend; body unavailable.)`;
 
-  if (ref.kind === "paf") {
-    return handlePafReply(supabase, ref.id, from, fromName, message);
+    if (ref.kind === "paf") {
+      return await handlePafReply(supabase, ref.id, from, fromName, message);
+    }
+
+    const ticketId = ref.id;
+    // Map the inbound channel onto a DB-allowed thread_type. "store" (and any
+    // future channel) collapses to requester for the insert; the real channel
+    // is preserved in user_role + the activity's event_data so it can be split
+    // out cleanly later without losing history.
+    const threadType = DB_THREAD_TYPES.has(ref.channel) ? ref.channel : "requester";
+    const channelTag = ref.channel && ref.channel !== "requester" ? `REPLY/${ref.channel}` : "REPLY";
+
+    const { data: ticket, error: ticketErr } = await supabase
+      .from("tickets").select("id").eq("id", ticketId).maybeSingle();
+    if (ticketErr) console.error("[resend-inbound] ticket lookup failed:", ticketErr.message);
+    if (!ticket) return resp(200, { ok: true, ignored: "unknown ticket" });
+
+    const { error: msgErr } = await supabase.from("ticket_messages").insert({
+      ticket_id: ticketId,
+      user_id: null,
+      user_name: fromName,
+      user_role: channelTag,
+      message,
+      thread_type: threadType,
+    });
+    if (msgErr) console.error("[resend-inbound] ticket_messages insert failed:", msgErr.message);
+
+    const { error: updErr } = await supabase
+      .from("tickets")
+      .update({ awaiting_info: false, awaiting_info_at: null, updated_at: new Date().toISOString() })
+      .eq("id", ticketId);
+    if (updErr) console.error("[resend-inbound] tickets update failed:", updErr.message);
+
+    const { error: actErr } = await supabase.from("ticket_activities").insert({
+      ticket_id: ticketId,
+      user_id: null,
+      user_name: fromName,
+      user_role: "reply",
+      update_type: "info_answer",
+      event_type: "info_answered",
+      event_data: { channel: ref.channel },
+      notes: message.slice(0, 500),
+      visibility: "all",
+    });
+    if (actErr) console.error("[resend-inbound] ticket_activities insert failed:", actErr.message);
+
+    console.log(`[resend-inbound] ok ticket=${ticketId} channel=${ref.channel} thread=${threadType} msg_ok=${!msgErr}`);
+    return resp(200, { ok: true, ticketId });
+  } catch (e) {
+    console.error("[resend-inbound] unhandled error:", e?.message || e);
+    return resp(200, { ok: true, error: "logged" });
   }
-
-  const ticketId = ref.id;
-  const threadType = ref.channel === "store" ? "store" : "requester";
-
-  const { data: ticket } = await supabase
-    .from("tickets").select("id").eq("id", ticketId).maybeSingle();
-  if (!ticket) return resp(200, { ok: true, ignored: "unknown ticket" });
-
-  await supabase.from("ticket_messages").insert({
-    ticket_id: ticketId,
-    user_id: null,
-    user_name: fromName,
-    user_role: "REPLY",
-    message,
-    thread_type: threadType,
-  });
-
-  await supabase
-    .from("tickets")
-    .update({ awaiting_info: false, awaiting_info_at: null, updated_at: new Date().toISOString() })
-    .eq("id", ticketId);
-
-  await supabase.from("ticket_activities").insert({
-    ticket_id: ticketId,
-    user_id: null,
-    user_name: fromName,
-    user_role: "reply",
-    update_type: "info_answer",
-    event_type: "info_answered",
-    notes: message.slice(0, 500),
-    visibility: "all",
-  });
-
-  return resp(200, { ok: true, ticketId });
 };
 
 // A reply to a PAF "Message the submitter" email. Posts straight into the
