@@ -7,7 +7,7 @@
 // Role-gated to GM and up (see router + nav); scoped to the viewer's org tree.
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, CalendarCheck2, Check, ChevronRight, Lock, SlidersHorizontal, Upload, Users } from "lucide-react";
+import { Archive, CalendarCheck2, Check, ChevronRight, Lock, Search, SlidersHorizontal, Upload, Users } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/auth/AuthProvider";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -55,15 +55,17 @@ export function TeamPipelinePage() {
   // Region name + DO name per district, for the upgraded district cards. DO is
   // shared across a district's stores, so the first store's leadership wins.
   const districtMeta = useMemo(() => {
-    const meta = new Map<string, { regionName: string | null; doName: string | null }>();
+    const meta = new Map<string, { regionName: string | null; doName: string | null; rvpName: string | null }>();
     const leadership = treeQ.data?.leadership ?? {};
     for (const region of treeQ.data?.regions ?? []) {
       for (const area of region.areas ?? []) {
         for (const d of area.districts ?? []) {
           const doPerson = d.stores.map((s) => leadership[s.id]?.do).find(Boolean) ?? null;
+          const rvpPerson = d.stores.map((s) => leadership[s.id]?.rvp).find(Boolean) ?? null;
           meta.set(d.id, {
             regionName: region.name || area.name || null,
             doName: doPerson ? (doPerson.preferred_name || doPerson.full_name || null) : null,
+            rvpName: rvpPerson ? (rvpPerson.preferred_name || rvpPerson.full_name || null) : null,
           });
         }
       }
@@ -105,7 +107,7 @@ export function TeamPipelinePage() {
             {nav.level === "company" && (
               <>
                 <MonthlyReviewCard onGo={(v) => setView(v)} />
-                <Company districts={districts} roll={roll} meta={districtMeta} canWrite={rollupQ.data?.can_write ?? false} onOpen={(id) => setNav({ level: "district", districtId: id })} />
+                <Company districts={districts} roll={roll} meta={districtMeta} canWrite={rollupQ.data?.can_write ?? false} onOpen={(id) => setNav({ level: "district", districtId: id })} onOpenStore={(districtId, storeId) => setNav({ level: "store", districtId, storeId })} />
               </>
             )}
             {nav.level === "district" && district && (
@@ -193,7 +195,7 @@ function Breadcrumb({ nav, district, store, onGo }: { nav: Nav; district: MyDist
 }
 
 // ── Company ─────────────────────────────────────────────────────────────────
-type DistrictMeta = Map<string, { regionName: string | null; doName: string | null }>;
+type DistrictMeta = Map<string, { regionName: string | null; doName: string | null; rvpName: string | null }>;
 
 // ── Succession & Risk — leadership view (DO→COO) ──────────────────────────────
 // Named at-risk people in the caller's scope, and GM-seat backfill exposure
@@ -971,13 +973,46 @@ function TenureTable({ rows, districtName, onOpen, emptyTitle, emptyDesc }: {
   );
 }
 
-function Company({ districts, roll, meta, canWrite, onOpen }: { districts: MyDistrictNode[]; roll: RollupResponse["stores"]; meta: DistrictMeta; canWrite: boolean; onOpen: (id: string) => void }) {
+function Company({ districts, roll, meta, canWrite, onOpen, onOpenStore }: { districts: MyDistrictNode[]; roll: RollupResponse["stores"]; meta: DistrictMeta; canWrite: boolean; onOpen: (id: string) => void; onOpenStore: (districtId: string, storeId: string) => void }) {
   const { profile } = useAuth();
   const qc = useQueryClient();
   const toast = useToast();
   const [importing, setImporting] = useState(false);
+  const [storeQuery, setStoreQuery] = useState("");
+  const [sortByRvp, setSortByRvp] = useState(false);
   const allStores = districts.flatMap((d) => d.stores);
   const totals = sumRisk(allStores, roll);
+
+  // Flat store index for the search box: store + its district / RVP labels.
+  const flatStores = useMemo(
+    () => districts.flatMap((d) => d.stores.map((s) => ({
+      store: s, districtId: d.id, districtName: d.name || d.code || "District",
+      rvpName: meta.get(d.id)?.rvpName ?? null, regionName: meta.get(d.id)?.regionName ?? null,
+    }))),
+    [districts, meta],
+  );
+  const storeMatches = useMemo(() => {
+    const q = storeQuery.trim().toLowerCase();
+    if (!q) return [];
+    return flatStores
+      .filter((r) => `${r.store.number} ${r.store.name ?? ""} ${r.districtName} ${r.rvpName ?? ""} ${r.regionName ?? ""}`.toLowerCase().includes(q))
+      .sort((a, b) => String(a.store.number).localeCompare(String(b.store.number), undefined, { numeric: true }))
+      .slice(0, 50);
+  }, [flatStores, storeQuery]);
+
+  // Districts grouped by RVP (then region), each group sorted by district name.
+  const rvpGroups = useMemo(() => {
+    const groups = new Map<string, { label: string; region: string | null; districts: MyDistrictNode[] }>();
+    for (const d of districts) {
+      const m = meta.get(d.id);
+      const label = m?.rvpName || m?.regionName || "Unassigned";
+      const key = label.toLowerCase();
+      if (!groups.has(key)) groups.set(key, { label, region: m?.regionName ?? null, districts: [] });
+      groups.get(key)!.districts.push(d);
+    }
+    for (const g of groups.values()) g.districts.sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+    return [...groups.values()].sort((a, b) => a.label.localeCompare(b.label));
+  }, [districts, meta]);
 
   // Reconcile every account-linked seat with its live profile — repairs stale
   // GM seats and pulls in newly-assigned accounts. Superset of the old
@@ -1031,37 +1066,101 @@ function Company({ districts, roll, meta, canWrite, onOpen }: { districts: MyDis
 
       {profile?.role === "admin" && <StaffingModelSettings />}
 
-      <div className="mb-3 text-[11px] font-bold uppercase tracking-wider text-ink-subtle">Districts</div>
-      {districts.length === 0 ? (
-        <EmptyState title="No districts in your scope" description="Talent Planning shows the districts and stores you oversee." />
-      ) : (
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {districts.map((d) => {
-            const t = sumRisk(d.stores, roll);
-            const m = meta.get(d.id);
-            const sub = [m?.regionName, m?.doName ? `DO ${m.doName}` : null].filter(Boolean).join(" · ");
-            return (
-              <button key={d.id} onClick={() => onOpen(d.id)}
-                className="group rounded-2xl border border-border bg-surface p-5 text-left shadow-card transition hover:border-accent/60 hover:shadow-float">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-base font-bold tracking-tight text-heading">{d.name || d.code || "District"}</div>
-                    {sub && <div className="mt-0.5 truncate text-xs text-ink-muted">{sub}</div>}
-                  </div>
-                  <RiskDonut risk={t.risk} size={48} stroke={6} />
-                </div>
-                <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-                  <span className="font-semibold text-heading">{d.stores.length}</span><span className="-ml-3 text-ink-muted">stores</span>
-                  <span className="font-semibold text-heading">{t.roster}</span><span className="-ml-3 text-ink-muted">team</span>
-                  <span className={cn("font-semibold", t.immediate > 0 ? "text-red-600" : "text-heading")}>{t.immediate}</span><span className={cn("-ml-3", t.immediate > 0 ? "text-red-600/80" : "text-ink-muted")}>immediate</span>
-                  <span className={cn("font-semibold", t.short > 0 ? "text-amber-600" : "text-heading")}>{t.short}</span><span className={cn("-ml-3", t.short > 0 ? "text-amber-600/80" : "text-ink-muted")}>open seats</span>
-                </div>
-              </button>
-            );
-          })}
+      {/* Store search + RVP sort */}
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <div className="relative min-w-[220px] flex-1 sm:max-w-sm">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" />
+          <input
+            value={storeQuery}
+            onChange={(e) => setStoreQuery(e.target.value)}
+            placeholder="Search stores by # or name…"
+            className="w-full rounded-lg border border-border bg-surface py-2 pl-9 pr-3 text-sm text-heading focus:border-accent focus:outline-none"
+          />
         </div>
+        {!storeQuery.trim() && (
+          <div className="flex items-center gap-1.5 text-xs text-ink-muted">
+            <span className="font-semibold">Sort</span>
+            <div className="flex overflow-hidden rounded-lg ring-1 ring-inset ring-border">
+              {([["district", "District"], ["rvp", "RVP"]] as const).map(([k, label]) => {
+                const active = (k === "rvp") === sortByRvp;
+                return (
+                  <button key={k} type="button" onClick={() => setSortByRvp(k === "rvp")}
+                    className={cn("px-2.5 py-1.5 font-semibold", active ? "bg-accent text-white" : "bg-surface text-ink-muted hover:bg-ink/5")}>
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {storeQuery.trim() ? (
+        storeMatches.length === 0 ? (
+          <EmptyState title="No stores match" description="Try a store number or name." />
+        ) : (
+          <div className="overflow-hidden rounded-2xl border border-border bg-surface shadow-card">
+            {storeMatches.map((r) => (
+              <button key={r.store.id} onClick={() => onOpenStore(r.districtId, r.store.id)}
+                className="flex w-full items-center justify-between gap-3 border-b border-border px-4 py-3 text-left last:border-b-0 hover:bg-ink/5">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-heading">#{r.store.number}{r.store.name ? ` · ${r.store.name}` : ""}</div>
+                  <div className="truncate text-xs text-ink-muted">{[r.districtName, r.rvpName ? `RVP ${r.rvpName}` : r.regionName].filter(Boolean).join(" · ")}</div>
+                </div>
+                <ChevronRight className="h-4 w-4 shrink-0 text-ink-subtle" />
+              </button>
+            ))}
+          </div>
+        )
+      ) : districts.length === 0 ? (
+        <EmptyState title="No districts in your scope" description="Talent Planning shows the districts and stores you oversee." />
+      ) : sortByRvp ? (
+        <div className="space-y-6">
+          {rvpGroups.map((g) => (
+            <div key={g.label}>
+              <div className="mb-3 flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-ink-subtle">
+                <span>{g.label}</span>
+                {g.region && g.region !== g.label && <span className="font-medium normal-case tracking-normal text-ink-muted">· {g.region}</span>}
+              </div>
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                {g.districts.map((d) => <DistrictCard key={d.id} d={d} roll={roll} meta={meta} onOpen={onOpen} />)}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <>
+          <div className="mb-3 text-[11px] font-bold uppercase tracking-wider text-ink-subtle">Districts</div>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            {districts.map((d) => <DistrictCard key={d.id} d={d} roll={roll} meta={meta} onOpen={onOpen} />)}
+          </div>
+        </>
       )}
     </>
+  );
+}
+
+function DistrictCard({ d, roll, meta, onOpen }: { d: MyDistrictNode; roll: RollupResponse["stores"]; meta: DistrictMeta; onOpen: (id: string) => void }) {
+  const t = sumRisk(d.stores, roll);
+  const m = meta.get(d.id);
+  const sub = [m?.regionName, m?.doName ? `DO ${m.doName}` : null].filter(Boolean).join(" · ");
+  return (
+    <button onClick={() => onOpen(d.id)}
+      className="group rounded-2xl border border-border bg-surface p-5 text-left shadow-card transition hover:border-accent/60 hover:shadow-float">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-base font-bold tracking-tight text-heading">{d.name || d.code || "District"}</div>
+          {sub && <div className="mt-0.5 truncate text-xs text-ink-muted">{sub}</div>}
+        </div>
+        <RiskDonut risk={t.risk} size={48} stroke={6} />
+      </div>
+      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+        <span className="font-semibold text-heading">{d.stores.length}</span><span className="-ml-3 text-ink-muted">stores</span>
+        <span className="font-semibold text-heading">{t.roster}</span><span className="-ml-3 text-ink-muted">team</span>
+        <span className={cn("font-semibold", t.immediate > 0 ? "text-red-600" : "text-heading")}>{t.immediate}</span><span className={cn("-ml-3", t.immediate > 0 ? "text-red-600/80" : "text-ink-muted")}>immediate</span>
+        <span className={cn("font-semibold", t.short > 0 ? "text-amber-600" : "text-heading")}>{t.short}</span><span className={cn("-ml-3", t.short > 0 ? "text-amber-600/80" : "text-ink-muted")}>open seats</span>
+      </div>
+    </button>
   );
 }
 function StatCard({ value, label, tone }: { value: number | string; label: string; tone?: "red" | "amber" }) {
