@@ -24,7 +24,7 @@ import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/auth/AuthProvider";
 import {
-  addRankingConfig, backfillRankingFields, fetchRankingOverview, ingestBscRows, ingestEcosureRows, ingestIxFile, ingestShopRows, ingestTotzoneRows, ingestVogRows, setFcTargetEfficiency, setLaborPad,
+  addRankingConfig, backfillRankingFields, fetchRankingOverview, ingestBscRows, ingestEcosureRows, ingestIxFile, ingestOttRows, ingestShopRows, ingestTotzoneRows, ingestVogRows, setFcTargetEfficiency, setLaborPad,
   type RankingConfigRow, type RankingStoreRow,
 } from "./api";
 
@@ -138,6 +138,7 @@ function SettingsView() {
         <ShopsUploadPanel />
 
         <VogUploadPanel />
+        <OttUploadPanel />
 
         <BackfillPanel />
         {/* Complaints placeholder */}
@@ -705,6 +706,91 @@ function VogUploadPanel() {
           )}>
             {busy ? "Ingesting…" : "Upload CSV"}
             <input type="file" accept=".csv,text/csv" className="hidden" onChange={onFile} />
+          </label>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── OTT / Late Sends upload (the "OTT Avg. SOS and Late Sends" xlsx) ──────────
+function OttUploadPanel() {
+  const toast = useToast();
+  const [scope, setScope] = useState<"ptd" | "wtd" | "auto">("auto");
+  const [busy, setBusy] = useState(false);
+  const [summary, setSummary] = useState<string | null>(null);
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    setBusy(true);
+    setSummary(null);
+    try {
+      const buf = await f.arrayBuffer();
+      const shaBytes = await crypto.subtle.digest("SHA-256", buf);
+      const sha256 = [...new Uint8Array(shaBytes)].map((b) => b.toString(16).padStart(2, "0")).join("");
+      const XLSX = await import("xlsx"); // lazy — keeps the main bundle lean
+      const wb = XLSX.read(buf, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const grid = XLSX.utils.sheet_to_json<(string | number | null)[]>(ws, { header: 1, raw: true });
+      const header = (grid[0] ?? []).map((h) => String(h ?? "").trim().toLowerCase());
+      const find = (pred: (h: string) => boolean) => header.findIndex(pred);
+      const cStore = find((h) => h === "rest" || h.includes("rest") || h.includes("store"));
+      const cLatePct = find((h) => h.includes("late sends") && h.includes("%"));
+      const cLateCnt = find((h) => h.includes("late sends") && !h.includes("%"));
+      const cOnTime = find((h) => h.includes("on time"));
+      const cSos = find((h) => h.includes("sos"));
+      if (cStore < 0 || cLatePct < 0) throw new Error('Not a Late Sends export — missing "Rest" / "% Late Sends over 8 Min" columns.');
+
+      const num = (v: unknown) => { const n = Number(v); return isFinite(n) ? n : null; };
+      const rows = grid.slice(1)
+        .filter((r) => /^\d+$/.test(String(r[cStore] ?? "").trim())) // drops any footer/blank
+        .map((r) => ({
+          store_code: String(r[cStore]).trim(),
+          on_time_pct: cOnTime >= 0 ? num(r[cOnTime]) : null,
+          avg_sos: cSos >= 0 ? (String(r[cSos] ?? "").trim() || null) : null,
+          late_sends_pct: num(r[cLatePct]),
+          late_sends_count: cLateCnt >= 0 && num(r[cLateCnt]) != null ? Math.round(num(r[cLateCnt]) as number) : null,
+        }))
+        .filter((r) => r.late_sends_pct != null);
+      if (!rows.length) throw new Error("No store rows with % Late Sends found.");
+
+      const detected: "ptd" | "wtd" =
+        scope !== "auto" ? scope : /wtd|week/i.test(f.name) ? "wtd" : /mtd|ptd|month|period/i.test(f.name) ? "ptd" : "ptd";
+      const res = await ingestOttRows({ filename: f.name, sha256, scope: detected, rows });
+      setSummary(`${detected.toUpperCase()} · ${res.stores} stores` + (res.unresolved.length ? ` · unresolved: ${res.unresolved.join(", ")}` : ""));
+      toast.push("Late Sends ingested — hit Run now on the Ranking tab to apply.", "success");
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "Ingest failed.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-midnight">OTT — % Late Sends over 8 Min</div>
+          <p className="text-xs text-zinc-500">
+            Upload the "OTT, Avg. SOS and Late Sends" xlsx. Reads <strong>% Late Sends over 8 Min</strong> per store
+            (surfaced on the ranker). Comes in WTD and PTD — upload both. Duplicates rejected by content hash.
+          </p>
+          {summary && <p className="mt-1 font-mono text-xs text-zinc-600">{summary}</p>}
+        </div>
+        <div className="flex items-center gap-2">
+          <select value={scope} onChange={(e) => setScope(e.target.value as "ptd" | "wtd" | "auto")} className={cn(inputCls)}>
+            <option value="auto">Detect from filename</option>
+            <option value="wtd">Week to date</option>
+            <option value="ptd">Period (PTD)</option>
+          </select>
+          <label className={cn(
+            "cursor-pointer rounded-lg bg-midnight px-3 py-2 text-sm font-semibold text-white hover:bg-zinc-800",
+            busy && "pointer-events-none opacity-50",
+          )}>
+            {busy ? "Ingesting…" : "Upload XLSX"}
+            <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={onFile} />
           </label>
         </div>
       </div>

@@ -485,6 +485,58 @@ async function ingestVog(supa, user, body) {
   return { file_id: file.id, scope, rows: rows.length, stores: codes.length, unresolved };
 }
 
+// Ingest On-Time Tickets / SOS / Late Sends (the "OTT" export). One row per
+// store, uploaded WTD and PTD. Carries % Late Sends over 8 Min (the metric the
+// ranker surfaces) plus % On Time Tickets, Avg SOS, and the late-send count.
+// Mirrors ingestVog (scope-aware, store-keyed). sha256 dedupe.
+async function ingestOtt(supa, user, body) {
+  const filename = String(body?.filename || "ott.xlsx").slice(0, 200);
+  const sha = String(body?.sha256 || "");
+  if (!/^[a-f0-9]{64}$/i.test(sha)) return { error: "sha256 of the file is required.", status: 400 };
+  const scope = body?.scope === "wtd" ? "wtd" : "ptd";
+  const numOrNull = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+  const raw = Array.isArray(body?.rows) ? body.rows : [];
+  const clean = raw
+    .map((r) => ({
+      level: "store",
+      store_code: String(r?.store_code ?? "").replace(/\D/g, "").replace(/^0+/, ""),
+      on_time_pct: numOrNull(r?.on_time_pct),
+      avg_sos: String(r?.avg_sos ?? "").trim().slice(0, 12) || null,
+      late_sends_pct: numOrNull(r?.late_sends_pct),
+      late_sends_count: Number.isFinite(Number(r?.late_sends_count)) ? Math.round(Number(r.late_sends_count)) : null,
+      scope,
+    }))
+    .filter((r) => r.store_code && r.late_sends_pct != null && r.late_sends_pct >= 0 && r.late_sends_pct <= 1.5);
+  if (!clean.length) return { error: "No usable rows (need store # + % Late Sends over 8 Min).", status: 400 };
+  if (clean.length > 2000) return { error: "Too many rows.", status: 400 };
+
+  const codes = [...new Set(clean.map((r) => r.store_code))];
+  const { data: sts } = await supa.from("stores").select("id, number").in("number", codes);
+  const idByNum = new Map((sts || []).map((s) => [String(s.number), s.id]));
+
+  const { data: file, error: fe } = await supa.from("ranking_source_files").insert({
+    source: "ott",
+    storage_path: `inline:${filename}`,
+    sha256: sha.toLowerCase(),
+    week_ending: null,
+    row_count: clean.length,
+    status: "parsed",
+    uploaded_by: user.id,
+  }).select("id").single();
+  if (fe) {
+    if (/duplicate|unique/i.test(fe.message)) return { error: "This exact file was already ingested — no double-count.", status: 409 };
+    if (/violates check|source_check/i.test(fe.message)) return { error: "Run migration 0260 first (adds the 'ott' source).", status: 500 };
+    return { error: fe.message, status: 500 };
+  }
+  const rows = clean.map((r) => ({ file_id: file.id, source: "ott", store_id: idByNum.get(r.store_code) ?? null, store_code: r.store_code, payload: r }));
+  for (let i = 0; i < rows.length; i += 300) {
+    const { error } = await supa.from("ranking_src_rows").insert(rows.slice(i, i + 300));
+    if (error) return { error: `File saved but rows failed: ${error.message}`, status: 500 };
+  }
+  const unresolved = codes.filter((c) => !idByNum.get(c));
+  return { file_id: file.id, scope, rows: rows.length, stores: codes.length, unresolved };
+}
+
 export const handler = async (event) => {
   let supa;
   try { supa = admin(); } catch (e) { return respond(500, { error: e.message }); }
@@ -514,6 +566,7 @@ export const handler = async (event) => {
       if (action === "ingest-bsc") return unwrap(await ingestBsc(supa, user, body));
       if (action === "ingest-shops") return unwrap(await ingestShops(supa, user, body));
       if (action === "ingest-vog") return unwrap(await ingestVog(supa, user, body));
+      if (action === "ingest-ott") return unwrap(await ingestOtt(supa, user, body));
       if (action === "import-legacy") return unwrap(await importLegacyWeeks(supa));
       return respond(400, { error: `Unknown action: ${action}` });
     }
