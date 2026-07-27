@@ -276,6 +276,27 @@ export async function runRankingNow(supa, user) {
     }
   }
 
+  // OTT (On-Time Tickets / SOS / Late Sends) per scope: newest file for each of
+  // wtd/ptd. Carries % Late Sends over 8 Min, surfaced on the ranker (not scored).
+  const ott = { ptd: new Map(), wtd: new Map() };
+  {
+    const { data: ofiles } = await supa.from("ranking_source_files")
+      .select("id, uploaded_at").eq("source", "ott").eq("status", "parsed")
+      .order("uploaded_at", { ascending: false }).limit(12);
+    const seenScope = new Set();
+    for (const f of ofiles || []) {
+      const { data: probe } = await supa.from("ranking_src_rows").select("payload").eq("file_id", f.id).limit(1);
+      const sc = probe?.[0]?.payload?.scope === "wtd" ? "wtd" : "ptd";
+      if (seenScope.has(sc)) continue;
+      seenScope.add(sc);
+      const { data: orows } = await supa.from("ranking_src_rows").select("payload").eq("file_id", f.id).limit(2000);
+      for (const { payload: p } of orows || []) if (p?.store_code) ott[sc].set(String(p.store_code), p);
+    }
+    if (ott.ptd.size || ott.wtd.size) {
+      issues.push({ level: "info", msg: `Late Sends loaded — PTD ${ott.ptd.size} store(s), WTD ${ott.wtd.size} store(s).` });
+    }
+  }
+
   const eco = await loadLatestUpload(supa, "ecosure");
   const ecoAvgByStore = new Map();
   if (eco) {
@@ -384,6 +405,20 @@ export async function runRankingNow(supa, user) {
     },
   });
 
+  // Attach % Late Sends over 8 Min to the store rows (display-only, not scored),
+  // per scope, from the OTT upload. Leader tiers aren't rolled up yet.
+  for (const sc of ["ptd", "wtd"]) {
+    for (const m of out[sc]?.stores || []) {
+      const o = ott[sc].get(String(m.store));
+      if (o && isNum(o.late_sends_pct)) {
+        m.lateSendsPct = o.late_sends_pct;
+        m.lateSendsCount = isNum(o.late_sends_count) ? o.late_sends_count : null;
+        if (o.on_time_pct != null) m.ottOnTimePct = Number(o.on_time_pct);
+        if (o.avg_sos) m.avgSos = String(o.avg_sos);
+      }
+    }
+  }
+
   // 6. Persist run + rows.
   const sourceStatus = {
     skunkworks: { status: "ok", stores: stores.length, week_ending: weekEnding, snapshot_latest: latest },
@@ -395,6 +430,9 @@ export async function runRankingNow(supa, user) {
       : { status: "missing" },
     vog: (vog.ptd.size || vog.wtd.size)
       ? { status: "ok", ptd: vog.ptd.size, wtd: vog.wtd.size }
+      : { status: "missing" },
+    ott: (ott.ptd.size || ott.wtd.size)
+      ? { status: "ok", ptd: ott.ptd.size, wtd: ott.wtd.size }
       : { status: "missing" },
     shops: shops
       ? { status: "ok", as_of: shops.file.week_ending, stores: shopByStore.size, in_period: [...shopByStore.values()].reduce((a, b) => a + b.n, 0) }

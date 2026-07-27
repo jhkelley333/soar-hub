@@ -293,6 +293,19 @@ export function ingestVogRows(input: {
   return req(`${FN}?action=ingest-vog`, { method: "POST", body: JSON.stringify(input) });
 }
 
+export interface OttRowInput {
+  store_code: string;
+  on_time_pct: number | null;
+  avg_sos: string | null;
+  late_sends_pct: number | null;
+  late_sends_count: number | null;
+}
+export function ingestOttRows(input: {
+  filename: string; sha256: string; scope: RankScope; rows: OttRowInput[];
+}): Promise<{ file_id: string; scope: RankScope; rows: number; stores: number; unresolved: string[] }> {
+  return req(`${FN}?action=ingest-ott`, { method: "POST", body: JSON.stringify(input) });
+}
+
 // ── Legacy history + trends ──────────────────────────────────────────
 export interface LegacyImportResult {
   available: number;

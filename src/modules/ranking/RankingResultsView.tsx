@@ -103,6 +103,7 @@ const STORE_COLS: Col[] = [
   { g: "ops", label: "Score", key: "bscScore", kind: "score" },
   { g: "ops", label: "On time", key: "onTimePct", kind: "pct1" },
   { g: "ops", label: "Score", key: "onTimeScore", kind: "score" },
+  { g: "ops", label: "% Late Sends", key: "lateSendsPct", kind: "pct1" },
   { g: "ops", label: "Calls /10k", key: "callsPer10k", kind: "num1" },
   { g: "ops", label: "Complaints", key: "complaintsScore", kind: "score" },
   { g: "ops", label: "EcoSure", key: "ecosure", kind: "pct1" },
