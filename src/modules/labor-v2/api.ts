@@ -203,6 +203,8 @@ export interface NoGmCreditRow {
   id: string;
   store_number: string;
   store_name: string | null;
+  region: string | null;
+  rvp_name: string | null;
   reason: "loa" | "no_gm" | "in_training";
   start_date: string;
   end_date: string | null;
