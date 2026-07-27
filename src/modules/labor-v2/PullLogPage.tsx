@@ -3,13 +3,15 @@
 // what it wrote, and any error. Admin-only; auto-refreshes.
 
 import { useQuery } from "@tanstack/react-query";
-import { CheckCircle2, RefreshCw, XCircle } from "lucide-react";
+import { CheckCircle2, GitCompareArrows, RefreshCw, XCircle } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { cn } from "@/lib/cn";
-import { fetchPullLog, type PullLogEntry } from "./api";
+import { fetchDataRevisions, fetchPullLog, type DataRevision, type PullLogEntry } from "./api";
+
+const fmtVal = (v: number | null) => (v == null ? "—" : Number.isInteger(v) ? v.toLocaleString("en-US") : v.toLocaleString("en-US", { maximumFractionDigits: 4 }));
 
 const fmtTime = (s: string) =>
   new Date(s).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
@@ -30,6 +32,14 @@ export function PullLogPage() {
   });
   const entries = q.data?.entries ?? [];
   const okCount = entries.filter((e) => e.ok).length;
+
+  const revQ = useQuery({
+    queryKey: ["labor-v2-data-revisions"],
+    queryFn: () => fetchDataRevisions(),
+    refetchOnWindowFocus: true,
+    refetchInterval: 60_000,
+  });
+  const revisions = revQ.data?.entries ?? [];
 
   return (
     <>
@@ -62,7 +72,46 @@ export function PullLogPage() {
           </CardBody>
         </Card>
       )}
+
+      {/* Data revisions — a re-pull changed an already-captured value. */}
+      <div className="mt-8">
+        <div className="mb-2 flex items-center gap-2">
+          <GitCompareArrows className="h-4 w-4 text-zinc-400" />
+          <h2 className="text-sm font-semibold text-midnight dark:text-night-ink">Data revisions</h2>
+          <span className="text-[11px] text-zinc-400">a re-pull changed an already-captured value · the sheet was updated (latest wins)</span>
+        </div>
+        {revQ.data?.note ? (
+          <EmptyState title="Not available yet" description={revQ.data.note} />
+        ) : revisions.length === 0 ? (
+          <EmptyState title="No restatements" description="Every re-pull so far has matched the captured data. Changes will list here." />
+        ) : (
+          <Card>
+            <CardBody className="p-0">
+              <div className="border-b border-zinc-100 px-4 py-2 text-[11px] text-zinc-400">{revisions.length} recent change{revisions.length === 1 ? "" : "s"}</div>
+              <div className="divide-y divide-zinc-100">
+                {revisions.map((r) => <RevisionRow key={r.id} r={r} />)}
+              </div>
+            </CardBody>
+          </Card>
+        )}
+      </div>
     </>
+  );
+}
+
+function RevisionRow({ r }: { r: DataRevision }) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-4 py-2.5 text-xs">
+      <span className="w-32 shrink-0 text-zinc-400">{fmtTime(r.detected_at)}</span>
+      <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide", r.source === "labor" ? "bg-accent-100 text-accent-700" : "bg-sky-50 text-sky-700")}>{r.source}</span>
+      <span className="font-medium text-midnight dark:text-night-ink">#{r.store_number}</span>
+      <span className="text-zinc-400">{r.business_date}</span>
+      <span className="font-mono text-zinc-600">{r.field}</span>
+      <span className="tabular-nums text-zinc-500">{fmtVal(r.old_value)}</span>
+      <span className="text-zinc-300">→</span>
+      <span className="font-semibold tabular-nums text-midnight dark:text-night-ink">{fmtVal(r.new_value)}</span>
+      {r.pull_source && <span className="text-[10px] text-zinc-300">({SOURCE_LABEL[r.pull_source] ?? r.pull_source})</span>}
+    </div>
   );
 }
 

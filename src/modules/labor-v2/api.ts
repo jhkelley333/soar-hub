@@ -66,6 +66,24 @@ export function fetchPullLog(): Promise<{ entries: PullLogEntry[] }> {
   return req(`${FN}?action=pull-log`);
 }
 
+// Restatement log — a re-pull changed an already-captured value.
+export interface DataRevision {
+  id: string;
+  source: "labor" | "count";
+  store_number: string;
+  business_date: string;
+  field: string;
+  old_value: number | null;
+  new_value: number | null;
+  pull_source: string | null;
+  detected_at: string;
+}
+export function fetchDataRevisions(businessDate?: string): Promise<{ entries: DataRevision[]; note?: string }> {
+  const p = new URLSearchParams({ action: "data-revisions" });
+  if (businessDate) p.set("business_date", businessDate);
+  return req(`${FN}?${p.toString()}`);
+}
+
 // ── Leadership "Team labor" rollup (drill Region → Market → District → Store) ─
 export function fetchLaborV2Team(date?: string): Promise<TeamLaborResponse> {
   const p = new URLSearchParams({ action: "team" });
