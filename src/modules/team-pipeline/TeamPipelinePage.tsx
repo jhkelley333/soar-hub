@@ -4,7 +4,7 @@
 // The richer store layouts (bench ladder, 9-box, staffing planner) and the
 // GM bench / corrective-action documents build out in later slices.
 //
-// Gated behind the `team_pipeline` feature flag (see router + nav).
+// Role-gated to GM and up (see router + nav); scoped to the viewer's org tree.
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, CalendarCheck2, Check, ChevronRight, Lock, SlidersHorizontal, Upload, Users } from "lucide-react";
@@ -92,11 +92,6 @@ export function TeamPipelinePage() {
             onChange={setView}
             options={[{ value: "pipeline", label: "Pipeline" }, { value: "succession", label: "Succession & Risk" }, { value: "development", label: "Development" }, { value: "tenure", label: "Time in role" }]}
           />
-        </div>
-
-        <div className="mb-5 flex items-center gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-[13px] font-medium text-amber-800">
-          <Lock className="h-4 w-4 shrink-0" />
-          Talent Planning pilot — gated by the <code className="rounded bg-amber-100 px-1 font-mono text-[12px]">team_pipeline</code> flag.
         </div>
 
         {view === "succession" ? (

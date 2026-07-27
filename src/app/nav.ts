@@ -139,10 +139,9 @@ export const NAV: NavItem[] = [
   // Assessments live as tabs inside (each gates itself by role/flag), with the
   // Training QR launcher in the header. Replaces four separate nav items.
   { to: "/training", label: "Training", icon: BookOpenCheck, roles: null },
-  // Team Pipeline — Talent Planning. Gated behind the team_pipeline flag:
-  // roles:[] means it stays dark until the flag resolves true for the user
-  // (admins always see it). Scoped to the viewer's org tree in-app.
-  { to: "/team-pipeline", label: "Team Pipeline", icon: GitBranch, roles: [], flagKey: "team_pipeline" },
+  // Team Pipeline — Talent Planning. GM and up; scoped to the viewer's org
+  // tree in-app (a GM sees only their own store). Pilot flag removed.
+  { to: "/team-pipeline", label: "Team Pipeline", icon: GitBranch, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/schedule",    label: "Calendar",    icon: CalendarDays,    roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/contacts",    label: "Contacts",    icon: BookUser,        roles: null },
   { to: "/manuals",     label: "Manual Search", icon: BookMarked,    roles: null },
@@ -187,10 +186,9 @@ export function visibleNav(
     if (!item.roles) return true;
     if (item.roles.includes(role)) return true;
     // flagKey only opens the module when the role allowlist is explicitly
-    // empty (the "gated until the flag flips on" pattern — see
-    // team_pipeline above). Otherwise a global flag like qsr_platform
-    // would bypass the role gate and leak the module to every signed-in
-    // user, which is what surfaced PAF + Team Training to FBC.
+    // empty (the "gated until the flag flips on" pattern). Otherwise a global
+    // flag like qsr_platform would bypass the role gate and leak the module to
+    // every signed-in user, which is what surfaced PAF + Team Training to FBC.
     if (item.flagKey && flags[item.flagKey] && item.roles.length === 0) return true;
     return false;
   });
