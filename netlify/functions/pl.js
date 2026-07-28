@@ -132,6 +132,26 @@ async function overview(supa, user, params) {
     if (r.is_final) cur.final = r; else cur.prelim = r;
     byStore.set(key, cur);
   }
+
+  // Flag-notes saved for THIS period (system of record), counted per store — so
+  // the Notes column reflects the selected period, not the current flags sheet.
+  const noteCount = new Map();
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data: nrows, error: nErr } = await supa
+      .from("pl_flag_notes")
+      .select("store_number")
+      .eq("period_end", period)
+      .in("store_number", numbers)
+      .range(from, from + PAGE - 1);
+    if (nErr) break; // notes are a nicety here — don't fail the overview
+    for (const n of nrows ?? []) {
+      const k = String(n.store_number);
+      noteCount.set(k, (noteCount.get(k) || 0) + 1);
+    }
+    if (!nrows || nrows.length < PAGE) break;
+  }
+
   const rows = [];
   for (const [num, { prelim, final }] of byStore) {
     const chosen = final || prelim;
@@ -141,6 +161,7 @@ async function overview(supa, user, params) {
       store_name: nameByNumber.get(num) ?? null,
       stage: chosen.is_final ? "final" : "prelim",
       compare_available: !!(prelim && final),
+      note_count: noteCount.get(num) ?? 0,
     });
   }
   rows.sort((a, b) => String(a.store_number).localeCompare(String(b.store_number), undefined, { numeric: true }));

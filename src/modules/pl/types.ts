@@ -31,6 +31,7 @@ export interface PlOverviewRow {
   ebitda: number | null;
   stage?: PlStage;
   compare_available?: boolean;
+  note_count?: number; // flag-notes saved for THIS period (not the live sheet)
 }
 
 export interface PlStatement extends PlOverviewRow {

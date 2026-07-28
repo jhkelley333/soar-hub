@@ -52,25 +52,6 @@ export function PlPage() {
   });
   const rows = useMemo(() => overviewQ.data?.rows ?? [], [overviewQ.data]);
 
-  // Walkthrough-flag note status per store, for the Notes pill. Reflects
-  // the CURRENT review sheet (flags are per-month) regardless of which P&L
-  // period is selected. Quietly absent if the sheet isn't reachable.
-  const flagsQ = useQuery({
-    queryKey: ["pl-flags", "summary"],
-    queryFn: () => fetchPlFlags(),
-    staleTime: 5 * 60_000,
-    retry: false,
-  });
-  const flagStats = useMemo(() => {
-    const m = new Map<string, { total: number; noted: number }>();
-    for (const s of flagsQ.data?.stores ?? []) {
-      if (!s.flags.length) continue;
-      const noted = s.flags.filter((f) => (f.note ?? "").trim().length > 0).length;
-      m.set(s.store_number, { total: s.flags.length, noted });
-    }
-    return m;
-  }, [flagsQ.data]);
-
   // Single-store viewers (GMs) jump straight into their statement.
   useEffect(() => {
     if (!store && rows.length === 1) setStore(rows[0].store_number);
@@ -84,10 +65,7 @@ export function PlPage() {
         case "ci": return r.ci_amount ?? -Infinity;
         case "ci_pct": return r.ci_pct ?? -Infinity;
         case "ebitda": return r.ebitda ?? -Infinity;
-        case "notes": {
-          const fs = flagStats.get(r.store_number);
-          return fs ? fs.total - fs.noted : -1; // most notes owed first when desc
-        }
+        case "notes": return r.note_count ?? 0; // notes saved for this period
       }
     };
     return [...rows].sort((a, b) => {
@@ -95,7 +73,7 @@ export function PlPage() {
       const cmp = typeof av === "string" ? av.localeCompare(bv as string, undefined, { numeric: true }) : (av as number) - (bv as number);
       return sort.dir === "asc" ? cmp : -cmp;
     });
-  }, [rows, sort, flagStats]);
+  }, [rows, sort]);
 
   const activePeriod = periods.find((p) => p.period_end === period);
 
@@ -184,7 +162,7 @@ export function PlPage() {
                     <td className={cn("px-4 py-2.5 text-right font-semibold tabular-nums", (r.ci_pct ?? 0) < 0 ? "text-red-600" : "text-emerald-700")}>{pct(r.ci_pct)}</td>
                     <td className={cn("px-4 py-2.5 text-right tabular-nums", (r.ebitda ?? 0) < 0 ? "text-red-600" : "text-zinc-600")}>{money(r.ebitda)}</td>
                     <td className="px-4 py-2.5 text-right">
-                      <NotesPill stats={flagStats.get(r.store_number)} />
+                      <PeriodNotesPill count={r.note_count ?? 0} />
                     </td>
                     <td className="px-4 py-2.5 text-right text-xs font-semibold text-accent">View →</td>
                   </tr>
@@ -221,6 +199,17 @@ function NotesPill({ stats }: { stats?: { total: number; noted: number } }) {
   return (
     <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
       {stats.noted} noted
+    </span>
+  );
+}
+
+// Overview column pill — counts flag-notes SAVED for the selected period (not
+// the live walkthrough sheet), so past periods with no notes show nothing.
+function PeriodNotesPill({ count }: { count: number }) {
+  if (!count) return <span className="text-xs text-zinc-300">—</span>;
+  return (
+    <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
+      {count} noted
     </span>
   );
 }
