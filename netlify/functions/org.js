@@ -945,6 +945,9 @@ async function territoryMap(supa, user) {
       .select("id, number, name, address, city, state, latitude, longitude, district_id")
       .in("id", visibleStoreIds)
       .eq("is_active", true)
+      // Sonic only — Little Caesars stores live on the COO map, not the
+      // territory map (brand 'sonic' or null = Sonic; other brands excluded).
+      .or("brand.eq.sonic,brand.is.null")
       .order("number"),
     supa.from("districts").select("id, code, name, area_id"),
     supa.from("areas").select("id, code, name, region_id"),
