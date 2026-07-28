@@ -83,12 +83,13 @@ async function getSessionUser(event) {
 // Stores the caller can see (org-wide roles see all; others by user_scopes).
 async function storesForUser(supa, profile) {
   const role = String(profile.role || "").toLowerCase();
+  const selfId = profile.id; // caller's own profile — used to hide their own card
   if (ORG_WIDE.has(role)) {
     const { data } = await supa.from("stores").select("id").eq("is_active", true).limit(5000);
-    return { all: true, ids: new Set((data || []).map((s) => s.id)) };
+    return { all: true, ids: new Set((data || []).map((s) => s.id)), selfId };
   }
   const { data: scopes } = await supa.from("user_scopes").select("scope_type, scope_id").eq("user_id", profile.id);
-  if (!scopes?.length) return { all: false, ids: new Set() };
+  if (!scopes?.length) return { all: false, ids: new Set(), selfId };
   const directStoreIds = scopes.filter((s) => s.scope_type === "store").map((s) => s.scope_id);
   const districtIds = scopes.filter((s) => s.scope_type === "district").map((s) => s.scope_id);
   const areaIds = scopes.filter((s) => s.scope_type === "area").map((s) => s.scope_id);
@@ -106,7 +107,7 @@ async function storesForUser(supa, profile) {
     const { data } = await supa.from("stores").select("id").in("district_id", districtIds);
     for (const s of data || []) storeIds.add(s.id);
   }
-  return { all: false, ids: storeIds };
+  return { all: false, ids: storeIds, selfId };
 }
 
 const emptyRisk = () => ({ immediate: 0, medium: 0, low: 0, na: 0 });
@@ -427,11 +428,13 @@ async function storeRoster(supa, user, storeId) {
   const sales = srow ? (await salesForStoreNumbers([srow.number])).get(String(srow.number)) ?? null : null;
   // Stamp each member with its store label so the drawer can show it anywhere.
   const withStore = (m) => ({ ...m, store_number: srow?.number ?? null, store_name: srow?.name ?? null });
+  // Hide the caller's own card — they don't see the talent record kept on them.
+  const notSelf = (m) => String(m.profile_id ?? "") !== String(user.id);
   return {
     // Terminated members drop out of the active pipeline but stay accessible
     // in their own list (rehire / history).
-    roster: annotated.filter((m) => m.status !== "terminated").map(withStore),
-    terminated: annotated.filter((m) => m.status === "terminated").map(withStore),
+    roster: annotated.filter((m) => m.status !== "terminated" && notSelf(m)).map(withStore),
+    terminated: annotated.filter((m) => m.status === "terminated" && notSelf(m)).map(withStore),
     reqs: reqs || [],
     can_write: VIEW_ROLES.has(String(user.role)),
     role_edit: await roleEditOn(supa, user),
@@ -450,7 +453,7 @@ async function gms(supa, user) {
   let q = supa.from("tp_team_members").select("*").eq("role", "gm").neq("status", "terminated");
   if (ids) q = q.in("store_id", ids);
   const { data } = await q;
-  const annotated = await annotateAccounts(supa, data);
+  const annotated = (await annotateAccounts(supa, data)).filter((m) => String(m.profile_id ?? "") !== String(user.id));
   const storeIds = [...new Set(annotated.map((m) => m.store_id))];
   const { data: stores } = storeIds.length
     ? await supa.from("stores").select("id, number, name").in("id", storeIds)
@@ -581,6 +584,7 @@ async function transferMember(supa, user, body) {
   const scope = await storesForUser(supa, user);
   const { data: m } = await supa.from("tp_team_members").select("id, store_id, role, profile_id").eq("id", id).maybeSingle();
   if (!m) return { error: "Team member not found.", status: 404 };
+  if (m.profile_id && String(m.profile_id) === String(user.id)) return { error: "You can't transfer your own record.", status: 403 };
   if (!scope.all && !scope.ids.has(m.store_id)) return { error: "That team member is outside your scope.", status: 403 };
   if (!scope.all && !scope.ids.has(toStore)) return { error: "Destination store is outside your scope.", status: 403 };
 
@@ -612,7 +616,7 @@ async function searchMembers(supa, user, query) {
     q = q.in("store_id", ids);
   }
   const { data } = await q;
-  const annotated = await annotateAccounts(supa, data);
+  const annotated = (await annotateAccounts(supa, data)).filter((m) => String(m.profile_id ?? "") !== String(user.id));
   const storeIds = [...new Set(annotated.map((m) => m.store_id))];
   const { data: stores } = storeIds.length
     ? await supa.from("stores").select("id, number, name").in("id", storeIds)
@@ -629,9 +633,12 @@ async function searchMembers(supa, user, query) {
 
 // Resolve a roster member and confirm it falls inside the caller's scope.
 async function memberInScope(supa, scope, memberId) {
-  const { data: m } = await supa.from("tp_team_members").select("id, store_id").eq("id", memberId).maybeSingle();
+  const { data: m } = await supa.from("tp_team_members").select("id, store_id, profile_id").eq("id", memberId).maybeSingle();
   if (!m) return null;
   if (!scope.all && !scope.ids.has(m.store_id)) return null;
+  // A member can't view or edit their OWN talent record — notes, risk, and
+  // ratings on it are leadership's upward record, hidden from its subject.
+  if (scope.selfId && m.profile_id && String(m.profile_id) === String(scope.selfId)) return null;
   return m;
 }
 function clampRating(v) {
