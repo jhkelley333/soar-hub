@@ -17,7 +17,8 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
-import { fetchPlCompare, fetchPlFlags, fetchPlOverview, fetchPlPeriods, fetchPlStatement, savePlFlagNote, uploadPl, type PlFlag } from "./api";
+import { Modal } from "@/shared/ui/Modal";
+import { fetchPlCompare, fetchPlFlags, fetchPlLineTrend, fetchPlOverview, fetchPlPeriods, fetchPlStatement, savePlFlagNote, uploadPl, type PlFlag, type PlTrendPoint } from "./api";
 import type { ParsedWorkbook, PlCompareLine, PlLine, PlOverviewRow, PlStage } from "./types";
 
 const money = (v: number | null | undefined, dp = 0) =>
@@ -589,9 +590,94 @@ function flagTrend(flag: PlFlag): { dir: "up" | "down"; label: string } | null {
   };
 }
 
+const plUsd = (n: number | null) =>
+  n == null ? "—" : n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+
+// Small SVG line chart of a line item's amount across periods, with the value
+// labelled at each point and the period on the x-axis.
+function TrendChart({ points }: { points: PlTrendPoint[] }) {
+  const W = 460, H = 170, padL = 12, padR = 12, padT = 18, padB = 26;
+  const vals = points.map((p) => p.amount ?? 0);
+  const min = Math.min(...vals), max = Math.max(...vals), span = max - min || Math.abs(max) || 1;
+  const x = (i: number) => padL + (i * (W - padL - padR)) / Math.max(1, points.length - 1);
+  const y = (v: number) => padT + (1 - (v - min) / span) * (H - padT - padB);
+  const path = points.map((p, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)} ${y(p.amount ?? 0).toFixed(1)}`).join(" ");
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Line item trend">
+      <line x1={padL} y1={H - padB} x2={W - padR} y2={H - padB} stroke="#e4e4e7" />
+      <path d={path} fill="none" stroke="#2563eb" strokeWidth={2} />
+      {points.map((p, i) => (
+        <g key={i}>
+          <circle cx={x(i)} cy={y(p.amount ?? 0)} r={3.5} fill="#2563eb" />
+          <text x={x(i)} y={y(p.amount ?? 0) - 8} textAnchor="middle" fontSize={9} fill="#3f3f46">
+            {p.amount == null ? "" : Math.round(p.amount).toLocaleString()}
+          </text>
+          <text x={x(i)} y={H - padB + 15} textAnchor="middle" fontSize={9} fill="#a1a1aa">
+            {p.period_end ? plPeriodShort(p.period_end) : (p.period_label ?? "")}
+          </text>
+        </g>
+      ))}
+    </svg>
+  );
+}
+
+function LineTrendModal({ open, onClose, store, label, flag }: {
+  open: boolean; onClose: () => void; store: string; label: string; flag: PlFlag;
+}) {
+  const q = useQuery({
+    queryKey: ["pl-line-trend", store, label],
+    queryFn: () => fetchPlLineTrend(store, label),
+    enabled: open && !!label,
+  });
+  const points = q.data?.points ?? [];
+  // Fallback to the review sheet's own current + prior_1 + prior_2 when the P&L
+  // statements don't carry (or don't match) this line.
+  const fallback: PlTrendPoint[] = [];
+  if (points.length < 2) {
+    const cur = flagMoney(flag.value), p1 = flagMoney(flag.prior_1), p2 = flagMoney(flag.prior_2);
+    if (p2 != null) fallback.push({ period_end: "", period_label: "2 ago", amount: p2, pct: null });
+    if (p1 != null) fallback.push({ period_end: "", period_label: "1 ago", amount: p1, pct: null });
+    if (cur != null) fallback.push({ period_end: "", period_label: "Now", amount: cur, pct: null });
+  }
+  const shown = points.length >= 2 ? points : fallback;
+  return (
+    <Modal open={open} onClose={onClose} title={`${label} — trend`}>
+      {q.isLoading ? (
+        <div className="py-6 text-center text-sm text-zinc-500">Loading trend…</div>
+      ) : shown.length < 2 ? (
+        <div className="py-6 text-center text-sm text-zinc-500">Not enough history yet to chart this line — upload more P&amp;L periods.</div>
+      ) : (
+        <div className="space-y-3">
+          <TrendChart points={shown} />
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-zinc-400">
+                <th className="py-1">Period</th><th className="py-1 text-right">Amount</th><th className="py-1 text-right">%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...shown].reverse().map((p, i) => (
+                <tr key={i} className="border-t border-zinc-100">
+                  <td className="py-1.5">{p.period_end ? plPeriodShort(p.period_end) : p.period_label}</td>
+                  <td className="py-1.5 text-right tabular-nums">{plUsd(p.amount)}</td>
+                  <td className="py-1.5 text-right tabular-nums text-zinc-500">{p.pct == null ? "—" : `${p.pct}%`}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {points.length < 2 && (
+            <p className="text-[11px] text-zinc-400">Showing the review sheet's values — full P&amp;L history wasn't matched for this line.</p>
+          )}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 function FlagRow({ flag, store, periodEnd }: { flag: PlFlag; store: string; periodEnd: string }) {
   const toast = useToast();
   const qc = useQueryClient();
+  const [trendOpen, setTrendOpen] = useState(false);
   const [note, setNote] = useState(flag.note ?? "");
   // Re-seed when the saved note arrives after mount (cached flag data can
   // render first, then the fresh fetch lands with the note) — but never
@@ -633,7 +719,12 @@ function FlagRow({ flag, store, periodEnd }: { flag: PlFlag; store: string; peri
         <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-zinc-600">
           {flag.category}
         </span>
-        <span className="text-sm font-semibold text-midnight">{flag.item ?? "—"}</span>
+        <button type="button" onClick={() => setTrendOpen(true)} title="See this line's trend across periods"
+          className="text-sm font-semibold text-midnight underline decoration-dotted decoration-zinc-300 underline-offset-2 hover:decoration-accent hover:text-accent">
+          {flag.item ?? flag.category}
+        </button>
+        <LineTrendModal open={trendOpen} onClose={() => setTrendOpen(false)} store={store}
+          label={flag.item || flag.category} flag={flag} />
         {flag.value && <span className="text-sm tabular-nums text-zinc-700">{flag.value}</span>}
         {trend && (
           <span

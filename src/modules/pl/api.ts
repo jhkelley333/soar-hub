@@ -61,6 +61,17 @@ export function uploadPl(input: {
   return request(`${FN}?action=upload`, { method: "POST", body: JSON.stringify(input) });
 }
 
+// ── Line-item trend across periods ──────────────────────────────────
+export interface PlTrendPoint {
+  period_end: string;
+  period_label: string | null;
+  amount: number | null;
+  pct: number | null;
+}
+export function fetchPlLineTrend(store: string, label: string): Promise<{ store: string; label: string; points: PlTrendPoint[] }> {
+  return request(`${FN}?action=line-trend&store=${encodeURIComponent(store)}&label=${encodeURIComponent(label)}`);
+}
+
 // ── Walkthrough flags (Google Sheet) + notes write-back ─────────────
 
 const FLAGS_FN = "/.netlify/functions/pl-flags";
