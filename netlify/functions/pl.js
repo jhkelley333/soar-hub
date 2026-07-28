@@ -371,15 +371,29 @@ async function upload(supa, user, body) {
   }
   if (!ready.length) return { error: "nothing parseable in the upload", status: 400 };
 
+  // Some workbooks list a store in two columns (a store rolled up under two
+  // groups). Those become two rows with the SAME (store_number, period_end,
+  // is_final) — and a single upsert can't touch one conflict key twice
+  // ("ON CONFLICT ... cannot affect row a second time"). Collapse to the last
+  // occurrence per store and report which were duplicated.
+  const byKey = new Map();
+  const dupSet = new Set();
+  for (const r of ready) {
+    if (byKey.has(r.store_number)) dupSet.add(r.store_number);
+    byKey.set(r.store_number, r);
+  }
+  const deduped = [...byKey.values()];
+  const duplicates = [...dupSet];
+
   // Keyed on the stage too (is_final), so a Final upload no longer clobbers the
   // Prelim — both are retained for side-by-side comparison. Re-uploading the
   // same stage overwrites just that stage.
   const { error } = await supa
     .from("pl_statements")
-    .upsert(ready, { onConflict: "store_number,period_end,is_final" });
+    .upsert(deduped, { onConflict: "store_number,period_end,is_final" });
   if (error) return { error: error.message, status: 500 };
 
-  return { ok: true, upserted: ready.length, unmatched };
+  return { ok: true, upserted: deduped.length, unmatched, duplicates };
 }
 
 function numOrNull(v) {
