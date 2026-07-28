@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from "react";
 import { RefreshCw } from "lucide-react";
+import { router } from "@/app/router";
 
 const ENTRY_RE = /\/assets\/index-[A-Za-z0-9_-]+\.js/;
 
@@ -67,8 +68,34 @@ function useUpdateAvailable(): boolean {
   return available;
 }
 
+// Once a new version is live, refresh onto it automatically at the next SAFE
+// moment — when the tab is backgrounded (silent) or on the next in-app
+// navigation (a natural checkpoint) — so everyone ends up current without a
+// manual click and without interrupting active work. The banner stays as the
+// immediate manual option.
+function useAutoRefresh(available: boolean) {
+  useEffect(() => {
+    if (!available) return;
+    let done = false;
+    const go = () => { if (!done) { done = true; window.location.reload(); } };
+
+    // Already hidden right now → refresh silently.
+    if (document.visibilityState === "hidden") { go(); return; }
+
+    const onHidden = () => { if (document.visibilityState === "hidden") go(); };
+    document.addEventListener("visibilitychange", onHidden);
+
+    // Or on the next completed in-app navigation.
+    const startKey = router.state.location.key;
+    const unsub = router.subscribe((s) => { if (s.location.key !== startKey) go(); });
+
+    return () => { document.removeEventListener("visibilitychange", onHidden); unsub(); };
+  }, [available]);
+}
+
 export function UpdateBanner() {
   const available = useUpdateAvailable();
+  useAutoRefresh(available);
   if (!available) return null;
   return (
     <div className="fixed inset-x-0 bottom-4 z-[2000] flex justify-center px-4" role="status" aria-live="polite">
