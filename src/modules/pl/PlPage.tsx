@@ -864,8 +864,10 @@ function UploadPanel({ onDone }: { onDone: () => void }) {
       });
     },
     onSuccess: (r) => {
+      const dups = r.duplicates ?? [];
       toast.push(
         `Saved ${r.upserted} statement${r.upserted === 1 ? "" : "s"}.` +
+          (dups.length ? ` Merged ${dups.length} duplicate store column(s): ${dups.slice(0, 8).join(", ")}${dups.length > 8 ? "…" : ""}.` : "") +
           (r.unmatched.length ? ` ${r.unmatched.length} store number(s) not in the app: ${r.unmatched.slice(0, 8).join(", ")}${r.unmatched.length > 8 ? "…" : ""}` : ""),
         r.unmatched.length ? "info" : "success",
       );

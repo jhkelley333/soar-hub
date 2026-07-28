@@ -57,7 +57,7 @@ export function uploadPl(input: {
   period_label: string;
   is_final: boolean;
   statements: ParsedPlStore[];
-}): Promise<{ ok: true; upserted: number; unmatched: string[] }> {
+}): Promise<{ ok: true; upserted: number; unmatched: string[]; duplicates?: string[] }> {
   return request(`${FN}?action=upload`, { method: "POST", body: JSON.stringify(input) });
 }
 
