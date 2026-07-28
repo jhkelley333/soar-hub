@@ -45,6 +45,8 @@ export interface TeamMember {
   created_at: string;
   updated_at: string;
   has_account?: boolean; // linked to an active app profile (server-computed)
+  store_number?: string | null; // server-stamped store label (for the drawer)
+  store_name?: string | null;
 }
 
 // Crew Leader and up can be invited to an app login.

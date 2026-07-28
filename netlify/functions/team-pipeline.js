@@ -423,13 +423,15 @@ async function storeRoster(supa, user, storeId) {
   const { data: reqs } = await supa.from("tp_requisitions").select("*").eq("store_id", storeId).neq("status", "filled").order("created_at", { ascending: false });
   const annotated = await annotateAccounts(supa, all);
   const settings = await tpSettings(supa);
-  const { data: srow } = await supa.from("stores").select("number").eq("id", storeId).maybeSingle();
+  const { data: srow } = await supa.from("stores").select("number, name").eq("id", storeId).maybeSingle();
   const sales = srow ? (await salesForStoreNumbers([srow.number])).get(String(srow.number)) ?? null : null;
+  // Stamp each member with its store label so the drawer can show it anywhere.
+  const withStore = (m) => ({ ...m, store_number: srow?.number ?? null, store_name: srow?.name ?? null });
   return {
     // Terminated members drop out of the active pipeline but stay accessible
     // in their own list (rehire / history).
-    roster: annotated.filter((m) => m.status !== "terminated"),
-    terminated: annotated.filter((m) => m.status === "terminated"),
+    roster: annotated.filter((m) => m.status !== "terminated").map(withStore),
+    terminated: annotated.filter((m) => m.status === "terminated").map(withStore),
     reqs: reqs || [],
     can_write: VIEW_ROLES.has(String(user.role)),
     role_edit: await roleEditOn(supa, user),
@@ -448,7 +450,17 @@ async function gms(supa, user) {
   let q = supa.from("tp_team_members").select("*").eq("role", "gm").neq("status", "terminated");
   if (ids) q = q.in("store_id", ids);
   const { data } = await q;
-  return { gms: await annotateAccounts(supa, data) };
+  const annotated = await annotateAccounts(supa, data);
+  const storeIds = [...new Set(annotated.map((m) => m.store_id))];
+  const { data: stores } = storeIds.length
+    ? await supa.from("stores").select("id, number, name").in("id", storeIds)
+    : { data: [] };
+  const byId = new Map((stores || []).map((s) => [s.id, s]));
+  return {
+    gms: annotated.map((m) => ({
+      ...m, store_number: byId.get(m.store_id)?.number ?? null, store_name: byId.get(m.store_id)?.name ?? null,
+    })),
+  };
 }
 
 // Admin-only: bootstrap the roster from existing SOAR profiles that have a
@@ -554,10 +566,11 @@ async function addMember(supa, user, body) {
   return { row: data };
 }
 
-// Move a member to another store (and optionally re-slot their role). Only for
-// hand-managed members: an account holder's store follows their profile (My
-// Team / Org Admin), and the account sync would just move them back — so we
-// steer those edits to My Team instead of silently fighting the sync.
+// Move a member to another store (and optionally re-slot their role). Works for
+// everyone. Hand-managed members just move their roster row. Account holders
+// ALSO have their My Team assignment moved (primary_store_id + any store scope)
+// so the change sticks and the account sync keeps them at the new store instead
+// of pulling them back — the pipeline stays in step with My Team / Org Admin.
 async function transferMember(supa, user, body) {
   if (!VIEW_ROLES.has(String(user.role))) return { error: "Not allowed.", status: 403 };
   const id = body?.member_id;
@@ -570,12 +583,19 @@ async function transferMember(supa, user, body) {
   if (!m) return { error: "Team member not found.", status: 404 };
   if (!scope.all && !scope.ids.has(m.store_id)) return { error: "That team member is outside your scope.", status: 403 };
   if (!scope.all && !scope.ids.has(toStore)) return { error: "Destination store is outside your scope.", status: 403 };
-  if (m.profile_id) return { error: "This person has an app account — transfer them in My Team; the pipeline follows their account.", status: 409 };
+
   const patch = { store_id: toStore };
   if (toRole && toRole !== m.role) { patch.role = toRole; patch.role_since = new Date().toISOString().slice(0, 10); }
   const { error } = await supa.from("tp_team_members").update(patch).eq("id", id);
   if (error) return { error: error.message, status: 500 };
-  return { ok: true };
+
+  // Account holder: move the underlying assignment too, so it persists and the
+  // sync (which reconciles seats to the profile) keeps them at the new store.
+  if (m.profile_id) {
+    await supa.from("profiles").update({ primary_store_id: toStore }).eq("id", m.profile_id);
+    await supa.from("user_scopes").update({ scope_id: toStore }).eq("user_id", m.profile_id).eq("scope_type", "store");
+  }
+  return { ok: true, account_moved: !!m.profile_id };
 }
 
 // Find roster members by name across the caller's scope — the pipeline's people
