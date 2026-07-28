@@ -200,6 +200,10 @@ export function PlPage() {
 function periodDisplay(label: string | null, end: string, isFinal: boolean): string {
   return `${label ?? end}${isFinal ? " · Final" : " · Prelim"}`;
 }
+// "2026-01-25" -> "Jan 2026" for prior-note labels.
+function plPeriodShort(end: string): string {
+  return new Date(`${end}T00:00:00`).toLocaleDateString("en-US", { month: "short", year: "numeric" });
+}
 
 // Walkthrough-flag note status: amber while notes are owed, green once
 // every flag has one. No pill when the store has no flags this period.
@@ -662,6 +666,26 @@ function FlagRow({ flag, store, periodEnd }: { flag: PlFlag; store: string; peri
             </span>
           )}
         </div>
+      )}
+
+      {/* Prior-period notes — shown when this item was flagged before, so the
+          store has the history from earlier P&Ls. */}
+      {flag.prior_notes && flag.prior_notes.length > 0 && (
+        <details className="mt-2 rounded-lg bg-amber-50/60 px-3 py-2 ring-1 ring-inset ring-amber-100">
+          <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-amber-700">
+            Flagged before · {flag.prior_notes.length} prior note{flag.prior_notes.length === 1 ? "" : "s"}
+          </summary>
+          <div className="mt-2 space-y-2">
+            {flag.prior_notes.map((p, i) => (
+              <div key={i} className="border-l-2 border-amber-200 pl-2.5 text-sm text-zinc-700">
+                <span className="whitespace-pre-wrap">{p.note}</span>
+                <span className="mt-0.5 block text-[11px] text-zinc-400">
+                  {plPeriodShort(p.period_end)}{p.noted_by_name ? ` · ${p.noted_by_name}` : ""}
+                </span>
+              </div>
+            ))}
+          </div>
+        </details>
       )}
 
       <div className="mt-2 flex items-start gap-2">

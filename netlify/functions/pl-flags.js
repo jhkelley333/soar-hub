@@ -210,17 +210,43 @@ async function listFlags(supa, user, params) {
 
   // Overlay app-saved notes (the system of record) — the sheet's column N
   // may lag or be blank if a write failed.
+  const key = (sn, c, i) => `${sn}|${c}|${i ?? ""}`;
   if (parsed.period_end && stores.length) {
+    const storeNums = stores.map((s) => s.store_number);
     const { data: notes } = await supa
       .from("pl_flag_notes")
       .select("store_number, category, item, note, noted_by_name, updated_at")
       .eq("period_end", parsed.period_end)
-      .in("store_number", stores.map((s) => s.store_number));
-    const key = (sn, c, i) => `${sn}|${c}|${i ?? ""}`;
+      .in("store_number", storeNums);
     const byKey = new Map((notes ?? []).map((n) => [key(n.store_number, n.category, n.item), n]));
+
+    // Prior-period notes: when the same item is flagged again, the store should
+    // see what was written for it in earlier periods. Collect every note before
+    // this period, grouped by store/category/item, most recent period first.
+    // Paged because pl_flag_notes grows with stores x periods (PostgREST 1000).
+    const priorByKey = new Map();
+    const PAGE = 1000;
+    for (let from = 0; ; from += PAGE) {
+      const { data: prior } = await supa
+        .from("pl_flag_notes")
+        .select("period_end, store_number, category, item, note, noted_by_name, updated_at")
+        .lt("period_end", parsed.period_end)
+        .in("store_number", storeNums)
+        .order("period_end", { ascending: false })
+        .range(from, from + PAGE - 1);
+      for (const n of prior ?? []) {
+        const k = key(n.store_number, n.category, n.item);
+        const arr = priorByKey.get(k) || [];
+        arr.push({ period_end: n.period_end, note: n.note, noted_by_name: n.noted_by_name, updated_at: n.updated_at });
+        priorByKey.set(k, arr);
+      }
+      if (!prior || prior.length < PAGE) break;
+    }
+
     for (const s of stores) {
       for (const f of s.flags) {
-        const n = byKey.get(key(s.store_number, f.category, f.item));
+        const k = key(s.store_number, f.category, f.item);
+        const n = byKey.get(k);
         if (n) {
           f.note = n.note;
           f.noted_by = n.noted_by_name;
@@ -228,6 +254,8 @@ async function listFlags(supa, user, params) {
         } else if (f.sheet_note) {
           f.note = f.sheet_note;
         }
+        const prior = priorByKey.get(k);
+        if (prior && prior.length) f.prior_notes = prior; // most recent period first
       }
     }
   }

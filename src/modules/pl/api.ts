@@ -77,6 +77,9 @@ export interface PlFlag {
   note?: string;
   noted_by?: string;
   noted_at?: string;
+  // Notes written for this same store/category/item in earlier periods (most
+  // recent first) — surfaced when an item is flagged again.
+  prior_notes?: { period_end: string; note: string; noted_by_name: string | null; updated_at: string }[];
 }
 
 export interface PlFlagStore {
