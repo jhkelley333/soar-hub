@@ -10,7 +10,7 @@ import {
   getSheetsClient, getAvailableWeeks, batchGetWeeks,
   findRowByStore, getMetricRaw, parseNum,
 } from "./_lib/ranker-sheets.js";
-import { reconcileAllProfiles } from "./_lib/tpSync.js";
+import { reconcileAllProfiles, syncProfileToRoster } from "./_lib/tpSync.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -390,10 +390,35 @@ function emptySuccessionSummary() {
   return { at_risk_immediate: 0, at_risk_medium: 0, at_risk_total: 0, gm_total: 0, gm_at_risk: 0, gm_open: 0, gm_ready: 0, gm_developing: 0, gm_covered: 0, gm_exposed: 0 };
 }
 
+// Active account holders assigned to a store — the same union My Team / Org
+// Admin use (profiles.primary_store_id + a user_scopes store row), limited to
+// ladder roles (GM + managers). Their profile ids drive live materialization.
+async function accountHoldersForStore(supa, storeId) {
+  const ids = new Set();
+  const { data: prim } = await supa.from("profiles")
+    .select("id, role").eq("primary_store_id", storeId).eq("is_active", true);
+  for (const p of prim || []) if (ROLE_MAP[String(p.role)]) ids.add(p.id);
+  const { data: scopes } = await supa.from("user_scopes")
+    .select("user_id").eq("scope_type", "store").eq("scope_id", storeId);
+  const scopeIds = [...new Set((scopes || []).map((s) => s.user_id))];
+  if (scopeIds.length) {
+    const { data: sp } = await supa.from("profiles").select("id, role").in("id", scopeIds).eq("is_active", true);
+    for (const p of sp || []) if (ROLE_MAP[String(p.role)]) ids.add(p.id);
+  }
+  return [...ids];
+}
+
 async function storeRoster(supa, user, storeId) {
   if (!storeId) return { error: "Missing store.", status: 400 };
   const scope = await storesForUser(supa, user);
   if (!scope.all && !scope.ids.has(storeId)) return { error: "That store is outside your scope.", status: 403 };
+  // Live-materialize this store's account seats before reading, so the ladder
+  // reflects My Team / Org Admin immediately — no waiting on the nightly sync.
+  // Idempotent and best-effort: on any hiccup we fall back to what's stored.
+  try {
+    const holders = await accountHoldersForStore(supa, storeId);
+    for (const pid of holders) await syncProfileToRoster(supa, pid);
+  } catch { /* non-fatal */ }
   const all = await fetchAll(() => supa.from("tp_team_members").select("*").eq("store_id", storeId).order("created_at", { ascending: true }));
   const { data: reqs } = await supa.from("tp_requisitions").select("*").eq("store_id", storeId).neq("status", "filled").order("created_at", { ascending: false });
   const annotated = await annotateAccounts(supa, all);

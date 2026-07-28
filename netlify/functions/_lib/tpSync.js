@@ -103,6 +103,18 @@ export async function syncProfileToRoster(supa, profileId) {
   const name = p.preferred_name || p.full_name || p.email || "Team member";
   const activeRows = linked.filter((r) => r.status !== "terminated");
   if (activeRows.length === 0) {
+    // Before inserting, adopt an existing UNLINKED roster member (from the bulk
+    // ATS upload — profile_id null) at this store whose name matches, so we link
+    // the account onto it instead of creating a duplicate of the same person.
+    const { data: candidates } = await supa.from("tp_team_members")
+      .select("id, full_name").eq("store_id", storeId).is("profile_id", null).neq("status", "terminated");
+    const match = (candidates || []).find((c) => namesMatch(c.full_name, name));
+    if (match) {
+      const { error } = await supa.from("tp_team_members").update({
+        profile_id: p.id, role: rk, status: "active", full_name: name, email: p.email,
+      }).eq("id", match.id);
+      return { ok: !error, action: "created" }; // adopted an ATS row (no duplicate)
+    }
     const { error } = await supa.from("tp_team_members").insert({
       store_id: storeId, profile_id: p.id, role: rk, status: "active", full_name: name, email: p.email,
     });
