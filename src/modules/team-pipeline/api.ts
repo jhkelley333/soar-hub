@@ -37,6 +37,26 @@ export function fetchGms(): Promise<GmsResponse> {
 export function fetchStoreRoster(storeId: string): Promise<StoreRosterResponse> {
   return request<StoreRosterResponse>(`${FN}?action=store-roster&store_id=${encodeURIComponent(storeId)}`);
 }
+
+// ── People search + add + transfer ───────────────────────────────────────────
+export interface ScopeStore { id: string; number: string; name: string | null }
+export function fetchScopeStores(): Promise<{ stores: ScopeStore[] }> {
+  return request(`${FN}?action=scope-stores`);
+}
+export type MemberSearchHit = TeamMember & { store_number: string | null; store_name: string | null };
+export function searchMembers(q: string): Promise<{ members: MemberSearchHit[] }> {
+  return request(`${FN}?action=search-members&q=${encodeURIComponent(q)}`);
+}
+export function addMember(input: {
+  store_id: string; full_name: string; role: string; email?: string; phone?: string; hire_date?: string;
+}): Promise<{ row: TeamMember }> {
+  return request(`${FN}?action=add-member`, { method: "POST", body: JSON.stringify(input) });
+}
+export function transferMember(input: {
+  member_id: string; to_store_id: string; to_role?: string;
+}): Promise<{ ok: true }> {
+  return request(`${FN}?action=transfer-member`, { method: "POST", body: JSON.stringify(input) });
+}
 export function seedFromProfiles(): Promise<{ ok: true; created: number }> {
   return request(`${FN}?action=seed-from-profiles`, { method: "POST", body: "{}" });
 }

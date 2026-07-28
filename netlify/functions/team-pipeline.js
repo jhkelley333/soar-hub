@@ -516,6 +516,97 @@ async function commitPlan(supa, user, body) {
   return { ok: true, promoted, reqs_opened: reqsOpened };
 }
 
+// Stores in the caller's scope — powers the add / transfer store pickers.
+async function scopeStores(supa, user) {
+  const scope = await storesForUser(supa, user);
+  let q = supa.from("stores").select("id, number, name").eq("is_active", true).order("number").limit(5000);
+  if (!scope.all) {
+    const ids = [...scope.ids];
+    if (!ids.length) return { stores: [] };
+    q = q.in("id", ids);
+  }
+  const { data } = await q;
+  return { stores: data || [] };
+}
+
+// Add a roster member by hand — no app account required (crew/managers loaded
+// outside the ATS import). profile_id stays null; the person is a pure roster
+// entry until/unless they're invited or a sync links an account.
+async function addMember(supa, user, body) {
+  if (!VIEW_ROLES.has(String(user.role))) return { error: "Not allowed.", status: 403 };
+  const storeId = body?.store_id;
+  const fullName = String(body?.full_name || "").trim().slice(0, 200);
+  const role = String(body?.role || "").trim();
+  if (!storeId) return { error: "Missing store.", status: 400 };
+  if (!fullName) return { error: "Name is required.", status: 400 };
+  if (!ROLE_KEYS.has(role)) return { error: "Pick a role.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  if (!scope.all && !scope.ids.has(storeId)) return { error: "That store is outside your scope.", status: 403 };
+  const today = new Date().toISOString().slice(0, 10);
+  const { data, error } = await supa.from("tp_team_members").insert({
+    store_id: storeId, full_name: fullName, role,
+    email: body?.email ? String(body.email).trim().slice(0, 200) : null,
+    phone: body?.phone ? String(body.phone).trim().slice(0, 50) : null,
+    hire_date: body?.hire_date ? String(body.hire_date).trim() : null,
+    role_since: today, status: "active",
+  }).select("*").single();
+  if (error) return { error: error.message, status: 500 };
+  return { row: data };
+}
+
+// Move a member to another store (and optionally re-slot their role). Only for
+// hand-managed members: an account holder's store follows their profile (My
+// Team / Org Admin), and the account sync would just move them back — so we
+// steer those edits to My Team instead of silently fighting the sync.
+async function transferMember(supa, user, body) {
+  if (!VIEW_ROLES.has(String(user.role))) return { error: "Not allowed.", status: 403 };
+  const id = body?.member_id;
+  const toStore = body?.to_store_id;
+  const toRole = body?.to_role ? String(body.to_role) : null;
+  if (!id || !toStore) return { error: "Missing member or destination store.", status: 400 };
+  if (toRole && !ROLE_KEYS.has(toRole)) return { error: "Unknown role.", status: 400 };
+  const scope = await storesForUser(supa, user);
+  const { data: m } = await supa.from("tp_team_members").select("id, store_id, role, profile_id").eq("id", id).maybeSingle();
+  if (!m) return { error: "Team member not found.", status: 404 };
+  if (!scope.all && !scope.ids.has(m.store_id)) return { error: "That team member is outside your scope.", status: 403 };
+  if (!scope.all && !scope.ids.has(toStore)) return { error: "Destination store is outside your scope.", status: 403 };
+  if (m.profile_id) return { error: "This person has an app account — transfer them in My Team; the pipeline follows their account.", status: 409 };
+  const patch = { store_id: toStore };
+  if (toRole && toRole !== m.role) { patch.role = toRole; patch.role_since = new Date().toISOString().slice(0, 10); }
+  const { error } = await supa.from("tp_team_members").update(patch).eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
+// Find roster members by name across the caller's scope — the pipeline's people
+// search. Non-terminated only; annotated with account status + store label.
+async function searchMembers(supa, user, query) {
+  const qy = String(query || "").trim();
+  if (qy.length < 2) return { members: [] };
+  const scope = await storesForUser(supa, user);
+  let q = supa.from("tp_team_members").select("*")
+    .ilike("full_name", `%${qy}%`).neq("status", "terminated").limit(50);
+  if (!scope.all) {
+    const ids = [...scope.ids];
+    if (!ids.length) return { members: [] };
+    q = q.in("store_id", ids);
+  }
+  const { data } = await q;
+  const annotated = await annotateAccounts(supa, data);
+  const storeIds = [...new Set(annotated.map((m) => m.store_id))];
+  const { data: stores } = storeIds.length
+    ? await supa.from("stores").select("id, number, name").in("id", storeIds)
+    : { data: [] };
+  const byId = new Map((stores || []).map((s) => [s.id, s]));
+  return {
+    members: annotated.map((m) => ({
+      ...m,
+      store_number: byId.get(m.store_id)?.number ?? null,
+      store_name: byId.get(m.store_id)?.name ?? null,
+    })),
+  };
+}
+
 // Resolve a roster member and confirm it falls inside the caller's scope.
 async function memberInScope(supa, scope, memberId) {
   const { data: m } = await supa.from("tp_team_members").select("id, store_id").eq("id", memberId).maybeSingle();
@@ -1811,8 +1902,12 @@ export const handler = async (event) => {
       if (action === "talent-export") return unwrap(await talentExport(supa, user, params));
       if (action === "monthly-review") return unwrap(await monthlyReview(supa, user));
       if (action === "settings") return unwrap(await getSettings(supa, user));
+      if (action === "scope-stores") return unwrap(await scopeStores(supa, user));
+      if (action === "search-members") return unwrap(await searchMembers(supa, user, params.q));
       return respond(400, { error: `Unknown action: ${action}` });
     }
+    if (action === "add-member") return unwrap(await addMember(supa, user, body));
+    if (action === "transfer-member") return unwrap(await transferMember(supa, user, body));
     if (action === "seed-from-profiles") return unwrap(await seedFromProfiles(supa, user));
     if (action === "reconcile-roster") return unwrap(await reconcileRoster(supa, user));
     if (action === "commit-plan") return unwrap(await commitPlan(supa, user, body));

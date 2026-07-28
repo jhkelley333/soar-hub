@@ -7,16 +7,18 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from "
 import { useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { openNla, fetchNlaTemplates } from "@/modules/nla/api";
-import { BadgeCheck, Check, ChevronDown, Copy, FileWarning, Phone, Plus, Star, Trash2, UserPlus } from "lucide-react";
+import { ArrowLeftRight, BadgeCheck, Check, ChevronDown, Copy, FileWarning, Phone, Plus, Star, Trash2, UserPlus } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Drawer } from "@/shared/ui/Drawer";
+import { Modal } from "@/shared/ui/Modal";
+import { Button } from "@/shared/ui/Button";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { useToast } from "@/shared/ui/Toaster";
 import {
   addCorrectiveAction, addDevItem, addDevMilestone, addNote, addSuccessor, fetchCorrectiveActions, fetchDevPlan,
-  fetchMemberReadiness, fetchMemberSignals, fetchNotes, fetchStoreRoster, fetchSuccessors, inviteMember, removeDevItem,
-  removeDevMilestone, removeSuccessor, saveDevPlan, setCorrectiveActionStatus, updateDevItem, updateDevMilestone,
-  updateMember, updateSuccessor,
+  fetchMemberReadiness, fetchMemberSignals, fetchNotes, fetchScopeStores, fetchStoreRoster, fetchSuccessors, inviteMember,
+  removeDevItem, removeDevMilestone, removeSuccessor, saveDevPlan, setCorrectiveActionStatus, transferMember, updateDevItem,
+  updateDevMilestone, updateMember, updateSuccessor,
 } from "./api";
 import {
   ASPIRATION_META, CA_CATEGORIES, CA_LEVEL_META, CA_LEVELS, CA_STATUS_META, CA_TEMPLATES, DEV_ITEM_META,
@@ -121,6 +123,9 @@ function MemberBody({ member, canWrite, roleEdit }: { member: TeamMember; canWri
       {canWrite && !member.has_account && INVITE_ROLES.includes(draft.role) && (
         <InviteBlock member={member} />
       )}
+
+      {/* transfer (hand-managed members only — account holders move via My Team) */}
+      {canWrite && !member.has_account && <TransferBlock member={member} />}
 
       {/* risk */}
       <Field label="Risk">
@@ -854,6 +859,56 @@ export function AccountBadge({ has }: { has?: boolean }) {
     </span>
   ) : (
     <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-500 ring-1 ring-zinc-200">No account</span>
+  );
+}
+
+function TransferBlock({ member }: { member: TeamMember }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const [toStore, setToStore] = useState("");
+  const [toRole, setToRole] = useState<LadderKey | "">("");
+  const storesQ = useQuery({ queryKey: ["tp-scope-stores"], queryFn: fetchScopeStores, enabled: open, staleTime: 5 * 60_000 });
+  const stores = (storesQ.data?.stores ?? []).filter((s) => s.id !== member.store_id);
+  const transfer = useMutation({
+    mutationFn: () => transferMember({ member_id: member.id, to_store_id: toStore, to_role: toRole || undefined }),
+    onSuccess: () => {
+      toast.push(`${member.full_name} transferred.`, "success");
+      setOpen(false); setToStore(""); setToRole("");
+      qc.invalidateQueries({ queryKey: ["tp-store-roster"] });
+      qc.invalidateQueries({ queryKey: ["tp-rollup"] });
+      qc.invalidateQueries({ queryKey: ["tp-gms"] });
+      qc.invalidateQueries({ queryKey: ["tp-search-members"] });
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't transfer.", "error"),
+  });
+  const selCls = "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-heading focus:border-accent focus:outline-none";
+  return (
+    <>
+      <button onClick={() => setOpen(true)}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-ink-2 transition hover:bg-surface-sunk">
+        <ArrowLeftRight className="h-3.5 w-3.5" />Transfer to another store
+      </button>
+      <Modal open={open} onClose={() => setOpen(false)} title={`Transfer ${member.full_name}`}
+        footer={<Button size="sm" onClick={() => transfer.mutate()} disabled={!toStore || transfer.isPending}>{transfer.isPending ? "Transferring…" : "Transfer"}</Button>}>
+        <div className="space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-ink-muted">Destination store</label>
+            <select value={toStore} onChange={(e) => setToStore(e.target.value)} className={selCls}>
+              <option value="">{storesQ.isLoading ? "Loading stores…" : "Pick a store…"}</option>
+              {stores.map((s) => <option key={s.id} value={s.id}>#{s.number}{s.name ? ` · ${s.name}` : ""}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-ink-muted">Role at new store</label>
+            <select value={toRole} onChange={(e) => setToRole(e.target.value as LadderKey)} className={selCls}>
+              <option value="">Keep {LADDER_BY_KEY[member.role]?.label ?? member.role}</option>
+              {LADDER.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
+            </select>
+          </div>
+        </div>
+      </Modal>
+    </>
   );
 }
 

@@ -7,17 +7,18 @@
 // Role-gated to GM and up (see router + nav); scoped to the viewer's org tree.
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, CalendarCheck2, Check, ChevronRight, Lock, Search, SlidersHorizontal, Upload, Users } from "lucide-react";
+import { Archive, CalendarCheck2, Check, ChevronRight, Lock, Search, SlidersHorizontal, Upload, UserPlus, Users } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/auth/AuthProvider";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Button } from "@/shared/ui/Button";
 import { Segmented } from "@/shared/ui/Segmented";
+import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { fetchMyTree } from "@/modules/my-stores/api";
 import type { MyDistrictNode, MyStoreNode } from "@/modules/my-stores/types";
-import { fetchGms, fetchRollup, fetchSuccession, fetchStoreRoster, fetchSnapshots, fetchSnapshotRows, fetchRiskReview, fetchDevRollup, fetchReadinessRollup, fetchTenureRollup, fetchTalentExport, fetchMonthlyReview, markReviewed, takeSnapshot, lockSnapshot, reconcileRoster, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings } from "./api";
+import { fetchGms, fetchRollup, fetchSuccession, fetchStoreRoster, fetchSnapshots, fetchSnapshotRows, fetchRiskReview, fetchDevRollup, fetchReadinessRollup, fetchTenureRollup, fetchTalentExport, fetchMonthlyReview, markReviewed, takeSnapshot, lockSnapshot, reconcileRoster, commitPlan, updateReq, updateMember, mergeMembers, fetchSettings, updateSettings, addMember, searchMembers, type MemberSearchHit } from "./api";
 import { AccountBadge, MemberDrawerProvider, useMemberDrawer } from "./MemberDrawer";
 import { RosterImport } from "./RosterImport";
 import { toCSV, downloadCSV } from "@/lib/csv";
@@ -1051,6 +1052,8 @@ function Company({ districts, roll, meta, canWrite, onOpen, onOpenStore }: { dis
         </div>
       </div>
 
+      <PeopleSearch />
+
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <div className="flex items-center gap-4 rounded-2xl border border-border bg-surface p-5 shadow-card">
           <RiskDonut risk={totals.risk} />
@@ -1137,6 +1140,58 @@ function Company({ districts, roll, meta, canWrite, onOpen, onOpenStore }: { dis
         </>
       )}
     </>
+  );
+}
+
+// People search — find any roster member by name across the caller's scope and
+// open them (where Transfer / talent edits live).
+function PeopleSearch() {
+  const { open } = useMemberDrawer();
+  const [q, setQ] = useState("");
+  const term = q.trim();
+  const res = useQuery({
+    queryKey: ["tp-search-members", term],
+    queryFn: () => searchMembers(term),
+    enabled: term.length >= 2,
+    staleTime: 30_000,
+  });
+  const members: MemberSearchHit[] = res.data?.members ?? [];
+  return (
+    <div className="mb-6">
+      <div className="relative max-w-md">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-subtle" />
+        <input
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          placeholder="Find a team member by name…"
+          className="w-full rounded-lg border border-border bg-surface py-2 pl-9 pr-3 text-sm text-heading focus:border-accent focus:outline-none"
+        />
+      </div>
+      {term.length >= 2 && (
+        <div className="mt-2 max-w-md overflow-hidden rounded-2xl border border-border bg-surface shadow-card">
+          {res.isLoading ? (
+            <div className="p-3 text-sm text-ink-muted">Searching…</div>
+          ) : members.length === 0 ? (
+            <div className="p-3 text-sm text-ink-muted">No team members match.</div>
+          ) : (
+            members.map((m) => (
+              <button key={m.id} onClick={() => open(m)}
+                className="flex w-full items-center justify-between gap-3 border-b border-border px-4 py-2.5 text-left last:border-b-0 hover:bg-ink/5">
+                <div className="min-w-0">
+                  <div className="truncate text-sm font-semibold text-heading">
+                    {m.full_name} <span className="font-normal text-ink-muted">· {LADDER_BY_KEY[m.role]?.label ?? m.role}</span>
+                  </div>
+                  <div className="truncate text-xs text-ink-muted">
+                    #{m.store_number}{m.store_name ? ` · ${m.store_name}` : ""}{m.has_account ? " · account" : ""}
+                  </div>
+                </div>
+                <ChevronRight className="h-4 w-4 shrink-0 text-ink-subtle" />
+              </button>
+            ))
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1344,6 +1399,7 @@ function RiskPill({ risk }: { risk: TeamMember["flight_risk"] }) {
 type Layout = "ladder" | "roster" | "ninebox" | "plan";
 function Store({ store }: { store: MyStoreNode }) {
   const [layout, setLayout] = useState<Layout>("ladder");
+  const [addOpen, setAddOpen] = useState(false);
   const rosterQ = useQuery({ queryKey: ["tp-store-roster", store.id], queryFn: () => fetchStoreRoster(store.id) });
   const roster = rosterQ.data?.roster ?? [];
   const terminated = rosterQ.data?.terminated ?? [];
@@ -1368,10 +1424,19 @@ function Store({ store }: { store: MyStoreNode }) {
             )}
           </div>
         </div>
-        <Segmented<Layout>
-          options={[{ value: "ladder", label: "Bench ladder" }, { value: "roster", label: "Roster" }, { value: "ninebox", label: "9-box" }, { value: "plan", label: "Staffing plan" }]}
-          value={layout} onChange={setLayout} />
+        <div className="flex flex-wrap items-center gap-2">
+          <Segmented<Layout>
+            options={[{ value: "ladder", label: "Bench ladder" }, { value: "roster", label: "Roster" }, { value: "ninebox", label: "9-box" }, { value: "plan", label: "Staffing plan" }]}
+            value={layout} onChange={setLayout} />
+          {canWrite && (
+            <Button size="sm" variant="secondary" onClick={() => setAddOpen(true)}>
+              <UserPlus className="mr-1 h-3.5 w-3.5" />Add member
+            </Button>
+          )}
+        </div>
       </div>
+
+      <AddMemberModal storeId={store.id} storeLabel={store.name || `#${store.number}`} open={addOpen} onClose={() => setAddOpen(false)} />
 
       {canWrite && <DuplicatesBanner storeId={store.id} roster={roster} />}
       {reqs.length > 0 && <ReqsPanel storeId={store.id} reqs={reqs} canWrite={canWrite} />}
@@ -1396,6 +1461,68 @@ function Store({ store }: { store: MyStoreNode }) {
 
       {terminated.length > 0 && <TerminatedPanel storeId={store.id} members={terminated} canWrite={canWrite} />}
     </>
+  );
+}
+
+// ── Add member (no account required) ─────────────────────────────────────────
+function AddMemberModal({ storeId, storeLabel, open, onClose }: { storeId: string; storeLabel: string; open: boolean; onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [fullName, setFullName] = useState("");
+  const [role, setRole] = useState<LadderKey>("crew");
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
+  const [hireDate, setHireDate] = useState("");
+  const reset = () => { setFullName(""); setRole("crew"); setEmail(""); setPhone(""); setHireDate(""); };
+  const add = useMutation({
+    mutationFn: () => addMember({
+      store_id: storeId, full_name: fullName.trim(), role,
+      email: email.trim() || undefined, phone: phone.trim() || undefined, hire_date: hireDate || undefined,
+    }),
+    onSuccess: () => {
+      toast.push(`Added ${fullName.trim()} to ${storeLabel}.`, "success");
+      qc.invalidateQueries({ queryKey: ["tp-store-roster", storeId] });
+      qc.invalidateQueries({ queryKey: ["tp-rollup"] });
+      reset(); onClose();
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't add.", "error"),
+  });
+  const inputCls = "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-heading focus:border-accent focus:outline-none";
+  return (
+    <Modal open={open} onClose={onClose} title={`Add team member — ${storeLabel}`}
+      footer={
+        <Button size="sm" onClick={() => add.mutate()} disabled={!fullName.trim() || add.isPending}>
+          {add.isPending ? "Adding…" : "Add member"}
+        </Button>
+      }>
+      <div className="space-y-3">
+        <p className="text-xs text-ink-muted">No app account needed — this adds a roster member you manage by hand. Invite them to a login later if you want.</p>
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-ink-muted">Full name</label>
+          <input value={fullName} onChange={(e) => setFullName(e.target.value)} maxLength={200} placeholder="Jordan Rivera" className={inputCls} />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-ink-muted">Role</label>
+          <select value={role} onChange={(e) => setRole(e.target.value as LadderKey)} className={inputCls}>
+            {LADDER.map((r) => <option key={r.key} value={r.key}>{r.label}</option>)}
+          </select>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-ink-muted">Email (optional)</label>
+            <input value={email} onChange={(e) => setEmail(e.target.value)} maxLength={200} className={inputCls} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-ink-muted">Phone (optional)</label>
+            <input value={phone} onChange={(e) => setPhone(e.target.value)} maxLength={50} className={inputCls} />
+          </div>
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-ink-muted">Hire date (optional)</label>
+          <input type="date" value={hireDate} onChange={(e) => setHireDate(e.target.value)} className={inputCls} />
+        </div>
+      </div>
+    </Modal>
   );
 }
 
