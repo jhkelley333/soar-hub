@@ -199,6 +199,13 @@ export function fetchMissTracker(weekStart: string): Promise<MissTrackerResponse
 }
 
 // ── No-GM labor credit (SDO+) ────────────────────────────────────────
+export interface NoGmEdit {
+  at: string;
+  by_email: string | null;
+  note: string;
+  changes: Record<string, { from: unknown; to: unknown }>;
+}
+
 export interface NoGmCreditRow {
   id: string;
   store_number: string;
@@ -212,6 +219,7 @@ export interface NoGmCreditRow {
   created_by_email: string | null;
   created_at: string;
   active: boolean;
+  edit_log?: NoGmEdit[];
 }
 
 export function fetchNoGmCredits(): Promise<{ rows: NoGmCreditRow[]; weekly: number }> {
@@ -226,6 +234,14 @@ export function addNoGmCredit(input: {
 
 export function endNoGmCredit(id: string, endDate: string): Promise<{ ok: true }> {
   return req(`${FN}?action=no-gm-end`, { method: "POST", body: JSON.stringify({ id, end_date: endDate }) });
+}
+
+// Edit an existing tag (any status). edit_note is required — it's recorded in
+// the tag's audit log. Pass end_date: "" to clear it (reopen the tag).
+export function updateNoGmCredit(input: {
+  id: string; reason: string; start_date: string; end_date: string | null; note?: string; edit_note: string;
+}): Promise<{ row: NoGmCreditRow }> {
+  return req(`${FN}?action=no-gm-update`, { method: "POST", body: JSON.stringify(input) });
 }
 
 export function deleteNoGmCredit(id: string): Promise<{ ok: true }> {

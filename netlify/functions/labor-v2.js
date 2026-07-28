@@ -1270,6 +1270,59 @@ async function noGmEnd(supa, user, body) {
   return { ok: true };
 }
 
+// Edit a tag at any point in its life (active, ended, or upcoming). Every edit
+// records an audit entry in edit_log — who, when, a required note, and a diff of
+// what changed — so a corrected or reopened credit keeps its history.
+async function noGmUpdate(supa, user, body) {
+  if (!NO_GM_ROLES.has(roleOf(user))) return { error: "SDO and above only.", status: 403 };
+  const id = String(body?.id || "").trim();
+  if (!id) return { error: "id is required.", status: 400 };
+  const reason = String(body?.reason || "").trim();
+  const startDate = String(body?.start_date || "").trim();
+  const endDate = body?.end_date ? String(body.end_date).trim() : null;
+  const note = String(body?.note ?? "").trim().slice(0, 500) || null;
+  const editNote = String(body?.edit_note ?? "").trim().slice(0, 500);
+  if (!NO_GM_REASONS.has(reason)) return { error: "reason must be loa, no_gm, or in_training.", status: 400 };
+  if (!parseIso(startDate)) return { error: "valid start_date is required.", status: 400 };
+  if (endDate && (!parseIso(endDate) || endDate < startDate)) return { error: "end_date must be on/after start_date.", status: 400 };
+  if (!editNote) return { error: "Add a note describing the edit.", status: 400 };
+
+  const { data: rec } = await supa.from("no_gm_credits")
+    .select("id, store_number, reason, start_date, end_date, note, edit_log").eq("id", id).maybeSingle();
+  if (!rec) return { error: "Record not found.", status: 404 };
+  const visible = await resolveVisibleStoreRows(supa, user);
+  if (!visible.some((s) => String(s.number) === String(rec.store_number))) {
+    return { error: "That store is outside your scope.", status: 403 };
+  }
+  // Reopening (clearing the end date) must not collide with another open tag.
+  if (!endDate) {
+    const { data: openOthers } = await supa.from("no_gm_credits")
+      .select("id").eq("store_number", rec.store_number).is("end_date", null).neq("id", id).limit(1);
+    if (openOthers?.length) return { error: `Store ${rec.store_number} already has another open tag — end it first.`, status: 409 };
+  }
+
+  // Diff old vs new for the audit entry.
+  const next = { reason, start_date: startDate, end_date: endDate, note };
+  const changes = {};
+  for (const [k, v] of Object.entries(next)) {
+    const before = rec[k] ?? null;
+    const after = v ?? null;
+    if (String(before) !== String(after)) changes[k] = { from: before, to: after };
+  }
+  const entry = { at: new Date().toISOString(), by_id: user.id, by_email: user.email, note: editNote, changes };
+  const edit_log = (Array.isArray(rec.edit_log) ? rec.edit_log : []).concat(entry);
+
+  const { data, error } = await supa.from("no_gm_credits").update({
+    reason, start_date: startDate, end_date: endDate, note, edit_log,
+    updated_at: new Date().toISOString(),
+  }).eq("id", id).select("*").single();
+  if (error) {
+    if (/edit_log/.test(error.message)) return { error: "Run migration 0262 first (edit_log column is missing).", status: 500 };
+    return { error: error.message, status: 500 };
+  }
+  return { row: data };
+}
+
 async function noGmDelete(supa, user, body) {
   if (!NO_GM_ROLES.has(roleOf(user))) return { error: "SDO and above only.", status: 403 };
   const id = String(body?.id || "").trim();
@@ -2000,6 +2053,7 @@ export const handler = async (event) => {
       if (action === "review") return unwrap(await saveReview(supa, user, body));
       if (action === "no-gm-add") return unwrap(await noGmAdd(supa, user, body));
       if (action === "no-gm-end") return unwrap(await noGmEnd(supa, user, body));
+      if (action === "no-gm-update") return unwrap(await noGmUpdate(supa, user, body));
       if (action === "no-gm-delete") return unwrap(await noGmDelete(supa, user, body));
       if (action === "no-gm-rate-set") return unwrap(await noGmRateSet(supa, user, body));
       if (action === "gm-support-add") return unwrap(await gmSupportAdd(supa, user, body));
