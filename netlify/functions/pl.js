@@ -74,22 +74,30 @@ async function callerVisibleStores(supa, user) {
 }
 
 async function listPeriods(supa) {
-  const { data, error } = await supa
-    .from("pl_statements")
-    .select("period_end, period_label, is_final")
-    .order("period_end", { ascending: false });
-  if (error) return { error: error.message, status: 500 };
+  // Page through every row: PostgREST caps a single response at 1000, and each
+  // period is ~272 store rows, so past ~3-4 periods the oldest ones (e.g. Jan)
+  // fell off the end and never showed in the dropdown.
+  const PAGE = 1000;
   const byEnd = new Map();
-  for (const r of data ?? []) {
-    const cur = byEnd.get(r.period_end) || {
-      period_end: r.period_end,
-      period_label: r.period_label,
-      has_prelim: false,
-      has_final: false,
-    };
-    if (r.period_label && !cur.period_label) cur.period_label = r.period_label;
-    if (r.is_final) cur.has_final = true; else cur.has_prelim = true;
-    byEnd.set(r.period_end, cur);
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supa
+      .from("pl_statements")
+      .select("period_end, period_label, is_final")
+      .order("period_end", { ascending: false })
+      .range(from, from + PAGE - 1);
+    if (error) return { error: error.message, status: 500 };
+    for (const r of data ?? []) {
+      const cur = byEnd.get(r.period_end) || {
+        period_end: r.period_end,
+        period_label: r.period_label,
+        has_prelim: false,
+        has_final: false,
+      };
+      if (r.period_label && !cur.period_label) cur.period_label = r.period_label;
+      if (r.is_final) cur.has_final = true; else cur.has_prelim = true;
+      byEnd.set(r.period_end, cur);
+    }
+    if (!data || data.length < PAGE) break;
   }
   // is_final kept for back-compat (badge shows "Final" once a Final exists).
   const periods = Array.from(byEnd.values()).map((p) => ({ ...p, is_final: p.has_final }));
