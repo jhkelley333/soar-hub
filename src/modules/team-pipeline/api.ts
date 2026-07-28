@@ -42,7 +42,10 @@ export function seedFromProfiles(): Promise<{ ok: true; created: number }> {
 }
 // Reconcile every account-linked seat with its live profile (store, role,
 // active/terminated). Superset of seed — also moves/terminates stale seats.
-export function reconcileRoster(): Promise<{ ok: true; profiles: number; failed: number }> {
+export interface ReconcileResult {
+  ok: true; profiles: number; created: number; updated: number; closed: number; unchanged: number; failed: number;
+}
+export function reconcileRoster(): Promise<ReconcileResult> {
   return request(`${FN}?action=reconcile-roster`, { method: "POST", body: "{}" });
 }
 export interface CommitPlanInput {

@@ -1020,7 +1020,7 @@ function Company({ districts, roll, meta, canWrite, onOpen, onOpenStore }: { dis
   const sync = useMutation({
     mutationFn: reconcileRoster,
     onSuccess: (r) => {
-      toast.push(`Synced ${r.profiles.toLocaleString()} account${r.profiles === 1 ? "" : "s"} into the pipeline.`, "success");
+      toast.push(`Synced ${r.profiles.toLocaleString()} accounts — ${r.created} added, ${r.updated} updated, ${r.closed} closed.`, "success");
       qc.invalidateQueries({ predicate: (q) => String(q.queryKey[0] ?? "").startsWith("tp") });
     },
     onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't sync.", "error"),
