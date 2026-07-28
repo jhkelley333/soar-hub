@@ -89,6 +89,9 @@ function MemberBody({ member, canWrite, roleEdit }: { member: TeamMember; canWri
             {draft.status === "terminated" && <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700 ring-1 ring-red-200">Terminated</span>}
           </div>
           <div className="text-sm text-ink-muted">{role?.label}{member.hire_date && ` · since ${new Date(member.hire_date).toLocaleDateString(undefined, { month: "short", year: "numeric" })}`}</div>
+          {member.store_number && (
+            <div className="text-sm font-medium text-ink-2">Store #{member.store_number}{member.store_name ? ` — ${member.store_name}` : ""}</div>
+          )}
           <ReadinessBadge memberId={member.id} />
           <div className="mt-2 flex flex-wrap gap-2">
             {member.email && (
@@ -124,8 +127,8 @@ function MemberBody({ member, canWrite, roleEdit }: { member: TeamMember; canWri
         <InviteBlock member={member} />
       )}
 
-      {/* transfer (hand-managed members only — account holders move via My Team) */}
-      {canWrite && !member.has_account && <TransferBlock member={member} />}
+      {/* transfer to another store (account holders move their My Team assignment too) */}
+      {canWrite && <TransferBlock member={member} />}
 
       {/* risk */}
       <Field label="Risk">
@@ -879,6 +882,7 @@ function TransferBlock({ member }: { member: TeamMember }) {
       qc.invalidateQueries({ queryKey: ["tp-rollup"] });
       qc.invalidateQueries({ queryKey: ["tp-gms"] });
       qc.invalidateQueries({ queryKey: ["tp-search-members"] });
+      qc.invalidateQueries({ queryKey: ["my-tree"] }); // account holder moved home store
     },
     onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't transfer.", "error"),
   });
@@ -892,6 +896,11 @@ function TransferBlock({ member }: { member: TeamMember }) {
       <Modal open={open} onClose={() => setOpen(false)} title={`Transfer ${member.full_name}`}
         footer={<Button size="sm" onClick={() => transfer.mutate()} disabled={!toStore || transfer.isPending}>{transfer.isPending ? "Transferring…" : "Transfer"}</Button>}>
         <div className="space-y-3">
+          {member.has_account && (
+            <p className="rounded-lg bg-surface-muted px-3 py-2 text-xs text-ink-muted">
+              This person has an app account — transferring also moves their My Team assignment (home store), so it stays in step everywhere.
+            </p>
+          )}
           <div>
             <label className="mb-1 block text-xs font-semibold text-ink-muted">Destination store</label>
             <select value={toStore} onChange={(e) => setToStore(e.target.value)} className={selCls}>
