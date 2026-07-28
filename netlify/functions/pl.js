@@ -176,6 +176,56 @@ async function statement(supa, user, params) {
   };
 }
 
+// One line item's value across every uploaded period for a store — powers the
+// click-through trend on a flagged / statement line. Matches the line by label
+// (normalized: exact first, then contains either way), Final preferred over
+// Prelim per period. Returns points oldest -> newest.
+async function lineTrend(supa, user, params) {
+  if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const storeNumber = String(params.store || "").trim();
+  const rawLabel = String(params.label || "").trim();
+  if (!storeNumber || !rawLabel) return { error: "store and label are required", status: 400 };
+  const stores = await callerVisibleStores(supa, user);
+  const store = stores.find((s) => String(s.number) === storeNumber);
+  if (!store) return { error: `Store ${storeNumber} is outside your scope.`, status: 403 };
+
+  const norm = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+  const want = norm(rawLabel);
+
+  const PAGE = 1000;
+  const rowsAll = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supa
+      .from("pl_statements")
+      .select("period_end, period_label, is_final, lines")
+      .eq("store_number", storeNumber)
+      .order("period_end", { ascending: true })
+      .range(from, from + PAGE - 1);
+    if (error) return { error: error.message, status: 500 };
+    rowsAll.push(...(data ?? []));
+    if (!data || data.length < PAGE) break;
+  }
+  // Collapse to one statement per period (Final wins over Prelim).
+  const byEnd = new Map();
+  for (const r of rowsAll) {
+    const cur = byEnd.get(r.period_end);
+    if (!cur || (r.is_final && !cur.is_final)) byEnd.set(r.period_end, r);
+  }
+  const ordered = [...byEnd.values()].sort((a, b) => String(a.period_end).localeCompare(String(b.period_end)));
+
+  const points = [];
+  let matchedLabel = null;
+  for (const r of ordered) {
+    const lines = Array.isArray(r.lines) ? r.lines : [];
+    let line = lines.find((l) => norm(l.label) === want);
+    if (!line) line = lines.find((l) => norm(l.label).includes(want) || (want && want.includes(norm(l.label))));
+    if (!line) continue;
+    matchedLabel = line.label;
+    points.push({ period_end: r.period_end, period_label: r.period_label, amount: line.amount ?? null, pct: line.pct ?? null });
+  }
+  return { store: storeNumber, label: matchedLabel || rawLabel, points };
+}
+
 // Side-by-side Prelim vs Final for one store/period: both statements plus a
 // line-by-line delta and headline movers, for the "what changed" report.
 async function compare(supa, user, params) {
@@ -344,6 +394,7 @@ export const handler = async (event) => {
       if (action === "overview") return unwrap(await overview(supa, user, params));
       if (action === "statement") return unwrap(await statement(supa, user, params));
       if (action === "compare") return unwrap(await compare(supa, user, params));
+      if (action === "line-trend") return unwrap(await lineTrend(supa, user, params));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {
