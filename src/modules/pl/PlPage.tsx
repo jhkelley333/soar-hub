@@ -348,7 +348,7 @@ function StatementView({ store, period, periodLabel, onBack }: {
             </div>
             <div>
               {s.lines.map((l, i) => (
-                <LineRow key={`${l.label}-${i}`} line={l} />
+                <LineRow key={`${l.label}-${i}`} line={l} store={store} />
               ))}
             </div>
           </div>
@@ -622,7 +622,7 @@ function TrendChart({ points }: { points: PlTrendPoint[] }) {
 }
 
 function LineTrendModal({ open, onClose, store, label, flag }: {
-  open: boolean; onClose: () => void; store: string; label: string; flag: PlFlag;
+  open: boolean; onClose: () => void; store: string; label: string; flag?: PlFlag;
 }) {
   const q = useQuery({
     queryKey: ["pl-line-trend", store, label],
@@ -631,9 +631,9 @@ function LineTrendModal({ open, onClose, store, label, flag }: {
   });
   const points = q.data?.points ?? [];
   // Fallback to the review sheet's own current + prior_1 + prior_2 when the P&L
-  // statements don't carry (or don't match) this line.
+  // statements don't carry (or don't match) this line — flags only.
   const fallback: PlTrendPoint[] = [];
-  if (points.length < 2) {
+  if (flag && points.length < 2) {
     const cur = flagMoney(flag.value), p1 = flagMoney(flag.prior_1), p2 = flagMoney(flag.prior_2);
     if (p2 != null) fallback.push({ period_end: "", period_label: "2 ago", amount: p2, pct: null });
     if (p1 != null) fallback.push({ period_end: "", period_label: "1 ago", amount: p1, pct: null });
@@ -800,20 +800,27 @@ function FlagRow({ flag, store, periodEnd }: { flag: PlFlag; store: string; peri
   );
 }
 
-function LineRow({ line }: { line: PlLine }) {
+function LineRow({ line, store }: { line: PlLine; store: string }) {
+  const [trendOpen, setTrendOpen] = useState(false);
   return (
-    <div
-      className={cn(
-        "grid grid-cols-[1fr_auto_auto] gap-x-6 px-5 py-1.5 text-sm",
-        line.total ? "border-t border-zinc-200 bg-zinc-50 font-bold text-midnight" : "text-zinc-700",
-      )}
-    >
-      <span className={cn(!line.total && "pl-3")}>{line.label}</span>
-      <span className={cn("w-28 text-right tabular-nums", (line.amount ?? 0) < 0 && "text-red-600")}>
-        {money(line.amount, 2)}
-      </span>
-      <span className="w-20 text-right tabular-nums text-zinc-500">{line.pct != null ? `${line.pct.toFixed(1)}%` : ""}</span>
-    </div>
+    <>
+      <button
+        type="button"
+        onClick={() => setTrendOpen(true)}
+        title="See this line's trend across periods"
+        className={cn(
+          "grid w-full grid-cols-[1fr_auto_auto] gap-x-6 px-5 py-1.5 text-left text-sm hover:bg-accent/5",
+          line.total ? "border-t border-zinc-200 bg-zinc-50 font-bold text-midnight" : "text-zinc-700",
+        )}
+      >
+        <span className={cn("underline decoration-dotted decoration-zinc-300 underline-offset-2", !line.total && "pl-3")}>{line.label}</span>
+        <span className={cn("w-28 text-right tabular-nums", (line.amount ?? 0) < 0 && "text-red-600")}>
+          {money(line.amount, 2)}
+        </span>
+        <span className="w-20 text-right tabular-nums text-zinc-500">{line.pct != null ? `${line.pct.toFixed(1)}%` : ""}</span>
+      </button>
+      <LineTrendModal open={trendOpen} onClose={() => setTrendOpen(false)} store={store} label={line.label} />
+    </>
   );
 }
 
