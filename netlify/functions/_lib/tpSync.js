@@ -95,23 +95,25 @@ export async function syncProfileToRoster(supa, profileId) {
     return { ok: true, action: "terminated", changed };
   }
 
-  // Active account with a store + ladder role. Keep one seat in sync (store =
-  // transfers, role = promotions, status = reactivation, name/email from the
-  // account). If legacy data linked several rows, keep one and terminate the
-  // rest so a profile never holds two live seats.
+  // Active account with a store + ladder role. Sync a *live* seat in place
+  // (store = transfers, role = promotions, name/email from the account). If the
+  // only linked rows are terminated (e.g. a prior stint at another store), the
+  // account has NO live seat, so create a fresh one and leave the terminated
+  // rows as history — never repurpose a closed row into a new store/role.
   const name = p.preferred_name || p.full_name || p.email || "Team member";
-  if (linked.length === 0) {
+  const activeRows = linked.filter((r) => r.status !== "terminated");
+  if (activeRows.length === 0) {
     const { error } = await supa.from("tp_team_members").insert({
       store_id: storeId, profile_id: p.id, role: rk, status: "active", full_name: name, email: p.email,
     });
     return { ok: !error, action: "created" };
   }
-  const keep = linked.find((r) => r.status !== "terminated") || linked[0];
+  const keep = activeRows[0];
   // Only write when something actually differs — keeps the nightly sweep from
   // bumping updated_at on every account-linked row every run.
   let error = null;
   const changed =
-    keep.store_id !== storeId || keep.role !== rk || keep.status !== "active" ||
+    keep.store_id !== storeId || keep.role !== rk ||
     (keep.full_name ?? null) !== name || (keep.email ?? null) !== (p.email ?? null);
   if (changed) {
     ({ error } = await supa.from("tp_team_members").update({
@@ -119,11 +121,9 @@ export async function syncProfileToRoster(supa, profileId) {
     }).eq("id", keep.id));
   }
   let extra = 0;
-  for (const r of linked) {
-    if (r.id !== keep.id && r.status !== "terminated") {
-      await supa.from("tp_team_members").update({ status: "terminated" }).eq("id", r.id);
-      extra++;
-    }
+  for (const r of activeRows.slice(1)) {
+    await supa.from("tp_team_members").update({ status: "terminated" }).eq("id", r.id);
+    extra++;
   }
   return { ok: !error, action: changed ? "synced" : "unchanged", extra_terminated: extra };
 }
