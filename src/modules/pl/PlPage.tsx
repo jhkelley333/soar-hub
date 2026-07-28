@@ -586,19 +586,23 @@ const plUsd = (n: number | null) =>
 // labelled at each point and the period on the x-axis.
 function TrendChart({ points }: { points: PlTrendPoint[] }) {
   const W = 460, H = 170, padL = 12, padR = 12, padT = 18, padB = 26;
-  const vals = points.map((p) => p.amount ?? 0);
+  // Contra-revenue lines (DISCOUNTS etc.) are stored negative — plot by
+  // magnitude so a growing amount trends UP, while labels keep the real sign.
+  const contra = points.length > 0 && points.every((p) => (p.amount ?? 0) <= 0) && points.some((p) => (p.amount ?? 0) < 0);
+  const mag = (a: number | null) => (contra ? Math.abs(a ?? 0) : (a ?? 0));
+  const vals = points.map((p) => mag(p.amount));
   const min = Math.min(...vals), max = Math.max(...vals), span = max - min || Math.abs(max) || 1;
   const x = (i: number) => padL + (i * (W - padL - padR)) / Math.max(1, points.length - 1);
   const y = (v: number) => padT + (1 - (v - min) / span) * (H - padT - padB);
-  const path = points.map((p, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)} ${y(p.amount ?? 0).toFixed(1)}`).join(" ");
+  const path = points.map((p, i) => `${i === 0 ? "M" : "L"} ${x(i).toFixed(1)} ${y(mag(p.amount)).toFixed(1)}`).join(" ");
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full" role="img" aria-label="Line item trend">
       <line x1={padL} y1={H - padB} x2={W - padR} y2={H - padB} stroke="#e4e4e7" />
       <path d={path} fill="none" stroke="#2563eb" strokeWidth={2} />
       {points.map((p, i) => (
         <g key={i}>
-          <circle cx={x(i)} cy={y(p.amount ?? 0)} r={3.5} fill="#2563eb" />
-          <text x={x(i)} y={y(p.amount ?? 0) - 8} textAnchor="middle" fontSize={9} fill="#3f3f46">
+          <circle cx={x(i)} cy={y(mag(p.amount))} r={3.5} fill="#2563eb" />
+          <text x={x(i)} y={y(mag(p.amount)) - 8} textAnchor="middle" fontSize={9} fill="#3f3f46">
             {p.amount == null ? "" : Math.round(p.amount).toLocaleString()}
           </text>
           <text x={x(i)} y={H - padB + 15} textAnchor="middle" fontSize={9} fill="#a1a1aa">
