@@ -21,12 +21,48 @@ export const TP_ROLE_MAP = {
 // and team-members key off), else a user_scopes store row (what the Org Admin
 // tree writes). Mirrors the GM union in org.js so the pipeline agrees with My
 // Team about who's where.
+// Loose name equality (order-independent first/last, punctuation-stripped) —
+// same rule gm-roster.js uses to match an account to a roster entry.
+function normName(s) {
+  return String(s || "").toLowerCase().replace(/[^a-z0-9\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+function namesMatch(a, b) {
+  const na = normName(a), nb = normName(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const first = (t) => (t.length >= 2 ? `${t[0]} ${t[t.length - 1]}` : t[0]);
+  return first(na.split(" ")) === first(nb.split(" "));
+}
+
 async function storeForProfile(supa, profile) {
   if (profile.primary_store_id) return profile.primary_store_id;
   const { data } = await supa
     .from("user_scopes").select("scope_id")
     .eq("user_id", profile.id).eq("scope_type", "store").limit(1);
-  return data && data.length ? data[0].scope_id : null;
+  if (data && data.length) return data[0].scope_id;
+
+  // GM-roster fallback: a GM account can be tied to its store only through the
+  // roster (the authoritative who's-GM-per-store), matched by email then name,
+  // with no primary_store_id / user_scopes row. Resolve store_number -> id.
+  if (String(profile.role) === "gm") {
+    const email = String(profile.email || "").toLowerCase();
+    const acctName = profile.preferred_name || profile.full_name || "";
+    const { data: roster } = await supa.from("gm_roster").select("store_number, gm_name, gm_email");
+    let storeNumber = null;
+    for (const r of roster || []) {
+      if (email && String(r.gm_email || "").toLowerCase() === email) { storeNumber = r.store_number; break; }
+    }
+    if (!storeNumber) {
+      for (const r of roster || []) {
+        if (r.gm_name && namesMatch(r.gm_name, acctName)) { storeNumber = r.store_number; break; }
+      }
+    }
+    if (storeNumber) {
+      const { data: st } = await supa.from("stores").select("id").eq("number", String(storeNumber)).maybeSingle();
+      if (st) return st.id;
+    }
+  }
+  return null;
 }
 
 // Reconcile one profile's pipeline seat with the live account. Best-effort:
@@ -104,10 +140,15 @@ export async function reconcileAllProfiles(supa) {
   for (const p of mapped || []) ids.add(p.id);
   for (const r of linkedRows || []) if (r.profile_id) ids.add(r.profile_id);
 
-  let synced = 0, failed = 0;
+  const tally = { created: 0, updated: 0, closed: 0, unchanged: 0, failed: 0 };
   for (const id of ids) {
-    try { await syncProfileToRoster(supa, id); synced++; }
-    catch { failed++; }
+    try {
+      const r = await syncProfileToRoster(supa, id);
+      if (r?.action === "created") tally.created++;
+      else if (r?.action === "synced") tally.updated++;
+      else if (r?.action === "terminated" && r.changed > 0) tally.closed += r.changed;
+      else tally.unchanged++;
+    } catch { tally.failed++; }
   }
-  return { ok: true, profiles: synced, failed };
+  return { ok: true, profiles: ids.size, ...tally };
 }
