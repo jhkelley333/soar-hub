@@ -133,7 +133,7 @@ export function RankingSevenUpView() {
         </div>
       )}
 
-      <PresentModal open={present} onClose={() => setPresent(false)} filename={`${pLabel || "SOAR"}-7up-in-sales`}>
+      <PresentModal open={present} onClose={() => setPresent(false)} filename={`${pLabel || "SOAR"}-7up-in-sales`} maxWidth="max-w-[960px]">
         <SlideTable
           title={`7 UP in Sales${pLabel ? ` · ${pLabel}` : ""}`}
           columns={sevenUpCols}

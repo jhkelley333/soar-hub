@@ -61,12 +61,13 @@ export function SlideTable<T>({
 // Full-screen capture modal. Children are the slide content; the toolbar offers
 // a PNG download (rasterizes the card) and a hint to just screenshot the window.
 export function PresentModal({
-  open, onClose, filename, children,
+  open, onClose, filename, children, maxWidth = "max-w-[1400px]",
 }: {
   open: boolean;
   onClose: () => void;
   filename: string;
   children: ReactNode;
+  maxWidth?: string;
 }) {
   const cardRef = useRef<HTMLDivElement>(null);
   const [busy, setBusy] = useState(false);
@@ -104,7 +105,7 @@ export function PresentModal({
       className="fixed inset-0 z-50 flex flex-col items-center overflow-auto bg-zinc-900/80 p-4 sm:p-8"
       onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="mb-3 flex w-full max-w-[1400px] items-center justify-between gap-3">
+      <div className={cn("mb-3 flex w-full items-center justify-between gap-3", maxWidth)}>
         <div className="flex items-center gap-2 text-xs text-white/80">
           <Camera className="h-4 w-4" />
           <span>Screenshot this card, or download it as a PNG.</span>
@@ -122,9 +123,9 @@ export function PresentModal({
           </button>
         </div>
       </div>
-      {err && <div className="mb-2 w-full max-w-[1400px] rounded-lg bg-red-500/90 px-3 py-2 text-sm text-white">{err}</div>}
+      {err && <div className={cn("mb-2 w-full rounded-lg bg-red-500/90 px-3 py-2 text-sm text-white", maxWidth)}>{err}</div>}
       {/* The capture target — white slide surface. */}
-      <div ref={cardRef} className="w-full max-w-[1400px] rounded-xl bg-white p-6">
+      <div ref={cardRef} className={cn("w-full rounded-xl bg-white p-6", maxWidth)}>
         {children}
       </div>
     </div>
