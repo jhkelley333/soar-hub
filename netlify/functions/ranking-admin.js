@@ -537,6 +537,53 @@ async function ingestOtt(supa, user, body) {
   return { file_id: file.id, scope, rows: rows.length, stores: codes.length, unresolved };
 }
 
+// Ingest the official "SOAR PTD RANKING" sheet (store tier) for one fiscal
+// period. These are the period-ending numbers the recognition slides quote; we
+// archive them so 7 UP + Movers & Shakers can show the sheet's exact ranks and
+// % vs LY instead of the live-recomputed values. Full replace per period: the
+// PK is (period, store_number), so re-uploading a corrected sheet just rewrites
+// that period cleanly (no double-count, drops stores no longer present).
+async function ingestPtdRanking(supa, user, body) {
+  const period = parseInt(body?.period, 10);
+  if (!(period >= 1 && period <= 13)) return { error: "A fiscal period (1-13) is required.", status: 400 };
+  const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+  const raw = Array.isArray(body?.rows) ? body.rows : [];
+  const clean = raw
+    .map((r) => ({
+      period,
+      store_number: String(r?.store_code ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, ""),
+      soar_rank: Number.isFinite(Number(r?.soar_rank)) ? Math.round(Number(r.soar_rank)) : null,
+      location: String(r?.location ?? "").trim() || null,
+      gm: String(r?.gm ?? "").trim() || null,
+      total_points: num(r?.total_points),
+      ptd_sales: num(r?.ptd_sales),
+      ly_sales: num(r?.ly_sales),
+      pct_vs_ly: num(r?.pct_vs_ly),
+      imported_by: user.id,
+    }))
+    .filter((r) => r.store_number);
+  if (!clean.length) return { error: "No usable store rows (need a DI # and SOAR Rank).", status: 400 };
+  if (clean.length > 2000) return { error: "Too many rows.", status: 400 };
+
+  // De-dupe by store within the upload (keep the first occurrence).
+  const byStore = new Map();
+  for (const r of clean) if (!byStore.has(r.store_number)) byStore.set(r.store_number, r);
+  const rows = [...byStore.values()];
+
+  const del = await supa.from("ranking_official_periods").delete().eq("period", period);
+  if (del.error) {
+    if (/ranking_official_periods/.test(del.error.message) && /does not exist|relation/i.test(del.error.message)) {
+      return { error: "Run migration 0263 first (ranking_official_periods is missing).", status: 500 };
+    }
+    return { error: del.error.message, status: 500 };
+  }
+  for (let i = 0; i < rows.length; i += 300) {
+    const { error } = await supa.from("ranking_official_periods").insert(rows.slice(i, i + 300));
+    if (error) return { error: `Insert failed: ${error.message}`, status: 500 };
+  }
+  return { period, stores: rows.length };
+}
+
 export const handler = async (event) => {
   let supa;
   try { supa = admin(); } catch (e) { return respond(500, { error: e.message }); }
@@ -567,6 +614,7 @@ export const handler = async (event) => {
       if (action === "ingest-shops") return unwrap(await ingestShops(supa, user, body));
       if (action === "ingest-vog") return unwrap(await ingestVog(supa, user, body));
       if (action === "ingest-ott") return unwrap(await ingestOtt(supa, user, body));
+      if (action === "ingest-ptd-ranking") return unwrap(await ingestPtdRanking(supa, user, body));
       if (action === "import-legacy") return unwrap(await importLegacyWeeks(supa));
       return respond(400, { error: `Unknown action: ${action}` });
     }

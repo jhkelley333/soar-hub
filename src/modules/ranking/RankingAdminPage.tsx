@@ -26,7 +26,7 @@ import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/auth/AuthProvider";
 import {
-  addRankingConfig, backfillRankingFields, fetchRankingOverview, ingestBscRows, ingestEcosureRows, ingestIxFile, ingestOttRows, ingestShopRows, ingestTotzoneRows, ingestVogRows, setFcTargetEfficiency, setLaborPad,
+  addRankingConfig, backfillRankingFields, fetchRankingOverview, ingestBscRows, ingestEcosureRows, ingestIxFile, ingestOttRows, ingestPtdRankingRows, ingestShopRows, ingestTotzoneRows, ingestVogRows, setFcTargetEfficiency, setLaborPad,
   type RankingConfigRow, type RankingStoreRow,
 } from "./api";
 
@@ -145,6 +145,8 @@ function SettingsView() {
 
         <VogUploadPanel />
         <OttUploadPanel />
+
+        <PtdRankingUploadPanel />
 
         <BackfillPanel />
         {/* Complaints placeholder */}
@@ -550,6 +552,111 @@ function BscUploadPanel() {
           {busy ? "Ingesting…" : "Upload XLSX"}
           <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={onFile} />
         </label>
+      </div>
+    </div>
+  );
+}
+
+// ── Official "SOAR PTD RANKING" sheet upload ─────────────────────────
+// Archives the store tier's period-ending SOAR ranks + % vs LY for one fiscal
+// period so the 7 UP and Movers & Shakers boards can quote the sheet's exact
+// numbers instead of the live-recomputed run.
+function PtdRankingUploadPanel() {
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [period, setPeriod] = useState<number>(6);
+  const [summary, setSummary] = useState<string | null>(null);
+
+  async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = "";
+    if (!f) return;
+    setBusy(true);
+    setSummary(null);
+    try {
+      const buf = await f.arrayBuffer();
+      const XLSX = await import("xlsx");
+      const wb = XLSX.read(buf, { type: "array" });
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const grid = XLSX.utils.sheet_to_json<(string | number | null)[]>(ws, { header: 1, raw: true });
+
+      // Store tier header: col B = "SOAR Rank", col C = "DI #".
+      const norm = (v: unknown) => String(v ?? "").trim().toLowerCase();
+      const hIdx = grid.findIndex((r) => norm(r?.[1]) === "soar rank" && norm(r?.[2]).startsWith("di"));
+      if (hIdx < 0) throw new Error('Couldn\'t find the store-tier header ("SOAR Rank" / "DI #").');
+
+      // Detect the fiscal period from the title block ("... Period - 6").
+      let detected: number | null = null;
+      for (let i = 0; i <= hIdx && detected == null; i++) {
+        for (const c of grid[i] ?? []) {
+          const m = /period\s*-?\s*(\d{1,2})/i.exec(String(c ?? ""));
+          if (m) { detected = Number(m[1]); break; }
+        }
+      }
+      if (detected != null && detected >= 1 && detected <= 13) setPeriod(detected);
+      const useP = detected != null && detected >= 1 && detected <= 13 ? detected : period;
+
+      const num = (v: unknown) => (typeof v === "number" && isFinite(v) ? v : null);
+      // Store rows only: DI # (col C, idx 2) numeric. The DO / SDO / RVP tiers
+      // below carry text in that column, so they drop out naturally.
+      const rows = grid.slice(hIdx + 1)
+        .filter((r) => Number.isFinite(Number(r?.[2])) && Number.isFinite(Number(r?.[1])))
+        .map((r) => ({
+          soar_rank: num(r?.[1]),
+          store_code: String(r?.[2] ?? "").replace(/\D/g, ""),
+          location: String(r?.[3] ?? "").trim() || null,
+          gm: String(r?.[4] ?? "").trim() || null,
+          total_points: num(r?.[5]),
+          ptd_sales: num(r?.[7]),
+          ly_sales: num(r?.[8]),
+          pct_vs_ly: num(r?.[9]),
+        }))
+        .filter((r) => /^\d+$/.test(r.store_code));
+      if (!rows.length) throw new Error("No store rows found under the header.");
+
+      const res = await ingestPtdRankingRows({ filename: f.name, period: useP, rows });
+      setSummary(`P${res.period} · ${res.stores} stores archived`);
+      toast.push(`Official P${res.period} ranking uploaded — 7 UP + Movers & Shakers now use it.`, "success");
+    } catch (err) {
+      toast.push(err instanceof Error ? err.message : "Upload failed.", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-sm font-semibold text-midnight">Official PTD Ranking (period-ending)</div>
+          <p className="text-xs text-zinc-500">
+            Upload the "SOAR PTD RANKING" xlsx. Archives each store's official SOAR Rank + % vs LY for the
+            selected period; 7 UP and Movers &amp; Shakers then quote these exact numbers. Re-uploading a period
+            replaces it cleanly. The period is auto-detected from the sheet title.
+          </p>
+          {summary && <p className="mt-1 font-mono text-xs text-zinc-600">{summary}</p>}
+        </div>
+        <div className="flex items-center gap-2">
+          <label className="flex items-center gap-1 text-xs text-zinc-500">
+            Period
+            <select
+              value={period}
+              onChange={(e) => setPeriod(Number(e.target.value))}
+              className={inputCls + " py-1"}
+            >
+              {Array.from({ length: 13 }, (_, i) => i + 1).map((p) => (
+                <option key={p} value={p}>P{p}</option>
+              ))}
+            </select>
+          </label>
+          <label className={cn(
+            "cursor-pointer rounded-lg bg-midnight px-3 py-2 text-sm font-semibold text-white hover:bg-zinc-800",
+            busy && "pointer-events-none opacity-50",
+          )}>
+            {busy ? "Uploading…" : "Upload XLSX"}
+            <input type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" className="hidden" onChange={onFile} />
+          </label>
+        </div>
       </div>
     </div>
   );

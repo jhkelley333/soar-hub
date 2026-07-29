@@ -601,9 +601,92 @@ export async function latestRun(supa, params, storeNums = null) {
 // period-to-date by default). Reads the latest run's store rows, where the
 // engine already computed pctVsLy = (sales - lySales) / lySales, and carries
 // the store's GM / DO / SDO. Scoped to the caller like every other board.
+// Normalize a store number for cross-source joins (official sheet <-> live run
+// <-> caller scope): digits only, no leading zeros.
+const normStoreNum = (v) => String(v ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+
+// The distinct fiscal periods archived from the official "SOAR PTD RANKING"
+// sheet, newest first. Empty (with `missing: true`) when the table isn't there
+// yet or nothing has been uploaded, so callers fall back to the live run.
+async function officialPeriods(supa) {
+  const { data, error } = await supa
+    .from("ranking_official_periods").select("period").order("period", { ascending: false });
+  if (error) return { periods: [], missing: true };
+  const periods = [];
+  for (const r of data || []) if (!periods.includes(r.period)) periods.push(r.period);
+  return { periods };
+}
+
+// Official store rows for one period (already rank-ordered by the index).
+async function officialRows(supa, period) {
+  const { data, error } = await supa
+    .from("ranking_official_periods")
+    .select("store_number, soar_rank, location, gm, total_points, ptd_sales, ly_sales, pct_vs_ly")
+    .eq("period", period).order("soar_rank", { ascending: true });
+  if (error) return [];
+  return data || [];
+}
+
+// DO / SDO (and fallback location / GM) for stores, borrowed from the latest
+// complete run's PTD store rows. The official sheet's store tier carries GM +
+// location but not the DO / SDO chain, which the recognition slides show.
+async function runStoreNameMap(supa) {
+  const map = new Map();
+  const { data: runs } = await supa
+    .from("ranking_runs").select("id").eq("status", "complete")
+    .order("started_at", { ascending: false }).limit(1);
+  const run = runs?.[0];
+  if (!run) return map;
+  const { data: rows } = await supa
+    .from("ranking_rows").select("entity_key, metrics")
+    .eq("run_id", run.id).eq("scope", "ptd").eq("tier", "store");
+  for (const r of rows || []) {
+    const m = r.metrics || {};
+    const key = normStoreNum(m.store ?? r.entity_key);
+    if (key) map.set(key, { doName: m.doName ?? null, sdoName: m.sdoName ?? null, location: m.location ?? null, gm: m.gm ?? null });
+  }
+  return map;
+}
+
+// A normalized store-number allow-set from the caller's scope (null = org-wide).
+const allowSet = (storeNums) => (storeNums ? new Set([...storeNums].map(normStoreNum)) : null);
+
 export async function sevenUpSales(supa, params, storeNums = null) {
   const scope = params.scope === "wtd" ? "wtd" : "ptd";
   const limit = Math.max(1, Math.min(50, parseInt(params.limit, 10) || 7));
+
+  // Prefer the official period-ending sheet for the Period (PTD) view when a
+  // period has been uploaded. Week view + un-uploaded periods use the live run.
+  if (scope === "ptd" && !params.run_id) {
+    const { periods } = await officialPeriods(supa);
+    if (periods.length) {
+      const period = periods[0];
+      const [rows, names] = await Promise.all([officialRows(supa, period), runStoreNameMap(supa)]);
+      const allow = allowSet(storeNums);
+      const out = rows
+        .map((r) => {
+          const key = normStoreNum(r.store_number);
+          const nm = names.get(key) || {};
+          return {
+            store_number: key,
+            location: r.location ?? nm.location ?? null,
+            gm: r.gm ?? nm.gm ?? null,
+            do_name: nm.doName ?? null,
+            sdo_name: nm.sdoName ?? null,
+            sales: r.ptd_sales != null ? Number(r.ptd_sales) : null,
+            ly_sales: r.ly_sales != null ? Number(r.ly_sales) : null,
+            pct_vs_ly: r.pct_vs_ly != null ? Number(r.pct_vs_ly) * 100 : null, // fraction -> %
+          };
+        })
+        .filter((r) => (!allow || allow.has(r.store_number)) && r.pct_vs_ly != null)
+        .sort((a, b) => b.pct_vs_ly - a.pct_vs_ly)
+        .slice(0, limit);
+      if (out.length) {
+        return { run: { period, week: null, week_ending: null }, scope, source: "official", rows: out };
+      }
+    }
+  }
+
   const { run, rows, error, status } = await latestRun(supa, { scope, tier: "store", run_id: params.run_id }, storeNums);
   if (error) return { error, status };
   if (!run) return { run: null, scope, rows: [] };
@@ -625,7 +708,7 @@ export async function sevenUpSales(supa, params, storeNums = null) {
     .filter((r) => r.pct_vs_ly != null)
     .sort((a, b) => b.pct_vs_ly - a.pct_vs_ly)
     .slice(0, limit);
-  return { run: { period: run.period, week: run.week, week_ending: run.week_ending }, scope, rows: out };
+  return { run: { period: run.period, week: run.week, week_ending: run.week_ending }, scope, source: "run", rows: out };
 }
 
 // "Movers & Shakers" — the stores that climbed the most in PERIOD rank vs the
@@ -634,6 +717,49 @@ export async function sevenUpSales(supa, params, storeNums = null) {
 // (positive = moved up). Returns the biggest climbers with GM / DO / SDO.
 export async function periodMovers(supa, params, storeNums = null) {
   const limit = Math.max(1, Math.min(50, parseInt(params.limit, 10) || 11));
+
+  // Prefer the official sheet: when two or more periods are archived, compare
+  // the newest to the one before it, using the sheet's exact SOAR ranks. Gives
+  // the recognition slides parity with the printed rankings.
+  {
+    const { periods } = await officialPeriods(supa);
+    if (periods.length >= 2) {
+      const [curPeriod, prevPeriod] = periods;
+      const [curRows, prevRows, names] = await Promise.all([
+        officialRows(supa, curPeriod), officialRows(supa, prevPeriod), runStoreNameMap(supa),
+      ]);
+      const prevRank = new Map(prevRows.map((r) => [normStoreNum(r.store_number), r.soar_rank]));
+      const allow = allowSet(storeNums);
+      const out = curRows
+        .map((r) => {
+          const key = normStoreNum(r.store_number);
+          const nm = names.get(key) || {};
+          const prev = prevRank.get(key);
+          const rank = typeof r.soar_rank === "number" ? r.soar_rank : null;
+          const delta = typeof prev === "number" && rank != null ? prev - rank : null;
+          return {
+            store_number: key,
+            location: r.location ?? nm.location ?? null,
+            gm: r.gm ?? nm.gm ?? null,
+            do_name: nm.doName ?? null,
+            sdo_name: nm.sdoName ?? null,
+            rank,
+            prev_rank: typeof prev === "number" ? prev : null,
+            delta,
+          };
+        })
+        .filter((r) => (!allow || allow.has(r.store_number)) && r.delta != null && r.delta > 0)
+        .sort((a, b) => b.delta - a.delta)
+        .slice(0, limit);
+      return {
+        current: { period: curPeriod, week: null, week_ending: null },
+        previous: { period: prevPeriod },
+        source: "official",
+        rows: out,
+      };
+    }
+  }
+
   const { data: runs, error } = await supa
     .from("ranking_runs").select("id, period, week, week_ending, started_at, status")
     .eq("status", "complete").order("started_at", { ascending: false }).limit(60);
@@ -679,6 +805,7 @@ export async function periodMovers(supa, params, storeNums = null) {
   return {
     current: { period: current.period, week: current.week, week_ending: current.week_ending },
     previous: previous ? { period: previous.period } : null,
+    source: "run",
     rows: out,
   };
 }

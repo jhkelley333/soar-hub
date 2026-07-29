@@ -23,6 +23,7 @@ export function RankingShakersView() {
   const rows: PeriodMoverRow[] = q.data?.rows ?? [];
   const cur = q.data?.current ?? null;
   const prev = q.data?.previous ?? null;
+  const official = q.data?.source === "official";
   const pLabel = cur ? `P${cur.period}` : "";
 
   return (
@@ -35,7 +36,8 @@ export function RankingShakersView() {
           <div>
             <div className="text-xl font-black tracking-tight">Movers &amp; Shakers</div>
             <div className="text-xs font-medium text-white/80">
-              Biggest climbers in rank{cur ? ` · ${pLabel}${prev ? ` vs P${prev.period}` : ""} · wk ending ${fmtDate(cur.week_ending)}` : ""}
+              Biggest climbers in rank{cur ? ` · ${pLabel}${prev ? ` vs P${prev.period}` : ""}${cur.week_ending ? ` · wk ending ${fmtDate(cur.week_ending)}` : ""}` : ""}
+              {official && <span className="ml-2 rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1 ring-white/30">Official sheet</span>}
             </div>
           </div>
         </div>
