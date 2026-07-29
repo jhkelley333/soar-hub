@@ -52,7 +52,7 @@ export function RankingShakersView() {
       ) : q.isError ? (
         <EmptyState title="Couldn't load" description={(q.error as Error)?.message ?? "Try again."} />
       ) : rows.length === 0 ? (
-        <EmptyState title="No period-over-period movement yet" description="Needs a completed run in two periods to compare. Run the ranker once this period's board is in." />
+        <EmptyState title="No period-over-period movement yet" description="Needs two periods to compare — the newest period (uploaded sheet or live run) and the one before it. Upload the prior period's SOAR PTD RANKING, or run the ranker for both periods." />
       ) : (
         <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-zinc-200">
           <div className="overflow-x-auto">
