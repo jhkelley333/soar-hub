@@ -48,9 +48,9 @@ export function RankingSevenUpView() {
             dense value={scope} onChange={setScope}
             options={[{ value: "ptd", label: "Period" }, { value: "wtd", label: "Week" }]}
           />
-          <Segmented<number>
-            dense value={limit} onChange={setLimit}
-            options={[{ value: 7, label: "Top 7" }, { value: 15, label: "15" }, { value: 50, label: "All" }]}
+          <Segmented<string>
+            dense value={String(limit)} onChange={(v) => setLimit(Number(v))}
+            options={[{ value: "7", label: "Top 7" }, { value: "15", label: "15" }, { value: "50", label: "All" }]}
           />
         </div>
       </div>
