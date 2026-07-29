@@ -628,6 +628,61 @@ export async function sevenUpSales(supa, params, storeNums = null) {
   return { run: { period: run.period, week: run.week, week_ending: run.week_ending }, scope, rows: out };
 }
 
+// "Movers & Shakers" — the stores that climbed the most in PERIOD rank vs the
+// prior period (e.g. P6 vs P5). Compares the latest complete run's PTD store
+// rank to the last run of the previous period; delta = prevRank - currRank
+// (positive = moved up). Returns the biggest climbers with GM / DO / SDO.
+export async function periodMovers(supa, params, storeNums = null) {
+  const limit = Math.max(1, Math.min(50, parseInt(params.limit, 10) || 11));
+  const { data: runs, error } = await supa
+    .from("ranking_runs").select("id, period, week, week_ending, started_at, status")
+    .eq("status", "complete").order("started_at", { ascending: false }).limit(60);
+  if (error) {
+    if (/ranking_runs/.test(error.message)) return { error: "Run migration 0237 first (ranking tables are missing).", status: 500 };
+    return { error: error.message, status: 500 };
+  }
+  const current = runs?.[0] ?? null;
+  if (!current) return { current: null, previous: null, rows: [] };
+  // Walking back in time, the first run whose period differs is the previous
+  // period's final run (handles period wrap without special-casing).
+  const previous = (runs || []).find((r) => r.period !== current.period) ?? null;
+
+  // Current PTD store rows, scoped to the caller.
+  const { rows: curRows } = await latestRun(supa, { scope: "ptd", tier: "store", run_id: current.id }, storeNums);
+  // Previous period's PTD store ranks — read raw; only used for our own stores.
+  let prevRank = new Map();
+  if (previous) {
+    const { data: pr } = await supa.from("ranking_rows")
+      .select("entity_key, rank").eq("run_id", previous.id).eq("scope", "ptd").eq("tier", "store");
+    prevRank = new Map((pr || []).map((r) => [String(r.entity_key), r.rank]));
+  }
+  const out = (curRows || [])
+    .map((row) => {
+      const m = row.metrics || {};
+      const key = String(m.store ?? row.entity_key);
+      const prev = prevRank.get(key);
+      const delta = typeof prev === "number" && typeof row.rank === "number" ? prev - row.rank : null;
+      return {
+        store_number: key,
+        location: m.location ?? null,
+        gm: m.gm ?? null,
+        do_name: m.doName ?? null,
+        sdo_name: m.sdoName ?? null,
+        rank: typeof row.rank === "number" ? row.rank : null,
+        prev_rank: typeof prev === "number" ? prev : null,
+        delta,
+      };
+    })
+    .filter((r) => r.delta != null && r.delta > 0)
+    .sort((a, b) => b.delta - a.delta)
+    .slice(0, limit);
+  return {
+    current: { period: current.period, week: current.week, week_ending: current.week_ending },
+    previous: previous ? { period: previous.period } : null,
+    rows: out,
+  };
+}
+
 // One run's ENTIRE board — every scope and tier, in a single response — for
 // the Excel workbook export. Latest complete run, or a specific run_id.
 export async function fullRun(supa, params, storeNums = null) {
