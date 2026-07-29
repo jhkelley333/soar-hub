@@ -597,6 +597,37 @@ export async function latestRun(supa, params, storeNums = null) {
   return { run, scope, tier, rows: out };
 }
 
+// "7 UP in Sales" — the top stores by sales vs last year for a scope (PTD =
+// period-to-date by default). Reads the latest run's store rows, where the
+// engine already computed pctVsLy = (sales - lySales) / lySales, and carries
+// the store's GM / DO / SDO. Scoped to the caller like every other board.
+export async function sevenUpSales(supa, params, storeNums = null) {
+  const scope = params.scope === "wtd" ? "wtd" : "ptd";
+  const limit = Math.max(1, Math.min(50, parseInt(params.limit, 10) || 7));
+  const { run, rows, error, status } = await latestRun(supa, { scope, tier: "store", run_id: params.run_id }, storeNums);
+  if (error) return { error, status };
+  if (!run) return { run: null, scope, rows: [] };
+  const out = (rows || [])
+    .map((row) => {
+      const m = row.metrics || {};
+      const pct = typeof m.pctVsLy === "number" ? m.pctVsLy * 100 : null; // fraction -> %
+      return {
+        store_number: m.store ?? row.entity_key,
+        location: m.location ?? null,
+        gm: m.gm ?? null,
+        do_name: m.doName ?? null,
+        sdo_name: m.sdoName ?? null,
+        sales: typeof m.sales === "number" ? m.sales : null,
+        ly_sales: typeof m.lySales === "number" ? m.lySales : null,
+        pct_vs_ly: pct,
+      };
+    })
+    .filter((r) => r.pct_vs_ly != null)
+    .sort((a, b) => b.pct_vs_ly - a.pct_vs_ly)
+    .slice(0, limit);
+  return { run: { period: run.period, week: run.week, week_ending: run.week_ending }, scope, rows: out };
+}
+
 // One run's ENTIRE board — every scope and tier, in a single response — for
 // the Excel workbook export. Latest complete run, or a specific run_id.
 export async function fullRun(supa, params, storeNums = null) {

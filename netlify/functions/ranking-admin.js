@@ -8,7 +8,7 @@
 
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
-import { runRankingNow, latestRun, listRuns, fullRun, moversData, commsBoard } from "./_lib/ranking/run.js";
+import { runRankingNow, latestRun, listRuns, fullRun, moversData, commsBoard, sevenUpSales } from "./_lib/ranking/run.js";
 import { callerStoreNumbers } from "./_lib/ranking/scope.js";
 import { backfillLaborWindow } from "./_lib/kpiBackfill.js";
 import { parseIxCsv } from "./_lib/ranking/ixParse.js";
@@ -579,6 +579,7 @@ export const handler = async (event) => {
     // org-wide roles payroll/admin/vp/coo, who see the whole company).
     const storeNums = await callerStoreNumbers(supa, user);
     if (action === "run-latest") return unwrap(await latestRun(supa, params, storeNums));
+    if (action === "sevenup") return unwrap(await sevenUpSales(supa, params, storeNums));
     if (action === "runs") return unwrap(await listRuns(supa));
     if (action === "weeks") return unwrap(await unifiedWeeks(supa));         // hub + legacy timeline
     if (action === "legacy-week") return unwrap(await legacyWeekStores(supa, params, storeNums)); // one sheet-era week (store tier)
