@@ -581,7 +581,53 @@ async function ingestPtdRanking(supa, user, body) {
     const { error } = await supa.from("ranking_official_periods").insert(rows.slice(i, i + 300));
     if (error) return { error: `Insert failed: ${error.message}`, status: 500 };
   }
-  return { period, stores: rows.length };
+
+  // Leader tiers (DO / SDO / RVP) - optional; powers the Movers & Shakers DO
+  // tab. match_key strips the "-DO"/"-SDO"/"-RVP" suffix so the sheet joins the
+  // new ranker's computed leader rows. Same clean full-replace per period.
+  const leaderKey = (v) => String(v ?? "").replace(/-(?:sdo|rvp|do)\s*$/i, "").trim().replace(/\s+/g, " ").toLowerCase();
+  const rawLeaders = Array.isArray(body?.leaders) ? body.leaders : [];
+  let leaders = 0;
+  if (rawLeaders.length) {
+    const cleanLeaders = rawLeaders
+      .map((r) => {
+        const tier = String(r?.tier ?? "").toLowerCase();
+        const entity_name = String(r?.entity_name ?? "").trim();
+        return {
+          period,
+          tier: ["do", "sdo", "rvp"].includes(tier) ? tier : null,
+          entity_name,
+          match_key: leaderKey(entity_name),
+          sdo_name: String(r?.sdo_name ?? "").trim() || null,
+          store_count: Number.isFinite(Number(r?.store_count)) ? Math.round(Number(r.store_count)) : null,
+          rank: Number.isFinite(Number(r?.rank)) ? Math.round(Number(r.rank)) : null,
+          total_points: num(r?.total_points),
+          ptd_sales: num(r?.ptd_sales),
+          ly_sales: num(r?.ly_sales),
+          imported_by: user.id,
+        };
+      })
+      .filter((r) => r.tier && r.entity_name);
+    // De-dupe within (tier, entity_name).
+    const seen = new Map();
+    for (const r of cleanLeaders) { const k = `${r.tier}|${r.entity_name}`; if (!seen.has(k)) seen.set(k, r); }
+    const lrows = [...seen.values()];
+
+    const ldel = await supa.from("ranking_official_leaders").delete().eq("period", period);
+    if (ldel.error) {
+      if (/ranking_official_leaders/.test(ldel.error.message) && /does not exist|relation/i.test(ldel.error.message)) {
+        return { error: "Store ranks saved, but run migration 0264 for the DO/SDO/RVP tiers (ranking_official_leaders is missing).", status: 500 };
+      }
+      return { error: ldel.error.message, status: 500 };
+    }
+    for (let i = 0; i < lrows.length; i += 300) {
+      const { error } = await supa.from("ranking_official_leaders").insert(lrows.slice(i, i + 300));
+      if (error) return { error: `Store ranks saved, but leader insert failed: ${error.message}`, status: 500 };
+    }
+    leaders = lrows.length;
+  }
+
+  return { period, stores: rows.length, leaders };
 }
 
 export const handler = async (event) => {
