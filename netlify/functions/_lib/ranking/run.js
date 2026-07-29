@@ -651,38 +651,99 @@ async function runStoreNameMap(supa) {
 // A normalized store-number allow-set from the caller's scope (null = org-wide).
 const allowSet = (storeNums) => (storeNums ? new Set([...storeNums].map(normStoreNum)) : null);
 
+// The store-tier board for ONE fiscal period, source-agnostic: prefer the
+// official "SOAR PTD RANKING" archive for that period; otherwise the latest
+// complete computed run for it. This is what bridges the legacy sheet (past
+// periods, uploaded) and the new ranker (the active period, computed) so a
+// period-over-period comparison can span the cutover - e.g. P6 legacy vs P7
+// new ranker. Ranks / % vs LY come from whichever source owns the period.
+async function periodBoard(supa, period) {
+  const off = await officialRows(supa, period);
+  if (off.length) {
+    return {
+      source: "official",
+      rows: off.map((r) => ({
+        store_number: normStoreNum(r.store_number),
+        rank: typeof r.soar_rank === "number" ? r.soar_rank : null,
+        location: r.location ?? null,
+        gm: r.gm ?? null,
+        do_name: null,
+        sdo_name: null,
+        sales: r.ptd_sales != null ? Number(r.ptd_sales) : null,
+        ly_sales: r.ly_sales != null ? Number(r.ly_sales) : null,
+        pct: r.pct_vs_ly != null ? Number(r.pct_vs_ly) : null, // fraction
+      })),
+    };
+  }
+  const { data: runs } = await supa
+    .from("ranking_runs").select("id").eq("status", "complete").eq("period", period)
+    .order("started_at", { ascending: false }).limit(1);
+  const run = runs?.[0];
+  if (!run) return { source: null, rows: [] };
+  const { data: rows } = await supa
+    .from("ranking_rows").select("entity_key, rank, metrics")
+    .eq("run_id", run.id).eq("scope", "ptd").eq("tier", "store");
+  return {
+    source: "run",
+    rows: (rows || []).map((r) => {
+      const m = r.metrics || {};
+      return {
+        store_number: normStoreNum(m.store ?? r.entity_key),
+        rank: typeof r.rank === "number" ? r.rank : null,
+        location: m.location ?? null,
+        gm: m.gm ?? null,
+        do_name: m.doName ?? null,
+        sdo_name: m.sdoName ?? null,
+        sales: typeof m.sales === "number" ? m.sales : null,
+        ly_sales: typeof m.lySales === "number" ? m.lySales : null,
+        pct: typeof m.pctVsLy === "number" ? m.pctVsLy : null, // fraction
+      };
+    }),
+  };
+}
+
+// Distinct fiscal periods available across BOTH sources (official archive +
+// completed computed runs), newest first.
+async function availablePeriods(supa) {
+  const { periods: off } = await officialPeriods(supa);
+  const set = new Set(off);
+  const { data: runs } = await supa
+    .from("ranking_runs").select("period").eq("status", "complete");
+  for (const r of runs || []) if (r.period != null) set.add(r.period);
+  return [...set].sort((a, b) => b - a);
+}
+
 export async function sevenUpSales(supa, params, storeNums = null) {
   const scope = params.scope === "wtd" ? "wtd" : "ptd";
   const limit = Math.max(1, Math.min(50, parseInt(params.limit, 10) || 7));
 
-  // Prefer the official period-ending sheet for the Period (PTD) view when a
-  // period has been uploaded. Week view + un-uploaded periods use the live run.
+  // Period (PTD) view: use the newest available period across both sources -
+  // the official sheet for a closed period, the live run for the active one.
   if (scope === "ptd" && !params.run_id) {
-    const { periods } = await officialPeriods(supa);
+    const periods = await availablePeriods(supa);
     if (periods.length) {
       const period = periods[0];
-      const [rows, names] = await Promise.all([officialRows(supa, period), runStoreNameMap(supa)]);
+      const [board, names] = await Promise.all([periodBoard(supa, period), runStoreNameMap(supa)]);
       const allow = allowSet(storeNums);
-      const out = rows
+      const out = board.rows
         .map((r) => {
-          const key = normStoreNum(r.store_number);
-          const nm = names.get(key) || {};
+          const nm = names.get(r.store_number) || {};
           return {
-            store_number: key,
+            store_number: r.store_number,
             location: r.location ?? nm.location ?? null,
             gm: r.gm ?? nm.gm ?? null,
-            do_name: nm.doName ?? null,
-            sdo_name: nm.sdoName ?? null,
-            sales: r.ptd_sales != null ? Number(r.ptd_sales) : null,
-            ly_sales: r.ly_sales != null ? Number(r.ly_sales) : null,
-            pct_vs_ly: r.pct_vs_ly != null ? Number(r.pct_vs_ly) * 100 : null, // fraction -> %
+            do_name: r.do_name ?? nm.doName ?? null,
+            sdo_name: r.sdo_name ?? nm.sdoName ?? null,
+            sales: r.sales,
+            ly_sales: r.ly_sales,
+            pct_vs_ly: r.pct != null ? r.pct * 100 : null, // fraction -> %
           };
         })
         .filter((r) => (!allow || allow.has(r.store_number)) && r.pct_vs_ly != null)
         .sort((a, b) => b.pct_vs_ly - a.pct_vs_ly)
         .slice(0, limit);
       if (out.length) {
-        return { run: { period, week: null, week_ending: null }, scope, source: "official", rows: out };
+        return { run: { period, week: null, week_ending: null }, scope, source: board.source, rows: out };
       }
     }
   }
@@ -711,103 +772,52 @@ export async function sevenUpSales(supa, params, storeNums = null) {
   return { run: { period: run.period, week: run.week, week_ending: run.week_ending }, scope, source: "run", rows: out };
 }
 
-// "Movers & Shakers" — the stores that climbed the most in PERIOD rank vs the
-// prior period (e.g. P6 vs P5). Compares the latest complete run's PTD store
-// rank to the last run of the previous period; delta = prevRank - currRank
-// (positive = moved up). Returns the biggest climbers with GM / DO / SDO.
+// "Movers & Shakers" — the stores that climbed the most in PERIOD rank from the
+// previous period to the newest one. Spans the source cutover: the newest
+// period is usually the new ranker's live run (e.g. P7) and the one before it
+// the legacy official sheet (e.g. P6). delta = prevRank - currRank (positive =
+// moved up). Biggest climbers with GM / DO / SDO.
 export async function periodMovers(supa, params, storeNums = null) {
   const limit = Math.max(1, Math.min(50, parseInt(params.limit, 10) || 11));
 
-  // Prefer the official sheet: when two or more periods are archived, compare
-  // the newest to the one before it, using the sheet's exact SOAR ranks. Gives
-  // the recognition slides parity with the printed rankings.
-  {
-    const { periods } = await officialPeriods(supa);
-    if (periods.length >= 2) {
-      const [curPeriod, prevPeriod] = periods;
-      const [curRows, prevRows, names] = await Promise.all([
-        officialRows(supa, curPeriod), officialRows(supa, prevPeriod), runStoreNameMap(supa),
-      ]);
-      const prevRank = new Map(prevRows.map((r) => [normStoreNum(r.store_number), r.soar_rank]));
+  const periods = await availablePeriods(supa);
+  if (periods.length >= 2) {
+    const [curPeriod, prevPeriod] = periods;
+    const [cur, prev, names] = await Promise.all([
+      periodBoard(supa, curPeriod), periodBoard(supa, prevPeriod), runStoreNameMap(supa),
+    ]);
+    if (cur.rows.length && prev.rows.length) {
+      const prevRank = new Map(prev.rows.map((r) => [r.store_number, r.rank]));
       const allow = allowSet(storeNums);
-      const out = curRows
+      const out = cur.rows
         .map((r) => {
-          const key = normStoreNum(r.store_number);
-          const nm = names.get(key) || {};
-          const prev = prevRank.get(key);
-          const rank = typeof r.soar_rank === "number" ? r.soar_rank : null;
-          const delta = typeof prev === "number" && rank != null ? prev - rank : null;
+          const nm = names.get(r.store_number) || {};
+          const prevR = prevRank.get(r.store_number);
+          const delta = typeof prevR === "number" && typeof r.rank === "number" ? prevR - r.rank : null;
           return {
-            store_number: key,
+            store_number: r.store_number,
             location: r.location ?? nm.location ?? null,
             gm: r.gm ?? nm.gm ?? null,
-            do_name: nm.doName ?? null,
-            sdo_name: nm.sdoName ?? null,
-            rank,
-            prev_rank: typeof prev === "number" ? prev : null,
+            do_name: r.do_name ?? nm.doName ?? null,
+            sdo_name: r.sdo_name ?? nm.sdoName ?? null,
+            rank: typeof r.rank === "number" ? r.rank : null,
+            prev_rank: typeof prevR === "number" ? prevR : null,
             delta,
           };
         })
         .filter((r) => (!allow || allow.has(r.store_number)) && r.delta != null && r.delta > 0)
         .sort((a, b) => b.delta - a.delta)
         .slice(0, limit);
+      const source = cur.source === "official" || prev.source === "official" ? "official" : "run";
       return {
         current: { period: curPeriod, week: null, week_ending: null },
         previous: { period: prevPeriod },
-        source: "official",
+        source,
         rows: out,
       };
     }
   }
-
-  const { data: runs, error } = await supa
-    .from("ranking_runs").select("id, period, week, week_ending, started_at, status")
-    .eq("status", "complete").order("started_at", { ascending: false }).limit(60);
-  if (error) {
-    if (/ranking_runs/.test(error.message)) return { error: "Run migration 0237 first (ranking tables are missing).", status: 500 };
-    return { error: error.message, status: 500 };
-  }
-  const current = runs?.[0] ?? null;
-  if (!current) return { current: null, previous: null, rows: [] };
-  // Walking back in time, the first run whose period differs is the previous
-  // period's final run (handles period wrap without special-casing).
-  const previous = (runs || []).find((r) => r.period !== current.period) ?? null;
-
-  // Current PTD store rows, scoped to the caller.
-  const { rows: curRows } = await latestRun(supa, { scope: "ptd", tier: "store", run_id: current.id }, storeNums);
-  // Previous period's PTD store ranks — read raw; only used for our own stores.
-  let prevRank = new Map();
-  if (previous) {
-    const { data: pr } = await supa.from("ranking_rows")
-      .select("entity_key, rank").eq("run_id", previous.id).eq("scope", "ptd").eq("tier", "store");
-    prevRank = new Map((pr || []).map((r) => [String(r.entity_key), r.rank]));
-  }
-  const out = (curRows || [])
-    .map((row) => {
-      const m = row.metrics || {};
-      const key = String(m.store ?? row.entity_key);
-      const prev = prevRank.get(key);
-      const delta = typeof prev === "number" && typeof row.rank === "number" ? prev - row.rank : null;
-      return {
-        store_number: key,
-        location: m.location ?? null,
-        gm: m.gm ?? null,
-        do_name: m.doName ?? null,
-        sdo_name: m.sdoName ?? null,
-        rank: typeof row.rank === "number" ? row.rank : null,
-        prev_rank: typeof prev === "number" ? prev : null,
-        delta,
-      };
-    })
-    .filter((r) => r.delta != null && r.delta > 0)
-    .sort((a, b) => b.delta - a.delta)
-    .slice(0, limit);
-  return {
-    current: { period: current.period, week: current.week, week_ending: current.week_ending },
-    previous: previous ? { period: previous.period } : null,
-    source: "run",
-    rows: out,
-  };
+  return { current: null, previous: null, source: "run", rows: [] };
 }
 
 // One run's ENTIRE board — every scope and tier, in a single response — for
