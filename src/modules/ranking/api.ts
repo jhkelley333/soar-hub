@@ -155,6 +155,26 @@ export function fetchRankingMovers(scope: RankScope, tier: RankTier): Promise<Mo
   return req(`${FN}?action=movers&scope=${scope}&tier=${tier}`);
 }
 
+// "7 UP in Sales" — top stores by sales vs last year for a scope.
+export interface SevenUpRow {
+  store_number: string;
+  location: string | null;
+  gm: string | null;
+  do_name: string | null;
+  sdo_name: string | null;
+  sales: number | null;
+  ly_sales: number | null;
+  pct_vs_ly: number | null;
+}
+export interface SevenUpResponse {
+  run: { period: number; week: number; week_ending: string } | null;
+  scope: RankScope;
+  rows: SevenUpRow[];
+}
+export function fetchSevenUp(scope: RankScope, limit = 7): Promise<SevenUpResponse> {
+  return req(`${FN}?action=sevenup&scope=${scope}&limit=${limit}`);
+}
+
 // Communication Board — read-only mirror of the in-store weekly comms board.
 export interface CommsStoreOption { number: string; name: string | null }
 export interface CommsWeek { week: number; week_ending: string; metrics: RankMetrics | null }
