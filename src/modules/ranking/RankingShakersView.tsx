@@ -39,9 +39,9 @@ export function RankingShakersView() {
             </div>
           </div>
         </div>
-        <Segmented<number>
-          dense value={limit} onChange={setLimit}
-          options={[{ value: 11, label: "Top 11" }, { value: 25, label: "25" }, { value: 50, label: "All" }]}
+        <Segmented<string>
+          dense value={String(limit)} onChange={(v) => setLimit(Number(v))}
+          options={[{ value: "11", label: "Top 11" }, { value: "25", label: "25" }, { value: "50", label: "All" }]}
         />
       </div>
 
