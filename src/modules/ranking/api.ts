@@ -175,6 +175,26 @@ export function fetchSevenUp(scope: RankScope, limit = 7): Promise<SevenUpRespon
   return req(`${FN}?action=sevenup&scope=${scope}&limit=${limit}`);
 }
 
+// "Movers & Shakers" — biggest climbers in period rank vs the prior period.
+export interface PeriodMoverRow {
+  store_number: string;
+  location: string | null;
+  gm: string | null;
+  do_name: string | null;
+  sdo_name: string | null;
+  rank: number | null;       // current period rank
+  prev_rank: number | null;  // last period's rank
+  delta: number | null;      // + = spots gained
+}
+export interface PeriodMoversResponse {
+  current: { period: number; week: number; week_ending: string } | null;
+  previous: { period: number } | null;
+  rows: PeriodMoverRow[];
+}
+export function fetchPeriodMovers(limit = 11): Promise<PeriodMoversResponse> {
+  return req(`${FN}?action=period-movers&limit=${limit}`);
+}
+
 // Communication Board — read-only mirror of the in-store weekly comms board.
 export interface CommsStoreOption { number: string; name: string | null }
 export interface CommsWeek { week: number; week_ending: string; metrics: RankMetrics | null }

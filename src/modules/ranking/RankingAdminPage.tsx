@@ -14,6 +14,7 @@ import { RankingWatchlistView } from "./RankingWatchlistView";
 import { RankingMoversView } from "./RankingMoversView";
 import { RankingCommsBoardView } from "./RankingCommsBoardView";
 import { RankingSevenUpView } from "./RankingSevenUpView";
+import { RankingShakersView } from "./RankingShakersView";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, PauseCircle, Plus, Save } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -35,7 +36,7 @@ const fmtDate = (s: string) =>
   new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const todayIso = () => new Date().toLocaleDateString("en-CA");
 
-type AdminView = "ranking" | "sevenup" | "drill" | "watchlist" | "trends" | "risk" | "movers" | "comms" | "settings";
+type AdminView = "ranking" | "sevenup" | "shakers" | "drill" | "watchlist" | "trends" | "risk" | "movers" | "comms" | "settings";
 
 export function RankingAdminPage() {
   const { profile } = useAuth();
@@ -65,6 +66,7 @@ export function RankingAdminPage() {
   const options: { value: AdminView; label: string }[] = [
     { value: "ranking", label: "Ranking" },
     { value: "sevenup", label: "7 UP" },
+    { value: "shakers", label: "Movers & Shakers" },
     { value: "drill", label: "Drill" },
     { value: "watchlist", label: "Watchlist" },
     { value: "trends", label: "Trends" },
@@ -86,6 +88,7 @@ export function RankingAdminPage() {
       </div>
       {active === "ranking" ? <RankingResultsView />
         : active === "sevenup" ? <RankingSevenUpView />
+        : active === "shakers" ? <RankingShakersView />
         : active === "drill" ? <RankingDrillView />
         : active === "watchlist" ? <RankingWatchlistView />
         : active === "trends" ? <RankingTrendsView />
