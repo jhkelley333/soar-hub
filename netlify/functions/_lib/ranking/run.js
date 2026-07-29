@@ -669,6 +669,7 @@ async function periodBoard(supa, period) {
         gm: r.gm ?? null,
         do_name: null,
         sdo_name: null,
+        total_points: r.total_points != null ? Number(r.total_points) : null,
         sales: r.ptd_sales != null ? Number(r.ptd_sales) : null,
         ly_sales: r.ly_sales != null ? Number(r.ly_sales) : null,
         pct: r.pct_vs_ly != null ? Number(r.pct_vs_ly) : null, // fraction
@@ -681,7 +682,7 @@ async function periodBoard(supa, period) {
   const run = runs?.[0];
   if (!run) return { source: null, rows: [] };
   const { data: rows } = await supa
-    .from("ranking_rows").select("entity_key, rank, metrics")
+    .from("ranking_rows").select("entity_key, rank, total_points, metrics")
     .eq("run_id", run.id).eq("scope", "ptd").eq("tier", "store");
   return {
     source: "run",
@@ -694,6 +695,7 @@ async function periodBoard(supa, period) {
         gm: m.gm ?? null,
         do_name: m.doName ?? null,
         sdo_name: m.sdoName ?? null,
+        total_points: typeof r.total_points === "number" ? r.total_points : (typeof m.totalPoints === "number" ? m.totalPoints : null),
         sales: typeof m.sales === "number" ? m.sales : null,
         ly_sales: typeof m.lySales === "number" ? m.lySales : null,
         pct: typeof m.pctVsLy === "number" ? m.pctVsLy : null, // fraction
@@ -723,7 +725,7 @@ const leaderKey = (v) => String(v ?? "").replace(/-(?:sdo|rvp|do)\s*$/i, "").tri
 async function periodBoardLeaders(supa, period, tier) {
   const { data: off } = await supa
     .from("ranking_official_leaders")
-    .select("entity_name, match_key, sdo_name, rank")
+    .select("entity_name, match_key, sdo_name, rank, total_points")
     .eq("period", period).eq("tier", tier).order("rank", { ascending: true });
   if (off && off.length) {
     return {
@@ -733,6 +735,7 @@ async function periodBoardLeaders(supa, period, tier) {
         name: r.entity_name,
         sdo_name: r.sdo_name ?? null,
         rank: typeof r.rank === "number" ? r.rank : null,
+        total_points: r.total_points != null ? Number(r.total_points) : null,
       })),
     };
   }
@@ -742,7 +745,7 @@ async function periodBoardLeaders(supa, period, tier) {
   const run = runs?.[0];
   if (!run) return { source: null, rows: [] };
   const { data: rows } = await supa
-    .from("ranking_rows").select("entity_key, rank, metrics")
+    .from("ranking_rows").select("entity_key, rank, total_points, metrics")
     .eq("run_id", run.id).eq("scope", "ptd").eq("tier", tier);
   return {
     source: "run",
@@ -754,6 +757,7 @@ async function periodBoardLeaders(supa, period, tier) {
         name,
         sdo_name: m.sdoName ?? null,
         rank: typeof r.rank === "number" ? r.rank : null,
+        total_points: typeof r.total_points === "number" ? r.total_points : (typeof m.totalPoints === "number" ? m.totalPoints : null),
       };
     }),
   };
@@ -924,6 +928,52 @@ export async function periodMovers(supa, params, storeNums = null) {
     }
   }
   return { current: null, previous: null, source: "run", rows: [] };
+}
+
+// "Top Performers" — the leaderboard (not movers) for the newest available
+// period: the highest-ranked stores and DOs by SOAR rank, with total points.
+// Prefers the official sheet for the period, else that period's computed run.
+export async function topPerformers(supa, params, storeNums = null) {
+  const clamp = (v, d) => Math.max(1, Math.min(60, parseInt(v, 10) || d));
+  const storeLimit = clamp(params.store_limit, 20);
+  const doLimit = clamp(params.do_limit, 10);
+
+  const periods = await availablePeriods(supa);
+  if (!periods.length) return { period: null, source: null, stores: [], dos: [] };
+  const period = periods[0];
+  const [sboard, dboard, names, vis] = await Promise.all([
+    periodBoard(supa, period),
+    periodBoardLeaders(supa, period, "do"),
+    runStoreNameMap(supa),
+    visibleLeaderNames(supa, storeNums),
+  ]);
+  const allow = allowSet(storeNums);
+  const stores = sboard.rows
+    .map((r) => {
+      const nm = names.get(r.store_number) || {};
+      return {
+        rank: typeof r.rank === "number" ? r.rank : null,
+        store_number: r.store_number,
+        location: r.location ?? nm.location ?? null,
+        gm: r.gm ?? nm.gm ?? null,
+        do_name: r.do_name ?? nm.doName ?? null,
+        sdo_name: r.sdo_name ?? nm.sdoName ?? null,
+        total_points: r.total_points ?? null,
+      };
+    })
+    .filter((r) => (!allow || allow.has(r.store_number)) && r.rank != null)
+    .sort((a, b) => a.rank - b.rank)
+    .slice(0, storeLimit);
+
+  const doAllow = vis ? new Set([...vis.dos].map(leaderKey)) : null;
+  const dos = dboard.rows
+    .map((r) => ({ rank: typeof r.rank === "number" ? r.rank : null, name: r.name, sdo_name: r.sdo_name ?? null, total_points: r.total_points ?? null, key: r.key }))
+    .filter((r) => (!doAllow || doAllow.has(r.key)) && r.rank != null)
+    .sort((a, b) => a.rank - b.rank)
+    .slice(0, doLimit);
+
+  const source = sboard.source || dboard.source || "run";
+  return { period, source, stores, dos };
 }
 
 // One run's ENTIRE board — every scope and tier, in a single response — for

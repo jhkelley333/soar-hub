@@ -200,6 +200,32 @@ export function fetchPeriodMovers(limit = 11, tier: MoverTier = "store"): Promis
   return req(`${FN}?action=period-movers&limit=${limit}&tier=${tier}`);
 }
 
+// "Top Performers" — leaderboard (by rank) for the newest period: top stores + top DOs.
+export interface TopStoreRow {
+  rank: number | null;
+  store_number: string;
+  location: string | null;
+  gm: string | null;
+  do_name: string | null;
+  sdo_name: string | null;
+  total_points: number | null;
+}
+export interface TopDoRow {
+  rank: number | null;
+  name: string | null;
+  sdo_name: string | null;
+  total_points: number | null;
+}
+export interface TopPerformersResponse {
+  period: number | null;
+  source?: "official" | "run" | null;
+  stores: TopStoreRow[];
+  dos: TopDoRow[];
+}
+export function fetchTopPerformers(storeLimit = 20, doLimit = 10): Promise<TopPerformersResponse> {
+  return req(`${FN}?action=top-performers&store_limit=${storeLimit}&do_limit=${doLimit}`);
+}
+
 // Official "SOAR PTD RANKING" sheet upload — archives the store tier's exact
 // period-ending ranks / % vs LY, which 7 UP + Movers & Shakers then read.
 export interface PtdRankingRowInput {

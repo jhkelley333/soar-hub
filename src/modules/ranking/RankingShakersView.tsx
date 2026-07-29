@@ -3,16 +3,20 @@
 // (store, GM/DO/SDO, rank, spots gained) or DOs (DO, SDO, rank, spots gained).
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Rocket, ArrowUp } from "lucide-react";
+import { Rocket, ArrowUp, Presentation } from "lucide-react";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Segmented } from "@/shared/ui/Segmented";
 import { cn } from "@/lib/cn";
 import { fetchPeriodMovers, type PeriodMoverRow, type MoverTier } from "./api";
+import { SlideTable, PresentModal, type SlideCol } from "./present";
+
+const deltaCell = (r: PeriodMoverRow) => (r.delta == null ? "—" : `+${r.delta}`);
 
 export function RankingShakersView() {
   const [limit, setLimit] = useState(11);
   const [tier, setTier] = useState<MoverTier>("store");
+  const [present, setPresent] = useState(false);
   const q = useQuery({
     queryKey: ["ranking-shakers", limit, tier],
     queryFn: () => fetchPeriodMovers(limit, tier),
@@ -24,6 +28,25 @@ export function RankingShakersView() {
   const official = q.data?.source === "official";
   const isDo = tier === "do";
   const pLabel = cur ? `P${cur.period}` : "";
+
+  const rankLabel = `${pLabel || "P"} Rank`;
+  const slideCols: SlideCol<PeriodMoverRow>[] = isDo
+    ? [
+        { key: "do", label: "DO", cell: (r) => r.name ?? "—", cellClassName: "font-semibold" },
+        { key: "sdo", label: "SDO", cell: (r) => r.sdo_name ?? "—" },
+        { key: "rank", label: rankLabel, align: "center", cell: (r) => r.rank ?? "—", cellClassName: "font-bold" },
+        { key: "delta", label: "+/- Last Period", align: "center", cell: deltaCell, cellClassName: "bg-green-100 font-bold" },
+      ]
+    : [
+        { key: "store", label: "Store #", align: "center", cell: (r) => r.store_number, cellClassName: "bg-blue-100 font-semibold" },
+        { key: "loc", label: "Location", cell: (r) => r.location ?? "—" },
+        { key: "gm", label: "GM", cell: (r) => r.gm ?? "—" },
+        { key: "do", label: "DO", cell: (r) => r.do_name ?? "—" },
+        { key: "sdo", label: "SDO", cell: (r) => r.sdo_name ?? "—" },
+        { key: "rank", label: rankLabel, align: "center", cell: (r) => r.rank ?? "—", cellClassName: "font-bold" },
+        { key: "delta", label: "+/- Last Period", align: "center", cell: deltaCell, cellClassName: "bg-green-100 font-bold" },
+      ];
+  const slideTitle = `${isDo ? "DO " : ""}Movers & Shakers${pLabel ? ` · ${pLabel}` : ""}${prev ? ` vs P${prev.period}` : ""}`;
 
   return (
     <div className="space-y-4">
@@ -51,6 +74,13 @@ export function RankingShakersView() {
             dense value={String(limit)} onChange={(v) => setLimit(Number(v))}
             options={[{ value: "11", label: "Top 11" }, { value: "25", label: "25" }, { value: "50", label: "All" }]}
           />
+          <button
+            onClick={() => setPresent(true)}
+            disabled={!rows.length}
+            className="inline-flex items-center gap-2 rounded-lg bg-white/15 px-3 py-2 text-sm font-semibold text-white ring-1 ring-white/30 hover:bg-white/25 disabled:opacity-40"
+          >
+            <Presentation className="h-4 w-4" />Present
+          </button>
         </div>
       </div>
 
@@ -117,6 +147,15 @@ export function RankingShakersView() {
           </div>
         </div>
       )}
+
+      <PresentModal open={present} onClose={() => setPresent(false)} filename={`${pLabel || "SOAR"}-${isDo ? "do-" : ""}movers-shakers`}>
+        <SlideTable
+          title={slideTitle}
+          columns={slideCols}
+          rows={rows}
+          getKey={(r, i) => `${r.store_number}-${i}`}
+        />
+      </PresentModal>
     </div>
   );
 }

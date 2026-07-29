@@ -3,14 +3,25 @@
 // pctVsLy straight off the latest ranking run, with each store's GM / DO / SDO.
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { TrendingUp } from "lucide-react";
+import { TrendingUp, Presentation } from "lucide-react";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Segmented } from "@/shared/ui/Segmented";
 import { cn } from "@/lib/cn";
 import { fetchSevenUp, type RankScope, type SevenUpRow } from "./api";
+import { SlideTable, PresentModal, type SlideCol } from "./present";
 
 const fmtPct = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`);
+type SevenUpSlideRow = SevenUpRow & { pos: number };
+const sevenUpCols: SlideCol<SevenUpSlideRow>[] = [
+  { key: "pos", label: "#", align: "center", cell: (r) => r.pos, cellClassName: "font-bold" },
+  { key: "store", label: "Store #", align: "center", cell: (r) => r.store_number, cellClassName: "bg-blue-100 font-semibold" },
+  { key: "loc", label: "Location", cell: (r) => r.location ?? "—" },
+  { key: "gm", label: "GM", cell: (r) => r.gm ?? "—" },
+  { key: "do", label: "DO", cell: (r) => r.do_name ?? "—" },
+  { key: "sdo", label: "SDO", cell: (r) => r.sdo_name ?? "—" },
+  { key: "pct", label: "% vs Last Year", align: "center", cell: (r) => fmtPct(r.pct_vs_ly), cellClassName: "bg-green-100 font-bold" },
+];
 const fmtUsd = (v: number | null) => (v == null ? "—" : `$${Math.round(v).toLocaleString()}`);
 const fmtDate = (s: string | null | undefined) =>
   s ? new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—";
@@ -18,6 +29,7 @@ const fmtDate = (s: string | null | undefined) =>
 export function RankingSevenUpView() {
   const [scope, setScope] = useState<RankScope>("ptd");
   const [limit, setLimit] = useState(7);
+  const [present, setPresent] = useState(false);
   const q = useQuery({
     queryKey: ["ranking-sevenup", scope, limit],
     queryFn: () => fetchSevenUp(scope, limit),
@@ -26,6 +38,8 @@ export function RankingSevenUpView() {
   const rows: SevenUpRow[] = q.data?.rows ?? [];
   const run = q.data?.run ?? null;
   const official = q.data?.source === "official";
+  const pLabel = run ? `P${run.period}${scope === "wtd" && run.week ? ` W${run.week}` : ""}` : "";
+  const slideRows: SevenUpSlideRow[] = rows.map((r, i) => ({ ...r, pos: i + 1 }));
 
   return (
     <div className="space-y-4">
@@ -54,6 +68,13 @@ export function RankingSevenUpView() {
             dense value={String(limit)} onChange={(v) => setLimit(Number(v))}
             options={[{ value: "7", label: "Top 7" }, { value: "15", label: "15" }, { value: "50", label: "All" }]}
           />
+          <button
+            onClick={() => setPresent(true)}
+            disabled={!rows.length}
+            className="inline-flex items-center gap-2 rounded-lg bg-white/15 px-3 py-2 text-sm font-semibold text-white ring-1 ring-white/30 hover:bg-white/25 disabled:opacity-40"
+          >
+            <Presentation className="h-4 w-4" />Present
+          </button>
         </div>
       </div>
 
@@ -111,6 +132,15 @@ export function RankingSevenUpView() {
           </div>
         </div>
       )}
+
+      <PresentModal open={present} onClose={() => setPresent(false)} filename={`${pLabel || "SOAR"}-7up-in-sales`}>
+        <SlideTable
+          title={`7 UP in Sales${pLabel ? ` · ${pLabel}` : ""}`}
+          columns={sevenUpCols}
+          rows={slideRows}
+          getKey={(r) => r.store_number}
+        />
+      </PresentModal>
     </div>
   );
 }
