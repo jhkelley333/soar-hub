@@ -177,8 +177,10 @@ export function fetchSevenUp(scope: RankScope, limit = 7): Promise<SevenUpRespon
 }
 
 // "Movers & Shakers" — biggest climbers in period rank vs the prior period.
+export type MoverTier = "store" | "do" | "sdo" | "rvp";
 export interface PeriodMoverRow {
-  store_number: string;
+  store_number: string;      // store # (store tier) or a leader join-key (leader tiers)
+  name?: string | null;      // DO / SDO / RVP display name (leader tiers)
   location: string | null;
   gm: string | null;
   do_name: string | null;
@@ -190,11 +192,12 @@ export interface PeriodMoverRow {
 export interface PeriodMoversResponse {
   current: { period: number; week: number | null; week_ending: string | null } | null;
   previous: { period: number } | null;
+  tier?: MoverTier;
   source?: "official" | "run";
   rows: PeriodMoverRow[];
 }
-export function fetchPeriodMovers(limit = 11): Promise<PeriodMoversResponse> {
-  return req(`${FN}?action=period-movers&limit=${limit}`);
+export function fetchPeriodMovers(limit = 11, tier: MoverTier = "store"): Promise<PeriodMoversResponse> {
+  return req(`${FN}?action=period-movers&limit=${limit}&tier=${tier}`);
 }
 
 // Official "SOAR PTD RANKING" sheet upload — archives the store tier's exact
@@ -209,9 +212,19 @@ export interface PtdRankingRowInput {
   ly_sales?: number | null;
   pct_vs_ly?: number | null;
 }
+export interface PtdLeaderRowInput {
+  tier: string;              // 'do' | 'sdo' | 'rvp'
+  entity_name: string;
+  sdo_name?: string | null;
+  store_count?: number | null;
+  rank?: number | null;
+  total_points?: number | null;
+  ptd_sales?: number | null;
+  ly_sales?: number | null;
+}
 export function ingestPtdRankingRows(input: {
-  filename: string; period: number; rows: PtdRankingRowInput[];
-}): Promise<{ period: number; stores: number }> {
+  filename: string; period: number; rows: PtdRankingRowInput[]; leaders?: PtdLeaderRowInput[];
+}): Promise<{ period: number; stores: number; leaders?: number }> {
   return req(`${FN}?action=ingest-ptd-ranking`, { method: "POST", body: JSON.stringify(input) });
 }
 

@@ -713,6 +713,67 @@ async function availablePeriods(supa) {
   return [...set].sort((a, b) => b - a);
 }
 
+// Leader-name join key: drop the "-DO"/"-SDO"/"-RVP" suffix, collapse space,
+// lower-case. Bridges the sheet ("Jose Soto-DO") and the ranker ("Jose Soto").
+const leaderKey = (v) => String(v ?? "").replace(/-(?:sdo|rvp|do)\s*$/i, "").trim().replace(/\s+/g, " ").toLowerCase();
+
+// The leader-tier (do/sdo/rvp) board for one period, source-agnostic: prefer
+// the official archive for that period, else that period's latest complete
+// computed run. Rows carry a join key, a display name, the SDO (do tier), rank.
+async function periodBoardLeaders(supa, period, tier) {
+  const { data: off } = await supa
+    .from("ranking_official_leaders")
+    .select("entity_name, match_key, sdo_name, rank")
+    .eq("period", period).eq("tier", tier).order("rank", { ascending: true });
+  if (off && off.length) {
+    return {
+      source: "official",
+      rows: off.map((r) => ({
+        key: r.match_key,
+        name: r.entity_name,
+        sdo_name: r.sdo_name ?? null,
+        rank: typeof r.rank === "number" ? r.rank : null,
+      })),
+    };
+  }
+  const { data: runs } = await supa
+    .from("ranking_runs").select("id").eq("status", "complete").eq("period", period)
+    .order("started_at", { ascending: false }).limit(1);
+  const run = runs?.[0];
+  if (!run) return { source: null, rows: [] };
+  const { data: rows } = await supa
+    .from("ranking_rows").select("entity_key, rank, metrics")
+    .eq("run_id", run.id).eq("scope", "ptd").eq("tier", tier);
+  return {
+    source: "run",
+    rows: (rows || []).map((r) => {
+      const m = r.metrics || {};
+      const name = m.name ?? r.entity_key;
+      return {
+        key: leaderKey(name),
+        name,
+        sdo_name: m.sdoName ?? null,
+        rank: typeof r.rank === "number" ? r.rank : null,
+      };
+    }),
+  };
+}
+
+// The DO / SDO / RVP names visible to the caller (null = org-wide, sees all),
+// derived from the latest complete run's store rows (which carry the chain).
+async function visibleLeaderNames(supa, storeNums) {
+  if (storeNums == null) return null;
+  const { data: runs } = await supa
+    .from("ranking_runs").select("id").eq("status", "complete")
+    .order("started_at", { ascending: false }).limit(1);
+  const run = runs?.[0];
+  if (!run) return { dos: new Set(), sdos: new Set(), rvps: new Set(), ents: new Set() };
+  const { data: rows } = await supa
+    .from("ranking_rows").select("entity_key, metrics")
+    .eq("run_id", run.id).eq("scope", "ptd").eq("tier", "store");
+  return deriveVisibleNames(rows || [], storeNums);
+}
+
 export async function sevenUpSales(supa, params, storeNums = null) {
   const scope = params.scope === "wtd" ? "wtd" : "ptd";
   const limit = Math.max(1, Math.min(50, parseInt(params.limit, 10) || 7));
@@ -779,6 +840,51 @@ export async function sevenUpSales(supa, params, storeNums = null) {
 // moved up). Biggest climbers with GM / DO / SDO.
 export async function periodMovers(supa, params, storeNums = null) {
   const limit = Math.max(1, Math.min(50, parseInt(params.limit, 10) || 11));
+  const tier = ["do", "sdo", "rvp"].includes(params.tier) ? params.tier : "store";
+
+  // Leader tiers (DO / SDO / RVP) — climbers in leader rank across the cutover.
+  if (tier !== "store") {
+    const periods = await availablePeriods(supa);
+    if (periods.length >= 2) {
+      const [curPeriod, prevPeriod] = periods;
+      const [cur, prev, vis] = await Promise.all([
+        periodBoardLeaders(supa, curPeriod, tier),
+        periodBoardLeaders(supa, prevPeriod, tier),
+        visibleLeaderNames(supa, storeNums),
+      ]);
+      if (cur.rows.length && prev.rows.length) {
+        const prevRank = new Map(prev.rows.map((r) => [r.key, r.rank]));
+        const setName = { do: "dos", sdo: "sdos", rvp: "rvps" }[tier];
+        const allow = vis ? new Set([...vis[setName]].map(leaderKey)) : null;
+        const out = cur.rows
+          .map((r) => {
+            const prevR = prevRank.get(r.key);
+            const delta = typeof prevR === "number" && typeof r.rank === "number" ? prevR - r.rank : null;
+            return {
+              store_number: r.key,            // join key (also the React key)
+              name: r.name,                   // DO / SDO / RVP display name
+              location: null,
+              gm: null,
+              do_name: null,
+              sdo_name: r.sdo_name ?? null,
+              rank: typeof r.rank === "number" ? r.rank : null,
+              prev_rank: typeof prevR === "number" ? prevR : null,
+              delta,
+            };
+          })
+          .filter((r) => (!allow || allow.has(r.store_number)) && r.delta != null && r.delta > 0)
+          .sort((a, b) => b.delta - a.delta)
+          .slice(0, limit);
+        const source = cur.source === "official" || prev.source === "official" ? "official" : "run";
+        return {
+          current: { period: curPeriod, week: null, week_ending: null },
+          previous: { period: prevPeriod },
+          tier, source, rows: out,
+        };
+      }
+    }
+    return { current: null, previous: null, tier, source: "run", rows: [] };
+  }
 
   const periods = await availablePeriods(supa);
   if (periods.length >= 2) {

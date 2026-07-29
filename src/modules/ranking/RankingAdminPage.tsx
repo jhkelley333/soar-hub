@@ -597,9 +597,10 @@ function PtdRankingUploadPanel() {
       const useP = detected != null && detected >= 1 && detected <= 13 ? detected : period;
 
       const num = (v: unknown) => (typeof v === "number" && isFinite(v) ? v : null);
-      // Store rows only: DI # (col C, idx 2) numeric. The DO / SDO / RVP tiers
-      // below carry text in that column, so they drop out naturally.
-      const rows = grid.slice(hIdx + 1)
+      const body = grid.slice(hIdx + 1);
+      // Store rows: DI # (col C, idx 2) numeric. The DO / SDO / RVP tiers below
+      // carry text there, so they drop out of the store list naturally.
+      const rows = body
         .filter((r) => Number.isFinite(Number(r?.[2])) && Number.isFinite(Number(r?.[1])))
         .map((r) => ({
           soar_rank: num(r?.[1]),
@@ -614,8 +615,31 @@ function PtdRankingUploadPanel() {
         .filter((r) => /^\d+$/.test(r.store_code));
       if (!rows.length) throw new Error("No store rows found under the header.");
 
-      const res = await ingestPtdRankingRows({ filename: f.name, period: useP, rows });
-      setSummary(`P${res.period} · ${res.stores} stores archived`);
+      // Leader tiers: classify each non-store row by its name suffix in col C
+      // ("...-DO" / "...-SDO" / "...-RVP"). DO rows carry the SDO in col D; SDO /
+      // RVP rows carry a store count there instead.
+      const leaders = body
+        .map((r) => {
+          const c = String(r?.[2] ?? "").trim();
+          const mm = /-(SDO|RVP|DO)\s*$/i.exec(c);
+          if (!mm || !Number.isFinite(Number(r?.[1]))) return null;
+          const tier = mm[1].toLowerCase();
+          const isLeaderParent = tier === "sdo" || tier === "rvp";
+          return {
+            tier,
+            entity_name: c,
+            sdo_name: tier === "do" ? String(r?.[3] ?? "").trim() || null : null,
+            store_count: isLeaderParent ? num(r?.[3]) : null,
+            rank: num(r?.[1]),
+            total_points: num(r?.[5]),
+            ptd_sales: num(r?.[7]),
+            ly_sales: num(r?.[8]),
+          };
+        })
+        .filter((r): r is NonNullable<typeof r> => r != null);
+
+      const res = await ingestPtdRankingRows({ filename: f.name, period: useP, rows, leaders });
+      setSummary(`P${res.period} · ${res.stores} stores · ${res.leaders ?? 0} leaders archived`);
       toast.push(`Official P${res.period} ranking uploaded — 7 UP + Movers & Shakers now use it.`, "success");
     } catch (err) {
       toast.push(err instanceof Error ? err.message : "Upload failed.", "error");
