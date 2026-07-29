@@ -25,6 +25,7 @@ export function RankingSevenUpView() {
   });
   const rows: SevenUpRow[] = q.data?.rows ?? [];
   const run = q.data?.run ?? null;
+  const official = q.data?.source === "official";
 
   return (
     <div className="space-y-4">
@@ -39,7 +40,8 @@ export function RankingSevenUpView() {
               7&nbsp;UP <span className="font-semibold text-white/90">in Sales</span>
             </div>
             <div className="text-xs font-medium text-white/80">
-              Stores most up vs last year{run ? ` · P${run.period}${scope === "wtd" ? ` W${run.week}` : ""} · wk ending ${fmtDate(run.week_ending)}` : ""}
+              Stores most up vs last year{run ? ` · P${run.period}${scope === "wtd" && run.week ? ` W${run.week}` : ""}${run.week_ending ? ` · wk ending ${fmtDate(run.week_ending)}` : ""}` : ""}
+              {official && <span className="ml-2 rounded-full bg-white/20 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ring-1 ring-white/30">Official sheet</span>}
             </div>
           </div>
         </div>

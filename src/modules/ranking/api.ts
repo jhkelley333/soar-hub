@@ -167,8 +167,9 @@ export interface SevenUpRow {
   pct_vs_ly: number | null;
 }
 export interface SevenUpResponse {
-  run: { period: number; week: number; week_ending: string } | null;
+  run: { period: number; week: number | null; week_ending: string | null } | null;
   scope: RankScope;
+  source?: "official" | "run";
   rows: SevenUpRow[];
 }
 export function fetchSevenUp(scope: RankScope, limit = 7): Promise<SevenUpResponse> {
@@ -187,12 +188,31 @@ export interface PeriodMoverRow {
   delta: number | null;      // + = spots gained
 }
 export interface PeriodMoversResponse {
-  current: { period: number; week: number; week_ending: string } | null;
+  current: { period: number; week: number | null; week_ending: string | null } | null;
   previous: { period: number } | null;
+  source?: "official" | "run";
   rows: PeriodMoverRow[];
 }
 export function fetchPeriodMovers(limit = 11): Promise<PeriodMoversResponse> {
   return req(`${FN}?action=period-movers&limit=${limit}`);
+}
+
+// Official "SOAR PTD RANKING" sheet upload — archives the store tier's exact
+// period-ending ranks / % vs LY, which 7 UP + Movers & Shakers then read.
+export interface PtdRankingRowInput {
+  soar_rank: number | null;
+  store_code: string;
+  location?: string | null;
+  gm?: string | null;
+  total_points?: number | null;
+  ptd_sales?: number | null;
+  ly_sales?: number | null;
+  pct_vs_ly?: number | null;
+}
+export function ingestPtdRankingRows(input: {
+  filename: string; period: number; rows: PtdRankingRowInput[];
+}): Promise<{ period: number; stores: number }> {
+  return req(`${FN}?action=ingest-ptd-ranking`, { method: "POST", body: JSON.stringify(input) });
 }
 
 // Communication Board — read-only mirror of the in-store weekly comms board.
