@@ -337,6 +337,8 @@ export interface BulkRowAnnotated {
   errors: string[];
   warnings: string[];
   already_exists: boolean;
+  existing_id?: string | null;
+  is_update?: boolean;
 }
 
 export interface BulkPreviewResponse {
@@ -344,13 +346,14 @@ export interface BulkPreviewResponse {
   summary: {
     total: number;
     valid: number;
+    updates: number;
     invalid: number;
     skipped: number;
   };
 }
 
 export interface BulkImportResult extends BulkRowAnnotated {
-  status: "invited" | "skipped" | "error";
+  status: "invited" | "updated" | "skipped" | "error";
   message?: string;
   user_id?: string;
 }
@@ -360,22 +363,23 @@ export interface BulkImportResponse {
   summary: {
     total: number;
     invited: number;
+    updated: number;
     skipped: number;
     errors: number;
   };
 }
 
-export function bulkPreview(rows: BulkRowInput[]): Promise<BulkPreviewResponse> {
+export function bulkPreview(rows: BulkRowInput[], updateExisting = false): Promise<BulkPreviewResponse> {
   return request<BulkPreviewResponse>(`${FN}?action=bulk-preview`, {
     method: "POST",
-    body: JSON.stringify({ rows }),
+    body: JSON.stringify({ rows, update_existing: updateExisting }),
   });
 }
 
-export function bulkImport(rows: BulkRowInput[]): Promise<BulkImportResponse> {
+export function bulkImport(rows: BulkRowInput[], updateExisting = false): Promise<BulkImportResponse> {
   return request<BulkImportResponse>(`${FN}?action=bulk-import`, {
     method: "POST",
-    body: JSON.stringify({ rows }),
+    body: JSON.stringify({ rows, update_existing: updateExisting }),
   });
 }
 

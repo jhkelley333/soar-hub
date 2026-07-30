@@ -1522,7 +1522,7 @@ async function fetchHistory(supa, manager, query) {
 
 const ALL_ROLES = [...HOURLY_STORE_ROLES,"gm","do","sdo","rvp","vp","coo","admin","payroll","accounting","facilities","human_resources","fbc"];
 
-async function bulkValidate(supa, rows) {
+async function bulkValidate(supa, rows, updateExisting = false) {
   // Pre-load org maps so we can resolve codes → ids in O(1).
   const [
     { data: stores },
@@ -1543,7 +1543,7 @@ async function bulkValidate(supa, rows) {
   // Pre-load existing emails so we can mark duplicates upfront. Cap
   // at MAX_AUTH_PAGES * AUTH_USERS_PER_PAGE; warn if truncated so a
   // bulk import doesn't silently re-invite users that already exist.
-  const existingEmails = new Set();
+  const existingIdByEmail = new Map();
   try {
     let page = 1;
     let truncated = false;
@@ -1554,7 +1554,7 @@ async function bulkValidate(supa, rows) {
       });
       if (error) break;
       for (const u of data?.users ?? []) {
-        if (u.email) existingEmails.add(u.email.toLowerCase());
+        if (u.email) existingIdByEmail.set(u.email.toLowerCase(), u.id);
       }
       if ((data?.users ?? []).length < AUTH_USERS_PER_PAGE) break;
       if (page >= MAX_AUTH_PAGES) {
@@ -1583,35 +1583,13 @@ async function bulkValidate(supa, rows) {
     const role = String(row.role ?? "").trim();
     const scopeType = String(row.scope_type ?? "").trim();
     const codeRaw = String(row.scope_id_or_code ?? "").trim();
+    const existingId = existingIdByEmail.get(email) ?? null;
+    const alreadyExists = !!existingId;
+    // Update mode: a matching existing member has their name / phone corrected;
+    // role & scope are left untouched, so those columns aren't required here.
+    const isUpdate = updateExisting && alreadyExists;
 
     if (!email || !email.includes("@")) errors.push("Invalid email.");
-    if (!ALL_ROLES.includes(role)) errors.push(`Invalid role "${role}".`);
-
-    const expectedScope = scopeForRole(role);
-    if (expectedScope && scopeType !== expectedScope) {
-      errors.push(`Role ${role} expects scope_type "${expectedScope}", got "${scopeType}".`);
-    }
-
-    let scopeId = null;
-    if (scopeType === "global") {
-      // ok
-    } else if (!codeRaw) {
-      errors.push(`scope_id_or_code required for scope_type "${scopeType}".`);
-    } else if (scopeType === "store") {
-      scopeId = storeByNum[codeRaw];
-      if (!scopeId) errors.push(`Store number "${codeRaw}" not found.`);
-    } else if (scopeType === "district") {
-      scopeId = districtByCode[codeRaw];
-      if (!scopeId) errors.push(`District code "${codeRaw}" not found.`);
-    } else if (scopeType === "area") {
-      scopeId = areaByCode[codeRaw];
-      if (!scopeId) errors.push(`Area code "${codeRaw}" not found.`);
-    } else if (scopeType === "region") {
-      scopeId = regionByCode[codeRaw];
-      if (!scopeId) errors.push(`Region code "${codeRaw}" not found.`);
-    } else if (!errors.length) {
-      errors.push(`Unknown scope_type "${scopeType}".`);
-    }
 
     let phone = null;
     if (row.phone) {
@@ -1619,12 +1597,42 @@ async function bulkValidate(supa, rows) {
       if (!phone) errors.push("Phone must be a 10-digit number.");
     }
 
+    let scopeId = null;
+    if (isUpdate) {
+      if (!fullName && !phone) warnings.push("No name or phone to update — will be skipped.");
+    } else {
+      if (!ALL_ROLES.includes(role)) errors.push(`Invalid role "${role}".`);
+      const expectedScope = scopeForRole(role);
+      if (expectedScope && scopeType !== expectedScope) {
+        errors.push(`Role ${role} expects scope_type "${expectedScope}", got "${scopeType}".`);
+      }
+      if (scopeType === "global") {
+        // ok
+      } else if (!codeRaw) {
+        errors.push(`scope_id_or_code required for scope_type "${scopeType}".`);
+      } else if (scopeType === "store") {
+        scopeId = storeByNum[codeRaw];
+        if (!scopeId) errors.push(`Store number "${codeRaw}" not found.`);
+      } else if (scopeType === "district") {
+        scopeId = districtByCode[codeRaw];
+        if (!scopeId) errors.push(`District code "${codeRaw}" not found.`);
+      } else if (scopeType === "area") {
+        scopeId = areaByCode[codeRaw];
+        if (!scopeId) errors.push(`Area code "${codeRaw}" not found.`);
+      } else if (scopeType === "region") {
+        scopeId = regionByCode[codeRaw];
+        if (!scopeId) errors.push(`Region code "${codeRaw}" not found.`);
+      } else if (!errors.length) {
+        errors.push(`Unknown scope_type "${scopeType}".`);
+      }
+      if (alreadyExists) {
+        warnings.push("Email already in the system — will be skipped (turn on Update existing to correct their name/phone).");
+      }
+    }
+
     if (email) {
       if (seenEmails.has(email)) errors.push("Duplicate email in this CSV.");
       seenEmails.add(email);
-      if (existingEmails.has(email)) {
-        warnings.push("Email already in the system — will be skipped.");
-      }
     }
 
     return {
@@ -1638,7 +1646,9 @@ async function bulkValidate(supa, rows) {
       scope_code: codeRaw,
       errors,
       warnings,
-      already_exists: existingEmails.has(email),
+      already_exists: alreadyExists,
+      existing_id: existingId,
+      is_update: isUpdate,
     };
   });
 }
@@ -1654,12 +1664,14 @@ async function bulkPreview(supa, manager, body) {
   if (rows.length > 500) {
     return { error: "Bulk import is capped at 500 rows per upload.", status: 400 };
   }
-  const annotated = await bulkValidate(supa, rows);
+  const updateExisting = body?.update_existing === true;
+  const annotated = await bulkValidate(supa, rows, updateExisting);
   const summary = {
     total: annotated.length,
     valid: annotated.filter((r) => r.errors.length === 0 && !r.already_exists).length,
+    updates: annotated.filter((r) => r.errors.length === 0 && r.is_update && (r.full_name || r.phone)).length,
     invalid: annotated.filter((r) => r.errors.length > 0).length,
-    skipped: annotated.filter((r) => r.errors.length === 0 && r.already_exists).length,
+    skipped: annotated.filter((r) => r.errors.length === 0 && r.already_exists && !(r.is_update && (r.full_name || r.phone))).length,
   };
   return { rows: annotated, summary };
 }
@@ -1672,7 +1684,8 @@ async function bulkImport(supa, manager, body) {
   if (!Array.isArray(rows) || rows.length === 0) {
     return { error: "No rows to import.", status: 400 };
   }
-  const annotated = await bulkValidate(supa, rows);
+  const updateExisting = body?.update_existing === true;
+  const annotated = await bulkValidate(supa, rows, updateExisting);
   const inviteRedirect =
     (process.env.URL || process.env.DEPLOY_URL || "").replace(/\/$/, "") +
       "/accept-invite";
@@ -1684,6 +1697,37 @@ async function bulkImport(supa, manager, body) {
       continue;
     }
     if (r.already_exists) {
+      // Update mode: correct an existing member's name / phone (role & scope
+      // untouched). New emails still fall through to the invite path below.
+      if (r.is_update && r.existing_id) {
+        const patch = {};
+        if (r.full_name) patch.full_name = r.full_name;
+        if (r.phone) patch.phone = r.phone;
+        if (Object.keys(patch).length === 0) {
+          results.push({ ...r, status: "skipped", message: "nothing to update" });
+          continue;
+        }
+        try {
+          const { data: before } = await supa
+            .from("profiles").select("full_name, phone").eq("id", r.existing_id).maybeSingle();
+          const { error: upErr } = await supa.from("profiles").update(patch).eq("id", r.existing_id);
+          if (upErr) {
+            results.push({ ...r, status: "error", message: upErr.message });
+            continue;
+          }
+          await logChange(supa, {
+            actor_id: manager.id,
+            target_id: r.existing_id,
+            action: "update",
+            before: before ?? null,
+            after: patch,
+          });
+          results.push({ ...r, status: "updated", user_id: r.existing_id, message: "name/phone updated" });
+        } catch (e) {
+          results.push({ ...r, status: "error", message: String(e?.message ?? e) });
+        }
+        continue;
+      }
       results.push({ ...r, status: "skipped", message: "already exists" });
       continue;
     }
@@ -1761,6 +1805,7 @@ async function bulkImport(supa, manager, body) {
   const summary = {
     total: results.length,
     invited: results.filter((r) => r.status === "invited").length,
+    updated: results.filter((r) => r.status === "updated").length,
     skipped: results.filter((r) => r.status === "skipped").length,
     errors: results.filter((r) => r.status === "error").length,
   };

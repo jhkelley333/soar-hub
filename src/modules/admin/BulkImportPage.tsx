@@ -70,24 +70,43 @@ export function BulkImportPage() {
   const [parseError, setParseError] = useState<string | null>(null);
   const [preview, setPreview] = useState<BulkPreviewResponse | null>(null);
   const [imported, setImported] = useState<BulkImportResponse | null>(null);
+  // When on, rows whose email already exists correct that member's name/phone
+  // instead of being skipped (new emails are still invited).
+  const [updateExisting, setUpdateExisting] = useState(false);
 
   const previewMut = useMutation({
-    mutationFn: bulkPreview,
+    mutationFn: (rows: BulkRowInput[]) => bulkPreview(rows, updateExisting),
     onSuccess: (data) => setPreview(data),
     onError: (e: unknown) =>
       setParseError(e instanceof Error ? e.message : "Preview failed."),
   });
 
   const importMut = useMutation({
-    mutationFn: bulkImport,
+    mutationFn: (rows: BulkRowInput[]) => bulkImport(rows, updateExisting),
     onSuccess: (data) => {
       setImported(data);
       qc.invalidateQueries({ queryKey: ["my-team"] });
-      toast.push(`Imported: ${data.summary.invited} invites sent.`, "success");
+      const bits = [
+        data.summary.invited ? `${data.summary.invited} invited` : "",
+        data.summary.updated ? `${data.summary.updated} updated` : "",
+      ].filter(Boolean).join(", ");
+      toast.push(`Done: ${bits || "no changes"}.`, "success");
     },
     onError: (e: unknown) =>
       setParseError(e instanceof Error ? e.message : "Import failed."),
   });
+
+  // Re-run the preview when the update-existing toggle flips (rows already loaded).
+  function toggleUpdateExisting(next: boolean) {
+    setUpdateExisting(next);
+    if (parsed && parsed.length) {
+      setImported(null);
+      // bulkPreview closes over updateExisting via the mutationFn; call directly.
+      bulkPreview(parsed, next).then(setPreview).catch((e) =>
+        setParseError(e instanceof Error ? e.message : "Preview failed."),
+      );
+    }
+  }
 
   function downloadTemplate() {
     const csv = toCSV(TEMPLATE_HEADERS, TEMPLATE_ROWS);
@@ -193,6 +212,22 @@ export function BulkImportPage() {
               </p>
             </div>
 
+            <label className="flex items-start gap-2 rounded-md border border-zinc-200 bg-white p-3 text-sm">
+              <input
+                type="checkbox"
+                checked={updateExisting}
+                onChange={(e) => toggleUpdateExisting(e.target.checked)}
+                className="mt-0.5 h-4 w-4 rounded border-zinc-300 text-accent focus:ring-accent"
+              />
+              <span>
+                <span className="font-medium text-midnight">Update existing members</span>
+                <span className="block text-xs text-zinc-600">
+                  Correct the <b>name / phone</b> of people already in the system (matched by email).
+                  Role &amp; scope are left unchanged; new emails are still invited.
+                </span>
+              </span>
+            </label>
+
             <div className="flex flex-wrap gap-2">
               <Button
                 variant="primary"
@@ -279,17 +314,23 @@ function PreviewTable({
   const status = useMemo(
     () => (r: BulkRowAnnotated) => {
       if (r.errors.length > 0) return { tone: "danger" as const, label: "Error" };
+      if (r.is_update && (r.full_name || r.phone)) return { tone: "info" as const, label: "Update" };
       if (r.already_exists) return { tone: "neutral" as const, label: "Skip" };
       return { tone: "success" as const, label: "Ready" };
     },
     []
   );
+  const actionable = summary.valid + summary.updates;
+  const applyLabel = [
+    summary.valid ? `${summary.valid} invite${summary.valid === 1 ? "" : "s"}` : "",
+    summary.updates ? `${summary.updates} update${summary.updates === 1 ? "" : "s"}` : "",
+  ].filter(Boolean).join(" + ");
 
   return (
     <Card>
       <CardHeader
         title="2. Review"
-        description={`${summary.valid} ready · ${summary.skipped} skipped · ${summary.invalid} error`}
+        description={`${summary.valid} ready · ${summary.updates} update · ${summary.skipped} skipped · ${summary.invalid} error`}
         actions={
           <div className="flex gap-2">
             <Button variant="ghost" size="sm" onClick={onCancel}>
@@ -299,11 +340,9 @@ function PreviewTable({
               variant="primary"
               size="sm"
               onClick={onConfirm}
-              disabled={submitting || summary.valid === 0}
+              disabled={submitting || actionable === 0}
             >
-              {submitting
-                ? "Sending invites…"
-                : `Send ${summary.valid} invite${summary.valid === 1 ? "" : "s"}`}
+              {submitting ? "Applying…" : `Apply ${applyLabel || "changes"}`}
             </Button>
           </div>
         }
@@ -374,7 +413,7 @@ function ResultsTable({
     <Card>
       <CardHeader
         title="3. Results"
-        description={`${summary.invited} invited · ${summary.skipped} skipped · ${summary.errors} error`}
+        description={`${summary.invited} invited · ${summary.updated} updated · ${summary.skipped} skipped · ${summary.errors} error`}
         actions={
           <Button variant="primary" size="sm" onClick={onReset}>
             Import another
@@ -401,6 +440,12 @@ function ResultsTable({
                       <Badge tone="success" className="inline-flex items-center gap-1">
                         <CheckCircle2 className="h-3 w-3" strokeWidth={2} />
                         Invited
+                      </Badge>
+                    )}
+                    {r.status === "updated" && (
+                      <Badge tone="info" className="inline-flex items-center gap-1">
+                        <CheckCircle2 className="h-3 w-3" strokeWidth={2} />
+                        Updated
                       </Badge>
                     )}
                     {r.status === "skipped" && <Badge tone="neutral">Skipped</Badge>}
