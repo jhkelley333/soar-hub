@@ -7,7 +7,7 @@
 //   A   missing IX -> store treated as 96.0% efficiency (sheet rule) until
 //       the IX parser lands; complaints on hold (B6) -> neutral 3
 import { fiscalForDate } from "../fiscal.js";
-import { resolveOrg } from "../kpiOrg.js";
+import { resolveOrg, isStoreRow, storeNumberOf } from "../kpiOrg.js";
 import { loadLaborCredits, applyCreditsToRows } from "../trainingCredit.js";
 import { backfillLaborDate } from "../kpiBackfill.js";
 import { loadRankingConfig } from "./config.js";
@@ -872,6 +872,78 @@ export async function sevenUpSales(supa, params, storeNums = null) {
     .sort((a, b) => b.pct_vs_ly - a.pct_vs_ly)
     .slice(0, limit);
   return { run: { period: run.period, week: run.week, week_ending: run.week_ending }, scope, source: "run", rows: out };
+}
+
+// The KPI feed's period sections carry a per-store `<metric>Dayparts` object
+// keyed Breakfast / Lunch / Afternoon / Dinner / Evening. We read them straight
+// off the latest stored snapshot (kpi_snapshots keeps the full payload).
+const DP_PTD_SECTIONS = ["periodToDateData", "periodToDate", "ptdData", "businessPeriodData", "periodData", "ptd"];
+const DP_WTD_SECTIONS = ["weekToDateData", "weekToDate", "wtdData", "businessWeekData", "weekData", "wtd"];
+const pickDpSection = (rd, cands) => { for (const k of cands) if (Array.isArray(rd?.[k])) return rd[k]; return []; };
+// One daypart's value off a `<metric>Dayparts` object (case-insensitive key).
+const daypartVal = (row, field, dp) => {
+  const o = row?.[field];
+  if (!o || typeof o !== "object") return null;
+  for (const k of Object.keys(o)) if (k.toLowerCase() === dp) { const v = o[k]; return typeof v === "number" && isFinite(v) ? v : null; }
+  return null;
+};
+
+// "Evening growth" — top stores by Evening-daypart net sales vs last year,
+// period-to-date. Same shape as 7 UP so the UI can share the board. Reads the
+// newest KPI snapshot's period rows; falls back to WTD/daily if a period lacks
+// dayparts. Enriched with GM / DO / SDO from the latest ranking run.
+export async function eveningGrowth(supa, params, storeNums = null) {
+  const DP = "evening";
+  const limit = Math.max(1, Math.min(50, parseInt(params.limit, 10) || 10));
+  const { data: snaps, error } = await supa
+    .from("kpi_snapshots").select("central_date, central_hour, payload")
+    .order("central_date", { ascending: false }).order("central_hour", { ascending: false }).limit(1);
+  if (error) {
+    if (/kpi_snapshots/.test(error.message)) return { as_of: null, daypart: "Evening", rows: [] };
+    return { error: error.message, status: 500 };
+  }
+  const snap = snaps?.[0];
+  if (!snap) return { as_of: null, daypart: "Evening", rows: [] };
+  const rd = snap.payload?.rawData || {};
+  const ptd = pickDpSection(rd, DP_PTD_SECTIONS);
+  const wtd = pickDpSection(rd, DP_WTD_SECTIONS);
+  const daily = Array.isArray(rd.businessDateData) ? rd.businessDateData : [];
+  // Use whichever period section actually carries daypart objects.
+  const hasDp = (rows) => rows.some((r) => r && typeof r.netSalesDayparts === "object" && r.netSalesDayparts);
+  const pick = hasDp(ptd) ? ptd : hasDp(wtd) ? wtd : daily;
+
+  const names = await runStoreNameMap(supa);
+  const allow = allowSet(storeNums);
+  const out = [];
+  for (const r of pick) {
+    if (!isStoreRow(r)) continue;
+    const number = storeNumberOf(r);
+    if (!number) continue;
+    const net = daypartVal(r, "netSalesDayparts", DP);
+    const prev = daypartVal(r, "previousYearNetSalesDayparts", DP);
+    let pct = null;
+    if (net != null && prev != null && prev !== 0) pct = ((net - prev) / prev) * 100;
+    else {
+      const y = daypartVal(r, "yoyNetSalesDaypartsPercentage", DP);
+      if (y != null) pct = Math.abs(y) <= 5 ? y * 100 : y; // feed may give a fraction or a %
+    }
+    if (pct == null) continue;
+    const key = normStoreNum(number);
+    if (allow && !allow.has(key)) continue;
+    const nm = names.get(key) || {};
+    out.push({
+      store_number: key,
+      location: nm.location ?? null,
+      gm: nm.gm ?? null,
+      do_name: nm.doName ?? null,
+      sdo_name: nm.sdoName ?? null,
+      sales: net,
+      ly_sales: prev,
+      pct_vs_ly: pct,
+    });
+  }
+  out.sort((a, b) => b.pct_vs_ly - a.pct_vs_ly);
+  return { as_of: snap.central_date, daypart: "Evening", source: "kpi", rows: out.slice(0, limit) };
 }
 
 // "Movers & Shakers" — the stores that climbed the most in PERIOD rank from the

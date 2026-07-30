@@ -16,6 +16,7 @@ import { RankingCommsBoardView } from "./RankingCommsBoardView";
 import { RankingSevenUpView } from "./RankingSevenUpView";
 import { RankingShakersView } from "./RankingShakersView";
 import { RankingTopPerformersView } from "./RankingTopPerformersView";
+import { RankingEveningView } from "./RankingEveningView";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, PauseCircle, Plus, Save } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -37,7 +38,7 @@ const fmtDate = (s: string) =>
   new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const todayIso = () => new Date().toLocaleDateString("en-CA");
 
-type AdminView = "ranking" | "top" | "sevenup" | "shakers" | "drill" | "watchlist" | "trends" | "risk" | "movers" | "comms" | "settings";
+type AdminView = "ranking" | "top" | "sevenup" | "evening" | "shakers" | "drill" | "watchlist" | "trends" | "risk" | "movers" | "comms" | "settings";
 
 export function RankingAdminPage() {
   const { profile } = useAuth();
@@ -68,6 +69,7 @@ export function RankingAdminPage() {
     { value: "ranking", label: "Ranking" },
     { value: "top", label: "Top Performers" },
     { value: "sevenup", label: "7 UP" },
+    { value: "evening", label: "Evenings" },
     { value: "shakers", label: "Movers & Shakers" },
     { value: "drill", label: "Drill" },
     { value: "watchlist", label: "Watchlist" },
@@ -91,6 +93,7 @@ export function RankingAdminPage() {
       {active === "ranking" ? <RankingResultsView />
         : active === "top" ? <RankingTopPerformersView />
         : active === "sevenup" ? <RankingSevenUpView />
+        : active === "evening" ? <RankingEveningView />
         : active === "shakers" ? <RankingShakersView />
         : active === "drill" ? <RankingDrillView />
         : active === "watchlist" ? <RankingWatchlistView />
