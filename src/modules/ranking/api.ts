@@ -178,6 +178,18 @@ export function fetchSevenUp(scope: RankScope, limit = 7, tier: "store" | "do" =
   return req(`${FN}?action=sevenup&scope=${scope}&limit=${limit}&tier=${tier}`);
 }
 
+// Evening-daypart sales growth vs last year (period-to-date), top stores.
+// Shares the SevenUpRow shape (sales = Evening net, ly_sales = Evening prior year).
+export interface EveningResponse {
+  as_of: string | null;
+  daypart: string;
+  source?: string;
+  rows: SevenUpRow[];
+}
+export function fetchEveningGrowth(limit = 10): Promise<EveningResponse> {
+  return req(`${FN}?action=evening-growth&limit=${limit}`);
+}
+
 // "Movers & Shakers" — biggest climbers in period rank vs the prior period.
 export type MoverTier = "store" | "do" | "sdo" | "rvp";
 export interface PeriodMoverRow {
