@@ -192,7 +192,10 @@ export function BulkOrgImportPage() {
     setParseError(null);
     setPreview(null);
     setImported(null);
-    const rows = parseCSVWithHeader(text);
+    // Drop fully-blank rows (Excel often pads exports with trailing empty rows).
+    const rows = parseCSVWithHeader(text).filter((r) =>
+      Object.values(r).some((v) => String(v ?? "").trim() !== "")
+    );
     if (rows.length === 0) {
       setParseError("Couldn't parse any rows. Did you include a header row?");
       setParsed(null);
