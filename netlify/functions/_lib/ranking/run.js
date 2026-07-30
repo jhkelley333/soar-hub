@@ -723,20 +723,26 @@ const leaderKey = (v) => String(v ?? "").replace(/-(?:sdo|rvp|do)\s*$/i, "").tri
 // the official archive for that period, else that period's latest complete
 // computed run. Rows carry a join key, a display name, the SDO (do tier), rank.
 async function periodBoardLeaders(supa, period, tier) {
+  const pctOf = (sales, ly) => (typeof sales === "number" && typeof ly === "number" && ly !== 0 ? (sales - ly) / ly : null);
   const { data: off } = await supa
     .from("ranking_official_leaders")
-    .select("entity_name, match_key, sdo_name, rank, total_points")
+    .select("entity_name, match_key, sdo_name, rank, total_points, ptd_sales, ly_sales")
     .eq("period", period).eq("tier", tier).order("rank", { ascending: true });
   if (off && off.length) {
     return {
       source: "official",
-      rows: off.map((r) => ({
-        key: r.match_key,
-        name: r.entity_name,
-        sdo_name: r.sdo_name ?? null,
-        rank: typeof r.rank === "number" ? r.rank : null,
-        total_points: r.total_points != null ? Number(r.total_points) : null,
-      })),
+      rows: off.map((r) => {
+        const sales = r.ptd_sales != null ? Number(r.ptd_sales) : null;
+        const ly = r.ly_sales != null ? Number(r.ly_sales) : null;
+        return {
+          key: r.match_key,
+          name: r.entity_name,
+          sdo_name: r.sdo_name ?? null,
+          rank: typeof r.rank === "number" ? r.rank : null,
+          total_points: r.total_points != null ? Number(r.total_points) : null,
+          sales, ly_sales: ly, pct: pctOf(sales, ly),
+        };
+      }),
     };
   }
   const { data: runs } = await supa
@@ -752,12 +758,16 @@ async function periodBoardLeaders(supa, period, tier) {
     rows: (rows || []).map((r) => {
       const m = r.metrics || {};
       const name = m.name ?? r.entity_key;
+      const sales = typeof m.sales === "number" ? m.sales : null;
+      const ly = typeof m.lySales === "number" ? m.lySales : null;
       return {
         key: leaderKey(name),
         name,
         sdo_name: m.sdoName ?? null,
         rank: typeof r.rank === "number" ? r.rank : null,
         total_points: typeof r.total_points === "number" ? r.total_points : (typeof m.totalPoints === "number" ? m.totalPoints : null),
+        sales, ly_sales: ly,
+        pct: typeof m.pctVsLy === "number" ? m.pctVsLy : pctOf(sales, ly),
       };
     }),
   };
@@ -781,6 +791,33 @@ async function visibleLeaderNames(supa, storeNums) {
 export async function sevenUpSales(supa, params, storeNums = null) {
   const scope = params.scope === "wtd" ? "wtd" : "ptd";
   const limit = Math.max(1, Math.min(50, parseInt(params.limit, 10) || 7));
+  const tier = params.tier === "do" ? "do" : "store";
+
+  // DO leaderboard — DOs most up in sales vs LY for the newest period (official
+  // sheet else the live run). Period-based; scope toggle doesn't apply.
+  if (tier === "do") {
+    const periods = await availablePeriods(supa);
+    if (!periods.length) return { run: null, scope, tier, rows: [] };
+    const period = periods[0];
+    const [board, vis] = await Promise.all([periodBoardLeaders(supa, period, "do"), visibleLeaderNames(supa, storeNums)]);
+    const allow = vis ? new Set([...vis.dos].map(leaderKey)) : null;
+    const out = board.rows
+      .map((r) => ({
+        store_number: r.key,
+        name: r.name,
+        location: null,
+        gm: null,
+        do_name: null,
+        sdo_name: r.sdo_name ?? null,
+        sales: r.sales ?? null,
+        ly_sales: r.ly_sales ?? null,
+        pct_vs_ly: r.pct != null ? r.pct * 100 : null, // fraction -> %
+      }))
+      .filter((r) => (!allow || allow.has(r.store_number)) && r.pct_vs_ly != null)
+      .sort((a, b) => b.pct_vs_ly - a.pct_vs_ly)
+      .slice(0, limit);
+    return { run: { period, week: null, week_ending: null }, scope, tier, source: board.source, rows: out };
+  }
 
   // Period (PTD) view: use the newest available period across both sources -
   // the official sheet for a closed period, the live run for the active one.

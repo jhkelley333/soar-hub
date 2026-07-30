@@ -22,6 +22,12 @@ const sevenUpCols: SlideCol<SevenUpSlideRow>[] = [
   { key: "sdo", label: "SDO", cell: (r) => r.sdo_name ?? "—" },
   { key: "pct", label: "% vs Last Year", align: "center", cell: (r) => fmtPct(r.pct_vs_ly), cellClassName: "bg-green-100 font-bold" },
 ];
+const doSevenUpCols: SlideCol<SevenUpSlideRow>[] = [
+  { key: "pos", label: "#", align: "center", cell: (r) => r.pos, cellClassName: "font-bold" },
+  { key: "do", label: "DO", cell: (r) => r.name ?? "—", cellClassName: "font-semibold" },
+  { key: "sdo", label: "SDO", cell: (r) => r.sdo_name ?? "—" },
+  { key: "pct", label: "% vs Last Year", align: "center", cell: (r) => fmtPct(r.pct_vs_ly), cellClassName: "bg-green-100 font-bold" },
+];
 const fmtUsd = (v: number | null) => (v == null ? "—" : `$${Math.round(v).toLocaleString()}`);
 const fmtDate = (s: string | null | undefined) =>
   s ? new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "—";
@@ -35,11 +41,30 @@ export function RankingSevenUpView() {
     queryFn: () => fetchSevenUp(scope, limit),
     staleTime: 5 * 60_000,
   });
+  // DO leaderboard — always period-based (the sheet's DO tier is PTD only).
+  const doQ = useQuery({
+    queryKey: ["ranking-sevenup-do", limit],
+    queryFn: () => fetchSevenUp("ptd", limit, "do"),
+    staleTime: 5 * 60_000,
+  });
   const rows: SevenUpRow[] = q.data?.rows ?? [];
+  const doRows: SevenUpRow[] = doQ.data?.rows ?? [];
   const run = q.data?.run ?? null;
   const official = q.data?.source === "official";
   const pLabel = run ? `P${run.period}${scope === "wtd" && run.week ? ` W${run.week}` : ""}` : "";
   const slideRows: SevenUpSlideRow[] = rows.map((r, i) => ({ ...r, pos: i + 1 }));
+  const doSlideRows: SevenUpSlideRow[] = doRows.map((r, i) => ({ ...r, pos: i + 1 }));
+
+  const presentBoards = (
+    <div className="grid gap-4 lg:grid-cols-3">
+      <div className="lg:col-span-2">
+        <SlideTable title="Stores Up in Sales" columns={sevenUpCols} rows={slideRows} getKey={(r) => r.store_number} />
+      </div>
+      <div>
+        <SlideTable title="DOs Up in Sales" columns={doSevenUpCols} rows={doSlideRows} getKey={(r, i) => `${r.store_number}-${i}`} />
+      </div>
+    </div>
+  );
 
   return (
     <div className="space-y-4">
@@ -70,7 +95,7 @@ export function RankingSevenUpView() {
           />
           <button
             onClick={() => setPresent(true)}
-            disabled={!rows.length}
+            disabled={!rows.length && !doRows.length}
             className="inline-flex items-center gap-2 rounded-lg bg-white/15 px-3 py-2 text-sm font-semibold text-white ring-1 ring-white/30 hover:bg-white/25 disabled:opacity-40"
           >
             <Presentation className="h-4 w-4" />Present
@@ -133,13 +158,21 @@ export function RankingSevenUpView() {
         </div>
       )}
 
-      <PresentModal open={present} onClose={() => setPresent(false)} filename={`${pLabel || "SOAR"}-7up-in-sales`} maxWidth="max-w-[960px]">
+      {/* DOs most up in sales vs LY (period). Shown when the DO tier resolves. */}
+      {doRows.length > 0 && (
         <SlideTable
-          title={`7 UP in Sales${pLabel ? ` · ${pLabel}` : ""}`}
-          columns={sevenUpCols}
-          rows={slideRows}
-          getKey={(r) => r.store_number}
+          title="DOs Up in Sales"
+          columns={doSevenUpCols}
+          rows={doSlideRows}
+          getKey={(r, i) => `${r.store_number}-${i}`}
         />
+      )}
+
+      <PresentModal open={present} onClose={() => setPresent(false)} filename={`${pLabel || "SOAR"}-7up-in-sales`}>
+        <div className="mb-4 text-center text-2xl font-black tracking-tight text-black">
+          7 UP in Sales{pLabel ? ` · ${pLabel}` : ""}
+        </div>
+        {presentBoards}
       </PresentModal>
     </div>
   );
