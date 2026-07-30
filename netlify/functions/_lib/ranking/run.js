@@ -874,11 +874,10 @@ export async function sevenUpSales(supa, params, storeNums = null) {
   return { run: { period: run.period, week: run.week, week_ending: run.week_ending }, scope, source: "run", rows: out };
 }
 
-// The KPI feed's period sections carry a per-store `<metric>Dayparts` object
+// The KPI feed's period section carries a per-store `<metric>Dayparts` object
 // keyed Breakfast / Lunch / Afternoon / Dinner / Evening. We read them straight
 // off the latest stored snapshot (kpi_snapshots keeps the full payload).
 const DP_PTD_SECTIONS = ["periodToDateData", "periodToDate", "ptdData", "businessPeriodData", "periodData", "ptd"];
-const DP_WTD_SECTIONS = ["weekToDateData", "weekToDate", "wtdData", "businessWeekData", "weekData", "wtd"];
 const pickDpSection = (rd, cands) => { for (const k of cands) if (Array.isArray(rd?.[k])) return rd[k]; return []; };
 // One daypart's value off a `<metric>Dayparts` object (case-insensitive key).
 const daypartVal = (row, field, dp) => {
@@ -889,9 +888,10 @@ const daypartVal = (row, field, dp) => {
 };
 
 // "Evening growth" — top stores by Evening-daypart net sales vs last year,
-// period-to-date. Same shape as 7 UP so the UI can share the board. Reads the
-// newest KPI snapshot's period rows; falls back to WTD/daily if a period lacks
-// dayparts. Enriched with GM / DO / SDO from the latest ranking run.
+// PERIOD-TO-DATE (the same period-ending basis as 7 UP's Period view). Reads the
+// Evening slice off the newest KPI snapshot's period-to-date rows only (never
+// the daily/week section, which would misrepresent a single day as the period).
+// Enriched with GM / DO / SDO from the latest ranking run.
 export async function eveningGrowth(supa, params, storeNums = null) {
   const DP = "evening";
   const limit = Math.max(1, Math.min(50, parseInt(params.limit, 10) || 10));
@@ -905,12 +905,8 @@ export async function eveningGrowth(supa, params, storeNums = null) {
   const snap = snaps?.[0];
   if (!snap) return { as_of: null, daypart: "Evening", rows: [] };
   const rd = snap.payload?.rawData || {};
-  const ptd = pickDpSection(rd, DP_PTD_SECTIONS);
-  const wtd = pickDpSection(rd, DP_WTD_SECTIONS);
-  const daily = Array.isArray(rd.businessDateData) ? rd.businessDateData : [];
-  // Use whichever period section actually carries daypart objects.
-  const hasDp = (rows) => rows.some((r) => r && typeof r.netSalesDayparts === "object" && r.netSalesDayparts);
-  const pick = hasDp(ptd) ? ptd : hasDp(wtd) ? wtd : daily;
+  // Period-to-date section ONLY — these are the period-ending running totals.
+  const pick = pickDpSection(rd, DP_PTD_SECTIONS);
 
   const names = await runStoreNameMap(supa);
   const allow = allowSet(storeNums);

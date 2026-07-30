@@ -49,7 +49,7 @@ export function RankingEveningView() {
           <div>
             <div className="text-xl font-black tracking-tight">Evening Growth</div>
             <div className="text-xs font-medium text-white/80">
-              Stores most up in Evening sales vs last year · period-to-date{asOf ? ` · as of ${fmtDate(asOf)}` : ""}
+              Stores most up in Evening sales vs last year · period-to-date (period-ending){asOf ? ` · as of ${fmtDate(asOf)}` : ""}
             </div>
           </div>
         </div>
