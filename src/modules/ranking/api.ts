@@ -155,9 +155,10 @@ export function fetchRankingMovers(scope: RankScope, tier: RankTier): Promise<Mo
   return req(`${FN}?action=movers&scope=${scope}&tier=${tier}`);
 }
 
-// "7 UP in Sales" — top stores by sales vs last year for a scope.
+// "7 UP in Sales" — top stores (or DOs) by sales vs last year for a scope.
 export interface SevenUpRow {
   store_number: string;
+  name?: string | null;   // DO name (tier=do)
   location: string | null;
   gm: string | null;
   do_name: string | null;
@@ -169,11 +170,12 @@ export interface SevenUpRow {
 export interface SevenUpResponse {
   run: { period: number; week: number | null; week_ending: string | null } | null;
   scope: RankScope;
+  tier?: "store" | "do";
   source?: "official" | "run";
   rows: SevenUpRow[];
 }
-export function fetchSevenUp(scope: RankScope, limit = 7): Promise<SevenUpResponse> {
-  return req(`${FN}?action=sevenup&scope=${scope}&limit=${limit}`);
+export function fetchSevenUp(scope: RankScope, limit = 7, tier: "store" | "do" = "store"): Promise<SevenUpResponse> {
+  return req(`${FN}?action=sevenup&scope=${scope}&limit=${limit}&tier=${tier}`);
 }
 
 // "Movers & Shakers" — biggest climbers in period rank vs the prior period.
