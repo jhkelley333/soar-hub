@@ -181,7 +181,9 @@ export function fetchSevenUp(scope: RankScope, limit = 7, tier: "store" | "do" =
 // Evening-daypart sales growth vs last year (period-to-date), top stores.
 // Shares the SevenUpRow shape (sales = Evening net, ly_sales = Evening prior year).
 export interface EveningResponse {
-  as_of: string | null;
+  as_of: string | null;      // period-ending date when anchored, else snapshot date
+  period?: number | null;    // fiscal period the numbers cover
+  anchored?: boolean;        // true = completed period-end snapshot; false = latest (in-progress)
   daypart: string;
   source?: string;
   rows: SevenUpRow[];

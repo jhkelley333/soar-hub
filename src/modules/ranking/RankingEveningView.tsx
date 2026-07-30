@@ -37,6 +37,9 @@ export function RankingEveningView() {
   });
   const rows: SevenUpRow[] = q.data?.rows ?? [];
   const asOf = q.data?.as_of ?? null;
+  const period = q.data?.period ?? null;
+  const anchored = q.data?.anchored ?? false;
+  const pLabel = period ? `P${period}` : "";
   const slideRows: EveningSlideRow[] = rows.map((r, i) => ({ ...r, pos: i + 1 }));
 
   return (
@@ -49,7 +52,8 @@ export function RankingEveningView() {
           <div>
             <div className="text-xl font-black tracking-tight">Evening Growth</div>
             <div className="text-xs font-medium text-white/80">
-              Stores most up in Evening sales vs last year · period-to-date (period-ending){asOf ? ` · as of ${fmtDate(asOf)}` : ""}
+              Stores most up in Evening sales vs last year{pLabel ? ` · ${pLabel}` : ""}
+              {anchored ? ` · period-ending ${fmtDate(asOf)}` : asOf ? ` · latest snapshot ${fmtDate(asOf)} (period in progress)` : ""}
             </div>
           </div>
         </div>
@@ -124,7 +128,7 @@ export function RankingEveningView() {
 
       <PresentModal open={present} onClose={() => setPresent(false)} filename="evening-growth" maxWidth="max-w-[960px]">
         <SlideTable
-          title={`Evening Growth${asOf ? ` · as of ${fmtDate(asOf)}` : ""}`}
+          title={`Evening Growth${pLabel ? ` · ${pLabel}` : ""}${anchored && asOf ? ` · period-ending ${fmtDate(asOf)}` : ""}`}
           columns={eveningCols}
           rows={slideRows}
           getKey={(r) => r.store_number}
