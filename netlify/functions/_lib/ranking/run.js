@@ -10,6 +10,7 @@ import { fiscalForDate } from "../fiscal.js";
 import { resolveOrg, isStoreRow, storeNumberOf } from "../kpiOrg.js";
 import { loadLaborCredits, applyCreditsToRows } from "../trainingCredit.js";
 import { backfillLaborDate } from "../kpiBackfill.js";
+import { feedBusinessDate } from "../kpiLabor.js";
 import { loadRankingConfig } from "./config.js";
 import { deriveVisibleNames, filterTier } from "./scope.js";
 import engine from "./engine.cjs";
@@ -887,23 +888,65 @@ const daypartVal = (row, field, dp) => {
   return null;
 };
 
-// "Evening growth" — top stores by Evening-daypart net sales vs last year,
-// PERIOD-TO-DATE (the same period-ending basis as 7 UP's Period view). Reads the
-// Evening slice off the newest KPI snapshot's period-to-date rows only (never
-// the daily/week section, which would misrepresent a single day as the period).
-// Enriched with GM / DO / SDO from the latest ranking run.
+const isoAddDaysUTC = (iso, n) => { const [y, m, d] = String(iso).split("-").map(Number); return new Date(Date.UTC(y, m - 1, d + n)).toISOString().slice(0, 10); };
+
+// The snapshot whose period-to-date represents the most recently COMPLETED
+// fiscal period (period-ending), NOT the in-progress one. Anchors on the latest
+// captured business date -> its fiscal period; the completed period end is that
+// period's close (or the day before the current period started). The feed lags
+// ~1 day, so the period-end business date is captured under central_date +1
+// (try +2, same-day too, mirroring the labor backfill). Returns the snapshot
+// whose feed business date matches the period end, plus that end date + period.
+async function periodEndSnapshot(supa) {
+  const { data: lastRow } = await supa
+    .from("labor_v2_daily").select("business_date").order("business_date", { ascending: false }).limit(1);
+  const bd = lastRow?.[0]?.business_date;
+  if (!bd) return null;
+  const fi = fiscalForDate(bd);
+  if (!fi) return null;
+  const periodEnd = fi.isPeriodEnd ? bd : isoAddDaysUTC(fi.periodStart, -1);
+  const period = fiscalForDate(periodEnd)?.period ?? null;
+  for (const offset of [1, 2, 0]) {
+    const cd = isoAddDaysUTC(periodEnd, offset);
+    const { data: snaps } = await supa
+      .from("kpi_snapshots").select("central_date, central_hour, payload")
+      .eq("central_date", cd).order("central_hour", { ascending: false }).limit(4);
+    for (const snap of snaps || []) {
+      const wc = { year: +cd.slice(0, 4), month: +cd.slice(5, 7), day: +cd.slice(8, 10), hour: snap.central_hour };
+      if (feedBusinessDate(snap.payload, wc) === periodEnd) return { snap, periodEnd, period };
+    }
+  }
+  return { snap: null, periodEnd, period };
+}
+
+// "Evening growth" — top stores by Evening-daypart net sales vs last year for
+// the most recently COMPLETED fiscal period (period-ending), matching how the
+// ranker anchors. Reads the Evening slice off that period-end snapshot's
+// period-to-date rows only. Falls back to the latest snapshot (in-progress
+// period) if no period-end capture is stored. Enriched with GM/DO/SDO.
 export async function eveningGrowth(supa, params, storeNums = null) {
   const DP = "evening";
   const limit = Math.max(1, Math.min(50, parseInt(params.limit, 10) || 10));
-  const { data: snaps, error } = await supa
-    .from("kpi_snapshots").select("central_date, central_hour, payload")
-    .order("central_date", { ascending: false }).order("central_hour", { ascending: false }).limit(1);
-  if (error) {
-    if (/kpi_snapshots/.test(error.message)) return { as_of: null, daypart: "Evening", rows: [] };
-    return { error: error.message, status: 500 };
+
+  let anchor = null;
+  try { anchor = await periodEndSnapshot(supa); } catch { anchor = null; }
+  let snap = anchor?.snap ?? null;
+  let asOf = anchor?.periodEnd ?? null;
+  const period = anchor?.period ?? null;
+  const anchored = !!snap;
+  if (!snap) {
+    // No stored period-end capture — fall back to the newest snapshot.
+    const { data: snaps, error } = await supa
+      .from("kpi_snapshots").select("central_date, central_hour, payload")
+      .order("central_date", { ascending: false }).order("central_hour", { ascending: false }).limit(1);
+    if (error) {
+      if (/kpi_snapshots/.test(error.message)) return { as_of: null, period, daypart: "Evening", rows: [] };
+      return { error: error.message, status: 500 };
+    }
+    snap = snaps?.[0];
+    asOf = snap?.central_date ?? null;
   }
-  const snap = snaps?.[0];
-  if (!snap) return { as_of: null, daypart: "Evening", rows: [] };
+  if (!snap) return { as_of: null, period, daypart: "Evening", rows: [] };
   const rd = snap.payload?.rawData || {};
   // Period-to-date section ONLY — these are the period-ending running totals.
   const pick = pickDpSection(rd, DP_PTD_SECTIONS);
@@ -939,7 +982,7 @@ export async function eveningGrowth(supa, params, storeNums = null) {
     });
   }
   out.sort((a, b) => b.pct_vs_ly - a.pct_vs_ly);
-  return { as_of: snap.central_date, daypart: "Evening", source: "kpi", rows: out.slice(0, limit) };
+  return { as_of: asOf, period, anchored, daypart: "Evening", source: "kpi", rows: out.slice(0, limit) };
 }
 
 // "Movers & Shakers" — the stores that climbed the most in PERIOD rank from the
