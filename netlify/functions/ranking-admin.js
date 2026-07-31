@@ -55,7 +55,7 @@ async function overview(supa) {
   const [cfg, seeds, stores] = await Promise.all([
     supa.from("ranking_config").select("id, key, value, effective_from, note, created_at").order("key").order("effective_from", { ascending: false }),
     supa.from("ranking_store_seed").select("store_id, labor_pad, entity, updated_at"),
-    supa.from("stores").select("id, number, name, soar_company_name, is_active").eq("is_active", true).order("number"),
+    supa.from("stores").select("id, number, name, soar_company_name, is_active").eq("is_active", true).or("brand.eq.sonic,brand.is.null").order("number"),
   ]);
   if (cfg.error) {
     if (isMissingTable(cfg.error)) return { error: "Run migration 0237 first (ranking tables are missing).", status: 500 };

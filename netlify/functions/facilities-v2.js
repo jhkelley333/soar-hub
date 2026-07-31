@@ -68,17 +68,11 @@ async function getCallerProfile(event) {
 }
 
 // Apricus (Little Caesars) shares the stores table for the cross-brand COO map
-// only; it must never appear in Sonic Work Orders store pickers. Resolve + cache
-// the company id and exclude it (keeping Sonic + any null-company legacy rows).
-let _apricusCompanyId;
-async function apricusCompanyId(supa) {
-  if (_apricusCompanyId !== undefined) return _apricusCompanyId;
-  const { data } = await supa.from("companies").select("id").eq("slug", "apricus").maybeSingle();
-  _apricusCompanyId = data?.id ?? null;
-  return _apricusCompanyId;
-}
-function excludeApricus(q, apricusId) {
-  return apricusId ? q.or(`company_id.is.null,company_id.neq.${apricusId}`) : q;
+// only; it must never appear in Sonic Work Orders store pickers. Filter by the
+// `brand` column, keeping Sonic rows + legacy null-brand (Sonic) rows and
+// dropping Apricus.
+function excludeApricus(q) {
+  return q.or("brand.eq.sonic,brand.is.null");
 }
 
 function respond(statusCode, body) {
@@ -756,10 +750,8 @@ export const handler = async (event) => {
           .map((v) => (typeof v === "string" ? v : v?.user_visible_stores ?? null))
           .filter(Boolean);
         if (!ids.length) return [];
-        const apricusId = await apricusCompanyId(supabase);
         const { data: rows } = await excludeApricus(
           supabase.from("stores").select("id, number, name").in("id", ids),
-          apricusId,
         ).order("number");
         return (rows || []).map((s) => ({
           id: s.id,
@@ -784,10 +776,8 @@ export const handler = async (event) => {
       // against every active store. RVP/SDO/DO fall through to the scoped
       // user_visible_stores list below.
       if (["admin", "coo", "vp"].includes(role)) {
-        const apricusId = await apricusCompanyId(supabase);
         const { data: rows, error } = await excludeApricus(
           supabase.from("stores").select("id, number, name"),
-          apricusId,
         ).order("number");
         if (error) throw error;
         return respond(200, {

@@ -60,7 +60,7 @@ async function getSessionUser(event) {
 
 async function callerVisibleStores(supa, user) {
   if (ORG_WIDE.has(user.role) || user.role === "fbc") {
-    const { data } = await supa.from("stores").select("id, number, name").eq("is_active", true);
+    const { data } = await supa.from("stores").select("id, number, name").eq("is_active", true).or("brand.eq.sonic,brand.is.null");
     return data ?? [];
   }
   const { data: visible } = await supa.rpc("user_visible_stores", { uid: user.id });

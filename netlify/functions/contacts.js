@@ -435,7 +435,7 @@ async function scopeOptions(supa, user) {
         ? supa.from("districts").select("id, code, name, area_id").in("id", visibleDistrictIds).order("code")
         : Promise.resolve({ data: [] }),
     ORG_WIDE.has(user.role)
-      ? supa.from("stores").select("id, number, name, district_id").eq("is_active", true).order("number")
+      ? supa.from("stores").select("id, number, name, district_id").eq("is_active", true).or("brand.eq.sonic,brand.is.null").order("number")
       : visibleStoreIds.length
         ? supa.from("stores").select("id, number, name, district_id").in("id", visibleStoreIds).eq("is_active", true).order("number")
         : Promise.resolve({ data: [] }),

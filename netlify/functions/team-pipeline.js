@@ -240,7 +240,7 @@ async function succession(supa, user) {
       return q;
     }),
     (async () => {
-      let q = supa.from("stores").select("id, number, name, district_id").eq("is_active", true);
+      let q = supa.from("stores").select("id, number, name, district_id").eq("is_active", true).or("brand.eq.sonic,brand.is.null");
       if (ids) q = q.in("id", ids);
       const { data } = await q;
       return data || [];
@@ -534,7 +534,7 @@ async function commitPlan(supa, user, body) {
 // Stores in the caller's scope — powers the add / transfer store pickers.
 async function scopeStores(supa, user) {
   const scope = await storesForUser(supa, user);
-  let q = supa.from("stores").select("id, number, name").eq("is_active", true).order("number").limit(5000);
+  let q = supa.from("stores").select("id, number, name").eq("is_active", true).or("brand.eq.sonic,brand.is.null").order("number").limit(5000);
   if (!scope.all) {
     const ids = [...scope.ids];
     if (!ids.length) return { stores: [] };
@@ -1213,7 +1213,7 @@ async function riskReview(supa, user) {
       return q;
     }),
     (async () => {
-      let q = supa.from("stores").select("id, number, name, district_id").eq("is_active", true);
+      let q = supa.from("stores").select("id, number, name, district_id").eq("is_active", true).or("brand.eq.sonic,brand.is.null");
       if (ids) q = q.in("id", ids);
       const { data } = await q;
       return data || [];
@@ -1280,7 +1280,7 @@ async function devRollup(supa, user) {
       return q;
     }),
     (async () => {
-      let q = supa.from("stores").select("id, number, name, district_id").eq("is_active", true);
+      let q = supa.from("stores").select("id, number, name, district_id").eq("is_active", true).or("brand.eq.sonic,brand.is.null");
       if (ids) q = q.in("id", ids);
       const { data } = await q;
       return data || [];
@@ -1496,7 +1496,7 @@ async function tenureRollup(supa, user) {
       return q;
     }),
     (async () => {
-      let q = supa.from("stores").select("id, number, name, district_id").eq("is_active", true);
+      let q = supa.from("stores").select("id, number, name, district_id").eq("is_active", true).or("brand.eq.sonic,brand.is.null");
       if (ids) q = q.in("id", ids);
       const { data } = await q;
       return data || [];

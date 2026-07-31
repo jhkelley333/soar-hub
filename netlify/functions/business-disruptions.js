@@ -83,7 +83,7 @@ async function getSessionUser(event) {
 async function storesForUser(supa, profile) {
   const role = String(profile.role || "").toLowerCase();
   if (ORG_WIDE.has(role)) {
-    const { data } = await supa.from("stores").select("id, number, name, district_id").eq("is_active", true).limit(2000);
+    const { data } = await supa.from("stores").select("id, number, name, district_id").eq("is_active", true).or("brand.eq.sonic,brand.is.null").limit(2000);
     return { all: true, ids: new Set((data || []).map((s) => s.id)), rows: data || [] };
   }
   const { data: scopes } = await supa.from("user_scopes").select("scope_type, scope_id").eq("user_id", profile.id);

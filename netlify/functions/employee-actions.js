@@ -183,17 +183,10 @@ function displayName(p) {
 // Store scope helpers (mirror paf.js).
 // ----------------------------------------------------------------------------
 // Apricus (Little Caesars) shares the stores table for the cross-brand COO map
-// only; it must never appear in Sonic operational pickers. Resolve + cache the
-// company id and exclude it (keeping Sonic + any null-company legacy rows).
-let _apricusCompanyId;
-async function apricusCompanyId(supa) {
-  if (_apricusCompanyId !== undefined) return _apricusCompanyId;
-  const { data } = await supa.from("companies").select("id").eq("slug", "apricus").maybeSingle();
-  _apricusCompanyId = data?.id ?? null;
-  return _apricusCompanyId;
-}
-function excludeApricus(q, apricusId) {
-  return apricusId ? q.or(`company_id.is.null,company_id.neq.${apricusId}`) : q;
+// only; it must never appear in Sonic operational pickers. Filter by the `brand`
+// column, keeping Sonic rows + legacy null-brand (Sonic) rows and dropping Apricus.
+function excludeApricus(q) {
+  return q.or("brand.eq.sonic,brand.is.null");
 }
 
 async function resolveVisibleStoreRows(supa, userId) {
@@ -202,10 +195,8 @@ async function resolveVisibleStoreRows(supa, userId) {
     .map((v) => (typeof v === "string" ? v : v?.user_visible_stores ?? null))
     .filter(Boolean);
   if (!ids.length) return [];
-  const apricusId = await apricusCompanyId(supa);
   const { data } = await excludeApricus(
     supa.from("stores").select("id, number, name, district_id, is_active").in("id", ids).eq("is_active", true),
-    apricusId,
   ).order("number");
   return data ?? [];
 }
@@ -291,10 +282,8 @@ async function resolveStoreLeadership(supa, storeNumber) {
 // ----------------------------------------------------------------------------
 async function listMyStores(supa, user) {
   if (user.role === "admin") {
-    const apricusId = await apricusCompanyId(supa);
     const { data } = await excludeApricus(
       supa.from("stores").select("id, number, name, district_id, is_active").eq("is_active", true),
-      apricusId,
     ).order("number");
     return { stores: data ?? [] };
   }

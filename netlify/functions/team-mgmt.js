@@ -524,7 +524,7 @@ async function scopeOptions(supa, manager) {
   // assignScope, which already lets org-wide roles pick any scope.)
   if (ORG_WIDE_SCOPE_ROLES.includes(manager.role)) {
     const [{ data: stores }, { data: districts }, { data: areas }, { data: regions }] = await Promise.all([
-      supa.from("stores").select("id, number, name, district_id, is_active").eq("is_active", true).order("number"),
+      supa.from("stores").select("id, number, name, district_id, is_active").eq("is_active", true).or("brand.eq.sonic,brand.is.null").order("number"),
       supa.from("districts").select("id, name, code, area_id").order("name"),
       supa.from("areas").select("id, name, code, region_id").order("name"),
       supa.from("regions").select("id, name, code").order("name"),
