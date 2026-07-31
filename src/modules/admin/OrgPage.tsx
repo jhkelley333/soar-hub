@@ -19,6 +19,7 @@ import { Skeleton } from "@/shared/ui/Skeleton";
 import { useAuth } from "@/auth/AuthProvider";
 import { ROLE_LABELS } from "@/types/database";
 import { downloadCSV, toCSV } from "@/lib/csv";
+import { exportOrgChartPdf } from "./orgChartPdf";
 import { formatPhoneForDisplay } from "@/lib/phone";
 import { cn } from "@/lib/cn";
 import {
@@ -505,6 +506,15 @@ export function OrgPage() {
             >
               <Download className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
               Full export
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => exportOrgChartPdf(data)}
+              disabled={!data || data.regions.length === 0}
+            >
+              <Download className="mr-1 h-3.5 w-3.5" strokeWidth={1.75} />
+              Org chart PDF
             </Button>
             <button
               type="button"
