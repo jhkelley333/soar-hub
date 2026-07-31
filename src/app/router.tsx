@@ -17,6 +17,7 @@ import { PafQueuePage } from "@/modules/paf/PafQueuePage";
 import { EmployeeActionsPage } from "@/modules/employee-actions/EmployeeActionsPage";
 import { SchedulePage } from "@/modules/schedule/SchedulePage";
 import { OpsToolsPage } from "@/modules/ops-tools/OpsToolsPage";
+import { SystemSettingsPage } from "@/modules/system-settings/SystemSettingsPage";
 import { QrCodesPage } from "@/modules/qr-codes/QrCodesPage";
 import { SiteAuditPage } from "@/modules/site-audit/SiteAuditPage";
 import { BusinessDisruptionsPage } from "@/modules/business-disruptions/BusinessDisruptionsPage";
@@ -526,6 +527,14 @@ export const router = createBrowserRouter([
       },
       { path: "nla/:id", element: <NlaTakePage /> },
       { path: "nla/:id/compare", element: <NlaComparePage /> },
+      {
+        path: "admin/system-settings",
+        element: (
+          <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
+            <SystemSettingsPage />
+          </ProtectedRoute>
+        ),
+      },
       {
         path: "admin/org",
         element: (
