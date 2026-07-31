@@ -1,10 +1,13 @@
-import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
+import { Modal } from "@/shared/ui/Modal";
+import { useToast } from "@/shared/ui/Toaster";
 import {
   AlertCircle,
   ChevronRight,
   Download,
+  GitMerge,
   MapPin,
   Pencil,
   Plus,
@@ -24,6 +27,7 @@ import { formatPhoneForDisplay } from "@/lib/phone";
 import { cn } from "@/lib/cn";
 import {
   fetchOrgTree,
+  mergeOrgNode,
   type OrgArea,
   type OrgDistrict,
   type OrgManager,
@@ -355,6 +359,7 @@ export function OrgPage() {
   const [editTarget, setEditTarget] = useState<EditTarget | null>(null);
   const [addTarget, setAddTarget] = useState<AddTarget | null>(null);
   const [addParentLabel, setAddParentLabel] = useState<string | undefined>();
+  const [mergeSource, setMergeSource] = useState<MergeSource | null>(null);
 
   function openEdit(target: EditTarget) {
     setEditTarget(target);
@@ -589,10 +594,17 @@ export function OrgPage() {
               isAdmin={isAdmin}
               onEdit={openEdit}
               onAdd={openAdd}
+              onMerge={setMergeSource}
             />
           ))}
         </div>
       )}
+
+      <MergeOrgNodeModal
+        source={mergeSource}
+        tree={data ?? null}
+        onClose={() => setMergeSource(null)}
+      />
     </>
   );
 }
@@ -601,10 +613,20 @@ export function OrgPage() {
 // Tree rows
 // ----------------------------------------------------------------------------
 
+export interface MergeSource {
+  kind: "region" | "area" | "district";
+  id: string;
+  name: string;
+  code: string;
+  childCount: number;
+  childLabel: string;
+}
+
 interface RowCallbacks {
   isAdmin: boolean;
   onEdit: (target: EditTarget) => void;
   onAdd: (target: AddTarget, parentLabel?: string) => void;
+  onMerge: (src: MergeSource) => void;
 }
 
 function RegionRow({
@@ -614,6 +636,7 @@ function RegionRow({
   isAdmin,
   onEdit,
   onAdd,
+  onMerge,
 }: {
   region: OrgRegion;
   expanded: ExpandedSet;
@@ -635,6 +658,7 @@ function RegionRow({
         kindLabel="Region"
         isAdmin={isAdmin}
         onEdit={() => onEdit({ kind: "region", node: region })}
+        onMerge={() => onMerge({ kind: "region", id: region.id, name: region.name, code: region.code, childCount: region.areas.length, childLabel: "area" })}
       />
       {isOpen && (
         <div className="divide-y divide-zinc-100 border-t border-zinc-100 bg-zinc-50/30">
@@ -648,6 +672,7 @@ function RegionRow({
               isAdmin={isAdmin}
               onEdit={onEdit}
               onAdd={onAdd}
+              onMerge={onMerge}
             />
           ))}
           {region.areas.length === 0 && (
@@ -680,6 +705,7 @@ function AreaRow({
   isAdmin,
   onEdit,
   onAdd,
+  onMerge,
 }: {
   area: OrgArea;
   regionId: string;
@@ -704,6 +730,7 @@ function AreaRow({
         onEdit={() =>
           onEdit({ kind: "area", node: area, region_id: regionId })
         }
+        onMerge={() => onMerge({ kind: "area", id: area.id, name: area.name, code: area.code, childCount: area.districts.length, childLabel: "district" })}
       />
       {isOpen && (
         <div className="divide-y divide-zinc-100 bg-white">
@@ -717,6 +744,7 @@ function AreaRow({
               isAdmin={isAdmin}
               onEdit={onEdit}
               onAdd={onAdd}
+              onMerge={onMerge}
             />
           ))}
           {area.districts.length === 0 && (
@@ -749,6 +777,7 @@ function DistrictRow({
   isAdmin,
   onEdit,
   onAdd,
+  onMerge,
 }: {
   district: OrgDistrict;
   areaId: string;
@@ -774,6 +803,7 @@ function DistrictRow({
         onEdit={() =>
           onEdit({ kind: "district", node: district, area_id: areaId })
         }
+        onMerge={() => onMerge({ kind: "district", id: district.id, name: district.name, code: district.code, childCount: district.stores.length, childLabel: "store" })}
       />
       {isOpen && (
         <div className="divide-y divide-zinc-100 bg-zinc-50/30">
@@ -889,6 +919,7 @@ function NodeHeader({
   countLabel,
   isAdmin,
   onEdit,
+  onMerge,
 }: {
   depth: 0 | 1 | 2;
   code: string;
@@ -901,6 +932,7 @@ function NodeHeader({
   countLabel?: string;
   isAdmin: boolean;
   onEdit: () => void;
+  onMerge?: () => void;
 }) {
   const indent = ["pl-4", "pl-12", "pl-16"][depth];
   const sizing =
@@ -966,6 +998,17 @@ function NodeHeader({
           )}
         </div>
       </button>
+      {isAdmin && onMerge && (
+        <button
+          type="button"
+          onClick={onMerge}
+          className="shrink-0 rounded-md p-1 text-zinc-400 opacity-0 transition hover:bg-zinc-100 hover:text-midnight group-hover:opacity-100"
+          aria-label={`Merge ${kindLabel}`}
+          title={`Merge this ${kindLabel} into another`}
+        >
+          <GitMerge className="h-3.5 w-3.5" strokeWidth={1.75} />
+        </button>
+      )}
       {isAdmin && (
         <button
           type="button"
@@ -1001,6 +1044,103 @@ function ManagerChips({ managers }: { managers: OrgManager[] }) {
         </span>
       ))}
     </div>
+  );
+}
+
+// Merge a region/area/district into another of the same kind — moves the
+// source's children onto the target and deactivates the source.
+function MergeOrgNodeModal({
+  source,
+  tree,
+  onClose,
+}: {
+  source: MergeSource | null;
+  tree: OrgTreeResponse | null;
+  onClose: () => void;
+}) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [targetId, setTargetId] = useState("");
+  useEffect(() => {
+    setTargetId("");
+  }, [source?.id]);
+
+  const merge = useMutation({
+    mutationFn: mergeOrgNode,
+    onSuccess: (res) => {
+      qc.invalidateQueries({ queryKey: ["org-tree"] });
+      toast.push(
+        `Merged — ${res.moved} ${source?.childLabel ?? "item"}${res.moved === 1 ? "" : "s"} moved.`,
+        "success",
+      );
+      onClose();
+    },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Merge failed.", "error"),
+  });
+
+  // Same-kind, active candidates (excluding the source), flattened from the tree.
+  const candidates = useMemo(() => {
+    if (!source || !tree) return [] as { id: string; label: string }[];
+    const out: { id: string; label: string }[] = [];
+    for (const r of tree.regions) {
+      if (source.kind === "region") {
+        if (r.is_active && r.id !== source.id) out.push({ id: r.id, label: `${r.code} — ${r.name}` });
+        continue;
+      }
+      for (const a of r.areas) {
+        if (source.kind === "area") {
+          if (a.is_active && a.id !== source.id) out.push({ id: a.id, label: `${a.code} — ${a.name}` });
+          continue;
+        }
+        for (const d of a.districts) {
+          if (d.is_active && d.id !== source.id) out.push({ id: d.id, label: `${d.code} — ${d.name}` });
+        }
+      }
+    }
+    return out.sort((x, y) => x.label.localeCompare(y.label));
+  }, [source, tree]);
+
+  if (!source) return null;
+  return (
+    <Modal open={!!source} onClose={onClose} title={`Merge ${source.kind}`}>
+      <div className="space-y-4">
+        <p className="text-sm text-zinc-600">
+          Move all <b>{source.childCount}</b> {source.childLabel}
+          {source.childCount === 1 ? "" : "s"} from <b>{source.code} — {source.name}</b> into another{" "}
+          {source.kind}, then deactivate <b>{source.name}</b>. Reversible — reactivate it and move the{" "}
+          {source.childLabel}s back if needed.
+        </p>
+        <div>
+          <label className="block text-xs font-medium uppercase tracking-wide text-zinc-500">
+            Merge into
+          </label>
+          <select
+            value={targetId}
+            onChange={(e) => setTargetId(e.target.value)}
+            className="mt-1 block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+          >
+            <option value="">Select a {source.kind}…</option>
+            {candidates.map((c) => (
+              <option key={c.id} value={c.id}>{c.label}</option>
+            ))}
+          </select>
+          {candidates.length === 0 && (
+            <p className="mt-1 text-xs text-amber-700">No other active {source.kind}s available.</p>
+          )}
+        </div>
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" size="sm" onClick={onClose}>Cancel</Button>
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={!targetId || merge.isPending}
+            onClick={() => merge.mutate({ kind: source.kind, id: source.id, target_id: targetId })}
+          >
+            {merge.isPending ? "Merging…" : "Merge"}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   );
 }
 

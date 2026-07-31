@@ -283,6 +283,20 @@ export function moveOrgNode(input: MoveOrgNodeInput): Promise<{ ok: true }> {
   });
 }
 
+// Merge a node into another of the same kind: the source's children move onto
+// the target and the source is deactivated. Regions / areas / districts only.
+export interface MergeOrgNodeInput {
+  kind: "region" | "area" | "district";
+  id: string;
+  target_id: string;
+}
+export function mergeOrgNode(input: MergeOrgNodeInput): Promise<{ ok: true; moved: number; merged_into: string }> {
+  return request<{ ok: true; moved: number; merged_into: string }>(`${FN}?action=merge`, {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export interface OrgHistoryEntry {
   id: string;
   target_kind: OrgTargetKind;
