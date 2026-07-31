@@ -419,8 +419,11 @@ async function getBudget(supa, user) {
   };
 }
 
+const BUDGET_EDIT_ROLES = new Set(["admin", "coo", "vp"]);
+const NOTE_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]);
+
 async function setBudget(supa, user, body) {
-  if (user.role !== "admin") return { error: "Only admins can edit P&L budget targets.", status: 403 };
+  if (!BUDGET_EDIT_ROLES.has(user.role)) return { error: "Only Admin / COO / VP can edit P&L budget targets.", status: 403 };
   const updates = Array.isArray(body?.updates) ? body.updates : body?.line_key ? [body] : [];
   if (!updates.length) return { error: "Nothing to update.", status: 400 };
   for (const u of updates) {
@@ -437,6 +440,192 @@ async function setBudget(supa, user, body) {
     if (error) return { error: error.message, status: 500 };
   }
   return await getBudget(supa, user);
+}
+
+// ── P&L preliminary review: flag engine + per-flag notes ────────────
+// Statement label -> budget line_key, by keyword (priority order within a key).
+const LINE_KEYWORDS = {
+  food_cost: ["food cost", "food"],
+  paper_cost: ["paper"],
+  salaried_managers: ["salaried", "management labor", "manager labor", "mgmt labor", "salary"],
+  hourly_wages: ["hourly", "crew labor", "team labor"],
+  overtime: ["overtime"],
+  rm: ["repair", "r&m", "r & m", "maintenance"],
+  smallwares: ["smallware"],
+  uniforms: ["uniform"],
+  cleaning_solutions: ["cleaning"],
+  trash_removal: ["trash", "waste removal"],
+  landscaping_snow: ["landscap", "snow"],
+  supplies_other: ["supplies"],
+  grease_trap: ["grease"],
+  professional_services: ["professional"],
+  travel_expense: ["travel"],
+  pest_control: ["pest"],
+  cost_of_sales: ["total cost of sales", "cost of sales"],
+  total_labor: ["total labor", "total payroll"],
+  total_controllable: ["total controllable"],
+};
+const MAJORS = new Set(["food_cost", "paper_cost", "salaried_managers", "hourly_wages", "total_labor", "cost_of_sales"]);
+const normLabel = (s) => String(s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+
+function matchLine(lines, key) {
+  for (const kw of LINE_KEYWORDS[key] || []) {
+    const hit = (lines || []).find((l) => normLabel(l.label).includes(kw));
+    if (hit) return hit;
+  }
+  return null;
+}
+function linePct(line, sales) {
+  if (!line) return null;
+  if (typeof line.pct === "number" && isFinite(line.pct)) return line.pct;
+  if (typeof line.amount === "number" && sales) return (line.amount / sales) * 100;
+  return null;
+}
+
+// Flags for one statement's lines vs the budget + the store's trailing history.
+function computeFlags(lines, sales, targets, history) {
+  const flags = [];
+  const priorSeries = (key) => history.map((h) => h.pctByKey[key]).filter((v) => typeof v === "number");
+  const priorAmt = (key) => history.map((h) => h.amtByKey[key]).filter((v) => typeof v === "number");
+
+  for (const t of targets) {
+    if (t.is_group) continue;
+    const line = matchLine(lines, t.line_key);
+    const actualAmt = line && typeof line.amount === "number" ? line.amount : null;
+    const actualPct = linePct(line, sales);
+
+    // Verify-on-zero (Pest Control): nothing posted -> confirm a visit happened.
+    if (t.verify_on_zero && (actualAmt == null || Math.abs(actualAmt) < 1)) {
+      flags.push({ line_key: t.line_key, label: t.label, type: "verify_zero", severity: "med",
+        actual_pct: actualPct, actual_amount: actualAmt, target_pct: t.target_pct, variance_pts: null, dollars_over: null,
+        message: `No ${t.label} expense posted this period — verify a visit actually occurred.` });
+      continue;
+    }
+    if (actualPct == null) continue;
+
+    // Over budget — ranked by dollars over.
+    if (t.target_pct != null) {
+      const variance = actualPct - t.target_pct;
+      const threshold = t.line_key === "overtime" ? 0.001 : MAJORS.has(t.line_key) ? 0.3 : Math.max(0.05, t.target_pct * 0.15);
+      if (variance >= threshold) {
+        const dollarsOver = sales ? (variance / 100) * sales : null;
+        let severity = "low";
+        if ((MAJORS.has(t.line_key) && variance >= 1.0) || (dollarsOver != null && dollarsOver >= 1000)) severity = "high";
+        else if (variance >= threshold * 2 || (dollarsOver != null && dollarsOver >= 300)) severity = "med";
+        flags.push({ line_key: t.line_key, label: t.label, type: "over_budget", severity,
+          actual_pct: actualPct, actual_amount: actualAmt, target_pct: t.target_pct,
+          variance_pts: Math.round(variance * 100) / 100, dollars_over: dollarsOver == null ? null : Math.round(dollarsOver),
+          message: `${t.label} at ${actualPct.toFixed(2)}% vs ${t.target_pct.toFixed(2)}% budget — ${variance.toFixed(2)} pts over${dollarsOver ? ` (~$${Math.round(dollarsOver).toLocaleString()})` : ""}.` });
+      }
+    }
+
+    // Anomaly vs the store's own trailing history (needs >= 3 points).
+    const series = priorSeries(t.line_key);
+    if (series.length >= 3) {
+      const mean = series.reduce((a, b) => a + b, 0) / series.length;
+      const sd = Math.sqrt(series.reduce((a, b) => a + (b - mean) ** 2, 0) / series.length);
+      if (sd > 0.02 && Math.abs(actualPct - mean) > 2 * sd) {
+        flags.push({ line_key: t.line_key, label: t.label, type: "anomaly", severity: "med",
+          actual_pct: actualPct, actual_amount: actualAmt, target_pct: t.target_pct, variance_pts: null, dollars_over: null,
+          message: `${t.label} ${actualPct > mean ? "spike" : "drop"}: ${actualPct.toFixed(2)}% vs its trailing avg ${mean.toFixed(2)}% — unusual for this store.` });
+      }
+    }
+
+    // Missing invoice — $0 now but usually nonzero.
+    if ((actualAmt == null || Math.abs(actualAmt) < 1) && !t.verify_on_zero) {
+      const amts = priorAmt(t.line_key);
+      const meanAmt = amts.length ? amts.reduce((a, b) => a + b, 0) / amts.length : 0;
+      if (amts.length >= 2 && meanAmt > 50) {
+        flags.push({ line_key: t.line_key, label: t.label, type: "missing", severity: "low",
+          actual_pct: actualPct, actual_amount: actualAmt, target_pct: t.target_pct, variance_pts: null, dollars_over: null,
+          message: `${t.label} is $0 this period but usually ~$${Math.round(meanAmt).toLocaleString()} — missing invoice? Verify.` });
+      }
+    }
+  }
+  const rank = { high: 0, med: 1, low: 2 };
+  flags.sort((a, b) => (rank[a.severity] - rank[b.severity]) || ((b.dollars_over ?? 0) - (a.dollars_over ?? 0)));
+  return flags;
+}
+
+async function review(supa, user, params) {
+  if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const storeNumber = String(params.store || "").trim();
+  const period = String(params.period || "").trim();
+  if (!storeNumber || !period) return { error: "store and period are required", status: 400 };
+  const stores = await callerVisibleStores(supa, user);
+  const store = stores.find((s) => String(s.number) === storeNumber);
+  if (!store) return { error: `Store ${storeNumber} is outside your scope.`, status: 403 };
+
+  const { data: cur } = await supa.from("pl_statements").select("*").eq("store_number", storeNumber).eq("period_end", period);
+  const prelim = (cur ?? []).find((r) => !r.is_final) || null;
+  const finalRow = (cur ?? []).find((r) => r.is_final) || null;
+  const chosen = prelim || finalRow;
+  if (!chosen) return { error: "No P&L uploaded for this store and period.", status: 404 };
+
+  const { data: targetsRaw, error: tErr } = await supa
+    .from("pl_budget_targets").select("line_key, label, is_group, target_pct, verify_on_zero, sort_order").order("sort_order");
+  if (tErr && /pl_budget_targets/.test(tErr.message)) return { error: "Run migration 0265 first (pl_budget_targets is missing).", status: 500 };
+  const targets = (targetsRaw || []).map((t) => ({ ...t, target_pct: t.target_pct == null ? null : Number(t.target_pct) }));
+
+  // Trailing history (prior periods), collapsed to one per period (Final wins).
+  const { data: hist } = await supa.from("pl_statements")
+    .select("period_end, is_final, lines, total_sales").eq("store_number", storeNumber)
+    .lt("period_end", period).order("period_end", { ascending: false }).limit(8);
+  const byPeriod = new Map();
+  for (const r of hist || []) { const ex = byPeriod.get(r.period_end); if (!ex || (r.is_final && !ex.is_final)) byPeriod.set(r.period_end, r); }
+  const history = [...byPeriod.values()].slice(0, 4).map((r) => {
+    const pctByKey = {}, amtByKey = {};
+    for (const key of Object.keys(LINE_KEYWORDS)) {
+      const line = matchLine(r.lines, key);
+      const p = linePct(line, r.total_sales);
+      if (typeof p === "number") pctByKey[key] = p;
+      if (line && typeof line.amount === "number") amtByKey[key] = line.amount;
+    }
+    return { pctByKey, amtByKey };
+  });
+
+  const flags = computeFlags(chosen.lines, chosen.total_sales, targets, history);
+
+  const { data: notes } = await supa.from("pl_review_notes")
+    .select("id, line_key, root_cause, action_steps, author_id, author_name, author_role, updated_at")
+    .eq("store_number", storeNumber).eq("period_end", period);
+
+  return {
+    store: { number: storeNumber, name: store.name },
+    stage: chosen.is_final ? "final" : "prelim",
+    total_sales: chosen.total_sales,
+    flags,
+    notes: notes || [],
+    my_author_id: user.id,
+  };
+}
+
+async function saveReviewNote(supa, user, body) {
+  if (!NOTE_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const storeNumber = String(body?.store || "").trim();
+  const period = String(body?.period || "").trim();
+  const lineKey = String(body?.line_key || "").trim();
+  if (!storeNumber || !period) return { error: "store and period are required", status: 400 };
+  const stores = await callerVisibleStores(supa, user);
+  const store = stores.find((s) => String(s.number) === storeNumber);
+  if (!store) return { error: `Store ${storeNumber} is outside your scope.`, status: 403 };
+
+  const rootCause = String(body?.root_cause ?? "").slice(0, 4000).trim();
+  const actionSteps = String(body?.action_steps ?? "").slice(0, 4000).trim();
+  const row = {
+    period_end: period, store_number: storeNumber, store_id: store.id ?? null, line_key: lineKey,
+    root_cause: rootCause || null, action_steps: actionSteps || null,
+    author_id: user.id, author_name: user.preferred_name || user.full_name || user.email || null, author_role: user.role,
+    updated_at: new Date().toISOString(),
+  };
+  const { data, error } = await supa.from("pl_review_notes")
+    .upsert(row, { onConflict: "period_end,store_number,author_id,line_key" })
+    .select("id, line_key, root_cause, action_steps, author_id, author_name, author_role, updated_at").single();
+  if (error) {
+    if (/pl_review_notes/.test(error.message)) return { error: "Run migration 0266 first (pl_review_notes is missing).", status: 500 };
+    return { error: error.message, status: 500 };
+  }
+  return { note: data };
 }
 
 export const handler = async (event) => {
@@ -469,6 +658,7 @@ export const handler = async (event) => {
       if (action === "compare") return unwrap(await compare(supa, user, params));
       if (action === "line-trend") return unwrap(await lineTrend(supa, user, params));
       if (action === "budget") return unwrap(await getBudget(supa, user));
+      if (action === "review") return unwrap(await review(supa, user, params));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {
@@ -480,6 +670,7 @@ export const handler = async (event) => {
       }
       if (action === "upload") return unwrap(await upload(supa, user, body));
       if (action === "budget-set") return unwrap(await setBudget(supa, user, body));
+      if (action === "review-note") return unwrap(await saveReviewNote(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
     return respond(405, { error: "method not allowed" });

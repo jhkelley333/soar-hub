@@ -81,6 +81,47 @@ export function savePlBudget(
   return request(`${FN}?action=budget-set`, { method: "POST", body: JSON.stringify({ updates }) });
 }
 
+// ── Preliminary review: flags + per-flag notes ──────────────────────
+export type PlFlagType = "over_budget" | "anomaly" | "verify_zero" | "missing";
+export interface PlReviewFlag {
+  line_key: string;
+  label: string;
+  type: PlFlagType;
+  severity: "high" | "med" | "low";
+  actual_pct: number | null;
+  actual_amount: number | null;
+  target_pct: number | null;
+  variance_pts: number | null;
+  dollars_over: number | null;
+  message: string;
+}
+export interface PlReviewNote {
+  id: string;
+  line_key: string;
+  root_cause: string | null;
+  action_steps: string | null;
+  author_id: string;
+  author_name: string | null;
+  author_role: string | null;
+  updated_at: string;
+}
+export interface PlReviewResponse {
+  store: { number: string; name: string | null };
+  stage: PlStage;
+  total_sales: number | null;
+  flags: PlReviewFlag[];
+  notes: PlReviewNote[];
+  my_author_id: string;
+}
+export function fetchPlReview(store: string, period: string): Promise<PlReviewResponse> {
+  return request(`${FN}?action=review&store=${encodeURIComponent(store)}&period=${encodeURIComponent(period)}`);
+}
+export function savePlReviewNote(input: {
+  store: string; period: string; line_key: string; root_cause: string; action_steps: string;
+}): Promise<{ note: PlReviewNote }> {
+  return request(`${FN}?action=review-note`, { method: "POST", body: JSON.stringify(input) });
+}
+
 // ── Line-item trend across periods ──────────────────────────────────
 export interface PlTrendPoint {
   period_end: string;

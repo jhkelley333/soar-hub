@@ -20,6 +20,7 @@ import { cn } from "@/lib/cn";
 import { Modal } from "@/shared/ui/Modal";
 import { fetchPlCompare, fetchPlFlags, fetchPlLineTrend, fetchPlOverview, fetchPlPeriods, fetchPlStatement, savePlFlagNote, uploadPl, type PlFlag, type PlTrendPoint } from "./api";
 import { BudgetTargetsModal } from "./BudgetTargetsModal";
+import { PlReviewPanel } from "./PlReviewPanel";
 import type { ParsedWorkbook, PlCompareLine, PlLine, PlOverviewRow, PlStage } from "./types";
 
 const money = (v: number | null | undefined, dp = 0) =>
@@ -352,6 +353,8 @@ function StatementView({ store, period, periodLabel, onBack }: {
               ))}
             </div>
           </div>
+
+          <PlReviewPanel store={store} period={period} />
         </div>
       )}
     </>
