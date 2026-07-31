@@ -600,6 +600,42 @@ async function review(supa, user, params) {
   };
 }
 
+// Per-store review status for a whole period — which stores still owe notes.
+// Uses budget-variance + verify-on-$0 flags only (skips the per-store history
+// checks) so it stays a couple of queries instead of N. The full engine still
+// runs when a store is opened.
+async function reviewSummary(supa, user, params) {
+  if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const period = String(params.period || "").trim();
+  if (!period) return { error: "period is required", status: 400 };
+  const stores = await callerVisibleStores(supa, user);
+  const visibleNums = new Set(stores.map((s) => String(s.number)));
+
+  const { data: targetsRaw } = await supa
+    .from("pl_budget_targets").select("line_key, label, is_group, target_pct, verify_on_zero, sort_order").order("sort_order");
+  const targets = (targetsRaw || []).map((t) => ({ ...t, target_pct: t.target_pct == null ? null : Number(t.target_pct) }));
+
+  const { data: sts } = await supa
+    .from("pl_statements").select("store_number, is_final, lines, total_sales").eq("period_end", period);
+  const byStore = new Map();
+  for (const r of sts || []) {
+    if (!visibleNums.has(String(r.store_number))) continue;
+    const keep = byStore.get(r.store_number);
+    if (!keep || (!r.is_final && keep.is_final)) byStore.set(r.store_number, r); // prefer prelim
+  }
+
+  const { data: notes } = await supa.from("pl_review_notes").select("store_number, line_key").eq("period_end", period);
+  const addressed = new Set((notes || []).map((n) => `${n.store_number}|${n.line_key}`));
+
+  const rows = [];
+  for (const [num, r] of byStore) {
+    const flags = computeFlags(r.lines, r.total_sales, targets, []);
+    const noted = flags.filter((f) => addressed.has(`${num}|${f.line_key}`)).length;
+    rows.push({ store_number: String(num), flags: flags.length, noted, owed: flags.length - noted });
+  }
+  return { period, rows };
+}
+
 async function saveReviewNote(supa, user, body) {
   if (!NOTE_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
   const storeNumber = String(body?.store || "").trim();
@@ -659,6 +695,7 @@ export const handler = async (event) => {
       if (action === "line-trend") return unwrap(await lineTrend(supa, user, params));
       if (action === "budget") return unwrap(await getBudget(supa, user));
       if (action === "review") return unwrap(await review(supa, user, params));
+      if (action === "review-summary") return unwrap(await reviewSummary(supa, user, params));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {

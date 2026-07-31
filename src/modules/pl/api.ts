@@ -116,6 +116,12 @@ export interface PlReviewResponse {
 export function fetchPlReview(store: string, period: string): Promise<PlReviewResponse> {
   return request(`${FN}?action=review&store=${encodeURIComponent(store)}&period=${encodeURIComponent(period)}`);
 }
+
+// Per-store review status for a period (which stores still owe notes).
+export interface PlReviewSummaryRow { store_number: string; flags: number; noted: number; owed: number }
+export function fetchPlReviewSummary(period: string): Promise<{ period: string; rows: PlReviewSummaryRow[] }> {
+  return request(`${FN}?action=review-summary&period=${encodeURIComponent(period)}`);
+}
 export function savePlReviewNote(input: {
   store: string; period: string; line_key: string; root_cause: string; action_steps: string;
 }): Promise<{ note: PlReviewNote }> {

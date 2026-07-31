@@ -18,7 +18,7 @@ import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import { Modal } from "@/shared/ui/Modal";
-import { fetchPlCompare, fetchPlFlags, fetchPlLineTrend, fetchPlOverview, fetchPlPeriods, fetchPlStatement, savePlFlagNote, uploadPl, type PlFlag, type PlTrendPoint } from "./api";
+import { fetchPlCompare, fetchPlFlags, fetchPlLineTrend, fetchPlOverview, fetchPlPeriods, fetchPlReviewSummary, fetchPlStatement, savePlFlagNote, uploadPl, type PlFlag, type PlTrendPoint } from "./api";
 import { BudgetTargetsModal } from "./BudgetTargetsModal";
 import { PlReviewPanel } from "./PlReviewPanel";
 import type { ParsedWorkbook, PlCompareLine, PlLine, PlOverviewRow, PlStage } from "./types";
@@ -54,6 +54,16 @@ export function PlPage() {
     staleTime: 5 * 60_000,
   });
   const rows = useMemo(() => overviewQ.data?.rows ?? [], [overviewQ.data]);
+  const reviewSummaryQ = useQuery({
+    queryKey: ["pl-review-summary", period],
+    queryFn: () => fetchPlReviewSummary(period),
+    enabled: !!period,
+    staleTime: 30_000,
+  });
+  const reviewByStore = useMemo(
+    () => new Map((reviewSummaryQ.data?.rows ?? []).map((r) => [r.store_number, r])),
+    [reviewSummaryQ.data],
+  );
 
   // Single-store viewers (GMs) jump straight into their statement.
   useEffect(() => {
@@ -158,6 +168,7 @@ export function PlPage() {
                   <Th label="CI $" k="ci" sort={sort} onSort={setSort} right />
                   <Th label="CI %" k="ci_pct" sort={sort} onSort={setSort} right />
                   <Th label="EBITDA" k="ebitda" sort={sort} onSort={setSort} right />
+                  <th className="px-4 py-2 text-right">Review</th>
                   <Th label="Notes" k="notes" sort={sort} onSort={setSort} right />
                   <th className="px-4 py-2" />
                 </tr>
@@ -173,6 +184,9 @@ export function PlPage() {
                     <td className={cn("px-4 py-2.5 text-right font-semibold tabular-nums", (r.ci_amount ?? 0) < 0 ? "text-red-600" : "text-midnight")}>{money(r.ci_amount)}</td>
                     <td className={cn("px-4 py-2.5 text-right font-semibold tabular-nums", (r.ci_pct ?? 0) < 0 ? "text-red-600" : "text-emerald-700")}>{pct(r.ci_pct)}</td>
                     <td className={cn("px-4 py-2.5 text-right tabular-nums", (r.ebitda ?? 0) < 0 ? "text-red-600" : "text-zinc-600")}>{money(r.ebitda)}</td>
+                    <td className="px-4 py-2.5 text-right">
+                      <ReviewPill summary={reviewByStore.get(r.store_number)} />
+                    </td>
                     <td className="px-4 py-2.5 text-right">
                       <PeriodNotesPill count={r.note_count ?? 0} />
                     </td>
@@ -222,6 +236,24 @@ function PeriodNotesPill({ count }: { count: number }) {
   return (
     <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
       {count} noted
+    </span>
+  );
+}
+
+// Review roll-up pill — amber when a store still owes notes on its flags, green
+// when every flag has a note, dim when there's nothing to review.
+function ReviewPill({ summary }: { summary?: { flags: number; owed: number } }) {
+  if (!summary || summary.flags === 0) return <span className="text-xs text-zinc-300">—</span>;
+  if (summary.owed > 0) {
+    return (
+      <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-200">
+        {summary.owed} to review
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
+      Reviewed
     </span>
   );
 }
