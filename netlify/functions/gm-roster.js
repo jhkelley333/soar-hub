@@ -81,7 +81,7 @@ async function listRoster(supa, user) {
   if (!MANAGE_ROLES.has(String(user.role).toLowerCase())) return { error: "forbidden", status: 403 };
   const [{ data: roster }, { data: stores }] = await Promise.all([
     supa.from("gm_roster").select("*").order("store_number"),
-    supa.from("stores").select("id, number, name"),
+    supa.from("stores").select("id, number, name").or("brand.eq.sonic,brand.is.null"),
   ]);
   const storeByNumber = new Map((stores || []).map((s) => [String(s.number), s]));
   const numbers = (roster || []).map((r) => String(r.store_number));

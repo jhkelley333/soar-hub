@@ -43,17 +43,11 @@ function admin() {
 }
 
 // Apricus (Little Caesars) shares the stores table for the cross-brand COO map
-// only; it must never appear in the Sonic calendar's store/org tree. Resolve +
-// cache the company id and exclude it (keeping Sonic + null-company legacy rows).
-let _apricusCompanyId;
-async function apricusCompanyId(supa) {
-  if (_apricusCompanyId !== undefined) return _apricusCompanyId;
-  const { data } = await supa.from("companies").select("id").eq("slug", "apricus").maybeSingle();
-  _apricusCompanyId = data?.id ?? null;
-  return _apricusCompanyId;
-}
-function excludeApricus(q, apricusId) {
-  return apricusId ? q.or(`company_id.is.null,company_id.neq.${apricusId}`) : q;
+// only; it must never appear in the Sonic calendar's store/org tree. Filter by
+// the `brand` column, keeping Sonic rows + legacy null-brand (Sonic) rows and
+// dropping Apricus.
+function excludeApricus(q) {
+  return q.or("brand.eq.sonic,brand.is.null");
 }
 
 async function getSessionUser(event) {
@@ -98,10 +92,8 @@ async function resolveScope(supa, profile) {
   // Drives the "YOU" badge on the org tree. Org-wide roles sit at "org".
   let primaryScope = { scope_type: "org", scope_id: null };
   if (ORG_WIDE.has(role) || role === "accounting" || role === "payroll") {
-    const apricusId = await apricusCompanyId(supa);
     const { data } = await excludeApricus(
       supa.from("stores").select("id, number, name, district_id").eq("is_active", true),
-      apricusId,
     ).order("number").limit(2000);
     storeRows = data || [];
     all = true;

@@ -984,7 +984,7 @@ async function leaderCanTouchStore(supa, user, storeId) {
 async function leaderActionStores(supa, user) {
   const ids = await inboxStoreIds(supa, user);
   if (ids && ids.length === 0) return { stores: [] };
-  let q = supa.from("stores").select("id, number, name").eq("is_active", true).order("number");
+  let q = supa.from("stores").select("id, number, name").eq("is_active", true).or("brand.eq.sonic,brand.is.null").order("number");
   if (ids) q = q.in("id", ids);
   const { data } = await q;
   return { stores: data || [] };

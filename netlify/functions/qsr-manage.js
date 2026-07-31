@@ -68,7 +68,7 @@ const pct = (num, den) => (den ? Math.round((num / den) * 100) : 0);
 // store id → { number, name, region } via the org chain.
 async function storeRegionMap(supa) {
   const [{ data: stores }, { data: districts }, { data: markets }, { data: regions }] = await Promise.all([
-    supa.from("stores").select("id, number, name, district_id"),
+    supa.from("stores").select("id, number, name, district_id").or("brand.eq.sonic,brand.is.null"),
     supa.from("districts").select("id, market_id"),
     supa.from("markets").select("id, region_id"),
     supa.from("regions").select("id, name"),
@@ -261,7 +261,7 @@ async function listTokens(supa, user) {
 // The caller's stores, for the mint picker.
 async function tokenStores(supa, user) {
   const visible = await visibleStoreIds(supa, user);
-  let q = supa.from("stores").select("id, number, name").eq("is_active", true).order("number");
+  let q = supa.from("stores").select("id, number, name").eq("is_active", true).or("brand.eq.sonic,brand.is.null").order("number");
   if (visible) q = q.in("id", visible.size ? [...visible] : ["00000000-0000-0000-0000-000000000000"]);
   const { data } = await q;
   return { stores: data || [], canMintAll: isAuthor(user.role) };

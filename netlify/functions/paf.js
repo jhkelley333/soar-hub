@@ -544,18 +544,10 @@ function flattenStore(s) {
 
 // Apricus (Little Caesars) is a separate brand that lives in the same stores
 // table for the cross-brand COO map only. Its stores must never appear in Sonic
-// operational pickers (PAF, etc.). Resolve + cache the company id so we can
-// exclude it. Cached across invocations — the id is stable.
-let _apricusCompanyId;
-async function apricusCompanyId(supa) {
-  if (_apricusCompanyId !== undefined) return _apricusCompanyId;
-  const { data } = await supa.from("companies").select("id").eq("slug", "apricus").maybeSingle();
-  _apricusCompanyId = data?.id ?? null;
-  return _apricusCompanyId;
-}
-// Keep Sonic + any null-company (legacy Sonic) rows; drop Apricus.
-function excludeApricus(q, apricusId) {
-  return apricusId ? q.or(`company_id.is.null,company_id.neq.${apricusId}`) : q;
+// operational pickers (PAF, etc.). Filter by the `brand` column, keeping Sonic
+// rows and legacy null-brand (Sonic) rows and dropping Apricus.
+function excludeApricus(q) {
+  return q.or("brand.eq.sonic,brand.is.null");
 }
 
 async function resolveVisibleStoreRows(supa, userId) {
@@ -564,10 +556,8 @@ async function resolveVisibleStoreRows(supa, userId) {
     .map((v) => (typeof v === "string" ? v : v?.user_visible_stores ?? null))
     .filter(Boolean);
   if (!ids.length) return [];
-  const apricusId = await apricusCompanyId(supa);
   const { data } = await excludeApricus(
     supa.from("stores").select(STORE_SELECT).in("id", ids).eq("is_active", true),
-    apricusId,
   ).order("number");
   return (data ?? []).map(flattenStore);
 }
@@ -579,10 +569,8 @@ async function resolveVisibleStoreRows(supa, userId) {
 async function listMyStores(supa, user) {
   // Admin sees everything to match the submit fallback in submitPaf.
   if (user.role === "admin") {
-    const apricusId = await apricusCompanyId(supa);
     const { data } = await excludeApricus(
       supa.from("stores").select(STORE_SELECT).eq("is_active", true),
-      apricusId,
     ).order("number");
     return { stores: (data ?? []).map(flattenStore) };
   }
