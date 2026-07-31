@@ -445,8 +445,8 @@ async function setBudget(supa, user, body) {
 // ── P&L preliminary review: flag engine + per-flag notes ────────────
 // Statement label -> budget line_key, by keyword (priority order within a key).
 const LINE_KEYWORDS = {
-  food_cost: ["food cost", "food"],
-  paper_cost: ["paper"],
+  food_cost: ["total cost of goods", "cost of goods sold", "cost of goods", "cogs", "food cost"],
+  paper_cost: ["paper cost", "paper"],
   salaried_managers: ["salaried", "management labor", "manager labor", "mgmt labor", "salary"],
   hourly_wages: ["hourly", "crew labor", "team labor"],
   overtime: ["overtime"],
@@ -466,11 +466,21 @@ const LINE_KEYWORDS = {
   total_controllable: ["total controllable"],
 };
 const MAJORS = new Set(["food_cost", "paper_cost", "salaried_managers", "hourly_wages", "total_labor", "cost_of_sales"]);
+// Terms that must NOT appear in a matched line for a given key — keeps a cost
+// line from grabbing a revenue line (e.g. "Food Sales" is not Food Cost).
+const LINE_EXCLUDE = {
+  food_cost: ["sales", "revenue"],
+  paper_cost: ["sales", "revenue"],
+};
 const normLabel = (s) => String(s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
 
 function matchLine(lines, key) {
+  const exclude = LINE_EXCLUDE[key] || [];
   for (const kw of LINE_KEYWORDS[key] || []) {
-    const hit = (lines || []).find((l) => normLabel(l.label).includes(kw));
+    const hit = (lines || []).find((l) => {
+      const label = normLabel(l.label);
+      return label.includes(kw) && !exclude.some((x) => label.includes(x));
+    });
     if (hit) return hit;
   }
   return null;
