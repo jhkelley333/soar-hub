@@ -61,6 +61,26 @@ export function uploadPl(input: {
   return request(`${FN}?action=upload`, { method: "POST", body: JSON.stringify(input) });
 }
 
+// ── Budget & Targets (store-controllable % of sales) ────────────────
+export interface PlBudgetTarget {
+  line_key: string;
+  label: string;
+  group_key: string | null;
+  is_group: boolean;
+  target_pct: number | null;
+  verify_on_zero: boolean;
+  sort_order: number;
+  updated_at?: string;
+}
+export function fetchPlBudget(): Promise<{ targets: PlBudgetTarget[] }> {
+  return request(`${FN}?action=budget`);
+}
+export function savePlBudget(
+  updates: { line_key: string; target_pct: number | null; verify_on_zero?: boolean }[],
+): Promise<{ targets: PlBudgetTarget[] }> {
+  return request(`${FN}?action=budget-set`, { method: "POST", body: JSON.stringify({ updates }) });
+}
+
 // ── Line-item trend across periods ──────────────────────────────────
 export interface PlTrendPoint {
   period_end: string;

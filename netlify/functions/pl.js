@@ -401,6 +401,44 @@ function numOrNull(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+// ── Budget & Targets (store-controllable % of sales) ────────────────
+async function getBudget(supa, user) {
+  if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const { data, error } = await supa
+    .from("pl_budget_targets")
+    .select("line_key, label, group_key, is_group, target_pct, verify_on_zero, sort_order, updated_at")
+    .order("sort_order");
+  if (error) {
+    if (/pl_budget_targets/.test(error.message)) {
+      return { error: "Run migration 0265 first (pl_budget_targets is missing).", status: 500 };
+    }
+    return { error: error.message, status: 500 };
+  }
+  return {
+    targets: (data || []).map((t) => ({ ...t, target_pct: t.target_pct == null ? null : Number(t.target_pct) })),
+  };
+}
+
+async function setBudget(supa, user, body) {
+  if (user.role !== "admin") return { error: "Only admins can edit P&L budget targets.", status: 403 };
+  const updates = Array.isArray(body?.updates) ? body.updates : body?.line_key ? [body] : [];
+  if (!updates.length) return { error: "Nothing to update.", status: 400 };
+  for (const u of updates) {
+    const key = String(u?.line_key || "").trim();
+    if (!key) continue;
+    const raw = u.target_pct;
+    const pct = raw === null || raw === "" || raw === undefined ? null : Number(raw);
+    if (pct !== null && (!isFinite(pct) || pct < 0 || pct > 100)) {
+      return { error: `Target for ${key} must be a percent between 0 and 100 (or blank).`, status: 400 };
+    }
+    const patch = { target_pct: pct, updated_by: user.id, updated_at: new Date().toISOString() };
+    if (typeof u.verify_on_zero === "boolean") patch.verify_on_zero = u.verify_on_zero;
+    const { error } = await supa.from("pl_budget_targets").update(patch).eq("line_key", key);
+    if (error) return { error: error.message, status: 500 };
+  }
+  return await getBudget(supa, user);
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
 
@@ -430,6 +468,7 @@ export const handler = async (event) => {
       if (action === "statement") return unwrap(await statement(supa, user, params));
       if (action === "compare") return unwrap(await compare(supa, user, params));
       if (action === "line-trend") return unwrap(await lineTrend(supa, user, params));
+      if (action === "budget") return unwrap(await getBudget(supa, user));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {
@@ -440,6 +479,7 @@ export const handler = async (event) => {
         return respond(400, { error: "invalid JSON body" });
       }
       if (action === "upload") return unwrap(await upload(supa, user, body));
+      if (action === "budget-set") return unwrap(await setBudget(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
     return respond(405, { error: "method not allowed" });
