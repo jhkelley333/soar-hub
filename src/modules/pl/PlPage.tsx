@@ -10,7 +10,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowLeft, ArrowLeftRight, ArrowUp, ArrowUpDown, Download, Loader2, TrendingDown, TrendingUp, Upload } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowLeftRight, ArrowUp, ArrowUpDown, Download, Loader2, SlidersHorizontal, TrendingDown, TrendingUp, Upload } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -19,6 +19,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import { Modal } from "@/shared/ui/Modal";
 import { fetchPlCompare, fetchPlFlags, fetchPlLineTrend, fetchPlOverview, fetchPlPeriods, fetchPlStatement, savePlFlagNote, uploadPl, type PlFlag, type PlTrendPoint } from "./api";
+import { BudgetTargetsModal } from "./BudgetTargetsModal";
 import type { ParsedWorkbook, PlCompareLine, PlLine, PlOverviewRow, PlStage } from "./types";
 
 const money = (v: number | null | undefined, dp = 0) =>
@@ -36,6 +37,7 @@ export function PlPage() {
   const [period, setPeriod] = useState<string>("");
   const [store, setStore] = useState<string | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
+  const [budgetOpen, setBudgetOpen] = useState(false);
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "ci_pct", dir: "asc" });
 
   const periodsQ = useQuery({ queryKey: ["pl-periods"], queryFn: fetchPlPeriods });
@@ -108,6 +110,14 @@ export function PlPage() {
                 ))}
               </select>
             )}
+            <button
+              type="button"
+              onClick={() => setBudgetOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-semibold text-midnight hover:border-accent"
+            >
+              <SlidersHorizontal className="h-4 w-4" strokeWidth={2} />
+              Budget &amp; Targets
+            </button>
             {isAdmin && (
               <button
                 type="button"
@@ -121,6 +131,7 @@ export function PlPage() {
           </div>
         }
       />
+      <BudgetTargetsModal open={budgetOpen} onClose={() => setBudgetOpen(false)} />
 
       {uploadOpen && isAdmin && <UploadPanel onDone={() => setUploadOpen(false)} />}
 
