@@ -660,7 +660,7 @@ function TrendChart({ points }: { points: PlTrendPoint[] }) {
   );
 }
 
-function LineTrendModal({ open, onClose, store, label, flag }: {
+export function LineTrendModal({ open, onClose, store, label, flag }: {
   open: boolean; onClose: () => void; store: string; label: string; flag?: PlFlag;
 }) {
   const q = useQuery({
