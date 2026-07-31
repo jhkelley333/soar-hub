@@ -497,17 +497,19 @@ function computeFlags(lines, sales, targets, history) {
   const flags = [];
   const priorSeries = (key) => history.map((h) => h.pctByKey[key]).filter((v) => typeof v === "number");
   const priorAmt = (key) => history.map((h) => h.amtByKey[key]).filter((v) => typeof v === "number");
+  const stmtLabelByKey = {};
 
   for (const t of targets) {
     if (t.is_group) continue;
     const line = matchLine(lines, t.line_key);
+    if (line) stmtLabelByKey[t.line_key] = line.label;
     const actualAmt = line && typeof line.amount === "number" ? line.amount : null;
     const actualPct = linePct(line, sales);
 
     // Verify-on-zero (Pest Control): nothing posted -> confirm a visit happened.
     if (t.verify_on_zero && (actualAmt == null || Math.abs(actualAmt) < 1)) {
       flags.push({ line_key: t.line_key, label: t.label, type: "verify_zero", severity: "med",
-        actual_pct: actualPct, actual_amount: actualAmt, target_pct: t.target_pct, variance_pts: null, dollars_over: null,
+        actual_pct: actualPct, actual_amount: actualAmt, target_pct: t.target_pct, variance_pts: null, dollars_over: null, context: [],
         message: `No ${t.label} expense posted this period — verify a visit actually occurred.` });
       continue;
     }
@@ -522,9 +524,17 @@ function computeFlags(lines, sales, targets, history) {
         let severity = "low";
         if ((MAJORS.has(t.line_key) && variance >= 1.0) || (dollarsOver != null && dollarsOver >= 1000)) severity = "high";
         else if (variance >= threshold * 2 || (dollarsOver != null && dollarsOver >= 300)) severity = "med";
+        // Trend: how many trailing periods were also over this target.
+        const priorVals = priorSeries(t.line_key);
+        const priorOver = priorVals.filter((p) => p > t.target_pct).length;
+        const context = [];
+        if (priorOver >= 2) {
+          context.push(`Chronic — over budget ${priorOver} of the last ${priorVals.length} periods (not a one-off).`);
+          if (severity === "low") severity = "med"; // persistent problems matter more
+        }
         flags.push({ line_key: t.line_key, label: t.label, type: "over_budget", severity,
           actual_pct: actualPct, actual_amount: actualAmt, target_pct: t.target_pct,
-          variance_pts: Math.round(variance * 100) / 100, dollars_over: dollarsOver == null ? null : Math.round(dollarsOver),
+          variance_pts: Math.round(variance * 100) / 100, dollars_over: dollarsOver == null ? null : Math.round(dollarsOver), context,
           message: `${t.label} at ${actualPct.toFixed(2)}% vs ${t.target_pct.toFixed(2)}% budget — ${variance.toFixed(2)} pts over${dollarsOver ? ` (~$${Math.round(dollarsOver).toLocaleString()})` : ""}.` });
       }
     }
@@ -536,7 +546,7 @@ function computeFlags(lines, sales, targets, history) {
       const sd = Math.sqrt(series.reduce((a, b) => a + (b - mean) ** 2, 0) / series.length);
       if (sd > 0.02 && Math.abs(actualPct - mean) > 2 * sd) {
         flags.push({ line_key: t.line_key, label: t.label, type: "anomaly", severity: "med",
-          actual_pct: actualPct, actual_amount: actualAmt, target_pct: t.target_pct, variance_pts: null, dollars_over: null,
+          actual_pct: actualPct, actual_amount: actualAmt, target_pct: t.target_pct, variance_pts: null, dollars_over: null, context: [],
           message: `${t.label} ${actualPct > mean ? "spike" : "drop"}: ${actualPct.toFixed(2)}% vs its trailing avg ${mean.toFixed(2)}% — unusual for this store.` });
       }
     }
@@ -547,11 +557,12 @@ function computeFlags(lines, sales, targets, history) {
       const meanAmt = amts.length ? amts.reduce((a, b) => a + b, 0) / amts.length : 0;
       if (amts.length >= 2 && meanAmt > 50) {
         flags.push({ line_key: t.line_key, label: t.label, type: "missing", severity: "low",
-          actual_pct: actualPct, actual_amount: actualAmt, target_pct: t.target_pct, variance_pts: null, dollars_over: null,
+          actual_pct: actualPct, actual_amount: actualAmt, target_pct: t.target_pct, variance_pts: null, dollars_over: null, context: [],
           message: `${t.label} is $0 this period but usually ~$${Math.round(meanAmt).toLocaleString()} — missing invoice? Verify.` });
       }
     }
   }
+  for (const f of flags) f.stmt_label = stmtLabelByKey[f.line_key] || f.label;
   const rank = { high: 0, med: 1, low: 2 };
   flags.sort((a, b) => (rank[a.severity] - rank[b.severity]) || ((b.dollars_over ?? 0) - (a.dollars_over ?? 0)));
   return flags;
@@ -595,6 +606,43 @@ async function review(supa, user, params) {
   });
 
   const flags = computeFlags(chosen.lines, chosen.total_sales, targets, history);
+
+  // Cross-reference the ranker: latest complete run's metrics for this store add
+  // context to the food + labor flags (food cost efficiency / FC score; whether
+  // they made their labor chart; training credit already applied to labor).
+  try {
+    const { data: runs } = await supa
+      .from("ranking_runs").select("id").eq("status", "complete").order("started_at", { ascending: false }).limit(1);
+    const runId = runs?.[0]?.id;
+    if (runId) {
+      const { data: rr } = await supa
+        .from("ranking_rows").select("metrics")
+        .eq("run_id", runId).eq("scope", "ptd").eq("tier", "store").eq("entity_key", storeNumber).maybeSingle();
+      const m = rr?.metrics || null;
+      if (m) {
+        const n = (v) => (typeof v === "number" && isFinite(v) ? v : null);
+        const cogsEff = n(m.cogsEff), fcScore = n(m.fcScore);
+        const laborPct = n(m.laborPct), varToChart = n(m.varianceToChart), laborScore = n(m.laborScore);
+        const tcPct = n(m.trainingCreditPct), rSales = n(m.sales);
+        const foodKeys = new Set(["food_cost", "cost_of_sales"]);
+        const laborKeys = new Set(["total_labor", "hourly_wages", "salaried_managers", "overtime"]);
+        for (const f of flags) {
+          if (foodKeys.has(f.line_key) && cogsEff != null) {
+            f.context.push(`Ranker: food cost efficiency ${(cogsEff * 100).toFixed(1)}%${fcScore != null ? ` · FC score ${fcScore}/5` : ""}.`);
+          }
+          if (laborKeys.has(f.line_key)) {
+            if (varToChart != null) {
+              f.context.push(`Ranker labor chart: ${varToChart <= 0 ? "MADE chart" : "MISSED chart"} — ${laborPct != null ? `labor ${(laborPct * 100).toFixed(2)}%, ` : ""}variance ${(varToChart * 100).toFixed(2)} pts${laborScore != null ? ` · score ${laborScore}/5` : ""}.`);
+            }
+            if (tcPct != null && tcPct > 0) {
+              const tcDollars = rSales ? tcPct * rSales : null;
+              f.context.push(`Training credit applied: ${(tcPct * 100).toFixed(2)}% of sales${tcDollars ? ` (~$${Math.round(tcDollars).toLocaleString()})` : ""} — already offsetting labor.`);
+            }
+          }
+        }
+      }
+    }
+  } catch { /* ranker context is a nicety — never fail the review */ }
 
   const { data: notes } = await supa.from("pl_review_notes")
     .select("id, line_key, root_cause, action_steps, author_id, author_name, author_role, updated_at")

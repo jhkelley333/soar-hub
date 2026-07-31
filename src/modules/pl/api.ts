@@ -86,6 +86,7 @@ export type PlFlagType = "over_budget" | "anomaly" | "verify_zero" | "missing";
 export interface PlReviewFlag {
   line_key: string;
   label: string;
+  stmt_label: string;
   type: PlFlagType;
   severity: "high" | "med" | "low";
   actual_pct: number | null;
@@ -93,6 +94,7 @@ export interface PlReviewFlag {
   target_pct: number | null;
   variance_pts: number | null;
   dollars_over: number | null;
+  context: string[];
   message: string;
 }
 export interface PlReviewNote {

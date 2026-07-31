@@ -4,12 +4,13 @@
 // never overwrite each other; everyone sees everyone's.
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, TrendingUp, HelpCircle, FileWarning } from "lucide-react";
+import { AlertTriangle, TrendingUp, HelpCircle, FileWarning, LineChart } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import { fetchPlReview, savePlReviewNote, type PlReviewFlag, type PlReviewNote } from "./api";
+import { LineTrendModal } from "./PlPage";
 
 const SEV: Record<string, string> = {
   high: "bg-red-50 text-red-700 ring-red-200",
@@ -96,6 +97,7 @@ function FlagCard({
   const others = notes.filter((n) => n.author_id !== myAuthorId);
   const [rootCause, setRootCause] = useState(mine?.root_cause ?? "");
   const [actionSteps, setActionSteps] = useState(mine?.action_steps ?? "");
+  const [trendOpen, setTrendOpen] = useState(false);
 
   const save = useMutation({
     mutationFn: () => savePlReviewNote({ store, period, line_key: flag.line_key, root_cause: rootCause, action_steps: actionSteps }),
@@ -110,14 +112,30 @@ function FlagCard({
 
   return (
     <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
-      <div className="flex flex-wrap items-center gap-2 border-b border-zinc-100 px-4 py-2.5">
+      <button
+        type="button"
+        onClick={() => setTrendOpen(true)}
+        title="See this line's trend across periods"
+        className="group flex w-full flex-wrap items-center gap-2 border-b border-zinc-100 px-4 py-2.5 text-left hover:bg-zinc-50"
+      >
         <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide ring-1", SEV[flag.severity])}>
           <Icon className="h-3.5 w-3.5" strokeWidth={2} />{TYPE_LABEL[flag.type]}
         </span>
         <span className="text-sm font-semibold text-midnight">{flag.label}</span>
         <span className="text-sm text-zinc-600">{flag.message}</span>
-      </div>
+        <LineChart className="ml-auto h-4 w-4 shrink-0 text-zinc-300 group-hover:text-accent" strokeWidth={2} />
+      </button>
+      <LineTrendModal open={trendOpen} onClose={() => setTrendOpen(false)} store={store} label={flag.stmt_label} />
       <div className="space-y-3 px-4 py-3">
+        {flag.context.length > 0 && (
+          <ul className="space-y-1">
+            {flag.context.map((c, i) => (
+              <li key={i} className="flex gap-1.5 text-xs text-zinc-600">
+                <span className="mt-0.5 text-zinc-400">•</span>{c}
+              </li>
+            ))}
+          </ul>
+        )}
         {others.length > 0 && (
           <div className="space-y-1.5">
             {others.map((n) => (
