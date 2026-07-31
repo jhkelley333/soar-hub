@@ -863,6 +863,62 @@ async function moveOrgNode(supa, user, body) {
   return { ok: true };
 }
 
+// Child table + FK for a merge — the rows that get reparented from the source
+// node onto the target. (Reverse of PARENT_FIELD_FOR.) Stores are leaves, so
+// only regions / areas / districts can be merged.
+const MERGE_CHILD_FOR = {
+  region: { table: "areas", fk: "region_id" },
+  area: { table: "districts", fk: "area_id" },
+  district: { table: "stores", fk: "district_id" },
+};
+
+// Merge one node into another of the same kind: move every child of the source
+// onto the target, then deactivate the (now empty) source. Same-kind keeps the
+// hierarchy valid. Audited as a deactivate on the source (the enum has no
+// 'merge' value) with the merge details in the payload.
+async function mergeOrgNode(supa, user, body) {
+  const adminCheck = requireAdmin(user);
+  if (adminCheck) return adminCheck;
+
+  const kind = String(body?.kind ?? "");
+  const child = MERGE_CHILD_FOR[kind];
+  if (!child) return { error: "Only regions, areas, and districts can be merged.", status: 400 };
+  const id = body?.id;
+  const targetId = body?.target_id;
+  if (!id || !targetId) return { error: "id and target_id are required.", status: 400 };
+  if (id === targetId) return { error: "Cannot merge a node into itself.", status: 400 };
+
+  const table = TABLE_FOR[kind];
+  const [{ data: src, error: se }, { data: tgt, error: te }] = await Promise.all([
+    supa.from(table).select("id, name, is_active").eq("id", id).maybeSingle(),
+    supa.from(table).select("id, name, is_active").eq("id", targetId).maybeSingle(),
+  ]);
+  if (se) return { error: se.message, status: 500 };
+  if (te) return { error: te.message, status: 500 };
+  if (!src) return { error: "Source not found.", status: 404 };
+  if (!tgt) return { error: "Merge target not found.", status: 404 };
+
+  // Reparent every child of the source onto the target.
+  const { data: moved, error: moveErr } = await supa
+    .from(child.table).update({ [child.fk]: targetId }).eq(child.fk, id).select("id");
+  if (moveErr) return { error: moveErr.message, status: 500 };
+
+  // Deactivate the now-empty source node.
+  const { error: deErr } = await supa.from(table).update({ is_active: false }).eq("id", id);
+  if (deErr) return { error: deErr.message, status: 500 };
+
+  await logOrgChange(supa, {
+    actor_id: user.id,
+    target_kind: kind,
+    target_id: id,
+    action: "deactivate",
+    before: { name: src.name, is_active: src.is_active },
+    after: { merged_into: targetId, target_name: tgt.name, moved: (moved || []).length, reason: "merge" },
+  });
+
+  return { ok: true, moved: (moved || []).length, merged_into: targetId };
+}
+
 // ---------- history (admin-only audit feed) ----------
 
 async function fetchOrgHistory(supa, user, query) {
@@ -1691,6 +1747,7 @@ export const handler = async (event) => {
       if (action === "create") return unwrap(await createOrgNode(supa, user, body));
       if (action === "update") return unwrap(await updateOrgNode(supa, user, body));
       if (action === "move") return unwrap(await moveOrgNode(supa, user, body));
+      if (action === "merge") return unwrap(await mergeOrgNode(supa, user, body));
       if (action === "bulk-preview") return unwrap(await orgBulkPreview(supa, user, body));
       if (action === "bulk-import") return unwrap(await orgBulkImport(supa, user, body));
       if (action === "bulk-attribute-preview") {
