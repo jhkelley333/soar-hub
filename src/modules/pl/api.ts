@@ -69,6 +69,7 @@ export interface PlBudgetTarget {
   is_group: boolean;
   target_pct: number | null;
   verify_on_zero: boolean;
+  enabled: boolean;
   sort_order: number;
   updated_at?: string;
 }
@@ -76,7 +77,7 @@ export function fetchPlBudget(): Promise<{ targets: PlBudgetTarget[] }> {
   return request(`${FN}?action=budget`);
 }
 export function savePlBudget(
-  updates: { line_key: string; target_pct: number | null; verify_on_zero?: boolean }[],
+  updates: { line_key: string; target_pct: number | null; verify_on_zero?: boolean; enabled?: boolean }[],
 ): Promise<{ targets: PlBudgetTarget[] }> {
   return request(`${FN}?action=budget-set`, { method: "POST", body: JSON.stringify({ updates }) });
 }
