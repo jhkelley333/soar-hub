@@ -407,16 +407,19 @@ async function getBudget(supa, user) {
   if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
   const { data, error } = await supa
     .from("pl_budget_targets")
-    .select("line_key, label, group_key, is_group, target_pct, verify_on_zero, sort_order, updated_at")
+    .select("line_key, label, group_key, is_group, target_pct, verify_on_zero, enabled, sort_order, updated_at")
     .order("sort_order");
   if (error) {
     if (/pl_budget_targets/.test(error.message)) {
       return { error: "Run migration 0265 first (pl_budget_targets is missing).", status: 500 };
     }
+    if (/enabled/.test(error.message)) {
+      return { error: "Run migration 0267 first (adds the enabled column).", status: 500 };
+    }
     return { error: error.message, status: 500 };
   }
   return {
-    targets: (data || []).map((t) => ({ ...t, target_pct: t.target_pct == null ? null : Number(t.target_pct) })),
+    targets: (data || []).map((t) => ({ ...t, enabled: t.enabled !== false, target_pct: t.target_pct == null ? null : Number(t.target_pct) })),
   };
 }
 
@@ -437,6 +440,7 @@ async function setBudget(supa, user, body) {
     }
     const patch = { target_pct: pct, updated_by: user.id, updated_at: new Date().toISOString() };
     if (typeof u.verify_on_zero === "boolean") patch.verify_on_zero = u.verify_on_zero;
+    if (typeof u.enabled === "boolean") patch.enabled = u.enabled;
     const { error } = await supa.from("pl_budget_targets").update(patch).eq("line_key", key);
     if (error) return { error: error.message, status: 500 };
   }
@@ -501,7 +505,7 @@ function computeFlags(lines, sales, targets, history) {
   const stmtLabelByKey = {};
 
   for (const t of targets) {
-    if (t.is_group) continue;
+    if (t.is_group || t.enabled === false) continue; // disabled lines aren't flagged
     const line = matchLine(lines, t.line_key);
     if (line) stmtLabelByKey[t.line_key] = line.label;
     const actualAmt = line && typeof line.amount === "number" ? line.amount : null;
@@ -597,7 +601,7 @@ async function review(supa, user, params) {
   if (!chosen) return { error: "No P&L uploaded for this store and period.", status: 404 };
 
   const { data: targetsRaw, error: tErr } = await supa
-    .from("pl_budget_targets").select("line_key, label, is_group, target_pct, verify_on_zero, sort_order").order("sort_order");
+    .from("pl_budget_targets").select("line_key, label, is_group, target_pct, verify_on_zero, enabled, sort_order").order("sort_order");
   if (tErr && /pl_budget_targets/.test(tErr.message)) return { error: "Run migration 0265 first (pl_budget_targets is missing).", status: 500 };
   const targets = (targetsRaw || []).map((t) => ({ ...t, target_pct: t.target_pct == null ? null : Number(t.target_pct) }));
 
@@ -688,7 +692,7 @@ async function reviewSummary(supa, user, params) {
   const visibleNums = new Set(stores.map((s) => String(s.number)));
 
   const { data: targetsRaw } = await supa
-    .from("pl_budget_targets").select("line_key, label, is_group, target_pct, verify_on_zero, sort_order").order("sort_order");
+    .from("pl_budget_targets").select("line_key, label, is_group, target_pct, verify_on_zero, enabled, sort_order").order("sort_order");
   const targets = (targetsRaw || []).map((t) => ({ ...t, target_pct: t.target_pct == null ? null : Number(t.target_pct) }));
 
   const { data: sts } = await supa
