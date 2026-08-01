@@ -552,6 +552,22 @@ function computeFlags(lines, sales, targets, history) {
       const variance = actualPct - t.target_pct;
       const threshold = t.line_key === "overtime" ? 0.001 : MAJORS.has(t.line_key) ? 0.3 : Math.max(0.05, t.target_pct * 0.15);
       if (variance >= threshold) {
+        // Run-rate: over budget but FLAT across the last 3 periods (current + 2
+        // prior all over target, within ~5% of each other). That's the market
+        // price we pay (Landscaping, Trash, …), not a store-execution miss — so
+        // suggest re-baselining the target instead of demanding an action plan.
+        const recent = [actualPct, ...series].slice(0, 3);
+        if (recent.length >= 3 && recent.every((p) => p > t.target_pct)) {
+          const rMean = recent.reduce((a, b) => a + b, 0) / recent.length;
+          const rSd = Math.sqrt(recent.reduce((a, b) => a + (b - rMean) ** 2, 0) / recent.length);
+          if (rMean > 0 && rSd / rMean < 0.05) {
+            flags.push({ line_key: t.line_key, label: t.label, type: "run_rate", severity: "low",
+              actual_pct: actualPct, actual_amount: actualAmt, target_pct: t.target_pct,
+              variance_pts: Math.round(variance * 100) / 100, dollars_over: sales ? Math.round((variance / 100) * sales) : null, context: [],
+              message: `${t.label} steady at ~${rMean.toFixed(2)}% for 3 periods (budget ${t.target_pct.toFixed(2)}%) — likely your run-rate price, not a store issue. Consider re-baselining the target to ~${rMean.toFixed(2)}%.` });
+            continue;
+          }
+        }
         const dollarsOver = sales ? (variance / 100) * sales : null;
         let severity = "low";
         if ((MAJORS.has(t.line_key) && variance >= 1.0) || (dollarsOver != null && dollarsOver >= 1000)) severity = "high";
