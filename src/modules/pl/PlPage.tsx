@@ -18,7 +18,7 @@ import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import { Modal } from "@/shared/ui/Modal";
-import { fetchPlCompare, fetchPlFlags, fetchPlLineTrend, fetchPlOverview, fetchPlPeriods, fetchPlReviewSummary, fetchPlStatement, savePlFlagNote, uploadPl, type PlFlag, type PlTrendPoint } from "./api";
+import { fetchPlCompare, fetchPlFlags, fetchPlLineTrend, fetchPlOverview, fetchPlPeriods, fetchPlReview, fetchPlReviewSummary, fetchPlStatement, savePlFlagNote, uploadPl, type PlFlag, type PlTrendPoint } from "./api";
 import { BudgetTargetsModal } from "./BudgetTargetsModal";
 import { PlReviewPanel } from "./PlReviewPanel";
 import type { ParsedWorkbook, PlCompareLine, PlLine, PlOverviewRow, PlStage } from "./types";
@@ -291,6 +291,7 @@ function StatementView({ store, period, periodLabel, onBack }: {
   // undefined = "auto" (Final when it exists, else Prelim). A toggle forces one.
   const [stage, setStage] = useState<PlStage | undefined>(undefined);
   const [compareOpen, setCompareOpen] = useState(false);
+  const [printing, setPrinting] = useState(false);
 
   const q = useQuery({
     queryKey: ["pl-statement", store, period, stage ?? "auto"],
@@ -298,6 +299,20 @@ function StatementView({ store, period, periodLabel, onBack }: {
     staleTime: 5 * 60_000,
   });
   const s = q.data?.statement;
+
+  async function handlePrint() {
+    if (!s) return;
+    setPrinting(true);
+    try {
+      const [{ exportPlPdf }, review] = await Promise.all([
+        import("./plPdf"),
+        fetchPlReview(store, period).catch(() => null),
+      ]);
+      exportPlPdf(s, review);
+    } finally {
+      setPrinting(false);
+    }
+  }
   const available = q.data?.available;
   const bothStages = !!(available?.prelim && available?.final);
 
@@ -318,42 +333,55 @@ function StatementView({ store, period, periodLabel, onBack }: {
         title={s ? `#${s.store_number}${s.store_name ? ` · ${s.store_name}` : ""}` : `#${store}`}
         description={`Income statement · ${periodLabel}${s?.uploaded_by_name ? ` · uploaded by ${s.uploaded_by_name}` : ""}`}
         actions={
-          bothStages ? (
+          s ? (
             <div className="flex flex-wrap items-center gap-2">
-              <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-zinc-200">
-                {(["prelim", "final"] as PlStage[]).map((st) => {
-                  const activeStage = (s?.stage ?? "final") === st;
-                  return (
-                    <button
-                      key={st}
-                      type="button"
-                      onClick={() => setStage(st)}
-                      className={cn(
-                        "px-3 py-1.5 text-sm font-semibold capitalize transition",
-                        activeStage ? "bg-accent text-white" : "bg-white text-zinc-600 hover:bg-zinc-50",
-                      )}
-                    >
-                      {st}
-                    </button>
-                  );
-                })}
-              </div>
               <button
                 type="button"
-                onClick={() => setCompareOpen(true)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-semibold text-midnight hover:border-accent"
+                onClick={handlePrint}
+                disabled={printing}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-semibold text-midnight hover:border-accent disabled:opacity-50"
               >
-                <ArrowLeftRight className="h-4 w-4" strokeWidth={2} />
-                Compare Prelim → Final
+                <Download className="h-4 w-4" strokeWidth={2} />
+                {printing ? "Building…" : "Print PDF"}
               </button>
+              {bothStages ? (
+                <>
+                  <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-zinc-200">
+                    {(["prelim", "final"] as PlStage[]).map((st) => {
+                      const activeStage = (s?.stage ?? "final") === st;
+                      return (
+                        <button
+                          key={st}
+                          type="button"
+                          onClick={() => setStage(st)}
+                          className={cn(
+                            "px-3 py-1.5 text-sm font-semibold capitalize transition",
+                            activeStage ? "bg-accent text-white" : "bg-white text-zinc-600 hover:bg-zinc-50",
+                          )}
+                        >
+                          {st}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setCompareOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-semibold text-midnight hover:border-accent"
+                  >
+                    <ArrowLeftRight className="h-4 w-4" strokeWidth={2} />
+                    Compare Prelim → Final
+                  </button>
+                </>
+              ) : (
+                <span className={cn(
+                  "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset",
+                  s.stage === "final" ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-amber-50 text-amber-700 ring-amber-200",
+                )}>
+                  {s.stage === "final" ? "Final" : "Prelim"} only
+                </span>
+              )}
             </div>
-          ) : s ? (
-            <span className={cn(
-              "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset",
-              s.stage === "final" ? "bg-emerald-50 text-emerald-700 ring-emerald-200" : "bg-amber-50 text-amber-700 ring-amber-200",
-            )}>
-              {s.stage === "final" ? "Final" : "Prelim"} only
-            </span>
           ) : undefined
         }
       />
