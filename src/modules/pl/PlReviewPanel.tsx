@@ -4,7 +4,7 @@
 // never overwrite each other; everyone sees everyone's.
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, TrendingUp, HelpCircle, FileWarning, LineChart } from "lucide-react";
+import { AlertTriangle, TrendingUp, HelpCircle, FileWarning, LineChart, Repeat } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
@@ -22,12 +22,14 @@ const TYPE_ICON: Record<string, typeof AlertTriangle> = {
   anomaly: TrendingUp,
   verify_zero: HelpCircle,
   missing: FileWarning,
+  run_rate: Repeat,
 };
 const TYPE_LABEL: Record<string, string> = {
   over_budget: "Over budget",
   anomaly: "Anomaly",
   verify_zero: "Verify",
   missing: "Missing?",
+  run_rate: "Run-rate",
 };
 
 export function PlReviewPanel({ store, period }: { store: string; period: string }) {
