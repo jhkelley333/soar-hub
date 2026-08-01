@@ -13,6 +13,7 @@
 // gatekeeper — RLS is on with no policies; this function scope-checks.
 
 import { createClient } from "@supabase/supabase-js";
+import { fiscalForDate } from "./_lib/fiscal.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY =
@@ -619,13 +620,18 @@ async function review(supa, user, params) {
 
   const flags = computeFlags(chosen.lines, chosen.total_sales, targets, history);
 
-  // Cross-reference the ranker: latest complete run's metrics for this store add
-  // context to the food + labor flags (food cost efficiency / FC score; whether
-  // they made their labor chart; training credit already applied to labor).
+  // Cross-reference the ranker for the SAME fiscal period as this P&L (a P6 P&L
+  // reads the P6 ranker, not whatever ran most recently). Adds context to the
+  // food + labor flags: food cost efficiency / FC score; whether they made their
+  // labor chart; training credit already applied to labor.
   try {
-    const { data: runs } = await supa
-      .from("ranking_runs").select("id").eq("status", "complete").order("started_at", { ascending: false }).limit(1);
+    const fi = fiscalForDate(period);
+    const targetPeriod = fi?.period ?? null;
+    const { data: runs } = targetPeriod == null ? { data: [] } : await supa
+      .from("ranking_runs").select("id").eq("status", "complete").eq("period", targetPeriod)
+      .order("started_at", { ascending: false }).limit(1);
     const runId = runs?.[0]?.id;
+    const rTag = targetPeriod == null ? "Ranker" : `Ranker P${targetPeriod}`;
     if (runId) {
       const { data: rr } = await supa
         .from("ranking_rows").select("metrics")
@@ -640,11 +646,11 @@ async function review(supa, user, params) {
         const laborKeys = new Set(["total_labor", "hourly_wages", "salaried_managers", "overtime"]);
         for (const f of flags) {
           if (foodKeys.has(f.line_key) && cogsEff != null) {
-            f.context.push(`Ranker: food cost efficiency ${(cogsEff * 100).toFixed(1)}%${fcScore != null ? ` · FC score ${fcScore}/5` : ""}.`);
+            f.context.push(`${rTag}: food cost efficiency ${(cogsEff * 100).toFixed(1)}%${fcScore != null ? ` · FC score ${fcScore}/5` : ""}.`);
           }
           if (laborKeys.has(f.line_key)) {
             if (varToChart != null) {
-              f.context.push(`Ranker labor chart: ${varToChart <= 0 ? "MADE chart" : "MISSED chart"} — ${laborPct != null ? `labor ${(laborPct * 100).toFixed(2)}%, ` : ""}variance ${(varToChart * 100).toFixed(2)} pts${laborScore != null ? ` · score ${laborScore}/5` : ""}.`);
+              f.context.push(`${rTag} labor chart: ${varToChart <= 0 ? "MADE chart" : "MISSED chart"} — ${laborPct != null ? `labor ${(laborPct * 100).toFixed(2)}%, ` : ""}variance ${(varToChart * 100).toFixed(2)} pts${laborScore != null ? ` · score ${laborScore}/5` : ""}.`);
             }
             if (tcPct != null && tcPct > 0) {
               const tcDollars = rSales ? tcPct * rSales : null;
