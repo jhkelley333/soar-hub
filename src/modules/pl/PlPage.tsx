@@ -18,7 +18,7 @@ import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import { Modal } from "@/shared/ui/Modal";
-import { fetchPlCompare, fetchPlFlags, fetchPlLineTrend, fetchPlOverview, fetchPlPeriods, fetchPlReview, fetchPlReviewSummary, fetchPlStatement, savePlFlagNote, uploadPl, type PlFlag, type PlTrendPoint } from "./api";
+import { fetchPlCompare, fetchPlFlags, fetchPlLineTrend, fetchPlOverview, fetchPlPeriods, fetchPlReview, fetchPlReviewSummary, fetchPlRollup, fetchPlStatement, savePlFlagNote, uploadPl, type PlFlag, type PlRollupGroup, type PlTrendPoint, type RollupGroupBy } from "./api";
 import { BudgetTargetsModal } from "./BudgetTargetsModal";
 import { PlReviewPanel } from "./PlReviewPanel";
 import type { ParsedWorkbook, PlCompareLine, PlLine, PlOverviewRow, PlStage } from "./types";
@@ -39,6 +39,8 @@ export function PlPage() {
   const [store, setStore] = useState<string | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [budgetOpen, setBudgetOpen] = useState(false);
+  const [view, setView] = useState<"stores" | "rollup">("stores");
+  const [groupBy, setGroupBy] = useState<RollupGroupBy>("do");
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "ci_pct", dir: "asc" });
 
   const periodsQ = useQuery({ queryKey: ["pl-periods"], queryFn: fetchPlPeriods });
@@ -64,6 +66,12 @@ export function PlPage() {
     () => new Map((reviewSummaryQ.data?.rows ?? []).map((r) => [r.store_number, r])),
     [reviewSummaryQ.data],
   );
+  const rollupQ = useQuery({
+    queryKey: ["pl-rollup", period, groupBy],
+    queryFn: () => fetchPlRollup(period, groupBy),
+    enabled: !!period && view === "rollup",
+    staleTime: 30_000,
+  });
 
   // Single-store viewers (GMs) jump straight into their statement.
   useEffect(() => {
@@ -121,6 +129,30 @@ export function PlPage() {
                 ))}
               </select>
             )}
+            <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-zinc-200">
+              {(["stores", "rollup"] as const).map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setView(v)}
+                  className={cn("px-3 py-1.5 text-sm font-semibold capitalize transition",
+                    view === v ? "bg-accent text-white" : "bg-white text-zinc-600 hover:bg-zinc-50")}
+                >
+                  {v === "stores" ? "Stores" : "Roll-up"}
+                </button>
+              ))}
+            </div>
+            {view === "rollup" && (
+              <select
+                value={groupBy}
+                onChange={(e) => setGroupBy(e.target.value as RollupGroupBy)}
+                className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-midnight focus:border-accent focus:outline-none"
+              >
+                <option value="do">by DO</option>
+                <option value="sdo">by SDO</option>
+                <option value="rvp">by RVP</option>
+              </select>
+            )}
             <button
               type="button"
               onClick={() => setBudgetOpen(true)}
@@ -146,7 +178,15 @@ export function PlPage() {
 
       {uploadOpen && isAdmin && <UploadPanel onDone={() => setUploadOpen(false)} />}
 
-      {periodsQ.isLoading || (overviewQ.isLoading && !!period) ? (
+      {view === "rollup" && periods.length > 0 ? (
+        <RollupTable
+          groups={rollupQ.data?.groups ?? []}
+          isLoading={rollupQ.isLoading}
+          isError={rollupQ.isError}
+          error={rollupQ.error as Error | null}
+          groupBy={groupBy}
+        />
+      ) : periodsQ.isLoading || (overviewQ.isLoading && !!period) ? (
         <Skeleton className="h-64 w-full" />
       ) : periods.length === 0 ? (
         <EmptyState
@@ -255,6 +295,62 @@ function ReviewPill({ summary }: { summary?: { flags: number; owed: number } }) 
     <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
       Reviewed
     </span>
+  );
+}
+
+// Roll-up of the caller's stores aggregated by DO / SDO / RVP.
+function RollupTable({ groups, isLoading, isError, error, groupBy }: {
+  groups: PlRollupGroup[];
+  isLoading: boolean;
+  isError: boolean;
+  error: Error | null;
+  groupBy: RollupGroupBy;
+}) {
+  const tierLabel = groupBy.toUpperCase();
+  if (isLoading) return <Skeleton className="h-64 w-full" />;
+  if (isError) return <EmptyState title="Couldn't load roll-up" description={error?.message ?? "Try again."} />;
+  if (groups.length === 0) return <EmptyState title="Nothing to roll up" description="No P&L for your stores in this period." />;
+  return (
+    <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-zinc-100 text-left text-[10px] uppercase tracking-wide text-zinc-400">
+              <th className="px-4 py-2">{tierLabel}</th>
+              <th className="px-4 py-2 text-right">Stores</th>
+              <th className="px-4 py-2 text-right">Sales</th>
+              <th className="px-4 py-2 text-right">CI $</th>
+              <th className="px-4 py-2 text-right">CI %</th>
+              <th className="px-4 py-2 text-right">Flags</th>
+              <th className="px-4 py-2 text-right">Owed</th>
+              <th className="px-4 py-2 text-right">$ Over Budget</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-100">
+            {groups.map((g) => (
+              <tr key={g.name} className="hover:bg-zinc-50">
+                <td className="px-4 py-2.5 font-semibold text-midnight">{g.name}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-zinc-600">{g.stores}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-midnight">{money(g.total_sales)}</td>
+                <td className={cn("px-4 py-2.5 text-right font-semibold tabular-nums", g.ci_amount < 0 ? "text-red-600" : "text-midnight")}>{money(g.ci_amount)}</td>
+                <td className={cn("px-4 py-2.5 text-right tabular-nums", (g.ci_pct ?? 0) < 0 ? "text-red-600" : "text-emerald-700")}>{pct(g.ci_pct)}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-zinc-600">{g.flags}</td>
+                <td className="px-4 py-2.5 text-right">
+                  {g.owed > 0
+                    ? <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-200">{g.owed} to review</span>
+                    : g.flags > 0
+                      ? <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Reviewed</span>
+                      : <span className="text-xs text-zinc-300">—</span>}
+                </td>
+                <td className={cn("px-4 py-2.5 text-right font-semibold tabular-nums", g.dollars_over > 0 ? "text-red-600" : "text-zinc-400")}>
+                  {g.dollars_over > 0 ? money(g.dollars_over) : "—"}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 

@@ -14,6 +14,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { fiscalForDate } from "./_lib/fiscal.js";
+import { resolveOrg } from "./_lib/kpiOrg.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY =
@@ -732,6 +733,60 @@ async function reviewSummary(supa, user, params) {
   return { period, rows };
 }
 
+// Roll-up: the caller's stores aggregated by DO / SDO / RVP — store count,
+// sales, CI, flag/owed counts and total $ over budget per leader. Powers the
+// DO/SDO/RVP/VP roll-ups (pick the tier to group by). Budget + pest flags only
+// (no per-store history), like the summary.
+async function reviewRollup(supa, user, params) {
+  if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const period = String(params.period || "").trim();
+  const groupBy = ["do", "sdo", "rvp"].includes(params.group_by) ? params.group_by : "do";
+  if (!period) return { error: "period is required", status: 400 };
+  const stores = await callerVisibleStores(supa, user);
+  const visibleNums = stores.map((s) => String(s.number));
+  if (!visibleNums.length) return { period, group_by: groupBy, groups: [] };
+
+  const { data: targetsRaw } = await supa
+    .from("pl_budget_targets").select("line_key, label, is_group, target_pct, verify_on_zero, enabled, sort_order").order("sort_order");
+  const targets = (targetsRaw || []).map((t) => ({ ...t, target_pct: t.target_pct == null ? null : Number(t.target_pct) }));
+
+  const { data: sts } = await supa
+    .from("pl_statements").select("store_number, is_final, lines, total_sales, ci_amount")
+    .eq("period_end", period).in("store_number", visibleNums);
+  const byStore = new Map();
+  for (const r of sts || []) { const keep = byStore.get(r.store_number); if (!keep || (!r.is_final && keep.is_final)) byStore.set(r.store_number, r); }
+
+  const { data: notes } = await supa.from("pl_review_notes").select("store_number, line_key").eq("period_end", period);
+  const addressed = new Set((notes || []).map((n) => `${n.store_number}|${n.line_key}`));
+
+  const org = await resolveOrg(supa, [...byStore.keys()]);
+  const nameFor = (num) => {
+    const o = org.get(String(num)) || {};
+    return (groupBy === "do" ? o.doName : groupBy === "sdo" ? o.sdoName : o.rvpName) || "Unassigned";
+  };
+
+  const groups = new Map();
+  for (const [num, r] of byStore) {
+    const flags = computeFlags(r.lines, r.total_sales, targets, []);
+    const owed = flags.filter((f) => !addressed.has(`${num}|${f.line_key}`)).length;
+    const dollarsOver = flags.reduce((a, f) => a + (f.dollars_over || 0), 0);
+    const key = nameFor(num);
+    const g = groups.get(key) || { name: key, stores: 0, total_sales: 0, ci_amount: 0, flags: 0, owed: 0, dollars_over: 0 };
+    g.stores += 1;
+    g.total_sales += Number(r.total_sales) || 0;
+    g.ci_amount += Number(r.ci_amount) || 0;
+    g.flags += flags.length;
+    g.owed += owed;
+    g.dollars_over += dollarsOver;
+    groups.set(key, g);
+  }
+  const out = [...groups.values()].map((g) => ({
+    ...g, ci_pct: g.total_sales ? (g.ci_amount / g.total_sales) * 100 : null, dollars_over: Math.round(g.dollars_over),
+  }));
+  out.sort((a, b) => b.owed - a.owed || b.dollars_over - a.dollars_over);
+  return { period, group_by: groupBy, groups: out };
+}
+
 async function saveReviewNote(supa, user, body) {
   if (!NOTE_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
   const storeNumber = String(body?.store || "").trim();
@@ -792,6 +847,7 @@ export const handler = async (event) => {
       if (action === "budget") return unwrap(await getBudget(supa, user));
       if (action === "review") return unwrap(await review(supa, user, params));
       if (action === "review-summary") return unwrap(await reviewSummary(supa, user, params));
+      if (action === "review-rollup") return unwrap(await reviewRollup(supa, user, params));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {
