@@ -506,16 +506,43 @@ function computeFlags(lines, sales, targets, history) {
     const actualAmt = line && typeof line.amount === "number" ? line.amount : null;
     const actualPct = linePct(line, sales);
 
-    // Verify-on-zero (Pest Control): nothing posted -> confirm a visit happened.
-    if (t.verify_on_zero && (actualAmt == null || Math.abs(actualAmt) < 1)) {
+    // ONE flag per line, priority-ordered — a line is never called out twice.
+    const isZero = actualAmt == null || Math.abs(actualAmt) < 1;
+
+    // 1. Verify-on-zero (Pest Control): nothing posted -> confirm a visit.
+    if (t.verify_on_zero && isZero) {
       flags.push({ line_key: t.line_key, label: t.label, type: "verify_zero", severity: "med",
         actual_pct: actualPct, actual_amount: actualAmt, target_pct: t.target_pct, variance_pts: null, dollars_over: null, context: [],
         message: `No ${t.label} expense posted this period — verify a visit actually occurred.` });
       continue;
     }
+
+    // 2. Missing invoice — $0 now but usually nonzero. A $0 line is never "over
+    // budget" and a drop to $0 is not an anomaly to chase, so stop here.
+    if (isZero) {
+      const amts = priorAmt(t.line_key);
+      const meanAmt = amts.length ? amts.reduce((a, b) => a + b, 0) / amts.length : 0;
+      if (amts.length >= 2 && meanAmt > 50) {
+        flags.push({ line_key: t.line_key, label: t.label, type: "missing", severity: "low",
+          actual_pct: actualPct, actual_amount: actualAmt, target_pct: t.target_pct, variance_pts: null, dollars_over: null, context: [],
+          message: `${t.label} is $0 this period but usually ~$${Math.round(meanAmt).toLocaleString()} — missing invoice? Verify.` });
+      }
+      continue;
+    }
     if (actualPct == null) continue;
 
-    // Over budget — ranked by dollars over.
+    // Trailing-history stats — a SPIKE only (a cost dropping is good news, and
+    // a $0 drop is already the "missing" case above).
+    const series = priorSeries(t.line_key);
+    let mean = null, spike = false;
+    if (series.length >= 3) {
+      mean = series.reduce((a, b) => a + b, 0) / series.length;
+      const sd = Math.sqrt(series.reduce((a, b) => a + (b - mean) ** 2, 0) / series.length);
+      spike = sd > 0.03 && actualPct > mean + 2 * sd;
+    }
+
+    // 3. Over budget — the primary flag. If it's ALSO spiking / chronic, that
+    // rides along as context rather than a second flag.
     if (t.target_pct != null) {
       const variance = actualPct - t.target_pct;
       const threshold = t.line_key === "overtime" ? 0.001 : MAJORS.has(t.line_key) ? 0.3 : Math.max(0.05, t.target_pct * 0.15);
@@ -524,42 +551,27 @@ function computeFlags(lines, sales, targets, history) {
         let severity = "low";
         if ((MAJORS.has(t.line_key) && variance >= 1.0) || (dollarsOver != null && dollarsOver >= 1000)) severity = "high";
         else if (variance >= threshold * 2 || (dollarsOver != null && dollarsOver >= 300)) severity = "med";
-        // Trend: how many trailing periods were also over this target.
-        const priorVals = priorSeries(t.line_key);
-        const priorOver = priorVals.filter((p) => p > t.target_pct).length;
+        const priorOver = series.filter((p) => p > t.target_pct).length;
         const context = [];
         if (priorOver >= 2) {
-          context.push(`Chronic — over budget ${priorOver} of the last ${priorVals.length} periods (not a one-off).`);
-          if (severity === "low") severity = "med"; // persistent problems matter more
+          context.push(`Chronic — over budget ${priorOver} of the last ${series.length} periods (not a one-off).`);
+          if (severity === "low") severity = "med";
         }
+        if (spike && mean != null) context.push(`Accelerating — spiking vs its trailing avg (${mean.toFixed(2)}%), not steady-state.`);
         flags.push({ line_key: t.line_key, label: t.label, type: "over_budget", severity,
           actual_pct: actualPct, actual_amount: actualAmt, target_pct: t.target_pct,
           variance_pts: Math.round(variance * 100) / 100, dollars_over: dollarsOver == null ? null : Math.round(dollarsOver), context,
           message: `${t.label} at ${actualPct.toFixed(2)}% vs ${t.target_pct.toFixed(2)}% budget — ${variance.toFixed(2)} pts over${dollarsOver ? ` (~$${Math.round(dollarsOver).toLocaleString()})` : ""}.` });
+        continue;
       }
     }
 
-    // Anomaly vs the store's own trailing history (needs >= 3 points).
-    const series = priorSeries(t.line_key);
-    if (series.length >= 3) {
-      const mean = series.reduce((a, b) => a + b, 0) / series.length;
-      const sd = Math.sqrt(series.reduce((a, b) => a + (b - mean) ** 2, 0) / series.length);
-      if (sd > 0.02 && Math.abs(actualPct - mean) > 2 * sd) {
-        flags.push({ line_key: t.line_key, label: t.label, type: "anomaly", severity: "med",
-          actual_pct: actualPct, actual_amount: actualAmt, target_pct: t.target_pct, variance_pts: null, dollars_over: null, context: [],
-          message: `${t.label} ${actualPct > mean ? "spike" : "drop"}: ${actualPct.toFixed(2)}% vs its trailing avg ${mean.toFixed(2)}% — unusual for this store.` });
-      }
-    }
-
-    // Missing invoice — $0 now but usually nonzero.
-    if ((actualAmt == null || Math.abs(actualAmt) < 1) && !t.verify_on_zero) {
-      const amts = priorAmt(t.line_key);
-      const meanAmt = amts.length ? amts.reduce((a, b) => a + b, 0) / amts.length : 0;
-      if (amts.length >= 2 && meanAmt > 50) {
-        flags.push({ line_key: t.line_key, label: t.label, type: "missing", severity: "low",
-          actual_pct: actualPct, actual_amount: actualAmt, target_pct: t.target_pct, variance_pts: null, dollars_over: null, context: [],
-          message: `${t.label} is $0 this period but usually ~$${Math.round(meanAmt).toLocaleString()} — missing invoice? Verify.` });
-      }
+    // 4. Anomaly — ONLY when within budget: an early warning that a good line
+    // jumped and could breach next period.
+    if (spike && mean != null) {
+      flags.push({ line_key: t.line_key, label: t.label, type: "anomaly", severity: "med",
+        actual_pct: actualPct, actual_amount: actualAmt, target_pct: t.target_pct, variance_pts: null, dollars_over: null, context: [],
+        message: `${t.label} spiked to ${actualPct.toFixed(2)}% vs its trailing avg ${mean.toFixed(2)}% — still within budget, but trending up fast.` });
     }
   }
   for (const f of flags) f.stmt_label = stmtLabelByKey[f.line_key] || f.label;
