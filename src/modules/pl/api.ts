@@ -125,6 +125,22 @@ export interface PlReviewSummaryRow { store_number: string; flags: number; noted
 export function fetchPlReviewSummary(period: string): Promise<{ period: string; rows: PlReviewSummaryRow[] }> {
   return request(`${FN}?action=review-summary&period=${encodeURIComponent(period)}`);
 }
+
+// Roll-up of the caller's stores aggregated by DO / SDO / RVP.
+export type RollupGroupBy = "do" | "sdo" | "rvp";
+export interface PlRollupGroup {
+  name: string;
+  stores: number;
+  total_sales: number;
+  ci_amount: number;
+  ci_pct: number | null;
+  flags: number;
+  owed: number;
+  dollars_over: number;
+}
+export function fetchPlRollup(period: string, groupBy: RollupGroupBy): Promise<{ period: string; group_by: RollupGroupBy; groups: PlRollupGroup[] }> {
+  return request(`${FN}?action=review-rollup&period=${encodeURIComponent(period)}&group_by=${groupBy}`);
+}
 export function savePlReviewNote(input: {
   store: string; period: string; line_key: string; root_cause: string; action_steps: string;
 }): Promise<{ note: PlReviewNote }> {
