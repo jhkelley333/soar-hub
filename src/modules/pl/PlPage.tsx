@@ -624,6 +624,16 @@ function StatementView({ store, period, periodLabel, onBack }: {
         <EmptyState title="Couldn't load this statement" description={(q.error as Error)?.message ?? "Try again."} />
       ) : (
         <div className="space-y-5">
+          {/* How-to note — orients the team on this screen. */}
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 rounded-xl bg-blue-50 px-4 py-2.5 text-sm text-blue-900 ring-1 ring-blue-200">
+            <span className="font-semibold">How this works:</span>
+            <span>Flagged items are at the bottom — add your notes there.</span>
+            <span className="inline-flex items-center gap-1">
+              Click the <Flag className="h-3.5 w-3.5 text-blue-500" strokeWidth={2} /> flag next to a line to flag it,
+            </span>
+            <span>and click a line item to see its trend.</span>
+          </div>
+
           {/* Hero metrics — the focus numbers. */}
           <div className="grid gap-4 sm:grid-cols-3">
             <Tile label="Total Sales" value={money(s.total_sales)} tone="neutral" />
@@ -645,13 +655,14 @@ function StatementView({ store, period, periodLabel, onBack }: {
             <div className="overflow-x-auto">
               <div className={cn(
                 "grid gap-x-6 border-b border-zinc-100 px-5 py-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400",
-                lyOn ? "min-w-[640px] grid-cols-[1fr_auto_auto_auto_auto]" : "grid-cols-[1fr_auto_auto]",
+                lyOn ? "min-w-[760px] grid-cols-[1fr_auto_auto_auto_auto_auto]" : "grid-cols-[1fr_auto_auto]",
               )}>
                 <span>Line</span>
                 <span className="w-28 text-right">$</span>
                 <span className="w-20 text-right">% Sales</span>
                 {lyOn && <span className="w-28 text-right text-zinc-400">LY $</span>}
                 {lyOn && <span className="w-20 text-right text-zinc-400">LY %</span>}
+                {lyOn && <span className="w-28 text-right text-zinc-400">YoY Δ $</span>}
               </div>
               <div>
                 {s.lines.map((l, i) => (
@@ -1168,7 +1179,7 @@ function LineRow({ line, store, period, flag, autoSev, canFlag, showLy }: {
       <div
         className={cn(
           "grid gap-x-6 px-5 py-1.5 text-sm hover:bg-accent/5",
-          showLy ? "min-w-[640px] grid-cols-[1fr_auto_auto_auto_auto]" : "grid-cols-[1fr_auto_auto]",
+          showLy ? "min-w-[760px] grid-cols-[1fr_auto_auto_auto_auto_auto]" : "grid-cols-[1fr_auto_auto]",
           line.total ? "border-t border-zinc-200 bg-zinc-50 font-bold text-midnight" : "text-zinc-700",
           flag && "bg-transparent",
         )}
@@ -1207,6 +1218,14 @@ function LineRow({ line, store, period, flag, autoSev, canFlag, showLy }: {
         {showLy && (
           <span className="w-20 text-right tabular-nums text-zinc-400">{line.ly_pct != null ? `${line.ly_pct.toFixed(1)}%` : ""}</span>
         )}
+        {showLy && (() => {
+          const d = line.amount != null && line.ly_amount != null ? line.amount - line.ly_amount : null;
+          return (
+            <span className="w-28 text-right tabular-nums text-zinc-500">
+              {d == null ? "—" : `${d > 0 ? "+" : ""}${money(d, 2)}`}
+            </span>
+          );
+        })()}
       </div>
 
       {/* The flag itself, shown right below the line it's on. */}
