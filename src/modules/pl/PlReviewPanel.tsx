@@ -4,7 +4,7 @@
 // entry (authors edit/delete only their own), and everyone sees everyone's. A
 // DO (or above) signs off per store once they've reviewed the notes; the
 // sign-off goes stale if a note changes after it, prompting a re-sign.
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, TrendingUp, HelpCircle, FileWarning, LineChart, Repeat, CheckCircle2, Clock, Pencil, Trash2 } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
