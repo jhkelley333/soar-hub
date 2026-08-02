@@ -426,6 +426,8 @@ async function getBudget(supa, user) {
 
 const BUDGET_EDIT_ROLES = new Set(["admin", "coo", "vp"]);
 const NOTE_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]);
+// DO sign-off: the store's DO or anyone above may attest the notes are reviewed.
+const SIGN_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
 
 async function setBudget(supa, user, body) {
   if (!BUDGET_EDIT_ROLES.has(user.role)) return { error: "Only Admin / COO / VP can edit P&L budget targets.", status: 403 };
@@ -683,9 +685,23 @@ async function review(supa, user, params) {
     }
   } catch { /* ranker context is a nicety — never fail the review */ }
 
+  // Append-only log — oldest first so each flag reads top-to-bottom in order.
   const { data: notes } = await supa.from("pl_review_notes")
-    .select("id, line_key, root_cause, action_steps, author_id, author_name, author_role, updated_at")
-    .eq("store_number", storeNumber).eq("period_end", period);
+    .select("id, line_key, root_cause, action_steps, author_id, author_name, author_role, created_at, updated_at")
+    .eq("store_number", storeNumber).eq("period_end", period)
+    .order("created_at", { ascending: true });
+
+  // DO sign-off for this store/period, plus whether it's stale (any note added
+  // or edited after it was signed) so the UI can prompt a re-sign.
+  const { data: signRow } = await supa.from("pl_review_signoffs")
+    .select("signed_by_id, signed_by_name, signed_by_role, signed_at")
+    .eq("store_number", storeNumber).eq("period_end", period).maybeSingle();
+  let signoff = null;
+  if (signRow) {
+    const signedMs = new Date(signRow.signed_at).getTime();
+    const stale = (notes || []).some((n) => new Date(n.updated_at).getTime() > signedMs);
+    signoff = { ...signRow, stale };
+  }
 
   return {
     store: { number: storeNumber, name: store.name },
@@ -694,6 +710,8 @@ async function review(supa, user, params) {
     flags,
     notes: notes || [],
     my_author_id: user.id,
+    signoff,
+    can_sign: SIGN_ROLES.has(user.role),
   };
 }
 
@@ -745,6 +763,7 @@ async function reviewRollup(supa, user, params) {
   const stores = await callerVisibleStores(supa, user);
   const visibleNums = stores.map((s) => String(s.number));
   if (!visibleNums.length) return { period, group_by: groupBy, groups: [] };
+  const nameByNumber = new Map(stores.map((s) => [String(s.number), s.name]));
 
   const { data: targetsRaw } = await supa
     .from("pl_budget_targets").select("line_key, label, is_group, target_pct, verify_on_zero, enabled, sort_order").order("sort_order");
@@ -756,8 +775,21 @@ async function reviewRollup(supa, user, params) {
   const byStore = new Map();
   for (const r of sts || []) { const keep = byStore.get(r.store_number); if (!keep || (!r.is_final && keep.is_final)) byStore.set(r.store_number, r); }
 
-  const { data: notes } = await supa.from("pl_review_notes").select("store_number, line_key").eq("period_end", period);
+  // Notes carry updated_at so we can tell if a sign-off went stale (a note
+  // changed after it was signed), matching the per-store review view.
+  const { data: notes } = await supa.from("pl_review_notes")
+    .select("store_number, line_key, updated_at").eq("period_end", period);
   const addressed = new Set((notes || []).map((n) => `${n.store_number}|${n.line_key}`));
+  const maxNoteMs = new Map();
+  for (const n of notes || []) {
+    const ms = new Date(n.updated_at).getTime();
+    const key = String(n.store_number);
+    if (ms > (maxNoteMs.get(key) ?? 0)) maxNoteMs.set(key, ms);
+  }
+
+  const { data: signs } = await supa.from("pl_review_signoffs")
+    .select("store_number, signed_at").eq("period_end", period).in("store_number", visibleNums);
+  const signedAtByStore = new Map((signs || []).map((s) => [String(s.store_number), new Date(s.signed_at).getTime()]));
 
   const org = await resolveOrg(supa, [...byStore.keys()]);
   const nameFor = (num) => {
@@ -767,22 +799,43 @@ async function reviewRollup(supa, user, params) {
 
   const groups = new Map();
   for (const [num, r] of byStore) {
+    const numKey = String(num);
     const flags = computeFlags(r.lines, r.total_sales, targets, []);
     const owed = flags.filter((f) => !addressed.has(`${num}|${f.line_key}`)).length;
     const dollarsOver = flags.reduce((a, f) => a + (f.dollars_over || 0), 0);
+    const signedAt = signedAtByStore.get(numKey) ?? null;
+    const signed = signedAt != null;
+    const signedStale = signed && (maxNoteMs.get(numKey) ?? 0) > signedAt;
+    const totalSales = Number(r.total_sales) || 0;
+    const ciAmount = Number(r.ci_amount) || 0;
     const key = nameFor(num);
-    const g = groups.get(key) || { name: key, stores: 0, total_sales: 0, ci_amount: 0, flags: 0, owed: 0, dollars_over: 0 };
+    const g = groups.get(key) || { name: key, stores: 0, total_sales: 0, ci_amount: 0, flags: 0, owed: 0, dollars_over: 0, signed_count: 0, store_rows: [] };
     g.stores += 1;
-    g.total_sales += Number(r.total_sales) || 0;
-    g.ci_amount += Number(r.ci_amount) || 0;
+    g.total_sales += totalSales;
+    g.ci_amount += ciAmount;
     g.flags += flags.length;
     g.owed += owed;
     g.dollars_over += dollarsOver;
+    if (signed && !signedStale) g.signed_count += 1;
+    g.store_rows.push({
+      store_number: numKey,
+      store_name: nameByNumber.get(numKey) ?? null,
+      total_sales: totalSales,
+      ci_amount: ciAmount,
+      ci_pct: totalSales ? (ciAmount / totalSales) * 100 : null,
+      flags: flags.length,
+      owed,
+      dollars_over: Math.round(dollarsOver),
+      signed,
+      signed_stale: signedStale,
+    });
     groups.set(key, g);
   }
-  const out = [...groups.values()].map((g) => ({
-    ...g, ci_pct: g.total_sales ? (g.ci_amount / g.total_sales) * 100 : null, dollars_over: Math.round(g.dollars_over),
-  }));
+  const out = [...groups.values()].map((g) => {
+    const { store_rows, ...rest } = g;
+    store_rows.sort((a, b) => b.owed - a.owed || b.dollars_over - a.dollars_over || a.store_number.localeCompare(b.store_number, undefined, { numeric: true }));
+    return { ...rest, ci_pct: g.total_sales ? (g.ci_amount / g.total_sales) * 100 : null, dollars_over: Math.round(g.dollars_over), stores_detail: store_rows };
+  });
   out.sort((a, b) => b.owed - a.owed || b.dollars_over - a.dollars_over);
   return { period, group_by: groupBy, groups: out };
 }
@@ -799,20 +852,150 @@ async function saveReviewNote(supa, user, body) {
 
   const rootCause = String(body?.root_cause ?? "").slice(0, 4000).trim();
   const actionSteps = String(body?.action_steps ?? "").slice(0, 4000).trim();
+  if (!rootCause && !actionSteps) return { error: "Add a root cause or an action step before saving.", status: 400 };
+  const now = new Date().toISOString();
+  // Append-only: every save is its own timestamped entry (migration 0268 drops
+  // the per-author unique constraint), so the flag keeps the full note history.
   const row = {
     period_end: period, store_number: storeNumber, store_id: store.id ?? null, line_key: lineKey,
     root_cause: rootCause || null, action_steps: actionSteps || null,
     author_id: user.id, author_name: user.preferred_name || user.full_name || user.email || null, author_role: user.role,
-    updated_at: new Date().toISOString(),
+    created_at: now, updated_at: now,
   };
   const { data, error } = await supa.from("pl_review_notes")
-    .upsert(row, { onConflict: "period_end,store_number,author_id,line_key" })
-    .select("id, line_key, root_cause, action_steps, author_id, author_name, author_role, updated_at").single();
+    .insert(row)
+    .select("id, line_key, root_cause, action_steps, author_id, author_name, author_role, created_at, updated_at").single();
   if (error) {
     if (/pl_review_notes/.test(error.message)) return { error: "Run migration 0266 first (pl_review_notes is missing).", status: 500 };
     return { error: error.message, status: 500 };
   }
   return { note: data };
+}
+
+// Edit one of the caller's own note entries. Authors edit only their own rows.
+async function updateReviewNote(supa, user, body) {
+  if (!NOTE_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const id = String(body?.id || "").trim();
+  if (!id) return { error: "id is required", status: 400 };
+  const { data: existing } = await supa.from("pl_review_notes").select("id, author_id").eq("id", id).maybeSingle();
+  if (!existing) return { error: "Note not found.", status: 404 };
+  if (existing.author_id !== user.id) return { error: "You can only edit your own notes.", status: 403 };
+  const rootCause = String(body?.root_cause ?? "").slice(0, 4000).trim();
+  const actionSteps = String(body?.action_steps ?? "").slice(0, 4000).trim();
+  if (!rootCause && !actionSteps) return { error: "A note can't be emptied — delete it instead.", status: 400 };
+  const { data, error } = await supa.from("pl_review_notes")
+    .update({ root_cause: rootCause || null, action_steps: actionSteps || null, updated_at: new Date().toISOString() })
+    .eq("id", id)
+    .select("id, line_key, root_cause, action_steps, author_id, author_name, author_role, created_at, updated_at").single();
+  if (error) return { error: error.message, status: 500 };
+  return { note: data };
+}
+
+// Delete one of the caller's own note entries.
+async function deleteReviewNote(supa, user, body) {
+  if (!NOTE_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const id = String(body?.id || "").trim();
+  if (!id) return { error: "id is required", status: 400 };
+  const { data: existing } = await supa.from("pl_review_notes").select("id, author_id").eq("id", id).maybeSingle();
+  if (!existing) return { error: "Note not found.", status: 404 };
+  if (existing.author_id !== user.id) return { error: "You can only delete your own notes.", status: 403 };
+  const { error } = await supa.from("pl_review_notes").delete().eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
+// DO sign-off: attest the store's notes for a period are reviewed. Re-signing
+// upserts (updates who/when), which also clears any "stale" state since the new
+// signed_at moves past every existing note's updated_at.
+async function saveSignoff(supa, user, body) {
+  if (!SIGN_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const storeNumber = String(body?.store || "").trim();
+  const period = String(body?.period || "").trim();
+  if (!storeNumber || !period) return { error: "store and period are required", status: 400 };
+  const stores = await callerVisibleStores(supa, user);
+  const store = stores.find((s) => String(s.number) === storeNumber);
+  if (!store) return { error: `Store ${storeNumber} is outside your scope.`, status: 403 };
+  const row = {
+    period_end: period, store_number: storeNumber, store_id: store.id ?? null,
+    signed_by_id: user.id, signed_by_name: user.preferred_name || user.full_name || user.email || null,
+    signed_by_role: user.role, signed_at: new Date().toISOString(),
+  };
+  const { data, error } = await supa.from("pl_review_signoffs")
+    .upsert(row, { onConflict: "period_end,store_number" })
+    .select("signed_by_id, signed_by_name, signed_by_role, signed_at").single();
+  if (error) {
+    if (/pl_review_signoffs/.test(error.message)) return { error: "Run migration 0269 first (pl_review_signoffs is missing).", status: 500 };
+    return { error: error.message, status: 500 };
+  }
+  return { signoff: { ...data, stale: false } };
+}
+
+// A stable slug for a statement line label, so re-flagging the same line
+// upserts instead of stacking duplicates.
+function lineSlug(label) {
+  return String(label || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 120);
+}
+
+// Team-created flags on any statement line for a store/period.
+async function listManualFlags(supa, user, params) {
+  if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const storeNumber = String(params.store || "").trim();
+  const period = String(params.period || "").trim();
+  if (!storeNumber || !period) return { error: "store and period are required", status: 400 };
+  const stores = await callerVisibleStores(supa, user);
+  if (!stores.some((s) => String(s.number) === storeNumber)) return { error: `Store ${storeNumber} is outside your scope.`, status: 403 };
+  const { data, error } = await supa.from("pl_manual_flags")
+    .select("id, line_key, line_label, reason, flagged_by_id, flagged_by_name, flagged_by_role, created_at, updated_at")
+    .eq("store_number", storeNumber).eq("period_end", period)
+    .order("created_at", { ascending: true });
+  if (error) {
+    if (/pl_manual_flags/.test(error.message)) return { error: "Run migration 0271 first (pl_manual_flags is missing).", status: 500 };
+    return { error: error.message, status: 500 };
+  }
+  return { flags: data || [], my_id: user.id, can_flag: NOTE_ROLES.has(user.role) };
+}
+
+// Flag a line (or edit an existing flag's reason). One flag per line — upsert.
+async function saveManualFlag(supa, user, body) {
+  if (!NOTE_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const storeNumber = String(body?.store || "").trim();
+  const period = String(body?.period || "").trim();
+  const lineLabel = String(body?.line_label || "").trim();
+  if (!storeNumber || !period || !lineLabel) return { error: "store, period and line_label are required", status: 400 };
+  const stores = await callerVisibleStores(supa, user);
+  const store = stores.find((s) => String(s.number) === storeNumber);
+  if (!store) return { error: `Store ${storeNumber} is outside your scope.`, status: 403 };
+  const reason = String(body?.reason ?? "").slice(0, 2000).trim();
+  const now = new Date().toISOString();
+  const row = {
+    period_end: period, store_number: storeNumber, store_id: store.id ?? null,
+    line_key: lineSlug(lineLabel), line_label: lineLabel, reason: reason || null,
+    flagged_by_id: user.id, flagged_by_name: user.preferred_name || user.full_name || user.email || null,
+    flagged_by_role: user.role, updated_at: now,
+  };
+  const { data, error } = await supa.from("pl_manual_flags")
+    .upsert(row, { onConflict: "period_end,store_number,line_key" })
+    .select("id, line_key, line_label, reason, flagged_by_id, flagged_by_name, flagged_by_role, created_at, updated_at").single();
+  if (error) {
+    if (/pl_manual_flags/.test(error.message)) return { error: "Run migration 0271 first (pl_manual_flags is missing).", status: 500 };
+    return { error: error.message, status: 500 };
+  }
+  return { flag: data };
+}
+
+// Remove a manual flag — the person who raised it, or a DO/above.
+async function deleteManualFlag(supa, user, body) {
+  if (!NOTE_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const id = String(body?.id || "").trim();
+  if (!id) return { error: "id is required", status: 400 };
+  const { data: existing } = await supa.from("pl_manual_flags").select("id, flagged_by_id").eq("id", id).maybeSingle();
+  if (!existing) return { error: "Flag not found.", status: 404 };
+  if (existing.flagged_by_id !== user.id && !SIGN_ROLES.has(user.role)) {
+    return { error: "Only the person who raised it, or a DO, can clear this flag.", status: 403 };
+  }
+  const { error } = await supa.from("pl_manual_flags").delete().eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
 }
 
 export const handler = async (event) => {
@@ -848,6 +1031,7 @@ export const handler = async (event) => {
       if (action === "review") return unwrap(await review(supa, user, params));
       if (action === "review-summary") return unwrap(await reviewSummary(supa, user, params));
       if (action === "review-rollup") return unwrap(await reviewRollup(supa, user, params));
+      if (action === "manual-flags") return unwrap(await listManualFlags(supa, user, params));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {
@@ -860,6 +1044,11 @@ export const handler = async (event) => {
       if (action === "upload") return unwrap(await upload(supa, user, body));
       if (action === "budget-set") return unwrap(await setBudget(supa, user, body));
       if (action === "review-note") return unwrap(await saveReviewNote(supa, user, body));
+      if (action === "review-note-update") return unwrap(await updateReviewNote(supa, user, body));
+      if (action === "review-note-delete") return unwrap(await deleteReviewNote(supa, user, body));
+      if (action === "review-signoff") return unwrap(await saveSignoff(supa, user, body));
+      if (action === "manual-flag") return unwrap(await saveManualFlag(supa, user, body));
+      if (action === "manual-flag-delete") return unwrap(await deleteManualFlag(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
     return respond(405, { error: "method not allowed" });

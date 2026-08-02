@@ -8,17 +8,18 @@
 // Flags review + notes write-back (Google Sheet column N) is the next
 // phase and will slot into the statement view.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowLeft, ArrowLeftRight, ArrowUp, ArrowUpDown, Download, Loader2, SlidersHorizontal, TrendingDown, TrendingUp, Upload } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowLeftRight, ArrowUp, ArrowUpDown, CheckCircle2, ChevronRight, Download, Flag, Loader2, SlidersHorizontal, Trash2, TrendingDown, TrendingUp, Upload, X } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
+import { fiscalInfo, FISCAL } from "@/lib/fiscal";
 import { Modal } from "@/shared/ui/Modal";
-import { fetchPlCompare, fetchPlFlags, fetchPlLineTrend, fetchPlOverview, fetchPlPeriods, fetchPlReview, fetchPlReviewSummary, fetchPlRollup, fetchPlStatement, savePlFlagNote, uploadPl, type PlFlag, type PlRollupGroup, type PlTrendPoint, type RollupGroupBy } from "./api";
+import { deletePlManualFlag, fetchPlCompare, fetchPlFlags, fetchPlLineTrend, fetchPlManualFlags, fetchPlOverview, fetchPlPeriods, fetchPlReview, fetchPlReviewSummary, fetchPlRollup, fetchPlStatement, savePlFlagNote, savePlManualFlag, uploadPl, type PlFlag, type PlManualFlag, type PlRollupGroup, type PlTrendPoint, type RollupGroupBy } from "./api";
 import { BudgetTargetsModal } from "./BudgetTargetsModal";
 import { PlReviewPanel } from "./PlReviewPanel";
 import type { ParsedWorkbook, PlCompareLine, PlLine, PlOverviewRow, PlStage } from "./types";
@@ -28,6 +29,14 @@ const money = (v: number | null | undefined, dp = 0) =>
     ? "—"
     : `${v < 0 ? "−" : ""}$${Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp })}`;
 const pct = (v: number | null | undefined) => (v == null ? "—" : `${v.toFixed(2)}%`);
+
+// Display sugar: the accounting "Cost of Sales" line is the store's total food
+// cost — show both terms so the team reads it unambiguously.
+function plLineLabel(label: string): string {
+  const n = label.trim().toLowerCase();
+  if (n === "cost of sales" || n === "total cost of sales") return `${label} (Total Food Cost)`;
+  return label;
+}
 
 type SortKey = "store" | "sales" | "ci" | "ci_pct" | "ebitda" | "notes";
 type SortDir = "asc" | "desc";
@@ -185,6 +194,7 @@ export function PlPage() {
           isError={rollupQ.isError}
           error={rollupQ.error as Error | null}
           groupBy={groupBy}
+          onOpenStore={(sn) => setStore(sn)}
         />
       ) : periodsQ.isLoading || (overviewQ.isLoading && !!period) ? (
         <Skeleton className="h-64 w-full" />
@@ -299,14 +309,23 @@ function ReviewPill({ summary }: { summary?: { flags: number; owed: number } }) 
 }
 
 // Roll-up of the caller's stores aggregated by DO / SDO / RVP.
-function RollupTable({ groups, isLoading, isError, error, groupBy }: {
+function RollupTable({ groups, isLoading, isError, error, groupBy, onOpenStore }: {
   groups: PlRollupGroup[];
   isLoading: boolean;
   isError: boolean;
   error: Error | null;
   groupBy: RollupGroupBy;
+  onOpenStore: (storeNumber: string) => void;
 }) {
   const tierLabel = groupBy.toUpperCase();
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const toggle = (name: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
+
   if (isLoading) return <Skeleton className="h-64 w-full" />;
   if (isError) return <EmptyState title="Couldn't load roll-up" description={error?.message ?? "Try again."} />;
   if (groups.length === 0) return <EmptyState title="Nothing to roll up" description="No P&L for your stores in this period." />;
@@ -323,30 +342,75 @@ function RollupTable({ groups, isLoading, isError, error, groupBy }: {
               <th className="px-4 py-2 text-right">CI %</th>
               <th className="px-4 py-2 text-right">Flags</th>
               <th className="px-4 py-2 text-right">Owed</th>
+              <th className="px-4 py-2 text-right">Signed</th>
               <th className="px-4 py-2 text-right">$ Over Budget</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100">
-            {groups.map((g) => (
-              <tr key={g.name} className="hover:bg-zinc-50">
-                <td className="px-4 py-2.5 font-semibold text-midnight">{g.name}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-zinc-600">{g.stores}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-midnight">{money(g.total_sales)}</td>
-                <td className={cn("px-4 py-2.5 text-right font-semibold tabular-nums", g.ci_amount < 0 ? "text-red-600" : "text-midnight")}>{money(g.ci_amount)}</td>
-                <td className={cn("px-4 py-2.5 text-right tabular-nums", (g.ci_pct ?? 0) < 0 ? "text-red-600" : "text-emerald-700")}>{pct(g.ci_pct)}</td>
-                <td className="px-4 py-2.5 text-right tabular-nums text-zinc-600">{g.flags}</td>
-                <td className="px-4 py-2.5 text-right">
-                  {g.owed > 0
-                    ? <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-200">{g.owed} to review</span>
-                    : g.flags > 0
-                      ? <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Reviewed</span>
-                      : <span className="text-xs text-zinc-300">—</span>}
-                </td>
-                <td className={cn("px-4 py-2.5 text-right font-semibold tabular-nums", g.dollars_over > 0 ? "text-red-600" : "text-zinc-400")}>
-                  {g.dollars_over > 0 ? money(g.dollars_over) : "—"}
-                </td>
-              </tr>
-            ))}
+            {groups.map((g) => {
+              const open = expanded.has(g.name);
+              const detail = g.stores_detail ?? [];
+              return (
+                <Fragment key={g.name}>
+                  <tr className="cursor-pointer hover:bg-zinc-50" onClick={() => toggle(g.name)}>
+                    <td className="px-4 py-2.5 font-semibold text-midnight">
+                      <span className="inline-flex items-center gap-1.5">
+                        <ChevronRight className={cn("h-4 w-4 shrink-0 text-zinc-400 transition-transform", open && "rotate-90")} strokeWidth={2.5} />
+                        {g.name}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-zinc-600">{g.stores}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-midnight">{money(g.total_sales)}</td>
+                    <td className={cn("px-4 py-2.5 text-right font-semibold tabular-nums", g.ci_amount < 0 ? "text-red-600" : "text-midnight")}>{money(g.ci_amount)}</td>
+                    <td className={cn("px-4 py-2.5 text-right tabular-nums", (g.ci_pct ?? 0) < 0 ? "text-red-600" : "text-emerald-700")}>{pct(g.ci_pct)}</td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-zinc-600">{g.flags}</td>
+                    <td className="px-4 py-2.5 text-right">
+                      {g.owed > 0
+                        ? <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-200">{g.owed} to review</span>
+                        : g.flags > 0
+                          ? <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">Reviewed</span>
+                          : <span className="text-xs text-zinc-300">—</span>}
+                    </td>
+                    <td className={cn("px-4 py-2.5 text-right tabular-nums", g.signed_count >= g.stores ? "text-emerald-700 font-semibold" : "text-zinc-600")}>
+                      {g.signed_count}/{g.stores}
+                    </td>
+                    <td className={cn("px-4 py-2.5 text-right font-semibold tabular-nums", g.dollars_over > 0 ? "text-red-600" : "text-zinc-400")}>
+                      {g.dollars_over > 0 ? money(g.dollars_over) : "—"}
+                    </td>
+                  </tr>
+                  {open && detail.map((s) => (
+                    <tr key={`${g.name}:${s.store_number}`} className="cursor-pointer bg-zinc-50/50 hover:bg-zinc-100/60" onClick={() => onOpenStore(s.store_number)}>
+                      <td className="py-2 pl-11 pr-4 text-midnight">
+                        <span className="font-medium">#{s.store_number}</span>
+                        {s.store_name && <span className="ml-1.5 text-zinc-500">{s.store_name}</span>}
+                      </td>
+                      <td className="px-4 py-2" />
+                      <td className="px-4 py-2 text-right tabular-nums text-zinc-600">{money(s.total_sales)}</td>
+                      <td className={cn("px-4 py-2 text-right tabular-nums", s.ci_amount < 0 ? "text-red-600" : "text-zinc-700")}>{money(s.ci_amount)}</td>
+                      <td className={cn("px-4 py-2 text-right tabular-nums", (s.ci_pct ?? 0) < 0 ? "text-red-600" : "text-emerald-700")}>{pct(s.ci_pct)}</td>
+                      <td className="px-4 py-2 text-right tabular-nums text-zinc-600">{s.flags}</td>
+                      <td className="px-4 py-2 text-right">
+                        {s.owed > 0
+                          ? <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-200">{s.owed}</span>
+                          : s.flags > 0
+                            ? <span className="text-[11px] text-emerald-600">✓</span>
+                            : <span className="text-xs text-zinc-300">—</span>}
+                      </td>
+                      <td className="px-4 py-2 text-right">
+                        {s.signed && !s.signed_stale
+                          ? <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-700"><CheckCircle2 className="h-3.5 w-3.5" strokeWidth={2} />Signed</span>
+                          : s.signed_stale
+                            ? <span className="inline-flex items-center rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-200">Re-sign</span>
+                            : <span className="text-xs text-zinc-300">—</span>}
+                      </td>
+                      <td className={cn("px-4 py-2 text-right tabular-nums", s.dollars_over > 0 ? "text-red-600" : "text-zinc-400")}>
+                        {s.dollars_over > 0 ? money(s.dollars_over) : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -377,6 +441,20 @@ function Th({ label, k, sort, onSort, right }: {
   );
 }
 
+// The Walkthrough flags panel is retired from fiscal period 7 (FY2026)
+// onward — the Preliminary Review below takes its place there. Earlier
+// periods keep the panel so their walkthrough notes stay visible. A
+// period_end past FY2026 is likewise "forward" of P7 and stays hidden; one
+// before FY2026 keeps the panel. Notes still save to whichever P&L period
+// the panel is shown for (see FlagRow → savePlFlagNote periodEnd).
+function showsWalkthroughFlags(periodEnd: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(periodEnd);
+  if (!m) return true;
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  const fi = fiscalInfo(d);
+  return fi ? fi.period < 7 : d < FISCAL.start;
+}
+
 // ── One store's full statement ───────────────────────────────────────
 function StatementView({ store, period, periodLabel, onBack }: {
   store: string;
@@ -395,6 +473,18 @@ function StatementView({ store, period, periodLabel, onBack }: {
     staleTime: 5 * 60_000,
   });
   const s = q.data?.statement;
+
+  // Team-created flags on individual lines — one lookup for the whole statement.
+  const manualQ = useQuery({
+    queryKey: ["pl-manual-flags", store, period],
+    queryFn: () => fetchPlManualFlags(store, period),
+    staleTime: 30_000,
+  });
+  const flagByLabel = useMemo(
+    () => new Map((manualQ.data?.flags ?? []).map((f) => [f.line_label, f])),
+    [manualQ.data],
+  );
+  const canFlag = manualQ.data?.can_flag ?? false;
 
   async function handlePrint() {
     if (!s) return;
@@ -495,8 +585,9 @@ function StatementView({ store, period, periodLabel, onBack }: {
             <Tile label="Controllable Income %" value={pct(s.ci_pct)} tone={(s.ci_pct ?? 0) < 0 ? "bad" : "ok"} />
           </div>
 
-          {/* Walkthrough flags + notes — write back to the review sheet. */}
-          <FlagsSection store={store} />
+          {/* Walkthrough flags + notes — write back to the review sheet.
+              Retired from P7 onward, where the Preliminary Review replaces it. */}
+          {showsWalkthroughFlags(period) && <FlagsSection store={store} />}
 
           {/* Full statement */}
           <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
@@ -505,7 +596,14 @@ function StatementView({ store, period, periodLabel, onBack }: {
             </div>
             <div>
               {s.lines.map((l, i) => (
-                <LineRow key={`${l.label}-${i}`} line={l} store={store} />
+                <LineRow
+                  key={`${l.label}-${i}`}
+                  line={l}
+                  store={store}
+                  period={period}
+                  flag={flagByLabel.get(l.label) ?? null}
+                  canFlag={canFlag}
+                />
               ))}
             </div>
           </div>
@@ -963,27 +1061,114 @@ function FlagRow({ flag, store, periodEnd }: { flag: PlFlag; store: string; peri
   );
 }
 
-function LineRow({ line, store }: { line: PlLine; store: string }) {
+function LineRow({ line, store, period, flag, canFlag }: {
+  line: PlLine;
+  store: string;
+  period: string;
+  flag: PlManualFlag | null;
+  canFlag: boolean;
+}) {
+  const qc = useQueryClient();
+  const toast = useToast();
   const [trendOpen, setTrendOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [reason, setReason] = useState(flag?.reason ?? "");
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["pl-manual-flags", store, period] });
+  const save = useMutation({
+    mutationFn: () => savePlManualFlag({ store, period, line_label: line.label, reason }),
+    onSuccess: () => { setEditing(false); invalidate(); toast.push(flag ? "Flag updated." : "Line flagged.", "success"); },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't flag this line.", "error"),
+  });
+  const remove = useMutation({
+    mutationFn: () => deletePlManualFlag({ id: flag!.id }),
+    onSuccess: () => { setEditing(false); invalidate(); toast.push("Flag cleared.", "info"); },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't clear the flag.", "error"),
+  });
+
+  const openFlag = () => { setReason(flag?.reason ?? ""); setEditing(true); };
+
   return (
-    <>
-      <button
-        type="button"
-        onClick={() => setTrendOpen(true)}
-        title="See this line's trend across periods"
+    <div className={cn(flag && "bg-amber-50/40")}>
+      <div
         className={cn(
-          "grid w-full grid-cols-[1fr_auto_auto] gap-x-6 px-5 py-1.5 text-left text-sm hover:bg-accent/5",
+          "grid grid-cols-[1fr_auto_auto] gap-x-6 px-5 py-1.5 text-sm hover:bg-accent/5",
           line.total ? "border-t border-zinc-200 bg-zinc-50 font-bold text-midnight" : "text-zinc-700",
+          flag && "bg-transparent",
         )}
       >
-        <span className={cn("underline decoration-dotted decoration-zinc-300 underline-offset-2", !line.total && "pl-3")}>{line.label}</span>
+        <span className={cn("flex items-center gap-1.5 min-w-0", !line.total && "pl-3")}>
+          {canFlag && (
+            <button
+              type="button"
+              onClick={openFlag}
+              title={flag ? "Edit this flag" : "Flag this line for review"}
+              className={cn("shrink-0", flag ? "text-amber-500" : "text-zinc-300 hover:text-amber-500")}
+            >
+              <Flag className="h-3.5 w-3.5" strokeWidth={2} fill={flag ? "currentColor" : "none"} />
+            </button>
+          )}
+          {!canFlag && flag && <Flag className="h-3.5 w-3.5 shrink-0 text-amber-500" strokeWidth={2} fill="currentColor" />}
+          <button
+            type="button"
+            onClick={() => setTrendOpen(true)}
+            title="See this line's trend across periods"
+            className="truncate text-left underline decoration-dotted decoration-zinc-300 underline-offset-2 hover:decoration-accent"
+          >
+            {plLineLabel(line.label)}
+          </button>
+        </span>
         <span className={cn("w-28 text-right tabular-nums", (line.amount ?? 0) < 0 && "text-red-600")}>
           {money(line.amount, 2)}
         </span>
         <span className="w-20 text-right tabular-nums text-zinc-500">{line.pct != null ? `${line.pct.toFixed(1)}%` : ""}</span>
-      </button>
+      </div>
+
+      {/* The flag itself, shown right below the line it's on. */}
+      {flag && !editing && (
+        <div className="flex items-start gap-2 px-5 pb-2 pl-11 text-xs text-amber-900">
+          <span className="mt-0.5 shrink-0 font-semibold uppercase tracking-wide text-amber-600">Flagged</span>
+          <span className="min-w-0 flex-1">
+            {flag.reason ? <span className="whitespace-pre-wrap">{flag.reason}</span> : <span className="italic text-amber-700/70">No reason given</span>}
+            <span className="ml-1 text-amber-700/70">— {flag.flagged_by_name ?? "—"}{flag.flagged_by_role ? ` · ${flag.flagged_by_role.toUpperCase()}` : ""}</span>
+          </span>
+          {canFlag && (
+            <span className="flex shrink-0 items-center gap-1.5">
+              <button type="button" onClick={openFlag} title="Edit" className="text-amber-600 hover:text-amber-800">Edit</button>
+              <button type="button" onClick={() => remove.mutate()} disabled={remove.isPending} title="Clear flag" className="text-amber-600 hover:text-red-600 disabled:opacity-50">
+                <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+              </button>
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Compose / edit the flag reason inline. */}
+      {editing && (
+        <div className="px-5 pb-2.5 pl-11">
+          <textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={2}
+            autoFocus
+            placeholder="Why flag this line? (optional)"
+            className="block w-full rounded-md border-0 bg-white px-2.5 py-1.5 text-sm ring-1 ring-inset ring-amber-200 focus:outline-none focus:ring-2 focus:ring-amber-400"
+          />
+          <div className="mt-1.5 flex items-center gap-2">
+            <button type="button" onClick={() => save.mutate()} disabled={save.isPending}
+              className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-2.5 py-1 text-xs font-semibold text-white hover:bg-amber-600 disabled:opacity-50">
+              <Flag className="h-3 w-3" strokeWidth={2.5} />{save.isPending ? "Saving…" : flag ? "Update flag" : "Flag line"}
+            </button>
+            <button type="button" onClick={() => { setEditing(false); setReason(flag?.reason ?? ""); }}
+              className="inline-flex items-center gap-1 text-xs font-semibold text-zinc-500 hover:text-zinc-700">
+              <X className="h-3 w-3" strokeWidth={2.5} />Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       <LineTrendModal open={trendOpen} onClose={() => setTrendOpen(false)} store={store} label={line.label} />
-    </>
+    </div>
   );
 }
 
