@@ -789,6 +789,26 @@ async function review(supa, user, params) {
     }
   } catch { /* ranker context is a nicety — never fail the review */ }
 
+  // Team-created (self) flags surface here too, so a self-flagged line gets the
+  // same Root Cause / Action Steps workflow at the bottom. Skip any line an
+  // auto-flag already covers (that card already collects the notes).
+  try {
+    const norm = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+    const covered = new Set(flags.map((f) => norm(f.stmt_label)));
+    const { data: manual } = await supa.from("pl_manual_flags")
+      .select("line_key, line_label, reason, flagged_by_name")
+      .eq("store_number", storeNumber).eq("period_end", period);
+    for (const mf of manual || []) {
+      if (covered.has(norm(mf.line_label))) continue;
+      flags.push({
+        line_key: mf.line_key, label: mf.line_label, stmt_label: mf.line_label, type: "manual", severity: "low",
+        actual_pct: null, actual_amount: null, target_pct: null, variance_pts: null, dollars_over: null,
+        context: mf.reason ? [`Reason: ${mf.reason}`] : [],
+        message: `Flagged for review${mf.flagged_by_name ? ` by ${mf.flagged_by_name}` : ""} — add a root cause and plan of action.`,
+      });
+    }
+  } catch { /* manual flags are additive — never fail the review */ }
+
   // Append-only log — oldest first so each flag reads top-to-bottom in order.
   const { data: notes } = await supa.from("pl_review_notes")
     .select("id, line_key, root_cause, action_steps, author_id, author_name, author_role, created_at, updated_at")

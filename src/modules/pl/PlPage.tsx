@@ -1160,7 +1160,12 @@ function LineRow({ line, store, period, flag, autoSev, canFlag, showLy }: {
           : "";
   const flagTitle = flag ? "Edit this flag" : autoSev != null ? "Flagged in review — click to add a note" : "Flag this line for review";
 
-  const invalidate = () => qc.invalidateQueries({ queryKey: ["pl-manual-flags", store, period] });
+  // Refresh the inline marker AND the review panel below (a self-flag surfaces
+  // there as a card with the root-cause / action-steps workflow).
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["pl-manual-flags", store, period] });
+    qc.invalidateQueries({ queryKey: ["pl-review", store, period] });
+  };
   const save = useMutation({
     mutationFn: () => savePlManualFlag({ store, period, line_label: line.label, reason }),
     onSuccess: () => { setEditing(false); invalidate(); toast.push(flag ? "Flag updated." : "Line flagged.", "success"); },

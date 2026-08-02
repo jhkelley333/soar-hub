@@ -83,7 +83,7 @@ export function savePlBudget(
 }
 
 // ── Preliminary review: flags + per-flag notes ──────────────────────
-export type PlFlagType = "over_budget" | "anomaly" | "verify_zero" | "missing" | "run_rate";
+export type PlFlagType = "over_budget" | "anomaly" | "verify_zero" | "missing" | "run_rate" | "manual";
 export interface PlReviewFlag {
   line_key: string;
   label: string;

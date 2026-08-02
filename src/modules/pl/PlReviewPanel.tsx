@@ -6,7 +6,7 @@
 // sign-off goes stale if a note changes after it, prompting a re-sign.
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, TrendingUp, HelpCircle, FileWarning, LineChart, Repeat, CheckCircle2, Clock, Pencil, Trash2 } from "lucide-react";
+import { AlertTriangle, TrendingUp, HelpCircle, FileWarning, LineChart, Repeat, CheckCircle2, Clock, Pencil, Trash2, Flag } from "lucide-react";
 import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
@@ -28,6 +28,7 @@ const TYPE_ICON: Record<string, typeof AlertTriangle> = {
   verify_zero: HelpCircle,
   missing: FileWarning,
   run_rate: Repeat,
+  manual: Flag,
 };
 const TYPE_LABEL: Record<string, string> = {
   over_budget: "Over budget",
@@ -35,6 +36,7 @@ const TYPE_LABEL: Record<string, string> = {
   verify_zero: "Verify",
   missing: "Missing?",
   run_rate: "Run-rate",
+  manual: "Flagged",
 };
 
 const NOTE_ROLES = ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"];
