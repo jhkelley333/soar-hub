@@ -17,6 +17,7 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
+import { fiscalInfo, FISCAL } from "@/lib/fiscal";
 import { Modal } from "@/shared/ui/Modal";
 import { fetchPlCompare, fetchPlFlags, fetchPlLineTrend, fetchPlOverview, fetchPlPeriods, fetchPlReview, fetchPlReviewSummary, fetchPlRollup, fetchPlStatement, savePlFlagNote, uploadPl, type PlFlag, type PlRollupGroup, type PlTrendPoint, type RollupGroupBy } from "./api";
 import { BudgetTargetsModal } from "./BudgetTargetsModal";
@@ -377,6 +378,20 @@ function Th({ label, k, sort, onSort, right }: {
   );
 }
 
+// The Walkthrough flags panel is retired from fiscal period 7 (FY2026)
+// onward — the Preliminary Review below takes its place there. Earlier
+// periods keep the panel so their walkthrough notes stay visible. A
+// period_end past FY2026 is likewise "forward" of P7 and stays hidden; one
+// before FY2026 keeps the panel. Notes still save to whichever P&L period
+// the panel is shown for (see FlagRow → savePlFlagNote periodEnd).
+function showsWalkthroughFlags(periodEnd: string): boolean {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(periodEnd);
+  if (!m) return true;
+  const d = new Date(+m[1], +m[2] - 1, +m[3]);
+  const fi = fiscalInfo(d);
+  return fi ? fi.period < 7 : d < FISCAL.start;
+}
+
 // ── One store's full statement ───────────────────────────────────────
 function StatementView({ store, period, periodLabel, onBack }: {
   store: string;
@@ -495,8 +510,9 @@ function StatementView({ store, period, periodLabel, onBack }: {
             <Tile label="Controllable Income %" value={pct(s.ci_pct)} tone={(s.ci_pct ?? 0) < 0 ? "bad" : "ok"} />
           </div>
 
-          {/* Walkthrough flags + notes — write back to the review sheet. */}
-          <FlagsSection store={store} />
+          {/* Walkthrough flags + notes — write back to the review sheet.
+              Retired from P7 onward, where the Preliminary Review replaces it. */}
+          {showsWalkthroughFlags(period) && <FlagsSection store={store} />}
 
           {/* Full statement */}
           <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
