@@ -486,6 +486,24 @@ function StatementView({ store, period, periodLabel, onBack }: {
   );
   const canFlag = manualQ.data?.can_flag ?? false;
 
+  // Auto-flags from the Preliminary Review, keyed by the statement line they map
+  // to, so we can color a flagged line right in the statement. Shares the query
+  // the review panel below already runs (same key → one fetch).
+  const reviewQ = useQuery({
+    queryKey: ["pl-review", store, period],
+    queryFn: () => fetchPlReview(store, period),
+    staleTime: 30_000,
+  });
+  const autoSevByLabel = useMemo(() => {
+    const rank: Record<string, number> = { high: 0, med: 1, low: 2 };
+    const m = new Map<string, "high" | "med" | "low">();
+    for (const f of reviewQ.data?.flags ?? []) {
+      const prev = m.get(f.stmt_label);
+      if (!prev || rank[f.severity] < rank[prev]) m.set(f.stmt_label, f.severity);
+    }
+    return m;
+  }, [reviewQ.data]);
+
   async function handlePrint() {
     if (!s) return;
     setPrinting(true);
@@ -602,6 +620,7 @@ function StatementView({ store, period, periodLabel, onBack }: {
                   store={store}
                   period={period}
                   flag={flagByLabel.get(l.label) ?? null}
+                  autoSev={autoSevByLabel.get(l.label) ?? null}
                   canFlag={canFlag}
                 />
               ))}
@@ -1061,11 +1080,12 @@ function FlagRow({ flag, store, periodEnd }: { flag: PlFlag; store: string; peri
   );
 }
 
-function LineRow({ line, store, period, flag, canFlag }: {
+function LineRow({ line, store, period, flag, autoSev, canFlag }: {
   line: PlLine;
   store: string;
   period: string;
   flag: PlManualFlag | null;
+  autoSev: "high" | "med" | "low" | null;
   canFlag: boolean;
 }) {
   const qc = useQueryClient();
@@ -1073,6 +1093,17 @@ function LineRow({ line, store, period, flag, canFlag }: {
   const [trendOpen, setTrendOpen] = useState(false);
   const [editing, setEditing] = useState(false);
   const [reason, setReason] = useState(flag?.reason ?? "");
+
+  // A manual flag (deliberate team flag) takes visual priority; otherwise color
+  // by the review severity. This drives the colored flag marker on the line.
+  const flagged = !!flag || autoSev != null;
+  const flagColor = flag
+    ? "text-amber-500"
+    : autoSev === "high" ? "text-red-500"
+      : autoSev === "med" ? "text-amber-500"
+        : autoSev === "low" ? "text-amber-400"
+          : "";
+  const flagTitle = flag ? "Edit this flag" : autoSev != null ? "Flagged in review — click to add a note" : "Flag this line for review";
 
   const invalidate = () => qc.invalidateQueries({ queryKey: ["pl-manual-flags", store, period] });
   const save = useMutation({
@@ -1098,17 +1129,18 @@ function LineRow({ line, store, period, flag, canFlag }: {
         )}
       >
         <span className={cn("flex items-center gap-1.5 min-w-0", !line.total && "pl-3")}>
-          {canFlag && (
+          {canFlag ? (
             <button
               type="button"
               onClick={openFlag}
-              title={flag ? "Edit this flag" : "Flag this line for review"}
-              className={cn("shrink-0", flag ? "text-amber-500" : "text-zinc-300 hover:text-amber-500")}
+              title={flagTitle}
+              className={cn("shrink-0", flagged ? flagColor : "text-zinc-300 hover:text-amber-500")}
             >
-              <Flag className="h-3.5 w-3.5" strokeWidth={2} fill={flag ? "currentColor" : "none"} />
+              <Flag className="h-3.5 w-3.5" strokeWidth={2} fill={flagged ? "currentColor" : "none"} />
             </button>
-          )}
-          {!canFlag && flag && <Flag className="h-3.5 w-3.5 shrink-0 text-amber-500" strokeWidth={2} fill="currentColor" />}
+          ) : flagged ? (
+            <Flag className={cn("h-3.5 w-3.5 shrink-0", flagColor)} strokeWidth={2} fill="currentColor" />
+          ) : null}
           <button
             type="button"
             onClick={() => setTrendOpen(true)}

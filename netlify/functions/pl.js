@@ -549,6 +549,19 @@ function computeFlags(lines, sales, targets, history) {
       spike = sd > 0.03 && actualPct > mean + 2 * sd;
     }
 
+    // Fixed-cost guard: if the DOLLARS are flat across the trailing run (a price
+    // we pay every period — Trash, Landscaping, subscriptions), don't flag it.
+    // The percent only moves because sales moved, so an over-budget %, a "spike",
+    // or a chronic streak here is a sales artifact, not a spend change — and it
+    // needs no fresh note each period. Only a real move in $ vs the last three
+    // periods is worth a flag.
+    const recentAmts = [actualAmt, ...priorAmt(t.line_key)].filter((v) => typeof v === "number").slice(0, 4);
+    if (recentAmts.length >= 3) {
+      const aMax = Math.max(...recentAmts), aMin = Math.min(...recentAmts);
+      const aMean = recentAmts.reduce((a, b) => a + b, 0) / recentAmts.length;
+      if (aMean > 0 && aMax - aMin <= Math.max(25, aMean * 0.03)) continue; // flat $ → no flag
+    }
+
     // 3. Over budget — the primary flag. If it's ALSO spiking / chronic, that
     // rides along as context rather than a second flag.
     if (t.target_pct != null) {
@@ -602,6 +615,51 @@ function computeFlags(lines, sales, targets, history) {
   const rank = { high: 0, med: 1, low: 2 };
   flags.sort((a, b) => (rank[a.severity] - rank[b.severity]) || ((b.dollars_over ?? 0) - (a.dollars_over ?? 0)));
   return flags;
+}
+
+// Per-key trailing pct/$ history for the last ~4 periods before `period`, for
+// many stores at once. Powers the fixed-cost guard in the period-wide summary /
+// roll-up so their flag counts match the per-store review (which has history).
+async function trailingHistoryByStore(supa, storeNums, period) {
+  const out = new Map();
+  if (!storeNums.length) return out;
+  const rows = [];
+  const PAGE = 1000;
+  for (let from = 0; ; from += PAGE) {
+    const { data } = await supa.from("pl_statements")
+      .select("store_number, period_end, is_final, lines, total_sales")
+      .lt("period_end", period).in("store_number", storeNums)
+      .order("period_end", { ascending: false }).range(from, from + PAGE - 1);
+    for (const r of data || []) rows.push(r);
+    if (!data || data.length < PAGE) break;
+  }
+  // Collapse to one row per (store, period) — Final wins over Prelim.
+  const byStorePeriod = new Map();
+  for (const r of rows) {
+    const k = `${r.store_number}|${r.period_end}`;
+    const ex = byStorePeriod.get(k);
+    if (!ex || (r.is_final && !ex.is_final)) byStorePeriod.set(k, r);
+  }
+  const rowsByStore = new Map();
+  for (const r of byStorePeriod.values()) {
+    const arr = rowsByStore.get(String(r.store_number)) || [];
+    arr.push(r);
+    rowsByStore.set(String(r.store_number), arr);
+  }
+  for (const [num, list] of rowsByStore) {
+    list.sort((a, b) => (a.period_end < b.period_end ? 1 : -1)); // most recent first
+    out.set(num, list.slice(0, 4).map((r) => {
+      const pctByKey = {}, amtByKey = {};
+      for (const key of Object.keys(LINE_KEYWORDS)) {
+        const line = matchLine(r.lines, key);
+        const p = linePct(line, r.total_sales);
+        if (typeof p === "number") pctByKey[key] = p;
+        if (line && typeof line.amount === "number") amtByKey[key] = line.amount;
+      }
+      return { pctByKey, amtByKey };
+    }));
+  }
+  return out;
 }
 
 async function review(supa, user, params) {
@@ -716,9 +774,8 @@ async function review(supa, user, params) {
 }
 
 // Per-store review status for a whole period — which stores still owe notes.
-// Uses budget-variance + verify-on-$0 flags only (skips the per-store history
-// checks) so it stays a couple of queries instead of N. The full engine still
-// runs when a store is opened.
+// Runs the full flag engine with batched trailing history, so its counts match
+// what a DO sees when they open the store (including the fixed-cost guard).
 async function reviewSummary(supa, user, params) {
   if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
   const period = String(params.period || "").trim();
@@ -742,9 +799,14 @@ async function reviewSummary(supa, user, params) {
   const { data: notes } = await supa.from("pl_review_notes").select("store_number, line_key").eq("period_end", period);
   const addressed = new Set((notes || []).map((n) => `${n.store_number}|${n.line_key}`));
 
+  // Trailing history so the fixed-cost guard (flat-$ lines aren't flagged) lands
+  // the same here as in the per-store review — otherwise flat lines would count
+  // as "owed" that a DO can never clear.
+  const history = await trailingHistoryByStore(supa, [...byStore.keys()].map(String), period);
+
   const rows = [];
   for (const [num, r] of byStore) {
-    const flags = computeFlags(r.lines, r.total_sales, targets, []);
+    const flags = computeFlags(r.lines, r.total_sales, targets, history.get(String(num)) || []);
     const noted = flags.filter((f) => addressed.has(`${num}|${f.line_key}`)).length;
     rows.push({ store_number: String(num), flags: flags.length, noted, owed: flags.length - noted });
   }
@@ -753,8 +815,8 @@ async function reviewSummary(supa, user, params) {
 
 // Roll-up: the caller's stores aggregated by DO / SDO / RVP — store count,
 // sales, CI, flag/owed counts and total $ over budget per leader. Powers the
-// DO/SDO/RVP/VP roll-ups (pick the tier to group by). Budget + pest flags only
-// (no per-store history), like the summary.
+// DO/SDO/RVP/VP roll-ups (pick the tier to group by). Runs the full flag engine
+// with batched trailing history so counts match the per-store review.
 async function reviewRollup(supa, user, params) {
   if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
   const period = String(params.period || "").trim();
@@ -791,6 +853,10 @@ async function reviewRollup(supa, user, params) {
     .select("store_number, signed_at").eq("period_end", period).in("store_number", visibleNums);
   const signedAtByStore = new Map((signs || []).map((s) => [String(s.store_number), new Date(s.signed_at).getTime()]));
 
+  // Trailing history so flat-$ fixed costs aren't counted as flags/owed here
+  // either — keeps the roll-up in step with the per-store review.
+  const history = await trailingHistoryByStore(supa, [...byStore.keys()].map(String), period);
+
   const org = await resolveOrg(supa, [...byStore.keys()]);
   const nameFor = (num) => {
     const o = org.get(String(num)) || {};
@@ -800,7 +866,7 @@ async function reviewRollup(supa, user, params) {
   const groups = new Map();
   for (const [num, r] of byStore) {
     const numKey = String(num);
-    const flags = computeFlags(r.lines, r.total_sales, targets, []);
+    const flags = computeFlags(r.lines, r.total_sales, targets, history.get(numKey) || []);
     const owed = flags.filter((f) => !addressed.has(`${num}|${f.line_key}`)).length;
     const dollarsOver = flags.reduce((a, f) => a + (f.dollars_over || 0), 0);
     const signedAt = signedAtByStore.get(numKey) ?? null;
