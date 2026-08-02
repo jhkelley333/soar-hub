@@ -193,10 +193,56 @@ async function statement(supa, user, params) {
   // Default to Final; ?stage=prelim forces the Prelim view.
   const wantPrelim = String(params.stage || "").toLowerCase() === "prelim";
   const chosen = (wantPrelim ? prelim : final) || final || prelim;
+
+  // Last-year comparison: the same fiscal period one year back is exactly 52
+  // weeks (364 days) earlier in a 4-4-5 calendar. Find that statement (nearest
+  // within ±3 weeks, Final preferred) and attach its per-line $ and % so the UI
+  // can show a year-over-year column the user can toggle off.
+  const ly = await priorYearLines(supa, storeNumber, period, chosen.lines);
   return {
-    statement: { ...chosen, store_name: store.name, stage: chosen.is_final ? "final" : "prelim" },
+    statement: { ...chosen, store_name: store.name, stage: chosen.is_final ? "final" : "prelim", ly: ly?.meta ?? null },
     available: { prelim: !!prelim, final: !!final },
   };
+}
+
+const isoShift = (iso, days) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(iso || ""));
+  if (!m) return null;
+  const dt = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]) + days * 86400000);
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}-${String(dt.getUTCDate()).padStart(2, "0")}`;
+};
+const isoDaysApart = (a, b) => {
+  const pa = /^(\d{4})-(\d{2})-(\d{2})/.exec(a), pb = /^(\d{4})-(\d{2})-(\d{2})/.exec(b);
+  if (!pa || !pb) return Infinity;
+  return Math.abs(Date.UTC(+pa[1], +pa[2] - 1, +pa[3]) - Date.UTC(+pb[1], +pb[2] - 1, +pb[3])) / 86400000;
+};
+
+// Attach ly_amount/ly_pct to each current line from the prior-year statement,
+// matched by normalized label. Mutates `lines`; returns { meta } or null.
+async function priorYearLines(supa, storeNumber, period, lines) {
+  const target = isoShift(period, -364);
+  if (!target || !Array.isArray(lines)) return null;
+  const lo = isoShift(period, -364 - 21), hi = isoShift(period, -364 + 21);
+  const { data: rows } = await supa.from("pl_statements")
+    .select("period_end, period_label, is_final, lines, total_sales")
+    .eq("store_number", storeNumber).gte("period_end", lo).lte("period_end", hi);
+  const byPeriod = new Map();
+  for (const r of rows || []) { const ex = byPeriod.get(r.period_end); if (!ex || (r.is_final && !ex.is_final)) byPeriod.set(r.period_end, r); }
+  let best = null, bestDist = Infinity;
+  for (const r of byPeriod.values()) { const d = isoDaysApart(r.period_end, target); if (d < bestDist) { bestDist = d; best = r; } }
+  if (!best) return null;
+
+  const norm = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+  const lyByLabel = new Map();
+  for (const l of best.lines || []) {
+    lyByLabel.set(norm(l.label), { amount: typeof l.amount === "number" ? l.amount : null, pct: linePct(l, best.total_sales) });
+  }
+  for (const l of lines) {
+    const m = lyByLabel.get(norm(l.label));
+    l.ly_amount = m ? m.amount : null;
+    l.ly_pct = m ? m.pct : null;
+  }
+  return { meta: { period_end: best.period_end, period_label: best.period_label } };
 }
 
 // One line item's value across every uploaded period for a store — powers the
