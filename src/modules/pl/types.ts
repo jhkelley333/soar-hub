@@ -7,6 +7,9 @@ export interface PlLine {
   pct: number | null;
   /** Subtotal/summary row — rendered bold with a rule. */
   total?: boolean;
+  /** Same line, same fiscal period last year (52 weeks back). Present only when a prior-year statement exists. */
+  ly_amount?: number | null;
+  ly_pct?: number | null;
 }
 
 export type PlStage = "prelim" | "final";
@@ -39,6 +42,8 @@ export interface PlStatement extends PlOverviewRow {
   lines: PlLine[];
   uploaded_by_name: string | null;
   updated_at: string;
+  /** Prior-year comparable period (same fiscal period, 52 weeks back), or null if none uploaded. */
+  ly?: { period_end: string; period_label: string | null } | null;
 }
 
 // ── Prelim vs Final comparison ──────────────────────────────────────

@@ -10,7 +10,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowLeft, ArrowLeftRight, ArrowUp, ArrowUpDown, CheckCircle2, ChevronRight, Download, Flag, Loader2, SlidersHorizontal, Trash2, TrendingDown, TrendingUp, Upload, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowLeftRight, ArrowUp, ArrowUpDown, CheckCircle2, ChevronRight, Download, Eye, EyeOff, Flag, Loader2, SlidersHorizontal, Trash2, TrendingDown, TrendingUp, Upload, X } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -467,6 +467,19 @@ function StatementView({ store, period, periodLabel, onBack }: {
   const [compareOpen, setCompareOpen] = useState(false);
   const [printing, setPrinting] = useState(false);
 
+  // Last-year comparison columns — on by default, hideable per user (persisted
+  // in localStorage so each person's choice sticks on their own device).
+  const { profile } = useAuth();
+  const lyKey = `pl-show-ly:${profile?.id ?? "anon"}`;
+  const [showLy, setShowLy] = useState<boolean>(() => {
+    try { const v = localStorage.getItem(lyKey); return v == null ? true : v === "1"; } catch { return true; }
+  });
+  const toggleLy = () => setShowLy((v) => {
+    const next = !v;
+    try { localStorage.setItem(lyKey, next ? "1" : "0"); } catch { /* ignore */ }
+    return next;
+  });
+
   const q = useQuery({
     queryKey: ["pl-statement", store, period, stage ?? "auto"],
     queryFn: () => fetchPlStatement(store, period, stage),
@@ -519,6 +532,7 @@ function StatementView({ store, period, periodLabel, onBack }: {
   }
   const available = q.data?.available;
   const bothStages = !!(available?.prelim && available?.final);
+  const lyOn = showLy && !!s?.ly;
 
   if (compareOpen) {
     return (
@@ -539,6 +553,20 @@ function StatementView({ store, period, periodLabel, onBack }: {
         actions={
           s ? (
             <div className="flex flex-wrap items-center gap-2">
+              {s.ly && (
+                <button
+                  type="button"
+                  onClick={toggleLy}
+                  title={`Same period last year (${s.ly.period_label ?? s.ly.period_end})`}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-semibold",
+                    showLy ? "border-accent bg-accent/10 text-accent" : "border-zinc-200 text-midnight hover:border-accent",
+                  )}
+                >
+                  {showLy ? <Eye className="h-4 w-4" strokeWidth={2} /> : <EyeOff className="h-4 w-4" strokeWidth={2} />}
+                  {showLy ? "Hide last year" : "Show last year"}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handlePrint}
@@ -609,21 +637,36 @@ function StatementView({ store, period, periodLabel, onBack }: {
 
           {/* Full statement */}
           <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
-            <div className="grid grid-cols-[1fr_auto_auto] gap-x-6 border-b border-zinc-100 px-5 py-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400">
-              <span>Line</span><span className="w-28 text-right">$</span><span className="w-20 text-right">% Sales</span>
-            </div>
-            <div>
-              {s.lines.map((l, i) => (
-                <LineRow
-                  key={`${l.label}-${i}`}
-                  line={l}
-                  store={store}
-                  period={period}
-                  flag={flagByLabel.get(l.label) ?? null}
-                  autoSev={autoSevByLabel.get(l.label) ?? null}
-                  canFlag={canFlag}
-                />
-              ))}
+            {lyOn && (
+              <div className="border-b border-zinc-100 bg-zinc-50 px-5 py-1.5 text-[11px] text-zinc-500">
+                Comparing to last year — <span className="font-semibold">{s.ly!.period_label ?? s.ly!.period_end}</span>
+              </div>
+            )}
+            <div className="overflow-x-auto">
+              <div className={cn(
+                "grid gap-x-6 border-b border-zinc-100 px-5 py-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400",
+                lyOn ? "min-w-[640px] grid-cols-[1fr_auto_auto_auto_auto]" : "grid-cols-[1fr_auto_auto]",
+              )}>
+                <span>Line</span>
+                <span className="w-28 text-right">$</span>
+                <span className="w-20 text-right">% Sales</span>
+                {lyOn && <span className="w-28 text-right text-zinc-400">LY $</span>}
+                {lyOn && <span className="w-20 text-right text-zinc-400">LY %</span>}
+              </div>
+              <div>
+                {s.lines.map((l, i) => (
+                  <LineRow
+                    key={`${l.label}-${i}`}
+                    line={l}
+                    store={store}
+                    period={period}
+                    flag={flagByLabel.get(l.label) ?? null}
+                    autoSev={autoSevByLabel.get(l.label) ?? null}
+                    canFlag={canFlag}
+                    showLy={lyOn}
+                  />
+                ))}
+              </div>
             </div>
           </div>
 
@@ -1080,13 +1123,14 @@ function FlagRow({ flag, store, periodEnd }: { flag: PlFlag; store: string; peri
   );
 }
 
-function LineRow({ line, store, period, flag, autoSev, canFlag }: {
+function LineRow({ line, store, period, flag, autoSev, canFlag, showLy }: {
   line: PlLine;
   store: string;
   period: string;
   flag: PlManualFlag | null;
   autoSev: "high" | "med" | "low" | null;
   canFlag: boolean;
+  showLy: boolean;
 }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -1123,7 +1167,8 @@ function LineRow({ line, store, period, flag, autoSev, canFlag }: {
     <div className={cn(flag && "bg-amber-50/40")}>
       <div
         className={cn(
-          "grid grid-cols-[1fr_auto_auto] gap-x-6 px-5 py-1.5 text-sm hover:bg-accent/5",
+          "grid gap-x-6 px-5 py-1.5 text-sm hover:bg-accent/5",
+          showLy ? "min-w-[640px] grid-cols-[1fr_auto_auto_auto_auto]" : "grid-cols-[1fr_auto_auto]",
           line.total ? "border-t border-zinc-200 bg-zinc-50 font-bold text-midnight" : "text-zinc-700",
           flag && "bg-transparent",
         )}
@@ -1154,6 +1199,14 @@ function LineRow({ line, store, period, flag, autoSev, canFlag }: {
           {money(line.amount, 2)}
         </span>
         <span className="w-20 text-right tabular-nums text-zinc-500">{line.pct != null ? `${line.pct.toFixed(1)}%` : ""}</span>
+        {showLy && (
+          <span className={cn("w-28 text-right tabular-nums text-zinc-400", (line.ly_amount ?? 0) < 0 && "text-red-400")}>
+            {line.ly_amount != null ? money(line.ly_amount, 2) : "—"}
+          </span>
+        )}
+        {showLy && (
+          <span className="w-20 text-right tabular-nums text-zinc-400">{line.ly_pct != null ? `${line.ly_pct.toFixed(1)}%` : ""}</span>
+        )}
       </div>
 
       {/* The flag itself, shown right below the line it's on. */}
