@@ -10,7 +10,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowLeft, ArrowLeftRight, ArrowUp, ArrowUpDown, CheckCircle2, ChevronRight, Download, Loader2, SlidersHorizontal, TrendingDown, TrendingUp, Upload } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowLeftRight, ArrowUp, ArrowUpDown, CheckCircle2, ChevronRight, Download, Flag, Loader2, SlidersHorizontal, Trash2, TrendingDown, TrendingUp, Upload, X } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -19,7 +19,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import { fiscalInfo, FISCAL } from "@/lib/fiscal";
 import { Modal } from "@/shared/ui/Modal";
-import { fetchPlCompare, fetchPlFlags, fetchPlLineTrend, fetchPlOverview, fetchPlPeriods, fetchPlReview, fetchPlReviewSummary, fetchPlRollup, fetchPlStatement, savePlFlagNote, uploadPl, type PlFlag, type PlRollupGroup, type PlTrendPoint, type RollupGroupBy } from "./api";
+import { deletePlManualFlag, fetchPlCompare, fetchPlFlags, fetchPlLineTrend, fetchPlManualFlags, fetchPlOverview, fetchPlPeriods, fetchPlReview, fetchPlReviewSummary, fetchPlRollup, fetchPlStatement, savePlFlagNote, savePlManualFlag, uploadPl, type PlFlag, type PlManualFlag, type PlRollupGroup, type PlTrendPoint, type RollupGroupBy } from "./api";
 import { BudgetTargetsModal } from "./BudgetTargetsModal";
 import { PlReviewPanel } from "./PlReviewPanel";
 import type { ParsedWorkbook, PlCompareLine, PlLine, PlOverviewRow, PlStage } from "./types";
@@ -29,6 +29,14 @@ const money = (v: number | null | undefined, dp = 0) =>
     ? "—"
     : `${v < 0 ? "−" : ""}$${Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp })}`;
 const pct = (v: number | null | undefined) => (v == null ? "—" : `${v.toFixed(2)}%`);
+
+// Display sugar: the accounting "Cost of Sales" line is the store's total food
+// cost — show both terms so the team reads it unambiguously.
+function plLineLabel(label: string): string {
+  const n = label.trim().toLowerCase();
+  if (n === "cost of sales" || n === "total cost of sales") return `${label} (Total Food Cost)`;
+  return label;
+}
 
 type SortKey = "store" | "sales" | "ci" | "ci_pct" | "ebitda" | "notes";
 type SortDir = "asc" | "desc";
@@ -466,6 +474,18 @@ function StatementView({ store, period, periodLabel, onBack }: {
   });
   const s = q.data?.statement;
 
+  // Team-created flags on individual lines — one lookup for the whole statement.
+  const manualQ = useQuery({
+    queryKey: ["pl-manual-flags", store, period],
+    queryFn: () => fetchPlManualFlags(store, period),
+    staleTime: 30_000,
+  });
+  const flagByLabel = useMemo(
+    () => new Map((manualQ.data?.flags ?? []).map((f) => [f.line_label, f])),
+    [manualQ.data],
+  );
+  const canFlag = manualQ.data?.can_flag ?? false;
+
   async function handlePrint() {
     if (!s) return;
     setPrinting(true);
@@ -576,7 +596,14 @@ function StatementView({ store, period, periodLabel, onBack }: {
             </div>
             <div>
               {s.lines.map((l, i) => (
-                <LineRow key={`${l.label}-${i}`} line={l} store={store} />
+                <LineRow
+                  key={`${l.label}-${i}`}
+                  line={l}
+                  store={store}
+                  period={period}
+                  flag={flagByLabel.get(l.label) ?? null}
+                  canFlag={canFlag}
+                />
               ))}
             </div>
           </div>
@@ -1034,27 +1061,114 @@ function FlagRow({ flag, store, periodEnd }: { flag: PlFlag; store: string; peri
   );
 }
 
-function LineRow({ line, store }: { line: PlLine; store: string }) {
+function LineRow({ line, store, period, flag, canFlag }: {
+  line: PlLine;
+  store: string;
+  period: string;
+  flag: PlManualFlag | null;
+  canFlag: boolean;
+}) {
+  const qc = useQueryClient();
+  const toast = useToast();
   const [trendOpen, setTrendOpen] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [reason, setReason] = useState(flag?.reason ?? "");
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["pl-manual-flags", store, period] });
+  const save = useMutation({
+    mutationFn: () => savePlManualFlag({ store, period, line_label: line.label, reason }),
+    onSuccess: () => { setEditing(false); invalidate(); toast.push(flag ? "Flag updated." : "Line flagged.", "success"); },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't flag this line.", "error"),
+  });
+  const remove = useMutation({
+    mutationFn: () => deletePlManualFlag({ id: flag!.id }),
+    onSuccess: () => { setEditing(false); invalidate(); toast.push("Flag cleared.", "info"); },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't clear the flag.", "error"),
+  });
+
+  const openFlag = () => { setReason(flag?.reason ?? ""); setEditing(true); };
+
   return (
-    <>
-      <button
-        type="button"
-        onClick={() => setTrendOpen(true)}
-        title="See this line's trend across periods"
+    <div className={cn(flag && "bg-amber-50/40")}>
+      <div
         className={cn(
-          "grid w-full grid-cols-[1fr_auto_auto] gap-x-6 px-5 py-1.5 text-left text-sm hover:bg-accent/5",
+          "grid grid-cols-[1fr_auto_auto] gap-x-6 px-5 py-1.5 text-sm hover:bg-accent/5",
           line.total ? "border-t border-zinc-200 bg-zinc-50 font-bold text-midnight" : "text-zinc-700",
+          flag && "bg-transparent",
         )}
       >
-        <span className={cn("underline decoration-dotted decoration-zinc-300 underline-offset-2", !line.total && "pl-3")}>{line.label}</span>
+        <span className={cn("flex items-center gap-1.5 min-w-0", !line.total && "pl-3")}>
+          {canFlag && (
+            <button
+              type="button"
+              onClick={openFlag}
+              title={flag ? "Edit this flag" : "Flag this line for review"}
+              className={cn("shrink-0", flag ? "text-amber-500" : "text-zinc-300 hover:text-amber-500")}
+            >
+              <Flag className="h-3.5 w-3.5" strokeWidth={2} fill={flag ? "currentColor" : "none"} />
+            </button>
+          )}
+          {!canFlag && flag && <Flag className="h-3.5 w-3.5 shrink-0 text-amber-500" strokeWidth={2} fill="currentColor" />}
+          <button
+            type="button"
+            onClick={() => setTrendOpen(true)}
+            title="See this line's trend across periods"
+            className="truncate text-left underline decoration-dotted decoration-zinc-300 underline-offset-2 hover:decoration-accent"
+          >
+            {plLineLabel(line.label)}
+          </button>
+        </span>
         <span className={cn("w-28 text-right tabular-nums", (line.amount ?? 0) < 0 && "text-red-600")}>
           {money(line.amount, 2)}
         </span>
         <span className="w-20 text-right tabular-nums text-zinc-500">{line.pct != null ? `${line.pct.toFixed(1)}%` : ""}</span>
-      </button>
+      </div>
+
+      {/* The flag itself, shown right below the line it's on. */}
+      {flag && !editing && (
+        <div className="flex items-start gap-2 px-5 pb-2 pl-11 text-xs text-amber-900">
+          <span className="mt-0.5 shrink-0 font-semibold uppercase tracking-wide text-amber-600">Flagged</span>
+          <span className="min-w-0 flex-1">
+            {flag.reason ? <span className="whitespace-pre-wrap">{flag.reason}</span> : <span className="italic text-amber-700/70">No reason given</span>}
+            <span className="ml-1 text-amber-700/70">— {flag.flagged_by_name ?? "—"}{flag.flagged_by_role ? ` · ${flag.flagged_by_role.toUpperCase()}` : ""}</span>
+          </span>
+          {canFlag && (
+            <span className="flex shrink-0 items-center gap-1.5">
+              <button type="button" onClick={openFlag} title="Edit" className="text-amber-600 hover:text-amber-800">Edit</button>
+              <button type="button" onClick={() => remove.mutate()} disabled={remove.isPending} title="Clear flag" className="text-amber-600 hover:text-red-600 disabled:opacity-50">
+                <Trash2 className="h-3.5 w-3.5" strokeWidth={2} />
+              </button>
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Compose / edit the flag reason inline. */}
+      {editing && (
+        <div className="px-5 pb-2.5 pl-11">
+          <textarea
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            rows={2}
+            autoFocus
+            placeholder="Why flag this line? (optional)"
+            className="block w-full rounded-md border-0 bg-white px-2.5 py-1.5 text-sm ring-1 ring-inset ring-amber-200 focus:outline-none focus:ring-2 focus:ring-amber-400"
+          />
+          <div className="mt-1.5 flex items-center gap-2">
+            <button type="button" onClick={() => save.mutate()} disabled={save.isPending}
+              className="inline-flex items-center gap-1 rounded-md bg-amber-500 px-2.5 py-1 text-xs font-semibold text-white hover:bg-amber-600 disabled:opacity-50">
+              <Flag className="h-3 w-3" strokeWidth={2.5} />{save.isPending ? "Saving…" : flag ? "Update flag" : "Flag line"}
+            </button>
+            <button type="button" onClick={() => { setEditing(false); setReason(flag?.reason ?? ""); }}
+              className="inline-flex items-center gap-1 text-xs font-semibold text-zinc-500 hover:text-zinc-700">
+              <X className="h-3 w-3" strokeWidth={2.5} />Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
       <LineTrendModal open={trendOpen} onClose={() => setTrendOpen(false)} store={store} label={line.label} />
-    </>
+    </div>
   );
 }
 

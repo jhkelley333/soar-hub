@@ -930,6 +930,74 @@ async function saveSignoff(supa, user, body) {
   return { signoff: { ...data, stale: false } };
 }
 
+// A stable slug for a statement line label, so re-flagging the same line
+// upserts instead of stacking duplicates.
+function lineSlug(label) {
+  return String(label || "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 120);
+}
+
+// Team-created flags on any statement line for a store/period.
+async function listManualFlags(supa, user, params) {
+  if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const storeNumber = String(params.store || "").trim();
+  const period = String(params.period || "").trim();
+  if (!storeNumber || !period) return { error: "store and period are required", status: 400 };
+  const stores = await callerVisibleStores(supa, user);
+  if (!stores.some((s) => String(s.number) === storeNumber)) return { error: `Store ${storeNumber} is outside your scope.`, status: 403 };
+  const { data, error } = await supa.from("pl_manual_flags")
+    .select("id, line_key, line_label, reason, flagged_by_id, flagged_by_name, flagged_by_role, created_at, updated_at")
+    .eq("store_number", storeNumber).eq("period_end", period)
+    .order("created_at", { ascending: true });
+  if (error) {
+    if (/pl_manual_flags/.test(error.message)) return { error: "Run migration 0271 first (pl_manual_flags is missing).", status: 500 };
+    return { error: error.message, status: 500 };
+  }
+  return { flags: data || [], my_id: user.id, can_flag: NOTE_ROLES.has(user.role) };
+}
+
+// Flag a line (or edit an existing flag's reason). One flag per line — upsert.
+async function saveManualFlag(supa, user, body) {
+  if (!NOTE_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const storeNumber = String(body?.store || "").trim();
+  const period = String(body?.period || "").trim();
+  const lineLabel = String(body?.line_label || "").trim();
+  if (!storeNumber || !period || !lineLabel) return { error: "store, period and line_label are required", status: 400 };
+  const stores = await callerVisibleStores(supa, user);
+  const store = stores.find((s) => String(s.number) === storeNumber);
+  if (!store) return { error: `Store ${storeNumber} is outside your scope.`, status: 403 };
+  const reason = String(body?.reason ?? "").slice(0, 2000).trim();
+  const now = new Date().toISOString();
+  const row = {
+    period_end: period, store_number: storeNumber, store_id: store.id ?? null,
+    line_key: lineSlug(lineLabel), line_label: lineLabel, reason: reason || null,
+    flagged_by_id: user.id, flagged_by_name: user.preferred_name || user.full_name || user.email || null,
+    flagged_by_role: user.role, updated_at: now,
+  };
+  const { data, error } = await supa.from("pl_manual_flags")
+    .upsert(row, { onConflict: "period_end,store_number,line_key" })
+    .select("id, line_key, line_label, reason, flagged_by_id, flagged_by_name, flagged_by_role, created_at, updated_at").single();
+  if (error) {
+    if (/pl_manual_flags/.test(error.message)) return { error: "Run migration 0271 first (pl_manual_flags is missing).", status: 500 };
+    return { error: error.message, status: 500 };
+  }
+  return { flag: data };
+}
+
+// Remove a manual flag — the person who raised it, or a DO/above.
+async function deleteManualFlag(supa, user, body) {
+  if (!NOTE_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const id = String(body?.id || "").trim();
+  if (!id) return { error: "id is required", status: 400 };
+  const { data: existing } = await supa.from("pl_manual_flags").select("id, flagged_by_id").eq("id", id).maybeSingle();
+  if (!existing) return { error: "Flag not found.", status: 404 };
+  if (existing.flagged_by_id !== user.id && !SIGN_ROLES.has(user.role)) {
+    return { error: "Only the person who raised it, or a DO, can clear this flag.", status: 403 };
+  }
+  const { error } = await supa.from("pl_manual_flags").delete().eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
 
@@ -963,6 +1031,7 @@ export const handler = async (event) => {
       if (action === "review") return unwrap(await review(supa, user, params));
       if (action === "review-summary") return unwrap(await reviewSummary(supa, user, params));
       if (action === "review-rollup") return unwrap(await reviewRollup(supa, user, params));
+      if (action === "manual-flags") return unwrap(await listManualFlags(supa, user, params));
       return respond(400, { error: `unknown GET action: ${action}` });
     }
     if (event.httpMethod === "POST") {
@@ -978,6 +1047,8 @@ export const handler = async (event) => {
       if (action === "review-note-update") return unwrap(await updateReviewNote(supa, user, body));
       if (action === "review-note-delete") return unwrap(await deleteReviewNote(supa, user, body));
       if (action === "review-signoff") return unwrap(await saveSignoff(supa, user, body));
+      if (action === "manual-flag") return unwrap(await saveManualFlag(supa, user, body));
+      if (action === "manual-flag-delete") return unwrap(await deleteManualFlag(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });
     }
     return respond(405, { error: "method not allowed" });

@@ -182,6 +182,28 @@ export function savePlReviewSignoff(input: { store: string; period: string }): P
   return request(`${FN}?action=review-signoff`, { method: "POST", body: JSON.stringify(input) });
 }
 
+// ── Manual (team-created) flags on any statement line ───────────────
+export interface PlManualFlag {
+  id: string;
+  line_key: string;
+  line_label: string;
+  reason: string | null;
+  flagged_by_id: string;
+  flagged_by_name: string | null;
+  flagged_by_role: string | null;
+  created_at: string;
+  updated_at: string;
+}
+export function fetchPlManualFlags(store: string, period: string): Promise<{ flags: PlManualFlag[]; my_id: string; can_flag: boolean }> {
+  return request(`${FN}?action=manual-flags&store=${encodeURIComponent(store)}&period=${encodeURIComponent(period)}`);
+}
+export function savePlManualFlag(input: { store: string; period: string; line_label: string; reason: string }): Promise<{ flag: PlManualFlag }> {
+  return request(`${FN}?action=manual-flag`, { method: "POST", body: JSON.stringify(input) });
+}
+export function deletePlManualFlag(input: { id: string }): Promise<{ ok: true }> {
+  return request(`${FN}?action=manual-flag-delete`, { method: "POST", body: JSON.stringify(input) });
+}
+
 // ── Line-item trend across periods ──────────────────────────────────
 export interface PlTrendPoint {
   period_end: string;
