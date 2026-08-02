@@ -106,7 +106,15 @@ export interface PlReviewNote {
   author_id: string;
   author_name: string | null;
   author_role: string | null;
+  created_at: string;
   updated_at: string;
+}
+export interface PlReviewSignoff {
+  signed_by_id: string;
+  signed_by_name: string | null;
+  signed_by_role: string | null;
+  signed_at: string;
+  stale: boolean; // a note was added/edited after this sign-off
 }
 export interface PlReviewResponse {
   store: { number: string; name: string | null };
@@ -115,6 +123,8 @@ export interface PlReviewResponse {
   flags: PlReviewFlag[];
   notes: PlReviewNote[];
   my_author_id: string;
+  signoff: PlReviewSignoff | null;
+  can_sign: boolean;
 }
 export function fetchPlReview(store: string, period: string): Promise<PlReviewResponse> {
   return request(`${FN}?action=review&store=${encodeURIComponent(store)}&period=${encodeURIComponent(period)}`);
@@ -128,6 +138,18 @@ export function fetchPlReviewSummary(period: string): Promise<{ period: string; 
 
 // Roll-up of the caller's stores aggregated by DO / SDO / RVP.
 export type RollupGroupBy = "do" | "sdo" | "rvp";
+export interface PlRollupStore {
+  store_number: string;
+  store_name: string | null;
+  total_sales: number;
+  ci_amount: number;
+  ci_pct: number | null;
+  flags: number;
+  owed: number;
+  dollars_over: number;
+  signed: boolean;
+  signed_stale: boolean;
+}
 export interface PlRollupGroup {
   name: string;
   stores: number;
@@ -137,6 +159,8 @@ export interface PlRollupGroup {
   flags: number;
   owed: number;
   dollars_over: number;
+  signed_count: number;       // stores in this group with a current (non-stale) sign-off
+  stores_detail: PlRollupStore[];
 }
 export function fetchPlRollup(period: string, groupBy: RollupGroupBy): Promise<{ period: string; group_by: RollupGroupBy; groups: PlRollupGroup[] }> {
   return request(`${FN}?action=review-rollup&period=${encodeURIComponent(period)}&group_by=${groupBy}`);
@@ -145,6 +169,17 @@ export function savePlReviewNote(input: {
   store: string; period: string; line_key: string; root_cause: string; action_steps: string;
 }): Promise<{ note: PlReviewNote }> {
   return request(`${FN}?action=review-note`, { method: "POST", body: JSON.stringify(input) });
+}
+export function updatePlReviewNote(input: {
+  id: string; root_cause: string; action_steps: string;
+}): Promise<{ note: PlReviewNote }> {
+  return request(`${FN}?action=review-note-update`, { method: "POST", body: JSON.stringify(input) });
+}
+export function deletePlReviewNote(input: { id: string }): Promise<{ ok: true }> {
+  return request(`${FN}?action=review-note-delete`, { method: "POST", body: JSON.stringify(input) });
+}
+export function savePlReviewSignoff(input: { store: string; period: string }): Promise<{ signoff: PlReviewSignoff }> {
+  return request(`${FN}?action=review-signoff`, { method: "POST", body: JSON.stringify(input) });
 }
 
 // ── Line-item trend across periods ──────────────────────────────────
