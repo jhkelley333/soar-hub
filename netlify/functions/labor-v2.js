@@ -1373,8 +1373,8 @@ async function gmSupportList(supa, user) {
   return { rows };
 }
 
-// A GM-support tag is one of two bases: fixed weekly hours OR a % buffer off
-// labor. Exactly one; `basis` disambiguates ("hours" | "buffer").
+// A GM-support tag is one of two bases: fixed weekly hours OR a % buffer of
+// sales (credited off labor). Exactly one; `basis` disambiguates ("hours" | "buffer").
 function parseGmSupportBasis(body) {
   const basis = String(body?.basis || (numv(body?.buffer_pct) > 0 && !(numv(body?.weekly_hours) > 0) ? "buffer" : "hours"));
   if (basis === "buffer") {

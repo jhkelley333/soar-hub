@@ -111,7 +111,7 @@ export function GmSupportCreditPanel() {
           <div className="text-xs text-zinc-500">
             For a GM who supports other stores. Credit the tagged store either a set{" "}
             <strong className="text-midnight">hours/week</strong> (at its blended wage) or a{" "}
-            <strong className="text-midnight">% buffer off labor</strong> — for as long as the tag is active.
+            <strong className="text-midnight">% buffer of sales</strong> (credited off labor) — for as long as the tag is active.
           </div>
         </div>
         <Button size="sm" onClick={openAdd}>
@@ -177,7 +177,7 @@ export function GmSupportCreditPanel() {
             <div>
               {basis === "buffer" ? (
                 <>
-                  <label className="mb-1 block text-xs font-semibold text-zinc-600">Buffer % off labor</label>
+                  <label className="mb-1 block text-xs font-semibold text-zinc-600">Buffer % of sales</label>
                   <input type="number" min={0.1} max={100} step="0.1" value={buffer} onChange={(e) => setBuffer(e.target.value)} className={cn(inputCls, "w-full")} />
                 </>
               ) : (
