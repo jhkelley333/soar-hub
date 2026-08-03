@@ -24,6 +24,23 @@ function isoAddDays(iso, n) {
   return dt.toISOString().slice(0, 10);
 }
 
+// The completed fiscal week an upload belongs to — the week-ending Sunday on or
+// just before it was uploaded (same rule the run uses to anchor its own week).
+function uploadWeekEnding(uploadedAt) {
+  const day = String(uploadedAt || "").slice(0, 10);
+  const fi = fiscalForDate(day);
+  if (!fi) return null;
+  return fi.isWeekEnd ? day : isoAddDays(fi.weekStart, -1);
+}
+// A source file may be used for the week being computed only if it belongs to
+// that week or an earlier one — never a LATER week. This stops a newer week's
+// upload (VOG/OTT/BSC/EcoSure/TotZone/Shops carry no week of their own) from
+// bleeding into an older week's run when that older week is re-run.
+function belongsToWeek(uploadedAt, weekEnding) {
+  const w = uploadWeekEnding(uploadedAt);
+  return w != null && w <= weekEnding;
+}
+
 const REQUIRED_BANDS = ["sales_vs_ly", "food_cost", "bsc_training", "on_time", "complaints", "food_safety", "vog", "total_training"];
 
 // B6: complaints data is on hold. Feed a neutral placeholder that lands in the
@@ -86,15 +103,16 @@ function bandInput(r, p, ix, fcTarget) {
   };
 }
 
-// Latest parsed upload of a store-keyed source (totzone, bsc, ...): newest
-// file wins; rows map by store code.
-async function loadLatestUpload(supa, source) {
+// Latest parsed upload of a store-keyed source (totzone, bsc, ...): newest file
+// that belongs to the week being computed or earlier wins (never a later week);
+// rows map by store code.
+async function loadLatestUpload(supa, source, weekEnding) {
   const { data: files } = await supa
     .from("ranking_source_files")
     .select("id, week_ending, uploaded_at")
     .eq("source", source).eq("status", "parsed")
-    .order("uploaded_at", { ascending: false }).limit(1);
-  const f = files?.[0];
+    .order("uploaded_at", { ascending: false }).limit(12);
+  const f = (files || []).find((x) => belongsToWeek(x.uploaded_at, weekEnding));
   if (!f) return null;
   const { data: rows } = await supa.from("ranking_src_rows").select("payload").eq("file_id", f.id).limit(2500);
   const stores = new Map();
@@ -124,7 +142,10 @@ async function loadIxForWeek(supa, weekEnding, issues) {
     withScope.push({ ...f, scope: probe?.[0]?.payload?.scope === "wtd" ? "wtd" : "ptd" });
   }
   for (const scope of ["ptd", "wtd"]) {
-    const cands = withScope.filter((f) => f.scope === scope);
+    // Eligible = this week's file or an earlier one, never a later week (by the
+    // sheet's own week when present, else by upload) — no later-week bleed.
+    const cands = withScope.filter((f) => f.scope === scope
+      && (f.week_ending ? f.week_ending <= weekEnding : belongsToWeek(f.uploaded_at, weekEnding)));
     if (!cands.length) continue;
     const pick = cands.find((f) => f.week_ending === weekEnding) ?? cands[0];
     const { data: rows } = await supa.from("ranking_src_rows").select("payload").eq("file_id", pick.id).limit(2000);
@@ -217,7 +238,7 @@ export async function runRankingNow(supa, user) {
 
   // 5. Engine inputs (IX food cost + TotZone training join here when ingested).
   const ix = await loadIxForWeek(supa, weekEnding, issues);
-  const tz = await loadLatestUpload(supa, "totzone");
+  const tz = await loadLatestUpload(supa, "totzone", weekEnding);
   if (tz) {
     const asOf = tz.file.week_ending;
     if (asOf && asOf < weekEnding) {
@@ -230,7 +251,7 @@ export async function runRankingNow(supa, user) {
   // EcoSure: YTD assessments — a store's input is the AVERAGE of its
   // assessment scores (brief section 6); unaudited stores stay null and the
   // engine renders "No Audit" with a neutral 3.
-  const bsc = await loadLatestUpload(supa, "bsc");
+  const bsc = await loadLatestUpload(supa, "bsc", weekEnding);
   if (bsc) {
     const asOf = bsc.file.week_ending;
     if (asOf && asOf < weekEnding) issues.push({ level: "warn", msg: `BSC training is as of ${asOf} — older than the week being ranked (stale).` });
@@ -240,7 +261,7 @@ export async function runRankingNow(supa, user) {
   // Mystery Shops: keep only shops whose visit fell WITHIN this run's fiscal
   // period (Heath), then per store: msCount = # in-period shops, msScore =
   // average score. Information only — never counted toward Total Points.
-  const shops = await loadLatestUpload(supa, "shops");
+  const shops = await loadLatestUpload(supa, "shops", weekEnding);
   const shopByStore = new Map();
   if (shops) {
     let inPeriod = 0;
@@ -265,6 +286,7 @@ export async function runRankingNow(supa, user) {
       .order("uploaded_at", { ascending: false }).limit(12);
     const seenScope = new Set();
     for (const f of vfiles || []) {
+      if (!belongsToWeek(f.uploaded_at, weekEnding)) continue; // no later-week bleed
       const { data: probe } = await supa.from("ranking_src_rows").select("payload").eq("file_id", f.id).limit(1);
       const sc = probe?.[0]?.payload?.scope === "wtd" ? "wtd" : "ptd";
       if (seenScope.has(sc)) continue;
@@ -286,6 +308,7 @@ export async function runRankingNow(supa, user) {
       .order("uploaded_at", { ascending: false }).limit(12);
     const seenScope = new Set();
     for (const f of ofiles || []) {
+      if (!belongsToWeek(f.uploaded_at, weekEnding)) continue; // no later-week bleed
       const { data: probe } = await supa.from("ranking_src_rows").select("payload").eq("file_id", f.id).limit(1);
       const sc = probe?.[0]?.payload?.scope === "wtd" ? "wtd" : "ptd";
       if (seenScope.has(sc)) continue;
@@ -298,7 +321,7 @@ export async function runRankingNow(supa, user) {
     }
   }
 
-  const eco = await loadLatestUpload(supa, "ecosure");
+  const eco = await loadLatestUpload(supa, "ecosure", weekEnding);
   const ecoAvgByStore = new Map();
   if (eco) {
     const sums = new Map();
