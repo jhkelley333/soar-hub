@@ -1647,7 +1647,7 @@ function hoursOverTrend(rows, lastWkRows) {
 }
 
 // Build the public drill-down for a scope (whole company or one region).
-async function laborSharePayload(supa, { scopeKind, regionName, label }) {
+async function laborSharePayload(supa, { scopeKind, regionName, label, numbers: only } = {}) {
   const anchor = await latestBusinessDate(supa);
   const empty = {
     date: null, scope: { kind: scopeKind, region: regionName ?? null }, label: label ?? null,
@@ -1655,8 +1655,11 @@ async function laborSharePayload(supa, { scopeKind, regionName, label }) {
   };
   if (!anchor) return empty;
 
-  const { data: storeRows } = await supa.from("stores")
-    .select("number, name, is_active, brand").eq("is_active", true).or("brand.eq.sonic,brand.is.null");
+  // `only` restricts to a caller's visible stores (authenticated Labor File);
+  // omitted → the whole Sonic company (public share link).
+  let storeQ = supa.from("stores").select("number, name").eq("is_active", true).or("brand.eq.sonic,brand.is.null");
+  if (only && only.length) storeQ = storeQ.in("number", [...new Set(only.map(String))]);
+  const { data: storeRows } = await storeQ;
   let numbers = [...new Set((storeRows || []).map((s) => String(s.number)))];
   const nameByNumber = new Map((storeRows || []).map((s) => [String(s.number), s.name]));
   if (!numbers.length) return { ...empty, date: anchor };
@@ -1761,6 +1764,18 @@ async function sharedLabor(supa, token) {
   }
   try { await supa.from("labor_share_tokens").update({ last_used_at: new Date().toISOString() }).eq("id", share.id); } catch { /* ignore */ }
   return laborSharePayload(supa, { scopeKind: share.scope_kind, regionName, label: share.label });
+}
+
+// AUTHENTICATED — the same drill-down the shared link produces (all columns +
+// credits), scoped to the caller's visible stores (org-wide roles get the whole
+// company). Powers the hub "Labor File" download so it matches the shared version.
+async function laborFile(supa, user) {
+  const visible = await resolveVisibleStoreRows(supa, user);
+  const numbers = [...new Set(visible.map((s) => String(s.number)))];
+  if (!numbers.length) {
+    return { date: null, scope: { kind: "company", region: null }, label: null, company: null, levels: { region: [], area: [], district: [], store: [] } };
+  }
+  return laborSharePayload(supa, { scopeKind: "company", numbers });
 }
 
 // PUBLIC — one store's current-week daily labor + any filed miss reason, for the
@@ -2071,6 +2086,7 @@ export const handler = async (event) => {
     // GM-facing reads — scope enforced per store in the function.
     if (action === "gm") return unwrap(await gmView(supa, user, params));
     if (action === "team") return unwrap(await teamView(supa, user, params));
+    if (action === "labor-file") return unwrap(await laborFile(supa, user));
     if (action === "rvp-scorecard") return unwrap(await rvpScorecard(supa, user, params));
     if (action === "rvp-commitments") return unwrap(await rvpCommitments(supa, user));
     if (action === "miss-tracker") return unwrap(await missTracker(supa, user, params));

@@ -340,6 +340,12 @@ export async function fetchSharedLabor(token: string): Promise<SharedLaborRespon
   return body as SharedLaborResponse;
 }
 
+// Authenticated Labor File — the same shared drill-down (all columns + credits),
+// scoped to the caller. Powers the hub download so it matches the shared version.
+export function fetchLaborFile(): Promise<SharedLaborResponse> {
+  return req<SharedLaborResponse>(`${FN}?action=labor-file`);
+}
+
 export interface DayWeather {
   hi: number | null;
   lo: number | null;

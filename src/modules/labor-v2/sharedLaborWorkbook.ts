@@ -164,7 +164,9 @@ export async function downloadSharedLaborFile(data: SharedLaborResponse, scopeLa
   for (const key of keys) {
     const doNode = doByKey.get(key) ?? null;
     const doStores = stores.filter((s) => s.district === key);
-    const tab = sheetName(doNode?.name || key, used);
+    // Name the tab after the DO (the district node's leader), falling back to the
+    // district name.
+    const tab = sheetName(doNode?.leader || doNode?.name || key, used);
     const ws = wb.addWorksheet(tab, { views: [view] });
     const secs: [string, Row[]][] = [];
     if (doNode) secs.push(["DO · District", [rowOf(doNode, grp(doNode))]]);
