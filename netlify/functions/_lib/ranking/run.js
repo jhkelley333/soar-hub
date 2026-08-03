@@ -82,6 +82,8 @@ function bandInput(r, p, ix, fcTarget) {
     lyTickets: numOrNull(r[p + "prev_year_tickets"]),
     custCount: numOrNull(r[p + "tickets"]),
     laborPct: numOrNull(r[p + "labor_pct"]),                 // credit-adjusted (B7)
+    laborCost: numOrNull(r[p + "labor_cost"]),               // credit-adjusted — for own-wage hours
+    laborHours: numOrNull(r[p + "labor_hours"]),             // credit-adjusted — for own-wage hours
     chart1: numOrNull(r[p + "target_labor_pct"]),            // IX target (B1)
     chart2: numOrNull(r[p + "target_labor_pct"]),            // interim: = chart1 (B2 addendum)
     trainingCreditDollars: 0,                                 // B7: already inside laborPct
