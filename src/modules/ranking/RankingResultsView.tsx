@@ -416,9 +416,9 @@ export function RankingResultsView() {
           <Button variant="secondary" size="sm" onClick={exportExcel} disabled={!run || rows.length === 0}>
             <Download className="mr-1 h-3.5 w-3.5" /> CSV
           </Button>
-          <Button variant="secondary" size="sm" onClick={exportWorkbook} disabled={!run || wbBusy || isLegacy}
+          <Button variant="danger" size="sm" onClick={exportWorkbook} disabled={!run || wbBusy || isLegacy}
             title={isLegacy ? "Workbook export is for hub-run weeks" : undefined}>
-            <Download className="mr-1 h-3.5 w-3.5" /> {wbBusy ? "Building…" : "Workbook"}
+            <Download className="mr-1 h-3.5 w-3.5" /> {wbBusy ? "Building…" : "Download Ranker"}
           </Button>
           {isAdmin && (
             <Button size="sm" onClick={() => runNow.mutate()} disabled={runNow.isPending}>
