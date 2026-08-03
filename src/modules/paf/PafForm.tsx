@@ -103,7 +103,7 @@ const NEW_HIRE_LEADER = "New Hire (Salary Leader)";
 const NH_ROLES = ["GM", "DO", "SDO"];
 // Pay Adjustment (Salary) — SDO/RVP+ submit; VP approves. Also code-driven.
 const PAY_ADJ_SALARY = "Pay Adjustment (Salary)";
-const PAY_ADJ_ROLES = ["GM", "SDO", "RVP"];
+const PAY_ADJ_ROLES = ["GM", "DO", "SDO", "RVP"];
 const PAY_ADJ_SUBMITTER_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
 // "Wed, Jul 15, 10:00 AM CT"
 function fmtCutoff(iso: string): string {
@@ -1026,7 +1026,7 @@ export function PafForm({
       {state.category === PAY_ADJ_SALARY && (
         <FormSection
           title="Pay Adjustment — Salary"
-          description="Salary change or promotion to GM, SDO, or RVP. The VP approves; VP and COO are copied."
+          description="Salary change or promotion to GM, DO, SDO, or RVP. The VP approves; VP and COO are copied."
         >
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <NhField label={`${cfgLabel("pa_role", "Promote to")} *`}>
