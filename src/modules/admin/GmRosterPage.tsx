@@ -6,7 +6,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Check, HelpCircle, Upload, UserX } from "lucide-react";
+import { AlertTriangle, Check, Download, HelpCircle, Upload, UserX } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -43,15 +43,43 @@ export function GmRosterPage() {
 
   const summary = q.data?.summary;
 
+  // Download the rows currently shown (respects the active filter + search) as a CSV.
+  function exportCsv() {
+    const esc = (v: string | number | null | undefined) => {
+      const s = v == null ? "" : String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    const head = ["Store #", "Store Name", "In App", "Roster GM", "GM Email", "Status", "Hub Account", "Hub Email", "RVP", "SDO", "DO"];
+    const body = rows.map((r) => [
+      r.store_number, r.store_name ?? "", r.in_app ? "yes" : "no",
+      r.roster_name ?? "", r.gm_email ?? "", STATUS_META[r.reconcile].label,
+      r.account?.name ?? "", r.account?.email ?? "",
+      r.rvp_name ?? "", r.sdo_name ?? "", r.do_name ?? "",
+    ]);
+    const csv = [head, ...body].map((row) => row.map(esc).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "gm-roster.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <>
       <PageHeader
         title="GM Roster"
         description="Reconcile the GM roster with Hub accounts — who's missing an account or whose name doesn't match."
         actions={
-          <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
-            <Upload className="mr-1 h-3.5 w-3.5" /> Import roster
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={exportCsv} disabled={rows.length === 0}>
+              <Download className="mr-1 h-3.5 w-3.5" /> Download
+            </Button>
+            <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
+              <Upload className="mr-1 h-3.5 w-3.5" /> Import roster
+            </Button>
+          </div>
         }
       />
 
