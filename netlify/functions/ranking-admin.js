@@ -153,6 +153,16 @@ async function clearPriorFile(supa, source, sha256) {
   await supa.from("ranking_source_files").delete().in("id", ids);
 }
 
+// Scoped sources (ix, vog, ott) legitimately reuse the SAME file for both PTD
+// and WTD — most obviously in week 1 of a period, when period-to-date IS
+// week-to-date, so the two exports are byte-identical. The file dedupe is on
+// (source, sha256), so identical PTD/WTD content would collide and the second
+// scope would be silently dropped. Fold the scope into the dedupe hash so the
+// two scopes are distinct files, while re-uploading the same scope still dedupes.
+function scopedSha(sha, scope) {
+  return createHash("sha256").update(`${String(sha || "").toLowerCase()}|${scope}`).digest("hex");
+}
+
 async function ingestIx(supa, user, body) {
   const content = String(body?.content || "");
   const filename = String(body?.filename || "ix.csv").slice(0, 200);
@@ -165,15 +175,16 @@ async function ingestIx(supa, user, body) {
   catch (e) { return { error: e.message, status: 400 }; }
 
   const sha = createHash("sha256").update(content).digest("hex");
+  const dsha = scopedSha(sha, scope);
   const codes = [...new Set(parsed.rows.filter((r) => r.level === "store" && r.store_code).map((r) => r.store_code))];
   const { data: sts } = await supa.from("stores").select("id, number").in("number", codes);
   const idByNum = new Map((sts || []).map((s) => [String(s.number), s.id]));
 
-  if (body?.force) await clearPriorFile(supa, "ix", sha);
+  if (body?.force) await clearPriorFile(supa, "ix", dsha);
   const { data: file, error: fe } = await supa.from("ranking_source_files").insert({
     source: "ix",
     storage_path: `inline:${filename}`,
-    sha256: sha,
+    sha256: dsha,
     week_ending: parsed.weekEnding,
     row_count: parsed.rows.length,
     status: "parsed",
@@ -474,11 +485,12 @@ async function ingestVog(supa, user, body) {
   const { data: sts } = await supa.from("stores").select("id, number").in("number", codes);
   const idByNum = new Map((sts || []).map((s) => [String(s.number), s.id]));
 
-  if (body?.force) await clearPriorFile(supa, "vog", sha);
+  const dsha = scopedSha(sha, scope);
+  if (body?.force) await clearPriorFile(supa, "vog", dsha);
   const { data: file, error: fe } = await supa.from("ranking_source_files").insert({
     source: "vog",
     storage_path: `inline:${filename}`,
-    sha256: sha.toLowerCase(),
+    sha256: dsha,
     week_ending: null,
     row_count: clean.length,
     status: "parsed",
@@ -535,11 +547,12 @@ async function ingestOtt(supa, user, body) {
   const { data: sts } = await supa.from("stores").select("id, number").in("number", codes);
   const idByNum = new Map((sts || []).map((s) => [String(s.number), s.id]));
 
-  if (body?.force) await clearPriorFile(supa, "ott", sha);
+  const dsha = scopedSha(sha, scope);
+  if (body?.force) await clearPriorFile(supa, "ott", dsha);
   const { data: file, error: fe } = await supa.from("ranking_source_files").insert({
     source: "ott",
     storage_path: `inline:${filename}`,
-    sha256: sha.toLowerCase(),
+    sha256: dsha,
     week_ending: null,
     row_count: clean.length,
     status: "parsed",
