@@ -168,24 +168,35 @@ async function loadIxForWeek(supa, weekEnding, issues) {
   return out;
 }
 
-export async function runRankingNow(supa, user) {
+export async function runRankingNow(supa, user, opts = {}) {
   const issues = [];
 
-  // 1. Anchor: the most recent COMPLETED fiscal week's Sunday with data.
-  const { data: lastRow, error: lastErr } = await supa
-    .from("labor_v2_daily").select("business_date")
-    .order("business_date", { ascending: false }).limit(1);
-  if (lastErr) return { error: lastErr.message, status: 500 };
-  const latest = lastRow?.[0]?.business_date;
-  if (!latest) return { error: "No Labor v2 data captured yet — nothing to rank.", status: 400 };
-  const fiLatest = fiscalForDate(latest);
-  if (!fiLatest) return { error: `Latest business date ${latest} is outside the fiscal calendar.`, status: 500 };
-  const weekEnding = fiLatest.isWeekEnd ? latest : isoAddDays(fiLatest.weekStart, -1);
+  // 1. Anchor. Normally the most recent COMPLETED fiscal week's Sunday with
+  // data; opts.weekEnding re-runs a SPECIFIC past week instead (the Refresh
+  // button), so a late credit/data change on that week can be recomputed. Either
+  // way credits and (week-scoped) source files are re-read live.
+  let weekEnding;
+  if (opts.weekEnding && /^\d{4}-\d{2}-\d{2}$/.test(opts.weekEnding)) {
+    const fx = fiscalForDate(opts.weekEnding);
+    if (!fx) return { error: `Week ending ${opts.weekEnding} is outside the fiscal calendar.`, status: 400 };
+    if (!fx.isWeekEnd) return { error: `${opts.weekEnding} is not a fiscal week-ending Sunday.`, status: 400 };
+    weekEnding = opts.weekEnding;
+  } else {
+    const { data: lastRow, error: lastErr } = await supa
+      .from("labor_v2_daily").select("business_date")
+      .order("business_date", { ascending: false }).limit(1);
+    if (lastErr) return { error: lastErr.message, status: 500 };
+    const latest = lastRow?.[0]?.business_date;
+    if (!latest) return { error: "No Labor v2 data captured yet — nothing to rank.", status: 400 };
+    const fiLatest = fiscalForDate(latest);
+    if (!fiLatest) return { error: `Latest business date ${latest} is outside the fiscal calendar.`, status: 500 };
+    weekEnding = fiLatest.isWeekEnd ? latest : isoAddDays(fiLatest.weekStart, -1);
+    if (!fiLatest.isWeekEnd) {
+      issues.push({ level: "info", msg: `Latest data is ${latest} (mid-week) — reporting the last completed week, ending ${weekEnding}.` });
+    }
+  }
   const fi = fiscalForDate(weekEnding);
   if (!fi) return { error: `Week ending ${weekEnding} is outside the fiscal calendar.`, status: 500 };
-  if (!fiLatest.isWeekEnd) {
-    issues.push({ level: "info", msg: `Latest data is ${latest} (mid-week) — reporting the last completed week, ending ${weekEnding}.` });
-  }
 
   // 2. Anchor rows. If the anchor Sunday predates migration 0238's fields
   // (tickets/on-time/voids), self-heal by re-extracting the stored KPI
@@ -586,9 +597,12 @@ export async function latestRun(supa, params, storeNums = null) {
     if (!data) return { error: "Run not found.", status: 404 };
     run = data;
   } else {
+    // "Latest" = the newest WEEK's newest run — ordered by week_ending first so
+    // that re-running an OLDER week (Refresh) never hijacks the default view.
     const { data: runs, error } = await supa
       .from("ranking_runs").select("*")
       .eq("status", "complete")
+      .order("week_ending", { ascending: false })
       .order("started_at", { ascending: false }).limit(1);
     if (error) {
       if (/ranking_runs/.test(error.message)) return { error: "Run migration 0237 first (ranking tables are missing).", status: 500 };
