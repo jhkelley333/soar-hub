@@ -15,9 +15,9 @@ import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { useAuth } from "@/auth/AuthProvider";
 import { MissTrackerExport } from "@/modules/labor/MissTrackerExport";
-import { fetchLaborV2Team, fetchMissTracker } from "./api";
+import { fetchLaborV2Team, fetchLaborFile, fetchMissTracker } from "./api";
 import { LaborShareLinksModal } from "./LaborShareLinksModal";
-import { downloadLaborWorkbook } from "./laborWorkbook";
+import { downloadSharedLaborFile } from "./sharedLaborWorkbook";
 import type { LaborPeriod, TeamBand, TeamDisplayLevel, TeamGroup, TeamStore } from "./types";
 
 const fmtPctPts = (v: number | null) => (v == null ? "—" : `${v.toFixed(1)}%`);
@@ -232,8 +232,19 @@ export function LaborV2TeamPage() {
             {t && <MissTrackerExport fetcher={fetchMissTracker} />}
             {data && (
               <Button variant="secondary" size="sm" disabled={wbBusy}
-                onClick={async () => { setWbBusy(true); try { await downloadLaborWorkbook(data); } finally { setWbBusy(false); } }}>
-                <Download className="mr-1 h-3.5 w-3.5" /> {wbBusy ? "Building…" : "Workbook"}
+                onClick={async () => {
+                  setWbBusy(true);
+                  try {
+                    // Same workbook as the shared link — all columns + a tab per DO.
+                    const file = await fetchLaborFile();
+                    await downloadSharedLaborFile(file);
+                  } catch (e) {
+                    toast.push(e instanceof Error ? e.message : "Couldn't build the Labor File.", "error");
+                  } finally {
+                    setWbBusy(false);
+                  }
+                }}>
+                <Download className="mr-1 h-3.5 w-3.5" /> {wbBusy ? "Building…" : "Labor File"}
               </Button>
             )}
             {t && (
