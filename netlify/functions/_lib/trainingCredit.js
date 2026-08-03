@@ -183,15 +183,16 @@ export async function loadGmSupportCreditDates(supa, storeNumbers) {
   const since = isoOf(Date.now() - 35 * DAY);
   const { data: rows } = await supa
     .from("labor_v2_daily")
-    .select("store_number, labor_cost, labor_hours")
+    .select("store_number, labor_cost, labor_hours, net_sales")
     .in("store_number", tagStores)
     .gte("business_date", since);
   const agg = new Map();
   for (const r of rows || []) {
     const sn = String(r.store_number);
-    const a = agg.get(sn) || { cost: 0, hours: 0, days: 0 };
+    const a = agg.get(sn) || { cost: 0, hours: 0, sales: 0, days: 0 };
     a.cost += Number(r.labor_cost) || 0;
     a.hours += Number(r.labor_hours) || 0;
+    a.sales += Number(r.net_sales) || 0;
     a.days += 1;
     agg.set(sn, a);
   }
@@ -206,12 +207,14 @@ export async function loadGmSupportCreditDates(supa, storeNumbers) {
     const bufferPct = Number(t.buffer_pct);
     let dailyHours, dailyAmount;
     if (isFinite(bufferPct) && bufferPct > 0) {
-      // % credit off labor: buffer_pct of the store's typical daily labor
-      // (cost + hours), from recent data. Falls back to the hours default if the
-      // store has no history to size the percentage against.
-      if (a && a.days > 0) {
-        dailyAmount = (bufferPct / 100) * (a.cost / a.days);
-        dailyHours = (bufferPct / 100) * (a.hours / a.days);
+      // % buffer off SALES: credit buffer_pct of the store's typical daily sales
+      // (from recent data), reducing labor cost by that $ and hours by the
+      // matching amount at the store's blended wage. Falls back to the hours
+      // default only if the store has no recent sales to size the % against.
+      if (a && a.days > 0 && a.sales > 0) {
+        const wage = a.hours > 0 ? a.cost / a.hours : fallbackWage;
+        dailyAmount = (bufferPct / 100) * (a.sales / a.days);
+        dailyHours = wage > 0 ? dailyAmount / wage : 0;
       } else {
         dailyHours = GM_SUPPORT_DEFAULT_WEEKLY_HOURS / 7;
         dailyAmount = dailyHours * fallbackWage;
