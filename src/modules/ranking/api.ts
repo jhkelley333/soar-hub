@@ -323,6 +323,25 @@ export function backfillRankingFields(days: number): Promise<BackfillResult> {
 }
 
 // ── Source ingestion ─────────────────────────────────────────────────
+
+// Post an ingest; if the backend blocks it as an already-ingested duplicate,
+// offer to re-ingest anyway (replaces the earlier upload) — the override for
+// when the wrong file was uploaded and needs redoing. Admin-only endpoints.
+async function ingestReq<T>(action: string, input: object): Promise<T> {
+  try {
+    return await req<T>(`${FN}?action=${action}`, { method: "POST", body: JSON.stringify(input) });
+  } catch (e) {
+    if (
+      e instanceof Error && /already ingested/i.test(e.message) &&
+      typeof window !== "undefined" &&
+      window.confirm(`${e.message}\n\nRe-ingest anyway and replace the earlier upload?`)
+    ) {
+      return await req<T>(`${FN}?action=${action}`, { method: "POST", body: JSON.stringify({ ...input, force: true }) });
+    }
+    throw e;
+  }
+}
+
 export interface IxIngestResult {
   file_id: string;
   week_ending: string | null;
@@ -334,7 +353,7 @@ export interface IxIngestResult {
 }
 
 export function ingestIxFile(input: { filename: string; content: string; scope: RankScope }): Promise<IxIngestResult> {
-  return req(`${FN}?action=ingest-ix`, { method: "POST", body: JSON.stringify(input) });
+  return ingestReq("ingest-ix", input);
 }
 
 export interface TotzoneRowInput {
@@ -350,7 +369,7 @@ export interface TotzoneRowInput {
 export function ingestTotzoneRows(input: {
   filename: string; sha256: string; as_of: string | null; rows: TotzoneRowInput[];
 }): Promise<{ file_id: string; as_of: string | null; rows: number; stores: number; unresolved: string[] }> {
-  return req(`${FN}?action=ingest-totzone`, { method: "POST", body: JSON.stringify(input) });
+  return ingestReq("ingest-totzone", input);
 }
 
 export interface EcosureRowInput {
@@ -365,7 +384,7 @@ export interface EcosureRowInput {
 export function ingestEcosureRows(input: {
   filename: string; sha256: string; as_of: string | null; rows: EcosureRowInput[];
 }): Promise<{ file_id: string; as_of: string | null; rows: number; stores: number; unresolved: string[] }> {
-  return req(`${FN}?action=ingest-ecosure`, { method: "POST", body: JSON.stringify(input) });
+  return ingestReq("ingest-ecosure", input);
 }
 
 export interface BscRowInput {
@@ -379,7 +398,7 @@ export interface BscRowInput {
 export function ingestBscRows(input: {
   filename: string; sha256: string; as_of: string | null; rows: BscRowInput[];
 }): Promise<{ file_id: string; as_of: string | null; rows: number; stores: number; unresolved: string[] }> {
-  return req(`${FN}?action=ingest-bsc`, { method: "POST", body: JSON.stringify(input) });
+  return ingestReq("ingest-bsc", input);
 }
 
 export interface ShopRowInput {
@@ -392,7 +411,7 @@ export interface ShopRowInput {
 export function ingestShopRows(input: {
   filename: string; sha256: string; rows: ShopRowInput[];
 }): Promise<{ file_id: string; as_of: string | null; rows: number; stores: number; unresolved: string[] }> {
-  return req(`${FN}?action=ingest-shops`, { method: "POST", body: JSON.stringify(input) });
+  return ingestReq("ingest-shops", input);
 }
 
 export interface VogRowInput {
@@ -405,7 +424,7 @@ export interface VogRowInput {
 export function ingestVogRows(input: {
   filename: string; sha256: string; scope: RankScope; rows: VogRowInput[];
 }): Promise<{ file_id: string; scope: RankScope; rows: number; stores: number; unresolved: string[] }> {
-  return req(`${FN}?action=ingest-vog`, { method: "POST", body: JSON.stringify(input) });
+  return ingestReq("ingest-vog", input);
 }
 
 export interface OttRowInput {
@@ -418,7 +437,7 @@ export interface OttRowInput {
 export function ingestOttRows(input: {
   filename: string; sha256: string; scope: RankScope; rows: OttRowInput[];
 }): Promise<{ file_id: string; scope: RankScope; rows: number; stores: number; unresolved: string[] }> {
-  return req(`${FN}?action=ingest-ott`, { method: "POST", body: JSON.stringify(input) });
+  return ingestReq("ingest-ott", input);
 }
 
 // ── Legacy history + trends ──────────────────────────────────────────
