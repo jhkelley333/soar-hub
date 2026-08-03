@@ -558,7 +558,11 @@ async function creditBalanceFor(supa, storeNumber, year) {
 // Stores the caller's register covers (admin/org-wide read: every store).
 async function creditStoresFor(supa, user) {
   if (user.role === "admin" || ORG_WIDE_READ.has(user.role)) {
-    const { data } = await supa.from("stores").select("number, name").eq("is_active", true).order("number");
+    // Sonic-only — Apricus (Little Caesars) shares the table but isn't part of
+    // the Sonic training-credit bank.
+    const { data } = await excludeApricus(
+      supa.from("stores").select("number, name").eq("is_active", true),
+    ).order("number");
     return (data ?? []).map((s) => ({ number: String(s.number), name: s.name ?? null }));
   }
   const rows = await resolveVisibleStoreRows(supa, user.id);
