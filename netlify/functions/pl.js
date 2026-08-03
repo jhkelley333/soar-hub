@@ -862,8 +862,20 @@ async function reviewSummary(supa, user, params) {
     if (!keep || (!r.is_final && keep.is_final)) byStore.set(r.store_number, r); // prefer prelim
   }
 
-  const { data: notes } = await supa.from("pl_review_notes").select("store_number, line_key").eq("period_end", period);
+  const { data: notes } = await supa.from("pl_review_notes").select("store_number, line_key, updated_at").eq("period_end", period);
   const addressed = new Set((notes || []).map((n) => `${n.store_number}|${n.line_key}`));
+  const maxNoteMs = new Map();
+  for (const n of notes || []) {
+    const ms = new Date(n.updated_at).getTime();
+    const key = String(n.store_number);
+    if (ms > (maxNoteMs.get(key) ?? 0)) maxNoteMs.set(key, ms);
+  }
+
+  // DO sign-offs for the period — surfaced per store (with staleness) so the
+  // overview can flag which stores a DO has signed off.
+  const { data: signs } = await supa.from("pl_review_signoffs")
+    .select("store_number, signed_at, signed_by_name").eq("period_end", period);
+  const signByStore = new Map((signs || []).map((s) => [String(s.store_number), s]));
 
   // Trailing history so the fixed-cost guard (flat-$ lines aren't flagged) lands
   // the same here as in the per-store review — otherwise flat lines would count
@@ -872,9 +884,17 @@ async function reviewSummary(supa, user, params) {
 
   const rows = [];
   for (const [num, r] of byStore) {
-    const flags = computeFlags(r.lines, r.total_sales, targets, history.get(String(num)) || []);
+    const numKey = String(num);
+    const flags = computeFlags(r.lines, r.total_sales, targets, history.get(numKey) || []);
     const noted = flags.filter((f) => addressed.has(`${num}|${f.line_key}`)).length;
-    rows.push({ store_number: String(num), flags: flags.length, noted, owed: flags.length - noted });
+    const sign = signByStore.get(numKey);
+    const signedAt = sign ? new Date(sign.signed_at).getTime() : null;
+    const signed = signedAt != null;
+    const signedStale = signed && (maxNoteMs.get(numKey) ?? 0) > signedAt;
+    rows.push({
+      store_number: numKey, flags: flags.length, noted, owed: flags.length - noted,
+      signed, signed_stale: signedStale, signed_by: sign?.signed_by_name ?? null,
+    });
   }
   return { period, rows };
 }

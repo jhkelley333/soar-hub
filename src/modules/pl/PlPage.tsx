@@ -290,10 +290,27 @@ function PeriodNotesPill({ count }: { count: number }) {
   );
 }
 
-// Review roll-up pill — amber when a store still owes notes on its flags, green
-// when every flag has a note, dim when there's nothing to review.
-function ReviewPill({ summary }: { summary?: { flags: number; owed: number } }) {
+// Review roll-up pill — "Signed off" (green ✓) once the DO signs, "Re-sign"
+// (amber) if notes changed after; else amber when notes are owed, green when
+// every flag has a note, dim when there's nothing to review.
+function ReviewPill({ summary }: { summary?: { flags: number; owed: number; signed?: boolean; signed_stale?: boolean; signed_by?: string | null } }) {
   if (!summary || summary.flags === 0) return <span className="text-xs text-zinc-300">—</span>;
+  if (summary.signed && !summary.signed_stale) {
+    return (
+      <span title={summary.signed_by ? `Signed off by ${summary.signed_by}` : "Signed off"}
+        className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
+        <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={2} /> Signed off
+      </span>
+    );
+  }
+  if (summary.signed && summary.signed_stale) {
+    return (
+      <span title="Notes changed since sign-off"
+        className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-200">
+        Re-sign
+      </span>
+    );
+  }
   if (summary.owed > 0) {
     return (
       <span className="inline-flex items-center rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold text-amber-800 ring-1 ring-inset ring-amber-200">
