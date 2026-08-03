@@ -197,7 +197,12 @@ function computeStorePtd(st, cfg, issues) {
     ? r.laborPct - chart1raw - padPct - r.trainingCreditPct - r.ptoPct : null;
   r.laborMiss = isNum(r.varianceToChart) && isNum(r.sales)
     ? (r.varianceToChart > 0 ? r.varianceToChart * r.sales : 0) : null; // AD
-  r.hoursOver = isNum(r.laborMiss) ? r.laborMiss / cfg.avgWage : null;  // AE
+  // AE: convert $ miss to hours at the STORE'S OWN blended wage (cost/hours),
+  // the same basis Labor v2 uses — so the ranker's hours reconcile with the
+  // labor report. Falls back to the company wage when a store has no hours.
+  var ownWage = (isNum(p.laborCost) && isNum(p.laborHours) && p.laborHours > 0)
+    ? p.laborCost / p.laborHours : cfg.avgWage;
+  r.hoursOver = (isNum(r.laborMiss) && isNum(ownWage) && ownWage > 0) ? r.laborMiss / ownWage : null;  // AE
   r.avgHoursOverPerStore = r.hoursOver;                                 // AF
   r.laborAnnualized = isNum(r.laborMiss) ? (52 / cfg.week) * r.laborMiss : null; // AG
   r.laborScore = laborScoreHoursOver(r.avgHoursOverPerStore);           // AH
@@ -311,7 +316,9 @@ function computeStoreWtd(st, cfg, issues) {
     ? r.laborPct - r.chart - r.ptoPct : null; // Y = U - V - X
   r.laborMiss = (isNum(r.varianceToChart) && isNum(r.sales))
     ? (r.varianceToChart > 0 ? r.varianceToChart * r.sales : 0) : null; // Z
-  r.hoursOver = isNum(r.laborMiss) ? r.laborMiss / cfg.avgWage : null;  // AA
+  var wOwnWage = (isNum(w.laborCost) && isNum(w.laborHours) && w.laborHours > 0)
+    ? w.laborCost / w.laborHours : cfg.avgWage;
+  r.hoursOver = (isNum(r.laborMiss) && isNum(wOwnWage) && wOwnWage > 0) ? r.laborMiss / wOwnWage : null;  // AA (own wage)
   r.avgHoursOverPerStore = r.hoursOver;                                 // AB
   r.laborAnnualized = isNum(r.laborMiss) ? r.laborMiss * 52 : null;     // AC
   r.laborScore = laborScoreChart(r.laborPct, r.chart, r._chart2);       // AD
@@ -421,7 +428,7 @@ function aggregatePtd(name, members, opts, cfg, inputs) {
   r.laborMiss = sumBy(members, function (m) { return m.laborMiss; });        // AD
   r.laborAnnualized = sumBy(members, function (m) { return m.laborAnnualized; }); // AG
   if (tier !== 'entity') {
-    r.hoursOver = r.laborMiss / cfg.avgWage; // AE
+    r.hoursOver = sumBy(members, function (m) { return m.hoursOver; }); // AE: Σ per-store own-wage hours (matches Labor v2)
     // AF: DO = AE/count; SDO/RVP = AE/count/week   (DEVIATION: dynamic counts)
     r.avgHoursOverPerStore = (tier === 'do')
       ? (r.storeCount ? r.hoursOver / r.storeCount : null)
@@ -529,7 +536,7 @@ function companyPtd(sdoRows, storeRows, cfg, inputs) {
   r._chart2 = weightedBy(storeRows, function (m) { return m.sales; }, function (m) { return m._chart2; }, storeSales); // AB352
   r.varianceToChart = weightedBy(sdoRows, wSalesSdo, function (m) { return m.varianceToChart; }, r.sales); // AC352 over SDO (no -Y)
   r.laborMiss = sumBy(sdoRows, function (m) { return m.laborMiss; });           // AD
-  r.hoursOver = r.laborMiss / cfg.avgWage;                                      // AE
+  r.hoursOver = sumBy(sdoRows, function (m) { return m.hoursOver; });           // AE: Σ own-wage hours
   r.avgHoursOverPerStore = r.storeCount ? r.hoursOver / r.storeCount / cfg.week : null; // AF (dynamic count)
   r.laborAnnualized = sumBy(sdoRows, function (m) { return m.laborAnnualized; }); // AG
   r.laborScore = laborScoreHoursOver(r.avgHoursOverPerStore);                   // AH352 (hours-over bands)
@@ -620,7 +627,7 @@ function aggregateWtd(name, members, opts, cfg, inputs) {
   r.ptoPct = weightedBy(members, wSales, function (m) { return m.ptoPct; }, r.sales);     // X
   r.varianceToChart = weightedBy(members, wSales, function (m) { return m.varianceToChart; }, r.sales); // Y
   r.laborMiss = sumBy(members, function (m) { return m.laborMiss; });  // Z
-  r.hoursOver = r.laborMiss / cfg.avgWage;                             // AA
+  r.hoursOver = sumBy(members, function (m) { return m.hoursOver; });  // AA: Σ own-wage hours
   // AB: DO = AA/count; SDO/RVP = AA/count (workbook /H)  — all per-store, no /week on WEEKLY
   r.avgHoursOverPerStore = r.storeCount ? r.hoursOver / r.storeCount : null;
   // AC: plain SUM of stores at every leader tier — same basis as FC Annualized
@@ -694,7 +701,7 @@ function companyWtd(sdoRows, storeRows, cfg, inputs) {
   r.ptoPct = weightedBy(storeRows, function (m) { return m.sales; }, function (m) { return m.ptoPct; }, storeSales);   // X over stores
   r.varianceToChart = weightedBy(sdoRows, wSalesSdo, function (m) { return m.varianceToChart; }, r.sales); // Y over SDO
   r.laborMiss = sumBy(sdoRows, function (m) { return m.laborMiss; });   // Z
-  r.hoursOver = r.laborMiss / cfg.avgWage;                              // AA
+  r.hoursOver = sumBy(sdoRows, function (m) { return m.hoursOver; });   // AA: Σ own-wage hours
   r.avgHoursOverPerStore = r.storeCount ? r.hoursOver / r.storeCount : null; // AB (dynamic count)
   r.laborAnnualized = sumBy(storeRows, function (m) { return m.laborAnnualized; }); // AC = SUM(stores), consistent with FC + PTD
   r.laborScore = laborScoreChart(r.laborPct, r.chart, r._chart2);       // AD
