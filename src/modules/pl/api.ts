@@ -131,7 +131,7 @@ export function fetchPlReview(store: string, period: string): Promise<PlReviewRe
 }
 
 // Per-store review status for a period (which stores still owe notes).
-export interface PlReviewSummaryRow { store_number: string; flags: number; noted: number; owed: number }
+export interface PlReviewSummaryRow { store_number: string; flags: number; noted: number; owed: number; signed?: boolean; signed_stale?: boolean; signed_by?: string | null }
 export function fetchPlReviewSummary(period: string): Promise<{ period: string; rows: PlReviewSummaryRow[] }> {
   return request(`${FN}?action=review-summary&period=${encodeURIComponent(period)}`);
 }

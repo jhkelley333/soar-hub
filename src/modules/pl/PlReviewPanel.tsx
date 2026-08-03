@@ -102,6 +102,7 @@ function SignoffCard({ store, period, signoff, canSign }: {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["pl-review", store, period] });
       qc.invalidateQueries({ queryKey: ["pl-rollup"] });
+      qc.invalidateQueries({ queryKey: ["pl-review-summary"] }); // refresh the "Signed off" flag on the overview
       toast.push("Signed off — review recorded.", "success");
     },
     onError: (e) => toast.push(e instanceof Error ? e.message : "Sign-off failed.", "error"),
