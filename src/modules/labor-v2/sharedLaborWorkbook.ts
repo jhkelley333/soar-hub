@@ -104,36 +104,73 @@ function addSection(ws: any, startRow: number, title: string, rows: Row[]): numb
   return row + 1;
 }
 
-export async function downloadSharedLaborFile(data: SharedLaborResponse, scopeLabel?: string): Promise<void> {
-  const ExcelJS = (await import("exceljs")).default;
-  const wb = new ExcelJS.Workbook();
-  wb.creator = "SOAR Hub";
-  const ws = wb.addWorksheet("Labor", { views: [{ state: "frozen", ySplit: 1, xSplit: 1 }] });
+const grp = (n: ShareNode) => (n.leader ? `${n.leader} — ${n.name}` : n.name);
 
-  const scope = scopeLabel || (data.scope.kind === "region" ? (data.scope.region ?? "Region") : "Company");
+// Excel sheet-name rules: ≤31 chars, none of \ / ? * [ ] :, non-empty, unique.
+function sheetName(base: string, used: Set<string>): string {
+  const clean = String(base || "DO").replace(/[\\/?*[\]:]/g, " ").replace(/\s+/g, " ").trim().slice(0, 31) || "DO";
+  let name = clean, i = 2;
+  while (used.has(name.toLowerCase())) {
+    const suffix = ` (${i})`;
+    name = clean.slice(0, 31 - suffix.length) + suffix;
+    i++;
+  }
+  used.add(name.toLowerCase());
+  return name;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function fillSheet(ws: any, scope: string, date: string | null | undefined, sections: [string, Row[]][]): void {
   ws.mergeCells(1, 1, 1, COLS.length);
   const banner = ws.getCell(1, 1);
-  banner.value = `SOAR Labor File — ${scope} — ${data.date ?? "—"}`;
+  banner.value = `SOAR Labor File — ${scope} — ${date ?? "—"}`;
   banner.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFC6E0B4" } };
   banner.font = { bold: true, size: 14, color: { argb: "FF1C2733" } };
   banner.alignment = { horizontal: "center" };
   ws.getRow(1).height = 22;
-
-  const grp = (n: ShareNode) => (n.leader ? `${n.leader} — ${n.name}` : n.name);
   let row = 3;
-  if (data.company) row = addSection(ws, row, scope === "Company" ? "SOAR — Company" : scope, [rowOf(data.company, grp(data.company))]);
-
-  const sections: [string, Row[]][] = [
-    ["RVP · Region", (data.levels.region ?? []).map((n) => rowOf(n, grp(n)))],
-    ["SDO · Market", (data.levels.area ?? []).map((n) => rowOf(n, grp(n)))],
-    ["DO · District", (data.levels.district ?? []).map((n) => rowOf(n, grp(n)))],
-    ["Stores", (data.levels.store ?? []).map((n) => rowOf(n, `#${n.store_number} ${n.store_name ?? ""}`.trim()))],
-  ];
   for (const [title, rows] of sections) {
     if (rows.length) row = addSection(ws, row, title, rows);
   }
-
   ws.columns.forEach((col: { width?: number }, i: number) => { col.width = i === 0 ? 34 : 10; });
+}
+
+export async function downloadSharedLaborFile(data: SharedLaborResponse, scopeLabel?: string): Promise<void> {
+  const ExcelJS = (await import("exceljs")).default;
+  const wb = new ExcelJS.Workbook();
+  wb.creator = "SOAR Hub";
+
+  const scope = scopeLabel || (data.scope.kind === "region" ? (data.scope.region ?? "Region") : "Company");
+  const view = { state: "frozen" as const, ySplit: 1, xSplit: 1 };
+  const used = new Set<string>();
+
+  // Summary tab — the full rollup (Company → RVP → SDO → DO → Stores).
+  const summary = wb.addWorksheet(sheetName("Summary", used), { views: [view] });
+  const summarySections: [string, Row[]][] = [];
+  if (data.company) summarySections.push([scope === "Company" ? "SOAR — Company" : scope, [rowOf(data.company, grp(data.company))]]);
+  summarySections.push(["RVP · Region", (data.levels.region ?? []).map((n) => rowOf(n, grp(n)))]);
+  summarySections.push(["SDO · Market", (data.levels.area ?? []).map((n) => rowOf(n, grp(n)))]);
+  summarySections.push(["DO · District", (data.levels.district ?? []).map((n) => rowOf(n, grp(n)))]);
+  summarySections.push(["Stores", (data.levels.store ?? []).map((n) => rowOf(n, `#${n.store_number} ${n.store_name ?? ""}`.trim()))]);
+  fillSheet(summary, scope, data.date, summarySections);
+
+  // One tab per DO (district): the DO's rollup row + its stores.
+  const stores = data.levels.store ?? [];
+  const doNodes = data.levels.district ?? [];
+  const doByKey = new Map<string, ShareNode>();
+  for (const d of doNodes) { const k = d.district ?? d.name; if (k) doByKey.set(k, d); }
+  const districts = [...new Set(stores.map((s) => s.district).filter((d): d is string => !!d))];
+  const keys = districts.length ? districts : [...doByKey.keys()];
+  for (const key of keys) {
+    const doNode = doByKey.get(key) ?? null;
+    const doStores = stores.filter((s) => s.district === key);
+    const tab = sheetName(doNode?.name || key, used);
+    const ws = wb.addWorksheet(tab, { views: [view] });
+    const secs: [string, Row[]][] = [];
+    if (doNode) secs.push(["DO · District", [rowOf(doNode, grp(doNode))]]);
+    secs.push(["Stores", doStores.map((n) => rowOf(n, `#${n.store_number} ${n.store_name ?? ""}`.trim()))]);
+    fillSheet(ws, doNode ? grp(doNode) : key, data.date, secs);
+  }
 
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
