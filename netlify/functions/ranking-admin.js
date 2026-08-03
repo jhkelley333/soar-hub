@@ -138,6 +138,21 @@ async function padSet(supa, user, body) {
 
 // Ingest an Inventory Expressway category export (CSV pasted/uploaded as
 // text). Dedupes by content hash; store codes resolve at ingest (brief 6).
+// Override for a re-upload: drop any prior ingest of this exact file (same
+// source + content hash) — its rows first, then the file — so a forced
+// re-ingest replaces it instead of being blocked as a duplicate. The run always
+// uses the latest file per source, so this cleanly redoes a bad/mistaken upload.
+async function clearPriorFile(supa, source, sha256) {
+  const sha = String(sha256 || "").toLowerCase();
+  if (!sha) return;
+  const { data: prior } = await supa.from("ranking_source_files")
+    .select("id").eq("source", source).eq("sha256", sha);
+  const ids = (prior || []).map((p) => p.id);
+  if (!ids.length) return;
+  await supa.from("ranking_src_rows").delete().in("file_id", ids);
+  await supa.from("ranking_source_files").delete().in("id", ids);
+}
+
 async function ingestIx(supa, user, body) {
   const content = String(body?.content || "");
   const filename = String(body?.filename || "ix.csv").slice(0, 200);
@@ -154,6 +169,7 @@ async function ingestIx(supa, user, body) {
   const { data: sts } = await supa.from("stores").select("id, number").in("number", codes);
   const idByNum = new Map((sts || []).map((s) => [String(s.number), s.id]));
 
+  if (body?.force) await clearPriorFile(supa, "ix", sha);
   const { data: file, error: fe } = await supa.from("ranking_source_files").insert({
     source: "ix",
     storage_path: `inline:${filename}`,
@@ -223,6 +239,7 @@ async function ingestTotzone(supa, user, body) {
   const { data: sts } = await supa.from("stores").select("id, number").in("number", codes);
   const idByNum = new Map((sts || []).map((s) => [String(s.number), s.id]));
 
+  if (body?.force) await clearPriorFile(supa, "totzone", sha);
   const { data: file, error: fe } = await supa.from("ranking_source_files").insert({
     source: "totzone",
     storage_path: `inline:${filename}`,
@@ -282,6 +299,7 @@ async function ingestEcosure(supa, user, body) {
   const { data: sts } = await supa.from("stores").select("id, number").in("number", codes);
   const idByNum = new Map((sts || []).map((s) => [String(s.number), s.id]));
 
+  if (body?.force) await clearPriorFile(supa, "ecosure", sha);
   const { data: file, error: fe } = await supa.from("ranking_source_files").insert({
     source: "ecosure",
     storage_path: `inline:${filename}`,
@@ -339,6 +357,7 @@ async function ingestBsc(supa, user, body) {
   const { data: sts } = await supa.from("stores").select("id, number").in("number", codes);
   const idByNum = new Map((sts || []).map((s) => [String(s.number), s.id]));
 
+  if (body?.force) await clearPriorFile(supa, "bsc", sha);
   const { data: file, error: fe } = await supa.from("ranking_source_files").insert({
     source: "bsc",
     storage_path: `inline:${filename}`,
@@ -397,6 +416,7 @@ async function ingestShops(supa, user, body) {
   const { data: sts } = await supa.from("stores").select("id, number").in("number", codes);
   const idByNum = new Map((sts || []).map((s) => [String(s.number), s.id]));
 
+  if (body?.force) await clearPriorFile(supa, "shops", sha);
   const { data: file, error: fe } = await supa.from("ranking_source_files").insert({
     source: "shops",
     storage_path: `inline:${filename}`,
@@ -454,6 +474,7 @@ async function ingestVog(supa, user, body) {
   const { data: sts } = await supa.from("stores").select("id, number").in("number", codes);
   const idByNum = new Map((sts || []).map((s) => [String(s.number), s.id]));
 
+  if (body?.force) await clearPriorFile(supa, "vog", sha);
   const { data: file, error: fe } = await supa.from("ranking_source_files").insert({
     source: "vog",
     storage_path: `inline:${filename}`,
@@ -514,6 +535,7 @@ async function ingestOtt(supa, user, body) {
   const { data: sts } = await supa.from("stores").select("id, number").in("number", codes);
   const idByNum = new Map((sts || []).map((s) => [String(s.number), s.id]));
 
+  if (body?.force) await clearPriorFile(supa, "ott", sha);
   const { data: file, error: fe } = await supa.from("ranking_source_files").insert({
     source: "ott",
     storage_path: `inline:${filename}`,
