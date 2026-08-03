@@ -304,8 +304,10 @@ export function fetchRankingFull(runId?: string | null): Promise<{
   return req(`${FN}?${p.toString()}`);
 }
 
-export function triggerRankingRun(): Promise<{ run_id: string; week_ending: string; period: number; week: number; rows: number; issues: RankingIssue[] }> {
-  return req(`${FN}?action=run-now`, { method: "POST", body: "{}" });
+// Run the latest completed week, or (weekEnding given) re-run a specific past
+// week — used by Refresh to recompute a week with the latest credits/data.
+export function triggerRankingRun(weekEnding?: string): Promise<{ run_id: string; week_ending: string; period: number; week: number; rows: number; issues: RankingIssue[] }> {
+  return req(`${FN}?action=run-now`, { method: "POST", body: JSON.stringify(weekEnding ? { week_ending: weekEnding } : {}) });
 }
 
 export interface BackfillResult {

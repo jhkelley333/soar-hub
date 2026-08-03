@@ -266,7 +266,7 @@ export function RankingResultsView() {
   const canNewer = weekIdx > 0;
 
   const runNow = useMutation({
-    mutationFn: triggerRankingRun,
+    mutationFn: () => triggerRankingRun(),
     onSuccess: (r) => {
       toast.push(`Ranked P${r.period} W${r.week} (week ending ${r.week_ending}) — ${r.rows} rows.`, "success");
       setWeekKey(null); // jump back to the latest
@@ -274,6 +274,19 @@ export function RankingResultsView() {
       qc.invalidateQueries({ queryKey: ["ranking-weeks"] });
     },
     onError: (e) => toast.push(e instanceof Error ? e.message : "Run failed.", "error"),
+  });
+
+  // Recompute the week currently being viewed with the latest credits & data —
+  // e.g. after a labor credit is entered/approved once the run already exists.
+  const refresh = useMutation({
+    mutationFn: (weekEnding: string) => triggerRankingRun(weekEnding),
+    onSuccess: (r) => {
+      toast.push(`Refreshed P${r.period} W${r.week} (week ending ${r.week_ending}) with the latest credits & data.`, "success");
+      setWeekKey(r.run_id); // stay on this week, now pointing at the fresh run
+      qc.invalidateQueries({ queryKey: ["ranking-week"] });
+      qc.invalidateQueries({ queryKey: ["ranking-weeks"] });
+    },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Refresh failed.", "error"),
   });
 
   const baseCols = effectiveTier === "store" ? STORE_COLS : LEADER_COLS;
@@ -420,8 +433,16 @@ export function RankingResultsView() {
             title={isLegacy ? "Workbook export is for hub-run weeks" : undefined}>
             <Download className="mr-1 h-3.5 w-3.5" /> {wbBusy ? "Building…" : "Download Ranker"}
           </Button>
+          {isAdmin && run && !isLegacy && (
+            <Button variant="secondary" size="sm" onClick={() => refresh.mutate(run.week_ending)} disabled={refresh.isPending || runNow.isPending}
+              title="Recompute this week with the latest labor credits & data">
+              {refresh.isPending
+                ? <><RefreshCw className="mr-1 h-3.5 w-3.5 animate-spin" /> Refreshing…</>
+                : <><RefreshCw className="mr-1 h-3.5 w-3.5" /> Refresh</>}
+            </Button>
+          )}
           {isAdmin && (
-            <Button size="sm" onClick={() => runNow.mutate()} disabled={runNow.isPending}>
+            <Button size="sm" onClick={() => runNow.mutate()} disabled={runNow.isPending || refresh.isPending}>
               {runNow.isPending
                 ? <><RefreshCw className="mr-1 h-3.5 w-3.5 animate-spin" /> Running…</>
                 : <><Play className="mr-1 h-3.5 w-3.5" /> Run now</>}

@@ -686,7 +686,7 @@ export const handler = async (event) => {
       if (action === "config-add") return unwrap(await configAdd(supa, user, body));
       if (action === "pad-set") return unwrap(await padSet(supa, user, body));
       if (action === "fc-target-set") return unwrap(await setFcTarget(supa, user, body));
-      if (action === "run-now") return unwrap(await runRankingNow(supa, user));
+      if (action === "run-now") return unwrap(await runRankingNow(supa, user, { weekEnding: body?.week_ending }));
       if (action === "backfill") return unwrap(await backfillLaborWindow(supa, { days: Number(body?.days) || 35 }));
       if (action === "ingest-ix") return unwrap(await ingestIx(supa, user, body));
       if (action === "ingest-totzone") return unwrap(await ingestTotzone(supa, user, body));
