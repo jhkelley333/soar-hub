@@ -36,6 +36,16 @@ async function userFromAuth(supa, event) {
 const sumOf = (rows, k) => rows.reduce((a, r) => a + numv(r[k]), 0);
 const div = (a, b) => (b ? a / b : null);
 
+// Weighted mean of column `valKey` by column `wtKey` across rows (both numeric).
+function weightedMean(rows, valKey, wtKey) {
+  let num = 0, wt = 0;
+  for (const r of rows) {
+    const v = numv(r[valKey]), w = numv(r[wtKey]);
+    if (v && w) { num += v * w; wt += w; }
+  }
+  return wt ? num / wt : null;
+}
+
 function laborMetrics(rows, p) {
   const sales = sumOf(rows, `${p}net_sales`);
   const cost = sumOf(rows, `${p}labor_cost`);
@@ -46,14 +56,24 @@ function laborMetrics(rows, p) {
   const lyS = sumOf(rows, `${p}prev_year_net_sales`);
   const ttTotal = sumOf(rows, `${p}total_ticket_time`);
   const ttQty = sumOf(rows, `${p}on_time_quantity`);
+  // Avg Ticket Time = the feed's averageTicketTime, ticket-weighted across the
+  // scope; fall back to total_ticket_time / on_time_quantity if not captured.
+  const attWeighted = weightedMean(rows, `${p}average_ticket_time`, `${p}tickets`);
+  // Labor target from the feed (sales-weighted targetLaborPercentage). Normalize
+  // a fraction (0.26) to a percent (26) so it lines up with labor_pct.
+  let laborTarget = weightedMean(rows, `${p}target_labor_pct`, `${p}net_sales`);
+  if (laborTarget != null && laborTarget < 1) laborTarget *= 100;
   return {
     sales_vs_ly: lyS ? ((sales - lyS) / lyS) * 100 : null,
+    sales_dollars: rows.length ? sales : null,
+    ly_dollars: rows.length ? lyS : null,
     labor_pct: sales ? (cost / sales) * 100 : null,
+    labor_target: laborTarget,
     splh: div(sales, hours),
     tickets: rows.length ? tickets : null,
     average_check: div(sales, tickets),
     on_time: otDen ? (otNum / otDen) * 100 : null,
-    avg_ticket_time: ttQty ? ttTotal / ttQty : null,
+    avg_ticket_time: attWeighted != null ? attWeighted : (ttQty ? ttTotal / ttQty : null),
     actual_vs_schedule: rows.length ? sumOf(rows, `${p}actual_vs_scheduled_hours`) : null,
     overtime: rows.length ? sumOf(rows, `${p}overtime_hours`) : null,
   };
@@ -92,13 +112,14 @@ const METRIC_IDS = [
 // EcoSure + Mystery Shop are period (PTD) metrics — WTD carries no value — so
 // the PTD figure is used for every board window.
 const rankerNum = (v) => (typeof v === "number" && isFinite(v) ? v : null);
-async function rankerMetrics(supa, scopeStoreNumbers) {
+async function rankerMetrics(supa, scopeStoreNumbers, anchor = null) {
   const empty = { vog: { wtd: null, ptd: null }, ecosure: null, mysteryShop: null };
   const numset = new Set((scopeStoreNumbers || []).map(String));
   if (!numset.size) return empty;
-  const { data: runs } = await supa
-    .from("ranking_runs").select("id")
-    .eq("status", "complete")
+  let q = supa.from("ranking_runs").select("id").eq("status", "complete");
+  // Viewing a past week → use the newest run that ended on/before the anchor.
+  if (anchor) q = q.lte("week_ending", anchor);
+  const { data: runs } = await q
     .order("week_ending", { ascending: false })
     .order("started_at", { ascending: false }).limit(1);
   const runId = runs?.[0]?.id;
@@ -145,13 +166,47 @@ export const handler = async (event) => {
     if (!BOARD_ROLES.has(user.role)) return respond(403, { error: "Not authorized." });
 
     const params = event.queryStringParameters || {};
+
+    // Admin: set/clear a metric's target override.
+    if (event.httpMethod === "POST" && params.action === "set-target") {
+      if (user.role !== "admin") return respond(403, { error: "Only an admin can change targets." });
+      let body = {};
+      try { body = JSON.parse(event.body || "{}"); } catch { body = {}; }
+      const metricId = String(body.metric_id || "").trim();
+      if (!metricId) return respond(400, { error: "metric_id is required" });
+      const target = body.target === null || body.target === "" ? null : Number(body.target);
+      if (target != null && !isFinite(target)) return respond(400, { error: "target must be a number or null" });
+      const { error } = await supa.from("board_metric_targets").upsert(
+        { metric_id: metricId, target, updated_by: user.id, updated_at: new Date().toISOString() },
+        { onConflict: "metric_id" },
+      );
+      if (error) {
+        if (/board_metric_targets/.test(error.message)) return respond(500, { error: "Run migration 0275 first (board_metric_targets is missing)." });
+        return respond(500, { error: error.message });
+      }
+      return respond(200, { ok: true, metric_id: metricId, target });
+    }
+
     const level = ["company", "region", "store"].includes(params.level) ? params.level : "company";
     const id = params.id ? String(params.id) : null;
 
-    // Latest business date anchors the whole board.
-    const { data: latest } = await supa.from("labor_v2_daily").select("business_date").order("business_date", { ascending: false }).limit(1);
-    const anchor = latest?.[0]?.business_date ?? null;
-    if (!anchor) return respond(200, { anchor: null, fiscal: null, scopes: { regions: [], stores: [] }, values: emptyValues() });
+    // Anchor date: an explicit ?date=YYYY-MM-DD (view a past week) or the latest
+    // captured business date. Clamp a requested future/absent date to the latest.
+    const wantDate = /^\d{4}-\d{2}-\d{2}$/.test(params.date || "") ? params.date : null;
+    const { data: latestRow } = await supa.from("labor_v2_daily").select("business_date").order("business_date", { ascending: false }).limit(1);
+    const latestDate = latestRow?.[0]?.business_date ?? null;
+    if (!latestDate) return respond(200, { anchor: null, fiscal: null, scopes: { regions: [], stores: [] }, values: emptyValues() });
+    // Use the requested date only if we actually captured on/before it; otherwise
+    // the latest we have (avoids an empty board on a bad date).
+    let anchor = latestDate;
+    if (wantDate && wantDate <= latestDate) {
+      const { data: onDate } = await supa.from("labor_v2_daily").select("business_date").eq("business_date", wantDate).limit(1);
+      if (onDate?.length) anchor = wantDate;
+      else {
+        const { data: before } = await supa.from("labor_v2_daily").select("business_date").lte("business_date", wantDate).order("business_date", { ascending: false }).limit(1);
+        anchor = before?.[0]?.business_date ?? latestDate;
+      }
+    }
 
     // Org: build the scope selector lists + resolve which stores are in scope.
     const { data: allStores } = await supa.from("labor_v2_daily").select("store_number").eq("business_date", anchor);
@@ -199,7 +254,7 @@ export const handler = async (event) => {
     const laborAnchorD = lab(anchor, ""), laborAnchorW = lab(anchor, "wtd_"), laborAnchorM = lab(anchor, "ptd_");
     const laborPriorD = lab(dailyPrior, ""), laborPriorW = lab(wtdPrior, "wtd_"), laborPriorM = lab(mtdPrior, "ptd_");
     const laborWeeks = weekEnds.map((d) => lab(d, "wtd_"));
-    for (const k of ["sales_vs_ly", "avg_ticket_time", "on_time", "splh", "tickets", "average_check", "labor_pct", "actual_vs_schedule", "overtime"]) {
+    for (const k of ["sales_vs_ly", "sales_dollars", "ly_dollars", "avg_ticket_time", "on_time", "splh", "tickets", "average_check", "labor_pct", "actual_vs_schedule", "overtime"]) {
       values[k] = {
         daily: pair(laborAnchorD[k], laborPriorD[k]),
         wtd: pair(laborAnchorW[k], laborPriorW[k]),
@@ -221,10 +276,10 @@ export const handler = async (event) => {
       };
     }
 
-    // Ranker-sourced metrics (latest completed run = "LW Ranker"). WTD run →
-    // Daily + WTD windows; PTD run → MTD. EcoSure + Mystery Shop are PTD-only,
-    // so their one value fills every window.
-    const rk = await rankerMetrics(supa, scopeStores);
+    // Ranker-sourced metrics from the run covering the viewed week (newest run
+    // whose week ends on/before the anchor). WTD run → Daily + WTD windows;
+    // PTD run → MTD. EcoSure + Mystery Shop are PTD-only, so one value fills all.
+    const rk = await rankerMetrics(supa, scopeStores, anchor);
     values.vog = {
       daily: pair(rk.vog.wtd, null), wtd: pair(rk.vog.wtd, null), mtd: pair(rk.vog.ptd, null),
       weeks: [null, null, null, null, null],
@@ -244,10 +299,28 @@ export const handler = async (event) => {
       weeks: [null, null, null, null, null],
     };
 
-    return respond(200, { anchor, fiscal: fi, scope: { level, id }, scopes, values });
+    // Targets: admin-set overrides (board_metric_targets) plus the data-driven
+    // labor target from the feed (sales-weighted, never a fixed 26%). The
+    // frontend uses these over the catalog defaults.
+    const targets = await loadTargets(supa);
+    if (laborAnchorD.labor_target != null) targets.labor_pct = round(laborAnchorD.labor_target);
+
+    return respond(200, { anchor, fiscal: fi, scope: { level, id }, scopes, values, targets });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });
   }
+}
+
+// Admin-set target overrides, keyed by metric id. Best-effort: a missing table
+// (migration not run) just yields no overrides.
+async function loadTargets(supa) {
+  try {
+    const { data, error } = await supa.from("board_metric_targets").select("metric_id, target");
+    if (error) return {};
+    const out = {};
+    for (const r of data || []) if (r.target != null) out[String(r.metric_id)] = Number(r.target);
+    return out;
+  } catch { return {}; }
 }
 
 function round(v) { return v == null || !isFinite(v) ? null : Math.round(v * 100) / 100; }

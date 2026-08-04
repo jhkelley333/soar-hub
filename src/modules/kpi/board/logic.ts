@@ -80,8 +80,11 @@ export interface MetricView {
   onTarget: boolean;
 }
 
-// Merge a static def with its live values for the selected period.
-export function metricView(def: MetricDef, vals: MetricValues | undefined, per: Period, w: number, h: number): MetricView {
+// Merge a static def with its live values for the selected period. An optional
+// numeric targetOverride (from the board's targets map) replaces def.target for
+// status + label — used for admin-set targets and the data-driven labor target.
+export function metricView(def: MetricDef, vals: MetricValues | undefined, per: Period, w: number, h: number, targetOverride?: number | null): MetricView {
+  if (typeof targetOverride === "number") def = { ...def, target: targetOverride };
   const pair: ValPair = vals?.[per] ?? [null, null];
   const cur = pair[0];
   const weeks = (vals?.weeks ?? []).filter((v): v is number => typeof v === "number");
