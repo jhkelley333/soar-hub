@@ -1,10 +1,13 @@
-// Execution Metrics Board — computed-value logic, ported verbatim from the
-// design's DCLogic class (fmt / delta / status / spark / metric), extended to
-// handle null values (unwired metrics render a skeleton).
-import { C, type MetricDef } from "./catalog";
+// Execution Metrics Board — computed-value logic (fmt / delta / status / spark /
+// metric), extended to handle null values (unwired metrics render a skeleton).
+// Status and delta are returned as semantic tones ("good"/"warn"/"bad"/"flat")
+// so the light-themed board can map them to its own Tailwind classes.
+import type { MetricDef } from "./catalog";
 import type { MetricValues, ValPair } from "./api";
 
 export type Period = "daily" | "wtd" | "mtd";
+export type StatusTone = "good" | "warn" | "bad" | "none";
+export type DeltaTone = "good" | "bad" | "flat";
 
 export function fmt(v: number, m: MetricDef): string {
   const n = Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: m.dec, maximumFractionDigits: m.dec });
@@ -22,7 +25,7 @@ export function fmt(v: number, m: MetricDef): string {
   }
 }
 
-export function delta(m: MetricDef, cur: number, prior: number): { text: string; color: string } {
+export function deltaOf(m: MetricDef, cur: number, prior: number): { text: string; tone: DeltaTone } {
   const d = cur - prior;
   const good = m.hb ? d > 0 : d < 0;
   const flat = Math.abs(d) < (m.dec ? Math.pow(10, -m.dec) / 2 : 0.5);
@@ -30,21 +33,21 @@ export function delta(m: MetricDef, cur: number, prior: number): { text: string;
   const mag = Math.abs(d).toLocaleString("en-US", { minimumFractionDigits: m.dec, maximumFractionDigits: m.dec });
   const suffix = m.unit === "%" ? " pp" : "";
   const text = `${arrow} ${m.unit === "$" ? "$" : ""}${mag}${suffix}`;
-  return { text, color: flat ? C.dim : good ? C.good : C.bad };
+  return { text, tone: flat ? "flat" : good ? "good" : "bad" };
 }
 
-export function status(m: MetricDef, cur: number): string {
-  if (m.target === null || m.target === undefined) return C.dim;
+export function statusTone(m: MetricDef, cur: number): StatusTone {
+  if (m.target === null || m.target === undefined) return "none";
   if (m.hb) {
-    if (cur >= m.target) return C.good;
-    return cur >= m.target * 0.95 ? C.accent : C.bad;
+    if (cur >= m.target) return "good";
+    return cur >= m.target * 0.95 ? "warn" : "bad";
   }
   if (m.target === 0) {
     const a = Math.abs(cur);
-    return a <= 5 ? C.good : a <= 20 ? C.accent : C.bad;
+    return a <= 5 ? "good" : a <= 20 ? "warn" : "bad";
   }
-  if (cur <= m.target) return C.good;
-  return cur <= m.target * 1.05 ? C.accent : C.bad;
+  if (cur <= m.target) return "good";
+  return cur <= m.target * 1.05 ? "warn" : "bad";
 }
 
 export function targetLabel(m: MetricDef): string {
@@ -67,13 +70,12 @@ export interface MetricView {
   hasData: boolean;
   value: string;
   delta: string;
-  deltaColor: string;
+  deltaTone: DeltaTone;
   targetLabel: string;
-  statusColor: string;
+  statusTone: StatusTone;
   spark: string | null;
   dotX: string;
   dotY: string;
-  sparkColor: string;
   weeks: { label: string; value: string }[];
   onTarget: boolean;
 }
@@ -85,22 +87,21 @@ export function metricView(def: MetricDef, vals: MetricValues | undefined, per: 
   const weeks = (vals?.weeks ?? []).filter((v): v is number => typeof v === "number");
   if (cur == null) {
     return {
-      name: def.name, hasData: false, value: "—", delta: "", deltaColor: C.dim,
-      targetLabel: targetLabel(def), statusColor: C.dim, spark: null, dotX: "", dotY: "",
-      sparkColor: C.sparkNone, weeks: [], onTarget: false,
+      name: def.name, hasData: false, value: "—", delta: "", deltaTone: "flat",
+      targetLabel: targetLabel(def), statusTone: "none", spark: null, dotX: "", dotY: "",
+      weeks: [], onTarget: false,
     };
   }
   const prior = pair[1];
-  const d = prior == null ? { text: "", color: C.dim } : delta(def, cur, prior);
-  const st = status(def, cur);
+  const d = prior == null ? { text: "", tone: "flat" as DeltaTone } : deltaOf(def, cur, prior);
+  const st = statusTone(def, cur);
   const sp = weeks.length >= 2 ? spark(weeks, w, h) : null;
   return {
-    name: def.name, hasData: true, value: fmt(cur, def), delta: d.text, deltaColor: d.color,
-    targetLabel: targetLabel(def), statusColor: st,
+    name: def.name, hasData: true, value: fmt(cur, def), delta: d.text, deltaTone: d.tone,
+    targetLabel: targetLabel(def), statusTone: st,
     spark: sp?.d ?? null, dotX: sp?.x ?? "", dotY: sp?.y ?? "",
-    sparkColor: st === C.dim ? C.sparkNone : st,
     weeks: weeks.map((v, i) => ({ label: i === weeks.length - 1 ? "Now" : `W-${weeks.length - 1 - i}`, value: fmt(v, def) })),
-    onTarget: st === C.good,
+    onTarget: st === "good",
   };
 }
 

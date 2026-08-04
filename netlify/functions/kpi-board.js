@@ -44,6 +44,8 @@ function laborMetrics(rows, p) {
   const otNum = sumOf(rows, `${p}on_time_numerator`);
   const otDen = sumOf(rows, `${p}on_time_denominator`);
   const lyS = sumOf(rows, `${p}prev_year_net_sales`);
+  const ttTotal = sumOf(rows, `${p}total_ticket_time`);
+  const ttQty = sumOf(rows, `${p}on_time_quantity`);
   return {
     sales_vs_ly: lyS ? ((sales - lyS) / lyS) * 100 : null,
     labor_pct: sales ? (cost / sales) * 100 : null,
@@ -51,6 +53,7 @@ function laborMetrics(rows, p) {
     tickets: rows.length ? tickets : null,
     average_check: div(sales, tickets),
     on_time: otDen ? (otNum / otDen) * 100 : null,
+    avg_ticket_time: ttQty ? ttTotal / ttQty : null,
     actual_vs_schedule: rows.length ? sumOf(rows, `${p}actual_vs_scheduled_hours`) : null,
     overtime: rows.length ? sumOf(rows, `${p}overtime_hours`) : null,
   };
@@ -80,6 +83,43 @@ const METRIC_IDS = [
   "other_pct", "cash_over_short", "paid_outs", "last_clock_out",
   "training_compliance", "new_hire_certified", "cross_trained", "ninety_day_retention",
 ];
+
+// VOG for the board comes from the current ranker (not the labor feed): the
+// latest completed run's store-tier VOG, response-weighted across the scope's
+// stores. The ranker stores VOG as a 0-1 top-box fraction; the board shows it
+// as a percentage (matching the ranking board's own VOG formatting). WTD/PTD
+// runs map to the board's WTD (also Daily) / MTD windows; no weekly sparkline.
+async function vogFromRanker(supa, scopeStoreNumbers) {
+  const numset = new Set((scopeStoreNumbers || []).map(String));
+  if (!numset.size) return { wtd: null, ptd: null };
+  const { data: runs } = await supa
+    .from("ranking_runs").select("id")
+    .eq("status", "complete")
+    .order("week_ending", { ascending: false })
+    .order("started_at", { ascending: false }).limit(1);
+  const runId = runs?.[0]?.id;
+  if (!runId) return { wtd: null, ptd: null };
+
+  const out = { wtd: null, ptd: null };
+  await Promise.all(["wtd", "ptd"].map(async (scope) => {
+    const { data: rows } = await supa
+      .from("ranking_rows").select("entity_key, metrics")
+      .eq("run_id", runId).eq("scope", scope).eq("tier", "store");
+    let wSum = 0, rSum = 0, plain = 0, n = 0;
+    for (const r of rows || []) {
+      if (!numset.has(String(r.entity_key))) continue;
+      const m = r.metrics || {};
+      const v = typeof m.vog === "number" && isFinite(m.vog) ? m.vog : null;
+      if (v == null) continue;
+      const resp = typeof m.vogResponses === "number" && isFinite(m.vogResponses) ? m.vogResponses : 0;
+      wSum += v * resp; rSum += resp; plain += v; n += 1;
+    }
+    if (n === 0) return;
+    const val = rSum > 0 ? wSum / rSum : plain / n;
+    out[scope] = val * 100; // 0-1 fraction -> percentage
+  }));
+  return out;
+}
 
 export const handler = async (event) => {
   try {
@@ -144,7 +184,7 @@ export const handler = async (event) => {
     const laborAnchorD = lab(anchor, ""), laborAnchorW = lab(anchor, "wtd_"), laborAnchorM = lab(anchor, "ptd_");
     const laborPriorD = lab(dailyPrior, ""), laborPriorW = lab(wtdPrior, "wtd_"), laborPriorM = lab(mtdPrior, "ptd_");
     const laborWeeks = weekEnds.map((d) => lab(d, "wtd_"));
-    for (const k of ["sales_vs_ly", "on_time", "splh", "tickets", "average_check", "labor_pct", "actual_vs_schedule", "overtime"]) {
+    for (const k of ["sales_vs_ly", "avg_ticket_time", "on_time", "splh", "tickets", "average_check", "labor_pct", "actual_vs_schedule", "overtime"]) {
       values[k] = {
         daily: pair(laborAnchorD[k], laborPriorD[k]),
         wtd: pair(laborAnchorW[k], laborPriorW[k]),
@@ -165,6 +205,16 @@ export const handler = async (event) => {
         weeks: cWeeks.map((w) => round(w[k])),
       };
     }
+
+    // VOG from the current ranker (latest completed run), response-weighted
+    // across the scope. WTD run → Daily + WTD windows; PTD run → MTD.
+    const vog = await vogFromRanker(supa, scopeStores);
+    values.vog = {
+      daily: pair(vog.wtd, null),
+      wtd: pair(vog.wtd, null),
+      mtd: pair(vog.ptd, null),
+      weeks: [null, null, null, null, null],
+    };
 
     return respond(200, { anchor, fiscal: fi, scope: { level, id }, scopes, values });
   } catch (e) {

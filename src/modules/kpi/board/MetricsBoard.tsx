@@ -1,132 +1,117 @@
-// Execution Metrics Board — pixel-accurate port of the design handoff. A fixed
-// 1440px dark "wall display": six pillars, each with a Metric That Matters and
-// its execution metrics, a Daily/WTD/MTD toggle, sparklines, and a trailing
+// Execution Metrics Board — the site-themed board (light cards, PageHeader,
+// accent controls) matching the rest of the app. Phase 1 shows the Sales pillar
+// ("Goals to Grow Sales"): a Metric-That-Matters hero (Sales vs. LY) plus its
+// execution metrics, with a Daily/WTD/MTD toggle, sparklines, and a trailing
 // 5-week strip. Scope-selectable (company / region / store). Live values come
-// from kpi-board; targets/units from the static catalog. Unwired metrics render
-// in a skeleton state.
-import { useState, type CSSProperties } from "react";
+// from kpi-board; targets/units from the static catalog. VOG is sourced from
+// the current ranker; unwired metrics render "—".
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
-import { PILLARS, C, MONO, SANS, type MetricDef, type Pillar } from "./catalog";
+import { cn } from "@/lib/cn";
+import { PILLARS, type MetricDef, type Pillar } from "./catalog";
 import { fetchKpiBoard, type MetricValues } from "./api";
-import { metricView, PERIOD_LABELS, type MetricView, type Period } from "./logic";
+import { metricView, PERIOD_LABELS, type DeltaTone, type MetricView, type Period, type StatusTone } from "./logic";
 
-const box = (s: CSSProperties): CSSProperties => s;
+const STATUS_BORDER: Record<StatusTone, string> = {
+  good: "border-l-emerald-500", warn: "border-l-amber-500", bad: "border-l-red-500", none: "border-l-zinc-200",
+};
+const STATUS_STROKE: Record<StatusTone, string> = {
+  good: "#059669", warn: "#d97706", bad: "#dc2626", none: "#a1a1aa",
+};
+const DELTA_TEXT: Record<DeltaTone, string> = { good: "text-emerald-600", bad: "text-red-600", flat: "text-zinc-400" };
 
 function Sparkline({ v, w, h, sw, r }: { v: MetricView; w: number; h: number; sw: number; r: number }) {
-  if (!v.spark) return <svg width={w} height={h} style={{ display: "block" }} />;
+  if (!v.spark) return <svg width={w} height={h} className="block" />;
+  const stroke = STATUS_STROKE[v.statusTone];
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} width={w} height={h} style={{ display: "block" }}>
-      <path d={v.spark} fill="none" stroke={v.sparkColor} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx={v.dotX} cy={v.dotY} r={r} fill={v.sparkColor} />
+    <svg viewBox={`0 0 ${w} ${h}`} width={w} height={h} className="block">
+      <path d={v.spark} fill="none" stroke={stroke} strokeWidth={sw} strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx={v.dotX} cy={v.dotY} r={r} fill={stroke} />
     </svg>
   );
 }
 
-function WeekStrip({ v, dir }: { v: MetricView; dir: "row" | "grid" }) {
+function WeekStrip({ v }: { v: MetricView }) {
   if (!v.weeks.length) return null;
   return (
-    <div style={box({ display: dir === "grid" ? "grid" : "flex", gridTemplateColumns: dir === "grid" ? "repeat(5,1fr)" : undefined, gap: 9 })}>
+    <div className="flex flex-wrap gap-x-4 gap-y-1">
       {v.weeks.map((w) => (
-        <div key={w.label} style={box({ display: "flex", flexDirection: "column", gap: 1, alignItems: dir === "grid" ? "center" : "flex-start" })}>
-          <span style={box({ fontSize: 9.5, fontWeight: 600, color: C.faint })}>{w.label}</span>
-          <span style={box({ fontFamily: MONO, fontSize: 11, color: C.tertiary })}>{w.value}</span>
+        <div key={w.label} className="flex flex-col">
+          <span className="text-[9.5px] font-semibold uppercase tracking-wide text-zinc-400">{w.label}</span>
+          <span className="text-[11px] tabular-nums text-zinc-600">{w.value}</span>
         </div>
       ))}
     </div>
   );
 }
 
-function MtmPanel({ p, v }: { p: Pillar; v: MetricView }) {
+// The Metric That Matters hero card.
+function MtmHero({ v }: { v: MetricView }) {
   return (
-    <div style={box({ background: C.inset, border: `1px solid ${C.borderStrong}`, borderRadius: 10, padding: p.key === "sales" ? 16 : "14px 16px", display: "flex", flexDirection: "column", gap: 8 })}>
-      <div style={box({ fontSize: 10.5, fontWeight: 700, letterSpacing: ".12em", textTransform: "uppercase", color: C.accent })}>Metric That Matters</div>
-      <div style={box({ fontSize: 12.5, color: C.tertiary })}>{v.name}</div>
-      <div style={box({ display: "flex", alignItems: "flex-end", gap: 9 })}>
-        <span style={box({ fontFamily: MONO, fontWeight: 600, fontSize: p.mtmSize, lineHeight: 0.95, letterSpacing: "-.02em", color: C.primary })}>{v.value}</span>
-        {v.delta && <span style={box({ fontFamily: MONO, fontSize: 12.5, fontWeight: 600, paddingBottom: 5, color: v.deltaColor })}>{v.delta}</span>}
+    <div className="rounded-xl bg-gradient-to-br from-accent/[0.06] to-transparent p-5 ring-1 ring-zinc-200">
+      <div className="text-[10.5px] font-bold uppercase tracking-[0.12em] text-accent">Metric That Matters</div>
+      <div className="mt-1 text-sm text-zinc-500">{v.name}</div>
+      <div className="mt-2 flex items-end gap-2.5">
+        <span className={cn("text-5xl font-bold leading-none tracking-tight tabular-nums", v.hasData ? "text-midnight" : "text-zinc-300")}>{v.value}</span>
+        {v.delta && <span className={cn("pb-1 text-sm font-semibold tabular-nums", DELTA_TEXT[v.deltaTone])}>{v.delta}</span>}
       </div>
-      <div style={box({ fontSize: 11, color: C.dim })}>{v.targetLabel}</div>
-      <Sparkline v={v} w={p.spark[0]} h={p.spark[1]} sw={2} r={3} />
-      <div style={box({ borderTop: `1px solid ${C.divider}`, paddingTop: 9 })}>
-        <WeekStrip v={v} dir="grid" />
+      <div className="mt-1.5 text-xs text-zinc-400">{v.targetLabel}</div>
+      <div className="mt-3">
+        <Sparkline v={v} w={280} h={48} sw={2} r={3} />
       </div>
-    </div>
-  );
-}
-
-function MtmBanner({ p, v }: { p: Pillar; v: MetricView }) {
-  return (
-    <div style={box({ background: C.inset, border: `1px solid ${C.borderStrong}`, borderRadius: 10, padding: "14px 16px", display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16 })}>
-      <div style={box({ display: "flex", flexDirection: "column", gap: 6 })}>
-        <div style={box({ fontSize: 10.5, fontWeight: 700, letterSpacing: ".12em", textTransform: "uppercase", color: C.accent })}>Metric That Matters</div>
-        <div style={box({ fontSize: 12.5, color: C.tertiary })}>{v.name}</div>
-        <div style={box({ display: "flex", alignItems: "flex-end", gap: 9 })}>
-          <span style={box({ fontFamily: MONO, fontWeight: 600, fontSize: p.mtmSize, lineHeight: 0.95, letterSpacing: "-.02em", color: C.primary })}>{v.value}</span>
-          {v.delta && <span style={box({ fontFamily: MONO, fontSize: 12.5, fontWeight: 600, paddingBottom: 4, color: v.deltaColor })}>{v.delta}</span>}
+      {v.weeks.length > 0 && (
+        <div className="mt-3 border-t border-zinc-100 pt-3">
+          <WeekStrip v={v} />
         </div>
-        <div style={box({ fontSize: 11, color: C.dim })}>{v.targetLabel}</div>
-      </div>
-      <div style={box({ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 8 })}>
-        <Sparkline v={v} w={p.spark[0]} h={p.spark[1]} sw={2} r={3} />
-        <WeekStrip v={v} dir="row" />
-      </div>
-    </div>
-  );
-}
-
-function ExecRow({ def, v, team }: { def: MetricDef; v: MetricView; team: boolean }) {
-  return (
-    <div style={box({
-      display: "grid", gridTemplateColumns: team ? "1fr 70px" : "1fr 78px 66px 104px", alignItems: "center", gap: 12,
-      padding: "9px 12px", borderRadius: 8, background: C.inset, border: `1px solid ${C.borderSubtle}`, borderLeft: `2px solid ${v.statusColor}`,
-    })}>
-      <div style={box({ minWidth: 0 })}>
-        <div style={box({ fontSize: 12.5, fontWeight: 500, color: C.secondary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" })}>{def.name}</div>
-        <div style={box({ fontSize: 10.5, color: C.faint })}>{v.targetLabel}</div>
-      </div>
-      {team ? (
-        <div style={box({ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1 })}>
-          <span style={box({ fontFamily: MONO, fontSize: 15, fontWeight: 600, color: C.primary })}>{v.value}</span>
-          {v.delta && <span style={box({ fontFamily: MONO, fontSize: 11, color: v.deltaColor })}>{v.delta}</span>}
-        </div>
-      ) : (
-        <>
-          <span style={box({ fontFamily: MONO, fontSize: 15, fontWeight: 600, textAlign: "right", color: C.primary })}>{v.value}</span>
-          <span style={box({ fontFamily: MONO, fontSize: 11.5, fontWeight: 500, textAlign: "right", color: v.deltaColor })}>{v.delta}</span>
-          <Sparkline v={v} w={104} h={26} sw={1.5} r={2} />
-        </>
       )}
     </div>
   );
 }
 
-function PillarCard({ p, values, period }: { p: Pillar; values: Record<string, MetricValues>; period: Period }) {
-  const mtmV = metricView(p.mtm, values[p.mtm.id], period, p.spark[0], p.spark[1]);
-  const rowViews = p.rows.map((r) => ({ def: r, v: metricView(r, values[r.id], period, 104, 26) }));
+function ExecCard({ def, v }: { def: MetricDef; v: MetricView }) {
   return (
-    <section style={box({ gridColumn: `span ${p.span}`, background: C.card, border: `1px solid ${C.borderStrong}`, borderRadius: 12, padding: "18px 20px", display: "flex", flexDirection: "column", gap: p.key === "sales" ? 16 : 14 })}>
-      <div style={box({ display: "flex", alignItems: "baseline", gap: 10, justifyContent: p.countLabel ? "space-between" : "flex-start" })}>
-        <div style={box({ display: "flex", alignItems: "baseline", gap: 10 })}>
-          <span style={box({ fontFamily: MONO, fontSize: 12, fontWeight: 600, color: C.accent })}>{p.index}</span>
-          <span style={box({ fontSize: 17, fontWeight: 700, letterSpacing: "-.01em", color: C.primary })}>{p.title}</span>
-        </div>
-        {p.countLabel && <span style={box({ fontSize: 10.5, fontWeight: 600, letterSpacing: ".1em", textTransform: "uppercase", color: C.dim })}>{p.countLabel}</span>}
+    <div className={cn("flex items-center justify-between gap-3 rounded-lg border border-l-2 border-zinc-200 bg-white px-3.5 py-3", STATUS_BORDER[v.statusTone])}>
+      <div className="min-w-0">
+        <div className="truncate text-sm font-medium text-midnight">{def.name}</div>
+        <div className="text-[11px] text-zinc-400">{v.targetLabel}</div>
       </div>
-      {p.mtmStyle === "panel" ? <MtmPanel p={p} v={mtmV} /> : <MtmBanner p={p} v={mtmV} />}
-      <div style={box({ display: p.rowStyle === "grid2" ? "grid" : "flex", gridTemplateColumns: p.rowStyle === "grid2" ? "repeat(2,1fr)" : undefined, flexDirection: p.rowStyle === "grid2" ? undefined : "column", gap: 8 })}>
-        {rowViews.map(({ def, v }) => <ExecRow key={def.id} def={def} v={v} team={p.rowStyle === "team"} />)}
+      <div className="flex items-center gap-3">
+        <div className="hidden sm:block"><Sparkline v={v} w={92} h={26} sw={1.5} r={2} /></div>
+        <div className="flex flex-col items-end">
+          <span className={cn("text-base font-semibold tabular-nums", v.hasData ? "text-midnight" : "text-zinc-300")}>{v.value}</span>
+          {v.delta && <span className={cn("text-[11px] tabular-nums", DELTA_TEXT[v.deltaTone])}>{v.delta}</span>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function PillarCard({ p, values, period }: { p: Pillar; values: Record<string, MetricValues>; period: Period }) {
+  const mtmV = metricView(p.mtm, values[p.mtm.id], period, 280, 48);
+  const rowViews = p.rows.map((r) => ({ def: r, v: metricView(r, values[r.id], period, 92, 26) }));
+  return (
+    <section className="overflow-hidden rounded-xl bg-white p-5 ring-1 ring-zinc-200 sm:p-6">
+      <div className="mb-4 flex items-baseline justify-between gap-3">
+        <div className="flex items-baseline gap-2.5">
+          <span className="font-mono text-sm font-semibold text-accent">{p.index}</span>
+          <h2 className="text-lg font-bold tracking-tight text-midnight">{p.title}</h2>
+        </div>
+        {p.countLabel && <span className="text-[10.5px] font-semibold uppercase tracking-wide text-zinc-400">{p.countLabel}</span>}
+      </div>
+      <div className="grid gap-4 lg:grid-cols-[minmax(300px,360px)_1fr]">
+        <MtmHero v={mtmV} />
+        <div className="grid content-start gap-2.5 sm:grid-cols-2">
+          {rowViews.map(({ def, v }) => <ExecCard key={def.id} def={def} v={v} />)}
+        </div>
       </div>
     </section>
   );
 }
 
-const btn = (sel: boolean): CSSProperties => ({
-  fontSize: 12.5, fontWeight: 600, letterSpacing: ".02em", padding: "8px 16px", border: 0, borderRadius: 6, cursor: "pointer",
-  background: sel ? C.accent : "transparent", color: sel ? C.onAccent : C.inactive,
-});
-const selStyle: CSSProperties = { background: C.inset, color: C.tertiary, border: `1px solid ${C.borderStrong}`, borderRadius: 6, padding: "7px 10px", fontSize: 12.5, fontFamily: SANS };
+const selCls = "rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-midnight focus:border-accent focus:outline-none";
 
 export function MetricsBoard() {
   const [period, setPeriod] = useState<Period>("wtd");
@@ -149,72 +134,68 @@ export function MetricsBoard() {
   const fiscalLabel = data?.fiscal ? `Period ${data.fiscal.period}, Week ${data.fiscal.weekInPeriod}` : "";
 
   return (
-    <div style={box({ background: C.page, borderRadius: 12, overflowX: "auto" })}>
-      <div style={box({ width: 1440, minWidth: 1440, padding: "26px 28px 44px", display: "flex", flexDirection: "column", gap: 16, fontFamily: SANS, color: C.primary })}>
-        {/* Header */}
-        <div style={box({ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 24, paddingBottom: 16, borderBottom: `1px solid ${C.borderStrong}` })}>
-          <div style={box({ display: "flex", flexDirection: "column", gap: 6 })}>
-            <div style={box({ fontSize: 11, fontWeight: 600, letterSpacing: ".16em", textTransform: "uppercase", color: C.dim })}>Operations Hub · Metrics That Matter</div>
-            <div style={box({ fontSize: 30, fontWeight: 700, letterSpacing: "-.02em", lineHeight: 1 })}>Execution Metrics Board</div>
-            <div style={box({ fontSize: 13, color: C.muted })}>{dateLabel}{fiscalLabel ? ` · ${fiscalLabel}` : ""} · comparison: {per.compare}</div>
-          </div>
-          <div style={box({ display: "flex", alignItems: "center", gap: 18 })}>
-            {/* Scope selector */}
-            <div style={box({ display: "flex", gap: 6 })}>
-              <select value={level} onChange={(e) => { setLevel(e.target.value as typeof level); setId(null); }} style={selStyle}>
-                <option value="company">Company</option>
-                <option value="region">Region</option>
-                <option value="store">Store</option>
+    <>
+      <PageHeader
+        title="Execution Metrics Board"
+        description={data?.anchor ? `${dateLabel}${fiscalLabel ? ` · ${fiscalLabel}` : ""} · comparison: ${per.compare}` : "Metrics That Matter — sales, service, and speed."}
+        actions={
+          <div className="flex flex-wrap items-center gap-2">
+            <select value={level} onChange={(e) => { setLevel(e.target.value as typeof level); setId(null); }} className={selCls}>
+              <option value="company">Company</option>
+              <option value="region">Region</option>
+              <option value="store">Store</option>
+            </select>
+            {level === "region" && (
+              <select value={id ?? ""} onChange={(e) => setId(e.target.value || null)} className={selCls}>
+                <option value="">All regions…</option>
+                {(data?.scopes.regions ?? []).map((r) => <option key={r} value={r}>{r}</option>)}
               </select>
-              {level === "region" && (
-                <select value={id ?? ""} onChange={(e) => setId(e.target.value || null)} style={selStyle}>
-                  <option value="">All regions…</option>
-                  {(data?.scopes.regions ?? []).map((r) => <option key={r} value={r}>{r}</option>)}
-                </select>
-              )}
-              {level === "store" && (
-                <select value={id ?? ""} onChange={(e) => setId(e.target.value || null)} style={selStyle}>
-                  <option value="">Pick a store…</option>
-                  {(data?.scopes.stores ?? []).map((s) => <option key={s.number} value={s.number}>#{s.number} · {s.name}</option>)}
-                </select>
-              )}
-            </div>
-            <div style={box({ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3 })}>
-              <span style={box({ fontFamily: MONO, fontSize: 20, fontWeight: 600 })}>{good} / {total}</span>
-              <span style={box({ fontSize: 10.5, fontWeight: 600, letterSpacing: ".1em", textTransform: "uppercase", color: C.dim })}>Metrics on target</span>
-            </div>
-            <div style={box({ display: "flex", gap: 4, padding: 4, background: C.card, border: `1px solid ${C.borderStrong}`, borderRadius: 9 })}>
+            )}
+            {level === "store" && (
+              <select value={id ?? ""} onChange={(e) => setId(e.target.value || null)} className={selCls}>
+                <option value="">Pick a store…</option>
+                {(data?.scopes.stores ?? []).map((s) => <option key={s.number} value={s.number}>#{s.number} · {s.name}</option>)}
+              </select>
+            )}
+            <div className="inline-flex overflow-hidden rounded-lg ring-1 ring-zinc-200">
               {(["daily", "wtd", "mtd"] as Period[]).map((pk) => (
-                <button key={pk} onClick={() => setPeriod(pk)} style={btn(period === pk)}>{pk === "daily" ? "Daily" : pk === "wtd" ? "WTD" : "MTD"}</button>
+                <button
+                  key={pk}
+                  type="button"
+                  onClick={() => setPeriod(pk)}
+                  className={cn("px-3 py-1.5 text-sm font-semibold transition", period === pk ? "bg-accent text-white" : "bg-white text-zinc-600 hover:bg-zinc-50")}
+                >
+                  {pk === "daily" ? "Daily" : pk === "wtd" ? "WTD" : "MTD"}
+                </button>
               ))}
             </div>
           </div>
+        }
+      />
+
+      {q.isLoading && <Skeleton className="h-96 w-full" />}
+      {q.isError && <EmptyState title="Couldn't load the board" description={(q.error as Error)?.message ?? "Try again."} />}
+      {data && data.anchor == null && <EmptyState title="No data yet" description="No labor snapshot has been captured." />}
+
+      {data && data.anchor && (
+        <div className="space-y-4">
+          {/* On-target summary + legend */}
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white px-4 py-3 ring-1 ring-zinc-200">
+            <div className="flex items-baseline gap-2">
+              <span className="text-lg font-bold tabular-nums text-midnight">{good}/{total}</span>
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Metrics on target</span>
+            </div>
+            <div className="flex flex-wrap items-center gap-4 text-[11.5px] text-zinc-500">
+              {([["bg-emerald-500", "On / above target"], ["bg-amber-500", "Within 5%"], ["bg-red-500", "Off target"]] as const).map(([sw, label]) => (
+                <span key={label} className="flex items-center gap-1.5"><span className={cn("h-2 w-2 rounded-sm", sw)} />{label}</span>
+              ))}
+              <span className="hidden sm:inline">Sparkline = trailing 5 weeks · Δ vs {per.compare}</span>
+            </div>
+          </div>
+
+          {PILLARS.map((p) => <PillarCard key={p.key} p={p} values={values} period={period} />)}
         </div>
-
-        {q.isLoading && <Skeleton className="h-96 w-full" />}
-        {q.isError && <div style={box({ color: C.bad, fontSize: 13 })}>{(q.error as Error)?.message ?? "Couldn't load."}</div>}
-        {data && data.anchor == null && <EmptyState title="No data yet" description="No labor snapshot has been captured." />}
-
-        {data && data.anchor && (
-          <>
-            <div style={box({ display: "grid", gridTemplateColumns: "repeat(12,1fr)", gap: 16, alignItems: "start" })}>
-              {PILLARS.map((p) => <PillarCard key={p.key} p={p} values={values} period={period} />)}
-            </div>
-            {/* Footer legend */}
-            <div style={box({ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 20, paddingTop: 14, borderTop: `1px solid ${C.borderStrong}`, fontSize: 11.5, color: C.faint })}>
-              <div style={box({ display: "flex", gap: 18 })}>
-                {[[C.good, "On or above target"], [C.accent, "Within 5% of target"], [C.bad, "Off target"]].map(([sw, label]) => (
-                  <span key={label} style={box({ display: "flex", alignItems: "center", gap: 6 })}>
-                    <span style={box({ width: 8, height: 8, borderRadius: 2, background: sw })} />{label}
-                  </span>
-                ))}
-                <span>Sparkline = trailing 5 weeks</span>
-              </div>
-              <div>Deltas compare {per.label} to {per.compare}</div>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
+      )}
+    </>
   );
 }
