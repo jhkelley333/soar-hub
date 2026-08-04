@@ -1,19 +1,25 @@
 // Execution Metrics Board — the site-themed board (light cards, PageHeader,
-// accent controls) matching the rest of the app. Phase 1 shows the Sales pillar
-// ("Goals to Grow Sales"): a Metric-That-Matters hero (Sales vs. LY) plus its
-// execution metrics, with a Daily/WTD/MTD toggle, sparklines, and a trailing
-// 5-week strip. Scope-selectable (company / region / store). Live values come
-// from kpi-board; targets/units from the static catalog. VOG is sourced from
-// the current ranker; unwired metrics render "—".
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+// accent controls). Sections stack vertically (Sales / Customer L2R /
+// Controllable Contribution …), each a Metric-That-Matters hero plus its
+// execution metrics, with a Daily/WTD/MTD toggle, a previous-weeks picker,
+// sparklines, and a trailing 5-week strip. Scope-selectable (company / region /
+// store). Values + targets come from kpi-board; catalog holds defaults. Admins
+// can edit targets; the labor target is data-driven (from the feed).
+import { useMemo, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { SlidersHorizontal } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
+import { Modal } from "@/shared/ui/Modal";
+import { Button } from "@/shared/ui/Button";
+import { useToast } from "@/shared/ui/Toaster";
+import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
+import { fiscalInfo, fiscalWeekRange } from "@/lib/fiscal";
 import { PILLARS, type MetricDef, type Pillar } from "./catalog";
-import { fetchKpiBoard, type MetricValues } from "./api";
-import { metricView, PERIOD_LABELS, type DeltaTone, type MetricView, type Period, type StatusTone } from "./logic";
+import { fetchKpiBoard, setBoardTarget, type MetricValues } from "./api";
+import { fmt, metricView, PERIOD_LABELS, type DeltaTone, type MetricView, type Period, type StatusTone } from "./logic";
 
 const STATUS_BORDER: Record<StatusTone, string> = {
   good: "border-l-emerald-500", warn: "border-l-amber-500", bad: "border-l-red-500", none: "border-l-zinc-200",
@@ -22,6 +28,26 @@ const STATUS_STROKE: Record<StatusTone, string> = {
   good: "#059669", warn: "#d97706", bad: "#dc2626", none: "#a1a1aa",
 };
 const DELTA_TEXT: Record<DeltaTone, string> = { good: "text-emerald-600", bad: "text-red-600", flat: "text-zinc-400" };
+
+const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const money0 = (v: number | null | undefined) => (v == null ? "—" : `$${Math.round(v).toLocaleString("en-US")}`);
+
+// This week (latest) + the prior ~10 fiscal weeks, keyed by week-ending date.
+function recentWeekOptions(): { value: string; label: string }[] {
+  const cur = fiscalInfo(new Date())?.fiscalWeek ?? null;
+  const opts = [{ value: "", label: "This week (latest)" }];
+  if (!cur) return opts;
+  for (let w = cur - 1; w >= Math.max(1, cur - 10); w--) {
+    const r = fiscalWeekRange(w);
+    if (!r) continue;
+    const info = fiscalInfo(r.end);
+    opts.push({
+      value: ymd(r.end),
+      label: `P${info?.period ?? "?"} W${info?.weekInPeriod ?? "?"} · ending ${r.end.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`,
+    });
+  }
+  return opts;
+}
 
 function Sparkline({ v, w, h, sw, r }: { v: MetricView; w: number; h: number; sw: number; r: number }) {
   if (!v.spark) return <svg width={w} height={h} className="block" />;
@@ -48,8 +74,9 @@ function WeekStrip({ v }: { v: MetricView }) {
   );
 }
 
-// The Metric That Matters hero card.
-function MtmHero({ v }: { v: MetricView }) {
+// The Metric That Matters hero card. `sub` is an optional extra line (e.g. the
+// Sales-vs-LY dollar figure under the % headline).
+function MtmHero({ v, sub }: { v: MetricView; sub?: string | null }) {
   return (
     <div className="rounded-xl bg-gradient-to-br from-accent/[0.06] to-transparent p-5 ring-1 ring-zinc-200">
       <div className="text-[10.5px] font-bold uppercase tracking-[0.12em] text-accent">Metric That Matters</div>
@@ -58,6 +85,7 @@ function MtmHero({ v }: { v: MetricView }) {
         <span className={cn("text-5xl font-bold leading-none tracking-tight tabular-nums", v.hasData ? "text-midnight" : "text-zinc-300")}>{v.value}</span>
         {v.delta && <span className={cn("pb-1 text-sm font-semibold tabular-nums", DELTA_TEXT[v.deltaTone])}>{v.delta}</span>}
       </div>
+      {sub && <div className="mt-1 text-sm font-semibold tabular-nums text-midnight">{sub}</div>}
       <div className="mt-1.5 text-xs text-zinc-400">{v.targetLabel}</div>
       <div className="mt-3">
         <Sparkline v={v} w={280} h={48} sw={2} r={3} />
@@ -100,9 +128,21 @@ function ExecCard({ def, v }: { def: MetricDef; v: MetricView }) {
   );
 }
 
-function PillarCard({ p, values, period }: { p: Pillar; values: Record<string, MetricValues>; period: Period }) {
-  const mtmV = metricView(p.mtm, values[p.mtm.id], period, 280, 48);
-  const rowViews = p.rows.map((r) => ({ def: r, v: metricView(r, values[r.id], period, 92, 26) }));
+function PillarCard({ p, values, targets, period }: { p: Pillar; values: Record<string, MetricValues>; targets: Record<string, number>; period: Period }) {
+  const mtmV = metricView(p.mtm, values[p.mtm.id], period, 280, 48, targets[p.mtm.id]);
+  const rowViews = p.rows.map((r) => ({ def: r, v: metricView(r, values[r.id], period, 92, 26, targets[r.id]) }));
+
+  // Sales pillar: show the actual sales $ (and $ vs LY) under the % headline.
+  let sub: string | null = null;
+  if (p.key === "sales") {
+    const sd = values.sales_dollars?.[period]?.[0] ?? null;
+    const ld = values.ly_dollars?.[period]?.[0] ?? null;
+    if (sd != null) {
+      const d = ld != null ? sd - ld : null;
+      sub = `${money0(sd)}${d != null ? ` · ${d >= 0 ? "+" : "−"}${money0(Math.abs(d))} vs LY` : ""}`;
+    }
+  }
+
   return (
     <section className="overflow-hidden rounded-xl bg-white p-5 ring-1 ring-zinc-200 sm:p-6">
       <div className="mb-4 flex items-baseline justify-between gap-3">
@@ -113,7 +153,7 @@ function PillarCard({ p, values, period }: { p: Pillar; values: Record<string, M
         {p.countLabel && <span className="text-[10.5px] font-semibold uppercase tracking-wide text-zinc-400">{p.countLabel}</span>}
       </div>
       <div className="grid gap-4 lg:grid-cols-[minmax(300px,360px)_1fr]">
-        <MtmHero v={mtmV} />
+        <MtmHero v={mtmV} sub={sub} />
         <div className="grid content-start gap-2.5 sm:grid-cols-2">
           {rowViews.map(({ def, v }) => <ExecCard key={def.id} def={def} v={v} />)}
         </div>
@@ -122,21 +162,83 @@ function PillarCard({ p, values, period }: { p: Pillar; values: Record<string, M
   );
 }
 
+// Admin: edit metric targets. Labor's target is data-driven (from the feed) and
+// therefore not listed here.
+function TargetsModal({ targets, onClose }: { targets: Record<string, number>; onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const metrics = useMemo(
+    () => PILLARS.flatMap((p) => [p.mtm, ...p.rows]).filter((m) => !m.soon && m.id !== "labor_pct"),
+    [],
+  );
+  const [draft, setDraft] = useState<Record<string, string>>(() =>
+    Object.fromEntries(metrics.map((m) => {
+      const t = targets[m.id] ?? m.target;
+      return [m.id, t == null ? "" : String(t)];
+    })),
+  );
+  const save = useMutation({
+    mutationFn: (m: MetricDef) => {
+      const raw = draft[m.id]?.trim() ?? "";
+      return setBoardTarget(m.id, raw === "" ? null : Number(raw));
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["kpi-board"] }); toast.push("Target saved.", "success"); },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't save the target.", "error"),
+  });
+  return (
+    <Modal open onClose={onClose} title="Metric targets">
+      <p className="mb-3 text-xs text-zinc-500">
+        Set the target for each metric. Blank clears it back to the default. Labor % vs. Target is data-driven from the feed and isn't listed.
+      </p>
+      <div className="space-y-2">
+        {metrics.map((m) => (
+          <div key={m.id} className="flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-sm text-midnight">{m.name}</div>
+              <div className="text-[11px] text-zinc-400">default {m.target == null ? "—" : fmt(m.target, { ...m, signed: false })}</div>
+            </div>
+            <input
+              type="number"
+              step="any"
+              value={draft[m.id] ?? ""}
+              onChange={(e) => setDraft((d) => ({ ...d, [m.id]: e.target.value }))}
+              className="w-24 rounded-md border border-zinc-200 px-2 py-1 text-right text-sm focus:border-accent focus:outline-none"
+            />
+            <span className="w-6 text-xs text-zinc-400">{m.unit}</span>
+            <Button size="sm" variant="secondary" disabled={save.isPending} onClick={() => save.mutate(m)}>Save</Button>
+          </div>
+        ))}
+      </div>
+    </Modal>
+  );
+}
+
 const selCls = "rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-midnight focus:border-accent focus:outline-none";
 
 export function MetricsBoard() {
+  const { profile } = useAuth();
+  const isAdmin = profile?.role === "admin";
   const [period, setPeriod] = useState<Period>("wtd");
   const [level, setLevel] = useState<"company" | "region" | "store">("company");
   const [id, setId] = useState<string | null>(null);
+  const [weekEnd, setWeekEnd] = useState<string>(""); // "" = this week (latest)
+  const [targetsOpen, setTargetsOpen] = useState(false);
+  const weekOptions = useMemo(() => recentWeekOptions(), []);
 
-  const q = useQuery({ queryKey: ["kpi-board", level, id], queryFn: () => fetchKpiBoard(level, id) });
+  const q = useQuery({
+    queryKey: ["kpi-board", level, id, weekEnd],
+    queryFn: () => fetchKpiBoard(level, id, weekEnd || null),
+    refetchInterval: weekEnd ? false : 5 * 60_000,
+  });
   const data = q.data;
   const values = data?.values ?? {};
+  const targets = data?.targets ?? {};
 
   // On-target counter across every metric (MTMs included).
   let total = 0, good = 0;
   for (const p of PILLARS) for (const m of [p.mtm, ...p.rows]) {
-    const v = metricView(m, values[m.id], period, 10, 10);
+    if (m.soon) continue;
+    const v = metricView(m, values[m.id], period, 10, 10, targets[m.id]);
     if (v.hasData) { total++; if (v.onTarget) good++; }
   }
 
@@ -151,6 +253,9 @@ export function MetricsBoard() {
         description={data?.anchor ? `${dateLabel}${fiscalLabel ? ` · ${fiscalLabel}` : ""} · comparison: ${per.compare}` : "Metrics That Matter — sales, service, and speed."}
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            <select value={weekEnd} onChange={(e) => setWeekEnd(e.target.value)} className={selCls} title="Week">
+              {weekOptions.map((o) => <option key={o.value || "latest"} value={o.value}>{o.label}</option>)}
+            </select>
             <select value={level} onChange={(e) => { setLevel(e.target.value as typeof level); setId(null); }} className={selCls}>
               <option value="company">Company</option>
               <option value="region">Region</option>
@@ -180,9 +285,16 @@ export function MetricsBoard() {
                 </button>
               ))}
             </div>
+            {isAdmin && (
+              <Button size="sm" variant="secondary" onClick={() => setTargetsOpen(true)}>
+                <SlidersHorizontal className="mr-1 h-3.5 w-3.5" /> Targets
+              </Button>
+            )}
           </div>
         }
       />
+
+      {targetsOpen && <TargetsModal targets={targets} onClose={() => setTargetsOpen(false)} />}
 
       {q.isLoading && <Skeleton className="h-96 w-full" />}
       {q.isError && <EmptyState title="Couldn't load the board" description={(q.error as Error)?.message ?? "Try again."} />}
@@ -204,7 +316,7 @@ export function MetricsBoard() {
             </div>
           </div>
 
-          {PILLARS.map((p) => <PillarCard key={p.key} p={p} values={values} period={period} />)}
+          {PILLARS.map((p) => <PillarCard key={p.key} p={p} values={values} targets={targets} period={period} />)}
         </div>
       )}
     </>

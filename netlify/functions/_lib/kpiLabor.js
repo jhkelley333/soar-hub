@@ -59,10 +59,11 @@ export function extractLaborRows(payload) {
       on_time_numerator: numOrNull(r.onTimePercentageNumerator),
       on_time_denominator: numOrNull(r.onTimePercentageDenominator),
       void_total: numOrNull(r.voidTotal),
-      // Ticket-time (migration 0272): total + quantity so a scope can compute
-      // avg = SUM(total_ticket_time) / SUM(on_time_quantity).
+      // Ticket-time (0272): total + quantity; averageTicketTime (0275) is the
+      // feed's own per-store average, ticket-weighted for the board's Avg Ticket.
       total_ticket_time: numOrNull(r.totalTicketTime),
       on_time_quantity: numOrNull(r.onTimeQuantity),
+      average_ticket_time: numOrNull(r.averageTicketTime),
       // Week to Date band (labor_hours feeds the avg-wage → hours-over calc)
       wtd_net_sales: numOrNull(w?.netSales),
       wtd_prev_year_net_sales: numOrNull(w?.previousYearNetSales),
@@ -80,6 +81,7 @@ export function extractLaborRows(payload) {
       wtd_void_total: numOrNull(w?.voidTotal),
       wtd_total_ticket_time: numOrNull(w?.totalTicketTime),
       wtd_on_time_quantity: numOrNull(w?.onTimeQuantity),
+      wtd_average_ticket_time: numOrNull(w?.averageTicketTime),
       // Period to Date band
       ptd_net_sales: numOrNull(p?.netSales),
       ptd_prev_year_net_sales: numOrNull(p?.previousYearNetSales),
@@ -97,6 +99,7 @@ export function extractLaborRows(payload) {
       ptd_void_total: numOrNull(p?.voidTotal),
       ptd_total_ticket_time: numOrNull(p?.totalTicketTime),
       ptd_on_time_quantity: numOrNull(p?.onTimeQuantity),
+      ptd_average_ticket_time: numOrNull(p?.averageTicketTime),
     });
   }
   return out;
@@ -130,6 +133,8 @@ const TICKET_COLS_0272 = [
   "total_ticket_time", "on_time_quantity",
   "wtd_total_ticket_time", "wtd_on_time_quantity",
   "ptd_total_ticket_time", "ptd_on_time_quantity",
+  // average_ticket_time added by 0275 — same strip/retry fallback.
+  "average_ticket_time", "wtd_average_ticket_time", "ptd_average_ticket_time",
 ];
 
 export function isPre0272Error(error) {
