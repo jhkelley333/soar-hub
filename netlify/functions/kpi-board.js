@@ -46,9 +46,6 @@ function laborMetrics(rows, p) {
   const lyS = sumOf(rows, `${p}prev_year_net_sales`);
   const ttTotal = sumOf(rows, `${p}total_ticket_time`);
   const ttQty = sumOf(rows, `${p}on_time_quantity`);
-  // L2R (Likely to Return) — feed's likelyToReturnPercentage, a store-level
-  // average, so the scope value is the simple mean of the stores that reported.
-  const l2rVals = rows.map((r) => r[`${p}likely_to_return_pct`]).filter((v) => typeof v === "number" && isFinite(v));
   return {
     sales_vs_ly: lyS ? ((sales - lyS) / lyS) * 100 : null,
     labor_pct: sales ? (cost / sales) * 100 : null,
@@ -57,7 +54,6 @@ function laborMetrics(rows, p) {
     average_check: div(sales, tickets),
     on_time: otDen ? (otNum / otDen) * 100 : null,
     avg_ticket_time: ttQty ? ttTotal / ttQty : null,
-    l2r: l2rVals.length ? l2rVals.reduce((a, b) => a + b, 0) / l2rVals.length : null,
     actual_vs_schedule: rows.length ? sumOf(rows, `${p}actual_vs_scheduled_hours`) : null,
     overtime: rows.length ? sumOf(rows, `${p}overtime_hours`) : null,
   };
@@ -203,7 +199,7 @@ export const handler = async (event) => {
     const laborAnchorD = lab(anchor, ""), laborAnchorW = lab(anchor, "wtd_"), laborAnchorM = lab(anchor, "ptd_");
     const laborPriorD = lab(dailyPrior, ""), laborPriorW = lab(wtdPrior, "wtd_"), laborPriorM = lab(mtdPrior, "ptd_");
     const laborWeeks = weekEnds.map((d) => lab(d, "wtd_"));
-    for (const k of ["sales_vs_ly", "avg_ticket_time", "on_time", "splh", "tickets", "average_check", "l2r", "labor_pct", "actual_vs_schedule", "overtime"]) {
+    for (const k of ["sales_vs_ly", "avg_ticket_time", "on_time", "splh", "tickets", "average_check", "labor_pct", "actual_vs_schedule", "overtime"]) {
       values[k] = {
         daily: pair(laborAnchorD[k], laborPriorD[k]),
         wtd: pair(laborAnchorW[k], laborPriorW[k]),
@@ -230,6 +226,12 @@ export const handler = async (event) => {
     // so their one value fills every window.
     const rk = await rankerMetrics(supa, scopeStores);
     values.vog = {
+      daily: pair(rk.vog.wtd, null), wtd: pair(rk.vog.wtd, null), mtd: pair(rk.vog.ptd, null),
+      weeks: [null, null, null, null, null],
+    };
+    // L2R is the ranker's likely-to-return top-box — the same VOG figure, so the
+    // Customer L2R headline shares that source.
+    values.l2r = {
       daily: pair(rk.vog.wtd, null), wtd: pair(rk.vog.wtd, null), mtd: pair(rk.vog.ptd, null),
       weeks: [null, null, null, null, null],
     };

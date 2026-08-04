@@ -63,8 +63,6 @@ export function extractLaborRows(payload) {
       // avg = SUM(total_ticket_time) / SUM(on_time_quantity).
       total_ticket_time: numOrNull(r.totalTicketTime),
       on_time_quantity: numOrNull(r.onTimeQuantity),
-      // L2R (migration 0274): guest likely-to-return %, a store-level average.
-      likely_to_return_pct: numOrNull(r.likelyToReturnPercentage),
       // Week to Date band (labor_hours feeds the avg-wage → hours-over calc)
       wtd_net_sales: numOrNull(w?.netSales),
       wtd_prev_year_net_sales: numOrNull(w?.previousYearNetSales),
@@ -82,7 +80,6 @@ export function extractLaborRows(payload) {
       wtd_void_total: numOrNull(w?.voidTotal),
       wtd_total_ticket_time: numOrNull(w?.totalTicketTime),
       wtd_on_time_quantity: numOrNull(w?.onTimeQuantity),
-      wtd_likely_to_return_pct: numOrNull(w?.likelyToReturnPercentage),
       // Period to Date band
       ptd_net_sales: numOrNull(p?.netSales),
       ptd_prev_year_net_sales: numOrNull(p?.previousYearNetSales),
@@ -100,7 +97,6 @@ export function extractLaborRows(payload) {
       ptd_void_total: numOrNull(p?.voidTotal),
       ptd_total_ticket_time: numOrNull(p?.totalTicketTime),
       ptd_on_time_quantity: numOrNull(p?.onTimeQuantity),
-      ptd_likely_to_return_pct: numOrNull(p?.likelyToReturnPercentage),
     });
   }
   return out;
@@ -127,18 +123,17 @@ export function stripRankingCols(rows) {
   });
 }
 
-// Optional metric columns added after 0238: ticket-time (0272) and L2R (0274).
-// Same fallback pattern — if the upsert fails because either migration hasn't
-// run, strip these and retry so the rest of the row (including 0238) still lands.
+// Ticket-time columns added by migration 0272. Same fallback pattern: if the
+// upsert fails because 0272 hasn't run, strip just these and retry so the rest
+// of the row (including the 0238 fields) still lands.
 const TICKET_COLS_0272 = [
   "total_ticket_time", "on_time_quantity",
   "wtd_total_ticket_time", "wtd_on_time_quantity",
   "ptd_total_ticket_time", "ptd_on_time_quantity",
-  "likely_to_return_pct", "wtd_likely_to_return_pct", "ptd_likely_to_return_pct",
 ];
 
 export function isPre0272Error(error) {
-  return !!error && /column/i.test(String(error.message)) && /ticket_time|on_time_quantity|likely_to_return/.test(String(error.message));
+  return !!error && /column/i.test(String(error.message)) && /ticket_time|on_time_quantity/.test(String(error.message));
 }
 
 export function stripTicketCols(rows) {

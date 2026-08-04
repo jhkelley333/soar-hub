@@ -5,8 +5,8 @@
 // Sources, section by section:
 //   01 Goals to Grow Sales — Avg Ticket Time (KPI feed), On Time (feed),
 //      VOG (ranker), SPLH/Tickets/Avg Check (feed).
-//   02 Customer L2R — L2R (KPI feed likelyToReturnPercentage), Complaints
-//      (coming soon), Mystery Shop + EcoSure Audit (last-week ranker).
+//   02 Customer L2R — L2R + Mystery Shop + EcoSure Audit (last-week ranker),
+//      Complaints (coming soon).
 //   03 Controllable Contribution — Labor % / Actual vs Sched / Over Time (feed).
 // Unwired / not-yet-populated metrics render "—" (or a "Coming soon" badge).
 export type Unit = "" | "%" | "$" | "s" | "min" | "hrs" | "pts" | "rank" | "/10k";
@@ -46,7 +46,7 @@ export const PILLARS: Pillar[] = [
   },
   {
     key: "l2r", index: "02", title: "Customer L2R", countLabel: "3 execution metrics",
-    // L2R (Likely to Return) from the KPI feed's likelyToReturnPercentage.
+    // L2R (Likely to Return) from the last-week ranker — the same top-box VOG.
     mtm: { id: "l2r", name: "Likely to Return (L2R)", unit: "%", dec: 1, hb: true, target: 80 },
     rows: [
       { id: "complaints", name: "Complaints", unit: "/10k", dec: 0, hb: false, target: 10, soon: true },
