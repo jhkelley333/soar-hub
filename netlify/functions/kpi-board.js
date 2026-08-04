@@ -80,16 +80,17 @@ function laborMetrics(rows, p) {
 }
 
 function countMetrics(rows) {
-  if (!rows.length) return { cogs_pct: null, daily_score: null, completion_score: null, accuracy_score: null };
-  const avgPct = (k) => {
-    const vals = rows.map((r) => r[k]).filter((v) => typeof v === "number" && isFinite(v));
-    return vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length) * 100 : null;
-  };
+  if (!rows.length) return { cogs_pct: null, daily_score: null, completion_score: null, accuracy_score: null, count_variance: null, item_efficiency: null };
+  const nums = (k) => rows.map((r) => r[k]).filter((v) => typeof v === "number" && isFinite(v));
+  const avgPct = (k) => { const v = nums(k); return v.length ? (v.reduce((a, b) => a + b, 0) / v.length) * 100 : null; };
+  const sum = (k) => { const v = nums(k); return v.length ? v.reduce((a, b) => a + b, 0) : null; };
   return {
     cogs_pct: avgPct("total_intellicost_pct"),
     daily_score: avgPct("daily_score"),
     completion_score: avgPct("completion_score"),
     accuracy_score: avgPct("accuracy_score"),
+    count_variance: sum("count_variance"),        // $ total across the scope
+    item_efficiency: avgPct("item_efficiency"),   // 0-1 fraction -> %
   };
 }
 
@@ -240,7 +241,7 @@ export const handler = async (event) => {
     await Promise.all(dates.map(async (d) => {
       const [{ data: lab }, { data: cnt }] = await Promise.all([
         supa.from("labor_v2_daily").select("*").eq("business_date", d).in("store_number", scopeStores),
-        supa.from("count_daily").select("store_number, daily_score, completion_score, accuracy_score, total_intellicost_pct").eq("business_date", d).in("store_number", scopeStores),
+        supa.from("count_daily").select("*").eq("business_date", d).in("store_number", scopeStores),
       ]);
       laborByDate.set(d, lab || []);
       countByDate.set(d, cnt || []);
@@ -267,7 +268,7 @@ export const handler = async (event) => {
     // all three periods, prior = prior day, weekly trend from the 5 week-ends.
     const cAnchor = cnt(anchor), cPrior = cnt(dailyPrior);
     const cWeeks = weekEnds.map((d) => cnt(d));
-    for (const k of ["cogs_pct", "daily_score", "completion_score", "accuracy_score"]) {
+    for (const k of ["cogs_pct", "daily_score", "completion_score", "accuracy_score", "count_variance", "item_efficiency"]) {
       values[k] = {
         daily: pair(cAnchor[k], cPrior[k]),
         wtd: pair(cAnchor[k], cPrior[k]),

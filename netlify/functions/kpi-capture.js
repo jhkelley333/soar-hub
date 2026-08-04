@@ -30,7 +30,7 @@
 
 import { createClient } from "@supabase/supabase-js";
 import { extractLaborRows, feedBusinessDate, isPre0238Error, isPre0272Error, stripRankingCols, stripTicketCols } from "./_lib/kpiLabor.js";
-import { extractCountRows } from "./_lib/kpiCount.js";
+import { extractCountRows, isPreCountExtrasError, stripCountExtras } from "./_lib/kpiCount.js";
 import { upsertLaborCloses } from "./_lib/laborCloses.js";
 import { logPull } from "./_lib/pullLog.js";
 
@@ -138,7 +138,11 @@ export const handler = async (event) => {
     ...r, business_date: businessDate, captured_at: new Date().toISOString(),
   }));
   if (countRows.length) {
-    const { error: cerr } = await supa.from("count_daily").upsert(countRows, { onConflict: "store_number,business_date" });
+    let { error: cerr } = await supa.from("count_daily").upsert(countRows, { onConflict: "store_number,business_date" });
+    if (cerr && isPreCountExtrasError(cerr)) {
+      // Migration 0276 (count_variance / item_efficiency) not applied yet.
+      ({ error: cerr } = await supa.from("count_daily").upsert(stripCountExtras(countRows), { onConflict: "store_number,business_date" }));
+    }
     if (cerr) console.log(`[kpi-capture] count upsert failed: ${cerr.message}`);
     else countStored = countRows.length;
   }
