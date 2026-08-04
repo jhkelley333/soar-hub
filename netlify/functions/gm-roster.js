@@ -50,7 +50,7 @@ async function getSessionUser(supa, event) {
   if (!token) return null;
   const { data: userRes, error } = await supa.auth.getUser(token);
   if (error || !userRes?.user) return null;
-  const { data: profile } = await supa.from("profiles").select("id, email, role, is_active").eq("id", userRes.user.id).single();
+  const { data: profile } = await supa.from("profiles").select("id, email, full_name, preferred_name, role, is_active").eq("id", userRes.user.id).single();
   if (!profile || profile.is_active === false) return null;
   return profile;
 }
@@ -175,9 +175,31 @@ async function importRoster(supa, user, body) {
     });
   }
   if (!ready.length) return { error: "nothing parseable", status: 400 };
+
+  // Snapshot the current name/status so the import only logs rows that actually
+  // change (a re-paste of the same sheet shouldn't spam the history).
+  const nums = ready.map((r) => r.store_number);
+  const { data: prevRows } = await supa.from("gm_roster").select("store_number, gm_name, status").in("store_number", nums);
+  const prev = new Map((prevRows || []).map((r) => [String(r.store_number), r]));
+
   const { error } = await supa.from("gm_roster").upsert(ready, { onConflict: "store_number" });
   if (error) return { error: error.message, status: 500 };
-  return { ok: true, upserted: ready.length };
+
+  const changedBy = displayName(user);
+  const hist = [];
+  for (const r of ready) {
+    const p = prev.get(r.store_number);
+    if (!p || p.gm_name !== r.gm_name || p.status !== r.status) {
+      hist.push({
+        store_number: r.store_number, store_name: r.store_name,
+        old_gm_name: p?.gm_name ?? null, new_gm_name: r.gm_name,
+        old_status: p?.status ?? null, new_status: r.status,
+        source: "import", changed_by: user.id, changed_by_name: changedBy, changed_at: now,
+      });
+    }
+  }
+  await logHistory(supa, hist);
+  return { ok: true, upserted: ready.length, logged: hist.length };
 }
 
 // Edit one store's roster GM name. Open to the org-wide roles + SDO/RVP (scoped
@@ -197,13 +219,52 @@ async function setName(supa, user, body) {
   else if (/in\s*training/i.test(raw)) { status = "in_training"; gm = null; }
 
   const now = new Date().toISOString();
-  const { data: existing } = await supa.from("gm_roster").select("store_number").eq("store_number", num).maybeSingle();
+  const { data: existing } = await supa.from("gm_roster").select("store_number, store_name, gm_name, status").eq("store_number", num).maybeSingle();
   const patch = { gm_name: gm, status, updated_by: user.id, updated_at: now };
   const { error } = existing
     ? await supa.from("gm_roster").update(patch).eq("store_number", num)
     : await supa.from("gm_roster").insert({ store_number: num, ...patch });
   if (error) return { error: error.message, status: 500 };
+
+  // Log the edit (best-effort — never fail the save on a history hiccup).
+  if (!existing || existing.gm_name !== gm || existing.status !== status) {
+    await logHistory(supa, [{
+      store_number: num, store_name: existing?.store_name ?? null,
+      old_gm_name: existing?.gm_name ?? null, new_gm_name: gm,
+      old_status: existing?.status ?? null, new_status: status,
+      source: "edit", changed_by: user.id, changed_by_name: displayName(user), changed_at: now,
+    }]);
+  }
   return { ok: true, store_number: num, gm_name: gm, status };
+}
+
+// Append edit-log rows. Best-effort: a missing table (migration 0273 not run)
+// or any insert error is swallowed so the underlying edit/import still succeeds.
+async function logHistory(supa, entries) {
+  if (!entries.length) return;
+  try {
+    const { error } = await supa.from("gm_roster_history").insert(entries);
+    if (error) console.warn("[gm-roster] history insert failed", error.message);
+  } catch (e) {
+    console.warn("[gm-roster] history insert threw", e?.message || e);
+  }
+}
+
+async function rosterHistory(supa, user, params) {
+  const role = String(user.role).toLowerCase();
+  if (!EDIT_ROLES.has(role)) return { error: "forbidden", status: 403 };
+  const num = String(params.store || "").trim();
+  if (!num) return { error: "store is required", status: 400 };
+  const visible = await visibleStoreNumbers(supa, user);
+  if (visible && !visible.has(num)) return { error: "That store isn't in your scope.", status: 403 };
+  const { data, error } = await supa
+    .from("gm_roster_history").select("*")
+    .eq("store_number", num).order("changed_at", { ascending: false }).limit(100);
+  if (error) {
+    if (/gm_roster_history/.test(error.message)) return { error: "Run migration 0273 first (gm_roster_history is missing).", status: 500 };
+    return { error: error.message, status: 500 };
+  }
+  return { store_number: num, entries: data || [] };
 }
 
 export const handler = async (event) => {
@@ -219,6 +280,7 @@ export const handler = async (event) => {
 
   try {
     if (event.httpMethod === "GET" && action === "list") return unwrap(await listRoster(supa, user));
+    if (event.httpMethod === "GET" && action === "history") return unwrap(await rosterHistory(supa, user, params));
     if (event.httpMethod === "POST" && action === "import") {
       const body = event.body ? JSON.parse(event.body) : {};
       return unwrap(await importRoster(supa, user, body));
