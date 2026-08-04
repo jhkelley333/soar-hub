@@ -19,7 +19,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import { fiscalInfo, FISCAL } from "@/lib/fiscal";
 import { Modal } from "@/shared/ui/Modal";
-import { deletePlManualFlag, fetchPlCompare, fetchPlFlags, fetchPlLineTrend, fetchPlManualFlags, fetchPlOverview, fetchPlPeriods, fetchPlReview, fetchPlReviewSummary, fetchPlRollup, fetchPlStatement, savePlFlagNote, savePlManualFlag, uploadPl, type PlFlag, type PlManualFlag, type PlRollupGroup, type PlTrendPoint, type RollupGroupBy } from "./api";
+import { deletePlManualFlag, fetchPlCompare, fetchPlFlags, fetchPlLineTrend, fetchPlManualFlags, fetchPlOverview, fetchPlPeriods, fetchPlReview, fetchPlReviewSummary, fetchPlRollup, fetchPlRollupLineTrend, fetchPlRollupStatement, fetchPlStatement, savePlFlagNote, savePlManualFlag, uploadPl, type PlFlag, type PlManualFlag, type PlRollupGroup, type PlTrendPoint, type RollupGroupBy } from "./api";
 import { BudgetTargetsModal } from "./BudgetTargetsModal";
 import { PlReviewPanel } from "./PlReviewPanel";
 import type { ParsedWorkbook, PlCompareLine, PlLine, PlOverviewRow, PlStage } from "./types";
@@ -50,6 +50,8 @@ export function PlPage() {
   const [budgetOpen, setBudgetOpen] = useState(false);
   const [view, setView] = useState<"stores" | "rollup">("stores");
   const [groupBy, setGroupBy] = useState<RollupGroupBy>("do");
+  // When set, show a leader's / the company's aggregated income statement.
+  const [rollupView, setRollupView] = useState<{ groupBy: RollupGroupBy; name: string } | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "ci_pct", dir: "asc" });
 
   const periodsQ = useQuery({ queryKey: ["pl-periods"], queryFn: fetchPlPeriods });
@@ -106,14 +108,27 @@ export function PlPage() {
   }, [rows, sort]);
 
   const activePeriod = periods.find((p) => p.period_end === period);
+  const periodLbl = activePeriod ? periodDisplay(activePeriod.period_label, activePeriod.period_end, activePeriod.is_final) : period;
 
   if (store && period) {
     return (
       <StatementView
         store={store}
         period={period}
-        periodLabel={activePeriod ? periodDisplay(activePeriod.period_label, activePeriod.period_end, activePeriod.is_final) : period}
+        periodLabel={periodLbl}
         onBack={rows.length > 1 ? () => setStore(null) : undefined}
+      />
+    );
+  }
+
+  if (rollupView && period) {
+    return (
+      <RollupStatementView
+        groupBy={rollupView.groupBy}
+        name={rollupView.name}
+        period={period}
+        periodLabel={periodLbl}
+        onBack={() => setRollupView(null)}
       />
     );
   }
@@ -160,6 +175,7 @@ export function PlPage() {
                 <option value="do">by DO</option>
                 <option value="sdo">by SDO</option>
                 <option value="rvp">by RVP</option>
+                <option value="company">Company</option>
               </select>
             )}
             <button
@@ -195,6 +211,7 @@ export function PlPage() {
           error={rollupQ.error as Error | null}
           groupBy={groupBy}
           onOpenStore={(sn) => setStore(sn)}
+          onOpenGroup={(name) => setRollupView({ groupBy, name })}
         />
       ) : periodsQ.isLoading || (overviewQ.isLoading && !!period) ? (
         <Skeleton className="h-64 w-full" />
@@ -326,13 +343,14 @@ function ReviewPill({ summary }: { summary?: { flags: number; owed: number; sign
 }
 
 // Roll-up of the caller's stores aggregated by DO / SDO / RVP.
-function RollupTable({ groups, isLoading, isError, error, groupBy, onOpenStore }: {
+function RollupTable({ groups, isLoading, isError, error, groupBy, onOpenStore, onOpenGroup }: {
   groups: PlRollupGroup[];
   isLoading: boolean;
   isError: boolean;
   error: Error | null;
   groupBy: RollupGroupBy;
   onOpenStore: (storeNumber: string) => void;
+  onOpenGroup: (name: string) => void;
 }) {
   const tierLabel = groupBy.toUpperCase();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -374,6 +392,14 @@ function RollupTable({ groups, isLoading, isError, error, groupBy, onOpenStore }
                       <span className="inline-flex items-center gap-1.5">
                         <ChevronRight className={cn("h-4 w-4 shrink-0 text-zinc-400 transition-transform", open && "rotate-90")} strokeWidth={2.5} />
                         {g.name}
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); onOpenGroup(g.name); }}
+                          className="ml-1.5 inline-flex items-center gap-1 rounded-md border border-zinc-200 px-2 py-0.5 text-[11px] font-semibold text-accent hover:border-accent hover:bg-accent/5"
+                          title={`View ${g.name}'s rolled-up P&L with line-item history`}
+                        >
+                          View P&amp;L →
+                        </button>
                       </span>
                     </td>
                     <td className="px-4 py-2.5 text-right tabular-nums text-zinc-600">{g.stores}</td>
@@ -1019,6 +1045,206 @@ export function LineTrendModal({ open, onClose, store, label, flag }: {
           {points.length < 2 && (
             <p className="text-[11px] text-zinc-400">Showing the review sheet's values — full P&amp;L history wasn't matched for this line.</p>
           )}
+        </div>
+      )}
+    </Modal>
+  );
+}
+
+// ── A leader's / the company's rolled-up income statement ────────────
+// One P&L for the whole group: every line summed across their stores, each
+// clickable through to its aggregated history. Reached from the roll-up table's
+// "View P&L" button.
+function RollupStatementView({ groupBy, name, period, periodLabel, onBack }: {
+  groupBy: RollupGroupBy;
+  name: string;
+  period: string;
+  periodLabel: string;
+  onBack: () => void;
+}) {
+  const { profile } = useAuth();
+  const lyKey = `pl-show-ly:${profile?.id ?? "anon"}`;
+  const [showLy, setShowLy] = useState<boolean>(() => {
+    try { const v = localStorage.getItem(lyKey); return v == null ? true : v === "1"; } catch { return true; }
+  });
+  const toggleLy = () => setShowLy((v) => {
+    const next = !v;
+    try { localStorage.setItem(lyKey, next ? "1" : "0"); } catch { /* ignore */ }
+    return next;
+  });
+
+  const q = useQuery({
+    queryKey: ["pl-rollup-statement", groupBy, name, period],
+    queryFn: () => fetchPlRollupStatement(period, groupBy, name),
+    staleTime: 5 * 60_000,
+  });
+  const s = q.data?.statement;
+  const lyOn = showLy && !!s?.ly;
+  const tierLabel = groupBy === "company" ? "Company" : groupBy.toUpperCase();
+
+  return (
+    <>
+      <button type="button" onClick={onBack} className="mb-3 inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-midnight">
+        <ArrowLeft className="h-4 w-4" /> Back to roll-up
+      </button>
+      <PageHeader
+        title={`${name} — Rolled-up P&L`}
+        description={`${tierLabel} · ${periodLabel}${s ? ` · ${s.stores} store${s.stores === 1 ? "" : "s"}` : ""}`}
+        actions={
+          s ? (
+            <div className="flex flex-wrap items-center gap-2">
+              {s.ly && (
+                <button
+                  type="button"
+                  onClick={toggleLy}
+                  title={`Same period last year (${s.ly.period_label ?? s.ly.period_end})`}
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-semibold",
+                    showLy ? "border-accent bg-accent/10 text-accent" : "border-zinc-200 text-midnight hover:border-accent",
+                  )}
+                >
+                  {showLy ? <Eye className="h-4 w-4" strokeWidth={2} /> : <EyeOff className="h-4 w-4" strokeWidth={2} />}
+                  {showLy ? "Hide last year" : "Show last year"}
+                </button>
+              )}
+              <span className={cn(
+                "inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold ring-1 ring-inset",
+                s.stage === "final" ? "bg-emerald-50 text-emerald-700 ring-emerald-200"
+                  : s.stage === "prelim" ? "bg-amber-50 text-amber-700 ring-amber-200"
+                    : "bg-zinc-100 text-zinc-600 ring-zinc-200",
+              )}>
+                {s.stage === "final" ? "Final" : s.stage === "prelim" ? "Prelim" : "Mixed Prelim/Final"}
+              </span>
+            </div>
+          ) : undefined
+        }
+      />
+
+      {q.isLoading ? (
+        <Skeleton className="h-96 w-full" />
+      ) : q.isError || !s ? (
+        <EmptyState title="Couldn't load this roll-up" description={(q.error as Error)?.message ?? "Try again."} />
+      ) : (
+        <div className="space-y-5">
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 rounded-xl bg-blue-50 px-4 py-2.5 text-sm text-blue-900 ring-1 ring-blue-200">
+            <span className="font-semibold">Rolled-up P&amp;L:</span>
+            <span>every line is summed across {groupBy === "company" ? "the company's" : `this ${tierLabel}'s`} stores, with % on the combined sales.</span>
+            <span>Click any line item to see its history across periods.</span>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-3">
+            <Tile label="Total Sales" value={money(s.total_sales)} tone="neutral" />
+            <Tile label="Controllable Income $" value={money(s.ci_amount)} tone={(s.ci_amount ?? 0) < 0 ? "bad" : "ok"} />
+            <Tile label="Controllable Income %" value={pct(s.ci_pct)} tone={(s.ci_pct ?? 0) < 0 ? "bad" : "ok"} />
+          </div>
+
+          <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
+            {lyOn && (
+              <div className="border-b border-zinc-100 bg-zinc-50 px-5 py-1.5 text-[11px] text-zinc-500">
+                Comparing to last year — <span className="font-semibold">{s.ly!.period_label ?? s.ly!.period_end}</span>
+              </div>
+            )}
+            <div className="overflow-x-auto">
+              <div className={cn(
+                "grid gap-x-6 border-b border-zinc-100 px-5 py-2 text-[10px] font-semibold uppercase tracking-wide text-zinc-400",
+                lyOn ? "min-w-[760px] grid-cols-[1fr_auto_auto_auto_auto_auto]" : "grid-cols-[1fr_auto_auto]",
+              )}>
+                <span>Line</span>
+                <span className="w-28 text-right">$</span>
+                <span className="w-20 text-right">% Sales</span>
+                {lyOn && <span className="w-28 text-right text-zinc-400">LY $</span>}
+                {lyOn && <span className="w-20 text-right text-zinc-400">LY %</span>}
+                {lyOn && <span className="w-28 text-right text-zinc-400">YoY Δ $</span>}
+              </div>
+              <div>
+                {s.lines.map((l, i) => (
+                  <RollupLineRow key={`${l.label}-${i}`} line={l} groupBy={groupBy} name={name} showLy={lyOn} />
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function RollupLineRow({ line, groupBy, name, showLy }: {
+  line: PlLine;
+  groupBy: RollupGroupBy;
+  name: string;
+  showLy: boolean;
+}) {
+  const [trendOpen, setTrendOpen] = useState(false);
+  const d = line.amount != null && line.ly_amount != null ? line.amount - line.ly_amount : null;
+  return (
+    <div>
+      <div className={cn(
+        "grid gap-x-6 px-5 py-1.5 text-sm hover:bg-accent/5",
+        showLy ? "min-w-[760px] grid-cols-[1fr_auto_auto_auto_auto_auto]" : "grid-cols-[1fr_auto_auto]",
+        line.total ? "border-t border-zinc-200 bg-zinc-50 font-bold text-midnight" : "text-zinc-700",
+      )}>
+        <span className={cn("flex items-center gap-1.5 min-w-0", !line.total && "pl-3")}>
+          <button
+            type="button"
+            onClick={() => setTrendOpen(true)}
+            title="See this line's history across periods"
+            className="truncate text-left underline decoration-dotted decoration-zinc-300 underline-offset-2 hover:decoration-accent"
+          >
+            {plLineLabel(line.label)}
+          </button>
+        </span>
+        <span className={cn("w-28 text-right tabular-nums", (line.amount ?? 0) < 0 && "text-red-600")}>{money(line.amount, 2)}</span>
+        <span className="w-20 text-right tabular-nums text-zinc-500">{line.pct != null ? `${line.pct.toFixed(1)}%` : ""}</span>
+        {showLy && (
+          <span className={cn("w-28 text-right tabular-nums text-zinc-400", (line.ly_amount ?? 0) < 0 && "text-red-400")}>
+            {line.ly_amount != null ? money(line.ly_amount, 2) : "—"}
+          </span>
+        )}
+        {showLy && <span className="w-20 text-right tabular-nums text-zinc-400">{line.ly_pct != null ? `${line.ly_pct.toFixed(1)}%` : ""}</span>}
+        {showLy && (
+          <span className="w-28 text-right tabular-nums text-zinc-500">{d == null ? "—" : `${d > 0 ? "+" : ""}${money(d, 2)}`}</span>
+        )}
+      </div>
+      <RollupLineTrendModal open={trendOpen} onClose={() => setTrendOpen(false)} groupBy={groupBy} name={name} label={line.label} />
+    </div>
+  );
+}
+
+function RollupLineTrendModal({ open, onClose, groupBy, name, label }: {
+  open: boolean; onClose: () => void; groupBy: RollupGroupBy; name: string; label: string;
+}) {
+  const q = useQuery({
+    queryKey: ["pl-rollup-line-trend", groupBy, name, label],
+    queryFn: () => fetchPlRollupLineTrend(groupBy, name, label),
+    enabled: open && !!label,
+  });
+  const points = q.data?.points ?? [];
+  return (
+    <Modal open={open} onClose={onClose} title={`${label} — ${name} history`}>
+      {q.isLoading ? (
+        <div className="py-6 text-center text-sm text-zinc-500">Loading history…</div>
+      ) : points.length < 2 ? (
+        <div className="py-6 text-center text-sm text-zinc-500">Not enough history yet to chart this line — upload more P&amp;L periods.</div>
+      ) : (
+        <div className="space-y-3">
+          <TrendChart points={points} />
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-[11px] uppercase tracking-wide text-zinc-400">
+                <th className="py-1">Period</th><th className="py-1 text-right">Amount</th><th className="py-1 text-right">%</th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...points].reverse().map((p, i) => (
+                <tr key={i} className="border-t border-zinc-100">
+                  <td className="py-1.5">{p.period_end ? plPeriodShort(p.period_end) : p.period_label}</td>
+                  <td className="py-1.5 text-right tabular-nums">{plUsd(p.amount)}</td>
+                  <td className="py-1.5 text-right tabular-nums text-zinc-500">{p.pct == null ? "—" : `${p.pct}%`}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
     </Modal>
