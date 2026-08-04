@@ -906,7 +906,7 @@ async function reviewSummary(supa, user, params) {
 async function reviewRollup(supa, user, params) {
   if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
   const period = String(params.period || "").trim();
-  const groupBy = ["do", "sdo", "rvp"].includes(params.group_by) ? params.group_by : "do";
+  const groupBy = ["do", "sdo", "rvp", "company"].includes(params.group_by) ? params.group_by : "do";
   if (!period) return { error: "period is required", status: 400 };
   const stores = await callerVisibleStores(supa, user);
   const visibleNums = stores.map((s) => String(s.number));
@@ -943,8 +943,9 @@ async function reviewRollup(supa, user, params) {
   // either — keeps the roll-up in step with the per-store review.
   const history = await trailingHistoryByStore(supa, [...byStore.keys()].map(String), period);
 
-  const org = await resolveOrg(supa, [...byStore.keys()]);
+  const org = groupBy === "company" ? null : await resolveOrg(supa, [...byStore.keys()]);
   const nameFor = (num) => {
+    if (groupBy === "company") return "Company";
     const o = org.get(String(num)) || {};
     return (groupBy === "do" ? o.doName : groupBy === "sdo" ? o.sdoName : o.rvpName) || "Unassigned";
   };
@@ -990,6 +991,173 @@ async function reviewRollup(supa, user, params) {
   });
   out.sort((a, b) => b.owed - a.owed || b.dollars_over - a.dollars_over);
   return { period, group_by: groupBy, groups: out };
+}
+
+// ── Rolled-up P&L statement (DO / SDO / RVP / Company) ────────────────
+// Aggregates the caller's visible stores in one group into a single income
+// statement — line amounts summed across the group's stores, % recomputed on
+// the summed sales — so a leader reads their whole book as one P&L and can
+// click any line for its history. `name` selects the leader (company ignores
+// it). Group membership resolves exactly as the roll-up table does (same
+// resolveOrg + "Unassigned" bucket), so a group name from the table always
+// resolves back to the same stores here.
+const plNorm = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+
+async function groupStoreNumbers(supa, user, groupBy, name) {
+  const stores = await callerVisibleStores(supa, user);
+  const nums = stores.map((s) => String(s.number));
+  if (groupBy === "company" || !nums.length) return nums;
+  const org = await resolveOrg(supa, nums);
+  const want = String(name || "").trim() || "Unassigned";
+  const leaderOf = (n) => {
+    const o = org.get(String(n)) || {};
+    return (groupBy === "do" ? o.doName : groupBy === "sdo" ? o.sdoName : o.rvpName) || "Unassigned";
+  };
+  return nums.filter((n) => leaderOf(n) === want);
+}
+
+// Sum line amounts across statements by normalized label, preserving the order
+// of the longest statement (they share the workbook layout, so labels align).
+// % is against the passed total sales. Returns [{label, amount, pct, total}].
+function aggregateLines(statements, totalSales) {
+  const order = [];
+  const seen = new Set();
+  const meta = new Map();
+  const remember = (l) => {
+    const k = plNorm(l.label);
+    if (!k || seen.has(k)) return;
+    seen.add(k); order.push(k); meta.set(k, { label: l.label, total: !!l.total });
+  };
+  let template = [];
+  for (const st of statements) if ((st.lines?.length || 0) > template.length) template = st.lines || [];
+  for (const l of template) remember(l);
+  for (const st of statements) for (const l of st.lines || []) remember(l);
+
+  const sum = new Map();
+  const has = new Set();
+  for (const st of statements) {
+    for (const l of st.lines || []) {
+      if (typeof l.amount !== "number") continue;
+      const k = plNorm(l.label);
+      sum.set(k, (sum.get(k) || 0) + l.amount);
+      has.add(k);
+    }
+  }
+  return order.map((k) => {
+    const amount = has.has(k) ? round2(sum.get(k) || 0) : null;
+    const m = meta.get(k);
+    return { label: m.label, amount, pct: amount != null && totalSales ? round2((amount / totalSales) * 100) : null, total: m.total };
+  });
+}
+
+async function rollupStatement(supa, user, params) {
+  if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const period = String(params.period || "").trim();
+  const groupBy = ["do", "sdo", "rvp", "company"].includes(params.group_by) ? params.group_by : "do";
+  const name = groupBy === "company" ? "Company" : (String(params.name || "").trim() || "Unassigned");
+  if (!period) return { error: "period is required", status: 400 };
+
+  const numbers = await groupStoreNumbers(supa, user, groupBy, name);
+  if (!numbers.length) return { error: "No stores in this group for your scope.", status: 404 };
+
+  const { data: sts, error } = await supa
+    .from("pl_statements")
+    .select("store_number, is_final, lines, total_sales, ci_amount, ebitda, period_label")
+    .eq("period_end", period).in("store_number", numbers);
+  if (error) return { error: error.message, status: 500 };
+  const byStore = new Map();
+  for (const r of sts || []) { const cur = byStore.get(r.store_number); if (!cur || (r.is_final && !cur.is_final)) byStore.set(r.store_number, r); }
+  const chosen = [...byStore.values()];
+  if (!chosen.length) return { error: "No P&L uploaded for this group and period.", status: 404 };
+
+  const totalSales = chosen.reduce((a, r) => a + (Number(r.total_sales) || 0), 0);
+  const ciAmount = chosen.reduce((a, r) => a + (Number(r.ci_amount) || 0), 0);
+  const ebitda = chosen.reduce((a, r) => a + (Number(r.ebitda) || 0), 0);
+  const lines = aggregateLines(chosen, totalSales);
+  const periodLabel = chosen.map((r) => r.period_label).find(Boolean) || null;
+  const finals = chosen.filter((r) => r.is_final).length;
+  const stage = finals === chosen.length ? "final" : finals === 0 ? "prelim" : "mixed";
+
+  // Last-year: same fiscal period 52 weeks (364 days) back, best statement per
+  // store in a ±3-week window (Final preferred), summed the same way. Attaches
+  // ly_amount / ly_pct per line so the leader sees the same YoY columns.
+  let lyMeta = null;
+  const target = isoShift(period, -364);
+  if (target) {
+    const lo = isoShift(period, -364 - 21), hi = isoShift(period, -364 + 21);
+    const { data: lyRows } = await supa.from("pl_statements")
+      .select("store_number, period_end, period_label, is_final, lines, total_sales")
+      .in("store_number", numbers).gte("period_end", lo).lte("period_end", hi);
+    const lyByStore = new Map();
+    for (const r of lyRows || []) {
+      const d = isoDaysApart(r.period_end, target);
+      const cur = lyByStore.get(r.store_number);
+      if (!cur || d < cur._d || (d === cur._d && r.is_final && !cur.is_final)) { r._d = d; lyByStore.set(r.store_number, r); }
+    }
+    const lyChosen = [...lyByStore.values()];
+    if (lyChosen.length) {
+      const lyTotalSales = lyChosen.reduce((a, r) => a + (Number(r.total_sales) || 0), 0);
+      const lyByLabel = new Map(aggregateLines(lyChosen, lyTotalSales).map((l) => [plNorm(l.label), l]));
+      for (const l of lines) { const m = lyByLabel.get(plNorm(l.label)); l.ly_amount = m ? m.amount : null; l.ly_pct = m ? m.pct : null; }
+      const nearest = [...lyChosen].sort((a, b) => a._d - b._d)[0];
+      lyMeta = { period_end: nearest.period_end, period_label: nearest.period_label };
+    }
+  }
+
+  return {
+    statement: {
+      group_by: groupBy, name, stores: chosen.length,
+      store_name: name, period_end: period, period_label: periodLabel,
+      total_sales: round2(totalSales), ci_amount: round2(ciAmount),
+      ci_pct: totalSales ? round2((ciAmount / totalSales) * 100) : null,
+      ebitda: round2(ebitda), stage, lines, ly: lyMeta,
+    },
+  };
+}
+
+// One aggregated line item's value across every period for a group — the
+// leader-level version of lineTrend. Sums the matched line across the group's
+// stores per period; % is on that period's summed sales.
+async function rollupLineTrend(supa, user, params) {
+  if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const groupBy = ["do", "sdo", "rvp", "company"].includes(params.group_by) ? params.group_by : "do";
+  const name = groupBy === "company" ? "Company" : (String(params.name || "").trim() || "Unassigned");
+  const rawLabel = String(params.label || "").trim();
+  if (!rawLabel) return { error: "label is required", status: 400 };
+  const numbers = await groupStoreNumbers(supa, user, groupBy, name);
+  if (!numbers.length) return { name, label: rawLabel, points: [] };
+
+  const PAGE = 1000;
+  const rowsAll = [];
+  for (let from = 0; ; from += PAGE) {
+    const { data, error } = await supa.from("pl_statements")
+      .select("store_number, period_end, period_label, is_final, lines, total_sales")
+      .in("store_number", numbers).order("period_end", { ascending: true }).range(from, from + PAGE - 1);
+    if (error) return { error: error.message, status: 500 };
+    rowsAll.push(...(data ?? []));
+    if (!data || data.length < PAGE) break;
+  }
+  // One statement per (store, period), Final preferred over Prelim.
+  const collapsed = new Map();
+  for (const r of rowsAll) { const k = `${r.store_number}|${r.period_end}`; const cur = collapsed.get(k); if (!cur || (r.is_final && !cur.is_final)) collapsed.set(k, r); }
+
+  const want = plNorm(rawLabel);
+  const byPeriod = new Map();
+  let matchedLabel = null;
+  for (const r of collapsed.values()) {
+    const lines = Array.isArray(r.lines) ? r.lines : [];
+    let line = lines.find((l) => plNorm(l.label) === want);
+    if (!line) line = lines.find((l) => plNorm(l.label).includes(want) || (want && want.includes(plNorm(l.label))));
+    const p = byPeriod.get(r.period_end) || { period_end: r.period_end, period_label: r.period_label, amount: 0, sales: 0, has: false };
+    if (r.period_label && !p.period_label) p.period_label = r.period_label;
+    p.sales += Number(r.total_sales) || 0;
+    if (line && typeof line.amount === "number") { p.amount += line.amount; p.has = true; if (!matchedLabel) matchedLabel = line.label; }
+    byPeriod.set(r.period_end, p);
+  }
+  const points = [...byPeriod.values()].filter((p) => p.has)
+    .sort((a, b) => String(a.period_end).localeCompare(String(b.period_end)))
+    .map((p) => ({ period_end: p.period_end, period_label: p.period_label, amount: round2(p.amount), pct: p.sales ? round2((p.amount / p.sales) * 100) : null }));
+  return { name, label: matchedLabel || rawLabel, points };
 }
 
 async function saveReviewNote(supa, user, body) {
@@ -1183,6 +1351,8 @@ export const handler = async (event) => {
       if (action === "review") return unwrap(await review(supa, user, params));
       if (action === "review-summary") return unwrap(await reviewSummary(supa, user, params));
       if (action === "review-rollup") return unwrap(await reviewRollup(supa, user, params));
+      if (action === "rollup-statement") return unwrap(await rollupStatement(supa, user, params));
+      if (action === "rollup-line-trend") return unwrap(await rollupLineTrend(supa, user, params));
       if (action === "manual-flags") return unwrap(await listManualFlags(supa, user, params));
       return respond(400, { error: `unknown GET action: ${action}` });
     }

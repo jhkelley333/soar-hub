@@ -1,7 +1,7 @@
 // P&L — typed wrappers around netlify/functions/pl.
 
 import { supabase } from "@/lib/supabase";
-import type { ParsedPlStore, PlCompare, PlOverviewRow, PlPeriod, PlStage, PlStatement } from "./types";
+import type { ParsedPlStore, PlCompare, PlLine, PlOverviewRow, PlPeriod, PlStage, PlStatement } from "./types";
 
 const FN = "/.netlify/functions/pl";
 
@@ -136,8 +136,8 @@ export function fetchPlReviewSummary(period: string): Promise<{ period: string; 
   return request(`${FN}?action=review-summary&period=${encodeURIComponent(period)}`);
 }
 
-// Roll-up of the caller's stores aggregated by DO / SDO / RVP.
-export type RollupGroupBy = "do" | "sdo" | "rvp";
+// Roll-up of the caller's stores aggregated by DO / SDO / RVP / Company.
+export type RollupGroupBy = "do" | "sdo" | "rvp" | "company";
 export interface PlRollupStore {
   store_number: string;
   store_name: string | null;
@@ -164,6 +164,31 @@ export interface PlRollupGroup {
 }
 export function fetchPlRollup(period: string, groupBy: RollupGroupBy): Promise<{ period: string; group_by: RollupGroupBy; groups: PlRollupGroup[] }> {
   return request(`${FN}?action=review-rollup&period=${encodeURIComponent(period)}&group_by=${groupBy}`);
+}
+
+// A leader's / the company's rolled-up income statement: line amounts summed
+// across the group's stores, % on the summed sales. Each line clicks through to
+// its aggregated history via fetchPlRollupLineTrend.
+export interface PlRollupStatement {
+  group_by: RollupGroupBy;
+  name: string;
+  stores: number;
+  store_name: string;
+  period_end: string;
+  period_label: string | null;
+  total_sales: number | null;
+  ci_amount: number | null;
+  ci_pct: number | null;
+  ebitda: number | null;
+  stage: "prelim" | "final" | "mixed";
+  lines: PlLine[];
+  ly: { period_end: string; period_label: string | null } | null;
+}
+export function fetchPlRollupStatement(period: string, groupBy: RollupGroupBy, name: string): Promise<{ statement: PlRollupStatement }> {
+  return request(`${FN}?action=rollup-statement&period=${encodeURIComponent(period)}&group_by=${groupBy}&name=${encodeURIComponent(name)}`);
+}
+export function fetchPlRollupLineTrend(groupBy: RollupGroupBy, name: string, label: string): Promise<{ name: string; label: string; points: PlTrendPoint[] }> {
+  return request(`${FN}?action=rollup-line-trend&group_by=${groupBy}&name=${encodeURIComponent(name)}&label=${encodeURIComponent(label)}`);
 }
 export function savePlReviewNote(input: {
   store: string; period: string; line_key: string; root_cause: string; action_steps: string;

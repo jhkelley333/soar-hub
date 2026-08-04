@@ -3,6 +3,10 @@
 // colored 1-5 score cells, and the Stores / DOs / SDOs / RVPs / Company
 // sections stacked per scope (PTD + WTD as two tabs). Uses exceljs
 // (lazy-loaded) because styled cells are beyond the CSV/SheetJS path.
+//
+// Beyond the two scope tabs, one tab is emitted per SDO and per RVP (named
+// after the leader), each scoped to that leader: their own rollup row plus
+// their subordinate tiers and stores, for both PTD and WTD.
 
 import type { FullRunScope, RankingResultRow, RankingRun } from "./api";
 
@@ -161,6 +165,29 @@ function addSection(ws: any, startRow: number, title: string | null, cols: Col[]
   return headerRow; // caller freezes on the store section's header
 }
 
+// Add a section and return the next free row (title + group hdr + col hdr +
+// data + one gap). Used by the per-leader tabs, which stack several sections.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function stack(ws: any, row: number, title: string | null, cols: Col[], rows: RankingResultRow[]): number {
+  addSection(ws, row, title, cols, rows);
+  return row + (title ? 1 : 0) + 2 + rows.length + 1;
+}
+
+// Excel sheet-name rules: ≤31 chars, none of \ / ? * [ ] :, non-empty, unique.
+function sheetName(base: string, used: Set<string>): string {
+  const clean = String(base || "Leader").replace(/[\\/?*[\]:]/g, " ").replace(/\s+/g, " ").trim().slice(0, 31) || "Leader";
+  let name = clean, i = 2;
+  while (used.has(name.toLowerCase())) {
+    const suffix = ` (${i})`;
+    name = clean.slice(0, 31 - suffix.length) + suffix;
+    i++;
+  }
+  used.add(name.toLowerCase());
+  return name;
+}
+
+const leaderName = (r: RankingResultRow): string => String(r.metrics.name ?? r.entity_key ?? "").trim();
+
 export async function downloadRankingWorkbook(
   run: RankingRun,
   scopes: { ptd: FullRunScope; wtd: FullRunScope },
@@ -219,6 +246,65 @@ export async function downloadRankingWorkbook(
       col.width = i === 2 ? 26 : i === 1 || i === 0 ? 8 : 12;
     });
   }
+
+  // ── One tab per SDO and per RVP, named after the leader ──────────────
+  // Each leader's tab scopes the run to just their org: their own rollup row,
+  // then their subordinate tiers (RVP → SDOs + DOs; SDO → DOs) and stores,
+  // stacked for PTD then WTD. Store/DO/SDO metrics carry sdoName/rvpName, so
+  // membership is a name match against the leader's own name.
+  const used = new Set<string>(["period to date", "week to date"]);
+  const leaderTabs = (tier: "sdo" | "rvp"): void => {
+    const parentKey = tier === "sdo" ? "sdoName" : "rvpName";
+    // Union of leader names across both scopes (a leader may lack a WTD row).
+    const names: string[] = [];
+    const seen = new Set<string>();
+    for (const scope of ["ptd", "wtd"] as const) {
+      for (const r of scopes[scope]?.[tier] ?? []) {
+        const n = leaderName(r);
+        if (n && !seen.has(n.toLowerCase())) { seen.add(n.toLowerCase()); names.push(n); }
+      }
+    }
+    for (const name of names) {
+      const key = name.toLowerCase();
+      const tab = sheetName(name, used);
+      const ws = wb.addWorksheet(tab, { views: [{ state: "frozen", xSplit: 3, ySplit: 1 }] });
+
+      ws.mergeCells(1, 1, 1, 12);
+      const banner = ws.getCell(1, 1);
+      banner.value = `SOAR RANKING — ${name} (${tier.toUpperCase()}) — Period ${run.period} Week ${run.week} · week ending ${run.week_ending} · run ${runId}`;
+      banner.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
+      banner.font = { bold: true, color: { argb: "FFFFFFFF" }, size: 12 };
+      ws.getRow(1).height = 20;
+
+      const belongs = (r: RankingResultRow): boolean => String(r.metrics[parentKey] ?? "").toLowerCase() === key;
+      let row = 3;
+      let any = false;
+      for (const scope of ["ptd", "wtd"] as const) {
+        const data = scopes[scope];
+        if (!data) continue;
+        const self = (data[tier] ?? []).filter((r) => leaderName(r).toLowerCase() === key);
+        const sdos = tier === "rvp" ? (data.sdo ?? []).filter((r) => String(r.metrics.rvpName ?? "").toLowerCase() === key) : [];
+        const dos = (data.do ?? []).filter(belongs);
+        const stores = (data.store ?? []).filter(belongs);
+        if (!self.length && !sdos.length && !dos.length && !stores.length) continue;
+        any = true;
+        row = stack(ws, row, scope === "wtd" ? "Week to Date" : "Period to Date", LEADER_COLS, self);
+        if (sdos.length) row = stack(ws, row, "SDOs", LEADER_COLS, sdos);
+        if (dos.length) row = stack(ws, row, "Directors of Operations", LEADER_COLS, dos);
+        if (stores.length) row = stack(ws, row, "Stores", STORE_COLS, stores);
+        row += 1; // gap between scope blocks
+      }
+      if (!any) {
+        ws.getCell(3, 1).value = "No data for this leader in this run.";
+        ws.getCell(3, 1).font = { italic: true, color: { argb: "FF6B7A89" } };
+      }
+      ws.columns.forEach((col: { width?: number }, i: number) => {
+        col.width = i === 2 ? 26 : i === 1 || i === 0 ? 8 : 12;
+      });
+    }
+  };
+  leaderTabs("sdo");
+  leaderTabs("rvp");
 
   const buf = await wb.xlsx.writeBuffer();
   const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
