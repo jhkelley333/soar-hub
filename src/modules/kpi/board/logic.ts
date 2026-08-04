@@ -38,6 +38,14 @@ export function deltaOf(m: MetricDef, cur: number, prior: number): { text: strin
 
 export function statusTone(m: MetricDef, cur: number): StatusTone {
   if (m.target === null || m.target === undefined) return "none";
+  // Band target (e.g. COGS Eff 96–101%): good inside, bad outside, warn near
+  // either edge (within 5% of the band).
+  if (typeof m.targetMax === "number") {
+    const lo = m.target, hi = m.targetMax;
+    if (cur >= lo && cur <= hi) return "good";
+    if (cur >= lo * 0.95 && cur <= hi * 1.05) return "warn";
+    return "bad";
+  }
   if (m.hb) {
     if (cur >= m.target) return "good";
     return cur >= m.target * 0.95 ? "warn" : "bad";
@@ -52,7 +60,16 @@ export function statusTone(m: MetricDef, cur: number): StatusTone {
 
 export function targetLabel(m: MetricDef): string {
   if (m.target === null || m.target === undefined) return "no target";
-  return `target ${fmt(m.target, { ...m, signed: false })}`;
+  const base = { ...m, signed: false };
+  if (typeof m.targetMax === "number") {
+    // Range — share a single trailing "%" for the common percent case.
+    if (m.unit === "%") {
+      const n = (v: number) => v.toLocaleString("en-US", { minimumFractionDigits: m.dec, maximumFractionDigits: m.dec });
+      return `target ${n(m.target)}–${n(m.targetMax)}%`;
+    }
+    return `target ${fmt(m.target, base)}–${fmt(m.targetMax, base)}`;
+  }
+  return `target ${fmt(m.target, base)}`;
 }
 
 export function spark(vals: number[], w: number, h: number): { d: string; x: string; y: string } {

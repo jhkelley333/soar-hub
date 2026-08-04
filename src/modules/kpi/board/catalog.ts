@@ -19,6 +19,9 @@ export interface MetricDef {
   dec: number;
   hb: boolean;            // higher is better
   target: number | null;
+  // Optional upper bound: when set, the metric is a BAND — good inside
+  // [target, targetMax], bad outside (e.g. COGS Eff 96–101%).
+  targetMax?: number;
   signed?: boolean;
   soon?: boolean;         // "Coming soon" — no source wired yet, render a badge
 }
@@ -69,7 +72,7 @@ export const PILLARS: Pillar[] = [
     key: "cogs", index: "04", title: "COGS Efficiency", countLabel: "5 execution metrics",
     // COGS Eff headline comes from the last-week ranker (cogsEff); the count
     // scores + variance + item efficiency come from the count feed.
-    mtm: { id: "cogs_pct", name: "COGS Eff", unit: "%", dec: 1, hb: true, target: 96 },
+    mtm: { id: "cogs_pct", name: "COGS Eff", unit: "%", dec: 1, hb: true, target: 96, targetMax: 101 },
     rows: [
       { id: "daily_score", name: "Daily Score", unit: "pts", dec: 0, hb: true, target: 95 },
       { id: "completion_score", name: "Completion Score", unit: "%", dec: 0, hb: true, target: 95 },
