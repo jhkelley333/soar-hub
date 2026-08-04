@@ -22,7 +22,20 @@ function scoresOf(r) {
     completion_score: numOrNull(r?.completionScore),
     accuracy_score: numOrNull(r?.accuracyScore),
     total_intellicost_pct: numOrNull(r?.totalIntelliCostPercentage),
+    // COGS section extras (migration 0276): $ count variance + item efficiency.
+    count_variance: numOrNull(r?.dailyCountDollarVariance),
+    item_efficiency: numOrNull(r?.itemEfficiency),
   };
+}
+
+// Columns added by migration 0276. If the count upsert fails because 0276 isn't
+// applied yet, strip these and retry so the base scores still land.
+const COUNT_COLS_0276 = ["count_variance", "item_efficiency"];
+export function isPreCountExtrasError(error) {
+  return !!error && /column/i.test(String(error.message)) && /count_variance|item_efficiency/.test(String(error.message));
+}
+export function stripCountExtras(rows) {
+  return rows.map((r) => { const c = { ...r }; for (const k of COUNT_COLS_0276) delete c[k]; return c; });
 }
 
 // Build a store_number -> score-row map from any rawData array section whose

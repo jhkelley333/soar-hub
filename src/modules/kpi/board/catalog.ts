@@ -8,6 +8,8 @@
 //   02 Customer L2R — L2R + Mystery Shop + EcoSure Audit (last-week ranker),
 //      Complaints (coming soon).
 //   03 Controllable Contribution — Labor % / Actual vs Sched / Over Time (feed).
+//   04 COGS Efficiency — COGS % + Daily/Completion/Accuracy scores (count feed);
+//      Daily Count Variance + Item Efficiency not sourced yet.
 // Unwired / not-yet-populated metrics render "—" (or a "Coming soon" badge).
 export type Unit = "" | "%" | "$" | "s" | "min" | "hrs" | "pts" | "rank" | "/10k";
 export interface MetricDef {
@@ -61,6 +63,19 @@ export const PILLARS: Pillar[] = [
     rows: [
       { id: "actual_vs_schedule", name: "Actual vs. Schedule", unit: "hrs", dec: 1, hb: false, target: 0, signed: true },
       { id: "overtime", name: "Over Time", unit: "hrs", dec: 1, hb: false, target: 4.0 },
+    ],
+  },
+  {
+    key: "cogs", index: "04", title: "COGS Efficiency", countLabel: "5 execution metrics",
+    // COGS % + the count scores come from the count feed (count_daily); Daily
+    // Count Variance and Item Efficiency are not sourced yet.
+    mtm: { id: "cogs_pct", name: "COGS % of Sales", unit: "%", dec: 1, hb: false, target: 29.8 },
+    rows: [
+      { id: "daily_score", name: "Daily Score", unit: "pts", dec: 0, hb: true, target: 95 },
+      { id: "completion_score", name: "Completion Score", unit: "%", dec: 0, hb: true, target: 95 },
+      { id: "accuracy_score", name: "Accuracy Score", unit: "%", dec: 0, hb: true, target: 95 },
+      { id: "count_variance", name: "Daily Count Variance", unit: "$", dec: 0, hb: false, target: 100 },
+      { id: "item_efficiency", name: "Item Efficiency", unit: "%", dec: 1, hb: true, target: 98 },
     ],
   },
 ];
