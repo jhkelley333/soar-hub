@@ -59,6 +59,10 @@ export function extractLaborRows(payload) {
       on_time_numerator: numOrNull(r.onTimePercentageNumerator),
       on_time_denominator: numOrNull(r.onTimePercentageDenominator),
       void_total: numOrNull(r.voidTotal),
+      // Ticket-time (migration 0272): total + quantity so a scope can compute
+      // avg = SUM(total_ticket_time) / SUM(on_time_quantity).
+      total_ticket_time: numOrNull(r.totalTicketTime),
+      on_time_quantity: numOrNull(r.onTimeQuantity),
       // Week to Date band (labor_hours feeds the avg-wage → hours-over calc)
       wtd_net_sales: numOrNull(w?.netSales),
       wtd_prev_year_net_sales: numOrNull(w?.previousYearNetSales),
@@ -74,6 +78,8 @@ export function extractLaborRows(payload) {
       wtd_on_time_numerator: numOrNull(w?.onTimePercentageNumerator),
       wtd_on_time_denominator: numOrNull(w?.onTimePercentageDenominator),
       wtd_void_total: numOrNull(w?.voidTotal),
+      wtd_total_ticket_time: numOrNull(w?.totalTicketTime),
+      wtd_on_time_quantity: numOrNull(w?.onTimeQuantity),
       // Period to Date band
       ptd_net_sales: numOrNull(p?.netSales),
       ptd_prev_year_net_sales: numOrNull(p?.previousYearNetSales),
@@ -89,6 +95,8 @@ export function extractLaborRows(payload) {
       ptd_on_time_numerator: numOrNull(p?.onTimePercentageNumerator),
       ptd_on_time_denominator: numOrNull(p?.onTimePercentageDenominator),
       ptd_void_total: numOrNull(p?.voidTotal),
+      ptd_total_ticket_time: numOrNull(p?.totalTicketTime),
+      ptd_on_time_quantity: numOrNull(p?.onTimeQuantity),
     });
   }
   return out;
@@ -111,6 +119,27 @@ export function stripRankingCols(rows) {
   return rows.map((r) => {
     const c = { ...r };
     for (const k of RANKING_COLS_0238) delete c[k];
+    return c;
+  });
+}
+
+// Ticket-time columns added by migration 0272. Same fallback pattern: if the
+// upsert fails because 0272 hasn't run, strip just these and retry so the rest
+// of the row (including the 0238 fields) still lands.
+const TICKET_COLS_0272 = [
+  "total_ticket_time", "on_time_quantity",
+  "wtd_total_ticket_time", "wtd_on_time_quantity",
+  "ptd_total_ticket_time", "ptd_on_time_quantity",
+];
+
+export function isPre0272Error(error) {
+  return !!error && /column/i.test(String(error.message)) && /ticket_time|on_time_quantity/.test(String(error.message));
+}
+
+export function stripTicketCols(rows) {
+  return rows.map((r) => {
+    const c = { ...r };
+    for (const k of TICKET_COLS_0272) delete c[k];
     return c;
   });
 }
