@@ -6,7 +6,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Check, Download, HelpCircle, Upload, UserX } from "lucide-react";
+import { AlertTriangle, Check, Download, HelpCircle, Pencil, Upload, UserX, X } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -14,7 +14,7 @@ import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { fetchGmRoster, importGmRoster, parseRosterPaste, type GmRosterRow, type ReconcileStatus } from "./gmRosterApi";
+import { fetchGmRoster, importGmRoster, parseRosterPaste, setGmRosterName, type GmRosterRow, type ReconcileStatus } from "./gmRosterApi";
 
 type Filter = "all" | ReconcileStatus;
 
@@ -76,9 +76,11 @@ export function GmRosterPage() {
             <Button variant="secondary" size="sm" onClick={exportCsv} disabled={rows.length === 0}>
               <Download className="mr-1 h-3.5 w-3.5" /> Download
             </Button>
-            <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
-              <Upload className="mr-1 h-3.5 w-3.5" /> Import roster
-            </Button>
+            {q.data?.can_import && (
+              <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
+                <Upload className="mr-1 h-3.5 w-3.5" /> Import roster
+              </Button>
+            )}
           </div>
         }
       />
@@ -124,7 +126,7 @@ export function GmRosterPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
-                {rows.map((r) => <Row key={r.store_number} r={r} />)}
+                {rows.map((r) => <Row key={r.store_number} r={r} canEdit={q.data?.can_edit ?? false} />)}
               </tbody>
             </table>
           </div>
@@ -134,9 +136,19 @@ export function GmRosterPage() {
   );
 }
 
-function Row({ r }: { r: GmRosterRow }) {
+function Row({ r, canEdit }: { r: GmRosterRow; canEdit: boolean }) {
   const meta = STATUS_META[r.reconcile];
   const Icon = meta.icon;
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [editing, setEditing] = useState(false);
+  const [val, setVal] = useState(r.roster_name ?? "");
+  const save = useMutation({
+    mutationFn: () => setGmRosterName(r.store_number, val.trim()),
+    onSuccess: () => { setEditing(false); qc.invalidateQueries({ queryKey: ["gm-roster"] }); toast.push("Roster name updated.", "success"); },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't update the name.", "error"),
+  });
+  const startEdit = () => { setVal(r.roster_name ?? ""); setEditing(true); };
   return (
     <tr className="align-top">
       <td className="px-4 py-2.5">
@@ -144,8 +156,34 @@ function Row({ r }: { r: GmRosterRow }) {
         <div className="text-xs text-zinc-500">{r.store_name ?? ""}{!r.in_app && <span className="ml-1 text-red-500">· not in app</span>}</div>
       </td>
       <td className="px-4 py-2.5">
-        <div className="text-midnight">{r.roster_name ?? <span className="text-zinc-400">—</span>}</div>
-        {r.gm_email && <div className="text-[11px] text-zinc-400">{r.gm_email}</div>}
+        {editing ? (
+          <div className="flex items-center gap-1.5">
+            <input
+              autoFocus
+              value={val}
+              onChange={(e) => setVal(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") save.mutate(); if (e.key === "Escape") setEditing(false); }}
+              placeholder="GM name — or Open / In Training"
+              className="w-48 rounded-md border border-zinc-200 px-2 py-1 text-sm focus:border-accent focus:outline-none"
+            />
+            <button type="button" onClick={() => save.mutate()} disabled={save.isPending} title="Save" className="text-emerald-600 hover:text-emerald-700 disabled:opacity-50">
+              <Check className="h-4 w-4" strokeWidth={2.5} />
+            </button>
+            <button type="button" onClick={() => setEditing(false)} title="Cancel" className="text-zinc-400 hover:text-zinc-600">
+              <X className="h-4 w-4" strokeWidth={2.5} />
+            </button>
+          </div>
+        ) : (
+          <div className="flex items-center gap-1.5">
+            <span className="text-midnight">{r.roster_name ?? <span className="text-zinc-400">—</span>}</span>
+            {canEdit && (
+              <button type="button" onClick={startEdit} title="Edit roster name" className="text-zinc-300 hover:text-accent">
+                <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
+              </button>
+            )}
+          </div>
+        )}
+        {r.gm_email && !editing && <div className="text-[11px] text-zinc-400">{r.gm_email}</div>}
       </td>
       <td className="px-4 py-2.5">
         <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset", meta.cls)}>

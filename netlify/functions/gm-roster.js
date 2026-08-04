@@ -15,7 +15,26 @@ import { resolveOrg } from "./_lib/kpiOrg.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
+// Bulk paste-import stays an org-wide admin action.
 const MANAGE_ROLES = new Set(["admin", "vp", "coo"]);
+// Viewing + editing a single GM's roster name: the org-wide roles plus SDO/RVP,
+// who are scoped to the stores they oversee.
+const EDIT_ROLES = new Set(["admin", "vp", "coo", "sdo", "rvp"]);
+const ORG_WIDE = new Set(["admin", "vp", "coo"]);
+
+// Store numbers a scoped leader (SDO/RVP) may see/edit; null = org-wide (no
+// filter). Uses the same user_visible_stores() RPC the rest of the app scopes
+// with.
+async function visibleStoreNumbers(supa, user) {
+  if (ORG_WIDE.has(String(user.role).toLowerCase())) return null;
+  const { data: visible } = await supa.rpc("user_visible_stores", { uid: user.id });
+  const ids = (visible ?? [])
+    .map((v) => (typeof v === "string" ? v : v?.user_visible_stores ?? null))
+    .filter(Boolean);
+  if (!ids.length) return new Set();
+  const { data } = await supa.from("stores").select("number").in("id", ids);
+  return new Set((data ?? []).map((s) => String(s.number)));
+}
 
 function admin() {
   if (!SUPABASE_URL || !SERVICE_KEY) throw new Error("gm-roster env vars not configured");
@@ -78,19 +97,23 @@ async function gmAccountsByStore(supa, storeIds) {
 }
 
 async function listRoster(supa, user) {
-  if (!MANAGE_ROLES.has(String(user.role).toLowerCase())) return { error: "forbidden", status: 403 };
+  const role = String(user.role).toLowerCase();
+  if (!EDIT_ROLES.has(role)) return { error: "forbidden", status: 403 };
+  const visible = await visibleStoreNumbers(supa, user); // null = org-wide
   const [{ data: roster }, { data: stores }] = await Promise.all([
     supa.from("gm_roster").select("*").order("store_number"),
     supa.from("stores").select("id, number, name").or("brand.eq.sonic,brand.is.null"),
   ]);
   const storeByNumber = new Map((stores || []).map((s) => [String(s.number), s]));
-  const numbers = (roster || []).map((r) => String(r.store_number));
+  // Scoped leaders (SDO/RVP) only see the stores they oversee.
+  const rosterRows = visible ? (roster || []).filter((r) => visible.has(String(r.store_number))) : (roster || []);
+  const numbers = rosterRows.map((r) => String(r.store_number));
   const [gmByStore, orgMap] = await Promise.all([
     gmAccountsByStore(supa, (stores || []).map((s) => s.id)),
     resolveOrg(supa, numbers),
   ]);
 
-  const rows = (roster || []).map((r) => {
+  const rows = rosterRows.map((r) => {
     const num = String(r.store_number);
     const store = storeByNumber.get(num) || null;
     const acct = store ? gmByStore.get(store.id) || null : null;
@@ -117,7 +140,9 @@ async function listRoster(supa, user) {
 
   const summary = { matched: 0, no_account: 0, mismatch: 0, open: 0, in_training: 0 };
   for (const r of rows) summary[r.reconcile] = (summary[r.reconcile] || 0) + 1;
-  return { rows, summary };
+  // can_import gates the bulk paste importer (org-wide only); everyone who can
+  // reach this list can inline-edit a single name within their scope.
+  return { rows, summary, can_import: MANAGE_ROLES.has(role), can_edit: true };
 }
 
 async function importRoster(supa, user, body) {
@@ -155,6 +180,32 @@ async function importRoster(supa, user, body) {
   return { ok: true, upserted: ready.length };
 }
 
+// Edit one store's roster GM name. Open to the org-wide roles + SDO/RVP (scoped
+// to their stores). "Open" / "In Training" (or blank) set the status the same
+// way the paste importer does, so the reconcile view stays consistent.
+async function setName(supa, user, body) {
+  const role = String(user.role).toLowerCase();
+  if (!EDIT_ROLES.has(role)) return { error: "forbidden", status: 403 };
+  const num = String(body?.store_number || "").trim();
+  if (!num) return { error: "store_number is required", status: 400 };
+  const visible = await visibleStoreNumbers(supa, user);
+  if (visible && !visible.has(num)) return { error: "That store isn't in your scope.", status: 403 };
+
+  const raw = String(body?.gm_name || "").trim();
+  let status = "named", gm = raw;
+  if (!raw || /^open$/i.test(raw)) { status = "open"; gm = null; }
+  else if (/in\s*training/i.test(raw)) { status = "in_training"; gm = null; }
+
+  const now = new Date().toISOString();
+  const { data: existing } = await supa.from("gm_roster").select("store_number").eq("store_number", num).maybeSingle();
+  const patch = { gm_name: gm, status, updated_by: user.id, updated_at: now };
+  const { error } = existing
+    ? await supa.from("gm_roster").update(patch).eq("store_number", num)
+    : await supa.from("gm_roster").insert({ store_number: num, ...patch });
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, store_number: num, gm_name: gm, status };
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   let supa;
@@ -171,6 +222,10 @@ export const handler = async (event) => {
     if (event.httpMethod === "POST" && action === "import") {
       const body = event.body ? JSON.parse(event.body) : {};
       return unwrap(await importRoster(supa, user, body));
+    }
+    if (event.httpMethod === "POST" && action === "set-name") {
+      const body = event.body ? JSON.parse(event.body) : {};
+      return unwrap(await setName(supa, user, body));
     }
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {

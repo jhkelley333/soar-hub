@@ -140,6 +140,9 @@ export const NAV: NavItem[] = [
   { to: "/admin/manuals", label: "Manuals Admin", icon: BookMarked,  roles: ["rvp"] }, // vp/coo/admin: System Settings
   { to: "/resources",   label: "Resources",   icon: BookOpen,        roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/team",        label: "My Team",     icon: Users,           roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // GM Roster — SDO/RVP edit their scope's GM names here; vp/coo/admin reach it
+  // via System Settings, so the sidebar entry is scoped to the lower roles.
+  { to: "/admin/gm-roster", label: "GM Roster", icon: BookUser,      roles: ["sdo", "rvp"] },
   { to: "/my-stores",   label: "My Stores",   icon: Building2,       roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll", "fbc"] },
   { to: "/admin/system-settings", label: "System Settings", icon: Settings, roles: ["vp", "coo", "admin"] },
   // Org Admin, GM Roster, Stay-Logged-In Links, KPI Dashboard, Labor Rollup,
@@ -247,7 +250,8 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/admin/system-settings": "ADMIN",
   "/admin/org": "ADMIN",
   "/admin/bulk-attributes": "ADMIN",
-  "/admin/gm-roster": "ADMIN",
+  // GM Roster's sidebar entry is SDO/RVP-only and sits with the People tools.
+  "/admin/gm-roster": "PEOPLE",
   "/admin/access-links": "ADMIN",
   "/admin/feature-flags": "ADMIN",
   "/admin/role-access": "ADMIN",
