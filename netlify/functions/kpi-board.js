@@ -114,7 +114,7 @@ const METRIC_IDS = [
 // the PTD figure is used for every board window.
 const rankerNum = (v) => (typeof v === "number" && isFinite(v) ? v : null);
 async function rankerMetrics(supa, scopeStoreNumbers, anchor = null) {
-  const empty = { vog: { wtd: null, ptd: null }, ecosure: null, mysteryShop: null };
+  const empty = { vog: { wtd: null, ptd: null }, cogsEff: { wtd: null, ptd: null }, ecosure: null, mysteryShop: null };
   const numset = new Set((scopeStoreNumbers || []).map(String));
   if (!numset.size) return empty;
   let q = supa.from("ranking_runs").select("id").eq("status", "complete");
@@ -126,7 +126,7 @@ async function rankerMetrics(supa, scopeStoreNumbers, anchor = null) {
   const runId = runs?.[0]?.id;
   if (!runId) return empty;
 
-  const out = { vog: { wtd: null, ptd: null }, ecosure: null, mysteryShop: null };
+  const out = { vog: { wtd: null, ptd: null }, cogsEff: { wtd: null, ptd: null }, ecosure: null, mysteryShop: null };
   const byScope = {};
   await Promise.all(["wtd", "ptd"].map(async (scope) => {
     const { data: rows } = await supa
@@ -155,6 +155,11 @@ async function rankerMetrics(supa, scopeStoreNumbers, anchor = null) {
   };
   out.ecosure = avgPct("ecosure");
   out.mysteryShop = avgPct("msScore");
+  // COGS efficiency — average of the store cogsEff (0-1 -> %), per scope.
+  for (const scope of ["wtd", "ptd"]) {
+    const vals = (byScope[scope] || []).map((r) => rankerNum((r.metrics || {}).cogsEff)).filter((v) => v != null);
+    if (vals.length) out.cogsEff[scope] = (vals.reduce((a, b) => a + b, 0) / vals.length) * 100;
+  }
   return out;
 }
 
@@ -268,7 +273,7 @@ export const handler = async (event) => {
     // all three periods, prior = prior day, weekly trend from the 5 week-ends.
     const cAnchor = cnt(anchor), cPrior = cnt(dailyPrior);
     const cWeeks = weekEnds.map((d) => cnt(d));
-    for (const k of ["cogs_pct", "daily_score", "completion_score", "accuracy_score", "count_variance", "item_efficiency"]) {
+    for (const k of ["daily_score", "completion_score", "accuracy_score", "count_variance", "item_efficiency"]) {
       values[k] = {
         daily: pair(cAnchor[k], cPrior[k]),
         wtd: pair(cAnchor[k], cPrior[k]),
@@ -297,6 +302,11 @@ export const handler = async (event) => {
     };
     values.mystery_shop_rank = {
       daily: pair(rk.mysteryShop, null), wtd: pair(rk.mysteryShop, null), mtd: pair(rk.mysteryShop, null),
+      weeks: [null, null, null, null, null],
+    };
+    // COGS Efficiency headline — from the LW ranker (cogsEff), not the count feed.
+    values.cogs_pct = {
+      daily: pair(rk.cogsEff.wtd, null), wtd: pair(rk.cogsEff.wtd, null), mtd: pair(rk.cogsEff.ptd, null),
       weeks: [null, null, null, null, null],
     };
 
