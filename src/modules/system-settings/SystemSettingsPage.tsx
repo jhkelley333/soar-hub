@@ -31,7 +31,7 @@ const GROUPS: Group[] = [
     title: "Org Tools",
     tools: [
       { title: "Org Admin", desc: "Regions, areas, districts and stores — the whole org tree.", icon: Network, roles: ["vp", "coo", "admin"], to: "/admin/org" },
-      { title: "GM Roster", desc: "GM assignments across every store.", icon: Users, roles: ["vp", "coo", "admin"], to: "/admin/gm-roster" },
+      { title: "GM Roster", desc: "GM assignments across every store — SDO/RVP edit their own stores' names.", icon: Users, roles: ["sdo", "rvp", "vp", "coo", "admin"], to: "/admin/gm-roster" },
       { title: "Store Geofences", desc: "Each store's geofence radius for on-site checks.", icon: MapPin, roles: ["admin"], to: "/admin/store-geofences" },
     ],
   },

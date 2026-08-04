@@ -6,7 +6,7 @@
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Check, Download, HelpCircle, Pencil, Upload, UserX, X } from "lucide-react";
+import { AlertTriangle, Check, Download, HelpCircle, History, Pencil, Upload, UserX, X } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -14,7 +14,7 @@ import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { fetchGmRoster, importGmRoster, parseRosterPaste, setGmRosterName, type GmRosterRow, type ReconcileStatus } from "./gmRosterApi";
+import { fetchGmRoster, fetchGmRosterHistory, importGmRoster, parseRosterPaste, setGmRosterName, type GmRosterHistoryEntry, type GmRosterRow, type ReconcileStatus } from "./gmRosterApi";
 
 type Filter = "all" | ReconcileStatus;
 
@@ -30,6 +30,7 @@ export function GmRosterPage() {
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [importOpen, setImportOpen] = useState(false);
+  const [historyRow, setHistoryRow] = useState<GmRosterRow | null>(null);
   const q = useQuery({ queryKey: ["gm-roster"], queryFn: fetchGmRoster });
 
   const rows = useMemo(() => {
@@ -86,6 +87,7 @@ export function GmRosterPage() {
       />
 
       {importOpen && <ImportModal onClose={() => setImportOpen(false)} />}
+      {historyRow && <HistoryModal row={historyRow} onClose={() => setHistoryRow(null)} />}
 
       {summary && (
         <div className="mb-3 flex flex-wrap gap-2">
@@ -126,7 +128,7 @@ export function GmRosterPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
-                {rows.map((r) => <Row key={r.store_number} r={r} canEdit={q.data?.can_edit ?? false} />)}
+                {rows.map((r) => <Row key={r.store_number} r={r} canEdit={q.data?.can_edit ?? false} onHistory={() => setHistoryRow(r)} />)}
               </tbody>
             </table>
           </div>
@@ -136,7 +138,7 @@ export function GmRosterPage() {
   );
 }
 
-function Row({ r, canEdit }: { r: GmRosterRow; canEdit: boolean }) {
+function Row({ r, canEdit, onHistory }: { r: GmRosterRow; canEdit: boolean; onHistory: () => void }) {
   const meta = STATUS_META[r.reconcile];
   const Icon = meta.icon;
   const qc = useQueryClient();
@@ -181,6 +183,9 @@ function Row({ r, canEdit }: { r: GmRosterRow; canEdit: boolean }) {
                 <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
               </button>
             )}
+            <button type="button" onClick={onHistory} title="Edit history" className="text-zinc-300 hover:text-accent">
+              <History className="h-3.5 w-3.5" strokeWidth={2} />
+            </button>
           </div>
         )}
         {r.gm_email && !editing && <div className="text-[11px] text-zinc-400">{r.gm_email}</div>}
@@ -204,6 +209,54 @@ function Row({ r, canEdit }: { r: GmRosterRow; canEdit: boolean }) {
         {[r.rvp_name, r.sdo_name, r.do_name].filter(Boolean).join(" · ") || "—"}
       </td>
     </tr>
+  );
+}
+
+function HistoryModal({ row, onClose }: { row: GmRosterRow; onClose: () => void }) {
+  const q = useQuery({
+    queryKey: ["gm-roster-history", row.store_number],
+    queryFn: () => fetchGmRosterHistory(row.store_number),
+  });
+  const entries = q.data?.entries ?? [];
+  return (
+    <Modal open onClose={onClose} title={`Edit history — #${row.store_number}${row.store_name ? ` · ${row.store_name}` : ""}`}>
+      {q.isLoading ? (
+        <div className="py-6 text-center text-sm text-zinc-500">Loading…</div>
+      ) : q.isError ? (
+        <div className="py-6 text-center text-sm text-red-600">{(q.error as Error)?.message ?? "Couldn't load history."}</div>
+      ) : entries.length === 0 ? (
+        <div className="py-6 text-center text-sm text-zinc-500">No edits recorded yet — changes are logged from here on.</div>
+      ) : (
+        <ul className="space-y-2">
+          {entries.map((e) => <HistoryEntry key={e.id} e={e} />)}
+        </ul>
+      )}
+    </Modal>
+  );
+}
+
+function HistoryEntry({ e }: { e: GmRosterHistoryEntry }) {
+  const val = (v: string | null) => (v && v.trim() ? v : "—");
+  const nameChanged = (e.old_gm_name ?? "") !== (e.new_gm_name ?? "");
+  const statusChanged = (e.old_status ?? "") !== (e.new_status ?? "");
+  const when = new Date(e.changed_at).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+  return (
+    <li className="rounded-lg bg-zinc-50 px-3 py-2 ring-1 ring-inset ring-zinc-100">
+      {nameChanged && (
+        <div className="text-sm text-midnight">
+          <span className="text-zinc-400 line-through">{val(e.old_gm_name)}</span>
+          <span className="mx-1 text-zinc-400">→</span>
+          <span className="font-semibold">{val(e.new_gm_name)}</span>
+        </div>
+      )}
+      {statusChanged && (
+        <div className="text-xs text-zinc-600">Status: {val(e.old_status)} <span className="text-zinc-400">→</span> <span className="font-semibold">{val(e.new_status)}</span></div>
+      )}
+      <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-zinc-400">
+        <span className={cn("rounded-full px-1.5 py-0.5 font-semibold uppercase tracking-wide", e.source === "import" ? "bg-sky-50 text-sky-600" : "bg-emerald-50 text-emerald-600")}>{e.source}</span>
+        <span>{e.changed_by_name ?? "—"} · {when}</span>
+      </div>
+    </li>
   );
 }
 

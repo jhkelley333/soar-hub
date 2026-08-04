@@ -84,40 +84,55 @@ const METRIC_IDS = [
   "training_compliance", "new_hire_certified", "cross_trained", "ninety_day_retention",
 ];
 
-// VOG for the board comes from the current ranker (not the labor feed): the
-// latest completed run's store-tier VOG, response-weighted across the scope's
-// stores. The ranker stores VOG as a 0-1 top-box fraction; the board shows it
-// as a percentage (matching the ranking board's own VOG formatting). WTD/PTD
-// runs map to the board's WTD (also Daily) / MTD windows; no weekly sparkline.
-async function vogFromRanker(supa, scopeStoreNumbers) {
+// Ranker-sourced board metrics from the latest completed run ("LW Ranker"),
+// aggregated across the scope's stores. All are 0-1 fractions in the ranker and
+// shown as percentages here (matching the ranking board). VOG is response-
+// weighted by its poll count; EcoSure + Mystery Shop (Shop avg) are simple
+// averages of the numeric store values (they can be 'No Audit' / 'NEW SDO').
+// EcoSure + Mystery Shop are period (PTD) metrics — WTD carries no value — so
+// the PTD figure is used for every board window.
+const rankerNum = (v) => (typeof v === "number" && isFinite(v) ? v : null);
+async function rankerMetrics(supa, scopeStoreNumbers) {
+  const empty = { vog: { wtd: null, ptd: null }, ecosure: null, mysteryShop: null };
   const numset = new Set((scopeStoreNumbers || []).map(String));
-  if (!numset.size) return { wtd: null, ptd: null };
+  if (!numset.size) return empty;
   const { data: runs } = await supa
     .from("ranking_runs").select("id")
     .eq("status", "complete")
     .order("week_ending", { ascending: false })
     .order("started_at", { ascending: false }).limit(1);
   const runId = runs?.[0]?.id;
-  if (!runId) return { wtd: null, ptd: null };
+  if (!runId) return empty;
 
-  const out = { wtd: null, ptd: null };
+  const out = { vog: { wtd: null, ptd: null }, ecosure: null, mysteryShop: null };
+  const byScope = {};
   await Promise.all(["wtd", "ptd"].map(async (scope) => {
     const { data: rows } = await supa
       .from("ranking_rows").select("entity_key, metrics")
       .eq("run_id", runId).eq("scope", scope).eq("tier", "store");
+    byScope[scope] = (rows || []).filter((r) => numset.has(String(r.entity_key)));
+  }));
+
+  // VOG — response-weighted, per scope, 0-1 -> %.
+  for (const scope of ["wtd", "ptd"]) {
     let wSum = 0, rSum = 0, plain = 0, n = 0;
-    for (const r of rows || []) {
-      if (!numset.has(String(r.entity_key))) continue;
+    for (const r of byScope[scope] || []) {
       const m = r.metrics || {};
-      const v = typeof m.vog === "number" && isFinite(m.vog) ? m.vog : null;
+      const v = rankerNum(m.vog);
       if (v == null) continue;
-      const resp = typeof m.vogResponses === "number" && isFinite(m.vogResponses) ? m.vogResponses : 0;
+      const resp = rankerNum(m.vogResponses) ?? 0;
       wSum += v * resp; rSum += resp; plain += v; n += 1;
     }
-    if (n === 0) return;
-    const val = rSum > 0 ? wSum / rSum : plain / n;
-    out[scope] = val * 100; // 0-1 fraction -> percentage
-  }));
+    if (n) out.vog[scope] = (rSum > 0 ? wSum / rSum : plain / n) * 100;
+  }
+
+  // EcoSure + Mystery Shop — PTD only, simple average of numeric values, 0-1 -> %.
+  const avgPct = (key) => {
+    const vals = (byScope.ptd || []).map((r) => rankerNum((r.metrics || {})[key])).filter((v) => v != null);
+    return vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length) * 100 : null;
+  };
+  out.ecosure = avgPct("ecosure");
+  out.mysteryShop = avgPct("msScore");
   return out;
 }
 
@@ -206,13 +221,26 @@ export const handler = async (event) => {
       };
     }
 
-    // VOG from the current ranker (latest completed run), response-weighted
-    // across the scope. WTD run → Daily + WTD windows; PTD run → MTD.
-    const vog = await vogFromRanker(supa, scopeStores);
+    // Ranker-sourced metrics (latest completed run = "LW Ranker"). WTD run →
+    // Daily + WTD windows; PTD run → MTD. EcoSure + Mystery Shop are PTD-only,
+    // so their one value fills every window.
+    const rk = await rankerMetrics(supa, scopeStores);
     values.vog = {
-      daily: pair(vog.wtd, null),
-      wtd: pair(vog.wtd, null),
-      mtd: pair(vog.ptd, null),
+      daily: pair(rk.vog.wtd, null), wtd: pair(rk.vog.wtd, null), mtd: pair(rk.vog.ptd, null),
+      weeks: [null, null, null, null, null],
+    };
+    // L2R is the ranker's likely-to-return top-box — the same VOG figure, so the
+    // Customer L2R headline shares that source.
+    values.l2r = {
+      daily: pair(rk.vog.wtd, null), wtd: pair(rk.vog.wtd, null), mtd: pair(rk.vog.ptd, null),
+      weeks: [null, null, null, null, null],
+    };
+    values.ecosure_rank = {
+      daily: pair(rk.ecosure, null), wtd: pair(rk.ecosure, null), mtd: pair(rk.ecosure, null),
+      weeks: [null, null, null, null, null],
+    };
+    values.mystery_shop_rank = {
+      daily: pair(rk.mysteryShop, null), wtd: pair(rk.mysteryShop, null), mtd: pair(rk.mysteryShop, null),
       weeks: [null, null, null, null, null],
     };
 

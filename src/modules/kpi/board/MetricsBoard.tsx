@@ -72,6 +72,17 @@ function MtmHero({ v }: { v: MetricView }) {
 }
 
 function ExecCard({ def, v }: { def: MetricDef; v: MetricView }) {
+  if (def.soon) {
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-l-2 border-zinc-200 border-l-zinc-200 bg-white px-3.5 py-3">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium text-midnight">{def.name}</div>
+          <div className="text-[11px] text-zinc-400">{v.targetLabel}</div>
+        </div>
+        <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Coming soon</span>
+      </div>
+    );
+  }
   return (
     <div className={cn("flex items-center justify-between gap-3 rounded-lg border border-l-2 border-zinc-200 bg-white px-3.5 py-3", STATUS_BORDER[v.statusTone])}>
       <div className="min-w-0">

@@ -141,7 +141,9 @@ export const NAV: NavItem[] = [
   { to: "/resources",   label: "Resources",   icon: BookOpen,        roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/team",        label: "My Team",     icon: Users,           roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   // GM Roster — SDO/RVP edit their scope's GM names here; vp/coo/admin reach it
-  // via System Settings, so the sidebar entry is scoped to the lower roles.
+  // via System Settings, so the sidebar entry is scoped to the lower roles. It
+  // lives in the Admin group so SDO/RVP find it where they'd expect (alongside
+  // the admin tools), matching where it sits in System Settings for higher roles.
   { to: "/admin/gm-roster", label: "GM Roster", icon: BookUser,      roles: ["sdo", "rvp"] },
   { to: "/my-stores",   label: "My Stores",   icon: Building2,       roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll", "fbc"] },
   { to: "/admin/system-settings", label: "System Settings", icon: Settings, roles: ["vp", "coo", "admin"] },
@@ -250,8 +252,9 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/admin/system-settings": "ADMIN",
   "/admin/org": "ADMIN",
   "/admin/bulk-attributes": "ADMIN",
-  // GM Roster's sidebar entry is SDO/RVP-only and sits with the People tools.
-  "/admin/gm-roster": "PEOPLE",
+  // GM Roster's sidebar entry is SDO/RVP-only; grouped under Admin so it shows
+  // up where those leaders expect it (with the other admin/settings tools).
+  "/admin/gm-roster": "ADMIN",
   "/admin/access-links": "ADMIN",
   "/admin/feature-flags": "ADMIN",
   "/admin/role-access": "ADMIN",

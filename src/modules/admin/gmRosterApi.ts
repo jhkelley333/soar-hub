@@ -54,6 +54,23 @@ export function setGmRosterName(storeNumber: string, gmName: string): Promise<{ 
   return req(`${FN}?action=set-name`, { method: "POST", body: JSON.stringify({ store_number: storeNumber, gm_name: gmName }) });
 }
 
+// ── Edit history (audit log) for one store ──────────────────────────────────
+export interface GmRosterHistoryEntry {
+  id: string;
+  store_number: string;
+  store_name: string | null;
+  old_gm_name: string | null;
+  new_gm_name: string | null;
+  old_status: string | null;
+  new_status: string | null;
+  source: "edit" | "import";
+  changed_by_name: string | null;
+  changed_at: string;
+}
+export function fetchGmRosterHistory(storeNumber: string): Promise<{ ok: true; store_number: string; entries: GmRosterHistoryEntry[] }> {
+  return req(`${FN}?action=history&store=${encodeURIComponent(storeNumber)}`);
+}
+
 export interface GmRosterImportRow {
   store_number: string;
   store_name?: string;
