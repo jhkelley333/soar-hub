@@ -70,8 +70,9 @@ export const NAV: NavItem[] = [
   // Territory Map — stores plotted on Google Maps, pin color keyed to the
   // DO resolved live from the org data.
   { to: "/territory-map", label: "Territory Map", icon: MapPinned,   roles: ["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
-  // Store Visit — mobile-first store walk + Top-3 gaps for DO and above.
-  { to: "/visit",         label: "Store Visit",  icon: ClipboardCheck, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // Store Visit is now a Beta Test tool inside System Settings
+  // (/admin/system-settings), so it's kept out of the sidebar. Its /visit route
+  // stays live (DO+ guard) for the hub card and deep links.
   // Labor — daily labor review. GMs review their store's numbers against
   // chart and explain misses; DO+ get the district rollup. Backend
   // (labor.js) enforces scope; nav is wide so shift managers see it too.
@@ -224,7 +225,6 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/admin/ranking": "OPERATIONS",
   "/coo-map": "OPERATIONS",
   "/territory-map": "OPERATIONS",
-  "/visit": "OPERATIONS",
   "/labor-v2": "OPERATIONS",
   "/admin/cash-management": "OPERATIONS",
   "/pl": "OPERATIONS",

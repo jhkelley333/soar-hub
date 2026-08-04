@@ -57,6 +57,7 @@ const GROUPS: Group[] = [
     tools: [
       { title: "KPI Dashboard", desc: "Execution KPI dashboard (in beta).", icon: BarChart3, roles: ["admin"], to: "/admin/kpi" },
       { title: "Metrics Board", desc: "Execution metrics board (in beta).", icon: LayoutGrid, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"], to: "/admin/metrics-board" },
+      { title: "Store Visit", desc: "Mobile-first store walk + Top-3 gaps (in beta).", icon: ClipboardCheck, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"], to: "/visit" },
     ],
   },
   {
