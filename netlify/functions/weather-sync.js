@@ -10,11 +10,13 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
 export const handler = async () => {
   if (!SUPABASE_URL || !SERVICE_KEY) { console.warn("[weather-sync] supabase env missing"); return { statusCode: 200, body: "skipped" }; }
-  if (!weatherKeyConfigured()) { console.warn("[weather-sync] GOOGLE_WEATHER_API_KEY not set — skipping"); return { statusCode: 200, body: "no key" }; }
+  // No Google key? Record anyway via the Open-Meteo fallback so daily history
+  // never silently stalls — we only note which source was used.
+  if (!weatherKeyConfigured()) console.warn("[weather-sync] GOOGLE_WEATHER_API_KEY not set — using Open-Meteo fallback");
 
   const supa = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
   const result = await syncWeather(supa);
-  console.log(`[weather-sync] locations=${result.locations} recorded=${result.recorded} failed=${result.failed}`);
+  console.log(`[weather-sync] locations=${result.locations} recorded=${result.recorded} failed=${result.failed} sources=${JSON.stringify(result.sources || {})}`);
   return { statusCode: 200, body: JSON.stringify(result) };
 };
 

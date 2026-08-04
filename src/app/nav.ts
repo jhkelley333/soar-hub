@@ -70,8 +70,9 @@ export const NAV: NavItem[] = [
   // Territory Map — stores plotted on Google Maps, pin color keyed to the
   // DO resolved live from the org data.
   { to: "/territory-map", label: "Territory Map", icon: MapPinned,   roles: ["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
-  // Store Visit — mobile-first store walk + Top-3 gaps for DO and above.
-  { to: "/visit",         label: "Store Visit",  icon: ClipboardCheck, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // Store Visit is now a Beta Test tool inside System Settings
+  // (/admin/system-settings), so it's kept out of the sidebar. Its /visit route
+  // stays live (DO+ guard) for the hub card and deep links.
   // Labor — daily labor review. GMs review their store's numbers against
   // chart and explain misses; DO+ get the district rollup. Backend
   // (labor.js) enforces scope; nav is wide so shift managers see it too.
@@ -139,6 +140,9 @@ export const NAV: NavItem[] = [
   { to: "/admin/manuals", label: "Manuals Admin", icon: BookMarked,  roles: ["rvp"] }, // vp/coo/admin: System Settings
   { to: "/resources",   label: "Resources",   icon: BookOpen,        roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/team",        label: "My Team",     icon: Users,           roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // GM Roster — SDO/RVP edit their scope's GM names here; vp/coo/admin reach it
+  // via System Settings, so the sidebar entry is scoped to the lower roles.
+  { to: "/admin/gm-roster", label: "GM Roster", icon: BookUser,      roles: ["sdo", "rvp"] },
   { to: "/my-stores",   label: "My Stores",   icon: Building2,       roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll", "fbc"] },
   { to: "/admin/system-settings", label: "System Settings", icon: Settings, roles: ["vp", "coo", "admin"] },
   // Org Admin, GM Roster, Stay-Logged-In Links, KPI Dashboard, Labor Rollup,
@@ -224,7 +228,6 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/admin/ranking": "OPERATIONS",
   "/coo-map": "OPERATIONS",
   "/territory-map": "OPERATIONS",
-  "/visit": "OPERATIONS",
   "/labor-v2": "OPERATIONS",
   "/admin/cash-management": "OPERATIONS",
   "/pl": "OPERATIONS",
@@ -247,7 +250,8 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/admin/system-settings": "ADMIN",
   "/admin/org": "ADMIN",
   "/admin/bulk-attributes": "ADMIN",
-  "/admin/gm-roster": "ADMIN",
+  // GM Roster's sidebar entry is SDO/RVP-only and sits with the People tools.
+  "/admin/gm-roster": "PEOPLE",
   "/admin/access-links": "ADMIN",
   "/admin/feature-flags": "ADMIN",
   "/admin/role-access": "ADMIN",

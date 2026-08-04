@@ -13,6 +13,7 @@ import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
+import { fiscalInfo, fiscalWeekRange } from "@/lib/fiscal";
 import { useAuth } from "@/auth/AuthProvider";
 import { MissTrackerExport } from "@/modules/labor/MissTrackerExport";
 import { fetchLaborV2Team, fetchLaborFile, fetchMissTracker } from "./api";
@@ -27,8 +28,6 @@ const fmtSignedUSD0 = (v: number | null) =>
 const fmtSignedHrs = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(Math.round(v)).toLocaleString("en-US")}`);
 const fmtRate2 = (v: number | null) => (v == null ? "—" : `+${v.toFixed(2)}`); // Hrs/Unit: per-store avg of over-stores, 2 dp (negatives hidden upstream)
 const fmtHrs = (v: number | null) => (v == null ? "—" : Math.round(v).toLocaleString("en-US"));
-// Signed 1-dp hours-over-chart, matching the workbook's "Hrs Over" column.
-const fmtHrsOver = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toFixed(1)}`);
 const fmtDate = (s: string | null) =>
   s ? new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "—";
 
@@ -38,6 +37,29 @@ const isOver = (b: TeamBand | null | undefined) => (b?.status === "over" ? true 
 const LEVEL_ORDER: TeamDisplayLevel[] = ["region", "area", "district", "store"];
 const LEVEL_LABEL: Record<TeamDisplayLevel, string> = { region: "Region", area: "Market", district: "District", store: "Stores" };
 const childOf = (l: TeamDisplayLevel): TeamDisplayLevel | null => LEVEL_ORDER[LEVEL_ORDER.indexOf(l) + 1] ?? null;
+
+const PERIOD_LABEL: Record<LaborPeriod, string> = { day: "Day", wtd: "WTD", ptd: "PTD" };
+const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+// Recent fiscal weeks for the "previous weeks" picker: this week (latest data)
+// plus the prior ~10 completed weeks, each keyed by its week-ending date so the
+// backend can anchor the rollup on it (its WTD covers the whole week).
+function recentWeekOptions(): { value: string; label: string }[] {
+  const fi = fiscalInfo(new Date());
+  const cur = fi?.fiscalWeek ?? null;
+  const opts = [{ value: "", label: "This week (latest)" }];
+  if (!cur) return opts;
+  for (let w = cur - 1; w >= Math.max(1, cur - 10); w--) {
+    const r = fiscalWeekRange(w);
+    if (!r) continue;
+    const info = fiscalInfo(r.end);
+    opts.push({
+      value: ymd(r.end),
+      label: `P${info?.period ?? "?"} W${info?.weekInPeriod ?? "?"} · ending ${r.end.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`,
+    });
+  }
+  return opts;
+}
 
 type Filter = "all" | "over" | "due";
 type SortKey = "name" | "day" | "wtd" | "ptd" | "var" | "over" | "hrsover" | "sched" | "actual" | "ot" | "actsch" | "status";
@@ -97,11 +119,13 @@ export function LaborV2TeamPage() {
   const [path, setPath] = useState<{ level: TeamDisplayLevel; name: string }[]>([]);
   const [filter, setFilter] = useState<Filter>("all");
   const [sort, setSort] = useState<{ key: SortKey; dir: "asc" | "desc" }>({ key: "var", dir: "desc" });
-  const [period, setPeriod] = useState<LaborPeriod>("day"); // mobile cards: which period headlines
+  const [period, setPeriod] = useState<LaborPeriod>("day"); // Day / WTD / PTD view
+  const [weekEnd, setWeekEnd] = useState<string>(""); // "" = this week (latest); else a past week-ending date
   const [shareDraft, setShareDraft] = useState<string | null>(null);
   const [wbBusy, setWbBusy] = useState(false);
+  const weekOptions = useMemo(() => recentWeekOptions(), []);
 
-  const q = useQuery({ queryKey: ["labor-v2-team"], queryFn: () => fetchLaborV2Team(), staleTime: 5 * 60_000, refetchOnWindowFocus: true, refetchInterval: 10 * 60_000 });
+  const q = useQuery({ queryKey: ["labor-v2-team", weekEnd], queryFn: () => fetchLaborV2Team(weekEnd || undefined), staleTime: 5 * 60_000, refetchOnWindowFocus: !weekEnd, refetchInterval: weekEnd ? false : 10 * 60_000 });
   const data = q.data;
   const t = data?.totals ?? null;
   const missing = data?.missing ?? [];
@@ -174,35 +198,6 @@ export function LaborV2TeamPage() {
     if (rows.length > cap) out.push(`…and ${rows.length - cap} more`);
     return out.join("\n");
   }
-  // Per-store Hours Over Chart (Day / WTD / PTD) with company numbers, formatted
-  // for a WhatsApp paste. Covers every store in the current scope (the whole
-  // region/market/district drilled into), sorted by PTD hours over — worst first.
-  function buildHoursOverText(): string {
-    if (!data || !t) return "";
-    const scope = path.length ? path.map((c) => c.name).join(" › ") : "All my stores";
-    const stores = [...scopedStores].sort(
-      (a, b) => (b.ptd.hours_over_chart ?? -Infinity) - (a.ptd.hours_over_chart ?? -Infinity),
-    );
-    const out: string[] = [
-      "*SOAR Labor — Hours Over Chart*",
-      `${fmtDate(data.date)} · ${scope} · ${stores.length} stores`,
-      `Totals — Day ${fmtHrsOver(t.day.hours_over_chart)} · WTD ${fmtHrsOver(t.wtd.hours_over_chart)} · PTD ${fmtHrsOver(t.ptd.hours_over_chart)}`,
-      "",
-    ];
-    for (const s of stores) {
-      out.push(
-        `#${s.store_number} ${s.store_name} — Day ${fmtHrsOver(s.day.hours_over_chart)} · WTD ${fmtHrsOver(s.wtd.hours_over_chart)} · PTD ${fmtHrsOver(s.ptd.hours_over_chart)}`,
-      );
-    }
-    return out.join("\n");
-  }
-  async function copyHoursOver() {
-    const text = buildHoursOverText();
-    if (!text) return;
-    try { await navigator.clipboard.writeText(text); toast.push("Hours-over copied — paste into WhatsApp.", "success"); }
-    catch { setShareDraft(text); toast.push("Couldn't copy automatically — copy from the box.", "info"); }
-  }
-
   function openShare() { setShareDraft(buildShareText()); }
   function shareToWhatsApp() {
     if (shareDraft == null) return;
@@ -248,11 +243,6 @@ export function LaborV2TeamPage() {
               </Button>
             )}
             {t && (
-              <Button variant="secondary" size="sm" onClick={copyHoursOver}>
-                <Copy className="mr-1 h-3.5 w-3.5" /> Copy hrs over
-              </Button>
-            )}
-            {t && (
               <Button variant="secondary" size="sm" onClick={openShare}>
                 <Share2 className="mr-1 h-3.5 w-3.5" /> Share
               </Button>
@@ -286,6 +276,32 @@ export function LaborV2TeamPage() {
           className="w-full resize-y rounded-lg border-0 bg-zinc-50 p-3 font-mono text-xs text-zinc-800 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
         />
       </Modal>
+
+      {/* View controls — pick a past week + the Day / WTD / PTD view. */}
+      <div className="mb-4 flex flex-wrap items-center gap-3">
+        <label className="inline-flex items-center gap-2 text-sm text-zinc-600">
+          <span className="font-medium">Week</span>
+          <select
+            value={weekEnd}
+            onChange={(e) => setWeekEnd(e.target.value)}
+            className="rounded-md border-0 bg-white px-3 py-1.5 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+          >
+            {weekOptions.map((o) => <option key={o.value || "latest"} value={o.value}>{o.label}</option>)}
+          </select>
+        </label>
+        <div className="inline-flex rounded-md ring-1 ring-inset ring-zinc-200">
+          {(["day", "wtd", "ptd"] as LaborPeriod[]).map((p) => (
+            <button key={p} onClick={() => setPeriod(p)}
+              className={cn("px-3 py-1.5 text-sm font-semibold first:rounded-l-md last:rounded-r-md",
+                period === p ? "bg-accent text-white" : "text-zinc-600 hover:bg-zinc-50")}>
+              {PERIOD_LABEL[p]}
+            </button>
+          ))}
+        </div>
+        {weekEnd && (
+          <span className="text-xs text-zinc-400">Past week — WTD covers the full week; Day is that week's last captured day.</span>
+        )}
+      </div>
 
       {/* Level tabs (jump) — drill into a row to go deeper */}
       {levelTabs.length > 0 && (
@@ -356,16 +372,9 @@ export function LaborV2TeamPage() {
               )}
             </div>
 
-            {/* Mobile controls: period + sort (the table header is desktop-only) */}
-            <div className="flex items-center justify-between gap-2 border-b border-zinc-100 px-3 py-2 lg:hidden">
-              <div className="inline-flex rounded-md ring-1 ring-inset ring-zinc-200 text-xs">
-                {(["day", "wtd", "ptd"] as LaborPeriod[]).map((p) => (
-                  <button key={p} onClick={() => setPeriod(p)}
-                    className={cn("px-3 py-1 font-semibold uppercase first:rounded-l-md last:rounded-r-md", period === p ? "bg-accent text-white" : "text-zinc-500")}>
-                    {p === "day" ? "Day" : p.toUpperCase()}
-                  </button>
-                ))}
-              </div>
+            {/* Mobile controls: sort (period + week live in the toolbar above;
+                the table header is desktop-only). */}
+            <div className="flex items-center justify-end gap-2 border-b border-zinc-100 px-3 py-2 lg:hidden">
               <select
                 value={`${sort.key}:${sort.dir}`}
                 onChange={(e) => { const [key, dir] = e.target.value.split(":"); setSort({ key: key as SortKey, dir: dir as "asc" | "desc" }); }}
@@ -399,14 +408,14 @@ export function LaborV2TeamPage() {
                 </div>
                 <div className="divide-y divide-zinc-100">
                   {summary && (
-                    <SummaryRow name={summary.name} leader={summary.leader} storeCount={summary.storeCount} storesOver={summary.storesOver} notesDue={summary.notesDue} r={summary} />
+                    <SummaryRow name={summary.name} leader={summary.leader} storeCount={summary.storeCount} storesOver={summary.storesOver} notesDue={summary.notesDue} r={summary} period={period} />
                   )}
                   {rows.length === 0 ? (
                     <div className="p-8 text-center text-sm text-zinc-500">{isStore ? "No stores match this filter." : "Nothing here yet."}</div>
                   ) : isStore ? (
-                    (rows as TeamStore[]).map((s) => <StoreRow key={s.store_number} s={s} />)
+                    (rows as TeamStore[]).map((s) => <StoreRow key={s.store_number} s={s} period={period} />)
                   ) : (
-                    (rows as TeamGroup[]).map((g) => <GroupRow key={g.name} g={g} onDrill={() => drillInto(g.name)} />)
+                    (rows as TeamGroup[]).map((g) => <GroupRow key={g.name} g={g} onDrill={() => drillInto(g.name)} period={period} />)
                   )}
                 </div>
               </div>
@@ -453,26 +462,31 @@ function SortTh({ label, k, sort, onSort, className }: {
 }
 
 // The right-aligned metric columns (Day/WTD/PTD %, Var, $ Over, Hrs/Unit, then
-// Sched/Actual/OT/Act−Sch), shared by group, store, and summary rows.
-function BandCells({ r }: { r: { day: TeamBand; wtd: TeamBand; ptd: TeamBand } }) {
-  const over = r.day.status === "over";
+// Sched/Actual/OT/Act−Sch), shared by group, store, and summary rows. The
+// selected period drives the bolded %-column and the derived Var/$ Over/Hrs/
+// Sched-Actual figures; all three %-columns stay visible for context.
+function BandCells({ r, period }: { r: { day: TeamBand; wtd: TeamBand; ptd: TeamBand }; period: LaborPeriod }) {
+  const b = r[period];
+  const over = b.status === "over";
+  const pctCls = (active: boolean) =>
+    active ? cn("text-sm font-bold", over ? "text-red-600" : "text-emerald-600") : "text-xs text-zinc-500";
   return (
     <>
-      <span className={cn("w-16 shrink-0 text-right text-sm font-bold tabular-nums", over ? "text-red-600" : "text-emerald-600")}>{fmtPctPts(r.day.labor_pct)}</span>
-      <span className="w-14 shrink-0 text-right text-xs tabular-nums text-zinc-500">{fmtPctPts(r.wtd.labor_pct)}</span>
-      <span className="w-14 shrink-0 text-right text-xs tabular-nums text-zinc-500">{fmtPctPts(r.ptd.labor_pct)}</span>
-      <span className={cn("w-14 shrink-0 text-right text-xs tabular-nums", over ? "text-red-700" : "text-zinc-500")}>{fmtPts(r.day.variance_pts)}</span>
-      <span className={cn("w-20 shrink-0 text-right text-xs tabular-nums", over ? "text-red-700" : "text-zinc-500")}>{fmtSignedUSD0(r.day.dollars_over_chart)}</span>
-      <span className="w-16 shrink-0 text-right text-xs tabular-nums text-zinc-500">{fmtRate2(r.day.hours_over_chart)}</span>
-      <HoursCells band={r.day} />
+      <span className={cn("w-16 shrink-0 text-right tabular-nums", pctCls(period === "day"))}>{fmtPctPts(r.day.labor_pct)}</span>
+      <span className={cn("w-14 shrink-0 text-right tabular-nums", pctCls(period === "wtd"))}>{fmtPctPts(r.wtd.labor_pct)}</span>
+      <span className={cn("w-14 shrink-0 text-right tabular-nums", pctCls(period === "ptd"))}>{fmtPctPts(r.ptd.labor_pct)}</span>
+      <span className={cn("w-14 shrink-0 text-right text-xs tabular-nums", over ? "text-red-700" : "text-zinc-500")}>{fmtPts(b.variance_pts)}</span>
+      <span className={cn("w-20 shrink-0 text-right text-xs tabular-nums", over ? "text-red-700" : "text-zinc-500")}>{fmtSignedUSD0(b.dollars_over_chart)}</span>
+      <span className="w-16 shrink-0 text-right text-xs tabular-nums text-zinc-500">{fmtRate2(b.hours_over_chart)}</span>
+      <HoursCells band={b} />
     </>
   );
 }
 
 // A non-clickable "total" row for the current scope (whole org at root, or the
 // drilled node), shown above its children.
-function SummaryRow({ name, leader, storeCount, storesOver, notesDue, r }: {
-  name: string; leader: string | null; storeCount: number; storesOver: number; notesDue: number; r: { day: TeamBand; wtd: TeamBand; ptd: TeamBand };
+function SummaryRow({ name, leader, storeCount, storesOver, notesDue, r, period }: {
+  name: string; leader: string | null; storeCount: number; storesOver: number; notesDue: number; r: { day: TeamBand; wtd: TeamBand; ptd: TeamBand }; period: LaborPeriod;
 }) {
   return (
     <div className="flex items-center gap-3 border-b-2 border-zinc-200 bg-zinc-50/70 px-4 py-3">
@@ -481,7 +495,7 @@ function SummaryRow({ name, leader, storeCount, storesOver, notesDue, r }: {
         <div className="truncate text-sm font-bold text-midnight dark:text-night-ink">{name}</div>
         <div className="truncate text-xs text-zinc-500">{leader ? `${leader} · ` : ""}{storeCount} store{storeCount === 1 ? "" : "s"}</div>
       </div>
-      <BandCells r={r} />
+      <BandCells r={r} period={period} />
       <span className="ml-2 w-[92px] shrink-0 text-right text-[11px] font-semibold tabular-nums text-zinc-500">{storesOver} over{notesDue ? ` · ${notesDue} due` : ""}</span>
     </div>
   );
@@ -565,8 +579,8 @@ function MobileRow({ row, isStore, period, summary, onDrill }: {
   );
 }
 
-function GroupRow({ g, onDrill }: { g: TeamGroup; onDrill: () => void }) {
-  const over = g.day.status === "over";
+function GroupRow({ g, onDrill, period }: { g: TeamGroup; onDrill: () => void; period: LaborPeriod }) {
+  const over = g[period].status === "over";
   return (
     <button onClick={onDrill} className="flex w-full items-center gap-3 p-4 text-left hover:bg-zinc-50">
       <span className={cn("h-10 w-1 shrink-0 rounded-full", over ? "bg-sonic" : "bg-transparent")} />
@@ -577,7 +591,7 @@ function GroupRow({ g, onDrill }: { g: TeamGroup; onDrill: () => void }) {
         </div>
         <div className="truncate text-xs text-zinc-500">{g.leader || "—"} · {g.storeCount} store{g.storeCount === 1 ? "" : "s"}</div>
       </div>
-      <BandCells r={g} />
+      <BandCells r={g} period={period} />
       <span className="ml-2 w-[92px] shrink-0 text-right text-[11px] font-semibold tabular-nums text-zinc-500">
         {g.storesOver} over{g.notesDue ? ` · ${g.notesDue} due` : ""}
       </span>
@@ -585,7 +599,7 @@ function GroupRow({ g, onDrill }: { g: TeamGroup; onDrill: () => void }) {
   );
 }
 
-function StoreRow({ s }: { s: TeamStore }) {
+function StoreRow({ s, period }: { s: TeamStore; period: LaborPeriod }) {
   const [open, setOpen] = useState(false);
   const over = s.status === "over";
   const label = s.note_due ? "Note due" : s.explained ? "Explained" : over ? "Over" : "On chart";
@@ -601,7 +615,7 @@ function StoreRow({ s }: { s: TeamStore }) {
             {[s.gm_name ? `GM ${s.gm_name}` : null, s.do_name ? `DO ${s.do_name}` : null].filter(Boolean).join(" · ") || "—"}
           </div>
         </div>
-        <BandCells r={s} />
+        <BandCells r={s} period={period} />
         <span className={cn("ml-2 inline-flex w-[92px] shrink-0 items-center justify-end gap-1.5 rounded-full px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide", chip)}>
           <span className={cn("h-1.5 w-1.5 rounded-full", dot)} />
           {label}

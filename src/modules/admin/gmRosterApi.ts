@@ -40,10 +40,18 @@ export interface GmRosterResponse {
   ok: true;
   rows: GmRosterRow[];
   summary: Record<ReconcileStatus, number>;
+  can_import: boolean; // bulk paste importer (org-wide roles only)
+  can_edit: boolean;   // inline single-name edit (everyone who can see the list)
 }
 
 export function fetchGmRoster(): Promise<GmRosterResponse> {
   return req(`${FN}?action=list`);
+}
+
+// Edit one store's roster GM name. "Open" / "In Training" (or blank) set the
+// matching status, mirroring the importer.
+export function setGmRosterName(storeNumber: string, gmName: string): Promise<{ ok: true; store_number: string; gm_name: string | null; status: string }> {
+  return req(`${FN}?action=set-name`, { method: "POST", body: JSON.stringify({ store_number: storeNumber, gm_name: gmName }) });
 }
 
 export interface GmRosterImportRow {

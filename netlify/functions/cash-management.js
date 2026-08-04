@@ -168,13 +168,22 @@ async function logCash(supa, entry) {
   }
 }
 
+// Cash Management is Sonic-only — Little Caesars (Apricus) stores don't deposit
+// through this module. Same brand guard the other Sonic-scoped functions use:
+// keep Sonic + un-branded rows, drop Apricus.
+function excludeApricus(q) {
+  return q.or("brand.eq.sonic,brand.is.null");
+}
+
 async function storeRowsForUser(supa, profile) {
   const role = String(profile.role || "").toLowerCase();
   if (ORG_WIDE_READ.has(role)) {
-    const { data } = await supa
-      .from("stores")
-      .select("id, number, name, district_id")
-      .eq("is_active", true)
+    const { data } = await excludeApricus(
+      supa
+        .from("stores")
+        .select("id, number, name, district_id")
+        .eq("is_active", true),
+    )
       .order("number")
       .limit(1000);
     return { all: true, rows: data || [] };
@@ -204,12 +213,13 @@ async function storeRowsForUser(supa, profile) {
     for (const s of data || []) storeIds.add(s.id);
   }
   if (storeIds.size === 0) return { all: false, rows: [] };
-  const { data: rows } = await supa
-    .from("stores")
-    .select("id, number, name, district_id")
-    .in("id", Array.from(storeIds))
-    .eq("is_active", true)
-    .order("number");
+  const { data: rows } = await excludeApricus(
+    supa
+      .from("stores")
+      .select("id, number, name, district_id")
+      .in("id", Array.from(storeIds))
+      .eq("is_active", true),
+  ).order("number");
   return { all: false, rows: rows || [] };
 }
 

@@ -83,9 +83,78 @@ async function pullWeather(lat, lng) {
   return { current, forecast };
 }
 
-// Run a full sync against the given service-role supabase client.
+// ── Open-Meteo fallback (no API key) ─────────────────────────────────────────
+// Keeps daily recording alive whenever the Google Weather key is unset or a
+// Google pull fails — the same free provider the historical backfill uses. Maps
+// WMO weather codes to plain text (Open-Meteo has no condition string or icon).
+const WMO = {
+  0: "Clear", 1: "Mainly clear", 2: "Partly cloudy", 3: "Overcast",
+  45: "Fog", 48: "Rime fog", 51: "Light drizzle", 53: "Drizzle", 55: "Heavy drizzle",
+  56: "Freezing drizzle", 57: "Freezing drizzle", 61: "Light rain", 63: "Rain", 65: "Heavy rain",
+  66: "Freezing rain", 67: "Freezing rain", 71: "Light snow", 73: "Snow", 75: "Heavy snow",
+  77: "Snow grains", 80: "Rain showers", 81: "Rain showers", 82: "Heavy rain showers",
+  85: "Snow showers", 86: "Snow showers", 95: "Thunderstorm", 96: "Thunderstorm w/ hail", 99: "Thunderstorm w/ hail",
+};
+
+async function pullOpenMeteoForecast(lat, lng) {
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}`
+    + `&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m`
+    + `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,weather_code`
+    + `&temperature_unit=fahrenheit&wind_speed_unit=mph&precipitation_unit=inch&timezone=auto&forecast_days=${FORECAST_DAYS}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Open-Meteo ${res.status}: ${String(await res.text().catch(() => "")).slice(0, 160)}`);
+  const j = await res.json();
+  const c = j?.current || {};
+  const code = num(c.weather_code);
+  const currentParsed = {
+    temp_f: num(c.temperature_2m),
+    feels_like_f: num(c.apparent_temperature),
+    condition: code != null ? (WMO[code] ?? null) : null,
+    condition_type: code != null ? `WMO_${code}` : null,
+    icon_uri: null,
+    humidity_pct: num(c.relative_humidity_2m),
+    wind_mph: num(c.wind_speed_10m),
+    precip_prob_pct: null,
+  };
+  const d = j?.daily || {};
+  const t = arr(d.time), hi = arr(d.temperature_2m_max), lo = arr(d.temperature_2m_min);
+  const pr = arr(d.precipitation_sum), pp = arr(d.precipitation_probability_max), wc = arr(d.weather_code);
+  const forecastParsed = t.map((date, i) => {
+    const dcode = num(wc[i]);
+    return {
+      date,
+      hi_f: num(hi[i]),
+      lo_f: num(lo[i]),
+      condition: dcode != null ? (WMO[dcode] ?? null) : null,
+      icon: null,
+      precip_prob: num(pp[i]),
+      precip_in: num(pr[i]),
+    };
+  });
+  return { currentParsed, forecastParsed, raw: { source: "open-meteo-forecast", current: j?.current ?? null } };
+}
+
+// One observation for a location: Google when its key is set (icons + rich
+// conditions), otherwise Open-Meteo. If Google errors, fall back to Open-Meteo
+// so a daily row is still recorded rather than lost.
+async function getObservation(lat, lng) {
+  if (WEATHER_KEY) {
+    try {
+      const { current, forecast } = await pullWeather(lat, lng);
+      return { currentParsed: parseCurrent(current), forecastParsed: parseForecast(forecast), raw: { current, forecast }, source: "google" };
+    } catch (e) {
+      const om = await pullOpenMeteoForecast(lat, lng);
+      return { ...om, source: "open-meteo", raw: { ...om.raw, google_error: e.message } };
+    }
+  }
+  const om = await pullOpenMeteoForecast(lat, lng);
+  return { ...om, source: "open-meteo" };
+}
+
+// Run a full sync against the given service-role supabase client. Records daily
+// even without a Google key (Open-Meteo fallback), so weather never silently
+// stops accumulating history.
 export async function syncWeather(supa) {
-  if (!WEATHER_KEY) return { ok: false, reason: "no_key", locations: 0, recorded: 0, failed: 0 };
 
   const { data: stores } = await supa
     .from("stores").select("city, state, latitude, longitude").eq("is_active", true);
@@ -127,23 +196,29 @@ export async function syncWeather(supa) {
   if (selErr) return { ok: false, reason: "db", error: `weather_locations read failed: ${selErr.message}`, locations: 0, recorded: 0, failed: 0 };
   const locById = new Map((locRows || []).map((r) => [`${r.city}|${r.state}`, r]));
 
-  const businessDate = new Date().toISOString().slice(0, 10);
+  const utcToday = new Date().toISOString().slice(0, 10);
   let recorded = 0, failed = 0, firstError = null;
+  const sources = { google: 0, "open-meteo": 0 };
   await mapLimit(locations, 12, async (l) => {
     const row = locById.get(`${l.city}|${l.state}`);
     if (!row) { failed++; return; }
     try {
-      const { current, forecast } = await pullWeather(row.latitude, row.longitude);
+      const { currentParsed, forecastParsed, raw, source } = await getObservation(row.latitude, row.longitude);
+      // Stamp the day from the forecast's own day-0 (the location-local "today")
+      // so the per-day "actual" hi/lo — derived by matching forecast.date to
+      // business_date — always resolves, instead of drifting on the UTC clock.
+      const businessDate = forecastParsed.find((f) => f.date)?.date || utcToday;
       const { error: insErr } = await supa.from("weather_observations").insert({
         location_id: row.id,
         business_date: businessDate,
-        ...parseCurrent(current),
-        forecast: parseForecast(forecast),
-        raw: { current, forecast },
+        ...currentParsed,
+        forecast: forecastParsed,
+        raw,
       });
       if (insErr) { failed++; if (!firstError) firstError = insErr.message; return; }
       await supa.from("weather_locations").update({ last_synced_at: new Date().toISOString() }).eq("id", row.id);
       recorded++;
+      sources[source] = (sources[source] || 0) + 1;
     } catch (e) {
       console.warn(`[weather] ${l.label}: ${e.message}`);
       failed++;
@@ -151,7 +226,7 @@ export async function syncWeather(supa) {
     }
   });
 
-  return { ok: true, locations: locations.length, recorded, failed, error: recorded === 0 ? firstError : null };
+  return { ok: true, locations: locations.length, recorded, failed, sources, error: recorded === 0 ? firstError : null };
 }
 
 // Backfill historical daily weather from Open-Meteo's free archive (no key) into
