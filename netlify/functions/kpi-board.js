@@ -173,6 +173,39 @@ export const handler = async (event) => {
 
     const params = event.queryStringParameters || {};
 
+    // Admin diagnostic: dump the vs-LY / comparable fields from the latest raw
+    // snapshot so we can wire the board + ranker to Skunkworks' own comparable
+    // figure. Read-only; matches keys by name so we don't have to guess.
+    if (event.httpMethod === "GET" && params.action === "vsly-probe") {
+      if (user.role !== "admin") return respond(403, { error: "Only an admin can run this." });
+      const { data: snap } = await supa.from("kpi_snapshots")
+        .select("central_date, central_hour, payload").order("captured_at", { ascending: false }).limit(1).maybeSingle();
+      if (!snap) return respond(200, { note: "no snapshot captured yet" });
+      const rd = snap.payload?.rawData || {};
+      const rx = /compar|yoy|last.?year|previous.?year|prev.?year|net.?sales/i;
+      const pick = (row) => {
+        if (!row || typeof row !== "object") return null;
+        const out = {};
+        for (const k of Object.keys(row)) if (rx.test(k)) out[k] = row[k];
+        return out;
+      };
+      const isStore = (r) => r?.storeName && r.storeName !== "Total";
+      const day = Array.isArray(rd.businessDateData) ? rd.businessDateData : [];
+      const wtdKey = ["weekToDateData", "weekToDate", "wtdData", "businessWeekData", "weekData", "wtd"].find((k) => Array.isArray(rd[k]));
+      const wtd = wtdKey ? rd[wtdKey] : [];
+      const totalDay = day.find((r) => r?.storeName === "Total") || null;
+      const storeDay = day.find(isStore) || null;
+      const storeWtd = (wtd || []).find(isStore) || null;
+      return respond(200, {
+        snapshot: { date: snap.central_date, hour: snap.central_hour },
+        rawData_sections: Object.keys(rd),
+        wtd_section_key: wtdKey || null,
+        total_daily: pick(totalDay),
+        store_daily: { name: storeDay?.storeName ?? null, fields: pick(storeDay) },
+        store_wtd: { name: storeWtd?.storeName ?? null, fields: pick(storeWtd) },
+      });
+    }
+
     // Admin: set/clear a metric's target override.
     if (event.httpMethod === "POST" && params.action === "set-target") {
       if (user.role !== "admin") return respond(403, { error: "Only an admin can change targets." });
