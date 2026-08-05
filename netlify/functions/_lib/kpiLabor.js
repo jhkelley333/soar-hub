@@ -44,6 +44,9 @@ export function extractLaborRows(payload) {
       store_number: number,
       net_sales: numOrNull(r.netSales),
       prev_year_net_sales: numOrNull(r.previousYearNetSales),
+      // Comparable (same-store) bases — dollars, despite the feed's names (0277).
+      net_sales_comp: numOrNull(r.netSalesForComparisonPercentage),
+      prev_year_net_sales_comp: numOrNull(r.previousYearNetSalesForComparisonPercentage),
       labor_cost: numOrNull(r.laborCost),
       labor_hours: numOrNull(r.laborHours),
       overtime_hours: numOrNull(r.overTimeHours),
@@ -67,6 +70,8 @@ export function extractLaborRows(payload) {
       // Week to Date band (labor_hours feeds the avg-wage → hours-over calc)
       wtd_net_sales: numOrNull(w?.netSales),
       wtd_prev_year_net_sales: numOrNull(w?.previousYearNetSales),
+      wtd_net_sales_comp: numOrNull(w?.netSalesForComparisonPercentage),
+      wtd_prev_year_net_sales_comp: numOrNull(w?.previousYearNetSalesForComparisonPercentage),
       wtd_labor_cost: numOrNull(w?.laborCost),
       wtd_labor_hours: numOrNull(w?.laborHours),
       wtd_labor_pct: numOrNull(w?.laborPercentage),
@@ -85,6 +90,8 @@ export function extractLaborRows(payload) {
       // Period to Date band
       ptd_net_sales: numOrNull(p?.netSales),
       ptd_prev_year_net_sales: numOrNull(p?.previousYearNetSales),
+      ptd_net_sales_comp: numOrNull(p?.netSalesForComparisonPercentage),
+      ptd_prev_year_net_sales_comp: numOrNull(p?.previousYearNetSalesForComparisonPercentage),
       ptd_labor_cost: numOrNull(p?.laborCost),
       ptd_labor_hours: numOrNull(p?.laborHours),
       ptd_labor_pct: numOrNull(p?.laborPercentage),
@@ -135,10 +142,14 @@ const TICKET_COLS_0272 = [
   "ptd_total_ticket_time", "ptd_on_time_quantity",
   // average_ticket_time added by 0275 — same strip/retry fallback.
   "average_ticket_time", "wtd_average_ticket_time", "ptd_average_ticket_time",
+  // comparable sales bases added by 0277.
+  "net_sales_comp", "prev_year_net_sales_comp",
+  "wtd_net_sales_comp", "wtd_prev_year_net_sales_comp",
+  "ptd_net_sales_comp", "ptd_prev_year_net_sales_comp",
 ];
 
 export function isPre0272Error(error) {
-  return !!error && /column/i.test(String(error.message)) && /ticket_time|on_time_quantity/.test(String(error.message));
+  return !!error && /column/i.test(String(error.message)) && /ticket_time|on_time_quantity|net_sales_comp/.test(String(error.message));
 }
 
 export function stripTicketCols(rows) {

@@ -77,7 +77,10 @@ function bandInput(r, p, ix, fcTarget) {
   const otNum = Number(r[p + "on_time_numerator"]);
   return {
     sales: numOrNull(r[p + "net_sales"]),
-    lySales: numOrNull(r[p + "prev_year_net_sales"]),
+    // vs-LY uses Skunkworks' same-store COMPARABLE bases (0277) so the % matches
+    // the feed exactly; falls back to all-store if the comp columns aren't there.
+    lySales: numOrNull(r[p + "prev_year_net_sales_comp"]) ?? numOrNull(r[p + "prev_year_net_sales"]),
+    compSales: numOrNull(r[p + "net_sales_comp"]) ?? numOrNull(r[p + "net_sales"]),
     tickets: numOrNull(r[p + "tickets"]),
     lyTickets: numOrNull(r[p + "prev_year_tickets"]),
     custCount: numOrNull(r[p + "tickets"]),
