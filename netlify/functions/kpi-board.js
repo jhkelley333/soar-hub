@@ -54,6 +54,11 @@ function laborMetrics(rows, p) {
   const otNum = sumOf(rows, `${p}on_time_numerator`);
   const otDen = sumOf(rows, `${p}on_time_denominator`);
   const lyS = sumOf(rows, `${p}prev_year_net_sales`);
+  // Comparable (same-store) bases (0277) — the feed's vs-LY excludes non-
+  // comparable/new stores; use them when present, else fall back to all-store.
+  const compSales = sumOf(rows, `${p}net_sales_comp`);
+  const compLy = sumOf(rows, `${p}prev_year_net_sales_comp`);
+  const hasComp = compLy > 0;
   const ttTotal = sumOf(rows, `${p}total_ticket_time`);
   const ttQty = sumOf(rows, `${p}on_time_quantity`);
   // Avg Ticket Time = the feed's averageTicketTime, ticket-weighted across the
@@ -64,9 +69,9 @@ function laborMetrics(rows, p) {
   let laborTarget = weightedMean(rows, `${p}target_labor_pct`, `${p}net_sales`);
   if (laborTarget != null && laborTarget < 1) laborTarget *= 100;
   return {
-    sales_vs_ly: lyS ? ((sales - lyS) / lyS) * 100 : null,
-    sales_dollars: rows.length ? sales : null,
-    ly_dollars: rows.length ? lyS : null,
+    sales_vs_ly: hasComp ? ((compSales - compLy) / compLy) * 100 : (lyS ? ((sales - lyS) / lyS) * 100 : null),
+    sales_dollars: rows.length ? (hasComp ? compSales : sales) : null,
+    ly_dollars: rows.length ? (hasComp ? compLy : lyS) : null,
     labor_pct: sales ? (cost / sales) * 100 : null,
     labor_target: laborTarget,
     splh: div(sales, hours),
