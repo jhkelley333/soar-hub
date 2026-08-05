@@ -69,9 +69,12 @@ function laborMetrics(rows, p) {
   let laborTarget = weightedMean(rows, `${p}target_labor_pct`, `${p}net_sales`);
   if (laborTarget != null && laborTarget < 1) laborTarget *= 100;
   return {
+    // vs-LY % on the comparable (same-store) basis to match the feed; the $
+    // headline stays all-store true revenue so "sales" is the same number on
+    // the ranker, the board, and the feed's netSales/previousYearNetSales.
     sales_vs_ly: hasComp ? ((compSales - compLy) / compLy) * 100 : (lyS ? ((sales - lyS) / lyS) * 100 : null),
-    sales_dollars: rows.length ? (hasComp ? compSales : sales) : null,
-    ly_dollars: rows.length ? (hasComp ? compLy : lyS) : null,
+    sales_dollars: rows.length ? sales : null,
+    ly_dollars: rows.length ? lyS : null,
     labor_pct: sales ? (cost / sales) * 100 : null,
     labor_target: laborTarget,
     splh: div(sales, hours),
