@@ -153,12 +153,14 @@ function computeStorePtd(st, cfg, issues) {
   // --- Sales (N/O/P/Q) ---
   r.sales = isNum(p.sales) ? p.sales : null;
   r.lySales = isNum(p.lySales) ? p.lySales : null;
-  // Comparable (same-store) current sales for the vs-LY numerator; all-store
-  // r.sales still drives labor %, SPLH, points, etc.
+  // Comparable (same-store) bases drive vs-LY ONLY; the all-store SALES/LY
+  // columns (r.sales/r.lySales) stay true revenue and feed labor %, SPLH,
+  // points. vs-LY % = feed's yoYNetSalesPercentage.
   r.compSales = isNum(p.compSales) ? p.compSales : r.sales;
-  // P = IFERROR((compN-LY)/LY, "NO LY")  (missing LY lookup or LY=0 -> "NO LY")
-  r.pctVsLy = (isNum(r.compSales) && isNum(r.lySales) && r.lySales !== 0)
-    ? (r.compSales - r.lySales) / r.lySales : 'NO LY';
+  r.compLySales = isNum(p.compLySales) ? p.compLySales : r.lySales;
+  // P = IFERROR((compCur-compLY)/compLY, "NO LY")
+  r.pctVsLy = (isNum(r.compSales) && isNum(r.compLySales) && r.compLySales !== 0)
+    ? (r.compSales - r.compLySales) / r.compLySales : 'NO LY';
   r.salesScore = bandScore(r.pctVsLy, cfg.bands.sales_vs_ly, 3); // Q: IFERROR(...,3)
 
   // --- NEW: tickets vs LY ---
@@ -289,8 +291,9 @@ function computeStoreWtd(st, cfg, issues) {
   r.sales = isNum(w.sales) ? w.sales : null;
   r.lySales = isNum(w.lySales) ? w.lySales : null;
   r.compSales = isNum(w.compSales) ? w.compSales : r.sales;
-  r.pctVsLy = (isNum(r.compSales) && isNum(r.lySales) && r.lySales !== 0)
-    ? (r.compSales - r.lySales) / r.lySales : 'NO LY';
+  r.compLySales = isNum(w.compLySales) ? w.compLySales : r.lySales;
+  r.pctVsLy = (isNum(r.compSales) && isNum(r.compLySales) && r.compLySales !== 0)
+    ? (r.compSales - r.compLySales) / r.compLySales : 'NO LY';
   r.salesScore = bandScore(r.pctVsLy, cfg.bands.sales_vs_ly, 3);
 
   r.tickets = isNum(w.tickets) ? w.tickets : null;
@@ -393,10 +396,12 @@ function aggregatePtd(name, members, opts, cfg, inputs) {
   // ENTITY tier: plain SUMIF only — the workbook entity block has NO NO-LY addition
   // (O355 is a plain SUMIF; confirmed against the P6-W5 snapshot).
   r.sales = sumBy(members, function (m) { return m.sales; });
-  r.compSales = sumBy(members, function (m) { return isNum(m.compSales) ? m.compSales : m.sales; });
   r.lySales = sumBy(members, function (m) { return m.lySales; })
+    + (tier === 'entity' ? 0 : sumBy(members, function (m) { return m.pctVsLy === 'NO LY' ? m.sales : null; }));
+  r.compSales = sumBy(members, function (m) { return isNum(m.compSales) ? m.compSales : m.sales; });
+  r.compLySales = sumBy(members, function (m) { return isNum(m.compLySales) ? m.compLySales : m.lySales; })
     + (tier === 'entity' ? 0 : sumBy(members, function (m) { return m.pctVsLy === 'NO LY' ? (isNum(m.compSales) ? m.compSales : m.sales) : null; }));
-  r.pctVsLy = (r.lySales !== 0) ? (r.compSales - r.lySales) / r.lySales : 'NO LY';
+  r.pctVsLy = (r.compLySales !== 0) ? (r.compSales - r.compLySales) / r.compLySales : 'NO LY';
   r.salesScore = bandScore(r.pctVsLy, cfg.bands.sales_vs_ly, 3);
 
   // NEW tickets rollup (mirrors the tier's LY-sales treatment)
@@ -516,9 +521,10 @@ function companyPtd(sdoRows, storeRows, cfg, inputs) {
   var wSalesSdo = function (m) { return m.sales; };
 
   r.sales = sdoSales;                                               // N = SUM(SDO)
-  r.compSales = sumBy(sdoRows, function (m) { return isNum(m.compSales) ? m.compSales : m.sales; });
   r.lySales = sumBy(sdoRows, function (m) { return m.lySales; });   // O
-  r.pctVsLy = (r.lySales !== 0) ? (r.compSales - r.lySales) / r.lySales : 'NO LY';
+  r.compSales = sumBy(sdoRows, function (m) { return isNum(m.compSales) ? m.compSales : m.sales; });
+  r.compLySales = sumBy(sdoRows, function (m) { return isNum(m.compLySales) ? m.compLySales : m.lySales; });
+  r.pctVsLy = (r.compLySales !== 0) ? (r.compSales - r.compLySales) / r.compLySales : 'NO LY';
   r.salesScore = bandScore(r.pctVsLy, cfg.bands.sales_vs_ly, undefined); // Q352 no IFERROR in wb; default n/a
   r.tickets = sumBy(sdoRows, function (m) { return m.tickets; });
   r.lyTickets = sumBy(sdoRows, function (m) { return m.lyTickets; });
@@ -609,10 +615,12 @@ function aggregateWtd(name, members, opts, cfg, inputs) {
   var wSales = function (m) { return m.sales; };
 
   r.sales = sumBy(members, function (m) { return m.sales; }); // K
-  r.compSales = sumBy(members, function (m) { return isNum(m.compSales) ? m.compSales : m.sales; });
   r.lySales = sumBy(members, function (m) { return m.lySales; })
-    + sumBy(members, function (m) { return m.pctVsLy === 'NO LY' ? (isNum(m.compSales) ? m.compSales : m.sales) : null; }); // L
-  r.pctVsLy = (r.lySales !== 0) ? (r.compSales - r.lySales) / r.lySales : 'NO LY';
+    + sumBy(members, function (m) { return m.pctVsLy === 'NO LY' ? m.sales : null; }); // L
+  r.compSales = sumBy(members, function (m) { return isNum(m.compSales) ? m.compSales : m.sales; });
+  r.compLySales = sumBy(members, function (m) { return isNum(m.compLySales) ? m.compLySales : m.lySales; })
+    + sumBy(members, function (m) { return m.pctVsLy === 'NO LY' ? (isNum(m.compSales) ? m.compSales : m.sales) : null; });
+  r.pctVsLy = (r.compLySales !== 0) ? (r.compSales - r.compLySales) / r.compLySales : 'NO LY';
   r.salesScore = bandScore(r.pctVsLy, cfg.bands.sales_vs_ly, 3);
 
   r.tickets = sumBy(members, function (m) { return m.tickets; });
@@ -688,9 +696,10 @@ function companyWtd(sdoRows, storeRows, cfg, inputs) {
   var storeSales = sumBy(storeRows, function (m) { return m.sales; });
 
   r.sales = sumBy(sdoRows, function (m) { return m.sales; });     // K = SUM(SDO)
-  r.compSales = sumBy(sdoRows, function (m) { return isNum(m.compSales) ? m.compSales : m.sales; });
   r.lySales = sumBy(sdoRows, function (m) { return m.lySales; }); // L
-  r.pctVsLy = (r.lySales !== 0) ? (r.compSales - r.lySales) / r.lySales : 'NO LY';
+  r.compSales = sumBy(sdoRows, function (m) { return isNum(m.compSales) ? m.compSales : m.sales; });
+  r.compLySales = sumBy(sdoRows, function (m) { return isNum(m.compLySales) ? m.compLySales : m.lySales; });
+  r.pctVsLy = (r.compLySales !== 0) ? (r.compSales - r.compLySales) / r.compLySales : 'NO LY';
   r.salesScore = bandScore(r.pctVsLy, cfg.bands.sales_vs_ly, 3);
   r.tickets = sumBy(sdoRows, function (m) { return m.tickets; });
   r.lyTickets = sumBy(sdoRows, function (m) { return m.lyTickets; });
