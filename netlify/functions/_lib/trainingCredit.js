@@ -19,6 +19,32 @@ function isoOf(ms) {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
 }
 
+// Blended wage per store from recent labor (~35 days): labor_cost / labor_hours.
+// Used to convert a dollar credit into the hours it relieves on the Hours Over
+// Chart, so every $ credit reduces both labor % and hours-over. Fallback $13/hr.
+const CREDIT_FALLBACK_WAGE = 13;
+async function blendedWageByStore(supa, storeSet) {
+  const out = new Map();
+  const stores = [...storeSet].map(String);
+  if (!stores.length) return out;
+  const since = isoOf(Date.now() - 35 * DAY);
+  const { data } = await supa.from("labor_v2_daily")
+    .select("store_number, labor_cost, labor_hours")
+    .in("store_number", stores).gte("business_date", since);
+  const agg = new Map();
+  for (const r of data || []) {
+    const sn = String(r.store_number);
+    const a = agg.get(sn) || { cost: 0, hours: 0 };
+    a.cost += numv(r.labor_cost); a.hours += numv(r.labor_hours);
+    agg.set(sn, a);
+  }
+  for (const sn of stores) {
+    const a = agg.get(sn);
+    out.set(sn, a && a.hours > 0 ? a.cost / a.hours : CREDIT_FALLBACK_WAGE);
+  }
+  return out;
+}
+
 // Resolve a request's weekday training days to calendar dates: each picked
 // weekday → its first occurrence on/after the start date. Returns [{date,$,hrs}].
 function creditDates(req) {
@@ -73,18 +99,19 @@ async function gmPtoDailyRate(supa) {
 // A request's PTO days → [{date, amount, hours}]. New requests carry explicit
 // vacation_days [{date}]; legacy GM rows (start/end + days_used only) credit
 // consecutive days from the start date, days_used long, capped at the end.
-function ptoCreditDates(req, rate) {
+function ptoCreditDates(req, rate, wage) {
+  const hrs = wage > 0 ? rate / wage : 0; // $ credit also relieves the Hours Over Chart
   const picked = Array.isArray(req.vacation_days)
     ? req.vacation_days.filter((d) => d && d.date).map((d) => String(d.date).slice(0, 10))
     : [];
-  if (picked.length) return picked.map((date) => ({ date, amount: rate, hours: 0 }));
+  if (picked.length) return picked.map((date) => ({ date, amount: rate, hours: hrs }));
   const startMs = parseIso(req.pto_start_date);
   if (startMs == null) return [];
   const endMs = parseIso(req.pto_end_date) ?? startMs;
   const n = Math.min(31, Math.max(0, Math.round(numv(req.days_used))));
   const out = [];
   for (let i = 0, ms = startMs; i < n && ms <= endMs; i++, ms += DAY) {
-    out.push({ date: isoOf(ms), amount: rate, hours: 0 });
+    out.push({ date: isoOf(ms), amount: rate, hours: hrs });
   }
   return out;
 }
@@ -100,10 +127,13 @@ export async function loadGmPtoCreditDates(supa, storeNumbers) {
     .eq("position", "GM")
     .not("approved_at", "is", null)
     .neq("status", "Withdrawn");
-  for (const req of data || []) {
+  const reqs = data || [];
+  if (!reqs.length) return map;
+  const wages = await blendedWageByStore(supa, new Set(reqs.map((r) => String(r.store_number))));
+  for (const req of reqs) {
     const sn = String(req.store_number);
     const arr = map.get(sn) || [];
-    for (const c of ptoCreditDates(req, rate)) arr.push(c);
+    for (const c of ptoCreditDates(req, rate, wages.get(sn) || CREDIT_FALLBACK_WAGE)) arr.push(c);
     if (arr.length) map.set(sn, arr);
   }
   return map;
@@ -134,17 +164,22 @@ export async function loadNoGmCreditDates(supa, storeNumbers) {
     .from("no_gm_credits")
     .select("store_number, start_date, end_date")
     .in("store_number", storeNumbers);
+  const recs = data || [];
+  if (!recs.length) return map;
+  const wages = await blendedWageByStore(supa, new Set(recs.map((r) => String(r.store_number))));
   const todayMs = Date.now();
-  for (const rec of data || []) {
+  for (const rec of recs) {
     const startMs = parseIso(rec.start_date);
     if (startMs == null) continue;
     // Open-ended records credit through today; dates past the queried rows
     // never match anyway (applyCreditsToRows filters per row). Safety-capped.
     const endMs = Math.min(parseIso(rec.end_date) ?? todayMs, todayMs);
     const sn = String(rec.store_number);
+    const wage = wages.get(sn) || CREDIT_FALLBACK_WAGE;
+    const dailyHours = wage > 0 ? daily / wage : 0; // $ credit also relieves Hours Over
     const arr = map.get(sn) || [];
     for (let ms = startMs, i = 0; ms <= endMs && i < 400; ms += DAY, i++) {
-      arr.push({ date: isoOf(ms), amount: daily, hours: 0 });
+      arr.push({ date: isoOf(ms), amount: daily, hours: dailyHours });
     }
     if (arr.length) map.set(sn, arr);
   }
@@ -243,7 +278,6 @@ export async function loadGmSupportCreditDates(supa, storeNumbers) {
 // store's recent blended wage (cost/hours), so both labor % and hours-over drop
 // — the same $<->hours bridge the GM support-hours credit uses.
 export const CORP_TRAINING_DEFAULT_DAILY = 176;
-const CORP_TRAINING_FALLBACK_WAGE = 13;
 
 export async function corpTrainingDailyRate(supa) {
   try {
@@ -264,8 +298,8 @@ export async function loadCorporateTrainingCreditDates(supa, storeNumbers) {
   const batches = data || [];
   if (!batches.length) return map;
 
-  // Blended wage per store from recent labor (~35 days), so the $ credit also
-  // reduces hours = $ / wage. Only look up stores that actually appear in a batch.
+  // Blended wage per store, so the $ credit also reduces hours = $ / wage. Only
+  // look up stores that actually appear in a batch.
   const relevant = new Set();
   for (const b of batches) {
     for (const s of Array.isArray(b.stores) ? b.stores : []) {
@@ -273,24 +307,7 @@ export async function loadCorporateTrainingCreditDates(supa, storeNumbers) {
       if (want.has(sn)) relevant.add(sn);
     }
   }
-  const wageOf = new Map();
-  if (relevant.size) {
-    const since = isoOf(Date.now() - 35 * DAY);
-    const { data: labor } = await supa.from("labor_v2_daily")
-      .select("store_number, labor_cost, labor_hours")
-      .in("store_number", [...relevant]).gte("business_date", since);
-    const agg = new Map();
-    for (const r of labor || []) {
-      const sn = String(r.store_number);
-      const a = agg.get(sn) || { cost: 0, hours: 0 };
-      a.cost += numv(r.labor_cost); a.hours += numv(r.labor_hours);
-      agg.set(sn, a);
-    }
-    for (const sn of relevant) {
-      const a = agg.get(sn);
-      wageOf.set(sn, a && a.hours > 0 ? a.cost / a.hours : CORP_TRAINING_FALLBACK_WAGE);
-    }
-  }
+  const wageOf = await blendedWageByStore(supa, relevant);
 
   for (const batch of batches) {
     const amt = numv(batch.daily_amount) > 0 ? numv(batch.daily_amount) : CORP_TRAINING_DEFAULT_DAILY;
@@ -301,7 +318,7 @@ export async function loadCorporateTrainingCreditDates(supa, storeNumbers) {
       if (!want.has(sn)) continue;
       const count = Math.max(1, Math.round(numv(s?.count) || 1));
       const dailyAmt = amt * count;
-      const wage = wageOf.get(sn) || CORP_TRAINING_FALLBACK_WAGE;
+      const wage = wageOf.get(sn) || CREDIT_FALLBACK_WAGE;
       const dailyHours = wage > 0 ? dailyAmt / wage : 0;
       const arr = map.get(sn) || [];
       for (const d of dates) arr.push({ date: String(d).slice(0, 10), amount: dailyAmt, hours: dailyHours });
