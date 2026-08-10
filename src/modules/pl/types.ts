@@ -74,6 +74,21 @@ export interface PlCompare {
   changed_count: number;
 }
 
+// Period-wide Prelim → Final diff (one row per store that has both stages).
+export interface PlComparePeriodRow {
+  store_number: string;
+  store_name: string | null;
+  changed_lines: number;
+  deltas: Record<"total_sales" | "ci_amount" | "ci_pct" | "ebitda", number | null>;
+}
+export interface PlComparePeriod {
+  period_end: string;
+  period_label: string | null;
+  rows: PlComparePeriodRow[];
+  stores_with_both: number;
+  stores_changed: number;
+}
+
 // Client-side workbook parse result (see parseWorkbook.ts).
 export interface ParsedPlStore {
   store_number: string;

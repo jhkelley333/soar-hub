@@ -371,6 +371,80 @@ async function compare(supa, user, params) {
   };
 }
 
+// Period-wide Prelim → Final diff: every in-scope store that has BOTH stages,
+// with its headline deltas and how many lines changed. Powers the "what changed"
+// summary surfaced after a Final upload; each row drills into the per-store
+// `compare` view above.
+async function comparePeriod(supa, user, params) {
+  if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const period = String(params.period || "").trim();
+  if (!period) return { error: "period is required", status: 400 };
+
+  const stores = await callerVisibleStores(supa, user);
+  if (!stores.length) return { period_end: period, period_label: null, rows: [], stores_with_both: 0, stores_changed: 0 };
+  const numbers = stores.map((s) => String(s.number));
+  const nameByNumber = new Map(stores.map((s) => [String(s.number), s.name]));
+
+  const { data, error } = await supa
+    .from("pl_statements")
+    .select("store_number, period_label, is_final, lines, total_sales, ci_amount, ci_pct, ebitda")
+    .eq("period_end", period)
+    .in("store_number", numbers);
+  if (error) return { error: error.message, status: 500 };
+
+  const byStore = new Map();
+  let periodLabel = null;
+  for (const r of data ?? []) {
+    if (r.period_label && !periodLabel) periodLabel = r.period_label;
+    const key = String(r.store_number);
+    const cur = byStore.get(key) || { prelim: null, final: null };
+    if (r.is_final) cur.final = r; else cur.prelim = r;
+    byStore.set(key, cur);
+  }
+
+  const delta = (a, b) => (a == null || b == null ? null : round2(b - a));
+  const countChanged = (prelim, final) => {
+    const pByLabel = new Map((prelim.lines || []).map((l) => [l.label, l]));
+    const seen = new Set();
+    let n = 0;
+    for (const fl of final.lines || []) {
+      seen.add(fl.label);
+      const pl = pByLabel.get(fl.label);
+      const d = pl ? delta(pl.amount, fl.amount) : null;
+      if ((!pl && fl.amount != null) || (d != null && Math.abs(d) >= 0.005)) n++;
+    }
+    for (const pl of prelim.lines || []) if (!seen.has(pl.label) && pl.amount != null) n++;
+    return n;
+  };
+
+  const rows = [];
+  let withBoth = 0;
+  for (const [num, { prelim, final }] of byStore) {
+    if (!prelim || !final) continue;
+    withBoth++;
+    rows.push({
+      store_number: num,
+      store_name: nameByNumber.get(num) ?? null,
+      changed_lines: countChanged(prelim, final),
+      deltas: {
+        total_sales: delta(prelim.total_sales, final.total_sales),
+        ci_amount: delta(prelim.ci_amount, final.ci_amount),
+        ci_pct: delta(prelim.ci_pct, final.ci_pct),
+        ebitda: delta(prelim.ebitda, final.ebitda),
+      },
+    });
+  }
+  // Biggest movers first: most changed lines, then largest CI swing.
+  rows.sort((a, b) => (b.changed_lines - a.changed_lines) || (Math.abs(b.deltas.ci_amount ?? 0) - Math.abs(a.deltas.ci_amount ?? 0)));
+  return {
+    period_end: period,
+    period_label: periodLabel,
+    rows,
+    stores_with_both: withBoth,
+    stores_changed: rows.filter((r) => r.changed_lines > 0).length,
+  };
+}
+
 function round2(n) {
   return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 }
@@ -1346,6 +1420,7 @@ export const handler = async (event) => {
       if (action === "overview") return unwrap(await overview(supa, user, params));
       if (action === "statement") return unwrap(await statement(supa, user, params));
       if (action === "compare") return unwrap(await compare(supa, user, params));
+      if (action === "compare-period") return unwrap(await comparePeriod(supa, user, params));
       if (action === "line-trend") return unwrap(await lineTrend(supa, user, params));
       if (action === "budget") return unwrap(await getBudget(supa, user));
       if (action === "review") return unwrap(await review(supa, user, params));
