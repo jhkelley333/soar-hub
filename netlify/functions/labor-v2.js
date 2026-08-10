@@ -10,7 +10,7 @@ import { extractLaborRows, feedBusinessDate, feedSectionReport, wallClockInTz, i
 import { extractCountRows } from "./_lib/kpiCount.js";
 import { upsertLaborCloses } from "./_lib/laborCloses.js";
 import { fiscalForDate } from "./_lib/fiscal.js";
-import { loadLaborCredits, applyCreditsToRows, loadTrainingCreditDates, loadGmPtoCreditDates, loadNoGmCreditDates, loadGmSupportCreditDates } from "./_lib/trainingCredit.js";
+import { loadLaborCredits, applyCreditsToRows, loadTrainingCreditDates, loadGmPtoCreditDates, loadNoGmCreditDates, loadGmSupportCreditDates, corpTrainingDailyRate, CORP_TRAINING_DEFAULT_DAILY } from "./_lib/trainingCredit.js";
 import { logPull } from "./_lib/pullLog.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -1260,6 +1260,162 @@ async function rvpCommitmentDelete(supa, user, body) {
 // ea_settings.no_gm_weekly_credit). SDO+ tag a store with a reason —
 // LOA / No GM / In Training — and a start date; ending the record stops
 // the credit. The credit itself is applied in _lib/trainingCredit.js.
+// ── Corporate training-class labor credit ────────────────────────────────────
+// Upload a CSV of class attendees (by store), then apply a per-day credit to a
+// chosen week's selected days. Credit lands via loadLaborCredits like the others.
+const CORP_TRAINING_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
+
+// Parse a CSV of attendees into per-store counts. Store number comes from a
+// header column matching store/unit/location/number, else the most-numeric
+// column when there's no recognizable header. A store appearing N times = N
+// attendees (credited N x the daily rate).
+function parseCorpTrainingCsv(text) {
+  const lines = String(text || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (!lines.length) return { rows: [], error: "The file is empty." };
+  const splitRow = (line) => {
+    const out = []; let cur = ""; let q = false;
+    for (let i = 0; i < line.length; i++) {
+      const c = line[i];
+      if (c === '"') { if (q && line[i + 1] === '"') { cur += '"'; i++; } else q = !q; }
+      else if (c === "," && !q) { out.push(cur); cur = ""; }
+      else cur += c;
+    }
+    out.push(cur);
+    return out.map((s) => s.trim());
+  };
+  const header = splitRow(lines[0]).map((h) => h.toLowerCase());
+  const looksHeader = header.some((h) => /store|unit|location|number|#|name|attendee|employee/.test(h));
+  let storeCol = -1, nameCol = -1;
+  if (looksHeader) {
+    storeCol = header.findIndex((h) => /store|unit|location|number|#/.test(h));
+    nameCol = header.findIndex((h) => /name|attendee|employee/.test(h));
+  }
+  const bodyLines = looksHeader ? lines.slice(1) : lines;
+  const parsed = bodyLines.map(splitRow);
+  if (storeCol === -1) {
+    const width = Math.max(...parsed.map((r) => r.length), 1);
+    let best = 0, bestScore = -1;
+    for (let c = 0; c < width; c++) {
+      const score = parsed.filter((r) => /^\d{2,6}$/.test(String(r[c] || "").replace(/\D/g, ""))).length;
+      if (score > bestScore) { bestScore = score; best = c; }
+    }
+    storeCol = best;
+  }
+  const byStore = new Map();
+  for (const r of parsed) {
+    const sn = String(r[storeCol] || "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+    if (!/^\d{2,6}$/.test(sn)) continue;
+    const name = nameCol >= 0 ? String(r[nameCol] || "").trim() : "";
+    const e = byStore.get(sn) || { store_number: sn, count: 0, names: [] };
+    e.count += 1;
+    if (name) e.names.push(name);
+    byStore.set(sn, e);
+  }
+  return { rows: [...byStore.values()] };
+}
+
+async function corpTrainingParse(supa, user, body) {
+  if (!CORP_TRAINING_ROLES.has(roleOf(user))) return { error: "SDO and above only.", status: 403 };
+  const { rows, error } = parseCorpTrainingCsv(body?.csv);
+  if (error) return { error, status: 400 };
+  if (!rows.length) return { error: "No store numbers found in the file.", status: 400 };
+  const visible = await resolveVisibleStoreRows(supa, user);
+  const nameByNumber = new Map(visible.map((s) => [String(s.number), s.name]));
+  const inScope = new Set(visible.map((s) => String(s.number)));
+  const stores = rows.map((r) => ({
+    store_number: r.store_number,
+    count: r.count,
+    store_name: nameByNumber.get(r.store_number) ?? null,
+    in_scope: inScope.has(r.store_number),
+  })).sort((a, b) => Number(a.store_number) - Number(b.store_number));
+  return {
+    stores,
+    total_attendees: stores.reduce((a, s) => a + s.count, 0),
+    unknown: stores.filter((s) => !s.in_scope).map((s) => s.store_number),
+    default_daily: await corpTrainingDailyRate(supa),
+  };
+}
+
+async function corpTrainingApply(supa, user, body) {
+  if (!CORP_TRAINING_ROLES.has(roleOf(user))) return { error: "SDO and above only.", status: 403 };
+  const label = String(body?.label ?? "").trim().slice(0, 120) || null;
+  const daily = Number(body?.daily_amount);
+  const dailyAmount = isFinite(daily) && daily > 0 ? Math.round(daily * 100) / 100 : CORP_TRAINING_DEFAULT_DAILY;
+  const dates = Array.isArray(body?.dates)
+    ? [...new Set(body.dates.map((d) => String(d).slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && parseIso(d)))]
+    : [];
+  if (!dates.length) return { error: "Select at least one day to apply the credit to.", status: 400 };
+  const rawStores = Array.isArray(body?.stores) ? body.stores : [];
+  const visible = await resolveVisibleStoreRows(supa, user);
+  const inScope = new Set(visible.map((s) => String(s.number)));
+  const stores = [];
+  for (const s of rawStores) {
+    const sn = String(s?.store_number ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+    if (!sn || !inScope.has(sn)) continue; // drop out-of-scope stores
+    stores.push({ store_number: sn, count: Math.max(1, Math.round(Number(s?.count) || 1)) });
+  }
+  if (!stores.length) return { error: "No in-scope stores to apply the credit to.", status: 400 };
+  const { data, error } = await supa.from("corporate_training_credits").insert({
+    label, daily_amount: dailyAmount, dates: dates.sort(), stores,
+    created_by_id: user.id, created_by_email: user.email,
+  }).select("*").single();
+  if (error) {
+    if (/corporate_training_credits/.test(error.message)) return { error: "Run migration 0278 first (corporate_training_credits table is missing).", status: 500 };
+    return { error: error.message, status: 500 };
+  }
+  return { row: data };
+}
+
+async function corpTrainingList(supa, user) {
+  if (!CORP_TRAINING_ROLES.has(roleOf(user))) return { error: "SDO and above only.", status: 403 };
+  const visible = await resolveVisibleStoreRows(supa, user);
+  const inScope = new Set(visible.map((s) => String(s.number)));
+  const [{ data, error }, defaultDaily] = await Promise.all([
+    supa.from("corporate_training_credits").select("*").order("created_at", { ascending: false }).limit(200),
+    corpTrainingDailyRate(supa),
+  ]);
+  if (error) {
+    if (/corporate_training_credits/.test(error.message)) return { rows: [], default_daily: defaultDaily };
+    return { error: error.message, status: 500 };
+  }
+  const rows = [];
+  for (const b of data || []) {
+    const stores = (Array.isArray(b.stores) ? b.stores : []).filter((s) => inScope.has(String(s.store_number)));
+    if (!stores.length) continue;
+    const dates = Array.isArray(b.dates) ? [...b.dates].sort() : [];
+    rows.push({
+      id: b.id, label: b.label, daily_amount: Number(b.daily_amount),
+      dates, start: dates[0] ?? null, end: dates[dates.length - 1] ?? null,
+      store_count: stores.length,
+      attendees: stores.reduce((a, s) => a + Math.max(1, Math.round(Number(s.count) || 1)), 0),
+      stores, created_at: b.created_at, created_by_email: b.created_by_email,
+    });
+  }
+  return { rows, default_daily: defaultDaily };
+}
+
+async function corpTrainingDelete(supa, user, body) {
+  if (!CORP_TRAINING_ROLES.has(roleOf(user))) return { error: "SDO and above only.", status: 403 };
+  const id = String(body?.id || "").trim();
+  if (!id) return { error: "id is required.", status: 400 };
+  const { error } = await supa.from("corporate_training_credits").delete().eq("id", id);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
+async function corpTrainingRateSet(supa, user, body) {
+  if (!new Set(["vp", "coo", "admin"]).has(roleOf(user))) return { error: "VP and above only.", status: 403 };
+  const amt = Number(body?.amount);
+  if (!isFinite(amt) || amt <= 0) return { error: "amount must be a positive number.", status: 400 };
+  const rate = Math.round(amt * 100) / 100;
+  const { error } = await supa.from("ea_settings").upsert(
+    { key: "corp_training_daily_credit", value: { amount: rate }, updated_by: user.id, updated_at: new Date().toISOString() },
+    { onConflict: "key" },
+  );
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, amount: rate };
+}
+
 const NO_GM_ROLES = new Set(["sdo", "rvp", "vp", "coo", "admin"]);
 const NO_GM_REASONS = new Set(["loa", "no_gm", "in_training"]);
 
@@ -2162,6 +2318,10 @@ export const handler = async (event) => {
       if (action === "rvp-commitment-base-set") return unwrap(await rvpCommitmentBaseSet(supa, user, body));
       if (action === "labor-share-mint") return unwrap(await mintLaborShare(supa, user, body));
       if (action === "labor-share-revoke") return unwrap(await revokeLaborShare(supa, user, body));
+      if (action === "corp-training-parse") return unwrap(await corpTrainingParse(supa, user, body));
+      if (action === "corp-training-apply") return unwrap(await corpTrainingApply(supa, user, body));
+      if (action === "corp-training-delete") return unwrap(await corpTrainingDelete(supa, user, body));
+      if (action === "corp-training-rate-set") return unwrap(await corpTrainingRateSet(supa, user, body));
       return respond(400, { error: `Unknown action: ${action}` });
     }
 
@@ -2174,6 +2334,7 @@ export const handler = async (event) => {
     if (action === "miss-tracker") return unwrap(await missTracker(supa, user, params));
     if (action === "my-stores") return unwrap(await listMyStores(supa, user));
     if (action === "no-gm-list") return unwrap(await noGmList(supa, user));
+    if (action === "corp-training-list") return unwrap(await corpTrainingList(supa, user));
     if (action === "gm-support-list") return unwrap(await gmSupportList(supa, user));
     if (action === "labor-shares") return unwrap(await listLaborShares(supa, user));
 

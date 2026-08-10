@@ -234,16 +234,56 @@ export async function loadGmSupportCreditDates(supa, storeNumbers) {
   return map;
 }
 
+// ── Corporate training-class labor credit ────────────────────────────────────
+// A corporate training class credits each attendee's store a fixed dollar amount
+// per class day (default 176.00/day, per-batch adjustable). Batches are uploaded
+// from a CSV of stores, then applied to specific calendar dates. `stores` is
+// [{store_number, count}] so a store with N attendees is credited N x rate/day.
+export const CORP_TRAINING_DEFAULT_DAILY = 176;
+
+export async function corpTrainingDailyRate(supa) {
+  try {
+    const { data } = await supa.from("ea_settings")
+      .select("value").eq("key", "corp_training_daily_credit").maybeSingle();
+    const amt = Number(data?.value?.amount);
+    return isFinite(amt) && amt > 0 ? amt : CORP_TRAINING_DEFAULT_DAILY;
+  } catch { return CORP_TRAINING_DEFAULT_DAILY; }
+}
+
+export async function loadCorporateTrainingCreditDates(supa, storeNumbers) {
+  const map = new Map();
+  if (!storeNumbers.length) return map;
+  const want = new Set(storeNumbers.map(String));
+  const { data } = await supa
+    .from("corporate_training_credits")
+    .select("daily_amount, dates, stores");
+  for (const batch of data || []) {
+    const amt = numv(batch.daily_amount) > 0 ? numv(batch.daily_amount) : CORP_TRAINING_DEFAULT_DAILY;
+    const dates = Array.isArray(batch.dates) ? batch.dates : [];
+    const stores = Array.isArray(batch.stores) ? batch.stores : [];
+    for (const s of stores) {
+      const sn = String(s?.store_number ?? s?.number ?? "").trim();
+      if (!want.has(sn)) continue;
+      const count = Math.max(1, Math.round(numv(s?.count) || 1));
+      const arr = map.get(sn) || [];
+      for (const d of dates) arr.push({ date: String(d).slice(0, 10), amount: amt * count, hours: 0 });
+      if (arr.length) map.set(sn, arr);
+    }
+  }
+  return map;
+}
+
 // All labor credits for the given stores: training + GM PTO + no-GM + GM
-// support-hours, one merged map for applyCreditsToRows.
+// support-hours + corporate training class, one merged map for applyCreditsToRows.
 export async function loadLaborCredits(supa, storeNumbers) {
-  const [tc, pto, noGm, gmSup] = await Promise.all([
+  const [tc, pto, noGm, gmSup, corp] = await Promise.all([
     loadTrainingCreditDates(supa, storeNumbers),
     loadGmPtoCreditDates(supa, storeNumbers),
     loadNoGmCreditDates(supa, storeNumbers),
     loadGmSupportCreditDates(supa, storeNumbers),
+    loadCorporateTrainingCreditDates(supa, storeNumbers),
   ]);
-  for (const extra of [pto, noGm, gmSup]) {
+  for (const extra of [pto, noGm, gmSup, corp]) {
     for (const [sn, arr] of extra) {
       const cur = tc.get(sn) || [];
       tc.set(sn, cur.concat(arr));
