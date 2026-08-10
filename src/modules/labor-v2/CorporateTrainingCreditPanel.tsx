@@ -47,10 +47,11 @@ export function CorporateTrainingCreditPanel() {
   const q = useQuery({ queryKey: ["corp-training"], queryFn: fetchCorpTraining });
   const defaultDaily = q.data?.default_daily ?? 176;
 
-  // Recent weeks: 6 back through 2 ahead of the current week's Monday.
+  // Weeks to pick from: 13 back (a fiscal quarter, for back-dating) through 2
+  // ahead of the current week's Monday. Credits apply where labor data exists.
   const weeks = useMemo(() => {
     const cur = mondayOf(new Date());
-    return Array.from({ length: 9 }, (_, i) => addDaysIso(cur, (2 - i) * 7));
+    return Array.from({ length: 16 }, (_, i) => addDaysIso(cur, (2 - i) * 7));
   }, []);
 
   const [parsed, setParsed] = useState<CorpTrainingParseResult | null>(null);
