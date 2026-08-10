@@ -167,6 +167,46 @@ export function deleteRvpCommitment(region: string, metric: CommitMetric): Promi
   return req(`${FN}?action=rvp-commitment-delete`, { method: "POST", body: JSON.stringify({ region, metric }) });
 }
 
+// ── Corporate training-class labor credit ─────────────────────────────
+export interface CorpTrainingParseStore { store_number: string; count: number; store_name: string | null; in_scope: boolean; }
+export interface CorpTrainingParseResult {
+  stores: CorpTrainingParseStore[];
+  total_attendees: number;
+  unknown: string[];
+  default_daily: number;
+}
+export interface CorpTrainingBatch {
+  id: string;
+  label: string | null;
+  daily_amount: number;
+  dates: string[];
+  start: string | null;
+  end: string | null;
+  store_count: number;
+  attendees: number;
+  stores: { store_number: string; count: number }[];
+  created_at: string;
+  created_by_email: string | null;
+}
+export function parseCorpTrainingCsv(csv: string): Promise<CorpTrainingParseResult> {
+  return req(`${FN}?action=corp-training-parse`, { method: "POST", body: JSON.stringify({ csv }) });
+}
+export function applyCorpTraining(input: {
+  label: string | null; daily_amount: number; dates: string[];
+  stores: { store_number: string; count: number }[];
+}): Promise<{ row: unknown }> {
+  return req(`${FN}?action=corp-training-apply`, { method: "POST", body: JSON.stringify(input) });
+}
+export function fetchCorpTraining(): Promise<{ rows: CorpTrainingBatch[]; default_daily: number }> {
+  return req(`${FN}?action=corp-training-list`);
+}
+export function deleteCorpTraining(id: string): Promise<{ ok: true }> {
+  return req(`${FN}?action=corp-training-delete`, { method: "POST", body: JSON.stringify({ id }) });
+}
+export function setCorpTrainingRate(amount: number): Promise<{ ok: true; amount: number }> {
+  return req(`${FN}?action=corp-training-rate-set`, { method: "POST", body: JSON.stringify({ amount }) });
+}
+
 // ── GM day view ──────────────────────────────────────────────────────
 export function fetchLaborV2Stores(): Promise<{ stores: LaborStore[] }> {
   return req(`${FN}?action=my-stores`);

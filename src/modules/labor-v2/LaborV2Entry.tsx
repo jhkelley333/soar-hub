@@ -12,6 +12,7 @@ import { LaborV2GmPage } from "./LaborV2GmPage";
 import { LaborV2TeamPage } from "./LaborV2TeamPage";
 import { NoGmCreditPanel } from "./NoGmCreditPanel";
 import { GmSupportCreditPanel } from "./GmSupportCreditPanel";
+import { CorporateTrainingCreditPanel } from "./CorporateTrainingCreditPanel";
 import { RvpScorecardPanel } from "./RvpScorecardPanel";
 
 const ROLLUP_ROLES = ["do", "sdo", "rvp", "vp", "coo", "admin"];
@@ -20,7 +21,7 @@ const NO_GM_ROLES = ["sdo", "rvp", "vp", "coo", "admin"];
 // Cross-region RVP scorecard: for those who oversee multiple RVPs.
 const SCORECARD_ROLES = ["vp", "coo", "admin"];
 
-type View = "team" | "store" | "no-gm" | "gm-support" | "rvp-scorecard";
+type View = "team" | "store" | "no-gm" | "gm-support" | "corp-training" | "rvp-scorecard";
 
 export function LaborV2Entry() {
   const { profile } = useAuth();
@@ -48,6 +49,7 @@ export function LaborV2Entry() {
             { value: "store", label: "By store" },
             ...(canScorecard ? [{ value: "rvp-scorecard" as const, label: "RVP scorecard" }] : []),
             ...(canNoGm ? [{ value: "no-gm" as const, label: "No-GM credit" }] : []),
+            ...(canNoGm ? [{ value: "corp-training" as const, label: "Training class" }] : []),
             ...(canGmSupport ? [{ value: "gm-support" as const, label: "GM support hrs" }] : []),
           ]}
         />
@@ -56,6 +58,7 @@ export function LaborV2Entry() {
         : view === "store" ? <LaborV2GmPage />
         : view === "rvp-scorecard" ? <RvpScorecardPanel />
         : view === "gm-support" ? <GmSupportCreditPanel />
+        : view === "corp-training" ? <CorporateTrainingCreditPanel />
         : <NoGmCreditPanel />}
     </>
   );
