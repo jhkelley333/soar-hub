@@ -239,7 +239,11 @@ export async function loadGmSupportCreditDates(supa, storeNumbers) {
 // per class day (default 176.00/day, per-batch adjustable). Batches are uploaded
 // from a CSV of stores, then applied to specific calendar dates. `stores` is
 // [{store_number, count}] so a store with N attendees is credited N x rate/day.
+// The $ credit ALSO relieves the Hours Over Chart: it converts to hours at the
+// store's recent blended wage (cost/hours), so both labor % and hours-over drop
+// — the same $<->hours bridge the GM support-hours credit uses.
 export const CORP_TRAINING_DEFAULT_DAILY = 176;
+const CORP_TRAINING_FALLBACK_WAGE = 13;
 
 export async function corpTrainingDailyRate(supa) {
   try {
@@ -257,7 +261,38 @@ export async function loadCorporateTrainingCreditDates(supa, storeNumbers) {
   const { data } = await supa
     .from("corporate_training_credits")
     .select("daily_amount, dates, stores");
-  for (const batch of data || []) {
+  const batches = data || [];
+  if (!batches.length) return map;
+
+  // Blended wage per store from recent labor (~35 days), so the $ credit also
+  // reduces hours = $ / wage. Only look up stores that actually appear in a batch.
+  const relevant = new Set();
+  for (const b of batches) {
+    for (const s of Array.isArray(b.stores) ? b.stores : []) {
+      const sn = String(s?.store_number ?? s?.number ?? "").trim();
+      if (want.has(sn)) relevant.add(sn);
+    }
+  }
+  const wageOf = new Map();
+  if (relevant.size) {
+    const since = isoOf(Date.now() - 35 * DAY);
+    const { data: labor } = await supa.from("labor_v2_daily")
+      .select("store_number, labor_cost, labor_hours")
+      .in("store_number", [...relevant]).gte("business_date", since);
+    const agg = new Map();
+    for (const r of labor || []) {
+      const sn = String(r.store_number);
+      const a = agg.get(sn) || { cost: 0, hours: 0 };
+      a.cost += numv(r.labor_cost); a.hours += numv(r.labor_hours);
+      agg.set(sn, a);
+    }
+    for (const sn of relevant) {
+      const a = agg.get(sn);
+      wageOf.set(sn, a && a.hours > 0 ? a.cost / a.hours : CORP_TRAINING_FALLBACK_WAGE);
+    }
+  }
+
+  for (const batch of batches) {
     const amt = numv(batch.daily_amount) > 0 ? numv(batch.daily_amount) : CORP_TRAINING_DEFAULT_DAILY;
     const dates = Array.isArray(batch.dates) ? batch.dates : [];
     const stores = Array.isArray(batch.stores) ? batch.stores : [];
@@ -265,8 +300,11 @@ export async function loadCorporateTrainingCreditDates(supa, storeNumbers) {
       const sn = String(s?.store_number ?? s?.number ?? "").trim();
       if (!want.has(sn)) continue;
       const count = Math.max(1, Math.round(numv(s?.count) || 1));
+      const dailyAmt = amt * count;
+      const wage = wageOf.get(sn) || CORP_TRAINING_FALLBACK_WAGE;
+      const dailyHours = wage > 0 ? dailyAmt / wage : 0;
       const arr = map.get(sn) || [];
-      for (const d of dates) arr.push({ date: String(d).slice(0, 10), amount: amt * count, hours: 0 });
+      for (const d of dates) arr.push({ date: String(d).slice(0, 10), amount: dailyAmt, hours: dailyHours });
       if (arr.length) map.set(sn, arr);
     }
   }
