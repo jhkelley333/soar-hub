@@ -33,6 +33,8 @@ import { extractLaborRows, feedBusinessDate, isPre0238Error, isPre0272Error, str
 import { extractCountRows, isPreCountExtrasError, stripCountExtras } from "./_lib/kpiCount.js";
 import { upsertLaborCloses } from "./_lib/laborCloses.js";
 import { logPull } from "./_lib/pullLog.js";
+import { fiscalForDate } from "./_lib/fiscal.js";
+import { runRankingNow } from "./_lib/ranking/run.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -153,6 +155,31 @@ export const handler = async (event) => {
   try { closes = await upsertLaborCloses(supa, extracted, businessDate); }
   catch (e) { console.log(`[kpi-capture] close snapshot failed: ${e.message}`); }
 
+  // Auto-advance the Ranker. When the captured business day is a fiscal
+  // week-ending Sunday (Monday's capture serves Sunday's numbers), that week is
+  // complete — kick a ranking run so the board rolls to the new week without
+  // anyone clicking Refresh. Gated to fire once per week (skip if a complete run
+  // for this weekEnding already exists); best-effort so a ranking hiccup never
+  // fails the capture. Runs are ~0.5s, headless (started_by null).
+  let ranked = null;
+  try {
+    const fx = fiscalForDate(businessDate);
+    if (fx && fx.isWeekEnd) {
+      const { data: existing } = await supa
+        .from("ranking_runs").select("id")
+        .eq("week_ending", businessDate).eq("status", "complete").limit(1);
+      if (existing && existing.length) {
+        ranked = `week ${businessDate} already ranked`;
+      } else {
+        const r = await runRankingNow(supa, { id: null }, { weekEnding: businessDate });
+        ranked = r?.error ? `run error: ${r.error}` : `auto-ran week ${r.week_ending} (${r.rows} rows)`;
+      }
+    }
+  } catch (e) {
+    ranked = `run error: ${e.message}`;
+  }
+  if (ranked) console.log(`[kpi-capture] ranker: ${ranked}`);
+
   await logPull(supa, {
     source: "cron", ok: true, business_date: businessDate, store_rows: laborStored,
     wtd_rows: extracted.filter((r) => r.wtd_net_sales != null).length,
@@ -160,7 +187,7 @@ export const handler = async (event) => {
     kpi_snapshot: true, central_date: centralDate, central_hour: wc.hour, duration_ms: Date.now() - started,
   });
   console.log(`[kpi-capture] stored snapshot for ${centralDate} ${wc.hour}:00 CT · labor rows ${laborStored} · count rows ${countStored} (${businessDate}) · closes w${closes.weeks}/p${closes.periods}`);
-  return { statusCode: 200, body: `captured ${centralDate} ${wc.hour}:00 CT · labor ${laborStored} · count ${countStored} rows for ${businessDate} · closes ${closes.weeks}w/${closes.periods}p` };
+  return { statusCode: 200, body: `captured ${centralDate} ${wc.hour}:00 CT · labor ${laborStored} · count ${countStored} rows for ${businessDate} · closes ${closes.weeks}w/${closes.periods}p${ranked ? ` · ranker: ${ranked}` : ""}` };
 };
 
 // Fire on every UTC hour that could be 7 AM–2 PM Central (CST or CDT); the
