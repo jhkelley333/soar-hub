@@ -449,6 +449,95 @@ function round2(n) {
   return Math.round((Number(n) + Number.EPSILON) * 100) / 100;
 }
 
+// ── 2026 Bonus Plan — Monthly (period) bonus projection ──────────────────────
+// A store qualifies when its CI% meets the minimum CI% for its period-sales band;
+// the payout is that band's rate applied to the store's CI dollars. The pool is
+// then split 75% GM / 25% hourly managers. (The quarterly YoY bonus, audit
+// disqualifiers, and the cash-shortage clawback are separate and NOT in this
+// projection.) ci_pct is stored as a percent (e.g. 40.10), ci_amount as dollars.
+const BONUS_TIERS = [
+  { min_sales: 0,      max_sales: 49999.99,  min_ci_pct: 20, payout_rate: 0.005 },
+  { min_sales: 50000,  max_sales: 74999.99,  min_ci_pct: 30, payout_rate: 0.005 },
+  { min_sales: 75000,  max_sales: 99999.99,  min_ci_pct: 35, payout_rate: 0.005 },
+  { min_sales: 100000, max_sales: 124999.99, min_ci_pct: 40, payout_rate: 0.010 },
+  { min_sales: 125000, max_sales: 149999.99, min_ci_pct: 43, payout_rate: 0.010 },
+  { min_sales: 150000, max_sales: Infinity,  min_ci_pct: 45, payout_rate: 0.020 },
+];
+const GM_SHARE = 0.75;
+function bonusTierFor(sales) {
+  const s = Number(sales) || 0;
+  return BONUS_TIERS.find((t) => s >= t.min_sales && s <= t.max_sales) || BONUS_TIERS[BONUS_TIERS.length - 1];
+}
+
+async function bonusCheck(supa, user, params) {
+  if (!READ_ROLES.has(user.role)) return { error: "not authorized", status: 403 };
+  const period = String(params.period || "").trim();
+  if (!period) return { error: "period is required", status: 400 };
+
+  const stores = await callerVisibleStores(supa, user);
+  if (!stores.length) return { period_end: period, period_label: null, rows: [], totals: null, tiers: BONUS_TIERS, all_final: true };
+  const numbers = stores.map((s) => String(s.number));
+  const nameByNumber = new Map(stores.map((s) => [String(s.number), s.name]));
+
+  const { data, error } = await supa
+    .from("pl_statements")
+    .select("store_number, period_label, is_final, total_sales, ci_amount, ci_pct")
+    .eq("period_end", period)
+    .in("store_number", numbers);
+  if (error) return { error: error.message, status: 500 };
+
+  // Prefer the Final; fall back to Prelim (flagged) if a store has no Final yet.
+  const byStore = new Map();
+  let periodLabel = null;
+  for (const r of data ?? []) {
+    if (r.period_label && !periodLabel) periodLabel = r.period_label;
+    const cur = byStore.get(String(r.store_number)) || { prelim: null, final: null };
+    if (r.is_final) cur.final = r; else cur.prelim = r;
+    byStore.set(String(r.store_number), cur);
+  }
+
+  const rows = [];
+  for (const [num, { prelim, final }] of byStore) {
+    const src = final || prelim;
+    if (!src) continue;
+    const sales = src.total_sales == null ? null : Number(src.total_sales);
+    const ciAmt = src.ci_amount == null ? null : Number(src.ci_amount);
+    const ciPct = src.ci_pct == null ? null : Number(src.ci_pct);
+    const tier = bonusTierFor(sales ?? 0);
+    const qualifies = ciPct != null && ciPct >= tier.min_ci_pct;
+    const payout = qualifies && ciAmt != null ? round2(ciAmt * tier.payout_rate) : 0;
+    rows.push({
+      store_number: num,
+      store_name: nameByNumber.get(num) ?? null,
+      is_final: !!final,
+      sales, ci_amount: ciAmt, ci_pct: ciPct,
+      min_ci_pct: tier.min_ci_pct,
+      payout_rate: tier.payout_rate,
+      qualifies,
+      payout,
+      gm_share: round2(payout * GM_SHARE),
+      hourly_share: round2(payout * (1 - GM_SHARE)),
+    });
+  }
+  rows.sort((a, b) => String(a.store_number).localeCompare(String(b.store_number), undefined, { numeric: true }));
+
+  const sum = (k) => rows.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+  return {
+    period_end: period,
+    period_label: periodLabel,
+    rows,
+    tiers: BONUS_TIERS,
+    all_final: rows.length > 0 && rows.every((r) => r.is_final),
+    totals: {
+      stores: rows.length,
+      qualified: rows.filter((r) => r.qualifies).length,
+      payout: round2(sum("payout")),
+      gm_share: round2(sum("gm_share")),
+      hourly_share: round2(sum("hourly_share")),
+    },
+  };
+}
+
 // Batch upsert from the client-parsed workbook. Re-uploading the same
 // period overwrites (Prelim -> Final), keyed on (store_number, period_end).
 async function upload(supa, user, body) {
@@ -1421,6 +1510,7 @@ export const handler = async (event) => {
       if (action === "statement") return unwrap(await statement(supa, user, params));
       if (action === "compare") return unwrap(await compare(supa, user, params));
       if (action === "compare-period") return unwrap(await comparePeriod(supa, user, params));
+      if (action === "bonus-check") return unwrap(await bonusCheck(supa, user, params));
       if (action === "line-trend") return unwrap(await lineTrend(supa, user, params));
       if (action === "budget") return unwrap(await getBudget(supa, user));
       if (action === "review") return unwrap(await review(supa, user, params));
