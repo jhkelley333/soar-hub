@@ -10,7 +10,7 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, ArrowLeft, ArrowLeftRight, ArrowUp, ArrowUpDown, CheckCircle2, ChevronRight, Download, Eye, EyeOff, Flag, Loader2, SlidersHorizontal, Trash2, TrendingDown, TrendingUp, Upload, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowLeftRight, ArrowUp, ArrowUpDown, Award, CheckCircle2, ChevronRight, Download, Eye, EyeOff, Flag, Loader2, SlidersHorizontal, Trash2, TrendingDown, TrendingUp, Upload, X } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -19,10 +19,10 @@ import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import { fiscalInfo, FISCAL } from "@/lib/fiscal";
 import { Modal } from "@/shared/ui/Modal";
-import { deletePlManualFlag, fetchPlCompare, fetchPlComparePeriod, fetchPlFlags, fetchPlLineTrend, fetchPlManualFlags, fetchPlOverview, fetchPlPeriods, fetchPlReview, fetchPlReviewSummary, fetchPlRollup, fetchPlRollupLineTrend, fetchPlRollupStatement, fetchPlStatement, savePlFlagNote, savePlManualFlag, uploadPl, type PlFlag, type PlManualFlag, type PlRollupGroup, type PlTrendPoint, type RollupGroupBy } from "./api";
+import { deletePlManualFlag, fetchPlBonusCheck, fetchPlCompare, fetchPlComparePeriod, fetchPlFlags, fetchPlLineTrend, fetchPlManualFlags, fetchPlOverview, fetchPlPeriods, fetchPlReview, fetchPlReviewSummary, fetchPlRollup, fetchPlRollupLineTrend, fetchPlRollupStatement, fetchPlStatement, savePlFlagNote, savePlManualFlag, uploadPl, type PlFlag, type PlManualFlag, type PlRollupGroup, type PlTrendPoint, type RollupGroupBy } from "./api";
 import { BudgetTargetsModal } from "./BudgetTargetsModal";
 import { PlReviewPanel } from "./PlReviewPanel";
-import type { ParsedWorkbook, PlCompareLine, PlComparePeriodRow, PlLine, PlOverviewRow, PlStage } from "./types";
+import type { ParsedWorkbook, PlBonusRow, PlCompareLine, PlComparePeriodRow, PlLine, PlOverviewRow, PlStage } from "./types";
 
 const money = (v: number | null | undefined, dp = 0) =>
   v == null
@@ -49,6 +49,7 @@ export function PlPage() {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [budgetOpen, setBudgetOpen] = useState(false);
   const [periodCompareOpen, setPeriodCompareOpen] = useState(false);
+  const [bonusOpen, setBonusOpen] = useState(false);
   // When a store is opened FROM the period-compare view, land on its compare.
   const [openStoreCompare, setOpenStoreCompare] = useState(false);
   const [view, setView] = useState<"stores" | "rollup">("stores");
@@ -136,6 +137,10 @@ export function PlPage() {
     );
   }
 
+  if (bonusOpen && period) {
+    return <BonusCheckerView period={period} periodLabel={periodLbl} onBack={() => setBonusOpen(false)} />;
+  }
+
   if (rollupView && period) {
     return (
       <RollupStatementView
@@ -209,6 +214,16 @@ export function PlPage() {
               >
                 <ArrowLeftRight className="h-4 w-4" strokeWidth={2} />
                 What changed vs Prelim
+              </button>
+            )}
+            {isAdmin && (
+              <button
+                type="button"
+                onClick={() => setBonusOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-semibold text-midnight hover:border-accent"
+              >
+                <Award className="h-4 w-4" strokeWidth={2} />
+                Bonus Checker
               </button>
             )}
             {isAdmin && (
@@ -1015,6 +1030,195 @@ function PeriodCompareView({ period, periodLabel, onBack, onOpenStore }: {
             </table>
           </div>
           <div className="border-t border-zinc-100 px-5 py-2 text-[11px] text-zinc-400">Click a store to see its line-by-line Prelim → Final diff.</div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ── Bonus Checker — monthly bonus projection from the Final P&L (admin) ──
+// Store qualifies when CI% ≥ the min CI% for its sales band; payout = band rate
+// × CI $, split 75% GM / 25% hourly (2026 Bonus Plan).
+function BonusCheckerView({ period, periodLabel, onBack }: {
+  period: string;
+  periodLabel: string;
+  onBack: () => void;
+}) {
+  type BKey = "store" | "sales" | "ci" | "ci_pct" | "min" | "qual" | "payout" | "gm";
+  const [sort, setSort] = useState<{ key: BKey; dir: "asc" | "desc" }>({ key: "payout", dir: "desc" });
+  const [qualifiedOnly, setQualifiedOnly] = useState(false);
+  const q = useQuery({
+    queryKey: ["pl-bonus-check", period],
+    queryFn: () => fetchPlBonusCheck(period),
+    staleTime: 60_000,
+  });
+  const data = q.data;
+
+  const rows = useMemo(() => {
+    if (!data) return [];
+    const base = qualifiedOnly ? data.rows.filter((r) => r.qualifies) : data.rows;
+    const val = (r: PlBonusRow): number | string => {
+      switch (sort.key) {
+        case "store": return String(r.store_number);
+        case "sales": return r.sales ?? Number.NEGATIVE_INFINITY;
+        case "ci": return r.ci_amount ?? Number.NEGATIVE_INFINITY;
+        case "ci_pct": return r.ci_pct ?? Number.NEGATIVE_INFINITY;
+        case "min": return r.min_ci_pct;
+        case "qual": return r.qualifies ? 1 : 0;
+        case "payout": return r.payout;
+        case "gm": return r.gm_share;
+      }
+    };
+    return [...base].sort((a, b) => {
+      const av = val(a), bv = val(b);
+      const cmp = typeof av === "string" ? av.localeCompare(bv as string, undefined, { numeric: true }) : (av as number) - (bv as number);
+      return sort.dir === "asc" ? cmp : -cmp;
+    });
+  }, [data, qualifiedOnly, sort]);
+
+  const toggleSort = (key: BKey) =>
+    setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "store" ? "asc" : "desc" }));
+  const SortTh = ({ k, label, left }: { k: BKey; label: string; left?: boolean }) => (
+    <th className={cn(left ? "px-5 py-2 text-left" : "px-3 py-2 text-right")}>
+      <button type="button" onClick={() => toggleSort(k)}
+        className={cn("inline-flex items-center gap-1 hover:text-zinc-600", sort.key === k && "text-zinc-600")}>
+        {label}
+        {sort.key === k
+          ? (sort.dir === "asc" ? <ArrowUp className="h-3 w-3" strokeWidth={2.5} /> : <ArrowDown className="h-3 w-3" strokeWidth={2.5} />)
+          : <ArrowUpDown className="h-3 w-3 opacity-40" strokeWidth={2} />}
+      </button>
+    </th>
+  );
+
+  function exportCsv() {
+    if (!data) return;
+    const esc = (v: string | number | null) => { const s = v == null ? "" : String(v); return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
+    const head = ["Store", "Name", "Final Sales", "Final CI $", "CI %", "Min CI %", "Qualifies", "Payout %", "Payout $", "GM 75%", "Hourly 25%", "Stage"];
+    const body = rows.map((r) => [
+      r.store_number, r.store_name ?? "", r.sales ?? "", r.ci_amount ?? "", r.ci_pct ?? "",
+      r.min_ci_pct, r.qualifies ? "Yes" : "No", (r.payout_rate * 100).toFixed(1), r.payout, r.gm_share, r.hourly_share,
+      r.is_final ? "Final" : "Prelim",
+    ]);
+    const csv = [head, ...body].map((row) => row.map(esc).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `bonus-checker-${period}.csv`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  }
+
+  return (
+    <>
+      <button type="button" onClick={onBack} className="mb-3 inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-midnight">
+        <ArrowLeft className="h-4 w-4" /> Back to overview
+      </button>
+      <PageHeader
+        title="Bonus Checker"
+        description={
+          data?.totals
+            ? `${data.totals.qualified} of ${data.totals.stores} stores qualify · projected payout ${money(data.totals.payout)} · ${periodLabel}`
+            : `Monthly bonus projection · ${periodLabel}`
+        }
+        actions={
+          data && data.rows.length > 0 ? (
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="inline-flex cursor-pointer items-center gap-1.5 text-sm text-zinc-700">
+                <input type="checkbox" checked={qualifiedOnly} onChange={(e) => setQualifiedOnly(e.target.checked)} className="h-3.5 w-3.5 accent-accent" />
+                Qualified only
+              </label>
+              <button type="button" onClick={exportCsv}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-semibold text-midnight hover:border-accent">
+                <Download className="h-4 w-4" strokeWidth={2} /> Export CSV
+              </button>
+            </div>
+          ) : undefined
+        }
+      />
+
+      {q.isLoading ? (
+        <Skeleton className="h-80 w-full" />
+      ) : q.isError ? (
+        <EmptyState title="Couldn't load" description={(q.error as Error)?.message ?? "Try again."} />
+      ) : !data || data.rows.length === 0 ? (
+        <EmptyState title="No P&L for this period" description="Upload a P&L to project bonuses." />
+      ) : (
+        <div className="space-y-4">
+          {!data.all_final && (
+            <div className="rounded-xl bg-amber-50 px-4 py-2.5 text-sm text-amber-800 ring-1 ring-amber-200">
+              Some stores have no Final yet — those rows use the Preliminary P&L (marked “Prelim”). Projection updates when the Final lands.
+            </div>
+          )}
+          {data.totals && (
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Tile label="Projected payout (total)" value={money(data.totals.payout)} tone="ok" />
+              <Tile label="GM share (75%)" value={money(data.totals.gm_share)} tone="neutral" />
+              <Tile label="Hourly share (25%)" value={money(data.totals.hourly_share)} tone="neutral" />
+            </div>
+          )}
+
+          <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-zinc-100 text-[10px] uppercase tracking-wide text-zinc-400">
+                    <SortTh k="store" label="Store" left />
+                    <SortTh k="sales" label="Final Sales" />
+                    <SortTh k="ci" label="Final CI $" />
+                    <SortTh k="ci_pct" label="CI %" />
+                    <SortTh k="min" label="Min CI %" />
+                    <SortTh k="qual" label="Qualifies" />
+                    <SortTh k="payout" label="Payout $" />
+                    <SortTh k="gm" label="GM 75%" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={r.store_number} className={cn("border-b border-zinc-50", r.qualifies ? "hover:bg-emerald-50/40" : "text-zinc-500 hover:bg-zinc-50")}>
+                      <td className="px-5 py-2">
+                        <span className="font-semibold text-midnight">#{r.store_number}</span>
+                        {r.store_name && <span className="ml-1.5 text-zinc-500">{r.store_name}</span>}
+                        {!r.is_final && <span className="ml-1.5 rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700">Prelim</span>}
+                      </td>
+                      <td className="px-3 py-2 text-right tabular-nums">{money(r.sales)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums">{money(r.ci_amount)}</td>
+                      <td className={cn("px-3 py-2 text-right tabular-nums", r.qualifies ? "text-emerald-700" : "text-red-600")}>{pct(r.ci_pct)}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-zinc-400">{r.min_ci_pct.toFixed(2)}%</td>
+                      <td className="px-3 py-2 text-right">
+                        {r.qualifies
+                          ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">Yes · {(r.payout_rate * 100).toFixed(1)}%</span>
+                          : <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-semibold text-zinc-500">No</span>}
+                      </td>
+                      <td className={cn("px-3 py-2 text-right tabular-nums font-semibold", r.payout > 0 ? "text-midnight" : "text-zinc-300")}>{r.payout > 0 ? money(r.payout, 2) : "—"}</td>
+                      <td className="px-3 py-2 text-right tabular-nums text-zinc-600">{r.gm_share > 0 ? money(r.gm_share, 2) : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Tier reference */}
+          <details className="rounded-xl bg-white p-4 text-sm ring-1 ring-zinc-200">
+            <summary className="cursor-pointer font-semibold text-midnight">Monthly bonus tiers (2026 Bonus Plan)</summary>
+            <div className="mt-2 overflow-x-auto">
+              <table className="text-xs">
+                <thead className="text-left text-zinc-400"><tr><th className="pr-6 py-1">Period Sales</th><th className="pr-6 py-1">Min CI %</th><th className="py-1">Payout % of CI $</th></tr></thead>
+                <tbody className="tabular-nums text-zinc-600">
+                  {data.tiers.map((t, i) => (
+                    <tr key={i}>
+                      <td className="pr-6 py-0.5">{money(t.min_sales)}{Number.isFinite(t.max_sales) ? ` – ${money(t.max_sales)}` : "+"}</td>
+                      <td className="pr-6 py-0.5">{t.min_ci_pct.toFixed(2)}%</td>
+                      <td className="py-0.5">{(t.payout_rate * 100).toFixed(1)}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="mt-2 text-[11px] text-zinc-400">
+                Projection is the monthly (period) bonus only. Not included: the quarterly YoY bonus, audit disqualifiers,
+                the 50% cash-shortage clawback, and employment-eligibility rules.
+              </p>
+            </div>
+          </details>
         </div>
       )}
     </>

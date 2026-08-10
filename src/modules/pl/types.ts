@@ -89,6 +89,31 @@ export interface PlComparePeriod {
   stores_changed: number;
 }
 
+// Monthly bonus projection (2026 Bonus Plan) from the Final P&L per store.
+export interface PlBonusTier { min_sales: number; max_sales: number; min_ci_pct: number; payout_rate: number; }
+export interface PlBonusRow {
+  store_number: string;
+  store_name: string | null;
+  is_final: boolean;
+  sales: number | null;
+  ci_amount: number | null;
+  ci_pct: number | null;
+  min_ci_pct: number;
+  payout_rate: number;
+  qualifies: boolean;
+  payout: number;
+  gm_share: number;
+  hourly_share: number;
+}
+export interface PlBonusCheck {
+  period_end: string;
+  period_label: string | null;
+  rows: PlBonusRow[];
+  tiers: PlBonusTier[];
+  all_final: boolean;
+  totals: { stores: number; qualified: number; payout: number; gm_share: number; hourly_share: number } | null;
+}
+
 // Client-side workbook parse result (see parseWorkbook.ts).
 export interface ParsedPlStore {
   store_number: string;
