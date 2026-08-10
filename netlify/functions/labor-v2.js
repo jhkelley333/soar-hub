@@ -10,7 +10,7 @@ import { extractLaborRows, feedBusinessDate, feedSectionReport, wallClockInTz, i
 import { extractCountRows } from "./_lib/kpiCount.js";
 import { upsertLaborCloses } from "./_lib/laborCloses.js";
 import { fiscalForDate } from "./_lib/fiscal.js";
-import { loadLaborCredits, applyCreditsToRows, loadTrainingCreditDates, loadGmPtoCreditDates, loadNoGmCreditDates, loadGmSupportCreditDates, corpTrainingDailyRate, CORP_TRAINING_DEFAULT_DAILY } from "./_lib/trainingCredit.js";
+import { loadLaborCredits, applyCreditsToRows, loadTrainingCreditDates, loadGmPtoCreditDates, loadNoGmCreditDates, loadGmSupportCreditDates, loadCorporateTrainingCreditDates, corpTrainingDailyRate, CORP_TRAINING_DEFAULT_DAILY } from "./_lib/trainingCredit.js";
 import { logPull } from "./_lib/pullLog.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
@@ -1912,7 +1912,7 @@ async function laborSharePayload(supa, { scopeKind, regionName, label, numbers: 
   const lastWeekDate = isoOf(shiftDays(parseIso(anchor), -7));
   // Load each credit type separately so we can show the breakdown, then
   // merge them exactly as loadLaborCredits does to adjust the labor rows.
-  const [{ data: daily }, { data: lastWk }, tcMap, ptoMap, noGmMap, gmSupMap] = await Promise.all([
+  const [{ data: daily }, { data: lastWk }, tcMap, ptoMap, noGmMap, gmSupMap, corpMap] = await Promise.all([
     supa.from("labor_v2_daily").select("*").eq("business_date", anchor).in("store_number", numbers),
     // Include business_date so applyCreditsToRows can window last week's own
     // WTD credits (its weekStart → that day) — otherwise last week's WTD hours
@@ -1923,9 +1923,10 @@ async function laborSharePayload(supa, { scopeKind, regionName, label, numbers: 
     loadGmPtoCreditDates(supa, numbers),
     loadNoGmCreditDates(supa, numbers),
     loadGmSupportCreditDates(supa, numbers),
+    loadCorporateTrainingCreditDates(supa, numbers),
   ]);
   const mergedCredits = new Map();
-  for (const src of [tcMap, ptoMap, noGmMap, gmSupMap]) for (const [sn, arr] of src) mergedCredits.set(sn, (mergedCredits.get(sn) || []).concat(arr));
+  for (const src of [tcMap, ptoMap, noGmMap, gmSupMap, corpMap]) for (const [sn, arr] of src) mergedCredits.set(sn, (mergedCredits.get(sn) || []).concat(arr));
   applyCreditsToRows(daily || [], mergedCredits);
   // Credit last week's rows the same way, so the WoW comparison is like-for-like.
   applyCreditsToRows(lastWk || [], mergedCredits);
@@ -1958,6 +1959,7 @@ async function laborSharePayload(supa, { scopeKind, regionName, label, numbers: 
         pto: round2(nums.reduce((a, n) => a + creditPtd(ptoMap, n), 0)),
         training: round2(nums.reduce((a, n) => a + creditPtd(tcMap, n), 0)),
         gm_support: round2(nums.reduce((a, n) => a + creditPtd(gmSupMap, n), 0)),
+        training_class: round2(nums.reduce((a, n) => a + creditPtd(corpMap, n), 0)),
       },
     };
   };

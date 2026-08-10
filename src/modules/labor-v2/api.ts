@@ -369,7 +369,7 @@ export interface ShareNode {
   wtd: ShareBand;
   ptd: ShareBand;
   hours_trend: HoursTrend;
-  credits: { no_gm: number; pto: number; training: number; gm_support?: number };
+  credits: { no_gm: number; pto: number; training: number; gm_support?: number; training_class?: number };
 }
 export interface SharedLaborResponse {
   ok: true;
