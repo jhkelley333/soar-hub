@@ -22,7 +22,7 @@ import { Modal } from "@/shared/ui/Modal";
 import { deletePlManualFlag, fetchPlCompare, fetchPlComparePeriod, fetchPlFlags, fetchPlLineTrend, fetchPlManualFlags, fetchPlOverview, fetchPlPeriods, fetchPlReview, fetchPlReviewSummary, fetchPlRollup, fetchPlRollupLineTrend, fetchPlRollupStatement, fetchPlStatement, savePlFlagNote, savePlManualFlag, uploadPl, type PlFlag, type PlManualFlag, type PlRollupGroup, type PlTrendPoint, type RollupGroupBy } from "./api";
 import { BudgetTargetsModal } from "./BudgetTargetsModal";
 import { PlReviewPanel } from "./PlReviewPanel";
-import type { ParsedWorkbook, PlCompareLine, PlLine, PlOverviewRow, PlStage } from "./types";
+import type { ParsedWorkbook, PlCompareLine, PlComparePeriodRow, PlLine, PlOverviewRow, PlStage } from "./types";
 
 const money = (v: number | null | undefined, dp = 0) =>
   v == null
@@ -899,15 +899,46 @@ function PeriodCompareView({ period, periodLabel, onBack, onOpenStore }: {
   onOpenStore: (storeNumber: string) => void;
 }) {
   const [changedOnly, setChangedOnly] = useState(true);
+  type PCKey = "store" | "sales" | "ci" | "ci_pct" | "ebitda" | "lines";
+  const [sort, setSort] = useState<{ key: PCKey; dir: "asc" | "desc" }>({ key: "lines", dir: "desc" });
   const q = useQuery({
     queryKey: ["pl-compare-period", period],
     queryFn: () => fetchPlComparePeriod(period),
     staleTime: 60_000,
   });
   const data = q.data;
-  const rows = useMemo(
-    () => (data ? (changedOnly ? data.rows.filter((r) => r.changed_lines > 0) : data.rows) : []),
-    [data, changedOnly],
+  const rows = useMemo(() => {
+    if (!data) return [];
+    const base = changedOnly ? data.rows.filter((r) => r.changed_lines > 0) : data.rows;
+    const val = (r: PlComparePeriodRow): number | string => {
+      switch (sort.key) {
+        case "store": return String(r.store_number);
+        case "sales": return r.deltas.total_sales ?? Number.NEGATIVE_INFINITY;
+        case "ci": return r.deltas.ci_amount ?? Number.NEGATIVE_INFINITY;
+        case "ci_pct": return r.deltas.ci_pct ?? Number.NEGATIVE_INFINITY;
+        case "ebitda": return r.deltas.ebitda ?? Number.NEGATIVE_INFINITY;
+        case "lines": return r.changed_lines;
+      }
+    };
+    return [...base].sort((a, b) => {
+      const av = val(a), bv = val(b);
+      const cmp = typeof av === "string" ? av.localeCompare(bv as string, undefined, { numeric: true }) : (av as number) - (bv as number);
+      return sort.dir === "asc" ? cmp : -cmp;
+    });
+  }, [data, changedOnly, sort]);
+
+  const toggleSort = (key: PCKey) =>
+    setSort((s) => (s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: key === "store" ? "asc" : "desc" }));
+  const SortTh = ({ k, label, left }: { k: PCKey; label: string; left?: boolean }) => (
+    <th className={cn(left ? "px-5 py-2 text-left" : "px-3 py-2 text-right")}>
+      <button type="button" onClick={() => toggleSort(k)}
+        className={cn("inline-flex items-center gap-1 hover:text-zinc-600", sort.key === k && "text-zinc-600")}>
+        {label}
+        {sort.key === k
+          ? (sort.dir === "asc" ? <ArrowUp className="h-3 w-3" strokeWidth={2.5} /> : <ArrowDown className="h-3 w-3" strokeWidth={2.5} />)
+          : <ArrowUpDown className="h-3 w-3 opacity-40" strokeWidth={2} />}
+      </button>
+    </th>
   );
 
   const deltaText = (v: number | null, kind: "money" | "pts") => {
@@ -950,12 +981,12 @@ function PeriodCompareView({ period, periodLabel, onBack, onOpenStore }: {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-zinc-100 text-[10px] uppercase tracking-wide text-zinc-400">
-                  <th className="px-5 py-2 text-left">Store</th>
-                  <th className="px-3 py-2 text-right">Δ Sales</th>
-                  <th className="px-3 py-2 text-right">Δ CI $</th>
-                  <th className="px-3 py-2 text-right">Δ CI %</th>
-                  <th className="px-3 py-2 text-right">Δ EBITDA</th>
-                  <th className="px-5 py-2 text-right">Lines changed</th>
+                  <SortTh k="store" label="Store" left />
+                  <SortTh k="sales" label="Δ Sales" />
+                  <SortTh k="ci" label="Δ CI $" />
+                  <SortTh k="ci_pct" label="Δ CI %" />
+                  <SortTh k="ebitda" label="Δ EBITDA" />
+                  <SortTh k="lines" label="Lines changed" />
                 </tr>
               </thead>
               <tbody>
