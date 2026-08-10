@@ -12,7 +12,7 @@ import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import {
-  fetchRvpCommitments, setRvpCommitment, deleteRvpCommitment, setRvpCommitmentBuckets,
+  fetchRvpCommitments, setRvpCommitment, deleteRvpCommitment, setRvpCommitmentBuckets, setRvpCommitmentBase,
   type CommitMetric, type RvpCommitmentRow, type RvpCommitWeek,
 } from "./api";
 
@@ -37,6 +37,13 @@ const fmtVal = (v: number | null, m: MetricDef) => {
 const fmtTarget = (v: number | null, m: MetricDef) =>
   v == null ? "—" : `${m.dir === "up" ? "≥" : "≤"} ${m.unit === "h" ? `${v}h` : `${v}%`}`;
 const fmtWeek = (s: string) => new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" });
+// A fiscal week (Mon–Sun) from its ending Sunday, e.g. "Jul 27–Aug 2".
+const fmtWeekOf = (sundayIso: string) => {
+  const end = new Date(`${sundayIso}T12:00:00`);
+  const start = new Date(end); start.setDate(end.getDate() - 6);
+  const f = (d: Date) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+  return `${f(start)}–${f(end)}`;
+};
 const fmtUsd = (v: number | null) =>
   v == null ? "—" : v.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 // Savings over the next 30 days from a per-week rate.
@@ -106,6 +113,18 @@ export function RvpCommitmentsPage() {
     setBuckets.mutate(next);
   };
 
+  const setBase = useMutation({
+    mutationFn: (weekEnd: string | null) => setRvpCommitmentBase(weekEnd),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["rvp-commitments"] });
+      toast.push(r.anchor_week_end ? `4-wk base pinned before ${fmtWeek(r.anchor_week_end)}.` : "4-wk base back to sliding.", "success");
+    },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't update the base.", "error"),
+  });
+  const base = q.data?.base;
+  const baseWeeks = base?.week_ends ?? [];
+  const baseSpan = baseWeeks.length ? `${fmtWeek(baseWeeks[baseWeeks.length - 1])}–${fmtWeek(baseWeeks[0])}` : null;
+
   return (
     <div className="mx-auto max-w-5xl space-y-5 p-4 sm:p-6">
       <PageHeader title="RVP Commitments" description="Each region's committed target vs. its live actual, tracked weekly." />
@@ -122,23 +141,41 @@ export function RvpCommitmentsPage() {
             <p className="max-w-2xl text-xs text-zinc-500">
               Labor metrics are this fiscal week to date
               {q.data.week ? <> ({fmtWeek(q.data.week.start)}–{fmtWeek(q.data.week.end)})</> : null}.
-              COGS Efficiency is the latest ranking run. <strong>4-wk base</strong> is the last-four-weeks
-              average (click to seed a target). <strong>Track</strong> = the 30-day window
+              COGS Efficiency is the latest ranking run.{" "}
+              <strong>4-wk base</strong> is {base?.anchor_week_end
+                ? <>pinned to {baseSpan} (the 4 weeks before {fmtWeekOf(base.anchor_week_end)}) — fixed</>
+                : <>the last-four-weeks average{baseSpan ? <> ({baseSpan})</> : null}, which slides each week</>}
+              ; click a value to seed a target. <strong>Track</strong> = the 30-day window
               {q.data.tracking.end ? <> through {fmtWeek(q.data.tracking.end)}</> : null}; each week fills in with an up/down ticker as it closes.
             </p>
             {canEditBuckets && (
-              <div className="flex flex-wrap items-center gap-1.5" title="Default buckets — applies to any RVP you haven't customized below.">
-                <span className="text-[10px] uppercase tracking-wide text-zinc-400">Default buckets</span>
-                {METRICS.map((m) => {
-                  const on = !hidden.includes(m.key);
-                  return (
-                    <button key={m.key} onClick={() => toggleBucket(m.key)} disabled={setBuckets.isPending}
-                      className={cn("rounded-full border px-2 py-0.5 text-[11px] font-medium transition",
-                        on ? "border-accent-200 bg-accent-50 text-accent-700" : "border-zinc-200 bg-white text-zinc-400 line-through")}>
-                      {m.label}
-                    </button>
-                  );
-                })}
+              <div className="flex flex-col items-end gap-1.5">
+                {base && (
+                  <div className="flex items-center gap-1.5" title="Pin the 4-week base to a fixed reference week so it stops sliding. The base is the 4 completed weeks strictly before the week you pick.">
+                    <span className="text-[10px] uppercase tracking-wide text-zinc-400">4-wk base</span>
+                    <select value={base.anchor_week_end ?? ""} disabled={setBase.isPending}
+                      onChange={(e) => setBase.mutate(e.target.value || null)}
+                      className="rounded-md border border-zinc-200 bg-white px-2 py-1 text-[11px] text-zinc-700">
+                      <option value="">Auto (sliding)</option>
+                      {base.options.map((we) => (
+                        <option key={we} value={we}>Prior to {fmtWeekOf(we)}</option>
+                      ))}
+                    </select>
+                  </div>
+                )}
+                <div className="flex flex-wrap items-center gap-1.5" title="Default buckets — applies to any RVP you haven't customized below.">
+                  <span className="text-[10px] uppercase tracking-wide text-zinc-400">Default buckets</span>
+                  {METRICS.map((m) => {
+                    const on = !hidden.includes(m.key);
+                    return (
+                      <button key={m.key} onClick={() => toggleBucket(m.key)} disabled={setBuckets.isPending}
+                        className={cn("rounded-full border px-2 py-0.5 text-[11px] font-medium transition",
+                          on ? "border-accent-200 bg-accent-50 text-accent-700" : "border-zinc-200 bg-white text-zinc-400 line-through")}>
+                        {m.label}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
           </div>
