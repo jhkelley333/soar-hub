@@ -19,7 +19,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import { fiscalInfo, FISCAL } from "@/lib/fiscal";
 import { Modal } from "@/shared/ui/Modal";
-import { deletePlManualFlag, fetchPlCompare, fetchPlFlags, fetchPlLineTrend, fetchPlManualFlags, fetchPlOverview, fetchPlPeriods, fetchPlReview, fetchPlReviewSummary, fetchPlRollup, fetchPlRollupLineTrend, fetchPlRollupStatement, fetchPlStatement, savePlFlagNote, savePlManualFlag, uploadPl, type PlFlag, type PlManualFlag, type PlRollupGroup, type PlTrendPoint, type RollupGroupBy } from "./api";
+import { deletePlManualFlag, fetchPlCompare, fetchPlComparePeriod, fetchPlFlags, fetchPlLineTrend, fetchPlManualFlags, fetchPlOverview, fetchPlPeriods, fetchPlReview, fetchPlReviewSummary, fetchPlRollup, fetchPlRollupLineTrend, fetchPlRollupStatement, fetchPlStatement, savePlFlagNote, savePlManualFlag, uploadPl, type PlFlag, type PlManualFlag, type PlRollupGroup, type PlTrendPoint, type RollupGroupBy } from "./api";
 import { BudgetTargetsModal } from "./BudgetTargetsModal";
 import { PlReviewPanel } from "./PlReviewPanel";
 import type { ParsedWorkbook, PlCompareLine, PlLine, PlOverviewRow, PlStage } from "./types";
@@ -48,6 +48,9 @@ export function PlPage() {
   const [store, setStore] = useState<string | null>(null);
   const [uploadOpen, setUploadOpen] = useState(false);
   const [budgetOpen, setBudgetOpen] = useState(false);
+  const [periodCompareOpen, setPeriodCompareOpen] = useState(false);
+  // When a store is opened FROM the period-compare view, land on its compare.
+  const [openStoreCompare, setOpenStoreCompare] = useState(false);
   const [view, setView] = useState<"stores" | "rollup">("stores");
   const [groupBy, setGroupBy] = useState<RollupGroupBy>("do");
   // When set, show a leader's / the company's aggregated income statement.
@@ -116,7 +119,19 @@ export function PlPage() {
         store={store}
         period={period}
         periodLabel={periodLbl}
-        onBack={rows.length > 1 ? () => setStore(null) : undefined}
+        initialCompare={openStoreCompare}
+        onBack={rows.length > 1 ? () => { setStore(null); setOpenStoreCompare(false); } : undefined}
+      />
+    );
+  }
+
+  if (periodCompareOpen && period) {
+    return (
+      <PeriodCompareView
+        period={period}
+        periodLabel={periodLbl}
+        onBack={() => setPeriodCompareOpen(false)}
+        onOpenStore={(sn) => { setPeriodCompareOpen(false); setOpenStoreCompare(true); setStore(sn); }}
       />
     );
   }
@@ -186,6 +201,16 @@ export function PlPage() {
               <SlidersHorizontal className="h-4 w-4" strokeWidth={2} />
               Budget &amp; Targets
             </button>
+            {view === "stores" && rows.some((r) => r.compare_available) && (
+              <button
+                type="button"
+                onClick={() => setPeriodCompareOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 px-3 py-1.5 text-sm font-semibold text-midnight hover:border-accent"
+              >
+                <ArrowLeftRight className="h-4 w-4" strokeWidth={2} />
+                What changed vs Prelim
+              </button>
+            )}
             {isAdmin && (
               <button
                 type="button"
@@ -201,7 +226,15 @@ export function PlPage() {
       />
       <BudgetTargetsModal open={budgetOpen} onClose={() => setBudgetOpen(false)} />
 
-      {uploadOpen && isAdmin && <UploadPanel onDone={() => setUploadOpen(false)} />}
+      {uploadOpen && isAdmin && (
+        <UploadPanel
+          onDone={() => setUploadOpen(false)}
+          onUploaded={({ period_end, is_final }) => {
+            // After a Final upload, jump to the period-wide "what changed" diff.
+            if (is_final) { setPeriod(period_end); setPeriodCompareOpen(true); }
+          }}
+        />
+      )}
 
       {view === "rollup" && periods.length > 0 ? (
         <RollupTable
@@ -499,15 +532,16 @@ function showsWalkthroughFlags(periodEnd: string): boolean {
 }
 
 // ── One store's full statement ───────────────────────────────────────
-function StatementView({ store, period, periodLabel, onBack }: {
+function StatementView({ store, period, periodLabel, onBack, initialCompare }: {
   store: string;
   period: string;
   periodLabel: string;
   onBack?: () => void;
+  initialCompare?: boolean;
 }) {
   // undefined = "auto" (Final when it exists, else Prelim). A toggle forces one.
   const [stage, setStage] = useState<PlStage | undefined>(undefined);
-  const [compareOpen, setCompareOpen] = useState(false);
+  const [compareOpen, setCompareOpen] = useState(!!initialCompare);
   const [printing, setPrinting] = useState(false);
 
   // Last-year comparison columns — on by default, hideable per user (persisted
@@ -848,6 +882,108 @@ function CompareView({ store, period, periodLabel, onBack }: {
               </table>
             </div>
           </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+// ── Period-wide Prelim → Final "what changed" summary ────────────────
+// Surfaced after a Final upload (and from the "What changed vs Prelim" button):
+// every store with both stages, its headline deltas + changed-line count. Each
+// row drills into that store's line-by-line CompareView.
+function PeriodCompareView({ period, periodLabel, onBack, onOpenStore }: {
+  period: string;
+  periodLabel: string;
+  onBack: () => void;
+  onOpenStore: (storeNumber: string) => void;
+}) {
+  const [changedOnly, setChangedOnly] = useState(true);
+  const q = useQuery({
+    queryKey: ["pl-compare-period", period],
+    queryFn: () => fetchPlComparePeriod(period),
+    staleTime: 60_000,
+  });
+  const data = q.data;
+  const rows = useMemo(
+    () => (data ? (changedOnly ? data.rows.filter((r) => r.changed_lines > 0) : data.rows) : []),
+    [data, changedOnly],
+  );
+
+  const deltaText = (v: number | null, kind: "money" | "pts") => {
+    if (v == null || Math.abs(v) < 0.005) return <span className="text-zinc-300">—</span>;
+    const up = v > 0;
+    const txt = kind === "pts" ? `${Math.abs(v).toFixed(2)} pts` : money(Math.abs(v), 0).replace(/^−/, "");
+    return <span className={cn("font-semibold tabular-nums", up ? "text-emerald-700" : "text-red-600")}>{up ? "+" : "−"}{txt}</span>;
+  };
+
+  return (
+    <>
+      <button type="button" onClick={onBack} className="mb-3 inline-flex items-center gap-1.5 text-sm text-zinc-500 hover:text-midnight">
+        <ArrowLeft className="h-4 w-4" /> Back to overview
+      </button>
+      <PageHeader
+        title="What changed · Prelim → Final"
+        description={
+          data
+            ? `${data.stores_changed} of ${data.stores_with_both} store${data.stores_with_both === 1 ? "" : "s"} changed from Preliminary · ${periodLabel}`
+            : `Preliminary vs Final · ${periodLabel}`
+        }
+        actions={
+          data && data.stores_with_both > 0 ? (
+            <label className="inline-flex cursor-pointer items-center gap-1.5 text-sm text-zinc-700">
+              <input type="checkbox" checked={changedOnly} onChange={(e) => setChangedOnly(e.target.checked)} className="h-3.5 w-3.5 accent-accent" />
+              Changed stores only
+            </label>
+          ) : undefined
+        }
+      />
+      {q.isLoading ? (
+        <Skeleton className="h-80 w-full" />
+      ) : q.isError ? (
+        <EmptyState title="Couldn't compare" description={(q.error as Error)?.message ?? "Try again."} />
+      ) : !data || data.stores_with_both === 0 ? (
+        <EmptyState title="Nothing to compare yet" description="This period needs both a Preliminary and a Final upload to show what changed." />
+      ) : (
+        <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-100 text-[10px] uppercase tracking-wide text-zinc-400">
+                  <th className="px-5 py-2 text-left">Store</th>
+                  <th className="px-3 py-2 text-right">Δ Sales</th>
+                  <th className="px-3 py-2 text-right">Δ CI $</th>
+                  <th className="px-3 py-2 text-right">Δ CI %</th>
+                  <th className="px-3 py-2 text-right">Δ EBITDA</th>
+                  <th className="px-5 py-2 text-right">Lines changed</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r) => (
+                  <tr key={r.store_number} onClick={() => onOpenStore(r.store_number)}
+                    className="cursor-pointer border-b border-zinc-50 hover:bg-accent/5">
+                    <td className="px-5 py-2">
+                      <span className="font-semibold text-midnight">#{r.store_number}</span>
+                      {r.store_name && <span className="ml-1.5 text-zinc-500">{r.store_name}</span>}
+                    </td>
+                    <td className="px-3 py-2 text-right">{deltaText(r.deltas.total_sales, "money")}</td>
+                    <td className="px-3 py-2 text-right">{deltaText(r.deltas.ci_amount, "money")}</td>
+                    <td className="px-3 py-2 text-right">{deltaText(r.deltas.ci_pct, "pts")}</td>
+                    <td className="px-3 py-2 text-right">{deltaText(r.deltas.ebitda, "money")}</td>
+                    <td className="px-5 py-2 text-right">
+                      {r.changed_lines > 0
+                        ? <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">{r.changed_lines} changed</span>
+                        : <span className="text-[11px] text-zinc-400">no change</span>}
+                    </td>
+                  </tr>
+                ))}
+                {rows.length === 0 && (
+                  <tr><td colSpan={6} className="px-5 py-8 text-center text-sm text-zinc-400">No stores changed between Preliminary and Final.</td></tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="border-t border-zinc-100 px-5 py-2 text-[11px] text-zinc-400">Click a store to see its line-by-line Prelim → Final diff.</div>
         </div>
       )}
     </>
@@ -1535,7 +1671,7 @@ function Tile({ label, value, tone }: { label: string; value: string; tone: "ok"
 }
 
 // ── Admin upload — parse the workbook in the browser, preview, save. ──
-function UploadPanel({ onDone }: { onDone: () => void }) {
+function UploadPanel({ onDone, onUploaded }: { onDone: () => void; onUploaded?: (info: { period_end: string; is_final: boolean }) => void }) {
   const toast = useToast();
   const qc = useQueryClient();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -1584,7 +1720,9 @@ function UploadPanel({ onDone }: { onDone: () => void }) {
       );
       qc.invalidateQueries({ queryKey: ["pl-periods"] });
       qc.invalidateQueries({ queryKey: ["pl-overview"] });
+      qc.invalidateQueries({ queryKey: ["pl-compare-period"] });
       onDone();
+      if (parsed) onUploaded?.({ period_end: parsed.period_end, is_final: isFinal });
     },
     onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Upload failed.", "error"),
   });
