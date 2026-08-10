@@ -981,32 +981,37 @@ async function bucketSettings(supa) {
 const effectiveHidden = (buckets, region) =>
   Object.prototype.hasOwnProperty.call(buckets.byRegion, region) ? buckets.byRegion[region] : buckets.global;
 
-// The $ that closing the gap TO THEIR TARGET accomplishes, counting only the
-// buckets this RVP is tracking. Worked in ANNUAL terms (the Ranker's *Annualized
-// fields are the reliable rate); weekly = annual/52. Labor $ derives from the
-// Hours Over Chart bucket (AvS is a discipline lever, no separate $, to avoid
-// double-counting). COGS $ = annualized actual food cost x (1 - effActual/effTarget)
+// The $ the COMMITMENT is worth — moving each metric from its 4-week BASE to the
+// TARGET (a fixed value tied to the pinned base, not the shrinking live gap),
+// counting only the buckets this RVP is tracking. Worked in ANNUAL terms (the
+// Ranker's *Annualized fields are the reliable rate); weekly = annual/52. Labor $
+// derives from the Hours Over Chart bucket (AvS is a discipline lever, no separate
+// $, to avoid double-counting). COGS $ = annualized food cost x (1 - effBase/effTarget)
 // — works for any target, above or below the 96% standard.
-function targetDollars({ tracked, actuals, targets, dollars, ixActualFood, weekInPeriod }) {
+function targetDollars({ tracked, baselines, actuals, targets, dollars, ixActualFood, weekInPeriod }) {
   let laborAnnual = 0;
   if (tracked.has("labor_hours_over")) {
-    const A = actuals.labor_hours_over, T = targets.labor_hours_over;
-    if (A != null && T != null && A > 0 && A > T && dollars.labor_annual != null) {
-      laborAnnual = dollars.labor_annual * ((A - T) / A);
+    // Value the BASE->target hour reduction at the current $/hour-over rate:
+    // dollars.labor_annual is the $ at the ACTUAL hours-over, so dividing by the
+    // actual isolates the wage x stores x 52 rate, which we apply to (base - T).
+    const B = baselines.labor_hours_over, A = actuals.labor_hours_over, T = targets.labor_hours_over;
+    if (B != null && T != null && B > T && A != null && A > 0 && dollars.labor_annual != null) {
+      laborAnnual = dollars.labor_annual * ((B - T) / A);
     }
   }
   let cogsAnnual = 0;
   if (tracked.has("cogs_efficiency")) {
-    const A = actuals.cogs_efficiency, T = targets.cogs_efficiency; // percents
-    if (A != null && T != null && T > A) {
-      const effA = A / 100, effT = T / 100;
+    const B = baselines.cogs_efficiency, A = actuals.cogs_efficiency, T = targets.cogs_efficiency; // percents
+    if (B != null && T != null && T > B) {
+      const effB = B / 100, effT = T / 100, effA = A != null ? A / 100 : null;
       let annualFood = ixActualFood > 0 ? ixActualFood * (52 / Math.max(1, weekInPeriod)) : 0;
       // Fallback (below the 96% standard only): back out the food base from the
-      // Ranker's annualized fc-miss = annualFood x (1 - effA/0.96).
-      if (!(annualFood > 0) && dollars.cogs_annual > 0 && effA < 0.96) {
+      // Ranker's annualized fc-miss = annualFood x (1 - effActual/0.96) — this
+      // reconstruction is anchored to the ACTUAL, then the base->target gap applies.
+      if (!(annualFood > 0) && dollars.cogs_annual > 0 && effA != null && effA < 0.96) {
         annualFood = dollars.cogs_annual / (1 - effA / 0.96);
       }
-      if (annualFood > 0) cogsAnnual = Math.max(0, annualFood * (1 - effA / effT));
+      if (annualFood > 0) cogsAnnual = Math.max(0, annualFood * (1 - effB / effT));
     }
   }
   const r = (v) => (isFinite(v) ? Math.round(v) : null);
@@ -1114,15 +1119,16 @@ async function rvpCommitments(supa, user) {
       cogs_efficiency: targetOf(region, "cogs_efficiency"),
     };
     const dollars = cogsLatest?.dollars ?? { labor_weekly: null, labor_annual: null, cogs_weekly: null, cogs_annual: null, total_weekly: null, total_annual: null };
+    const baselines = {
+      labor_hours_over: baseAvg(region, "hours_over"),
+      labor_avs_pct: baseAvg(region, "avs_pct"),
+      cogs_efficiency: rvpName ? (cogs.baseline.get(String(rvpName)) ?? null) : null,
+    };
     return {
       region, rvp_name: rvpName, stores: storeCount.get(region) ?? rrows.length,
       hidden_metrics: hidden,
       actuals,
-      baselines: {
-        labor_hours_over: baseAvg(region, "hours_over"),
-        labor_avs_pct: baseAvg(region, "avs_pct"),
-        cogs_efficiency: rvpName ? (cogs.baseline.get(String(rvpName)) ?? null) : null,
-      },
+      baselines,
       weekly: {
         labor_hours_over: laborSeries("hours_over"),
         labor_avs_pct: laborSeries("avs_pct"),
@@ -1130,9 +1136,10 @@ async function rvpCommitments(supa, user) {
       },
       // Full opportunity to standard (labor over chart + food cost over target).
       dollars,
-      // What closing the gap to THEIR target accomplishes — tracked buckets only.
+      // The committed value — moving each metric from its 4-week base to the
+      // target, tracked buckets only.
       target_dollars: targetDollars({
-        tracked, actuals, targets, dollars,
+        tracked, baselines, actuals, targets, dollars,
         ixActualFood: rvpName ? (ixActualFood.get(String(rvpName)) ?? 0) : 0,
         weekInPeriod,
       }),

@@ -185,7 +185,7 @@ export function RvpCommitmentsPage() {
               <div className="mt-0.5 flex flex-wrap items-baseline gap-x-4 gap-y-1">
                 <span className="text-2xl font-semibold tabular-nums">{fmtUsd(per30(q.data.totals.total_weekly))}<span className="ml-1 text-sm font-normal text-white/60">/ 30 days</span></span>
                 <span className="text-sm tabular-nums text-white/80">{fmtUsd(q.data.totals.total_annual)}<span className="text-white/50">/yr</span></span>
-                <span className="text-[11px] text-white/50">Labor {fmtUsd(per30(q.data.totals.labor_weekly))} · COGS {fmtUsd(per30(q.data.totals.cogs_weekly))} over 30 days · gap to each RVP's committed target, tracked buckets only</span>
+                <span className="text-[11px] text-white/50">Labor {fmtUsd(per30(q.data.totals.labor_weekly))} · COGS {fmtUsd(per30(q.data.totals.cogs_weekly))} over 30 days · each RVP's 4-wk base → committed target, tracked buckets only</span>
               </div>
             </div>
           )}
