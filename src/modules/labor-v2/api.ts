@@ -141,12 +141,20 @@ export interface RvpCommitmentsResponse {
   anchor: string | null;
   week: { start: string; end: string } | null;
   tracking: { week_ends: string[]; end: string | null };
+  // 4-week base: anchor_week_end null = sliding; set = pinned to the 4 weeks
+  // strictly before that reference week. options = selectable reference weeks.
+  base: { anchor_week_end: string | null; week_ends: string[]; options: string[] };
   hidden_metrics: CommitMetric[];
   totals: CommitDollars;
   rows: RvpCommitmentRow[];
 }
 export function fetchRvpCommitments(): Promise<RvpCommitmentsResponse> {
   return req(`${FN}?action=rvp-commitments`);
+}
+// Pin the 4-week base to the 4 weeks strictly before `weekEnd` (a fiscal
+// week-ending Sunday); pass null to clear and let the base slide again.
+export function setRvpCommitmentBase(weekEnd: string | null): Promise<{ ok: true; anchor_week_end: string | null }> {
+  return req(`${FN}?action=rvp-commitment-base-set`, { method: "POST", body: JSON.stringify({ week_end: weekEnd ?? "" }) });
 }
 // Omit region to set the global default; pass a region to set that RVP's override.
 export function setRvpCommitmentBuckets(hidden: CommitMetric[], region?: string): Promise<{ ok: true; hidden: CommitMetric[] }> {

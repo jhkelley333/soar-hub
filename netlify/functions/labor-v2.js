@@ -776,18 +776,39 @@ const COMMIT_METRICS = new Set(["labor_hours_over", "labor_avs_pct", "cogs_effic
 // shows. Reads the latest complete run's rvp-tier rows (metrics.cogsEff, a
 // fraction) keyed by RVP name (entity_key == resolveOrg rvpName), plus a
 // baseline = average across the last `weeksBack` complete runs (PTD).
-async function cogsByRvpFromRuns(supa, weeksBack = 4) {
+// baseWeekEnds (optional): when provided, the baseline averages one complete run
+// per those specific weeks (the pinned 4-week base). When null, it falls back to
+// the sliding last-`weeksBack` complete runs. `latest` is always the newest run.
+async function cogsByRvpFromRuns(supa, weeksBack = 4, baseWeekEnds = null) {
   const empty = { latest: new Map(), baseline: new Map(), weekInPeriod: 1 };
-  const { data: runs } = await supa.from("ranking_runs")
+  const { data: latestRuns } = await supa.from("ranking_runs")
     .select("id, week_ending, week").eq("status", "complete")
-    .order("started_at", { ascending: false }).limit(weeksBack);
-  if (!runs?.length) return empty;
-  const latestRunId = runs[0].id;
-  const weekInPeriod = Math.max(1, Number(runs[0].week) || 1);
-  const weekByRun = new Map(runs.map((r) => [r.id, r.week_ending]));
+    .order("started_at", { ascending: false }).limit(1);
+  if (!latestRuns?.length) return empty;
+  const latestRunId = latestRuns[0].id;
+  const weekInPeriod = Math.max(1, Number(latestRuns[0].week) || 1);
+
+  // Base runs: one complete run per pinned week (latest per week), or the last N.
+  let baseRuns;
+  if (baseWeekEnds && baseWeekEnds.length) {
+    const { data } = await supa.from("ranking_runs")
+      .select("id, week_ending, week").eq("status", "complete")
+      .in("week_ending", baseWeekEnds).order("started_at", { ascending: false });
+    const seen = new Set();
+    baseRuns = [];
+    for (const r of data || []) { if (!seen.has(r.week_ending)) { seen.add(r.week_ending); baseRuns.push(r); } }
+  } else {
+    const { data } = await supa.from("ranking_runs")
+      .select("id, week_ending, week").eq("status", "complete")
+      .order("started_at", { ascending: false }).limit(weeksBack);
+    baseRuns = data || [];
+  }
+  const baseRunIds = new Set(baseRuns.map((r) => r.id));
+  const runIds = [...new Set([latestRunId, ...baseRuns.map((r) => r.id)])];
+  const weekByRun = new Map([[latestRunId, latestRuns[0].week_ending], ...baseRuns.map((r) => [r.id, r.week_ending])]);
   const { data: rows } = await supa.from("ranking_rows")
     .select("run_id, entity_key, metrics")
-    .in("run_id", runs.map((r) => r.id)).eq("scope", "ptd").eq("tier", "rvp");
+    .in("run_id", runIds).eq("scope", "ptd").eq("tier", "rvp");
   const latest = new Map();
   const acc = new Map();
   const num = (v) => (isFinite(Number(v)) ? Math.round(Number(v)) : null);
@@ -795,7 +816,7 @@ async function cogsByRvpFromRuns(supa, weeksBack = 4) {
     const name = String(r.entity_key);
     const m = r.metrics || {};
     const eff = Number(m.cogsEff);
-    if (isFinite(eff)) (acc.get(name) || acc.set(name, []).get(name)).push(round2(eff * 100));
+    if (isFinite(eff) && baseRunIds.has(r.run_id)) (acc.get(name) || acc.set(name, []).get(name)).push(round2(eff * 100));
     if (r.run_id === latestRunId) {
       // Labor $ over chart + food-cost $ over the 96% target + combined. The
       // Ranker's *Miss fields are period-to-date; the *Annualized fields are the
@@ -925,6 +946,26 @@ async function trackingWindow(supa) {
   return weekEnds;
 }
 
+// The 4-week base anchor. By default the base slides with the latest data; once
+// pinned (stored in ea_settings) it stays fixed on a reference week so the
+// committed baseline doesn't move week to week. The stored value is the
+// REFERENCE week-ending Sunday; the base is the 4 completed weeks STRICTLY
+// BEFORE it (e.g. anchor 2026-08-02 -> base weeks ending 07-26/07-19/07-12/07-05).
+async function baseAnchor(supa) {
+  const { data: row } = await supa.from("ea_settings").select("value").eq("key", "rvp_commitment_base_anchor").maybeSingle();
+  const we = row?.value?.week_end;
+  return (typeof we === "string" && /^\d{4}-\d{2}-\d{2}$/.test(we)) ? we : null;
+}
+
+// The 4 week-ending Sundays that make up the base for a given reference week
+// (strictly before it), or the sliding last-4 when no reference is pinned.
+function baseWeekEndsFor(anchorRef, latestAnchor, fi) {
+  if (anchorRef) return Array.from({ length: 4 }, (_, i) => isoOf(shiftDays(parseIso(anchorRef), -7 * (i + 1))));
+  if (!latestAnchor) return [];
+  const baseEnd = fi ? (fi.weekEnd <= latestAnchor ? fi.weekEnd : isoOf(shiftDays(parseIso(fi.weekStart), -1))) : latestAnchor;
+  return Array.from({ length: 4 }, (_, i) => isoOf(shiftDays(parseIso(baseEnd), -7 * i)));
+}
+
 // Bucket visibility: a global default plus per-region overrides. A region uses
 // its own list if it has one, else the global default. Stored in one setting.
 async function bucketSettings(supa) {
@@ -1017,15 +1058,17 @@ async function rvpCommitments(supa, user) {
     (rowsByRegion.get(region) || rowsByRegion.set(region, []).get(region)).push(r);
   }
 
-  // Baseline = last 4 completed fiscal weeks; tracking = the shared 30-day window.
-  const baseEnd = fi ? (fi.weekEnd <= anchor ? fi.weekEnd : isoOf(shiftDays(parseIso(fi.weekStart), -1))) : anchor;
-  const baseWeekEnds = anchor ? Array.from({ length: 4 }, (_, i) => isoOf(shiftDays(parseIso(baseEnd), -7 * i))) : [];
+  // Baseline = 4 completed fiscal weeks. It slides with the latest data unless
+  // an RVP-commitment base anchor is pinned, in which case it's the 4 weeks
+  // strictly before that reference week and stays fixed. Tracking = 30-day window.
+  const anchorRef = await baseAnchor(supa);
+  const baseWeekEnds = baseWeekEndsFor(anchorRef, anchor, fi);
   const trackWeekEnds = await trackingWindow(supa);
   const allWeekEnds = [...new Set([...baseWeekEnds, ...trackWeekEnds])];
 
   const credits = await loadLaborCredits(supa, numbers);
   const [cogs, laborWk, cogsWk, buckets, ixActualFood] = await Promise.all([
-    cogsByRvpFromRuns(supa),
+    cogsByRvpFromRuns(supa, 4, anchorRef ? baseWeekEnds : null),
     laborWeeklyByRegion(supa, numbers, orgMap, allWeekEnds, credits),
     cogsWeeklyByRvp(supa, trackWeekEnds),
     bucketSettings(supa),
@@ -1105,10 +1148,18 @@ async function rvpCommitments(supa, user) {
     total_weekly: sum("total_weekly"), total_annual: sum("total_annual"),
   };
 
+  // Picker options: recent week-ending Sundays (as reference weeks). The most
+  // recent completed Sunday on/before the anchor, going back 16 weeks.
+  const lastSun = fi ? (fi.weekEnd <= anchor ? fi.weekEnd : isoOf(shiftDays(parseIso(fi.weekStart), -1))) : anchor;
+  const baseOptions = lastSun ? Array.from({ length: 16 }, (_, i) => isoOf(shiftDays(parseIso(lastSun), -7 * i))) : [];
+
   return {
     anchor,
     week: fi ? { start: fi.weekStart, end: fi.weekEnd } : null,
     tracking: { week_ends: trackWeekEnds, end: trackWeekEnds[trackWeekEnds.length - 1] ?? null },
+    // 4-week base state: `anchor_week_end` null = sliding; set = pinned to the 4
+    // weeks strictly before that reference week. `week_ends` are those 4 weeks.
+    base: { anchor_week_end: anchorRef, week_ends: baseWeekEnds, options: baseOptions },
     hidden_metrics: buckets.global,
     totals,
     rows: out,
@@ -1137,6 +1188,29 @@ async function rvpCommitmentBucketsSet(supa, user, body) {
   );
   if (error) return { error: error.message, status: 500 };
   return { ok: true, hidden, region };
+}
+
+// Pin (or clear) the 4-week base anchor. Pass a fiscal week-ending Sunday to pin
+// the base to the 4 weeks strictly before it; pass empty/null to clear (base
+// slides again). Global setting — VP/COO/admin only, same as buckets/tracking.
+async function rvpCommitmentBaseSet(supa, user, body) {
+  if (!new Set(["vp", "coo", "admin"]).has(roleOf(user))) return { error: "VP and above only.", status: 403 };
+  const raw = String(body?.week_end ?? "").trim();
+  if (!raw) {
+    const { error } = await supa.from("ea_settings").delete().eq("key", "rvp_commitment_base_anchor");
+    if (error) return { error: error.message, status: 500 };
+    return { ok: true, anchor_week_end: null };
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(raw)) return { error: "week_end must be YYYY-MM-DD.", status: 400 };
+  const fx = fiscalForDate(raw);
+  if (!fx) return { error: `${raw} is outside the fiscal calendar.`, status: 400 };
+  if (!fx.isWeekEnd) return { error: `${raw} is not a fiscal week-ending Sunday.`, status: 400 };
+  const { error } = await supa.from("ea_settings").upsert(
+    { key: "rvp_commitment_base_anchor", value: { week_end: raw }, updated_by: user.id, updated_at: new Date().toISOString() },
+    { onConflict: "key" },
+  );
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, anchor_week_end: raw };
 }
 
 async function rvpCommitmentSet(supa, user, body) {
@@ -2078,6 +2152,7 @@ export const handler = async (event) => {
       if (action === "rvp-commitment-set") return unwrap(await rvpCommitmentSet(supa, user, body));
       if (action === "rvp-commitment-delete") return unwrap(await rvpCommitmentDelete(supa, user, body));
       if (action === "rvp-commitment-buckets-set") return unwrap(await rvpCommitmentBucketsSet(supa, user, body));
+      if (action === "rvp-commitment-base-set") return unwrap(await rvpCommitmentBaseSet(supa, user, body));
       if (action === "labor-share-mint") return unwrap(await mintLaborShare(supa, user, body));
       if (action === "labor-share-revoke") return unwrap(await revokeLaborShare(supa, user, body));
       return respond(400, { error: `Unknown action: ${action}` });
