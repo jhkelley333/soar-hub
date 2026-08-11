@@ -50,7 +50,7 @@ export const handler = async (event) => {
     if (event.httpMethod === "GET" && action === "list") {
       const { data: stores } = await supa.from("stores")
         .select("id, number, name, address, city, state, zip, is_active, google_hours, google_hours_checked_at")
-        .eq("is_active", true).order("number", { ascending: true });
+        .eq("is_active", true).neq("brand", "little_caesars").order("number", { ascending: true });
       const ids = (stores || []).map((s) => s.id);
       const byStore = new Map();
       const specialByStore = new Map();
@@ -92,7 +92,7 @@ export const handler = async (event) => {
       if (!storeNumber) return respond(400, { error: "store is required" });
       const { data: store } = await supa.from("stores")
         .select("id, number, name, address, city, state, zip, is_active, google_place_id, google_hours, google_hours_checked_at")
-        .eq("number", storeNumber).maybeSingle();
+        .eq("number", storeNumber).neq("brand", "little_caesars").maybeSingle();
       if (!store) return respond(404, { error: "Store not found." });
       const [{ data: hrs }, { data: sp }] = await Promise.all([
         supa.from("store_hours").select("day_of_week, is_closed, open_time, close_time, updated_at").eq("store_id", store.id),
@@ -176,7 +176,7 @@ export const handler = async (event) => {
       const rows = Array.isArray(body.rows) ? body.rows : [];
       if (!rows.length) return respond(400, { error: "no rows to import" });
       if (rows.length > 5000) return respond(400, { error: "too many rows (max 5000)" });
-      const { data: stores } = await supa.from("stores").select("id, number").eq("is_active", true);
+      const { data: stores } = await supa.from("stores").select("id, number").eq("is_active", true).neq("brand", "little_caesars");
       const idByNumber = new Map((stores || []).map((s) => [String(s.number), s.id]));
       const upserts = [];
       const errors = [];
@@ -217,7 +217,7 @@ export const handler = async (event) => {
       if (!storeNumber) return respond(400, { error: "store is required" });
       const { data: store } = await supa.from("stores")
         .select("id, number, name, address, city, state, zip, latitude, longitude, google_place_id")
-        .eq("number", storeNumber).maybeSingle();
+        .eq("number", storeNumber).neq("brand", "little_caesars").maybeSingle();
       if (!store) return respond(404, { error: "Store not found." });
       const r = await refreshGoogle(supa, store);
       const { data: hrs } = await supa.from("store_hours").select("day_of_week, is_closed, open_time, close_time").eq("store_id", store.id);
@@ -239,7 +239,7 @@ export const handler = async (event) => {
       if (!configured.length) return respond(200, { ok: true, checked: 0, failed: 0, remaining: 0 });
       const { data: cand } = await supa.from("stores")
         .select("id, number, name, address, city, state, zip, latitude, longitude, google_place_id, google_hours_checked_at")
-        .in("id", configured).eq("is_active", true)
+        .in("id", configured).eq("is_active", true).neq("brand", "little_caesars")
         .order("google_hours_checked_at", { ascending: true, nullsFirst: true });
       const eligible = (cand || []).filter((s) => !s.google_hours_checked_at || s.google_hours_checked_at < staleBefore);
       const start = Date.now();
