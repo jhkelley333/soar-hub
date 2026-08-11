@@ -316,11 +316,23 @@ export function MetricsBoard() {
   const toast = useToast();
   const qc = useQueryClient();
   const backfill = useMutation({
-    mutationFn: () => backfillBoardCash(),
+    // Loop through ALL history: each call fills a time-budgeted chunk and returns
+    // a cursor; keep going until it's null (or a safety cap of 60 calls).
+    mutationFn: async () => {
+      let before: string | null = null;
+      let days = 0, storeRows = 0, calls = 0;
+      for (;;) {
+        const r = await backfillBoardCash(before);
+        days += r.filled_dates; storeRows += r.store_rows; calls += 1;
+        if (!r.next_before || calls >= 60) break;
+        before = r.next_before;
+      }
+      return { days, storeRows };
+    },
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ["kpi-board"] });
       qc.invalidateQueries({ queryKey: ["kpi-breakdown"] });
-      toast.push(`Backfilled Cash/Paid-Outs across ${r.filled_dates} day(s)${r.remaining ? ` · ${r.remaining} left, run again` : ""}.`, "success");
+      toast.push(`Backfilled Cash/Paid-Outs across ${r.days} day(s) · ${r.storeRows.toLocaleString()} store-rows.`, "success");
     },
     onError: (e) => toast.push(e instanceof Error ? e.message : "Backfill failed.", "error"),
   });

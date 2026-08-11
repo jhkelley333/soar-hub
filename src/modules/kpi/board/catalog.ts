@@ -82,14 +82,13 @@ export const PILLARS: Pillar[] = [
     ],
   },
   {
-    key: "other", index: "05", title: "Other Controllable Contribution", countLabel: "3 execution metrics",
+    key: "other", index: "05", title: "Other Controllable Contribution", countLabel: "2 execution metrics",
     // Cash Over/Short + Paid Outs come live from the KPI feed (0279). Other
-    // Controllables % (P&L) and Last Clock Out (feed field null) aren't wired yet.
+    // Controllables % (P&L) isn't wired yet.
     mtm: { id: "other_pct", name: "Other Controllables % of Sales", unit: "%", dec: 1, hb: false, target: 4.0, soon: true },
     rows: [
       { id: "cash_over_short", name: "Cash Over / Short", unit: "$", dec: 2, hb: true, target: 0, signed: true },
       { id: "paid_outs", name: "Paid Outs", unit: "$", dec: 0, hb: false, target: 75 },
-      { id: "last_clock_out", name: "Last Clock Out", unit: "min", dec: 0, hb: false, target: 15, soon: true },
     ],
   },
 ];

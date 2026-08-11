@@ -64,16 +64,18 @@ export async function fetchStoreBreakdown(metric: string, level: string, id: str
   return body as StoreBreakdown;
 }
 
-// Admin: backfill Cash Over/Short + Paid Outs from stored snapshots.
-export async function backfillBoardCash(days = 45): Promise<{ ok: true; filled_dates: number; store_rows: number; remaining: number }> {
+// Admin: backfill Cash Over/Short + Paid Outs from stored snapshots. One call
+// processes as many dates as fit a time budget and returns `next_before` — pass
+// it back to continue older, until it's null (all history done).
+export async function backfillBoardCash(before: string | null = null): Promise<{ ok: true; filled_dates: number; store_rows: number; next_before: string | null }> {
   const res = await fetch(`${FN}?action=backfill-cash`, {
     method: "POST",
     headers: { Authorization: `Bearer ${await token()}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ days }),
+    body: JSON.stringify({ before }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((body as { error?: string })?.error || `Request failed (${res.status})`);
-  return body as { ok: true; filled_dates: number; store_rows: number; remaining: number };
+  return body as { ok: true; filled_dates: number; store_rows: number; next_before: string | null };
 }
 
 // Admin: set (number) or clear (null) a metric's target override.
