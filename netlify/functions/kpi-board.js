@@ -8,6 +8,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { fiscalForDate } from "./_lib/fiscal.js";
 import { resolveOrg } from "./_lib/kpiOrg.js";
+import { backfillCashPaidOuts } from "./_lib/kpiBackfill.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -238,6 +239,18 @@ export const handler = async (event) => {
         return respond(500, { error: error.message });
       }
       return respond(200, { ok: true, metric_id: metricId, target });
+    }
+
+    // Admin: backfill Cash Over/Short + Paid Outs into labor_v2_daily from the
+    // stored snapshots (for rows captured before 0279's capture landed).
+    if (event.httpMethod === "POST" && params.action === "backfill-cash") {
+      if (user.role !== "admin") return respond(403, { error: "Only an admin can backfill." });
+      let body = {};
+      try { body = JSON.parse(event.body || "{}"); } catch { body = {}; }
+      const days = Math.max(1, Math.min(120, Number(body.days) || 45));
+      const res = await backfillCashPaidOuts(supa, { days });
+      if (res.error) return respond(res.status || 500, { error: res.error });
+      return respond(200, { ok: true, filled_dates: res.filled, store_rows: res.stores, remaining: res.remaining.length, failed: res.failed.slice(0, 5) });
     }
 
     const level = ["company", "region", "store"].includes(params.level) ? params.level : "company";

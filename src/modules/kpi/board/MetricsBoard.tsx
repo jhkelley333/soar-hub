@@ -18,7 +18,7 @@ import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import { fiscalInfo, fiscalWeekRange } from "@/lib/fiscal";
 import { PILLARS, type MetricDef, type Pillar } from "./catalog";
-import { fetchKpiBoard, fetchStoreBreakdown, setBoardTarget, type MetricValues } from "./api";
+import { backfillBoardCash, fetchKpiBoard, fetchStoreBreakdown, setBoardTarget, type MetricValues } from "./api";
 
 // Metrics whose value rolls up from per-store $ — clickable to see each store.
 const DRILLABLE = new Set(["cash_over_short", "paid_outs"]);
@@ -313,6 +313,18 @@ export function MetricsBoard() {
   const values = data?.values ?? {};
   const targets = data?.targets ?? {};
 
+  const toast = useToast();
+  const qc = useQueryClient();
+  const backfill = useMutation({
+    mutationFn: () => backfillBoardCash(),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["kpi-board"] });
+      qc.invalidateQueries({ queryKey: ["kpi-breakdown"] });
+      toast.push(`Backfilled Cash/Paid-Outs across ${r.filled_dates} day(s)${r.remaining ? ` · ${r.remaining} left, run again` : ""}.`, "success");
+    },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Backfill failed.", "error"),
+  });
+
   // On-target counter across every metric (MTMs included).
   let total = 0, good = 0;
   for (const p of PILLARS) for (const m of [p.mtm, ...p.rows]) {
@@ -369,6 +381,13 @@ export function MetricsBoard() {
             {isAdmin && (
               <Button size="sm" variant="secondary" onClick={() => setTargetsOpen(true)}>
                 <SlidersHorizontal className="mr-1 h-3.5 w-3.5" /> Targets
+              </Button>
+            )}
+            {isAdmin && (
+              <Button size="sm" variant="secondary" disabled={backfill.isPending}
+                title="Fill Cash Over/Short + Paid Outs from the stored KPI snapshots"
+                onClick={() => backfill.mutate()}>
+                {backfill.isPending ? "Backfilling…" : "Backfill Cash/POs"}
               </Button>
             )}
           </div>

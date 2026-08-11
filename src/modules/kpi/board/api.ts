@@ -64,6 +64,18 @@ export async function fetchStoreBreakdown(metric: string, level: string, id: str
   return body as StoreBreakdown;
 }
 
+// Admin: backfill Cash Over/Short + Paid Outs from stored snapshots.
+export async function backfillBoardCash(days = 45): Promise<{ ok: true; filled_dates: number; store_rows: number; remaining: number }> {
+  const res = await fetch(`${FN}?action=backfill-cash`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${await token()}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ days }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((body as { error?: string })?.error || `Request failed (${res.status})`);
+  return body as { ok: true; filled_dates: number; store_rows: number; remaining: number };
+}
+
 // Admin: set (number) or clear (null) a metric's target override.
 export async function setBoardTarget(metricId: string, target: number | null): Promise<void> {
   const res = await fetch(`${FN}?action=set-target`, {
