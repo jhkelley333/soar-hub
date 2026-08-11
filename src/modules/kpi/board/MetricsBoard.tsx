@@ -7,7 +7,7 @@
 // can edit targets; the labor target is data-driven (from the feed).
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { SlidersHorizontal } from "lucide-react";
+import { ChevronRight, SlidersHorizontal } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -18,7 +18,10 @@ import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
 import { fiscalInfo, fiscalWeekRange } from "@/lib/fiscal";
 import { PILLARS, type MetricDef, type Pillar } from "./catalog";
-import { fetchKpiBoard, setBoardTarget, type MetricValues } from "./api";
+import { fetchKpiBoard, fetchStoreBreakdown, setBoardTarget, type MetricValues } from "./api";
+
+// Metrics whose value rolls up from per-store $ — clickable to see each store.
+const DRILLABLE = new Set(["cash_over_short", "paid_outs"]);
 import { fmt, metricView, PERIOD_LABELS, type DeltaTone, type MetricView, type Period, type StatusTone } from "./logic";
 
 const STATUS_BORDER: Record<StatusTone, string> = {
@@ -102,7 +105,7 @@ function MtmHero({ v, sub }: { v: MetricView; sub?: string | null }) {
   );
 }
 
-function ExecCard({ def, v }: { def: MetricDef; v: MetricView }) {
+function ExecCard({ def, v, onDrill }: { def: MetricDef; v: MetricView; onDrill?: () => void }) {
   if (def.soon) {
     return (
       <div className="flex items-center justify-between gap-3 rounded-lg border border-l-2 border-zinc-200 border-l-zinc-200 bg-white px-3.5 py-3">
@@ -114,10 +117,25 @@ function ExecCard({ def, v }: { def: MetricDef; v: MetricView }) {
       </div>
     );
   }
+  const drillable = !!onDrill && v.hasData;
   return (
-    <div className={cn("flex items-center justify-between gap-3 rounded-lg border border-l-2 border-zinc-200 bg-white px-3.5 py-3", STATUS_BORDER[v.statusTone])}>
+    <div
+      className={cn(
+        "flex items-center justify-between gap-3 rounded-lg border border-l-2 border-zinc-200 bg-white px-3.5 py-3",
+        STATUS_BORDER[v.statusTone],
+        drillable && "cursor-pointer transition hover:ring-1 hover:ring-accent",
+      )}
+      onClick={drillable ? onDrill : undefined}
+      role={drillable ? "button" : undefined}
+      tabIndex={drillable ? 0 : undefined}
+      onKeyDown={drillable ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onDrill?.(); } } : undefined}
+      title={drillable ? "See per-store breakdown" : undefined}
+    >
       <div className="min-w-0">
-        <div className="truncate text-sm font-medium text-midnight">{def.name}</div>
+        <div className="flex items-center gap-1 truncate text-sm font-medium text-midnight">
+          {def.name}
+          {drillable && <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-300" strokeWidth={2.5} />}
+        </div>
         <div className="text-[11px] text-zinc-400">{v.targetLabel}</div>
       </div>
       <div className="flex items-center gap-3">
@@ -131,7 +149,7 @@ function ExecCard({ def, v }: { def: MetricDef; v: MetricView }) {
   );
 }
 
-function PillarCard({ p, values, targets, period, nowFw }: { p: Pillar; values: Record<string, MetricValues>; targets: Record<string, number>; period: Period; nowFw: number | null }) {
+function PillarCard({ p, values, targets, period, nowFw, onDrill }: { p: Pillar; values: Record<string, MetricValues>; targets: Record<string, number>; period: Period; nowFw: number | null; onDrill: (metricId: string, name: string) => void }) {
   const mtmV = metricView(p.mtm, values[p.mtm.id], period, 280, 48, targets[p.mtm.id], nowFw);
   const rowViews = p.rows.map((r) => ({ def: r, v: metricView(r, values[r.id], period, 92, 26, targets[r.id]) }));
 
@@ -158,7 +176,10 @@ function PillarCard({ p, values, targets, period, nowFw }: { p: Pillar; values: 
       <div className="grid gap-4 lg:grid-cols-[minmax(300px,360px)_1fr]">
         <MtmHero v={mtmV} sub={sub} />
         <div className="grid content-start gap-2.5 sm:grid-cols-2">
-          {rowViews.map(({ def, v }) => <ExecCard key={def.id} def={def} v={v} />)}
+          {rowViews.map(({ def, v }) => (
+            <ExecCard key={def.id} def={def} v={v}
+              onDrill={DRILLABLE.has(def.id) ? () => onDrill(def.id, def.name) : undefined} />
+          ))}
         </div>
       </div>
     </section>
@@ -216,6 +237,60 @@ function TargetsModal({ targets, onClose }: { targets: Record<string, number>; o
   );
 }
 
+// Per-store breakdown for a $ metric (Cash Over/Short, Paid Outs).
+function BreakdownModal({ metricId, name, level, id, date, period, periodLabel, onClose }: {
+  metricId: string; name: string; level: string; id: string | null; date: string | null; period: Period; periodLabel: string; onClose: () => void;
+}) {
+  const q = useQuery({
+    queryKey: ["kpi-breakdown", metricId, level, id, date, period],
+    queryFn: () => fetchStoreBreakdown(metricId, level, id, date, period),
+    staleTime: 60_000,
+  });
+  const d = q.data;
+  const usd = (v: number) => {
+    const dp = metricId === "cash_over_short" ? 2 : 2;
+    const s = Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp });
+    return `${v < 0 ? "−" : ""}$${s}`;
+  };
+  // Cash over/short: red when short (negative). Paid outs: neutral.
+  const tone = (v: number) => (metricId === "cash_over_short" ? (v < 0 ? "text-red-600" : "text-emerald-700") : "text-midnight");
+  return (
+    <Modal open onClose={onClose} title={`${name} — by store`}>
+      <div className="mb-2 flex items-baseline justify-between text-xs text-zinc-500">
+        <span>{periodLabel}{d?.anchor ? ` · through ${new Date(`${d.anchor}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric" })}` : ""}</span>
+        {d?.total != null && <span>Total <b className="tabular-nums text-midnight">{usd(d.total)}</b> · {d.count} stores</span>}
+      </div>
+      {q.isLoading ? (
+        <div className="py-6 text-center text-sm text-zinc-500">Loading…</div>
+      ) : q.isError ? (
+        <div className="py-6 text-center text-sm text-red-600">{(q.error as Error)?.message ?? "Couldn't load."}</div>
+      ) : !d || d.stores.length === 0 ? (
+        <div className="py-6 text-center text-sm text-zinc-400">No store values for this period.</div>
+      ) : (
+        <div className="max-h-[60vh] overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 bg-white text-left text-[10px] uppercase tracking-wide text-zinc-400">
+              <tr><th className="py-1.5">Store</th><th className="py-1.5 text-right">{name}</th></tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {d.stores.map((s) => (
+                <tr key={s.store_number}>
+                  <td className="py-1.5">
+                    <span className="font-semibold text-midnight">#{s.store_number}</span>
+                    <span className="ml-1.5 text-zinc-500">{s.store_name}</span>
+                    {s.region && <span className="ml-1.5 text-[11px] text-zinc-400">· {s.region}</span>}
+                  </td>
+                  <td className={cn("py-1.5 text-right font-semibold tabular-nums", tone(s.value))}>{usd(s.value)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 const selCls = "rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-midnight focus:border-accent focus:outline-none";
 
 export function MetricsBoard() {
@@ -226,6 +301,7 @@ export function MetricsBoard() {
   const [id, setId] = useState<string | null>(null);
   const [weekEnd, setWeekEnd] = useState<string>(""); // "" = this week (latest)
   const [targetsOpen, setTargetsOpen] = useState(false);
+  const [drill, setDrill] = useState<{ metricId: string; name: string } | null>(null);
   const weekOptions = useMemo(() => recentWeekOptions(), []);
 
   const q = useQuery({
@@ -301,6 +377,19 @@ export function MetricsBoard() {
 
       {targetsOpen && <TargetsModal targets={targets} onClose={() => setTargetsOpen(false)} />}
 
+      {drill && (
+        <BreakdownModal
+          metricId={drill.metricId}
+          name={drill.name}
+          level={level}
+          id={id}
+          date={weekEnd || null}
+          period={period}
+          periodLabel={per.label}
+          onClose={() => setDrill(null)}
+        />
+      )}
+
       {q.isLoading && <Skeleton className="h-96 w-full" />}
       {q.isError && <EmptyState title="Couldn't load the board" description={(q.error as Error)?.message ?? "Try again."} />}
       {data && data.anchor == null && <EmptyState title="No data yet" description="No labor snapshot has been captured." />}
@@ -321,7 +410,7 @@ export function MetricsBoard() {
             </div>
           </div>
 
-          {PILLARS.map((p) => <PillarCard key={p.key} p={p} values={values} targets={targets} period={period} nowFw={nowFw} />)}
+          {PILLARS.map((p) => <PillarCard key={p.key} p={p} values={values} targets={targets} period={period} nowFw={nowFw} onDrill={(mid, name) => setDrill({ metricId: mid, name })} />)}
         </div>
       )}
     </>
