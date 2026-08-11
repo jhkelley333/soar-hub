@@ -66,9 +66,10 @@ export function HoursImportModal({ open, onClose, knownNumbers, onImported }: {
       }
     >
       <p className="mb-3 text-sm text-zinc-500">
-        Download the template, fill in each day's open/close (e.g. <code className="rounded bg-zinc-100 px-1">7:00 AM</code>), put
+        Upload your <strong>Hours of Ops</strong> Excel export (DI Number + Monday…Sunday Open/Close) — it's auto-detected. Or use the
+        template below: fill each day's open/close (e.g. <code className="rounded bg-zinc-100 px-1">7:00 AM</code>), put
         <code className="mx-1 rounded bg-zinc-100 px-1">Closed</code> in the day's open cell for a dark day, and leave a day blank to
-        keep it unchanged. Then upload the CSV or Excel file.
+        keep it unchanged.
       </p>
 
       <div className="mb-4 flex flex-wrap gap-2">
