@@ -247,10 +247,10 @@ export const handler = async (event) => {
       if (user.role !== "admin") return respond(403, { error: "Only an admin can backfill." });
       let body = {};
       try { body = JSON.parse(event.body || "{}"); } catch { body = {}; }
-      const days = Math.max(1, Math.min(120, Number(body.days) || 45));
-      const res = await backfillCashPaidOuts(supa, { days });
+      const before = typeof body.before === "string" ? body.before : null;
+      const res = await backfillCashPaidOuts(supa, { before });
       if (res.error) return respond(res.status || 500, { error: res.error });
-      return respond(200, { ok: true, filled_dates: res.filled, store_rows: res.stores, remaining: res.remaining.length, failed: res.failed.slice(0, 5) });
+      return respond(200, { ok: true, filled_dates: res.filled, store_rows: res.stores, next_before: res.next_before, failed: res.failed });
     }
 
     const level = ["company", "region", "store"].includes(params.level) ? params.level : "company";

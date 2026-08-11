@@ -75,24 +75,33 @@ async function backfillCashDate(supa, businessDate) {
   return { ok: false, date: businessDate, error: "no stored snapshot covers this date" };
 }
 
-export async function backfillCashPaidOuts(supa, { days = 45, budgetMs = 8000 } = {}) {
+// Backfill ALL history, newest-first, within a per-call time budget. `before`
+// is a cursor (business_date): pass null to start, then re-call with the
+// returned next_before until it comes back null (done). Covers every stored
+// date, not a fixed window.
+export async function backfillCashPaidOuts(supa, { before = null, budgetMs = 8000 } = {}) {
   const started = Date.now();
-  const { data: dateRows, error } = await supa
-    .from("labor_v2_daily").select("business_date").order("business_date", { ascending: false }).limit(4000);
+  let query = supa.from("labor_v2_daily").select("business_date").order("business_date", { ascending: false }).limit(4000);
+  if (before && /^\d{4}-\d{2}-\d{2}$/.test(before)) query = query.lt("business_date", before);
+  const { data: dateRows, error } = await query;
   if (error) return { error: error.message, status: 500 };
-  const dates = [...new Set((dateRows || []).map((r) => r.business_date))].slice(0, Math.max(1, Math.min(120, days)));
+  const dates = [...new Set((dateRows || []).map((r) => r.business_date))]; // newest first
+
   const results = [];
-  const remaining = [];
+  let lastProcessed = null;
+  let brokeOnBudget = false;
   for (const d of dates) {
-    if (Date.now() - started > budgetMs) { remaining.push(d); continue; }
+    if (Date.now() - started > budgetMs) { brokeOnBudget = true; break; }
     results.push(await backfillCashDate(supa, d));
+    lastProcessed = d;
   }
   return {
     filled: results.filter((r) => r.ok && r.updated > 0).length,
     stores: results.reduce((a, r) => a + (r.updated || 0), 0),
-    failed: results.filter((r) => !r.ok),
-    remaining,
-    results,
+    failed: results.filter((r) => !r.ok).slice(0, 5),
+    processed: results.length,
+    // More older dates to do → resume from here; null = complete.
+    next_before: brokeOnBudget ? lastProcessed : null,
   };
 }
 
