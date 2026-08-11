@@ -4,15 +4,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Clock, CalendarDays, Plus, Trash2 } from "lucide-react";
+import { ArrowLeft, Clock, CalendarDays, Plus, Trash2, MapPin, CheckCircle2, AlertTriangle } from "lucide-react";
 import { Card } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { deleteSpecialHours, fetchStoreHours, saveSpecialHours, saveStandardHours, type DayHours, type SpecialHours as SpecialHoursRow } from "./api";
-import { DAY_LABELS, isOvernight, to12 } from "./hoursFmt";
+import { checkStoreGoogle, deleteSpecialHours, fetchStoreHours, saveSpecialHours, saveStandardHours, type DayHours, type GoogleCompare, type SpecialHours as SpecialHoursRow } from "./api";
+import { DAY_LABELS, DAY_SHORT, isOvernight, to12 } from "./hoursFmt";
 
 type Tab = "standard" | "special";
 
@@ -45,6 +45,8 @@ export function LocationHoursPage() {
             {[query.data.store.address, query.data.store.city, query.data.store.state].filter(Boolean).join(", ")}{query.data.store.zip ? ` ${query.data.store.zip}` : ""}
           </div>
 
+          <GooglePanel storeNumber={storeNumber} google={query.data.google} />
+
           <div className="mt-5 grid gap-5 lg:grid-cols-[180px_1fr]">
             <nav className="flex gap-1 lg:flex-col">
               {([["standard", "Standard Hours", Clock], ["special", "Special Hours", CalendarDays]] as const).map(([key, label, Icon]) => (
@@ -69,6 +71,74 @@ export function LocationHoursPage() {
       )}
     </div>
   );
+}
+
+// ── Google comparison ───────────────────────────────────────────────────────
+function GooglePanel({ storeNumber, google }: { storeNumber: string; google: GoogleCompare }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const check = useMutation({
+    mutationFn: () => checkStoreGoogle(storeNumber),
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["store-hours", storeNumber] });
+      qc.invalidateQueries({ queryKey: ["hours-grid"] });
+      if (r.error) toast.push(`Google: ${r.error}`, "error");
+      else toast.push(r.status === "match" ? "Matches Google." : r.status === "mismatch" ? `${r.diffs.length} day(s) differ from Google.` : "No Google hours found.", r.status === "mismatch" ? "error" : "success");
+    },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Google check failed.", "error"),
+  });
+
+  if (!google.configured) {
+    return (
+      <div className="mt-3 rounded-lg bg-zinc-50 p-3 text-xs text-zinc-500 ring-1 ring-inset ring-zinc-200">
+        Set <code className="rounded bg-white px-1">GOOGLE_PLACES_API_KEY</code> in Netlify to compare this location's hours against Google.
+      </div>
+    );
+  }
+
+  const tone = google.status === "match" ? "emerald" : google.status === "mismatch" ? "amber" : "zinc";
+  return (
+    <div className={cn("mt-3 rounded-lg p-3 ring-1 ring-inset",
+      tone === "emerald" ? "bg-emerald-50 ring-emerald-200" : tone === "amber" ? "bg-amber-50 ring-amber-200" : "bg-zinc-50 ring-zinc-200")}>
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          <MapPin className="h-4 w-4 text-zinc-500" />
+          {google.status === "match" && <span className="inline-flex items-center gap-1 text-emerald-700"><CheckCircle2 className="h-4 w-4" /> Matches Google</span>}
+          {google.status === "mismatch" && <span className="inline-flex items-center gap-1 text-amber-800"><AlertTriangle className="h-4 w-4" /> {google.diffs.length} day(s) differ from Google</span>}
+          {google.status === "not_found" && <span className="text-zinc-500">No Google listing/hours found</span>}
+          {google.status === "unchecked" && <span className="text-zinc-500">Not yet compared to Google</span>}
+        </div>
+        <Button size="sm" variant="secondary" onClick={() => check.mutate()} disabled={check.isPending}>
+          {check.isPending ? "Checking…" : google.status === "unchecked" ? "Check Google" : "Re-check"}
+        </Button>
+      </div>
+      {google.status === "mismatch" && google.diffs.length > 0 && (
+        <div className="mt-2 overflow-hidden rounded-md ring-1 ring-amber-200">
+          <table className="w-full text-xs">
+            <thead className="bg-amber-100/60 text-left text-[10px] uppercase tracking-wide text-amber-700">
+              <tr><th className="px-2 py-1">Day</th><th className="px-2 py-1">System</th><th className="px-2 py-1">Google</th></tr>
+            </thead>
+            <tbody className="divide-y divide-amber-100 bg-white/50">
+              {google.diffs.map((d) => (
+                <tr key={d.day_of_week}>
+                  <td className="px-2 py-1 font-semibold text-midnight">{DAY_SHORT[d.day_of_week]}</td>
+                  <td className="px-2 py-1 tabular-nums text-zinc-600">{prettyRange(d.system)}</td>
+                  <td className="px-2 py-1 tabular-nums text-amber-800">{prettyRange(d.google)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {google.checked_at && <div className="mt-1.5 text-[10px] text-zinc-400">Last checked {new Date(google.checked_at).toLocaleString("en-US")}</div>}
+    </div>
+  );
+}
+// "09:00-14:00" -> "9:00 AM – 2:00 PM"; "Closed" stays.
+function prettyRange(s: string): string {
+  if (!s || /closed/i.test(s)) return "Closed";
+  const m = /^(\d{2}:\d{2})-(\d{2}:\d{2})$/.exec(s);
+  return m ? `${to12(m[1])} – ${to12(m[2])}` : s;
 }
 
 // ── Standard weekly hours ────────────────────────────────────────────────────

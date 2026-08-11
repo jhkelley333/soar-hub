@@ -20,6 +20,17 @@ export interface HoursGridStore {
   days: (DayHours | null)[]; // length 7, null = not set for that day
   configured: boolean;       // any day set
   upcoming_special: number;  // count of future special-hours overrides
+  google_status: "unchecked" | "match" | "mismatch" | "not_found";
+  google_diffs: number;      // number of days that differ from Google
+  google_checked_at: string | null;
+}
+export interface GoogleCompare {
+  status: "unchecked" | "match" | "mismatch" | "not_found";
+  diffs: { day_of_week: number; system: string; google: string }[];
+  checked_at: string | null;
+  has_place?: boolean;
+  hours?: DayHours[] | null;
+  configured: boolean;       // Google Places API key present server-side
 }
 export interface SpecialHours {
   id: string;
@@ -34,6 +45,7 @@ export interface StoreHoursDetail {
   standard: DayHours[];     // length 7
   special: SpecialHours[];
   updated_at: string | null;
+  google: GoogleCompare;
 }
 
 async function authHeaders(): Promise<HeadersInit> {
@@ -52,8 +64,14 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export function fetchHoursGrid(): Promise<{ stores: HoursGridStore[] }> {
+export function fetchHoursGrid(): Promise<{ stores: HoursGridStore[]; places_configured: boolean }> {
   return request(`${FN}?action=list`);
+}
+export function checkStoreGoogle(storeNumber: string): Promise<{ ok: boolean; status: GoogleCompare["status"]; diffs: GoogleCompare["diffs"]; hours: DayHours[] | null; checked_at: string; error: string | null }> {
+  return request(`${FN}?action=google-check-store`, { method: "POST", body: JSON.stringify({ store: storeNumber }) });
+}
+export function checkAllGoogle(): Promise<{ ok: boolean; checked: number; failed: number; remaining: number }> {
+  return request(`${FN}?action=google-check-all`, { method: "POST", body: JSON.stringify({}) });
 }
 export function fetchStoreHours(storeNumber: string): Promise<StoreHoursDetail> {
   return request(`${FN}?action=get&store=${encodeURIComponent(storeNumber)}`);
