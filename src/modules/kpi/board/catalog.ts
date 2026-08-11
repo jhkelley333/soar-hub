@@ -61,9 +61,12 @@ export const PILLARS: Pillar[] = [
     ],
   },
   {
-    key: "labor", index: "03", title: "Controllable Contribution", countLabel: "2 execution metrics",
+    key: "labor", index: "03", title: "Controllable Contribution", countLabel: "3 execution metrics",
     mtm: { id: "labor_pct", name: "Labor % vs. Target", unit: "%", dec: 1, hb: false, target: 26.0 },
     rows: [
+      // Hours Over Chart from the daily labor report — $ over target ÷ blended
+      // wage, positive-only, per in-scope store (Hrs/Unit). Lower is better.
+      { id: "hours_over", name: "Hours Over", unit: "hrs", dec: 1, hb: false, target: 0 },
       { id: "actual_vs_schedule", name: "Actual vs. Schedule", unit: "hrs", dec: 1, hb: false, target: 0, signed: true },
       { id: "overtime", name: "Over Time", unit: "hrs", dec: 1, hb: false, target: 4.0 },
     ],

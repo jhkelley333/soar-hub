@@ -47,6 +47,26 @@ function weightedMean(rows, valKey, wtKey) {
   return wt ? num / wt : null;
 }
 
+// Hours Over Chart (matches labor-v2): per store, $ over target ÷ that store's
+// avg wage (cost/hours). At scope level it's the sum of the POSITIVE (over)
+// store hours ÷ every in-scope store — under / on-chart / no-data stores add 0
+// to the sum but still count in the denominator (the "Hrs/Unit" figure). A lone
+// store returns its own hours over only when it's actually over.
+function storeHoursOver(r, p) {
+  const cost = numv(r[`${p}labor_cost`]);
+  const hours = numv(r[`${p}labor_hours`]);
+  const sales = numv(r[`${p}net_sales`]);
+  const target = numv(r[`${p}target_labor_pct`]);
+  if (!sales || !cost || !hours || !target) return null;
+  return (cost - sales * target) / (cost / hours);
+}
+function hoursOverPerUnit(rows, p) {
+  if (!rows.length) return null;
+  if (rows.length === 1) { const h = storeHoursOver(rows[0], p); return h != null && h > 0 ? h : null; }
+  const posSum = rows.reduce((a, r) => { const h = storeHoursOver(r, p); return a + (h && h > 0 ? h : 0); }, 0);
+  return posSum / rows.length;
+}
+
 function laborMetrics(rows, p) {
   const sales = sumOf(rows, `${p}net_sales`);
   const cost = sumOf(rows, `${p}labor_cost`);
@@ -86,6 +106,8 @@ function laborMetrics(rows, p) {
     average_check: div(sales, tickets),
     on_time: otDen ? (otNum / otDen) * 100 : null,
     avg_ticket_time: attSec != null ? Math.round(attSec) : null,
+    // Hours Over Chart (Hrs/Unit) from the daily labor report — per in-scope store.
+    hours_over: rows.length ? hoursOverPerUnit(rows, p) : null,
     // Other Controllable Contribution (section 05): cash over/short + paid outs.
     cash_over_short: rows.length ? sumOf(rows, `${p}cash_over_short`) : null,
     paid_outs: rows.length ? sumOf(rows, `${p}paid_out_dollars`) : null,
@@ -114,7 +136,7 @@ function countMetrics(rows) {
 const METRIC_IDS = [
   "sales_vs_ly", "avg_ticket_time", "on_time", "vog", "complaints", "order_accuracy", "delivery_mix", "splh", "tickets", "average_check",
   "l2r", "vog2", "complaints_rank", "mystery_shop_rank", "ecosure_rank",
-  "labor_pct", "actual_vs_schedule", "overtime",
+  "labor_pct", "hours_over", "actual_vs_schedule", "overtime",
   "cogs_pct", "daily_score", "completion_score", "accuracy_score", "count_variance", "item_efficiency",
   "other_pct", "other_food_pct", "other_labor_pct", "other_cash_pct", "cash_over_short", "paid_outs", "last_clock_out",
   "training_compliance", "new_hire_certified", "cross_trained", "ninety_day_retention",
@@ -426,7 +448,7 @@ export const handler = async (event) => {
     const laborAnchorD = lab(anchor, ""), laborAnchorW = lab(anchor, "wtd_"), laborAnchorM = lab(anchor, "ptd_");
     const laborPriorD = lab(dailyPrior, ""), laborPriorW = lab(wtdPrior, "wtd_"), laborPriorM = lab(mtdPrior, "ptd_");
     const laborWeeks = weekEnds.map((d) => lab(d, "wtd_"));
-    for (const k of ["sales_vs_ly", "sales_dollars", "ly_dollars", "avg_ticket_time", "on_time", "splh", "tickets", "average_check", "labor_pct", "actual_vs_schedule", "overtime", "cash_over_short", "paid_outs"]) {
+    for (const k of ["sales_vs_ly", "sales_dollars", "ly_dollars", "avg_ticket_time", "on_time", "splh", "tickets", "average_check", "labor_pct", "hours_over", "actual_vs_schedule", "overtime", "cash_over_short", "paid_outs"]) {
       values[k] = {
         daily: pair(laborAnchorD[k], laborPriorD[k]),
         wtd: pair(laborAnchorW[k], laborPriorW[k]),
