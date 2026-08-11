@@ -129,6 +129,29 @@ export const handler = async (event) => {
       });
     }
 
+    // ── history: change-log of standard hours for one store (newest first) ─────
+    if (event.httpMethod === "GET" && action === "history") {
+      const storeNumber = String(params.store || "").trim();
+      if (!storeNumber) return respond(400, { error: "store is required" });
+      const { data: store } = await supa.from("stores")
+        .select("id, number, name").eq("number", storeNumber).neq("brand", "little_caesars").maybeSingle();
+      if (!store) return respond(404, { error: "Store not found." });
+      const rows = await selectAll(() => supa.from("store_hours_history")
+        .select("id, changed_at, changed_by, source, days, note")
+        .eq("store_id", store.id).order("changed_at", { ascending: false }).order("id", { ascending: false }));
+      const ids = [...new Set(rows.map((r) => r.changed_by).filter(Boolean))];
+      const nameById = new Map();
+      if (ids.length) {
+        const { data: profs } = await supa.from("profiles").select("id, full_name, preferred_name, email").in("id", ids);
+        for (const p of profs || []) nameById.set(p.id, p.preferred_name || p.full_name || p.email || "—");
+      }
+      const history = rows.map((r) => ({
+        id: r.id, changed_at: r.changed_at, source: r.source || null, note: r.note || null,
+        by: r.changed_by ? (nameById.get(r.changed_by) || "—") : null, days: Array.isArray(r.days) ? r.days : [],
+      }));
+      return respond(200, { store: { number: String(store.number), name: store.name }, history });
+    }
+
     if (event.httpMethod !== "POST") return respond(405, { error: "method not allowed" });
     let body = {};
     try { body = JSON.parse(event.body || "{}"); } catch { body = {}; }
@@ -154,6 +177,7 @@ export const handler = async (event) => {
         if (/store_hours/.test(error.message)) return respond(500, { error: "Run migration 0281 first (store_hours is missing)." });
         return respond(500, { error: error.message });
       }
+      await recordHistory(supa, [storeId], user.id, "edit");
       return respond(200, { ok: true, saved: rows.length });
     }
 
@@ -221,6 +245,7 @@ export const handler = async (event) => {
           if (/store_hours/.test(error.message)) return respond(500, { error: "Run migration 0281 first (store_hours is missing)." });
           return respond(500, { error: error.message });
         }
+        await recordHistory(supa, [...touched].map((n) => idByNumber.get(n)).filter(Boolean), user.id, "import");
       }
       return respond(200, { ok: true, imported_stores: touched.size, imported_days: upserts.length, errors });
     }
@@ -283,6 +308,41 @@ export const handler = async (event) => {
     return respond(500, { error: e.message || "server error" });
   }
 };
+
+// Append a standard-hours snapshot for each store whose current hours differ
+// from its most recent history row (no-op saves don't add noise). Best-effort:
+// never fails the save/import that triggered it. Snapshot shape + ordering match
+// the 0283 baseline so dedup compares cleanly.
+async function recordHistory(supa, storeIds, userId, source) {
+  try {
+    const ids = [...new Set((storeIds || []).filter(Boolean))];
+    if (!ids.length) return;
+    const hrs = await selectAll(() => supa.from("store_hours")
+      .select("store_id, day_of_week, is_closed, open_time, close_time")
+      .in("store_id", ids).order("store_id", { ascending: true }).order("day_of_week", { ascending: true }));
+    const snap = new Map();
+    for (const r of hrs) {
+      const arr = snap.get(r.store_id) || [];
+      arr.push({ day_of_week: r.day_of_week, is_closed: r.is_closed, open: hhmm(r.open_time), close: hhmm(r.close_time) });
+      snap.set(r.store_id, arr);
+    }
+    const hist = await selectAll(() => supa.from("store_hours_history")
+      .select("store_id, changed_at, days")
+      .in("store_id", ids).order("store_id", { ascending: true }).order("changed_at", { ascending: false }).order("id", { ascending: false }));
+    const latest = new Map();
+    for (const h of hist) if (!latest.has(h.store_id)) latest.set(h.store_id, h.days);
+    const now = new Date().toISOString();
+    const inserts = [];
+    for (const [sid, days] of snap) {
+      const prev = latest.get(sid);
+      if (prev && JSON.stringify(prev) === JSON.stringify(days)) continue; // unchanged
+      inserts.push({ store_id: sid, changed_at: now, changed_by: userId, source, days });
+    }
+    for (let i = 0; i < inserts.length; i += 500) await supa.from("store_hours_history").insert(inserts.slice(i, i + 500));
+  } catch (e) {
+    console.warn("[store-hours] recordHistory failed", e?.message || e);
+  }
+}
 
 // Resolve a store's Google place (cached place_id if present, else Find Place),
 // pull its hours, normalize, and cache place_id + hours + checked_at on the store.

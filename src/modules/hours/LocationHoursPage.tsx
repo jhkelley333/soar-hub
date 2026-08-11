@@ -4,17 +4,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Clock, CalendarDays, Plus, Trash2, MapPin, CheckCircle2, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Clock, CalendarDays, History, Plus, Trash2, MapPin, CheckCircle2, AlertTriangle } from "lucide-react";
 import { Card } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { checkStoreGoogle, deleteSpecialHours, fetchStoreHours, saveSpecialHours, saveStandardHours, type DayHours, type GoogleCompare, type SpecialHours as SpecialHoursRow } from "./api";
-import { DAY_LABELS, DAY_SHORT, isOvernight, to12 } from "./hoursFmt";
+import { checkStoreGoogle, deleteSpecialHours, fetchStoreHours, fetchStoreHoursHistory, saveSpecialHours, saveStandardHours, type DayHours, type GoogleCompare, type HoursHistoryEntry, type SpecialHours as SpecialHoursRow } from "./api";
+import { DAY_LABELS, DAY_SHORT, fmtRange, isOvernight, to12 } from "./hoursFmt";
 
-type Tab = "standard" | "special";
+type Tab = "standard" | "special" | "history";
 
 export function LocationHoursPage() {
   const { storeNumber = "" } = useParams();
@@ -49,7 +49,7 @@ export function LocationHoursPage() {
 
           <div className="mt-5 grid gap-5 lg:grid-cols-[180px_1fr]">
             <nav className="flex gap-1 lg:flex-col">
-              {([["standard", "Standard Hours", Clock], ["special", "Special Hours", CalendarDays]] as const).map(([key, label, Icon]) => (
+              {([["standard", "Standard Hours", Clock], ["special", "Special Hours", CalendarDays], ["history", "History", History]] as const).map(([key, label, Icon]) => (
                 <button
                   key={key}
                   type="button"
@@ -64,7 +64,9 @@ export function LocationHoursPage() {
             <div>
               {tab === "standard"
                 ? <StandardHours storeId={query.data.store.id} storeNumber={storeNumber} initial={query.data.standard} />
-                : <SpecialHours storeId={query.data.store.id} storeNumber={storeNumber} initial={query.data.special} />}
+                : tab === "special"
+                ? <SpecialHours storeId={query.data.store.id} storeNumber={storeNumber} initial={query.data.special} />
+                : <HistoryTab storeNumber={storeNumber} />}
             </div>
           </div>
         </>
@@ -313,5 +315,67 @@ function SpecialHours({ storeId, storeNumber, initial }: { storeId: string; stor
         </ul>
       )}
     </Card>
+  );
+}
+
+// ── Change history ───────────────────────────────────────────────────────────
+const SOURCE_LABEL: Record<string, string> = { edit: "Manual edit", import: "Bulk import", baseline: "Baseline" };
+
+// A snapshot's day_of_week -> "6:30 AM - 12:00 AM" / "Closed" / "—".
+function dayMap(days: DayHours[]): Record<number, string> {
+  const m: Record<number, string> = {};
+  for (let dow = 0; dow < 7; dow++) m[dow] = fmtRange(days.find((d) => d.day_of_week === dow) ?? null);
+  return m;
+}
+
+function HistoryTab({ storeNumber }: { storeNumber: string }) {
+  const q = useQuery({ queryKey: ["store-hours-history", storeNumber], queryFn: () => fetchStoreHoursHistory(storeNumber) });
+  if (q.isLoading) return <Skeleton className="h-64 w-full" />;
+  if (q.isError) return <EmptyState title="Couldn't load history" description={(q.error as Error)?.message ?? "Try again."} />;
+  const history = q.data?.history ?? [];
+
+  return (
+    <Card className="p-5">
+      <h3 className="mb-1 text-base font-bold text-midnight">Change History</h3>
+      <p className="mb-4 text-sm text-zinc-500">Every standard-hours change for this location, newest first. Changed days are highlighted against the prior version.</p>
+      {history.length === 0 ? (
+        <div className="py-6 text-center text-sm text-zinc-400">No history recorded yet.</div>
+      ) : (
+        <ol className="space-y-3">
+          {history.map((h, i) => {
+            const cur = dayMap(h.days);
+            const prev = i + 1 < history.length ? dayMap(history[i + 1].days) : null; // older entry
+            return <HistoryEntry key={h.id} h={h} cur={cur} prev={prev} />;
+          })}
+        </ol>
+      )}
+    </Card>
+  );
+}
+
+function HistoryEntry({ h, cur, prev }: { h: HoursHistoryEntry; cur: Record<number, string>; prev: Record<number, string> | null }) {
+  return (
+    <li className="rounded-lg border border-zinc-200 p-3">
+      <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="text-sm font-semibold text-midnight">
+          {new Date(h.changed_at).toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" })}
+        </span>
+        <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">{SOURCE_LABEL[h.source ?? ""] ?? h.source ?? "Change"}</span>
+        {h.by && <span className="text-xs text-zinc-400">by {h.by}</span>}
+      </div>
+      <div className="grid grid-cols-1 gap-x-4 gap-y-0.5 sm:grid-cols-2">
+        {DAY_SHORT.map((lbl, dow) => {
+          const changed = prev != null && prev[dow] !== cur[dow];
+          return (
+            <div key={dow} className={cn("flex items-center justify-between rounded px-1.5 py-0.5 text-xs", changed ? "bg-amber-50" : "")}>
+              <span className="font-medium text-zinc-500">{lbl}</span>
+              <span className={cn("tabular-nums", changed ? "font-semibold text-amber-800" : "text-zinc-700")}>
+                {cur[dow]}{changed ? <span className="ml-1 text-[10px] text-zinc-400">was {prev![dow]}</span> : null}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </li>
   );
 }

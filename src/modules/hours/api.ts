@@ -86,6 +86,18 @@ export function deleteSpecialHours(id: string): Promise<{ ok: boolean }> {
   return request(`${FN}?action=delete-special`, { method: "POST", body: JSON.stringify({ id }) });
 }
 
+export interface HoursHistoryEntry {
+  id: string;
+  changed_at: string;
+  source: string | null;   // 'edit' | 'import' | 'baseline'
+  note: string | null;
+  by: string | null;
+  days: DayHours[];         // snapshot (may include only the days that were set)
+}
+export function fetchStoreHoursHistory(storeNumber: string): Promise<{ store: { number: string; name: string }; history: HoursHistoryEntry[] }> {
+  return request(`${FN}?action=history&store=${encodeURIComponent(storeNumber)}`);
+}
+
 export interface BulkImportResult { ok: boolean; imported_stores: number; imported_days: number; errors: { store_number: string; reason: string }[] }
 export function bulkImportHours(rows: { store_number: string; days: DayHours[] }[]): Promise<BulkImportResult> {
   return request(`${FN}?action=bulk-import`, { method: "POST", body: JSON.stringify({ rows }) });
