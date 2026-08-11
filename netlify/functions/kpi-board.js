@@ -275,6 +275,34 @@ export const handler = async (event) => {
     else if (level === "store" && id) scopeStores = numbers.filter((n) => n === id);
 
     const scopes = { regions, stores: storeList };
+
+    // Per-store drill-down for a single labor-sourced $ metric (Cash Over/Short
+    // or Paid Outs) at the selected scope + period — each store's own value.
+    if (params.action === "store-breakdown") {
+      const metric = params.metric === "paid_outs" ? "paid_outs" : "cash_over_short";
+      const per = ["daily", "wtd", "mtd"].includes(params.period) ? params.period : "wtd";
+      const pref = per === "daily" ? "" : per === "wtd" ? "wtd_" : "ptd_";
+      const col = metric === "paid_outs" ? `${pref}paid_out_dollars` : `${pref}cash_over_short`;
+      let stores = [];
+      if (scopeStores.length) {
+        const { data: brk } = await supa.from("labor_v2_daily")
+          .select(`store_number, ${col}`).eq("business_date", anchor).in("store_number", scopeStores);
+        stores = (brk || [])
+          .map((r) => {
+            const sn = String(r.store_number);
+            const val = typeof r[col] === "number" && isFinite(r[col]) ? r[col] : null;
+            return { store_number: sn, store_name: orgMap.get(sn)?.store || `#${sn}`, region: orgMap.get(sn)?.region || null, value: val };
+          })
+          .filter((r) => r.value != null)
+          .sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+      }
+      return respond(200, {
+        anchor, metric, period: per, level, id,
+        total: round(stores.reduce((s, r) => s + r.value, 0)),
+        count: stores.length, stores,
+      });
+    }
+
     if (!scopeStores.length) return respond(200, { anchor, fiscal: fiscalForDate(anchor), scopes, values: emptyValues() });
 
     // Dates we need: anchor + prior-day + prior-week + prior-period, and the 5

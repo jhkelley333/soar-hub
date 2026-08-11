@@ -43,6 +43,27 @@ export async function fetchKpiBoard(level: string, id?: string | null, date?: st
   return body as BoardResponse;
 }
 
+// Per-store drill-down for a $ metric (cash_over_short / paid_outs) at the
+// current scope + period.
+export interface BreakdownStore { store_number: string; store_name: string; region: string | null; value: number; }
+export interface StoreBreakdown {
+  anchor: string | null;
+  metric: string;
+  period: string;
+  total: number | null;
+  count: number;
+  stores: BreakdownStore[];
+}
+export async function fetchStoreBreakdown(metric: string, level: string, id: string | null, date: string | null, period: string): Promise<StoreBreakdown> {
+  const p = new URLSearchParams({ action: "store-breakdown", metric, level, period });
+  if (id) p.set("id", id);
+  if (date) p.set("date", date);
+  const res = await fetch(`${FN}?${p.toString()}`, { headers: { Authorization: `Bearer ${await token()}` } });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((body as { error?: string })?.error || `Request failed (${res.status})`);
+  return body as StoreBreakdown;
+}
+
 // Admin: set (number) or clear (null) a metric's target override.
 export async function setBoardTarget(metricId: string, target: number | null): Promise<void> {
   const res = await fetch(`${FN}?action=set-target`, {
