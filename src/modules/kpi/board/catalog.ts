@@ -83,9 +83,10 @@ export const PILLARS: Pillar[] = [
   },
   {
     key: "other", index: "05", title: "Other Controllable Contribution", countLabel: "2 execution metrics",
-    // Cash Over/Short + Paid Outs come live from the KPI feed (0279). Other
-    // Controllables % (P&L) isn't wired yet.
-    mtm: { id: "other_pct", name: "Other Controllables % of Sales", unit: "%", dec: 1, hb: false, target: 4.0, soon: true },
+    // MTM = combined controllable cost %: Food Cost % (IX / LW ranker) + PTD
+    // Labor % (daily) + Cash-Short % (short raises it). Cash Over/Short + Paid
+    // Outs (rows) come live from the KPI feed (0279).
+    mtm: { id: "other_pct", name: "Controllable Cost % of Sales", unit: "%", dec: 1, hb: false, target: null },
     rows: [
       { id: "cash_over_short", name: "Cash Over / Short", unit: "$", dec: 2, hb: true, target: 0, signed: true },
       { id: "paid_outs", name: "Paid Outs", unit: "$", dec: 0, hb: false, target: 75 },

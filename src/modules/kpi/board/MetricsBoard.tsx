@@ -163,6 +163,17 @@ function PillarCard({ p, values, targets, period, nowFw, onDrill }: { p: Pillar;
       sub = `${money0(sd)}${d != null ? ` · ${d >= 0 ? "+" : "−"}${money0(Math.abs(d))} vs LY` : ""}`;
     }
   }
+  // Other Controllable Contribution: break the combined % into its parts.
+  if (p.key === "other") {
+    const f = values.other_food_pct?.[period]?.[0] ?? null;
+    const l = values.other_labor_pct?.[period]?.[0] ?? null;
+    const c = values.other_cash_pct?.[period]?.[0] ?? null;
+    const parts: string[] = [];
+    if (f != null) parts.push(`Food ${f.toFixed(1)}%`);
+    if (l != null) parts.push(`Labor ${l.toFixed(1)}%`);
+    if (c != null) parts.push(`Cash ${c >= 0 ? "+" : "−"}${Math.abs(c).toFixed(2)} pp`);
+    sub = parts.length ? parts.join(" · ") : null;
+  }
 
   return (
     <section className="overflow-hidden rounded-xl bg-white p-5 ring-1 ring-zinc-200 sm:p-6">
