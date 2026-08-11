@@ -94,6 +94,8 @@ import { WalkthroughPage } from "@/modules/walkthrough/WalkthroughPage";
 import { WalkthroughRunner } from "@/modules/walkthrough/WalkthroughRunner";
 import { MyWalksPage } from "@/modules/walkthrough/MyWalksPage";
 import { StoreGeofencesPage } from "@/modules/walkthrough/storegeo/StoreGeofencesPage";
+import { HoursOfOperationPage } from "@/modules/hours/HoursOfOperationPage";
+import { LocationHoursPage } from "@/modules/hours/LocationHoursPage";
 import { WalkthroughHubPage } from "@/modules/walkthrough/WalkthroughHubPage";
 import { ReviewDashboardPage } from "@/modules/walkthrough/review/ReviewDashboardPage";
 import { SubmissionDetailPage } from "@/modules/walkthrough/review/SubmissionDetailPage";
@@ -441,6 +443,23 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <StoreGeofencesPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Hours of Operation — standard + special hours per location.
+        path: "admin/hours-of-operation",
+        element: (
+          <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
+            <HoursOfOperationPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/hours-of-operation/:storeNumber",
+        element: (
+          <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
+            <LocationHoursPage />
           </ProtectedRoute>
         ),
       },

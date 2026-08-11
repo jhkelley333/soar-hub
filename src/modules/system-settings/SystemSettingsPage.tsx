@@ -7,7 +7,7 @@ import { Link } from "react-router-dom";
 import {
   ArrowRight, Network, Users, MapPin, KeyRound, Globe, Flag, QrCode, Link2,
   RefreshCw, CloudSun, BarChart3, LayoutGrid, Gauge, ScrollText, Layers, Upload,
-  Settings, ClipboardCheck, ListChecks, BookMarked, type LucideIcon,
+  Settings, ClipboardCheck, ListChecks, BookMarked, Clock, type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -33,6 +33,7 @@ const GROUPS: Group[] = [
       { title: "Org Admin", desc: "Regions, areas, districts and stores — the whole org tree.", icon: Network, roles: ["vp", "coo", "admin"], to: "/admin/org" },
       { title: "GM Roster", desc: "GM assignments across every store — SDO/RVP edit their own stores' names.", icon: Users, roles: ["sdo", "rvp", "vp", "coo", "admin"], to: "/admin/gm-roster" },
       { title: "Store Geofences", desc: "Each store's geofence radius for on-site checks.", icon: MapPin, roles: ["admin"], to: "/admin/store-geofences" },
+      { title: "Hours of Operation", desc: "Standard weekly + special hours for every location.", icon: Clock, roles: ["vp", "coo", "admin"], to: "/admin/hours-of-operation" },
     ],
   },
   {
