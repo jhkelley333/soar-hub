@@ -12,9 +12,15 @@ export function placesConfigured() {
   return !!PLACES_KEY;
 }
 
+// Search by BRAND + address, not the internal store name. The store's own name
+// ("Shawnee OK (Kickapoo 1)") is an internal label, not the Google business
+// name, and including it made Find Place match the wrong nearby business. The
+// brand + full address (plus the coord bias below) pins the real listing.
+const BRAND_LABEL = { sonic: "Sonic Drive-In", little_caesars: "Little Caesars" };
 function queryFor(store) {
-  return [store.name, store.address, store.city, store.state, store.zip]
-    .map((x) => (x || "").toString().trim()).filter(Boolean).join(" ");
+  const brand = BRAND_LABEL[String(store.brand || "").toLowerCase()] || "";
+  return [brand, store.address, store.city, store.state, store.zip]
+    .map((x) => (x || "").toString().trim()).filter(Boolean).join(", ");
 }
 
 // Resolve a store to a Google place_id. Uses coords as a location bias when
