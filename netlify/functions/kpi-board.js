@@ -116,7 +116,7 @@ const METRIC_IDS = [
   "l2r", "vog2", "complaints_rank", "mystery_shop_rank", "ecosure_rank",
   "labor_pct", "actual_vs_schedule", "overtime",
   "cogs_pct", "daily_score", "completion_score", "accuracy_score", "count_variance", "item_efficiency",
-  "other_pct", "cash_over_short", "paid_outs", "last_clock_out",
+  "other_pct", "other_food_pct", "other_labor_pct", "other_cash_pct", "cash_over_short", "paid_outs", "last_clock_out",
   "training_compliance", "new_hire_certified", "cross_trained", "ninety_day_retention",
 ];
 
@@ -128,6 +128,32 @@ const METRIC_IDS = [
 // EcoSure + Mystery Shop are period (PTD) metrics — WTD carries no value — so
 // the PTD figure is used for every board window.
 const rankerNum = (v) => (typeof v === "number" && isFinite(v) ? v : null);
+
+// Food Cost % of sales for the scope, from the newest IX upload (source="ix")
+// on/before the anchor week — the same IX that feeds the ranker. Sums Actual
+// Food $ and Net Sales across the scope's store rows: actual / sales.
+async function ixFoodCostPct(supa, scopeStoreNumbers, anchor = null) {
+  const numset = new Set((scopeStoreNumbers || []).map(String));
+  if (!numset.size) return null;
+  let fq = supa.from("ranking_source_files").select("id, week_ending")
+    .eq("source", "ix").order("week_ending", { ascending: false }).order("created_at", { ascending: false }).limit(1);
+  if (anchor) fq = fq.lte("week_ending", anchor);
+  const { data: files } = await fq;
+  const fileId = files?.[0]?.id;
+  if (!fileId) return null;
+  const { data: rows } = await supa.from("ranking_src_rows").select("store_code, payload").eq("file_id", fileId);
+  let actual = 0, sales = 0, n = 0;
+  for (const r of rows || []) {
+    const p = r.payload || {};
+    if (p.level !== "store") continue;
+    const sn = String(p.store_code ?? r.store_code ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+    if (!numset.has(sn)) continue;
+    const a = Number(p.actual_dollars), s = Number(p.net_sales);
+    if (isFinite(a) && isFinite(s) && s > 0) { actual += a; sales += s; n += 1; }
+  }
+  return n && sales > 0 ? (actual / sales) * 100 : null;
+}
+
 async function rankerMetrics(supa, scopeStoreNumbers, anchor = null) {
   const empty = { vog: { wtd: null, ptd: null }, cogsEff: { wtd: null, ptd: null }, ecosure: null, mysteryShop: null };
   const numset = new Set((scopeStoreNumbers || []).map(String));
@@ -397,6 +423,22 @@ export const handler = async (event) => {
       daily: pair(rk.cogsEff.wtd, null), wtd: pair(rk.cogsEff.wtd, null), mtd: pair(rk.cogsEff.ptd, null),
       weeks: [null, null, null, null, null],
     };
+
+    // Section 05 MTM — combined controllable cost % of sales (lower is better):
+    // Food Cost % (newest IX / LW ranker) + PTD Labor % (daily) + Cash-Short %
+    // (a shortage RAISES the %, an over lowers it). One figure across all periods
+    // since food is weekly and labor/cash are PTD; the parts feed the subtitle.
+    const foodPct = await ixFoodCostPct(supa, scopeStores, anchor);
+    const ptdLaborPct = laborAnchorM.labor_pct;
+    const ptdSales = laborAnchorM.sales_dollars;
+    const ptdCash = laborAnchorM.cash_over_short;
+    const cashPct = (ptdSales && ptdCash != null) ? (-ptdCash / ptdSales) * 100 : null;
+    const otherPct = ptdLaborPct == null ? null : round(ptdLaborPct + (foodPct ?? 0) + (cashPct ?? 0));
+    const fillAll = (v) => ({ daily: pair(v, null), wtd: pair(v, null), mtd: pair(v, null), weeks: [null, null, null, null, null] });
+    values.other_pct = fillAll(otherPct);
+    values.other_food_pct = fillAll(round(foodPct));
+    values.other_labor_pct = fillAll(round(ptdLaborPct));
+    values.other_cash_pct = fillAll(round(cashPct));
 
     // Targets: admin-set overrides (board_metric_targets) plus the data-driven
     // labor target from the feed (sales-weighted, never a fixed 26%). The
