@@ -35,6 +35,20 @@ function normTime(v) {
 }
 const hhmm = (t) => (t ? String(t).slice(0, 5) : null); // DB "time" -> "HH:MM"
 
+// Fetch every row of a query, paging past PostgREST's 1000-row cap. `make` must
+// return a fresh query builder each call. Without this the grid's store_hours
+// read truncated at ~1000 rows (~143 stores) even though all hours were stored.
+async function selectAll(make) {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await make().range(from, from + 999);
+    if (error || !data || !data.length) break;
+    out.push(...data);
+    if (data.length < 1000) break;
+  }
+  return out;
+}
+
 export const handler = async (event) => {
   try {
     if (!SUPABASE_URL || !SERVICE_KEY) return respond(500, { error: "store-hours env vars not configured" });
@@ -48,23 +62,24 @@ export const handler = async (event) => {
 
     // ── list: every active store + its assembled 7-day standard hours ─────────
     if (event.httpMethod === "GET" && action === "list") {
-      const { data: stores } = await supa.from("stores")
+      const stores = await selectAll(() => supa.from("stores")
         .select("id, number, name, address, city, state, zip, is_active, google_hours, google_hours_checked_at")
-        .eq("is_active", true).neq("brand", "little_caesars").order("number", { ascending: true });
+        .eq("is_active", true).neq("brand", "little_caesars").order("number", { ascending: true }));
       const ids = (stores || []).map((s) => s.id);
       const byStore = new Map();
       const specialByStore = new Map();
       if (ids.length) {
-        const [{ data: hrs }, { data: sp }] = await Promise.all([
-          supa.from("store_hours").select("store_id, day_of_week, is_closed, open_time, close_time, updated_at").in("store_id", ids),
-          supa.from("store_special_hours").select("store_id, special_date").in("store_id", ids).gte("special_date", new Date().toISOString().slice(0, 10)),
+        const today = new Date().toISOString().slice(0, 10);
+        const [hrs, sp] = await Promise.all([
+          selectAll(() => supa.from("store_hours").select("store_id, day_of_week, is_closed, open_time, close_time, updated_at").in("store_id", ids)),
+          selectAll(() => supa.from("store_special_hours").select("store_id, special_date").in("store_id", ids).gte("special_date", today)),
         ]);
-        for (const r of hrs || []) {
+        for (const r of hrs) {
           const arr = byStore.get(r.store_id) || Array(7).fill(null);
           arr[r.day_of_week] = { day_of_week: r.day_of_week, is_closed: r.is_closed, open: hhmm(r.open_time), close: hhmm(r.close_time) };
           byStore.set(r.store_id, arr);
         }
-        for (const r of sp || []) specialByStore.set(r.store_id, (specialByStore.get(r.store_id) || 0) + 1);
+        for (const r of sp) specialByStore.set(r.store_id, (specialByStore.get(r.store_id) || 0) + 1);
       }
       const out = (stores || []).map((s) => {
         const days = byStore.get(s.id) || Array(7).fill(null);
@@ -176,8 +191,8 @@ export const handler = async (event) => {
       const rows = Array.isArray(body.rows) ? body.rows : [];
       if (!rows.length) return respond(400, { error: "no rows to import" });
       if (rows.length > 5000) return respond(400, { error: "too many rows (max 5000)" });
-      const { data: stores } = await supa.from("stores").select("id, number").eq("is_active", true).neq("brand", "little_caesars");
-      const idByNumber = new Map((stores || []).map((s) => [String(s.number), s.id]));
+      const stores = await selectAll(() => supa.from("stores").select("id, number").eq("is_active", true).neq("brand", "little_caesars").order("number", { ascending: true }));
+      const idByNumber = new Map(stores.map((s) => [String(s.number), s.id]));
       const upserts = [];
       const errors = [];
       const touched = new Set();
@@ -234,8 +249,8 @@ export const handler = async (event) => {
       if (!placesConfigured()) return respond(400, { error: "Google Places not configured (set GOOGLE_PLACES_API_KEY)." });
       const staleBefore = new Date(Date.now() - 12 * 3600 * 1000).toISOString();
       // Only stores that actually have system hours to compare against.
-      const { data: hrsIds } = await supa.from("store_hours").select("store_id");
-      const configured = [...new Set((hrsIds || []).map((r) => r.store_id))];
+      const hrsIds = await selectAll(() => supa.from("store_hours").select("store_id"));
+      const configured = [...new Set(hrsIds.map((r) => r.store_id))];
       if (!configured.length) return respond(200, { ok: true, checked: 0, failed: 0, remaining: 0 });
       const { data: cand } = await supa.from("stores")
         .select("id, number, name, address, city, state, zip, latitude, longitude, google_place_id, google_hours_checked_at")
