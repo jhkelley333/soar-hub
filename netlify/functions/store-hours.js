@@ -249,7 +249,15 @@ export const handler = async (event) => {
     // ── google-check-all: time-budgeted refresh of configured stores ──────────
     if (action === "google-check-all") {
       if (!placesConfigured()) return respond(400, { error: "Google Places not configured (set GOOGLE_PLACES_API_KEY)." });
-      const staleBefore = new Date(Date.now() - 12 * 3600 * 1000).toISOString();
+      const force = !!body.force;
+      // Skip stores checked since this cutoff. A forced sweep passes `since` =
+      // the sweep's start time (set once by the client and held across the
+      // paged loop), so every store gets re-checked exactly once this run and
+      // the loop still converges as each store's checked_at moves past `since`.
+      // Default (no since): skip anything checked in the last 12h.
+      const staleBefore = typeof body.since === "string" && body.since
+        ? body.since
+        : new Date(Date.now() - 12 * 3600 * 1000).toISOString();
       // Only stores that actually have system hours to compare against.
       const hrsIds = await selectAll(() => supa.from("store_hours").select("store_id"));
       const configured = [...new Set(hrsIds.map((r) => r.store_id))];
@@ -263,7 +271,7 @@ export const handler = async (event) => {
       let checked = 0, failed = 0;
       for (const s of eligible) {
         if (Date.now() - start > 8000) break; // stay under the function timeout; client loops on `remaining`
-        const r = await refreshGoogle(supa, s);
+        const r = await refreshGoogle(supa, s, force); // force → re-resolve the place_id (fixes bad cached matches)
         checked += 1;
         if (r.status === "not_found") failed += 1;
       }
