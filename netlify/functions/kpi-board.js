@@ -9,6 +9,7 @@ import { createClient } from "@supabase/supabase-js";
 import { fiscalForDate } from "./_lib/fiscal.js";
 import { resolveOrg } from "./_lib/kpiOrg.js";
 import { backfillCashPaidOuts } from "./_lib/kpiBackfill.js";
+import { loadLaborCredits, applyCreditsToRows } from "./_lib/trainingCredit.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -440,7 +441,28 @@ export const handler = async (event) => {
       countByDate.set(d, cnt || []);
     }));
 
-    const lab = (d, p) => laborMetrics(laborByDate.get(d) || [], p);
+    // Credit-adjusted copy of every date's rows — the same No-GM / GM-PTO /
+    // Training / Training-Class / GM-support credits the Labor report applies, so
+    // the CHART metrics (Labor % + Hours Over) match it. Shallow-copy each row
+    // first (applyCreditsToRows mutates cost/hours/labor_pct in place); the raw
+    // set stays untouched so productivity metrics (SPLH) keep actual hours.
+    const creditMap = await loadLaborCredits(supa, scopeStores);
+    const laborAdjByDate = new Map();
+    for (const [d, rows] of laborByDate) {
+      const copy = rows.map((r) => ({ ...r }));
+      applyCreditsToRows(copy, creditMap);
+      laborAdjByDate.set(d, copy);
+    }
+
+    // Raw metrics for everything, but Labor % + Hours Over come from the
+    // credit-adjusted rows so they line up with the Labor report's chart.
+    const lab = (d, p) => {
+      const m = laborMetrics(laborByDate.get(d) || [], p);
+      const a = laborMetrics(laborAdjByDate.get(d) || [], p);
+      m.labor_pct = a.labor_pct;
+      m.hours_over = a.hours_over;
+      return m;
+    };
     const cnt = (d) => countMetrics(countByDate.get(d) || []);
 
     // Assemble each metric id's { daily:[c,p], wtd:[c,p], mtd:[c,p], weeks:[5] }.
