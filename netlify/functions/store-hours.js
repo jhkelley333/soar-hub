@@ -7,7 +7,18 @@ import { placesConfigured, findPlaceId, fetchPlaceHours, normalizeGoogleHours, c
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const EDIT_ROLES = new Set(["admin", "vp", "coo"]);
+const VIEW_ROLES = new Set(["admin", "vp", "coo", "sdo", "rvp"]); // can open the tool
+const ORG_WIDE = new Set(["admin", "vp", "coo"]);                 // see every store
+const IMPORT_ROLES = new Set(["admin", "vp", "coo"]);             // bulk import / backfill
+
+// The store ids a user may act on. ORG_WIDE roles → null (no restriction);
+// SDO/RVP → their org scope via user_visible_stores(uid).
+async function visibleIds(supa, user) {
+  if (ORG_WIDE.has(user.role)) return null;
+  const { data } = await supa.rpc("user_visible_stores", { uid: user.id });
+  return new Set((data ?? []).map((v) => (typeof v === "string" ? v : v?.user_visible_stores ?? null)).filter(Boolean));
+}
+const inScope = (scope, id) => scope == null || scope.has(id);
 
 function admin() {
   return createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -35,6 +46,31 @@ function normTime(v) {
 }
 const hhmm = (t) => (t ? String(t).slice(0, 5) : null); // DB "time" -> "HH:MM"
 
+const RECON_SYSTEMS = new Set(["system", "rap", "itsacheckmate", "google", "sign"]);
+
+// Shape a hours_reconciliation row for the client (defaults when none exists).
+function reconOut(rec) {
+  return {
+    exists: !!rec,
+    status: rec?.status || "open",
+    wrong_systems: Array.isArray(rec?.wrong_systems) ? rec.wrong_systems : [],
+    action_taken: rec?.action_taken || "",
+    itsacheckmate_update_needed: !!rec?.itsacheckmate_update_needed,
+    itsacheckmate_done: !!rec?.itsacheckmate_done,
+    sign_order_needed: !!rec?.sign_order_needed,
+    sign_ordered: !!rec?.sign_ordered,
+    reviewed_by: rec?.reviewed_by || null,
+    reviewed_at: rec?.reviewed_at || null,
+  };
+}
+
+// Reconciliation flag summaries for the grid (best-effort: [] if table absent).
+async function reconSummaries(supa, ids) {
+  return selectAll(() => supa.from("hours_reconciliation")
+    .select("store_id, status, itsacheckmate_update_needed, itsacheckmate_done, sign_order_needed, sign_ordered")
+    .in("store_id", ids));
+}
+
 // Fetch every row of a query, paging past PostgREST's 1000-row cap. `make` must
 // return a fresh query builder each call. Without this the grid's store_hours
 // read truncated at ~1000 rows (~143 stores) even though all hours were stored.
@@ -55,25 +91,31 @@ export const handler = async (event) => {
     const supa = admin();
     const user = await sessionUser(supa, event);
     if (!user) return respond(401, { error: "unauthorized" });
-    if (!EDIT_ROLES.has(user.role)) return respond(403, { error: "Not authorized." });
+    if (!VIEW_ROLES.has(user.role)) return respond(403, { error: "Not authorized." });
 
     const params = event.queryStringParameters || {};
     const action = params.action || "list";
+    // Store ids this user may see/act on (null = all, for ORG_WIDE roles).
+    const scope = await visibleIds(supa, user);
 
     // ── list: every active store + its assembled 7-day standard hours ─────────
     if (event.httpMethod === "GET" && action === "list") {
-      const stores = await selectAll(() => supa.from("stores")
+      const allStores = await selectAll(() => supa.from("stores")
         .select("id, number, name, address, city, state, zip, is_active, google_hours, google_hours_checked_at")
         .eq("is_active", true).neq("brand", "little_caesars").order("number", { ascending: true }));
-      const ids = (stores || []).map((s) => s.id);
+      const stores = allStores.filter((s) => inScope(scope, s.id)); // SDO/RVP → only their stores
+      const ids = stores.map((s) => s.id);
       const byStore = new Map();
       const specialByStore = new Map();
+      const reconByStore = new Map();
       if (ids.length) {
         const today = new Date().toISOString().slice(0, 10);
-        const [hrs, sp] = await Promise.all([
+        const [hrs, sp, recon] = await Promise.all([
           selectAll(() => supa.from("store_hours").select("store_id, day_of_week, is_closed, open_time, close_time, updated_at").in("store_id", ids)),
           selectAll(() => supa.from("store_special_hours").select("store_id, special_date").in("store_id", ids).gte("special_date", today)),
+          reconSummaries(supa, ids),
         ]);
+        for (const r of recon) reconByStore.set(r.store_id, r);
         for (const r of hrs) {
           const arr = byStore.get(r.store_id) || Array(7).fill(null);
           arr[r.day_of_week] = { day_of_week: r.day_of_week, is_closed: r.is_closed, open: hhmm(r.open_time), close: hhmm(r.close_time) };
@@ -81,7 +123,7 @@ export const handler = async (event) => {
         }
         for (const r of sp) specialByStore.set(r.store_id, (specialByStore.get(r.store_id) || 0) + 1);
       }
-      const out = (stores || []).map((s) => {
+      const out = stores.map((s) => {
         const days = byStore.get(s.id) || Array(7).fill(null);
         const configured = days.some((d) => d != null);
         // Google comparison from cache (0282). unchecked until first check;
@@ -91,14 +133,18 @@ export const handler = async (event) => {
           if (!Array.isArray(s.google_hours)) googleStatus = "not_found";
           else { const c = compareHours(days.filter(Boolean), s.google_hours); googleStatus = c.status; googleDiffs = c.diffs.length; }
         }
+        const rc = reconByStore.get(s.id) || null;
         return {
           id: s.id, number: String(s.number), name: s.name,
           address: s.address || null, city: s.city || null, state: s.state || null, zip: s.zip || null,
           days, configured, upcoming_special: specialByStore.get(s.id) || 0,
           google_status: googleStatus, google_diffs: googleDiffs, google_checked_at: s.google_hours_checked_at || null,
+          recon_status: rc ? rc.status : null,
+          itsacheckmate_open: rc ? (rc.itsacheckmate_update_needed && !rc.itsacheckmate_done) : false,
+          sign_open: rc ? (rc.sign_order_needed && !rc.sign_ordered) : false,
         };
       });
-      return respond(200, { stores: out, places_configured: placesConfigured() });
+      return respond(200, { stores: out, places_configured: placesConfigured(), can_import: IMPORT_ROLES.has(user.role), scoped: scope != null });
     }
 
     // ── get: one store's standard + special hours (editor) ────────────────────
@@ -109,9 +155,11 @@ export const handler = async (event) => {
         .select("id, number, name, address, city, state, zip, is_active, google_place_id, google_hours, google_hours_checked_at")
         .eq("number", storeNumber).neq("brand", "little_caesars").maybeSingle();
       if (!store) return respond(404, { error: "Store not found." });
-      const [{ data: hrs }, { data: sp }] = await Promise.all([
+      if (!inScope(scope, store.id)) return respond(403, { error: "This store isn't in your scope." });
+      const [{ data: hrs }, { data: sp }, { data: rec }] = await Promise.all([
         supa.from("store_hours").select("day_of_week, is_closed, open_time, close_time, updated_at").eq("store_id", store.id),
         supa.from("store_special_hours").select("id, special_date, is_closed, open_time, close_time, note").eq("store_id", store.id).order("special_date", { ascending: true }),
+        supa.from("hours_reconciliation").select("*").eq("store_id", store.id).maybeSingle(),
       ]);
       const standard = Array.from({ length: 7 }, (_, dow) => {
         const r = (hrs || []).find((h) => h.day_of_week === dow);
@@ -122,11 +170,51 @@ export const handler = async (event) => {
       const cmp = store.google_hours_checked_at
         ? (Array.isArray(store.google_hours) ? compareHours(standard, store.google_hours) : { status: "not_found", diffs: [] })
         : { status: "unchecked", diffs: [] };
+      let reviewedByName = null;
+      if (rec?.reviewed_by) {
+        const { data: p } = await supa.from("profiles").select("preferred_name, full_name, email").eq("id", rec.reviewed_by).maybeSingle();
+        reviewedByName = p ? (p.preferred_name || p.full_name || p.email || null) : null;
+      }
       return respond(200, {
         store: { id: store.id, number: String(store.number), name: store.name, address: store.address, city: store.city, state: store.state, zip: store.zip },
         standard, special, updated_at: updatedAt,
         google: { status: cmp.status, diffs: cmp.diffs, checked_at: store.google_hours_checked_at || null, has_place: !!store.google_place_id, hours: store.google_hours || null, configured: placesConfigured() },
+        reconciliation: { ...reconOut(rec), reviewed_by_name: reviewedByName },
       });
+    }
+
+    // ── reconciliation-list: worklist of open items (scoped), for the exports ──
+    if (event.httpMethod === "GET" && action === "reconciliation-list") {
+      const stores = await selectAll(() => supa.from("stores")
+        .select("id, number, name, address, city, state, zip").eq("is_active", true).neq("brand", "little_caesars").order("number", { ascending: true }));
+      const scoped = stores.filter((s) => inScope(scope, s.id));
+      const ids = scoped.map((s) => s.id);
+      if (!ids.length) return respond(200, { rows: [] });
+      const [recs, hrs] = await Promise.all([
+        selectAll(() => supa.from("hours_reconciliation").select("*").in("store_id", ids)),
+        selectAll(() => supa.from("store_hours").select("store_id, day_of_week, is_closed, open_time, close_time").in("store_id", ids)),
+      ]);
+      const recByStore = new Map(recs.map((r) => [r.store_id, r]));
+      const daysByStore = new Map();
+      for (const r of hrs) {
+        const arr = daysByStore.get(r.store_id) || Array(7).fill(null);
+        arr[r.day_of_week] = { day_of_week: r.day_of_week, is_closed: r.is_closed, open: hhmm(r.open_time), close: hhmm(r.close_time) };
+        daysByStore.set(r.store_id, arr);
+      }
+      const rows = scoped.map((s) => {
+        const rc = recByStore.get(s.id) || null;
+        return {
+          number: String(s.number), name: s.name,
+          address: [s.address, s.city, s.state].filter(Boolean).join(", ") + (s.zip ? ` ${s.zip}` : ""),
+          status: rc ? rc.status : null,
+          wrong_systems: rc?.wrong_systems || [],
+          itsacheckmate_open: rc ? (rc.itsacheckmate_update_needed && !rc.itsacheckmate_done) : false,
+          sign_open: rc ? (rc.sign_order_needed && !rc.sign_ordered) : false,
+          action_taken: rc?.action_taken || "",
+          days: daysByStore.get(s.id) || Array(7).fill(null),
+        };
+      });
+      return respond(200, { rows });
     }
 
     // ── history: change-log of standard hours for one store (newest first) ─────
@@ -136,6 +224,7 @@ export const handler = async (event) => {
       const { data: store } = await supa.from("stores")
         .select("id, number, name").eq("number", storeNumber).neq("brand", "little_caesars").maybeSingle();
       if (!store) return respond(404, { error: "Store not found." });
+      if (!inScope(scope, store.id)) return respond(403, { error: "This store isn't in your scope." });
       const rows = await selectAll(() => supa.from("store_hours_history")
         .select("id, changed_at, changed_by, source, days, note")
         .eq("store_id", store.id).order("changed_at", { ascending: false }).order("id", { ascending: false }));
@@ -160,6 +249,7 @@ export const handler = async (event) => {
     if (action === "save-standard") {
       const storeId = String(body.store_id || "").trim();
       if (!storeId) return respond(400, { error: "store_id is required" });
+      if (!inScope(scope, storeId)) return respond(403, { error: "This store isn't in your scope." });
       const days = Array.isArray(body.days) ? body.days : [];
       const rows = [];
       for (let dow = 0; dow < 7; dow++) {
@@ -186,6 +276,7 @@ export const handler = async (event) => {
       const storeId = String(body.store_id || "").trim();
       const date = String(body.date || "").trim();
       if (!storeId || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return respond(400, { error: "store_id and a valid date are required" });
+      if (!inScope(scope, storeId)) return respond(403, { error: "This store isn't in your scope." });
       const isClosed = !!body.is_closed;
       const row = {
         store_id: storeId, special_date: date, is_closed: isClosed,
@@ -202,8 +293,36 @@ export const handler = async (event) => {
     if (action === "delete-special") {
       const id = String(body.id || "").trim();
       if (!id) return respond(400, { error: "id is required" });
+      if (scope != null) {
+        const { data: row } = await supa.from("store_special_hours").select("store_id").eq("id", id).maybeSingle();
+        if (row && !inScope(scope, row.store_id)) return respond(403, { error: "This store isn't in your scope." });
+      }
       const { error } = await supa.from("store_special_hours").delete().eq("id", id);
       if (error) return respond(500, { error: error.message });
+      return respond(200, { ok: true });
+    }
+
+    // ── save-reconciliation: upsert a store's discrepancy remediation record ──
+    if (action === "save-reconciliation") {
+      const storeId = String(body.store_id || "").trim();
+      if (!storeId) return respond(400, { error: "store_id is required" });
+      if (!inScope(scope, storeId)) return respond(403, { error: "This store isn't in your scope." });
+      const wrong = Array.isArray(body.wrong_systems) ? [...new Set(body.wrong_systems.map(String).filter((s) => RECON_SYSTEMS.has(s)))] : [];
+      const status = ["open", "in_progress", "resolved"].includes(body.status) ? body.status : "open";
+      const row = {
+        store_id: storeId, status, wrong_systems: wrong,
+        action_taken: body.action_taken ? String(body.action_taken).slice(0, 2000) : null,
+        itsacheckmate_update_needed: !!body.itsacheckmate_update_needed,
+        itsacheckmate_done: !!body.itsacheckmate_done,
+        sign_order_needed: !!body.sign_order_needed,
+        sign_ordered: !!body.sign_ordered,
+        reviewed_by: user.id, reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      };
+      const { error } = await supa.from("hours_reconciliation").upsert(row, { onConflict: "store_id" });
+      if (error) {
+        if (/hours_reconciliation/.test(error.message)) return respond(500, { error: "Run migration 0284 first (hours_reconciliation is missing)." });
+        return respond(500, { error: error.message });
+      }
       return respond(200, { ok: true });
     }
 
@@ -212,6 +331,7 @@ export const handler = async (event) => {
     // Only the days present in a row are written; unknown store numbers are
     // reported back, not silently dropped.
     if (action === "bulk-import") {
+      if (!IMPORT_ROLES.has(user.role)) return respond(403, { error: "Only Admin / VP / COO can bulk-import hours." });
       const rows = Array.isArray(body.rows) ? body.rows : [];
       if (!rows.length) return respond(400, { error: "no rows to import" });
       if (rows.length > 5000) return respond(400, { error: "too many rows (max 5000)" });
@@ -259,6 +379,7 @@ export const handler = async (event) => {
         .select("id, number, name, address, city, state, zip, latitude, longitude, brand, google_place_id")
         .eq("number", storeNumber).neq("brand", "little_caesars").maybeSingle();
       if (!store) return respond(404, { error: "Store not found." });
+      if (!inScope(scope, store.id)) return respond(403, { error: "This store isn't in your scope." });
       // A single-store check always re-resolves the place_id (ignores any cached
       // one) so a bad earlier match gets corrected on Re-check.
       const r = await refreshGoogle(supa, store, true);
@@ -291,7 +412,7 @@ export const handler = async (event) => {
         .select("id, number, name, address, city, state, zip, latitude, longitude, brand, google_place_id, google_hours_checked_at")
         .in("id", configured).eq("is_active", true).neq("brand", "little_caesars")
         .order("google_hours_checked_at", { ascending: true, nullsFirst: true }));
-      const eligible = cand.filter((s) => !s.google_hours_checked_at || s.google_hours_checked_at < staleBefore);
+      const eligible = cand.filter((s) => inScope(scope, s.id) && (!s.google_hours_checked_at || s.google_hours_checked_at < staleBefore));
       const start = Date.now();
       let checked = 0, failed = 0;
       for (const s of eligible) {

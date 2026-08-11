@@ -26,6 +26,7 @@ import {
   MapPinned,
   Trophy,
   Target,
+  Clock,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -152,6 +153,9 @@ export const NAV: NavItem[] = [
   // System Settings (/admin/system-settings). Metrics Board stays in the sidebar
   // for the lower roles that can't see the hub; vp/coo/admin reach it in the hub.
   { to: "/admin/metrics-board", label: "Metrics Board", icon: LayoutGrid, roles: ["do", "sdo", "rvp"] },
+  // Hours of Operation — SDO/RVP reconcile their stores here; vp/coo/admin reach
+  // it via System Settings, so the sidebar entry is scoped to the lower roles.
+  { to: "/admin/hours-of-operation", label: "Hours of Operation", icon: Clock, roles: ["sdo", "rvp"] },
   // SOAR QSR Learning Platform — admin-only during the build. The qsr_platform
   // flag broadens access to a pilot cohort at launch (combined with role).
   { to: "/qsr",         label: "Soar MyLearning", icon: Sparkles,    roles: ["admin"], flagKey: "qsr_platform" },

@@ -4,17 +4,17 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Clock, CalendarDays, History, Plus, Trash2, MapPin, CheckCircle2, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Clock, CalendarDays, History, Wrench, Plus, Trash2, MapPin, CheckCircle2, AlertTriangle } from "lucide-react";
 import { Card } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { checkStoreGoogle, deleteSpecialHours, fetchStoreHours, fetchStoreHoursHistory, saveSpecialHours, saveStandardHours, type DayHours, type GoogleCompare, type HoursHistoryEntry, type SpecialHours as SpecialHoursRow } from "./api";
+import { checkStoreGoogle, deleteSpecialHours, fetchStoreHours, fetchStoreHoursHistory, saveReconciliation, saveSpecialHours, saveStandardHours, type DayHours, type GoogleCompare, type HoursHistoryEntry, type Reconciliation, type ReconSystem, type SpecialHours as SpecialHoursRow } from "./api";
 import { DAY_LABELS, DAY_SHORT, fmtRange, isOvernight, to12 } from "./hoursFmt";
 
-type Tab = "standard" | "special" | "history";
+type Tab = "standard" | "special" | "history" | "reconcile";
 
 export function LocationHoursPage() {
   const { storeNumber = "" } = useParams();
@@ -49,7 +49,7 @@ export function LocationHoursPage() {
 
           <div className="mt-5 grid gap-5 lg:grid-cols-[180px_1fr]">
             <nav className="flex gap-1 lg:flex-col">
-              {([["standard", "Standard Hours", Clock], ["special", "Special Hours", CalendarDays], ["history", "History", History]] as const).map(([key, label, Icon]) => (
+              {([["standard", "Standard Hours", Clock], ["special", "Special Hours", CalendarDays], ["reconcile", "Reconcile", Wrench], ["history", "History", History]] as const).map(([key, label, Icon]) => (
                 <button
                   key={key}
                   type="button"
@@ -66,6 +66,8 @@ export function LocationHoursPage() {
                 ? <StandardHours storeId={query.data.store.id} storeNumber={storeNumber} initial={query.data.standard} />
                 : tab === "special"
                 ? <SpecialHours storeId={query.data.store.id} storeNumber={storeNumber} initial={query.data.special} />
+                : tab === "reconcile"
+                ? <ReconcileTab storeId={query.data.store.id} storeNumber={storeNumber} initial={query.data.reconciliation} googleStatus={query.data.google.status} googleDiffs={query.data.google.diffs.length} />
                 : <HistoryTab storeNumber={storeNumber} />}
             </div>
           </div>
@@ -314,6 +316,107 @@ function SpecialHours({ storeId, storeNumber, initial }: { storeId: string; stor
           ))}
         </ul>
       )}
+    </Card>
+  );
+}
+
+// ── Reconciliation ───────────────────────────────────────────────────────────
+const WRONG_OPTIONS: { key: ReconSystem; label: string }[] = [
+  { key: "system", label: "System Hours (Hub)" },
+  { key: "rap", label: "RAP Hours of Ops" },
+  { key: "itsacheckmate", label: "Itsacheckmate" },
+  { key: "google", label: "Google listing" },
+  { key: "sign", label: "Physical hours sign" },
+];
+
+function ReconcileTab({ storeId, storeNumber, initial, googleStatus, googleDiffs }: {
+  storeId: string; storeNumber: string; initial: Reconciliation; googleStatus: string; googleDiffs: number;
+}) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const [wrong, setWrong] = useState<ReconSystem[]>(initial.wrong_systems);
+  const [status, setStatus] = useState(initial.status);
+  const [action, setAction] = useState(initial.action_taken);
+  const [icmNeed, setIcmNeed] = useState(initial.itsacheckmate_update_needed);
+  const [icmDone, setIcmDone] = useState(initial.itsacheckmate_done);
+  const [signNeed, setSignNeed] = useState(initial.sign_order_needed);
+  const [signDone, setSignDone] = useState(initial.sign_ordered);
+
+  const toggleWrong = (k: ReconSystem) => setWrong((w) => (w.includes(k) ? w.filter((x) => x !== k) : [...w, k]));
+
+  const save = useMutation({
+    mutationFn: () => saveReconciliation(storeId, {
+      status, wrong_systems: wrong, action_taken: action,
+      itsacheckmate_update_needed: icmNeed, itsacheckmate_done: icmDone,
+      sign_order_needed: signNeed, sign_ordered: signDone,
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["store-hours", storeNumber] });
+      qc.invalidateQueries({ queryKey: ["hours-grid"] });
+      toast.push("Reconciliation saved.", "success");
+    },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't save.", "error"),
+  });
+
+  return (
+    <Card className="p-5">
+      <h3 className="mb-1 text-base font-bold text-midnight">Reconcile Hours</h3>
+      <p className="mb-4 text-sm text-zinc-500">
+        Record where the hours are wrong, what you corrected, and any follow-ups. Check the two places to verify: <strong>RAP Hours of Ops</strong> and <strong>Itsacheckmate</strong>.
+      </p>
+
+      {googleStatus === "mismatch" && (
+        <div className="mb-4 flex items-center gap-2 rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800 ring-1 ring-inset ring-amber-200">
+          <AlertTriangle className="h-4 w-4 shrink-0" /> Google shows {googleDiffs} day(s) different from the system — see the Standard Hours tab for the diff.
+        </div>
+      )}
+
+      <div className="mb-4">
+        <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">Which systems are wrong?</div>
+        <div className="grid gap-1.5 sm:grid-cols-2">
+          {WRONG_OPTIONS.map((o) => (
+            <label key={o.key} className={cn("flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm", wrong.includes(o.key) ? "border-accent bg-accent/5 text-midnight" : "border-zinc-200 text-zinc-600")}>
+              <input type="checkbox" checked={wrong.includes(o.key)} onChange={() => toggleWrong(o.key)} />
+              {o.label}
+            </label>
+          ))}
+        </div>
+      </div>
+
+      <label className="mb-4 block">
+        <span className="text-xs font-semibold uppercase tracking-wide text-zinc-500">What did you correct / what action did you take?</span>
+        <textarea value={action} onChange={(e) => setAction(e.target.value)} rows={3}
+          placeholder="e.g. Corrected System Hours to 6:30 AM–12 AM; requested RAP update; Itsacheckmate still shows old hours."
+          className="mt-1 w-full rounded-lg border border-zinc-200 p-2 text-sm focus:border-accent focus:outline-none" />
+      </label>
+
+      <div className="mb-4 grid gap-3 sm:grid-cols-2">
+        <div className="rounded-lg border border-zinc-200 p-3">
+          <div className="mb-1.5 text-sm font-semibold text-midnight">Itsacheckmate</div>
+          <label className="flex items-center gap-2 text-sm text-zinc-600"><input type="checkbox" checked={icmNeed} onChange={(e) => setIcmNeed(e.target.checked)} /> Needs hours update</label>
+          <label className="mt-1 flex items-center gap-2 text-sm text-zinc-600"><input type="checkbox" checked={icmDone} onChange={(e) => setIcmDone(e.target.checked)} /> Update completed</label>
+        </div>
+        <div className="rounded-lg border border-zinc-200 p-3">
+          <div className="mb-1.5 text-sm font-semibold text-midnight">Hours-of-Ops sign</div>
+          <label className="flex items-center gap-2 text-sm text-zinc-600"><input type="checkbox" checked={signNeed} onChange={(e) => setSignNeed(e.target.checked)} /> New sign needs ordered</label>
+          <label className="mt-1 flex items-center gap-2 text-sm text-zinc-600"><input type="checkbox" checked={signDone} onChange={(e) => setSignDone(e.target.checked)} /> Sign ordered</label>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <label className="flex items-center gap-2 text-sm text-zinc-600">
+          Status
+          <select value={status} onChange={(e) => setStatus(e.target.value as Reconciliation["status"])} className="rounded-md border border-zinc-200 px-2 py-1 text-sm focus:border-accent focus:outline-none">
+            <option value="open">Open</option>
+            <option value="in_progress">In progress</option>
+            <option value="resolved">Resolved</option>
+          </select>
+        </label>
+        <div className="flex items-center gap-3">
+          {initial.reviewed_at && <span className="text-[11px] text-zinc-400">Last saved {new Date(initial.reviewed_at).toLocaleDateString("en-US")}{initial.reviewed_by_name ? ` by ${initial.reviewed_by_name}` : ""}</span>}
+          <Button onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? "Saving…" : "Save reconciliation"}</Button>
+        </div>
+      </div>
     </Card>
   );
 }

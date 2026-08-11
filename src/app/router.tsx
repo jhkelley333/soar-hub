@@ -447,10 +447,12 @@ export const router = createBrowserRouter([
         ),
       },
       {
-        // Hours of Operation — standard + special hours per location.
+        // Hours of Operation — standard + special hours per location. SDO/RVP
+        // can reconcile their own stores (scoped server-side); org-wide roles
+        // see all.
         path: "admin/hours-of-operation",
         element: (
-          <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
+          <ProtectedRoute requireRoles={["sdo", "rvp", "vp", "coo", "admin"]}>
             <HoursOfOperationPage />
           </ProtectedRoute>
         ),
@@ -458,7 +460,7 @@ export const router = createBrowserRouter([
       {
         path: "admin/hours-of-operation/:storeNumber",
         element: (
-          <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
+          <ProtectedRoute requireRoles={["sdo", "rvp", "vp", "coo", "admin"]}>
             <LocationHoursPage />
           </ProtectedRoute>
         ),

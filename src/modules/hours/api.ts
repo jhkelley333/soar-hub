@@ -23,6 +23,24 @@ export interface HoursGridStore {
   google_status: "unchecked" | "match" | "mismatch" | "not_found";
   google_diffs: number;      // number of days that differ from Google
   google_checked_at: string | null;
+  recon_status: "open" | "in_progress" | "resolved" | null;
+  itsacheckmate_open: boolean;  // Itsacheckmate update needed & not done
+  sign_open: boolean;           // sign order needed & not ordered
+}
+
+export type ReconSystem = "system" | "rap" | "itsacheckmate" | "google" | "sign";
+export interface Reconciliation {
+  exists: boolean;
+  status: "open" | "in_progress" | "resolved";
+  wrong_systems: ReconSystem[];
+  action_taken: string;
+  itsacheckmate_update_needed: boolean;
+  itsacheckmate_done: boolean;
+  sign_order_needed: boolean;
+  sign_ordered: boolean;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  reviewed_by_name?: string | null;
 }
 export interface GoogleCompare {
   status: "unchecked" | "match" | "mismatch" | "not_found";
@@ -46,6 +64,7 @@ export interface StoreHoursDetail {
   special: SpecialHours[];
   updated_at: string | null;
   google: GoogleCompare;
+  reconciliation: Reconciliation;
 }
 
 async function authHeaders(): Promise<HeadersInit> {
@@ -64,8 +83,22 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export function fetchHoursGrid(): Promise<{ stores: HoursGridStore[]; places_configured: boolean }> {
+export function fetchHoursGrid(): Promise<{ stores: HoursGridStore[]; places_configured: boolean; can_import: boolean; scoped: boolean }> {
   return request(`${FN}?action=list`);
+}
+
+export function saveReconciliation(storeId: string, r: Omit<Reconciliation, "exists" | "reviewed_by" | "reviewed_at" | "reviewed_by_name">): Promise<{ ok: boolean }> {
+  return request(`${FN}?action=save-reconciliation`, { method: "POST", body: JSON.stringify({ store_id: storeId, ...r }) });
+}
+
+export interface ReconListRow {
+  number: string; name: string; address: string;
+  status: string | null; wrong_systems: ReconSystem[];
+  itsacheckmate_open: boolean; sign_open: boolean; action_taken: string;
+  days: (DayHours | null)[];
+}
+export function fetchReconciliationList(): Promise<{ rows: ReconListRow[] }> {
+  return request(`${FN}?action=reconciliation-list`);
 }
 export function checkStoreGoogle(storeNumber: string): Promise<{ ok: boolean; status: GoogleCompare["status"]; diffs: GoogleCompare["diffs"]; hours: DayHours[] | null; checked_at: string; error: string | null }> {
   return request(`${FN}?action=google-check-store`, { method: "POST", body: JSON.stringify({ store: storeNumber }) });

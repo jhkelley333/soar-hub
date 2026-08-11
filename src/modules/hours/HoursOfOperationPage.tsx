@@ -4,7 +4,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Search, CalendarClock, Download, Upload, MapPin, AlertTriangle } from "lucide-react";
+import { Search, CalendarClock, Download, Upload, MapPin, AlertTriangle, ClipboardList, Signpost } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -12,9 +12,9 @@ import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { fetchHoursGrid, checkAllGoogle, type HoursGridStore } from "./api";
+import { fetchHoursGrid, checkAllGoogle, fetchReconciliationList, type HoursGridStore } from "./api";
 import { DAY_LABELS, fmtRange } from "./hoursFmt";
-import { downloadHoursWorkbook } from "./hoursWorkbook";
+import { downloadHoursWorkbook, downloadReconWorkbook } from "./hoursWorkbook";
 import { HoursImportModal } from "./HoursImportModal";
 
 type Filter = "open" | "pending";
@@ -53,6 +53,7 @@ export function HoursOfOperationPage() {
   const openCount = all.filter((s) => s.configured).length;
   const pendingCount = all.length - openCount;
   const placesOn = query.data?.places_configured ?? false;
+  const canImport = query.data?.can_import ?? false;
   const mismatchCount = all.filter((s) => s.google_status === "mismatch").length;
 
   // Loop the time-budgeted Google check until nothing's left to refresh.
@@ -89,6 +90,17 @@ export function HoursOfOperationPage() {
     }
   };
 
+  const exportRecon = async (kind: "itsacheckmate" | "sign") => {
+    try {
+      const { rows } = await fetchReconciliationList();
+      const rowsFor = rows.filter((r) => (kind === "itsacheckmate" ? r.itsacheckmate_open : r.sign_open));
+      if (!rowsFor.length) { toast.push(kind === "itsacheckmate" ? "No stores currently need an Itsacheckmate update." : "No signs currently need ordering.", "error"); return; }
+      await downloadReconWorkbook(rowsFor, kind);
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : "Export failed.", "error");
+    }
+  };
+
   return (
     <>
       <PageHeader
@@ -102,9 +114,17 @@ export function HoursOfOperationPage() {
                 <MapPin className="mr-1.5 h-3.5 w-3.5" /> {checkGoogle.isPending ? "Checking Google…" : "Check Google"}
               </Button>
             )}
-            <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
-              <Upload className="mr-1.5 h-3.5 w-3.5" /> Upload hours
+            <Button variant="secondary" size="sm" onClick={() => exportRecon("itsacheckmate")} title="Download stores needing an Itsacheckmate hours update">
+              <ClipboardList className="mr-1.5 h-3.5 w-3.5" /> Itsacheckmate list
             </Button>
+            <Button variant="secondary" size="sm" onClick={() => exportRecon("sign")} title="Download stores needing a new hours sign">
+              <Signpost className="mr-1.5 h-3.5 w-3.5" /> Signs to order
+            </Button>
+            {canImport && (
+              <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
+                <Upload className="mr-1.5 h-3.5 w-3.5" /> Upload hours
+              </Button>
+            )}
             <Button variant="secondary" size="sm" onClick={exportXlsx} disabled={exporting || !all.length}>
               <Download className="mr-1.5 h-3.5 w-3.5" /> {exporting ? "Exporting…" : "Download Excel"}
             </Button>
@@ -207,6 +227,15 @@ function GridRow({ s, onOpen }: { s: HoursGridStore; onOpen: () => void }) {
           )}
           {s.google_status === "not_found" && (
             <span className="text-[10px] font-medium text-zinc-400" title="No Google listing/hours found">No Google match</span>
+          )}
+          {s.itsacheckmate_open && (
+            <span className="rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-semibold text-orange-700" title="Itsacheckmate update needed">ICM</span>
+          )}
+          {s.sign_open && (
+            <span className="rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-semibold text-orange-700" title="New hours sign needs ordering">Sign</span>
+          )}
+          {s.recon_status === "resolved" && (
+            <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700" title="Reconciliation resolved">✓</span>
           )}
           {s.upcoming_special > 0 && (
             <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-600" title={`${s.upcoming_special} upcoming special hours`}>
