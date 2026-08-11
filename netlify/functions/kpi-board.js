@@ -85,6 +85,9 @@ function laborMetrics(rows, p) {
     average_check: div(sales, tickets),
     on_time: otDen ? (otNum / otDen) * 100 : null,
     avg_ticket_time: attSec != null ? Math.round(attSec) : null,
+    // Other Controllable Contribution (section 05): cash over/short + paid outs.
+    cash_over_short: rows.length ? sumOf(rows, `${p}cash_over_short`) : null,
+    paid_outs: rows.length ? sumOf(rows, `${p}paid_out_dollars`) : null,
     actual_vs_schedule: rows.length ? sumOf(rows, `${p}actual_vs_scheduled_hours`) : null,
     overtime: rows.length ? sumOf(rows, `${p}overtime_hours`) : null,
   };
@@ -304,7 +307,7 @@ export const handler = async (event) => {
     const laborAnchorD = lab(anchor, ""), laborAnchorW = lab(anchor, "wtd_"), laborAnchorM = lab(anchor, "ptd_");
     const laborPriorD = lab(dailyPrior, ""), laborPriorW = lab(wtdPrior, "wtd_"), laborPriorM = lab(mtdPrior, "ptd_");
     const laborWeeks = weekEnds.map((d) => lab(d, "wtd_"));
-    for (const k of ["sales_vs_ly", "sales_dollars", "ly_dollars", "avg_ticket_time", "on_time", "splh", "tickets", "average_check", "labor_pct", "actual_vs_schedule", "overtime"]) {
+    for (const k of ["sales_vs_ly", "sales_dollars", "ly_dollars", "avg_ticket_time", "on_time", "splh", "tickets", "average_check", "labor_pct", "actual_vs_schedule", "overtime", "cash_over_short", "paid_outs"]) {
       values[k] = {
         daily: pair(laborAnchorD[k], laborPriorD[k]),
         wtd: pair(laborAnchorW[k], laborPriorW[k]),
