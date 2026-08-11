@@ -3,6 +3,7 @@
 // per-location editor (action=get), and the save paths (save-standard /
 // save-special / delete-special). Storage: store_hours + store_special_hours (0281).
 import { createClient } from "@supabase/supabase-js";
+import { placesConfigured, findPlaceId, fetchPlaceHours, normalizeGoogleHours, compareHours } from "./_lib/places.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -48,7 +49,7 @@ export const handler = async (event) => {
     // ── list: every active store + its assembled 7-day standard hours ─────────
     if (event.httpMethod === "GET" && action === "list") {
       const { data: stores } = await supa.from("stores")
-        .select("id, number, name, address, city, state, zip, is_active")
+        .select("id, number, name, address, city, state, zip, is_active, google_hours, google_hours_checked_at")
         .eq("is_active", true).order("number", { ascending: true });
       const ids = (stores || []).map((s) => s.id);
       const byStore = new Map();
@@ -68,13 +69,21 @@ export const handler = async (event) => {
       const out = (stores || []).map((s) => {
         const days = byStore.get(s.id) || Array(7).fill(null);
         const configured = days.some((d) => d != null);
+        // Google comparison from cache (0282). unchecked until first check;
+        // not_found when checked but no listing/hours; else match/mismatch.
+        let googleStatus = "unchecked", googleDiffs = 0;
+        if (s.google_hours_checked_at) {
+          if (!Array.isArray(s.google_hours)) googleStatus = "not_found";
+          else { const c = compareHours(days.filter(Boolean), s.google_hours); googleStatus = c.status; googleDiffs = c.diffs.length; }
+        }
         return {
           id: s.id, number: String(s.number), name: s.name,
           address: s.address || null, city: s.city || null, state: s.state || null, zip: s.zip || null,
           days, configured, upcoming_special: specialByStore.get(s.id) || 0,
+          google_status: googleStatus, google_diffs: googleDiffs, google_checked_at: s.google_hours_checked_at || null,
         };
       });
-      return respond(200, { stores: out });
+      return respond(200, { stores: out, places_configured: placesConfigured() });
     }
 
     // ── get: one store's standard + special hours (editor) ────────────────────
@@ -82,7 +91,7 @@ export const handler = async (event) => {
       const storeNumber = String(params.store || "").trim();
       if (!storeNumber) return respond(400, { error: "store is required" });
       const { data: store } = await supa.from("stores")
-        .select("id, number, name, address, city, state, zip, is_active")
+        .select("id, number, name, address, city, state, zip, is_active, google_place_id, google_hours, google_hours_checked_at")
         .eq("number", storeNumber).maybeSingle();
       if (!store) return respond(404, { error: "Store not found." });
       const [{ data: hrs }, { data: sp }] = await Promise.all([
@@ -95,9 +104,13 @@ export const handler = async (event) => {
       });
       const updatedAt = (hrs || []).reduce((mx, h) => (!mx || h.updated_at > mx ? h.updated_at : mx), null);
       const special = (sp || []).map((r) => ({ id: r.id, date: r.special_date, is_closed: r.is_closed, open: hhmm(r.open_time), close: hhmm(r.close_time), note: r.note || "" }));
+      const cmp = store.google_hours_checked_at
+        ? (Array.isArray(store.google_hours) ? compareHours(standard, store.google_hours) : { status: "not_found", diffs: [] })
+        : { status: "unchecked", diffs: [] };
       return respond(200, {
         store: { id: store.id, number: String(store.number), name: store.name, address: store.address, city: store.city, state: store.state, zip: store.zip },
         standard, special, updated_at: updatedAt,
+        google: { status: cmp.status, diffs: cmp.diffs, checked_at: store.google_hours_checked_at || null, has_place: !!store.google_place_id, hours: store.google_hours || null, configured: placesConfigured() },
       });
     }
 
@@ -197,8 +210,69 @@ export const handler = async (event) => {
       return respond(200, { ok: true, imported_stores: touched.size, imported_days: upserts.length, errors });
     }
 
+    // ── google-check-store: refresh one store's Google hours + compare ────────
+    if (action === "google-check-store") {
+      if (!placesConfigured()) return respond(400, { error: "Google Places not configured (set GOOGLE_PLACES_API_KEY)." });
+      const storeNumber = String(body.store || body.store_number || "").trim();
+      if (!storeNumber) return respond(400, { error: "store is required" });
+      const { data: store } = await supa.from("stores")
+        .select("id, number, name, address, city, state, zip, latitude, longitude, google_place_id")
+        .eq("number", storeNumber).maybeSingle();
+      if (!store) return respond(404, { error: "Store not found." });
+      const r = await refreshGoogle(supa, store);
+      const { data: hrs } = await supa.from("store_hours").select("day_of_week, is_closed, open_time, close_time").eq("store_id", store.id);
+      const standard = Array.from({ length: 7 }, (_, dow) => {
+        const h = (hrs || []).find((x) => x.day_of_week === dow);
+        return { day_of_week: dow, is_closed: h?.is_closed ?? false, open: hhmm(h?.open_time), close: hhmm(h?.close_time) };
+      });
+      const cmp = Array.isArray(r.google_hours) ? compareHours(standard, r.google_hours) : { status: "not_found", diffs: [] };
+      return respond(200, { ok: true, status: cmp.status, diffs: cmp.diffs, hours: r.google_hours || null, checked_at: new Date().toISOString(), error: r.error || null });
+    }
+
+    // ── google-check-all: time-budgeted refresh of configured stores ──────────
+    if (action === "google-check-all") {
+      if (!placesConfigured()) return respond(400, { error: "Google Places not configured (set GOOGLE_PLACES_API_KEY)." });
+      const staleBefore = new Date(Date.now() - 12 * 3600 * 1000).toISOString();
+      // Only stores that actually have system hours to compare against.
+      const { data: hrsIds } = await supa.from("store_hours").select("store_id");
+      const configured = [...new Set((hrsIds || []).map((r) => r.store_id))];
+      if (!configured.length) return respond(200, { ok: true, checked: 0, failed: 0, remaining: 0 });
+      const { data: cand } = await supa.from("stores")
+        .select("id, number, name, address, city, state, zip, latitude, longitude, google_place_id, google_hours_checked_at")
+        .in("id", configured).eq("is_active", true)
+        .order("google_hours_checked_at", { ascending: true, nullsFirst: true });
+      const eligible = (cand || []).filter((s) => !s.google_hours_checked_at || s.google_hours_checked_at < staleBefore);
+      const start = Date.now();
+      let checked = 0, failed = 0;
+      for (const s of eligible) {
+        if (Date.now() - start > 8000) break; // stay under the function timeout; client loops on `remaining`
+        const r = await refreshGoogle(supa, s);
+        checked += 1;
+        if (r.status === "not_found") failed += 1;
+      }
+      return respond(200, { ok: true, checked, failed, remaining: Math.max(0, eligible.length - checked) });
+    }
+
     return respond(400, { error: `unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });
   }
 };
+
+// Resolve a store's Google place (cached place_id if present, else Find Place),
+// pull its hours, normalize, and cache place_id + hours + checked_at on the store.
+// Never throws — a Places hiccup just records a not_found check.
+async function refreshGoogle(supa, store) {
+  const now = new Date().toISOString();
+  let placeId = store.google_place_id || null;
+  if (!placeId) {
+    const f = await findPlaceId(store);
+    if (f.error) { await supa.from("stores").update({ google_hours: null, google_hours_checked_at: now }).eq("id", store.id); return { status: "not_found", error: f.error }; }
+    placeId = f.place_id;
+  }
+  const h = await fetchPlaceHours(placeId);
+  if (h.error) { await supa.from("stores").update({ google_place_id: placeId, google_hours: null, google_hours_checked_at: now }).eq("id", store.id); return { status: "not_found", error: h.error }; }
+  const norm = normalizeGoogleHours(h.periods);
+  await supa.from("stores").update({ google_place_id: placeId, google_hours: norm, google_hours_checked_at: now }).eq("id", store.id);
+  return { status: Array.isArray(norm) ? "ok" : "not_found", google_hours: norm, place_id: placeId };
+}

@@ -2,9 +2,9 @@
 // standard hours. Search + Open/Pending filter; click a row to edit that
 // location (standard + special hours). Admin-gated in the router.
 import { useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Search, CalendarClock, Download, Upload } from "lucide-react";
+import { Search, CalendarClock, Download, Upload, MapPin, AlertTriangle } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -12,7 +12,7 @@ import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { fetchHoursGrid, type HoursGridStore } from "./api";
+import { fetchHoursGrid, checkAllGoogle, type HoursGridStore } from "./api";
 import { DAY_LABELS, fmtRange } from "./hoursFmt";
 import { downloadHoursWorkbook } from "./hoursWorkbook";
 import { HoursImportModal } from "./HoursImportModal";
@@ -52,6 +52,26 @@ export function HoursOfOperationPage() {
 
   const openCount = all.filter((s) => s.configured).length;
   const pendingCount = all.length - openCount;
+  const placesOn = query.data?.places_configured ?? false;
+  const mismatchCount = all.filter((s) => s.google_status === "mismatch").length;
+
+  // Loop the time-budgeted Google check until nothing's left to refresh.
+  const checkGoogle = useMutation({
+    mutationFn: async () => {
+      let checked = 0, failed = 0, calls = 0;
+      for (;;) {
+        const r = await checkAllGoogle();
+        checked += r.checked; failed += r.failed; calls += 1;
+        if (r.remaining <= 0 || calls >= 60 || r.checked === 0) break;
+      }
+      return { checked, failed };
+    },
+    onSuccess: (r) => {
+      qc.invalidateQueries({ queryKey: ["hours-grid"] });
+      toast.push(`Checked ${r.checked} location(s) against Google${r.failed ? ` · ${r.failed} with no listing/hours` : ""}.`, "success");
+    },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Google check failed.", "error"),
+  });
 
   const exportXlsx = async () => {
     if (!filtered.length) { toast.push("Nothing to export for this view.", "error"); return; }
@@ -72,6 +92,12 @@ export function HoursOfOperationPage() {
         description="Standard weekly hours for every location. Click a location to edit its hours."
         actions={
           <div className="flex items-center gap-2">
+            {placesOn && (
+              <Button variant="secondary" size="sm" onClick={() => checkGoogle.mutate()} disabled={checkGoogle.isPending || !openCount}
+                title="Fetch each location's hours from Google and flag mismatches">
+                <MapPin className="mr-1.5 h-3.5 w-3.5" /> {checkGoogle.isPending ? "Checking Google…" : "Check Google"}
+              </Button>
+            )}
             <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
               <Upload className="mr-1.5 h-3.5 w-3.5" /> Upload hours
             </Button>
@@ -112,6 +138,18 @@ export function HoursOfOperationPage() {
           />
         </div>
       </div>
+
+      {query.data && (mismatchCount > 0 || !placesOn) && (
+        <div className={cn("mb-4 flex items-start gap-2 rounded-lg p-3 text-sm ring-1 ring-inset",
+          mismatchCount > 0 ? "bg-amber-50 text-amber-800 ring-amber-200" : "bg-zinc-50 text-zinc-500 ring-zinc-200")}>
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+          {mismatchCount > 0 ? (
+            <span><strong>{mismatchCount} location(s)</strong> don't match Google. Open a flagged location to see which days differ.</span>
+          ) : (
+            <span>Set <code className="rounded bg-white px-1">GOOGLE_PLACES_API_KEY</code> in Netlify to compare each location's hours against Google.</span>
+          )}
+        </div>
+      )}
 
       {query.isLoading && <Skeleton className="h-96 w-full" />}
       {query.isError && <EmptyState title="Couldn't load hours" description={(query.error as Error)?.message ?? "Try again."} />}
@@ -158,6 +196,14 @@ function GridRow({ s, onOpen }: { s: HoursGridStore; onOpen: () => void }) {
       <td className="sticky left-0 z-10 bg-white px-4 py-3">
         <div className="flex items-center gap-2">
           <span className="rounded-md bg-zinc-100 px-2 py-0.5 font-mono text-xs font-semibold text-midnight">{s.number}</span>
+          {s.google_status === "mismatch" && (
+            <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700" title={`${s.google_diffs} day(s) differ from Google`}>
+              <AlertTriangle className="h-3 w-3" />Google ≠ {s.google_diffs}
+            </span>
+          )}
+          {s.google_status === "not_found" && (
+            <span className="text-[10px] font-medium text-zinc-400" title="No Google listing/hours found">No Google match</span>
+          )}
           {s.upcoming_special > 0 && (
             <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-600" title={`${s.upcoming_special} upcoming special hours`}>
               <CalendarClock className="h-3 w-3" />{s.upcoming_special}
