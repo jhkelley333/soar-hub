@@ -58,11 +58,15 @@ export function HoursOfOperationPage() {
   // Loop the time-budgeted Google check until nothing's left to refresh.
   const checkGoogle = useMutation({
     mutationFn: async () => {
+      // A fixed sweep-start timestamp, held across the paged loop: every store
+      // is re-checked once this run (force re-resolves the Google place too), and
+      // the loop converges as each store's checked_at moves past `since`.
+      const since = new Date().toISOString();
       let checked = 0, failed = 0, calls = 0;
       for (;;) {
-        const r = await checkAllGoogle();
+        const r = await checkAllGoogle({ since, force: true });
         checked += r.checked; failed += r.failed; calls += 1;
-        if (r.remaining <= 0 || calls >= 60 || r.checked === 0) break;
+        if (r.remaining <= 0 || calls >= 80 || r.checked === 0) break;
       }
       return { checked, failed };
     },

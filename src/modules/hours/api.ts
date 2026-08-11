@@ -70,8 +70,8 @@ export function fetchHoursGrid(): Promise<{ stores: HoursGridStore[]; places_con
 export function checkStoreGoogle(storeNumber: string): Promise<{ ok: boolean; status: GoogleCompare["status"]; diffs: GoogleCompare["diffs"]; hours: DayHours[] | null; checked_at: string; error: string | null }> {
   return request(`${FN}?action=google-check-store`, { method: "POST", body: JSON.stringify({ store: storeNumber }) });
 }
-export function checkAllGoogle(): Promise<{ ok: boolean; checked: number; failed: number; remaining: number }> {
-  return request(`${FN}?action=google-check-all`, { method: "POST", body: JSON.stringify({}) });
+export function checkAllGoogle(opts?: { since?: string; force?: boolean }): Promise<{ ok: boolean; checked: number; failed: number; remaining: number }> {
+  return request(`${FN}?action=google-check-all`, { method: "POST", body: JSON.stringify(opts ?? {}) });
 }
 export function fetchStoreHours(storeNumber: string): Promise<StoreHoursDetail> {
   return request(`${FN}?action=get&store=${encodeURIComponent(storeNumber)}`);
