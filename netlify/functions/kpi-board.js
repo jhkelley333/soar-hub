@@ -63,7 +63,10 @@ function laborMetrics(rows, p) {
   const ttQty = sumOf(rows, `${p}on_time_quantity`);
   // Avg Ticket Time = the feed's averageTicketTime, ticket-weighted across the
   // scope; fall back to total_ticket_time / on_time_quantity if not captured.
-  const attWeighted = weightedMean(rows, `${p}average_ticket_time`, `${p}tickets`);
+  // The feed reports it in MINUTES (e.g. 3.8) — convert to SECONDS so the board
+  // can show it as mm:ss (3:48) against the 180s (3:00) target.
+  const attMin = weightedMean(rows, `${p}average_ticket_time`, `${p}tickets`);
+  const attSec = attMin != null ? attMin * 60 : (ttQty ? (ttTotal / ttQty) * 60 : null);
   // Labor target from the feed (sales-weighted targetLaborPercentage). Normalize
   // a fraction (0.26) to a percent (26) so it lines up with labor_pct.
   let laborTarget = weightedMean(rows, `${p}target_labor_pct`, `${p}net_sales`);
@@ -81,7 +84,7 @@ function laborMetrics(rows, p) {
     tickets: rows.length ? tickets : null,
     average_check: div(sales, tickets),
     on_time: otDen ? (otNum / otDen) * 100 : null,
-    avg_ticket_time: attWeighted != null ? attWeighted : (ttQty ? ttTotal / ttQty : null),
+    avg_ticket_time: attSec != null ? Math.round(attSec) : null,
     actual_vs_schedule: rows.length ? sumOf(rows, `${p}actual_vs_scheduled_hours`) : null,
     overtime: rows.length ? sumOf(rows, `${p}overtime_hours`) : null,
   };

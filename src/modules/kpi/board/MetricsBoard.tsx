@@ -128,8 +128,8 @@ function ExecCard({ def, v }: { def: MetricDef; v: MetricView }) {
   );
 }
 
-function PillarCard({ p, values, targets, period }: { p: Pillar; values: Record<string, MetricValues>; targets: Record<string, number>; period: Period }) {
-  const mtmV = metricView(p.mtm, values[p.mtm.id], period, 280, 48, targets[p.mtm.id]);
+function PillarCard({ p, values, targets, period, nowFw }: { p: Pillar; values: Record<string, MetricValues>; targets: Record<string, number>; period: Period; nowFw: number | null }) {
+  const mtmV = metricView(p.mtm, values[p.mtm.id], period, 280, 48, targets[p.mtm.id], nowFw);
   const rowViews = p.rows.map((r) => ({ def: r, v: metricView(r, values[r.id], period, 92, 26, targets[r.id]) }));
 
   // Sales pillar: show the actual sales $ (and $ vs LY) under the % headline.
@@ -245,6 +245,8 @@ export function MetricsBoard() {
   const per = PERIOD_LABELS[period];
   const dateLabel = data?.anchor ? new Date(`${data.anchor}T12:00:00`).toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" }) : "—";
   const fiscalLabel = data?.fiscal ? `Period ${data.fiscal.period}, Week ${data.fiscal.weekInPeriod}` : "";
+  // Fiscal week number of the anchor (NOW), to label the trend FW28…FW32.
+  const nowFw = data?.anchor ? (fiscalInfo(new Date(`${data.anchor}T12:00:00`))?.fiscalWeek ?? null) : null;
 
   return (
     <>
@@ -316,7 +318,7 @@ export function MetricsBoard() {
             </div>
           </div>
 
-          {PILLARS.map((p) => <PillarCard key={p.key} p={p} values={values} targets={targets} period={period} />)}
+          {PILLARS.map((p) => <PillarCard key={p.key} p={p} values={values} targets={targets} period={period} nowFw={nowFw} />)}
         </div>
       )}
     </>

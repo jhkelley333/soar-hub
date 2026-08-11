@@ -16,7 +16,10 @@ export function fmt(v: number, m: MetricDef): string {
     case "$": return `${sign}$${n}`;
     case "rank": return `#${n}`;
     case "%": return `${sign}${n}%`;
-    case "s": return `${n}s`;
+    case "s": { // ticket time in seconds → mm:ss (e.g. 229 → "3:49")
+      const total = Math.round(Math.abs(v));
+      return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+    }
     case "min": return `${n}m`;
     case "hrs": return `${sign}${n} hr`;
     case "/10k": return n;
@@ -100,7 +103,9 @@ export interface MetricView {
 // Merge a static def with its live values for the selected period. An optional
 // numeric targetOverride (from the board's targets map) replaces def.target for
 // status + label — used for admin-set targets and the data-driven labor target.
-export function metricView(def: MetricDef, vals: MetricValues | undefined, per: Period, w: number, h: number, targetOverride?: number | null): MetricView {
+// `nowFw` (the fiscal week number of the latest/NOW trend point) labels the
+// weekly strip as FW28…FW32 instead of W-4…Now.
+export function metricView(def: MetricDef, vals: MetricValues | undefined, per: Period, w: number, h: number, targetOverride?: number | null, nowFw?: number | null): MetricView {
   if (typeof targetOverride === "number") def = { ...def, target: targetOverride };
   const pair: ValPair = vals?.[per] ?? [null, null];
   const cur = pair[0];
@@ -120,7 +125,11 @@ export function metricView(def: MetricDef, vals: MetricValues | undefined, per: 
     name: def.name, hasData: true, value: fmt(cur, def), delta: d.text, deltaTone: d.tone,
     targetLabel: targetLabel(def), statusTone: st,
     spark: sp?.d ?? null, dotX: sp?.x ?? "", dotY: sp?.y ?? "",
-    weeks: weeks.map((v, i) => ({ label: i === weeks.length - 1 ? "Now" : `W-${weeks.length - 1 - i}`, value: fmt(v, def) })),
+    weeks: weeks.map((v, i) => {
+      const back = weeks.length - 1 - i;
+      const label = typeof nowFw === "number" ? `FW${nowFw - back}` : (back === 0 ? "Now" : `W-${back}`);
+      return { label, value: fmt(v, def) };
+    }),
     onTarget: st === "good",
   };
 }
