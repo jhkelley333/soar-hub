@@ -214,6 +214,48 @@ async function rankerMetrics(supa, scopeStoreNumbers, anchor = null) {
   return out;
 }
 
+// Weekly ranker trend for the L2R + COGS Eff MTMs: for each week-ending
+// (oldest..newest), the scope's VOG top-box and COGS efficiency from the run
+// covering that week (newest complete run ending on/before it). WTD scope = that
+// week's own figure, matching the labor weekly trend convention. VOG is
+// response-weighted; COGS is a simple store average. 0-1 fractions -> %.
+async function rankerWeekly(supa, scopeStoreNumbers, weekEnds) {
+  const numset = new Set((scopeStoreNumbers || []).map(String));
+  const n = weekEnds.length;
+  const blank = () => Array(n).fill(null);
+  if (!numset.size || !n) return { vog: blank(), cogsEff: blank() };
+  const maxWeek = weekEnds[weekEnds.length - 1];
+  const { data: runs } = await supa.from("ranking_runs").select("id, week_ending")
+    .eq("status", "complete").lte("week_ending", maxWeek)
+    .order("week_ending", { ascending: false }).order("started_at", { ascending: false }).limit(20);
+  const runList = runs || [];
+  // Each week-ending → the newest complete run ending on/before it.
+  const runForWeek = weekEnds.map((we) => runList.find((r) => r.week_ending <= we)?.id ?? null);
+  const uniq = [...new Set(runForWeek.filter(Boolean))];
+  const aggByRun = new Map();
+  await Promise.all(uniq.map(async (runId) => {
+    const { data: rows } = await supa.from("ranking_rows").select("entity_key, metrics")
+      .eq("run_id", runId).eq("scope", "wtd").eq("tier", "store");
+    const mine = (rows || []).filter((r) => numset.has(String(r.entity_key)));
+    let wSum = 0, rSum = 0, vPlain = 0, vN = 0, cSum = 0, cN = 0;
+    for (const r of mine) {
+      const m = r.metrics || {};
+      const v = rankerNum(m.vog);
+      if (v != null) { const resp = rankerNum(m.vogResponses) ?? 0; wSum += v * resp; rSum += resp; vPlain += v; vN += 1; }
+      const c = rankerNum(m.cogsEff);
+      if (c != null) { cSum += c; cN += 1; }
+    }
+    aggByRun.set(runId, {
+      vog: vN ? (rSum > 0 ? wSum / rSum : vPlain / vN) * 100 : null,
+      cogsEff: cN ? (cSum / cN) * 100 : null,
+    });
+  }));
+  return {
+    vog: runForWeek.map((rid) => (rid != null ? aggByRun.get(rid)?.vog ?? null : null)),
+    cogsEff: runForWeek.map((rid) => (rid != null ? aggByRun.get(rid)?.cogsEff ?? null : null)),
+  };
+}
+
 export const handler = async (event) => {
   try {
     if (!SUPABASE_URL || !SERVICE_KEY) return respond(500, { error: "kpi-board env vars not configured" });
@@ -410,15 +452,19 @@ export const handler = async (event) => {
     // whose week ends on/before the anchor). WTD run → Daily + WTD windows;
     // PTD run → MTD. EcoSure + Mystery Shop are PTD-only, so one value fills all.
     const rk = await rankerMetrics(supa, scopeStores, anchor);
+    // Weekly trend for the ranker MTMs (L2R + COGS Eff) across the 5 week-ends.
+    const rw = await rankerWeekly(supa, scopeStores, weekEnds);
+    const priorWeek = (arr) => (arr.length >= 2 ? arr[arr.length - 2] : null);
     values.vog = {
       daily: pair(rk.vog.wtd, null), wtd: pair(rk.vog.wtd, null), mtd: pair(rk.vog.ptd, null),
       weeks: [null, null, null, null, null],
     };
     // L2R is the ranker's likely-to-return top-box — the same VOG figure, so the
-    // Customer L2R headline shares that source.
+    // Customer L2R headline shares that source. Week-over-week delta = this week
+    // vs the prior week from the weekly trend.
     values.l2r = {
-      daily: pair(rk.vog.wtd, null), wtd: pair(rk.vog.wtd, null), mtd: pair(rk.vog.ptd, null),
-      weeks: [null, null, null, null, null],
+      daily: pair(rk.vog.wtd, priorWeek(rw.vog)), wtd: pair(rk.vog.wtd, priorWeek(rw.vog)), mtd: pair(rk.vog.ptd, null),
+      weeks: rw.vog.map(round),
     };
     values.ecosure_rank = {
       daily: pair(rk.ecosure, null), wtd: pair(rk.ecosure, null), mtd: pair(rk.ecosure, null),
@@ -430,8 +476,8 @@ export const handler = async (event) => {
     };
     // COGS Efficiency headline — from the LW ranker (cogsEff), not the count feed.
     values.cogs_pct = {
-      daily: pair(rk.cogsEff.wtd, null), wtd: pair(rk.cogsEff.wtd, null), mtd: pair(rk.cogsEff.ptd, null),
-      weeks: [null, null, null, null, null],
+      daily: pair(rk.cogsEff.wtd, priorWeek(rw.cogsEff)), wtd: pair(rk.cogsEff.wtd, priorWeek(rw.cogsEff)), mtd: pair(rk.cogsEff.ptd, null),
+      weeks: rw.cogsEff.map(round),
     };
 
     // Section 05 MTM — combined controllable cost % of sales (lower is better):
@@ -444,11 +490,24 @@ export const handler = async (event) => {
     const ptdCash = laborAnchorM.cash_over_short;
     const cashPct = (ptdSales && ptdCash != null) ? (-ptdCash / ptdSales) * 100 : null;
     const otherPct = ptdLaborPct == null ? null : round(ptdLaborPct + (foodPct ?? 0) + (cashPct ?? 0));
-    const fillAll = (v) => ({ daily: pair(v, null), wtd: pair(v, null), mtd: pair(v, null), weeks: [null, null, null, null, null] });
-    values.other_pct = fillAll(otherPct);
-    values.other_food_pct = fillAll(round(foodPct));
-    values.other_labor_pct = fillAll(round(ptdLaborPct));
-    values.other_cash_pct = fillAll(round(cashPct));
+
+    // Weekly trend for the section-05 composite: for each week-end, that week's
+    // Food % (IX file on/before it) + WTD Labor % + WTD Cash-Short % — the same
+    // WTD basis the labor/ranker weekly strips use. Powers the MTM 5-week strip
+    // and its week-over-week delta.
+    const foodWeeks = await Promise.all(weekEnds.map((d) => ixFoodCostPct(supa, scopeStores, d)));
+    const otherLaborWeeks = laborWeeks.map((w) => round(w.labor_pct));
+    const otherCashWeeks = laborWeeks.map((w) => (w.sales_dollars && w.cash_over_short != null ? round((-w.cash_over_short / w.sales_dollars) * 100) : null));
+    const otherFoodWeeks = foodWeeks.map(round);
+    const otherPctWeeks = laborWeeks.map((w, i) => (w.labor_pct == null ? null : round(w.labor_pct + (foodWeeks[i] ?? 0) + ((w.sales_dollars && w.cash_over_short != null) ? (-w.cash_over_short / w.sales_dollars) * 100 : 0))));
+    const otherPrior = priorWeek(otherPctWeeks);
+
+    // One figure across all periods (food is weekly, labor/cash are PTD); the
+    // parts feed the subtitle, the weekly arrays feed the trend strip.
+    values.other_pct = { daily: pair(otherPct, otherPrior), wtd: pair(otherPct, otherPrior), mtd: pair(otherPct, otherPrior), weeks: otherPctWeeks };
+    values.other_food_pct = { daily: pair(foodPct, null), wtd: pair(foodPct, null), mtd: pair(foodPct, null), weeks: otherFoodWeeks };
+    values.other_labor_pct = { daily: pair(ptdLaborPct, null), wtd: pair(ptdLaborPct, null), mtd: pair(ptdLaborPct, null), weeks: otherLaborWeeks };
+    values.other_cash_pct = { daily: pair(cashPct, null), wtd: pair(cashPct, null), mtd: pair(cashPct, null), weeks: otherCashWeeks };
 
     // Targets: admin-set overrides (board_metric_targets) plus the data-driven
     // labor target from the feed (sales-weighted, never a fixed 26%). The
