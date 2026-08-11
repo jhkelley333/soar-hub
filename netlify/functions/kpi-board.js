@@ -129,35 +129,39 @@ const METRIC_IDS = [
 // the PTD figure is used for every board window.
 const rankerNum = (v) => (typeof v === "number" && isFinite(v) ? v : null);
 
-// Food Cost % of sales for the scope, from the newest IX upload (source="ix")
-// on/before the anchor week — the same IX that feeds the ranker. Sums Actual
-// Food $ and Net Sales across the scope's store rows: actual / sales.
+// Food Cost % of sales for the scope, from the IX upload (source="ix") — the
+// same IX that feeds the ranker (its "MTD Actual $" ÷ "MTD Net Sales" = the
+// export's "MTD Actual %", column O). Walks the recent IX files (newest first,
+// preferring ones on/before the anchor week) and returns the first that yields
+// store-level food $ + sales for the scope — so a rollup-only or week-ahead
+// newest file doesn't blank it out.
 async function ixFoodCostPct(supa, scopeStoreNumbers, anchor = null) {
   const numset = new Set((scopeStoreNumbers || []).map(String));
   if (!numset.size) return null;
-  // Newest IX file on/before the anchor week; if none matches (IX week-ending
-  // ahead of the labor anchor, or null), fall back to the newest IX overall.
-  const pickFile = async (bounded) => {
+  const fileIds = [];
+  for (const bounded of [true, false]) {
     let q = supa.from("ranking_source_files").select("id, week_ending")
       .eq("source", "ix").order("week_ending", { ascending: false, nullsFirst: false })
-      .order("created_at", { ascending: false }).limit(1);
+      .order("created_at", { ascending: false }).limit(5);
     if (bounded && anchor) q = q.lte("week_ending", anchor);
     const { data } = await q;
-    return data?.[0]?.id ?? null;
-  };
-  const fileId = (await pickFile(true)) || (await pickFile(false));
-  if (!fileId) return null;
-  const { data: rows } = await supa.from("ranking_src_rows").select("store_code, payload").eq("file_id", fileId);
-  let actual = 0, sales = 0, n = 0;
-  for (const r of rows || []) {
-    const p = r.payload || {};
-    if (p.level !== "store") continue;
-    const sn = String(p.store_code ?? r.store_code ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
-    if (!numset.has(sn)) continue;
-    const a = Number(p.actual_dollars), s = Number(p.net_sales);
-    if (isFinite(a) && isFinite(s) && s > 0) { actual += a; sales += s; n += 1; }
+    for (const f of data || []) if (!fileIds.includes(f.id)) fileIds.push(f.id);
+    if (bounded && fileIds.length) break; // the anchor-bounded set is enough
   }
-  return n && sales > 0 ? (actual / sales) * 100 : null;
+  for (const fileId of fileIds) {
+    const { data: rows } = await supa.from("ranking_src_rows").select("store_code, payload").eq("file_id", fileId);
+    let actual = 0, sales = 0, n = 0;
+    for (const r of rows || []) {
+      const p = r.payload || {};
+      if (p.level !== "store") continue;
+      const sn = String(p.store_code ?? r.store_code ?? "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+      if (!numset.has(sn)) continue;
+      const a = Number(p.actual_dollars), s = Number(p.net_sales);
+      if (isFinite(a) && isFinite(s) && s > 0) { actual += a; sales += s; n += 1; }
+    }
+    if (n && sales > 0) return (actual / sales) * 100;
+  }
+  return null;
 }
 
 async function rankerMetrics(supa, scopeStoreNumbers, anchor = null) {
