@@ -84,6 +84,9 @@ function MtmHero({ v, sub }: { v: MetricView; sub?: string | null }) {
       <div className="mt-2 flex items-end gap-2.5">
         <span className={cn("text-5xl font-bold leading-none tracking-tight tabular-nums", v.hasData ? "text-midnight" : "text-zinc-300")}>{v.value}</span>
         {v.delta && <span className={cn("pb-1 text-sm font-semibold tabular-nums", DELTA_TEXT[v.deltaTone])}>{v.delta}</span>}
+        {!v.hasData && v.soon && (
+          <span className="mb-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-500">Coming soon</span>
+        )}
       </div>
       {sub && <div className="mt-1 text-sm font-semibold tabular-nums text-midnight">{sub}</div>}
       <div className="mt-1.5 text-xs text-zinc-400">{v.targetLabel}</div>

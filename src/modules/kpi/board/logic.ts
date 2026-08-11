@@ -98,6 +98,7 @@ export interface MetricView {
   dotY: string;
   weeks: { label: string; value: string }[];
   onTarget: boolean;
+  soon: boolean;          // source not wired yet — render a "Coming soon" state
 }
 
 // Merge a static def with its live values for the selected period. An optional
@@ -114,7 +115,7 @@ export function metricView(def: MetricDef, vals: MetricValues | undefined, per: 
     return {
       name: def.name, hasData: false, value: "—", delta: "", deltaTone: "flat",
       targetLabel: targetLabel(def), statusTone: "none", spark: null, dotX: "", dotY: "",
-      weeks: [], onTarget: false,
+      weeks: [], onTarget: false, soon: !!def.soon,
     };
   }
   const prior = pair[1];
@@ -130,7 +131,7 @@ export function metricView(def: MetricDef, vals: MetricValues | undefined, per: 
       const label = typeof nowFw === "number" ? `FW${nowFw - back}` : (back === 0 ? "Now" : `W-${back}`);
       return { label, value: fmt(v, def) };
     }),
-    onTarget: st === "good",
+    onTarget: st === "good", soon: !!def.soon,
   };
 }
 

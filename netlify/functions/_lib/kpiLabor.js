@@ -67,6 +67,9 @@ export function extractLaborRows(payload) {
       total_ticket_time: numOrNull(r.totalTicketTime),
       on_time_quantity: numOrNull(r.onTimeQuantity),
       average_ticket_time: numOrNull(r.averageTicketTime),
+      // Other Controllable Contribution (0279): cash over/short + paid outs.
+      cash_over_short: numOrNull(r.cashOverShort),
+      paid_out_dollars: numOrNull(r.paidOutDollars),
       // Week to Date band (labor_hours feeds the avg-wage → hours-over calc)
       wtd_net_sales: numOrNull(w?.netSales),
       wtd_prev_year_net_sales: numOrNull(w?.previousYearNetSales),
@@ -87,6 +90,8 @@ export function extractLaborRows(payload) {
       wtd_total_ticket_time: numOrNull(w?.totalTicketTime),
       wtd_on_time_quantity: numOrNull(w?.onTimeQuantity),
       wtd_average_ticket_time: numOrNull(w?.averageTicketTime),
+      wtd_cash_over_short: numOrNull(w?.cashOverShort),
+      wtd_paid_out_dollars: numOrNull(w?.paidOutDollars),
       // Period to Date band
       ptd_net_sales: numOrNull(p?.netSales),
       ptd_prev_year_net_sales: numOrNull(p?.previousYearNetSales),
@@ -107,6 +112,8 @@ export function extractLaborRows(payload) {
       ptd_total_ticket_time: numOrNull(p?.totalTicketTime),
       ptd_on_time_quantity: numOrNull(p?.onTimeQuantity),
       ptd_average_ticket_time: numOrNull(p?.averageTicketTime),
+      ptd_cash_over_short: numOrNull(p?.cashOverShort),
+      ptd_paid_out_dollars: numOrNull(p?.paidOutDollars),
     });
   }
   return out;
@@ -146,10 +153,14 @@ const TICKET_COLS_0272 = [
   "net_sales_comp", "prev_year_net_sales_comp",
   "wtd_net_sales_comp", "wtd_prev_year_net_sales_comp",
   "ptd_net_sales_comp", "ptd_prev_year_net_sales_comp",
+  // cash over/short + paid outs added by 0279.
+  "cash_over_short", "paid_out_dollars",
+  "wtd_cash_over_short", "wtd_paid_out_dollars",
+  "ptd_cash_over_short", "ptd_paid_out_dollars",
 ];
 
 export function isPre0272Error(error) {
-  return !!error && /column/i.test(String(error.message)) && /ticket_time|on_time_quantity|net_sales_comp/.test(String(error.message));
+  return !!error && /column/i.test(String(error.message)) && /ticket_time|on_time_quantity|net_sales_comp|cash_over_short|paid_out_dollars/.test(String(error.message));
 }
 
 export function stripTicketCols(rows) {
