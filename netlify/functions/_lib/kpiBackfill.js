@@ -43,6 +43,59 @@ export async function backfillLaborDate(supa, businessDate) {
   return { ok: false, date: businessDate, error: "no stored snapshot covers this date" };
 }
 
+// Targeted backfill of just Cash Over/Short + Paid Outs (0279) from the stored
+// snapshots — for rows captured before that capture landed. Upserts ONLY those
+// six columns so it never touches (or depends on) any other migration's fields.
+async function backfillCashDate(supa, businessDate) {
+  for (const offset of [1, 2, 0]) {
+    const cd = addDaysIso(businessDate, offset);
+    const { data: snaps } = await supa
+      .from("kpi_snapshots").select("central_date, central_hour, payload")
+      .eq("central_date", cd).order("central_hour", { ascending: false }).limit(2);
+    for (const snap of snaps || []) {
+      const wc = { year: +cd.slice(0, 4), month: +cd.slice(5, 7), day: +cd.slice(8, 10), hour: snap.central_hour };
+      if (feedBusinessDate(snap.payload, wc) !== businessDate) continue;
+      const full = extractLaborRows(snap.payload);
+      if (!full.length) continue;
+      const rows = full.map((r) => ({
+        store_number: r.store_number, business_date: businessDate,
+        cash_over_short: r.cash_over_short, paid_out_dollars: r.paid_out_dollars,
+        wtd_cash_over_short: r.wtd_cash_over_short, wtd_paid_out_dollars: r.wtd_paid_out_dollars,
+        ptd_cash_over_short: r.ptd_cash_over_short, ptd_paid_out_dollars: r.ptd_paid_out_dollars,
+      }));
+      const { error } = await supa.from("labor_v2_daily").upsert(rows, { onConflict: "store_number,business_date" });
+      if (error) {
+        if (/cash_over_short|paid_out_dollars/.test(String(error.message))) return { ok: false, date: businessDate, error: "Migration 0279 not applied yet." };
+        return { ok: false, date: businessDate, error: error.message };
+      }
+      const filled = rows.filter((r) => r.cash_over_short != null || r.paid_out_dollars != null).length;
+      return { ok: true, date: businessDate, updated: filled, from: `${cd} h${snap.central_hour}` };
+    }
+  }
+  return { ok: false, date: businessDate, error: "no stored snapshot covers this date" };
+}
+
+export async function backfillCashPaidOuts(supa, { days = 45, budgetMs = 8000 } = {}) {
+  const started = Date.now();
+  const { data: dateRows, error } = await supa
+    .from("labor_v2_daily").select("business_date").order("business_date", { ascending: false }).limit(4000);
+  if (error) return { error: error.message, status: 500 };
+  const dates = [...new Set((dateRows || []).map((r) => r.business_date))].slice(0, Math.max(1, Math.min(120, days)));
+  const results = [];
+  const remaining = [];
+  for (const d of dates) {
+    if (Date.now() - started > budgetMs) { remaining.push(d); continue; }
+    results.push(await backfillCashDate(supa, d));
+  }
+  return {
+    filled: results.filter((r) => r.ok && r.updated > 0).length,
+    stores: results.reduce((a, r) => a + (r.updated || 0), 0),
+    failed: results.filter((r) => !r.ok),
+    remaining,
+    results,
+  };
+}
+
 // Backfill a window of recent business dates, newest first, respecting a
 // wall-clock budget (Netlify function limits). Returns per-date results and
 // the dates it didn't reach so the caller can invoke again to continue.
