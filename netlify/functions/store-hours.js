@@ -231,10 +231,12 @@ export const handler = async (event) => {
       const storeNumber = String(body.store || body.store_number || "").trim();
       if (!storeNumber) return respond(400, { error: "store is required" });
       const { data: store } = await supa.from("stores")
-        .select("id, number, name, address, city, state, zip, latitude, longitude, google_place_id")
+        .select("id, number, name, address, city, state, zip, latitude, longitude, brand, google_place_id")
         .eq("number", storeNumber).neq("brand", "little_caesars").maybeSingle();
       if (!store) return respond(404, { error: "Store not found." });
-      const r = await refreshGoogle(supa, store);
+      // A single-store check always re-resolves the place_id (ignores any cached
+      // one) so a bad earlier match gets corrected on Re-check.
+      const r = await refreshGoogle(supa, store, true);
       const { data: hrs } = await supa.from("store_hours").select("day_of_week, is_closed, open_time, close_time").eq("store_id", store.id);
       const standard = Array.from({ length: 7 }, (_, dow) => {
         const h = (hrs || []).find((x) => x.day_of_week === dow);
@@ -252,11 +254,11 @@ export const handler = async (event) => {
       const hrsIds = await selectAll(() => supa.from("store_hours").select("store_id"));
       const configured = [...new Set(hrsIds.map((r) => r.store_id))];
       if (!configured.length) return respond(200, { ok: true, checked: 0, failed: 0, remaining: 0 });
-      const { data: cand } = await supa.from("stores")
-        .select("id, number, name, address, city, state, zip, latitude, longitude, google_place_id, google_hours_checked_at")
+      const cand = await selectAll(() => supa.from("stores")
+        .select("id, number, name, address, city, state, zip, latitude, longitude, brand, google_place_id, google_hours_checked_at")
         .in("id", configured).eq("is_active", true).neq("brand", "little_caesars")
-        .order("google_hours_checked_at", { ascending: true, nullsFirst: true });
-      const eligible = (cand || []).filter((s) => !s.google_hours_checked_at || s.google_hours_checked_at < staleBefore);
+        .order("google_hours_checked_at", { ascending: true, nullsFirst: true }));
+      const eligible = cand.filter((s) => !s.google_hours_checked_at || s.google_hours_checked_at < staleBefore);
       const start = Date.now();
       let checked = 0, failed = 0;
       for (const s of eligible) {
@@ -277,9 +279,9 @@ export const handler = async (event) => {
 // Resolve a store's Google place (cached place_id if present, else Find Place),
 // pull its hours, normalize, and cache place_id + hours + checked_at on the store.
 // Never throws — a Places hiccup just records a not_found check.
-async function refreshGoogle(supa, store) {
+async function refreshGoogle(supa, store, forceResolve = false) {
   const now = new Date().toISOString();
-  let placeId = store.google_place_id || null;
+  let placeId = forceResolve ? null : (store.google_place_id || null);
   if (!placeId) {
     const f = await findPlaceId(store);
     if (f.error) { await supa.from("stores").update({ google_hours: null, google_hours_checked_at: now }).eq("id", store.id); return { status: "not_found", error: f.error }; }
