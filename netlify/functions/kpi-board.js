@@ -142,7 +142,7 @@ async function ixFoodCostPct(supa, scopeStoreNumbers, anchor = null) {
   for (const bounded of [true, false]) {
     let q = supa.from("ranking_source_files").select("id, week_ending")
       .eq("source", "ix").order("week_ending", { ascending: false, nullsFirst: false })
-      .order("created_at", { ascending: false }).limit(5);
+      .order("uploaded_at", { ascending: false }).limit(5);
     if (bounded && anchor) q = q.lte("week_ending", anchor);
     const { data } = await q;
     for (const f of data || []) if (!fileIds.includes(f.id)) fileIds.push(f.id);
