@@ -155,6 +155,48 @@ export const handler = async (event) => {
       return respond(200, { ok: true });
     }
 
+    // ── bulk-import: seed standard hours from an uploaded spreadsheet ──────────
+    // Body: { rows: [{ store_number, days: [{day_of_week, is_closed, open, close}] }] }
+    // Only the days present in a row are written; unknown store numbers are
+    // reported back, not silently dropped.
+    if (action === "bulk-import") {
+      const rows = Array.isArray(body.rows) ? body.rows : [];
+      if (!rows.length) return respond(400, { error: "no rows to import" });
+      if (rows.length > 5000) return respond(400, { error: "too many rows (max 5000)" });
+      const { data: stores } = await supa.from("stores").select("id, number").eq("is_active", true);
+      const idByNumber = new Map((stores || []).map((s) => [String(s.number), s.id]));
+      const upserts = [];
+      const errors = [];
+      const touched = new Set();
+      for (const r of rows) {
+        const num = String(r?.store_number ?? "").trim();
+        const storeId = idByNumber.get(num);
+        if (!storeId) { errors.push({ store_number: num, reason: "unknown or inactive store" }); continue; }
+        const days = Array.isArray(r.days) ? r.days : [];
+        let any = false;
+        for (const d of days) {
+          const dow = Number(d?.day_of_week);
+          if (!(dow >= 0 && dow <= 6)) continue;
+          const isClosed = !!d.is_closed;
+          upserts.push({
+            store_id: storeId, day_of_week: dow, is_closed: isClosed,
+            open_time: isClosed ? null : normTime(d.open), close_time: isClosed ? null : normTime(d.close),
+            updated_at: new Date().toISOString(), updated_by: user.id,
+          });
+          any = true;
+        }
+        if (any) touched.add(num);
+      }
+      if (upserts.length) {
+        const { error } = await supa.from("store_hours").upsert(upserts, { onConflict: "store_id,day_of_week" });
+        if (error) {
+          if (/store_hours/.test(error.message)) return respond(500, { error: "Run migration 0281 first (store_hours is missing)." });
+          return respond(500, { error: error.message });
+        }
+      }
+      return respond(200, { ok: true, imported_stores: touched.size, imported_days: upserts.length, errors });
+    }
+
     return respond(400, { error: `unknown action: ${action}` });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });

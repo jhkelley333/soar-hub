@@ -2,9 +2,9 @@
 // standard hours. Search + Open/Pending filter; click a row to edit that
 // location (standard + special hours). Admin-gated in the router.
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Search, CalendarClock, Download } from "lucide-react";
+import { Search, CalendarClock, Download, Upload } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -15,6 +15,7 @@ import { cn } from "@/lib/cn";
 import { fetchHoursGrid, type HoursGridStore } from "./api";
 import { DAY_LABELS, fmtRange } from "./hoursFmt";
 import { downloadHoursWorkbook } from "./hoursWorkbook";
+import { HoursImportModal } from "./HoursImportModal";
 
 type Filter = "open" | "pending";
 
@@ -32,11 +33,14 @@ function weekDates(): { dow: string; d: number; mon: string }[] {
 export function HoursOfOperationPage() {
   const nav = useNavigate();
   const toast = useToast();
+  const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("open");
   const [exporting, setExporting] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   const query = useQuery({ queryKey: ["hours-grid"], queryFn: fetchHoursGrid });
   const cols = useMemo(() => weekDates(), []);
+  const knownNumbers = useMemo(() => new Set((query.data?.stores ?? []).map((s) => s.number)), [query.data]);
 
   const all = query.data?.stores ?? [];
   const filtered = useMemo(() => {
@@ -67,10 +71,22 @@ export function HoursOfOperationPage() {
         title="Hours of Operation"
         description="Standard weekly hours for every location. Click a location to edit its hours."
         actions={
-          <Button variant="secondary" size="sm" onClick={exportXlsx} disabled={exporting || !all.length}>
-            <Download className="mr-1.5 h-3.5 w-3.5" /> {exporting ? "Exporting…" : "Download Excel"}
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
+              <Upload className="mr-1.5 h-3.5 w-3.5" /> Upload hours
+            </Button>
+            <Button variant="secondary" size="sm" onClick={exportXlsx} disabled={exporting || !all.length}>
+              <Download className="mr-1.5 h-3.5 w-3.5" /> {exporting ? "Exporting…" : "Download Excel"}
+            </Button>
+          </div>
         }
+      />
+
+      <HoursImportModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        knownNumbers={knownNumbers}
+        onImported={() => qc.invalidateQueries({ queryKey: ["hours-grid"] })}
       />
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">

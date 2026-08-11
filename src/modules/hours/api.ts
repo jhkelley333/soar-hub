@@ -67,3 +67,8 @@ export function saveSpecialHours(storeId: string, s: { date: string; is_closed: 
 export function deleteSpecialHours(id: string): Promise<{ ok: boolean }> {
   return request(`${FN}?action=delete-special`, { method: "POST", body: JSON.stringify({ id }) });
 }
+
+export interface BulkImportResult { ok: boolean; imported_stores: number; imported_days: number; errors: { store_number: string; reason: string }[] }
+export function bulkImportHours(rows: { store_number: string; days: DayHours[] }[]): Promise<BulkImportResult> {
+  return request(`${FN}?action=bulk-import`, { method: "POST", body: JSON.stringify({ rows }) });
+}
