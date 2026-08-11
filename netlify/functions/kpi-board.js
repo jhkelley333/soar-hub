@@ -135,11 +135,17 @@ const rankerNum = (v) => (typeof v === "number" && isFinite(v) ? v : null);
 async function ixFoodCostPct(supa, scopeStoreNumbers, anchor = null) {
   const numset = new Set((scopeStoreNumbers || []).map(String));
   if (!numset.size) return null;
-  let fq = supa.from("ranking_source_files").select("id, week_ending")
-    .eq("source", "ix").order("week_ending", { ascending: false }).order("created_at", { ascending: false }).limit(1);
-  if (anchor) fq = fq.lte("week_ending", anchor);
-  const { data: files } = await fq;
-  const fileId = files?.[0]?.id;
+  // Newest IX file on/before the anchor week; if none matches (IX week-ending
+  // ahead of the labor anchor, or null), fall back to the newest IX overall.
+  const pickFile = async (bounded) => {
+    let q = supa.from("ranking_source_files").select("id, week_ending")
+      .eq("source", "ix").order("week_ending", { ascending: false, nullsFirst: false })
+      .order("created_at", { ascending: false }).limit(1);
+    if (bounded && anchor) q = q.lte("week_ending", anchor);
+    const { data } = await q;
+    return data?.[0]?.id ?? null;
+  };
+  const fileId = (await pickFile(true)) || (await pickFile(false));
   if (!fileId) return null;
   const { data: rows } = await supa.from("ranking_src_rows").select("store_code, payload").eq("file_id", fileId);
   let actual = 0, sales = 0, n = 0;
