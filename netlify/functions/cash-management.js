@@ -1030,9 +1030,13 @@ async function decideAlert(supa, user, body) {
 async function dsr(supa, user, params) {
   const { active } = await resolveActiveStore(supa, user, params.store_id);
   if (!active) return { error: "No store in your scope.", status: 403 };
+  // Newest 30 business days. Order DESCENDING before limiting so we take the
+  // most-recent 30 (ascending + limit pins the ledger to the OLDEST 30, which
+  // freezes it once a store has closed out more than 30 days). Descending is
+  // already newest-first, so the display map below doesn't reverse.
   const { data: rows } = await supa
     .from("cash_closeouts").select("*").eq("store_id", active.id)
-    .order("business_date", { ascending: true }).limit(30);
+    .order("business_date", { ascending: false }).limit(30);
 
   // closeout_id -> deposit (verified? + id + slip + entered open-check carryover).
   const ids = (rows || []).map((r) => r.id);
@@ -1046,7 +1050,7 @@ async function dsr(supa, user, params) {
   }
   const settings = await getSettings(supa);
 
-  // newest first for display (rows are ascending by date)
+  // rows are already newest-first (descending fetch) — map straight through.
   const ledger = (rows || [])
     .map((h) => {
       const d = depByCloseout[h.id];
@@ -1057,8 +1061,7 @@ async function dsr(supa, user, params) {
         carried_over_count: d?.carried_over_count || 0, carried_over_cents: d?.dsr_carried_over_cents || 0,
         deposit_verified: d?.status === "verified", status: h.status, is_late: !!h.is_late,
       };
-    })
-    .reverse();
+    });
 
   const flaggedCount = (rows || []).filter((h) => Math.abs(h.variance_cents) > settings.closeout).length;
   const totalDeposited = (rows || []).reduce((s, h) => s + (h.deposit_cents || 0), 0);
