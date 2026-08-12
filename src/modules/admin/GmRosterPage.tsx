@@ -6,7 +6,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Check, Download, HelpCircle, History, Pencil, Upload, UserX, X } from "lucide-react";
+import { AlertTriangle, Ban, Check, Download, HelpCircle, History, Pencil, Upload, UserX, X } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -17,7 +17,7 @@ import { cn } from "@/lib/cn";
 import { fetchGmRoster, fetchGmRosterHistory, importGmRoster, setGmRosterDetails, setGmRosterName, type GmRosterHistoryEntry, type GmRosterRow, type ReconcileStatus } from "./gmRosterApi";
 import { diffUpload, fmtDate, mergedImportRow, parseDate, parsePaste, parseRosterXlsx, sinceLabel, type DiffRow, type UploadRow } from "./rosterImport";
 
-type Filter = "all" | ReconcileStatus;
+type Filter = "all" | ReconcileStatus | "no_credit";
 
 const STATUS_META: Record<ReconcileStatus, { label: string; cls: string; icon: typeof Check }> = {
   matched: { label: "Matched", cls: "bg-emerald-50 text-emerald-700 ring-emerald-200", icon: Check },
@@ -37,7 +37,8 @@ export function GmRosterPage() {
 
   const rows = useMemo(() => {
     let r = q.data?.rows ?? [];
-    if (filter !== "all") r = r.filter((x) => x.reconcile === filter);
+    if (filter === "no_credit") r = r.filter((x) => x.no_gm_credit);
+    else if (filter !== "all") r = r.filter((x) => x.reconcile === filter);
     const s = search.trim().toLowerCase();
     if (s) r = r.filter((x) =>
       `${x.store_number} ${x.store_name ?? ""} ${x.roster_name ?? ""} ${x.account?.name ?? ""} ${x.rvp_name ?? ""}`.toLowerCase().includes(s));
@@ -45,6 +46,7 @@ export function GmRosterPage() {
   }, [q.data, filter, search]);
 
   const summary = q.data?.summary;
+  const noCreditCount = useMemo(() => (q.data?.rows ?? []).filter((r) => r.no_gm_credit).length, [q.data]);
 
   // Download the rows currently shown (respects the active filter + search) as a CSV.
   function exportCsv() {
@@ -52,10 +54,11 @@ export function GmRosterPage() {
       const s = v == null ? "" : String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const head = ["Store #", "Store Name", "In App", "Roster GM", "GM Email", "Status", "Hub Account", "Hub Email", "RVP", "SDO", "DO"];
+    const head = ["Store #", "Store Name", "In App", "Roster GM", "GM Email", "Status", "No GM Credit", "Hub Account", "Hub Email", "RVP", "SDO", "DO"];
     const body = rows.map((r) => [
       r.store_number, r.store_name ?? "", r.in_app ? "yes" : "no",
       r.roster_name ?? "", r.gm_email ?? "", STATUS_META[r.reconcile].label,
+      r.no_gm_credit ? "yes" : "no",
       r.account?.name ?? "", r.account?.email ?? "",
       r.rvp_name ?? "", r.sdo_name ?? "", r.do_name ?? "",
     ]);
@@ -100,6 +103,10 @@ export function GmRosterPage() {
               <FilterChip key={k} active={filter === k} onClick={() => setFilter(k)}
                 label={`${STATUS_META[k].label} ${summary[k]}`} cls={STATUS_META[k].cls} />
             ) : null,
+          )}
+          {noCreditCount > 0 && (
+            <FilterChip active={filter === "no_credit"} onClick={() => setFilter("no_credit")}
+              label={`No GM credit ${noCreditCount}`} cls="bg-orange-50 text-orange-700 ring-orange-200" />
           )}
         </div>
       )}
@@ -180,8 +187,13 @@ function Row({ r, canEdit, onHistory, onDetails }: { r: GmRosterRow; canEdit: bo
             </button>
           </div>
         ) : (
-          <div className="flex items-center gap-1.5">
+          <div className="flex flex-wrap items-center gap-1.5">
             <span className="text-midnight">{r.roster_name ?? <span className="text-zinc-400">—</span>}</span>
+            {r.no_gm_credit && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-orange-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-orange-700 ring-1 ring-inset ring-orange-200" title="Store isn't credited to a GM">
+                <Ban className="h-3 w-3" /> No GM credit
+              </span>
+            )}
             {canEdit && (
               <button type="button" onClick={startEdit} title="Edit roster name" className="text-zinc-300 hover:text-accent">
                 <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
@@ -278,15 +290,17 @@ function DetailsModal({ row, onClose }: { row: GmRosterRow; onClose: () => void 
   const [birthday, setBirthday] = useState(init.birthday);
   const [hire, setHire] = useState(init.hire);
   const [placement, setPlacement] = useState(init.placement);
-  const dirty = cell !== init.cell || birthday !== init.birthday || hire !== init.hire || placement !== init.placement;
+  const [noCredit, setNoCredit] = useState(row.no_gm_credit);
+  const dirty = cell !== init.cell || birthday !== init.birthday || hire !== init.hire || placement !== init.placement || noCredit !== row.no_gm_credit;
 
   const save = useMutation({
     mutationFn: () => {
-      const fields: { gm_cell?: string | null; gm_birthday?: string | null; hire_date?: string | null; placement_date?: string | null } = {};
+      const fields: { gm_cell?: string | null; gm_birthday?: string | null; hire_date?: string | null; placement_date?: string | null; no_gm_credit?: boolean } = {};
       if (cell !== init.cell) fields.gm_cell = cell.trim() || null;
       if (birthday !== init.birthday) fields.gm_birthday = birthday || null;
       if (hire !== init.hire) fields.hire_date = hire || null;
       if (placement !== init.placement) fields.placement_date = placement || null;
+      if (noCredit !== row.no_gm_credit) fields.no_gm_credit = noCredit;
       return setGmRosterDetails(row.store_number, fields);
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["gm-roster"] }); toast.push("Details saved.", "success"); onClose(); },
@@ -311,6 +325,13 @@ function DetailsModal({ row, onClose }: { row: GmRosterRow; onClose: () => void 
           <input type="date" value={hire} onChange={(e) => setHire(e.target.value)} className={cls} /></label>
         <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">Placement date (as GM)</span>
           <input type="date" value={placement} onChange={(e) => setPlacement(e.target.value)} className={cls} /></label>
+        <label className="mt-1 flex items-start gap-2 rounded-md bg-zinc-50 px-2.5 py-2 ring-1 ring-inset ring-zinc-200">
+          <input type="checkbox" checked={noCredit} onChange={(e) => setNoCredit(e.target.checked)} className="mt-0.5" />
+          <span>
+            <span className="block text-xs font-semibold text-zinc-700">No GM credit</span>
+            <span className="block text-[11px] text-zinc-400">Store isn't credited to a GM (vacant, interim, or excluded from GM standings).</span>
+          </span>
+        </label>
       </div>
       <p className="mt-3 text-[11px] text-zinc-400">GM name and status are edited from the roster row. Blank a field to clear it.</p>
     </Modal>

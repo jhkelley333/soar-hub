@@ -29,6 +29,7 @@ export interface GmRosterRow {
   gm_birthday: string | null;
   hire_date: string | null;
   placement_date: string | null;
+  no_gm_credit: boolean;
   do_name: string | null;
   sdo_name: string | null;
   rvp_name: string | null;
@@ -57,7 +58,7 @@ export function setGmRosterName(storeNumber: string, gmName: string): Promise<{ 
 // Edit one store's GM detail fields (DO and above, scoped). Only the keys sent
 // are updated; blank clears a field. Name / status / email are untouched.
 export function setGmRosterDetails(storeNumber: string, fields: {
-  gm_cell?: string | null; gm_birthday?: string | null; hire_date?: string | null; placement_date?: string | null;
+  gm_cell?: string | null; gm_birthday?: string | null; hire_date?: string | null; placement_date?: string | null; no_gm_credit?: boolean;
 }): Promise<{ ok: true; store_number: string }> {
   return req(`${FN}?action=set-details`, { method: "POST", body: JSON.stringify({ store_number: storeNumber, ...fields }) });
 }
