@@ -54,6 +54,14 @@ export function setGmRosterName(storeNumber: string, gmName: string): Promise<{ 
   return req(`${FN}?action=set-name`, { method: "POST", body: JSON.stringify({ store_number: storeNumber, gm_name: gmName }) });
 }
 
+// Edit one store's GM detail fields (DO and above, scoped). Only the keys sent
+// are updated; blank clears a field. Name / status / email are untouched.
+export function setGmRosterDetails(storeNumber: string, fields: {
+  gm_cell?: string | null; gm_birthday?: string | null; hire_date?: string | null; placement_date?: string | null;
+}): Promise<{ ok: true; store_number: string }> {
+  return req(`${FN}?action=set-details`, { method: "POST", body: JSON.stringify({ store_number: storeNumber, ...fields }) });
+}
+
 // ── Edit history (audit log) for one store ──────────────────────────────────
 export interface GmRosterHistoryEntry {
   id: string;

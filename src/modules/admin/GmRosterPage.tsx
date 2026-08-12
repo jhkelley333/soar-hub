@@ -14,8 +14,8 @@ import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { fetchGmRoster, fetchGmRosterHistory, importGmRoster, setGmRosterName, type GmRosterHistoryEntry, type GmRosterRow, type ReconcileStatus } from "./gmRosterApi";
-import { diffUpload, fmtDate, mergedImportRow, parsePaste, parseRosterXlsx, sinceLabel, type DiffRow, type UploadRow } from "./rosterImport";
+import { fetchGmRoster, fetchGmRosterHistory, importGmRoster, setGmRosterDetails, setGmRosterName, type GmRosterHistoryEntry, type GmRosterRow, type ReconcileStatus } from "./gmRosterApi";
+import { diffUpload, fmtDate, mergedImportRow, parseDate, parsePaste, parseRosterXlsx, sinceLabel, type DiffRow, type UploadRow } from "./rosterImport";
 
 type Filter = "all" | ReconcileStatus;
 
@@ -32,6 +32,7 @@ export function GmRosterPage() {
   const [search, setSearch] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [historyRow, setHistoryRow] = useState<GmRosterRow | null>(null);
+  const [detailsRow, setDetailsRow] = useState<GmRosterRow | null>(null);
   const q = useQuery({ queryKey: ["gm-roster"], queryFn: fetchGmRoster });
 
   const rows = useMemo(() => {
@@ -89,6 +90,7 @@ export function GmRosterPage() {
 
       {importOpen && <ImportModal current={q.data?.rows ?? []} onClose={() => setImportOpen(false)} />}
       {historyRow && <HistoryModal row={historyRow} onClose={() => setHistoryRow(null)} />}
+      {detailsRow && <DetailsModal row={detailsRow} onClose={() => setDetailsRow(null)} />}
 
       {summary && (
         <div className="mb-3 flex flex-wrap gap-2">
@@ -130,7 +132,7 @@ export function GmRosterPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
-                {rows.map((r) => <Row key={r.store_number} r={r} canEdit={q.data?.can_edit ?? false} onHistory={() => setHistoryRow(r)} />)}
+                {rows.map((r) => <Row key={r.store_number} r={r} canEdit={q.data?.can_edit ?? false} onHistory={() => setHistoryRow(r)} onDetails={() => setDetailsRow(r)} />)}
               </tbody>
             </table>
           </div>
@@ -140,7 +142,7 @@ export function GmRosterPage() {
   );
 }
 
-function Row({ r, canEdit, onHistory }: { r: GmRosterRow; canEdit: boolean; onHistory: () => void }) {
+function Row({ r, canEdit, onHistory, onDetails }: { r: GmRosterRow; canEdit: boolean; onHistory: () => void; onDetails: () => void }) {
   const meta = STATUS_META[r.reconcile];
   const Icon = meta.icon;
   const qc = useQueryClient();
@@ -205,13 +207,22 @@ function Row({ r, canEdit, onHistory }: { r: GmRosterRow; canEdit: boolean; onHi
         </span>
       </td>
       <td className="px-4 py-2.5 text-xs">
-        <div className="text-zinc-600">
-          <span className="text-zinc-400">Hire</span> {fmtDate(r.hire_date)}
-          {sinceLabel(r.hire_date) && <span className="ml-1 font-semibold text-midnight">· {sinceLabel(r.hire_date)}</span>}
-        </div>
-        <div className="text-zinc-600">
-          <span className="text-zinc-400">Placed</span> {fmtDate(r.placement_date)}
-          {sinceLabel(r.placement_date) && <span className="ml-1 font-semibold text-midnight">· {sinceLabel(r.placement_date)}</span>}
+        <div className="flex items-start gap-1.5">
+          <div>
+            <div className="text-zinc-600">
+              <span className="text-zinc-400">Hire</span> {fmtDate(r.hire_date)}
+              {sinceLabel(r.hire_date) && <span className="ml-1 font-semibold text-midnight">· {sinceLabel(r.hire_date)}</span>}
+            </div>
+            <div className="text-zinc-600">
+              <span className="text-zinc-400">Placed</span> {fmtDate(r.placement_date)}
+              {sinceLabel(r.placement_date) && <span className="ml-1 font-semibold text-midnight">· {sinceLabel(r.placement_date)}</span>}
+            </div>
+          </div>
+          {canEdit && (
+            <button type="button" onClick={onDetails} title="Edit cell / birthday / hire / placement" className="mt-0.5 text-zinc-300 hover:text-accent">
+              <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
+            </button>
+          )}
         </div>
       </td>
       <td className="px-4 py-2.5">
@@ -250,6 +261,58 @@ function HistoryModal({ row, onClose }: { row: GmRosterRow; onClose: () => void 
           {entries.map((e) => <HistoryEntry key={e.id} e={e} />)}
         </ul>
       )}
+    </Modal>
+  );
+}
+
+function DetailsModal({ row, onClose }: { row: GmRosterRow; onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const init = {
+    cell: row.gm_cell ?? "",
+    birthday: parseDate(row.gm_birthday) ?? "",
+    hire: parseDate(row.hire_date) ?? "",
+    placement: parseDate(row.placement_date) ?? "",
+  };
+  const [cell, setCell] = useState(init.cell);
+  const [birthday, setBirthday] = useState(init.birthday);
+  const [hire, setHire] = useState(init.hire);
+  const [placement, setPlacement] = useState(init.placement);
+  const dirty = cell !== init.cell || birthday !== init.birthday || hire !== init.hire || placement !== init.placement;
+
+  const save = useMutation({
+    mutationFn: () => {
+      const fields: { gm_cell?: string | null; gm_birthday?: string | null; hire_date?: string | null; placement_date?: string | null } = {};
+      if (cell !== init.cell) fields.gm_cell = cell.trim() || null;
+      if (birthday !== init.birthday) fields.gm_birthday = birthday || null;
+      if (hire !== init.hire) fields.hire_date = hire || null;
+      if (placement !== init.placement) fields.placement_date = placement || null;
+      return setGmRosterDetails(row.store_number, fields);
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["gm-roster"] }); toast.push("Details saved.", "success"); onClose(); },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't save.", "error"),
+  });
+
+  const cls = "w-full rounded-md border border-zinc-200 px-2.5 py-1.5 text-sm focus:border-accent focus:outline-none";
+  return (
+    <Modal open onClose={onClose} title={`Edit details — #${row.store_number}${row.store_name ? ` · ${row.store_name}` : ""}`}
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
+          <Button size="sm" onClick={() => save.mutate()} disabled={!dirty || save.isPending}>{save.isPending ? "Saving…" : "Save details"}</Button>
+        </>
+      }>
+      <div className="space-y-3">
+        <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">GM cell phone</span>
+          <input type="tel" value={cell} onChange={(e) => setCell(e.target.value)} placeholder="(555) 123-4567" className={cls} /></label>
+        <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">Birthday</span>
+          <input type="date" value={birthday} onChange={(e) => setBirthday(e.target.value)} className={cls} /></label>
+        <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">Hire date (with SOAR)</span>
+          <input type="date" value={hire} onChange={(e) => setHire(e.target.value)} className={cls} /></label>
+        <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">Placement date (as GM)</span>
+          <input type="date" value={placement} onChange={(e) => setPlacement(e.target.value)} className={cls} /></label>
+      </div>
+      <p className="mt-3 text-[11px] text-zinc-400">GM name and status are edited from the roster row. Blank a field to clear it.</p>
     </Modal>
   );
 }

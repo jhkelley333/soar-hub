@@ -17,9 +17,9 @@ const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 // Bulk paste-import stays an org-wide admin action.
 const MANAGE_ROLES = new Set(["admin", "vp", "coo"]);
-// Viewing + editing a single GM's roster name: the org-wide roles plus SDO/RVP,
-// who are scoped to the stores they oversee.
-const EDIT_ROLES = new Set(["admin", "vp", "coo", "sdo", "rvp"]);
+// Viewing + editing a single store's roster (GM name + detail fields): the
+// org-wide roles plus DO/SDO/RVP, who are scoped to the stores they oversee.
+const EDIT_ROLES = new Set(["admin", "vp", "coo", "sdo", "rvp", "do"]);
 const ORG_WIDE = new Set(["admin", "vp", "coo"]);
 
 // Store numbers a scoped leader (SDO/RVP) may see/edit; null = org-wide (no
@@ -238,6 +238,30 @@ async function setName(supa, user, body) {
   return { ok: true, store_number: num, gm_name: gm, status };
 }
 
+// Edit one store's GM detail fields — cell, birthday, hire date, placement date.
+// DO and above, scoped to their stores. Only the fields sent are updated (blank
+// clears a field); the GM name / status / email are untouched.
+async function setDetails(supa, user, body) {
+  const role = String(user.role).toLowerCase();
+  if (!EDIT_ROLES.has(role)) return { error: "forbidden", status: 403 };
+  const num = String(body?.store_number || "").trim();
+  if (!num) return { error: "store_number is required", status: 400 };
+  const visible = await visibleStoreNumbers(supa, user);
+  if (visible && !visible.has(num)) return { error: "That store isn't in your scope.", status: 403 };
+
+  const clean = (v) => (v == null || String(v).trim() === "" ? null : String(v).trim());
+  const patch = { updated_by: user.id, updated_at: new Date().toISOString() };
+  for (const f of ["gm_cell", "gm_birthday", "hire_date", "placement_date"]) {
+    if (Object.prototype.hasOwnProperty.call(body || {}, f)) patch[f] = clean(body[f]);
+  }
+  const { data: existing } = await supa.from("gm_roster").select("store_number").eq("store_number", num).maybeSingle();
+  const { error } = existing
+    ? await supa.from("gm_roster").update(patch).eq("store_number", num)
+    : await supa.from("gm_roster").insert({ store_number: num, status: "open", ...patch });
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, store_number: num };
+}
+
 // Append edit-log rows. Best-effort: a missing table (migration 0273 not run)
 // or any insert error is swallowed so the underlying edit/import still succeeds.
 async function logHistory(supa, entries) {
@@ -288,6 +312,10 @@ export const handler = async (event) => {
     if (event.httpMethod === "POST" && action === "set-name") {
       const body = event.body ? JSON.parse(event.body) : {};
       return unwrap(await setName(supa, user, body));
+    }
+    if (event.httpMethod === "POST" && action === "set-details") {
+      const body = event.body ? JSON.parse(event.body) : {};
+      return unwrap(await setDetails(supa, user, body));
     }
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
