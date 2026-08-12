@@ -9,6 +9,7 @@
 import { createHash } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { runRankingNow, latestRun, listRuns, fullRun, moversData, commsBoard, sevenUpSales, periodMovers, topPerformers, eveningGrowth } from "./_lib/ranking/run.js";
+import { bottomPerformers } from "./_lib/ranking/bottom.js";
 import { callerStoreNumbers } from "./_lib/ranking/scope.js";
 import { backfillLaborWindow } from "./_lib/kpiBackfill.js";
 import { parseIxCsv } from "./_lib/ranking/ixParse.js";
@@ -711,6 +712,10 @@ export const handler = async (event) => {
     if (action === "sevenup") return unwrap(await sevenUpSales(supa, params, storeNums));
     if (action === "period-movers") return unwrap(await periodMovers(supa, params, storeNums));
     if (action === "top-performers") return unwrap(await topPerformers(supa, params, storeNums));
+    if (action === "bottom-performers") {
+      if (!["sdo", "rvp", "vp", "coo", "admin"].includes(role)) return respond(403, { error: "Bottom Performers is for SDO and above." });
+      return unwrap(await bottomPerformers(supa, params, storeNums));
+    }
     if (action === "evening-growth") return unwrap(await eveningGrowth(supa, params, storeNums));
     if (action === "runs") return unwrap(await listRuns(supa));
     if (action === "weeks") return unwrap(await unifiedWeeks(supa));         // hub + legacy timeline

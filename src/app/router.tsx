@@ -39,6 +39,7 @@ import { KpiDashboardPage } from "@/modules/kpi/KpiDashboardPage";
 import { MetricsBoardPage } from "@/modules/kpi/MetricsBoardPage";
 import { LaborV2Page } from "@/modules/labor-v2/LaborV2Page";
 import { RankingAdminPage } from "@/modules/ranking/RankingAdminPage";
+import { BottomPerformersPage } from "@/modules/ranking/BottomPerformersPage";
 import { PullLogPage } from "@/modules/labor-v2/PullLogPage";
 import { LaborV2Entry } from "@/modules/labor-v2/LaborV2Entry";
 import { RvpCommitmentsPage } from "@/modules/labor-v2/RvpCommitmentsPage";
@@ -249,6 +250,15 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
             <RankingAdminPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // Bottom performers by SDO (year trend) — SDO and above.
+        path: "admin/ranking/bottom-performers",
+        element: (
+          <ProtectedRoute requireRoles={["sdo", "rvp", "vp", "coo", "admin"]}>
+            <BottomPerformersPage />
           </ProtectedRoute>
         ),
       },
