@@ -4,6 +4,7 @@
 // save-special / delete-special). Storage: store_hours + store_special_hours (0281).
 import { createClient } from "@supabase/supabase-js";
 import { placesConfigured, findPlaceId, fetchPlaceHours, normalizeGoogleHours, compareHours } from "./_lib/places.js";
+import { resolveOrg } from "./_lib/kpiOrg.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -105,6 +106,7 @@ export const handler = async (event) => {
         .eq("is_active", true).neq("brand", "little_caesars").order("number", { ascending: true }));
       const stores = allStores.filter((s) => inScope(scope, s.id)); // SDO/RVP → only their stores
       const ids = stores.map((s) => s.id);
+      const orgMap = await resolveOrg(supa, stores.map((s) => String(s.number))); // for the SDO view
       const byStore = new Map();
       const specialByStore = new Map();
       const reconByStore = new Map();
@@ -138,6 +140,7 @@ export const handler = async (event) => {
           id: s.id, number: String(s.number), name: s.name,
           address: s.address || null, city: s.city || null, state: s.state || null, zip: s.zip || null,
           days, configured, upcoming_special: specialByStore.get(s.id) || 0,
+          sdo: orgMap.get(String(s.number))?.sdoName || null,
           google_status: googleStatus, google_diffs: googleDiffs, google_checked_at: s.google_hours_checked_at || null,
           recon_status: rc ? rc.status : null,
           itsacheckmate_open: rc ? (rc.itsacheckmate_update_needed && !rc.itsacheckmate_done) : false,

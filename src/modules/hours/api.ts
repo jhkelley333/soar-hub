@@ -26,6 +26,7 @@ export interface HoursGridStore {
   recon_status: "open" | "in_progress" | "resolved" | null;
   itsacheckmate_open: boolean;  // Itsacheckmate update needed & not done
   sign_open: boolean;           // sign order needed & not ordered
+  sdo: string | null;           // responsible SDO (org leadership)
 }
 
 export type ReconSystem = "system" | "rap" | "itsacheckmate" | "google" | "sign";
