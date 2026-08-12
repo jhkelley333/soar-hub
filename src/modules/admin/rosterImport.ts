@@ -11,21 +11,25 @@ const DIFF_FIELDS: RosterField[] = ["gm_name", "gm_cell", "gm_birthday", "hire_d
 
 export interface UploadRow { store_number: string; values: Partial<Record<RosterField, string>>; }
 
-// Header aliases (lowercased) → field. First match wins per column.
+// Header → field, by substring (a header CONTAINS an alias). Ordered specific →
+// generic so compound headers ("Original Date of Hire", "GM Cell Phone Number")
+// resolve correctly and bare tokens ("store") only catch what's left. First
+// match wins; store_number is last so "Store Name" isn't grabbed as the number.
 const HEADER_MAP: { field: RosterField | "store_number"; aliases: string[] }[] = [
-  { field: "store_number", aliases: ["store #", "store#", "store number", "store", "di number", "di #", "di#", "unit", "unit #"] },
-  { field: "store_name", aliases: ["store name", "location", "name"] },
-  { field: "gm_name", aliases: ["gm (full name)", "gm full name", "gm name", "general manager", "gm", "manager"] },
-  { field: "hire_date", aliases: ["date of hire", "hire date", "hire with soar", "soar hire", "hire", "date hired"] },
-  { field: "placement_date", aliases: ["date of placement", "placement date", "store placement", "placement", "placed"] },
-  { field: "gm_cell", aliases: ["gm cell", "cell phone", "cell", "gm phone", "phone", "mobile"] },
-  { field: "gm_birthday", aliases: ["gm birthday", "birthday", "birth date", "dob", "date of birth"] },
+  { field: "gm_name", aliases: ["gm (full name)", "gm full name", "general manager", "gm name", "manager name"] },
+  { field: "hire_date", aliases: ["date of hire", "hire date", "date hired", "soar hire", "hire with soar"] },
+  { field: "placement_date", aliases: ["date of placement", "placement date", "store placement", "placement as", "date placed"] },
+  { field: "gm_cell", aliases: ["cell phone", "gm cell", "cell number", "cell", "gm phone", "phone number", "mobile"] },
+  { field: "gm_birthday", aliases: ["birthday", "birth date", "date of birth", "dob"] }, // NOT "birth month"
   { field: "gm_email", aliases: ["store email", "gm email", "email"] },
+  { field: "store_name", aliases: ["store name", "location"] },
+  { field: "store_number", aliases: ["store #", "store#", "store number", "store no", "di number", "di #", "di#", "unit #", "unit", "store"] },
 ];
 
 function matchHeader(h: string): RosterField | "store_number" | null {
   const s = h.trim().toLowerCase().replace(/\s+/g, " ");
-  for (const { field, aliases } of HEADER_MAP) if (aliases.includes(s)) return field;
+  if (!s) return null;
+  for (const { field, aliases } of HEADER_MAP) for (const a of aliases) if (s.includes(a)) return field;
   return null;
 }
 
