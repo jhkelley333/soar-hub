@@ -4,7 +4,7 @@
 // made in Team/Org admin (this page flags, it doesn't edit accounts). A paste
 // importer keeps the roster current from the ops sheet.
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, Download, HelpCircle, History, Pencil, Upload, UserX, X } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -14,7 +14,8 @@ import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { fetchGmRoster, fetchGmRosterHistory, importGmRoster, parseRosterPaste, setGmRosterName, type GmRosterHistoryEntry, type GmRosterRow, type ReconcileStatus } from "./gmRosterApi";
+import { fetchGmRoster, fetchGmRosterHistory, importGmRoster, setGmRosterName, type GmRosterHistoryEntry, type GmRosterRow, type ReconcileStatus } from "./gmRosterApi";
+import { diffUpload, fmtDate, mergedImportRow, parsePaste, parseRosterXlsx, sinceLabel, type DiffRow, type UploadRow } from "./rosterImport";
 
 type Filter = "all" | ReconcileStatus;
 
@@ -86,7 +87,7 @@ export function GmRosterPage() {
         }
       />
 
-      {importOpen && <ImportModal onClose={() => setImportOpen(false)} />}
+      {importOpen && <ImportModal current={q.data?.rows ?? []} onClose={() => setImportOpen(false)} />}
       {historyRow && <HistoryModal row={historyRow} onClose={() => setHistoryRow(null)} />}
 
       {summary && (
@@ -123,6 +124,7 @@ export function GmRosterPage() {
                   <th className="px-4 py-2">Store</th>
                   <th className="px-4 py-2">Roster GM</th>
                   <th className="px-4 py-2">Status</th>
+                  <th className="px-4 py-2">Tenure · Stability</th>
                   <th className="px-4 py-2">Hub account</th>
                   <th className="px-4 py-2">RVP · SDO · DO</th>
                 </tr>
@@ -188,12 +190,29 @@ function Row({ r, canEdit, onHistory }: { r: GmRosterRow; canEdit: boolean; onHi
             </button>
           </div>
         )}
-        {r.gm_email && !editing && <div className="text-[11px] text-zinc-400">{r.gm_email}</div>}
+        {!editing && (
+          <div className="text-[11px] text-zinc-400">
+            {r.gm_email && <div>{r.gm_email}</div>}
+            {(r.gm_cell || r.gm_birthday) && (
+              <div>{[r.gm_cell, r.gm_birthday ? `🎂 ${fmtDate(r.gm_birthday)}` : null].filter(Boolean).join(" · ")}</div>
+            )}
+          </div>
+        )}
       </td>
       <td className="px-4 py-2.5">
         <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset", meta.cls)}>
           <Icon className="h-3 w-3" /> {meta.label}
         </span>
+      </td>
+      <td className="px-4 py-2.5 text-xs">
+        <div className="text-zinc-600">
+          <span className="text-zinc-400">Hire</span> {fmtDate(r.hire_date)}
+          {sinceLabel(r.hire_date) && <span className="ml-1 font-semibold text-midnight">· {sinceLabel(r.hire_date)}</span>}
+        </div>
+        <div className="text-zinc-600">
+          <span className="text-zinc-400">Placed</span> {fmtDate(r.placement_date)}
+          {sinceLabel(r.placement_date) && <span className="ml-1 font-semibold text-midnight">· {sinceLabel(r.placement_date)}</span>}
+        </div>
       </td>
       <td className="px-4 py-2.5">
         {r.account ? (
@@ -273,45 +292,149 @@ function FilterChip({ active, onClick, label, cls }: { active: boolean; onClick:
   );
 }
 
-function ImportModal({ onClose }: { onClose: () => void }) {
+function ImportModal({ current, onClose }: { current: GmRosterRow[]; onClose: () => void }) {
   const toast = useToast();
   const qc = useQueryClient();
-  const [text, setText] = useState("");
-  const parsed = useMemo(() => parseRosterPaste(text), [text]);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [uploads, setUploads] = useState<UploadRow[]>([]);
+  const [fileName, setFileName] = useState("");
+  const [paste, setPaste] = useState("");
+  const [accepted, setAccepted] = useState<Set<string>>(new Set());
+
+  const diffs = useMemo(() => diffUpload(uploads, current), [uploads, current]);
+  const changed = diffs.filter((d) => d.status === "changed");
+  const news = diffs.filter((d) => d.status === "new");
+  const unchanged = diffs.filter((d) => d.status === "unchanged").length;
+
+  // Load a parsed upload: default to accepting all the changed rows (user can
+  // decline); new (not-in-roster) rows start declined and flagged.
+  const load = (rows: UploadRow[]) => {
+    setUploads(rows);
+    setAccepted(new Set(diffUpload(rows, current).filter((d) => d.status === "changed").map((d) => d.store_number)));
+  };
+  const onFile = async (f: File) => {
+    setFileName(f.name);
+    try { load(f.name.toLowerCase().endsWith(".xlsx") ? await parseRosterXlsx(f) : parsePaste(await f.text())); }
+    catch (e) { toast.push(e instanceof Error ? e.message : "Couldn't read that file.", "error"); }
+  };
+  const toggle = (n: string) => setAccepted((s) => { const x = new Set(s); x.has(n) ? x.delete(n) : x.add(n); return x; });
+  const setAll = (list: DiffRow[], on: boolean) => setAccepted((s) => { const x = new Set(s); for (const d of list) on ? x.add(d.store_number) : x.delete(d.store_number); return x; });
+
+  const acceptedRows = useMemo(
+    () => diffs.filter((d) => accepted.has(d.store_number)).map((d) => mergedImportRow(uploads.find((u) => u.store_number === d.store_number)!, current)),
+    [diffs, accepted, uploads, current],
+  );
 
   const mut = useMutation({
-    mutationFn: () => importGmRoster(parsed),
+    mutationFn: () => importGmRoster(acceptedRows as unknown as Parameters<typeof importGmRoster>[0]),
     onSuccess: (r) => {
-      toast.push(`Imported ${r.upserted} roster row${r.upserted === 1 ? "" : "s"}.`, "success");
+      toast.push(`Merged ${r.upserted} store${r.upserted === 1 ? "" : "s"} into the roster.`, "success");
       qc.invalidateQueries({ queryKey: ["gm-roster"] });
       onClose();
     },
     onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Import failed.", "error"),
   });
 
+  const hasUpload = uploads.length > 0;
+
   return (
-    <Modal open onClose={onClose} title="Import GM roster"
+    <Modal open onClose={onClose} title="Import GM roster" maxWidth="max-w-3xl"
       footer={
-        <>
-          <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
-          <Button size="sm" onClick={() => mut.mutate()} disabled={!parsed.length || mut.isPending}>
-            {mut.isPending ? "Importing…" : `Import ${parsed.length} row${parsed.length === 1 ? "" : "s"}`}
-          </Button>
-        </>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs text-zinc-400">{accepted.size} to merge · {changed.length} changed · {news.length} not in roster · {unchanged} unchanged</span>
+          <div className="flex gap-2">
+            <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
+            <Button size="sm" onClick={() => mut.mutate()} disabled={!accepted.size || mut.isPending}>
+              {mut.isPending ? "Merging…" : `Merge ${accepted.size} store${accepted.size === 1 ? "" : "s"}`}
+            </Button>
+          </div>
+        </div>
       }>
-      <p className="mb-2 text-xs text-zinc-500">
-        Paste the roster sheet (tab-separated), including the columns Store #, Store Name, GM (Full Name),
-        Date of Hire, Date of Placement, GM Cell, GM Birthday, and Store Email. A header row is ignored.
-        Existing stores are updated; `OPEN` / `In Training` / blank become non-person statuses.
+      <p className="mb-3 text-xs text-zinc-500">
+        Upload the roster file (.xlsx or .csv) or paste it — columns are auto-detected (Store #, GM, Date of Hire,
+        Date of Placement, GM Cell, GM Birthday, Store Email). Stores whose data <strong>differs</strong> from the
+        current roster are flagged below; accept to merge (only the uploaded fields overwrite) or decline to keep what's there.
       </p>
-      <textarea
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        rows={12}
-        placeholder="Paste rows here…"
-        className="w-full resize-y rounded-lg border-0 bg-zinc-50 p-3 font-mono text-xs text-zinc-800 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
-      />
-      <div className="mt-1 text-[11px] text-zinc-400">{parsed.length} store row{parsed.length === 1 ? "" : "s"} detected.</div>
+
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <Button variant="secondary" size="sm" onClick={() => fileRef.current?.click()}>
+          <Upload className="mr-1.5 h-3.5 w-3.5" /> Choose file (.xlsx / .csv)
+        </Button>
+        <input ref={fileRef} type="file" accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); }} />
+        {fileName && <span className="text-xs text-zinc-500">{fileName}</span>}
+      </div>
+
+      {!hasUpload && (
+        <textarea
+          value={paste}
+          onChange={(e) => setPaste(e.target.value)}
+          onBlur={() => paste.trim() && load(parsePaste(paste))}
+          rows={6}
+          placeholder="…or paste rows (with a header row) here"
+          className="w-full resize-y rounded-lg bg-zinc-50 p-3 font-mono text-xs text-zinc-800 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
+        />
+      )}
+
+      {hasUpload && (
+        <div className="max-h-[52vh] space-y-4 overflow-y-auto">
+          {changed.length > 0 && (
+            <div>
+              <div className="mb-1.5 flex items-center justify-between">
+                <span className="text-xs font-semibold uppercase tracking-wide text-amber-700">{changed.length} store(s) differ from the roster</span>
+                <span className="flex gap-2 text-[11px]">
+                  <button type="button" className="font-semibold text-accent hover:underline" onClick={() => setAll(changed, true)}>Accept all</button>
+                  <button type="button" className="font-semibold text-zinc-400 hover:underline" onClick={() => setAll(changed, false)}>Decline all</button>
+                </span>
+              </div>
+              <ul className="space-y-2">
+                {changed.map((d) => <DiffCard key={d.store_number} d={d} on={accepted.has(d.store_number)} toggle={() => toggle(d.store_number)} />)}
+              </ul>
+            </div>
+          )}
+
+          {news.length > 0 && (
+            <div>
+              <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-500">{news.length} store(s) not in the current roster</div>
+              <ul className="space-y-1.5">
+                {news.map((d) => (
+                  <li key={d.store_number} className="flex items-center justify-between gap-3 rounded-lg bg-zinc-50 px-3 py-2 text-sm ring-1 ring-inset ring-zinc-200">
+                    <span><span className="font-mono font-semibold text-midnight">#{d.store_number}</span> <span className="text-zinc-500">{d.values.gm_name ?? d.values.store_name ?? "new"}</span></span>
+                    <label className="flex items-center gap-1.5 text-xs text-zinc-500"><input type="checkbox" checked={accepted.has(d.store_number)} onChange={() => toggle(d.store_number)} /> Add anyway</label>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {unchanged > 0 && <div className="text-xs text-zinc-400">{unchanged} store(s) already match — nothing to merge.</div>}
+          {changed.length === 0 && news.length === 0 && <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-700 ring-1 ring-inset ring-emerald-200">Everything in the upload matches the current roster.</div>}
+        </div>
+      )}
     </Modal>
+  );
+}
+
+function DiffCard({ d, on, toggle }: { d: DiffRow; on: boolean; toggle: () => void }) {
+  return (
+    <li className={cn("rounded-lg p-3 ring-1 ring-inset", on ? "bg-white ring-amber-200" : "bg-zinc-50 ring-zinc-200 opacity-70")}>
+      <div className="mb-1.5 flex items-center justify-between gap-3">
+        <span className="text-sm"><span className="font-mono font-semibold text-midnight">#{d.store_number}</span> <span className="text-zinc-500">{d.store_name}</span></span>
+        <label className="flex items-center gap-1.5 text-xs font-semibold text-zinc-600"><input type="checkbox" checked={on} onChange={toggle} /> {on ? "Merge" : "Declined"}</label>
+      </div>
+      <ul className="space-y-0.5">
+        {d.changes.map((c) => {
+          const isDate = c.field === "hire_date" || c.field === "placement_date" || c.field === "gm_birthday";
+          return (
+            <li key={c.field} className="flex flex-wrap items-baseline gap-x-2 text-xs">
+              <span className="w-24 shrink-0 text-zinc-400">{c.label}</span>
+              <span className="text-zinc-400 line-through">{c.from ? (isDate ? fmtDate(c.from) : c.from) : "—"}</span>
+              <span className="text-zinc-400">→</span>
+              <span className="font-semibold text-amber-800">{isDate ? fmtDate(c.to) : c.to}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </li>
   );
 }
