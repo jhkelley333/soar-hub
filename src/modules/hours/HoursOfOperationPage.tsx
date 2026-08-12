@@ -18,6 +18,16 @@ import { downloadHoursWorkbook, downloadReconWorkbook } from "./hoursWorkbook";
 import { HoursImportModal } from "./HoursImportModal";
 
 type Filter = "open" | "pending";
+type ReconFilter = "all" | "flagged" | "none" | "open" | "in_progress" | "resolved";
+const RECON_FILTER_LABELS: Record<ReconFilter, string> = {
+  all: "All statuses", flagged: "Needs review", none: "Not started",
+  open: "Open", in_progress: "In progress", resolved: "Resolved",
+};
+const RECON_CHIP: Record<string, { label: string; cls: string }> = {
+  open: { label: "Open", cls: "bg-amber-100 text-amber-700" },
+  in_progress: { label: "In progress", cls: "bg-sky-100 text-sky-700" },
+  resolved: { label: "Resolved", cls: "bg-emerald-100 text-emerald-700" },
+};
 
 // Mon..Sun dates for the current week (for the column sub-labels, like the ref UI).
 function weekDates(): { dow: string; d: number; mon: string }[] {
@@ -36,6 +46,8 @@ export function HoursOfOperationPage() {
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<Filter>("open");
+  const [sdoFilter, setSdoFilter] = useState("");
+  const [reconFilter, setReconFilter] = useState<ReconFilter>("all");
   const [exporting, setExporting] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const query = useQuery({ queryKey: ["hours-grid"], queryFn: fetchHoursGrid });
@@ -43,12 +55,25 @@ export function HoursOfOperationPage() {
   const knownNumbers = useMemo(() => new Set((query.data?.stores ?? []).map((s) => s.number)), [query.data]);
 
   const all = query.data?.stores ?? [];
+  const sdos = useMemo(() => [...new Set(all.map((s) => s.sdo).filter((x): x is string => !!x))].sort(), [all]);
+
+  const matchesRecon = (s: HoursGridStore): boolean => {
+    switch (reconFilter) {
+      case "all": return true;
+      case "flagged": return s.google_status === "mismatch" || s.itsacheckmate_open || s.sign_open;
+      case "none": return s.recon_status == null;
+      default: return s.recon_status === reconFilter; // open | in_progress | resolved
+    }
+  };
+
   const filtered = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return all
       .filter((s) => (filter === "open" ? s.configured : !s.configured))
+      .filter((s) => !sdoFilter || s.sdo === sdoFilter)
+      .filter(matchesRecon)
       .filter((s) => !needle || s.number.toLowerCase().includes(needle) || (s.name ?? "").toLowerCase().includes(needle) || (s.address ?? "").toLowerCase().includes(needle) || (s.city ?? "").toLowerCase().includes(needle));
-  }, [all, q, filter]);
+  }, [all, q, filter, sdoFilter, reconFilter]);
 
   const openCount = all.filter((s) => s.configured).length;
   const pendingCount = all.length - openCount;
@@ -152,14 +177,27 @@ export function HoursOfOperationPage() {
             </button>
           ))}
         </div>
-        <div className="relative">
-          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
-          <input
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder="Search by location, address…"
-            className="w-72 rounded-lg border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm text-midnight focus:border-accent focus:outline-none"
-          />
+        <div className="flex flex-wrap items-center gap-2">
+          {sdos.length > 0 && (
+            <select value={sdoFilter} onChange={(e) => setSdoFilter(e.target.value)}
+              className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-midnight focus:border-accent focus:outline-none" title="Filter by SDO">
+              <option value="">All SDOs</option>
+              {sdos.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          )}
+          <select value={reconFilter} onChange={(e) => setReconFilter(e.target.value as ReconFilter)}
+            className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-midnight focus:border-accent focus:outline-none" title="Filter by reconcile status">
+            {(Object.keys(RECON_FILTER_LABELS) as ReconFilter[]).map((k) => <option key={k} value={k}>{RECON_FILTER_LABELS[k]}</option>)}
+          </select>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-zinc-400" />
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Search by location, address…"
+              className="w-64 rounded-lg border border-zinc-200 bg-white py-2 pl-9 pr-3 text-sm text-midnight focus:border-accent focus:outline-none"
+            />
+          </div>
         </div>
       </div>
 
@@ -234,8 +272,8 @@ function GridRow({ s, onOpen }: { s: HoursGridStore; onOpen: () => void }) {
           {s.sign_open && (
             <span className="rounded-full bg-orange-100 px-1.5 py-0.5 text-[10px] font-semibold text-orange-700" title="New hours sign needs ordering">Sign</span>
           )}
-          {s.recon_status === "resolved" && (
-            <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700" title="Reconciliation resolved">✓</span>
+          {s.recon_status && RECON_CHIP[s.recon_status] && (
+            <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-semibold", RECON_CHIP[s.recon_status].cls)} title="Reconcile status">{RECON_CHIP[s.recon_status].label}</span>
           )}
           {s.upcoming_special > 0 && (
             <span className="inline-flex items-center gap-0.5 text-[10px] font-semibold text-amber-600" title={`${s.upcoming_special} upcoming special hours`}>
@@ -245,6 +283,7 @@ function GridRow({ s, onOpen }: { s: HoursGridStore; onOpen: () => void }) {
         </div>
         <div className="mt-0.5 text-[11px] text-zinc-500">
           {[s.address, s.city, s.state].filter(Boolean).join(", ")}{s.zip ? ` ${s.zip}` : ""}
+          {s.sdo ? <span className="text-zinc-400"> · SDO: {s.sdo}</span> : null}
         </div>
       </td>
       {s.days.map((d, i) => (
