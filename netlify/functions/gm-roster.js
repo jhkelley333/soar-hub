@@ -132,6 +132,7 @@ async function listRoster(supa, user) {
       roster_status: r.status,
       gm_email: r.gm_email, gm_cell: r.gm_cell, gm_birthday: r.gm_birthday,
       hire_date: r.hire_date, placement_date: r.placement_date,
+      no_gm_credit: !!r.no_gm_credit,
       do_name: org.doName ?? null, sdo_name: org.sdoName ?? null, rvp_name: org.rvpName ?? null,
       account,
       reconcile,
@@ -254,6 +255,7 @@ async function setDetails(supa, user, body) {
   for (const f of ["gm_cell", "gm_birthday", "hire_date", "placement_date"]) {
     if (Object.prototype.hasOwnProperty.call(body || {}, f)) patch[f] = clean(body[f]);
   }
+  if (Object.prototype.hasOwnProperty.call(body || {}, "no_gm_credit")) patch.no_gm_credit = !!body.no_gm_credit;
   const { data: existing } = await supa.from("gm_roster").select("store_number").eq("store_number", num).maybeSingle();
   const { error } = existing
     ? await supa.from("gm_roster").update(patch).eq("store_number", num)
