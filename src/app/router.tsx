@@ -601,7 +601,7 @@ export const router = createBrowserRouter([
       {
         path: "admin/gm-roster",
         element: (
-          <ProtectedRoute requireRoles={["sdo", "rvp", "vp", "coo", "admin"]}>
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <GmRosterPage />
           </ProtectedRoute>
         ),
