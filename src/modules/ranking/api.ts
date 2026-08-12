@@ -40,21 +40,26 @@ export function fetchRankingOverview(): Promise<{ config: RankingConfigRow[]; st
 
 // ── Bottom performers by SDO (year trend) ────────────────────────────────────
 export interface BottomTrend { dir: "improving" | "declining" | "flat"; delta: number }
+export interface BottomMetric { key: string; label: string; better_is_higher: boolean }
 export interface BottomGM {
   store_number: string; gm: string | null; location: string | null; sdo: string;
-  avg_rank: number | null; avg_points: number | null; best_rank: number; worst_rank: number;
+  value: number | null; best: number | null; worst: number | null; avg_rank: number | null;
   weeks: number; trend: BottomTrend; series: number[];
 }
 export interface BottomDO {
   name: string; sdo: string;
-  avg_rank: number | null; avg_points: number | null; best_rank: number; worst_rank: number;
+  value: number | null; best: number | null; worst: number | null; avg_rank: number | null;
   weeks: number; trend: BottomTrend; series: number[];
 }
 export interface BottomSdo { sdo: string; store_count: number; do_count: number; bottom_gms: BottomGM[]; bottom_do: BottomDO | null }
-export interface BottomPerformers { fy_start: string; fy_end: string; weeks: number; gm_per_sdo: number; sdos: BottomSdo[] }
+export interface BottomPerformers {
+  fy_start: string; fy_end: string; weeks: number; gm_per_sdo: number;
+  metric: string; metric_label: string; better_is_higher: boolean;
+  metrics: BottomMetric[]; sdos: BottomSdo[];
+}
 
-export function fetchBottomPerformers(gmPerSdo = 2): Promise<BottomPerformers> {
-  return req(`${FN}?action=bottom-performers&gm_per_sdo=${gmPerSdo}`);
+export function fetchBottomPerformers(gmPerSdo = 2, metric = "overall"): Promise<BottomPerformers> {
+  return req(`${FN}?action=bottom-performers&gm_per_sdo=${gmPerSdo}&metric=${encodeURIComponent(metric)}`);
 }
 
 export function setFcTargetEfficiency(efficiency: number): Promise<{ ok: true; efficiency: number }> {
