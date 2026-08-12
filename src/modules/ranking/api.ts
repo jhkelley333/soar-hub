@@ -38,6 +38,25 @@ export function fetchRankingOverview(): Promise<{ config: RankingConfigRow[]; st
   return req(`${FN}?action=overview`);
 }
 
+// ── Bottom performers by SDO (year trend) ────────────────────────────────────
+export interface BottomTrend { dir: "improving" | "declining" | "flat"; delta: number }
+export interface BottomGM {
+  store_number: string; gm: string | null; location: string | null; sdo: string;
+  avg_rank: number | null; avg_points: number | null; best_rank: number; worst_rank: number;
+  weeks: number; trend: BottomTrend; series: number[];
+}
+export interface BottomDO {
+  name: string; sdo: string;
+  avg_rank: number | null; avg_points: number | null; best_rank: number; worst_rank: number;
+  weeks: number; trend: BottomTrend; series: number[];
+}
+export interface BottomSdo { sdo: string; store_count: number; do_count: number; bottom_gms: BottomGM[]; bottom_do: BottomDO | null }
+export interface BottomPerformers { fy_start: string; fy_end: string; weeks: number; gm_per_sdo: number; sdos: BottomSdo[] }
+
+export function fetchBottomPerformers(gmPerSdo = 2): Promise<BottomPerformers> {
+  return req(`${FN}?action=bottom-performers&gm_per_sdo=${gmPerSdo}`);
+}
+
 export function setFcTargetEfficiency(efficiency: number): Promise<{ ok: true; efficiency: number }> {
   return req(`${FN}?action=fc-target-set`, { method: "POST", body: JSON.stringify({ efficiency }) });
 }

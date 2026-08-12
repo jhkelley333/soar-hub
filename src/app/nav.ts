@@ -27,6 +27,7 @@ import {
   Trophy,
   Target,
   Clock,
+  TrendingDown,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -68,6 +69,8 @@ export const NAV: NavItem[] = [
   // over the Operations slot; the legacy sheet-fed Ranker (/ranker) is archived
   // off the sidebar, its route kept alive only for old deep links.
   { to: "/admin/ranking", label: "Ranker", icon: Trophy, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
+  // Bottom performers by SDO (year trend) — SDO and above.
+  { to: "/admin/ranking/bottom-performers", label: "Bottom Performers", icon: TrendingDown, roles: ["sdo", "rvp", "vp", "coo", "admin"] },
   // Territory Map — stores plotted on Google Maps, pin color keyed to the
   // DO resolved live from the org data.
   { to: "/territory-map", label: "Territory Map", icon: MapPinned,   roles: ["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
@@ -232,6 +235,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/operations": "OPERATIONS",
   "/business-disruptions": "OPERATIONS",
   "/admin/ranking": "OPERATIONS",
+  "/admin/ranking/bottom-performers": "OPERATIONS",
   "/coo-map": "OPERATIONS",
   "/territory-map": "OPERATIONS",
   "/labor-v2": "OPERATIONS",
