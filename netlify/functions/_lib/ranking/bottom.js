@@ -37,11 +37,16 @@ function trendOf(ranks) {
 export async function bottomPerformers(supa, params, storeNums = null) {
   const gmPerSdo = Math.max(1, Math.min(5, parseInt(params.gm_per_sdo, 10) || 2));
 
+  // All completed runs in the FY window, newest-first within each week. A week
+  // can be re-run several times; keep only the NEWEST run per week_ending so we
+  // count distinct weeks (not runs) and never double-count a week in the averages.
   const { data: runs } = await supa.from("ranking_runs")
-    .select("id, week_ending").eq("status", "complete")
+    .select("id, week_ending, started_at").eq("status", "complete")
     .gte("week_ending", FY_START).lte("week_ending", FY_END)
-    .order("week_ending", { ascending: true });
-  const runList = runs || [];
+    .order("week_ending", { ascending: true }).order("started_at", { ascending: false });
+  const byWeek = new Map();
+  for (const r of runs || []) if (!byWeek.has(r.week_ending)) byWeek.set(r.week_ending, r); // first per week = newest
+  const runList = [...byWeek.values()];
   if (!runList.length) return { fy_start: FY_START, fy_end: FY_END, weeks: 0, gm_per_sdo: gmPerSdo, sdos: [] };
   const weekById = new Map(runList.map((r) => [r.id, r.week_ending]));
 
