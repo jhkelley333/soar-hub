@@ -96,6 +96,28 @@ async function gmAccountsByStore(supa, storeIds) {
   return byStore;
 }
 
+// Which of these stores currently have an active No-GM labor credit (the
+// Labor v2 no_gm_credits table) — active = started on/before today and not yet
+// ended. Returns Map<store_number, reason> ("no_gm" | "loa" | "in_training").
+// The table may not exist (migration 0236 not run) — treated as "none".
+async function activeNoGmCredits(supa, numbers) {
+  const map = new Map();
+  if (!numbers.length) return map;
+  const today = new Date().toISOString().slice(0, 10);
+  const { data, error } = await supa
+    .from("no_gm_credits")
+    .select("store_number, reason, start_date, end_date")
+    .in("store_number", numbers)
+    .lte("start_date", today)
+    .or(`end_date.is.null,end_date.gte.${today}`);
+  if (error || !data) return map; // missing table / error → no flags
+  for (const r of data) {
+    const num = String(r.store_number);
+    if (!map.has(num)) map.set(num, r.reason); // first active tag wins
+  }
+  return map;
+}
+
 async function listRoster(supa, user) {
   const role = String(user.role).toLowerCase();
   if (!EDIT_ROLES.has(role)) return { error: "forbidden", status: 403 };
@@ -108,9 +130,10 @@ async function listRoster(supa, user) {
   // Scoped leaders (SDO/RVP) only see the stores they oversee.
   const rosterRows = visible ? (roster || []).filter((r) => visible.has(String(r.store_number))) : (roster || []);
   const numbers = rosterRows.map((r) => String(r.store_number));
-  const [gmByStore, orgMap] = await Promise.all([
+  const [gmByStore, orgMap, noGmByStore] = await Promise.all([
     gmAccountsByStore(supa, (stores || []).map((s) => s.id)),
     resolveOrg(supa, numbers),
+    activeNoGmCredits(supa, numbers),
   ]);
 
   const rows = rosterRows.map((r) => {
@@ -132,7 +155,8 @@ async function listRoster(supa, user) {
       roster_status: r.status,
       gm_email: r.gm_email, gm_cell: r.gm_cell, gm_birthday: r.gm_birthday,
       hire_date: r.hire_date, placement_date: r.placement_date,
-      no_gm_credit: !!r.no_gm_credit,
+      no_gm_credit: noGmByStore.has(num),
+      no_gm_reason: noGmByStore.get(num) ?? null,
       do_name: org.doName ?? null, sdo_name: org.sdoName ?? null, rvp_name: org.rvpName ?? null,
       account,
       reconcile,
@@ -255,7 +279,6 @@ async function setDetails(supa, user, body) {
   for (const f of ["gm_cell", "gm_birthday", "hire_date", "placement_date"]) {
     if (Object.prototype.hasOwnProperty.call(body || {}, f)) patch[f] = clean(body[f]);
   }
-  if (Object.prototype.hasOwnProperty.call(body || {}, "no_gm_credit")) patch.no_gm_credit = !!body.no_gm_credit;
   const { data: existing } = await supa.from("gm_roster").select("store_number").eq("store_number", num).maybeSingle();
   const { error } = existing
     ? await supa.from("gm_roster").update(patch).eq("store_number", num)
