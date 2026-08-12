@@ -69,8 +69,9 @@ export const NAV: NavItem[] = [
   // over the Operations slot; the legacy sheet-fed Ranker (/ranker) is archived
   // off the sidebar, its route kept alive only for old deep links.
   { to: "/admin/ranking", label: "Ranker", icon: Trophy, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
-  // Bottom performers by SDO (year trend) — SDO and above.
-  { to: "/admin/ranking/bottom-performers", label: "Bottom Performers", icon: TrendingDown, roles: ["sdo", "rvp", "vp", "coo", "admin"] },
+  // Bottom performers by SDO (year trend) — SDO/RVP reach it in the sidebar;
+  // vp/coo/admin reach it via System Settings, so the entry is scoped low.
+  { to: "/admin/ranking/bottom-performers", label: "Bottom Performers", icon: TrendingDown, roles: ["sdo", "rvp"] },
   // Territory Map — stores plotted on Google Maps, pin color keyed to the
   // DO resolved live from the org data.
   { to: "/territory-map", label: "Territory Map", icon: MapPinned,   roles: ["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },

@@ -79,17 +79,35 @@ export function BottomPerformersPage() {
                 <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">{g.store_count} store(s) · {g.do_count} DO(s)</span>
               </div>
 
-              <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">Bottom {g.bottom_gms.length} GM(s)</div>
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[560px] text-sm">
-                  <thead className="text-left text-[10px] uppercase tracking-wide text-zinc-400">
-                    <tr><th className="py-1.5">Store</th><th className="py-1.5">GM</th><th className="py-1.5 text-right">Avg rank</th><th className="py-1.5 text-right">Best–Worst</th><th className="py-1.5 text-right">Weeks</th><th className="py-1.5 text-right">Trend</th></tr>
-                  </thead>
-                  <tbody className="divide-y divide-zinc-100">
-                    {g.bottom_gms.map((s) => <GmRow key={s.store_number} s={s} />)}
-                  </tbody>
-                </table>
-              </div>
+              {g.bottom_gms.length > 0 ? (
+                <>
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-zinc-500">Bottom {g.bottom_gms.length} GM(s)</div>
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[620px] table-fixed text-sm">
+                      <colgroup>
+                        <col style={{ width: "34%" }} /><col style={{ width: "20%" }} />
+                        <col style={{ width: "10%" }} /><col style={{ width: "12%" }} />
+                        <col style={{ width: "8%" }} /><col style={{ width: "16%" }} />
+                      </colgroup>
+                      <thead className="text-[10px] uppercase tracking-wide text-zinc-400">
+                        <tr>
+                          <th className="py-1.5 text-left font-semibold">Store</th>
+                          <th className="py-1.5 text-left font-semibold">GM</th>
+                          <th className="py-1.5 text-right font-semibold">Avg rank</th>
+                          <th className="py-1.5 text-right font-semibold">Best–Worst</th>
+                          <th className="py-1.5 text-right font-semibold">Weeks</th>
+                          <th className="py-1.5 text-right font-semibold">Trend</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-zinc-100">
+                        {g.bottom_gms.map((s) => <GmRow key={s.store_number} s={s} />)}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-lg bg-zinc-50 px-3 py-2 text-xs text-zinc-400 ring-1 ring-inset ring-zinc-200">No GM ranking data for this SDO.</div>
+              )}
 
               {g.bottom_do && (
                 <div className="mt-4 rounded-lg bg-zinc-50 p-3 ring-1 ring-inset ring-zinc-200">
@@ -108,15 +126,15 @@ export function BottomPerformersPage() {
 function GmRow({ s }: { s: BottomGM }) {
   return (
     <tr>
-      <td className="py-2">
+      <td className="truncate py-2 pr-2">
         <span className="font-mono text-xs font-semibold text-midnight">#{s.store_number}</span>
         {s.location && <span className="ml-1.5 text-zinc-500">{s.location}</span>}
       </td>
-      <td className="py-2 text-zinc-700">{s.gm ?? "—"}</td>
+      <td className="truncate py-2 pr-2 text-zinc-700">{s.gm ?? "—"}</td>
       <td className="py-2 text-right font-semibold tabular-nums text-midnight">{s.avg_rank ?? "—"}</td>
       <td className="py-2 text-right tabular-nums text-zinc-500">{s.best_rank}–{s.worst_rank}</td>
       <td className="py-2 text-right tabular-nums text-zinc-500">{s.weeks}</td>
-      <td className="py-2 text-right"><TrendChip t={s.trend} /></td>
+      <td className="py-2 text-right"><span className="inline-flex justify-end whitespace-nowrap"><TrendChip t={s.trend} /></span></td>
     </tr>
   );
 }

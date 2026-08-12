@@ -7,7 +7,7 @@ import { Link } from "react-router-dom";
 import {
   ArrowRight, Network, Users, MapPin, KeyRound, Globe, Flag, QrCode, Link2,
   RefreshCw, CloudSun, BarChart3, LayoutGrid, Gauge, ScrollText, Layers, Upload,
-  Settings, ClipboardCheck, ListChecks, BookMarked, Clock, type LucideIcon,
+  Settings, ClipboardCheck, ListChecks, BookMarked, Clock, TrendingDown, type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -59,6 +59,7 @@ const GROUPS: Group[] = [
       { title: "KPI Dashboard", desc: "Execution KPI dashboard (in beta).", icon: BarChart3, roles: ["admin"], to: "/admin/kpi" },
       { title: "Metrics Board", desc: "Execution metrics board (in beta).", icon: LayoutGrid, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"], to: "/admin/metrics-board" },
       { title: "Store Visit", desc: "Mobile-first store walk + Top-3 gaps (in beta).", icon: ClipboardCheck, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"], to: "/visit" },
+      { title: "Bottom Performers", desc: "Bottom GMs + DO per SDO by this year's ranker trend.", icon: TrendingDown, roles: ["sdo", "rvp", "vp", "coo", "admin"], to: "/admin/ranking/bottom-performers" },
     ],
   },
   {
