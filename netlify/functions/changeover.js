@@ -22,6 +22,36 @@ const CREATE_GM = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);        //
 const ORG_WIDE = new Set(["admin", "vp", "coo"]);
 const KINDS = new Set(["do", "gm"]);
 const STATUSES = new Set(["open", "in_progress", "complete"]);
+const KIND_LABEL = { do: "DO", gm: "GM" };
+
+// Assignment notification (Resend — same sender as PAF / sign orders).
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "paf@mysoarhub.com";
+const RESEND_FROM_NAME = "SOAR Changeovers";
+const SITE_URL = process.env.SITE_URL || process.env.URL || "";
+const escHtml = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+// Best-effort: email the assignee a link to the checklist. Never throws.
+async function emailAssignee({ toEmail, kind, storeNumber, storeName, id, assignerName }) {
+  if (!RESEND_API_KEY || !toEmail) return;
+  const label = KIND_LABEL[kind] || "";
+  const link = SITE_URL ? `${SITE_URL.replace(/\/$/, "")}/changeover/${id}` : `/changeover/${id}`;
+  const store = `Sonic #${escHtml(storeNumber)}${storeName ? ` ${escHtml(storeName)}` : ""}`;
+  const html = `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222;line-height:1.5;">
+  <p>${assignerName ? `${escHtml(assignerName)} assigned you` : "You've been assigned"} a <b>${label} changeover</b> for <b>${store}</b>.</p>
+  <p><a href="${link}" style="color:#1d4ed8;font-weight:600;">Open the checklist</a></p>
+  <p style="color:#666;font-size:12px;margin-top:16px;">Check items off, add notes, and mark it complete in SOAR Hub.</p>
+</div>`;
+  try {
+    await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ from: `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`, to: [toEmail], subject: `${label} changeover assigned to you — Sonic #${storeNumber}`, html }),
+    });
+  } catch (e) {
+    console.warn("[changeover] assignee email failed", e?.message || e);
+  }
+}
 
 function admin() {
   return createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
@@ -156,6 +186,7 @@ export const handler = async (event) => {
         if (/changeover_checklists/.test(error.message)) return respond(500, { error: "Run migration 0285 first (changeover_checklists is missing)." });
         return respond(500, { error: error.message });
       }
+      if (assignedTo && email) await emailAssignee({ toEmail: email, kind, storeNumber: store.number, storeName: store.name, id: data?.id, assignerName: user.name });
       return respond(200, { ok: true, id: data?.id });
     }
 
@@ -176,6 +207,7 @@ export const handler = async (event) => {
       if (Object.prototype.hasOwnProperty.call(body, "notes")) patch.notes = clean(body.notes, 4000);
       if (Object.prototype.hasOwnProperty.call(body, "outgoing_name")) patch.outgoing_name = clean(body.outgoing_name);
       if (Object.prototype.hasOwnProperty.call(body, "incoming_name")) patch.incoming_name = clean(body.incoming_name);
+      let notifyEmail = null;
       if (Object.prototype.hasOwnProperty.call(body, "assigned_email")) {
         const email = clean(body.assigned_email, 200);
         if (!email) patch.assigned_to = null;
@@ -183,10 +215,12 @@ export const handler = async (event) => {
           const { data: p } = await supa.from("profiles").select("id").ilike("email", email).eq("is_active", true).maybeSingle();
           if (!p) return respond(400, { error: `No active Hub user with email ${email}.` });
           patch.assigned_to = p.id;
+          if (p.id !== r.assigned_to) notifyEmail = email; // only on an actual (re)assignment
         }
       }
       const { error } = await supa.from("changeover_checklists").update(patch).eq("id", id);
       if (error) return respond(500, { error: error.message });
+      if (notifyEmail) await emailAssignee({ toEmail: notifyEmail, kind: r.kind, storeNumber: r.store_number, storeName: r.store_name, id, assignerName: user.name });
       return respond(200, { ok: true });
     }
 
