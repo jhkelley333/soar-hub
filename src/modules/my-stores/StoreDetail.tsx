@@ -7,6 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, ClipboardList, Mail, MapPin, Pencil, Phone, Plus, Settings, Trash2 } from "lucide-react";
 import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
 import { ReplacementsTab } from "@/modules/work-orders-v2/ReplacementsTab";
+import { StoreVaultCard } from "./StoreVaultCard";
 import { Badge } from "@/shared/ui/Badge";
 import { Button } from "@/shared/ui/Button";
 import { Drawer } from "@/shared/ui/Drawer";
@@ -57,6 +58,9 @@ const ATTRIBUTE_EDITOR_ROLES = new Set<UserRole>([
   "admin", "payroll", "vp", "coo", "do", "sdo", "rvp",
 ]);
 
+// The password vault is for GM and above (store operators).
+const VAULT_ROLES = new Set<UserRole>(["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]);
+
 // Render a CustomAttributeValue for display. We coerce to string but
 // keep an italic placeholder for empty values so the read-mode card
 // doesn't render a bare key with nothing beside it.
@@ -79,6 +83,7 @@ export function StoreDetail({
 }) {
   const { profile } = useAuth();
   const canEditAttributes = !!profile && ATTRIBUTE_EDITOR_ROLES.has(profile.role);
+  const canUseVault = !!profile && VAULT_ROLES.has(profile.role);
   const [attributesOpen, setAttributesOpen] = useState(false);
 
   return (
@@ -196,6 +201,9 @@ export function StoreDetail({
 
       {/* Store attributes (read-only here; editable from Org admin) */}
       <StoreAttributesCard store={store} />
+
+      {/* Password vault — store logins (GM and above). */}
+      {canUseVault && <StoreVaultCard storeNumber={store.number} />}
 
       {/* Team Members card */}
       <Card>
