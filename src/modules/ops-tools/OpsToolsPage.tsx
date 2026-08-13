@@ -45,7 +45,9 @@ const TOOLS: Tool[] = [
     title: "Store Changeovers",
     desc: "Run a DO or GM changeover checklist for a store — remove/restore system access, verify cash & inventory, hand off keys — and download the finished list.",
     icon: UserCog,
-    roles: ["do", "sdo", "rvp", "vp", "coo", "admin"],
+    // GMs see it too so an assigned GM can find their checklist (they can't
+    // create one — the New buttons stay DO+ via the backend's can_create).
+    roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"],
     to: () => "/changeover",
   },
   {
