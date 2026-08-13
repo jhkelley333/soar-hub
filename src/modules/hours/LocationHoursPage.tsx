@@ -440,6 +440,7 @@ function OrderSignModal({ store, standard, onClose }: { store: StoreMeta; standa
   const [message, setMessage] = useState("");
   const [seeded, setSeeded] = useState(false);
   const [image, setImage] = useState<{ name: string; content: string } | null>(null);
+  const [verified, setVerified] = useState(false);
 
   useEffect(() => {
     if (settingsQ.data && !seeded) {
@@ -475,7 +476,7 @@ function OrderSignModal({ store, standard, onClose }: { store: StoreMeta; standa
       footer={
         <>
           <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
-          <Button size="sm" onClick={() => send.mutate()} disabled={!isEmail(to) || send.isPending || emailOff}>
+          <Button size="sm" onClick={() => send.mutate()} disabled={!isEmail(to) || !verified || send.isPending || emailOff}>
             <Mail className="mr-1.5 h-3.5 w-3.5" /> {send.isPending ? "Sending…" : "Send order"}
           </Button>
         </>
@@ -497,7 +498,7 @@ function OrderSignModal({ store, standard, onClose }: { store: StoreMeta; standa
 
         <div className="rounded-lg bg-zinc-50 p-3 text-xs ring-1 ring-inset ring-zinc-200">
           <div className="mb-1 font-semibold text-zinc-600">Ship to</div>
-          <div className="text-zinc-700">{store.name} #{store.number}</div>
+          <div className="text-zinc-700">Sonic #{store.number} {store.name}</div>
           <div className="text-zinc-500">{fullAddress || "— no address on file —"}</div>
           <div className="mt-2 mb-1 font-semibold text-zinc-600">Hours for the sign</div>
           <table className="text-zinc-600">
@@ -511,6 +512,11 @@ function OrderSignModal({ store, standard, onClose }: { store: StoreMeta; standa
             </tbody>
           </table>
         </div>
+
+        <label className={cn("flex items-start gap-2 rounded-md px-2.5 py-2 text-sm ring-1 ring-inset", verified ? "bg-emerald-50 text-emerald-800 ring-emerald-200" : "bg-amber-50 text-amber-800 ring-amber-200")}>
+          <input type="checkbox" checked={verified} onChange={(e) => setVerified(e.target.checked)} className="mt-0.5" />
+          <span>I verified the hours listed above are correct.</span>
+        </label>
 
         <div>
           <span className="mb-1 block text-xs font-semibold text-zinc-500">Reference image (optional)</span>
