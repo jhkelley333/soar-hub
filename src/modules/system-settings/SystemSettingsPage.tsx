@@ -7,7 +7,7 @@ import { Link } from "react-router-dom";
 import {
   ArrowRight, Network, Users, MapPin, KeyRound, Globe, Flag, QrCode, Link2,
   RefreshCw, CloudSun, BarChart3, LayoutGrid, Gauge, ScrollText, Layers, Upload,
-  Settings, ClipboardCheck, ListChecks, BookMarked, Clock, TrendingDown, type LucideIcon,
+  Settings, ClipboardCheck, ListChecks, BookMarked, Clock, TrendingDown, Building2, type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -70,6 +70,7 @@ const GROUPS: Group[] = [
       { title: "Bulk Attributes", desc: "Bulk-edit store attributes.", icon: Layers, roles: ["admin"], to: "/admin/bulk-attributes" },
       { title: "Bulk User Import", desc: "Invite or update team members from a CSV.", icon: Upload, roles: ["admin"], to: "/admin/bulk-import" },
       { title: "Bulk Org Import", desc: "Import or update the org tree from a CSV.", icon: Upload, roles: ["admin"], to: "/admin/bulk-org-import" },
+      { title: "Acquisitions", desc: "Stage an upcoming acquisition's stores, then merge them live across the hub.", icon: Building2, roles: ["vp", "coo", "admin"], to: "/admin/acquisitions" },
     ],
   },
   {

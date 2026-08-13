@@ -32,6 +32,8 @@ import { CfmExpiringPage } from "@/modules/team/CfmExpiringPage";
 import { OrgPage } from "@/modules/admin/OrgPage";
 import { BulkImportPage } from "@/modules/admin/BulkImportPage";
 import { BulkOrgImportPage } from "@/modules/admin/BulkOrgImportPage";
+import { AcquisitionsPage } from "@/modules/acquisitions/AcquisitionsPage";
+import { AcquisitionDetailPage } from "@/modules/acquisitions/AcquisitionDetailPage";
 import { BulkAttributesPage } from "@/modules/admin/BulkAttributesPage";
 import { GmRosterPage } from "@/modules/admin/GmRosterPage";
 import { FeatureFlagsPage } from "@/modules/admin/FeatureFlagsPage";
@@ -605,6 +607,22 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <BulkOrgImportPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/acquisitions",
+        element: (
+          <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
+            <AcquisitionsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/acquisitions/:id",
+        element: (
+          <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
+            <AcquisitionDetailPage />
           </ProtectedRoute>
         ),
       },
