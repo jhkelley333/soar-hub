@@ -1,18 +1,19 @@
 // Hours of Operation — main grid. Every active store × 7 weekday columns of
 // standard hours. Search + Open/Pending filter; click a row to edit that
 // location (standard + special hours). Admin-gated in the router.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Search, CalendarClock, Download, Upload, MapPin, AlertTriangle, ClipboardList, Signpost } from "lucide-react";
+import { Search, CalendarClock, Download, Upload, MapPin, AlertTriangle, ClipboardList, Signpost, Settings } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
+import { Modal } from "@/shared/ui/Modal";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { fetchHoursGrid, checkAllGoogle, fetchReconciliationList, type HoursGridStore } from "./api";
+import { fetchHoursGrid, checkAllGoogle, fetchReconciliationList, fetchSignSettings, saveSignSettings, type HoursGridStore } from "./api";
 import { DAY_LABELS, fmtRange } from "./hoursFmt";
 import { downloadHoursWorkbook, downloadReconWorkbook } from "./hoursWorkbook";
 import { HoursImportModal } from "./HoursImportModal";
@@ -50,6 +51,7 @@ export function HoursOfOperationPage() {
   const [reconFilter, setReconFilter] = useState<ReconFilter>("all");
   const [exporting, setExporting] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
+  const [signSettingsOpen, setSignSettingsOpen] = useState(false);
   const query = useQuery({ queryKey: ["hours-grid"], queryFn: fetchHoursGrid });
   const cols = useMemo(() => weekDates(), []);
   const knownNumbers = useMemo(() => new Set((query.data?.stores ?? []).map((s) => s.number)), [query.data]);
@@ -146,6 +148,11 @@ export function HoursOfOperationPage() {
               <Signpost className="mr-1.5 h-3.5 w-3.5" /> Signs to order
             </Button>
             {canImport && (
+              <Button variant="secondary" size="sm" onClick={() => setSignSettingsOpen(true)} title="Default recipient + message for sign orders">
+                <Settings className="mr-1.5 h-3.5 w-3.5" /> Sign settings
+              </Button>
+            )}
+            {canImport && (
               <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
                 <Upload className="mr-1.5 h-3.5 w-3.5" /> Upload hours
               </Button>
@@ -163,6 +170,8 @@ export function HoursOfOperationPage() {
         knownNumbers={knownNumbers}
         onImported={() => qc.invalidateQueries({ queryKey: ["hours-grid"] })}
       />
+
+      {signSettingsOpen && <SignSettingsModal onClose={() => setSignSettingsOpen(false)} />}
 
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
         <div className="inline-flex overflow-hidden rounded-full ring-1 ring-zinc-200">
@@ -292,5 +301,71 @@ function GridRow({ s, onOpen }: { s: HoursGridStore; onOpen: () => void }) {
         </td>
       ))}
     </tr>
+  );
+}
+
+// System setting: the default vendor recipient + subject + message used when
+// ordering a hours-of-op sign. Admin / VP / COO only.
+function SignSettingsModal({ onClose }: { onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const q = useQuery({ queryKey: ["sign-settings"], queryFn: fetchSignSettings });
+  const [to, setTo] = useState("");
+  const [subject, setSubject] = useState("");
+  const [message, setMessage] = useState("");
+  const [seeded, setSeeded] = useState(false);
+
+  useEffect(() => {
+    if (q.data && !seeded) {
+      setTo(q.data.settings.to);
+      setSubject(q.data.settings.subject);
+      setMessage(q.data.settings.message);
+      setSeeded(true);
+    }
+  }, [q.data, seeded]);
+
+  const save = useMutation({
+    mutationFn: () => saveSignSettings({ to: to.trim(), subject: subject.trim(), message: message.trim() }),
+    onSuccess: () => {
+      toast.push("Sign order settings saved.", "success");
+      qc.invalidateQueries({ queryKey: ["sign-settings"] });
+      onClose();
+    },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't save.", "error"),
+  });
+
+  const badEmail = to.trim() !== "" && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to.trim());
+  const cls = "w-full rounded-md border border-zinc-200 px-2.5 py-1.5 text-sm focus:border-accent focus:outline-none";
+
+  return (
+    <Modal open onClose={onClose} title="Sign order settings" maxWidth="max-w-lg"
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
+          <Button size="sm" onClick={() => save.mutate()} disabled={save.isPending || badEmail}>{save.isPending ? "Saving…" : "Save settings"}</Button>
+        </>
+      }>
+      {q.data?.email_configured === false && (
+        <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-inset ring-amber-200">
+          Email isn't configured on the server yet (RESEND_API_KEY) — orders can't be sent until it is.
+        </div>
+      )}
+      <div className="space-y-3">
+        <label className="block">
+          <span className="mb-0.5 block text-xs font-semibold text-zinc-500">Default send-to (vendor email)</span>
+          <input type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder="signs@vendor.com" className={cls} />
+          {badEmail && <span className="mt-0.5 block text-[11px] text-red-600">Enter a valid email.</span>}
+        </label>
+        <label className="block">
+          <span className="mb-0.5 block text-xs font-semibold text-zinc-500">Subject</span>
+          <input value={subject} onChange={(e) => setSubject(e.target.value)} className={cls} />
+        </label>
+        <label className="block">
+          <span className="mb-0.5 block text-xs font-semibold text-zinc-500">Message</span>
+          <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={3} className={cls} />
+        </label>
+      </div>
+      <p className="mt-3 text-[11px] text-zinc-400">Placeholders: <code>{"{{store}}"}</code> store #, <code>{"{{name}}"}</code> store name, <code>{"{{address}}"}</code> mailing address, <code>{"{{hours}}"}</code> the hours. The store address + hours are always added to the email body too. Each order can override the send-to and message.</p>
+    </Modal>
   );
 }
