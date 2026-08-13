@@ -4,7 +4,7 @@
 // its own nav item by design.
 
 import { Link } from "react-router-dom";
-import { ArrowRight, ClipboardCheck, ListChecks, QrCode, type LucideIcon } from "lucide-react";
+import { ArrowRight, ClipboardCheck, ListChecks, QrCode, UserCog, type LucideIcon } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { cn } from "@/lib/cn";
@@ -39,6 +39,14 @@ const TOOLS: Tool[] = [
     icon: ListChecks,
     roles: ["shift_manager", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"],
     to: (role) => (DO_PLUS.has(role) ? "/walkthroughs" : "/my-walks"),
+  },
+  {
+    key: "changeover",
+    title: "Store Changeovers",
+    desc: "Run a DO or GM changeover checklist for a store — remove/restore system access, verify cash & inventory, hand off keys — and download the finished list.",
+    icon: UserCog,
+    roles: ["do", "sdo", "rvp", "vp", "coo", "admin"],
+    to: () => "/changeover",
   },
   {
     key: "qr-codes",

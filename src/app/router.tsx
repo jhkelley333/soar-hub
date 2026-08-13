@@ -17,6 +17,8 @@ import { PafQueuePage } from "@/modules/paf/PafQueuePage";
 import { EmployeeActionsPage } from "@/modules/employee-actions/EmployeeActionsPage";
 import { SchedulePage } from "@/modules/schedule/SchedulePage";
 import { OpsToolsPage } from "@/modules/ops-tools/OpsToolsPage";
+import { ChangeoverListPage } from "@/modules/changeover/ChangeoverListPage";
+import { ChangeoverDetailPage } from "@/modules/changeover/ChangeoverDetailPage";
 import { SystemSettingsPage } from "@/modules/system-settings/SystemSettingsPage";
 import { QrCodesPage } from "@/modules/qr-codes/QrCodesPage";
 import { SiteAuditPage } from "@/modules/site-audit/SiteAuditPage";
@@ -194,6 +196,22 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
             <SiteAuditPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "changeover",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <ChangeoverListPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "changeover/:id",
+        element: (
+          <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
+            <ChangeoverDetailPage />
           </ProtectedRoute>
         ),
       },
