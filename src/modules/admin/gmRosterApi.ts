@@ -50,6 +50,20 @@ export function fetchGmRoster(): Promise<GmRosterResponse> {
   return req(`${FN}?action=list`);
 }
 
+// ── Leadership roster (DO / SDO / RVP) ──────────────────────────────────────
+export interface LeaderRow {
+  id: string;
+  name: string | null;
+  role: "do" | "sdo" | "rvp";
+  email: string | null;
+  phone: string | null;
+  birthday: string | null;   // ISO YYYY-MM-DD, null if opted out / unset
+  coverage: string[];        // district / area / region names they lead
+}
+export function fetchGmLeaders(): Promise<{ ok: true; rows: LeaderRow[] }> {
+  return req(`${FN}?action=leaders`);
+}
+
 // Edit one store's roster GM name. "Open" / "In Training" (or blank) set the
 // matching status, mirroring the importer.
 export function setGmRosterName(storeNumber: string, gmName: string): Promise<{ ok: true; store_number: string; gm_name: string | null; status: string }> {

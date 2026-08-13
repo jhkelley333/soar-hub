@@ -145,11 +145,10 @@ export const NAV: NavItem[] = [
   { to: "/admin/manuals", label: "Manuals Admin", icon: BookMarked,  roles: ["rvp"] }, // vp/coo/admin: System Settings
   { to: "/resources",   label: "Resources",   icon: BookOpen,        roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/team",        label: "My Team",     icon: Users,           roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
-  // GM Roster — DO/SDO/RVP reach it here (DOs edit detail for their stores);
-  // vp/coo/admin reach it via System Settings, so the sidebar entry is scoped to
-  // the lower roles. It lives in the Admin group so they find it where they'd
-  // expect (alongside the admin tools), matching System Settings for higher roles.
-  { to: "/admin/gm-roster", label: "GM Roster", icon: BookUser,      roles: ["do", "sdo", "rvp"] },
+  // Roster — the GM roster + the DO/SDO/RVP leadership roster + birthdays.
+  // DO/SDO/RVP reach it here (DOs edit detail for their stores); vp/coo/admin
+  // reach it via System Settings. Lives under People (org/people tooling).
+  { to: "/admin/gm-roster", label: "Roster", icon: BookUser,      roles: ["do", "sdo", "rvp"] },
   { to: "/my-stores",   label: "My Stores",   icon: Building2,       roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll", "fbc"] },
   { to: "/admin/system-settings", label: "System Settings", icon: Settings, roles: ["vp", "coo", "admin"] },
   // Org Admin, GM Roster, Stay-Logged-In Links, KPI Dashboard, Labor Rollup,
@@ -258,12 +257,11 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/manuals": "WORKSPACE",
   "/my-stores": "WORKSPACE",
   "/account": "WORKSPACE",
+  // Roster (GMs + leadership + birthdays) lives under People.
+  "/admin/gm-roster": "PEOPLE",
   "/admin/system-settings": "ADMIN",
   "/admin/org": "ADMIN",
   "/admin/bulk-attributes": "ADMIN",
-  // GM Roster's sidebar entry is SDO/RVP-only; grouped under Admin so it shows
-  // up where those leaders expect it (with the other admin/settings tools).
-  "/admin/gm-roster": "ADMIN",
   "/admin/access-links": "ADMIN",
   "/admin/feature-flags": "ADMIN",
   "/admin/role-access": "ADMIN",

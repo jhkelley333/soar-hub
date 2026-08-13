@@ -6,7 +6,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Ban, Check, Download, HelpCircle, History, Pencil, Upload, UserX, X } from "lucide-react";
+import { AlertTriangle, Ban, Cake, Check, Download, HelpCircle, History, Mail, Pencil, Phone, Upload, UserX, X } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -14,12 +14,15 @@ import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { fetchGmRoster, fetchGmRosterHistory, importGmRoster, setGmRosterDetails, setGmRosterName, type GmRosterHistoryEntry, type GmRosterRow, type ReconcileStatus } from "./gmRosterApi";
+import { fetchGmLeaders, fetchGmRoster, fetchGmRosterHistory, importGmRoster, setGmRosterDetails, setGmRosterName, type GmRosterHistoryEntry, type GmRosterRow, type LeaderRow, type ReconcileStatus } from "./gmRosterApi";
+import type { UseQueryResult } from "@tanstack/react-query";
 import { diffUpload, fmtDate, mergedImportRow, parseDate, parsePaste, parseRosterXlsx, sinceLabel, type DiffRow, type UploadRow } from "./rosterImport";
 
 type Filter = "all" | ReconcileStatus | "no_credit";
 
 const NO_GM_REASON_LABEL: Record<string, string> = { no_gm: "No GM", loa: "LOA", in_training: "In training" };
+const ROLE_LABEL: Record<string, string> = { do: "DO", sdo: "SDO", rvp: "RVP" };
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 
 const STATUS_META: Record<ReconcileStatus, { label: string; cls: string; icon: typeof Check }> = {
   matched: { label: "Matched", cls: "bg-emerald-50 text-emerald-700 ring-emerald-200", icon: Check },
@@ -30,12 +33,17 @@ const STATUS_META: Record<ReconcileStatus, { label: string; cls: string; icon: t
 };
 
 export function GmRosterPage() {
+  const [tab, setTab] = useState<"gms" | "leaders">("gms");
+  const [bdayOpen, setBdayOpen] = useState(false);
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [historyRow, setHistoryRow] = useState<GmRosterRow | null>(null);
   const [detailsRow, setDetailsRow] = useState<GmRosterRow | null>(null);
   const q = useQuery({ queryKey: ["gm-roster"], queryFn: fetchGmRoster });
+  // Leaders power the Leaders tab + the birthday view; fetched up front (one
+  // light request) so the Birthdays button works from either tab.
+  const leadersQ = useQuery({ queryKey: ["gm-leaders"], queryFn: fetchGmLeaders });
 
   const rows = useMemo(() => {
     let r = q.data?.rows ?? [];
@@ -77,14 +85,19 @@ export function GmRosterPage() {
   return (
     <>
       <PageHeader
-        title="GM Roster"
-        description="Reconcile the GM roster with Hub accounts — who's missing an account or whose name doesn't match."
+        title="Roster"
+        description="GMs and leadership — reconcile the GM roster with Hub accounts, see the DO/SDO/RVP roster, and this month's birthdays."
         actions={
           <div className="flex items-center gap-2">
-            <Button variant="secondary" size="sm" onClick={exportCsv} disabled={rows.length === 0}>
-              <Download className="mr-1 h-3.5 w-3.5" /> Download
+            <Button variant="secondary" size="sm" onClick={() => setBdayOpen(true)}>
+              <Cake className="mr-1 h-3.5 w-3.5" /> Birthdays
             </Button>
-            {q.data?.can_import && (
+            {tab === "gms" && (
+              <Button variant="secondary" size="sm" onClick={exportCsv} disabled={rows.length === 0}>
+                <Download className="mr-1 h-3.5 w-3.5" /> Download
+              </Button>
+            )}
+            {tab === "gms" && q.data?.can_import && (
               <Button variant="secondary" size="sm" onClick={() => setImportOpen(true)}>
                 <Upload className="mr-1 h-3.5 w-3.5" /> Import roster
               </Button>
@@ -96,7 +109,17 @@ export function GmRosterPage() {
       {importOpen && <ImportModal current={q.data?.rows ?? []} onClose={() => setImportOpen(false)} />}
       {historyRow && <HistoryModal row={historyRow} onClose={() => setHistoryRow(null)} />}
       {detailsRow && <DetailsModal row={detailsRow} onClose={() => setDetailsRow(null)} />}
+      {bdayOpen && <BirthdayModal gmRows={q.data?.rows ?? []} leaders={leadersQ.data?.rows ?? []} onClose={() => setBdayOpen(false)} />}
 
+      <div className="mb-4 flex gap-1 border-b border-zinc-200">
+        <TabButton active={tab === "gms"} onClick={() => setTab("gms")} label="GMs" count={q.data?.rows.length} />
+        <TabButton active={tab === "leaders"} onClick={() => setTab("leaders")} label="Leaders (DO · SDO · RVP)" count={leadersQ.data?.rows.length} />
+      </div>
+
+      {tab === "leaders" ? (
+        <LeadersTab q={leadersQ} />
+      ) : (
+        <>
       {summary && (
         <div className="mb-3 flex flex-wrap gap-2">
           <FilterChip active={filter === "all"} onClick={() => setFilter("all")} label={`All ${q.data!.rows.length}`} />
@@ -147,7 +170,154 @@ export function GmRosterPage() {
           </div>
         </div>
       )}
+        </>
+      )}
     </>
+  );
+}
+
+function TabButton({ active, onClick, label, count }: { active: boolean; onClick: () => void; label: string; count?: number }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn("-mb-px border-b-2 px-3 py-2 text-sm font-semibold transition",
+        active ? "border-accent text-accent" : "border-transparent text-zinc-500 hover:text-zinc-700")}
+    >
+      {label}{count != null && <span className="ml-1.5 text-xs font-normal text-zinc-400">{count}</span>}
+    </button>
+  );
+}
+
+// ── Leaders tab (DO / SDO / RVP roster) ─────────────────────────────────────
+function LeadersTab({ q }: { q: UseQueryResult<{ ok: true; rows: LeaderRow[] }> }) {
+  const [search, setSearch] = useState("");
+  const rows = useMemo(() => {
+    const all = q.data?.rows ?? [];
+    const s = search.trim().toLowerCase();
+    return s
+      ? all.filter((r) => `${r.name ?? ""} ${ROLE_LABEL[r.role]} ${r.coverage.join(" ")} ${r.email ?? ""}`.toLowerCase().includes(s))
+      : all;
+  }, [q.data, search]);
+
+  if (q.isLoading) return <Skeleton className="h-96 w-full" />;
+  if (q.isError) return <EmptyState title="Couldn't load leaders" description={(q.error as Error)?.message ?? "Try again."} />;
+  if (!rows.length && !search) return <EmptyState title="No leaders found" description="No DO / SDO / RVP resolved for your scope." />;
+
+  return (
+    <>
+      <input
+        value={search}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search name, role, coverage…"
+        className="mb-3 w-full max-w-md rounded-lg border border-zinc-200 px-3 py-2 text-sm focus:border-accent focus:outline-none"
+      />
+      {rows.length === 0 ? (
+        <EmptyState title="Nothing matches" description="No leaders for that search." />
+      ) : (
+        <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-zinc-100 text-left text-[10px] uppercase tracking-wide text-zinc-400">
+                  <th className="px-4 py-2">Name</th>
+                  <th className="px-4 py-2">Role</th>
+                  <th className="px-4 py-2">Coverage</th>
+                  <th className="px-4 py-2">Contact</th>
+                  <th className="px-4 py-2">Birthday</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100">
+                {rows.map((r) => <LeaderRowView key={r.id} r={r} />)}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+function LeaderRowView({ r }: { r: LeaderRow }) {
+  const tone = r.role === "rvp" ? "bg-accent-100 text-accent-700" : r.role === "sdo" ? "bg-sky-50 text-sky-700" : "bg-zinc-100 text-zinc-600";
+  return (
+    <tr className="align-top">
+      <td className="px-4 py-2.5 font-semibold text-midnight">{r.name ?? "—"}</td>
+      <td className="px-4 py-2.5">
+        <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide", tone)}>{ROLE_LABEL[r.role]}</span>
+      </td>
+      <td className="px-4 py-2.5 text-xs text-zinc-500">{r.coverage.length ? r.coverage.join(" · ") : "—"}</td>
+      <td className="px-4 py-2.5 text-xs">
+        {r.email || r.phone ? (
+          <div className="flex flex-col gap-0.5">
+            {r.email && <a href={`mailto:${r.email}`} className="inline-flex items-center gap-1 text-accent hover:underline"><Mail className="h-3 w-3" />{r.email}</a>}
+            {r.phone && <a href={`tel:${r.phone}`} className="inline-flex items-center gap-1 text-zinc-600 hover:underline"><Phone className="h-3 w-3" />{r.phone}</a>}
+          </div>
+        ) : <span className="text-zinc-400">—</span>}
+      </td>
+      <td className="px-4 py-2.5 text-xs text-zinc-600">{r.birthday ? `🎂 ${fmtDate(r.birthday)}` : <span className="text-zinc-400">—</span>}</td>
+    </tr>
+  );
+}
+
+// ── Birthday view — this (or any) month's birthdays across GMs + leaders ─────
+function BirthdayModal({ gmRows, leaders, onClose }: { gmRows: GmRosterRow[]; leaders: LeaderRow[]; onClose: () => void }) {
+  const [month, setMonth] = useState(new Date().getMonth()); // 0-11
+
+  const entries = useMemo(() => {
+    type E = { key: string; name: string; sub: string; mo: number; day: number; disp: string; kind: "gm" | "leader" };
+    const out: E[] = [];
+    const md = (raw: string | null | undefined) => {
+      const iso = parseDate(raw);
+      if (!iso) return null;
+      const [, m, d] = iso.split("-").map(Number);
+      return { mo: m - 1, day: d, disp: new Date(2000, m - 1, d).toLocaleDateString("en-US", { month: "short", day: "numeric" }) };
+    };
+    for (const r of gmRows) {
+      const p = md(r.gm_birthday);
+      if (!p || !r.roster_name) continue;
+      out.push({ key: `gm-${r.store_number}`, name: r.roster_name, sub: `#${r.store_number}${r.store_name ? ` · ${r.store_name}` : ""} · GM`, ...p, kind: "gm" });
+    }
+    for (const l of leaders) {
+      const p = md(l.birthday);
+      if (!p || !l.name) continue;
+      out.push({ key: `ldr-${l.id}`, name: l.name, sub: `${ROLE_LABEL[l.role]}${l.coverage.length ? ` · ${l.coverage.join(", ")}` : ""}`, ...p, kind: "leader" });
+    }
+    return out.filter((e) => e.mo === month).sort((a, b) => a.day - b.day || a.name.localeCompare(b.name));
+  }, [gmRows, leaders, month]);
+
+  const nav = "rounded-md px-2 py-1 text-zinc-500 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50";
+  return (
+    <Modal open onClose={onClose} title="Birthdays" maxWidth="max-w-lg">
+      <div className="mb-3 flex items-center gap-2">
+        <button type="button" className={nav} onClick={() => setMonth((m) => (m + 11) % 12)} aria-label="Previous month">‹</button>
+        <select value={month} onChange={(e) => setMonth(Number(e.target.value))}
+          className="rounded-md border border-zinc-200 px-2.5 py-1.5 text-sm font-semibold focus:border-accent focus:outline-none">
+          {MONTHS.map((m, i) => <option key={i} value={i}>{m}</option>)}
+        </select>
+        <button type="button" className={nav} onClick={() => setMonth((m) => (m + 1) % 12)} aria-label="Next month">›</button>
+        <span className="ml-1 text-xs text-zinc-400">{entries.length} birthday{entries.length === 1 ? "" : "s"}</span>
+        <button type="button" className="ml-auto text-xs font-semibold text-accent hover:underline" onClick={() => setMonth(new Date().getMonth())}>This month</button>
+      </div>
+      {entries.length === 0 ? (
+        <p className="py-8 text-center text-sm text-zinc-500">No birthdays in {MONTHS[month]}.</p>
+      ) : (
+        <ul className="max-h-[60vh] space-y-1.5 overflow-y-auto">
+          {entries.map((e) => (
+            <li key={e.key} className="flex items-center justify-between gap-3 rounded-lg bg-zinc-50 px-3 py-2 ring-1 ring-inset ring-zinc-100">
+              <div className="min-w-0">
+                <div className="truncate text-sm font-semibold text-midnight">{e.name}</div>
+                <div className="truncate text-[11px] text-zinc-500">{e.sub}</div>
+              </div>
+              <div className="flex shrink-0 items-center gap-2 whitespace-nowrap">
+                <span className={cn("rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide", e.kind === "gm" ? "bg-emerald-50 text-emerald-600" : "bg-accent-100 text-accent-700")}>{e.kind === "gm" ? "GM" : "Leader"}</span>
+                <span className="text-xs font-semibold text-zinc-600">🎂 {e.disp}</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </Modal>
   );
 }
 

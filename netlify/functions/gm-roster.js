@@ -118,6 +118,81 @@ async function activeNoGmCredits(supa, numbers) {
   return map;
 }
 
+// Leadership roster — the DO / SDO / RVP who oversee the caller's visible
+// stores, with contact info + birthday. Scoped: from the visible stores we walk
+// up to their districts/areas/regions and pull the leaders scoped to those
+// nodes (primary user_scopes + active additional/acting coverage), mirroring
+// resolveOrg's leadership resolution but returning the profiles themselves.
+const LEADER_ROLES = ["do", "sdo", "rvp"];
+const LEADER_RANK = { do: 1, sdo: 2, rvp: 3 };
+const NODE_ROLE = { district: "do", area: "sdo", region: "rvp" };
+
+async function listLeaders(supa, user) {
+  const role = String(user.role).toLowerCase();
+  if (!EDIT_ROLES.has(role)) return { error: "forbidden", status: 403 };
+  const visible = await visibleStoreNumbers(supa, user); // null = org-wide
+  if (visible && !visible.size) return { rows: [] };
+
+  const { data: stores } = await supa.from("stores").select("number, district_id").or("brand.eq.sonic,brand.is.null");
+  const scoped = visible ? (stores || []).filter((s) => visible.has(String(s.number))) : (stores || []);
+  const districtIds = [...new Set(scoped.map((s) => s.district_id).filter(Boolean))];
+  const { data: districts } = districtIds.length
+    ? await supa.from("districts").select("id, name, area_id").in("id", districtIds) : { data: [] };
+  const areaIds = [...new Set((districts || []).map((d) => d.area_id).filter(Boolean))];
+  const { data: areas } = areaIds.length
+    ? await supa.from("areas").select("id, name, region_id").in("id", areaIds) : { data: [] };
+  const regionIds = [...new Set((areas || []).map((a) => a.region_id).filter(Boolean))];
+  const { data: regions } = regionIds.length
+    ? await supa.from("regions").select("id, name").in("id", regionIds) : { data: [] };
+
+  // node id -> { role, label } for the three leadership levels.
+  const nodeMeta = new Map();
+  for (const d of districts || []) nodeMeta.set(d.id, { role: "do", label: d.name });
+  for (const a of areas || []) nodeMeta.set(a.id, { role: "sdo", label: a.name });
+  for (const r of regions || []) nodeMeta.set(r.id, { role: "rvp", label: r.name });
+  const nodeIds = [...districtIds, ...areaIds, ...regionIds];
+  if (!nodeIds.length) return { rows: [] };
+
+  const nowIso = new Date().toISOString();
+  const [{ data: scopeRows }, { data: addlRows }] = await Promise.all([
+    supa.from("user_scopes").select("user_id, scope_id").in("scope_id", nodeIds),
+    supa.from("additional_scopes").select("user_id, scope_id, expires_at").in("scope_id", nodeIds),
+  ]);
+  const activeAddl = (addlRows || []).filter((r) => !r.expires_at || r.expires_at > nowIso);
+  const covByUser = new Map(); // user_id -> [{ role, label }]
+  for (const s of [...(scopeRows || []), ...activeAddl]) {
+    const meta = nodeMeta.get(s.scope_id);
+    if (!meta) continue;
+    (covByUser.get(s.user_id) || covByUser.set(s.user_id, []).get(s.user_id)).push(meta);
+  }
+  const userIds = [...covByUser.keys()];
+  if (!userIds.length) return { rows: [] };
+
+  const { data: profs } = await supa.from("profiles")
+    .select("id, full_name, preferred_name, email, phone, role, birthday, show_birthday, is_active")
+    .in("id", userIds).eq("is_active", true).in("role", LEADER_ROLES);
+
+  const rows = (profs || []).map((p) => {
+    const r = String(p.role).toLowerCase();
+    const cov = covByUser.get(p.id) || [];
+    // Prefer nodes matching this leader's own level; if they only hold acting
+    // coverage at another level, fall back to whatever nodes they cover.
+    const own = cov.filter((c) => c.role === r).map((c) => c.label);
+    const labels = [...new Set((own.length ? own : cov.map((c) => c.label)))].sort();
+    return {
+      id: p.id,
+      name: displayName(p),
+      role: r,
+      email: p.email || null,
+      phone: p.phone || null,
+      birthday: p.show_birthday === false ? null : (p.birthday || null),
+      coverage: labels,
+    };
+  }).sort((a, b) => (LEADER_RANK[b.role] - LEADER_RANK[a.role]) || String(a.name || "").localeCompare(String(b.name || "")));
+
+  return { rows };
+}
+
 async function listRoster(supa, user) {
   const role = String(user.role).toLowerCase();
   if (!EDIT_ROLES.has(role)) return { error: "forbidden", status: 403 };
@@ -329,6 +404,7 @@ export const handler = async (event) => {
 
   try {
     if (event.httpMethod === "GET" && action === "list") return unwrap(await listRoster(supa, user));
+    if (event.httpMethod === "GET" && action === "leaders") return unwrap(await listLeaders(supa, user));
     if (event.httpMethod === "GET" && action === "history") return unwrap(await rosterHistory(supa, user, params));
     if (event.httpMethod === "POST" && action === "import") {
       const body = event.body ? JSON.parse(event.body) : {};
