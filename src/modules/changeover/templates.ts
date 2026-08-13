@@ -133,6 +133,16 @@ export const CHANGEOVER_TEMPLATES: Record<ChangeoverKind, ChecklistTemplate> = {
 export function templateFor(kind: ChangeoverKind): ChecklistTemplate {
   return CHANGEOVER_TEMPLATES[kind];
 }
+
+// The built-in items flattened for a one-click "load defaults into the editable
+// table" import (used before/instead of the migration seed).
+export interface ImportItem { section: string; section_order: number; sort_order: number; item_key: string; label: string; hint: string | null }
+export function builtinImportItems(kind: ChangeoverKind): ImportItem[] {
+  const out: ImportItem[] = [];
+  CHANGEOVER_TEMPLATES[kind].sections.forEach((s, si) =>
+    s.items.forEach((it, ii) => out.push({ section: s.title, section_order: si, sort_order: ii, item_key: it.key, label: it.label, hint: it.hint ?? null })));
+  return out;
+}
 // Item count for an assembled template (works for built-in or DB-backed).
 export function countItems(tpl: ChecklistTemplate): number {
   return tpl.sections.reduce((n, s) => n + s.items.length, 0);

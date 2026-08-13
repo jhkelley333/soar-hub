@@ -4,14 +4,14 @@
 // in-progress checklists — those key their progress by item_key.
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ChevronUp, ChevronDown, Trash2, Plus, X } from "lucide-react";
+import { ChevronUp, ChevronDown, Trash2, Plus, X, Download } from "lucide-react";
 import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { deleteTemplateItem, moveTemplateItem, saveTemplateItem } from "./api";
+import { deleteTemplateItem, importDefaultItems, moveTemplateItem, saveTemplateItem } from "./api";
 import { useChangeoverTemplates } from "./useTemplates";
-import type { ChangeoverKind, TemplateItem } from "./templates";
+import { builtinImportItems, CHANGEOVER_TEMPLATES, type ChangeoverKind, type TemplateItem } from "./templates";
 
 const KIND_LABEL: Record<ChangeoverKind, string> = { do: "DO changeover", gm: "GM changeover" };
 
@@ -19,12 +19,13 @@ export function ChangeoverTemplateEditor({ onClose }: { onClose: () => void }) {
   const { items, isLoading } = useChangeoverTemplates();
   const [kind, setKind] = useState<ChangeoverKind>("do");
 
+  const forKind = useMemo(() => items.filter((i) => i.kind === kind), [items, kind]);
   const sections = useMemo(() => {
-    const forKind = items.filter((i) => i.kind === kind);
     const map = new Map<string, TemplateItem[]>();
     for (const it of forKind) (map.get(it.section) ?? map.set(it.section, []).get(it.section)!).push(it);
     return [...map.entries()]; // already ordered by the backend
-  }, [items, kind]);
+  }, [forKind]);
+  const dbEmpty = forKind.length === 0;
 
   return (
     <Modal open onClose={onClose} title="Edit changeover checklist" maxWidth="max-w-2xl">
@@ -39,6 +40,8 @@ export function ChangeoverTemplateEditor({ onClose }: { onClose: () => void }) {
 
       {isLoading ? (
         <div className="py-8 text-center text-sm text-zinc-500">Loading…</div>
+      ) : dbEmpty ? (
+        <DefaultsPreview kind={kind} />
       ) : (
         <div className="max-h-[60vh] space-y-5 overflow-y-auto pr-1">
           {sections.map(([section, secItems]) => (
@@ -61,6 +64,43 @@ export function ChangeoverTemplateEditor({ onClose }: { onClose: () => void }) {
       </div>
       <p className="mt-2 text-[11px] text-zinc-400">Changes apply to new and in-progress checklists. Existing checked items are keyed and never lost when you edit or reorder.</p>
     </Modal>
+  );
+}
+
+// Shown when a kind has no editable items yet: the built-in defaults, with a
+// one-click import that makes them editable (writes them into the DB table).
+function DefaultsPreview({ kind }: { kind: ChangeoverKind }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const tpl = CHANGEOVER_TEMPLATES[kind];
+  const load = useMutation({
+    mutationFn: () => importDefaultItems(kind, builtinImportItems(kind)),
+    onSuccess: (r) => { qc.invalidateQueries({ queryKey: ["changeover-templates"] }); toast.push(`Loaded ${r.imported} items — now editable.`, "success"); },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't load items.", "error"),
+  });
+  return (
+    <div>
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-inset ring-amber-200">
+        <span>These are the built-in {tpl.title} items. Load them to edit the wording, reorder, or remove them.</span>
+        <Button size="sm" onClick={() => load.mutate()} disabled={load.isPending}>
+          <Download className="mr-1.5 h-3.5 w-3.5" /> {load.isPending ? "Loading…" : "Load to edit"}
+        </Button>
+      </div>
+      <div className="max-h-[52vh] space-y-4 overflow-y-auto pr-1">
+        {tpl.sections.map((s) => (
+          <div key={s.title}>
+            <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-zinc-500">{s.title}</div>
+            <ul className="space-y-1">
+              {s.items.map((it) => (
+                <li key={it.key} className="rounded-lg bg-zinc-50 px-3 py-1.5 text-sm text-zinc-600 ring-1 ring-inset ring-zinc-100">
+                  {it.label}{it.hint && <span className="ml-1 text-[11px] text-zinc-400">— {it.hint}</span>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

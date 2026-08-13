@@ -212,6 +212,25 @@ export const handler = async (event) => {
       return respond(200, { ok: true, id: data?.id, item_key: data?.item_key });
     }
 
+    if (action === "import-defaults") {
+      if (user.role !== "admin") return respond(403, { error: "Only an admin can edit the checklist." });
+      const kind = String(body.kind || "").trim();
+      if (!KINDS.has(kind)) return respond(400, { error: "kind must be 'do' or 'gm'." });
+      const items = Array.isArray(body.items) ? body.items : [];
+      if (!items.length) return respond(400, { error: "no items to import" });
+      const rows = items.map((it) => ({
+        kind, section: clean(it.section, 120) || "Section",
+        section_order: Number(it.section_order) || 0, sort_order: Number(it.sort_order) || 0,
+        item_key: clean(it.item_key, 120), label: clean(it.label, 300) || "Item", hint: clean(it.hint, 500),
+      })).filter((r) => r.item_key);
+      const { error } = await supa.from("changeover_template_items").upsert(rows, { onConflict: "item_key", ignoreDuplicates: true });
+      if (error) {
+        if (/changeover_template_items/.test(error.message)) return respond(500, { error: "Run migration 0286 first (changeover_template_items is missing)." });
+        return respond(500, { error: error.message });
+      }
+      return respond(200, { ok: true, imported: rows.length });
+    }
+
     if (action === "delete-template-item") {
       if (user.role !== "admin") return respond(403, { error: "Only an admin can edit the checklist." });
       const id = clean(body.id, 60);

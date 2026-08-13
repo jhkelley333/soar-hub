@@ -1,6 +1,6 @@
 // Store changeover checklists — typed client for the changeover function.
 import { supabase } from "@/lib/supabase";
-import type { ChangeoverKind, TemplateItem } from "./templates";
+import type { ChangeoverKind, ImportItem, TemplateItem } from "./templates";
 
 const FN = "/.netlify/functions/changeover";
 
@@ -78,4 +78,7 @@ export function deleteTemplateItem(id: string): Promise<{ ok: true }> {
 }
 export function moveTemplateItem(id: string, dir: "up" | "down"): Promise<{ ok: true }> {
   return req(`${FN}?action=move-template-item`, { method: "POST", body: JSON.stringify({ id, dir }) });
+}
+export function importDefaultItems(kind: ChangeoverKind, items: ImportItem[]): Promise<{ ok: true; imported: number }> {
+  return req(`${FN}?action=import-defaults`, { method: "POST", body: JSON.stringify({ kind, items }) });
 }
