@@ -12,7 +12,8 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { deleteChangeover, fetchChangeover, updateChangeover, updateChangeoverItem, type ChangeoverDetail, type ItemProgress } from "./api";
-import { itemCount, templateFor, type ChecklistItem } from "./templates";
+import { countItems, type ChecklistItem, type ChecklistTemplate } from "./templates";
+import { useChangeoverTemplates } from "./useTemplates";
 import { downloadChangeoverXlsx } from "./changeoverExport";
 
 export function ChangeoverDetailPage() {
@@ -33,11 +34,12 @@ export function ChangeoverDetailPage() {
 }
 
 function Detail({ c, canEdit }: { c: ChangeoverDetail; canEdit: boolean }) {
-  const tpl = templateFor(c.kind);
+  const { templates } = useChangeoverTemplates();
+  const tpl = templates[c.kind];
   const qc = useQueryClient();
   const toast = useToast();
   const nav = useNavigate();
-  const total = itemCount(c.kind);
+  const total = countItems(tpl);
   const pct = total ? Math.round((c.checked_count / total) * 100) : 0;
   const invalidate = () => qc.invalidateQueries({ queryKey: ["changeover", c.id] });
 
@@ -94,7 +96,7 @@ function Detail({ c, canEdit }: { c: ChangeoverDetail; canEdit: boolean }) {
         </div>
 
         <div className="space-y-4">
-          <DetailsCard c={c} canEdit={canEdit} onSaved={invalidate} />
+          <DetailsCard c={c} tpl={tpl} canEdit={canEdit} onSaved={invalidate} />
           <NotesCard c={c} canEdit={canEdit} onSaved={invalidate} />
           {canEdit && (
             <Button variant="ghost" size="sm" className="text-red-600 hover:bg-red-50"
@@ -155,8 +157,7 @@ function ItemRow({ checklistId, item, p, canEdit, onSaved }: { checklistId: stri
   );
 }
 
-function DetailsCard({ c, canEdit, onSaved }: { c: ChangeoverDetail; canEdit: boolean; onSaved: () => void }) {
-  const tpl = templateFor(c.kind);
+function DetailsCard({ c, tpl, canEdit, onSaved }: { c: ChangeoverDetail; tpl: ChecklistTemplate; canEdit: boolean; onSaved: () => void }) {
   const toast = useToast();
   const [outgoing, setOutgoing] = useState(c.outgoing_name ?? "");
   const [incoming, setIncoming] = useState(c.incoming_name ?? "");

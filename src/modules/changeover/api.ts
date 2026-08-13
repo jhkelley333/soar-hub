@@ -1,6 +1,6 @@
 // Store changeover checklists — typed client for the changeover function.
 import { supabase } from "@/lib/supabase";
-import type { ChangeoverKind } from "./templates";
+import type { ChangeoverKind, TemplateItem } from "./templates";
 
 const FN = "/.netlify/functions/changeover";
 
@@ -64,4 +64,18 @@ export function updateChangeoverItem(id: string, item_key: string, patch: { chec
 }
 export function deleteChangeover(id: string): Promise<{ ok: true }> {
   return req(`${FN}?action=delete`, { method: "POST", body: JSON.stringify({ id }) });
+}
+
+// ── Editable checklist items (admin) ─────────────────────────────────────────
+export function fetchTemplateItems(): Promise<{ items: TemplateItem[]; can_manage: boolean }> {
+  return req(`${FN}?action=templates`);
+}
+export function saveTemplateItem(input: { id?: string; kind: ChangeoverKind; section: string; label: string; hint?: string }): Promise<{ ok: true; id: string; item_key?: string }> {
+  return req(`${FN}?action=save-template-item`, { method: "POST", body: JSON.stringify(input) });
+}
+export function deleteTemplateItem(id: string): Promise<{ ok: true }> {
+  return req(`${FN}?action=delete-template-item`, { method: "POST", body: JSON.stringify({ id }) });
+}
+export function moveTemplateItem(id: string, dir: "up" | "down"): Promise<{ ok: true }> {
+  return req(`${FN}?action=move-template-item`, { method: "POST", body: JSON.stringify({ id, dir }) });
 }

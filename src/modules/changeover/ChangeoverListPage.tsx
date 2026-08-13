@@ -4,7 +4,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Plus, ClipboardList, ArrowRight, UserCog, Store } from "lucide-react";
+import { Plus, ClipboardList, ArrowRight, UserCog, Store, Settings } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
@@ -13,7 +13,9 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { createChangeover, fetchChangeovers, type ChangeoverListRow, type ChangeoverStatus } from "./api";
-import { itemCount, templateFor, type ChangeoverKind } from "./templates";
+import { countItems, type ChangeoverKind, type ChecklistTemplate } from "./templates";
+import { useChangeoverTemplates } from "./useTemplates";
+import { ChangeoverTemplateEditor } from "./ChangeoverTemplateEditor";
 
 const STATUS_META: Record<ChangeoverStatus, { label: string; cls: string }> = {
   open: { label: "Open", cls: "bg-zinc-100 text-zinc-600" },
@@ -25,9 +27,11 @@ const KIND_LABEL: Record<ChangeoverKind, string> = { do: "DO changeover", gm: "G
 export function ChangeoverListPage() {
   const nav = useNavigate();
   const q = useQuery({ queryKey: ["changeovers"], queryFn: fetchChangeovers });
+  const { templates, canManage } = useChangeoverTemplates();
   const [kindFilter, setKindFilter] = useState<"all" | ChangeoverKind>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | ChangeoverStatus>("all");
   const [createKind, setCreateKind] = useState<ChangeoverKind | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
 
   const rows = useMemo(() => {
     let r = q.data?.rows ?? [];
@@ -45,6 +49,11 @@ export function ChangeoverListPage() {
         description="Changeover checklists — SDO/RVP run the DO list, DOs run the GM list. Assign one to a store and work through it."
         actions={
           <div className="flex flex-wrap items-center gap-2">
+            {canManage && (
+              <Button variant="ghost" size="sm" onClick={() => setEditOpen(true)} title="Add / edit the checklist items (admin)">
+                <Settings className="mr-1 h-3.5 w-3.5" /> Edit checklist
+              </Button>
+            )}
             {canCreate?.do && (
               <Button variant="secondary" size="sm" onClick={() => setCreateKind("do")}>
                 <Plus className="mr-1 h-3.5 w-3.5" /> DO changeover
@@ -59,7 +68,8 @@ export function ChangeoverListPage() {
         }
       />
 
-      {createKind && <CreateModal kind={createKind} onClose={() => setCreateKind(null)} onCreated={(id) => nav(`/changeover/${id}`)} />}
+      {createKind && <CreateModal kind={createKind} tpl={templates[createKind]} onClose={() => setCreateKind(null)} onCreated={(id) => nav(`/changeover/${id}`)} />}
+      {editOpen && <ChangeoverTemplateEditor onClose={() => setEditOpen(false)} />}
 
       <div className="mb-3 flex flex-wrap gap-2">
         {(["all", "do", "gm"] as const).map((k) => (
@@ -79,15 +89,15 @@ export function ChangeoverListPage() {
         <EmptyState title="No changeovers yet" description={canCreate?.do || canCreate?.gm ? "Start one with the buttons above." : "Nothing assigned to you yet."} />
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {rows.map((r) => <ChangeoverCard key={r.id} r={r} onOpen={() => nav(`/changeover/${r.id}`)} />)}
+          {rows.map((r) => <ChangeoverCard key={r.id} r={r} tpl={templates[r.kind]} onOpen={() => nav(`/changeover/${r.id}`)} />)}
         </div>
       )}
     </>
   );
 }
 
-function ChangeoverCard({ r, onOpen }: { r: ChangeoverListRow; onOpen: () => void }) {
-  const total = itemCount(r.kind);
+function ChangeoverCard({ r, tpl, onOpen }: { r: ChangeoverListRow; tpl: ChecklistTemplate; onOpen: () => void }) {
+  const total = countItems(tpl);
   const pct = total ? Math.round((r.checked_count / total) * 100) : 0;
   const meta = STATUS_META[r.status];
   return (
@@ -120,10 +130,9 @@ function ChangeoverCard({ r, onOpen }: { r: ChangeoverListRow; onOpen: () => voi
   );
 }
 
-function CreateModal({ kind, onClose, onCreated }: { kind: ChangeoverKind; onClose: () => void; onCreated: (id: string) => void }) {
+function CreateModal({ kind, tpl, onClose, onCreated }: { kind: ChangeoverKind; tpl: ChecklistTemplate; onClose: () => void; onCreated: (id: string) => void }) {
   const toast = useToast();
   const qc = useQueryClient();
-  const tpl = templateFor(kind);
   const [storeNumber, setStoreNumber] = useState("");
   const [outgoing, setOutgoing] = useState("");
   const [incoming, setIncoming] = useState("");
