@@ -436,18 +436,16 @@ function OrderSignModal({ store, standard, onClose }: { store: StoreMeta; standa
   const qc = useQueryClient();
   const toast = useToast();
   const settingsQ = useQuery({ queryKey: ["sign-settings"], queryFn: fetchSignSettings });
-  const [to, setTo] = useState("");
   const [message, setMessage] = useState("");
   const [seeded, setSeeded] = useState(false);
   const [image, setImage] = useState<{ name: string; content: string } | null>(null);
   const [verified, setVerified] = useState(false);
 
+  // Recipient is fixed by Sign order settings (admin) — not editable here.
+  const recipient = settingsQ.data?.settings.to ?? "";
+
   useEffect(() => {
-    if (settingsQ.data && !seeded) {
-      setTo(settingsQ.data.settings.to);
-      setMessage(settingsQ.data.settings.message);
-      setSeeded(true);
-    }
+    if (settingsQ.data && !seeded) { setMessage(settingsQ.data.settings.message); setSeeded(true); }
   }, [settingsQ.data, seeded]);
 
   const onFile = (f: File) => {
@@ -457,7 +455,8 @@ function OrderSignModal({ store, standard, onClose }: { store: StoreMeta; standa
   };
 
   const send = useMutation({
-    mutationFn: () => orderSign({ store_number: store.number, to: to.trim(), message: message.trim() || undefined, image }),
+    // Omit `to` — the server uses the saved Sign-order recipient.
+    mutationFn: () => orderSign({ store_number: store.number, message: message.trim() || undefined, image }),
     onSuccess: (r) => {
       toast.push(`Sign order sent to ${r.to}.`, "success");
       qc.invalidateQueries({ queryKey: ["store-hours", store.number] });
@@ -469,6 +468,7 @@ function OrderSignModal({ store, standard, onClose }: { store: StoreMeta; standa
 
   const fullAddress = [store.address, store.city, store.state].filter(Boolean).join(", ") + (store.zip ? ` ${store.zip}` : "");
   const emailOff = settingsQ.data?.email_configured === false;
+  const noRecipient = !!settingsQ.data && !isEmail(recipient);
   const cls = "w-full rounded-md border border-zinc-200 px-2.5 py-1.5 text-sm focus:border-accent focus:outline-none";
 
   return (
@@ -476,7 +476,7 @@ function OrderSignModal({ store, standard, onClose }: { store: StoreMeta; standa
       footer={
         <>
           <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
-          <Button size="sm" onClick={() => send.mutate()} disabled={!isEmail(to) || !verified || send.isPending || emailOff}>
+          <Button size="sm" onClick={() => send.mutate()} disabled={noRecipient || !verified || send.isPending || emailOff}>
             <Mail className="mr-1.5 h-3.5 w-3.5" /> {send.isPending ? "Sending…" : "Send order"}
           </Button>
         </>
@@ -486,11 +486,16 @@ function OrderSignModal({ store, standard, onClose }: { store: StoreMeta; standa
           Email isn't configured on the server yet (RESEND_API_KEY) — the order can't be sent.
         </div>
       )}
+      {noRecipient && (
+        <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-inset ring-amber-200">
+          No vendor email is set. An admin sets it under <strong>Sign order settings</strong> on the Hours of Operation page.
+        </div>
+      )}
       <div className="space-y-3">
-        <label className="block">
+        <div>
           <span className="mb-0.5 block text-xs font-semibold text-zinc-500">Send to (vendor email)</span>
-          <input type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder="signs@vendor.com" className={cls} />
-        </label>
+          <div className="rounded-md bg-zinc-50 px-2.5 py-1.5 text-sm text-zinc-600 ring-1 ring-inset ring-zinc-200">{recipient || "— not set —"}</div>
+        </div>
         <label className="block">
           <span className="mb-0.5 block text-xs font-semibold text-zinc-500">Message</span>
           <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={3} className={cls} />
