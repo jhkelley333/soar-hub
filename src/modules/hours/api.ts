@@ -136,3 +136,20 @@ export interface BulkImportResult { ok: boolean; imported_stores: number; import
 export function bulkImportHours(rows: { store_number: string; days: DayHours[] }[]): Promise<BulkImportResult> {
   return request(`${FN}?action=bulk-import`, { method: "POST", body: JSON.stringify({ rows }) });
 }
+
+// ── Sign ordering ────────────────────────────────────────────────────────────
+export interface SignSettings { to: string; subject: string; message: string }
+export function fetchSignSettings(): Promise<{ settings: SignSettings; can_edit: boolean; email_configured: boolean }> {
+  return request(`${FN}?action=sign-settings`);
+}
+export function saveSignSettings(s: SignSettings): Promise<{ ok: boolean; settings: SignSettings }> {
+  return request(`${FN}?action=save-sign-settings`, { method: "POST", body: JSON.stringify(s) });
+}
+// Order a store's hours-of-op sign. `to`/`message` override the saved defaults
+// for this one order; `image` optionally attaches a reference (base64 content).
+export function orderSign(input: {
+  store_number: string; to?: string; subject?: string; message?: string;
+  image?: { name: string; content: string } | null;
+}): Promise<{ ok: boolean; to: string; sign_ordered: boolean }> {
+  return request(`${FN}?action=order-sign`, { method: "POST", body: JSON.stringify(input) });
+}

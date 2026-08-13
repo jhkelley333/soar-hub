@@ -12,6 +12,20 @@ const VIEW_ROLES = new Set(["admin", "vp", "coo", "sdo", "rvp"]); // can open th
 const ORG_WIDE = new Set(["admin", "vp", "coo"]);                 // see every store
 const IMPORT_ROLES = new Set(["admin", "vp", "coo"]);             // bulk import / backfill
 
+// Hours-of-operation sign ordering. The recipient (vendor) + subject + message
+// defaults live in ea_settings (key hours_sign_order), editable by IMPORT_ROLES
+// from the Sign order settings; each order can override the to/message inline.
+const RESEND_API_KEY = process.env.RESEND_API_KEY;
+const RESEND_FROM_EMAIL = process.env.RESEND_FROM_EMAIL || "paf@mysoarhub.com";
+const RESEND_FROM_NAME = "SOAR Hours of Operation";
+const SIGN_SETTINGS_KEY = "hours_sign_order";
+const SIGN_DEFAULTS = {
+  to: "",
+  subject: "Hours of Operation Sign Order — Store {{store}}",
+  message: "Order Approved, No Proof Needed. Please ship to the store address below.",
+};
+const isEmail = (v) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(v || "").trim());
+
 // The store ids a user may act on. ORG_WIDE roles → null (no restriction);
 // SDO/RVP → their org scope via user_visible_stores(uid).
 async function visibleIds(supa, user) {
@@ -84,6 +98,75 @@ async function selectAll(make) {
     if (data.length < 1000) break;
   }
   return out;
+}
+
+// ── Sign-order email ─────────────────────────────────────────────────────────
+async function getSignSettings(supa) {
+  let v = {};
+  try {
+    const { data } = await supa.from("ea_settings").select("value").eq("key", SIGN_SETTINGS_KEY).maybeSingle();
+    v = data?.value || {};
+  } catch { /* ea_settings may be absent → defaults */ }
+  return {
+    to: typeof v.to === "string" ? v.to : SIGN_DEFAULTS.to,
+    subject: typeof v.subject === "string" && v.subject.trim() ? v.subject : SIGN_DEFAULTS.subject,
+    message: typeof v.message === "string" && v.message.trim() ? v.message : SIGN_DEFAULTS.message,
+  };
+}
+
+const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+function to12h(t) {
+  const m = /^(\d{1,2}):(\d{2})/.exec(String(t || ""));
+  if (!m) return "";
+  let h = Number(m[1]); const ap = h >= 12 ? "PM" : "AM"; h = h % 12 || 12;
+  return `${h}:${m[2]} ${ap}`;
+}
+function dayLine(d) {
+  if (!d || d.is_closed) return "Closed";
+  if (!d.open || !d.close) return "—";
+  return `${to12h(d.open)} – ${to12h(d.close)}`; // en dash
+}
+// daysArr: length-7 (index = day_of_week, 0=Mon) of {is_closed, open, close}|null.
+function buildHoursLines(daysArr) {
+  return DAY_NAMES.map((day, dow) => ({ day, val: dayLine(daysArr[dow]) }));
+}
+const escHtml = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+function buildSignEmailHtml({ message, shipName, addrLines, hoursLines, hasImage }) {
+  const rows = hoursLines
+    .map((l) => `<tr><td style="padding:2px 16px 2px 0;color:#555;">${escHtml(l.day)}</td><td style="padding:2px 0;font-weight:600;">${escHtml(l.val)}</td></tr>`)
+    .join("");
+  const addr = addrLines.map(escHtml).join("<br>");
+  return `<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#222;line-height:1.5;">
+  <p style="font-size:15px;font-weight:700;margin:0 0 16px;">${escHtml(message)}</p>
+  <p style="margin:0 0 4px;font-weight:700;">Ship to</p>
+  <p style="margin:0 0 16px;">${escHtml(shipName)}<br>${addr}</p>
+  <p style="margin:0 0 4px;font-weight:700;">Hours for the sign</p>
+  <table style="border-collapse:collapse;margin:0 0 16px;">${rows}</table>
+  ${hasImage ? `<p style="color:#555;margin:0;">A reference image is attached.</p>` : ""}
+</div>`;
+}
+
+async function sendSignEmail({ to, subject, html, attachments }) {
+  if (!RESEND_API_KEY) return { skipped: true };
+  const recipients = (Array.isArray(to) ? to : [to]).filter(Boolean);
+  if (!recipients.length) return { ok: false, error: "no recipient" };
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        from: `${RESEND_FROM_NAME} <${RESEND_FROM_EMAIL}>`,
+        to: recipients, subject, html,
+        ...(attachments && attachments.length ? { attachments } : {}),
+      }),
+    });
+    if (!res.ok) { const detail = await res.text().catch(() => ""); return { ok: false, status: res.status, error: (detail || "").slice(0, 300) }; }
+    const json = await res.json().catch(() => ({}));
+    return { ok: true, id: json?.id };
+  } catch (e) {
+    return { ok: false, error: e?.message || "send failed" };
+  }
 }
 
 export const handler = async (event) => {
@@ -244,9 +327,83 @@ export const handler = async (event) => {
       return respond(200, { store: { number: String(store.number), name: store.name }, history });
     }
 
+    // ── sign-settings: the default vendor recipient + subject + message ───────
+    if (event.httpMethod === "GET" && action === "sign-settings") {
+      const settings = await getSignSettings(supa);
+      return respond(200, { settings, can_edit: IMPORT_ROLES.has(user.role), email_configured: !!RESEND_API_KEY });
+    }
+
     if (event.httpMethod !== "POST") return respond(405, { error: "method not allowed" });
     let body = {};
     try { body = JSON.parse(event.body || "{}"); } catch { body = {}; }
+
+    // ── save-sign-settings: update the default recipient/subject/message ──────
+    if (action === "save-sign-settings") {
+      if (!IMPORT_ROLES.has(user.role)) return respond(403, { error: "Only Admin / VP / COO can change sign settings." });
+      const to = String(body.to ?? "").trim();
+      if (to && !isEmail(to)) return respond(400, { error: "Enter a valid recipient email." });
+      const subject = String(body.subject ?? "").trim() || SIGN_DEFAULTS.subject;
+      const message = String(body.message ?? "").trim() || SIGN_DEFAULTS.message;
+      const { error } = await supa.from("ea_settings").upsert({ key: SIGN_SETTINGS_KEY, value: { to, subject, message } }, { onConflict: "key" });
+      if (error) return respond(500, { error: error.message });
+      return respond(200, { ok: true, settings: { to, subject, message } });
+    }
+
+    // ── order-sign: email the vendor to order a store's hours-of-op sign ──────
+    if (action === "order-sign") {
+      const storeNumber = String(body.store_number || body.store || "").trim();
+      if (!storeNumber) return respond(400, { error: "store_number is required" });
+      const { data: store } = await supa.from("stores")
+        .select("id, number, name, address, city, state, zip")
+        .eq("number", storeNumber).neq("brand", "little_caesars").maybeSingle();
+      if (!store) return respond(404, { error: "Store not found." });
+      if (!inScope(scope, store.id)) return respond(403, { error: "This store isn't in your scope." });
+      if (!RESEND_API_KEY) return respond(500, { error: "Email isn't configured on the server (RESEND_API_KEY missing)." });
+
+      const settings = await getSignSettings(supa);
+      const to = String(body.to ?? settings.to ?? "").trim();
+      if (!isEmail(to)) return respond(400, { error: "A valid recipient email is required — set one in Sign order settings or the order form." });
+      const subjectTpl = String(body.subject ?? "").trim() || settings.subject;
+      const messageTpl = String(body.message ?? "").trim() || settings.message;
+
+      // Assemble the store's standard hours.
+      const { data: hrs } = await supa.from("store_hours")
+        .select("day_of_week, is_closed, open_time, close_time").eq("store_id", store.id);
+      const daysArr = Array(7).fill(null);
+      for (const r of hrs || []) daysArr[r.day_of_week] = { is_closed: r.is_closed, open: hhmm(r.open_time), close: hhmm(r.close_time) };
+      const hoursLines = buildHoursLines(daysArr);
+
+      const shipName = `${store.name || "SONIC Drive-In"} #${store.number}`;
+      const cityLine = [store.city, store.state].filter(Boolean).join(", ") + (store.zip ? ` ${store.zip}` : "");
+      const addrLines = [store.address, cityLine].map((x) => (x || "").trim()).filter(Boolean);
+      const fullAddress = [store.address, store.city, store.state].filter(Boolean).join(", ") + (store.zip ? ` ${store.zip}` : "");
+      const fill = (t) => String(t)
+        .replace(/\{\{store\}\}/g, store.number)
+        .replace(/\{\{name\}\}/g, store.name || "")
+        .replace(/\{\{address\}\}/g, fullAddress)
+        .replace(/\{\{hours\}\}/g, hoursLines.map((l) => `${l.day}: ${l.val}`).join("; "));
+
+      let attachments = [];
+      if (body.image && body.image.content) {
+        const content = String(body.image.content).replace(/^data:[^;]+;base64,/, "");
+        if (content) attachments = [{ filename: String(body.image.name || "sign-reference.png").slice(0, 120), content }];
+      }
+
+      const html = buildSignEmailHtml({ message: fill(messageTpl), shipName, addrLines, hoursLines, hasImage: attachments.length > 0 });
+      const sent = await sendSignEmail({ to, subject: fill(subjectTpl), html, attachments });
+      if (sent.skipped) return respond(500, { error: "Email isn't configured on the server (RESEND_API_KEY missing)." });
+      if (!sent.ok) return respond(502, { error: `Email failed: ${sent.error || sent.status || "unknown"}` });
+
+      // Mark the sign ordered on the reconciliation record (best-effort).
+      try {
+        const now = new Date().toISOString();
+        const { data: rec } = await supa.from("hours_reconciliation").select("store_id").eq("store_id", store.id).maybeSingle();
+        if (rec) await supa.from("hours_reconciliation").update({ sign_ordered: true, reviewed_by: user.id, reviewed_at: now }).eq("store_id", store.id);
+        else await supa.from("hours_reconciliation").insert({ store_id: store.id, status: "in_progress", sign_order_needed: true, sign_ordered: true, reviewed_by: user.id, reviewed_at: now });
+      } catch { /* non-fatal */ }
+
+      return respond(200, { ok: true, to, sign_ordered: true });
+    }
 
     // ── save-standard: upsert all 7 weekday rows for a store ──────────────────
     if (action === "save-standard") {

@@ -4,17 +4,20 @@
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Clock, CalendarDays, History, Wrench, Plus, Trash2, MapPin, CheckCircle2, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Clock, CalendarDays, History, Wrench, Plus, Trash2, MapPin, CheckCircle2, AlertTriangle, Signpost, Mail, ImagePlus, X } from "lucide-react";
 import { Card } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
+import { Modal } from "@/shared/ui/Modal";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { checkStoreGoogle, deleteSpecialHours, fetchStoreHours, fetchStoreHoursHistory, saveReconciliation, saveSpecialHours, saveStandardHours, type DayHours, type GoogleCompare, type HoursHistoryEntry, type Reconciliation, type ReconSystem, type SpecialHours as SpecialHoursRow } from "./api";
+import { checkStoreGoogle, deleteSpecialHours, fetchSignSettings, fetchStoreHours, fetchStoreHoursHistory, orderSign, saveReconciliation, saveSpecialHours, saveStandardHours, type DayHours, type GoogleCompare, type HoursHistoryEntry, type Reconciliation, type ReconSystem, type SpecialHours as SpecialHoursRow } from "./api";
 import { DAY_LABELS, DAY_SHORT, fmtRange, isOvernight, to12 } from "./hoursFmt";
 
 type Tab = "standard" | "special" | "history" | "reconcile";
+type StoreMeta = { id: string; number: string; name: string; address: string | null; city: string | null; state: string | null; zip: string | null };
+const isEmail = (v: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v.trim());
 
 export function LocationHoursPage() {
   const { storeNumber = "" } = useParams();
@@ -67,7 +70,7 @@ export function LocationHoursPage() {
                 : tab === "special"
                 ? <SpecialHours storeId={query.data.store.id} storeNumber={storeNumber} initial={query.data.special} />
                 : tab === "reconcile"
-                ? <ReconcileTab storeId={query.data.store.id} storeNumber={storeNumber} initial={query.data.reconciliation} googleStatus={query.data.google.status} googleDiffs={query.data.google.diffs.length} />
+                ? <ReconcileTab store={query.data.store} storeNumber={storeNumber} initial={query.data.reconciliation} standard={query.data.standard} googleStatus={query.data.google.status} googleDiffs={query.data.google.diffs.length} />
                 : <HistoryTab storeNumber={storeNumber} />}
             </div>
           </div>
@@ -329,9 +332,10 @@ const WRONG_OPTIONS: { key: ReconSystem; label: string }[] = [
   { key: "sign", label: "Physical hours sign" },
 ];
 
-function ReconcileTab({ storeId, storeNumber, initial, googleStatus, googleDiffs }: {
-  storeId: string; storeNumber: string; initial: Reconciliation; googleStatus: string; googleDiffs: number;
+function ReconcileTab({ store, storeNumber, initial, standard, googleStatus, googleDiffs }: {
+  store: StoreMeta; storeNumber: string; initial: Reconciliation; standard: DayHours[]; googleStatus: string; googleDiffs: number;
 }) {
+  const storeId = store.id;
   const qc = useQueryClient();
   const toast = useToast();
   const [wrong, setWrong] = useState<ReconSystem[]>(initial.wrong_systems);
@@ -341,6 +345,7 @@ function ReconcileTab({ storeId, storeNumber, initial, googleStatus, googleDiffs
   const [icmDone, setIcmDone] = useState(initial.itsacheckmate_done);
   const [signNeed, setSignNeed] = useState(initial.sign_order_needed);
   const [signDone, setSignDone] = useState(initial.sign_ordered);
+  const [orderOpen, setOrderOpen] = useState(false);
 
   const toggleWrong = (k: ReconSystem) => setWrong((w) => (w.includes(k) ? w.filter((x) => x !== k) : [...w, k]));
 
@@ -400,8 +405,13 @@ function ReconcileTab({ storeId, storeNumber, initial, googleStatus, googleDiffs
           <div className="mb-1.5 text-sm font-semibold text-midnight">Hours-of-Ops sign</div>
           <label className="flex items-center gap-2 text-sm text-zinc-600"><input type="checkbox" checked={signNeed} onChange={(e) => setSignNeed(e.target.checked)} /> New sign needs ordered</label>
           <label className="mt-1 flex items-center gap-2 text-sm text-zinc-600"><input type="checkbox" checked={signDone} onChange={(e) => setSignDone(e.target.checked)} /> Sign ordered</label>
+          <Button variant="secondary" size="sm" className="mt-2" onClick={() => setOrderOpen(true)}>
+            <Signpost className="mr-1.5 h-3.5 w-3.5" /> Order sign…
+          </Button>
         </div>
       </div>
+
+      {orderOpen && <OrderSignModal store={store} standard={standard} onClose={() => setOrderOpen(false)} />}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <label className="flex items-center gap-2 text-sm text-zinc-600">
@@ -418,6 +428,108 @@ function ReconcileTab({ storeId, storeNumber, initial, googleStatus, googleDiffs
         </div>
       </div>
     </Card>
+  );
+}
+
+// ── Order a hours-of-op sign (email the vendor) ──────────────────────────────
+function OrderSignModal({ store, standard, onClose }: { store: StoreMeta; standard: DayHours[]; onClose: () => void }) {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const settingsQ = useQuery({ queryKey: ["sign-settings"], queryFn: fetchSignSettings });
+  const [to, setTo] = useState("");
+  const [message, setMessage] = useState("");
+  const [seeded, setSeeded] = useState(false);
+  const [image, setImage] = useState<{ name: string; content: string } | null>(null);
+
+  useEffect(() => {
+    if (settingsQ.data && !seeded) {
+      setTo(settingsQ.data.settings.to);
+      setMessage(settingsQ.data.settings.message);
+      setSeeded(true);
+    }
+  }, [settingsQ.data, seeded]);
+
+  const onFile = (f: File) => {
+    const r = new FileReader();
+    r.onload = () => setImage({ name: f.name, content: String(r.result) });
+    r.readAsDataURL(f);
+  };
+
+  const send = useMutation({
+    mutationFn: () => orderSign({ store_number: store.number, to: to.trim(), message: message.trim() || undefined, image }),
+    onSuccess: (r) => {
+      toast.push(`Sign order sent to ${r.to}.`, "success");
+      qc.invalidateQueries({ queryKey: ["store-hours", store.number] });
+      qc.invalidateQueries({ queryKey: ["hours-grid"] });
+      onClose();
+    },
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't send the order.", "error"),
+  });
+
+  const fullAddress = [store.address, store.city, store.state].filter(Boolean).join(", ") + (store.zip ? ` ${store.zip}` : "");
+  const emailOff = settingsQ.data?.email_configured === false;
+  const cls = "w-full rounded-md border border-zinc-200 px-2.5 py-1.5 text-sm focus:border-accent focus:outline-none";
+
+  return (
+    <Modal open onClose={onClose} title={`Order sign — #${store.number}`} maxWidth="max-w-lg"
+      footer={
+        <>
+          <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
+          <Button size="sm" onClick={() => send.mutate()} disabled={!isEmail(to) || send.isPending || emailOff}>
+            <Mail className="mr-1.5 h-3.5 w-3.5" /> {send.isPending ? "Sending…" : "Send order"}
+          </Button>
+        </>
+      }>
+      {emailOff && (
+        <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-inset ring-amber-200">
+          Email isn't configured on the server yet (RESEND_API_KEY) — the order can't be sent.
+        </div>
+      )}
+      <div className="space-y-3">
+        <label className="block">
+          <span className="mb-0.5 block text-xs font-semibold text-zinc-500">Send to (vendor email)</span>
+          <input type="email" value={to} onChange={(e) => setTo(e.target.value)} placeholder="signs@vendor.com" className={cls} />
+        </label>
+        <label className="block">
+          <span className="mb-0.5 block text-xs font-semibold text-zinc-500">Message</span>
+          <textarea value={message} onChange={(e) => setMessage(e.target.value)} rows={3} className={cls} />
+        </label>
+
+        <div className="rounded-lg bg-zinc-50 p-3 text-xs ring-1 ring-inset ring-zinc-200">
+          <div className="mb-1 font-semibold text-zinc-600">Ship to</div>
+          <div className="text-zinc-700">{store.name} #{store.number}</div>
+          <div className="text-zinc-500">{fullAddress || "— no address on file —"}</div>
+          <div className="mt-2 mb-1 font-semibold text-zinc-600">Hours for the sign</div>
+          <table className="text-zinc-600">
+            <tbody>
+              {standard.map((d) => (
+                <tr key={d.day_of_week}>
+                  <td className="pr-3 text-zinc-400">{DAY_LABELS[d.day_of_week]}</td>
+                  <td className="font-medium">{fmtRange(d)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
+        <div>
+          <span className="mb-1 block text-xs font-semibold text-zinc-500">Reference image (optional)</span>
+          {image ? (
+            <div className="flex items-center gap-2 rounded-md bg-zinc-50 px-2.5 py-1.5 text-sm ring-1 ring-inset ring-zinc-200">
+              <ImagePlus className="h-4 w-4 text-zinc-400" />
+              <span className="min-w-0 flex-1 truncate text-zinc-600">{image.name}</span>
+              <button type="button" onClick={() => setImage(null)} className="text-zinc-400 hover:text-red-600"><X className="h-4 w-4" /></button>
+            </div>
+          ) : (
+            <label className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-zinc-200 px-2.5 py-1.5 text-sm text-zinc-600 hover:bg-zinc-50">
+              <ImagePlus className="h-4 w-4" /> Attach image
+              <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); }} />
+            </label>
+          )}
+        </div>
+      </div>
+      <p className="mt-3 text-[11px] text-zinc-400">Sends from SOAR with the store's mailing address + hours. Marks the sign as ordered on this store's reconciliation. Edit the default recipient/message under Sign order settings.</p>
+    </Modal>
   );
 }
 
