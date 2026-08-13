@@ -6,7 +6,6 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
 import { Plus, ClipboardList, ArrowRight, UserCog, Store } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
-import { Card } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
 import { Skeleton } from "@/shared/ui/Skeleton";
