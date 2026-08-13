@@ -109,7 +109,9 @@ export const NAV: NavItem[] = [
   // The standalone routes /assignments, /signoffs, /caps still work
   // for deep links (e.g. from the AssignmentDetailPage back-link), but
   // they don't appear in the sidebar — open /workspaces and switch tabs.
-  { to: "/workspaces",  label: "Workspaces",  icon: ClipboardList,   roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin", "payroll"] },
+  // Workspaces removed from the sidebar for everyone. Route (/workspaces and the
+  // /assignments, /signoffs, /caps deep links) stays live for existing links.
+  // { to: "/workspaces",  label: "Workspaces",  icon: ClipboardList,   roles: [...] },
   // Reno Scoping is reached through the Operations Tools hub (/operations),
   // so it's kept out of the sidebar to reduce clutter. Its routes stay live
   // for deep links and the hub's card.
@@ -141,8 +143,10 @@ export const NAV: NavItem[] = [
   { to: "/team-pipeline", label: "Team Pipeline", icon: GitBranch, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/schedule",    label: "Calendar",    icon: CalendarDays,    roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/contacts",    label: "Contacts",    icon: BookUser,        roles: null },
-  { to: "/manuals",     label: "Manual Search", icon: BookMarked,    roles: null },
-  { to: "/admin/manuals", label: "Manuals Admin", icon: BookMarked,  roles: ["rvp"] }, // vp/coo/admin: System Settings
+  // Manual Search + Manuals Admin removed from the sidebar for everyone. Routes
+  // (/manuals, /admin/manuals) stay live for deep links / System Settings.
+  // { to: "/manuals",     label: "Manual Search", icon: BookMarked,    roles: null },
+  // { to: "/admin/manuals", label: "Manuals Admin", icon: BookMarked,  roles: ["rvp"] },
   { to: "/resources",   label: "Resources",   icon: BookOpen,        roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/team",        label: "My Team",     icon: Users,           roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   // Roster — the GM roster + the DO/SDO/RVP leadership roster + birthdays.
