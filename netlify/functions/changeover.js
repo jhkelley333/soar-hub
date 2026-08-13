@@ -12,6 +12,7 @@
 //
 // Service-role gatekeeper: RLS on changeover_checklists, no policies.
 import { createClient } from "@supabase/supabase-js";
+import { randomUUID } from "crypto";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -123,6 +124,22 @@ async function resolveStore(supa, number) {
 }
 const clean = (v, n = 200) => (v == null || String(v).trim() === "" ? null : String(v).trim().slice(0, n));
 
+// ── Editable template items (admin) ──────────────────────────────────────────
+const tplRow = (r) => ({ id: r.id, kind: r.kind, section: r.section, section_order: r.section_order, sort_order: r.sort_order, item_key: r.item_key, label: r.label, hint: r.hint ?? null });
+
+// section_order for a (kind, section): reuse the section's existing order, else
+// append after the last section.
+async function sectionOrderFor(supa, kind, section) {
+  const { data } = await supa.from("changeover_template_items").select("section_order").eq("kind", kind).eq("section", section).limit(1).maybeSingle();
+  if (data) return data.section_order;
+  const { data: mx } = await supa.from("changeover_template_items").select("section_order").eq("kind", kind).order("section_order", { ascending: false }).limit(1).maybeSingle();
+  return mx ? mx.section_order + 1 : 0;
+}
+async function nextSortOrder(supa, kind, section) {
+  const { data } = await supa.from("changeover_template_items").select("sort_order").eq("kind", kind).eq("section", section).order("sort_order", { ascending: false }).limit(1).maybeSingle();
+  return data ? data.sort_order + 1 : 0;
+}
+
 export const handler = async (event) => {
   try {
     if (!SUPABASE_URL || !SERVICE_KEY) return respond(500, { error: "changeover env vars not configured" });
@@ -155,9 +172,70 @@ export const handler = async (event) => {
       return respond(200, { checklist: detail(r, names), can_edit: canEdit(r, user, visible) });
     }
 
+    // Editable checklist items (all active, both kinds). Empty when the table
+    // isn't there yet — the app then falls back to its built-in defaults.
+    if (event.httpMethod === "GET" && action === "templates") {
+      const { data, error } = await supa.from("changeover_template_items").select("*").eq("is_active", true)
+        .order("kind", { ascending: true }).order("section_order", { ascending: true }).order("sort_order", { ascending: true });
+      if (error) return respond(200, { items: [], can_manage: user.role === "admin" });
+      return respond(200, { items: (data || []).map(tplRow), can_manage: user.role === "admin" });
+    }
+
     if (event.httpMethod !== "POST") return respond(405, { error: "method not allowed" });
     let body = {};
     try { body = JSON.parse(event.body || "{}"); } catch { body = {}; }
+
+    if (action === "save-template-item") {
+      if (user.role !== "admin") return respond(403, { error: "Only an admin can edit the checklist." });
+      const kind = String(body.kind || "").trim();
+      if (!KINDS.has(kind)) return respond(400, { error: "kind must be 'do' or 'gm'." });
+      const section = clean(body.section, 120);
+      const label = clean(body.label, 300);
+      if (!section) return respond(400, { error: "A section is required." });
+      if (!label) return respond(400, { error: "A label is required." });
+      const hint = clean(body.hint, 500);
+      const id = clean(body.id, 60);
+      const section_order = await sectionOrderFor(supa, kind, section);
+      if (id) {
+        const { error } = await supa.from("changeover_template_items").update({ section, section_order, label, hint, updated_at: new Date().toISOString() }).eq("id", id);
+        if (error) return respond(500, { error: error.message });
+        return respond(200, { ok: true, id });
+      }
+      const { data, error } = await supa.from("changeover_template_items").insert({
+        kind, section, section_order, sort_order: await nextSortOrder(supa, kind, section),
+        item_key: `${kind}_${randomUUID()}`, label, hint,
+      }).select("id, item_key").maybeSingle();
+      if (error) {
+        if (/changeover_template_items/.test(error.message)) return respond(500, { error: "Run migration 0286 first (changeover_template_items is missing)." });
+        return respond(500, { error: error.message });
+      }
+      return respond(200, { ok: true, id: data?.id, item_key: data?.item_key });
+    }
+
+    if (action === "delete-template-item") {
+      if (user.role !== "admin") return respond(403, { error: "Only an admin can edit the checklist." });
+      const id = clean(body.id, 60);
+      if (!id) return respond(400, { error: "id is required" });
+      const { error } = await supa.from("changeover_template_items").delete().eq("id", id);
+      if (error) return respond(500, { error: error.message });
+      return respond(200, { ok: true });
+    }
+
+    if (action === "move-template-item") {
+      if (user.role !== "admin") return respond(403, { error: "Only an admin can edit the checklist." });
+      const id = clean(body.id, 60);
+      const dir = body.dir === "up" ? "up" : "down";
+      if (!id) return respond(400, { error: "id is required" });
+      const { data: item } = await supa.from("changeover_template_items").select("id, kind, section, sort_order").eq("id", id).maybeSingle();
+      if (!item) return respond(404, { error: "Not found." });
+      let nq = supa.from("changeover_template_items").select("id, sort_order").eq("kind", item.kind).eq("section", item.section);
+      nq = dir === "up" ? nq.lt("sort_order", item.sort_order).order("sort_order", { ascending: false }) : nq.gt("sort_order", item.sort_order).order("sort_order", { ascending: true });
+      const { data: neighbor } = await nq.limit(1).maybeSingle();
+      if (!neighbor) return respond(200, { ok: true }); // already at the edge
+      await supa.from("changeover_template_items").update({ sort_order: neighbor.sort_order }).eq("id", item.id);
+      await supa.from("changeover_template_items").update({ sort_order: item.sort_order }).eq("id", neighbor.id);
+      return respond(200, { ok: true });
+    }
 
     if (action === "create") {
       const kind = String(body.kind || "").trim();

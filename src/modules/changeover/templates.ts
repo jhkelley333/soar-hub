@@ -133,9 +133,40 @@ export const CHANGEOVER_TEMPLATES: Record<ChangeoverKind, ChecklistTemplate> = {
 export function templateFor(kind: ChangeoverKind): ChecklistTemplate {
   return CHANGEOVER_TEMPLATES[kind];
 }
-export function itemCount(kind: ChangeoverKind): number {
-  return CHANGEOVER_TEMPLATES[kind].sections.reduce((n, s) => n + s.items.length, 0);
+// Item count for an assembled template (works for built-in or DB-backed).
+export function countItems(tpl: ChecklistTemplate): number {
+  return tpl.sections.reduce((n, s) => n + s.items.length, 0);
 }
-export function allItemKeys(kind: ChangeoverKind): string[] {
-  return CHANGEOVER_TEMPLATES[kind].sections.flatMap((s) => s.items.map((i) => i.key));
+
+// One editable checklist item as stored in the DB (migration 0286).
+export interface TemplateItem {
+  id: string;
+  kind: ChangeoverKind;
+  section: string;
+  section_order: number;
+  sort_order: number;
+  item_key: string;
+  label: string;
+  hint: string | null;
+}
+
+// Assemble the DO + GM templates from DB items (already ordered by the backend),
+// keeping each kind's built-in meta (title / who / labels). A kind with no DB
+// items falls back to its built-in section list, so the app works before the
+// migration is applied.
+export function buildTemplates(items: TemplateItem[]): Record<ChangeoverKind, ChecklistTemplate> {
+  const out = {} as Record<ChangeoverKind, ChecklistTemplate>;
+  for (const kind of ["do", "gm"] as ChangeoverKind[]) {
+    const forKind = items.filter((i) => i.kind === kind);
+    if (!forKind.length) { out[kind] = CHANGEOVER_TEMPLATES[kind]; continue; }
+    const bySection = new Map<string, { order: number; items: ChecklistItem[] }>();
+    for (const it of forKind) {
+      const g = bySection.get(it.section) ?? { order: it.section_order, items: [] };
+      g.items.push({ key: it.item_key, label: it.label, hint: it.hint ?? undefined });
+      bySection.set(it.section, g);
+    }
+    const sections = [...bySection.entries()].sort((a, b) => a[1].order - b[1].order).map(([title, g]) => ({ title, items: g.items }));
+    out[kind] = { ...CHANGEOVER_TEMPLATES[kind], sections };
+  }
+  return out;
 }
