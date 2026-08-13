@@ -373,7 +373,7 @@ export const handler = async (event) => {
       for (const r of hrs || []) daysArr[r.day_of_week] = { is_closed: r.is_closed, open: hhmm(r.open_time), close: hhmm(r.close_time) };
       const hoursLines = buildHoursLines(daysArr);
 
-      const shipName = `${store.name || "SONIC Drive-In"} #${store.number}`;
+      const shipName = `Sonic #${store.number}${store.name ? ` ${store.name}` : ""}`;
       const cityLine = [store.city, store.state].filter(Boolean).join(", ") + (store.zip ? ` ${store.zip}` : "");
       const addrLines = [store.address, cityLine].map((x) => (x || "").trim()).filter(Boolean);
       const fullAddress = [store.address, store.city, store.state].filter(Boolean).join(", ") + (store.zip ? ` ${store.zip}` : "");
