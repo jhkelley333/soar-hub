@@ -73,6 +73,7 @@ function laborMetrics(rows, p) {
   const cost = sumOf(rows, `${p}labor_cost`);
   const hours = sumOf(rows, `${p}labor_hours`);
   const tickets = sumOf(rows, `${p}tickets`);
+  const lyTickets = sumOf(rows, `${p}prev_year_tickets`);
   const otNum = sumOf(rows, `${p}on_time_numerator`);
   const otDen = sumOf(rows, `${p}on_time_denominator`);
   const lyS = sumOf(rows, `${p}prev_year_net_sales`);
@@ -104,6 +105,9 @@ function laborMetrics(rows, p) {
     labor_target: laborTarget,
     splh: div(sales, hours),
     tickets: rows.length ? tickets : null,
+    // Ticket count (traffic) trend vs. the same period last year, all-store —
+    // the Grow Sales pillar tracks traffic direction, not the raw count.
+    tickets_vs_ly: lyTickets ? ((tickets - lyTickets) / lyTickets) * 100 : null,
     average_check: div(sales, tickets),
     on_time: otDen ? (otNum / otDen) * 100 : null,
     avg_ticket_time: attSec != null ? Math.round(attSec) : null,
@@ -135,7 +139,7 @@ function countMetrics(rows) {
 // All metric ids the board knows; every value slot defaults to null so the
 // frontend can rely on the shape and render skeletons for unwired metrics.
 const METRIC_IDS = [
-  "sales_vs_ly", "avg_ticket_time", "on_time", "vog", "complaints", "order_accuracy", "delivery_mix", "splh", "tickets", "average_check",
+  "sales_vs_ly", "avg_ticket_time", "on_time", "vog", "complaints", "order_accuracy", "delivery_mix", "splh", "tickets_vs_ly", "average_check",
   "l2r", "vog2", "complaints_rank", "mystery_shop_rank", "ecosure_rank",
   "labor_pct", "hours_over", "actual_vs_schedule", "overtime",
   "cogs_pct", "daily_score", "completion_score", "accuracy_score", "count_variance", "item_efficiency",
@@ -228,7 +232,20 @@ async function rankerMetrics(supa, scopeStoreNumbers, anchor = null) {
     return vals.length ? (vals.reduce((a, b) => a + b, 0) / vals.length) * 100 : null;
   };
   out.ecosure = avgPct("ecosure");
-  out.mysteryShop = avgPct("msScore");
+  // Mystery Shop — count-weighted by shops (msCount), matching the ranker's
+  // period "Shop avg". The engine coerces every un-shopped store's msScore to 0,
+  // so a plain average is dragged toward 0 by the many stores with no shop;
+  // weighting by msCount gives those stores zero weight. 0-1 -> %.
+  out.mysteryShop = (() => {
+    let sum = 0, cnt = 0;
+    for (const r of byScope.ptd || []) {
+      const m = r.metrics || {};
+      const score = rankerNum(m.msScore), count = rankerNum(m.msCount);
+      if (score == null || !count || count <= 0) continue;
+      sum += score * count; cnt += count;
+    }
+    return cnt > 0 ? (sum / cnt) * 100 : null;
+  })();
   // COGS efficiency — average of the store cogsEff (0-1 -> %), per scope.
   for (const scope of ["wtd", "ptd"]) {
     const vals = (byScope[scope] || []).map((r) => rankerNum((r.metrics || {}).cogsEff)).filter((v) => v != null);
@@ -470,7 +487,7 @@ export const handler = async (event) => {
     const laborAnchorD = lab(anchor, ""), laborAnchorW = lab(anchor, "wtd_"), laborAnchorM = lab(anchor, "ptd_");
     const laborPriorD = lab(dailyPrior, ""), laborPriorW = lab(wtdPrior, "wtd_"), laborPriorM = lab(mtdPrior, "ptd_");
     const laborWeeks = weekEnds.map((d) => lab(d, "wtd_"));
-    for (const k of ["sales_vs_ly", "sales_dollars", "ly_dollars", "avg_ticket_time", "on_time", "splh", "tickets", "average_check", "labor_pct", "hours_over", "actual_vs_schedule", "overtime", "cash_over_short", "paid_outs"]) {
+    for (const k of ["sales_vs_ly", "sales_dollars", "ly_dollars", "avg_ticket_time", "on_time", "splh", "tickets_vs_ly", "average_check", "labor_pct", "hours_over", "actual_vs_schedule", "overtime", "cash_over_short", "paid_outs"]) {
       values[k] = {
         daily: pair(laborAnchorD[k], laborPriorD[k]),
         wtd: pair(laborAnchorW[k], laborPriorW[k]),
