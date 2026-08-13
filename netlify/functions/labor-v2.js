@@ -415,6 +415,23 @@ async function latestBusinessDate(supa) {
   return data?.business_date ?? null;
 }
 
+// The last business_date that actually captured labor within the fiscal week
+// (Mon–Sun) ending on `weekEndIso`, for the given stores. The week picker keys
+// past weeks by their week-ending Sunday, but captures often don't land on
+// Sunday — so anchoring the rollup on the calendar Sunday shows "no data".
+// This resolves to that week's last captured day (what the UI promises), and
+// its WTD/PTD snapshot covers the week/period through that day.
+async function weekLastCaptured(supa, numbers, weekEndIso) {
+  const startIso = isoOf(shiftDays(new Date(`${weekEndIso}T00:00:00Z`), -6));
+  const { data } = await supa.from("labor_v2_daily")
+    .select("business_date")
+    .in("store_number", numbers)
+    .gte("business_date", startIso).lte("business_date", weekEndIso)
+    .not("net_sales", "is", null)
+    .order("business_date", { ascending: false }).limit(1).maybeSingle();
+  return data?.business_date ?? null;
+}
+
 // Stores the caller can pick from in the GM view (the store dropdown).
 async function listMyStores(supa, user) {
   if (!READ_ROLES.has(roleOf(user))) return { stores: [] };
@@ -1726,7 +1743,12 @@ async function teamView(supa, user, params) {
   if (!visible.length) return empty;
   const numbers = [...new Set(visible.map((s) => String(s.number)))];
 
-  const anchor = params.date && /^\d{4}-\d{2}-\d{2}$/.test(params.date) ? params.date : await latestBusinessDate(supa);
+  // Past week → anchor on that week's last captured day (the calendar Sunday
+  // often has no capture); current week (no date) → the latest captured day.
+  const requested = params.date && /^\d{4}-\d{2}-\d{2}$/.test(params.date) ? params.date : null;
+  const anchor = requested
+    ? ((await weekLastCaptured(supa, numbers, requested)) || requested)
+    : await latestBusinessDate(supa);
   if (!anchor) return empty;
 
   const [{ data: rows }, { data: reviews }] = await Promise.all([
