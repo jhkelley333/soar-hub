@@ -4,7 +4,7 @@
 //
 // Sources, section by section:
 //   01 Goals to Grow Sales — Avg Ticket Time (KPI feed), On Time (feed),
-//      VOG (ranker), SPLH/Tickets/Avg Check (feed).
+//      VOG (ranker), SPLH/Tickets vs. LY/Avg Check (feed).
 //   02 Customer L2R — L2R + Mystery Shop + EcoSure Audit (last-week ranker),
 //      Complaints (coming soon).
 //   03 Controllable Contribution — Labor % / Actual vs Sched / Over Time (feed).
@@ -45,7 +45,9 @@ export const PILLARS: Pillar[] = [
       // VOG pulls from the current ranker (0-1 top-box → shown as %); ranker goal is 70%.
       { id: "vog", name: "VOG", unit: "%", dec: 1, hb: true, target: 70 },
       { id: "splh", name: "SPLH", unit: "$", dec: 2, hb: true, target: 70 },
-      { id: "tickets", name: "Tickets", unit: "", dec: 0, hb: true, target: null },
+      // Traffic trend vs. last year (ticket count YoY %), not the raw count —
+      // growth (>0) is good. From the feed's tickets vs. prev_year_tickets.
+      { id: "tickets_vs_ly", name: "Tickets vs. LY", unit: "%", dec: 1, hb: true, target: 0, signed: true },
       { id: "average_check", name: "Average Check", unit: "$", dec: 2, hb: true, target: 14.75 },
     ],
   },
