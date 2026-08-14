@@ -46,7 +46,8 @@ import { cn } from "@/lib/cn";
 import { FISCAL, fiscalInfo, fiscalWeekLabel } from "@/lib/fiscal";
 import { BirthdayCelebration } from "@/modules/my-stores/BirthdayCelebration";
 import { MobileHome } from "./MobileHome";
-import { TodayQueue } from "./TodayQueue";
+// TodayQueue temporarily hidden from the dashboard (re-enable below when ready).
+// import { TodayQueue } from "./TodayQueue";
 import { WeatherWidget } from "./WeatherWidget";
 import { MessageBoard } from "@/modules/messages/MessageBoard";
 
@@ -214,9 +215,9 @@ export function DashboardPage() {
       {/* Store message board — announcements addressed to the signed-in user. */}
       <MessageBoard />
 
-      {/* Today — the ranked worklist. Every signal competes here; the rest of
-          the dashboard is context. Oversight-only roles keep their slim view. */}
-      {!isOversightOnly && role && <TodayQueue role={role} />}
+      {/* Today — the ranked worklist. Hidden for now (dashboard is being
+          reworked); re-enable by un-commenting this line when ready. */}
+      {/* {!isOversightOnly && role && <TodayQueue role={role} />} */}
 
       {/* KPI row: hero + 4 stat cards (operations roles). FBC gets a slim
           two-card row covering just the oversight metrics they care about. */}

@@ -206,6 +206,9 @@ function LeadersTab({ q }: { q: UseQueryResult<{ ok: true; rows: LeaderRow[] }> 
 
   return (
     <>
+      <div className="mb-3 rounded-lg bg-sky-50 px-3 py-2 text-xs text-sky-800 ring-1 ring-inset ring-sky-200">
+        Leader details (phone, email, birthday) come from each person's Hub profile — update them in <strong>My Team</strong>, not here.
+      </div>
       <input
         value={search}
         onChange={(e) => setSearch(e.target.value)}
@@ -264,8 +267,9 @@ function LeaderRowView({ r }: { r: LeaderRow }) {
 function BirthdayModal({ gmRows, leaders, onClose }: { gmRows: GmRosterRow[]; leaders: LeaderRow[]; onClose: () => void }) {
   const [month, setMonth] = useState(new Date().getMonth()); // 0-11
 
-  const entries = useMemo(() => {
-    type E = { key: string; name: string; sub: string; mo: number; day: number; disp: string; kind: "gm" | "leader" };
+  // Every birthday across GMs + leaders (DO/SDO/RVP), all months.
+  const allEntries = useMemo(() => {
+    type E = { key: string; name: string; sub: string; who: string; mo: number; day: number; disp: string; kind: "gm" | "leader" };
     const out: E[] = [];
     const md = (raw: string | null | undefined) => {
       const iso = parseDate(raw);
@@ -276,15 +280,29 @@ function BirthdayModal({ gmRows, leaders, onClose }: { gmRows: GmRosterRow[]; le
     for (const r of gmRows) {
       const p = md(r.gm_birthday);
       if (!p || !r.roster_name) continue;
-      out.push({ key: `gm-${r.store_number}`, name: r.roster_name, sub: `#${r.store_number}${r.store_name ? ` · ${r.store_name}` : ""} · GM`, ...p, kind: "gm" });
+      out.push({ key: `gm-${r.store_number}`, name: r.roster_name, sub: `#${r.store_number}${r.store_name ? ` · ${r.store_name}` : ""} · GM`, who: `#${r.store_number} ${r.store_name ?? ""}`.trim(), ...p, kind: "gm" });
     }
     for (const l of leaders) {
       const p = md(l.birthday);
       if (!p || !l.name) continue;
-      out.push({ key: `ldr-${l.id}`, name: l.name, sub: `${ROLE_LABEL[l.role]}${l.coverage.length ? ` · ${l.coverage.join(", ")}` : ""}`, ...p, kind: "leader" });
+      out.push({ key: `ldr-${l.id}`, name: l.name, sub: `${ROLE_LABEL[l.role]}${l.coverage.length ? ` · ${l.coverage.join(", ")}` : ""}`, who: `${ROLE_LABEL[l.role]}${l.coverage.length ? ` · ${l.coverage.join(", ")}` : ""}`, ...p, kind: "leader" });
     }
-    return out.filter((e) => e.mo === month).sort((a, b) => a.day - b.day || a.name.localeCompare(b.name));
-  }, [gmRows, leaders, month]);
+    return out.sort((a, b) => a.mo - b.mo || a.day - b.day || a.name.localeCompare(b.name));
+  }, [gmRows, leaders]);
+
+  const entries = useMemo(() => allEntries.filter((e) => e.mo === month), [allEntries, month]);
+
+  const downloadAll = () => {
+    const esc = (v: string) => (/[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+    const head = ["Name", "Type", "Store / Coverage", "Birthday"];
+    const body = allEntries.map((e) => [e.name, e.kind === "gm" ? "GM" : "Leader", e.who, e.disp]);
+    const csv = [head, ...body].map((r) => r.map(esc).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = "birthdays.csv"; a.click();
+    URL.revokeObjectURL(url);
+  };
 
   const nav = "rounded-md px-2 py-1 text-zinc-500 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50";
   return (
@@ -298,6 +316,9 @@ function BirthdayModal({ gmRows, leaders, onClose }: { gmRows: GmRosterRow[]; le
         <button type="button" className={nav} onClick={() => setMonth((m) => (m + 1) % 12)} aria-label="Next month">›</button>
         <span className="ml-1 text-xs text-zinc-400">{entries.length} birthday{entries.length === 1 ? "" : "s"}</span>
         <button type="button" className="ml-auto text-xs font-semibold text-accent hover:underline" onClick={() => setMonth(new Date().getMonth())}>This month</button>
+        <button type="button" className="inline-flex items-center gap-1 text-xs font-semibold text-accent hover:underline" onClick={downloadAll} title="Download all birthdays (GMs + DO/SDO/RVP)">
+          <Download className="h-3.5 w-3.5" /> Download
+        </button>
       </div>
       {entries.length === 0 ? (
         <p className="py-8 text-center text-sm text-zinc-500">No birthdays in {MONTHS[month]}.</p>
