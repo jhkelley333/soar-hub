@@ -1,6 +1,7 @@
 // Labor v2 — client wrappers around the labor-v2 function (admin rollup +
 // the GM day view).
 import { supabase } from "@/lib/supabase";
+import { refreshAccessTokenOnce } from "@/lib/authRefresh";
 import type { GmLaborResponse, LaborStore, ReviewInput } from "@/modules/labor/types";
 import type { LaborSummary, TeamLaborResponse } from "./types";
 
@@ -25,8 +26,7 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   // A 401 usually means the stored access token went stale — refresh the
   // session once and retry before surfacing "unauthorized".
   if (res.status === 401) {
-    const { data } = await supabase.auth.refreshSession();
-    const fresh = data.session?.access_token;
+    const fresh = await refreshAccessTokenOnce();
     if (fresh) res = await callWith(path, init, fresh);
   }
   const body = await res.json().catch(() => ({}));

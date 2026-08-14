@@ -3,6 +3,7 @@
 // Supabase access token, inject it on every fetch.
 
 import { supabase } from "@/lib/supabase";
+import { refreshAccessTokenOnce } from "@/lib/authRefresh";
 import type {
   AddQuoteBody,
   ApprovalThreshold,
@@ -54,12 +55,9 @@ async function authHeaders(): Promise<HeadersInit> {
 // every facilities-v2 call comes back as "Not authenticated."
 // We bounce off a single 401 by forcing a refresh and retrying.
 async function refreshSessionAndGetToken(): Promise<string | null> {
-  const { data, error } = await supabase.auth.refreshSession();
-  if (error) {
-    console.warn("[wo2/api] refreshSession failed", error);
-    return null;
-  }
-  return data.session?.access_token ?? null;
+  // Deduped app-wide so a burst of 401s doesn't force multiple token rotations
+  // (which race on the rotating refresh token and can log the user out).
+  return refreshAccessTokenOnce();
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {

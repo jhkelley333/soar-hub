@@ -1,5 +1,6 @@
 // COO map — client wrappers around the coo-map function.
 import { supabase } from "@/lib/supabase";
+import { refreshAccessTokenOnce } from "@/lib/authRefresh";
 
 const FN = "/.netlify/functions/coo-map";
 
@@ -20,8 +21,7 @@ function callWith(path: string, init: RequestInit, token: string): Promise<Respo
 async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   let res = await callWith(path, init, await authToken());
   if (res.status === 401) {
-    const { data } = await supabase.auth.refreshSession();
-    const fresh = data.session?.access_token;
+    const fresh = await refreshAccessTokenOnce();
     if (fresh) res = await callWith(path, init, fresh);
   }
   const body = await res.json().catch(() => ({}));
