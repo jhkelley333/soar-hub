@@ -48,17 +48,22 @@ export interface KeyDate {
 export interface TeamMixRow {
   id: string;
   role: string;
+  /** Target headcount needed for this role. */
   count: number;
+  /** How many are hired so far (tracks progress against `count`). */
+  hired: number;
 }
 
 export interface NsoPlan {
   id: string;
-  /** Store label, e.g. "Sonic #1056 Dallas TX #1". */
+  /** Store label, e.g. "Sonic #1056 Dallas TX #1" — also the plan's name. */
   storeName: string;
   storeNumber: string;
   gmName: string;
   fbcName: string;
   address: string;
+  /** People this opening is assigned to (free-text names). */
+  assignees: string[];
   /** Grand Opening date, YYYY-MM-DD. The anchor for every offset. */
   grandOpeningISO: string;
   weeks: PlanWeek[];
@@ -204,27 +209,45 @@ export function trainingWeek(startOffset = -8, ordinalTitle = "Week 2"): PlanWee
   };
 }
 
-/** Week 3 · Grand Opening — open & post-open support (offsets -1..+5). */
-export function openingWeek(ordinalTitle = "Week 3"): PlanWeek {
-  return {
-    id: uid(),
-    kind: "opening",
-    title: `${ordinalTitle} · Grand Opening`,
-    subtitle: "Open & post-open support",
-    days: [
-      day(-1, "Friends & Family", "practice", [
-        block("Friends & Family", ["Serving 1:00–6:00p", "14–18 total crew for EACH 4 hr shift"]),
-      ]),
-      day(0, "Grand Opening", "open", [
+/** Offset (days from Grand Opening) of the Monday of the Grand Opening's own
+ *  calendar week. Keeps every rendered week aligned Monday→Sunday regardless of
+ *  which weekday the opening lands on. Tuesday opening → -1 (the classic Sonic
+ *  case), so the layout is unchanged for standard openings. */
+export function mondayOffsetFor(goISO: string): number {
+  const dow = parseISO(goISO).getDay(); // 0 Sun … 6 Sat
+  return -((dow + 6) % 7);
+}
+
+/** Grand Opening week — a full Mon→Sun calendar week. Days are labelled by
+ *  their relationship to opening day (offset 0), so this works for any opening
+ *  weekday: Friends & Family the day before, Post-Open after, Final Prep before.
+ *  `weekMonday` is the offset of that week's Monday (default -1 = Tue opening). */
+export function openingWeek(weekMonday = -1): PlanWeek {
+  const days: PlanDay[] = [];
+  for (let i = 0; i < 7; i++) {
+    const off = weekMonday + i;
+    if (off === 0) {
+      days.push(day(off, "Grand Opening", "open", [
         block("Grand Opening 🎉", ["Doors open — it's showtime!", "Min 1 support crew member on site", "All hands — celebrate the launch"]),
-      ]),
-      day(1, "Post-Open Support", "open", [block("Post-Open", ["Min 1 supporting DO or Hi-PO GM"])]),
-      day(2, "Post-Open Support", "open", [block("Post-Open", ["Min 1 supporting DO or Hi-PO GM"])]),
-      day(3, "Post-Open Support", "open", [block("Post-Open", ["Min 1 supporting DO or Hi-PO GM"])]),
-      day(4, "Post-Open Support", "open", [block("Post-Open", ["Min 1 supporting DO or Hi-PO GM"])]),
-      day(5, "Post-Open Support", "open", [block("Post-Open", ["Support Center: busiest 8-hr shift per day", "Maintain momentum & uphold standards"])]),
-    ],
-  };
+      ]));
+    } else if (off === -1) {
+      days.push(day(off, "Friends & Family", "practice", [
+        block("Friends & Family", ["Serving 1:00–6:00p", "14–18 total crew for EACH 4 hr shift"]),
+      ]));
+    } else if (off > 0) {
+      days.push(day(off, "Post-Open Support", "open", [block("Post-Open", ["Min 1 supporting DO or Hi-PO GM"])]));
+    } else {
+      days.push(day(off, "Final Prep", "train", [block("Final Prep", ["Station setup & PreSet complete", "Final readiness walkthrough"])]));
+    }
+  }
+  // Tag the last post-open day with the Support Center note.
+  for (let k = days.length - 1; k >= 0; k--) {
+    if (days[k].offset > 0) {
+      days[k] = { ...days[k], blocks: [block("Post-Open", ["Support Center: busiest 8-hr shift per day", "Maintain momentum & uphold standards"])] };
+      break;
+    }
+  }
+  return { id: uid(), kind: "opening", title: "Grand Opening", subtitle: "Open & post-open support", days };
 }
 
 export function defaultKeyDates(): KeyDate[] {
@@ -242,12 +265,12 @@ export function defaultKeyDates(): KeyDate[] {
 
 export function defaultTeamMix(): TeamMixRow[] {
   return [
-    { id: uid(), role: "General Manager", count: 1 },
-    { id: uid(), role: "Assistant Manager", count: 2 },
-    { id: uid(), role: "Shift Manager / Trainee", count: 3 },
-    { id: uid(), role: "Cook (BOH)", count: 8 },
-    { id: uid(), role: "Carhop (FOH)", count: 12 },
-    { id: uid(), role: "Crew (multi-station)", count: 16 },
+    { id: uid(), role: "General Manager", count: 1, hired: 0 },
+    { id: uid(), role: "Assistant Manager", count: 2, hired: 0 },
+    { id: uid(), role: "Shift Manager / Trainee", count: 3, hired: 0 },
+    { id: uid(), role: "Cook (BOH)", count: 8, hired: 0 },
+    { id: uid(), role: "Carhop (FOH)", count: 12, hired: 0 },
+    { id: uid(), role: "Crew (multi-station)", count: 16, hired: 0 },
   ];
 }
 
@@ -261,7 +284,15 @@ export function nextTuesdayISO(fromISO?: string): string {
   return toISO(d);
 }
 
+/** Build the three standard weeks Monday-anchored to a Grand Opening date, so
+ *  every week renders Mon→Sun whatever weekday the opening lands on. */
+export function standardWeeks(grandOpeningISO: string): PlanWeek[] {
+  const mo = mondayOffsetFor(grandOpeningISO);
+  return [hiringWeek(mo - 14), trainingWeek(mo - 7), openingWeek(mo)];
+}
+
 export function newPlan(grandOpeningISO?: string): NsoPlan {
+  const go = grandOpeningISO || nextTuesdayISO();
   return {
     id: uid(),
     storeName: "",
@@ -269,8 +300,9 @@ export function newPlan(grandOpeningISO?: string): NsoPlan {
     gmName: "",
     fbcName: "",
     address: "",
-    grandOpeningISO: grandOpeningISO || nextTuesdayISO(),
-    weeks: [hiringWeek(), trainingWeek(), openingWeek()],
+    assignees: [],
+    grandOpeningISO: go,
+    weeks: standardWeeks(go),
     keyDates: defaultKeyDates(),
     teamMix: defaultTeamMix(),
     notes: "",
@@ -312,6 +344,29 @@ export function weekSubtitle(kind: WeekKind): string {
     : kind === "training"
       ? "Hands-on training — Learn It → See It → Do It → Check It"
       : "Open & post-open support";
+}
+
+/** Move the plan to a new Grand Opening date, keeping every week aligned
+ *  Monday→Sunday. Because day offsets are stored relative to opening day, a
+ *  move to the SAME weekday needs no re-offset — the whole plan slides and
+ *  block edits are preserved. A move to a DIFFERENT weekday re-anchors each
+ *  week to its Monday (hiring/training keep their edited blocks by weekday
+ *  position; the opening week is rebuilt so Friends & Family / Grand Opening /
+ *  Post-Open land on the right days). */
+export function reanchorForGrandOpening(plan: NsoPlan, newGoISO: string): NsoPlan {
+  const oldDow = parseISO(plan.grandOpeningISO).getDay();
+  const newDow = parseISO(newGoISO).getDay();
+  if (oldDow === newDow) return { ...plan, grandOpeningISO: newGoISO };
+
+  const newMo = mondayOffsetFor(newGoISO);
+  const openingIdx = plan.weeks.findIndex((w) => w.kind === "opening");
+  const anchorIdx = openingIdx < 0 ? plan.weeks.length - 1 : openingIdx;
+  const weeks = plan.weeks.map((w, j) => {
+    const weekMonday = newMo - 7 * (anchorIdx - j);
+    if (w.kind === "opening") return { ...openingWeek(weekMonday), id: w.id };
+    return { ...w, days: w.days.map((d, i) => ({ ...d, offset: weekMonday + i })) };
+  });
+  return { ...plan, grandOpeningISO: newGoISO, weeks };
 }
 
 export const TONE_STYLES: Record<Tone, { chip: string; ring: string; dot: string }> = {
