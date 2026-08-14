@@ -21,7 +21,7 @@ import { cn } from "@/lib/cn";
 import {
   type NsoPlan, type PlanWeek, type PlanDay, type DayBlock,
   newPlan, addWeek, removeWeek, defaultKeyDates, defaultTeamMix,
-  hiringWeek, trainingWeek, openingWeek,
+  hiringWeek, trainingWeek, openingWeek, weekName, weekSubtitle,
   dateForOffset, offsetForDate, toISO, parseISO, uid,
   fmtDow, fmtShort, fmtLong, TONE_STYLES,
 } from "./plan";
@@ -340,10 +340,11 @@ export function NsoPlannerPage() {
 
       {/* ── Weeks ────────────────────────────────────────────────────────── */}
       <div className="space-y-6">
-        {plan.weeks.map((week) => (
+        {plan.weeks.map((week, i) => (
           <WeekBoard
             key={week.id}
             week={week}
+            ordinal={i + 1}
             plan={plan}
             editing={editing}
             onRemoveWeek={week.kind !== "opening" ? () => update((p) => removeWeek(p, week.id)) : undefined}
@@ -407,9 +408,10 @@ function HeroField({
 // Week board — a titled row of day columns
 // ---------------------------------------------------------------------------
 function WeekBoard({
-  week, plan, editing, onRemoveWeek, mapDay, mapBlock,
+  week, ordinal, plan, editing, onRemoveWeek, mapDay, mapBlock,
 }: {
   week: PlanWeek;
+  ordinal: number;
   plan: NsoPlan;
   editing: boolean;
   onRemoveWeek?: () => void;
@@ -429,9 +431,9 @@ function WeekBoard({
             <span className={cn("rounded-md px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide", kindChip)}>
               {week.kind === "opening" ? <PartyPopper className="inline h-3 w-3" /> : week.kind === "training" ? <GraduationCap className="inline h-3 w-3" /> : <Users className="inline h-3 w-3" />}
             </span>
-            {week.title}
+            Week {ordinal} · {weekName(week.kind)}
           </h3>
-          <p className="mt-0.5 text-xs text-ink-muted">{week.subtitle}</p>
+          <p className="mt-0.5 text-xs text-ink-muted">{weekSubtitle(week.kind)}</p>
         </div>
         {editing && onRemoveWeek && (
           <button onClick={onRemoveWeek} className="shrink-0 text-ink-subtle hover:text-cherry" aria-label="Remove week" data-noprint>

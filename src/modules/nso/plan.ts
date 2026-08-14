@@ -286,20 +286,32 @@ function earliestOffset(plan: NsoPlan): number {
 }
 
 /** Prepend an extra hiring or training week, 7 days ahead of the current
- *  earliest week, so the Grand Opening stays fixed and the runway grows. */
+ *  earliest week, so the Grand Opening stays fixed and the runway grows.
+ *  The displayed "Week N" label is derived from chronological position at
+ *  render time (see weekName), so the whole plan renumbers automatically. */
 export function addWeek(plan: NsoPlan, kind: "hiring" | "training"): NsoPlan {
   const start = earliestOffset(plan) - 7;
-  const nHiring = plan.weeks.filter((w) => w.kind === "hiring").length;
-  const nTraining = plan.weeks.filter((w) => w.kind === "training").length;
-  const week =
-    kind === "hiring"
-      ? hiringWeek(start, `Week +${nHiring + 1}`)
-      : trainingWeek(start, `Extra Training ${nTraining}`);
+  const week = kind === "hiring" ? hiringWeek(start) : trainingWeek(start);
   return { ...plan, weeks: [week, ...plan.weeks] };
 }
 
 export function removeWeek(plan: NsoPlan, weekId: string): NsoPlan {
   return { ...plan, weeks: plan.weeks.filter((w) => w.id !== weekId) };
+}
+
+// Displayed title/subtitle are derived from the week's kind + its chronological
+// position (index) so adding/removing weeks renumbers everything Week 1..N in
+// order — no stale ordinals baked into stored data. `title`/`subtitle` on the
+// stored week are ignored for display.
+export function weekName(kind: WeekKind): string {
+  return kind === "hiring" ? "Hiring & Onboarding" : kind === "training" ? "Training Week" : "Grand Opening";
+}
+export function weekSubtitle(kind: WeekKind): string {
+  return kind === "hiring"
+    ? "Hire & onboard to the staffing plan"
+    : kind === "training"
+      ? "Hands-on training — Learn It → See It → Do It → Check It"
+      : "Open & post-open support";
 }
 
 export const TONE_STYLES: Record<Tone, { chip: string; ring: string; dot: string }> = {
