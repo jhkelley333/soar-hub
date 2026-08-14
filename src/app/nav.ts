@@ -17,7 +17,6 @@ import {
   LayoutGrid,
   GraduationCap,
   GitBranch,
-  BookOpenCheck,
   CloudSun,
   BarChart3,
   AlertTriangle,
@@ -132,10 +131,9 @@ export const NAV: NavItem[] = [
   // Coaching Tool Kit — coaching-for-performance reference cards for hourly
   // managers and above. Lives under People.
   { to: "/coaching",    label: "Coaching Tool Kit", icon: GraduationCap, roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
-  // Training — the consolidated hub: My Training, Team Training, and
-  // Assessments live as tabs inside (each gates itself by role/flag), with the
-  // Training QR launcher in the header. Replaces four separate nav items.
-  { to: "/training", label: "Training", icon: BookOpenCheck, roles: null },
+  // Training — hidden from the sidebar for now. Route (/training) stays live
+  // for deep links; re-add this entry to bring it back.
+  // { to: "/training", label: "Training", icon: BookOpenCheck, roles: null },
   // Team Pipeline — Talent Planning. GM and up; scoped to the viewer's org
   // tree in-app (a GM sees only their own store). Pilot flag removed.
   { to: "/team-pipeline", label: "Team Pipeline", icon: GitBranch, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },

@@ -801,28 +801,39 @@ export const handler = async (event) => {
     // ── GET TICKETS ──
     if (action === "getTickets") {
       const storeAccess = await getStoresForUser(supabase, profile);
-      let query = supabase
-        .from("tickets")
-        .select(`
-          *,
-          ticket_photos(id, file_url, file_name, upload_type, created_at),
-          ticket_approvals(id, approval_tier, status, requested_at, approved_at, approved_by, notes, quote_url),
-          ticket_activities(id, user_name, event_type, event_data, notes, created_at),
-          ticket_quotes(*)
-        `)
-        .order("date_submitted", { ascending: false });
-
-      if (!storeAccess.all && storeAccess.stores.length) {
-        query = query.in("store_number", storeAccess.stores);
-      } else if (!storeAccess.all) {
+      if (!storeAccess.all && !storeAccess.stores.length) {
         return respond(200, { ok: true, tickets: [] });
       }
 
       const storeFilter = (event.queryStringParameters || {}).store;
-      if (storeFilter) query = query.eq("store_number", storeFilter);
+      // Build a fresh query each page so we can walk past PostgREST's 1000-row
+      // cap. Tickets accumulate forever, so an org-wide admin (storeAccess.all)
+      // would otherwise only ever see the 1000 most-recent and silently lose
+      // older open work.
+      const makeTicketQuery = () => {
+        let q = supabase
+          .from("tickets")
+          .select(`
+            *,
+            ticket_photos(id, file_url, file_name, upload_type, created_at),
+            ticket_approvals(id, approval_tier, status, requested_at, approved_at, approved_by, notes, quote_url),
+            ticket_activities(id, user_name, event_type, event_data, notes, created_at),
+            ticket_quotes(*)
+          `)
+          .order("date_submitted", { ascending: false });
+        if (!storeAccess.all) q = q.in("store_number", storeAccess.stores);
+        if (storeFilter) q = q.eq("store_number", storeFilter);
+        return q;
+      };
 
-      const { data, error } = await query;
-      if (error) throw error;
+      const data = [];
+      for (let from = 0; ; from += 1000) {
+        const { data: page, error } = await makeTicketQuery().range(from, from + 999);
+        if (error) throw error;
+        if (!page || !page.length) break;
+        data.push(...page);
+        if (page.length < 1000) break;
+      }
 
       // Decorate each ticket with unread_message_count from
       // ticket_views. A "message" is unread when:

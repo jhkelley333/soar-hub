@@ -86,6 +86,30 @@ async function callerVisibleStoreIds(supa, user) {
 // the intended behavior for the leadership card on store detail (the
 // chain of command upward), but it MUST NOT be used for the birthday
 // widget — see callerStoreLevelProfiles below.
+// Fetch every row of a query, paging past PostgREST's 1000-row cap. `make` must
+// return a fresh query builder each call. Without this, org-wide reads of large
+// tables (profiles ~10k, user_scopes) truncated at 1000 rows — dropping people
+// and managers so the org tree / My Stores / birthdays came up short. []-on-error.
+async function selectAll(make) {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await make().range(from, from + 999);
+    if (error || !data || !data.length) break;
+    out.push(...data);
+    if (data.length < 1000) break;
+  }
+  return out;
+}
+// Profiles for a possibly-large id list, chunking the .in() (URL + 1000-row caps).
+async function profilesByIds(supa, cols, ids) {
+  const out = [];
+  for (let i = 0; i < ids.length; i += 300) {
+    const chunk = ids.slice(i, i + 300);
+    out.push(...(await selectAll(() => supa.from("profiles").select(cols).in("id", chunk))));
+  }
+  return out;
+}
+
 async function callerVisibleProfiles(supa, user, visibleStoreIds) {
   if (!visibleStoreIds.length && !ORG_WIDE.has(user.role)) return [];
 
@@ -93,19 +117,12 @@ async function callerVisibleProfiles(supa, user, visibleStoreIds) {
     "id, email, phone, full_name, preferred_name, role, primary_store_id, is_active, birthday, show_birthday, profile_photo_url";
 
   if (ORG_WIDE.has(user.role)) {
-    const { data } = await supa
-      .from("profiles")
-      .select(baseSelect)
-      .eq("is_active", true);
-    return data ?? [];
+    return await selectAll(() => supa.from("profiles").select(baseSelect).eq("is_active", true));
   }
 
   // 1) Store-level employees with primary_store_id in scope.
-  const { data: storeFolks } = await supa
-    .from("profiles")
-    .select(baseSelect)
-    .in("primary_store_id", visibleStoreIds)
-    .eq("is_active", true);
+  const storeFolks = await selectAll(() =>
+    supa.from("profiles").select(baseSelect).in("primary_store_id", visibleStoreIds).eq("is_active", true));
 
   // 2) Anyone with a user_scopes row mapping into our visible org slice.
   // First resolve the caller's reach in district/area/region terms via
@@ -138,22 +155,14 @@ async function callerVisibleProfiles(supa, user, visibleStoreIds) {
     ["region", regionIds],
   ]) {
     if (!ids.length) continue;
-    const { data: scopes } = await supa
-      .from("user_scopes")
-      .select("user_id")
-      .eq("scope_type", scopeType)
-      .in("scope_id", ids);
-    for (const s of scopes ?? []) scopedUserIds.add(s.user_id);
+    const scopes = await selectAll(() =>
+      supa.from("user_scopes").select("user_id").eq("scope_type", scopeType).in("scope_id", ids));
+    for (const s of scopes) scopedUserIds.add(s.user_id);
   }
 
   let scopedProfiles = [];
   if (scopedUserIds.size) {
-    const { data } = await supa
-      .from("profiles")
-      .select(baseSelect)
-      .in("id", Array.from(scopedUserIds))
-      .eq("is_active", true);
-    scopedProfiles = data ?? [];
+    scopedProfiles = (await profilesByIds(supa, baseSelect, Array.from(scopedUserIds))).filter((p) => p.is_active);
   }
 
   // Dedupe.
@@ -171,19 +180,11 @@ async function callerStoreLevelProfiles(supa, user, visibleStoreIds) {
     "id, email, phone, full_name, preferred_name, role, primary_store_id, is_active, birthday, show_birthday, profile_photo_url";
 
   if (ORG_WIDE.has(user.role)) {
-    const { data } = await supa
-      .from("profiles")
-      .select(baseSelect)
-      .eq("is_active", true);
-    return data ?? [];
+    return await selectAll(() => supa.from("profiles").select(baseSelect).eq("is_active", true));
   }
   if (!visibleStoreIds.length) return [];
-  const { data } = await supa
-    .from("profiles")
-    .select(baseSelect)
-    .in("primary_store_id", visibleStoreIds)
-    .eq("is_active", true);
-  return data ?? [];
+  return await selectAll(() =>
+    supa.from("profiles").select(baseSelect).in("primary_store_id", visibleStoreIds).eq("is_active", true));
 }
 
 // ----------------------------------------------------------------------------
@@ -233,13 +234,11 @@ async function getMyTree(supa, user) {
   const regions = (regionRows ?? []).filter((r) => regionIdsInScope.includes(r.id));
 
   // Team members per store: profiles with primary_store_id in scope.
-  const { data: members } = await supa
-    .from("profiles")
-    .select(
-      "id, email, phone, full_name, preferred_name, role, primary_store_id, is_active, birthday, show_birthday, profile_photo_url"
-    )
-    .in("primary_store_id", visibleStoreIds)
-    .eq("is_active", true);
+  const members = await selectAll(() =>
+    supa.from("profiles")
+      .select("id, email, phone, full_name, preferred_name, role, primary_store_id, is_active, birthday, show_birthday, profile_photo_url")
+      .in("primary_store_id", visibleStoreIds)
+      .eq("is_active", true));
 
   const membersByStore = new Map();
   for (const m of members ?? []) {
@@ -254,18 +253,14 @@ async function getMyTree(supa, user) {
   // scopes here so GMs assigned via the Org Admin tree (which writes to
   // user_scopes rather than profile.primary_store_id) still resolve as
   // their store's GM in the Leadership card.
-  const { data: scopeRows } = await supa
-    .from("user_scopes")
-    .select("user_id, scope_type, scope_id")
-    .in("scope_type", ["store", "district", "area", "region"]);
+  const scopeRows = await selectAll(() =>
+    supa.from("user_scopes").select("user_id, scope_type, scope_id").in("scope_type", ["store", "district", "area", "region"]));
   // Additional ("acting") coverage feeds the same leadership resolution, so an
   // RVP covering an area as acting SDO shows in that store's SDO slot. Only
   // non-expired rows count.
   const nowIso = new Date().toISOString();
-  const { data: addlScopeRows } = await supa
-    .from("additional_scopes")
-    .select("user_id, scope_type, scope_id, expires_at")
-    .in("scope_type", ["store", "district", "area", "region"]);
+  const addlScopeRows = await selectAll(() =>
+    supa.from("additional_scopes").select("user_id, scope_type, scope_id, expires_at").in("scope_type", ["store", "district", "area", "region"]));
   const activeAddl = (addlScopeRows ?? []).filter(
     (r) => !r.expires_at || r.expires_at > nowIso
   );
@@ -277,14 +272,9 @@ async function getMyTree(supa, user) {
   );
   let scopedProfiles = [];
   if (scopedUserIds.length) {
-    const { data } = await supa
-      .from("profiles")
-      .select(
-        "id, email, phone, full_name, preferred_name, role, primary_store_id, is_active, profile_photo_url"
-      )
-      .in("id", scopedUserIds)
-      .eq("is_active", true);
-    scopedProfiles = data ?? [];
+    scopedProfiles = (await profilesByIds(supa,
+      "id, email, phone, full_name, preferred_name, role, primary_store_id, is_active, profile_photo_url",
+      scopedUserIds)).filter((p) => p.is_active);
   }
   const profileById = new Map(scopedProfiles.map((p) => [p.id, p]));
 
