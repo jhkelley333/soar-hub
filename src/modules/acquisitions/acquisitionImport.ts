@@ -8,7 +8,9 @@ const HEADER_MAP: { field: Field; aliases: string[] }[] = [
   { field: "name", aliases: ["store name", "location name", "location", "name"] },
   { field: "address", aliases: ["address", "street"] },
   { field: "city", aliases: ["city"] },
-  { field: "state", aliases: ["state", "st"] },
+  // NB: no bare "st" alias — it matches "STore email" / "STore #" and mis-routes
+  // those columns into State (that's how a store email landed in the state field).
+  { field: "state", aliases: ["state", "province"] },
   { field: "zip", aliases: ["zip", "postal"] },
   { field: "phone", aliases: ["store phone", "phone"] },
   { field: "store_email", aliases: ["store email", "location email", "email"] },

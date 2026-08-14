@@ -41,6 +41,13 @@ export interface AcqStore extends AcqStoreInput {
 }
 export interface AcqSummary { total: number; mergeable: number; blocked: number; merged: number }
 
+export interface OrgOptions {
+  regions: { id: string; name: string }[];
+  areas: { id: string; name: string; region_id: string }[];
+  districts: { id: string; name: string; area_id: string }[];
+}
+export function fetchOrgOptions(): Promise<OrgOptions> { return req(`${FN}?action=org-options`); }
+
 export function fetchAcquisitions(): Promise<{ rows: Acquisition[] }> { return req(`${FN}?action=list`); }
 export function fetchAcquisition(id: string): Promise<{ acquisition: Acquisition; stores: AcqStore[]; summary: AcqSummary }> {
   return req(`${FN}?action=get&id=${encodeURIComponent(id)}`);

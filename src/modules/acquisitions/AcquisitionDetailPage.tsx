@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Upload, Rocket, RotateCcw, Trash2, Pencil, AlertTriangle, CheckCircle2, MapPin } from "lucide-react";
+import { ArrowLeft, Upload, Rocket, RotateCcw, Trash2, Pencil, AlertTriangle, CheckCircle2, MapPin, Download, FileDown } from "lucide-react";
 import { Card } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
@@ -11,8 +11,9 @@ import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { deleteAcquisition, deleteStore, fetchAcquisition, geocodeAcquisition, mergeAcquisition, unmergeAcquisition, updateStore, uploadStores, type AcqStore } from "./api";
+import { deleteAcquisition, deleteStore, fetchAcquisition, fetchOrgOptions, geocodeAcquisition, mergeAcquisition, unmergeAcquisition, updateStore, uploadStores, type AcqStore, type OrgOptions } from "./api";
 import { parseAcquisitionPaste, parseAcquisitionXlsx } from "./acquisitionImport";
+import { downloadAcquisitionData, downloadAcquisitionTemplate } from "./acquisitionsWorkbook";
 
 export function AcquisitionDetailPage() {
   const { id = "" } = useParams();
@@ -93,6 +94,14 @@ export function AcquisitionDetailPage() {
               {acq.close_date && <div className="mt-0.5 text-sm text-zinc-500">Closes {new Date(`${acq.close_date}T12:00:00`).toLocaleDateString("en-US")}</div>}
             </div>
             <div className="flex flex-wrap items-center gap-2">
+              <Button variant="secondary" size="sm" onClick={() => downloadAcquisitionTemplate()} title="Download the upload template">
+                <FileDown className="mr-1.5 h-3.5 w-3.5" /> Template
+              </Button>
+              {stores.length > 0 && (
+                <Button variant="secondary" size="sm" onClick={() => downloadAcquisitionData(acq.name, stores)} title="Download the current staged stores to edit and re-upload">
+                  <Download className="mr-1.5 h-3.5 w-3.5" /> Download data
+                </Button>
+              )}
               {!merged && summary && (
                 <Button size="sm" disabled={summary.mergeable === 0 || merge.isPending}
                   onClick={() => { if (window.confirm(`Merge ${summary.mergeable} store(s) live? This creates active stores and any missing region/area/district. Blocked rows are skipped.`)) merge.mutate(); }}>
@@ -136,6 +145,9 @@ export function AcquisitionDetailPage() {
                 .xlsx or .csv — columns auto-detected: <strong>Store #, Name, Address, City, State, Zip, Store Email, Phone, Region, Area, District</strong>.
                 Region + Area + District are required for a store to be mergeable (every store needs a district). GM assignments are added later (separate roster upload). Uploading replaces the current staged set.
               </p>
+              <div className="mb-3 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800 ring-1 ring-inset ring-amber-200">
+                <strong>First create the new Region / Area / District in <a href="/admin/org" className="underline">Org Admin</a></strong>, then pick them from the dropdowns on each store below (edit a row). Merge assigns each store to the district you choose.
+              </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Button variant="secondary" size="sm" onClick={() => fileRef.current?.click()} disabled={upload.isPending}><Upload className="mr-1.5 h-3.5 w-3.5" /> Choose file</Button>
                 <input ref={fileRef} type="file" accept=".xlsx,.csv,text/csv" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); }} />
@@ -204,10 +216,12 @@ function StoreRow({ s, merged, onEdit, onDelete }: { s: AcqStore; merged: boolea
 
 function EditStoreModal({ store, onClose, onSaved }: { store: AcqStore; onClose: () => void; onSaved: () => void }) {
   const toast = useToast();
+  const orgQ = useQuery({ queryKey: ["acquisition-org-options"], queryFn: fetchOrgOptions });
   const [f, setF] = useState({
-    store_number: store.store_number, name: store.name ?? "", city: store.city ?? "", state: store.state ?? "",
+    store_number: store.store_number, name: store.name ?? "",
+    address: store.address ?? "", city: store.city ?? "", state: store.state ?? "", zip: store.zip ?? "",
     store_email: store.store_email ?? "", phone: store.phone ?? "",
-    region_name: store.region_name ?? "", area_name: store.area_name ?? "", district_name: store.district_name ?? "", gm_name: store.gm_name ?? "",
+    region_name: store.region_name ?? "", area_name: store.area_name ?? "", district_name: store.district_name ?? "",
   });
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF((p) => ({ ...p, [k]: e.target.value }));
   const save = useMutation({
@@ -216,22 +230,66 @@ function EditStoreModal({ store, onClose, onSaved }: { store: AcqStore; onClose:
     onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't save.", "error"),
   });
   const cls = "w-full rounded-md border border-zinc-200 px-2.5 py-1.5 text-sm focus:border-accent focus:outline-none";
-  const fields: { label: string; k: keyof typeof f }[] = [
+  const textFields: { label: string; k: keyof typeof f; span?: boolean }[] = [
     { label: "Store #", k: "store_number" }, { label: "Name", k: "name" },
-    { label: "City", k: "city" }, { label: "State", k: "state" },
+    { label: "Address", k: "address", span: true },
+    { label: "City", k: "city" }, { label: "State", k: "state" }, { label: "Zip", k: "zip" },
     { label: "Store email", k: "store_email" }, { label: "Phone", k: "phone" },
-    { label: "Region", k: "region_name" }, { label: "Area", k: "area_name" },
-    { label: "District", k: "district_name" }, { label: "GM", k: "gm_name" },
   ];
   return (
-    <Modal open onClose={onClose} title={`Edit #${store.store_number}`} maxWidth="max-w-md"
+    <Modal open onClose={onClose} title={`Edit #${store.store_number}`} maxWidth="max-w-lg"
       footer={<><Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button><Button size="sm" onClick={() => save.mutate()} disabled={save.isPending}>{save.isPending ? "Saving…" : "Save"}</Button></>}>
-      <div className="grid grid-cols-2 gap-3">
-        {fields.map(({ label, k }) => (
-          <label key={k} className="block"><span className="mb-0.5 block text-[11px] font-semibold text-zinc-500">{label}</span><input value={f[k]} onChange={set(k)} className={cls} /></label>
+      <div className="grid grid-cols-3 gap-3">
+        {textFields.map(({ label, k, span }) => (
+          <label key={k} className={cn("block", span && "col-span-3")}><span className="mb-0.5 block text-[11px] font-semibold text-zinc-500">{label}</span><input value={f[k]} onChange={set(k)} className={cls} /></label>
         ))}
       </div>
+      <OrgPickers options={orgQ.data} value={{ region: f.region_name, area: f.area_name, district: f.district_name }}
+        onChange={(v) => setF((p) => ({ ...p, region_name: v.region, area_name: v.area, district_name: v.district }))} />
+      <p className="mt-3 text-[11px] text-zinc-400">Region → Area → District come from Org Admin. Create them there first if they're missing.</p>
     </Modal>
+  );
+}
+
+// Cascading Region → Area → District selects sourced from the existing org tree.
+// Each level filters the next; the currently-saved value stays selectable even
+// if it isn't in the tree (so an uploaded name isn't silently dropped).
+function OrgPickers({ options, value, onChange }: {
+  options: OrgOptions | undefined;
+  value: { region: string; area: string; district: string };
+  onChange: (v: { region: string; area: string; district: string }) => void;
+}) {
+  const regions = options?.regions ?? [];
+  const region = regions.find((r) => r.name === value.region) || null;
+  const areas = (options?.areas ?? []).filter((a) => region && a.region_id === region.id);
+  const area = areas.find((a) => a.name === value.area) || null;
+  const districts = (options?.districts ?? []).filter((d) => area && d.area_id === area.id);
+
+  const withCurrent = (list: { name: string }[], cur: string) =>
+    cur && !list.some((x) => x.name === cur) ? [{ name: cur }, ...list] : list;
+
+  const cls = "w-full rounded-md border border-zinc-200 px-2.5 py-1.5 text-sm focus:border-accent focus:outline-none disabled:bg-zinc-50";
+  return (
+    <div className="mt-3 grid grid-cols-3 gap-3">
+      <label className="block"><span className="mb-0.5 block text-[11px] font-semibold text-zinc-500">Region</span>
+        <select value={value.region} onChange={(e) => onChange({ region: e.target.value, area: "", district: "" })} className={cls}>
+          <option value="">— select —</option>
+          {withCurrent(regions, value.region).map((r) => <option key={r.name} value={r.name}>{r.name}</option>)}
+        </select>
+      </label>
+      <label className="block"><span className="mb-0.5 block text-[11px] font-semibold text-zinc-500">Area</span>
+        <select value={value.area} disabled={!value.region} onChange={(e) => onChange({ region: value.region, area: e.target.value, district: "" })} className={cls}>
+          <option value="">— select —</option>
+          {withCurrent(areas, value.area).map((a) => <option key={a.name} value={a.name}>{a.name}</option>)}
+        </select>
+      </label>
+      <label className="block"><span className="mb-0.5 block text-[11px] font-semibold text-zinc-500">District</span>
+        <select value={value.district} disabled={!value.area} onChange={(e) => onChange({ region: value.region, area: value.area, district: e.target.value })} className={cls}>
+          <option value="">— select —</option>
+          {withCurrent(districts, value.district).map((d) => <option key={d.name} value={d.name}>{d.name}</option>)}
+        </select>
+      </label>
+    </div>
   );
 }
 
