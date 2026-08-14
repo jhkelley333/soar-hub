@@ -378,6 +378,7 @@ export function NsoPlannerPage() {
             plan={plan}
             editing={editing}
             onRemoveWeek={week.kind !== "opening" ? () => update((p) => removeWeek(p, week.id)) : undefined}
+            onRenameWeek={(name) => mapWeek(week.id, (w) => ({ ...w, name: name || undefined }))}
             mapDay={mapDay}
             mapBlock={mapBlock}
           />
@@ -531,13 +532,14 @@ function HeroField({
 // Week board — a titled row of day columns
 // ---------------------------------------------------------------------------
 function WeekBoard({
-  week, ordinal, plan, editing, onRemoveWeek, mapDay, mapBlock,
+  week, ordinal, plan, editing, onRemoveWeek, onRenameWeek, mapDay, mapBlock,
 }: {
   week: PlanWeek;
   ordinal: number;
   plan: NsoPlan;
   editing: boolean;
   onRemoveWeek?: () => void;
+  onRenameWeek: (name: string) => void;
   mapDay: (weekId: string, dayId: string, fn: (d: PlanDay) => PlanDay) => void;
   mapBlock: (weekId: string, dayId: string, blockId: string, fn: (b: DayBlock) => DayBlock) => void;
 }) {
@@ -545,16 +547,26 @@ function WeekBoard({
     week.kind === "hiring" ? "bg-accent/10 text-accent"
       : week.kind === "training" ? "bg-cherry/10 text-cherry"
         : "bg-emerald-100 text-emerald-700";
+  const displayName = week.name ?? weekName(week.kind);
 
   return (
     <section className="nso-week rounded-2xl border border-border bg-surface p-4 sm:p-5">
       <div className="mb-3 flex items-center justify-between gap-3">
-        <div>
+        <div className="min-w-0 flex-1">
           <h3 className="flex items-center gap-2 text-base font-bold tracking-tight text-heading">
-            <span className={cn("rounded-md px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide", kindChip)}>
+            <span className={cn("shrink-0 rounded-md px-2 py-0.5 text-[11px] font-bold uppercase tracking-wide", kindChip)}>
               {week.kind === "opening" ? <PartyPopper className="inline h-3 w-3" /> : week.kind === "training" ? <GraduationCap className="inline h-3 w-3" /> : <Users className="inline h-3 w-3" />}
             </span>
-            Week {ordinal} · {weekName(week.kind)}
+            <span className="shrink-0">Week {ordinal} ·</span>
+            {editing ? (
+              <input
+                value={displayName}
+                onChange={(e) => onRenameWeek(e.target.value)}
+                className="min-w-0 flex-1 rounded border-0 bg-surface-muted px-1.5 py-0.5 text-base font-bold text-heading outline-none ring-1 ring-inset ring-border focus:ring-accent"
+              />
+            ) : (
+              <span>{displayName}</span>
+            )}
           </h3>
           <p className="mt-0.5 text-xs text-ink-muted">{weekSubtitle(week.kind)}</p>
         </div>
@@ -601,7 +613,16 @@ function DayColumn({
           <span className="text-[11px] font-bold uppercase tracking-wide">{fmtDow(date)}</span>
           <span className="text-[11px] font-semibold tabular-nums opacity-80">{fmtShort(date)}</span>
         </div>
-        <div className="mt-0.5 text-[12.5px] font-bold leading-tight">{day.label}</div>
+        {editing ? (
+          <input
+            value={day.label}
+            onChange={(e) => mapDay((d) => ({ ...d, label: e.target.value }))}
+            placeholder="Day label"
+            className="mt-0.5 w-full rounded border-0 bg-white/60 px-1 py-0.5 text-[12.5px] font-bold leading-tight text-heading outline-none ring-1 ring-inset ring-black/10 focus:ring-accent"
+          />
+        ) : (
+          <div className="mt-0.5 text-[12.5px] font-bold leading-tight">{day.label}</div>
+        )}
       </div>
 
       <div className="flex-1 space-y-2 p-2.5">

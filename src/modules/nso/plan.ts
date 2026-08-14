@@ -34,6 +34,9 @@ export interface PlanWeek {
   kind: WeekKind;
   title: string;
   subtitle: string;
+  /** Optional user override for the displayed week name (the part after
+   *  "Week N ·"). Falls back to weekName(kind) when unset. */
+  name?: string;
   days: PlanDay[];
 }
 
@@ -309,26 +312,43 @@ export function newPlan(grandOpeningISO?: string): NsoPlan {
   };
 }
 
-/** The earliest (most negative) day offset across all weeks — used to place a
- *  newly added week 7 days ahead of everything else. */
-function earliestOffset(plan: NsoPlan): number {
-  let min = 0;
-  for (const w of plan.weeks) for (const d of w.days) if (d.offset < min) min = d.offset;
-  return min;
+/** Re-assign every week's day offsets from the current week ORDER so they sit
+ *  7 days apart and Monday-anchored, with the opening week anchored at the
+ *  Grand Opening. Called after inserting/removing a week so dates cascade and
+ *  the Grand Opening stays fixed. */
+export function respaceWeeks(plan: NsoPlan): NsoPlan {
+  const mo = mondayOffsetFor(plan.grandOpeningISO);
+  const openingIdx = plan.weeks.findIndex((w) => w.kind === "opening");
+  const anchorIdx = openingIdx < 0 ? plan.weeks.length - 1 : openingIdx;
+  const weeks = plan.weeks.map((w, j) => {
+    if (w.kind === "opening") return w; // already anchored at mondayOffset
+    const weekMonday = mo - 7 * (anchorIdx - j);
+    return { ...w, days: w.days.map((d, i) => ({ ...d, offset: weekMonday + i })) };
+  });
+  return { ...plan, weeks };
 }
 
-/** Prepend an extra hiring or training week, 7 days ahead of the current
- *  earliest week, so the Grand Opening stays fixed and the runway grows.
- *  The displayed "Week N" label is derived from chronological position at
- *  render time (see weekName), so the whole plan renumbers automatically. */
+/** Add an extra hiring or training week. Hiring weeks go to the front (earlier
+ *  recruiting runway); training weeks slot in just before the first Training
+ *  Week (more ramp time, still after hiring) — never above the hiring weeks.
+ *  Offsets are then re-spaced so the Grand Opening stays fixed and everything
+ *  renumbers Week 1..N in order. */
 export function addWeek(plan: NsoPlan, kind: "hiring" | "training"): NsoPlan {
-  const start = earliestOffset(plan) - 7;
-  const week = kind === "hiring" ? hiringWeek(start) : trainingWeek(start);
-  return { ...plan, weeks: [week, ...plan.weeks] };
+  const week = kind === "hiring" ? hiringWeek() : trainingWeek();
+  let weeks: PlanWeek[];
+  if (kind === "hiring") {
+    weeks = [week, ...plan.weeks];
+  } else {
+    let idx = plan.weeks.findIndex((w) => w.kind === "training");
+    if (idx < 0) idx = plan.weeks.findIndex((w) => w.kind === "opening");
+    if (idx < 0) idx = plan.weeks.length;
+    weeks = [...plan.weeks.slice(0, idx), week, ...plan.weeks.slice(idx)];
+  }
+  return respaceWeeks({ ...plan, weeks });
 }
 
 export function removeWeek(plan: NsoPlan, weekId: string): NsoPlan {
-  return { ...plan, weeks: plan.weeks.filter((w) => w.id !== weekId) };
+  return respaceWeeks({ ...plan, weeks: plan.weeks.filter((w) => w.id !== weekId) });
 }
 
 // Displayed title/subtitle are derived from the week's kind + its chronological
