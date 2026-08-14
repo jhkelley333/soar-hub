@@ -24,7 +24,7 @@ import {
   newPlan, addWeek, removeWeek, defaultKeyDates, defaultTeamMix, standardWeeks,
   weekName, weekSubtitle, reanchorForGrandOpening,
   dateForOffset, offsetForDate, toISO, parseISO, uid,
-  fmtDow, fmtShort, fmtLong, TONE_STYLES,
+  fmtDow, fmtShort, fmtLong, TONE_STYLES, TONE_ORDER, TONE_LABELS,
 } from "./plan";
 import { bootstrap, savePlans, setActiveId as persistActiveId } from "./storage";
 
@@ -614,12 +614,29 @@ function DayColumn({
           <span className="text-[11px] font-semibold tabular-nums opacity-80">{fmtShort(date)}</span>
         </div>
         {editing ? (
-          <input
-            value={day.label}
-            onChange={(e) => mapDay((d) => ({ ...d, label: e.target.value }))}
-            placeholder="Day label"
-            className="mt-0.5 w-full rounded border-0 bg-white/60 px-1 py-0.5 text-[12.5px] font-bold leading-tight text-heading outline-none ring-1 ring-inset ring-black/10 focus:ring-accent"
-          />
+          <>
+            <input
+              value={day.label}
+              onChange={(e) => mapDay((d) => ({ ...d, label: e.target.value }))}
+              placeholder="Day label"
+              className="mt-0.5 w-full rounded border-0 bg-white/60 px-1 py-0.5 text-[12.5px] font-bold leading-tight text-heading outline-none ring-1 ring-inset ring-black/10 focus:ring-accent"
+            />
+            <div className="mt-1 flex items-center gap-1" data-noprint>
+              {TONE_ORDER.map((t) => (
+                <button
+                  key={t}
+                  onClick={() => mapDay((d) => ({ ...d, tone: t }))}
+                  title={TONE_LABELS[t]}
+                  aria-label={`${TONE_LABELS[t]} header`}
+                  className={cn(
+                    "h-4 w-4 rounded-full ring-1 ring-black/15 transition",
+                    TONE_STYLES[t].dot,
+                    day.tone === t && "ring-2 ring-offset-1 ring-black/50",
+                  )}
+                />
+              ))}
+            </div>
+          </>
         ) : (
           <div className="mt-0.5 text-[12.5px] font-bold leading-tight">{day.label}</div>
         )}

@@ -396,3 +396,13 @@ export const TONE_STYLES: Record<Tone, { chip: string; ring: string; dot: string
   open: { chip: "bg-emerald-100 text-emerald-700", ring: "ring-emerald-200", dot: "bg-emerald-500" },
   off: { chip: "bg-zinc-100 text-zinc-500", ring: "ring-zinc-200", dot: "bg-zinc-400" },
 };
+
+/** Order + names for the day-header color picker (edit mode). */
+export const TONE_ORDER: Tone[] = ["recruit", "train", "practice", "open", "off"];
+export const TONE_LABELS: Record<Tone, string> = {
+  recruit: "Blue",
+  train: "Red",
+  practice: "Amber",
+  open: "Green",
+  off: "Gray",
+};
