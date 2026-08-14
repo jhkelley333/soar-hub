@@ -29,7 +29,7 @@ export interface Acquisition {
 
 export interface AcqStoreInput {
   store_number: string;
-  name?: string; address?: string; city?: string; state?: string; zip?: string; phone?: string;
+  name?: string; address?: string; city?: string; state?: string; zip?: string; phone?: string; store_email?: string;
   region_name?: string; area_name?: string; district_name?: string;
   gm_name?: string; gm_email?: string; gm_phone?: string; notes?: string;
 }

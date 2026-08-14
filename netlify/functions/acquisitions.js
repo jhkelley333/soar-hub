@@ -189,6 +189,7 @@ export const handler = async (event) => {
         acquisition_id: id,
         store_number: clean(r.store_number, 20), name: clean(r.name, 200),
         address: clean(r.address, 300), city: clean(r.city, 120), state: clean(r.state, 40), zip: clean(r.zip, 20), phone: clean(r.phone, 40),
+        store_email: clean(r.store_email, 200),
         region_name: clean(r.region_name, 120), area_name: clean(r.area_name, 120), district_name: clean(r.district_name, 120),
         gm_name: clean(r.gm_name, 200), gm_email: clean(r.gm_email, 200), gm_phone: clean(r.gm_phone, 40),
         notes: clean(r.notes, 500),
@@ -208,7 +209,7 @@ export const handler = async (event) => {
       const storeId = clean(body.store_id, 60);
       if (!storeId) return respond(400, { error: "store_id is required" });
       const patch = {};
-      for (const f of ["store_number", "name", "address", "city", "state", "zip", "phone", "region_name", "area_name", "district_name", "gm_name", "gm_email", "gm_phone", "notes"]) {
+      for (const f of ["store_number", "name", "address", "city", "state", "zip", "phone", "store_email", "region_name", "area_name", "district_name", "gm_name", "gm_email", "gm_phone", "notes"]) {
         if (Object.prototype.hasOwnProperty.call(body, f)) patch[f] = clean(body[f], f === "notes" ? 500 : 300);
       }
       if (!Object.keys(patch).length) return respond(400, { error: "nothing to update" });
@@ -249,7 +250,8 @@ export const handler = async (event) => {
           const districtId = await findOrCreate(supa, "districts", s.district_name, "area_id", areaId, cache);
           const { data: store, error } = await supa.from("stores").insert({
             number: String(s.store_number), name: s.name || `#${s.store_number}`, district_id: districtId,
-            address: s.address, city: s.city, state: s.state, zip: s.zip, is_active: true,
+            address: s.address, city: s.city, state: s.state, zip: s.zip,
+            phone: s.phone || null, email: s.store_email || null, is_active: true,
           }).select("id").maybeSingle();
           if (error) { skipped.push({ store_number: s.store_number, reason: error.message }); continue; }
           existing.add(String(s.store_number));
