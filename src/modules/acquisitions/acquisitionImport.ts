@@ -44,6 +44,12 @@ function rowsFromMatrix(header: string[], body: string[][]): AcqStoreInput[] {
       const v = String(cells[i] ?? "").trim();
       if (v) (row as unknown as Record<string, string>)[f] = v;
     });
+    // Belt-and-suspenders: an email must never be a State (a mislabeled/shifted
+    // source column). If State looks like an email, treat it as the store email.
+    if (row.state && row.state.includes("@")) {
+      if (!row.store_email) row.store_email = row.state;
+      delete row.state;
+    }
     out.push(row);
   }
   return out;
