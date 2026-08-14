@@ -133,7 +133,7 @@ export function AcquisitionDetailPage() {
             <Card className="mb-4 p-4">
               <div className="mb-2 text-xs font-bold uppercase tracking-wide text-zinc-500">Upload stores</div>
               <p className="mb-3 text-xs text-zinc-500">
-                .xlsx or .csv — columns auto-detected: <strong>Store #, Name, Address, City, State, Zip, Region, Area, District</strong>.
+                .xlsx or .csv — columns auto-detected: <strong>Store #, Name, Address, City, State, Zip, Store Email, Phone, Region, Area, District</strong>.
                 Region + Area + District are required for a store to be mergeable (every store needs a district). GM assignments are added later (separate roster upload). Uploading replaces the current staged set.
               </p>
               <div className="flex flex-wrap items-center gap-2">
@@ -206,6 +206,7 @@ function EditStoreModal({ store, onClose, onSaved }: { store: AcqStore; onClose:
   const toast = useToast();
   const [f, setF] = useState({
     store_number: store.store_number, name: store.name ?? "", city: store.city ?? "", state: store.state ?? "",
+    store_email: store.store_email ?? "", phone: store.phone ?? "",
     region_name: store.region_name ?? "", area_name: store.area_name ?? "", district_name: store.district_name ?? "", gm_name: store.gm_name ?? "",
   });
   const set = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF((p) => ({ ...p, [k]: e.target.value }));
@@ -218,6 +219,7 @@ function EditStoreModal({ store, onClose, onSaved }: { store: AcqStore; onClose:
   const fields: { label: string; k: keyof typeof f }[] = [
     { label: "Store #", k: "store_number" }, { label: "Name", k: "name" },
     { label: "City", k: "city" }, { label: "State", k: "state" },
+    { label: "Store email", k: "store_email" }, { label: "Phone", k: "phone" },
     { label: "Region", k: "region_name" }, { label: "Area", k: "area_name" },
     { label: "District", k: "district_name" }, { label: "GM", k: "gm_name" },
   ];
