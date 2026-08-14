@@ -451,11 +451,16 @@ function EditGmModal({ row, onClose }: { row: GmRosterRow; onClose: () => void }
     onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't save.", "error"),
   });
 
+  // Wipe every field — for a store going vacant (No GM) or a new GM coming in,
+  // so the previous GM's data isn't carried over. Saving all-blank sets Open.
+  const clearAll = () => { setName(""); setCell(""); setBirthday(""); setHire(""); setPlacement(""); setConfirmedNew(false); };
+
   const cls = "w-full rounded-md border border-zinc-200 px-2.5 py-1.5 text-sm focus:border-accent focus:outline-none";
   return (
     <Modal open onClose={onClose} title={`Edit GM — #${row.store_number}${row.store_name ? ` · ${row.store_name}` : ""}`}
       footer={
         <>
+          <Button variant="ghost" size="sm" className="mr-auto text-red-600 hover:bg-red-50" onClick={clearAll}>Clear all</Button>
           <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
           <Button size="sm" onClick={() => save.mutate()} disabled={!dirty || blocked || save.isPending}>{save.isPending ? "Saving…" : "Save"}</Button>
         </>
