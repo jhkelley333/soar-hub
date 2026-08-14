@@ -69,3 +69,6 @@ export function mergeAcquisition(id: string): Promise<{ ok: true; created: numbe
 export function unmergeAcquisition(id: string): Promise<{ ok: true; deactivated: number }> {
   return req(`${FN}?action=unmerge`, { method: "POST", body: JSON.stringify({ id }) });
 }
+export function geocodeAcquisition(id: string): Promise<{ ok: true; geocoded: number; remaining: number }> {
+  return req(`${FN}?action=geocode`, { method: "POST", body: JSON.stringify({ id }) });
+}

@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate, useParams } from "react-router-dom";
-import { ArrowLeft, Upload, Rocket, RotateCcw, Trash2, Pencil, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { ArrowLeft, Upload, Rocket, RotateCcw, Trash2, Pencil, AlertTriangle, CheckCircle2, MapPin } from "lucide-react";
 import { Card } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
@@ -11,7 +11,7 @@ import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { deleteAcquisition, deleteStore, fetchAcquisition, mergeAcquisition, unmergeAcquisition, updateStore, uploadStores, type AcqStore } from "./api";
+import { deleteAcquisition, deleteStore, fetchAcquisition, geocodeAcquisition, mergeAcquisition, unmergeAcquisition, updateStore, uploadStores, type AcqStore } from "./api";
 import { parseAcquisitionPaste, parseAcquisitionXlsx } from "./acquisitionImport";
 
 export function AcquisitionDetailPage() {
@@ -54,6 +54,19 @@ export function AcquisitionDetailPage() {
     onSuccess: (r) => { toast.push(`Deactivated ${r.deactivated} stores.`, "success"); invalidate(); },
     onError: (e) => toast.push(e instanceof Error ? e.message : "Un-merge failed.", "error"),
   });
+  const geocode = useMutation({
+    mutationFn: async () => {
+      let total = 0;
+      for (let i = 0; i < 60; i++) {
+        const r = await geocodeAcquisition(id);
+        total += r.geocoded;
+        if (r.remaining <= 0 || r.geocoded === 0) break;
+      }
+      return total;
+    },
+    onSuccess: (n) => toast.push(n ? `Geocoded ${n} store(s) for the map.` : "All stores already geocoded.", "success"),
+    onError: (e) => toast.push(e instanceof Error ? e.message : "Geocoding failed.", "error"),
+  });
   const removeAcq = useMutation({
     mutationFn: () => deleteAcquisition(id),
     onSuccess: () => { toast.push("Acquisition deleted.", "success"); qc.invalidateQueries({ queryKey: ["acquisitions"] }); nav("/admin/acquisitions"); },
@@ -87,8 +100,14 @@ export function AcquisitionDetailPage() {
                 </Button>
               )}
               {merged && (
+                <Button variant="secondary" size="sm" disabled={geocode.isPending} onClick={() => geocode.mutate()}
+                  title="Geocode the merged stores' addresses so they pin on the Territory Map">
+                  <MapPin className="mr-1.5 h-3.5 w-3.5" /> {geocode.isPending ? "Geocoding…" : "Geocode addresses"}
+                </Button>
+              )}
+              {merged && (
                 <Button variant="secondary" size="sm" disabled={unmerge.isPending}
-                  onClick={() => { if (window.confirm("Un-merge? This deactivates the stores this acquisition created (they disappear from the hub). Org nodes and rosters stay. Use if a deal fell through.")) unmerge.mutate(); }}>
+                  onClick={() => { if (window.confirm("Un-merge? This deactivates the stores this acquisition created (they disappear from the hub). Org nodes stay. Use if a deal fell through.")) unmerge.mutate(); }}>
                   <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> {unmerge.isPending ? "Un-merging…" : "Un-merge"}
                 </Button>
               )}
@@ -114,8 +133,8 @@ export function AcquisitionDetailPage() {
             <Card className="mb-4 p-4">
               <div className="mb-2 text-xs font-bold uppercase tracking-wide text-zinc-500">Upload stores</div>
               <p className="mb-3 text-xs text-zinc-500">
-                .xlsx or .csv — columns auto-detected: <strong>Store #, Name, Address, City, State, Zip, Region, Area, District, GM, GM Email, GM Phone</strong>.
-                Region + Area + District are required for a store to be mergeable (every store needs a district). Uploading replaces the current staged set.
+                .xlsx or .csv — columns auto-detected: <strong>Store #, Name, Address, City, State, Zip, Region, Area, District</strong>.
+                Region + Area + District are required for a store to be mergeable (every store needs a district). GM assignments are added later (separate roster upload). Uploading replaces the current staged set.
               </p>
               <div className="flex flex-wrap items-center gap-2">
                 <Button variant="secondary" size="sm" onClick={() => fileRef.current?.click()} disabled={upload.isPending}><Upload className="mr-1.5 h-3.5 w-3.5" /> Choose file</Button>

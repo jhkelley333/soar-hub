@@ -16,6 +16,7 @@
 //
 // Service-role gatekeeper: RLS on, no policies.
 import { createClient } from "@supabase/supabase-js";
+import { geocodeConfigured, geocodeStoreOnWrite } from "./_lib/geocode.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -252,14 +253,8 @@ export const handler = async (event) => {
           }).select("id").maybeSingle();
           if (error) { skipped.push({ store_number: s.store_number, reason: error.message }); continue; }
           existing.add(String(s.store_number));
-          // Seed the GM roster (best-effort) so org/labor show who runs it.
-          try {
-            const gmStatus = s.gm_name ? "named" : "open";
-            await supa.from("gm_roster").upsert({
-              store_number: String(s.store_number), store_name: s.name, gm_name: s.gm_name || null, status: gmStatus,
-              gm_email: s.gm_email || null, gm_cell: s.gm_phone || null, updated_by: user.id, updated_at: new Date().toISOString(),
-            }, { onConflict: "store_number" });
-          } catch { /* roster is best-effort */ }
+          // GM assignment is handled later (separate roster upload), so merge
+          // intentionally does not touch gm_roster here.
           await supa.from("acquisition_stores").update({ merged_store_id: store.id }).eq("id", s.id);
           created.push(String(s.store_number));
         } catch (e) {
@@ -268,6 +263,26 @@ export const handler = async (event) => {
       }
       await supa.from("acquisitions").update({ status: "merged", merged_at: new Date().toISOString(), merged_by: user.id, updated_at: new Date().toISOString() }).eq("id", id);
       return respond(200, { ok: true, created: created.length, skipped });
+    }
+
+    // ── Geocode the merged stores' addresses so they pin on the Territory Map.
+    // Time-budgeted; the client loops until `remaining` hits 0.
+    if (action === "geocode") {
+      const id = clean(body.id, 60);
+      if (!geocodeConfigured()) return respond(500, { error: "Geocoding isn't configured (GOOGLE_GEOCODING_API_KEY)." });
+      const staged = await acquisitionStores(supa, id);
+      const storeIds = staged.map((s) => s.merged_store_id).filter(Boolean);
+      if (!storeIds.length) return respond(200, { ok: true, geocoded: 0, remaining: 0 });
+      const { data: stores } = await supa.from("stores").select("id, number, address, city, state").in("id", storeIds).is("latitude", null);
+      const todo = stores || [];
+      let geocoded = 0;
+      const started = Date.now();
+      for (const st of todo) {
+        if (Date.now() - started > 8000) break; // stay under the function timeout
+        const geo = await geocodeStoreOnWrite(st);
+        if (geo) { await supa.from("stores").update({ ...geo, updated_at: new Date().toISOString() }).eq("id", st.id); geocoded++; }
+      }
+      return respond(200, { ok: true, geocoded, remaining: Math.max(0, todo.length - geocoded) });
     }
 
     // ── Safety net: deactivate the stores a merge created (does not delete). ────
