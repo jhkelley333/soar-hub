@@ -302,3 +302,20 @@ body {
 @media (prefers-reduced-motion: reduce) {
   .qsr-card-in { animation: none; }
 }
+
+/* Print — used by the NSO planner "Print / Save PDF" action. Drop the app
+ * chrome (sidebar, topbar) and anything marked data-noprint, let the main
+ * scroll area expand to full height, and avoid slicing a week across pages. */
+@media print {
+  aside,
+  header,
+  [data-noprint] {
+    display: none !important;
+  }
+  main {
+    overflow: visible !important;
+  }
+  .nso-week {
+    break-inside: avoid;
+  }
+}
