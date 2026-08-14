@@ -156,7 +156,9 @@ async function buildTree(supa) {
     supa.from("regions").select("id, code, name, is_active").order("code"),
     supa.from("areas").select("id, code, name, region_id, is_active").order("code"),
     supa.from("districts").select("id, code, name, area_id, is_active").order("code"),
-    selectAll(() => supa.from("stores").select(STORE_TREE_COLS).order("number")),
+    // Exclude Little Caesars from the Sonic org tree + counts (matches the rest
+    // of the app). Keeps sonic + null-brand (treated as sonic) + other brands.
+    selectAll(() => supa.from("stores").select(STORE_TREE_COLS).neq("brand", "little_caesars").order("number")),
     selectAll(() => supa.from("user_scopes").select("user_id, scope_type, scope_id")),
     // GM roster — the ops "who's the GM" per store, so a store with no Hub
     // account shows the roster name (placeholder) instead of a bare "Vacant".
