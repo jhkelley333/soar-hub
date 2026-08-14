@@ -107,41 +107,60 @@ const ORG_ADMIN_ROLES = new Set(["admin", "coo", "vp"]);
 // tree — full org hierarchy in one nested response
 // ----------------------------------------------------------------------------
 
+// Fetch every row of a query, paging past PostgREST's 1000-row cap. `make` must
+// return a fresh query builder each call. Without this the org tree's
+// user_scopes / stores fetches truncated once the company grew past ~1000 rows,
+// dropping manager rows so every node read "Vacant". Returns [] on error.
+async function selectAll(make) {
+  const out = [];
+  for (let from = 0; ; from += 1000) {
+    const { data, error } = await make().range(from, from + 999);
+    if (error || !data || !data.length) break;
+    out.push(...data);
+    if (data.length < 1000) break;
+  }
+  return out;
+}
+// Fetch rows whose id is in `ids`, chunking the .in() list (a large list blows
+// the request URL and still caps at 1000 rows) and paging each chunk.
+async function selectByIds(supa, table, cols, ids) {
+  const out = [];
+  for (let i = 0; i < ids.length; i += 300) {
+    const chunk = ids.slice(i, i + 300);
+    out.push(...(await selectAll(() => supa.from(table).select(cols).in("id", chunk))));
+  }
+  return out;
+}
+
+const STORE_TREE_COLS =
+  "id, number, name, phone, email, address, city, state, zip, district_id, is_active, " +
+  "plate_iq_email, soar_company_name, pay_cycle, " +
+  "acquisition_date, pos_provider, security_vendor, security_vendor_phone, food_vendor_name, " +
+  "has_apple_pay, has_order_ahead, has_outdoor_seating, has_drive_thru, has_clearance_bar, " +
+  "drive_thru_lanes, drive_thru_type, public_restroom_count, " +
+  "patio_pop_menu_count, patio_pop_stall_numbers, " +
+  "order_ahead_stall_count, order_ahead_stall_numbers, stall_pop_menu_count, " +
+  "has_trailer_stall, trailer_stall_number, third_party_delivery";
+
 async function buildTree(supa) {
-  // Pull everything in parallel; assemble client-side.
+  // Pull everything in parallel; assemble client-side. The large sets (stores,
+  // scopes, roster) are paged so nothing truncates at 1000 rows.
   const [
     { data: regions },
     { data: areas },
     { data: districts },
-    { data: stores },
-    { data: scopes },
-    { data: rosterRows },
+    stores,
+    scopes,
+    rosterRows,
   ] = await Promise.all([
     supa.from("regions").select("id, code, name, is_active").order("code"),
     supa.from("areas").select("id, code, name, region_id, is_active").order("code"),
-    supa
-      .from("districts")
-      .select("id, code, name, area_id, is_active")
-      .order("code"),
-    supa
-      .from("stores")
-      .select(
-        "id, number, name, phone, email, address, city, state, zip, district_id, is_active, " +
-        "plate_iq_email, soar_company_name, pay_cycle, " +
-        "acquisition_date, pos_provider, security_vendor, security_vendor_phone, food_vendor_name, " +
-        "has_apple_pay, has_order_ahead, has_outdoor_seating, has_drive_thru, has_clearance_bar, " +
-        "drive_thru_lanes, drive_thru_type, public_restroom_count, " +
-        "patio_pop_menu_count, patio_pop_stall_numbers, " +
-        "order_ahead_stall_count, order_ahead_stall_numbers, stall_pop_menu_count, " +
-        "has_trailer_stall, trailer_stall_number, third_party_delivery"
-      )
-      .order("number"),
-    supa
-      .from("user_scopes")
-      .select("user_id, scope_type, scope_id"),
+    supa.from("districts").select("id, code, name, area_id, is_active").order("code"),
+    selectAll(() => supa.from("stores").select(STORE_TREE_COLS).order("number")),
+    selectAll(() => supa.from("user_scopes").select("user_id, scope_type, scope_id")),
     // GM roster — the ops "who's the GM" per store, so a store with no Hub
     // account shows the roster name (placeholder) instead of a bare "Vacant".
-    supa.from("gm_roster").select("store_number, gm_name, status").then((r) => r, () => ({ data: [] })),
+    selectAll(() => supa.from("gm_roster").select("store_number, gm_name, status")),
   ]);
   const rosterByNumber = new Map((rosterRows ?? [])
     .filter((r) => r.status === "named" && r.gm_name)
@@ -150,27 +169,25 @@ async function buildTree(supa) {
   // Additional ("acting") coverage shows alongside primary managers on each
   // node — e.g. an RVP covering an area as acting SDO. Non-expired only.
   const nowIso = new Date().toISOString();
-  const { data: addlScopes } = await supa
+  const addlScopes = await selectAll(() => supa
     .from("additional_scopes")
-    .select("user_id, scope_type, scope_id, expires_at");
+    .select("user_id, scope_type, scope_id, expires_at"));
   const activeAddl = (addlScopes ?? []).filter(
     (r) => !r.expires_at || r.expires_at > nowIso
   );
 
-  // Resolve managers for each scope row.
+  // Resolve managers for each scope row. Chunk + page the profiles fetch — a
+  // company-sized userIds list would otherwise overflow the .in() URL / row cap
+  // and drop managers, which is what made every node read "Vacant".
   const userIds = [
     ...new Set([
       ...(scopes ?? []).map((s) => s.user_id),
       ...activeAddl.map((s) => s.user_id),
     ]),
   ];
-  const { data: profiles } = userIds.length
-    ? await supa
-        .from("profiles")
-        .select("id, full_name, email, role, is_active")
-        .in("id", userIds)
-        .eq("is_active", true)
-    : { data: [] };
+  const profiles = userIds.length
+    ? (await selectByIds(supa, "profiles", "id, full_name, email, role, is_active", userIds)).filter((p) => p.is_active)
+    : [];
   const profileMap = Object.fromEntries(
     (profiles ?? []).map((p) => [p.id, p])
   );
