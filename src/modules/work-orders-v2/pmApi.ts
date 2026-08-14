@@ -3,6 +3,7 @@
 // auto-recover on 401.
 
 import { supabase } from "@/lib/supabase";
+import { refreshAccessTokenOnce } from "@/lib/authRefresh";
 
 const FN = "/.netlify/functions/pm";
 
@@ -100,9 +101,7 @@ async function authHeaders(): Promise<HeadersInit> {
 }
 
 async function refreshSessionAndGetToken(): Promise<string | null> {
-  const { data, error } = await supabase.auth.refreshSession();
-  if (error) return null;
-  return data.session?.access_token ?? null;
+  return refreshAccessTokenOnce();
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
