@@ -116,6 +116,16 @@ export const handler = async (event) => {
       return respond(200, { rows: (acqs || []).map((a) => ({ ...a, store_count: counts.get(a.id)?.total || 0, merged_count: counts.get(a.id)?.merged || 0 })) });
     }
 
+    // Existing org hierarchy, for the Region → Area → District dropdowns.
+    if (event.httpMethod === "GET" && action === "org-options") {
+      const [{ data: regions }, { data: areas }, { data: districts }] = await Promise.all([
+        supa.from("regions").select("id, name").order("name"),
+        supa.from("areas").select("id, name, region_id").order("name"),
+        supa.from("districts").select("id, name, area_id").order("name"),
+      ]);
+      return respond(200, { regions: regions || [], areas: areas || [], districts: districts || [] });
+    }
+
     if (event.httpMethod === "GET" && action === "get") {
       const id = String(params.id || "").trim();
       if (!id) return respond(400, { error: "id is required" });
