@@ -6,7 +6,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Ban, Cake, Check, Download, HelpCircle, History, Mail, Pencil, Phone, Upload, UserX, X } from "lucide-react";
+import { AlertTriangle, Ban, Cake, Check, Download, HelpCircle, History, Mail, Pencil, Phone, Upload, UserX } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -39,7 +39,7 @@ export function GmRosterPage() {
   const [search, setSearch] = useState("");
   const [importOpen, setImportOpen] = useState(false);
   const [historyRow, setHistoryRow] = useState<GmRosterRow | null>(null);
-  const [detailsRow, setDetailsRow] = useState<GmRosterRow | null>(null);
+  const [editRow, setEditRow] = useState<GmRosterRow | null>(null);
   const q = useQuery({ queryKey: ["gm-roster"], queryFn: fetchGmRoster });
   // Leaders power the Leaders tab + the birthday view; fetched up front (one
   // light request) so the Birthdays button works from either tab.
@@ -108,7 +108,7 @@ export function GmRosterPage() {
 
       {importOpen && <ImportModal current={q.data?.rows ?? []} onClose={() => setImportOpen(false)} />}
       {historyRow && <HistoryModal row={historyRow} onClose={() => setHistoryRow(null)} />}
-      {detailsRow && <DetailsModal row={detailsRow} onClose={() => setDetailsRow(null)} />}
+      {editRow && <EditGmModal row={editRow} onClose={() => setEditRow(null)} />}
       {bdayOpen && <BirthdayModal gmRows={q.data?.rows ?? []} leaders={leadersQ.data?.rows ?? []} onClose={() => setBdayOpen(false)} />}
 
       <div className="mb-4 flex gap-1 border-b border-zinc-200">
@@ -164,7 +164,7 @@ export function GmRosterPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
-                {rows.map((r) => <Row key={r.store_number} r={r} canEdit={q.data?.can_edit ?? false} onHistory={() => setHistoryRow(r)} onDetails={() => setDetailsRow(r)} />)}
+                {rows.map((r) => <Row key={r.store_number} r={r} canEdit={q.data?.can_edit ?? false} onHistory={() => setHistoryRow(r)} onEdit={() => setEditRow(r)} />)}
               </tbody>
             </table>
           </div>
@@ -321,19 +321,9 @@ function BirthdayModal({ gmRows, leaders, onClose }: { gmRows: GmRosterRow[]; le
   );
 }
 
-function Row({ r, canEdit, onHistory, onDetails }: { r: GmRosterRow; canEdit: boolean; onHistory: () => void; onDetails: () => void }) {
+function Row({ r, canEdit, onHistory, onEdit }: { r: GmRosterRow; canEdit: boolean; onHistory: () => void; onEdit: () => void }) {
   const meta = STATUS_META[r.reconcile];
   const Icon = meta.icon;
-  const qc = useQueryClient();
-  const toast = useToast();
-  const [editing, setEditing] = useState(false);
-  const [val, setVal] = useState(r.roster_name ?? "");
-  const save = useMutation({
-    mutationFn: () => setGmRosterName(r.store_number, val.trim()),
-    onSuccess: () => { setEditing(false); qc.invalidateQueries({ queryKey: ["gm-roster"] }); toast.push("Roster name updated.", "success"); },
-    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't update the name.", "error"),
-  });
-  const startEdit = () => { setVal(r.roster_name ?? ""); setEditing(true); };
   return (
     <tr className="align-top">
       <td className="px-4 py-2.5">
@@ -341,49 +331,28 @@ function Row({ r, canEdit, onHistory, onDetails }: { r: GmRosterRow; canEdit: bo
         <div className="text-xs text-zinc-500">{r.store_name ?? ""}{!r.in_app && <span className="ml-1 text-red-500">· not in app</span>}</div>
       </td>
       <td className="px-4 py-2.5">
-        {editing ? (
-          <div className="flex items-center gap-1.5">
-            <input
-              autoFocus
-              value={val}
-              onChange={(e) => setVal(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") save.mutate(); if (e.key === "Escape") setEditing(false); }}
-              placeholder="GM name — or Open / In Training"
-              className="w-48 rounded-md border border-zinc-200 px-2 py-1 text-sm focus:border-accent focus:outline-none"
-            />
-            <button type="button" onClick={() => save.mutate()} disabled={save.isPending} title="Save" className="text-emerald-600 hover:text-emerald-700 disabled:opacity-50">
-              <Check className="h-4 w-4" strokeWidth={2.5} />
+        <div className="flex flex-wrap items-center gap-1.5">
+          <span className="text-midnight">{r.roster_name ?? <span className="text-zinc-400">—</span>}</span>
+          {r.no_gm_credit && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-orange-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-orange-700 ring-1 ring-inset ring-orange-200" title="Active No-GM labor credit (from Labor → No-GM credit)">
+              <Ban className="h-3 w-3" /> No GM credit{NO_GM_REASON_LABEL[r.no_gm_reason ?? ""] ? ` · ${NO_GM_REASON_LABEL[r.no_gm_reason ?? ""]}` : ""}
+            </span>
+          )}
+          {canEdit && (
+            <button type="button" onClick={onEdit} title="Edit GM — name, phone, birthday, hire & placement" className="text-zinc-300 hover:text-accent">
+              <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
             </button>
-            <button type="button" onClick={() => setEditing(false)} title="Cancel" className="text-zinc-400 hover:text-zinc-600">
-              <X className="h-4 w-4" strokeWidth={2.5} />
-            </button>
-          </div>
-        ) : (
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-midnight">{r.roster_name ?? <span className="text-zinc-400">—</span>}</span>
-            {r.no_gm_credit && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-orange-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-orange-700 ring-1 ring-inset ring-orange-200" title="Active No-GM labor credit (from Labor → No-GM credit)">
-                <Ban className="h-3 w-3" /> No GM credit{NO_GM_REASON_LABEL[r.no_gm_reason ?? ""] ? ` · ${NO_GM_REASON_LABEL[r.no_gm_reason ?? ""]}` : ""}
-              </span>
-            )}
-            {canEdit && (
-              <button type="button" onClick={startEdit} title="Edit roster name" className="text-zinc-300 hover:text-accent">
-                <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
-              </button>
-            )}
-            <button type="button" onClick={onHistory} title="Edit history" className="text-zinc-300 hover:text-accent">
-              <History className="h-3.5 w-3.5" strokeWidth={2} />
-            </button>
-          </div>
-        )}
-        {!editing && (
-          <div className="text-[11px] text-zinc-400">
-            {r.gm_email && <div>{r.gm_email}</div>}
-            {(r.gm_cell || r.gm_birthday) && (
-              <div>{[r.gm_cell, r.gm_birthday ? `🎂 ${fmtDate(r.gm_birthday)}` : null].filter(Boolean).join(" · ")}</div>
-            )}
-          </div>
-        )}
+          )}
+          <button type="button" onClick={onHistory} title="Edit history" className="text-zinc-300 hover:text-accent">
+            <History className="h-3.5 w-3.5" strokeWidth={2} />
+          </button>
+        </div>
+        <div className="text-[11px] text-zinc-400">
+          {r.gm_email && <div>{r.gm_email}</div>}
+          {(r.gm_cell || r.gm_birthday) && (
+            <div>{[r.gm_cell, r.gm_birthday ? `🎂 ${fmtDate(r.gm_birthday)}` : null].filter(Boolean).join(" · ")}</div>
+          )}
+        </div>
       </td>
       <td className="px-4 py-2.5">
         <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset", meta.cls)}>
@@ -391,22 +360,13 @@ function Row({ r, canEdit, onHistory, onDetails }: { r: GmRosterRow; canEdit: bo
         </span>
       </td>
       <td className="px-4 py-2.5 text-xs">
-        <div className="flex items-start gap-1.5">
-          <div>
-            <div className="text-zinc-600">
-              <span className="text-zinc-400">Hire</span> {fmtDate(r.hire_date)}
-              {sinceLabel(r.hire_date) && <span className="ml-1 font-semibold text-midnight">· {sinceLabel(r.hire_date)}</span>}
-            </div>
-            <div className="text-zinc-600">
-              <span className="text-zinc-400">Placed</span> {fmtDate(r.placement_date)}
-              {sinceLabel(r.placement_date) && <span className="ml-1 font-semibold text-midnight">· {sinceLabel(r.placement_date)}</span>}
-            </div>
-          </div>
-          {canEdit && (
-            <button type="button" onClick={onDetails} title="Edit cell / birthday / hire / placement" className="mt-0.5 text-zinc-300 hover:text-accent">
-              <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
-            </button>
-          )}
+        <div className="text-zinc-600">
+          <span className="text-zinc-400">Hire</span> {fmtDate(r.hire_date)}
+          {sinceLabel(r.hire_date) && <span className="ml-1 font-semibold text-midnight">· {sinceLabel(r.hire_date)}</span>}
+        </div>
+        <div className="text-zinc-600">
+          <span className="text-zinc-400">Placed</span> {fmtDate(r.placement_date)}
+          {sinceLabel(r.placement_date) && <span className="ml-1 font-semibold text-midnight">· {sinceLabel(r.placement_date)}</span>}
         </div>
       </td>
       <td className="px-4 py-2.5">
@@ -449,44 +409,60 @@ function HistoryModal({ row, onClose }: { row: GmRosterRow; onClose: () => void 
   );
 }
 
-function DetailsModal({ row, onClose }: { row: GmRosterRow; onClose: () => void }) {
+// One edit for the whole GM: name (+ Open / In Training), phone, birthday, hire
+// and placement dates. When the name changes to a new person, require an
+// explicit confirm that the birthday / hire / placement / phone were updated too.
+const isRealGmName = (s: string) => { const t = s.trim(); return !!t && !/^open$/i.test(t) && !/in\s*training/i.test(t); };
+
+function EditGmModal({ row, onClose }: { row: GmRosterRow; onClose: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const init = {
+    name: row.roster_name ?? "",
     cell: row.gm_cell ?? "",
     birthday: parseDate(row.gm_birthday) ?? "",
     hire: parseDate(row.hire_date) ?? "",
     placement: parseDate(row.placement_date) ?? "",
   };
+  const [name, setName] = useState(init.name);
   const [cell, setCell] = useState(init.cell);
   const [birthday, setBirthday] = useState(init.birthday);
   const [hire, setHire] = useState(init.hire);
   const [placement, setPlacement] = useState(init.placement);
-  const dirty = cell !== init.cell || birthday !== init.birthday || hire !== init.hire || placement !== init.placement;
+  const [confirmedNew, setConfirmedNew] = useState(false);
+
+  const nameChanged = name.trim() !== init.name.trim();
+  const isNewGm = nameChanged && isRealGmName(name);
+  const detailsDirty = cell !== init.cell || birthday !== init.birthday || hire !== init.hire || placement !== init.placement;
+  const dirty = nameChanged || detailsDirty;
+  const blocked = isNewGm && !confirmedNew;
 
   const save = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
+      if (nameChanged) await setGmRosterName(row.store_number, name.trim());
       const fields: { gm_cell?: string | null; gm_birthday?: string | null; hire_date?: string | null; placement_date?: string | null } = {};
       if (cell !== init.cell) fields.gm_cell = cell.trim() || null;
       if (birthday !== init.birthday) fields.gm_birthday = birthday || null;
       if (hire !== init.hire) fields.hire_date = hire || null;
       if (placement !== init.placement) fields.placement_date = placement || null;
-      return setGmRosterDetails(row.store_number, fields);
+      if (Object.keys(fields).length) await setGmRosterDetails(row.store_number, fields);
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["gm-roster"] }); toast.push("Details saved.", "success"); onClose(); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["gm-roster"] }); toast.push("GM saved.", "success"); onClose(); },
     onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't save.", "error"),
   });
 
   const cls = "w-full rounded-md border border-zinc-200 px-2.5 py-1.5 text-sm focus:border-accent focus:outline-none";
   return (
-    <Modal open onClose={onClose} title={`Edit details — #${row.store_number}${row.store_name ? ` · ${row.store_name}` : ""}`}
+    <Modal open onClose={onClose} title={`Edit GM — #${row.store_number}${row.store_name ? ` · ${row.store_name}` : ""}`}
       footer={
         <>
           <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
-          <Button size="sm" onClick={() => save.mutate()} disabled={!dirty || save.isPending}>{save.isPending ? "Saving…" : "Save details"}</Button>
+          <Button size="sm" onClick={() => save.mutate()} disabled={!dirty || blocked || save.isPending}>{save.isPending ? "Saving…" : "Save"}</Button>
         </>
       }>
       <div className="space-y-3">
+        <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">GM name</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="GM name — or Open / In Training" className={cls} /></label>
         <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">GM cell phone</span>
           <input type="tel" value={cell} onChange={(e) => setCell(e.target.value)} placeholder="(555) 123-4567" className={cls} /></label>
         <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">Birthday</span>
@@ -495,6 +471,14 @@ function DetailsModal({ row, onClose }: { row: GmRosterRow; onClose: () => void 
           <input type="date" value={hire} onChange={(e) => setHire(e.target.value)} className={cls} /></label>
         <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">Placement date (as GM)</span>
           <input type="date" value={placement} onChange={(e) => setPlacement(e.target.value)} className={cls} /></label>
+
+        {isNewGm && (
+          <label className={cn("flex items-start gap-2 rounded-md px-2.5 py-2 text-xs ring-1 ring-inset", confirmedNew ? "bg-emerald-50 text-emerald-800 ring-emerald-200" : "bg-amber-50 text-amber-800 ring-amber-200")}>
+            <input type="checkbox" checked={confirmedNew} onChange={(e) => setConfirmedNew(e.target.checked)} className="mt-0.5" />
+            <span>New GM — I've updated the <b>birthday, hire date, placement date, and phone</b> for {name.trim()} (not carried over from the previous GM).</span>
+          </label>
+        )}
+
         {row.no_gm_credit && (
           <div className="mt-1 flex items-start gap-2 rounded-md bg-orange-50 px-2.5 py-2 text-[11px] ring-1 ring-inset ring-orange-200">
             <Ban className="mt-0.5 h-3.5 w-3.5 shrink-0 text-orange-600" />
@@ -504,7 +488,7 @@ function DetailsModal({ row, onClose }: { row: GmRosterRow; onClose: () => void 
           </div>
         )}
       </div>
-      <p className="mt-3 text-[11px] text-zinc-400">GM name and status are edited from the roster row. Blank a field to clear it.</p>
+      <p className="mt-3 text-[11px] text-zinc-400">Blank a field to clear it. "Open" / "In Training" set the status instead of a name.</p>
     </Modal>
   );
 }
