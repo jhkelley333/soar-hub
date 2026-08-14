@@ -21,6 +21,7 @@ import { ChangeoverListPage } from "@/modules/changeover/ChangeoverListPage";
 import { ChangeoverDetailPage } from "@/modules/changeover/ChangeoverDetailPage";
 import { SystemSettingsPage } from "@/modules/system-settings/SystemSettingsPage";
 import { QrCodesPage } from "@/modules/qr-codes/QrCodesPage";
+import { NsoPlannerPage } from "@/modules/nso/NsoPlannerPage";
 import { SiteAuditPage } from "@/modules/site-audit/SiteAuditPage";
 import { BusinessDisruptionsPage } from "@/modules/business-disruptions/BusinessDisruptionsPage";
 import { LaborPage } from "@/modules/labor/LaborPage";
@@ -939,6 +940,16 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <QrCodesPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        // New Store Opening planner — interactive 3-week NSO plan builder,
+        // reached from the Operations Tools hub. DO and above (opening owners).
+        path: "nso",
+        element: (
+          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"]}>
+            <NsoPlannerPage />
           </ProtectedRoute>
         ),
       },

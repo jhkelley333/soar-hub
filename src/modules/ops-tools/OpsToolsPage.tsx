@@ -4,7 +4,7 @@
 // its own nav item by design.
 
 import { Link } from "react-router-dom";
-import { ArrowRight, ClipboardCheck, ListChecks, QrCode, UserCog, type LucideIcon } from "lucide-react";
+import { ArrowRight, ClipboardCheck, ListChecks, QrCode, UserCog, Rocket, type LucideIcon } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { cn } from "@/lib/cn";
@@ -49,6 +49,14 @@ const TOOLS: Tool[] = [
     // create one — the New buttons stay DO+ via the backend's can_create).
     roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"],
     to: () => "/changeover",
+  },
+  {
+    key: "nso",
+    title: "New Store Opening",
+    desc: "Pick a Grand Opening date and the 3-week Sonic playbook builds around it — hiring, training week, opening. Set the team mix, GM, and first food & smallwares orders, edit any block, and print the plan.",
+    icon: Rocket,
+    roles: ["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"],
+    to: () => "/nso",
   },
   {
     key: "qr-codes",
