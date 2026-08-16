@@ -305,19 +305,30 @@ export function ChatList({
         onClose={() => setNeedsYouOpen(false)}
         title={`Needs you · ${needsYou.length}`}
       >
-        <div className="space-y-2.5">
-          {needsYou.map((t) => (
-            <ActionCard
-              key={t.id}
-              thread={t}
-              onOpen={() => {
-                setNeedsYouOpen(false);
-                onOpen(t.id);
-              }}
-              onAction={(a) => toast.push(`"${a}" — wired to the work flow next.`, "info")}
-            />
-          ))}
-        </div>
+        {needsYou.length === 0 ? (
+          <EmptyState
+            title="All clear"
+            description="Nothing needs your action right now."
+          />
+        ) : (
+          <div className="space-y-2.5">
+            {needsYou.map((t) => (
+              <ActionCard
+                key={t.id}
+                thread={t}
+                onOpen={() => {
+                  setNeedsYouOpen(false);
+                  onOpen(t.id);
+                }}
+                onAction={(a) => toast.push(`"${a}" — wired to the work flow next.`, "info")}
+                onDismiss={() => {
+                  markReadMut.mutate(t.id);
+                  toast.push("Cleared", "info");
+                }}
+              />
+            ))}
+          </div>
+        )}
       </Drawer>
 
       <Drawer open={archivedOpen} onClose={() => setArchivedOpen(false)} title="Archived">

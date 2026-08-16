@@ -10,6 +10,7 @@ import {
   Paperclip,
   Camera,
   Send,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import type { ChatThread, StatusPillKind } from "../types";
@@ -63,10 +64,13 @@ export function ActionCard({
   thread,
   onOpen,
   onAction,
+  onDismiss,
 }: {
   thread: ChatThread;
   onOpen: () => void;
   onAction: (action: string) => void;
+  /** Clear this card from "Needs you" (marks the thread read). */
+  onDismiss?: () => void;
 }) {
   const isWO = thread.kind === "workorder";
   const Icon = isWO ? ClipboardList : CircleCheck;
@@ -104,9 +108,25 @@ export function ActionCard({
             <span className="truncate text-[14px] font-semibold text-midnight-900">
               {thread.title}
             </span>
-            <span className="shrink-0 text-[11px] text-midnight-400">
-              {thread.lastMessage.at}
-            </span>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <span className="text-[11px] text-midnight-400">
+                {thread.lastMessage.at}
+              </span>
+              {onDismiss && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDismiss();
+                  }}
+                  aria-label="Clear from Needs you"
+                  title="Clear from Needs you"
+                  className="-mr-1 rounded-md p-1 text-midnight-400 transition hover:bg-surface-muted hover:text-midnight-700"
+                >
+                  <X className="h-4 w-4" strokeWidth={2} />
+                </button>
+              )}
+            </div>
           </div>
           <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11.5px] text-midnight-500">
             <span className="truncate">{thread.subtitle}</span>
