@@ -120,7 +120,7 @@ function MtmTile({ pillar, scoped, company, targets, period, nowFw, orgWide }: {
   return (
     <div className="[perspective:1200px]">
       <div
-        className={cn("relative h-[266px] transition-transform duration-500 [transform-style:preserve-3d] motion-reduce:transition-none", flipped && "[transform:rotateY(180deg)]")}
+        className={cn("relative h-[300px] transition-transform duration-500 [transform-style:preserve-3d] motion-reduce:transition-none", flipped && "[transform:rotateY(180deg)]")}
       >
         {/* FRONT */}
         <button
@@ -146,6 +146,16 @@ function MtmTile({ pillar, scoped, company, targets, period, nowFw, orgWide }: {
           <div className="mt-1 min-h-[16px] text-[12px] font-semibold tabular-nums text-ink dark:text-night-ink">{sub}</div>
           <div className="text-[11px] text-ink-subtle dark:text-night-muted">{v.targetLabel}</div>
           <div className="mt-2"><SparkArea points={weeksRaw} tone={v.statusTone} /></div>
+          {v.weeks.length > 0 && (
+            <div className="mt-2 flex justify-between gap-1 border-t border-zinc-100 pt-2 dark:border-night-line">
+              {v.weeks.map((w, i) => (
+                <div key={w.label} className="flex flex-col items-center gap-0.5">
+                  <span className="text-[8.5px] font-bold uppercase tracking-wide text-ink-subtle dark:text-night-muted">{w.label}</span>
+                  <span className={cn("text-[11px] tabular-nums", i === v.weeks.length - 1 ? "font-bold text-ink dark:text-night-ink" : "text-ink-muted dark:text-night-muted")}>{w.value}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="mt-auto flex items-center justify-end gap-1 pt-2 text-[10.5px] font-semibold text-ink-subtle dark:text-night-muted">
             <RotateCw className="h-3 w-3" strokeWidth={2.2} /> {flipLabel}
           </div>
@@ -276,7 +286,7 @@ export function MetricsThatMatter() {
 
       {scopedQ.isLoading ? (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-          {PILLARS.map((p) => <div key={p.key} className={cn(PANEL, "h-[266px] animate-pulse")} />)}
+          {PILLARS.map((p) => <div key={p.key} className={cn(PANEL, "h-[300px] animate-pulse")} />)}
         </div>
       ) : scopedQ.isError ? (
         <div className={cn(PANEL, "p-5 text-sm text-cherry")}>Couldn't load the metrics board.</div>
