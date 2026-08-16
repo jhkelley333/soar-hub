@@ -15,7 +15,7 @@ export interface BoardScopes {
 export interface BoardResponse {
   anchor: string | null;
   fiscal: { period: number; weekInPeriod: number; weekStart: string; weekEnd: string } | null;
-  scope?: { level: string; id: string | null };
+  scope?: { level: string; id: string | null; storeCount?: number };
   scopes: BoardScopes;
   values: Record<string, MetricValues>;
   // Target overrides by metric id (admin-set) plus the data-driven labor target.

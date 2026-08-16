@@ -8,6 +8,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { fiscalForDate } from "./_lib/fiscal.js";
 import { resolveOrg } from "./_lib/kpiOrg.js";
+import { callerStoreNumbers } from "./_lib/ranking/scope.js";
 import { backfillCashPaidOuts } from "./_lib/kpiBackfill.js";
 import { loadLaborCredits, applyCreditsToRows } from "./_lib/trainingCredit.js";
 
@@ -371,7 +372,10 @@ export const handler = async (event) => {
       return respond(200, { ok: true, filled_dates: res.filled, store_rows: res.stores, next_before: res.next_before, failed: res.failed });
     }
 
-    const level = ["company", "region", "store"].includes(params.level) ? params.level : "company";
+    // "mine" scopes to the caller's own footprint (their district/area/region),
+    // so a DO/SDO/RVP sees their actual performance. Org-wide roles resolve to
+    // the whole company. company/region/store are the explicit board pickers.
+    const level = ["company", "region", "store", "mine"].includes(params.level) ? params.level : "company";
     const id = params.id ? String(params.id) : null;
 
     // Anchor date: an explicit ?date=YYYY-MM-DD (view a past week) or the latest
@@ -402,8 +406,15 @@ export const handler = async (event) => {
       .sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }));
 
     let scopeStores = numbers;
-    if (level === "region" && id) scopeStores = numbers.filter((n) => orgMap.get(n)?.region === id);
-    else if (level === "store" && id) scopeStores = numbers.filter((n) => n === id);
+    if (level === "mine") {
+      // null = org-wide (whole company); a Set = the caller's store numbers.
+      const mine = await callerStoreNumbers(supa, user);
+      if (mine) scopeStores = numbers.filter((n) => mine.has(n));
+    } else if (level === "region" && id) {
+      scopeStores = numbers.filter((n) => orgMap.get(n)?.region === id);
+    } else if (level === "store" && id) {
+      scopeStores = numbers.filter((n) => n === id);
+    }
 
     const scopes = { regions, stores: storeList };
 
@@ -434,7 +445,7 @@ export const handler = async (event) => {
       });
     }
 
-    if (!scopeStores.length) return respond(200, { anchor, fiscal: fiscalForDate(anchor), scopes, values: emptyValues() });
+    if (!scopeStores.length) return respond(200, { anchor, fiscal: fiscalForDate(anchor), scope: { level, id, storeCount: 0 }, scopes, values: emptyValues() });
 
     // Dates we need: anchor + prior-day + prior-week + prior-period, and the 5
     // trailing fiscal week-ends for the weekly trend.
@@ -576,7 +587,7 @@ export const handler = async (event) => {
     const targets = await loadTargets(supa);
     if (laborAnchorD.labor_target != null) targets.labor_pct = round(laborAnchorD.labor_target);
 
-    return respond(200, { anchor, fiscal: fi, scope: { level, id }, scopes, values, targets });
+    return respond(200, { anchor, fiscal: fi, scope: { level, id, storeCount: scopeStores.length }, scopes, values, targets });
   } catch (e) {
     return respond(500, { error: e.message || "server error" });
   }
