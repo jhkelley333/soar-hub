@@ -49,8 +49,12 @@ import { MobileHome } from "./MobileHome";
 // TodayQueue temporarily hidden from the dashboard (re-enable below when ready).
 // import { TodayQueue } from "./TodayQueue";
 import { WeatherWidget } from "./WeatherWidget";
+import { MetricsThatMatter } from "./MetricsThatMatter";
 import { MessageBoard } from "@/modules/messages/MessageBoard";
 
+// Roles the KPI board endpoint authorizes (kpi-board BOARD_ROLES). GMs/below
+// would 403, so the Metrics That Matter band only renders for these.
+const BOARD_ROLES = new Set<UserRole>(["do", "sdo", "rvp", "vp", "coo", "admin"]);
 const SDO_REVIEW_ROLES = new Set<UserRole>(["sdo", "rvp", "vp", "coo", "admin"]);
 const PTO_VIEW_ROLES = new Set<UserRole>(["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]);
 const CASH_ROLES = new Set<UserRole>([
@@ -138,6 +142,7 @@ export function DashboardPage() {
   const isSdoReviewer = !!role && SDO_REVIEW_ROLES.has(role);
   const canPto = !!role && PTO_VIEW_ROLES.has(role);
   const canWo = !!role && WO_ROLES.has(role);
+  const canBoard = !!role && BOARD_ROLES.has(role);
   // Oversight-only roles (currently just FBC — external consultant) get a
   // narrower dashboard: CFMs Expiring + Stores in Scope + Birthdays. The
   // operations-heavy tiles (Open WOs hero, Cash Variances, Bonus PAFs,
@@ -211,6 +216,10 @@ export function DashboardPage() {
         storeCount={storeCount}
         showWalkActions={!!role && WALK_ROLES.has(role)}
       />
+
+      {/* Metrics That Matter — the five pillar headlines up top, so the numbers
+          are the first thing leadership sees. Board-eligible roles only. */}
+      {canBoard && <MetricsThatMatter />}
 
       {/* Store message board — announcements addressed to the signed-in user. */}
       <MessageBoard />
