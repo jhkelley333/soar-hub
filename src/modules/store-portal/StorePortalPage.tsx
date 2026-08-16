@@ -122,6 +122,9 @@ export function PortalBody({ data, isLoading, access, onCall, onReport, onTicket
   // checklist (from the Actions card) — no message-board content there.
   const [showDay, setShowDay] = useState<"full" | "actions" | null>(null);
   const openActions = (data?.actions ?? []).filter((a) => !a.done);
+  // Actions Needed can be turned off company-wide (admin toggle). When off,
+  // the backend returns no actions and we drop the whole card + summary row.
+  const actionsEnabled = data?.actions_enabled !== false;
   return (
     <>
       {/* ── Hero ── */}
@@ -208,7 +211,7 @@ export function PortalBody({ data, isLoading, access, onCall, onReport, onTicket
       )}
 
       {/* ── Cards ── */}
-      <section className="mx-auto grid max-w-6xl grid-cols-1 gap-5 px-6 py-10 lg:grid-cols-3">
+      <section className={cn("mx-auto grid max-w-6xl grid-cols-1 gap-5 px-6 py-10", actionsEnabled ? "lg:grid-cols-3" : "lg:grid-cols-2")}>
         {/* Work orders */}
         <Card>
           <div className="flex items-center justify-between">
@@ -275,7 +278,9 @@ export function PortalBody({ data, isLoading, access, onCall, onReport, onTicket
         </button>
 
         {/* Actions needed — the GM's checklist for the shift. Report to GM
-            stays in the hero, so this card earns its spot with real work. */}
+            stays in the hero, so this card earns its spot with real work.
+            Hidden entirely when the feature is turned off company-wide. */}
+        {actionsEnabled && (
         <div className="flex flex-col rounded-2xl bg-zinc-900 p-6 text-white shadow-sm">
           <div className="flex items-center justify-between">
             <h2 className="text-xl font-bold">Actions Needed</h2>
@@ -305,6 +310,7 @@ export function PortalBody({ data, isLoading, access, onCall, onReport, onTicket
             Open today's list <ArrowRight className="h-4 w-4" />
           </button>
         </div>
+        )}
       </section>
 
       {(data?.quick_links?.length ?? 0) > 0 && <QuickLinks links={data!.quick_links!} />}

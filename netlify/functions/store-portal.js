@@ -306,6 +306,14 @@ async function setSetting(supa, key, value, userId) {
     .upsert({ key, value, updated_by: userId ?? null, updated_at: new Date().toISOString() });
 }
 
+// "Actions Needed" (the Command Center checklist + its "Screen actions"
+// manager button) can be turned off company-wide. Defaults ON when unset.
+const ACTIONS_SETTING_KEY = "actions_enabled";
+async function getActionsEnabled(supa) {
+  const v = await getSetting(supa, ACTIONS_SETTING_KEY);
+  return v?.enabled !== false;
+}
+
 // Minimal ICS parsing: unfold wrapped lines, walk VEVENT blocks, read
 // SUMMARY + DTSTART, and expand simple RRULEs (DAILY/WEEKLY/MONTHLY/YEARLY
 // with INTERVAL/BYDAY/UNTIL/COUNT) out to the display horizon. EXDATE and
@@ -620,7 +628,10 @@ async function ensureAutoActions(supa, store, ls) {
 async function assembleSnapshot(supa, store) {
   // Labor first: a breach seeds today's auto action before the list is read.
   const ls = await laborAndSales(supa, store.number);
-  await ensureAutoActions(supa, store, ls);
+  // Actions Needed can be turned off company-wide — when off, skip the
+  // auto-seed and hand back an empty list so the screen hides the section.
+  const actionsEnabled = await getActionsEnabled(supa);
+  if (actionsEnabled) await ensureAutoActions(supa, store, ls);
   const [rank, wo, notes, contacts, links, storeEmail, actions, birthdays, training, out, cooking] = await Promise.all([
     rankerRank(store.number),
     openWorkOrders(supa, store.number),
@@ -628,7 +639,7 @@ async function assembleSnapshot(supa, store) {
     leadership(supa, store),
     quickLinks(supa),
     supa.from("stores").select("email").eq("id", store.id).maybeSingle().then((r) => r.data?.email || null),
-    storeActions(supa, store.id),
+    actionsEnabled ? storeActions(supa, store.id) : Promise.resolve([]),
     storeBirthdays(supa, store.id),
     storeTrainingToday(supa, store.number),
     storePtoToday(supa, store.number),
@@ -636,7 +647,7 @@ async function assembleSnapshot(supa, store) {
   ]);
   return {
     store: { number: store.number, name: store.name, city: store.city, state: store.state },
-    sales: ls.sales, labor: ls.labor, rank, work_orders: wo, notes, actions, birthdays,
+    sales: ls.sales, labor: ls.labor, rank, work_orders: wo, notes, actions, actions_enabled: actionsEnabled, birthdays,
     training_today: training, out_today: out, whats_cooking: cooking,
     // The GM's card carries the store's email address, not their personal
     // one — that is the inbox the store answers. Floor-report emails
@@ -1402,10 +1413,12 @@ export const handler = async (event) => {
     const LEADER_ACTIONS = new Set([
       "inbox-list", "inbox-resolve", "inbox-escalate",
       "actions-stores", "actions-list", "action-save", "action-delete",
+      "actions-enabled",
     ]);
     if (LEADER_ACTIONS.has(action)) {
       const leader = await getLeaderUser(event, supa);
       if (!leader) return respond(401, { error: "unauthorized" });
+      if (action === "actions-enabled") return unwrap({ enabled: await getActionsEnabled(supa) });
       if (action === "inbox-list") return unwrap(await inboxList(supa, leader));
       if (action === "inbox-resolve") return unwrap(await inboxResolve(supa, leader, body));
       if (action === "inbox-escalate") return unwrap(await inboxEscalate(supa, leader, body));
@@ -1422,6 +1435,10 @@ export const handler = async (event) => {
     if (action === "admin-calendar-get") return unwrap(await adminCalendarGet(supa));
     if (action === "admin-calendar-set") return unwrap(await adminCalendarSet(supa, user, body));
     if (action === "admin-calendar-resync") return unwrap(await adminCalendarResync(supa, user));
+    if (action === "admin-actions-set") {
+      await setSetting(supa, ACTIONS_SETTING_KEY, { enabled: !!body?.enabled }, user.id);
+      return unwrap({ ok: true, enabled: !!body?.enabled });
+    }
     if (action === "admin-links") return unwrap(await adminLinksList(supa));
     if (action === "admin-link-save") return unwrap(await adminLinkSave(supa, user, body));
     if (action === "admin-link-upload") return unwrap(await adminLinkUpload(supa, user, body));
