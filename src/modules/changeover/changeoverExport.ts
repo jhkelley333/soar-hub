@@ -12,7 +12,11 @@ export async function downloadChangeoverXlsx(tpl: ChecklistTemplate, c: Changeov
   const bold = { bold: true };
   ws.getCell("A1").value = "SOAR QSR"; ws.getCell("A1").font = { bold: true, size: 14 };
   ws.getCell("A2").value = tpl.title; ws.getCell("A2").font = { bold: true, size: 12 };
-  ws.getCell("A4").value = "Store:"; ws.getCell("B4").value = `${c.store_number ?? ""} ${c.store_name ?? ""}`.trim();
+  if (c.district_code) {
+    ws.getCell("A4").value = "District:"; ws.getCell("B4").value = `#${c.district_code} ${c.district_name ?? ""}`.trim();
+  } else {
+    ws.getCell("A4").value = "Store:"; ws.getCell("B4").value = `${c.store_number ?? ""} ${c.store_name ?? ""}`.trim();
+  }
   ws.getCell("A5").value = `${tpl.subjectLabel}:`; ws.getCell("B5").value = c.outgoing_name ?? "";
   ws.getCell("A6").value = `${tpl.incomingLabel}:`; ws.getCell("B6").value = c.incoming_name ?? "";
   ws.getCell("A7").value = "Status:"; ws.getCell("B7").value = c.status.replace("_", " ");
@@ -46,6 +50,6 @@ export async function downloadChangeoverXlsx(tpl: ChecklistTemplate, c: Changeov
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `${tpl.title} - ${c.store_number ?? "store"} - ${new Date().toLocaleDateString("en-CA")}.xlsx`;
+  a.download = `${tpl.title} - ${c.district_code ? `D${c.district_code}` : c.store_number ?? "store"} - ${new Date().toLocaleDateString("en-CA")}.xlsx`;
   document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
 }

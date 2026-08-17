@@ -65,7 +65,11 @@ function Detail({ c, canEdit }: { c: ChangeoverDetail; canEdit: boolean }) {
               {c.status.replace("_", " ")}
             </span>
           </div>
-          <div className="mt-0.5 text-sm text-zinc-500">#{c.store_number}{c.store_name ? ` · ${c.store_name}` : ""}</div>
+          <div className="mt-0.5 text-sm text-zinc-500">
+            {c.district_code
+              ? `District #${c.district_code}${c.district_name ? ` · ${c.district_name}` : ""}`
+              : `#${c.store_number}${c.store_name ? ` · ${c.store_name}` : ""}`}
+          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button variant="secondary" size="sm" onClick={() => downloadChangeoverXlsx(tpl, c)}><Download className="mr-1.5 h-3.5 w-3.5" /> Download</Button>

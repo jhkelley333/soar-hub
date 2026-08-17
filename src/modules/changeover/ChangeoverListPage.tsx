@@ -4,7 +4,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "react-router-dom";
-import { Plus, ClipboardList, ArrowRight, UserCog, Store, Settings } from "lucide-react";
+import { Plus, ClipboardList, ArrowRight, UserCog, Store, Settings, Map } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
@@ -13,6 +13,7 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { createChangeover, fetchChangeovers, type ChangeoverListRow, type ChangeoverStatus } from "./api";
+import { fetchScopeOptions } from "@/modules/team/api";
 import { countItems, type ChangeoverKind, type ChecklistTemplate } from "./templates";
 import { useChangeoverTemplates } from "./useTemplates";
 import { ChangeoverTemplateEditor } from "./ChangeoverTemplateEditor";
@@ -109,7 +110,11 @@ function ChangeoverCard({ r, tpl, onOpen }: { r: ChangeoverListRow; tpl: Checkli
         <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide", meta.cls)}>{meta.label}</span>
       </div>
       <div className="flex items-center gap-1.5 text-sm font-semibold text-midnight">
-        <Store className="h-4 w-4 text-zinc-400" /> #{r.store_number}{r.store_name ? ` · ${r.store_name}` : ""}
+        {r.district_code ? (
+          <><Map className="h-4 w-4 text-zinc-400" /> District #{r.district_code}{r.district_name ? ` · ${r.district_name}` : ""}</>
+        ) : (
+          <><Store className="h-4 w-4 text-zinc-400" /> #{r.store_number}{r.store_name ? ` · ${r.store_name}` : ""}</>
+        )}
       </div>
       <div className="mt-0.5 text-xs text-zinc-500">
         {[r.outgoing_name && `Out: ${r.outgoing_name}`, r.incoming_name && `In: ${r.incoming_name}`].filter(Boolean).join(" · ") || "No names set"}
@@ -133,30 +138,56 @@ function ChangeoverCard({ r, tpl, onOpen }: { r: ChangeoverListRow; tpl: Checkli
 function CreateModal({ kind, tpl, onClose, onCreated }: { kind: ChangeoverKind; tpl: ChecklistTemplate; onClose: () => void; onCreated: (id: string) => void }) {
   const toast = useToast();
   const qc = useQueryClient();
+  const isDo = kind === "do";
   const [storeNumber, setStoreNumber] = useState("");
+  const [districtCode, setDistrictCode] = useState("");
   const [outgoing, setOutgoing] = useState("");
   const [incoming, setIncoming] = useState("");
   const [email, setEmail] = useState("");
 
+  // DO changeover picks a District (numeric order) from the caller's scope.
+  const scopeQ = useQuery({ queryKey: ["scope-options"], queryFn: fetchScopeOptions, enabled: isDo, staleTime: 5 * 60_000 });
+  const districts = useMemo(
+    () => [...(scopeQ.data?.districts ?? [])].sort((a, b) =>
+      String(a.code || a.name).localeCompare(String(b.code || b.name), undefined, { numeric: true })),
+    [scopeQ.data],
+  );
+
   const create = useMutation({
-    mutationFn: () => createChangeover({ kind, store_number: storeNumber.trim(), outgoing_name: outgoing.trim() || undefined, incoming_name: incoming.trim() || undefined, assigned_email: email.trim() || undefined }),
+    mutationFn: () => createChangeover({
+      kind,
+      store_number: isDo ? undefined : storeNumber.trim(),
+      district_code: isDo ? districtCode.trim() : undefined,
+      outgoing_name: outgoing.trim() || undefined, incoming_name: incoming.trim() || undefined, assigned_email: email.trim() || undefined,
+    }),
     onSuccess: (r) => { qc.invalidateQueries({ queryKey: ["changeovers"] }); onCreated(r.id); },
     onError: (e) => toast.push(e instanceof Error ? e.message : "Couldn't create.", "error"),
   });
 
+  const subjectMissing = isDo ? !districtCode.trim() : !storeNumber.trim();
   const cls = "w-full rounded-md border border-zinc-200 px-2.5 py-1.5 text-sm focus:border-accent focus:outline-none";
   return (
     <Modal open onClose={onClose} title={`New ${tpl.title}`} maxWidth="max-w-md"
       footer={
         <>
           <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
-          <Button size="sm" onClick={() => create.mutate()} disabled={!storeNumber.trim() || create.isPending}>{create.isPending ? "Creating…" : "Create"}</Button>
+          <Button size="sm" onClick={() => create.mutate()} disabled={subjectMissing || create.isPending}>{create.isPending ? "Creating…" : "Create"}</Button>
         </>
       }>
       <p className="mb-3 text-xs text-zinc-500">{tpl.who}</p>
       <div className="space-y-3">
-        <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">Store number</span>
-          <input value={storeNumber} onChange={(e) => setStoreNumber(e.target.value)} placeholder="e.g. 1056" className={cls} /></label>
+        {isDo ? (
+          <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">District</span>
+            <select value={districtCode} onChange={(e) => setDistrictCode(e.target.value)} className={cls}>
+              <option value="">{scopeQ.isLoading ? "Loading districts…" : "Select a district…"}</option>
+              {districts.map((d) => (
+                <option key={d.id} value={d.code}>#{d.code}{d.name ? ` · ${d.name}` : ""}</option>
+              ))}
+            </select></label>
+        ) : (
+          <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">Store number</span>
+            <input value={storeNumber} onChange={(e) => setStoreNumber(e.target.value)} placeholder="e.g. 1056" className={cls} /></label>
+        )}
         <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">{tpl.subjectLabel} (optional)</span>
           <input value={outgoing} onChange={(e) => setOutgoing(e.target.value)} className={cls} /></label>
         <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">{tpl.incomingLabel} (optional)</span>

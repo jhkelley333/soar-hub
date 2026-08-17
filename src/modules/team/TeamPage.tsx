@@ -23,6 +23,19 @@ import { EditMemberModal } from "./EditMemberModal";
 
 type RoleFilter = "all" | UserRole;
 
+// Natural, numeric-aware compare so "2" sorts before "10" (District/Area codes).
+const natCmp = (a: string, b: string) =>
+  String(a).localeCompare(String(b), undefined, { numeric: true, sensitivity: "base" });
+// Rank scope badges top-down: Region → Area → District → Store, numeric within.
+const SCOPE_RANK: Record<string, number> = { global: -1, region: 0, area: 1, district: 2, store: 3 };
+function sortScopes<T extends { scope_type: string; code?: string; label: string }>(scopes: T[]): T[] {
+  return [...scopes].sort(
+    (a, b) =>
+      (SCOPE_RANK[a.scope_type] ?? 9) - (SCOPE_RANK[b.scope_type] ?? 9) ||
+      natCmp(a.code || a.label, b.code || b.label),
+  );
+}
+
 export function TeamPage() {
   const { profile } = useAuth();
   const navigate = useNavigate();
@@ -93,9 +106,10 @@ export function TeamPage() {
     return list;
   }, [allMembers, search, roleFilter, marketFilter, includeInactive]);
 
-  // Markets present across the visible team, for the market dropdown.
+  // Markets present across the visible team, for the market dropdown. Numeric-
+  // aware sort so District/Area codes read 2, 3, 10 — not 10, 2, 3.
   const marketsPresent = useMemo(
-    () => [...new Set(allMembers.flatMap((m) => m.markets ?? []))].sort((a, b) => a.localeCompare(b)),
+    () => [...new Set(allMembers.flatMap((m) => m.markets ?? []))].sort((a, b) => natCmp(a, b)),
     [allMembers]
   );
 
@@ -504,7 +518,7 @@ function MemberCard({
 
           {member.scopes.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {member.scopes.map((s, i) => (
+              {sortScopes(member.scopes).map((s, i) => (
                 <span
                   key={`${s.scope_type}-${s.scope_id ?? i}`}
                   className="inline-flex items-center rounded bg-zinc-100 px-2 py-0.5 text-xs font-medium text-zinc-700"
