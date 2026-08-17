@@ -196,7 +196,7 @@ function LeadersTab({ q }: { q: UseQueryResult<{ ok: true; rows: LeaderRow[] }> 
     const all = q.data?.rows ?? [];
     const s = search.trim().toLowerCase();
     return s
-      ? all.filter((r) => `${r.name ?? ""} ${ROLE_LABEL[r.role]} ${r.coverage.join(" ")} ${r.email ?? ""}`.toLowerCase().includes(s))
+      ? all.filter((r) => `${r.name ?? ""} ${ROLE_LABEL[r.role]} ${r.coverage.join(" ")} ${(r.additional ?? []).join(" ")} ${r.email ?? ""}`.toLowerCase().includes(s))
       : all;
   }, [q.data, search]);
 
@@ -249,7 +249,18 @@ function LeaderRowView({ r }: { r: LeaderRow }) {
       <td className="px-4 py-2.5">
         <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide", tone)}>{ROLE_LABEL[r.role]}</span>
       </td>
-      <td className="px-4 py-2.5 text-xs text-zinc-500">{r.coverage.length ? r.coverage.join(" · ") : "—"}</td>
+      <td className="px-4 py-2.5 text-xs text-zinc-500">
+        {r.coverage.length ? r.coverage.join(" · ") : "—"}
+        {(r.additional ?? []).length > 0 && (
+          <div className="mt-1 flex flex-wrap gap-1">
+            {(r.additional ?? []).map((a) => (
+              <span key={a} className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-800">
+                + Acting · {a}
+              </span>
+            ))}
+          </div>
+        )}
+      </td>
       <td className="px-4 py-2.5 text-xs">
         {r.email || r.phone ? (
           <div className="flex flex-col gap-0.5">

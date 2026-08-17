@@ -137,19 +137,19 @@ async function listLeaders(supa, user) {
   const scoped = visible ? (stores || []).filter((s) => visible.has(String(s.number))) : (stores || []);
   const districtIds = [...new Set(scoped.map((s) => s.district_id).filter(Boolean))];
   const { data: districts } = districtIds.length
-    ? await supa.from("districts").select("id, name, area_id").in("id", districtIds) : { data: [] };
+    ? await supa.from("districts").select("id, name, code, area_id").in("id", districtIds) : { data: [] };
   const areaIds = [...new Set((districts || []).map((d) => d.area_id).filter(Boolean))];
   const { data: areas } = areaIds.length
-    ? await supa.from("areas").select("id, name, region_id").in("id", areaIds) : { data: [] };
+    ? await supa.from("areas").select("id, name, code, region_id").in("id", areaIds) : { data: [] };
   const regionIds = [...new Set((areas || []).map((a) => a.region_id).filter(Boolean))];
   const { data: regions } = regionIds.length
-    ? await supa.from("regions").select("id, name").in("id", regionIds) : { data: [] };
+    ? await supa.from("regions").select("id, name, code").in("id", regionIds) : { data: [] };
 
-  // node id -> { role, label } for the three leadership levels.
+  // node id -> { role, name, code } for the three leadership levels.
   const nodeMeta = new Map();
-  for (const d of districts || []) nodeMeta.set(d.id, { role: "do", label: d.name });
-  for (const a of areas || []) nodeMeta.set(a.id, { role: "sdo", label: a.name });
-  for (const r of regions || []) nodeMeta.set(r.id, { role: "rvp", label: r.name });
+  for (const d of districts || []) nodeMeta.set(d.id, { role: "do", name: d.name, code: d.code || null });
+  for (const a of areas || []) nodeMeta.set(a.id, { role: "sdo", name: a.name, code: a.code || null });
+  for (const r of regions || []) nodeMeta.set(r.id, { role: "rvp", name: r.name, code: r.code || null });
   const nodeIds = [...districtIds, ...areaIds, ...regionIds];
   if (!nodeIds.length) return { rows: [] };
 
@@ -159,12 +159,10 @@ async function listLeaders(supa, user) {
     supa.from("additional_scopes").select("user_id, scope_id, expires_at").in("scope_id", nodeIds),
   ]);
   const activeAddl = (addlRows || []).filter((r) => !r.expires_at || r.expires_at > nowIso);
-  const covByUser = new Map(); // user_id -> [{ role, label }]
-  for (const s of [...(scopeRows || []), ...activeAddl]) {
-    const meta = nodeMeta.get(s.scope_id);
-    if (!meta) continue;
-    (covByUser.get(s.user_id) || covByUser.set(s.user_id, []).get(s.user_id)).push(meta);
-  }
+  const covByUser = new Map(); // user_id -> [{ role, name, code, additional }]
+  const pushCov = (uid, meta) => (covByUser.get(uid) || covByUser.set(uid, []).get(uid)).push(meta);
+  for (const s of scopeRows || []) { const m = nodeMeta.get(s.scope_id); if (m) pushCov(s.user_id, { ...m, additional: false }); }
+  for (const s of activeAddl) { const m = nodeMeta.get(s.scope_id); if (m) pushCov(s.user_id, { ...m, additional: true }); }
   const userIds = [...covByUser.keys()];
   if (!userIds.length) return { rows: [] };
 
@@ -172,13 +170,22 @@ async function listLeaders(supa, user) {
     .select("id, full_name, preferred_name, email, phone, role, birthday, show_birthday, is_active")
     .in("id", userIds).eq("is_active", true).in("role", LEADER_ROLES);
 
+  // Coverage label with its market number, e.g. "#12 · Northern Heartland".
+  const fmt = (c) => (c.code ? `#${c.code} · ${c.name}` : c.name);
+  const natSort = (a, b) => String(a).localeCompare(String(b), undefined, { numeric: true });
+
   const rows = (profs || []).map((p) => {
     const r = String(p.role).toLowerCase();
     const cov = covByUser.get(p.id) || [];
-    // Prefer nodes matching this leader's own level; if they only hold acting
-    // coverage at another level, fall back to whatever nodes they cover.
-    const own = cov.filter((c) => c.role === r).map((c) => c.label);
-    const labels = [...new Set((own.length ? own : cov.map((c) => c.label)))].sort();
+    // Primary coverage = permanent scopes at this leader's own level; fall back
+    // to any permanent scope, then to whatever they cover. Additional (acting)
+    // coverage is surfaced separately so it can be flagged.
+    const primary = cov.filter((c) => !c.additional);
+    const ownPrimary = primary.filter((c) => c.role === r);
+    const base = ownPrimary.length ? ownPrimary : primary.length ? primary : cov;
+    const coverage = [...new Set(base.map(fmt))].sort(natSort);
+    const additional = [...new Set(cov.filter((c) => c.additional).map(fmt))].sort(natSort)
+      .filter((label) => !coverage.includes(label));
     return {
       id: p.id,
       name: displayName(p),
@@ -186,7 +193,8 @@ async function listLeaders(supa, user) {
       email: p.email || null,
       phone: p.phone || null,
       birthday: p.show_birthday === false ? null : (p.birthday || null),
-      coverage: labels,
+      coverage,
+      additional,
     };
   }).sort((a, b) => (LEADER_RANK[b.role] - LEADER_RANK[a.role]) || String(a.name || "").localeCompare(String(b.name || "")));
 
