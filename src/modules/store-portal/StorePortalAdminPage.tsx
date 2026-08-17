@@ -4,14 +4,14 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CalendarDays, Check, Copy, Eye, MonitorSmartphone, RefreshCw, RotateCcw, XCircle } from "lucide-react";
+import { CalendarDays, Check, Copy, Eye, ListTodo, MonitorSmartphone, RefreshCw, RotateCcw, XCircle } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import {
-  fetchPortalAdminList, fetchPortalCalendar, mintPortalToken, resetPortalDevice,
-  resyncPortalCalendar, revokePortalToken, savePortalCalendar,
+  fetchActionsEnabled, fetchPortalAdminList, fetchPortalCalendar, mintPortalToken, resetPortalDevice,
+  resyncPortalCalendar, revokePortalToken, saveActionsEnabled, savePortalCalendar,
 } from "./api";
 import { QuickLinksManager } from "./QuickLinksManager";
 
@@ -141,8 +141,58 @@ export function StorePortalAdminPage() {
         </div>
       </div>
 
+      <ScreenActionsSettings />
       <WhatsCookingSettings />
       <QuickLinksManager />
+    </div>
+  );
+}
+
+// Turn the "Actions Needed" feature on/off company-wide. Off hides the
+// Actions Needed card on every store screen and the "Screen actions" button
+// on the message board.
+function ScreenActionsSettings() {
+  const toast = useToast();
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["store-portal", "actions-enabled"], queryFn: fetchActionsEnabled });
+  const enabled = q.data?.enabled !== false;
+  const save = useMutation({
+    mutationFn: (next: boolean) => saveActionsEnabled(next),
+    onSuccess: (r) => {
+      toast.push(r.enabled ? "Actions Needed turned on." : "Actions Needed turned off.", "success");
+      qc.invalidateQueries({ queryKey: ["store-portal", "actions-enabled"] });
+    },
+    onError: (e: unknown) => toast.push((e as Error)?.message ?? "Could not save.", "error"),
+  });
+
+  return (
+    <div className="mt-10">
+      <div className="mb-1 flex items-center gap-2">
+        <ListTodo className="h-4 w-4 text-accent" />
+        <h2 className="text-lg font-bold text-heading">Actions Needed</h2>
+      </div>
+      <p className="mb-3 max-w-2xl text-sm text-ink-muted">
+        The checklist under <strong>Actions Needed</strong> on the store's Command Center. The floor checks items off; you see it live.
+        Turn it off to hide the card on every store screen and the <strong>Screen actions</strong> button on the message board.
+      </p>
+      <div className="flex max-w-2xl items-center justify-between rounded-xl border border-border bg-surface px-4 py-3">
+        <div className="text-sm font-semibold text-heading">
+          {q.isLoading ? "Loading…" : enabled ? "On — shown on store screens" : "Off — hidden everywhere"}
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={enabled}
+          disabled={q.isLoading || save.isPending}
+          onClick={() => save.mutate(!enabled)}
+          className={cn(
+            "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition disabled:opacity-50",
+            enabled ? "bg-accent" : "bg-zinc-300 dark:bg-night-line",
+          )}
+        >
+          <span className={cn("inline-block h-5 w-5 transform rounded-full bg-white shadow transition", enabled ? "translate-x-5" : "translate-x-0.5")} />
+        </button>
+      </div>
     </div>
   );
 }

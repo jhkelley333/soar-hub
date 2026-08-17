@@ -7,6 +7,7 @@ import { Megaphone, Plus, Paperclip, Pin, Link2, GraduationCap, ChevronRight, Li
 import { Card, CardBody } from "@/shared/ui/Card";
 import { useToast } from "@/shared/ui/Toaster";
 import { listMessages, type MessageBoardView, type StoreMessage } from "./api";
+import { fetchActionsEnabled } from "@/modules/store-portal/api";
 import { MessageComposeModal } from "./MessageComposeModal";
 import { MessageDetailModal } from "./MessageDetailModal";
 import { StoreActionsManager } from "./StoreActionsManager";
@@ -53,6 +54,16 @@ export function MessageBoard() {
   });
   const messages = q.data?.messages ?? [];
   const canPost = q.data?.canPost ?? false;
+  // The "Screen actions" button is hidden when the Actions Needed feature is
+  // turned off company-wide (admin toggle on the Store Command Center admin).
+  // Only worth asking once we know the user can post (gm+).
+  const actionsQ = useQuery({
+    queryKey: ["store-portal", "actions-enabled"],
+    queryFn: fetchActionsEnabled,
+    enabled: canPost,
+    staleTime: 5 * 60_000,
+  });
+  const actionsEnabled = actionsQ.data?.enabled !== false;
   // Invalidate BOTH live and archive caches so a delete on the live tab
   // surfaces in archive on the next switch (and vice versa).
   const refresh = () => qc.invalidateQueries({ queryKey: ["store-messages"] });
@@ -94,14 +105,16 @@ export function MessageBoard() {
             </div>
             {canPost && view === "live" && (
               <>
-                <button
-                  type="button"
-                  onClick={() => setActionsOpen(true)}
-                  className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-accent"
-                  title="Manage the Actions Needed checklist on the store's Command Center screen"
-                >
-                  <ListTodo className="h-3.5 w-3.5" /> Screen actions
-                </button>
+                {actionsEnabled && (
+                  <button
+                    type="button"
+                    onClick={() => setActionsOpen(true)}
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-zinc-700 transition hover:border-accent"
+                    title="Manage the Actions Needed checklist on the store's Command Center screen"
+                  >
+                    <ListTodo className="h-3.5 w-3.5" /> Screen actions
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => { setEditing(null); setComposing(true); }}

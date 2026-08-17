@@ -90,6 +90,8 @@ export interface PortalSnapshot {
   contacts: { slot: string; name: string | null; phone: string | null; email: string | null }[];
   quick_links?: QuickLink[];
   actions?: PortalAction[];
+  /** When false, the Actions Needed feature is turned off company-wide. */
+  actions_enabled?: boolean;
   birthdays?: PortalBirthday[];
   training_today?: { name: string; type: string | null; start_time: string | null; end_time: string | null }[];
   out_today?: { name: string; position: string | null; until: string }[];
@@ -295,6 +297,15 @@ export function saveLeaderAction(input: {
 }
 export function deleteLeaderAction(actionId: string): Promise<{ ok: true }> {
   return adminRequest("action-delete", { method: "POST", body: JSON.stringify({ action_id: actionId }) });
+}
+
+// Company-wide on/off for the Actions Needed feature (Command Center checklist
+// + the "Screen actions" manager button). Read is gm+; the write is admin-only.
+export function fetchActionsEnabled(): Promise<{ enabled: boolean }> {
+  return adminRequest("actions-enabled", { method: "POST", body: "{}" });
+}
+export function saveActionsEnabled(enabled: boolean): Promise<{ ok: true; enabled: boolean }> {
+  return adminRequest("admin-actions-set", { method: "POST", body: JSON.stringify({ enabled }) });
 }
 
 // ── Leader Inbox (floor reports, worked from Chat; Bearer, gm and up) ────────
