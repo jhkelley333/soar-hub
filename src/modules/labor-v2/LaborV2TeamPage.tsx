@@ -161,12 +161,28 @@ export function LaborV2TeamPage() {
   }, [data, displayLevel, path, filter, sort, isStore]);
 
   // The drilled-into node's own rollup row (shown as a summary above its
-  // children). Null at the top level — the tiles cover the whole scope there.
+  // children). Null at the top level — the company row below covers it there.
   const summary = useMemo<TeamGroup | null>(() => {
     if (!data || !path.length) return null;
     const lvl = path[path.length - 1].level as "region" | "area" | "district";
     return data.levels[lvl].find(matchesPath) ?? null;
   }, [data, path]);
+
+  // At the top level, a Company total row above the regions/districts, built
+  // from the whole-scope totals so it lines up column-for-column with the rows
+  // below (Day/WTD/PTD %, Var, $ Over, Hrs/Unit, Sched/Actual/OT/Act−Sch).
+  const companyRow = useMemo<TeamGroup | null>(() => {
+    if (!data || !t || path.length) return null;
+    return {
+      name: displayLevel === "region" ? "Company" : "Total",
+      leader: null,
+      storeCount: data.scope.stores,
+      region: null, area: null, district: null,
+      day: t.day, wtd: t.wtd, ptd: t.ptd,
+      storesOver: t.storesOver, notesDue: t.notesDue,
+    };
+  }, [data, t, path, displayLevel]);
+  const topRow = summary ?? companyRow;
 
   const levelTabs: TeamDisplayLevel[] = data
     ? [...(["region", "area", "district"] as const).filter((lv) => data.levels[lv].length > 0), "store"]
@@ -407,8 +423,8 @@ export function LaborV2TeamPage() {
                   <SortTh label="Status" k="status" sort={sort} onSort={toggleSort} className="ml-2 w-[92px] shrink-0" />
                 </div>
                 <div className="divide-y divide-zinc-100">
-                  {summary && (
-                    <SummaryRow name={summary.name} leader={summary.leader} storeCount={summary.storeCount} storesOver={summary.storesOver} notesDue={summary.notesDue} r={summary} period={period} />
+                  {topRow && (
+                    <SummaryRow name={topRow.name} leader={topRow.leader} storeCount={topRow.storeCount} storesOver={topRow.storesOver} notesDue={topRow.notesDue} r={topRow} period={period} />
                   )}
                   {rows.length === 0 ? (
                     <div className="p-8 text-center text-sm text-zinc-500">{isStore ? "No stores match this filter." : "Nothing here yet."}</div>
@@ -423,7 +439,7 @@ export function LaborV2TeamPage() {
 
             {/* Mobile cards */}
             <div className="space-y-2 p-3 lg:hidden">
-              {summary && <MobileRow row={summary} isStore={false} period={period} summary />}
+              {topRow && <MobileRow row={topRow} isStore={false} period={period} summary />}
               {rows.length === 0 ? (
                 <div className="p-6 text-center text-sm text-zinc-500">{isStore ? "No stores match this filter." : "Nothing here yet."}</div>
               ) : isStore ? (
