@@ -90,6 +90,25 @@ function respond(statusCode, payload) {
 // list
 // ----------------------------------------------------------------------------
 
+// PostgREST caps one response at 1000 rows (and a URL at a finite length), so
+// an `.in(col, ids)` over a company-wide id list both TRUNCATES the result and
+// can overflow the query string — dropping scopes so leaders render
+// "Unassigned". Chunk the ids and page each chunk to fetch every row.
+async function selectAllIn(supa, table, cols, col, ids) {
+  const out = [];
+  const uniq = [...new Set((ids || []).filter(Boolean))];
+  for (let i = 0; i < uniq.length; i += 200) {
+    const chunk = uniq.slice(i, i + 200);
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supa.from(table).select(cols).in(col, chunk).range(from, from + 999);
+      if (error || !data || !data.length) break;
+      out.push(...data);
+      if (data.length < 1000) break;
+    }
+  }
+  return out;
+}
+
 async function listManaged(supa, manager) {
   const { data: members, error: rpcErr } = await supa.rpc(
     "manageable_users",
@@ -104,16 +123,13 @@ async function listManaged(supa, manager) {
 
   // Pull scopes for every returned user, then resolve scope_id -> human label.
   const ids = members.map((m) => m.id);
-  const { data: scopes } = await supa
-    .from("user_scopes")
-    .select("user_id, scope_type, scope_id")
-    .in("user_id", ids);
+  // Paged + id-chunked: one row per user's scope means a company-wide list
+  // blows past PostgREST's 1000-row cap, which was dropping scopes and showing
+  // leaders as "Unassigned".
+  const scopes = await selectAllIn(supa, "user_scopes", "user_id, scope_type, scope_id", "user_id", ids);
   // Additional ("acting") coverage rows — labeled and returned alongside the
   // primary scopes so the UI can show + manage extra coverage.
-  const { data: addlScopes } = await supa
-    .from("additional_scopes")
-    .select("id, user_id, scope_type, scope_id, expires_at, note")
-    .in("user_id", ids);
+  const addlScopes = await selectAllIn(supa, "additional_scopes", "id, user_id, scope_type, scope_id, expires_at, note", "user_id", ids);
 
   // id → label maps are built from BOTH primary and additional scopes.
   const allScopeRows = [...(scopes ?? []), ...(addlScopes ?? [])];
@@ -122,21 +138,12 @@ async function listManaged(supa, manager) {
   const areaIds = allScopeRows.filter((s) => s.scope_type === "area").map((s) => s.scope_id);
   const regionIds = allScopeRows.filter((s) => s.scope_type === "region").map((s) => s.scope_id);
 
-  const [{ data: stores }, { data: dDirect }, { data: aDirect }, { data: rDirect }] =
-    await Promise.all([
-      storeIds.length
-        ? supa.from("stores").select("id, number, name, district_id").in("id", storeIds)
-        : Promise.resolve({ data: [] }),
-      districtIds.length
-        ? supa.from("districts").select("id, name, code, area_id").in("id", districtIds)
-        : Promise.resolve({ data: [] }),
-      areaIds.length
-        ? supa.from("areas").select("id, name, code, region_id").in("id", areaIds)
-        : Promise.resolve({ data: [] }),
-      regionIds.length
-        ? supa.from("regions").select("id, name, code").in("id", regionIds)
-        : Promise.resolve({ data: [] }),
-    ]);
+  const [stores, dDirect, aDirect, rDirect] = await Promise.all([
+    selectAllIn(supa, "stores", "id, number, name, district_id", "id", storeIds),
+    selectAllIn(supa, "districts", "id, name, code, area_id", "id", districtIds),
+    selectAllIn(supa, "areas", "id, name, code, region_id", "id", areaIds),
+    selectAllIn(supa, "regions", "id, name, code", "id", regionIds),
+  ]);
 
   const storeMap = Object.fromEntries((stores ?? []).map((s) => [s.id, s]));
   const districtMap = Object.fromEntries((dDirect ?? []).map((d) => [d.id, d]));
