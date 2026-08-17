@@ -361,6 +361,7 @@ export function PafForm({
   // Home-store verification: the submitter must confirm the entered home store
   // before submitting. Resets whenever the store changes.
   const [homeVerified, setHomeVerified] = useState(false);
+  const [termAck, setTermAck] = useState(false);
   const [offerUploading, setOfferUploading] = useState(false);
 
   async function handleOfferPick(e: React.ChangeEvent<HTMLInputElement>) {
@@ -526,6 +527,11 @@ export function PafForm({
   // Any change to the entered home store clears a prior verification.
   useEffect(() => { setHomeVerified(false); }, [homeStoreNum]);
 
+  // Termination requires the submitter to confirm they removed the employee
+  // from every system before the PAF can go through.
+  const needsTermAck = state.category === "Termination";
+  useEffect(() => { setTermAck(false); }, [state.category]);
+
   const submit = useMutation({
     mutationFn: (input: PafSubmitInput) =>
       editPaf ? resubmitPaf(editPaf.id, input) : submitPaf(input),
@@ -609,6 +615,12 @@ export function PafForm({
     // Require an explicit home-store verification when a store was entered.
     if (needsHomeVerify && !homeVerified) {
       setError("Please verify the home store before submitting.");
+      return;
+    }
+
+    // Termination: the submitter must confirm the off-boarding steps.
+    if (needsTermAck && !termAck) {
+      setError("Please confirm the termination off-boarding steps before submitting.");
       return;
     }
 
@@ -962,6 +974,28 @@ export function PafForm({
             />
           </FormSection>
         ))}
+
+      {/* Termination off-boarding attestation — must be checked to submit. */}
+      {needsTermAck && (
+        <FormSection title="Off-boarding confirmation">
+          <label
+            className={`flex cursor-pointer items-start gap-3 rounded-lg p-3 text-sm ring-1 ring-inset transition ${
+              termAck ? "bg-emerald-50 text-emerald-900 ring-emerald-200" : "bg-amber-50 text-amber-900 ring-amber-200"
+            }`}
+          >
+            <input
+              type="checkbox"
+              checked={termAck}
+              onChange={(e) => setTermAck(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0"
+            />
+            <span>
+              I have removed this employee from <b>TR</b>, the <b>POS system</b>, and <b>ToteZone</b>, removed them from{" "}
+              <b>all WhatsApp chats</b>, and <b>deactivated them in MySOARHUB</b>. <span className="text-red-600">*</span>
+            </span>
+          </label>
+        </FormSection>
+      )}
 
       {/* Back pay type — custom block. Full = the form as-is; Partial nets out
           what the team member already received (reg pay / CC tips / declared). */}
@@ -1353,7 +1387,7 @@ export function PafForm({
                     {error}
                   </Badge>
                 )}
-                <Button type="submit" disabled={submit.isPending || (needsHomeVerify && !homeVerified)}>
+                <Button type="submit" disabled={submit.isPending || (needsHomeVerify && !homeVerified) || (needsTermAck && !termAck)}>
                   {submit.isPending
                     ? isEdit
                       ? "Resubmitting…"
@@ -1385,7 +1419,7 @@ export function PafForm({
           </div>
           <Button
             type="submit"
-            disabled={submit.isPending || (needsHomeVerify && !homeVerified)}
+            disabled={submit.isPending || (needsHomeVerify && !homeVerified) || (needsTermAck && !termAck)}
             className="h-11 px-5 text-sm"
           >
             {submit.isPending
