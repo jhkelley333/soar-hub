@@ -58,7 +58,8 @@ export interface LeaderRow {
   email: string | null;
   phone: string | null;
   birthday: string | null;   // ISO YYYY-MM-DD, null if opted out / unset
-  coverage: string[];        // district / area / region names they lead
+  coverage: string[];        // "#code · name" for the markets they lead
+  additional?: string[];     // extra (acting) markets, flagged separately
 }
 export function fetchGmLeaders(): Promise<{ ok: true; rows: LeaderRow[] }> {
   return req(`${FN}?action=leaders`);
