@@ -385,6 +385,17 @@ function Row({ r, canEdit, onHistory, onEdit }: { r: GmRosterRow; canEdit: boole
             <div>{[r.gm_cell, r.gm_birthday ? `🎂 ${fmtDate(r.gm_birthday)}` : null].filter(Boolean).join(" · ")}</div>
           )}
         </div>
+        {r.roster_status === "open" && (r.still_interviewing || r.projected_fill_date || r.projected_gm_name) && (
+          <div className="mt-1">
+            {r.still_interviewing ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold text-sky-700 ring-1 ring-inset ring-sky-200">Still interviewing</span>
+            ) : (
+              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700 ring-1 ring-inset ring-emerald-200">
+                Projected {r.projected_fill_date ? fmtDate(r.projected_fill_date) : "TBD"}{r.projected_gm_name ? ` · ${r.projected_gm_name}` : ""}
+              </span>
+            )}
+          </div>
+        )}
       </td>
       <td className="px-4 py-2.5">
         <span className={cn("inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold ring-1 ring-inset", meta.cls)}>
@@ -456,27 +467,50 @@ function EditGmModal({ row, onClose }: { row: GmRosterRow; onClose: () => void }
     hire: parseDate(row.hire_date) ?? "",
     placement: parseDate(row.placement_date) ?? "",
   };
+  const initProjName = row.projected_gm_name ?? "";
+  const initProjDate = parseDate(row.projected_fill_date) ?? "";
+  const initInterviewing = !!row.still_interviewing;
   const [name, setName] = useState(init.name);
   const [cell, setCell] = useState(init.cell);
   const [birthday, setBirthday] = useState(init.birthday);
   const [hire, setHire] = useState(init.hire);
   const [placement, setPlacement] = useState(init.placement);
+  const [projName, setProjName] = useState(initProjName);
+  const [projDate, setProjDate] = useState(initProjDate);
+  const [interviewing, setInterviewing] = useState(initInterviewing);
   const [confirmedNew, setConfirmedNew] = useState(false);
 
   const nameChanged = name.trim() !== init.name.trim();
   const isNewGm = nameChanged && isRealGmName(name);
+  // Store is "open" while the name isn't a real GM (blank / Open / In Training).
+  const isOpen = !isRealGmName(name);
+  // Filling the position clears any hiring plan; interviewing clears the
+  // projected date/name (the two options are mutually exclusive).
+  const targetInterviewing = isOpen ? interviewing : false;
+  const targetProjName = isOpen && !interviewing ? (projName.trim() || null) : null;
+  const targetProjDate = isOpen && !interviewing ? (projDate || null) : null;
+  const hiringDirty =
+    targetInterviewing !== initInterviewing ||
+    (targetProjName ?? "") !== initProjName.trim() ||
+    (targetProjDate ?? "") !== initProjDate;
   const detailsDirty = cell !== init.cell || birthday !== init.birthday || hire !== init.hire || placement !== init.placement;
-  const dirty = nameChanged || detailsDirty;
+  const dirty = nameChanged || detailsDirty || hiringDirty;
   const blocked = isNewGm && !confirmedNew;
 
   const save = useMutation({
     mutationFn: async () => {
       if (nameChanged) await setGmRosterName(row.store_number, name.trim());
-      const fields: { gm_cell?: string | null; gm_birthday?: string | null; hire_date?: string | null; placement_date?: string | null } = {};
+      const fields: {
+        gm_cell?: string | null; gm_birthday?: string | null; hire_date?: string | null; placement_date?: string | null;
+        projected_gm_name?: string | null; projected_fill_date?: string | null; still_interviewing?: boolean;
+      } = {};
       if (cell !== init.cell) fields.gm_cell = cell.trim() || null;
       if (birthday !== init.birthday) fields.gm_birthday = birthday || null;
       if (hire !== init.hire) fields.hire_date = hire || null;
       if (placement !== init.placement) fields.placement_date = placement || null;
+      if (targetInterviewing !== initInterviewing) fields.still_interviewing = targetInterviewing;
+      if ((targetProjName ?? "") !== initProjName.trim()) fields.projected_gm_name = targetProjName;
+      if ((targetProjDate ?? "") !== initProjDate) fields.projected_fill_date = targetProjDate;
       if (Object.keys(fields).length) await setGmRosterDetails(row.store_number, fields);
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["gm-roster"] }); toast.push("GM saved.", "success"); onClose(); },
@@ -485,7 +519,7 @@ function EditGmModal({ row, onClose }: { row: GmRosterRow; onClose: () => void }
 
   // Wipe every field — for a store going vacant (No GM) or a new GM coming in,
   // so the previous GM's data isn't carried over. Saving all-blank sets Open.
-  const clearAll = () => { setName(""); setCell(""); setBirthday(""); setHire(""); setPlacement(""); setConfirmedNew(false); };
+  const clearAll = () => { setName(""); setCell(""); setBirthday(""); setHire(""); setPlacement(""); setProjName(""); setProjDate(""); setInterviewing(false); setConfirmedNew(false); };
 
   const cls = "w-full rounded-md border border-zinc-200 px-2.5 py-1.5 text-sm focus:border-accent focus:outline-none";
   return (
@@ -508,6 +542,24 @@ function EditGmModal({ row, onClose }: { row: GmRosterRow; onClose: () => void }
           <input type="date" value={hire} onChange={(e) => setHire(e.target.value)} className={cls} /></label>
         <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">Placement date (as GM)</span>
           <input type="date" value={placement} onChange={(e) => setPlacement(e.target.value)} className={cls} /></label>
+
+        {isOpen && (
+          <div className="rounded-lg bg-amber-50/60 p-3 ring-1 ring-inset ring-amber-200">
+            <div className="mb-2 text-xs font-semibold text-amber-800">Store is open — hiring plan</div>
+            <label className="flex items-center gap-2 text-sm text-zinc-700">
+              <input type="checkbox" checked={interviewing} onChange={(e) => setInterviewing(e.target.checked)} />
+              Still interviewing
+            </label>
+            {!interviewing && (
+              <div className="mt-3 space-y-3">
+                <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">Projected fill date</span>
+                  <input type="date" value={projDate} onChange={(e) => setProjDate(e.target.value)} className={cls} /></label>
+                <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">Filling GM (by who)</span>
+                  <input value={projName} onChange={(e) => setProjName(e.target.value)} placeholder="Name of the incoming / promoting GM" className={cls} /></label>
+              </div>
+            )}
+          </div>
+        )}
 
         {isNewGm && (
           <label className={cn("flex items-start gap-2 rounded-md px-2.5 py-2 text-xs ring-1 ring-inset", confirmedNew ? "bg-emerald-50 text-emerald-800 ring-emerald-200" : "bg-amber-50 text-amber-800 ring-amber-200")}>
