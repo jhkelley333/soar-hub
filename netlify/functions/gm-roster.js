@@ -81,10 +81,10 @@ async function gmAccountsByStore(supa, storeIds) {
   const { data: scopeRows } = await supa.from("user_scopes").select("user_id, scope_type, scope_id").eq("scope_type", "store").in("scope_id", storeIds);
   const scopeUserIds = [...new Set((scopeRows || []).map((r) => r.user_id))];
   const { data: primaries } = await supa.from("profiles")
-    .select("id, full_name, preferred_name, email, phone, role, primary_store_id, is_active")
+    .select("id, full_name, preferred_name, email, phone, role, primary_store_id, is_active, cultural_index_trait")
     .eq("role", "gm").eq("is_active", true).in("primary_store_id", storeIds);
   const { data: scopedProfiles } = scopeUserIds.length
-    ? await supa.from("profiles").select("id, full_name, preferred_name, email, phone, role, is_active").eq("role", "gm").eq("is_active", true).in("id", scopeUserIds)
+    ? await supa.from("profiles").select("id, full_name, preferred_name, email, phone, role, is_active, cultural_index_trait").eq("role", "gm").eq("is_active", true).in("id", scopeUserIds)
     : { data: [] };
   const scopedById = new Map((scopedProfiles || []).map((p) => [p.id, p]));
   // Source (2): scope-based GMs first, so primary_store_id can overwrite.
@@ -226,7 +226,7 @@ async function listRoster(supa, user) {
     // Full name first (not preferred/nickname): the roster reconciles against
     // legal names, and the account editor writes full_name — so editing the
     // name here visibly takes effect and the match check compares like-for-like.
-    const account = acct ? { id: acct.id, name: acct.full_name || acct.preferred_name || acct.email || null, email: acct.email, phone: acct.phone ?? null, is_active: acct.is_active } : null;
+    const account = acct ? { id: acct.id, name: acct.full_name || acct.preferred_name || acct.email || null, email: acct.email, phone: acct.phone ?? null, is_active: acct.is_active, cultural_index_trait: acct.cultural_index_trait ?? null } : null;
     const org = orgMap.get(num) || {};
     let reconcile;
     if (r.status === "open" || r.status === "in_training") reconcile = r.status;

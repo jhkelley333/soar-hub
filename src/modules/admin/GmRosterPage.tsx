@@ -67,12 +67,12 @@ export function GmRosterPage() {
       const s = v == null ? "" : String(v);
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
-    const head = ["Store #", "Store Name", "In App", "Roster GM", "GM Email", "Status", "No GM Credit", "Hub Account", "Hub Email", "RVP", "SDO", "DO"];
+    const head = ["Store #", "Store Name", "In App", "Roster GM", "GM Email", "Status", "No GM Credit", "Hub Account", "Hub Email", "CI Trait", "RVP", "SDO", "DO"];
     const body = rows.map((r) => [
       r.store_number, r.store_name ?? "", r.in_app ? "yes" : "no",
       r.roster_name ?? "", r.gm_email ?? "", STATUS_META[r.reconcile].label,
       r.no_gm_credit ? (NO_GM_REASON_LABEL[r.no_gm_reason ?? ""] ?? "yes") : "no",
-      r.account?.name ?? "", r.account?.email ?? "",
+      r.account?.name ?? "", r.account?.email ?? "", r.account?.cultural_index_trait ?? "",
       r.rvp_name ?? "", r.sdo_name ?? "", r.do_name ?? "",
     ]);
     const csv = [head, ...body].map((row) => row.map(esc).join(",")).join("\n");
@@ -428,6 +428,14 @@ function Row({ r, canEdit, onHistory, onEdit, onEditAccount }: { r: GmRosterRow;
               )}
             </div>
             {r.account.email && <div className="text-[11px] text-zinc-400">{r.account.email}</div>}
+            {r.account.cultural_index_trait && (
+              <span
+                title="Cultural Index trait"
+                className="mt-1 inline-flex items-center rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700 ring-1 ring-inset ring-violet-200"
+              >
+                {r.account.cultural_index_trait}
+              </span>
+            )}
           </>
         ) : (
           <span className="text-zinc-400">—</span>
