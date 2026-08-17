@@ -32,6 +32,7 @@ import { TeamPage } from "@/modules/team/TeamPage";
 import { CfmExpiringPage } from "@/modules/team/CfmExpiringPage";
 import { OrgPage } from "@/modules/admin/OrgPage";
 import { BulkImportPage } from "@/modules/admin/BulkImportPage";
+import { CulturalIndexImportPage } from "@/modules/admin/CulturalIndexImportPage";
 import { BulkOrgImportPage } from "@/modules/admin/BulkOrgImportPage";
 import { AcquisitionsPage } from "@/modules/acquisitions/AcquisitionsPage";
 import { AcquisitionDetailPage } from "@/modules/acquisitions/AcquisitionDetailPage";
@@ -608,6 +609,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <BulkOrgImportPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/cultural-index-import",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <CulturalIndexImportPage />
           </ProtectedRoute>
         ),
       },

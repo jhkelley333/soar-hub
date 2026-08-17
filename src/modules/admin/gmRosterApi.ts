@@ -38,7 +38,7 @@ export interface GmRosterRow {
   do_name: string | null;
   sdo_name: string | null;
   rvp_name: string | null;
-  account: { id: string; name: string | null; email: string | null; phone: string | null; is_active: boolean } | null;
+  account: { id: string; name: string | null; email: string | null; phone: string | null; is_active: boolean; cultural_index_trait: string | null } | null;
   reconcile: ReconcileStatus;
 }
 
