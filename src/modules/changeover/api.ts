@@ -21,6 +21,8 @@ export interface ChangeoverListRow {
   kind: ChangeoverKind;
   store_number: string | null;
   store_name: string | null;
+  district_code: string | null;
+  district_name: string | null;
   outgoing_name: string | null;
   incoming_name: string | null;
   status: ChangeoverStatus;
@@ -50,7 +52,7 @@ export function fetchChangeover(id: string): Promise<{ checklist: ChangeoverDeta
   return req(`${FN}?action=get&id=${encodeURIComponent(id)}`);
 }
 export function createChangeover(input: {
-  kind: ChangeoverKind; store_number: string; outgoing_name?: string; incoming_name?: string; assigned_email?: string;
+  kind: ChangeoverKind; store_number?: string; district_code?: string; outgoing_name?: string; incoming_name?: string; assigned_email?: string;
 }): Promise<{ ok: true; id: string }> {
   return req(`${FN}?action=create`, { method: "POST", body: JSON.stringify(input) });
 }

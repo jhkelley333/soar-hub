@@ -103,6 +103,7 @@ function listRow(r, names) {
   return {
     id: r.id, kind: r.kind,
     store_number: r.store_number, store_name: r.store_name,
+    district_code: r.district_code ?? null, district_name: r.district_name ?? null,
     outgoing_name: r.outgoing_name, incoming_name: r.incoming_name,
     status: r.status, checked_count: checkedCount(r.progress),
     assigned_to: r.assigned_to, assigned_to_name: r.assigned_to ? names.get(r.assigned_to) ?? null : null,
@@ -121,6 +122,18 @@ function detail(r, names) {
 async function resolveStore(supa, number) {
   const { data } = await supa.from("stores").select("id, number, name").eq("number", String(number)).or("brand.eq.sonic,brand.is.null").maybeSingle();
   return data || null;
+}
+
+// A DO changeover is anchored to a district. Resolve it by code and pick a
+// representative store (lowest number) so the checklist still carries a real
+// store_id/number for scope + FK, while district_code/name drive the display.
+async function resolveDistrict(supa, code) {
+  const { data: d } = await supa.from("districts").select("id, code, name").eq("code", String(code)).maybeSingle();
+  if (!d) return null;
+  const { data: stores } = await supa.from("stores")
+    .select("id, number, name").eq("district_id", d.id).or("brand.eq.sonic,brand.is.null");
+  const list = (stores || []).slice().sort((a, b) => String(a.number).localeCompare(String(b.number), undefined, { numeric: true }));
+  return { district: d, stores: list, rep: list[0] || null };
 }
 const clean = (v, n = 200) => (v == null || String(v).trim() === "" ? null : String(v).trim().slice(0, n));
 
@@ -260,11 +273,27 @@ export const handler = async (event) => {
       const kind = String(body.kind || "").trim();
       if (!KINDS.has(kind)) return respond(400, { error: "kind must be 'do' or 'gm'." });
       if (!canCreate(user.role, kind)) return respond(403, { error: kind === "do" ? "Only SDO and above can create a DO changeover." : "Only DO and above can create a GM changeover." });
-      const number = clean(body.store_number, 20);
-      if (!number) return respond(400, { error: "A store is required." });
-      const store = await resolveStore(supa, number);
-      if (!store) return respond(404, { error: `Store ${number} not found.` });
-      if (visible && !visible.has(String(store.number))) return respond(403, { error: "That store isn't in your scope." });
+
+      // DO changeover → pick a District; anchor to a representative store so the
+      // existing store-based scope + FK checks keep working, but display the
+      // district. GM changeover (or a DO created the legacy way) → a store.
+      let store, districtCode = null, districtName = null;
+      const code = clean(body.district_code, 40);
+      if (kind === "do" && code) {
+        const d = await resolveDistrict(supa, code);
+        if (!d) return respond(404, { error: `District ${code} not found.` });
+        if (!d.rep) return respond(400, { error: `District ${code} has no stores yet.` });
+        if (visible && !d.stores.some((s) => visible.has(String(s.number)))) {
+          return respond(403, { error: "That district isn't in your scope." });
+        }
+        store = d.rep; districtCode = d.district.code; districtName = d.district.name;
+      } else {
+        const number = clean(body.store_number, 20);
+        if (!number) return respond(400, { error: kind === "do" ? "A district is required." : "A store is required." });
+        store = await resolveStore(supa, number);
+        if (!store) return respond(404, { error: `Store ${number} not found.` });
+        if (visible && !visible.has(String(store.number))) return respond(403, { error: "That store isn't in your scope." });
+      }
 
       let assignedTo = null;
       const email = clean(body.assigned_email, 200);
@@ -276,6 +305,7 @@ export const handler = async (event) => {
       const now = new Date().toISOString();
       const { data, error } = await supa.from("changeover_checklists").insert({
         kind, store_id: store.id, store_number: String(store.number), store_name: store.name,
+        district_code: districtCode, district_name: districtName,
         outgoing_name: clean(body.outgoing_name), incoming_name: clean(body.incoming_name),
         assigned_to: assignedTo, status: "open", progress: {}, created_by: user.id, created_at: now, updated_at: now,
       }).select("id").maybeSingle();
@@ -283,7 +313,7 @@ export const handler = async (event) => {
         if (/changeover_checklists/.test(error.message)) return respond(500, { error: "Run migration 0285 first (changeover_checklists is missing)." });
         return respond(500, { error: error.message });
       }
-      if (assignedTo && email) await emailAssignee({ toEmail: email, kind, storeNumber: store.number, storeName: store.name, id: data?.id, assignerName: user.name });
+      if (assignedTo && email) await emailAssignee({ toEmail: email, kind, storeNumber: districtCode || store.number, storeName: districtName || store.name, id: data?.id, assignerName: user.name });
       return respond(200, { ok: true, id: data?.id });
     }
 
