@@ -238,6 +238,9 @@ async function listRoster(supa, user) {
       roster_status: r.status,
       gm_email: r.gm_email, gm_cell: r.gm_cell, gm_birthday: r.gm_birthday,
       hire_date: r.hire_date, placement_date: r.placement_date,
+      projected_gm_name: r.projected_gm_name ?? null,
+      projected_fill_date: r.projected_fill_date ?? null,
+      still_interviewing: !!r.still_interviewing,
       no_gm_credit: noGmByStore.has(num),
       no_gm_reason: noGmByStore.get(num) ?? null,
       do_name: org.doName ?? null, sdo_name: org.sdoName ?? null, rvp_name: org.rvpName ?? null,
@@ -359,9 +362,10 @@ async function setDetails(supa, user, body) {
 
   const clean = (v) => (v == null || String(v).trim() === "" ? null : String(v).trim());
   const patch = { updated_by: user.id, updated_at: new Date().toISOString() };
-  for (const f of ["gm_cell", "gm_birthday", "hire_date", "placement_date"]) {
+  for (const f of ["gm_cell", "gm_birthday", "hire_date", "placement_date", "projected_gm_name", "projected_fill_date"]) {
     if (Object.prototype.hasOwnProperty.call(body || {}, f)) patch[f] = clean(body[f]);
   }
+  if (Object.prototype.hasOwnProperty.call(body || {}, "still_interviewing")) patch.still_interviewing = !!body.still_interviewing;
   const { data: existing } = await supa.from("gm_roster").select("store_number").eq("store_number", num).maybeSingle();
   const { error } = existing
     ? await supa.from("gm_roster").update(patch).eq("store_number", num)

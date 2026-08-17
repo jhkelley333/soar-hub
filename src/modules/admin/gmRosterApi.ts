@@ -29,6 +29,10 @@ export interface GmRosterRow {
   gm_birthday: string | null;
   hire_date: string | null;
   placement_date: string | null;
+  // Hiring plan for an OPEN store: projected fill date + who, or interviewing.
+  projected_gm_name: string | null;
+  projected_fill_date: string | null;
+  still_interviewing: boolean;
   no_gm_credit: boolean;        // derived from Labor's active No-GM credit tags
   no_gm_reason: "no_gm" | "loa" | "in_training" | null;
   do_name: string | null;
@@ -75,6 +79,7 @@ export function setGmRosterName(storeNumber: string, gmName: string): Promise<{ 
 // are updated; blank clears a field. Name / status / email are untouched.
 export function setGmRosterDetails(storeNumber: string, fields: {
   gm_cell?: string | null; gm_birthday?: string | null; hire_date?: string | null; placement_date?: string | null;
+  projected_gm_name?: string | null; projected_fill_date?: string | null; still_interviewing?: boolean;
 }): Promise<{ ok: true; store_number: string }> {
   return req(`${FN}?action=set-details`, { method: "POST", body: JSON.stringify({ store_number: storeNumber, ...fields }) });
 }
