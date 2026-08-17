@@ -933,6 +933,7 @@ async function buildPafRowFromBody(supa, user, body) {
     // stays retired; the column still exists for historical rows only.
     last_day_worked: sanitizeDateInput(body?.last_day_worked),
     termed_in_tr: sanitizeText(body?.termed_in_tr, 10) || null,
+    offboarding_confirmed: body?.offboarding_confirmed === "yes" || body?.offboarding_confirmed === true ? true : null,
     final_check_hrs: num(body?.final_check_hrs),
 
     // New Hire (Salary Leader)

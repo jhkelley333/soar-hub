@@ -753,6 +753,9 @@ export function PafForm({
       }
     }
 
+    // Persist the Termination off-boarding attestation with the PAF.
+    if (needsTermAck) payload.offboarding_confirmed = termAck ? "yes" : "";
+
     submit.mutate(payload as unknown as PafSubmitInput);
   }
 

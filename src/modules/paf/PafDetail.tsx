@@ -283,6 +283,12 @@ export function PafDetail({ paf }: { paf: PafRow }) {
             {paf.term_demotion && (
               <Field label="Termination Type (legacy)" value={paf.term_demotion} />
             )}
+            {paf.category === "Termination" && paf.offboarding_confirmed != null && (
+              <Field
+                label="Off-boarding confirmed"
+                value={paf.offboarding_confirmed ? "Yes — TR, POS, ToteZone, WhatsApp, MySOARHUB" : "No"}
+              />
+            )}
           </Grid>
         </Section>
       )}

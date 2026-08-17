@@ -93,6 +93,9 @@ export interface PafRow {
   term_demotion: string | null;
   final_check_hrs: number | string;
   termed_in_tr: string | null;
+  // Submitter's attestation that off-boarding steps were completed (TR, POS,
+  // ToteZone, WhatsApp, MySOARHUB). Termination PAFs only.
+  offboarding_confirmed: boolean | null;
 
   // Bonus
   bonus_type: string | null;
