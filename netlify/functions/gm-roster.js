@@ -223,7 +223,10 @@ async function listRoster(supa, user) {
     const num = String(r.store_number);
     const store = storeByNumber.get(num) || null;
     const acct = store ? gmByStore.get(store.id) || null : null;
-    const account = acct ? { id: acct.id, name: displayName(acct), email: acct.email, phone: acct.phone ?? null, is_active: acct.is_active } : null;
+    // Full name first (not preferred/nickname): the roster reconciles against
+    // legal names, and the account editor writes full_name — so editing the
+    // name here visibly takes effect and the match check compares like-for-like.
+    const account = acct ? { id: acct.id, name: acct.full_name || acct.preferred_name || acct.email || null, email: acct.email, phone: acct.phone ?? null, is_active: acct.is_active } : null;
     const org = orgMap.get(num) || {};
     let reconcile;
     if (r.status === "open" || r.status === "in_training") reconcile = r.status;
