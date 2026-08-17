@@ -62,6 +62,15 @@ export interface Profile {
   shirt_size: string | null;
   // Migration 0201 — "mens" | "womens" | null.
   shirt_cut: string | null;
+  // Migration 0293 — jacket + quarter-zip sizing, each with a cut like shirt.
+  jacket_size: string | null;
+  jacket_cut: string | null;           // "mens" | "womens" | null
+  quarter_zip_size: string | null;
+  quarter_zip_cut: string | null;      // "mens" | "womens" | null
+  // Migration 0293 — work-style assessment results (self-reported, free text).
+  cultural_index_trait: string | null;
+  disc_profile: string | null;
+  scarf_results: string | null;
   favorite_quote: string | null;
   cfm_cert_number: string | null;
   cfm_issued_at: string | null;     // ISO date

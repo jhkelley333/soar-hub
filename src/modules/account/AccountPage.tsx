@@ -47,6 +47,61 @@ const AVATAR_MAX_BYTES = 5 * 1024 * 1024;
 const CFM_MAX_BYTES = 10 * 1024 * 1024;
 const PASSPORT_MAX_BYTES = 10 * 1024 * 1024;
 
+const SELECT_CLASS =
+  "block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent";
+
+// A garment's size + cut, mirroring the original inline Shirt control so
+// Shirt / Jacket / ¼-Zip all render identically.
+function SizeCutField({
+  label,
+  idBase,
+  size,
+  cut,
+  onSize,
+  onCut,
+}: {
+  label: string;
+  idBase: string;
+  size: string;
+  cut: string;
+  onSize: (v: string) => void;
+  onCut: (v: string) => void;
+}) {
+  return (
+    <div>
+      <Label htmlFor={idBase}>{label}</Label>
+      <div className="flex gap-2">
+        <select
+          id={idBase}
+          value={size}
+          onChange={(e) => onSize(e.target.value)}
+          className={SELECT_CLASS}
+        >
+          <option value="">—</option>
+          {SHIRT_SIZES.map((s) => (
+            <option key={s} value={s}>
+              {s}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label={`${label} cut`}
+          value={cut}
+          onChange={(e) => onCut(e.target.value)}
+          className={SELECT_CLASS}
+        >
+          <option value="">Cut</option>
+          {SHIRT_CUTS.map((c) => (
+            <option key={c.value} value={c.value}>
+              {c.label}
+            </option>
+          ))}
+        </select>
+      </div>
+    </div>
+  );
+}
+
 export function AccountPage() {
   const { profile, refresh } = useAuth();
   const qc = useQueryClient();
@@ -60,6 +115,13 @@ export function AccountPage() {
   const [showBirthday, setShowBirthday] = useState(true);
   const [shirtSize, setShirtSize] = useState("");
   const [shirtCut, setShirtCut] = useState("");
+  const [jacketSize, setJacketSize] = useState("");
+  const [jacketCut, setJacketCut] = useState("");
+  const [quarterZipSize, setQuarterZipSize] = useState("");
+  const [quarterZipCut, setQuarterZipCut] = useState("");
+  const [culturalIndex, setCulturalIndex] = useState("");
+  const [disc, setDisc] = useState("");
+  const [scarf, setScarf] = useState("");
   const [favoriteQuote, setFavoriteQuote] = useState("");
   const [profileError, setProfileError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number | null>(null);
@@ -74,6 +136,13 @@ export function AccountPage() {
       setShowBirthday(profile.show_birthday ?? true);
       setShirtSize(profile.shirt_size ?? "");
       setShirtCut(profile.shirt_cut ?? "");
+      setJacketSize(profile.jacket_size ?? "");
+      setJacketCut(profile.jacket_cut ?? "");
+      setQuarterZipSize(profile.quarter_zip_size ?? "");
+      setQuarterZipCut(profile.quarter_zip_cut ?? "");
+      setCulturalIndex(profile.cultural_index_trait ?? "");
+      setDisc(profile.disc_profile ?? "");
+      setScarf(profile.scarf_results ?? "");
       setFavoriteQuote(profile.favorite_quote ?? "");
     }
   }, [profile]);
@@ -89,9 +158,16 @@ export function AccountPage() {
       showBirthday !== (profile.show_birthday ?? true) ||
       (shirtSize || null) !== (profile.shirt_size ?? null) ||
       (shirtCut || null) !== (profile.shirt_cut ?? null) ||
+      (jacketSize || null) !== (profile.jacket_size ?? null) ||
+      (jacketCut || null) !== (profile.jacket_cut ?? null) ||
+      (quarterZipSize || null) !== (profile.quarter_zip_size ?? null) ||
+      (quarterZipCut || null) !== (profile.quarter_zip_cut ?? null) ||
+      (culturalIndex.trim() || null) !== (profile.cultural_index_trait ?? null) ||
+      (disc.trim() || null) !== (profile.disc_profile ?? null) ||
+      (scarf.trim() || null) !== (profile.scarf_results ?? null) ||
       (favoriteQuote.trim() || null) !== (profile.favorite_quote ?? null)
     );
-  }, [profile, fullName, preferredName, phone, birthday, showBirthday, shirtSize, shirtCut, favoriteQuote]);
+  }, [profile, fullName, preferredName, phone, birthday, showBirthday, shirtSize, shirtCut, jacketSize, jacketCut, quarterZipSize, quarterZipCut, culturalIndex, disc, scarf, favoriteQuote]);
 
   // Tab-close guard.
   useEffect(() => {
@@ -144,6 +220,13 @@ export function AccountPage() {
           show_birthday: profile.role === "gm" ? showBirthday : true,
           shirt_size: shirtSize || null,
           shirt_cut: shirtCut || null,
+          jacket_size: jacketSize || null,
+          jacket_cut: jacketCut || null,
+          quarter_zip_size: quarterZipSize || null,
+          quarter_zip_cut: quarterZipCut || null,
+          cultural_index_trait: culturalIndex.trim() || null,
+          disc_profile: disc.trim() || null,
+          scarf_results: scarf.trim() || null,
           favorite_quote: favoriteQuote.trim() || null,
         })
         .eq("id", profile.id);
@@ -218,58 +301,102 @@ export function AccountPage() {
                   placeholder="(555) 555-1234"
                 />
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <Label htmlFor="acct-birthday">Birthday</Label>
-                  <Input
-                    id="acct-birthday"
-                    type="date"
-                    value={birthday}
-                    onChange={(e) => setBirthday(e.target.value)}
+              <div>
+                <Label htmlFor="acct-birthday">Birthday</Label>
+                <Input
+                  id="acct-birthday"
+                  type="date"
+                  value={birthday}
+                  onChange={(e) => setBirthday(e.target.value)}
+                />
+                {profile?.role === "gm" && birthday && (
+                  <label className="mt-2 flex items-center gap-2 text-xs text-zinc-600">
+                    <input
+                      type="checkbox"
+                      checked={showBirthday}
+                      onChange={(e) => setShowBirthday(e.target.checked)}
+                      className="h-3.5 w-3.5 accent-accent"
+                    />
+                    Show my birthday on the team dashboard
+                  </label>
+                )}
+              </div>
+
+              {/* Apparel sizing — Shirt / Jacket / ¼-Zip, each size + cut. Used
+                  for ordering team gear, so a cut (men's/women's) rides with
+                  every size. */}
+              <div className="space-y-3 rounded-md border border-zinc-200 bg-zinc-50/60 p-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  Apparel sizing
+                </p>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <SizeCutField
+                    label="Shirt"
+                    idBase="acct-shirt"
+                    size={shirtSize}
+                    cut={shirtCut}
+                    onSize={setShirtSize}
+                    onCut={setShirtCut}
                   />
-                  {profile?.role === "gm" && birthday && (
-                    <label className="mt-2 flex items-center gap-2 text-xs text-zinc-600">
-                      <input
-                        type="checkbox"
-                        checked={showBirthday}
-                        onChange={(e) => setShowBirthday(e.target.checked)}
-                        className="h-3.5 w-3.5 accent-accent"
-                      />
-                      Show my birthday on the team dashboard
-                    </label>
-                  )}
+                  <SizeCutField
+                    label="Jacket"
+                    idBase="acct-jacket"
+                    size={jacketSize}
+                    cut={jacketCut}
+                    onSize={setJacketSize}
+                    onCut={setJacketCut}
+                  />
+                  <SizeCutField
+                    label="¼-Zip"
+                    idBase="acct-qzip"
+                    size={quarterZipSize}
+                    cut={quarterZipCut}
+                    onSize={setQuarterZipSize}
+                    onCut={setQuarterZipCut}
+                  />
+                </div>
+              </div>
+
+              {/* Work Style Profile — self-reported assessment results so a
+                  leader can see how a teammate works best at a glance. Free
+                  text; all optional. */}
+              <div className="space-y-3 rounded-md border border-zinc-200 bg-zinc-50/60 p-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                    Work Style Profile
+                  </p>
+                  <p className="mt-0.5 text-xs text-zinc-500">
+                    Your assessment results, so your team knows how you work best. Optional.
+                  </p>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <Label htmlFor="acct-ci">Cultural Index trait</Label>
+                    <Input
+                      id="acct-ci"
+                      value={culturalIndex}
+                      onChange={(e) => setCulturalIndex(e.target.value)}
+                      placeholder="e.g. Trailblazer"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="acct-disc">DISC profile</Label>
+                    <Input
+                      id="acct-disc"
+                      value={disc}
+                      onChange={(e) => setDisc(e.target.value)}
+                      placeholder="e.g. DI / High D"
+                    />
+                  </div>
                 </div>
                 <div>
-                  <Label htmlFor="acct-shirt">Shirt size</Label>
-                  <div className="flex gap-2">
-                    <select
-                      id="acct-shirt"
-                      value={shirtSize}
-                      onChange={(e) => setShirtSize(e.target.value)}
-                      className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
-                    >
-                      <option value="">—</option>
-                      {SHIRT_SIZES.map((s) => (
-                        <option key={s} value={s}>
-                          {s}
-                        </option>
-                      ))}
-                    </select>
-                    <select
-                      id="acct-shirt-cut"
-                      aria-label="Shirt cut"
-                      value={shirtCut}
-                      onChange={(e) => setShirtCut(e.target.value)}
-                      className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
-                    >
-                      <option value="">Cut</option>
-                      {SHIRT_CUTS.map((c) => (
-                        <option key={c.value} value={c.value}>
-                          {c.label}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                  <Label htmlFor="acct-scarf">SCARF results</Label>
+                  <Input
+                    id="acct-scarf"
+                    value={scarf}
+                    onChange={(e) => setScarf(e.target.value)}
+                    placeholder="e.g. Status high · Autonomy high · Certainty low"
+                  />
                 </div>
               </div>
               <div>
