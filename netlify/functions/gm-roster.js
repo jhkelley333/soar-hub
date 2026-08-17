@@ -81,10 +81,10 @@ async function gmAccountsByStore(supa, storeIds) {
   const { data: scopeRows } = await supa.from("user_scopes").select("user_id, scope_type, scope_id").eq("scope_type", "store").in("scope_id", storeIds);
   const scopeUserIds = [...new Set((scopeRows || []).map((r) => r.user_id))];
   const { data: primaries } = await supa.from("profiles")
-    .select("id, full_name, preferred_name, email, role, primary_store_id, is_active")
+    .select("id, full_name, preferred_name, email, phone, role, primary_store_id, is_active")
     .eq("role", "gm").eq("is_active", true).in("primary_store_id", storeIds);
   const { data: scopedProfiles } = scopeUserIds.length
-    ? await supa.from("profiles").select("id, full_name, preferred_name, email, role, is_active").eq("role", "gm").eq("is_active", true).in("id", scopeUserIds)
+    ? await supa.from("profiles").select("id, full_name, preferred_name, email, phone, role, is_active").eq("role", "gm").eq("is_active", true).in("id", scopeUserIds)
     : { data: [] };
   const scopedById = new Map((scopedProfiles || []).map((p) => [p.id, p]));
   // Source (2): scope-based GMs first, so primary_store_id can overwrite.
@@ -223,7 +223,7 @@ async function listRoster(supa, user) {
     const num = String(r.store_number);
     const store = storeByNumber.get(num) || null;
     const acct = store ? gmByStore.get(store.id) || null : null;
-    const account = acct ? { name: displayName(acct), email: acct.email } : null;
+    const account = acct ? { id: acct.id, name: displayName(acct), email: acct.email, phone: acct.phone ?? null, is_active: acct.is_active } : null;
     const org = orgMap.get(num) || {};
     let reconcile;
     if (r.status === "open" || r.status === "in_training") reconcile = r.status;

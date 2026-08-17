@@ -1,8 +1,9 @@
 // /admin/gm-roster — GM roster reconciliation. Shows every store's roster GM
 // next to the actual Hub account, flagging who has no account or whose name
-// doesn't match, so the roster and the accounts can be kept in sync. Fixes are
-// made in Team/Org admin (this page flags, it doesn't edit accounts). A paste
-// importer keeps the roster current from the ops sheet.
+// doesn't match, so the roster and the accounts can be kept in sync. The linked
+// Hub account can be edited (name / email / phone) or deactivated inline via
+// team-mgmt update-user. A paste importer keeps the roster current from the ops
+// sheet.
 
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -15,6 +16,7 @@ import { Modal } from "@/shared/ui/Modal";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { fetchGmLeaders, fetchGmRoster, fetchGmRosterHistory, importGmRoster, setGmRosterDetails, setGmRosterName, type GmRosterHistoryEntry, type GmRosterRow, type LeaderRow, type ReconcileStatus } from "./gmRosterApi";
+import { updateUser, type UpdateUserInput } from "@/modules/team/api";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { diffUpload, fmtDate, mergedImportRow, parseDate, parsePaste, parseRosterXlsx, sinceLabel, type DiffRow, type UploadRow } from "./rosterImport";
 
@@ -40,6 +42,7 @@ export function GmRosterPage() {
   const [importOpen, setImportOpen] = useState(false);
   const [historyRow, setHistoryRow] = useState<GmRosterRow | null>(null);
   const [editRow, setEditRow] = useState<GmRosterRow | null>(null);
+  const [acctRow, setAcctRow] = useState<GmRosterRow | null>(null);
   const q = useQuery({ queryKey: ["gm-roster"], queryFn: fetchGmRoster });
   // Leaders power the Leaders tab + the birthday view; fetched up front (one
   // light request) so the Birthdays button works from either tab.
@@ -109,6 +112,7 @@ export function GmRosterPage() {
       {importOpen && <ImportModal current={q.data?.rows ?? []} onClose={() => setImportOpen(false)} />}
       {historyRow && <HistoryModal row={historyRow} onClose={() => setHistoryRow(null)} />}
       {editRow && <EditGmModal row={editRow} onClose={() => setEditRow(null)} />}
+      {acctRow?.account && <EditAccountModal row={acctRow} onClose={() => setAcctRow(null)} />}
       {bdayOpen && <BirthdayModal gmRows={q.data?.rows ?? []} leaders={leadersQ.data?.rows ?? []} onClose={() => setBdayOpen(false)} />}
 
       <div className="mb-4 flex gap-1 border-b border-zinc-200">
@@ -164,7 +168,7 @@ export function GmRosterPage() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-zinc-100">
-                {rows.map((r) => <Row key={r.store_number} r={r} canEdit={q.data?.can_edit ?? false} onHistory={() => setHistoryRow(r)} onEdit={() => setEditRow(r)} />)}
+                {rows.map((r) => <Row key={r.store_number} r={r} canEdit={q.data?.can_edit ?? false} onHistory={() => setHistoryRow(r)} onEdit={() => setEditRow(r)} onEditAccount={() => setAcctRow(r)} />)}
               </tbody>
             </table>
           </div>
@@ -353,7 +357,7 @@ function BirthdayModal({ gmRows, leaders, onClose }: { gmRows: GmRosterRow[]; le
   );
 }
 
-function Row({ r, canEdit, onHistory, onEdit }: { r: GmRosterRow; canEdit: boolean; onHistory: () => void; onEdit: () => void }) {
+function Row({ r, canEdit, onHistory, onEdit, onEditAccount }: { r: GmRosterRow; canEdit: boolean; onHistory: () => void; onEdit: () => void; onEditAccount: () => void }) {
   const meta = STATUS_META[r.reconcile];
   const Icon = meta.icon;
   return (
@@ -415,7 +419,14 @@ function Row({ r, canEdit, onHistory, onEdit }: { r: GmRosterRow; canEdit: boole
       <td className="px-4 py-2.5">
         {r.account ? (
           <>
-            <div className={cn(r.reconcile === "mismatch" ? "font-semibold text-red-700" : "text-midnight")}>{r.account.name}</div>
+            <div className="flex items-center gap-1.5">
+              <span className={cn(r.reconcile === "mismatch" ? "font-semibold text-red-700" : "text-midnight")}>{r.account.name}</span>
+              {canEdit && (
+                <button type="button" onClick={onEditAccount} title="Edit Hub account — name, email, phone, or deactivate" className="text-zinc-300 hover:text-accent">
+                  <Pencil className="h-3.5 w-3.5" strokeWidth={2} />
+                </button>
+              )}
+            </div>
             {r.account.email && <div className="text-[11px] text-zinc-400">{r.account.email}</div>}
           </>
         ) : (
@@ -578,6 +589,65 @@ function EditGmModal({ row, onClose }: { row: GmRosterRow; onClose: () => void }
         )}
       </div>
       <p className="mt-3 text-[11px] text-zinc-400">Blank a field to clear it. "Open" / "In Training" set the status instead of a name.</p>
+    </Modal>
+  );
+}
+
+// Edit the linked Hub account (My Team profile) inline — name, email, phone —
+// or deactivate it. Backed by team-mgmt update-user, so the same manageable-
+// users scope + permission rules apply (email change + reactivation are DO+/
+// admin gated server-side).
+function EditAccountModal({ row, onClose }: { row: GmRosterRow; onClose: () => void }) {
+  const acct = row.account!;
+  const qc = useQueryClient();
+  const toast = useToast();
+  const init = { name: acct.name ?? "", email: acct.email ?? "", phone: acct.phone ?? "" };
+  const [name, setName] = useState(init.name);
+  const [email, setEmail] = useState(init.email);
+  const [phone, setPhone] = useState(init.phone);
+  const dirty = name.trim() !== init.name.trim() || email.trim() !== init.email.trim() || phone.trim() !== init.phone.trim();
+
+  const refresh = () => qc.invalidateQueries({ queryKey: ["gm-roster"] });
+  const save = useMutation({
+    mutationFn: () => {
+      const input: UpdateUserInput = { user_id: acct.id };
+      if (name.trim() !== init.name.trim()) input.full_name = name.trim() || null;
+      if (phone.trim() !== init.phone.trim()) input.phone = phone.trim() || null;
+      if (email.trim() !== init.email.trim()) input.email = email.trim();
+      return updateUser(input);
+    },
+    onSuccess: (r) => { refresh(); toast.push(r.email_reissued ? `Saved — new invite sent to ${r.email_reissued}.` : "Account saved.", "success"); onClose(); },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't save.", "error"),
+  });
+  const deactivate = useMutation({
+    mutationFn: () => updateUser({ user_id: acct.id, is_active: false }),
+    onSuccess: () => { refresh(); toast.push("Account deactivated.", "success"); onClose(); },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't deactivate.", "error"),
+  });
+
+  const cls = "w-full rounded-md border border-zinc-200 px-2.5 py-1.5 text-sm focus:border-accent focus:outline-none";
+  return (
+    <Modal open onClose={onClose} title={`Hub account — #${row.store_number}`}
+      footer={
+        <>
+          <Button variant="ghost" size="sm" className="mr-auto text-red-600 hover:bg-red-50" disabled={deactivate.isPending || save.isPending}
+            onClick={() => { if (confirm(`Deactivate ${acct.name ?? "this account"}? They lose Hub access until an admin reactivates them.`)) deactivate.mutate(); }}>
+            Deactivate
+          </Button>
+          <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
+          <Button size="sm" onClick={() => save.mutate()} disabled={!dirty || save.isPending}>{save.isPending ? "Saving…" : "Save"}</Button>
+        </>
+      }>
+      <p className="mb-3 text-xs text-zinc-500">Edits this person's Hub profile. Changes apply everywhere in the Hub, same as My Team.</p>
+      <div className="space-y-3">
+        <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">Full name</span>
+          <input value={name} onChange={(e) => setName(e.target.value)} className={cls} /></label>
+        <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">Email (login)</span>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} className={cls} /></label>
+        <label className="block"><span className="mb-0.5 block text-xs font-semibold text-zinc-500">Cell phone</span>
+          <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="(555) 123-4567" className={cls} /></label>
+      </div>
+      <p className="mt-3 text-[11px] text-zinc-400">Changing the email updates their login; if they haven't activated yet, a fresh invite goes to the new address.</p>
     </Modal>
   );
 }
