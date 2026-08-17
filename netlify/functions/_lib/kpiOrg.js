@@ -14,20 +14,49 @@ export function isStoreRow(r) {
   return Boolean(r?.storeName && r.storeName !== "Total");
 }
 
+// PostgREST caps every response at 1000 rows and long `.in()` lists blow up the
+// URL, so any query whose result (or filter list) scales with the store count
+// must be chunked + paged. Without this, a 271-store org truncates the
+// user_scopes fetch below and the district/area/region leader rows fall off the
+// end — which is exactly why DO/SDO/RVP came back null (blank column) on the
+// labor and GM-roster screens. Chunk the id list, then page each chunk fully.
+const IN_CHUNK = 200;
+const PAGE = 1000;
+async function selectAllIn(supa, table, cols, col, ids, refine) {
+  const uniq = [...new Set((ids || []).filter((v) => v !== null && v !== undefined))];
+  if (!uniq.length) return [];
+  const out = [];
+  for (let i = 0; i < uniq.length; i += IN_CHUNK) {
+    const chunk = uniq.slice(i, i + IN_CHUNK);
+    let from = 0;
+    for (;;) {
+      let q = supa.from(table).select(cols).in(col, chunk).range(from, from + PAGE - 1);
+      if (refine) q = refine(q);
+      const { data, error } = await q;
+      if (error) throw error;
+      const batch = data || [];
+      out.push(...batch);
+      if (batch.length < PAGE) break;
+      from += PAGE;
+    }
+  }
+  return out;
+}
+
 // Resolve store numbers → our org (store/district/area/region names + the
 // responsible GM/DO/SDO/RVP) by walking the hierarchy. Returns a Map keyed by
 // store number. Mirrors org.js leadership resolution.
 export async function resolveOrg(supa, numbers) {
   const map = new Map();
   if (!numbers.length) return map;
-  const { data: stores } = await supa.from("stores").select("id, number, name, district_id").in("number", numbers);
+  const stores = await selectAllIn(supa, "stores", "id, number, name, district_id", "number", numbers);
 
   // GM roster fallback — when a store has no GM account, use the uploaded roster
   // name so every org-driven report (labor, KPI, ranking, …) still shows who the
   // GM is. An actual account always wins; the roster only fills the gap.
   let rosterGm = new Map();
   try {
-    const { data: rosterRows } = await supa.from("gm_roster").select("store_number, gm_name, status").in("store_number", numbers.map(String));
+    const rosterRows = await selectAllIn(supa, "gm_roster", "store_number, gm_name, status", "store_number", numbers.map(String));
     rosterGm = new Map((rosterRows || [])
       .filter((r) => r.status === "named" && r.gm_name)
       .map((r) => [String(r.store_number), r.gm_name]));
@@ -49,16 +78,20 @@ export async function resolveOrg(supa, numbers) {
   // sources the Org chart's leadership card reads, so an RVP covering an area
   // as acting SDO (e.g. Narda over Area 12) resolves here identically.
   const nowIso = new Date().toISOString();
-  const [{ data: scopeRows }, { data: addlRows }] = await Promise.all([
-    nodeIds.length ? supa.from("user_scopes").select("user_id, scope_type, scope_id").in("scope_id", nodeIds) : Promise.resolve({ data: [] }),
-    nodeIds.length ? supa.from("additional_scopes").select("user_id, scope_type, scope_id, expires_at").in("scope_id", nodeIds) : Promise.resolve({ data: [] }),
+  const [scopeRows, addlRows] = await Promise.all([
+    selectAllIn(supa, "user_scopes", "user_id, scope_type, scope_id", "scope_id", nodeIds),
+    selectAllIn(supa, "additional_scopes", "user_id, scope_type, scope_id, expires_at", "scope_id", nodeIds),
   ]);
   const activeAddl = (addlRows || []).filter((r) => !r.expires_at || r.expires_at > nowIso);
   const scopeUserIds = [...new Set([...(scopeRows || []).map((s) => s.user_id), ...activeAddl.map((s) => s.user_id)])];
-  const { data: scopeProfiles } = scopeUserIds.length
-    ? await supa.from("profiles").select("id, full_name, preferred_name, email, role").in("id", scopeUserIds).eq("is_active", true) : { data: [] };
-  const { data: gmProfiles } = storeIds.length
-    ? await supa.from("profiles").select("id, full_name, preferred_name, email, primary_store_id").eq("role", "gm").eq("is_active", true).in("primary_store_id", storeIds) : { data: [] };
+  const scopeProfiles = await selectAllIn(
+    supa, "profiles", "id, full_name, preferred_name, email, role", "id", scopeUserIds,
+    (q) => q.eq("is_active", true),
+  );
+  const gmProfiles = await selectAllIn(
+    supa, "profiles", "id, full_name, preferred_name, email, primary_store_id", "primary_store_id", storeIds,
+    (q) => q.eq("role", "gm").eq("is_active", true),
+  );
   const profById = new Map((scopeProfiles || []).map((p) => [p.id, p]));
   const roleRank = { gm: 1, do: 2, sdo: 3, rvp: 4, vp: 5, coo: 6, admin: 6 };
 
