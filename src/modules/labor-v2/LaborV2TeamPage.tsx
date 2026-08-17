@@ -424,7 +424,7 @@ export function LaborV2TeamPage() {
                 </div>
                 <div className="divide-y divide-zinc-100">
                   {topRow && (
-                    <SummaryRow name={topRow.name} leader={topRow.leader} storeCount={topRow.storeCount} storesOver={topRow.storesOver} notesDue={topRow.notesDue} r={topRow} period={period} />
+                    <SummaryRow name={topRow.name} leader={topRow.leader} storeCount={topRow.storeCount} storesOver={topRow.storesOver} notesDue={topRow.notesDue} r={topRow} period={period} emphasis={!summary} />
                   )}
                   {rows.length === 0 ? (
                     <div className="p-8 text-center text-sm text-zinc-500">{isStore ? "No stores match this filter." : "Nothing here yet."}</div>
@@ -500,14 +500,16 @@ function BandCells({ r, period }: { r: { day: TeamBand; wtd: TeamBand; ptd: Team
 }
 
 // A non-clickable "total" row for the current scope (whole org at root, or the
-// drilled node), shown above its children.
-function SummaryRow({ name, leader, storeCount, storesOver, notesDue, r, period }: {
-  name: string; leader: string | null; storeCount: number; storesOver: number; notesDue: number; r: { day: TeamBand; wtd: TeamBand; ptd: TeamBand }; period: LaborPeriod;
+// drilled node), shown above its children. `emphasis` gives the company line at
+// the top a distinct accent treatment so it clearly reads as the roll-up.
+function SummaryRow({ name, leader, storeCount, storesOver, notesDue, r, period, emphasis }: {
+  name: string; leader: string | null; storeCount: number; storesOver: number; notesDue: number; r: { day: TeamBand; wtd: TeamBand; ptd: TeamBand }; period: LaborPeriod; emphasis?: boolean;
 }) {
   return (
-    <div className="flex items-center gap-3 border-b-2 border-zinc-200 bg-zinc-50/70 px-4 py-3">
-      <span className="h-10 w-1 shrink-0 rounded-full bg-transparent" />
+    <div className={cn("flex items-center gap-3 border-b-2 px-4 py-3", emphasis ? "border-accent/30 bg-accent/[0.06]" : "border-zinc-200 bg-zinc-50/70")}>
+      <span className={cn("h-10 w-1 shrink-0 rounded-full", emphasis ? "bg-accent" : "bg-transparent")} />
       <div className="min-w-0 flex-1">
+        {emphasis && <div className="text-[9.5px] font-bold uppercase tracking-[0.12em] text-accent">Company total</div>}
         <div className="truncate text-sm font-bold text-midnight dark:text-night-ink">{name}</div>
         <div className="truncate text-xs text-zinc-500">{leader ? `${leader} · ` : ""}{storeCount} store{storeCount === 1 ? "" : "s"}</div>
       </div>
