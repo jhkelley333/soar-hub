@@ -112,6 +112,10 @@ function laborMetrics(rows, p) {
     average_check: div(sales, tickets),
     on_time: otDen ? (otNum / otDen) * 100 : null,
     avg_ticket_time: attSec != null ? Math.round(attSec) : null,
+    // Order Ahead + Delivery penetration — net sales ÷ their denominators,
+    // recomputed from summed bases across the scope (never averaging %s).
+    order_ahead: (() => { const d = sumOf(rows, `${p}order_ahead_net_sales_denominator`); return d ? (sumOf(rows, `${p}order_ahead_net_sales`) / d) * 100 : null; })(),
+    delivery: (() => { const d = sumOf(rows, `${p}delivery_net_sales_denominator`); return d ? (sumOf(rows, `${p}delivery_net_sales`) / d) * 100 : null; })(),
     // Hours Over Chart (Hrs/Unit) from the daily labor report — per in-scope store.
     hours_over: rows.length ? hoursOverPerUnit(rows, p) : null,
     // Other Controllable Contribution (section 05): cash over/short + paid outs.
@@ -140,7 +144,7 @@ function countMetrics(rows) {
 // All metric ids the board knows; every value slot defaults to null so the
 // frontend can rely on the shape and render skeletons for unwired metrics.
 const METRIC_IDS = [
-  "sales_vs_ly", "avg_ticket_time", "on_time", "vog", "complaints", "order_accuracy", "delivery_mix", "splh", "tickets_vs_ly", "average_check",
+  "sales_vs_ly", "avg_ticket_time", "on_time", "vog", "order_ahead", "delivery", "complaints", "order_accuracy", "delivery_mix", "splh", "tickets_vs_ly", "average_check",
   "l2r", "vog2", "complaints_rank", "mystery_shop_rank", "ecosure_rank",
   "labor_pct", "hours_over", "actual_vs_schedule", "overtime",
   "cogs_pct", "daily_score", "completion_score", "accuracy_score", "count_variance", "item_efficiency",
@@ -498,7 +502,7 @@ export const handler = async (event) => {
     const laborAnchorD = lab(anchor, ""), laborAnchorW = lab(anchor, "wtd_"), laborAnchorM = lab(anchor, "ptd_");
     const laborPriorD = lab(dailyPrior, ""), laborPriorW = lab(wtdPrior, "wtd_"), laborPriorM = lab(mtdPrior, "ptd_");
     const laborWeeks = weekEnds.map((d) => lab(d, "wtd_"));
-    for (const k of ["sales_vs_ly", "sales_dollars", "ly_dollars", "avg_ticket_time", "on_time", "splh", "tickets_vs_ly", "average_check", "labor_pct", "hours_over", "actual_vs_schedule", "overtime", "cash_over_short", "paid_outs"]) {
+    for (const k of ["sales_vs_ly", "sales_dollars", "ly_dollars", "avg_ticket_time", "on_time", "order_ahead", "delivery", "splh", "tickets_vs_ly", "average_check", "labor_pct", "hours_over", "actual_vs_schedule", "overtime", "cash_over_short", "paid_outs"]) {
       values[k] = {
         daily: pair(laborAnchorD[k], laborPriorD[k]),
         wtd: pair(laborAnchorW[k], laborPriorW[k]),

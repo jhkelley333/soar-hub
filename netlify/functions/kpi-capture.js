@@ -29,7 +29,7 @@
 // regardless of the hour.
 
 import { createClient } from "@supabase/supabase-js";
-import { extractLaborRows, feedBusinessDate, isPre0238Error, isPre0272Error, stripRankingCols, stripTicketCols } from "./_lib/kpiLabor.js";
+import { extractLaborRows, feedBusinessDate, isPre0238Error, isPre0272Error, isPreMixError, stripMixCols, stripRankingCols, stripTicketCols } from "./_lib/kpiLabor.js";
 import { extractCountRows, isPreCountExtrasError, stripCountExtras } from "./_lib/kpiCount.js";
 import { upsertLaborCloses } from "./_lib/laborCloses.js";
 import { logPull } from "./_lib/pullLog.js";
@@ -121,13 +121,17 @@ export const handler = async (event) => {
   const laborRows = extracted.map((r) => ({ ...r, business_date: businessDate, captured_at: new Date().toISOString() }));
   if (laborRows.length) {
     let { error: lerr } = await supa.from("labor_v2_daily").upsert(laborRows, { onConflict: "store_number,business_date" });
+    if (lerr && isPreMixError(lerr)) {
+      // Migration 0296 (order-ahead/delivery) not applied yet — drop just those.
+      ({ error: lerr } = await supa.from("labor_v2_daily").upsert(stripMixCols(laborRows), { onConflict: "store_number,business_date" }));
+    }
     if (lerr && isPre0272Error(lerr)) {
       // Migration 0272 (ticket-time) not applied yet — drop just those columns.
-      ({ error: lerr } = await supa.from("labor_v2_daily").upsert(stripTicketCols(laborRows), { onConflict: "store_number,business_date" }));
+      ({ error: lerr } = await supa.from("labor_v2_daily").upsert(stripMixCols(stripTicketCols(laborRows)), { onConflict: "store_number,business_date" }));
     }
     if (lerr && isPre0238Error(lerr)) {
       // Migration 0238 (ranking fields) not applied yet — land the old column set.
-      ({ error: lerr } = await supa.from("labor_v2_daily").upsert(stripRankingCols(stripTicketCols(laborRows)), { onConflict: "store_number,business_date" }));
+      ({ error: lerr } = await supa.from("labor_v2_daily").upsert(stripMixCols(stripRankingCols(stripTicketCols(laborRows))), { onConflict: "store_number,business_date" }));
     }
     if (lerr) console.log(`[kpi-capture] labor upsert failed: ${lerr.message}`);
     else laborStored = laborRows.length;

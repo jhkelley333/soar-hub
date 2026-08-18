@@ -36,14 +36,16 @@ export interface Pillar {
 
 export const PILLARS: Pillar[] = [
   {
-    key: "sales", index: "01", title: "Goals to Grow Sales", countLabel: "6 execution metrics",
+    key: "sales", index: "01", title: "Goals to Grow Sales", countLabel: "7 execution metrics",
     mtm: { id: "sales_vs_ly", name: "Sales vs. LY", unit: "%", dec: 1, hb: true, target: 4.0, signed: true },
     rows: [
       // Avg Ticket Time comes from the KPI (Skunkworks) feed's averageTicketTime.
       { id: "avg_ticket_time", name: "Avg Ticket Time", unit: "s", dec: 0, hb: false, target: 180 },
       { id: "on_time", name: "On Time", unit: "%", dec: 1, hb: true, target: 92 },
-      // VOG pulls from the current ranker (0-1 top-box → shown as %); ranker goal is 70%.
-      { id: "vog", name: "VOG", unit: "%", dec: 1, hb: true, target: 70 },
+      // Order Ahead + Delivery penetration (% of net sales) from the KPI feed —
+      // a growth push, so higher is better. Set a goal in Admin → Metrics Board.
+      { id: "order_ahead", name: "Order Ahead", unit: "%", dec: 1, hb: true, target: null },
+      { id: "delivery", name: "Delivery", unit: "%", dec: 1, hb: true, target: null },
       { id: "splh", name: "SPLH", unit: "$", dec: 2, hb: true, target: 70 },
       // Traffic trend vs. last year (ticket count YoY %), not the raw count —
       // growth (>0) is good. From the feed's tickets vs. prev_year_tickets.
@@ -52,10 +54,12 @@ export const PILLARS: Pillar[] = [
     ],
   },
   {
-    key: "l2r", index: "02", title: "Customer L2R", countLabel: "3 execution metrics",
+    key: "l2r", index: "02", title: "Customer L2R", countLabel: "4 execution metrics",
     // L2R (Likely to Return) from the last-week ranker — the same top-box VOG.
     mtm: { id: "l2r", name: "Likely to Return (L2R)", unit: "%", dec: 1, hb: true, target: 80 },
     rows: [
+      // VOG pulls from the current ranker (0-1 top-box → shown as %); ranker goal is 70%.
+      { id: "vog", name: "VOG", unit: "%", dec: 1, hb: true, target: 70 },
       { id: "complaints", name: "Complaints", unit: "/10k", dec: 0, hb: false, target: 10, soon: true },
       // Mystery Shop (Shop avg) + EcoSure Audit from the last-week ranker run.
       { id: "mystery_shop_rank", name: "Mystery Shop", unit: "%", dec: 1, hb: true, target: 90 },
