@@ -10,7 +10,7 @@
 #
 # It just pings the (unauthenticated, idempotent) kpi-capture function. The
 # function itself still:
-#   - gates to its capture hours (7 AM–2 PM Central), so off-window pings
+#   - gates to its capture hours (7 AM–10 PM Central), so off-window pings
 #     return instantly without writing, and
 #   - upserts on (central_date, central_hour) for kpi_snapshots and on
 #     (store_number, business_date) for labor_v2_daily, so a retry — or the

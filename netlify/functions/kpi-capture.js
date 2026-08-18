@@ -1,7 +1,7 @@
 // kpi-capture — scheduled puller for the Expressway KPI feed.
 //
 // Captures the raw feed into kpi_snapshots, and fans store-level labor into
-// labor_v2_daily, hourly from 7 AM to 2 PM Central — the same "back office
+// labor_v2_daily, hourly from 7 AM to 10 PM Central — the same "back office
 // fills it in gradually through the morning" window labor-snapshot.js already
 // uses for the Labor sheet. The feed doesn't have one "done" moment either
 // (Expressway sometimes finishes after the old 7/9/11 AM-only window), so
@@ -21,8 +21,8 @@
 // CAPTURE_HOURS and every write is an upsert.
 //
 // Netlify cron is UTC-only, so the config.schedule below fires on the union
-// of UTC hours that can map to 7 AM–2 PM Central across DST, and this file
-// gates on the actual America/Chicago hour (so it's always 7 AM–2 PM local,
+// of UTC hours that can map to 7 AM–10 PM Central across DST, and this file
+// gates on the actual America/Chicago hour (so it's always 7 AM–10 PM local,
 // summer or winter).
 //
 // Manual test: GET /.netlify/functions/kpi-capture?force=1 captures now,
@@ -42,7 +42,7 @@ const KPI_URL = process.env.SKUNKWORKS_KPI_URL;
 const KPI_TOKEN = process.env.SKUNKWORKS_KPI_TOKEN;
 
 const TZ = "America/Chicago";
-const CAPTURE_HOURS = [7, 8, 9, 10, 11, 12, 13, 14];
+const CAPTURE_HOURS = [7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22];
 
 // Wall-clock parts in a timezone (DST-safe). Mirrors the digest functions.
 function wallClockInTz(utcDate, tz) {
@@ -194,10 +194,11 @@ export const handler = async (event) => {
   return { statusCode: 200, body: `captured ${centralDate} ${wc.hour}:00 CT · labor ${laborStored} · count ${countStored} rows for ${businessDate} · closes ${closes.weeks}w/${closes.periods}p${ranked ? ` · ranker: ${ranked}` : ""}` };
 };
 
-// Fire on every UTC hour that could be 7 AM–2 PM Central (CST or CDT); the
-// handler gates to the real Central hour, so exactly eight captures land
-// each day regardless of DST. Backup trigger only — see the file header and
-// .github/workflows/kpi-capture-pull.yml for the reliable one.
+// Fire on every UTC hour that could be 7 AM–10 PM Central (CST or CDT); the
+// handler gates to the real Central hour, so exactly sixteen captures land
+// each day regardless of DST. 7 AM–10 PM Central spans UTC 12–23 + 00–04
+// (10 PM Central wraps past midnight UTC). Backup trigger only — see the file
+// header and .github/workflows/kpi-capture-pull.yml for the reliable one.
 export const config = {
-  schedule: "0 12-20 * * *",
+  schedule: "0 0-4,12-23 * * *",
 };
