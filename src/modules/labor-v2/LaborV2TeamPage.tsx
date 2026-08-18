@@ -26,7 +26,10 @@ const fmtPts = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : ""}$
 const fmtSignedUSD0 = (v: number | null) =>
   v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })}`;
 const fmtSignedHrs = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(Math.round(v)).toLocaleString("en-US")}`);
-const fmtRate2 = (v: number | null) => (v == null ? "—" : `+${v.toFixed(2)}`); // Hrs/Store: per-store avg of over-stores, 2 dp (negatives hidden upstream)
+// Hrs/Store, 2 dp. The PTD aggregate is Ranker-aligned (netted per-store per
+// week) so it can be negative (net under chart); show its sign. Day/WTD/store
+// bands stay ≥ 0.
+const fmtRate2 = (v: number | null) => (v == null ? "—" : v > 0 ? `+${v.toFixed(2)}` : v.toFixed(2));
 const fmtHrs = (v: number | null) => (v == null ? "—" : Math.round(v).toLocaleString("en-US"));
 const fmtDate = (s: string | null) =>
   s ? new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "—";
