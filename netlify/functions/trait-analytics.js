@@ -161,42 +161,57 @@ const TIERS = ["Stable", "Steady", "Volatile", "Turnaround"];
 async function overview(supa) {
   const now = new Date();
 
-  // 1. Latest complete ranking run.
-  const { data: runs } = await supa
-    .from("ranking_runs")
-    .select("id, week_ending, status")
-    .eq("status", "complete")
-    .order("week_ending", { ascending: false })
-    .order("started_at", { ascending: false })
-    .limit(1);
-  const run = runs?.[0];
-  if (!run) return { error: "No completed ranking run yet — run the Ranker first.", status: 400 };
+  // 1. Every ranker week (v1 sheet + v2 db) from the backfilled history.
+  const weekRows = await selectAll(supa, "ranker_week_history", "store_number, week_key, rank");
+  const rankedRows = weekRows.filter((r) => r.rank != null && r.store_number);
+  if (rankedRows.length < 3) {
+    return { error: "No ranker history yet — run the Ranker History Backfill (System Settings → Data & Imports) first.", status: 400 };
+  }
 
-  // 2. Store-tier PTD rows for that run.
-  const rows = await selectAll(supa, "ranking_rows", "entity_key, store_id, rank", (q) =>
-    q.eq("run_id", run.id).eq("scope", "ptd").eq("tier", "store"),
-  );
-  const ranked = rows.filter((r) => r.rank != null);
-  const N = ranked.length;
-  if (N < 3) return { error: "Not enough ranked stores to analyze.", status: 400 };
-  // Percentile: rank 1 → 100, worst → 0.
-  const pctOf = (rank) => Math.round((100 * (N - rank)) / (N - 1));
+  // 2. Percentile per store per week (rank 1 → 100, worst → 0, using THAT week's
+  //    store count), then average per store across every week it appears in —
+  //    the season-average that turns a noisy one-week snapshot into real signal.
+  const byWeek = new Map();
+  for (const r of rankedRows) {
+    if (!byWeek.has(r.week_key)) byWeek.set(r.week_key, []);
+    byWeek.get(r.week_key).push(r);
+  }
+  const weeksAnalyzed = byWeek.size;
+  const acc = new Map(); // store_number -> { sum, n }
+  for (const [, wr] of byWeek) {
+    const n = wr.length;
+    if (n < 2) continue;
+    for (const r of wr) {
+      const p = (100 * (n - r.rank)) / (n - 1);
+      const a = acc.get(String(r.store_number)) || { sum: 0, n: 0 };
+      a.sum += p; a.n += 1;
+      acc.set(String(r.store_number), a);
+    }
+  }
+  const seasonPct = new Map();
+  for (const [num, a] of acc) if (a.n > 0) seasonPct.set(num, Math.round(a.sum / a.n));
+  const storeNumbers = [...seasonPct.keys()];
+  if (storeNumbers.length < 3) return { error: "Not enough ranked stores to analyze.", status: 400 };
 
-  // 3. Trait per store (GM's trait, joined on store_id).
-  const storeIds = [...new Set(ranked.map((r) => r.store_id).filter(Boolean))];
-  // Chunk the id list — a company-wide `.in()` of ~271 UUIDs overruns the API
-  // gateway's URL limit.
+  // 3. Trait per store_number: stores(number → id) → the GM's profile(id → trait).
+  const storesMeta = [];
+  for (let i = 0; i < storeNumbers.length; i += 150) {
+    const part = await selectAll(supa, "stores", "id, number", (q) => q.in("number", storeNumbers.slice(i, i + 150)));
+    storesMeta.push(...part);
+  }
+  const numById = new Map(storesMeta.map((s) => [s.id, String(s.number)]));
+  const storeIds = [...new Set(storesMeta.map((s) => s.id).filter(Boolean))];
   const gmProfiles = [];
   for (let i = 0; i < storeIds.length; i += 150) {
-    const chunk = storeIds.slice(i, i + 150);
     const part = await selectAll(supa, "profiles", "primary_store_id, cultural_index_trait", (q) =>
-      q.eq("role", "gm").eq("is_active", true).in("primary_store_id", chunk),
+      q.eq("role", "gm").eq("is_active", true).in("primary_store_id", storeIds.slice(i, i + 150)),
     );
     gmProfiles.push(...part);
   }
-  const traitByStoreId = new Map();
+  const traitByNum = new Map();
   for (const p of gmProfiles) {
-    if (p.primary_store_id && p.cultural_index_trait) traitByStoreId.set(p.primary_store_id, p.cultural_index_trait);
+    const num = p.primary_store_id ? numById.get(p.primary_store_id) : null;
+    if (num && p.cultural_index_trait) traitByNum.set(num, p.cultural_index_trait);
   }
 
   // 4. Stability inputs, keyed by store_number (= entity_key on store rows).
@@ -220,11 +235,10 @@ async function overview(supa) {
   );
   const activeByNum = new Set(transitions.map((t) => String(t.store_number)).filter(Boolean));
 
-  // 5. Per-store assembled records.
+  // 5. Per-store assembled records (season-average percentile, keyed by number).
   const records = [];
-  for (const r of ranked) {
-    const num = String(r.entity_key);
-    const trait = traitByStoreId.get(r.store_id) || null;
+  for (const num of storeNumbers) {
+    const trait = traitByNum.get(num) || null;
     const rosterRow = rosterByNum.get(num);
     const stab = stabilityFor(
       {
@@ -237,7 +251,7 @@ async function overview(supa) {
     );
     records.push({
       store_number: num,
-      percentile: pctOf(r.rank),
+      percentile: seasonPct.get(num),
       pattern: trait ? ciPatternForTrait(trait)?.name || trait : null,
       stability_score: stab.score,
       stability_tier: stab.tier,
@@ -305,11 +319,11 @@ async function overview(supa) {
   });
 
   return {
-    run: { week_ending: run.week_ending },
+    run: { weeks_analyzed: weeksAnalyzed },
     coverage: {
-      ranked_stores: N,
+      ranked_stores: storeNumbers.length,
       with_trait: withTrait.length,
-      trait_pct: Math.round((100 * withTrait.length) / N),
+      trait_pct: Math.round((100 * withTrait.length) / storeNumbers.length),
     },
     decomposition: { stability_r2: stabilityR2, trait_var: traitVar, n: both.length, verdict },
     leaderboard,

@@ -55,7 +55,7 @@ function Overview({ data }: { data: OverviewResponse }) {
     <div className="space-y-6">
       {/* Coverage strip */}
       <div className="flex flex-wrap gap-2 text-xs text-ink-muted">
-        <Badge tone="neutral">Ranker week ending {run.week_ending}</Badge>
+        <Badge tone="neutral">{run.weeks_analyzed} ranker weeks analyzed</Badge>
         <Badge tone="neutral">{coverage.ranked_stores} ranked stores</Badge>
         <Badge tone={coverage.trait_pct >= 60 ? "success" : "warning"}>
           {coverage.with_trait} have a trait ({coverage.trait_pct}%)

@@ -19,7 +19,7 @@ export interface HeatCell {
   confident: boolean;
 }
 export interface OverviewResponse {
-  run: { week_ending: string };
+  run: { weeks_analyzed: number };
   coverage: { ranked_stores: number; with_trait: number; trait_pct: number };
   decomposition: {
     stability_r2: number;
