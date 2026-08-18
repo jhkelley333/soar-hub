@@ -77,6 +77,9 @@ export const NAV: NavItem[] = [
   // Team Playbook — AI coaching on how to lead your team, grounded in each
   // person's Culture Index profile. DO and above (they have a downline to lead).
   { to: "/culture-index/playbook", label: "Team Playbook", icon: Sparkles, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // Executive Overview — org-wide trait × performance × store-stability
+  // analytics. Strategic view, VP/COO/admin only.
+  { to: "/culture-index/overview", label: "Trait Analytics", icon: BarChart3, roles: ["vp", "coo", "admin"] },
   // Territory Map — stores plotted on Google Maps, pin color keyed to the
   // DO resolved live from the org data.
   { to: "/territory-map", label: "Territory Map", icon: MapPinned,   roles: ["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
