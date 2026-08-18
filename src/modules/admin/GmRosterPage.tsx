@@ -17,6 +17,7 @@ import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { fetchGmLeaders, fetchGmRoster, fetchGmRosterHistory, importGmRoster, setGmRosterDetails, setGmRosterName, type GmRosterHistoryEntry, type GmRosterRow, type LeaderRow, type ReconcileStatus } from "./gmRosterApi";
 import { updateUser, type UpdateUserInput } from "@/modules/team/api";
+import { TraitChip } from "@/modules/culture-index/TraitChip";
 import type { UseQueryResult } from "@tanstack/react-query";
 import { diffUpload, fmtDate, mergedImportRow, parseDate, parsePaste, parseRosterXlsx, sinceLabel, type DiffRow, type UploadRow } from "./rosterImport";
 
@@ -429,12 +430,9 @@ function Row({ r, canEdit, onHistory, onEdit, onEditAccount }: { r: GmRosterRow;
             </div>
             {r.account.email && <div className="text-[11px] text-zinc-400">{r.account.email}</div>}
             {r.account.cultural_index_trait && (
-              <span
-                title="Cultural Index trait"
-                className="mt-1 inline-flex items-center rounded-full bg-violet-50 px-2 py-0.5 text-[11px] font-medium text-violet-700 ring-1 ring-inset ring-violet-200"
-              >
-                {r.account.cultural_index_trait}
-              </span>
+              <div className="mt-1">
+                <TraitChip trait={r.account.cultural_index_trait} size="xs" />
+              </div>
             )}
           </>
         ) : (
