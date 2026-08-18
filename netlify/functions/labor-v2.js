@@ -187,10 +187,27 @@ function ptdHoursOverRankerAligned(rows, weeksInPeriod) {
   return round2(sumOver / rows.length / weeksInPeriod);
 }
 
-// Override an aggregate PTD band's Hrs/Store with the Ranker-aligned figure.
+// Override a PTD band's Hrs/Store with the per-store(-per-week) figure.
 function withRankerHrs(band, rows, weeksInPeriod) {
   if (band) band.hours_over_chart = ptdHoursOverRankerAligned(rows, weeksInPeriod);
   return band;
+}
+
+// Company-wide Labor setting (generic store_portal_settings KV): whether PTD
+// Hrs/Store is a per-week RATE (÷ weeks elapsed) or the raw PERIOD TOTAL per
+// store. Defaults ON (÷ weeks) when unset.
+const LABOR_HRS_WEEKLY_KEY = "labor_hrs_weekly_rate";
+async function getLaborHrsWeekly(supa) {
+  try {
+    const { data } = await supa.from("store_portal_settings").select("value").eq("key", LABOR_HRS_WEEKLY_KEY).maybeSingle();
+    return data?.value?.enabled !== false;
+  } catch { return true; }
+}
+async function setLaborHrsWeekly(supa, enabled, userId) {
+  return supa.from("store_portal_settings").upsert({
+    key: LABOR_HRS_WEEKLY_KEY, value: { enabled: !!enabled },
+    updated_by: userId ?? null, updated_at: new Date().toISOString(),
+  });
 }
 
 // Aggregate one band (prefix "" = daily, "wtd_", "ptd_") across a set of store
@@ -1792,6 +1809,9 @@ async function teamView(supa, user, params) {
   // Weeks elapsed in the current fiscal period — the Ranker divides its
   // per-store hours-over by this, so the PTD Hrs/Store aggregates below match.
   const weeksInPeriod = fiscalForDate(anchor)?.weekInPeriod || null;
+  // Toggle: per-week rate (÷ weeks elapsed) vs. raw period total (÷ 1).
+  const weeklyRate = await getLaborHrsWeekly(supa);
+  const hrsWeeks = weeklyRate ? weeksInPeriod : 1;
 
   const [{ data: rows }, { data: reviews }] = await Promise.all([
     supa.from("labor_v2_daily").select("*").eq("business_date", anchor).in("store_number", numbers),
@@ -1839,7 +1859,7 @@ async function teamView(supa, user, params) {
       region: rs[0]?.soar?.region ?? null,
       area: rs[0]?.soar?.area ?? null,
       district: rs[0]?.soar?.district ?? null,
-      day: teamBand(rs, ""), wtd: teamBand(rs, "wtd_"), ptd: withRankerHrs(teamBand(rs, "ptd_"), rs, weeksInPeriod),
+      day: teamBand(rs, ""), wtd: teamBand(rs, "wtd_"), ptd: withRankerHrs(teamBand(rs, "ptd_"), rs, hrsWeeks),
       storesOver: rs.filter(storeOver).length,
       notesDue: rs.filter((r) => storeOver(r) && !reviewByStore.get(String(r.store_number))).length,
     })).sort((a, b) => (b.day.variance_pts ?? -999) - (a.day.variance_pts ?? -999));
@@ -1856,7 +1876,7 @@ async function teamView(supa, user, params) {
       gm_name: r.soar.gmName,
       do_name: r.soar.doName,
       region: r.soar.region, area: r.soar.area, district: r.soar.district,
-      day, wtd: teamBand([r], "wtd_"), ptd: withRankerHrs(teamBand([r], "ptd_"), [r], weeksInPeriod),
+      day, wtd: teamBand([r], "wtd_"), ptd: withRankerHrs(teamBand([r], "ptd_"), [r], hrsWeeks),
       status: day.status,
       note_due: day.status === "over" && !explained,
       explained,
@@ -1875,7 +1895,7 @@ async function teamView(supa, user, params) {
     date: anchor,
     scope: { stores: inScope.length, dos: [...new Set(inScope.map((r) => r.soar.doName).filter(Boolean))] },
     totals: {
-      day: teamBand(inScope, ""), wtd: teamBand(inScope, "wtd_"), ptd: withRankerHrs(teamBand(inScope, "ptd_"), inScope, weeksInPeriod),
+      day: teamBand(inScope, ""), wtd: teamBand(inScope, "wtd_"), ptd: withRankerHrs(teamBand(inScope, "ptd_"), inScope, hrsWeeks),
       storesOver: storeRows.filter((s) => s.status === "over").length,
       notesDue: storeRows.filter((s) => s.note_due).length,
       notesExplained: storeRows.filter((s) => s.explained).length,
@@ -1883,6 +1903,7 @@ async function teamView(supa, user, params) {
     startLevel,
     levels,
     missing,
+    hrs_weekly_rate: weeklyRate,
   };
 }
 
@@ -2369,6 +2390,11 @@ export const handler = async (event) => {
     if (event.httpMethod === "POST") {
       const body = event.body ? JSON.parse(event.body) : {};
       if (action === "review") return unwrap(await saveReview(supa, user, body));
+      if (action === "set-labor-settings") {
+        if (!isAdmin) return respond(403, { error: "Admins only." });
+        await setLaborHrsWeekly(supa, body.hrs_weekly_rate, user.id);
+        return respond(200, { ok: true, hrs_weekly_rate: !!body.hrs_weekly_rate });
+      }
       if (action === "no-gm-add") return unwrap(await noGmAdd(supa, user, body));
       if (action === "no-gm-end") return unwrap(await noGmEnd(supa, user, body));
       if (action === "no-gm-update") return unwrap(await noGmUpdate(supa, user, body));
@@ -2394,6 +2420,7 @@ export const handler = async (event) => {
     // GM-facing reads — scope enforced per store in the function.
     if (action === "gm") return unwrap(await gmView(supa, user, params));
     if (action === "team") return unwrap(await teamView(supa, user, params));
+    if (action === "labor-settings") return respond(200, { ok: true, hrs_weekly_rate: await getLaborHrsWeekly(supa) });
     if (action === "labor-file") return unwrap(await laborFile(supa, user));
     if (action === "rvp-scorecard") return unwrap(await rvpScorecard(supa, user, params));
     if (action === "rvp-commitments") return unwrap(await rvpCommitments(supa, user));
