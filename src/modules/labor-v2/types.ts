@@ -65,6 +65,17 @@ export interface TeamBand {
 
 export type TeamDisplayLevel = TeamLevel | "store";
 
+// Period-to-date labor credit $ applied across a node's stores, by type, plus
+// the all-credits total. Surfaced per District / Area / Region / Company.
+export interface LaborCredits {
+  no_gm: number;
+  pto: number;
+  training: number;
+  gm_support: number;
+  training_class: number;
+  total: number;
+}
+
 export interface TeamGroup {
   name: string;
   leader: string | null;
@@ -77,6 +88,7 @@ export interface TeamGroup {
   ptd: TeamBand;
   storesOver: number;
   notesDue: number;
+  credits?: LaborCredits;
 }
 
 export interface TeamStore {
@@ -96,6 +108,7 @@ export interface TeamStore {
   note: string | null;
   /** Structured miss reason filed with the note (poor_projections | scheduled_above_chart | …). */
   root_cause: string | null;
+  credits?: LaborCredits;
 }
 
 export interface TeamLaborResponse {
@@ -109,6 +122,7 @@ export interface TeamLaborResponse {
     storesOver: number;
     notesDue: number;
     notesExplained: number;
+    credits?: LaborCredits;
   } | null;
   startLevel: TeamLevel;
   levels: {

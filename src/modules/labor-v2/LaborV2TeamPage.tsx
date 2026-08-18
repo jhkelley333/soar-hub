@@ -5,7 +5,7 @@
 
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { AlertTriangle, ArrowDown, ArrowUp, ChevronRight, Clock, Copy, Download, Link2, RefreshCw, Share2 } from "lucide-react";
+import { AlertTriangle, ArrowDown, ArrowUp, CalendarDays, ChevronRight, Clock, Copy, Download, Link2, RefreshCw, Share2, SlidersHorizontal } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -16,10 +16,11 @@ import { cn } from "@/lib/cn";
 import { recentWeekOptions } from "./weeks";
 import { useAuth } from "@/auth/AuthProvider";
 import { MissTrackerExport } from "@/modules/labor/MissTrackerExport";
-import { fetchLaborV2Team, fetchLaborFile, fetchMissTracker } from "./api";
+import { fetchLaborV2Team, fetchLaborFile, fetchLaborFileWeek, fetchMissTracker, type ShareBand, type ShareNode } from "./api";
 import { LaborShareLinksModal } from "./LaborShareLinksModal";
+import { LaborTableModal, WeekTrendModal, type Chain } from "./laborExplorerModals";
 import { downloadSharedLaborFile } from "./sharedLaborWorkbook";
-import type { LaborPeriod, TeamBand, TeamDisplayLevel, TeamGroup, TeamStore } from "./types";
+import type { LaborCredits, LaborPeriod, TeamBand, TeamDisplayLevel, TeamGroup, TeamStore } from "./types";
 
 const fmtPctPts = (v: number | null) => (v == null ? "—" : `${v.toFixed(1)}%`);
 const fmtPts = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : ""}${v.toFixed(1)}`);
@@ -33,6 +34,37 @@ const fmtRate2 = (v: number | null) => (v == null ? "—" : v > 0 ? `+${v.toFixe
 const fmtHrs = (v: number | null) => (v == null ? "—" : Math.round(v).toLocaleString("en-US"));
 const fmtDate = (s: string | null) =>
   s ? new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "—";
+const fmtUsd0 = (v: number) => `$${Math.round(v).toLocaleString("en-US")}`;
+
+// PTD labor credit breakdown for a node's title tooltip (all types that apply).
+function creditBreakdown(c?: LaborCredits): string {
+  if (!c) return "";
+  const parts: string[] = [];
+  if (c.no_gm) parts.push(`No GM ${fmtUsd0(c.no_gm)}`);
+  if (c.pto) parts.push(`PTO ${fmtUsd0(c.pto)}`);
+  if (c.training) parts.push(`Training ${fmtUsd0(c.training)}`);
+  if (c.training_class) parts.push(`Training class ${fmtUsd0(c.training_class)}`);
+  if (c.gm_support) parts.push(`GM support ${fmtUsd0(c.gm_support)}`);
+  return parts.join(" · ");
+}
+
+// Inline "· $X credits" appended to a node's sub-line — hover shows the per-type
+// breakdown. Nothing rendered when the node used no credits this period.
+function CreditsInline({ credits }: { credits?: LaborCredits }) {
+  if (!credits || !credits.total) return null;
+  return (
+    <span className="text-zinc-400" title={creditBreakdown(credits)}>
+      {" · "}<span className="font-semibold text-emerald-700">{fmtUsd0(credits.total)}</span> credits
+    </span>
+  );
+}
+
+// TeamBand → ShareBand, so the shared Table view / Week Trend modals can render
+// the hub's already-loaded store rows without a second fetch.
+const bandToShare = (b: TeamBand): ShareBand => ({
+  labor_pct: b.labor_pct, target_pct: b.target_pct, variance_pts: b.variance_pts,
+  dollars_over: b.dollars_over_chart, hours_over: b.hours_over_chart, act_vs_sched: b.act_vs_sched,
+});
 
 const overTone = (over: boolean | null) => (over == null ? "text-zinc-500" : over ? "text-red-600" : "text-emerald-600");
 const isOver = (b: TeamBand | null | undefined) => (b?.status === "over" ? true : b?.status === "on" ? false : null);
@@ -105,6 +137,8 @@ export function LaborV2TeamPage() {
   const [weekEnd, setWeekEnd] = useState<string>(""); // "" = this week (latest); else a past week-ending date
   const [shareDraft, setShareDraft] = useState<string | null>(null);
   const [wbBusy, setWbBusy] = useState(false);
+  const [tableOpen, setTableOpen] = useState(false);
+  const [weekOpen, setWeekOpen] = useState(false);
   const weekOptions = useMemo(() => recentWeekOptions(), []);
 
   const q = useQuery({ queryKey: ["labor-v2-team", weekEnd], queryFn: () => fetchLaborV2Team(weekEnd || undefined), staleTime: 5 * 60_000, refetchOnWindowFocus: !weekEnd, refetchInterval: weekEnd ? false : 10 * 60_000 });
@@ -127,6 +161,23 @@ export function LaborV2TeamPage() {
   const scopedStores = useMemo(() => (data?.levels.store ?? []).filter(matchesPath), [data, path]);
   const overCount = scopedStores.filter((s) => s.status === "over").length;
   const dueCount = scopedStores.filter((s) => s.note_due).length;
+
+  // Store rows for the current scope, mapped to the shared-modal shape so the
+  // Table view can render them client-side (no extra fetch).
+  const tableStores = useMemo<ShareNode[]>(() => scopedStores.map((s) => ({
+    level: "store", name: `#${s.store_number} ${s.store_name}`, leader: s.gm_name, storeCount: 1,
+    region: s.region, area: s.area, district: s.district,
+    store_number: s.store_number, store_name: s.store_name,
+    daily: bandToShare(s.day), wtd: bandToShare(s.wtd), ptd: bandToShare(s.ptd),
+    hours_trend: { this_wtd: null, last_week: null, delta: null, improving: null },
+    credits: { no_gm: 0, pto: 0, training: 0 },
+  })), [scopedStores]);
+  // Week Trend narrows to whatever the viewer has drilled into.
+  const weekFilter = {
+    region: path.find((c) => c.level === "region")?.name ?? null,
+    area: path.find((c) => c.level === "area")?.name ?? null,
+    district: path.find((c) => c.level === "district")?.name ?? null,
+  };
 
   const rows = useMemo(() => {
     const src: (TeamGroup | TeamStore)[] = isStore ? (data?.levels.store ?? []) : (data?.levels[displayLevel as "region" | "area" | "district"] ?? []);
@@ -162,6 +213,7 @@ export function LaborV2TeamPage() {
       region: null, area: null, district: null,
       day: t.day, wtd: t.wtd, ptd: t.ptd,
       storesOver: t.storesOver, notesDue: t.notesDue,
+      credits: t.credits,
     };
   }, [data, t, path, displayLevel]);
   const topRow = summary ?? companyRow;
@@ -299,6 +351,18 @@ export function LaborV2TeamPage() {
         {weekEnd && (
           <span className="text-xs text-zinc-400">Past week — WTD covers the full week; Day is that week's last captured day.</span>
         )}
+        {t && (
+          <div className="ml-auto flex items-center gap-2">
+            <button type="button" onClick={() => setWeekOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-midnight hover:border-accent">
+              <CalendarDays className="h-3.5 w-3.5" /> Week Trend
+            </button>
+            <button type="button" onClick={() => setTableOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-2.5 py-1.5 text-xs font-semibold text-midnight hover:border-accent">
+              <SlidersHorizontal className="h-3.5 w-3.5" /> Table view
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Level tabs (jump) — drill into a row to go deeper */}
@@ -344,6 +408,18 @@ export function LaborV2TeamPage() {
             <Tile label="Notes to Review" value={String(t.notesDue)} sub={`${t.notesExplained} already explained`} />
             <Tile label="$ Over Chart · Day" value={fmtSignedUSD0(t.day.dollars_over_chart)} sub={t.day.training_credit ? `incl. ${fmtSignedUSD0(-t.day.training_credit)} training credit` : `${fmtRate2(t.day.hours_over_chart)} hr/unit`} tone={overTone((t.day.dollars_over_chart ?? 0) > 0)} />
           </div>
+
+          {/* All labor credits applied across this scope, period-to-date. */}
+          {t.credits && t.credits.total > 0 && (
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-xl bg-white px-4 py-3 ring-1 ring-zinc-200">
+              <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-400">Credits used · PTD</span>
+              <span className="text-lg font-bold tabular-nums text-emerald-700">{fmtUsd0(t.credits.total)}</span>
+              <span className="text-xs text-zinc-500">across {data!.scope.stores} stores</span>
+              {creditBreakdown(t.credits) && (
+                <span className="text-[11px] tabular-nums text-zinc-400">· {creditBreakdown(t.credits)}</span>
+              )}
+            </div>
+          )}
 
           {/* List */}
           <div className="rounded-xl bg-white ring-1 ring-zinc-200">
@@ -406,7 +482,7 @@ export function LaborV2TeamPage() {
                 </div>
                 <div className="divide-y divide-zinc-100">
                   {topRow && (
-                    <SummaryRow name={topRow.name} leader={topRow.leader} storeCount={topRow.storeCount} storesOver={topRow.storesOver} notesDue={topRow.notesDue} r={topRow} period={period} emphasis={!summary} />
+                    <SummaryRow name={topRow.name} leader={topRow.leader} storeCount={topRow.storeCount} storesOver={topRow.storesOver} notesDue={topRow.notesDue} r={topRow} period={period} emphasis={!summary} credits={topRow.credits} />
                   )}
                   {rows.length === 0 ? (
                     <div className="p-8 text-center text-sm text-zinc-500">{isStore ? "No stores match this filter." : "Nothing here yet."}</div>
@@ -432,6 +508,13 @@ export function LaborV2TeamPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {tableOpen && <LaborTableModal stores={tableStores} onClose={() => setTableOpen(false)} />}
+      {weekOpen && (
+        <WeekTrendModal cacheKey="labor-file-week" level={displayLevel as Chain}
+          weekFetcher={(o) => fetchLaborFileWeek(o)} filter={weekFilter}
+          onClose={() => setWeekOpen(false)} />
       )}
     </>
   );
@@ -484,8 +567,8 @@ function BandCells({ r, period }: { r: { day: TeamBand; wtd: TeamBand; ptd: Team
 // A non-clickable "total" row for the current scope (whole org at root, or the
 // drilled node), shown above its children. `emphasis` gives the company line at
 // the top a distinct accent treatment so it clearly reads as the roll-up.
-function SummaryRow({ name, leader, storeCount, storesOver, notesDue, r, period, emphasis }: {
-  name: string; leader: string | null; storeCount: number; storesOver: number; notesDue: number; r: { day: TeamBand; wtd: TeamBand; ptd: TeamBand }; period: LaborPeriod; emphasis?: boolean;
+function SummaryRow({ name, leader, storeCount, storesOver, notesDue, r, period, emphasis, credits }: {
+  name: string; leader: string | null; storeCount: number; storesOver: number; notesDue: number; r: { day: TeamBand; wtd: TeamBand; ptd: TeamBand }; period: LaborPeriod; emphasis?: boolean; credits?: LaborCredits;
 }) {
   return (
     <div className={cn("flex items-center gap-3 border-b-2 px-4 py-3", emphasis ? "border-accent/30 bg-accent/[0.06]" : "border-zinc-200 bg-zinc-50/70")}>
@@ -493,7 +576,7 @@ function SummaryRow({ name, leader, storeCount, storesOver, notesDue, r, period,
       <div className="min-w-0 flex-1">
         {emphasis && <div className="text-[9.5px] font-bold uppercase tracking-[0.12em] text-accent">Company total</div>}
         <div className="truncate text-sm font-bold text-midnight dark:text-night-ink">{name}</div>
-        <div className="truncate text-xs text-zinc-500">{leader ? `${leader} · ` : ""}{storeCount} store{storeCount === 1 ? "" : "s"}</div>
+        <div className="truncate text-xs text-zinc-500">{leader ? `${leader} · ` : ""}{storeCount} store{storeCount === 1 ? "" : "s"}<CreditsInline credits={credits} /></div>
       </div>
       <BandCells r={r} period={period} />
       <span className="ml-2 w-[92px] shrink-0 text-right text-[11px] font-semibold tabular-nums text-zinc-500">{storesOver} over{notesDue ? ` · ${notesDue} due` : ""}</span>
@@ -548,7 +631,7 @@ function MobileRow({ row, isStore, period, summary, onDrill }: {
             <span className="truncate">{name}</span>
             {grp && !summary && <ChevronRight className="h-4 w-4 shrink-0 text-zinc-300" />}
           </div>
-          <div className="mt-0.5 truncate text-xs text-zinc-500">{sub}</div>
+          <div className="mt-0.5 truncate text-xs text-zinc-500">{sub}{grp && <CreditsInline credits={grp.credits} />}</div>
           <div className="mt-1.5">
             {store
               ? <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide", statusCls)}>{statusLabel}</span>
@@ -589,7 +672,7 @@ function GroupRow({ g, onDrill, period }: { g: TeamGroup; onDrill: () => void; p
           {g.name}
           <ChevronRight className="h-3.5 w-3.5 shrink-0 text-zinc-300" />
         </div>
-        <div className="truncate text-xs text-zinc-500">{g.leader || "—"} · {g.storeCount} store{g.storeCount === 1 ? "" : "s"}</div>
+        <div className="truncate text-xs text-zinc-500">{g.leader || "—"} · {g.storeCount} store{g.storeCount === 1 ? "" : "s"}<CreditsInline credits={g.credits} /></div>
       </div>
       <BandCells r={g} period={period} />
       <span className="ml-2 w-[92px] shrink-0 text-right text-[11px] font-semibold tabular-nums text-zinc-500">
