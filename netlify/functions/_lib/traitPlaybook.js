@@ -49,6 +49,59 @@ const displayName = (p) => p.full_name || p.preferred_name || p.email || "(unnam
 // The caller's coachable team: manageable downline that carries a CI trait,
 // leaders-first then by name. Store labels attached (chunked to stay under the
 // API gateway's URL limit for large downlines).
+async function fetchByIds(supa, table, cols, ids) {
+  const arr = [...new Set(ids)].filter(Boolean);
+  const out = [];
+  for (let i = 0; i < arr.length; i += 150) {
+    const { data } = await supa.from(table).select(cols).in("id", arr.slice(i, i + 150));
+    if (data) out.push(...data);
+  }
+  return out;
+}
+
+// Each leader's region name, resolved from their scope (district → area →
+// region, or area → region, or region directly). Used to coach one region at a
+// time — a VP's whole downline is too big for one generation.
+async function regionByMember(supa, memberIds) {
+  const out = new Map();
+  if (!memberIds.length) return out;
+  const scopes = [];
+  for (let i = 0; i < memberIds.length; i += 150) {
+    const { data } = await supa.from("user_scopes")
+      .select("user_id, scope_type, scope_id")
+      .in("user_id", memberIds.slice(i, i + 150));
+    if (data) scopes.push(...data);
+  }
+  const districts = await fetchByIds(supa, "districts", "id, area_id",
+    scopes.filter((s) => s.scope_type === "district").map((s) => s.scope_id));
+  const dMap = new Map(districts.map((d) => [d.id, d]));
+  const areaIds = [
+    ...scopes.filter((s) => s.scope_type === "area").map((s) => s.scope_id),
+    ...districts.map((d) => d.area_id),
+  ];
+  const areas = await fetchByIds(supa, "areas", "id, region_id", areaIds);
+  const aMap = new Map(areas.map((a) => [a.id, a]));
+  const regionIds = [
+    ...scopes.filter((s) => s.scope_type === "region").map((s) => s.scope_id),
+    ...areas.map((a) => a.region_id),
+  ];
+  const regions = await fetchByIds(supa, "regions", "id, name", regionIds);
+  const rMap = new Map(regions.map((r) => [r.id, r]));
+
+  const regionOfScope = (s) => {
+    if (s.scope_type === "region") return rMap.get(s.scope_id)?.name || null;
+    if (s.scope_type === "area") { const a = aMap.get(s.scope_id); return a ? rMap.get(a.region_id)?.name || null : null; }
+    if (s.scope_type === "district") { const d = dMap.get(s.scope_id); const a = d ? aMap.get(d.area_id) : null; return a ? rMap.get(a.region_id)?.name || null : null; }
+    return null;
+  };
+  for (const s of scopes) {
+    if (out.get(s.user_id)) continue; // first resolvable scope wins
+    const reg = regionOfScope(s);
+    if (reg) out.set(s.user_id, reg);
+  }
+  return out;
+}
+
 export async function resolveTeam(supa, leader) {
   const { data: members, error } = await supa.rpc("manageable_users", { manager_id: leader.id });
   if (error) throw new Error(`manageable_users failed: ${error.message}`);
@@ -60,6 +113,7 @@ export async function resolveTeam(supa, leader) {
     const { data: stores } = await supa.from("stores").select("id, number, name").in("id", storeIds.slice(i, i + 150));
     for (const s of stores || []) storeById.set(s.id, s);
   }
+  const regByMember = await regionByMember(supa, withTrait.map((m) => m.id));
 
   const roleRank = { rvp: 5, sdo: 4, do: 3, gm: 2 };
   return withTrait
@@ -70,11 +124,18 @@ export async function resolveTeam(supa, leader) {
         name: displayName(m),
         role: m.role,
         trait: m.cultural_index_trait,
+        region: regByMember.get(m.id) || null,
         store_number: store ? String(store.number) : null,
         store_name: store ? store.name : null,
       };
     })
     .sort((a, b) => (roleRank[b.role] ?? 0) - (roleRank[a.role] ?? 0) || a.name.localeCompare(b.name));
+}
+
+// Filter a resolved team to one region (null/empty = whole team).
+export function filterTeamByRegion(team, region) {
+  if (!region) return team;
+  return team.filter((m) => m.region === region);
 }
 
 // Stable hash of the team composition (members + traits) — the cache key.
@@ -128,9 +189,11 @@ function parseModelJson(text) {
 // Generate coaching for the leader's current team and upsert it into the cache.
 // Runs the (slow) Anthropic call — call this only from a background function.
 // Returns { ok, content } or { error }.
-export async function generateAndCache(supa, leader, { force } = {}) {
-  const team = await resolveTeam(supa, leader);
-  if (team.length === 0) return { error: "No one on your team has a Culture Index trait yet." };
+export async function generateAndCache(supa, leader, { force, region } = {}) {
+  const team = filterTeamByRegion(await resolveTeam(supa, leader), region);
+  if (team.length === 0) {
+    return { error: region ? `No one in ${region} has a Culture Index trait yet.` : "No one on your team has a Culture Index trait yet." };
+  }
   const hash = teamHash(team);
 
   if (!process.env.ANTHROPIC_API_KEY) return { error: "ANTHROPIC_API_KEY missing on server." };

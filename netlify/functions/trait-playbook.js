@@ -10,7 +10,7 @@
 //
 // Leader-only (do/sdo/rvp/vp/coo/admin).
 
-import { admin, getSessionUser, resolveTeam, teamHash, LEADER_ROLES } from "./_lib/traitPlaybook.js";
+import { admin, getSessionUser, resolveTeam, filterTeamByRegion, teamHash, LEADER_ROLES } from "./_lib/traitPlaybook.js";
 
 function respond(statusCode, payload) {
   return { statusCode, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) };
@@ -20,23 +20,14 @@ const displayName = (p) => p.full_name || p.preferred_name || p.email || "(unnam
 
 async function getTeam(supa, leader) {
   const team = await resolveTeam(supa, leader);
-  let hasPlaybook = false;
-  if (team.length) {
-    const { data, error } = await supa
-      .from("trait_playbook_cache")
-      .select("id")
-      .eq("leader_id", leader.id)
-      .eq("team_hash", teamHash(team))
-      .maybeSingle();
-    hasPlaybook = !error && !!data;
-  }
-  return { leader: { id: leader.id, name: displayName(leader), role: leader.role }, members: team, has_playbook: hasPlaybook };
+  const regions = [...new Set(team.map((m) => m.region).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  return { leader: { id: leader.id, name: displayName(leader), role: leader.role }, members: team, regions };
 }
 
 // Cache-only read — never generates. Returns whatever is saved for the leader's
-// current team composition.
-async function readCoach(supa, leader) {
-  const team = await resolveTeam(supa, leader);
+// current team (optionally narrowed to one region).
+async function readCoach(supa, leader, region) {
+  const team = filterTeamByRegion(await resolveTeam(supa, leader), region);
   if (team.length === 0) return { ready: false, empty: true };
   const { data, error } = await supa
     .from("trait_playbook_cache")
@@ -61,11 +52,13 @@ export const handler = async (event) => {
     return respond(403, { error: "The Team Playbook is for DO and above." });
   }
 
-  const action = (event.queryStringParameters || {}).action || "team";
+  const params = event.queryStringParameters || {};
+  const action = params.action || "team";
+  const region = params.region || null;
   try {
     const supa = admin();
     if (event.httpMethod === "GET" && action === "team") return respond(200, await getTeam(supa, leader));
-    if (event.httpMethod === "GET" && action === "coach") return respond(200, await readCoach(supa, leader));
+    if (event.httpMethod === "GET" && action === "coach") return respond(200, await readCoach(supa, leader, region));
     return respond(400, { error: `unknown action: ${action}` });
   } catch (e) {
     console.error("[trait-playbook] error:", e);
