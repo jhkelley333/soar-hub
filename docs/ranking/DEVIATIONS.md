@@ -151,3 +151,21 @@ it plugs into the adapter without touching the engine.
 Matches every other module in this repo; the engine is pure JS and does not
 care. RLS-with-policies (brief §5.6) becomes the Hub's standard service-role
 gatekeeper: RLS on, no policies, scope checks in the function.
+
+### B2. Hrs/Store (avgHoursOverPerStore) divides by weeks at EVERY PTD tier.
+
+Originally the PTD `avgHoursOverPerStore` divided by `cfg.week` (weeks elapsed
+in the period) at SDO / RVP / Company, but NOT at store or DO — so store/DO were
+a cumulative period figure while SDO+ were a per-week rate, and the labor score
+compared them on different scales.
+
+Per Heath: make it consistent — every PTD tier is now
+`Σ hours ÷ store count ÷ cfg.week` (store = `hoursOver ÷ cfg.week`). This puts
+the labor score on one per-week scale across all tiers and makes the Hrs/Store
+column match the Labor report tab-for-tab.
+
+**Consequence:** because the value feeds `laborScoreHoursOver` → total points →
+rank, this SHIFTS rankings from the prior behavior (store/DO scores generally
+improve as their inputs shrink onto the per-week scale). It takes effect on the
+next ranker run; previously-persisted runs keep their old ranks until re-run.
+WTD is unchanged (weekly already, no week division).

@@ -208,7 +208,9 @@ function computeStorePtd(st, cfg, issues) {
   var ownWage = (isNum(p.laborCost) && isNum(p.laborHours) && p.laborHours > 0)
     ? p.laborCost / p.laborHours : cfg.avgWage;
   r.hoursOver = (isNum(r.laborMiss) && isNum(ownWage) && ownWage > 0) ? r.laborMiss / ownWage : null;  // AE
-  r.avgHoursOverPerStore = r.hoursOver;                                 // AF
+  // AF: per-store PER-WEEK — the cumulative PTD hours ÷ weeks elapsed, so the
+  // store tier is on the same per-week scale as SDO/RVP/Company (was cumulative).
+  r.avgHoursOverPerStore = (isNum(r.hoursOver) && cfg.week) ? r.hoursOver / cfg.week : null;
   r.laborAnnualized = isNum(r.laborMiss) ? (52 / cfg.week) * r.laborMiss : null; // AG
   r.laborScore = laborScoreHoursOver(r.avgHoursOverPerStore);           // AH
 
@@ -439,10 +441,10 @@ function aggregatePtd(name, members, opts, cfg, inputs) {
   r.laborAnnualized = sumBy(members, function (m) { return m.laborAnnualized; }); // AG
   if (tier !== 'entity') {
     r.hoursOver = sumBy(members, function (m) { return m.hoursOver; }); // AE: Σ per-store own-wage hours (matches Labor v2)
-    // AF: DO = AE/count; SDO/RVP = AE/count/week   (DEVIATION: dynamic counts)
-    r.avgHoursOverPerStore = (tier === 'do')
-      ? (r.storeCount ? r.hoursOver / r.storeCount : null)
-      : (r.storeCount ? r.hoursOver / r.storeCount / cfg.week : null);
+    // AF: per-store per-week at EVERY tier — Σ hours ÷ store count ÷ weeks
+    // elapsed. (Was: DO divided by count only; now consistent with SDO/RVP/
+    // Company so the labor score sits on one scale across all tiers.)
+    r.avgHoursOverPerStore = (r.storeCount && cfg.week) ? r.hoursOver / r.storeCount / cfg.week : null;
     r.laborScore = laborScoreHoursOver(r.avgHoursOverPerStore); // AH hours-over bands
   } else {
     r.hoursOver = null; r.avgHoursOverPerStore = null;
