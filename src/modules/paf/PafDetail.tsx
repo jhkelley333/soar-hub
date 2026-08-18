@@ -18,6 +18,7 @@ const AUDIT_LABEL: Record<string, string> = {
   "mark-processed": "Marked Processed",
   "sdo-approved": "Approved by SDO",
   "vp-approved": "Approved by VP",
+  "leader-approved": "Approved by leadership",
   "vp-rejected": "Rejected by VP",
   "sdo-rejected": "Rejected by SDO",
   "notify-approver": "Approver notified",

@@ -13,6 +13,7 @@ import { useFlag } from "@/lib/flags";
 import { fetchPafUnread, markThreadRead } from "@/modules/chat/api";
 import { ProcessActions } from "./ProcessActions";
 import { SdoActions } from "./SdoActions";
+import { LeaderApproveAction } from "./LeaderApproveAction";
 import { DeletePafAction } from "./DeletePafAction";
 import { TextApproverAction } from "./TextApproverAction";
 import { PafDetail } from "./PafDetail";
@@ -78,6 +79,18 @@ function canApprove(
   if (paf.sdo_approver_id && paf.sdo_approver_id === profile.id) return true;
   const escalate = isVpFlow ? ["vp", "coo"] : ["rvp", "vp", "coo"];
   return escalate.includes(profile.role ?? "");
+}
+
+// A "Needs Approval" PAF is in Payroll's external-token flow; region+ leadership
+// can approve it in-app so a link sent to the wrong inbox doesn't strand it.
+function canLeaderApprove(
+  paf: PafRow,
+  profile: { id?: string; role?: string } | null | undefined,
+): boolean {
+  return (
+    paf.status === "Needs Approval" &&
+    ["rvp", "vp", "coo", "admin"].includes(profile?.role ?? "")
+  );
 }
 
 export function PafTable({
@@ -274,6 +287,7 @@ export function PafTable({
                     </Button>
                     {actions === "process" && <ProcessActions paf={p} />}
                     {actions === "sdo" && <SdoActions paf={p} />}
+                    {canLeaderApprove(p, profile) && <LeaderApproveAction paf={p} />}
                   </div>
                 </td>
               </tr>
@@ -320,6 +334,14 @@ export function PafTable({
             {detail && canApprove(detail, profile) && (
               <div className="flex flex-wrap items-center gap-1.5">
                 <SdoActions
+                  paf={detail}
+                  onComplete={() => setDetail(null)}
+                />
+              </div>
+            )}
+            {detail && canLeaderApprove(detail, profile) && (
+              <div className="flex flex-wrap items-center gap-1.5">
+                <LeaderApproveAction
                   paf={detail}
                   onComplete={() => setDetail(null)}
                 />
