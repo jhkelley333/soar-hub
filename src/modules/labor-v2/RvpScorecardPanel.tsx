@@ -1,6 +1,6 @@
 // RVP Scorecard — each region's Hours Over Chart averaged over the last N
 // completed fiscal weeks, credit-adjusted so it matches the labor cards. Two
-// figures per RVP: avg per store (the Hrs/Unit "efficiency" number, fair across
+// figures per RVP: avg per store (the Hrs/Store "efficiency" number, fair across
 // differently-sized regions) and the region total. Cross-region leadership view.
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -105,7 +105,7 @@ export function RvpScorecardPanel() {
       </div>
 
       <p className="px-1 text-[11px] leading-relaxed text-zinc-400">
-        <strong>Avg hrs over / store</strong> = the Hrs/Unit metric from the region cards (each week: the sum of over-chart
+        <strong>Avg hrs over / store</strong> = the Hrs/Store metric from the region cards (each week: the sum of over-chart
         stores' hours ÷ every store), averaged across the weeks — a size-fair "efficiency" read.{" "}
         <strong>Avg region total</strong> = the region's whole-week hours over chart, averaged. Red = over chart, green = on/under.
         Labor credits (training / PTO / No-GM / GM support) are already subtracted.

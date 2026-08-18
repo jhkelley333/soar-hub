@@ -158,6 +158,25 @@ function hoursPerUnit(rows, prefix) {
   return round2(posSum / rows.length);
 }
 
+// Ranker-aligned Hrs/Store for an AGGREGATE node's period-to-date band: the NET
+// (signed — under-stores subtract) per-store hours over chart, averaged over
+// ALL stores AND over the weeks elapsed in the period. This matches the Ranker's
+// avgHoursOverPerStore (Σ per-store own-wage hours ÷ store count ÷ week), so the
+// Labor region view and the Ranker show the same number. Only meaningful for the
+// PTD band at district+; falls back to the plain per-store average when the week
+// count is unknown (anchor outside the fiscal calendar).
+function ptdHoursOverRankerAligned(rows, weeksInPeriod) {
+  if (!rows.length || !weeksInPeriod) return hoursPerUnit(rows, "ptd_");
+  const sumSigned = rows.reduce((a, r) => { const h = storeHoursOver(r, "ptd_"); return a + (h != null ? h : 0); }, 0);
+  return round2(sumSigned / rows.length / weeksInPeriod);
+}
+
+// Override an aggregate PTD band's Hrs/Store with the Ranker-aligned figure.
+function withRankerHrs(band, rows, weeksInPeriod) {
+  if (band) band.hours_over_chart = ptdHoursOverRankerAligned(rows, weeksInPeriod);
+  return band;
+}
+
 // Aggregate one band (prefix "" = daily, "wtd_", "ptd_") across a set of store
 // rows, weighting from $ and hours (never averaging percentages). $ over chart =
 // cost − sales×target; hours over chart = $ over ÷ blended avg wage (cost÷hours).
@@ -1750,6 +1769,9 @@ async function teamView(supa, user, params) {
     ? ((await weekLastCaptured(supa, numbers, requested)) || requested)
     : await latestBusinessDate(supa);
   if (!anchor) return empty;
+  // Weeks elapsed in the current fiscal period — the Ranker divides its
+  // per-store hours-over by this, so the PTD Hrs/Store aggregates below match.
+  const weeksInPeriod = fiscalForDate(anchor)?.weekInPeriod || null;
 
   const [{ data: rows }, { data: reviews }] = await Promise.all([
     supa.from("labor_v2_daily").select("*").eq("business_date", anchor).in("store_number", numbers),
@@ -1797,7 +1819,7 @@ async function teamView(supa, user, params) {
       region: rs[0]?.soar?.region ?? null,
       area: rs[0]?.soar?.area ?? null,
       district: rs[0]?.soar?.district ?? null,
-      day: teamBand(rs, ""), wtd: teamBand(rs, "wtd_"), ptd: teamBand(rs, "ptd_"),
+      day: teamBand(rs, ""), wtd: teamBand(rs, "wtd_"), ptd: withRankerHrs(teamBand(rs, "ptd_"), rs, weeksInPeriod),
       storesOver: rs.filter(storeOver).length,
       notesDue: rs.filter((r) => storeOver(r) && !reviewByStore.get(String(r.store_number))).length,
     })).sort((a, b) => (b.day.variance_pts ?? -999) - (a.day.variance_pts ?? -999));
@@ -1833,7 +1855,7 @@ async function teamView(supa, user, params) {
     date: anchor,
     scope: { stores: inScope.length, dos: [...new Set(inScope.map((r) => r.soar.doName).filter(Boolean))] },
     totals: {
-      day: teamBand(inScope, ""), wtd: teamBand(inScope, "wtd_"), ptd: teamBand(inScope, "ptd_"),
+      day: teamBand(inScope, ""), wtd: teamBand(inScope, "wtd_"), ptd: withRankerHrs(teamBand(inScope, "ptd_"), inScope, weeksInPeriod),
       storesOver: storeRows.filter((s) => s.status === "over").length,
       notesDue: storeRows.filter((s) => s.note_due).length,
       notesExplained: storeRows.filter((s) => s.explained).length,

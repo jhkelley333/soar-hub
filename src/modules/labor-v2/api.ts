@@ -94,7 +94,7 @@ export function fetchLaborV2Team(date?: string): Promise<TeamLaborResponse> {
 // ── Per-RVP Hours Over Chart scorecard (last N fiscal weeks) ─────────────────
 export interface RvpScorecardWeek {
   weekEnd: string;
-  perStore: number | null; // avg positive hours over chart per store (Hrs/Unit)
+  perStore: number | null; // avg positive hours over chart per store (Hrs/Store)
   total: number | null;    // sum of positive store overages for the region
   stores: number;
 }
