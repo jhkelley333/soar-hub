@@ -1,3 +1,4 @@
+import { useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Info, TrendingUp, Layers } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -5,6 +6,35 @@ import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
 import { Badge } from "@/shared/ui/Badge";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { fetchOverview, type OverviewResponse, type HeatCell } from "./analyticsApi";
+
+// A small "?" info button that pops a plain-language explainer for a section —
+// written for someone who's never seen these stats before. Click to toggle;
+// click anywhere else (the invisible backdrop) to close.
+function InfoTip({ title, children }: { title: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <span className="relative inline-flex align-middle">
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); e.preventDefault(); setOpen((o) => !o); }}
+        className="inline-flex h-5 w-5 items-center justify-center rounded-full text-ink-subtle transition hover:bg-zinc-100 hover:text-accent dark:hover:bg-white/10"
+        aria-label={`What does "${title}" mean?`}
+        aria-expanded={open}
+      >
+        <Info className="h-3.5 w-3.5" strokeWidth={2} />
+      </button>
+      {open && (
+        <>
+          <span className="fixed inset-0 z-40" onClick={(e) => { e.stopPropagation(); setOpen(false); }} aria-hidden />
+          <span className="absolute left-0 top-6 z-50 block w-72 cursor-default rounded-xl border border-border bg-surface p-3 text-left shadow-lg" onClick={(e) => e.stopPropagation()}>
+            <span className="mb-1 block text-xs font-bold text-heading">{title}</span>
+            <span className="block space-y-1.5 text-[11.5px] font-normal leading-relaxed text-ink-muted">{children}</span>
+          </span>
+        </>
+      )}
+    </span>
+  );
+}
 
 // Percentile (0–100) → a soft red→green background for heatmap cells.
 function heatBg(pct: number): string {
@@ -54,12 +84,18 @@ function Overview({ data }: { data: OverviewResponse }) {
   return (
     <div className="space-y-6">
       {/* Coverage strip */}
-      <div className="flex flex-wrap gap-2 text-xs text-ink-muted">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-ink-muted">
         <Badge tone="neutral">{run.weeks_analyzed} ranker weeks analyzed</Badge>
         <Badge tone="neutral">{coverage.ranked_stores} ranked stores</Badge>
         <Badge tone={coverage.trait_pct >= 60 ? "success" : "warning"}>
           {coverage.with_trait} have a trait ({coverage.trait_pct}%)
         </Badge>
+        <InfoTip title="How much data is behind this page">
+          <span className="block">These chips tell you how much this page has to work with:</span>
+          <span className="block"><b>Ranker weeks analyzed</b> — how many weekly store report cards we pooled together.</span>
+          <span className="block"><b>Ranked stores</b> — stores that got a performance rank in those weeks.</span>
+          <span className="block"><b>Have a trait</b> — of the general managers running those stores, how many have a Culture Index personality result on file. The higher this %, the more you can trust everything below — with little data, treat it as a hunch, not a fact.</span>
+        </InfoTip>
       </div>
 
       {/* THE HEADLINE — stability vs. trait */}
@@ -69,6 +105,11 @@ function Overview({ data }: { data: OverviewResponse }) {
             <span className="flex items-center gap-2">
               <TrendingUp className="h-4 w-4 text-accent" strokeWidth={2} />
               What's actually driving performance?
+              <InfoTip title="What's driving performance?">
+                <span className="block">When a store does better or worse than others, we ask <b>why</b>: is it more about the <b>store's situation</b> (how settled it is — steady team, low turnover) or the <b>manager's personality trait</b>?</span>
+                <span className="block">Each number is the share of the performance differences that factor can account for. "Variance in rank explained" just means "how much of the up-and-down this explains." Higher = it matters more. The bigger of the two is flagged the <b>bigger lever</b> — the thing worth acting on first.</span>
+                <span className="block">If both are low, neither explains much on its own — treat it as a weak hint.</span>
+              </InfoTip>
             </span>
           }
         />
@@ -86,7 +127,18 @@ function Overview({ data }: { data: OverviewResponse }) {
       {/* Leaderboard */}
       <Card>
         <CardHeader
-          title="Trait performance"
+          title={
+            <span className="flex items-center gap-2">
+              Trait performance
+              <InfoTip title="Trait performance">
+                <span className="block">Group managers by their personality trait, then see how their stores rank on average.</span>
+                <span className="block"><b>Avg pct</b> = average performance <b>percentile</b>: 50 is middle of the pack, 90 means "top 10% of stores," 10 means "bottom 10%."</span>
+                <span className="block"><b>Median</b> = the typical manager for that trait (half score above, half below) — handy when one outlier skews the average.</span>
+                <span className="block"><b>Spread</b> = how much they vary. A big spread means the trait doesn't guarantee the result — plenty of exceptions.</span>
+                <span className="block">Traits with only a handful of managers are set aside — too few people to tell you anything real.</span>
+              </InfoTip>
+            </span>
+          }
           description={`Average store performance percentile by GM trait. Only traits with ${data.thresholds.min_n_trait}+ GMs are ranked — the rest don't have enough signal yet.`}
         />
         <CardBody className="p-0">
@@ -145,6 +197,12 @@ function Overview({ data }: { data: OverviewResponse }) {
               <span className="flex items-center gap-2">
                 <Layers className="h-4 w-4 text-accent" strokeWidth={2} />
                 Trait × store stability
+                <InfoTip title="Trait × store stability">
+                  <span className="block">Same idea as the leaderboard, but split by how <b>settled the store is</b>: <b>Stable</b> and <b>Steady</b> stores run smoothly; <b>Volatile</b> and <b>Turnaround</b> stores are churny or struggling.</span>
+                  <span className="block">Each cell is the average performance percentile for managers with that trait <b>in that kind of store</b>. Greener = better, redder = worse.</span>
+                  <span className="block"><b>Read across a row</b> to see where a trait holds up: some personalities shine in a calm store, others in a turnaround. That's the <b>placement</b> insight — who to put where.</span>
+                  <span className="block">Blank cells (or "n=…") just don't have enough managers to be trustworthy yet.</span>
+                </InfoTip>
               </span>
             }
             description="Average performance percentile for each trait, split by how stable the store is. This is the placement lever — which trait holds up where. Cells with fewer than 4 GMs are left blank."
