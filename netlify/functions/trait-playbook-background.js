@@ -30,15 +30,18 @@ export const handler = async (event) => {
   }
 
   let force = false;
+  let region = null;
   try {
-    force = (event.body ? JSON.parse(event.body) : {}).force === true && leader.role === "admin";
+    const body = event.body ? JSON.parse(event.body) : {};
+    force = body.force === true && leader.role === "admin";
+    region = body.region || null;
   } catch {
     /* ignore malformed body */
   }
 
   try {
     const supa = admin();
-    const result = await generateAndCache(supa, leader, { force });
+    const result = await generateAndCache(supa, leader, { force, region });
     if (result.error) console.error("[trait-playbook-bg] generation failed:", result.error);
     else console.log("[trait-playbook-bg] generated playbook for", leader.id);
   } catch (e) {

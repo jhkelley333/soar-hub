@@ -13,36 +13,60 @@ import { ROLE_LABELS } from "@/types/database";
 import { TraitChip } from "./TraitChip";
 import {
   fetchTeam,
+  fetchCachedPlaybook,
   generatePlaybook,
   type PlaybookContent,
   type PlaybookMember,
 } from "./playbookApi";
+
+const LARGE_TEAM = 40; // above this, a whole-team generation is too big — pick a region
 
 export function DoPlaybookPage() {
   const { profile } = useAuth();
   const isAdmin = profile?.role === "admin";
 
   const teamQ = useQuery({ queryKey: ["trait-team"], queryFn: fetchTeam });
+  const [region, setRegion] = useState<string>("");
   const [content, setContent] = useState<PlaybookContent | null>(null);
   const [meta, setMeta] = useState<{ cached: boolean; generatedAt: string } | null>(null);
 
   const coachMut = useMutation({
-    mutationFn: (force: boolean) => generatePlaybook(force),
+    mutationFn: (force: boolean) => generatePlaybook(force, region),
     onSuccess: (data) => {
       setContent(data.content);
       setMeta({ cached: data.cached, generatedAt: data.generatedAt });
     },
   });
 
-  // Auto-load a previously generated playbook (cache hit — free, no re-bill).
+  const allMembers = teamQ.data?.members ?? [];
+  const regions = teamQ.data?.regions ?? [];
+  const members = region ? allMembers.filter((m) => m.region === region) : allMembers;
+
+  // A big whole-team view is too much for one generation — default to the first
+  // region so the initial scope is manageable.
   useEffect(() => {
-    if (teamQ.data?.has_playbook && !content && !coachMut.isPending) {
-      coachMut.mutate(false);
+    if (teamQ.data && !region && regions.length > 1 && allMembers.length > LARGE_TEAM) {
+      setRegion(regions[0]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [teamQ.data?.has_playbook]);
+  }, [teamQ.data]);
 
-  const members = teamQ.data?.members ?? [];
+  // On region change, load that region's saved playbook if one exists (no
+  // generation, no re-bill); otherwise clear so the button offers to generate.
+  useEffect(() => {
+    if (!teamQ.data) return;
+    let cancelled = false;
+    setContent(null);
+    setMeta(null);
+    fetchCachedPlaybook(region).then((r) => {
+      if (cancelled || !r) return;
+      setContent(r.content);
+      setMeta({ cached: r.cached, generatedAt: r.generatedAt });
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [region, teamQ.data]);
+
   const coachingById = new Map((content?.members ?? []).map((m) => [m.id, m.coaching]));
 
   return (
@@ -51,7 +75,7 @@ export function DoPlaybookPage() {
         title="Team Playbook"
         description="How to lead your team, one person at a time — grounded in each leader's Culture Index profile."
         actions={
-          members.length > 0 ? (
+          allMembers.length > 0 ? (
             <div className="flex items-center gap-2">
               {content && isAdmin && (
                 <Button
@@ -67,7 +91,11 @@ export function DoPlaybookPage() {
               {!content && (
                 <Button onClick={() => coachMut.mutate(false)} disabled={coachMut.isPending}>
                   <Sparkles className="mr-1 h-4 w-4" strokeWidth={2} />
-                  {coachMut.isPending ? "Generating…" : "Generate coaching"}
+                  {coachMut.isPending
+                    ? "Generating…"
+                    : region
+                      ? `Generate for ${region}`
+                      : "Generate coaching"}
                 </Button>
               )}
             </div>
@@ -90,7 +118,7 @@ export function DoPlaybookPage() {
         </CardBody></Card>
       )}
 
-      {teamQ.data && members.length === 0 && (
+      {teamQ.data && allMembers.length === 0 && (
         <EmptyState
           title="No Culture Index traits on your team yet"
           description="Once your team members have a Culture Index trait, their coaching shows up here."
@@ -102,13 +130,31 @@ export function DoPlaybookPage() {
         />
       )}
 
-      {teamQ.data && members.length > 0 && (
+      {teamQ.data && allMembers.length > 0 && (
         <div className="space-y-6">
           {/* Team composition — always shown, even before coaching is generated. */}
           <Card>
             <CardHeader
-              title={`Your team (${members.length})`}
-              description="Every direct/downline leader who carries a Culture Index profile."
+              title={`${region || "Whole team"} · ${members.length}`}
+              description={
+                regions.length > 1
+                  ? "Coach one region at a time — a whole-org generation is too large."
+                  : "Every direct/downline leader who carries a Culture Index profile."
+              }
+              actions={
+                regions.length > 1 ? (
+                  <select
+                    value={region}
+                    onChange={(e) => setRegion(e.target.value)}
+                    className="rounded-md border-0 bg-surface px-3 py-1.5 text-sm text-heading ring-1 ring-inset ring-border focus:outline-none focus:ring-2 focus:ring-accent"
+                  >
+                    <option value="">All regions ({allMembers.length})</option>
+                    {regions.map((r) => (
+                      <option key={r} value={r}>{r}</option>
+                    ))}
+                  </select>
+                ) : undefined
+              }
             />
             <CardBody className="p-0">
               <div className="divide-y divide-border">

@@ -15,6 +15,7 @@ export interface PlaybookMember {
   name: string;
   role: UserRole;
   trait: string;
+  region: string | null;
   store_number: string | null;
   store_name: string | null;
   coaching?: string;
@@ -23,7 +24,7 @@ export interface PlaybookMember {
 export interface TeamResponse {
   leader: { id: string; name: string; role: UserRole };
   members: PlaybookMember[];
-  has_playbook: boolean;
+  regions: string[];
 }
 
 export interface PlaybookContent {
@@ -75,28 +76,38 @@ export function fetchTeam(): Promise<TeamResponse> {
   return request<TeamResponse>(`${FN}?action=team`);
 }
 
-function readCoach(): Promise<CoachRead> {
-  return request<CoachRead>(`${FN}?action=coach`);
+function readCoach(region: string): Promise<CoachRead> {
+  const q = region ? `&region=${encodeURIComponent(region)}` : "";
+  return request<CoachRead>(`${FN}?action=coach${q}`);
+}
+
+// Read a saved playbook for a region without triggering generation. Null if
+// none is cached yet.
+export async function fetchCachedPlaybook(region = ""): Promise<CoachResult | null> {
+  const c = await readCoach(region);
+  if (c.ready && c.content) return { content: c.content, cached: true, generatedAt: c.generatedAt ?? "" };
+  return null;
 }
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // Kick the background generator and poll the cache read until a NEW result
 // appears. For a plain view (force=false) a cached result returns instantly.
-export async function generatePlaybook(force = false): Promise<CoachResult> {
-  const first = await readCoach();
+// `region` narrows generation to one region (recommended for large downlines).
+export async function generatePlaybook(force = false, region = ""): Promise<CoachResult> {
+  const first = await readCoach(region);
   if (first.ready && first.content && !force) {
     return { content: first.content, cached: true, generatedAt: first.generatedAt ?? "" };
   }
   const prevAt = first.ready ? first.generatedAt : null;
 
   // Fire-and-forget: the background function returns 202 immediately.
-  await fetch(FN_BG, { method: "POST", headers: await authHeaders(), body: JSON.stringify({ force }) });
+  await fetch(FN_BG, { method: "POST", headers: await authHeaders(), body: JSON.stringify({ force, region: region || null }) });
 
   // Poll for a fresh result (generatedAt must differ from any prior one).
   for (let i = 0; i < 40; i++) {
     await sleep(3000);
-    const c = await readCoach();
+    const c = await readCoach(region);
     if (c.ready && c.content && c.generatedAt !== prevAt) {
       return { content: c.content, cached: false, generatedAt: c.generatedAt ?? "" };
     }
