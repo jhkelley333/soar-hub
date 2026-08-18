@@ -631,7 +631,7 @@ function MobileRow({ row, isStore, period, summary, onDrill }: {
             <span className="truncate">{name}</span>
             {grp && !summary && <ChevronRight className="h-4 w-4 shrink-0 text-zinc-300" />}
           </div>
-          <div className="mt-0.5 truncate text-xs text-zinc-500">{sub}{grp && <CreditsInline credits={grp.credits} />}</div>
+          <div className="mt-0.5 truncate text-xs text-zinc-500">{sub}<CreditsInline credits={(grp ?? store)?.credits} /></div>
           <div className="mt-1.5">
             {store
               ? <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide", statusCls)}>{statusLabel}</span>
@@ -696,6 +696,7 @@ function StoreRow({ s, period }: { s: TeamStore; period: LaborPeriod }) {
           <div className="truncate text-sm font-semibold text-midnight dark:text-night-ink">#{s.store_number} · {s.store_name}</div>
           <div className="truncate text-xs text-zinc-500">
             {[s.gm_name ? `GM ${s.gm_name}` : null, s.do_name ? `DO ${s.do_name}` : null].filter(Boolean).join(" · ") || "—"}
+            <CreditsInline credits={s.credits} />
           </div>
         </div>
         <BandCells r={s} period={period} />
