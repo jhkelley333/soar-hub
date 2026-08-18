@@ -80,6 +80,7 @@ const GROUPS: Group[] = [
     title: "Templates & Config",
     tools: [
       { title: "PAF Config", desc: "Payroll Adjustment Form categories and fields.", icon: Settings, roles: ["payroll", "admin"], to: "/admin/paf-config" },
+      { title: "Labor Settings", desc: "Hrs/Store calculation — per-week rate vs. full period total.", icon: Gauge, roles: ["admin"], to: "/admin/labor-settings" },
       { title: "Assessment Templates", desc: "New-leader assessment templates.", icon: ClipboardCheck, roles: ["admin"], to: "/admin/nla-templates" },
       { title: "Walkthrough Templates", desc: "Store walkthrough templates.", icon: ListChecks, roles: ["do", "sdo", "rvp", "vp", "coo", "admin"], to: "/admin/walkthrough-templates" },
       { title: "Manuals Admin", desc: "Manage manual documents and search.", icon: BookMarked, roles: ["rvp", "vp", "coo", "admin"], to: "/admin/manuals" },

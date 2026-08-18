@@ -496,3 +496,11 @@ export function mintLaborShare(input: { region_id?: string | null; label?: strin
 export function revokeLaborShare(id: string): Promise<{ ok: true }> {
   return req(`${FN}?action=labor-share-revoke`, { method: "POST", body: JSON.stringify({ id }) });
 }
+
+// Labor settings — the company-wide Hrs/Store per-week-rate toggle.
+export function fetchLaborSettings(): Promise<{ ok: true; hrs_weekly_rate: boolean }> {
+  return req(`${FN}?action=labor-settings`);
+}
+export function setLaborSettings(hrs_weekly_rate: boolean): Promise<{ ok: true; hrs_weekly_rate: boolean }> {
+  return req(`${FN}?action=set-labor-settings`, { method: "POST", body: JSON.stringify({ hrs_weekly_rate }) });
+}

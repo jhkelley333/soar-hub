@@ -37,6 +37,7 @@ import { CultureIndexPage } from "@/modules/culture-index/CultureIndexPage";
 import { DoPlaybookPage } from "@/modules/culture-index/DoPlaybookPage";
 import { ExecOverviewPage } from "@/modules/culture-index/ExecOverviewPage";
 import { RankerBackfillPage } from "@/modules/admin/RankerBackfillPage";
+import { LaborSettingsPage } from "@/modules/admin/LaborSettingsPage";
 import { BulkOrgImportPage } from "@/modules/admin/BulkOrgImportPage";
 import { AcquisitionsPage } from "@/modules/acquisitions/AcquisitionsPage";
 import { AcquisitionDetailPage } from "@/modules/acquisitions/AcquisitionDetailPage";
@@ -653,6 +654,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <RankerBackfillPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/labor-settings",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <LaborSettingsPage />
           </ProtectedRoute>
         ),
       },
