@@ -36,6 +36,7 @@ import { CulturalIndexImportPage } from "@/modules/admin/CulturalIndexImportPage
 import { CultureIndexPage } from "@/modules/culture-index/CultureIndexPage";
 import { DoPlaybookPage } from "@/modules/culture-index/DoPlaybookPage";
 import { ExecOverviewPage } from "@/modules/culture-index/ExecOverviewPage";
+import { RankerBackfillPage } from "@/modules/admin/RankerBackfillPage";
 import { BulkOrgImportPage } from "@/modules/admin/BulkOrgImportPage";
 import { AcquisitionsPage } from "@/modules/acquisitions/AcquisitionsPage";
 import { AcquisitionDetailPage } from "@/modules/acquisitions/AcquisitionDetailPage";
@@ -644,6 +645,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
             <ExecOverviewPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/ranker-backfill",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <RankerBackfillPage />
           </ProtectedRoute>
         ),
       },
