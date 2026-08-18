@@ -251,10 +251,17 @@ function isoAddDays(iso, n) {
 // days the archive can't provide yet (its ~5-day lag returns nulls) so a later
 // run fills them once available. Idempotent — existing days are left untouched.
 const CATCHUP_MAX_LOOKBACK_DAYS = 120;
+// Cap archive calls per run so a single invocation can't blow the function
+// timeout (a large one-time hole is meant to be filled from the sliced Backfill
+// tool; this self-heal is the steady-state safety net for small gaps). Whatever
+// isn't reached this run is picked up by the next scheduled run — it's
+// idempotent, so it simply continues where it left off.
+const CATCHUP_MAX_FETCHES_PER_RUN = 40;
 async function catchUpGaps(supa, locRows, todayIso) {
   const yesterday = isoAddDays(todayIso, -1);
   const floor = isoAddDays(todayIso, -CATCHUP_MAX_LOOKBACK_DAYS);
   let filled = 0;
+  let fetches = 0;
   await mapLimit(locRows, 4, async (l) => {
     if (l.latitude == null || l.longitude == null) return;
     const { data: last } = await supa
@@ -265,6 +272,8 @@ async function catchUpGaps(supa, locRows, todayIso) {
     let start = lastDay ? isoAddDays(lastDay, 1) : floor;
     if (start < floor) start = floor;
     if (start > yesterday) return; // no gap to fill
+    if (fetches >= CATCHUP_MAX_FETCHES_PER_RUN) return; // budget spent this run
+    fetches++;
 
     const url = `${ARCHIVE_URL}?latitude=${l.latitude}&longitude=${l.longitude}&start_date=${start}&end_date=${yesterday}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&temperature_unit=fahrenheit&timezone=auto`;
     const fetched = await fetchArchiveWithRetry(url);
