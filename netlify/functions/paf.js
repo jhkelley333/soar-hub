@@ -1560,6 +1560,76 @@ async function tokenApprove(supa, body) {
 }
 
 // ----------------------------------------------------------------------------
+// leader-approve — an authenticated leader approves a PAF that Payroll put into
+// the external-token flow ("Needs Approval"), without needing the emailed link.
+// ----------------------------------------------------------------------------
+// Payroll routes a "Needs Approval" PAF by typing an approver email; only that
+// emailed link could approve it. When the link lands in the wrong inbox the PAF
+// is stuck — nobody in-app can move it. This lets region+ leadership approve it
+// directly. Distinct from sdo-approve, which keys off an assigned approver id;
+// this keys purely off the caller's role since the token flow assigns no one.
+const LEADER_APPROVE_ROLES = new Set(["rvp", "vp", "coo", "admin"]);
+async function leaderApprovePaf(supa, user, body) {
+  if (!LEADER_APPROVE_ROLES.has(user.role)) {
+    return { error: "Only RVP/VP/COO/Admin can approve here.", status: 403 };
+  }
+  const id = body?.id;
+  if (!id) return { error: "id is required.", status: 400 };
+
+  const { data: existing, error: fetchErr } = await supa
+    .from("paf_submissions")
+    .select("id, status, employee_name, drive_in")
+    .eq("id", id)
+    .maybeSingle();
+  if (fetchErr) return { error: fetchErr.message, status: 500 };
+  if (!existing) return { error: "PAF not found.", status: 404 };
+  if (existing.status !== "Needs Approval") {
+    return { error: `Only a "Needs Approval" PAF can be approved here (this one is ${existing.status}).`, status: 400 };
+  }
+
+  // Guard the flip on the current status so a racing token-approve or a second
+  // leader click doesn't double-approve.
+  const { data: updated, error } = await supa
+    .from("paf_submissions")
+    .update({
+      status: "Approved",
+      approved_at: new Date().toISOString(),
+      approved_by_email: user.email,
+      action_token: null,
+      token_expires_at: null,
+    })
+    .eq("id", existing.id)
+    .eq("status", "Needs Approval")
+    .select("id");
+  if (error) return { error: error.message, status: 500 };
+  if (!updated || updated.length === 0) {
+    return { error: "PAF is no longer awaiting approval.", status: 409 };
+  }
+
+  await logAudit(supa, {
+    paf_id: existing.id,
+    actor_id: user.id,
+    actor_email: user.email,
+    action: "leader-approved",
+    detail: {
+      role: user.role,
+      employee_name: existing.employee_name,
+      drive_in: existing.drive_in,
+    },
+  });
+
+  // Notify Payroll it's approved and ready to process.
+  const recipients = await payrollEmails(supa);
+  await sendPafEmail(supa, {
+    templateKey: "APPROVAL_CONFIRMED",
+    to: recipients,
+    vars: { EMPLOYEE: existing.employee_name, STORE: existing.drive_in },
+  });
+
+  return { ok: true };
+}
+
+// ----------------------------------------------------------------------------
 // audit-log — recent state-change rows for one PAF. Visible to the
 // submitter, anyone with org-wide read (payroll/admin/vp/coo), and any
 // scoped manager whose visible-store set covers the PAF's drive_in.
@@ -2153,6 +2223,7 @@ export const handler = async (event) => {
       if (action === "cutoff-delete") return unwrap(await deleteCutoff(supa, user, body));
       if (action === "sdo-approve") return unwrap(await sdoApprovePaf(supa, user, body));
       if (action === "sdo-reject") return unwrap(await sdoRejectPaf(supa, user, body));
+      if (action === "leader-approve") return unwrap(await leaderApprovePaf(supa, user, body));
       if (action === "delete") return unwrap(await deletePaf(supa, user, body));
       if (action === "text-approver") return unwrap(await textApprover(supa, user, body));
       return respond(400, { error: `unknown POST action: ${action}` });

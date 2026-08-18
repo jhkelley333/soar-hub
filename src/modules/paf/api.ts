@@ -216,6 +216,14 @@ export function markProcessedPaf(id: string): Promise<{ ok: true }> {
   });
 }
 
+// Region+ leadership approves a "Needs Approval" PAF in-app (no token link).
+export function leaderApprovePaf(id: string): Promise<{ ok: true }> {
+  return request<{ ok: true }>(`${FN}?action=leader-approve`, {
+    method: "POST",
+    body: JSON.stringify({ id }),
+  });
+}
+
 export function tokenApprovePaf(
   token: string,
   email?: string
