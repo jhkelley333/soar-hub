@@ -1823,7 +1823,30 @@ async function teamView(supa, user, params) {
     supa.from("labor_v2_daily").select("*").eq("business_date", anchor).in("store_number", numbers),
     supa.from("labor_reviews").select("store_number, note, root_cause").eq("business_date", anchor).in("store_number", numbers),
   ]);
-  applyCreditsToRows(rows || [], await loadLaborCredits(supa, numbers));
+  // Load each credit type separately so the Team view can show how much each
+  // District / Area / Region / Company is using in credits (with a per-type
+  // breakdown), then merge them exactly as loadLaborCredits does to adjust rows.
+  const [tcMap, ptoMap, noGmMap, gmSupMap, corpMap] = await Promise.all([
+    loadTrainingCreditDates(supa, numbers),
+    loadGmPtoCreditDates(supa, numbers),
+    loadNoGmCreditDates(supa, numbers),
+    loadGmSupportCreditDates(supa, numbers),
+    loadCorporateTrainingCreditDates(supa, numbers),
+  ]);
+  const mergedCredits = new Map();
+  for (const src of [tcMap, ptoMap, noGmMap, gmSupMap, corpMap]) for (const [sn, arr] of src) mergedCredits.set(sn, (mergedCredits.get(sn) || []).concat(arr));
+  applyCreditsToRows(rows || [], mergedCredits);
+  // Period-to-date credit $ per store (periodStart → anchor), summed per node.
+  const periodStart = fiscalForDate(anchor)?.periodStart ?? anchor;
+  const creditPtd = (map, sn) => (map.get(sn) || []).reduce((a, c) => (c.date >= periodStart && c.date <= anchor ? a + numv(c.amount) : a), 0);
+  const creditsFor = (nums) => {
+    const no_gm = round2(nums.reduce((a, n) => a + creditPtd(noGmMap, String(n)), 0));
+    const pto = round2(nums.reduce((a, n) => a + creditPtd(ptoMap, String(n)), 0));
+    const training = round2(nums.reduce((a, n) => a + creditPtd(tcMap, String(n)), 0));
+    const gm_support = round2(nums.reduce((a, n) => a + creditPtd(gmSupMap, String(n)), 0));
+    const training_class = round2(nums.reduce((a, n) => a + creditPtd(corpMap, String(n)), 0));
+    return { no_gm, pto, training, gm_support, training_class, total: round2(no_gm + pto + training + gm_support + training_class) };
+  };
   const reviewByStore = new Map((reviews || []).map((r) => [String(r.store_number), r]));
   const orgMap = await resolveOrg(supa, numbers);
 
@@ -1868,6 +1891,7 @@ async function teamView(supa, user, params) {
       day: teamBand(rs, ""), wtd: teamBand(rs, "wtd_"), ptd: withRankerHrs(teamBand(rs, "ptd_"), rs, hrsWeeks),
       storesOver: rs.filter(storeOver).length,
       notesDue: rs.filter((r) => storeOver(r) && !reviewByStore.get(String(r.store_number))).length,
+      credits: creditsFor(rs.map((r) => r.store_number)),
     })).sort((a, b) => (b.day.variance_pts ?? -999) - (a.day.variance_pts ?? -999));
   };
 
@@ -1888,6 +1912,7 @@ async function teamView(supa, user, params) {
       explained,
       note: review?.note ?? null,
       root_cause: review?.root_cause ?? null,
+      credits: creditsFor([r.store_number]),
     };
   }).sort((a, b) => (b.day.variance_pts ?? -999) - (a.day.variance_pts ?? -999));
 
@@ -1905,6 +1930,7 @@ async function teamView(supa, user, params) {
       storesOver: storeRows.filter((s) => s.status === "over").length,
       notesDue: storeRows.filter((s) => s.note_due).length,
       notesExplained: storeRows.filter((s) => s.explained).length,
+      credits: creditsFor(inScope.map((r) => r.store_number)),
     },
     startLevel,
     levels,
@@ -2233,18 +2259,13 @@ async function sharedLaborStoreReview(supa, token, body) {
   return { ok: true };
 }
 
-// PUBLIC — Mon→Sun daily-labor strip for each node at a level (region/area/
-// district/store), rolled up. Scoped to the token + an optional path filter, so
-// the Week Trend popup can show the average per RVP / SDO / DO / store.
-async function sharedLaborWeek(supa, token, params) {
-  const t = String(token || "").trim();
-  if (!t) return { error: "token required", status: 400 };
+// Shared Week-Trend core — Mon→Sun daily-labor strip for each node at a level
+// (region/area/district/store), rolled up. `baseNumbers` is the already-scoped
+// store set (token scope for the public link, the caller's visible stores for
+// the authenticated Labor File); `orgMap`/`nameByNumber` cover those stores.
+// `scopeLabel` names the top "scope total" row when no path filter is applied.
+async function weekTrendCore(supa, baseNumbers, orgMap, nameByNumber, params, scopeLabel) {
   const level = ["region", "area", "district", "store"].includes(params.level) ? params.level : "region";
-  const { data: share } = await supa.from("labor_share_tokens").select("scope_kind, region_id, is_active").eq("token", t).maybeSingle();
-  if (!share || !share.is_active) return { error: "This labor link is no longer active.", status: 404 };
-  let regionName = null;
-  if (share.region_id) { const { data: r } = await supa.from("regions").select("name").eq("id", share.region_id).maybeSingle(); regionName = r?.name ?? null; }
-
   const latest = await latestBusinessDate(supa);
   const empty = { level, dates: [], week_start: null, has_prev: false, has_next: false, scope_total: null, nodes: [] };
   if (!latest) return empty;
@@ -2255,17 +2276,11 @@ async function sharedLaborWeek(supa, token, params) {
   const weekStart = week[0];
   const currentWeekStart = weekDates(parseIso(latest))[0];
 
-  const { data: storeRows } = await supa.from("stores").select("number, name, is_active, brand").eq("is_active", true).or("brand.eq.sonic,brand.is.null");
-  let numbers = [...new Set((storeRows || []).map((s) => String(s.number)))];
-  const nameByNumber = new Map((storeRows || []).map((s) => [String(s.number), s.name]));
-  const orgMap = await resolveOrg(supa, numbers);
-  numbers = numbers.filter((n) => orgMap.get(n)?.region && !CORPORATE_STORE_NUMBERS.has(n));
-  if (share.scope_kind === "region" && regionName) numbers = numbers.filter((n) => orgMap.get(n)?.region === regionName);
   // Path filter — narrow to the region / market / district being viewed.
   const fReg = params.region ? String(params.region) : null;
   const fArea = params.area ? String(params.area) : null;
   const fDist = params.district ? String(params.district) : null;
-  numbers = numbers.filter((n) => { const o = orgMap.get(n); return (!fReg || o.region === fReg) && (!fArea || o.area === fArea) && (!fDist || o.district === fDist); });
+  const numbers = baseNumbers.filter((n) => { const o = orgMap.get(n); return o && (!fReg || o.region === fReg) && (!fArea || o.area === fArea) && (!fDist || o.district === fDist); });
   if (!numbers.length) return { ...empty, dates: week, week_start: weekStart };
 
   // Earliest day with data in this scope — bounds how far back you can page.
@@ -2306,10 +2321,43 @@ async function sharedLaborWeek(supa, token, params) {
   })).sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true }));
 
   const scope_total = {
-    name: fDist || fArea || fReg || (share.scope_kind === "region" ? regionName : "Company"),
+    name: fDist || fArea || fReg || scopeLabel,
     leader: null, week: seriesFor(numbers),
   };
   return { level, dates: week, week_start: weekStart, has_prev, has_next, scope_total, nodes };
+}
+
+// PUBLIC — Week Trend for a share token. Scoped to the token + an optional path
+// filter, so the popup can show the average per RVP / SDO / DO / store.
+async function sharedLaborWeek(supa, token, params) {
+  const t = String(token || "").trim();
+  if (!t) return { error: "token required", status: 400 };
+  const { data: share } = await supa.from("labor_share_tokens").select("scope_kind, region_id, is_active").eq("token", t).maybeSingle();
+  if (!share || !share.is_active) return { error: "This labor link is no longer active.", status: 404 };
+  let regionName = null;
+  if (share.region_id) { const { data: r } = await supa.from("regions").select("name").eq("id", share.region_id).maybeSingle(); regionName = r?.name ?? null; }
+
+  const { data: storeRows } = await supa.from("stores").select("number, name, is_active, brand").eq("is_active", true).or("brand.eq.sonic,brand.is.null");
+  let numbers = [...new Set((storeRows || []).map((s) => String(s.number)))];
+  const nameByNumber = new Map((storeRows || []).map((s) => [String(s.number), s.name]));
+  const orgMap = await resolveOrg(supa, numbers);
+  numbers = numbers.filter((n) => orgMap.get(n)?.region && !CORPORATE_STORE_NUMBERS.has(n));
+  if (share.scope_kind === "region" && regionName) numbers = numbers.filter((n) => orgMap.get(n)?.region === regionName);
+  return weekTrendCore(supa, numbers, orgMap, nameByNumber, params, share.scope_kind === "region" ? (regionName || "Region") : "Company");
+}
+
+// AUTHENTICATED — Week Trend scoped to the caller's visible stores (the same
+// drill-down the hub Team view shows), so leadership gets the Week Trend popup
+// without minting a share link.
+async function laborFileWeek(supa, user, params) {
+  if (!TEAM_ROLES.has(roleOf(user))) return { error: "not authorized", status: 403 };
+  const visible = await resolveVisibleStoreRows(supa, user);
+  let numbers = [...new Set(visible.map((s) => String(s.number)))];
+  if (!numbers.length) return { level: params.level || "region", dates: [], week_start: null, has_prev: false, has_next: false, scope_total: null, nodes: [] };
+  const nameByNumber = new Map(visible.map((s) => [String(s.number), s.name]));
+  const orgMap = await resolveOrg(supa, numbers);
+  numbers = numbers.filter((n) => orgMap.get(n)?.region && !CORPORATE_STORE_NUMBERS.has(n));
+  return weekTrendCore(supa, numbers, orgMap, nameByNumber, params, "All my stores");
 }
 
 // Admin/VP: list existing links + the region list to mint against.
@@ -2428,6 +2476,7 @@ export const handler = async (event) => {
     if (action === "team") return unwrap(await teamView(supa, user, params));
     if (action === "labor-settings") return respond(200, { ok: true, hrs_weekly_rate: await getLaborHrsWeekly(supa) });
     if (action === "labor-file") return unwrap(await laborFile(supa, user));
+    if (action === "labor-file-week") return unwrap(await laborFileWeek(supa, user, params));
     if (action === "rvp-scorecard") return unwrap(await rvpScorecard(supa, user, params));
     if (action === "rvp-commitments") return unwrap(await rvpCommitments(supa, user));
     if (action === "miss-tracker") return unwrap(await missTracker(supa, user, params));

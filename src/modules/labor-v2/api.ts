@@ -464,6 +464,19 @@ export async function fetchSharedLaborWeek(token: string, opts: {
   return body as SharedLaborWeekResponse;
 }
 
+// AUTHENTICATED — Week Trend scoped to the caller's visible stores (same shape
+// as the public share week trend). Powers the hub Team view's Week Trend popup.
+export function fetchLaborFileWeek(opts: {
+  level: string; region?: string | null; area?: string | null; district?: string | null; weekOf?: string | null;
+}): Promise<SharedLaborWeekResponse> {
+  const p = new URLSearchParams({ action: "labor-file-week", level: opts.level });
+  if (opts.region) p.set("region", opts.region);
+  if (opts.area) p.set("area", opts.area);
+  if (opts.district) p.set("district", opts.district);
+  if (opts.weekOf) p.set("weekOf", opts.weekOf);
+  return req<SharedLaborWeekResponse>(`${FN}?${p.toString()}`);
+}
+
 // PUBLIC — file a miss reason + note from the shared store popup.
 export async function submitSharedLaborReview(token: string, input: {
   store: string; date: string; root_cause: string | null; note: string; filed_by: string;
