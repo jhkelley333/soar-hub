@@ -19,6 +19,8 @@ import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { supabase } from "@/lib/supabase";
 import { ROLE_LABELS } from "@/types/database";
+import { TraitChip } from "@/modules/culture-index/TraitChip";
+import { patternForTrait } from "@/modules/culture-index/patterns";
 import { formatPhoneForDisplay, normalizePhone } from "@/lib/phone";
 import {
   pushSupported,
@@ -378,6 +380,11 @@ export function AccountPage() {
                       onChange={(e) => setCulturalIndex(e.target.value)}
                       placeholder="e.g. Trailblazer"
                     />
+                    {patternForTrait(culturalIndex) && (
+                      <div className="mt-1.5">
+                        <TraitChip trait={culturalIndex} size="xs" />
+                      </div>
+                    )}
                   </div>
                   <div>
                     <Label htmlFor="acct-disc">DISC profile</Label>

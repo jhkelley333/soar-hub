@@ -25,6 +25,7 @@ import {
   Target,
   Clock,
   TrendingDown,
+  Fingerprint,
   type LucideIcon,
 } from "lucide-react";
 import type { UserRole } from "@/types/database";
@@ -69,6 +70,10 @@ export const NAV: NavItem[] = [
   // Bottom performers by SDO (year trend) — SDO/RVP reach it in the sidebar;
   // vp/coo/admin reach it via System Settings, so the entry is scoped low.
   { to: "/admin/ranking/bottom-performers", label: "Bottom Performers", icon: TrendingDown, roles: ["sdo", "rvp"] },
+  // Culture Index — the trait framework + all 21 pattern definitions. The
+  // reference behind every trait chip on the roster and in accounts; the base
+  // the coaching/analytics views build on.
+  { to: "/culture-index", label: "Culture Index", icon: Fingerprint, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   // Territory Map — stores plotted on Google Maps, pin color keyed to the
   // DO resolved live from the org data.
   { to: "/territory-map", label: "Territory Map", icon: MapPinned,   roles: ["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
