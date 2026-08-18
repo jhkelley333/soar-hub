@@ -144,6 +144,16 @@ function storeHoursOver(r, prefix) {
   return (cost - chartAllowed) / (cost / hours);
 }
 
+// One store's dollars over chart for a band (cost − sales×target). Positive =
+// over-spent; negative/zero = on or under. null when the store has no basis.
+function storeDollarsOver(r, prefix) {
+  const cost = numv(r[prefix + "labor_cost"]);
+  const sales = numv(r[prefix + "net_sales"]);
+  const target = numv(r[prefix + "target_labor_pct"]);
+  if (!sales || !cost || !target) return null;
+  return cost - sales * target;
+}
+
 // Hrs/Unit: at the store level, the store's own hours over — but only if it's
 // over (negative/under is hidden). At District and above it's the average over
 // ALL the node's stores (its children): only the OVER stores' hours feed the
@@ -165,10 +175,14 @@ function hoursPerUnit(rows, prefix) {
 // Labor region view and the Ranker show the same number. Only meaningful for the
 // PTD band at district+; falls back to the plain per-store average when the week
 // count is unknown (anchor outside the fiscal calendar).
+// Hrs/Store for an AGGREGATE node's period-to-date band: sum ONLY the
+// over-spending stores' hours over chart (under-stores are ignored, not netted),
+// divided by ALL the node's stores and by the weeks elapsed in the period — a
+// per-store-per-week "how many hours of over-spend are we carrying" figure.
 function ptdHoursOverRankerAligned(rows, weeksInPeriod) {
   if (!rows.length || !weeksInPeriod) return hoursPerUnit(rows, "ptd_");
-  const sumSigned = rows.reduce((a, r) => { const h = storeHoursOver(r, "ptd_"); return a + (h != null ? h : 0); }, 0);
-  return round2(sumSigned / rows.length / weeksInPeriod);
+  const sumOver = rows.reduce((a, r) => { const h = storeHoursOver(r, "ptd_"); return a + (h != null && h > 0 ? h : 0); }, 0);
+  return round2(sumOver / rows.length / weeksInPeriod);
 }
 
 // Override an aggregate PTD band's Hrs/Store with the Ranker-aligned figure.
@@ -630,7 +644,11 @@ function teamBand(rows, prefix) {
   const chartAllowed = rows.reduce((a, r) => a + numv(r[prefix + "target_labor_pct"]) * numv(r[prefix + "net_sales"]), 0);
   const laborPct = sales ? round1((cost / sales) * 100) : null;
   const targetPct = sales ? round1((chartAllowed / sales) * 100) : null;
-  const dollarsOver = sales ? round2(cost - chartAllowed) : null;
+  // $ Over shows over-spend only: sum just the stores that ran over chart
+  // (under-stores are ignored, not netted against). null when no store has a
+  // basis, so a no-data node reads "—" rather than "$0".
+  const overSum = rows.reduce((a, r) => { const d = storeDollarsOver(r, prefix); return a + (d != null && d > 0 ? d : 0); }, 0);
+  const dollarsOver = sales ? round2(overSum) : null;
   const tcKey = prefix === "" ? "day" : prefix === "wtd_" ? "wtd" : "ptd";
   const trainingCredit = round2(rows.reduce((a, r) => a + numv(r._tc?.[tcKey]?.amt), 0));
   return {
