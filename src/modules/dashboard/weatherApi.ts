@@ -98,8 +98,9 @@ async function authPost<T>(path: string, body?: unknown): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-// Admin-only: run a manual pull now (same core as the schedule).
-export function triggerWeatherSync(): Promise<{ ok: boolean; locations: number; recorded: number; failed: number; error?: string | null; reason?: string }> {
+// Admin-only: run a manual pull now (same core as the schedule). Also fills any
+// gap between the last recorded day and yesterday (caught_up = day-rows healed).
+export function triggerWeatherSync(): Promise<{ ok: boolean; locations: number; recorded: number; failed: number; caught_up?: number; error?: string | null; reason?: string }> {
   return authPost(`${FN}?action=sync`);
 }
 

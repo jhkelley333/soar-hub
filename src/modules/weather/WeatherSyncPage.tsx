@@ -33,6 +33,19 @@ function pastRange(days: number): { start: string; end: string } {
   return { start: ymd(start), end: ymd(end) };
 }
 
+// The current Mon–Sun week shifted back 364 days (same weekdays a year ago) —
+// so "This week, last year" on the Weather page has a full seven days.
+function thisWeekLastYear(): { start: string; end: string } {
+  const now = new Date();
+  const monday = new Date(now);
+  monday.setDate(now.getDate() - ((now.getDay() + 6) % 7));
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  monday.setDate(monday.getDate() - 364);
+  sunday.setDate(sunday.getDate() - 364);
+  return { start: ymd(monday), end: ymd(sunday) };
+}
+
 interface Progress {
   label: string;
   processed: number;
@@ -58,7 +71,7 @@ export function WeatherSyncPage() {
         return;
       }
       toast.push(
-        `Synced ${r.recorded} of ${r.locations} cities${r.failed ? `, ${r.failed} failed` : ""}.`,
+        `Synced ${r.recorded} of ${r.locations} cities${r.caught_up ? ` · filled ${r.caught_up} missing day-row${r.caught_up === 1 ? "" : "s"}` : ""}${r.failed ? `, ${r.failed} failed` : ""}.`,
         "success"
       );
       qc.invalidateQueries({ queryKey: ["weather"] });
@@ -143,8 +156,9 @@ export function WeatherSyncPage() {
             <div className="font-semibold text-midnight">Current conditions</div>
             <p className="mt-1 leading-relaxed text-zinc-600">
               <strong>Sync now</strong> pulls today's conditions and forecast for every city via the
-              schedule's data source. Runs automatically a few times a day — use this to force an
-              immediate refresh.
+              schedule's data source, and fills any missing days between the last recorded day and
+              yesterday from the archive. Runs automatically a few times a day — if the trend looks
+              frozen, one <strong>Sync now</strong> catches the history back up.
             </p>
           </div>
         </div>
@@ -171,6 +185,19 @@ export function WeatherSyncPage() {
             </Button>
             <Button variant="secondary" disabled={busy} onClick={() => backfillPast(90, "past 90 days")}>
               Past 90 days
+            </Button>
+            <Button variant="secondary" disabled={busy} onClick={() => backfillPast(365, "past year")}>
+              Past year
+            </Button>
+            <Button
+              variant="secondary"
+              disabled={busy}
+              onClick={() => {
+                const { start: s, end: e } = thisWeekLastYear();
+                runBackfill("this week, last year", s, e);
+              }}
+            >
+              This week, last year
             </Button>
           </div>
 
