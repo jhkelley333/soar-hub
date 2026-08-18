@@ -175,10 +175,12 @@ function hoursPerUnit(rows, prefix) {
 // Labor region view and the Ranker show the same number. Only meaningful for the
 // PTD band at district+; falls back to the plain per-store average when the week
 // count is unknown (anchor outside the fiscal calendar).
-// Hrs/Store for an AGGREGATE node's period-to-date band: sum ONLY the
-// over-spending stores' hours over chart (under-stores are ignored, not netted),
-// divided by ALL the node's stores and by the weeks elapsed in the period — a
-// per-store-per-week "how many hours of over-spend are we carrying" figure.
+// Hrs/Store for a period-to-date band, at any level (a single store or a
+// district / area / region roll-up): sum ONLY the over-spending stores' hours
+// over chart (under-stores are ignored, not netted), divided by ALL the node's
+// stores and by the weeks elapsed in the period — one consistent per-store-per-
+// week "how many hours of over-spend are we carrying" rate at every tier, so a
+// region's number is the average of its stores' numbers.
 function ptdHoursOverRankerAligned(rows, weeksInPeriod) {
   if (!rows.length || !weeksInPeriod) return hoursPerUnit(rows, "ptd_");
   const sumOver = rows.reduce((a, r) => { const h = storeHoursOver(r, "ptd_"); return a + (h != null && h > 0 ? h : 0); }, 0);
@@ -1854,7 +1856,7 @@ async function teamView(supa, user, params) {
       gm_name: r.soar.gmName,
       do_name: r.soar.doName,
       region: r.soar.region, area: r.soar.area, district: r.soar.district,
-      day, wtd: teamBand([r], "wtd_"), ptd: teamBand([r], "ptd_"),
+      day, wtd: teamBand([r], "wtd_"), ptd: withRankerHrs(teamBand([r], "ptd_"), [r], weeksInPeriod),
       status: day.status,
       note_due: day.status === "over" && !explained,
       explained,
