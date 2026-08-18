@@ -73,19 +73,47 @@ function namesMatch(a, b) {
   return firstLast(ta) === firstLast(tb);
 }
 
+// PostgREST caps a response at 1000 rows AND the API gateway rejects an
+// over-long URL (a company-wide `.in(col, ids)` of ~271 UUIDs is ~10 KB — past
+// the gateway limit, which returns an "Error - Request ID" page that surfaces to
+// the user). Chunk the id list so every query stays under both ceilings.
+async function selectInChunks(supa, table, cols, col, ids, refine) {
+  const uniq = [...new Set((ids || []).filter(Boolean))];
+  const out = [];
+  for (let i = 0; i < uniq.length; i += 150) {
+    let q = supa.from(table).select(cols).in(col, uniq.slice(i, i + 150));
+    if (refine) q = refine(q);
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+    if (data) out.push(...data);
+  }
+  return out;
+}
+
 // GM account per store id — the same two sources of truth org.js unions:
 // profiles.primary_store_id (preferred) then user_scopes store-scope holders.
 async function gmAccountsByStore(supa, storeIds) {
   const byStore = new Map();
   if (!storeIds.length) return byStore;
-  const { data: scopeRows } = await supa.from("user_scopes").select("user_id, scope_type, scope_id").eq("scope_type", "store").in("scope_id", storeIds);
+  const scopeRows = await selectInChunks(
+    supa, "user_scopes", "user_id, scope_type, scope_id", "scope_id", storeIds,
+    (q) => q.eq("scope_type", "store"),
+  );
   const scopeUserIds = [...new Set((scopeRows || []).map((r) => r.user_id))];
-  const { data: primaries } = await supa.from("profiles")
-    .select("id, full_name, preferred_name, email, phone, role, primary_store_id, is_active, cultural_index_trait")
-    .eq("role", "gm").eq("is_active", true).in("primary_store_id", storeIds);
-  const { data: scopedProfiles } = scopeUserIds.length
-    ? await supa.from("profiles").select("id, full_name, preferred_name, email, phone, role, is_active, cultural_index_trait").eq("role", "gm").eq("is_active", true).in("id", scopeUserIds)
-    : { data: [] };
+  const primaries = await selectInChunks(
+    supa, "profiles",
+    "id, full_name, preferred_name, email, phone, role, primary_store_id, is_active, cultural_index_trait",
+    "primary_store_id", storeIds,
+    (q) => q.eq("role", "gm").eq("is_active", true),
+  );
+  const scopedProfiles = scopeUserIds.length
+    ? await selectInChunks(
+        supa, "profiles",
+        "id, full_name, preferred_name, email, phone, role, is_active, cultural_index_trait",
+        "id", scopeUserIds,
+        (q) => q.eq("role", "gm").eq("is_active", true),
+      )
+    : [];
   const scopedById = new Map((scopedProfiles || []).map((p) => [p.id, p]));
   // Source (2): scope-based GMs first, so primary_store_id can overwrite.
   for (const r of scopeRows || []) {

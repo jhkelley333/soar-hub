@@ -136,9 +136,11 @@ export function CultureIndexPage() {
         )}
       </div>
 
-      <Drawer open={!!active} onClose={() => setActive(null)} title="Culture Index profile">
-        {active && <PatternDetail pattern={active} />}
-      </Drawer>
+      {active && (
+        <Drawer open onClose={() => setActive(null)} title="Culture Index profile">
+          <PatternDetail pattern={active} />
+        </Drawer>
+      )}
     </>
   );
 }

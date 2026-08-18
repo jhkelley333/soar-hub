@@ -38,9 +38,16 @@ export function TraitChip({
       >
         {pattern.name}
       </button>
-      <Drawer open={open} onClose={() => setOpen(false)} title="Culture Index profile">
-        <PatternDetail pattern={pattern} />
-      </Drawer>
+      {/* Mount the drawer only while open. A persistent (closed) Drawer keeps a
+          full-screen fixed overlay + an off-screen (translate-x-full) panel with
+          a large shadow in the DOM; with one TraitChip per roster row that's
+          dozens of stacked composited layers bleeding at the right edge, which
+          is what whited-out the page and drew black bars on scroll. */}
+      {open && (
+        <Drawer open onClose={() => setOpen(false)} title="Culture Index profile">
+          <PatternDetail pattern={pattern} />
+        </Drawer>
+      )}
     </>
   );
 }
