@@ -1,9 +1,14 @@
-// Client for netlify/functions/trait-playbook — the DO Playbook.
+// Client for the DO Playbook.
+//
+// Generation is slow (an LLM call that exceeds Netlify's 10s synchronous
+// limit), so it runs in a background function. generatePlaybook() kicks that
+// off and polls the cache-only `coach` read until the result lands.
 
 import { supabase } from "@/lib/supabase";
 import type { UserRole } from "@/types/database";
 
 const FN = "/.netlify/functions/trait-playbook";
+const FN_BG = "/.netlify/functions/trait-playbook-background";
 
 export interface PlaybookMember {
   id: string;
@@ -26,14 +31,22 @@ export interface PlaybookContent {
   dynamics: string;
   actions: string[];
   members: PlaybookMember[];
+  truncated?: boolean;
+  coached_count?: number;
+  team_count?: number;
 }
 
-export interface CoachResponse {
-  ok: boolean;
+export interface CoachResult {
   content: PlaybookContent;
   cached: boolean;
   generatedAt: string;
-  model: string | null;
+}
+
+interface CoachRead {
+  ready: boolean;
+  content?: PlaybookContent;
+  generatedAt?: string;
+  empty?: boolean;
 }
 
 async function authHeaders(): Promise<HeadersInit> {
@@ -62,9 +75,31 @@ export function fetchTeam(): Promise<TeamResponse> {
   return request<TeamResponse>(`${FN}?action=team`);
 }
 
-export function generatePlaybook(force = false): Promise<CoachResponse> {
-  return request<CoachResponse>(`${FN}?action=coach`, {
-    method: "POST",
-    body: JSON.stringify({ force }),
-  });
+function readCoach(): Promise<CoachRead> {
+  return request<CoachRead>(`${FN}?action=coach`);
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// Kick the background generator and poll the cache read until a NEW result
+// appears. For a plain view (force=false) a cached result returns instantly.
+export async function generatePlaybook(force = false): Promise<CoachResult> {
+  const first = await readCoach();
+  if (first.ready && first.content && !force) {
+    return { content: first.content, cached: true, generatedAt: first.generatedAt ?? "" };
+  }
+  const prevAt = first.ready ? first.generatedAt : null;
+
+  // Fire-and-forget: the background function returns 202 immediately.
+  await fetch(FN_BG, { method: "POST", headers: await authHeaders(), body: JSON.stringify({ force }) });
+
+  // Poll for a fresh result (generatedAt must differ from any prior one).
+  for (let i = 0; i < 40; i++) {
+    await sleep(3000);
+    const c = await readCoach();
+    if (c.ready && c.content && c.generatedAt !== prevAt) {
+      return { content: c.content, cached: false, generatedAt: c.generatedAt ?? "" };
+    }
+  }
+  throw new Error("The coaching is taking longer than usual to generate. Give it a moment and try again.");
 }
