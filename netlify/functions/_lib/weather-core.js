@@ -226,7 +226,84 @@ export async function syncWeather(supa) {
     }
   });
 
-  return { ok: true, locations: locations.length, recorded, failed, sources, error: recorded === 0 ? firstError : null };
+  // Self-heal: fill any gap between each location's last recorded day and
+  // yesterday from the archive, so a stalled schedule (or a paused key) recovers
+  // its missing history the next time this runs — automatically, or the instant
+  // an admin clicks "Sync now". Best-effort: never fails the live sync.
+  let caughtUp = 0;
+  try { caughtUp = await catchUpGaps(supa, locRows || [], utcToday); }
+  catch (e) { console.warn(`[weather] catch-up failed: ${e.message}`); }
+
+  return { ok: true, locations: locations.length, recorded, failed, caught_up: caughtUp, sources, error: recorded === 0 ? firstError : null };
+}
+
+// Local-date arithmetic on a YYYY-MM-DD string (UTC-anchored, DST-safe for
+// whole-day steps).
+function isoAddDays(iso, n) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+
+// For each location, backfill the daily highs/lows for any date missing between
+// its last recorded day (exclusive) and yesterday, from the Open-Meteo archive.
+// Bounded lookback so a brand-new location doesn't pull years at once. Skips
+// days the archive can't provide yet (its ~5-day lag returns nulls) so a later
+// run fills them once available. Idempotent — existing days are left untouched.
+const CATCHUP_MAX_LOOKBACK_DAYS = 120;
+// Cap archive calls per run so a single invocation can't blow the function
+// timeout (a large one-time hole is meant to be filled from the sliced Backfill
+// tool; this self-heal is the steady-state safety net for small gaps). Whatever
+// isn't reached this run is picked up by the next scheduled run — it's
+// idempotent, so it simply continues where it left off.
+const CATCHUP_MAX_FETCHES_PER_RUN = 40;
+async function catchUpGaps(supa, locRows, todayIso) {
+  const yesterday = isoAddDays(todayIso, -1);
+  const floor = isoAddDays(todayIso, -CATCHUP_MAX_LOOKBACK_DAYS);
+  let filled = 0;
+  let fetches = 0;
+  await mapLimit(locRows, 4, async (l) => {
+    if (l.latitude == null || l.longitude == null) return;
+    const { data: last } = await supa
+      .from("weather_observations").select("business_date")
+      .eq("location_id", l.id).lt("business_date", todayIso)
+      .order("business_date", { ascending: false }).limit(1);
+    const lastDay = last?.[0]?.business_date || null;
+    let start = lastDay ? isoAddDays(lastDay, 1) : floor;
+    if (start < floor) start = floor;
+    if (start > yesterday) return; // no gap to fill
+    if (fetches >= CATCHUP_MAX_FETCHES_PER_RUN) return; // budget spent this run
+    fetches++;
+
+    const url = `${ARCHIVE_URL}?latitude=${l.latitude}&longitude=${l.longitude}&start_date=${start}&end_date=${yesterday}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&temperature_unit=fahrenheit&timezone=auto`;
+    const fetched = await fetchArchiveWithRetry(url);
+    if (!fetched.ok) return;
+    const j = await fetched.res.json();
+    const time = arr(j?.daily?.time), hi = arr(j?.daily?.temperature_2m_max), lo = arr(j?.daily?.temperature_2m_min), pr = arr(j?.daily?.precipitation_sum);
+    if (!time.length) return;
+
+    const { data: existing } = await supa
+      .from("weather_observations").select("business_date")
+      .eq("location_id", l.id).gte("business_date", start).lte("business_date", yesterday);
+    const have = new Set((existing || []).map((r) => r.business_date));
+
+    const rows = [];
+    for (let i = 0; i < time.length; i++) {
+      const date = time[i];
+      const hiF = num(hi[i]), loF = num(lo[i]);
+      if (have.has(date) || (hiF == null && loF == null)) continue;
+      rows.push({
+        location_id: l.id, business_date: date, observed_at: `${date}T12:00:00Z`,
+        temp_f: hiF, forecast: [{ date, hi_f: hiF, lo_f: loF, precip_in: num(pr[i]) }],
+        raw: { source: "open-meteo-archive-catchup" },
+      });
+    }
+    for (let i = 0; i < rows.length; i += 500) {
+      const { error } = await supa.from("weather_observations").insert(rows.slice(i, i + 500));
+      if (!error) filled += Math.min(500, rows.length - i);
+    }
+  });
+  return filled;
 }
 
 // Backfill historical daily weather from Open-Meteo's free archive (no key) into

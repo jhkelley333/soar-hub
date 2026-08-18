@@ -156,6 +156,17 @@ export function WeatherPage() {
   // Show the full 10-day forecast we now pull from Google Weather.
   const forecast = (curQ.data?.forecast ?? []).slice(0, 10);
   const loc = curQ.data?.location ?? histQ.data?.location;
+  // How stale is the latest recorded observation? Surfaced so a stalled sync is
+  // obvious rather than silently showing week-old numbers as "Now".
+  const observedAt = curQ.data?.observed_at ?? null;
+  const staleDays = useMemo(() => {
+    if (!observedAt) return null;
+    const ms = Date.now() - new Date(observedAt).getTime();
+    return Math.floor(ms / 86400000);
+  }, [observedAt]);
+  const observedLabel = observedAt
+    ? new Date(observedAt).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })
+    : null;
   const points = histQ.data?.points ?? [];
   const stats = useMemo(() => {
     const his = points.map((p) => p.hi_f).filter((v): v is number => v != null);
@@ -194,6 +205,18 @@ export function WeatherPage() {
         <Card><EmptyState title="No stores in your scope" description="Weather is shown for the stores you oversee." /></Card>
       ) : (
         <div className="space-y-4">
+          {/* Staleness banner — the recorded data is more than a day behind, so
+              "Now" and the trend are showing old numbers until a sync catches up. */}
+          {staleDays != null && staleDays >= 2 && (
+            <div className="rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-800 ring-1 ring-amber-200">
+              <span className="font-semibold">Weather looks stale.</span> Last recorded {observedLabel}
+              {" "}({staleDays} days ago).{" "}
+              {profile?.role === "admin"
+                ? "Run a Sync in Admin → Weather Sync — it also backfills the missing days automatically."
+                : "Ask an admin to run a Weather Sync to catch it up."}
+            </div>
+          )}
+
           {/* current + forecast */}
           <Card>
             <CardBody>
