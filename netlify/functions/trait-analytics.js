@@ -184,11 +184,16 @@ async function overview(supa) {
 
   // 3. Trait per store (GM's trait, joined on store_id).
   const storeIds = [...new Set(ranked.map((r) => r.store_id).filter(Boolean))];
-  const gmProfiles = storeIds.length
-    ? await selectAll(supa, "profiles", "primary_store_id, cultural_index_trait", (q) =>
-        q.eq("role", "gm").eq("is_active", true).in("primary_store_id", storeIds),
-      )
-    : [];
+  // Chunk the id list — a company-wide `.in()` of ~271 UUIDs overruns the API
+  // gateway's URL limit.
+  const gmProfiles = [];
+  for (let i = 0; i < storeIds.length; i += 150) {
+    const chunk = storeIds.slice(i, i + 150);
+    const part = await selectAll(supa, "profiles", "primary_store_id, cultural_index_trait", (q) =>
+      q.eq("role", "gm").eq("is_active", true).in("primary_store_id", chunk),
+    );
+    gmProfiles.push(...part);
+  }
   const traitByStoreId = new Map();
   for (const p of gmProfiles) {
     if (p.primary_store_id && p.cultural_index_trait) traitByStoreId.set(p.primary_store_id, p.cultural_index_trait);

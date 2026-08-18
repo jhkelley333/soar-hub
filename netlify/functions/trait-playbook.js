@@ -65,15 +65,17 @@ async function resolveTeam(supa, leader) {
     (m) => m.id !== leader.id && m.is_active && m.cultural_index_trait,
   );
 
-  // Store labels for the GMs (primary_store_id → "#num name").
+  // Store labels for the GMs (primary_store_id → "#num name"). Chunk the id
+  // list: an admin/VP downline can span hundreds of stores, and a single
+  // `.in()` over that many UUIDs overruns the API gateway's URL limit.
   const storeIds = [...new Set(withTrait.map((m) => m.primary_store_id).filter(Boolean))];
-  let storeById = new Map();
-  if (storeIds.length) {
+  const storeById = new Map();
+  for (let i = 0; i < storeIds.length; i += 150) {
     const { data: stores } = await supa
       .from("stores")
       .select("id, number, name")
-      .in("id", storeIds);
-    storeById = new Map((stores || []).map((s) => [s.id, s]));
+      .in("id", storeIds.slice(i, i + 150));
+    for (const s of stores || []) storeById.set(s.id, s);
   }
 
   const roleRank = { rvp: 5, sdo: 4, do: 3, gm: 2 };
