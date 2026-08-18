@@ -35,6 +35,7 @@ import { BulkImportPage } from "@/modules/admin/BulkImportPage";
 import { CulturalIndexImportPage } from "@/modules/admin/CulturalIndexImportPage";
 import { CultureIndexPage } from "@/modules/culture-index/CultureIndexPage";
 import { DoPlaybookPage } from "@/modules/culture-index/DoPlaybookPage";
+import { ExecOverviewPage } from "@/modules/culture-index/ExecOverviewPage";
 import { BulkOrgImportPage } from "@/modules/admin/BulkOrgImportPage";
 import { AcquisitionsPage } from "@/modules/acquisitions/AcquisitionsPage";
 import { AcquisitionDetailPage } from "@/modules/acquisitions/AcquisitionDetailPage";
@@ -635,6 +636,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <DoPlaybookPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "culture-index/overview",
+        element: (
+          <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
+            <ExecOverviewPage />
           </ProtectedRoute>
         ),
       },
