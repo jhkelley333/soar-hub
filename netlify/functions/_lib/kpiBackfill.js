@@ -1,5 +1,5 @@
 // Backfill labor_v2_daily from the raw KPI snapshots we've stored all along.
-// Every kpi_snapshots row keeps the FULL feed payload (hourly, 7AM-2PM CT),
+// Every kpi_snapshots row keeps the FULL feed payload (hourly, 7AM-10PM CT),
 // so fields that capture started landing later (migration 0238: tickets,
 // on-time num/den, voids - daily/WTD/PTD) can be recovered for past days by
 // re-extracting the stored payload for that business date. Idempotent: the

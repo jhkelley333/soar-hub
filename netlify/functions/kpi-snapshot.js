@@ -249,7 +249,7 @@ export const handler = async (event) => {
     //
     // If the live call fails (e.g. the feed serves a transient interstitial
     // page instead of JSON), fall back to the most recent row kpi-capture.js
-    // already wrote to kpi_snapshots — it runs hourly 7 AM-2 PM Central, so
+    // already wrote to kpi_snapshots — it runs hourly 7 AM-10 PM Central, so
     // there's almost always a recent capture to fall back to. Beats a hard
     // error card when we're already sitting on perfectly usable data that's
     // at most an hour or two old.
