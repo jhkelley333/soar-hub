@@ -212,9 +212,10 @@ export function fetchLaborV2Stores(): Promise<{ stores: LaborStore[] }> {
   return req(`${FN}?action=my-stores`);
 }
 
-export function fetchLaborV2Gm(store: string, date?: string): Promise<GmLaborResponse> {
+export function fetchLaborV2Gm(store: string, opts?: { date?: string; week?: string }): Promise<GmLaborResponse> {
   const p = new URLSearchParams({ action: "gm", store });
-  if (date) p.set("date", date);
+  if (opts?.week) p.set("week", opts.week);
+  else if (opts?.date) p.set("date", opts.date);
   return req(`${FN}?${p.toString()}`);
 }
 

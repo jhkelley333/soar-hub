@@ -13,7 +13,7 @@ import { Modal } from "@/shared/ui/Modal";
 import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
-import { fiscalInfo, fiscalWeekRange } from "@/lib/fiscal";
+import { recentWeekOptions } from "./weeks";
 import { useAuth } from "@/auth/AuthProvider";
 import { MissTrackerExport } from "@/modules/labor/MissTrackerExport";
 import { fetchLaborV2Team, fetchLaborFile, fetchMissTracker } from "./api";
@@ -42,27 +42,6 @@ const LEVEL_LABEL: Record<TeamDisplayLevel, string> = { region: "Region", area: 
 const childOf = (l: TeamDisplayLevel): TeamDisplayLevel | null => LEVEL_ORDER[LEVEL_ORDER.indexOf(l) + 1] ?? null;
 
 const PERIOD_LABEL: Record<LaborPeriod, string> = { day: "Day", wtd: "WTD", ptd: "PTD" };
-const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-
-// Recent fiscal weeks for the "previous weeks" picker: this week (latest data)
-// plus the prior ~10 completed weeks, each keyed by its week-ending date so the
-// backend can anchor the rollup on it (its WTD covers the whole week).
-function recentWeekOptions(): { value: string; label: string }[] {
-  const fi = fiscalInfo(new Date());
-  const cur = fi?.fiscalWeek ?? null;
-  const opts = [{ value: "", label: "This week (latest)" }];
-  if (!cur) return opts;
-  for (let w = cur - 1; w >= Math.max(1, cur - 10); w--) {
-    const r = fiscalWeekRange(w);
-    if (!r) continue;
-    const info = fiscalInfo(r.end);
-    opts.push({
-      value: ymd(r.end),
-      label: `P${info?.period ?? "?"} W${info?.weekInPeriod ?? "?"} · ending ${r.end.toLocaleDateString("en-US", { month: "short", day: "numeric" })}`,
-    });
-  }
-  return opts;
-}
 
 type Filter = "all" | "over" | "due";
 type SortKey = "name" | "day" | "wtd" | "ptd" | "var" | "over" | "hrsover" | "sched" | "actual" | "ot" | "actsch" | "status";

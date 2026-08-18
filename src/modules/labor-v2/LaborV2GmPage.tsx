@@ -6,7 +6,7 @@
 //
 // Multi-store roles (DO+) get a store picker; a single-store GM skips it.
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Check, Clock, RefreshCw } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -18,29 +18,33 @@ import { cn } from "@/lib/cn";
 import { BandCard } from "@/modules/labor/BandCard";
 import { WeekStrip } from "@/modules/labor/WeekStrip";
 import { fmtDayLabel, fmtPct, fmtSignedMoney, fmtSignedHours, fmtSignedPts } from "@/modules/labor/format";
-import type { LaborDay } from "@/modules/labor/types";
+import type { LaborBand, LaborDay } from "@/modules/labor/types";
 import { fetchLaborV2Gm, fetchLaborV2Stores, saveLaborV2Review } from "./api";
+import { recentWeekOptions } from "./weeks";
 
 const GM_QK = "labor-v2-gm";
 
 export function LaborV2GmPage() {
   const [store, setStore] = useState<string>("");
   const [date, setDate] = useState<string | undefined>(undefined);
+  const [weekEnd, setWeekEnd] = useState<string>(""); // "" = this week (latest)
 
   const storesQ = useQuery({ queryKey: ["labor-v2-stores"], queryFn: fetchLaborV2Stores });
   const stores = storesQ.data?.stores ?? [];
   const multiStore = stores.length > 1;
+  const weekOptions = useMemo(() => recentWeekOptions(), []);
 
   useEffect(() => {
     if (!store && stores.length) setStore(String(stores[0].number));
   }, [store, stores]);
 
   const gmQ = useQuery({
-    queryKey: [GM_QK, store, date ?? "latest"],
-    queryFn: () => fetchLaborV2Gm(store, date),
+    queryKey: [GM_QK, store, weekEnd, date ?? "latest"],
+    // A picked day wins; else the picked week; else latest.
+    queryFn: () => fetchLaborV2Gm(store, date ? { date } : weekEnd ? { week: weekEnd } : undefined),
     enabled: !!store,
-    refetchOnWindowFocus: true,
-    refetchInterval: 10 * 60_000,
+    refetchOnWindowFocus: !weekEnd,
+    refetchInterval: weekEnd ? false : 10 * 60_000,
   });
 
   const data = gmQ.data;
@@ -74,11 +78,11 @@ export function LaborV2GmPage() {
         }
       />
 
-      {multiStore && (
-        <div className="mb-4">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        {multiStore && (
           <select
             value={store}
-            onChange={(e) => { setStore(e.target.value); setDate(undefined); }}
+            onChange={(e) => { setStore(e.target.value); setDate(undefined); setWeekEnd(""); }}
             className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-midnight focus:border-accent focus:outline-none"
           >
             {stores.map((s) => (
@@ -87,8 +91,16 @@ export function LaborV2GmPage() {
               </option>
             ))}
           </select>
-        </div>
-      )}
+        )}
+        <select
+          value={weekEnd}
+          onChange={(e) => { setWeekEnd(e.target.value); setDate(undefined); }}
+          className="rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm text-midnight focus:border-accent focus:outline-none"
+          aria-label="Week"
+        >
+          {weekOptions.map((o) => <option key={o.value || "latest"} value={o.value}>{o.label}</option>)}
+        </select>
+      </div>
 
       {storesQ.isLoading || (gmQ.isLoading && !data) ? (
         <div className="space-y-4">
@@ -143,6 +155,9 @@ export function LaborV2GmPage() {
             <BandCard title="Period to Date" band={data!.ptd} goal={data!.ptd?.goal_pct ?? goal} salesLabel="PTD Sales" />
           </div>
 
+          {/* Overtime → floor-hours opportunity (uses the week's OT). */}
+          <OtInsightCard band={data!.wtd} />
+
           {/* Goal footer */}
           <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg bg-white px-4 py-3 text-sm text-zinc-600 ring-1 ring-zinc-200">
             <span className="text-zinc-400">⚑</span>
@@ -159,6 +174,78 @@ export function LaborV2GmPage() {
         </div>
       )}
     </>
+  );
+}
+
+// Overtime → floor-hours opportunity. OT is paid at 1.5× the average wage; the
+// 0.5× premium is money spent on NO extra bodies. Reinvested at straight time,
+// that premium alone buys back hours: extra hours = OT hours × 0.5 (which is
+// exactly premium$ ÷ avg wage). Click to see the breakdown.
+const SHIFT_HOURS = 8;
+function OtInsightCard({ band }: { band: LaborBand | null }) {
+  const [open, setOpen] = useState(false);
+  const ot = band?.overtime_hours ?? 0;
+  const wage = band?.avg_wage ?? null;
+  if (!ot || ot <= 0 || !wage) {
+    return (
+      <div className="rounded-xl bg-white px-4 py-3 text-sm text-zinc-500 ring-1 ring-zinc-200">
+        <Clock className="mr-1.5 inline h-3.5 w-3.5" /> No overtime this week — nice.
+      </div>
+    );
+  }
+  const premium = ot * 0.5 * wage;      // the half-time you paid for zero extra bodies
+  const extraHrs = ot * 0.5;            // = premium ÷ wage
+  const crew = extraHrs / SHIFT_HOURS;  // extra 8-hour shifts you could staff
+  const fmt0 = (n: number) => Math.round(n).toLocaleString();
+  const fmt1 = (n: number) => n.toFixed(1);
+
+  return (
+    <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left transition hover:bg-zinc-50"
+      >
+        <span className="flex items-center gap-2 text-sm font-semibold text-midnight">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-100 text-amber-700">
+            <Clock className="h-4 w-4" />
+          </span>
+          Overtime this week — {fmt1(ot)} hrs
+        </span>
+        <span className="text-xs font-medium text-accent">
+          {open ? "Hide" : `≈ ${fmt1(extraHrs)} hrs of floor time lost →`}
+        </span>
+      </button>
+      {open && (
+        <div className="space-y-3 border-t border-zinc-100 px-4 py-4">
+          <p className="text-sm text-zinc-600">
+            Those {fmt1(ot)} OT hours are paid at <strong>1.5× your average wage</strong>{" "}
+            (${wage.toFixed(2)}/hr). The half-time <strong>premium</strong> — about{" "}
+            <strong className="text-amber-700">${fmt0(premium)}</strong> — buys you <em>no extra
+            bodies</em> on the floor.
+          </p>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <Stat label="OT premium paid" value={`$${fmt0(premium)}`} tone="text-amber-700" />
+            <Stat label="Straight-time hours that buys" value={`${fmt1(extraHrs)} hrs`} tone="text-emerald-700" />
+            <Stat label="≈ extra 8-hr shifts" value={fmt1(crew)} tone="text-emerald-700" />
+          </div>
+          <p className="text-xs text-zinc-500">
+            If OT weren't an issue, that premium reinvested at your average wage would put roughly{" "}
+            <strong>{fmt1(extraHrs)} more hours</strong> — about <strong>{fmt1(crew)}</strong> more
+            crew for a full shift — on the floor this week, for the same spend.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <div className="rounded-lg bg-zinc-50 px-3 py-2.5">
+      <div className="text-[10px] font-semibold uppercase tracking-wide text-zinc-400">{label}</div>
+      <div className={cn("mt-0.5 text-lg font-bold tabular-nums", tone ?? "text-midnight")}>{value}</div>
+    </div>
   );
 }
 

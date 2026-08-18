@@ -124,6 +124,7 @@ function shapeBand(row, prefix) {
     hours_over_chart: hoursOver,
     chart_dollars_allowed: chartAllowed,
     avg_wage: avgWage == null ? null : round2(avgWage),
+    overtime_hours: row[`${prefix}overtime_hours`] != null ? round1(Number(row[`${prefix}overtime_hours`])) : null,
     training_credit: round2((row._tc?.[prefix === "" ? "day" : prefix === "wtd_" ? "wtd" : "ptd"]?.amt) ?? 0),
     labor_pct_pre: row._tcPre?.[prefix === "" ? "day" : prefix === "wtd_" ? "wtd" : "ptd"] != null
       ? round2(Number(row._tcPre[prefix === "" ? "day" : prefix === "wtd_" ? "wtd" : "ptd"]) * 100) : null,
@@ -509,7 +510,12 @@ async function gmView(supa, user, params) {
   }
   if (!storeRow) return { error: `Store ${storeNumber} not found.`, status: 404 };
 
-  const anchorIso = params.date || (await latestBusinessDate(supa));
+  // A past week is picked by its week-ending Sunday; anchor on that week's last
+  // captured day (captures rarely land on the calendar Sunday). Otherwise a
+  // specific day, else the latest captured day.
+  const anchorIso = params.week
+    ? ((await weekLastCaptured(supa, [storeNumber], params.week)) || params.week)
+    : (params.date || (await latestBusinessDate(supa)));
   if (!anchorIso) return { store: storeRow, date: null, day: null, wtd: null, ptd: null, week: [], goal: null, notes_due: 0 };
   const anchor = parseIso(anchorIso);
   if (!anchor) return { error: "bad date", status: 400 };
