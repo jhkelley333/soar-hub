@@ -70,6 +70,12 @@ export function extractLaborRows(payload) {
       // Other Controllable Contribution (0279): cash over/short + paid outs.
       cash_over_short: numOrNull(r.cashOverShort),
       paid_out_dollars: numOrNull(r.paidOutDollars),
+      // Order Ahead + Delivery penetration (0296): net sales + denominators so
+      // the board recomputes the % from summed bases across a scope.
+      order_ahead_net_sales: numOrNull(r.orderAheadNetSales),
+      order_ahead_net_sales_denominator: numOrNull(r.orderAheadNetSalesDenominator),
+      delivery_net_sales: numOrNull(r.deliveryNetSales),
+      delivery_net_sales_denominator: numOrNull(r.deliveryNetSalesDenominator),
       // Week to Date band (labor_hours feeds the avg-wage → hours-over calc)
       wtd_net_sales: numOrNull(w?.netSales),
       wtd_prev_year_net_sales: numOrNull(w?.previousYearNetSales),
@@ -92,6 +98,10 @@ export function extractLaborRows(payload) {
       wtd_average_ticket_time: numOrNull(w?.averageTicketTime),
       wtd_cash_over_short: numOrNull(w?.cashOverShort),
       wtd_paid_out_dollars: numOrNull(w?.paidOutDollars),
+      wtd_order_ahead_net_sales: numOrNull(w?.orderAheadNetSales),
+      wtd_order_ahead_net_sales_denominator: numOrNull(w?.orderAheadNetSalesDenominator),
+      wtd_delivery_net_sales: numOrNull(w?.deliveryNetSales),
+      wtd_delivery_net_sales_denominator: numOrNull(w?.deliveryNetSalesDenominator),
       // Period to Date band
       ptd_net_sales: numOrNull(p?.netSales),
       ptd_prev_year_net_sales: numOrNull(p?.previousYearNetSales),
@@ -114,6 +124,10 @@ export function extractLaborRows(payload) {
       ptd_average_ticket_time: numOrNull(p?.averageTicketTime),
       ptd_cash_over_short: numOrNull(p?.cashOverShort),
       ptd_paid_out_dollars: numOrNull(p?.paidOutDollars),
+      ptd_order_ahead_net_sales: numOrNull(p?.orderAheadNetSales),
+      ptd_order_ahead_net_sales_denominator: numOrNull(p?.orderAheadNetSalesDenominator),
+      ptd_delivery_net_sales: numOrNull(p?.deliveryNetSales),
+      ptd_delivery_net_sales_denominator: numOrNull(p?.deliveryNetSalesDenominator),
     });
   }
   return out;
@@ -167,6 +181,26 @@ export function stripTicketCols(rows) {
   return rows.map((r) => {
     const c = { ...r };
     for (const k of TICKET_COLS_0272) delete c[k];
+    return c;
+  });
+}
+
+// Order Ahead + Delivery penetration columns added by migration 0296. Same
+// strip/retry fallback so capture keeps landing the rest until 0296 runs.
+const MIX_COLS_0296 = [
+  "order_ahead_net_sales", "order_ahead_net_sales_denominator", "delivery_net_sales", "delivery_net_sales_denominator",
+  "wtd_order_ahead_net_sales", "wtd_order_ahead_net_sales_denominator", "wtd_delivery_net_sales", "wtd_delivery_net_sales_denominator",
+  "ptd_order_ahead_net_sales", "ptd_order_ahead_net_sales_denominator", "ptd_delivery_net_sales", "ptd_delivery_net_sales_denominator",
+];
+
+export function isPreMixError(error) {
+  return !!error && /column/i.test(String(error.message)) && /order_ahead_net_sales|delivery_net_sales/.test(String(error.message));
+}
+
+export function stripMixCols(rows) {
+  return rows.map((r) => {
+    const c = { ...r };
+    for (const k of MIX_COLS_0296) delete c[k];
     return c;
   });
 }
