@@ -23,7 +23,7 @@ const fmtSignedUSD0 = (v: number | null) =>
 const fmtPct = (frac: number | null, d = 1) => (frac == null ? "—" : `${(frac * 100).toFixed(d)}%`);
 const fmtPts = (frac: number | null) => (frac == null ? "—" : `${frac >= 0 ? "+" : ""}${(frac * 100).toFixed(1)} pts`);
 const fmtHrs = (v: number | null) => (v == null ? "—" : Math.round(v).toLocaleString("en-US"));
-const fmtRate2 = (v: number | null) => (v == null ? "—" : `+${v.toFixed(2)}`); // Hrs/Unit: per-store avg of over-stores, 2 dp
+const fmtRate2 = (v: number | null) => (v == null ? "—" : `+${v.toFixed(2)}`); // Hrs/Store: per-store avg of over-stores, 2 dp
 const fmtDate = (s: string | null) =>
   s ? new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "—";
 
@@ -187,7 +187,7 @@ export function LaborV2Page() {
             <Tile label="Target %" value={fmtPct(totalBand?.targetPct ?? null)} />
             <Tile label="Variance" value={fmtPts(totalBand?.variancePts ?? null)} tone={overTone(totalBand ? (totalBand.variancePts ?? 0) > 0 : null)} />
             <Tile label="$ Over Chart" value={fmtSignedUSD0(totalBand?.dollarsOver ?? null)} sub="cost − chart $" tone={overTone(totalBand ? (totalBand.dollarsOver ?? 0) > 0 : null)} />
-            <Tile label="Hrs Over / Unit" value={fmtRate2(totalBand?.hoursOver ?? null)} sub="over-store hrs ÷ # stores" tone={overTone(totalBand ? (totalBand.hoursOver ?? 0) > 0 : null)} />
+            <Tile label="Hrs Over / Store" value={fmtRate2(totalBand?.hoursOver ?? null)} sub="over-store hrs ÷ # stores" tone={overTone(totalBand ? (totalBand.hoursOver ?? 0) > 0 : null)} />
           </div>
 
           <Card className="mt-6">
@@ -237,7 +237,7 @@ export function LaborV2Page() {
                         <Th label="Target %" k="target" sort={sort} onSort={toggleSort} right />
                         <Th label="Variance" k="variance" sort={sort} onSort={toggleSort} right />
                         <Th label="$ Over Chart" k="dollarsOver" sort={sort} onSort={toggleSort} right />
-                        <Th label="Hrs/Unit" k="hoursOver" sort={sort} onSort={toggleSort} right />
+                        <Th label="Hrs/Store" k="hoursOver" sort={sort} onSort={toggleSort} right />
                         <Th label="Sched Hrs" k="sched" sort={sort} onSort={toggleSort} right />
                         <Th label="Actual Hrs" k="actual" sort={sort} onSort={toggleSort} right />
                         <Th label="OT Hrs" k="ot" sort={sort} onSort={toggleSort} right />

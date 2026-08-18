@@ -26,7 +26,7 @@ const fmtPts = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : ""}$
 const fmtSignedUSD0 = (v: number | null) =>
   v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(v).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 })}`;
 const fmtSignedHrs = (v: number | null) => (v == null ? "—" : `${v >= 0 ? "+" : "−"}${Math.abs(Math.round(v)).toLocaleString("en-US")}`);
-const fmtRate2 = (v: number | null) => (v == null ? "—" : `+${v.toFixed(2)}`); // Hrs/Unit: per-store avg of over-stores, 2 dp (negatives hidden upstream)
+const fmtRate2 = (v: number | null) => (v == null ? "—" : `+${v.toFixed(2)}`); // Hrs/Store: per-store avg of over-stores, 2 dp (negatives hidden upstream)
 const fmtHrs = (v: number | null) => (v == null ? "—" : Math.round(v).toLocaleString("en-US"));
 const fmtDate = (s: string | null) =>
   s ? new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", year: "numeric" }) : "—";
@@ -170,7 +170,7 @@ export function LaborV2TeamPage() {
 
   // At the top level, a Company total row above the regions/districts, built
   // from the whole-scope totals so it lines up column-for-column with the rows
-  // below (Day/WTD/PTD %, Var, $ Over, Hrs/Unit, Sched/Actual/OT/Act−Sch).
+  // below (Day/WTD/PTD %, Var, $ Over, Hrs/Store, Sched/Actual/OT/Act−Sch).
   const companyRow = useMemo<TeamGroup | null>(() => {
     if (!data || !t || path.length) return null;
     return {
@@ -399,7 +399,7 @@ export function LaborV2TeamPage() {
                 <option value="var:desc">Variance ↓</option>
                 <option value="day:desc">Labor % ↓</option>
                 <option value="over:desc">$ Over ↓</option>
-                <option value="hrsover:desc">Hrs/Unit ↓</option>
+                <option value="hrsover:desc">Hrs/Store ↓</option>
                 <option value="name:asc">Name ↑</option>
               </select>
             </div>
@@ -415,7 +415,7 @@ export function LaborV2TeamPage() {
                   <SortTh label="PTD %" k="ptd" sort={sort} onSort={toggleSort} className="w-14 shrink-0" />
                   <SortTh label="Var" k="var" sort={sort} onSort={toggleSort} className="w-14 shrink-0" />
                   <SortTh label="$ Over" k="over" sort={sort} onSort={toggleSort} className="w-20 shrink-0" />
-                  <SortTh label="Hrs/Unit" k="hrsover" sort={sort} onSort={toggleSort} className="w-16 shrink-0" />
+                  <SortTh label="Hrs/Store" k="hrsover" sort={sort} onSort={toggleSort} className="w-16 shrink-0" />
                   <SortTh label="Sched" k="sched" sort={sort} onSort={toggleSort} className="w-16 shrink-0" />
                   <SortTh label="Actual" k="actual" sort={sort} onSort={toggleSort} className="w-16 shrink-0" />
                   <SortTh label="OT" k="ot" sort={sort} onSort={toggleSort} className="w-14 shrink-0" />
@@ -477,7 +477,7 @@ function SortTh({ label, k, sort, onSort, className }: {
   );
 }
 
-// The right-aligned metric columns (Day/WTD/PTD %, Var, $ Over, Hrs/Unit, then
+// The right-aligned metric columns (Day/WTD/PTD %, Var, $ Over, Hrs/Store, then
 // Sched/Actual/OT/Act−Sch), shared by group, store, and summary rows. The
 // selected period drives the bolded %-column and the derived Var/$ Over/Hrs/
 // Sched-Actual figures; all three %-columns stay visible for context.
@@ -580,7 +580,7 @@ function MobileRow({ row, isStore, period, summary, onDrill }: {
       </button>
       <div className="grid grid-cols-3 gap-2 border-t border-zinc-100 px-3.5 py-2">
         <MobileMetric label="$ Over" value={fmtSignedUSD0(b.dollars_over_chart)} tone={over ? "text-red-700" : undefined} />
-        <MobileMetric label="Hrs/Unit" value={fmtRate2(b.hours_over_chart)} />
+        <MobileMetric label="Hrs/Store" value={fmtRate2(b.hours_over_chart)} />
         <MobileMetric label="Sched→Act" value={`${fmtHrs(b.scheduled_hours)}→${fmtHrs(b.actual_hours)}`} />
       </div>
       {store && open && store.note && (
