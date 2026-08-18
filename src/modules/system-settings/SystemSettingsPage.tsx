@@ -72,6 +72,7 @@ const GROUPS: Group[] = [
       { title: "Bulk User Import", desc: "Invite or update team members from a CSV.", icon: Upload, roles: ["admin"], to: "/admin/bulk-import" },
       { title: "Bulk Org Import", desc: "Import or update the org tree from a CSV.", icon: Upload, roles: ["admin"], to: "/admin/bulk-org-import" },
       { title: "Cultural Index Import", desc: "Tie Culture Index traits to profiles from the survey CSV — confirms close names.", icon: Fingerprint, roles: ["admin"], to: "/admin/cultural-index-import" },
+      { title: "Ranker History Backfill", desc: "Migrate v1 sheet + v2 database ranker weeks into one table for cross-week analysis.", icon: Gauge, roles: ["admin"], to: "/admin/ranker-backfill" },
       { title: "Acquisitions", desc: "Stage an upcoming acquisition's stores, then merge them live across the hub.", icon: Building2, roles: ["vp", "coo", "admin"], to: "/admin/acquisitions" },
     ],
   },
