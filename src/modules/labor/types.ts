@@ -21,6 +21,7 @@ export interface LaborBand {
   hours_over_chart: number | null;
   chart_dollars_allowed: number | null;
   avg_wage?: number | null;        // labor cost ÷ labor hours (Labor v2 only)
+  overtime_hours?: number | null;  // OT hours in this band (Labor v2)
   training_credit?: number | null; // approved training $ credited out of this band (Labor v2)
   labor_pct_pre?: number | null;   // labor % before the training credit (Labor v2)
   status: ChartStatus;
