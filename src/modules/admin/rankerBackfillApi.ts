@@ -4,6 +4,7 @@ import { supabase } from "@/lib/supabase";
 
 const FN = "/.netlify/functions/ranker-backfill";
 const FN_BG = "/.netlify/functions/ranker-backfill-background";
+const FN_RESCORE = "/.netlify/functions/ranker-rescore-background";
 
 export interface BackfillStatus {
   rows_total: number;
@@ -37,4 +38,10 @@ export async function fetchBackfillStatus(): Promise<BackfillStatus> {
 // Fire-and-forget — the background job returns 202 immediately and keeps running.
 export async function startBackfill(): Promise<void> {
   await fetch(FN_BG, { method: "POST", headers: await authHeaders(), body: "{}" });
+}
+
+// Re-run every completed v2 week with the current scoring formula, then refresh
+// the history. Background; returns 202 immediately.
+export async function startRescore(): Promise<void> {
+  await fetch(FN_RESCORE, { method: "POST", headers: await authHeaders(), body: "{}" });
 }

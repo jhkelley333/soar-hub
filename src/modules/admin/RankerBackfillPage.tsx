@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Database, Play, RefreshCw } from "lucide-react";
+import { Database, Play, RefreshCw, Recycle } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody, CardHeader } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
 import { useToast } from "@/shared/ui/Toaster";
-import { fetchBackfillStatus, startBackfill } from "./rankerBackfillApi";
+import { fetchBackfillStatus, startBackfill, startRescore } from "./rankerBackfillApi";
 
 export function RankerBackfillPage() {
   const toast = useToast();
@@ -37,6 +37,19 @@ export function RankerBackfillPage() {
     }
   }
 
+  async function rescore() {
+    if (!window.confirm(
+      "Re-run every completed v2 week with the current scoring formula? This changes stored ranks for those weeks (v1 sheet weeks are untouched) and refreshes the history. It runs in the background and may take several minutes.",
+    )) return;
+    try {
+      await startRescore();
+      setRunning(true);
+      toast.push("Rescore started — re-running v2 weeks, then refreshing history. This takes a few minutes.", "success");
+    } catch (e) {
+      toast.push(e instanceof Error ? e.message : "Couldn't start rescore.", "error");
+    }
+  }
+
   const s = statusQ.data;
 
   return (
@@ -49,6 +62,10 @@ export function RankerBackfillPage() {
             <Button variant="ghost" size="sm" onClick={() => statusQ.refetch()} disabled={statusQ.isFetching}>
               <RefreshCw className={`mr-1 h-3.5 w-3.5 ${statusQ.isFetching ? "animate-spin" : ""}`} strokeWidth={2} />
               Refresh
+            </Button>
+            <Button variant="secondary" onClick={rescore} disabled={running}>
+              <Recycle className="mr-1 h-4 w-4" strokeWidth={2} />
+              Rescore v2 weeks
             </Button>
             <Button onClick={run} disabled={running}>
               <Play className="mr-1 h-4 w-4" strokeWidth={2} />
@@ -66,6 +83,17 @@ export function RankerBackfillPage() {
             <li>Writes one row per store per week into <span className="font-mono text-xs">ranker_week_history</span> — rank + GM, tagged by source.</li>
             <li><b>Idempotent</b> — safe to re-run any time; it refreshes existing rows and adds new weeks.</li>
             <li>Runs in the background (it's a lot of data), so this page just watches the totals climb.</li>
+          </ul>
+        </CardBody>
+      </Card>
+
+      <Card className="mb-6">
+        <CardHeader title="Rescore v2 weeks" description="Use after a scoring-formula change." />
+        <CardBody>
+          <ul className="list-disc space-y-1 pl-5 text-sm text-ink-muted">
+            <li>Re-runs the ranking engine for every completed v2 week from its stored source files, so past weeks pick up the <b>current</b> scoring — then refreshes the DB rows in the history.</li>
+            <li><b>Changes stored ranks</b> for those weeks (and the Ranker's own past weeks). <b>v1 sheet weeks are untouched</b> — they carry the sheet's own ranks, not this engine's.</li>
+            <li>Run this once after the per-week Hrs/Store scoring change so the Ranker history and Trait Analytics reflect it. Then the row counts below refresh.</li>
           </ul>
         </CardBody>
       </Card>
