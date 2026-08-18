@@ -151,6 +151,12 @@ export function DoPlaybookPage() {
                 />
                 <CardBody>
                   <p className="text-sm leading-relaxed text-ink-muted">{content.overview}</p>
+                  {content.truncated && (
+                    <p className="mt-2 text-xs text-amber-700">
+                      Large team — coached the first {content.coached_count} of {content.team_count}.
+                      Narrow your view or coach in groups for the rest.
+                    </p>
+                  )}
                 </CardBody>
               </Card>
 
