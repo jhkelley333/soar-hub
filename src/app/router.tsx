@@ -25,7 +25,6 @@ import { NsoPlannerPage } from "@/modules/nso/NsoPlannerPage";
 import { SiteAuditPage } from "@/modules/site-audit/SiteAuditPage";
 import { BusinessDisruptionsPage } from "@/modules/business-disruptions/BusinessDisruptionsPage";
 import { LaborPage } from "@/modules/labor/LaborPage";
-import { LaborSyncPage } from "@/modules/labor/LaborSyncPage";
 import { ResourcesPage } from "@/modules/resources/ResourcesPage";
 import { ContactsPage } from "@/modules/contacts/ContactsPage";
 import { TeamPage } from "@/modules/team/TeamPage";
@@ -237,14 +236,6 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <LaborPage />
-          </ProtectedRoute>
-        ),
-      },
-      {
-        path: "admin/labor-sync",
-        element: (
-          <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
-            <LaborSyncPage />
           </ProtectedRoute>
         ),
       },

@@ -278,7 +278,6 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/admin/role-access": "ADMIN",
   "/admin/paf-config": "ADMIN",
   "/admin/manuals": "ADMIN",
-  "/admin/labor-sync": "ADMIN",
   "/admin/weather-sync": "ADMIN",
 };
 

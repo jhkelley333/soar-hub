@@ -6,7 +6,7 @@
 import { Link } from "react-router-dom";
 import {
   ArrowRight, Network, Users, MapPin, KeyRound, Globe, Flag, QrCode, Link2,
-  RefreshCw, CloudSun, BarChart3, LayoutGrid, Gauge, ScrollText, Layers, Upload,
+  CloudSun, BarChart3, LayoutGrid, Gauge, ScrollText, Layers, Upload,
   Settings, ClipboardCheck, ListChecks, BookMarked, Clock, TrendingDown, Building2,
   Fingerprint, type LucideIcon,
 } from "lucide-react";
@@ -50,7 +50,6 @@ const GROUPS: Group[] = [
   {
     title: "Back Up Syncs",
     tools: [
-      { title: "Labor Sync", desc: "Manually pull the labor feed.", icon: RefreshCw, roles: ["vp", "coo", "admin"], to: "/admin/labor-sync" },
       { title: "Weather Sync", desc: "Refresh weather data on demand.", icon: CloudSun, roles: ["admin"], to: "/admin/weather-sync" },
     ],
   },
