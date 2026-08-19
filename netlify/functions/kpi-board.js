@@ -415,6 +415,47 @@ export const handler = async (event) => {
       .map((n) => ({ number: n, name: orgMap.get(n)?.store || `#${n}`, region: orgMap.get(n)?.region || null }))
       .sort((a, b) => a.number.localeCompare(b.number, undefined, { numeric: true }));
 
+    // Cash flags — stores in the caller's scope that are cash-short or ran high
+    // paid-outs this week (WTD, from the KPI feed). Powers the mobile "needs
+    // review" card. GM → own store; DO+ → their org; org-wide → all stores.
+    if (params.action === "cash-flags") {
+      const mine = await callerStoreNumbers(supa, user); // Set, or null for org-wide
+      const scope = mine ? numbers.filter((n) => mine.has(n)) : numbers;
+      const empty = { ok: true, date: anchor, counts: { flagged: 0, short: 0, paidout: 0 }, stores: [] };
+      if (!scope.length) return respond(200, empty);
+      const { data: rows } = await supa.from("labor_v2_daily")
+        .select("store_number, wtd_cash_over_short, wtd_paid_out_dollars")
+        .eq("business_date", anchor).in("store_number", scope);
+      const SHORT_FLAG = 10;    // net short more than $10 (WTD)
+      const PAIDOUT_FLAG = 150; // paid-outs over $150 for the week
+      const out = [];
+      for (const r of rows || []) {
+        const sn = String(r.store_number);
+        const cos = numv(r.wtd_cash_over_short); // negative = short
+        const po = numv(r.wtd_paid_out_dollars);
+        const shortFlag = cos < -SHORT_FLAG;
+        const paidoutFlag = po > PAIDOUT_FLAG;
+        if (!shortFlag && !paidoutFlag) continue;
+        const o = orgMap.get(sn);
+        out.push({
+          store_number: sn,
+          store_name: o?.store || `#${sn}`,
+          region: o?.region || null,
+          cash_over_short: Math.round(cos),
+          paid_out: Math.round(po),
+          short_flag: shortFlag,
+          paidout_flag: paidoutFlag,
+        });
+      }
+      // Worst first: most short, then highest paid-outs.
+      out.sort((a, b) => (a.cash_over_short - b.cash_over_short) || (b.paid_out - a.paid_out));
+      return respond(200, {
+        ok: true, date: anchor,
+        counts: { flagged: out.length, short: out.filter((s) => s.short_flag).length, paidout: out.filter((s) => s.paidout_flag).length },
+        stores: out,
+      });
+    }
+
     let scopeStores = numbers;
     if (level === "mine") {
       // null = org-wide (whole company); a Set = the caller's store numbers.
