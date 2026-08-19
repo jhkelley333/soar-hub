@@ -818,6 +818,7 @@ export function AddOrgNodeModal({
   const [city, setCity] = useState("");
   const [state, setState] = useState("");
   const [zip, setZip] = useState("");
+  const [active, setActive] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -830,6 +831,7 @@ export function AddOrgNodeModal({
     setCity("");
     setState("");
     setZip("");
+    setActive(true);
     setError(null);
   }, [open, target]);
 
@@ -857,6 +859,7 @@ export function AddOrgNodeModal({
         number: number.trim(),
         name: name.trim(),
         district_id: target.district_id,
+        is_active: active,
         phone: normalizedPhone,
         address: address.trim() || null,
         city: city.trim() || null,
@@ -884,7 +887,12 @@ export function AddOrgNodeModal({
     try {
       await create.mutateAsync(input);
       await qc.refetchQueries({ queryKey: ["org-tree"] });
-      toast.push(`${KIND_LABEL[target.kind]} created.`, "success");
+      toast.push(
+        target.kind === "store" && !active
+          ? 'Store added as inactive. Turn on "Show inactive" to see it; activate it from Edit when it opens.'
+          : `${KIND_LABEL[target.kind]} created.`,
+        "success",
+      );
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Create failed.");
@@ -991,6 +999,13 @@ export function AddOrgNodeModal({
                   disabled={!isAdmin}
                 />
               </div>
+            </div>
+            <div className="rounded-lg border border-zinc-200 bg-zinc-50 px-3 py-2.5">
+              <Toggle label="Active (open for business)" checked={active} onChange={setActive} disabled={!isAdmin} />
+              <p className="mt-1 pl-6 text-xs text-zinc-500">
+                Uncheck to add a store that hasn't opened yet. It stays in the org chart (greyed out) and out of active
+                reports until you activate it — flip it on from Edit when it opens.
+              </p>
             </div>
           </>
         ) : (
