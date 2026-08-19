@@ -52,9 +52,13 @@ import { WeatherWidget } from "./WeatherWidget";
 import { MetricsThatMatter } from "./MetricsThatMatter";
 import { MessageBoard } from "@/modules/messages/MessageBoard";
 
-// Roles the KPI board endpoint authorizes (kpi-board BOARD_ROLES). GMs/below
-// would 403, so the Metrics That Matter band only renders for these.
-const BOARD_ROLES = new Set<UserRole>(["do", "sdo", "rvp", "vp", "coo", "admin"]);
+// Roles the KPI board endpoint authorizes (kpi-board BOARD_ROLES). Store-level
+// leadership (GM + assistant/shift managers) see it scoped to their own store;
+// DO+ see their org rollup.
+const BOARD_ROLES = new Set<UserRole>([
+  "do", "sdo", "rvp", "vp", "coo", "admin",
+  "gm", "associate_manager", "first_assistant_manager", "shift_manager", "crew_leader",
+]);
 const SDO_REVIEW_ROLES = new Set<UserRole>(["sdo", "rvp", "vp", "coo", "admin"]);
 const PTO_VIEW_ROLES = new Set<UserRole>(["gm", "do", "sdo", "rvp", "vp", "coo", "admin"]);
 const CASH_ROLES = new Set<UserRole>([
