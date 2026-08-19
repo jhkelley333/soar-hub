@@ -175,6 +175,8 @@ interface CreateStoreInput extends BaseFields {
   number: string;
   name: string;
   district_id: string;
+  /** Defaults to active on the server; set false to add a store that hasn't opened yet. */
+  is_active?: boolean;
   phone?: string | null;
   email?: string | null;
   address?: string | null;
