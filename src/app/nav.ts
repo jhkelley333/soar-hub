@@ -166,7 +166,7 @@ export const NAV: NavItem[] = [
   // Pull Log, Bulk Attributes, Feature Flags, Role/Region Access now live behind
   // System Settings (/admin/system-settings). Metrics Board stays in the sidebar
   // for the lower roles that can't see the hub; vp/coo/admin reach it in the hub.
-  { to: "/admin/metrics-board", label: "Metrics Board", icon: LayoutGrid, roles: ["do", "sdo", "rvp"] },
+  { to: "/admin/metrics-board", label: "Metrics Board", icon: LayoutGrid, roles: ["gm", "associate_manager", "first_assistant_manager", "shift_manager", "crew_leader", "do", "sdo", "rvp"] },
   // Hours of Operation — SDO/RVP reconcile their stores here; vp/coo/admin reach
   // it via System Settings, so the sidebar entry is scoped to the lower roles.
   { to: "/admin/hours-of-operation", label: "Hours of Operation", icon: Clock, roles: ["sdo", "rvp"] },

@@ -14,7 +14,13 @@ import { loadLaborCredits, applyCreditsToRows } from "./_lib/trainingCredit.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const BOARD_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
+// Read access to the board. Store-level leadership (GM + assistant/shift
+// managers) see it scoped to their own store; DO+ see their org rollup. Admin
+// sub-actions (targets / backfill / sync) still self-check role === "admin".
+const BOARD_ROLES = new Set([
+  "do", "sdo", "rvp", "vp", "coo", "admin",
+  "gm", "associate_manager", "first_assistant_manager", "shift_manager", "crew_leader",
+]);
 const DAY = 86400000;
 const numv = (v) => (typeof v === "number" && isFinite(v) ? v : Number.isFinite(Number(v)) ? Number(v) : 0);
 const parseIso = (s) => (s && /^\d{4}-\d{2}-\d{2}$/.test(s) ? Date.parse(`${s}T00:00:00Z`) : null);

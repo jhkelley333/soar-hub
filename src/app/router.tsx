@@ -258,7 +258,7 @@ export const router = createBrowserRouter([
       {
         path: "admin/metrics-board",
         element: (
-          <ProtectedRoute requireRoles={["do", "sdo", "rvp", "vp", "coo", "admin"]}>
+          <ProtectedRoute requireRoles={["gm", "associate_manager", "first_assistant_manager", "shift_manager", "crew_leader", "do", "sdo", "rvp", "vp", "coo", "admin"]}>
             <MetricsBoardPage />
           </ProtectedRoute>
         ),

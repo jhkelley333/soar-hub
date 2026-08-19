@@ -53,9 +53,13 @@ const COACH_ROLES = new Set([
   "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin",
 ]);
 
-// Metrics That Matter is a DO-and-above board. Leaders get the compact metric
-// tiles up top; GMs/crew keep the quick-action grid instead.
-const BOARD_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
+// Metrics That Matter roles. Store-level leadership (GM + assistant/shift
+// managers) see their store's tiles up top; DO+ see their org rollup. Front-line
+// crew (crew_member / carhop) keep the quick-action grid instead.
+const BOARD_ROLES = new Set([
+  "do", "sdo", "rvp", "vp", "coo", "admin",
+  "gm", "associate_manager", "first_assistant_manager", "shift_manager", "crew_leader",
+]);
 // Org-wide roles see the whole company; scoped leaders see their own stores.
 const ORG_WIDE = new Set(["admin", "vp", "coo"]);
 
