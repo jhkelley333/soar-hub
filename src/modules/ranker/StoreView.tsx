@@ -46,6 +46,23 @@ const KPI_LIST: { label: string; key: MetricKey }[] = [
   { label: "Calls /10k", key: "callsPer10k" },
 ];
 
+// Plain-language "what is this?" for each scorecard metric — written for someone
+// who's never seen the term. Shown via the ⓘ next to each tile's label.
+const METRIC_HELP: Partial<Record<MetricKey, string>> = {
+  weeklySales: "Total net sales the store rang up this week — the top line, before any costs.",
+  vsLastYear: "This week's sales vs. the same week a year ago. Positive = growing, negative = down vs last year.",
+  cogsEff: "Cost of Goods Sold efficiency — how well the store controlled food/product cost against what it should have used. About 96–101% is the healthy band; well over 101% can mean under-portioning or miscounts, not a win.",
+  annualizedFcMiss: "Food-cost miss stretched to a full year — the dollars the store is on pace to lose annually from running food cost above target. Lower is better; $0 is on target.",
+  laborPct: "Labor cost as a percent of sales, measured against the store's target. Lower is generally better, but too low can mean it was understaffed.",
+  varToChart: "How far actual labor ran from the labor 'chart' — the hours the sales volume should have needed. Positive = over the plan (overspent hours).",
+  bscTraining: "Balanced Scorecard training completion — the share of required training the team has finished. Higher is better.",
+  onTimeTickets: "Share of orders delivered within the target time. Higher = faster, more consistent service.",
+  vogWeek: "Voice of Guest for the week — the guest-satisfaction survey score (likely-to-return top box). Higher is better.",
+  vogCount: "How many guest surveys came in this week. More responses make the VOG score more reliable.",
+  complaints: "Number of guest complaints logged this week. Lower is better.",
+  callsPer10k: "Complaint calls per 10,000 transactions — complaints adjusted for how busy the store is, so big and small stores compare fairly. Lower is better.",
+};
+
 export function StoreView({
   week,
   store,
@@ -303,6 +320,7 @@ export function StoreView({
                 delta={deltaText(k.key, cur, prior)}
                 tone={tone}
                 series={series}
+                info={METRIC_HELP[k.key]}
               />
             );
           })}
