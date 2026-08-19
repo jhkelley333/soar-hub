@@ -63,6 +63,8 @@ const STORE_COLS: Col[] = [
   { group: "Info Only", header: "DOH", key: "doh", fmt: "num1" },
   { group: "Info Only", header: "Ending $", key: "endingDollars", fmt: "money" },
   { group: "Info Only", header: "$ Over Goal", key: "dollarsOverGoal", fmt: "money" },
+  { group: "Info Only", header: "Cash O/S (WTD)", key: "cashOverShort", fmt: "money" },
+  { group: "Info Only", header: "Paid Outs (WTD)", key: "paidOut", fmt: "money" },
 ];
 
 // Leader columns (DO / SDO / RVP / Company) — a COMPLETE mirror of the store

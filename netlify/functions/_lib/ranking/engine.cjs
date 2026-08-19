@@ -246,6 +246,8 @@ function computeStorePtd(st, cfg, issues) {
   r.msScore = isNum(p.msScore) ? p.msScore : 0;   // BK
   r.voids = isNum(p.voids) ? p.voids : null;      // BL
   r.voidsPct = (isNum(r.voids) && isNum(r.sales) && r.sales !== 0) ? r.voids / r.sales : null; // BM
+  r.cashOverShort = isNum(p.cashOverShort) ? p.cashOverShort : null; // info: WTD register short/over
+  r.paidOut = isNum(p.paidOut) ? p.paidOut : null;                    // info: WTD paid-outs
   // BN = AVERAGE(AY,AV,AR,AO) — errors propagate
   r.totalBsc = (isNum(r.ecosureScore) && isNum(r.complaintsScore) && isNum(r.onTimeScore) && isNum(r.bscScore))
     ? (r.ecosureScore + r.complaintsScore + r.onTimeScore + r.bscScore) / 4 : null;
@@ -356,6 +358,8 @@ function computeStoreWtd(st, cfg, issues) {
   // Information only
   r.voids = isNum(w.voids) ? w.voids : null;                           // AZ
   r.voidsPct = (isNum(r.voids) && isNum(r.sales) && r.sales !== 0) ? r.voids / r.sales : null; // BA
+  r.cashOverShort = isNum(w.cashOverShort) ? w.cashOverShort : null;   // info: WTD register short/over
+  r.paidOut = isNum(w.paidOut) ? w.paidOut : null;                      // info: WTD paid-outs
   r.doh = isNum(w.doh) ? w.doh : null;                                 // BB
   r.dohGoal = isNum(w.dohGoal) ? w.dohGoal : null;                     // BC
   r.endingDollars = isNum(w.endingDollars) ? w.endingDollars : null;   // BD
@@ -504,6 +508,8 @@ function aggregatePtd(name, members, opts, cfg, inputs) {
     r.msScore = msW === null ? 0 : msW; // BK count-weighted, IFERROR -> 0
   }
   r.voids = sumPropagate(members, function (m) { return m.voids; });   // BL (SUMIF, errors propagate)
+  r.cashOverShort = sumPropagate(members, function (m) { return m.cashOverShort; }); // info: WTD cash short/over
+  r.paidOut = sumPropagate(members, function (m) { return m.paidOut; });              // info: WTD paid-outs
   r.voidsPct = (isNum(r.voids) && isNum(r.sales) && r.sales !== 0) ? r.voids / r.sales : null; // BM
   r.totalBsc = avgBy(members, function (m) { return m.totalBsc; });          // BN
   r.doh = isNum(roll.doh) ? roll.doh : avgBy(members, function (m) { return m.doh; });          // BP
@@ -594,6 +600,8 @@ function companyPtd(sdoRows, storeRows, cfg, inputs) {
     ? weightedBy(storeRows, function (m) { return m.msCount; }, function (m) { return m.msScore; }, r.msCount)
     : null; // BK352
   r.voids = sumPropagate(sdoRows, function (m) { return m.voids; }); // BL352 (errors propagate)
+  r.cashOverShort = sumPropagate(sdoRows, function (m) { return m.cashOverShort; }); // info: WTD cash short/over
+  r.paidOut = sumPropagate(sdoRows, function (m) { return m.paidOut; });              // info: WTD paid-outs
   r.voidsPct = (isNum(r.voids) && r.sales !== 0) ? r.voids / r.sales : null;
   r.totalBsc = avgBy(sdoRows, function (m) { return m.totalBsc; }); // BN352 over SDO
   r.doh = isNum(roll.doh) ? roll.doh : avgBy(storeRows, function (m) { return m.doh; });
@@ -680,6 +688,8 @@ function aggregateWtd(name, members, opts, cfg, inputs) {
   r.totalPoints = (isNum(r.finScore) && isNum(r.opsScore)) ? r.finScore + r.opsScore : null; // I
 
   r.voids = sumPropagate(members, function (m) { return m.voids; });  // AZ (errors propagate)
+  r.cashOverShort = sumPropagate(members, function (m) { return m.cashOverShort; }); // info: WTD cash short/over
+  r.paidOut = sumPropagate(members, function (m) { return m.paidOut; });              // info: WTD paid-outs
   r.voidsPct = (isNum(r.voids) && r.sales !== 0) ? r.voids / r.sales : null; // BA
   r.doh = isNum(roll.doh) ? roll.doh : avgBy(members, function (m) { return m.doh; });          // BB
   r.dohGoal = isNum(roll.dohGoal) ? roll.dohGoal : avgBy(members, function (m) { return m.dohGoal; }); // BC
@@ -751,6 +761,8 @@ function companyWtd(sdoRows, storeRows, cfg, inputs) {
 
   r.voids = sumPropagate(sdoRows, function (m) { return m.voids; });
   r.voidsPct = (isNum(r.voids) && r.sales !== 0) ? r.voids / r.sales : null;
+  r.cashOverShort = sumPropagate(sdoRows, function (m) { return m.cashOverShort; }); // info: WTD cash short/over
+  r.paidOut = sumPropagate(sdoRows, function (m) { return m.paidOut; });              // info: WTD paid-outs
   r.doh = isNum(roll.doh) ? roll.doh : avgBy(storeRows, function (m) { return m.doh; });
   r.dohGoal = isNum(roll.dohGoal) ? roll.dohGoal : avgBy(storeRows, function (m) { return m.dohGoal; });
   r.endingDollars = avgBy(storeRows, function (m) { return m.endingDollars; }); // BD354 = AVERAGE(stores)

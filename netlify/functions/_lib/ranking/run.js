@@ -102,6 +102,10 @@ function bandInput(r, p, ix, fcTarget) {
     fcMiss: ix ? fcMissVsTarget(ix, fcTarget) : 0,
     onTimePct: isFinite(otDen) && otDen > 0 && isFinite(otNum) ? otNum / otDen : null,
     voids: numOrNull(r[p + "void_total"]),
+    // Cash reconciles weekly, so always the WEEK-TO-DATE figure regardless of
+    // the band — an info-only readout of register short/over + paid-outs.
+    cashOverShort: numOrNull(r["wtd_cash_over_short"]),
+    paidOut: numOrNull(r["wtd_paid_out_dollars"]),
     callsPer10k: COMPLAINTS_HOLD_PLACEHOLDER,                 // B6: on hold -> neutral 3 at every tier
     ecosure: null, vogScore: null, vogResponses: null,        // parsers not wired yet
     totalTrainingPct: null, msCount: null, msScore: null,
