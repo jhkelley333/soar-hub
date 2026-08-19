@@ -125,6 +125,8 @@ const STORE_COLS: Col[] = [
   { g: "info", label: "DOH", key: "doh", kind: "num1" },
   { g: "info", label: "Ending $", key: "endingDollars", kind: "money" },
   { g: "info", label: "$ over goal", key: "dollarsOverGoal", kind: "money" },
+  { g: "info", label: "Cash O/S (WTD)", key: "cashOverShort", kind: "money" },
+  { g: "info", label: "Paid outs (WTD)", key: "paidOut", kind: "money" },
 ];
 
 // Leaders (DO / SDO / RVP / Entity / Company) carry every store metric — the
@@ -225,6 +227,8 @@ const METRIC_INFO: Record<string, { desc: string; src?: string }> = {
   doh: { desc: "Days On Hand — how many days of inventory the store is holding.", src: "Inventory Expressway" },
   endingDollars: { desc: "Ending inventory value for the week.", src: "Inventory Expressway" },
   dollarsOverGoal: { desc: "Inventory dollars above the goal level.", src: "Inventory Expressway" },
+  cashOverShort: { desc: "Week-to-date register cash over/short. Negative = short (cash missing); positive = over. Always the week's figure, since cash reconciles weekly.", src: "KPI feed" },
+  paidOut: { desc: "Week-to-date paid-outs — cash taken from the register for approved expenses. Watch for high totals.", src: "KPI feed" },
 };
 
 function cellValue(r: RankingResultRow, c: Col): unknown {
@@ -836,6 +840,7 @@ const DETAIL_LABELS: [string, string, (v: unknown) => string][] = [
   ["totalTrainingPct", "Training %", fmtPct1], ["msCount", "Shops", fmtInt], ["msScore", "Shop avg", fmtPct1],
   ["voids", "Voids $", fmtMoney], ["voidsPct", "Voids %", fmtPct1], ["doh", "DOH", fmtNum1],
   ["endingDollars", "Ending $", fmtMoney], ["dollarsOverGoal", "$ over goal", fmtMoney],
+  ["cashOverShort", "Cash O/S (WTD)", fmtMoney], ["paidOut", "Paid outs (WTD)", fmtMoney],
 ];
 function DetailGrid({ m }: { m: RankMetrics }) {
   return (
