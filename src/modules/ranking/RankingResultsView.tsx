@@ -5,7 +5,7 @@
 
 import { Fragment, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Download, Play, RefreshCw } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Download, Info, Play, RefreshCw } from "lucide-react";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
 import { Button } from "@/shared/ui/Button";
@@ -150,6 +150,83 @@ const SOURCE_LABEL: Record<string, string> = {
   shops: "Mystery shops", bsc: "BSC Training", totzone: "TotZone", complaints: "Complaints",
 };
 
+// ── Column guide — plain-language "what is this + where's it from" ──────
+// Written for someone who's never seen the ranker. GROUP_INFO explains each
+// colored band; METRIC_INFO explains each column and names its data source.
+const GROUP_INFO: Record<string, string> = {
+  id: "Who the row is and how it placed — rank, store/leader identity, and the total ranker points that decide the order.",
+  sales: "Top-line business: how much the store sold and whether it's growing vs. a year ago. Higher is better.",
+  fc: "Food cost control — how well actual product cost matched what it should have been, and the dollars lost when it didn't.",
+  labor: "Labor control — labor as a share of sales vs. the chart (the hours the sales volume should have needed) and the dollars/hours run over.",
+  fin: "The two money leaks combined — food cost + labor — as one financial-miss number.",
+  ops: "How well the store runs day to day: guest satisfaction, speed, food safety, training and complaints.",
+  info: "Reference numbers that aren't scored but help explain a result — voids and inventory position.",
+};
+
+// order the guide walks the bands in
+const GUIDE_ORDER = ["id", "sales", "fc", "labor", "fin", "ops", "info"];
+
+// Per-column help. `src` names where the number originates. Keyed by Col.key;
+// leader-only id keys (name/storeCount) are covered too.
+const METRIC_INFO: Record<string, { desc: string; src?: string }> = {
+  rank: { desc: "Where this row placed overall this week — 1 is best. Driven by total points." },
+  __store: { desc: "Store number + city. Click the row for the full store dashboard." },
+  name: { desc: "The leader (DO / SDO / RVP) or entity this row rolls up." },
+  storeCount: { desc: "How many stores roll into this leader's number." },
+  gm: { desc: "General manager running the store." },
+  totalPoints: { desc: "Sum of every pillar's ranker points — the score the ranking is sorted by.", src: "Ranker" },
+  // Sales
+  sales: { desc: "Net sales rung up this week.", src: "Skunkworks API" },
+  lySales: { desc: "Net sales for the same week last year.", src: "Skunkworks API" },
+  pctVsLy: { desc: "Sales growth vs. the same week last year. Positive = growing.", src: "Skunkworks API" },
+  tickets: { desc: "Transaction (guest) count this week.", src: "Skunkworks API" },
+  lyTickets: { desc: "Transactions the same week last year.", src: "Skunkworks API" },
+  ticketsVsLyPct: { desc: "Traffic trend vs. last year (ticket count).", src: "Skunkworks API" },
+  salesScore: { desc: "Ranker points earned for the Sales pillar.", src: "Ranker" },
+  // Food cost
+  cogsEff: { desc: "Cost of Goods Sold efficiency — actual product cost vs. what it should have used. About 96–101% is healthy; well over that can mean under-portioning or miscounts.", src: "Inventory Expressway" },
+  fcMiss: { desc: "Dollars over the food-cost target this week.", src: "Inventory Expressway" },
+  fcAnnualized: { desc: "This week's food-cost miss projected out to a full year.", src: "Inventory Expressway (derived)" },
+  fcScore: { desc: "Ranker points earned for Food Cost.", src: "Ranker" },
+  // Labor
+  laborPct: { desc: "Labor cost as a percent of sales.", src: "KPI feed / Labor report" },
+  ptoPct: { desc: "Paid-time-off hours credited out of labor, as a %.", src: "Labor credits" },
+  chart: { desc: "The labor % the chart allows for this sales volume — the target.", src: "KPI feed" },
+  varianceToChart: { desc: "How far actual labor % ran from the chart. Positive = over the plan.", src: "Derived" },
+  laborMiss: { desc: "Dollars over the labor chart this week.", src: "Labor report" },
+  hoursOver: { desc: "Hours run over the labor chart.", src: "Labor report" },
+  avgHoursOverPerStore: { desc: "Hours over chart per store, per week — so a DO/RVP with many stores compares fairly to a single store.", src: "Labor report (derived)" },
+  laborAnnualized: { desc: "This week's labor miss projected out to a full year.", src: "Labor report (derived)" },
+  laborScore: { desc: "Ranker points earned for Labor.", src: "Ranker" },
+  // Financial
+  finMiss: { desc: "Food-cost miss + labor miss combined, this week.", src: "Derived" },
+  finAnnualized: { desc: "Combined food + labor miss projected to a full year.", src: "Derived" },
+  finScore: { desc: "Ranker points for the Financial pillar.", src: "Ranker" },
+  // Operations
+  bscTrainingPct: { desc: "Balanced Scorecard training completion.", src: "BSC Training" },
+  bscScore: { desc: "Ranker points for BSC training.", src: "Ranker" },
+  onTimePct: { desc: "Share of orders delivered within the target time.", src: "Skunkworks API" },
+  onTimeScore: { desc: "Ranker points for on-time service.", src: "Ranker" },
+  lateSendsPct: { desc: "Share of orders that blew the critical time threshold. Lower is better.", src: "Skunkworks API" },
+  callsPer10k: { desc: "Guest complaint calls per 10,000 transactions — complaints sized to how busy the store is.", src: "Complaints" },
+  complaintsScore: { desc: "Ranker points for complaints (fewer = more points).", src: "Ranker" },
+  ecosure: { desc: "EcoSure food-safety audit score.", src: "EcoSure" },
+  ecosureScore: { desc: "Ranker points for the EcoSure audit.", src: "Ranker" },
+  vog: { desc: "Voice of Guest — guest satisfaction / likely-to-return.", src: "VOG" },
+  vogScore: { desc: "Ranker points for VOG.", src: "Ranker" },
+  totalTrainingPct: { desc: "Overall training completion across the team.", src: "TotZone" },
+  totalTrainingScore: { desc: "Ranker points for training.", src: "Ranker" },
+  msCount: { desc: "How many mystery shops came in.", src: "Mystery shops" },
+  msScore: { desc: "Average mystery-shop score.", src: "Mystery shops" },
+  opsScore: { desc: "Total Operations points across all the ops metrics.", src: "Ranker" },
+  // Info only
+  voids: { desc: "Dollar value of voided transactions.", src: "Skunkworks API" },
+  voidsPct: { desc: "Voids as a percent of sales.", src: "Skunkworks API" },
+  doh: { desc: "Days On Hand — how many days of inventory the store is holding.", src: "Inventory Expressway" },
+  endingDollars: { desc: "Ending inventory value for the week.", src: "Inventory Expressway" },
+  dollarsOverGoal: { desc: "Inventory dollars above the goal level.", src: "Inventory Expressway" },
+};
+
 function cellValue(r: RankingResultRow, c: Col): unknown {
   if (c.key === "rank") return r.rank;
   if (c.key === "totalPoints") return r.total_points;
@@ -239,6 +316,7 @@ export function RankingResultsView() {
   const [openRow, setOpenRow] = useState<string | null>(null);
   const [modalRow, setModalRow] = useState<RankingResultRow | null>(null); // store dashboard popup
   const [showIssues, setShowIssues] = useState(false); // run-notes panel, collapsed by default
+  const [guideOpen, setGuideOpen] = useState(false); // "what do these columns mean" legend
   // Selected week: null = newest. The picker spans hub runs AND sheet-era
   // legacy weeks (before the P7W2 cutover); legacy weeks are store-tier only.
   const [weekKey, setWeekKey] = useState<string | null>(null);
@@ -543,6 +621,10 @@ export function RankingResultsView() {
       <div className="flex flex-wrap items-center gap-2">
         <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Store, city or GM"
           className="w-56 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm focus:border-accent focus:outline-none" />
+        <button type="button" onClick={() => setGuideOpen(true)}
+          className="inline-flex items-center gap-1 rounded-full border border-zinc-200 bg-white px-2.5 py-1 text-xs font-bold text-zinc-600 transition hover:border-accent hover:text-accent">
+          <Info className="h-3.5 w-3.5" strokeWidth={2} /> Guide
+        </button>
         <span className="ml-2 text-[10px] font-bold uppercase tracking-wider text-zinc-400">Columns</span>
         {Object.entries(GROUPS).filter(([k]) => k !== "id").map(([k, label]) => (
           <button key={k} onClick={() => setGroupsOn((g) => ({ ...g, [k]: !g[k] }))}
@@ -582,7 +664,14 @@ export function RankingResultsView() {
                         className={cn("h-7 px-2.5 text-left text-[10px] font-bold uppercase tracking-widest text-white sticky top-0",
                           GROUP_HEAD[grp] ?? "bg-midnight",
                           isId ? "z-40 left-0" : "z-30")}>
-                        {GROUPS[grp]}
+                        <span className="inline-flex items-center gap-1">
+                          {GROUPS[grp]}
+                          <button type="button" title={`What does "${GROUPS[grp]}" mean?`}
+                            onClick={(e) => { e.stopPropagation(); setGuideOpen(true); }}
+                            className="inline-flex items-center text-white/70 hover:text-white">
+                            <Info className="h-3 w-3" strokeWidth={2.25} />
+                          </button>
+                        </span>
                       </th>,
                     );
                   };
@@ -678,6 +767,56 @@ export function RankingResultsView() {
         title={modalRow ? `Store ${modalRow.entity_key}${modalRow.metrics.location ? ` · ${String(modalRow.metrics.location)}` : ""}` : ""}
       >
         {modalRow && <RankingStoreView row={modalRow} run={run} />}
+      </Modal>
+
+      {/* Column guide — what every band + column means, and where it comes from */}
+      <Modal open={guideOpen} onClose={() => setGuideOpen(false)} maxWidth="max-w-3xl" title="Column guide — what these mean">
+        <p className="mb-4 text-sm text-zinc-500">
+          Every column on the board, in plain language, with where the number comes from. The colored bands group
+          related metrics; a <span className="font-semibold text-zinc-700">Score</span> in a band is the ranker points
+          earned for it, and <span className="font-semibold text-zinc-700">Points</span> is the total that sets the rank.
+        </p>
+        <div className="space-y-5">
+          {GUIDE_ORDER.map((grp) => {
+            // Leader tiers swap Store/GM for Name/Stores — surface both in the id band.
+            const list: Col[] = grp === "id"
+              ? [
+                  ...STORE_COLS.filter((c) => c.g === "id"),
+                  { g: "id", label: "Name", key: "name", kind: "id" },
+                  { g: "id", label: "Stores", key: "storeCount", kind: "int" },
+                ]
+              : STORE_COLS.filter((c) => c.g === grp);
+            return (
+              <div key={grp}>
+                <div className="mb-1.5 flex items-center gap-2">
+                  <span className={cn("rounded px-2 py-0.5 text-[10px] font-bold uppercase tracking-widest text-white", GROUP_HEAD[grp] ?? "bg-midnight")}>
+                    {GROUPS[grp]}
+                  </span>
+                </div>
+                <p className="mb-2 text-xs leading-relaxed text-zinc-500">{GROUP_INFO[grp]}</p>
+                <div className="divide-y divide-zinc-100 rounded-lg border border-zinc-200">
+                  {list.map((c) => {
+                    const info = METRIC_INFO[c.key];
+                    if (!info) return null;
+                    return (
+                      <div key={c.key} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 px-3 py-2">
+                        <span className="min-w-[6.5rem] text-xs font-bold text-midnight">
+                          {c.key === "__store" ? "Store" : c.label}
+                        </span>
+                        <span className="flex-1 text-xs leading-relaxed text-zinc-600">{info.desc}</span>
+                        {info.src && (
+                          <span className="shrink-0 rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-500">
+                            {info.src}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </Modal>
     </div>
   );
