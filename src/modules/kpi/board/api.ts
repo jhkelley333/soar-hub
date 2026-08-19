@@ -64,6 +64,30 @@ export async function fetchStoreBreakdown(metric: string, level: string, id: str
   return body as StoreBreakdown;
 }
 
+// Cash flags — stores in the caller's scope that are cash-short or ran high
+// paid-outs this week (KPI feed, WTD). Powers the mobile "needs review" card.
+export interface CashFlagStore {
+  store_number: string;
+  store_name: string;
+  region: string | null;
+  cash_over_short: number; // negative = short
+  paid_out: number;
+  short_flag: boolean;
+  paidout_flag: boolean;
+}
+export interface CashFlagsResponse {
+  ok: true;
+  date: string | null;
+  counts: { flagged: number; short: number; paidout: number };
+  stores: CashFlagStore[];
+}
+export async function fetchCashFlags(): Promise<CashFlagsResponse> {
+  const res = await fetch(`${FN}?action=cash-flags`, { headers: { Authorization: `Bearer ${await token()}` } });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error((body as { error?: string })?.error || `Request failed (${res.status})`);
+  return body as CashFlagsResponse;
+}
+
 // Admin: backfill Cash Over/Short + Paid Outs from stored snapshots. One call
 // processes as many dates as fit a time budget and returns `next_before` — pass
 // it back to continue older, until it's null (all history done).

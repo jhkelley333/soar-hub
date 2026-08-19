@@ -21,6 +21,7 @@ import {
   LayoutGrid,
   GraduationCap,
   ChevronRight,
+  Flag,
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
@@ -29,7 +30,7 @@ import { cn } from "@/lib/cn";
 import { FISCAL, fiscalInfo, fiscalWeekLabel } from "@/lib/fiscal";
 import { Drawer } from "@/shared/ui/Drawer";
 import { fetchApprovalsQueue, relativeTime } from "@/modules/approvals/api";
-import { fetchKpiBoard } from "@/modules/kpi/board/api";
+import { fetchKpiBoard, fetchCashFlags, type CashFlagStore } from "@/modules/kpi/board/api";
 import { PILLARS } from "@/modules/kpi/board/catalog";
 import { metricView, type MetricView } from "@/modules/kpi/board/logic";
 import { fetchBirthdays, fetchMyTree, launchScopeLabel } from "@/modules/my-stores/api";
@@ -128,6 +129,15 @@ export function MobileHome() {
     staleTime: 3 * 60_000,
     refetchOnWindowFocus: false,
   });
+  // Cash exceptions in the viewer's scope (short / high paid-outs, WTD).
+  const cashFlagsQ = useQuery({
+    queryKey: ["cash-flags"],
+    queryFn: fetchCashFlags,
+    enabled: isLeader,
+    staleTime: 3 * 60_000,
+  });
+  const cashFlagged = cashFlagsQ.data?.counts.flagged ?? 0;
+  const [cashOpen, setCashOpen] = useState(false);
   const cashBadgesQ = useQuery({
     queryKey: ["cash-badges"],
     queryFn: fetchCashBadges,
@@ -269,6 +279,37 @@ export function MobileHome() {
             <ChevronRight className="ml-auto h-4 w-4 text-white/40" strokeWidth={2} />
           </button>
         </div>
+
+        {/* Cash review — paid outs & cash short needing a look, viewer-scoped */}
+        {isLeader && (
+          <div className="mt-3">
+            <button
+              type="button"
+              onClick={() => setCashOpen(true)}
+              className="flex w-full items-center gap-3 rounded-2xl bg-white/10 px-4 py-3 text-left ring-1 ring-white/10 transition active:scale-[0.99] active:bg-white/15"
+            >
+              <span
+                className={cn(
+                  "flex h-8 w-8 shrink-0 items-center justify-center rounded-xl",
+                  cashFlagged > 0 ? "bg-red-500/90" : "bg-white/10",
+                )}
+              >
+                <Flag className="h-4 w-4 text-white" strokeWidth={2.2} fill={cashFlagged > 0 ? "currentColor" : "none"} />
+              </span>
+              <span className="min-w-0">
+                <p className="text-[13px] font-medium leading-tight">Paid outs &amp; cash short</p>
+                <p className="text-[11px] text-white/60">
+                  {cashFlagsQ.isLoading
+                    ? "Checking…"
+                    : cashFlagged > 0
+                      ? `${cashFlagged} store${cashFlagged === 1 ? "" : "s"} to review`
+                      : "All clear this week"}
+                </p>
+              </span>
+              <ChevronRight className="ml-auto h-4 w-4 text-white/40" strokeWidth={2} />
+            </button>
+          </div>
+        )}
       </section>
 
       {/* Leaders: compact Metrics That Matter tiles where the app grid was. */}
@@ -485,7 +526,64 @@ export function MobileHome() {
           </ul>
         )}
       </Drawer>
+
+      <Drawer
+        open={cashOpen}
+        onClose={() => setCashOpen(false)}
+        title="Paid outs & cash short · needs review"
+      >
+        {cashFlagsQ.isLoading ? (
+          <p className="px-1 py-8 text-center text-[13px] text-midnight-500">Loading…</p>
+        ) : (cashFlagsQ.data?.stores.length ?? 0) === 0 ? (
+          <p className="px-1 py-8 text-center text-[13px] text-midnight-500">
+            No stores are cash-short or over on paid-outs this week. 🎉
+          </p>
+        ) : (
+          <>
+            <p className="px-1 pb-2 text-[12px] text-midnight-500">
+              Stores in your scope that ran <span className="font-semibold text-midnight-700">short</span> or high on{" "}
+              <span className="font-semibold text-midnight-700">paid-outs</span> this week (from the KPI feed).
+            </p>
+            <ul className="divide-y divide-midnight-100">
+              {cashFlagsQ.data!.stores.map((s) => (
+                <CashFlagRow key={s.store_number} s={s} />
+              ))}
+            </ul>
+          </>
+        )}
+      </Drawer>
     </div>
+  );
+}
+
+const usd0 = (v: number) => `$${Math.abs(Math.round(v)).toLocaleString("en-US")}`;
+
+function CashFlagRow({ s }: { s: CashFlagStore }) {
+  return (
+    <li className="flex items-center gap-3 py-3">
+      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-red-50">
+        <Flag className="h-4 w-4 text-red-600" strokeWidth={2.2} fill="currentColor" />
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-[14px] font-medium text-midnight-900">
+          #{s.store_number}
+          {s.store_name && s.store_name !== `#${s.store_number}` ? ` · ${s.store_name}` : ""}
+        </p>
+        <p className="truncate text-[12px] text-midnight-500">{s.region ?? "—"}</p>
+      </div>
+      <div className="flex shrink-0 flex-col items-end gap-1">
+        {s.short_flag && (
+          <span className="rounded-full bg-red-50 px-2 py-0.5 text-[11px] font-semibold text-red-700">
+            Short {usd0(s.cash_over_short)}
+          </span>
+        )}
+        {s.paidout_flag && (
+          <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+            Paid outs {usd0(s.paid_out)}
+          </span>
+        )}
+      </div>
+    </li>
   );
 }
 
