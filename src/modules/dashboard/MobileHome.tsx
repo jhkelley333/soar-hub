@@ -24,10 +24,14 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
+import { useEffectiveRole } from "@/lib/useViewAs";
 import { cn } from "@/lib/cn";
 import { FISCAL, fiscalInfo, fiscalWeekLabel } from "@/lib/fiscal";
 import { Drawer } from "@/shared/ui/Drawer";
 import { fetchApprovalsQueue, relativeTime } from "@/modules/approvals/api";
+import { fetchKpiBoard } from "@/modules/kpi/board/api";
+import { PILLARS } from "@/modules/kpi/board/catalog";
+import { metricView, type MetricView } from "@/modules/kpi/board/logic";
 import { fetchBirthdays, fetchMyTree, launchScopeLabel } from "@/modules/my-stores/api";
 import {
   thisAndNextWeekRange,
@@ -48,6 +52,12 @@ const COACH_ROLES = new Set([
   "shift_manager", "first_assistant_manager", "associate_manager",
   "crew_leader", "gm", "do", "sdo", "rvp", "vp", "coo", "admin",
 ]);
+
+// Metrics That Matter is a DO-and-above board. Leaders get the compact metric
+// tiles up top; GMs/crew keep the quick-action grid instead.
+const BOARD_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
+// Org-wide roles see the whole company; scoped leaders see their own stores.
+const ORG_WIDE = new Set(["admin", "vp", "coo"]);
 
 function greetingFor(d = new Date()): string {
   const h = d.getHours();
@@ -102,6 +112,18 @@ export function MobileHome() {
   });
   const canCash = !!role && CASH_ROLES.has(role);
   const canCoach = !!role && COACH_ROLES.has(role);
+
+  // Leaders (DO+) get compact Metrics-That-Matter tiles where the app grid was.
+  const effRole = useEffectiveRole(profile);
+  const isLeader = !!effRole && BOARD_ROLES.has(effRole);
+  const orgWide = !!effRole && ORG_WIDE.has(effRole);
+  const boardQ = useQuery({
+    queryKey: ["kpi-board", orgWide ? "company" : "mine", null, "mobilehome"],
+    queryFn: () => fetchKpiBoard(orgWide ? "company" : "mine", null, null),
+    enabled: isLeader,
+    staleTime: 3 * 60_000,
+    refetchOnWindowFocus: false,
+  });
   const cashBadgesQ = useQuery({
     queryKey: ["cash-badges"],
     queryFn: fetchCashBadges,
@@ -245,40 +267,77 @@ export function MobileHome() {
         </div>
       </section>
 
-      {/* Quick actions */}
+      {/* Leaders: compact Metrics That Matter tiles where the app grid was. */}
+      {isLeader && (
+        <>
+          <h2 className="mt-7 mb-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-midnight-400">
+            Metrics that matter
+          </h2>
+          <MetricsStrip q={boardQ} />
+        </>
+      )}
+
+      {/* Quick actions — a row list for leaders (apps moved out of the grid),
+          the 2×2 grid for GMs/crew who don't get the metrics board. */}
       <h2 className="mt-7 mb-2.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-midnight-400">
         Quick actions
       </h2>
-      <div className="grid grid-cols-2 gap-3">
-        <QuickAction
-          to="/approvals"
-          Icon={BadgeCheck}
-          gradient="linear-gradient(135deg,#1a9bdd,#0173b5)"
-          title="Approvals"
-          sub={`${itemsNeedYou} pending`}
-        />
-        <QuickAction
-          to="/operations"
-          Icon={LayoutGrid}
-          gradient="linear-gradient(135deg,#3f6d97,#21496f)"
-          title="Operations Tools"
-          sub="Audits & walks"
-        />
-        <QuickAction
-          to="/admin/ranking"
-          Icon={Trophy}
-          gradient="linear-gradient(135deg,#5cc6e2,#2196b8)"
-          title="Ranker"
-          sub="This week"
-        />
-        <QuickAction
-          to="/admin/work-orders-v2"
-          Icon={Wrench}
-          gradient="linear-gradient(135deg,#ef3358,#c2003a)"
-          title="Work orders"
-          sub={`${woReview} awaiting`}
-        />
-      </div>
+      {isLeader ? (
+        <div className="space-y-3">
+          <HomeRow
+            to="/approvals"
+            Icon={BadgeCheck}
+            gradient="linear-gradient(135deg,#1a9bdd,#0173b5)"
+            title="Approvals"
+            sub={`${itemsNeedYou} pending`}
+          />
+          <HomeRow
+            to="/operations"
+            Icon={LayoutGrid}
+            gradient="linear-gradient(135deg,#3f6d97,#21496f)"
+            title="Operations Tools"
+            sub="Audits & walks"
+          />
+          <HomeRow
+            to="/admin/ranking"
+            Icon={Trophy}
+            gradient="linear-gradient(135deg,#5cc6e2,#2196b8)"
+            title="Ranker"
+            sub="This week"
+          />
+        </div>
+      ) : (
+        <div className="grid grid-cols-2 gap-3">
+          <QuickAction
+            to="/approvals"
+            Icon={BadgeCheck}
+            gradient="linear-gradient(135deg,#1a9bdd,#0173b5)"
+            title="Approvals"
+            sub={`${itemsNeedYou} pending`}
+          />
+          <QuickAction
+            to="/operations"
+            Icon={LayoutGrid}
+            gradient="linear-gradient(135deg,#3f6d97,#21496f)"
+            title="Operations Tools"
+            sub="Audits & walks"
+          />
+          <QuickAction
+            to="/admin/ranking"
+            Icon={Trophy}
+            gradient="linear-gradient(135deg,#5cc6e2,#2196b8)"
+            title="Ranker"
+            sub="This week"
+          />
+          <QuickAction
+            to="/admin/work-orders-v2"
+            Icon={Wrench}
+            gradient="linear-gradient(135deg,#ef3358,#c2003a)"
+            title="Work orders"
+            sub={`${woReview} awaiting`}
+          />
+        </div>
+      )}
 
       {canCash && (
         <Link
@@ -456,5 +515,96 @@ function QuickAction({
       <p className="mt-3 text-[15px] font-semibold leading-tight text-midnight-900">{title}</p>
       <p className="mt-0.5 truncate text-[12px] text-midnight-500">{sub}</p>
     </Link>
+  );
+}
+
+// Full-width tappable row (icon + title + sub + chevron) — matches the Cash /
+// Coaching rows. Used for the apps moved out of the leader grid.
+function HomeRow({
+  to,
+  Icon,
+  gradient,
+  title,
+  sub,
+}: {
+  to: string;
+  Icon: LucideIcon;
+  gradient: string;
+  title: string;
+  sub: string;
+}) {
+  return (
+    <Link
+      to={to}
+      className="flex items-center gap-3 rounded-2xl bg-surface p-4 shadow-card ring-1 ring-midnight-100 transition active:scale-[0.99]"
+    >
+      <div
+        className="grid h-11 w-11 shrink-0 place-items-center rounded-xl text-white"
+        style={{ background: gradient }}
+      >
+        <Icon className="h-[19px] w-[19px]" strokeWidth={2} />
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-[14px] font-semibold text-midnight-900">{title}</p>
+        <p className="truncate text-[12.5px] text-midnight-500">{sub}</p>
+      </div>
+      <ChevronRight className="h-5 w-5 shrink-0 text-midnight-300" />
+    </Link>
+  );
+}
+
+// Compact Metrics-That-Matter strip — the five pillar headline metrics as small
+// non-flip tiles (2 per row), colored by on-/off-target. Taps through to the
+// full board. Same data + logic the desktop band uses.
+const TONE_BAR: Record<string, string> = {
+  good: "bg-emerald-500", warn: "bg-amber-500", bad: "bg-red-500", none: "bg-midnight-200",
+};
+const DELTA_TEXT: Record<string, string> = {
+  good: "text-emerald-600", bad: "text-red-600", flat: "text-midnight-400",
+};
+
+function MetricsStrip({ q }: { q: { isLoading: boolean; data?: { anchor: string | null; values?: Record<string, unknown>; targets?: Record<string, number> } } }) {
+  if (q.isLoading) {
+    return (
+      <div className="grid grid-cols-2 gap-3">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <div key={i} className="h-[74px] animate-pulse rounded-2xl bg-surface shadow-card ring-1 ring-midnight-100" />
+        ))}
+      </div>
+    );
+  }
+  const data = q.data;
+  if (!data?.anchor) return null; // no capture yet — leave the spot empty
+  const values = (data.values ?? {}) as Record<string, Parameters<typeof metricView>[1]>;
+  const targets = data.targets ?? {};
+  const nowFw = fiscalInfo(new Date(`${data.anchor}T12:00:00`))?.fiscalWeek ?? null;
+  return (
+    <Link to="/admin/metrics-board" className="block active:scale-[0.99]">
+      <div className="grid grid-cols-2 gap-3">
+        {PILLARS.map((p) => {
+          const v = metricView(p.mtm, values[p.mtm.id], "wtd", 10, 10, targets[p.mtm.id], nowFw);
+          return <MetricTile key={p.key} v={v} />;
+        })}
+      </div>
+    </Link>
+  );
+}
+
+function MetricTile({ v }: { v: MetricView }) {
+  return (
+    <div className="relative overflow-hidden rounded-2xl bg-surface p-3.5 shadow-card ring-1 ring-midnight-100">
+      <span className={cn("absolute inset-x-0 top-0 h-1", TONE_BAR[v.statusTone])} />
+      <p className="truncate text-[10.5px] font-semibold uppercase tracking-wide text-midnight-400">{v.name}</p>
+      <div className="mt-1 flex items-baseline gap-1.5">
+        <span className={cn("text-[22px] font-bold leading-none tabular-nums", v.hasData ? "text-midnight-900" : "text-midnight-300")}>
+          {v.value}
+        </span>
+        {v.delta && (
+          <span className={cn("text-[11px] font-bold tabular-nums", DELTA_TEXT[v.deltaTone] ?? "text-midnight-400")}>
+            {v.delta}
+          </span>
+        )}
+      </div>
+    </div>
   );
 }
