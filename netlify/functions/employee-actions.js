@@ -19,6 +19,7 @@
 //   POST ?action=submit-pto     -> create a pto_requests row
 
 import { createClient } from "@supabase/supabase-js";
+import { fireEventReport } from "./_lib/reports/dispatch.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -797,6 +798,23 @@ async function submitTraining(supa, user, body) {
     text: trainingEmailText(user, storeNumber, built.fields, built.meta, link, "submitted")
       + (overBank ? `\n\n⚠ Over the store's training bank ($${bal.remaining.toFixed(2)} left of $${bal.budget.toFixed(2)}) — this needs RVP approval.` : ""),
   });
+
+  // 2D — event report: an APPROVED credit (auto-completed because the submitter
+  // clears the tier) that overdraws the store's yearly bank alerts the COO.
+  // Best-effort; never affects the submit result.
+  if (insertRow.status === "Completed" && overBank) {
+    await fireEventReport(supa, "training_over_budget", {
+      store_number: storeNumber,
+      employee_name: built.meta.employeeName,
+      training_type: built.meta.trainingType,
+      requested_amount: built.meta.requestedAmount,
+      budget: bal.budget,
+      remaining_before: bal.remaining,
+      overage: Math.max(0, built.meta.requestedAmount - bal.remaining),
+      approved_by: user.full_name || user.email,
+      year,
+    });
+  }
 
   return { ok: true, id: created.id, status: insertRow.status };
 }
