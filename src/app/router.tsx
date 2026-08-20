@@ -55,6 +55,7 @@ import { BottomPerformersPage } from "@/modules/ranking/BottomPerformersPage";
 import { PullLogPage } from "@/modules/labor-v2/PullLogPage";
 import { LaborV2Entry } from "@/modules/labor-v2/LaborV2Entry";
 import { RvpCommitmentsPage } from "@/modules/labor-v2/RvpCommitmentsPage";
+import { PeriodCommitmentsPage } from "@/modules/period-commitments/PeriodCommitmentsPage";
 import { QsrHomePage } from "@/modules/qsr/QsrHomePage";
 import { TrainingHubPage } from "@/modules/qsr/TrainingHubPage";
 import { LessonPlayer } from "@/modules/qsr/player/LessonPlayer";
@@ -311,6 +312,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["rvp", "vp", "coo", "admin"]}>
             <RvpCommitmentsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "period-commitments",
+        element: (
+          <ProtectedRoute requireRoles={["rvp", "vp", "coo", "admin"]}>
+            <PeriodCommitmentsPage />
           </ProtectedRoute>
         ),
       },
