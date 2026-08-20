@@ -8,7 +8,7 @@ import {
   ArrowRight, Network, Users, MapPin, KeyRound, Globe, Flag, QrCode, Link2,
   CloudSun, BarChart3, LayoutGrid, Gauge, ScrollText, Layers, Upload,
   Settings, ClipboardCheck, ListChecks, BookMarked, Clock, TrendingDown, Building2,
-  Fingerprint, type LucideIcon,
+  Fingerprint, Send, type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -43,6 +43,7 @@ const GROUPS: Group[] = [
       { title: "Role Access", desc: "What each role can see and do.", icon: KeyRound, roles: ["admin"], to: "/admin/role-access" },
       { title: "Region Access", desc: "Per-region access grants.", icon: Globe, roles: ["admin"], to: "/admin/region-access" },
       { title: "Feature Flags", desc: "Toggle features on or off per environment.", icon: Flag, roles: ["admin"], to: "/admin/feature-flags" },
+      { title: "Reports", desc: "Scheduled + event report engine — recipients, schedules, run history.", icon: Send, roles: ["admin"], to: "/admin/reports" },
       { title: "Command Center Links", desc: "Per-store command-center links and QR codes.", icon: QrCode, roles: ["admin"], to: "/admin/store-portal" },
       { title: "Stay-Logged-In Links", desc: "Mint durable token-in-URL logins for the field.", icon: Link2, roles: ["vp", "coo", "admin"], to: "/admin/access-links" },
     ],

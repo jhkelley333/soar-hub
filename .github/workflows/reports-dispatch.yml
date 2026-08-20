@@ -1,0 +1,52 @@
+# Report engine dispatch — external trigger for the reports-dispatcher function.
+#
+# Netlify's native scheduled-function trigger has been unreliable in this
+# project (see kpi-capture-pull.yml / labor-auto-pull.yml). A missed report is
+# worse than a missed data pull, so GitHub's scheduler drives the dispatcher too
+# — the reports-dispatcher config.schedule is kept as a secondary trigger.
+#
+# The ping is unauthenticated and safe to fire redundantly: the dispatcher runs
+# an idempotent (non-forced) dispatch that claims each report's window before
+# sending, so a report goes out at most once per window no matter how many
+# triggers fire. `?force=1` (which bypasses that) is token-gated and never used
+# here.
+#
+# SETUP: nothing beyond merging to the default branch with Actions enabled.
+# Defaults to https://mysoarhub.com; set a SITE_URL repo secret to override.
+
+name: Reports dispatch
+
+on:
+  schedule:
+    # Every 15 minutes. GitHub cron is UTC; each report carries its own
+    # timezone and the dispatcher matches the cron against that wall clock.
+    - cron: "*/15 * * * *"
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+concurrency:
+  group: reports-dispatch
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping reports-dispatcher
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+        run: |
+          set -euo pipefail
+          base="${SITE_URL:-https://mysoarhub.com}"
+          base="${base%/}"
+          url="${base}/.netlify/functions/reports-dispatcher"
+          echo "Pinging ${url}"
+          code=$(curl -fsS --max-time 120 -o /tmp/reports-dispatch.json -w "%{http_code}" "${url}" || true)
+          echo "HTTP ${code}"
+          echo "--- response ---"
+          cat /tmp/reports-dispatch.json 2>/dev/null || echo "(no body)"
+          echo
+          case "${code}" in
+            2*) echo "OK" ;;
+            *) echo "::error::reports-dispatcher returned HTTP ${code}"; exit 1 ;;
+          esac

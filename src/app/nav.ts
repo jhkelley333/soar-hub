@@ -275,6 +275,7 @@ const GROUP_OF: Record<string, NavGroup> = {
   "/admin/bulk-attributes": "ADMIN",
   "/admin/access-links": "ADMIN",
   "/admin/feature-flags": "ADMIN",
+  "/admin/reports": "ADMIN",
   "/admin/role-access": "ADMIN",
   "/admin/paf-config": "ADMIN",
   "/admin/manuals": "ADMIN",
