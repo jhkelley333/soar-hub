@@ -8,9 +8,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, ArrowLeft, Camera, Check, ChevronRight, Image as ImageIcon,
-  Plus, Send, Trash2,
+  AlertTriangle, ArrowLeft, Camera, Check, CheckSquare, ChevronRight, Image as ImageIcon,
+  Plus, Send, Square, Trash2,
 } from "lucide-react";
+import { BulkAuditBar } from "./BulkAuditBar";
 import { Button } from "@/shared/ui/Button";
 import { Modal } from "@/shared/ui/Modal";
 import { Skeleton } from "@/shared/ui/Skeleton";
@@ -84,6 +85,7 @@ export function SiteAuditPage() {
   const auditsQ = useQuery({ queryKey: ["site-audits"], queryFn: fetchAudits });
   const audits = auditsQ.data?.audits ?? [];
   const canWrite = auditsQ.data?.can_write ?? false;
+  const canManage = auditsQ.data?.can_manage ?? false;
   const invalidate = () => qc.invalidateQueries({ queryKey: ["site-audits"] });
 
   const audit = useMemo(() => audits.find((a) => a.id === nav.auditId) ?? null, [audits, nav.auditId]);
@@ -154,7 +156,7 @@ export function SiteAuditPage() {
         onChanged={invalidate}
         onDeleted={() => { invalidate(); setNav({ screen: "audit", auditId: audit.id }); }} />
     ) : (
-      <AuditList audits={audits} canWrite={canWrite} onOpen={(id) => setNav({ screen: "audit", auditId: id })}
+      <AuditList audits={audits} canWrite={canWrite} canManage={canManage} onOpen={(id) => setNav({ screen: "audit", auditId: id })}
         onCreated={(id) => { invalidate(); setNav({ screen: "audit", auditId: id }); }} />
     );
 
@@ -169,7 +171,7 @@ export function SiteAuditPage() {
       {/* Field on phones/tablets; Command desktop dashboard on lg+. */}
       <div className="mx-auto w-full max-w-md lg:hidden">{field}</div>
       <div className="hidden lg:block">
-        <SiteAuditCommand audits={audits} canWrite={canWrite}
+        <SiteAuditCommand audits={audits} canWrite={canWrite} canManage={canManage}
           focusAuditId={nav.auditId ?? null}
           onStartCapture={(id) => setNav({ screen: "capture", auditId: id })}
           onStartShare={(id) => setNav({ screen: "share", auditId: id })} />
@@ -179,12 +181,16 @@ export function SiteAuditPage() {
 }
 
 // ── List ──────────────────────────────────────────────────────────────────
-function AuditList({ audits, canWrite, onOpen, onCreated }: {
-  audits: SiteAudit[]; canWrite: boolean; onOpen: (id: string) => void; onCreated: (id: string) => void;
+function AuditList({ audits, canWrite, canManage, onOpen, onCreated }: {
+  audits: SiteAudit[]; canWrite: boolean; canManage: boolean; onOpen: (id: string) => void; onCreated: (id: string) => void;
 }) {
   const toast = useToast();
   const [picking, setPicking] = useState(false);
   const [view, setView] = useState<"active" | "archived">("active");
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const toggleSel = (id: string) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const exitSelect = () => { setSelecting(false); setSelected(new Set()); };
   const storesQ = useQuery({ queryKey: ["site-audit-stores"], queryFn: fetchAuditStores, enabled: picking });
   const [storeId, setStoreId] = useState("");
   const create = useMutation({
@@ -209,14 +215,26 @@ function AuditList({ audits, canWrite, onOpen, onCreated }: {
         )}
       </div>
 
-      <div className="mb-3 inline-flex rounded-md ring-1 ring-inset ring-zinc-200">
-        {(["active", "archived"] as const).map((v) => (
-          <button key={v} onClick={() => setView(v)} className={cn("px-3.5 py-1.5 text-sm font-medium capitalize transition first:rounded-l-md last:rounded-r-md",
-            view === v ? "bg-midnight text-white" : "text-zinc-600 hover:bg-zinc-50")}>
-            {v} <span className="tabular-nums opacity-70">{v === "active" ? activeCount : archivedCount}</span>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div className="inline-flex rounded-md ring-1 ring-inset ring-zinc-200">
+          {(["active", "archived"] as const).map((v) => (
+            <button key={v} onClick={() => { setView(v); setSelected(new Set()); }} className={cn("px-3.5 py-1.5 text-sm font-medium capitalize transition first:rounded-l-md last:rounded-r-md",
+              view === v ? "bg-midnight text-white" : "text-zinc-600 hover:bg-zinc-50")}>
+              {v} <span className="tabular-nums opacity-70">{v === "active" ? activeCount : archivedCount}</span>
+            </button>
+          ))}
+        </div>
+        {canManage && (
+          <button onClick={() => (selecting ? exitSelect() : setSelecting(true))}
+            className="rounded-md px-2.5 py-1.5 text-sm font-medium text-zinc-600 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50">
+            {selecting ? "Done" : "Select"}
           </button>
-        ))}
+        )}
       </div>
+
+      {selecting && (
+        <div className="mb-3"><BulkAuditBar ids={[...selected]} onDone={exitSelect} /></div>
+      )}
 
       {visible.length === 0 ? (
         <EmptyState
@@ -230,10 +248,15 @@ function AuditList({ audits, canWrite, onOpen, onCreated }: {
           {visible.map((a) => {
             const s = a.stats;
             const closed = a.status === "complete";
+            const checked = selected.has(a.id);
             return (
-              <button key={a.id} onClick={() => onOpen(a.id)}
+              <button key={a.id} onClick={() => (selecting ? toggleSel(a.id) : onOpen(a.id))}
                 className={cn("flex w-full items-center gap-3 rounded-2xl border p-4 text-left shadow-card transition hover:border-accent/60",
-                  closed ? "border-zinc-200 bg-zinc-50/60" : "border-zinc-200 bg-white")}>
+                  closed ? "border-zinc-200 bg-zinc-50/60" : "border-zinc-200 bg-white",
+                  selecting && checked && "border-accent/60 bg-accent/5")}>
+                {selecting && (checked
+                  ? <CheckSquare className="h-5 w-5 shrink-0 text-accent" />
+                  : <Square className="h-5 w-5 shrink-0 text-zinc-300" />)}
                 <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-accent/10 text-accent text-sm font-bold">
                   #{a.store_number}
                 </span>

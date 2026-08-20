@@ -78,6 +78,13 @@ export function deleteAudit(audit_id: string): Promise<{ ok: true }> {
 export function closeAudit(input: { audit_id: string; reopen?: boolean }): Promise<{ ok: true; status: "open" | "complete" }> {
   return request(`${FN}?action=close-audit`, { method: "POST", body: JSON.stringify(input) });
 }
+// RVP+ bulk actions across many audits at once.
+export function bulkArchiveAudits(input: { audit_ids: string[]; reopen?: boolean }): Promise<{ ok: true; affected: number; status: "open" | "complete" }> {
+  return request(`${FN}?action=bulk-archive-audits`, { method: "POST", body: JSON.stringify(input) });
+}
+export function bulkDeleteAudits(input: { audit_ids: string[] }): Promise<{ ok: true; affected: number }> {
+  return request(`${FN}?action=bulk-delete-audits`, { method: "POST", body: JSON.stringify(input) });
+}
 export interface ShareReportInput {
   audit_id: string;
   signature: string; // base64 data URL of the signature canvas

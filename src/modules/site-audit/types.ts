@@ -62,6 +62,8 @@ export interface SiteAudit {
 export interface AuditsResponse {
   audits: SiteAudit[];
   can_write: boolean;
+  // RVP+ — may bulk-select audits and archive or delete them.
+  can_manage?: boolean;
 }
 
 export interface StorePick {

@@ -17,6 +17,8 @@ import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { closeAudit, createAudit, deleteAudit, fetchAuditStores, fileToPhoto, resolveIssue, type PhotoPayload } from "./api";
 import { SEVERITY_META, type AuditIssue, type SiteAudit } from "./types";
+import { BulkAuditBar } from "./BulkAuditBar";
+import { CheckSquare, Square } from "lucide-react";
 
 function fmtDate(d: string) {
   return new Date(`${d}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
@@ -50,8 +52,8 @@ function Bar({ pct }: { pct: number }) {
   return <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-200"><div className={cn("h-full rounded-full", pct >= 100 ? "bg-emerald-500" : "bg-accent")} style={{ width: `${pct}%` }} /></div>;
 }
 
-export function SiteAuditCommand({ audits, canWrite, focusAuditId, onStartCapture, onStartShare }: {
-  audits: SiteAudit[]; canWrite: boolean;
+export function SiteAuditCommand({ audits, canWrite, canManage = false, focusAuditId, onStartCapture, onStartShare }: {
+  audits: SiteAudit[]; canWrite: boolean; canManage?: boolean;
   focusAuditId?: string | null;
   onStartCapture: (auditId: string) => void;
   onStartShare: (auditId: string) => void;
@@ -63,11 +65,15 @@ export function SiteAuditCommand({ audits, canWrite, focusAuditId, onStartCaptur
   const audit = audits.find((a) => a.id === sel) ?? null;
   return audit
     ? <AuditDetail audit={audit} canWrite={canWrite} onBack={() => setSel(null)} onCapture={() => onStartCapture(audit.id)} onShare={() => onStartShare(audit.id)} />
-    : <Overview audits={audits} canWrite={canWrite} onOpen={setSel} onStartCapture={onStartCapture} />;
+    : <Overview audits={audits} canWrite={canWrite} canManage={canManage} onOpen={setSel} onStartCapture={onStartCapture} />;
 }
 
-function Overview({ audits, canWrite, onOpen, onStartCapture }: { audits: SiteAudit[]; canWrite: boolean; onOpen: (id: string) => void; onStartCapture: (id: string) => void }) {
+function Overview({ audits, canWrite, canManage, onOpen, onStartCapture }: { audits: SiteAudit[]; canWrite: boolean; canManage: boolean; onOpen: (id: string) => void; onStartCapture: (id: string) => void }) {
   const [view, setView] = useState<"active" | "archived">("active");
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const toggleSel = (id: string) => setSelected((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const exitSelect = () => { setSelecting(false); setSelected(new Set()); };
   const activeAudits = audits.filter((a) => a.status !== "complete");
   const archivedAudits = audits.filter((a) => a.status === "complete");
   // KPIs reflect the operational state — closed audits are out of scope here.
@@ -96,20 +102,48 @@ function Overview({ audits, canWrite, onOpen, onStartCapture }: { audits: SiteAu
         <Kpi label="Overdue" value={overdue} sub="past due date" tone={overdue ? "red" : "muted"} icon={Clock} />
       </div>
 
+      {selecting && (
+        <div className="mb-3">
+          <BulkAuditBar ids={[...selected]} onDone={exitSelect} />
+        </div>
+      )}
+
       <div className="overflow-hidden rounded-2xl border border-zinc-200 bg-white shadow-card">
-        <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-3.5">
+        <div className="flex items-center justify-between gap-2 border-b border-zinc-100 px-5 py-3.5">
           <div className="text-sm font-semibold text-midnight">Store audits</div>
-          <div className="inline-flex rounded-md ring-1 ring-inset ring-zinc-200">
-            {(["active", "archived"] as const).map((v) => (
-              <button key={v} onClick={() => setView(v)} className={cn("px-3 py-1 text-xs font-medium capitalize transition first:rounded-l-md last:rounded-r-md",
-                view === v ? "bg-midnight text-white" : "text-zinc-600 hover:bg-zinc-50")}>
-                {v} <span className="tabular-nums opacity-70">{v === "active" ? activeAudits.length : archivedAudits.length}</span>
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            {canManage && (
+              selecting ? (
+                <button onClick={exitSelect} className="rounded-md px-2.5 py-1 text-xs font-medium text-zinc-600 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50">Done</button>
+              ) : (
+                <button onClick={() => setSelecting(true)} className="rounded-md px-2.5 py-1 text-xs font-medium text-zinc-600 ring-1 ring-inset ring-zinc-200 hover:bg-zinc-50">Select</button>
+              )
+            )}
+            <div className="inline-flex rounded-md ring-1 ring-inset ring-zinc-200">
+              {(["active", "archived"] as const).map((v) => (
+                <button key={v} onClick={() => { setView(v); setSelected(new Set()); }} className={cn("px-3 py-1 text-xs font-medium capitalize transition first:rounded-l-md last:rounded-r-md",
+                  view === v ? "bg-midnight text-white" : "text-zinc-600 hover:bg-zinc-50")}>
+                  {v} <span className="tabular-nums opacity-70">{v === "active" ? activeAudits.length : archivedAudits.length}</span>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
         <div className="grid grid-cols-[2.2fr_1.2fr_1.4fr_0.9fr_auto] gap-3 border-b border-zinc-100 px-5 py-2.5 text-[11px] font-bold uppercase tracking-wide text-zinc-400">
-          <span>Store</span><span>GM · Date</span><span>Progress</span><span>Status</span><span />
+          <span className="flex items-center gap-2">
+            {selecting && (() => {
+              const visIds = visible.map((a) => a.id);
+              const allSel = visIds.length > 0 && visIds.every((id) => selected.has(id));
+              return (
+                <button aria-label={allSel ? "Clear all" : "Select all"}
+                  onClick={() => setSelected(allSel ? new Set() : new Set(visIds))}
+                  className="text-zinc-400 hover:text-accent">
+                  {allSel ? <CheckSquare className="h-4 w-4 text-accent" /> : <Square className="h-4 w-4" />}
+                </button>
+              );
+            })()}
+            Store
+          </span><span>GM · Date</span><span>Progress</span><span>Status</span><span />
         </div>
         {visible.length === 0 ? (
           <div className="px-5 py-12 text-center">
@@ -121,11 +155,15 @@ function Overview({ audits, canWrite, onOpen, onStartCapture }: { audits: SiteAu
         ) : visible.map((a) => {
           const s = a.stats;
           const closed = a.status === "complete";
+          const checked = selected.has(a.id);
           return (
-            <button key={a.id} onClick={() => onOpen(a.id)}
+            <button key={a.id} onClick={() => (selecting ? toggleSel(a.id) : onOpen(a.id))}
               className={cn("grid w-full grid-cols-[2.2fr_1.2fr_1.4fr_0.9fr_auto] items-center gap-3 border-b border-zinc-100 px-5 py-3.5 text-left transition last:border-b-0 hover:bg-zinc-50",
-                closed && "bg-zinc-50/50")}>
+                closed && "bg-zinc-50/50", selecting && checked && "bg-accent/5")}>
               <div className="flex items-center gap-3">
+                {selecting && (checked
+                  ? <CheckSquare className="h-4 w-4 shrink-0 text-accent" />
+                  : <Square className="h-4 w-4 shrink-0 text-zinc-300" />)}
                 <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-accent/10 text-[11px] font-bold text-accent">#{a.store_number}</span>
                 <span className={cn("truncate text-sm font-semibold", closed ? "text-zinc-500" : "text-midnight")}>
                   {a.store_name || `Store #${a.store_number}`}
@@ -332,12 +370,20 @@ function St({ n, label, tone = "midnight" }: { n: number; label: string; tone?: 
 // auditor straight into capturing the first issue (the centered Field screen).
 function NewWalkButton({ onCreated, label = "New walk" }: { onCreated: (auditId: string) => void; label?: string }) {
   const toast = useToast();
+  const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [storeId, setStoreId] = useState("");
   const storesQ = useQuery({ queryKey: ["site-audit-stores"], queryFn: fetchAuditStores, enabled: open });
   const create = useMutation({
     mutationFn: () => createAudit({ store_id: storeId }),
-    onSuccess: (r) => { setOpen(false); setStoreId(""); onCreated(r.audit_id); },
+    // Refetch the audit list before navigating so the new walk is present (the
+    // capture/detail screen looks the audit up by id in the list). Without this
+    // the new walk didn't appear until a manual refresh.
+    onSuccess: async (r) => {
+      setOpen(false); setStoreId("");
+      await qc.invalidateQueries({ queryKey: ["site-audits"] });
+      onCreated(r.audit_id);
+    },
     onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't start the walk.", "error"),
   });
   return (
