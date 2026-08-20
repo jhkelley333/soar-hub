@@ -23,6 +23,7 @@ import {
   MapPinned,
   Trophy,
   Target,
+  ListChecks,
   Clock,
   TrendingDown,
   Fingerprint,
@@ -94,6 +95,7 @@ export const NAV: NavItem[] = [
   // route stays alive for old deep links.
   { to: "/labor-v2",    label: "Labor",       icon: Gauge,           roles: ["shift_manager", "first_assistant_manager", "associate_manager", "crew_leader", "crew_member", "carhop", "gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   { to: "/rvp-commitments", label: "RVP Commitments", icon: Target,  roles: ["rvp", "vp", "coo", "admin"] },
+  { to: "/period-commitments", label: "Period Commitments", icon: ListChecks, roles: ["rvp", "vp", "coo", "admin"] },
   // Cash Management — night-close + next-day deposit cycle. Store leaders
   // run it; DO+ act on alerts. Rolled out by role now (the pilot flag was
   // retired once it shipped to all store leaders).
