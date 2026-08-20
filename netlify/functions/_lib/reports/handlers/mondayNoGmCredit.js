@@ -2,24 +2,10 @@
 // (Mon-Sun), grouped RVP -> DO -> store. send_when_empty: true (zero stores on
 // a no-GM credit is good news worth sending).
 
-import { wallClock } from "../core.js";
 import { resolveOrg } from "../../kpiOrg.js";
+import { priorWeek } from "../dates.js";
 
 const REASON_LABEL = { loa: "LOA", no_gm: "No GM", in_training: "In Training" };
-
-const ymd = (d) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-${String(d.getUTCDate()).padStart(2, "0")}`;
-
-// The prior full Mon-Sun week, relative to `now` in `tz`.
-function priorWeek(now, tz) {
-  const wc = wallClock(now, tz);
-  const today = new Date(Date.UTC(wc.year, wc.month - 1, wc.day, 12));
-  const sinceMonday = (wc.dow + 6) % 7;         // dow: Sun=0..Sat=6
-  const thisMonday = new Date(today); thisMonday.setUTCDate(today.getUTCDate() - sinceMonday);
-  const start = new Date(thisMonday); start.setUTCDate(thisMonday.getUTCDate() - 7);
-  const end = new Date(start); end.setUTCDate(start.getUTCDate() + 6);
-  return { weekStart: ymd(start), weekEnd: ymd(end) };
-}
-
 const money = (n) => `$${Math.round(n).toLocaleString("en-US")}`;
 
 export async function mondayNoGmCredit({ supa, definition, now }) {
