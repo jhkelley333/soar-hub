@@ -19,7 +19,7 @@ async function finalize(supa, definition, run) {
 
 // Execute one report definition: run its handler, send to the resolved
 // recipients (or a single testTo), and write exactly one report_runs row.
-export async function runReport(supa, definition, { now = new Date(), windowStart = null, testTo = null } = {}) {
+export async function runReport(supa, definition, { now = new Date(), windowStart = null, testTo = null, context = null } = {}) {
   const base = {
     report_key: definition.key,
     window_start: windowStart ? windowStart.toISOString() : null,
@@ -32,7 +32,7 @@ export async function runReport(supa, definition, { now = new Date(), windowStar
 
   let result;
   try {
-    result = await handler({ supa, definition, now });
+    result = await handler({ supa, definition, now, context });
   } catch (e) {
     return finalize(supa, definition, { ...base, status: "failed", completed_at: new Date().toISOString(), error: String(e?.message || e).slice(0, 1000), payload_summary: { test: !!testTo } });
   }
@@ -80,6 +80,19 @@ export async function runReportByKey(supa, key, { testTo = null, now = new Date(
   const { data: def } = await supa.from("report_definitions").select("*").eq("key", key).maybeSingle();
   if (!def) return { error: `Unknown report '${key}'`, status: 404 };
   return runReport(supa, def, { now, testTo });
+}
+
+// Fire an EVENT report inline from a triggering action, passing it context.
+// No-op (best-effort) when the definition is missing, disabled, or not an event
+// report — so a caller can always fire without guarding. Never throws.
+export async function fireEventReport(supa, key, context, { now = new Date() } = {}) {
+  try {
+    const { data: def } = await supa.from("report_definitions").select("*").eq("key", key).maybeSingle();
+    if (!def || !def.enabled || def.trigger_type !== "event") return { skipped: true };
+    return await runReport(supa, def, { now, context });
+  } catch (e) {
+    return { error: String(e?.message || e) };
+  }
 }
 
 // Find enabled scheduled reports due this tick, claim each window, and run.
