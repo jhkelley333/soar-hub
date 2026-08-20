@@ -14,6 +14,8 @@
 // { perRecipient: [{ to, subject, text, html }], rowCount, summary } and the
 // dispatcher fans those out individually.
 
+import { mondayNoGmCredit } from "./handlers/mondayNoGmCredit.js";
+
 // Engine smoke test — no query; confirms the render + Resend path end to end.
 async function smokeTest({ definition, now }) {
   const stamp = now.toISOString();
@@ -31,6 +33,7 @@ async function smokeTest({ definition, now }) {
 
 const HANDLERS = {
   smoke_test: smokeTest,
+  monday_no_gm_credit: mondayNoGmCredit,
 };
 
 export function getHandler(key) {
