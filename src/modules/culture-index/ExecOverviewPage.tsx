@@ -90,11 +90,15 @@ function Overview({ data }: { data: OverviewResponse }) {
         <Badge tone={coverage.trait_pct >= 60 ? "success" : "warning"}>
           {coverage.with_trait} have a trait ({coverage.trait_pct}%)
         </Badge>
+        {(coverage.recovered_via_roster ?? 0) > 0 && (
+          <Badge tone="neutral">+{coverage.recovered_via_roster} via GM roster</Badge>
+        )}
         <InfoTip title="How much data is behind this page">
           <span className="block">These chips tell you how much this page has to work with:</span>
           <span className="block"><b>Ranker weeks analyzed</b> — how many weekly store report cards we pooled together.</span>
           <span className="block"><b>Ranked stores</b> — stores that got a performance rank in those weeks.</span>
           <span className="block"><b>Have a trait</b> — of the general managers running those stores, how many have a Culture Index personality result on file. The higher this %, the more you can trust everything below — with little data, treat it as a hunch, not a fact.</span>
+          <span className="block"><b>Via GM roster</b> — GMs we matched to their store through the GM roster (by email) because their profile's store assignment was missing or out of date. Without this, these active GMs would drop off the page entirely.</span>
         </InfoTip>
       </div>
 
