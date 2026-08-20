@@ -19,9 +19,11 @@ alter table public.system_settings enable row level security;
 
 -- Any signed-in user may READ settings (the app resolves recipients/config
 -- server-side with the service role; this covers direct client reads).
+drop policy if exists system_settings_read on public.system_settings;
 create policy system_settings_read on public.system_settings
   for select using (auth.uid() is not null);
 -- Only admins may WRITE.
+drop policy if exists system_settings_admin_write on public.system_settings;
 create policy system_settings_admin_write on public.system_settings
   for all using (is_admin()) with check (is_admin());
 
@@ -48,8 +50,10 @@ create table if not exists public.report_definitions (
 
 alter table public.report_definitions enable row level security;
 
+drop policy if exists report_definitions_read on public.report_definitions;
 create policy report_definitions_read on public.report_definitions
   for select using (auth.uid() is not null);
+drop policy if exists report_definitions_admin_write on public.report_definitions;
 create policy report_definitions_admin_write on public.report_definitions
   for all using (is_admin()) with check (is_admin());
 
@@ -93,6 +97,7 @@ create index if not exists report_runs_key_created_idx
 alter table public.report_runs enable row level security;
 -- Admins can READ the run history in the admin UI. INSERT happens via the
 -- service role (bypasses RLS). UPDATE/DELETE have no policy AND raise below.
+drop policy if exists report_runs_admin_read on public.report_runs;
 create policy report_runs_admin_read on public.report_runs
   for select using (is_admin());
 
