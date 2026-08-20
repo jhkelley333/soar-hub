@@ -10,7 +10,7 @@
 //
 // Leader-only (do/sdo/rvp/vp/coo/admin).
 
-import { admin, getSessionUser, resolveTeam, filterTeamByRegion, teamHash, LEADER_ROLES } from "./_lib/traitPlaybook.js";
+import { admin, getSessionUser, resolveTeam, readRun, LEADER_ROLES } from "./_lib/traitPlaybook.js";
 
 function respond(statusCode, payload) {
   return { statusCode, headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) };
@@ -24,19 +24,10 @@ async function getTeam(supa, leader) {
   return { leader: { id: leader.id, name: displayName(leader), role: leader.role }, members: team, regions };
 }
 
-// Cache-only read — never generates. Returns whatever is saved for the leader's
-// current team (optionally narrowed to one region).
+// Read-only — never generates. Returns the current run's progress + whatever
+// coaching is committed so far for the leader's team (optionally one region).
 async function readCoach(supa, leader, region) {
-  const team = filterTeamByRegion(await resolveTeam(supa, leader), region);
-  if (team.length === 0) return { ready: false, empty: true };
-  const { data, error } = await supa
-    .from("trait_playbook_cache")
-    .select("content, generated_at")
-    .eq("leader_id", leader.id)
-    .eq("team_hash", teamHash(team))
-    .maybeSingle();
-  if (error || !data) return { ready: false };
-  return { ready: true, content: data.content, generatedAt: data.generated_at };
+  return readRun(supa, leader, region);
 }
 
 export const handler = async (event) => {

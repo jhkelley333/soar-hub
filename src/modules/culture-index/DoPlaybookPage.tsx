@@ -17,6 +17,7 @@ import {
   generatePlaybook,
   type PlaybookContent,
   type PlaybookMember,
+  type PlaybookProgress,
 } from "./playbookApi";
 
 const LARGE_TEAM = 40; // above this, a whole-team generation is too big — pick a region
@@ -29,13 +30,23 @@ export function DoPlaybookPage() {
   const [region, setRegion] = useState<string>("");
   const [content, setContent] = useState<PlaybookContent | null>(null);
   const [meta, setMeta] = useState<{ cached: boolean; generatedAt: string } | null>(null);
+  const [progress, setProgress] = useState<PlaybookProgress | null>(null);
 
   const coachMut = useMutation({
-    mutationFn: (force: boolean) => generatePlaybook(force, region),
+    mutationFn: (force: boolean) => {
+      setProgress(null);
+      return generatePlaybook(force, region, (tick) => {
+        // Live: partial coaching + "coached X of Y" as each batch lands.
+        setContent(tick.content);
+        setProgress(tick.progress);
+      });
+    },
     onSuccess: (data) => {
       setContent(data.content);
       setMeta({ cached: data.cached, generatedAt: data.generatedAt });
+      setProgress(null);
     },
+    onSettled: () => setProgress(null),
   });
 
   const allMembers = teamQ.data?.members ?? [];
@@ -58,6 +69,7 @@ export function DoPlaybookPage() {
     let cancelled = false;
     setContent(null);
     setMeta(null);
+    setProgress(null);
     fetchCachedPlaybook(region).then((r) => {
       if (cancelled || !r) return;
       setContent(r.content);
@@ -165,12 +177,22 @@ export function DoPlaybookPage() {
             </CardBody>
           </Card>
 
-          {coachMut.isPending && !content && (
+          {coachMut.isPending && (
             <Card><CardBody>
               <div className="flex items-center gap-3 text-sm text-ink-muted">
                 <Sparkles className="h-4 w-4 animate-pulse text-accent" strokeWidth={2} />
-                Reading each profile and writing your coaching… this takes a few seconds.
+                {progress && progress.total > 0
+                  ? `Coaching your team in batches — ${progress.coached} of ${progress.total} done…`
+                  : "Reading each profile and writing your coaching… this runs in the background."}
               </div>
+              {progress && progress.total > 0 && (
+                <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-border">
+                  <div
+                    className="h-full rounded-full bg-accent transition-all duration-500"
+                    style={{ width: `${Math.min(100, Math.round((progress.coached / progress.total) * 100))}%` }}
+                  />
+                </div>
+              )}
             </CardBody></Card>
           )}
 
@@ -182,7 +204,7 @@ export function DoPlaybookPage() {
             </CardBody></Card>
           )}
 
-          {content && (
+          {content && content.overview && (
             <>
               <Card>
                 <CardHeader

@@ -11,7 +11,7 @@
 //
 //   POST /.netlify/functions/trait-playbook-background   { force? }
 
-import { admin, getSessionUser, generateAndCache, LEADER_ROLES } from "./_lib/traitPlaybook.js";
+import { admin, getSessionUser, generateChunked, LEADER_ROLES } from "./_lib/traitPlaybook.js";
 
 export const handler = async (event) => {
   // Background invocations are POST-only; anything else is a no-op.
@@ -41,7 +41,7 @@ export const handler = async (event) => {
 
   try {
     const supa = admin();
-    const result = await generateAndCache(supa, leader, { force, region });
+    const result = await generateChunked(supa, leader, { force, region });
     if (result.error) console.error("[trait-playbook-bg] generation failed:", result.error);
     else console.log("[trait-playbook-bg] generated playbook for", leader.id);
   } catch (e) {
