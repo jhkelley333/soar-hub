@@ -25,6 +25,9 @@ const CAPTURE_ROLES = new Set(["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "
 // Org-wide visibility — these roles see every audit regardless of user_scopes.
 // FBC is org-wide because their coverage isn't tied to a region/district.
 const ORG_WIDE = new Set(["vp", "coo", "admin", "fbc"]);
+// Bulk management — RVP and above may select multiple audits and archive or
+// delete them (regardless of who created each one), scoped to what they can see.
+const MANAGE_ROLES = new Set(["rvp", "vp", "coo", "admin"]);
 const AREAS = new Set(["FOH", "BOH", "Restroom", "Stock Room", "Roof", "Parking Lot", "Stall", "Landscaping", "Managers Desk", "Patio", "Trash Enclosure", "Kitchen", "Misc."]);
 const SEVERITIES = new Set(["high", "medium", "low"]);
 
@@ -158,7 +161,7 @@ async function listAudits(supa, user) {
   const scope = await storesForUser(supa, user);
   let q = supa.from("site_audits").select("*").order("date", { ascending: false }).order("created_at", { ascending: false }).limit(200);
   if (!scope.all) {
-    if (scope.ids.size === 0) return { audits: [], can_write: CAPTURE_ROLES.has(String(user.role)) };
+    if (scope.ids.size === 0) return { audits: [], can_write: CAPTURE_ROLES.has(String(user.role)), can_manage: MANAGE_ROLES.has(String(user.role || "").toLowerCase()) };
     q = q.in("store_id", Array.from(scope.ids));
   }
   const { data: audits, error } = await q;
@@ -198,7 +201,7 @@ async function listAudits(supa, user) {
       issues: await Promise.all(issues.map((i) => issueCard(supa, i))),
     });
   }
-  return { audits: out, can_write: CAPTURE_ROLES.has(String(user.role)) };
+  return { audits: out, can_write: CAPTURE_ROLES.has(String(user.role)), can_manage: MANAGE_ROLES.has(role) };
 }
 
 async function createAudit(supa, user, body) {
@@ -344,6 +347,46 @@ async function deleteAudit(supa, user, body) {
   const { error } = await supa.from("site_audits").delete().eq("id", auditId);
   if (error) return { error: error.message, status: 500 };
   return { ok: true };
+}
+
+// The subset of the requested audit ids the caller is actually allowed to touch:
+// existing audits whose store is within the caller's visibility scope. Keeps a
+// bulk action from reaching audits outside the caller's org scope even if ids
+// are guessed/forged.
+async function scopedAuditIds(supa, user, rawIds) {
+  const ids = [...new Set((Array.isArray(rawIds) ? rawIds : []).map((x) => sanitize(x, 64)).filter(Boolean))];
+  if (ids.length === 0) return [];
+  const scope = await storesForUser(supa, user);
+  const { data } = await supa.from("site_audits").select("id, store_id").in("id", ids);
+  let rows = data || [];
+  if (!scope.all) rows = rows.filter((r) => scope.ids.has(r.store_id));
+  return rows.map((r) => r.id);
+}
+
+// RVP+ bulk archive (status -> 'complete') or reopen (-> 'open').
+async function bulkArchiveAudits(supa, user, body) {
+  if (!MANAGE_ROLES.has(String(user.role || "").toLowerCase())) {
+    return { error: "Only RVP and above can archive audits in bulk.", status: 403 };
+  }
+  const ids = await scopedAuditIds(supa, user, body?.audit_ids);
+  if (ids.length === 0) return { error: "No audits in your scope to update.", status: 400 };
+  const nextStatus = body?.reopen === true ? "open" : "complete";
+  const { error } = await supa.from("site_audits")
+    .update({ status: nextStatus, updated_at: new Date().toISOString() }).in("id", ids);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, affected: ids.length, status: nextStatus };
+}
+
+// RVP+ bulk delete. Issue/report children cascade via the FKs from 0145.
+async function bulkDeleteAudits(supa, user, body) {
+  if (!MANAGE_ROLES.has(String(user.role || "").toLowerCase())) {
+    return { error: "Only RVP and above can delete audits in bulk.", status: 403 };
+  }
+  const ids = await scopedAuditIds(supa, user, body?.audit_ids);
+  if (ids.length === 0) return { error: "No audits in your scope to delete.", status: 400 };
+  const { error } = await supa.from("site_audits").delete().in("id", ids);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true, affected: ids.length };
 }
 
 function esc(s) {
@@ -565,6 +608,8 @@ export const handler = async (event) => {
     if (action === "delete-issue") return unwrap(await deleteIssue(supa, user, body));
     if (action === "close-audit") return unwrap(await closeAudit(supa, user, body));
     if (action === "delete-audit") return unwrap(await deleteAudit(supa, user, body));
+    if (action === "bulk-archive-audits") return unwrap(await bulkArchiveAudits(supa, user, body));
+    if (action === "bulk-delete-audits") return unwrap(await bulkDeleteAudits(supa, user, body));
     if (action === "share-report") return unwrap(await shareReport(supa, user, body));
     return respond(400, { error: `Unknown action: ${action}` });
   } catch (e) {
