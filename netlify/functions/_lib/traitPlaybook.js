@@ -15,10 +15,14 @@ const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 export const MODEL = "claude-sonnet-4-6";
 const ANTHROPIC_VERSION = "2023-06-01";
 
-// Cap how many people go into one generation. A DO's team is small; an
-// admin/VP downline can be hundreds, which would blow the prompt and the
-// response budget. Coach the first N (leaders-first ordering) and flag the rest.
+// Cap how many people go into one run. A DO's team is small; an admin/VP
+// downline can be hundreds, which would blow the budget. Coach the first N
+// (leaders-first ordering) and flag the rest.
 const MAX_COACHED = 40;
+// Members per Anthropic call. The whole team in one call truncated the response
+// (JSON cut off mid-array → parse fail → whole run lost). Small batches each fit
+// comfortably in the token budget and commit independently.
+const BATCH_SIZE = 8;
 
 export const LEADER_ROLES = new Set(["do", "sdo", "rvp", "vp", "coo", "admin"]);
 
@@ -144,32 +148,53 @@ export function teamHash(team) {
   return createHash("sha1").update(basis).digest("hex");
 }
 
-function buildPrompt(leader, team, coached) {
+// The CI definition block for whichever traits appear in a set of members.
+function traitDefsFor(members) {
   const seen = new Map();
-  for (const m of coached) {
+  for (const m of members) {
     const p = ciPatternForTrait(m.trait);
     if (p && !seen.has(p.id)) seen.set(p.id, p);
   }
-  const defs = [...seen.values()]
+  return [...seen.values()]
     .map((p) => `### ${p.name}\n- Essence: ${p.essence}\n- Strengths: ${p.strengths}\n- Watch-outs: ${p.watchouts}\n- Motivators: ${p.motivators}\n- Working style: ${p.style}`)
     .join("\n\n");
-  const roster = coached
-    .map((m) => `- ${m.name} — ${String(m.role).toUpperCase()}${m.store_number ? ` — #${m.store_number}${m.store_name ? ` ${m.store_name}` : ""}` : ""} — Culture Index: ${ciPatternForTrait(m.trait)?.name || m.trait}`)
-    .join("\n");
+}
 
+const rosterLine = (m) =>
+  `- ${m.name} — ${String(m.role).toUpperCase()}${m.store_number ? ` — #${m.store_number}${m.store_name ? ` ${m.store_name}` : ""}` : ""} — Culture Index: ${ciPatternForTrait(m.trait)?.name || m.trait}`;
+
+// Per-batch prompt: coaching for just these members. Small so the response
+// never truncates. Includes the ids so we can map results back reliably.
+function buildBatchPrompt(leader, batch) {
+  const roster = batch.map((m) => `- id=${m.id} — ${m.name} — ${String(m.role).toUpperCase()} — Culture Index: ${ciPatternForTrait(m.trait)?.name || m.trait}`).join("\n");
   return (
-    `You are a seasoned multi-unit operations coach for Sonic Drive-In, advising ${displayName(leader)} (a ${String(leader.role).toUpperCase()}) on how to lead their team, using each person's Culture Index profile.\n\n` +
+    `You are a seasoned multi-unit operations coach for Sonic Drive-In, advising ${displayName(leader)} (a ${String(leader.role).toUpperCase()}) on how to lead specific team members, using each person's Culture Index profile.\n\n` +
+    `TEAM MEMBERS TO COACH:\n${roster}\n\n` +
+    `CULTURE INDEX DEFINITIONS (ground everything you say in these — do not invent traits):\n${traitDefsFor(batch)}\n\n` +
+    `Return ONLY valid minified JSON (no markdown fence, no prose outside the JSON) in exactly this shape:\n` +
+    `{"members":[{"id":string,"name":string,"coaching":string}]}\n\n` +
+    `Rules:\n` +
+    `- One entry per person given, using the EXACT id and name provided.\n` +
+    `- "coaching" is 2-3 sentences: how to communicate with, motivate, delegate to, and give feedback to this person given their pattern — concrete and store-ops specific.\n` +
+    `- Never present a trait as a verdict on ability. Frame gaps as coaching paths; traits are defaults, not ceilings.`
+  );
+}
+
+// Team-level synthesis: the overview / dynamics / actions. Reads the roster's
+// composition, not per-member text, so it's a small, reliable call.
+function buildSynthesisPrompt(leader, coached) {
+  const roster = coached.map(rosterLine).join("\n");
+  return (
+    `You are a seasoned multi-unit operations coach for Sonic Drive-In, advising ${displayName(leader)} (a ${String(leader.role).toUpperCase()}) on how to lead their team as a whole, using the team's Culture Index composition.\n\n` +
     `THE TEAM:\n${roster}\n\n` +
-    `CULTURE INDEX DEFINITIONS (ground everything you say in these — do not invent traits):\n${defs}\n\n` +
-    `Write practical, specific coaching for a store-operations context. Return ONLY valid minified JSON (no markdown fence, no prose outside the JSON) in exactly this shape:\n` +
-    `{"overview": string, "members": [{"id": string, "name": string, "coaching": string}], "dynamics": string, "actions": [string, string, string]}\n\n` +
+    `CULTURE INDEX DEFINITIONS (ground everything you say in these — do not invent traits):\n${traitDefsFor(coached)}\n\n` +
+    `Return ONLY valid minified JSON (no markdown fence, no prose outside the JSON) in exactly this shape:\n` +
+    `{"overview":string,"dynamics":string,"actions":[string,string,string]}\n\n` +
     `Rules:\n` +
     `- "overview": 2-3 sentences reading the team's overall Culture Index composition and what it means for how to lead THIS group.\n` +
-    `- "members": one entry per person, in the same order given. Use the exact id and name provided. "coaching" is 2-3 sentences: how to communicate with, motivate, delegate to, and give feedback to this person given their pattern — concrete and store-ops specific.\n` +
     `- "dynamics": 2-3 sentences on friction and complementarity across the team.\n` +
     `- "actions": exactly 3 concrete things this leader can do THIS WEEK.\n` +
-    `- Never present a trait as a verdict on ability. Frame gaps as coaching paths; traits are defaults, not ceilings.\n` +
-    `- Keep the total response under 600 words.`
+    `- Never present a trait as a verdict on ability. Keep it under 250 words.`
   );
 }
 
@@ -186,62 +211,156 @@ function parseModelJson(text) {
   }
 }
 
-// Generate coaching for the leader's current team and upsert it into the cache.
-// Runs the (slow) Anthropic call — call this only from a background function.
-// Returns { ok, content } or { error }.
-export async function generateAndCache(supa, leader, { force, region } = {}) {
+async function callAnthropic(prompt, maxTokens) {
+  const apiRes = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": ANTHROPIC_VERSION },
+    body: JSON.stringify({ model: MODEL, max_tokens: maxTokens, messages: [{ role: "user", content: prompt }] }),
+  });
+  if (!apiRes.ok) {
+    const errText = await apiRes.text();
+    throw new Error(`Anthropic returned ${apiRes.status}: ${errText.slice(0, 160)}`);
+  }
+  const apiJson = await apiRes.json();
+  return apiJson?.content?.[0]?.text || "";
+}
+
+const chunk = (arr, n) => {
+  const out = [];
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+  return out;
+};
+
+// Chunked, resumable generation. Coaches the team in small member-batches,
+// committing each batch to trait_playbook_member_coaching as it lands, then a
+// team-level synthesis into trait_playbook_runs. A re-run reuses members already
+// coached for the same team_hash (resume); `force` clears them and starts over.
+// Progress lives in the run header so the poller can surface it. Call this only
+// from a background function — it makes several sequential Anthropic calls.
+// Returns { ok } or { error }.
+export async function generateChunked(supa, leader, { force, region } = {}) {
   const team = filterTeamByRegion(await resolveTeam(supa, leader), region);
   if (team.length === 0) {
     return { error: region ? `No one in ${region} has a Culture Index trait yet.` : "No one on your team has a Culture Index trait yet." };
   }
-  const hash = teamHash(team);
-
   if (!process.env.ANTHROPIC_API_KEY) return { error: "ANTHROPIC_API_KEY missing on server." };
 
+  const hash = teamHash(team);
   const coached = team.slice(0, MAX_COACHED);
-  const prompt = buildPrompt(leader, team, coached);
-
-  const apiRes = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "x-api-key": process.env.ANTHROPIC_API_KEY, "anthropic-version": ANTHROPIC_VERSION },
-    body: JSON.stringify({ model: MODEL, max_tokens: 2000, messages: [{ role: "user", content: prompt }] }),
-  });
-  if (!apiRes.ok) {
-    const errText = await apiRes.text();
-    console.error("[trait-playbook] anthropic error:", apiRes.status, errText);
-    return { error: `Anthropic returned ${apiRes.status}.` };
-  }
-  const apiJson = await apiRes.json();
-  const parsed = parseModelJson(apiJson?.content?.[0]?.text);
-  if (!parsed || !Array.isArray(parsed.members)) return { error: "The model returned an unexpected format." };
-
   const byId = new Map(team.map((t) => [t.id, t]));
-  const members = (parsed.members || [])
-    .map((m) => {
-      const t = byId.get(m.id) || team.find((x) => x.name === m.name);
-      if (!t) return null;
-      return { id: t.id, name: t.name, role: t.role, trait: t.trait, store_number: t.store_number, store_name: t.store_name, coaching: String(m.coaching || "") };
-    })
-    .filter(Boolean);
+  const now = () => new Date().toISOString();
+
+  // force → wipe prior member work for this composition so it fully regenerates.
+  if (force) {
+    await supa.from("trait_playbook_member_coaching").delete().eq("leader_id", leader.id).eq("team_hash", hash);
+  }
+
+  // Already-coached members (resume).
+  const { data: existing } = await supa
+    .from("trait_playbook_member_coaching").select("member_id").eq("leader_id", leader.id).eq("team_hash", hash);
+  const doneIds = new Set((existing || []).map((r) => r.member_id));
+
+  // Open (or reset) the run header in the running state.
+  await supa.from("trait_playbook_runs").upsert({
+    leader_id: leader.id, team_hash: hash, region: region || null,
+    status: "running", total_members: coached.length, coached_members: doneIds.size,
+    team_count: team.length, truncated: team.length > coached.length,
+    error: null, model: MODEL, updated_at: now(),
+  }, { onConflict: "leader_id,team_hash" });
+
+  let firstError = null;
+  for (const batch of chunk(coached, BATCH_SIZE)) {
+    const todo = batch.filter((m) => !doneIds.has(m.id));
+    if (todo.length === 0) continue;
+    try {
+      const parsed = parseModelJson(await callAnthropic(buildBatchPrompt(leader, todo), 1500));
+      if (!parsed || !Array.isArray(parsed.members)) throw new Error("The model returned an unexpected format for a batch.");
+      const rows = [];
+      for (const pm of parsed.members) {
+        const t = byId.get(pm.id) || todo.find((x) => x.name === pm.name);
+        if (!t || !pm.coaching) continue;
+        rows.push({ leader_id: leader.id, team_hash: hash, member_id: t.id, coaching: String(pm.coaching), model: MODEL, generated_at: now() });
+      }
+      if (rows.length) {
+        const { error: upErr } = await supa.from("trait_playbook_member_coaching").upsert(rows, { onConflict: "leader_id,team_hash,member_id" });
+        if (upErr) throw new Error(upErr.message);
+        rows.forEach((r) => doneIds.add(r.member_id));
+        // Commit progress after each batch so the poller (and a resume) see it.
+        await supa.from("trait_playbook_runs").update({ coached_members: doneIds.size, updated_at: now() })
+          .eq("leader_id", leader.id).eq("team_hash", hash);
+      }
+    } catch (e) {
+      firstError = firstError || (e?.message || "A batch failed.");
+      console.error("[trait-playbook] batch failed:", e?.message || e);
+      // Keep going — other batches are independent; completed work is saved.
+    }
+  }
+
+  // Team-level synthesis, once everyone is coached.
+  const allCoached = doneIds.size >= coached.length;
+  let synth = null;
+  if (allCoached) {
+    try {
+      synth = parseModelJson(await callAnthropic(buildSynthesisPrompt(leader, coached), 800));
+    } catch (e) {
+      firstError = firstError || (e?.message || "Synthesis failed.");
+      console.error("[trait-playbook] synthesis failed:", e?.message || e);
+    }
+  }
+
+  const complete = allCoached && synth && typeof synth.overview === "string";
+  const patch = complete
+    ? {
+        status: "done", coached_members: doneIds.size, error: null, updated_at: now(), generated_at: now(),
+        overview: String(synth.overview || ""), dynamics: String(synth.dynamics || ""),
+        actions: Array.isArray(synth.actions) ? synth.actions.map(String).slice(0, 5) : [],
+      }
+    : { status: "error", coached_members: doneIds.size, updated_at: now(),
+        error: firstError || "Generation didn't finish — try again to resume." };
+  await supa.from("trait_playbook_runs").update(patch).eq("leader_id", leader.id).eq("team_hash", hash);
+
+  return complete ? { ok: true } : { error: patch.error };
+}
+
+// Assemble the current run for a leader/region: progress + whatever coaching is
+// committed so far. Never generates. Returns { ready, status, progress, content,
+// error, generatedAt } — ready is true only once the run is 'done'.
+export async function readRun(supa, leader, region) {
+  const team = filterTeamByRegion(await resolveTeam(supa, leader), region);
+  if (team.length === 0) return { ready: false, empty: true };
+  const hash = teamHash(team);
+
+  const { data: run } = await supa
+    .from("trait_playbook_runs")
+    .select("status, total_members, coached_members, team_count, truncated, overview, dynamics, actions, error, generated_at, updated_at")
+    .eq("leader_id", leader.id).eq("team_hash", hash).maybeSingle();
+  if (!run) return { ready: false };
+
+  const { data: coachRows } = await supa
+    .from("trait_playbook_member_coaching").select("member_id, coaching")
+    .eq("leader_id", leader.id).eq("team_hash", hash);
+  const coachingById = new Map((coachRows || []).map((r) => [r.member_id, r.coaching]));
+
+  const members = team.slice(0, run.total_members || MAX_COACHED)
+    .filter((t) => coachingById.has(t.id))
+    .map((t) => ({ id: t.id, name: t.name, role: t.role, trait: t.trait, store_number: t.store_number, store_name: t.store_name, coaching: coachingById.get(t.id) }));
 
   const content = {
-    overview: String(parsed.overview || ""),
-    dynamics: String(parsed.dynamics || ""),
-    actions: Array.isArray(parsed.actions) ? parsed.actions.map(String).slice(0, 5) : [],
+    overview: run.overview || "",
+    dynamics: run.dynamics || "",
+    actions: Array.isArray(run.actions) ? run.actions : [],
     members,
-    coached_count: coached.length,
-    team_count: team.length,
-    truncated: team.length > coached.length,
+    coached_count: run.total_members,
+    team_count: run.team_count,
+    truncated: run.truncated,
   };
-
-  const generatedAt = new Date().toISOString();
-  const { error: upErr } = await supa
-    .from("trait_playbook_cache")
-    .upsert({ leader_id: leader.id, team_hash: hash, content, model: MODEL, generated_by: leader.id, generated_at: generatedAt }, { onConflict: "leader_id,team_hash" });
-  if (upErr) {
-    console.error("[trait-playbook] cache write failed:", upErr.message);
-    return { error: `Couldn't save the playbook: ${upErr.message}` };
-  }
-  void force; // force only affects whether the caller bypassed the cache read
-  return { ok: true, content, generatedAt };
+  const progress = { total: run.total_members, coached: (coachRows || []).length, status: run.status };
+  return {
+    ready: run.status === "done",
+    status: run.status,
+    error: run.error || null,
+    progress,
+    content,
+    generatedAt: run.generated_at || run.updated_at,
+  };
 }

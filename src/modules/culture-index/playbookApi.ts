@@ -37,6 +37,14 @@ export interface PlaybookContent {
   team_count?: number;
 }
 
+export type RunStatus = "running" | "done" | "error";
+
+export interface PlaybookProgress {
+  total: number;
+  coached: number;
+  status: RunStatus;
+}
+
 export interface CoachResult {
   content: PlaybookContent;
   cached: boolean;
@@ -45,9 +53,19 @@ export interface CoachResult {
 
 interface CoachRead {
   ready: boolean;
+  status?: RunStatus;
+  error?: string | null;
+  progress?: PlaybookProgress;
   content?: PlaybookContent;
   generatedAt?: string;
   empty?: boolean;
+}
+
+// A live progress tick during generation: how far along, and the partial
+// coaching committed so far (members fill in as their batch lands).
+export interface GenerationTick {
+  progress: PlaybookProgress;
+  content: PlaybookContent;
 }
 
 async function authHeaders(): Promise<HeadersInit> {
@@ -91,10 +109,16 @@ export async function fetchCachedPlaybook(region = ""): Promise<CoachResult | nu
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-// Kick the background generator and poll the cache read until a NEW result
-// appears. For a plain view (force=false) a cached result returns instantly.
-// `region` narrows generation to one region (recommended for large downlines).
-export async function generatePlaybook(force = false, region = ""): Promise<CoachResult> {
+// Kick the background generator and poll until the run completes. Generation is
+// chunked, so `onTick` fires each poll with live progress + the partial coaching
+// committed so far. For a plain view (force=false) a completed run returns
+// instantly. `region` narrows generation to one region (recommended for large
+// downlines). Throws if the run ends in an error state or never finishes.
+export async function generatePlaybook(
+  force = false,
+  region = "",
+  onTick?: (t: GenerationTick) => void,
+): Promise<CoachResult> {
   const first = await readCoach(region);
   if (first.ready && first.content && !force) {
     return { content: first.content, cached: true, generatedAt: first.generatedAt ?? "" };
@@ -104,12 +128,22 @@ export async function generatePlaybook(force = false, region = ""): Promise<Coac
   // Fire-and-forget: the background function returns 202 immediately.
   await fetch(FN_BG, { method: "POST", headers: await authHeaders(), body: JSON.stringify({ force, region: region || null }) });
 
-  // Poll for a fresh result (generatedAt must differ from any prior one).
-  for (let i = 0; i < 40; i++) {
+  // Poll until a fresh completed run appears. The run passes through 'running'
+  // (surfaced as progress) before 'done'. A batch failure lands the run in
+  // 'error' with partial work saved — retrying resumes it.
+  let sawRunning = false;
+  for (let i = 0; i < 80; i++) {
     await sleep(3000);
     const c = await readCoach(region);
+    if (c.progress && c.content && onTick) onTick({ progress: c.progress, content: c.content });
+    if (c.status === "running") { sawRunning = true; continue; }
     if (c.ready && c.content && c.generatedAt !== prevAt) {
       return { content: c.content, cached: false, generatedAt: c.generatedAt ?? "" };
+    }
+    // Terminal error — but only trust it once this run has actually started, so
+    // we don't trip on a stale 'error' row from a previous attempt.
+    if (c.status === "error" && sawRunning) {
+      throw new Error(c.error || "Generation didn't finish. Try again to resume where it left off.");
     }
   }
   throw new Error("The coaching is taking longer than usual to generate. Give it a moment and try again.");
