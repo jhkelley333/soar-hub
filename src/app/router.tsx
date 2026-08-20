@@ -43,6 +43,7 @@ import { AcquisitionDetailPage } from "@/modules/acquisitions/AcquisitionDetailP
 import { BulkAttributesPage } from "@/modules/admin/BulkAttributesPage";
 import { GmRosterPage } from "@/modules/admin/GmRosterPage";
 import { FeatureFlagsPage } from "@/modules/admin/FeatureFlagsPage";
+import { ReportsAdminPage } from "@/modules/reports/ReportsAdminPage";
 import { RoleAccessPage } from "@/modules/admin/RoleAccessPage";
 import { RegionAccessPage } from "@/modules/admin/RegionAccessPage";
 import { KpiDashboardPage } from "@/modules/kpi/KpiDashboardPage";
@@ -701,6 +702,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <FeatureFlagsPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/reports",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <ReportsAdminPage />
           </ProtectedRoute>
         ),
       },
