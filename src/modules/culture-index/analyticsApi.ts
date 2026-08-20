@@ -20,7 +20,7 @@ export interface HeatCell {
 }
 export interface OverviewResponse {
   run: { weeks_analyzed: number };
-  coverage: { ranked_stores: number; with_trait: number; trait_pct: number };
+  coverage: { ranked_stores: number; with_trait: number; trait_pct: number; recovered_via_roster?: number };
   decomposition: {
     stability_r2: number;
     trait_var: number;

@@ -200,23 +200,40 @@ async function overview(supa) {
     storesMeta.push(...part);
   }
   const numById = new Map(storesMeta.map((s) => [s.id, String(s.number)]));
-  const storeIds = [...new Set(storesMeta.map((s) => s.id).filter(Boolean))];
-  const gmProfiles = [];
-  for (let i = 0; i < storeIds.length; i += 150) {
-    const part = await selectAll(supa, "profiles", "primary_store_id, cultural_index_trait", (q) =>
-      q.eq("role", "gm").eq("is_active", true).in("primary_store_id", storeIds.slice(i, i + 150)),
-    );
-    gmProfiles.push(...part);
-  }
-  const traitByNum = new Map();
+  // Every active GM's trait, indexed two ways so a store still resolves when one
+  // link is stale: by the profile's primary_store_id, and by email (to match the
+  // gm_roster below). We fetch ALL active GMs — not just those whose
+  // primary_store_id already points at a ranked store — so a GM with an unset or
+  // out-of-date primary_store_id isn't silently dropped from the analysis.
+  const gmProfiles = await selectAll(supa, "profiles", "primary_store_id, email, cultural_index_trait", (q) =>
+    q.eq("role", "gm").eq("is_active", true),
+  );
+  const traitByNum = new Map();   // store_number -> trait, resolved via primary_store_id
+  const traitByEmail = new Map(); // lower(email)  -> trait, for the roster fallback
   for (const p of gmProfiles) {
+    if (!p.cultural_index_trait) continue;
     const num = p.primary_store_id ? numById.get(p.primary_store_id) : null;
-    if (num && p.cultural_index_trait) traitByNum.set(num, p.cultural_index_trait);
+    if (num) traitByNum.set(num, p.cultural_index_trait);
+    const email = (p.email || "").trim().toLowerCase();
+    if (email && !traitByEmail.has(email)) traitByEmail.set(email, p.cultural_index_trait);
   }
 
   // 4. Stability inputs, keyed by store_number (= entity_key on store rows).
-  const roster = await selectAll(supa, "gm_roster", "store_number, placement_date, status");
+  const roster = await selectAll(supa, "gm_roster", "store_number, gm_email, placement_date, status");
   const rosterByNum = new Map(roster.map((r) => [String(r.store_number), r]));
+
+  // Recover stores whose trait didn't resolve via primary_store_id by falling
+  // back to the authoritative GM roster: store_number -> roster gm_email ->
+  // active GM's trait. This is what pulls in active GMs who run a store per the
+  // roster but whose profile primary_store_id is unset or stale. primary_store_id
+  // wins where present; the roster only fills the gaps.
+  let recoveredViaRoster = 0;
+  for (const num of storeNumbers) {
+    if (traitByNum.has(num)) continue;
+    const email = (rosterByNum.get(num)?.gm_email || "").trim().toLowerCase();
+    const trait = email ? traitByEmail.get(email) : null;
+    if (trait) { traitByNum.set(num, trait); recoveredViaRoster += 1; }
+  }
 
   const cutoff = new Date(now.getTime() - 18 * 30.44 * 24 * 60 * 60 * 1000).toISOString();
   const history = await selectAll(supa, "gm_roster_history", "store_number, old_gm_name, new_gm_name, changed_at", (q) =>
@@ -324,6 +341,7 @@ async function overview(supa) {
       ranked_stores: storeNumbers.length,
       with_trait: withTrait.length,
       trait_pct: Math.round((100 * withTrait.length) / storeNumbers.length),
+      recovered_via_roster: recoveredViaRoster,
     },
     decomposition: { stability_r2: stabilityR2, trait_var: traitVar, n: both.length, verdict },
     leaderboard,
