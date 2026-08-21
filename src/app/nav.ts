@@ -17,15 +17,12 @@ import {
   LayoutGrid,
   GraduationCap,
   GitBranch,
-  CloudSun,
   BarChart3,
   AlertTriangle,
-  MapPinned,
   Trophy,
   Target,
   ListChecks,
   Clock,
-  TrendingDown,
   Fingerprint,
   type LucideIcon,
 } from "lucide-react";
@@ -68,9 +65,7 @@ export const NAV: NavItem[] = [
   // over the Operations slot; the legacy sheet-fed Ranker (/ranker) is archived
   // off the sidebar, its route kept alive only for old deep links.
   { to: "/admin/ranking", label: "Ranker", icon: Trophy, roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
-  // Bottom performers by SDO (year trend) — SDO/RVP reach it in the sidebar;
-  // vp/coo/admin reach it via System Settings, so the entry is scoped low.
-  { to: "/admin/ranking/bottom-performers", label: "Bottom Performers", icon: TrendingDown, roles: ["sdo", "rvp"] },
+  // Bottom Performers lives in System Settings (Beta), out of the sidebar.
   // Culture Index — the trait framework + all 21 pattern definitions. The
   // reference behind every trait chip on the roster and in accounts; the base
   // the coaching/analytics views build on.
@@ -81,10 +76,7 @@ export const NAV: NavItem[] = [
   // Executive Overview — org-wide trait × performance × store-stability
   // analytics. Strategic view, VP/COO/admin only.
   { to: "/culture-index/overview", label: "Trait Analytics", icon: BarChart3, roles: ["vp", "coo", "admin"] },
-  // Territory Map — stores plotted on Google Maps, pin color keyed to the
-  // DO resolved live from the org data. vp/coo/admin reach it via System
-  // Settings, so the sidebar entry is scoped to the lower roles.
-  { to: "/territory-map", label: "Territory Map", icon: MapPinned,   roles: ["do", "sdo", "rvp", "fbc"] },
+  // Territory Map lives in System Settings (Org Tools), out of the sidebar.
   // Store Visit is now a Beta Test tool inside System Settings
   // (/admin/system-settings), so it's kept out of the sidebar. Its /visit route
   // stays live (DO+ guard) for the hub card and deep links.
@@ -126,7 +118,8 @@ export const NAV: NavItem[] = [
   // Reno Scoping is reached through the Operations Tools hub (/operations),
   // so it's kept out of the sidebar to reduce clutter. Its routes stay live
   // for deep links and the hub's card.
-  { to: "/weather",     label: "Weather",     icon: CloudSun,        roles: ["do", "sdo", "rvp", "vp", "coo", "admin"] },
+  // Weather is reached through the Operations Tools hub (/operations), out of
+  // the sidebar. Its /weather route stays live for deep links and the hub card.
   // My Walks + Walkthroughs are reached through the Operations Tools hub
   // (/operations), so they're kept out of the sidebar to reduce clutter.
   // Their routes stay live for deep links and the hub's card.
