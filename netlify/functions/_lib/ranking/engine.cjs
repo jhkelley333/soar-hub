@@ -343,6 +343,7 @@ function computeStoreWtd(st, cfg, issues) {
   // Operations
   r.bscTrainingPct = isNum(w.bscTrainingPct) ? w.bscTrainingPct : '-'; // AJ
   r.bscScore = bandScore(r.bscTrainingPct, cfg.bands.bsc_training, 1); // AK
+  r.totalTrainingPct = isNum(w.totalTrainingPct) ? w.totalTrainingPct : null; // info only (Comms Board); not scored on WTD
   r.onTimePct = isNum(w.onTimePct) ? w.onTimePct : null;               // AM
   r.onTimeScore = bandScore(r.onTimePct, cfg.bands.on_time, undefined); // AN: no IFERROR
   r.vog = isNum(w.vogScore) ? w.vogScore : null;                       // AP

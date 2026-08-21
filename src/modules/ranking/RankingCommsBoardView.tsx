@@ -177,7 +177,7 @@ export function RankingCommsBoardView() {
           <SideStat label="Soar Company Rank" value={ranks.company != null ? `${ranks.company}${ranks.company_of ? ` / ${ranks.company_of}` : ""}` : "—"} />
           <SideStat label="Days without Complaints" value="—" />
           <div>
-            <div className="rounded bg-blue-500 px-2 py-1 text-xs font-bold text-white">BSC Food Safety % Goal &gt;95%</div>
+            <div className="rounded bg-blue-500 px-2 py-1 text-xs font-bold text-white">Food Safety % Goal &gt;95%</div>
             <div className={cn("px-2 py-2 text-center text-lg font-black", isNum(ecoFoodSafety) && (ecoFoodSafety as number) < 0.95 ? "text-red-600" : "text-midnight")}>
               {pct1(ecoFoodSafety)}
             </div>

@@ -185,7 +185,7 @@ export function RankingStoreView({ row, run }: { row: RankingResultRow; run?: Ra
           <ScoreRing score={exec} size={90} />
           <div>
             <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-400">Execution Score</div>
-            <p className="mt-1 text-xs leading-relaxed text-zinc-600">Composite of labor, VOG count, complaints, and BSC training.</p>
+            <p className="mt-1 text-xs leading-relaxed text-zinc-600">Composite of labor, VOG count, complaints, and LTO training.</p>
             <div className={cn("mt-2 text-xs font-semibold", exec == null ? "text-zinc-400" : exec >= 75 ? "text-emerald-600" : exec >= 50 ? "text-amber-600" : "text-red-600")}>
               {exec == null ? "Not enough data" : exec >= 75 ? "Strong execution" : exec >= 50 ? "Room to improve" : "Needs attention"}
             </div>

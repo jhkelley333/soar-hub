@@ -388,7 +388,9 @@ export async function runRankingNow(supa, user, opts = {}) {
     // Total Training (PTD-only; WTD's contract excludes it). Scored 1-5 but
     // never counted toward Total Points (DEVIATIONS A).
     const tzRow = tz?.stores.get(num);
-    if (isNum(tzRow?.total_training_pct)) ptd.totalTrainingPct = tzRow.total_training_pct;
+    // Total Training feeds PTD scoring; also mirror it onto WTD as an info-only
+    // value so the Comms Board (which reads WTD per week) can show it.
+    if (isNum(tzRow?.total_training_pct)) { ptd.totalTrainingPct = tzRow.total_training_pct; wtd.totalTrainingPct = tzRow.total_training_pct; }
     // TR vs TZ Variance from the TotZone file — info readout on both scopes.
     if (isNum(tzRow?.tr_vs_tz)) { ptd.trVsTz = tzRow.tr_vs_tz; wtd.trVsTz = tzRow.tr_vs_tz; }
     // Evening daypart net-sales YoY %, from that week's KPI snapshot (WTD).

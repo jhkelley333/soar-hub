@@ -104,7 +104,7 @@ const STORE_COLS: Col[] = [
   { g: "fin", label: "$ miss", key: "finMiss", kind: "money" },
   { g: "fin", label: "Annualized", key: "finAnnualized", kind: "money" },
   { g: "fin", label: "Fin score", key: "finScore", kind: "tot" },
-  { g: "ops", label: "BSC", key: "bscTrainingPct", kind: "pct1" },
+  { g: "ops", label: "LTO Training", key: "bscTrainingPct", kind: "pct1" },
   { g: "ops", label: "Score", key: "bscScore", kind: "score" },
   { g: "ops", label: "On time", key: "onTimePct", kind: "pct1" },
   { g: "ops", label: "Score", key: "onTimeScore", kind: "score" },
@@ -149,7 +149,7 @@ const TIER_TABS: { id: RankTier; label: string }[] = [
 
 const SOURCE_LABEL: Record<string, string> = {
   skunkworks: "Skunkworks API", ix: "Inventory Expressway", ecosure: "EcoSure", vog: "VOG",
-  shops: "Mystery shops", bsc: "BSC Training", totzone: "TotZone", complaints: "Complaints",
+  shops: "Mystery shops", bsc: "LTO Training", totzone: "TotZone", complaints: "Complaints",
 };
 
 // ── Column guide — plain-language "what is this + where's it from" ──────
@@ -205,8 +205,8 @@ const METRIC_INFO: Record<string, { desc: string; src?: string }> = {
   finAnnualized: { desc: "Combined food + labor miss projected to a full year.", src: "Derived" },
   finScore: { desc: "Ranker points for the Financial pillar.", src: "Ranker" },
   // Operations
-  bscTrainingPct: { desc: "Balanced Scorecard training completion.", src: "BSC Training" },
-  bscScore: { desc: "Ranker points for BSC training.", src: "Ranker" },
+  bscTrainingPct: { desc: "LTO Training Module completion.", src: "LTO Training" },
+  bscScore: { desc: "Ranker points for LTO training.", src: "Ranker" },
   onTimePct: { desc: "Share of orders delivered within the target time.", src: "Skunkworks API" },
   onTimeScore: { desc: "Ranker points for on-time service.", src: "Ranker" },
   lateSendsPct: { desc: "Share of orders that blew the critical time threshold. Lower is better.", src: "Skunkworks API" },
