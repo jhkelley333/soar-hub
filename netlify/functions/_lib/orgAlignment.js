@@ -31,6 +31,7 @@ export async function applyAlignment(supa, alignmentId, actorId) {
 
   const { data: nodes } = await supa.from("org_alignment_nodes").select("*").eq("alignment_id", alignmentId);
   const { data: moves } = await supa.from("org_alignment_moves").select("*").eq("alignment_id", alignmentId);
+  const { data: leaderMoves } = await supa.from("org_alignment_leader_moves").select("*").eq("alignment_id", alignmentId);
 
   const refMap = {}; // node ref -> real id
   for (const n of nodes || []) if (n.created_real_id) refMap[n.ref] = n.created_real_id;
@@ -66,10 +67,28 @@ export async function applyAlignment(supa, alignmentId, actorId) {
     if (error) return { error: `Couldn't move ${m.kind}: ${error.message}`, status: 500 };
   }
 
+  // 3. Reassign leaders (DO/SDO), snapshotting the prior scope for rollback.
+  for (const lm of leaderMoves || []) {
+    if (lm.applied) continue;
+    const target = lm.to_scope_id || refMap[lm.to_scope_ref];
+    if (!target) return { error: `A leader reassignment has no resolvable destination scope.`, status: 400 };
+    if (lm.from_scope_id) {
+      const { error } = await supa.from("user_scopes")
+        .update({ scope_id: target })
+        .eq("user_id", lm.user_id).eq("scope_type", lm.scope_type).eq("scope_id", lm.from_scope_id);
+      if (error) return { error: `Couldn't reassign leader: ${error.message}`, status: 500 };
+    } else {
+      const { error } = await supa.from("user_scopes")
+        .insert({ user_id: lm.user_id, scope_type: lm.scope_type, scope_id: target });
+      if (error && !/duplicate|unique/i.test(error.message)) return { error: `Couldn't assign leader: ${error.message}`, status: 500 };
+    }
+    await supa.from("org_alignment_leader_moves").update({ prior_scope_id: lm.from_scope_id, applied: true }).eq("id", lm.id);
+  }
+
   await supa.from("org_alignments").update({
     status: "applied", applied_at: new Date().toISOString(), applied_by: actorId, updated_at: new Date().toISOString(),
   }).eq("id", alignmentId);
-  return { ok: true, created: (nodes || []).length, moved: (moves || []).length };
+  return { ok: true, created: (nodes || []).length, moved: (moves || []).length, leaders: (leaderMoves || []).length };
 }
 
 // Undo an applied alignment: revert every move to its prior parent, then delete
@@ -82,15 +101,35 @@ export async function rollbackAlignment(supa, alignmentId, actorId) {
 
   const { data: nodes } = await supa.from("org_alignment_nodes").select("*").eq("alignment_id", alignmentId);
   const { data: moves } = await supa.from("org_alignment_moves").select("*").eq("alignment_id", alignmentId);
+  const { data: leaderMoves } = await supa.from("org_alignment_leader_moves").select("*").eq("alignment_id", alignmentId);
 
-  // 1. Revert moves.
+  const refMap = {}; // node ref -> real id (for leader moves that targeted new nodes)
+  for (const n of nodes || []) if (n.created_real_id) refMap[n.ref] = n.created_real_id;
+
+  // 1. Revert leader reassignments first (before their destination nodes are
+  //    deleted): put each person's scope back, or drop a new assignment.
+  for (const lm of leaderMoves || []) {
+    if (!lm.applied) continue;
+    const target = lm.to_scope_id || refMap[lm.to_scope_ref];
+    if (lm.from_scope_id) {
+      const { error } = await supa.from("user_scopes").update({ scope_id: lm.from_scope_id })
+        .eq("user_id", lm.user_id).eq("scope_type", lm.scope_type).eq("scope_id", target);
+      if (error) return { error: `Couldn't revert a leader reassignment: ${error.message}`, status: 500 };
+    } else if (target) {
+      await supa.from("user_scopes").delete()
+        .eq("user_id", lm.user_id).eq("scope_type", lm.scope_type).eq("scope_id", target);
+    }
+    await supa.from("org_alignment_leader_moves").update({ prior_scope_id: null, applied: false }).eq("id", lm.id);
+  }
+
+  // 2. Revert node moves.
   for (const m of moves || []) {
     if (!m.prior_parent_id) continue;
     const { error } = await supa.from(MOVE_TABLE[m.kind]).update({ [MOVE_PARENT_FK[m.kind]]: m.prior_parent_id }).eq("id", m.node_id);
     if (error) return { error: `Couldn't revert a ${m.kind} move: ${error.message}`, status: 500 };
   }
 
-  // 2. Delete created nodes, children first (district -> area -> region).
+  // 3. Delete created nodes, children first (district -> area -> region).
   const blocked = [];
   for (const kind of ["district", "area", "region"]) {
     for (const n of (nodes || []).filter((x) => x.kind === kind && x.created_real_id)) {
@@ -103,7 +142,7 @@ export async function rollbackAlignment(supa, alignmentId, actorId) {
     return { error: `Reverted the moves, but these new nodes are still in use and weren't deleted: ${blocked.join(", ")}. Move their children out first, then roll back again.`, status: 409 };
   }
 
-  // 3. Clear snapshots + return to draft (won't auto-apply until re-scheduled).
+  // 4. Clear snapshots + return to draft (won't auto-apply until re-scheduled).
   for (const m of moves || []) await supa.from("org_alignment_moves").update({ prior_parent_id: null }).eq("id", m.id);
   await supa.from("org_alignments").update({
     status: "draft", applied_at: null, applied_by: null, updated_at: new Date().toISOString(),
