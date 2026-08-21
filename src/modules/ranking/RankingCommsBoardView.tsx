@@ -46,7 +46,6 @@ const CARDS: Card[][] = [
     { title: "# of Complaints", goal: "0", key: "complaints", fmt: int0, good: (v) => v === 0 },
     { title: "Complaints / 10K Tickets", goal: "<1.3", key: "callsPer10k", fmt: num1, good: (v) => v < 1.3 },
     { title: "On-Time %", goal: "> 80%", key: "onTimePct", fmt: pct1, good: (v) => v >= 0.8 },
-    { title: "LTO Training Score 1-5", goal: "5.0", key: "bscScore", fmt: num1, good: (v) => v >= 5 },
   ],
 ];
 
