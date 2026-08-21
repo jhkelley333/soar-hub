@@ -395,13 +395,13 @@ export function RankingAdminPage() {
   // (backend enforces the scope). Only admins get System settings.
   const options: { value: AdminView; label: string }[] = [
     { value: "ranking", label: "Ranking" },
+    { value: "comms", label: "Comms Board" },
     { value: "top", label: "Top Performers" },
     { value: "sevenup", label: "7 UP" },
     { value: "evening", label: "Evenings" },
     { value: "shakers", label: "Movers & Shakers" },
     { value: "drill", label: "Drill" },
     { value: "watchlist", label: "Watchlist" },
-    { value: "comms", label: "Comms Board" },
     ...(canSettings ? [{ value: "settings" as AdminView, label: isAdmin ? "System settings" : "Ranker uploads" }] : []),
   ];
   const active = view === "settings" && !canSettings ? "ranking" : view;
