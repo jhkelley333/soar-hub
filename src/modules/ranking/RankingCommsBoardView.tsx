@@ -38,13 +38,13 @@ const CARDS: Card[][] = [
     { title: "COGS Efficiency %", goal: "96%-101%", key: "cogsEff", fmt: pct1, good: (v) => v >= 0.96 && v <= 1.01 },
     { title: "Inventory - Days on Hand", goal: "7 or 10 Days", key: "doh", fmt: num1, good: (v) => v <= 7 },
     { title: "Station Training %", goal: "100%", key: "totalTrainingPct", fmt: pct1, good: (v) => v >= 1 },
-    { title: "BSC Training", goal: "95%", key: "bscTrainingPct", fmt: pct1, good: (v) => v >= 0.95 },
+    { title: "LTO Training", goal: "95%", key: "bscTrainingPct", fmt: pct1, good: (v) => v >= 0.95 },
   ],
   [
     { title: "# of Complaints", goal: "0", key: "complaints", fmt: int0, good: (v) => v === 0 },
     { title: "Complaints / 10K Tickets", goal: "<1.3", key: "callsPer10k", fmt: num1, good: (v) => v < 1.3 },
     { title: "On-Time %", goal: "> 80%", key: "onTimePct", fmt: pct1, good: (v) => v >= 0.8 },
-    { title: "Total BSC Score 1-5", goal: "5.0", key: "bscScore", fmt: num1, good: (v) => v >= 5 },
+    { title: "LTO Training Score 1-5", goal: "5.0", key: "bscScore", fmt: num1, good: (v) => v >= 5 },
   ],
 ];
 
@@ -52,7 +52,7 @@ const FOCUS: Card[] = [
   { title: "Night Time Biz (8PM to Close)", goal: "8%", key: "__na_night", fmt: pct1, good: () => true },
   { title: "VOG", goal: "70", key: "vog", fmt: pct1, good: (v) => v >= 0.7 },
   { title: "TR vs TZ Variance", goal: "Zero Variance", key: "__na_trtz", fmt: num1, good: () => true },
-  { title: "Cash +/-", goal: "Zero Variance", key: "__na_cash", fmt: num1, good: () => true },
+  { title: "Cash +/-", goal: "Zero Variance", key: "cashOverShort", fmt: num1, good: () => true },
 ];
 
 const WEEK_NUMS = [1, 2, 3, 4, 5];
