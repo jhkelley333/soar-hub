@@ -4,7 +4,7 @@
 // its own nav item by design.
 
 import { Link } from "react-router-dom";
-import { ArrowRight, ClipboardCheck, ListChecks, QrCode, UserCog, Rocket, type LucideIcon } from "lucide-react";
+import { ArrowRight, ClipboardCheck, ListChecks, QrCode, UserCog, Rocket, CloudSun, type LucideIcon } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { cn } from "@/lib/cn";
@@ -65,6 +65,14 @@ const TOOLS: Tool[] = [
     icon: QrCode,
     roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"],
     to: () => "/qr-codes",
+  },
+  {
+    key: "weather",
+    title: "Weather",
+    desc: "This week's actuals + forecast per store, with last year's same week for comparison.",
+    icon: CloudSun,
+    roles: ["do", "sdo", "rvp", "vp", "coo", "admin"],
+    to: () => "/weather",
   },
 ];
 
