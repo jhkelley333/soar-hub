@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, CalendarClock, Check, ChevronDown, ChevronRight, CornerDownRight, Plus, Trash2, Undo2, X } from "lucide-react";
+import { ArrowLeft, CalendarClock, Check, ChevronDown, ChevronRight, CornerDownRight, Download, Plus, Trash2, Undo2, X } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -20,9 +20,11 @@ import { cn } from "@/lib/cn";
 import {
   fetchAlignments, fetchAlignment, fetchOrgTree, createAlignment, updateAlignment, deleteAlignment,
   addNode, addMove, removeNode, removeMove, applyAlignment, rollbackAlignment,
-  type OrgTree, type AlignmentNode, type AlignmentMove, type NodeKind, type MoveKind, type AlignmentStatus,
+  type OrgTree, type AlignmentNode, type NodeKind, type MoveKind, type AlignmentStatus,
 } from "./api";
-import { fetchOrgTree as fetchAdminOrgTree, type OrgManager, type OrgTreeResponse } from "@/modules/admin/api";
+import { fetchOrgTree as fetchAdminOrgTree } from "@/modules/admin/api";
+import { projectTree, parentChoices, nextCode, buildLeaderMap, type PKind, type PNode } from "./projection";
+import { downloadChangesPdf } from "./changesPdf";
 
 const inputCls = "block w-full rounded-md border-0 bg-white px-2.5 py-1.5 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent";
 const STATUS_STYLE: Record<AlignmentStatus, string> = {
@@ -33,128 +35,7 @@ const fmtDate = (s: string) => new Date(`${s}T12:00:00`).toLocaleDateString("en-
 const todayIso = () => new Date().toLocaleDateString("en-CA");
 const newRef = (kind: string) => `${kind}-${Math.random().toString(36).slice(2, 8)}`;
 
-// ── Projected tree ───────────────────────────────────────────────────────────
-// A node in the tree the builder renders. `key` is the real id for existing
-// nodes and the ref for staged new nodes; parent moves and new-node parents both
-// point at a key.
-type PKind = "region" | "area" | "district" | "store";
-interface PNode {
-  key: string;
-  kind: PKind;
-  label: string;
-  sub?: string;
-  isNew: boolean;         // a staged new node
-  moved: boolean;         // an existing node with a staged move
-  moveId?: string;        // the staged move's id (for undo)
-  nodeId?: string;        // existing real id (for moving)
-  newId?: string;         // the staged new node's DB row id (for remove/undo)
-  children: PNode[];
-}
-
-// Build the projected tree: current org tree + staged new nodes + staged moves.
-function projectTree(tree: OrgTree, nodes: AlignmentNode[], moves: AlignmentMove[]): PNode[] {
-  const moveByNode = new Map(moves.map((m) => [m.node_id, m]));
-  const targetKey = (m?: { new_parent_id: string | null; new_parent_ref: string | null } | null) =>
-    m ? (m.new_parent_ref || m.new_parent_id || "") : "";
-
-  // Effective parent key for each existing node (staged move wins).
-  const areaParent = (a: OrgTree["areas"][number]) => moveByNode.has(a.id) ? targetKey(moveByNode.get(a.id)) : a.region_id;
-  const distParent = (d: OrgTree["districts"][number]) => moveByNode.has(d.id) ? targetKey(moveByNode.get(d.id)) : d.area_id;
-  const storeParent = (s: OrgTree["stores"][number]) => moveByNode.has(s.id) ? targetKey(moveByNode.get(s.id)) : s.district_id;
-
-  const newBy = (kind: NodeKind) => nodes.filter((n) => n.kind === kind);
-  const newParentKey = (n: AlignmentNode) => n.parent_ref || n.parent_id || "";
-
-  // Group children by parent key.
-  const storesByDist = new Map<string, PNode[]>();
-  for (const s of tree.stores) {
-    const p = storeParent(s);
-    (storesByDist.get(p) || storesByDist.set(p, []).get(p)!).push({
-      key: s.id, kind: "store", label: `#${s.number} ${s.name}`, isNew: false,
-      moved: moveByNode.has(s.id), moveId: moveByNode.get(s.id)?.id, nodeId: s.id, children: [],
-    });
-  }
-  const distNode = (key: string, name: string, code: string, isNew: boolean, mv?: AlignmentMove, newId?: string): PNode => ({
-    key, kind: "district", label: name, sub: code, isNew, moved: !!mv, moveId: mv?.id, nodeId: isNew ? undefined : key, newId,
-    children: (storesByDist.get(key) || []).sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true })),
-  });
-  const distsByArea = new Map<string, PNode[]>();
-  for (const d of tree.districts) (distsByArea.get(distParent(d)) || distsByArea.set(distParent(d), []).get(distParent(d))!).push(distNode(d.id, d.name, d.code, false, moveByNode.get(d.id)));
-  for (const n of newBy("district")) (distsByArea.get(newParentKey(n)) || distsByArea.set(newParentKey(n), []).get(newParentKey(n))!).push(distNode(n.ref, n.name, n.code, true, undefined, n.id));
-
-  const areaNode = (key: string, name: string, code: string, isNew: boolean, mv?: AlignmentMove, newId?: string): PNode => ({
-    key, kind: "area", label: name, sub: code, isNew, moved: !!mv, moveId: mv?.id, nodeId: isNew ? undefined : key, newId,
-    children: (distsByArea.get(key) || []).sort((a, b) => (a.sub || "").localeCompare(b.sub || "")),
-  });
-  const areasByRegion = new Map<string, PNode[]>();
-  for (const a of tree.areas) (areasByRegion.get(areaParent(a)) || areasByRegion.set(areaParent(a), []).get(areaParent(a))!).push(areaNode(a.id, a.name, a.code, false, moveByNode.get(a.id)));
-  for (const n of newBy("area")) (areasByRegion.get(newParentKey(n)) || areasByRegion.set(newParentKey(n), []).get(newParentKey(n))!).push(areaNode(n.ref, n.name, n.code, true, undefined, n.id));
-
-  const regionNode = (key: string, name: string, code: string, isNew: boolean, newId?: string): PNode => ({
-    key, kind: "region", label: name, sub: code, isNew, moved: false, newId, children: (areasByRegion.get(key) || []).sort((a, b) => (a.sub || "").localeCompare(b.sub || "")),
-  });
-  const regions: PNode[] = [
-    ...tree.regions.map((r) => regionNode(r.id, r.name, r.code, false)),
-    ...newBy("region").map((n) => regionNode(n.ref, n.name, n.code, true, n.id)),
-  ].sort((a, b) => (a.sub || "").localeCompare(b.sub || ""));
-  return regions;
-}
-
-// Valid new-parent options for moving a node of childKind (existing + staged new
-// of the parent kind), excluding the node's current parent. Labels carry the
-// code (e.g. "D111", "Area 09") and, for existing nodes, the current leader.
-function parentChoices(childKind: MoveKind, tree: OrgTree, nodes: AlignmentNode[], leaders: Map<string, string>): { key: string; label: string; isNew: boolean }[] {
-  const pk: NodeKind = childKind === "store" ? "district" : childKind === "district" ? "area" : "region";
-  const existing = pk === "region" ? tree.regions : pk === "area" ? tree.areas : tree.districts;
-  return [
-    ...existing.map((n) => { const l = leaders.get(n.id); return { key: n.id, label: `${n.code} · ${n.name}${l ? ` — ${l}` : ""}`, isNew: false }; }),
-    ...nodes.filter((n) => n.kind === pk).map((n) => ({ key: n.ref, label: `${n.code} · ${n.name} (new)`, isNew: true })),
-  ];
-}
-
-// Next code/number for a new region/area/district: take the highest existing
-// code of that kind (live + staged), keep its prefix + zero-pad width, and add
-// one. Falls back to a sensible default when there are none yet.
-function nextCode(kind: NodeKind, tree: OrgTree, nodes: AlignmentNode[]): string {
-  const codes: string[] = [
-    ...(kind === "region" ? tree.regions : kind === "area" ? tree.areas : tree.districts).map((n) => n.code),
-    ...nodes.filter((n) => n.kind === kind).map((n) => n.code),
-  ];
-  let best: { prefix: string; num: number; pad: number } | null = null;
-  for (const c of codes) {
-    const m = /^(.*?)(\d+)\s*$/.exec(c ?? "");
-    if (!m) continue;
-    const num = parseInt(m[2], 10);
-    if (!best || num >= best.num) best = { prefix: m[1], num, pad: m[2].length };
-  }
-  if (!best) return kind === "region" ? "R1" : kind === "area" ? "Area 01" : "D101";
-  return best.prefix + String(best.num + 1).padStart(best.pad, "0");
-}
-
-// ── Current leaders ──────────────────────────────────────────────────────────
-// The Org Admin tree carries managers at every level; we surface the current
-// leader next to each existing region/area/district (RVP / SDO / DO). Primary
-// (non-acting) holders win; multiple are joined with " / ".
-function leaderLabel(managers: OrgManager[], role: string): string {
-  const scoped = managers.filter((m) => m.role === role);
-  const primary = scoped.filter((m) => !m.acting);
-  const chosen = primary.length ? primary : scoped;
-  return chosen.map((m) => m.full_name?.trim() || m.email).filter(Boolean).join(" / ");
-}
-// Map real node id → current leader name, for regions/areas/districts.
-function buildLeaderMap(tree: OrgTreeResponse): Map<string, string> {
-  const m = new Map<string, string>();
-  for (const r of tree.regions) {
-    const rl = leaderLabel(r.managers, "rvp"); if (rl) m.set(r.id, rl);
-    for (const a of r.areas) {
-      const al = leaderLabel(a.managers, "sdo"); if (al) m.set(a.id, al);
-      for (const d of a.districts) {
-        const dl = leaderLabel(d.managers, "do"); if (dl) m.set(d.id, dl);
-      }
-    }
-  }
-  return m;
-}
+// Projected-tree + leader helpers live in ./projection (shared with the PDF).
 
 // ── Page ─────────────────────────────────────────────────────────────────────
 export function OrgAlignmentPage() {
@@ -276,6 +157,7 @@ function AlignmentDetail({ id, onBack }: { id: string; onBack: () => void }) {
             <div className="mt-0.5 text-xs text-zinc-500">Effective {fmtDate(a.effective_date)} · {changeCount} staged change{changeCount === 1 ? "" : "s"}{a.applied_at ? ` · applied ${fmtDate(a.applied_at.slice(0, 10))}` : ""}</div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
+            <Button size="sm" variant="ghost" onClick={() => downloadChangesPdf(a, tree, leaders)}><Download className="mr-1 h-3.5 w-3.5" /> PDF</Button>
             {a.status === "draft" && <Button size="sm" disabled={schedule.isPending || changeCount === 0} onClick={() => schedule.mutate()}><CalendarClock className="mr-1 h-3.5 w-3.5" /> Schedule</Button>}
             {a.status === "scheduled" && <Button size="sm" variant="secondary" disabled={unschedule.isPending} onClick={() => unschedule.mutate()}>Unschedule</Button>}
             {(a.status === "draft" || a.status === "scheduled") && (
