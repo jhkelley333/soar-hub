@@ -54,8 +54,9 @@ async function loadAlignment(supa, id) {
   ]);
   if (nErr) throw new Error(`load nodes: ${nErr.message}`);
   if (mErr) throw new Error(`load moves: ${mErr.message}`);
-  if (lErr) throw new Error(`load leader moves: ${lErr.message}`);
-  return { ...alignment, nodes: nodes || [], moves: moves || [], leader_moves: leaderMoves || [] };
+  // leader_moves is additive (migration 0309). If the table isn't there yet,
+  // degrade to empty rather than breaking the whole tool before the migration.
+  return { ...alignment, nodes: nodes || [], moves: moves || [], leader_moves: lErr ? [] : (leaderMoves || []) };
 }
 
 export const handler = async (event) => {
