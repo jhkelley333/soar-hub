@@ -82,8 +82,9 @@ export const NAV: NavItem[] = [
   // analytics. Strategic view, VP/COO/admin only.
   { to: "/culture-index/overview", label: "Trait Analytics", icon: BarChart3, roles: ["vp", "coo", "admin"] },
   // Territory Map — stores plotted on Google Maps, pin color keyed to the
-  // DO resolved live from the org data.
-  { to: "/territory-map", label: "Territory Map", icon: MapPinned,   roles: ["do", "sdo", "rvp", "vp", "coo", "admin", "fbc"] },
+  // DO resolved live from the org data. vp/coo/admin reach it via System
+  // Settings, so the sidebar entry is scoped to the lower roles.
+  { to: "/territory-map", label: "Territory Map", icon: MapPinned,   roles: ["do", "sdo", "rvp", "fbc"] },
   // Store Visit is now a Beta Test tool inside System Settings
   // (/admin/system-settings), so it's kept out of the sidebar. Its /visit route
   // stays live (DO+ guard) for the hub card and deep links.
