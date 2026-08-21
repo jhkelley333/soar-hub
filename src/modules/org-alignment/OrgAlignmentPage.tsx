@@ -1,12 +1,12 @@
-// /admin/org-alignment — stage a structural org realignment (new regions/areas/
-// districts + reparent existing stores/districts/areas) and have it go live on
-// an effective date. Nothing changes the live org tree until it's applied —
-// automatically on the effective date, or via "Apply now". Applied alignments
-// can be rolled back. Admin-only.
+// /admin/org-alignment — stage a structural org realignment on an interactive
+// tree (like Org Admin): move stores/districts/areas around and add new
+// regions/areas/districts. Nothing changes the live org tree until it's applied
+// — automatically on the effective date, or via "Apply now". The tree shows the
+// PROJECTED state (after the staged changes) with pending badges. Admin-only.
 
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, CalendarClock, Check, Plus, RotateCcw, Trash2, Undo2, X } from "lucide-react";
+import { ArrowLeft, CalendarClock, Check, ChevronDown, ChevronRight, CornerDownRight, Plus, Trash2, Undo2, X } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -20,10 +20,10 @@ import { cn } from "@/lib/cn";
 import {
   fetchAlignments, fetchAlignment, fetchOrgTree, createAlignment, updateAlignment, deleteAlignment,
   addNode, addMove, removeNode, removeMove, applyAlignment, rollbackAlignment,
-  type OrgAlignment, type OrgTree, type NodeKind, type MoveKind, type AlignmentStatus,
+  type OrgTree, type AlignmentNode, type AlignmentMove, type NodeKind, type MoveKind, type AlignmentStatus,
 } from "./api";
 
-const inputCls = "block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent";
+const inputCls = "block w-full rounded-md border-0 bg-white px-2.5 py-1.5 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent";
 const STATUS_STYLE: Record<AlignmentStatus, string> = {
   draft: "bg-zinc-100 text-zinc-600", scheduled: "bg-blue-50 text-blue-700",
   applied: "bg-emerald-50 text-emerald-700", canceled: "bg-red-50 text-red-600",
@@ -31,24 +31,99 @@ const STATUS_STYLE: Record<AlignmentStatus, string> = {
 const fmtDate = (s: string) => new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const todayIso = () => new Date().toLocaleDateString("en-CA");
 const newRef = (kind: string) => `${kind}-${Math.random().toString(36).slice(2, 8)}`;
-// Picker option value encodes existing id vs a staged new-node ref.
-const enc = (v: { id?: string; ref?: string }) => (v.ref ? `ref:${v.ref}` : `id:${v.id}`);
-const dec = (v: string): { id?: string; ref?: string } => (v.startsWith("ref:") ? { ref: v.slice(4) } : { id: v.slice(3) });
 
+// ── Projected tree ───────────────────────────────────────────────────────────
+// A node in the tree the builder renders. `key` is the real id for existing
+// nodes and the ref for staged new nodes; parent moves and new-node parents both
+// point at a key.
+type PKind = "region" | "area" | "district" | "store";
+interface PNode {
+  key: string;
+  kind: PKind;
+  label: string;
+  sub?: string;
+  isNew: boolean;         // a staged new node
+  moved: boolean;         // an existing node with a staged move
+  moveId?: string;        // the staged move's id (for undo)
+  nodeId?: string;        // existing real id (for moving)
+  newId?: string;         // the staged new node's DB row id (for remove/undo)
+  children: PNode[];
+}
+
+// Build the projected tree: current org tree + staged new nodes + staged moves.
+function projectTree(tree: OrgTree, nodes: AlignmentNode[], moves: AlignmentMove[]): PNode[] {
+  const moveByNode = new Map(moves.map((m) => [m.node_id, m]));
+  const targetKey = (m?: { new_parent_id: string | null; new_parent_ref: string | null } | null) =>
+    m ? (m.new_parent_ref || m.new_parent_id || "") : "";
+
+  // Effective parent key for each existing node (staged move wins).
+  const areaParent = (a: OrgTree["areas"][number]) => moveByNode.has(a.id) ? targetKey(moveByNode.get(a.id)) : a.region_id;
+  const distParent = (d: OrgTree["districts"][number]) => moveByNode.has(d.id) ? targetKey(moveByNode.get(d.id)) : d.area_id;
+  const storeParent = (s: OrgTree["stores"][number]) => moveByNode.has(s.id) ? targetKey(moveByNode.get(s.id)) : s.district_id;
+
+  const newBy = (kind: NodeKind) => nodes.filter((n) => n.kind === kind);
+  const newParentKey = (n: AlignmentNode) => n.parent_ref || n.parent_id || "";
+
+  // Group children by parent key.
+  const storesByDist = new Map<string, PNode[]>();
+  for (const s of tree.stores) {
+    const p = storeParent(s);
+    (storesByDist.get(p) || storesByDist.set(p, []).get(p)!).push({
+      key: s.id, kind: "store", label: `#${s.number} ${s.name}`, isNew: false,
+      moved: moveByNode.has(s.id), moveId: moveByNode.get(s.id)?.id, nodeId: s.id, children: [],
+    });
+  }
+  const distNode = (key: string, name: string, code: string, isNew: boolean, mv?: AlignmentMove, newId?: string): PNode => ({
+    key, kind: "district", label: name, sub: code, isNew, moved: !!mv, moveId: mv?.id, nodeId: isNew ? undefined : key, newId,
+    children: (storesByDist.get(key) || []).sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true })),
+  });
+  const distsByArea = new Map<string, PNode[]>();
+  for (const d of tree.districts) (distsByArea.get(distParent(d)) || distsByArea.set(distParent(d), []).get(distParent(d))!).push(distNode(d.id, d.name, d.code, false, moveByNode.get(d.id)));
+  for (const n of newBy("district")) (distsByArea.get(newParentKey(n)) || distsByArea.set(newParentKey(n), []).get(newParentKey(n))!).push(distNode(n.ref, n.name, n.code, true, undefined, n.id));
+
+  const areaNode = (key: string, name: string, code: string, isNew: boolean, mv?: AlignmentMove, newId?: string): PNode => ({
+    key, kind: "area", label: name, sub: code, isNew, moved: !!mv, moveId: mv?.id, nodeId: isNew ? undefined : key, newId,
+    children: (distsByArea.get(key) || []).sort((a, b) => (a.sub || "").localeCompare(b.sub || "")),
+  });
+  const areasByRegion = new Map<string, PNode[]>();
+  for (const a of tree.areas) (areasByRegion.get(areaParent(a)) || areasByRegion.set(areaParent(a), []).get(areaParent(a))!).push(areaNode(a.id, a.name, a.code, false, moveByNode.get(a.id)));
+  for (const n of newBy("area")) (areasByRegion.get(newParentKey(n)) || areasByRegion.set(newParentKey(n), []).get(newParentKey(n))!).push(areaNode(n.ref, n.name, n.code, true, undefined, n.id));
+
+  const regionNode = (key: string, name: string, code: string, isNew: boolean, newId?: string): PNode => ({
+    key, kind: "region", label: name, sub: code, isNew, moved: false, newId, children: (areasByRegion.get(key) || []).sort((a, b) => (a.sub || "").localeCompare(b.sub || "")),
+  });
+  const regions: PNode[] = [
+    ...tree.regions.map((r) => regionNode(r.id, r.name, r.code, false)),
+    ...newBy("region").map((n) => regionNode(n.ref, n.name, n.code, true, n.id)),
+  ].sort((a, b) => (a.sub || "").localeCompare(b.sub || ""));
+  return regions;
+}
+
+// Valid new-parent options for moving a node of childKind (existing + staged new
+// of the parent kind), excluding the node's current parent.
+function parentChoices(childKind: MoveKind, tree: OrgTree, nodes: AlignmentNode[]): { key: string; label: string; isNew: boolean }[] {
+  const pk: NodeKind = childKind === "store" ? "district" : childKind === "district" ? "area" : "region";
+  const existing = pk === "region" ? tree.regions : pk === "area" ? tree.areas : tree.districts;
+  return [
+    ...existing.map((n) => ({ key: n.id, label: n.name, isNew: false })),
+    ...nodes.filter((n) => n.kind === pk).map((n) => ({ key: n.ref, label: `${n.name} (new)`, isNew: true })),
+  ];
+}
+
+// ── Page ─────────────────────────────────────────────────────────────────────
 export function OrgAlignmentPage() {
   const [openId, setOpenId] = useState<string | null>(null);
   return (
     <>
       <PageHeader
         title="Org Alignment"
-        description="Stage a market realignment and schedule it to go live on a date. Nothing changes the org tree until it applies."
+        description="Move markets and stores around on the tree, then schedule the change to go live on a date. Nothing changes until it applies."
       />
       {openId ? <AlignmentDetail id={openId} onBack={() => setOpenId(null)} /> : <AlignmentList onOpen={setOpenId} />}
     </>
   );
 }
 
-// ── List ─────────────────────────────────────────────────────────────────────
 function AlignmentList({ onOpen }: { onOpen: (id: string) => void }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -62,13 +137,10 @@ function AlignmentList({ onOpen }: { onOpen: (id: string) => void }) {
     onSuccess: (r) => { setCreating(false); setName(""); qc.invalidateQueries({ queryKey: ["org-alignments"] }); onOpen(r.alignment.id); },
     onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't create.", "error"),
   });
-
   const alignments = q.data?.alignments ?? [];
   return (
     <div className="space-y-4">
-      <div className="flex justify-end">
-        <Button size="sm" onClick={() => setCreating(true)}><Plus className="mr-1 h-3.5 w-3.5" /> New alignment</Button>
-      </div>
+      <div className="flex justify-end"><Button size="sm" onClick={() => setCreating(true)}><Plus className="mr-1 h-3.5 w-3.5" /> New alignment</Button></div>
       {q.isLoading ? <Skeleton className="h-40 w-full" />
         : q.isError ? <EmptyState title="Couldn't load" description={(q.error as Error)?.message ?? "Try again."} />
         : alignments.length === 0 ? <EmptyState title="No alignments yet" description="Create one to stage a market realignment." />
@@ -77,20 +149,15 @@ function AlignmentList({ onOpen }: { onOpen: (id: string) => void }) {
             {alignments.map((a) => (
               <button key={a.id} onClick={() => onOpen(a.id)} className="flex w-full items-center gap-3 rounded-xl border border-zinc-200 bg-white p-4 text-left hover:border-accent/60">
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold text-midnight">{a.name}</span>
-                    <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase", STATUS_STYLE[a.status])}>{a.status}</span>
-                  </div>
-                  <div className="mt-0.5 text-xs text-zinc-500">
-                    Effective {fmtDate(a.effective_date)} · {a.change_count?.nodes ?? 0} new node(s) · {a.change_count?.moves ?? 0} move(s)
-                  </div>
+                  <div className="flex items-center gap-2"><span className="font-semibold text-midnight">{a.name}</span>
+                    <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase", STATUS_STYLE[a.status])}>{a.status}</span></div>
+                  <div className="mt-0.5 text-xs text-zinc-500">Effective {fmtDate(a.effective_date)} · {a.change_count?.nodes ?? 0} new · {a.change_count?.moves ?? 0} move(s)</div>
                 </div>
                 <CalendarClock className="h-4 w-4 shrink-0 text-zinc-300" />
               </button>
             ))}
           </div>
         )}
-
       <Modal open={creating} onClose={() => setCreating(false)} title="New alignment" maxWidth="max-w-md"
         footer={<><Button variant="ghost" onClick={() => setCreating(false)}>Cancel</Button>
           <Button disabled={!name.trim() || create.isPending} onClick={() => create.mutate()}>{create.isPending ? "Creating…" : "Create"}</Button></>}>
@@ -103,7 +170,6 @@ function AlignmentList({ onOpen }: { onOpen: (id: string) => void }) {
   );
 }
 
-// ── Detail / builder ─────────────────────────────────────────────────────────
 function AlignmentDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
@@ -114,42 +180,39 @@ function AlignmentDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const a = q.data?.alignment;
   const tree = treeQ.data;
   const locked = a?.status === "applied" || a?.status === "canceled";
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [addRegion, setAddRegion] = useState(false);
 
   const mut = <T, V = void>(fn: (v: V) => Promise<T>, msg?: string) => ({
     onSuccess: () => { if (msg) toast.push(msg, "success"); invalidate(); },
-    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Failed.", "error"),
-    mutationFn: fn,
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Failed.", "error"), mutationFn: fn,
   });
-
   const schedule = useMutation(mut(() => updateAlignment({ id, status: "scheduled" }), "Scheduled — it'll go live on its effective date."));
   const unschedule = useMutation(mut(() => updateAlignment({ id, status: "draft" }), "Back to draft."));
   const cancel = useMutation(mut(() => updateAlignment({ id, status: "canceled" }), "Canceled."));
   const del = useMutation(mut(() => deleteAlignment(id), "Deleted."));
   const apply = useMutation(mut(() => applyAlignment(id), "Applied — the org tree is updated."));
   const rollback = useMutation(mut(() => rollbackAlignment(id), "Rolled back."));
-  const rmNode = useMutation(mut((nid: string) => removeNode(nid)));
-  const rmMove = useMutation(mut((mid: string) => removeMove(mid)));
+  const stageMove = useMutation(mut((v: { kind: MoveKind; node_id: string; parent: { key: string; isNew: boolean } }) =>
+    addMove({ alignment_id: id, kind: v.kind, node_id: v.node_id, ...(v.parent.isNew ? { new_parent_ref: v.parent.key } : { new_parent_id: v.parent.key }) })));
+  const undoMove = useMutation(mut((mid: string) => removeMove(mid)));
+  const stageNode = useMutation(mut((v: { kind: NodeKind; name: string; code: string; parent?: { key: string; isNew: boolean } }) =>
+    addNode({ alignment_id: id, ref: newRef(v.kind), kind: v.kind, name: v.name, code: v.code, ...(v.parent ? (v.parent.isNew ? { parent_ref: v.parent.key } : { parent_id: v.parent.key }) : {}) })));
+  const undoNode = useMutation(mut((nid: string) => removeNode(nid)));
+
+  const projected = useMemo(() => (tree && a ? projectTree(tree, a.nodes ?? [], a.moves ?? []) : []), [tree, a]);
+  const toggle = (k: string) => setExpanded((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
 
   if (q.isLoading || treeQ.isLoading) return <Skeleton className="h-64 w-full" />;
-  if (q.isError || !a) return <EmptyState title="Couldn't load alignment" description={(q.error as Error)?.message ?? "Try again."} />;
+  if (q.isError || !a || !tree) return <EmptyState title="Couldn't load alignment" description={(q.error as Error)?.message ?? "Try again."} />;
 
-  // Name resolvers over the live tree + this alignment's staged new nodes.
-  const stagedByRef = new Map((a.nodes ?? []).map((n) => [n.ref, n]));
-  const regionName = (id2: string | null) => tree?.regions.find((r) => r.id === id2)?.name ?? "?";
-  const areaName = (id2: string | null) => tree?.areas.find((r) => r.id === id2)?.name ?? "?";
-  const districtName = (id2: string | null) => tree?.districts.find((r) => r.id === id2)?.name ?? "?";
-  const parentLabel = (kind: NodeKind, pid: string | null, pref: string | null) => {
-    if (pref) return `${stagedByRef.get(pref)?.name ?? pref} (new)`;
-    return kind === "area" ? regionName(pid) : kind === "district" ? areaName(pid) : "—";
-  };
-  const moveNodeLabel = (kind: MoveKind, nid: string) => {
-    if (kind === "store") { const s = tree?.stores.find((x) => x.id === nid); return s ? `#${s.number} ${s.name}` : "?"; }
-    if (kind === "district") return districtName(nid);
-    return areaName(nid);
-  };
-  const moveParentLabel = (kind: MoveKind, pid: string | null, pref: string | null) => {
-    if (pref) return `${stagedByRef.get(pref)?.name ?? pref} (new)`;
-    return kind === "store" ? districtName(pid) : kind === "district" ? areaName(pid) : regionName(pid);
+  const changeCount = (a.nodes?.length ?? 0) + (a.moves?.length ?? 0);
+  const nodeCtx = {
+    tree, nodes: a.nodes ?? [], locked, expanded, toggle,
+    onMove: (kind: MoveKind, node_id: string, parent: { key: string; isNew: boolean }) => stageMove.mutate({ kind, node_id, parent }),
+    onUndoMove: (mid: string) => undoMove.mutate(mid),
+    onUndoNode: (nid: string) => undoNode.mutate(nid),
+    onAddChild: (kind: NodeKind, name: string, code: string, parent: { key: string; isNew: boolean }) => stageNode.mutate({ kind, name, code, parent }),
   };
 
   return (
@@ -159,156 +222,137 @@ function AlignmentDetail({ id, onBack }: { id: string; onBack: () => void }) {
       <Card>
         <CardBody className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <div className="flex items-center gap-2">
-              <span className="text-lg font-bold text-midnight">{a.name}</span>
-              <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase", STATUS_STYLE[a.status])}>{a.status}</span>
-            </div>
-            <div className="mt-0.5 text-xs text-zinc-500">Effective {fmtDate(a.effective_date)}{a.applied_at ? ` · applied ${fmtDate(a.applied_at.slice(0, 10))}` : ""}</div>
+            <div className="flex items-center gap-2"><span className="text-lg font-bold text-midnight">{a.name}</span>
+              <span className={cn("rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase", STATUS_STYLE[a.status])}>{a.status}</span></div>
+            <div className="mt-0.5 text-xs text-zinc-500">Effective {fmtDate(a.effective_date)} · {changeCount} staged change{changeCount === 1 ? "" : "s"}{a.applied_at ? ` · applied ${fmtDate(a.applied_at.slice(0, 10))}` : ""}</div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            {a.status === "draft" && <Button size="sm" disabled={schedule.isPending} onClick={() => schedule.mutate()}><CalendarClock className="mr-1 h-3.5 w-3.5" /> Schedule</Button>}
+            {a.status === "draft" && <Button size="sm" disabled={schedule.isPending || changeCount === 0} onClick={() => schedule.mutate()}><CalendarClock className="mr-1 h-3.5 w-3.5" /> Schedule</Button>}
             {a.status === "scheduled" && <Button size="sm" variant="secondary" disabled={unschedule.isPending} onClick={() => unschedule.mutate()}>Unschedule</Button>}
             {(a.status === "draft" || a.status === "scheduled") && (
-              <Button size="sm" variant="secondary" disabled={apply.isPending} onClick={() => { if (window.confirm("Apply this alignment to the live org tree now?")) apply.mutate(); }}>
-                <Check className="mr-1 h-3.5 w-3.5" /> Apply now
-              </Button>
+              <Button size="sm" variant="secondary" disabled={apply.isPending || changeCount === 0} onClick={() => { if (window.confirm("Apply this alignment to the live org tree now?")) apply.mutate(); }}><Check className="mr-1 h-3.5 w-3.5" /> Apply now</Button>
             )}
             {a.status === "applied" && (
-              <Button size="sm" variant="secondary" className="text-amber-700 ring-amber-200" disabled={rollback.isPending} onClick={() => { if (window.confirm("Roll back this alignment? It reverts every move and deletes the nodes it created.")) rollback.mutate(); }}>
-                <Undo2 className="mr-1 h-3.5 w-3.5" /> Roll back
-              </Button>
+              <Button size="sm" variant="secondary" className="text-amber-700 ring-amber-200" disabled={rollback.isPending} onClick={() => { if (window.confirm("Roll back? Reverts every move and deletes the nodes it created.")) rollback.mutate(); }}><Undo2 className="mr-1 h-3.5 w-3.5" /> Roll back</Button>
             )}
-            {a.status !== "applied" && a.status !== "canceled" && (
-              <Button size="sm" variant="ghost" className="text-zinc-500" disabled={cancel.isPending} onClick={() => { if (window.confirm("Cancel this alignment?")) cancel.mutate(); }}><X className="h-3.5 w-3.5" /></Button>
-            )}
-            {a.status !== "applied" && (
-              <Button size="sm" variant="ghost" className="text-red-600" disabled={del.isPending} onClick={() => { if (window.confirm("Delete this alignment permanently?")) del.mutate(); onBack(); }}><Trash2 className="h-3.5 w-3.5" /></Button>
-            )}
+            {a.status !== "applied" && a.status !== "canceled" && <Button size="sm" variant="ghost" className="text-zinc-500" disabled={cancel.isPending} onClick={() => { if (window.confirm("Cancel this alignment?")) cancel.mutate(); }}><X className="h-3.5 w-3.5" /></Button>}
+            {a.status !== "applied" && <Button size="sm" variant="ghost" className="text-red-600" disabled={del.isPending} onClick={() => { if (window.confirm("Delete permanently?")) { del.mutate(); onBack(); } }}><Trash2 className="h-3.5 w-3.5" /></Button>}
           </div>
         </CardBody>
       </Card>
 
-      {/* Staged new nodes */}
-      <section>
-        <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-zinc-400">New nodes ({a.nodes?.length ?? 0})</h3>
-        <div className="space-y-1.5">
-          {(a.nodes ?? []).map((n) => (
-            <div key={n.id} className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm">
-              <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-zinc-500">{n.kind}</span>
-              <span className="font-medium text-midnight">{n.name}</span>
-              <span className="font-mono text-[11px] text-zinc-400">{n.code}</span>
-              {n.kind !== "region" && <span className="text-xs text-zinc-500">→ under {parentLabel(n.kind, n.parent_id, n.parent_ref)}</span>}
-              {!locked && <button onClick={() => rmNode.mutate(n.id)} className="ml-auto text-zinc-300 hover:text-red-500"><X className="h-3.5 w-3.5" /></button>}
-            </div>
-          ))}
-          {(a.nodes?.length ?? 0) === 0 && <p className="text-xs text-zinc-400">No new nodes staged.</p>}
+      {!locked && (
+        <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-emerald-500" /> new</span>
+          <span className="inline-flex items-center gap-1"><span className="h-2 w-2 rounded-full bg-blue-500" /> moving</span>
+          <span className="ml-auto"><Button size="sm" variant="secondary" onClick={() => setAddRegion(true)}><Plus className="mr-1 h-3.5 w-3.5" /> Add region</Button></span>
         </div>
-        {!locked && tree && <AddNodeForm alignmentId={id} tree={tree} staged={a.nodes ?? []} onAdded={invalidate} />}
-      </section>
-
-      {/* Staged moves */}
-      <section>
-        <h3 className="mb-2 text-xs font-bold uppercase tracking-wide text-zinc-400">Moves ({a.moves?.length ?? 0})</h3>
-        <div className="space-y-1.5">
-          {(a.moves ?? []).map((m) => (
-            <div key={m.id} className="flex items-center gap-2 rounded-lg border border-zinc-200 bg-white px-3 py-2 text-sm">
-              <span className="rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-zinc-500">{m.kind}</span>
-              <span className="font-medium text-midnight">{moveNodeLabel(m.kind, m.node_id)}</span>
-              <span className="text-xs text-zinc-500">→ {moveParentLabel(m.kind, m.new_parent_id, m.new_parent_ref)}</span>
-              {!locked && <button onClick={() => rmMove.mutate(m.id)} className="ml-auto text-zinc-300 hover:text-red-500"><X className="h-3.5 w-3.5" /></button>}
-            </div>
-          ))}
-          {(a.moves?.length ?? 0) === 0 && <p className="text-xs text-zinc-400">No moves staged.</p>}
-        </div>
-        {!locked && tree && <AddMoveForm alignmentId={id} tree={tree} staged={a.nodes ?? []} onAdded={invalidate} />}
-      </section>
-
-      {a.status === "applied" && (
-        <p className="flex items-center gap-1.5 text-[11px] text-zinc-400"><RotateCcw className="h-3 w-3" /> This alignment is live. Roll it back to revert every change.</p>
       )}
+
+      <div className="rounded-xl border border-zinc-200 bg-white p-1.5">
+        {projected.map((r) => <TreeRow key={r.key} node={r} depth={0} ctx={nodeCtx} />)}
+      </div>
+
+      <NodeFormModal open={addRegion} kind="region" onClose={() => setAddRegion(false)}
+        onSave={(name, code) => { stageNode.mutate({ kind: "region", name, code }); setAddRegion(false); }} />
     </div>
   );
 }
 
-// Parent options for a given child kind: existing nodes of the parent kind, plus
-// staged new nodes of the parent kind in this alignment.
-function parentOptions(childKind: NodeKind | MoveKind, tree: OrgTree, staged: OrgAlignment["nodes"]): { value: string; label: string }[] {
-  // store -> district, district -> area, area -> region.
-  const pk: NodeKind = childKind === "store" ? "district" : childKind === "district" ? "area" : "region";
-  const existing = pk === "region" ? tree.regions : pk === "area" ? tree.areas : tree.districts;
-  const opts = existing.map((n) => ({ value: enc({ id: n.id }), label: n.name }));
-  for (const s of staged ?? []) if (s.kind === pk) opts.push({ value: enc({ ref: s.ref }), label: `${s.name} (new)` });
-  return opts;
+interface Ctx {
+  tree: OrgTree; nodes: AlignmentNode[]; locked: boolean;
+  expanded: Set<string>; toggle: (k: string) => void;
+  onMove: (kind: MoveKind, node_id: string, parent: { key: string; isNew: boolean }) => void;
+  onUndoMove: (mid: string) => void; onUndoNode: (nid: string) => void;
+  onAddChild: (kind: NodeKind, name: string, code: string, parent: { key: string; isNew: boolean }) => void;
+}
+const KIND_TAG: Record<PKind, string> = { region: "R", area: "AREA", district: "D", store: "" };
+const CHILD_KIND: Record<PKind, NodeKind | null> = { region: "area", area: "district", district: null, store: null };
+
+function TreeRow({ node, depth, ctx }: { node: PNode; depth: number; ctx: Ctx }) {
+  const [moving, setMoving] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const hasChildren = node.children.length > 0;
+  const open = ctx.expanded.has(node.key);
+  const childKind = CHILD_KIND[node.kind];
+  const canMove = !ctx.locked && node.kind !== "region" && !node.isNew; // existing area/district/store
+  const moveKind = node.kind as MoveKind;
+
+  return (
+    <div>
+      <div className="group flex items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-zinc-50" style={{ paddingLeft: depth * 18 + 8 }}>
+        <button onClick={() => hasChildren && ctx.toggle(node.key)} className={cn("shrink-0 text-zinc-300", !hasChildren && "invisible")}>
+          {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+        </button>
+        {KIND_TAG[node.kind] && <span className="shrink-0 rounded bg-zinc-100 px-1.5 py-0.5 text-[10px] font-bold text-zinc-500">{KIND_TAG[node.kind]}{node.sub && node.kind !== "region" ? ` ${node.sub}` : ""}</span>}
+        <span className={cn("truncate text-sm", node.kind === "store" ? "text-zinc-700" : "font-semibold text-midnight")}>{node.label}</span>
+        {node.isNew && <span className="shrink-0 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">new</span>}
+        {node.moved && <span className="shrink-0 rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">moving</span>}
+
+        <div className="ml-auto flex shrink-0 items-center gap-1 opacity-0 group-hover:opacity-100">
+          {canMove && !node.moved && <button onClick={() => setMoving((v) => !v)} className="rounded px-1.5 py-0.5 text-[11px] font-medium text-zinc-500 ring-1 ring-zinc-200 hover:text-accent">Move</button>}
+          {node.moved && node.moveId && <button onClick={() => ctx.onUndoMove(node.moveId!)} className="rounded px-1.5 py-0.5 text-[11px] font-medium text-blue-600 hover:underline">undo move</button>}
+          {node.isNew && node.newId && !ctx.locked && <button onClick={() => ctx.onUndoNode(node.newId!)} className="rounded px-1.5 py-0.5 text-[11px] font-medium text-emerald-600 hover:underline">remove</button>}
+          {!ctx.locked && childKind && <button onClick={() => setAdding((v) => !v)} className="rounded px-1.5 py-0.5 text-[11px] font-medium text-zinc-500 ring-1 ring-zinc-200 hover:text-accent"><Plus className="inline h-3 w-3" /> {childKind}</button>}
+        </div>
+      </div>
+
+      {moving && canMove && (
+        <MovePicker node={node} moveKind={moveKind} ctx={ctx} depth={depth} onDone={() => setMoving(false)} />
+      )}
+      {adding && childKind && (
+        <div style={{ paddingLeft: (depth + 1) * 18 + 8 }} className="py-1">
+          <InlineNodeForm kind={childKind} onCancel={() => setAdding(false)}
+            onSave={(name, code) => { ctx.onAddChild(childKind, name, code, { key: node.key, isNew: node.isNew }); setAdding(false); }} />
+        </div>
+      )}
+
+      {open && node.children.map((c) => <TreeRow key={c.key} node={c} depth={depth + 1} ctx={ctx} />)}
+    </div>
+  );
 }
 
-function AddNodeForm({ alignmentId, tree, staged, onAdded }: { alignmentId: string; tree: OrgTree; staged: OrgAlignment["nodes"]; onAdded: () => void }) {
-  const toast = useToast();
-  const [kind, setKind] = useState<NodeKind>("district");
+function MovePicker({ node, moveKind, ctx, depth, onDone }: { node: PNode; moveKind: MoveKind; ctx: Ctx; depth: number; onDone: () => void }) {
+  const [target, setTarget] = useState("");
+  const choices = parentChoices(moveKind, ctx.tree, ctx.nodes).filter((c) => c.key !== node.key);
+  return (
+    <div style={{ paddingLeft: (depth + 1) * 18 + 8 }} className="flex items-center gap-2 py-1">
+      <CornerDownRight className="h-3.5 w-3.5 text-zinc-300" />
+      <select value={target} onChange={(e) => setTarget(e.target.value)} className={cn(inputCls, "w-56")}>
+        <option value="">Move to…</option>
+        {choices.map((c) => <option key={c.key} value={c.key}>{c.label}</option>)}
+      </select>
+      <Button size="sm" disabled={!target} onClick={() => { const c = choices.find((x) => x.key === target)!; ctx.onMove(moveKind, node.nodeId!, { key: c.key, isNew: c.isNew }); onDone(); }}>Move</Button>
+      <button onClick={onDone} className="text-zinc-400 hover:text-zinc-600"><X className="h-4 w-4" /></button>
+    </div>
+  );
+}
+
+function InlineNodeForm({ kind, onSave, onCancel }: { kind: NodeKind; onSave: (name: string, code: string) => void; onCancel: () => void }) {
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
-  const [parent, setParent] = useState("");
-  const opts = useMemo(() => (kind === "region" ? [] : parentOptions(kind, tree, staged)), [kind, tree, staged]);
-
-  const add = useMutation({
-    mutationFn: () => {
-      const p = kind === "region" ? {} : dec(parent);
-      return addNode({ alignment_id: alignmentId, ref: newRef(kind), kind, name: name.trim(), code: code.trim(), parent_id: p.id, parent_ref: p.ref });
-    },
-    onSuccess: () => { setName(""); setCode(""); setParent(""); onAdded(); },
-    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't add.", "error"),
-  });
-  const ready = name.trim() && code.trim() && (kind === "region" || parent);
-
   return (
-    <div className="mt-2 flex flex-wrap items-end gap-2 rounded-lg bg-zinc-50 p-2.5 ring-1 ring-zinc-100">
-      <select value={kind} onChange={(e) => { setKind(e.target.value as NodeKind); setParent(""); }} className={cn(inputCls, "w-28")}>
-        <option value="region">Region</option><option value="area">Area</option><option value="district">District</option>
-      </select>
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" className={cn(inputCls, "w-40")} />
+    <div className="flex items-center gap-2">
+      <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-700">new {kind}</span>
+      <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" className={cn(inputCls, "w-44")} autoFocus />
       <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code" className={cn(inputCls, "w-28")} />
-      {kind !== "region" && (
-        <select value={parent} onChange={(e) => setParent(e.target.value)} className={cn(inputCls, "w-44")}>
-          <option value="">Parent {kind === "area" ? "region" : "area"}…</option>
-          {opts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-        </select>
-      )}
-      <Button size="sm" disabled={!ready || add.isPending} onClick={() => add.mutate()}><Plus className="mr-1 h-3.5 w-3.5" /> Add node</Button>
+      <Button size="sm" disabled={!name.trim() || !code.trim()} onClick={() => onSave(name.trim(), code.trim())}>Add</Button>
+      <button onClick={onCancel} className="text-zinc-400 hover:text-zinc-600"><X className="h-4 w-4" /></button>
     </div>
   );
 }
 
-function AddMoveForm({ alignmentId, tree, staged, onAdded }: { alignmentId: string; tree: OrgTree; staged: OrgAlignment["nodes"]; onAdded: () => void }) {
-  const toast = useToast();
-  const [kind, setKind] = useState<MoveKind>("store");
-  const [nodeId, setNodeId] = useState("");
-  const [parent, setParent] = useState("");
-  const nodeOpts = useMemo(() => {
-    if (kind === "store") return tree.stores.map((s) => ({ value: s.id, label: `#${s.number} ${s.name}` }));
-    if (kind === "district") return tree.districts.map((d) => ({ value: d.id, label: d.name }));
-    return tree.areas.map((r) => ({ value: r.id, label: r.name }));
-  }, [kind, tree]);
-  const parentOpts = useMemo(() => parentOptions(kind, tree, staged), [kind, tree, staged]);
-
-  const add = useMutation({
-    mutationFn: () => { const p = dec(parent); return addMove({ alignment_id: alignmentId, kind, node_id: nodeId, new_parent_id: p.id, new_parent_ref: p.ref }); },
-    onSuccess: () => { setNodeId(""); setParent(""); onAdded(); },
-    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Couldn't add.", "error"),
-  });
-
+function NodeFormModal({ open, kind, onClose, onSave }: { open: boolean; kind: NodeKind; onClose: () => void; onSave: (name: string, code: string) => void }) {
+  const [name, setName] = useState("");
+  const [code, setCode] = useState("");
   return (
-    <div className="mt-2 flex flex-wrap items-end gap-2 rounded-lg bg-zinc-50 p-2.5 ring-1 ring-zinc-100">
-      <select value={kind} onChange={(e) => { setKind(e.target.value as MoveKind); setNodeId(""); setParent(""); }} className={cn(inputCls, "w-28")}>
-        <option value="store">Store</option><option value="district">District</option><option value="area">Area</option>
-      </select>
-      <select value={nodeId} onChange={(e) => setNodeId(e.target.value)} className={cn(inputCls, "w-52")}>
-        <option value="">Move which {kind}…</option>
-        {nodeOpts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
-      <select value={parent} onChange={(e) => setParent(e.target.value)} className={cn(inputCls, "w-44")}>
-        <option value="">New {kind === "store" ? "district" : kind === "district" ? "area" : "region"}…</option>
-        {parentOpts.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </select>
-      <Button size="sm" disabled={!nodeId || !parent || add.isPending} onClick={() => add.mutate()}><Plus className="mr-1 h-3.5 w-3.5" /> Add move</Button>
-    </div>
+    <Modal open={open} onClose={onClose} title={`New ${kind}`} maxWidth="max-w-md"
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button disabled={!name.trim() || !code.trim()} onClick={() => { onSave(name.trim(), code.trim()); setName(""); setCode(""); }}>Add</Button></>}>
+      <div className="space-y-3">
+        <div><Label htmlFor="nf-name">Name *</Label><Input id="nf-name" value={name} onChange={(e) => setName(e.target.value)} /></div>
+        <div><Label htmlFor="nf-code">Code *</Label><Input id="nf-code" value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. R5 / AREA 09 / D203" /></div>
+      </div>
+    </Modal>
   );
 }
