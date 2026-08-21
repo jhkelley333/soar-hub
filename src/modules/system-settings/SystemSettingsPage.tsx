@@ -36,6 +36,7 @@ const GROUPS: Group[] = [
       { title: "Store Geofences", desc: "Each store's geofence radius for on-site checks.", icon: MapPin, roles: ["admin"], to: "/admin/store-geofences" },
       { title: "Hours of Operation", desc: "Standard + special hours, Google compare, and discrepancy reconciliation.", icon: Clock, roles: ["sdo", "rvp", "vp", "coo", "admin"], to: "/admin/hours-of-operation" },
       { title: "Territory Map", desc: "Every store plotted on the map, pin color keyed to its DO.", icon: MapPinned, roles: ["vp", "coo", "admin"], to: "/territory-map" },
+      { title: "Org Alignment", desc: "Stage a market realignment — new regions/areas/districts + store moves — and schedule it to go live on a date.", icon: Network, roles: ["admin"], to: "/admin/org-alignment" },
     ],
   },
   {

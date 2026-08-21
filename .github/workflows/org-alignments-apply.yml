@@ -1,0 +1,50 @@
+# Org Alignment auto-apply — external trigger for the org-alignments-apply fn.
+#
+# Netlify's native scheduled-function trigger has been unreliable in this project
+# (see reports-dispatch.yml), and a missed org go-live is worse than a missed
+# data pull, so GitHub's scheduler drives the applier too. The applier's
+# config.schedule stays as a secondary trigger.
+#
+# The ping is unauthenticated and safe to fire redundantly: applyAlignment skips
+# anything already applied, so an alignment goes live at most once no matter how
+# many triggers fire.
+#
+# SETUP: nothing beyond merging to the default branch with Actions enabled.
+# Defaults to https://mysoarhub.com; set a SITE_URL repo secret to override.
+
+name: Org alignment apply
+
+on:
+  schedule:
+    # Daily ~6:00 AM America/Chicago (11:00 UTC). Date-granular, so once a day is
+    # enough; the function no-ops until an alignment's effective date arrives.
+    - cron: "0 11 * * *"
+  workflow_dispatch: {} # allow manual runs from the Actions tab
+
+concurrency:
+  group: org-alignments-apply
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping org-alignments-apply
+        env:
+          SITE_URL: ${{ secrets.SITE_URL }}
+        run: |
+          set -euo pipefail
+          base="${SITE_URL:-https://mysoarhub.com}"
+          base="${base%/}"
+          url="${base}/.netlify/functions/org-alignments-apply"
+          echo "Pinging ${url}"
+          code=$(curl -fsS --max-time 120 -o /tmp/org-align.json -w "%{http_code}" "${url}" || true)
+          echo "HTTP ${code}"
+          echo "--- response ---"
+          cat /tmp/org-align.json 2>/dev/null || echo "(no body)"
+          echo
+          case "${code}" in
+            2*) echo "OK" ;;
+            *) echo "::error::org-alignments-apply returned HTTP ${code}"; exit 1 ;;
+          esac
