@@ -8,10 +8,7 @@ import { Segmented } from "@/shared/ui/Segmented";
 import { RankingResultsView } from "./RankingResultsView";
 import { RankingDrillView } from "./RankingDrillView";
 import { MyStoreView } from "./RankingStoreView";
-import { RankingTrendsView } from "./RankingTrendsView";
-import { RankingRiskView } from "./RankingRiskView";
 import { RankingWatchlistView } from "./RankingWatchlistView";
-import { RankingMoversView } from "./RankingMoversView";
 import { RankingCommsBoardView } from "./RankingCommsBoardView";
 import { RankingSevenUpView } from "./RankingSevenUpView";
 import { RankingShakersView } from "./RankingShakersView";
@@ -38,12 +35,11 @@ const fmtDate = (s: string) =>
   new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const todayIso = () => new Date().toLocaleDateString("en-CA");
 
-type AdminView = "ranking" | "top" | "sevenup" | "evening" | "shakers" | "drill" | "watchlist" | "trends" | "risk" | "movers" | "comms" | "settings";
+type AdminView = "ranking" | "top" | "sevenup" | "evening" | "shakers" | "drill" | "watchlist" | "comms" | "settings";
 
 export function RankingAdminPage() {
   const { profile } = useAuth();
   const isAdmin = profile?.role === "admin";
-  const isVp = profile?.role === "vp";
   const isGm = profile?.role === "gm";
   const [view, setView] = useState<AdminView>("ranking");
 
@@ -62,9 +58,6 @@ export function RankingAdminPage() {
   }
   // Every leader sees the board/drill/analytics scoped to what they manage
   // (backend enforces the scope). Only admins get System settings.
-  // Movers (week-over-week improved / slipped) is VP-only for now; admins see
-  // it too for build/support. Backend enforces the same gate.
-  const canMovers = isVp || isAdmin;
   const options: { value: AdminView; label: string }[] = [
     { value: "ranking", label: "Ranking" },
     { value: "top", label: "Top Performers" },
@@ -73,14 +66,10 @@ export function RankingAdminPage() {
     { value: "shakers", label: "Movers & Shakers" },
     { value: "drill", label: "Drill" },
     { value: "watchlist", label: "Watchlist" },
-    { value: "trends", label: "Trends" },
-    { value: "risk", label: "Risk" },
     { value: "comms", label: "Comms Board" },
-    ...(canMovers ? [{ value: "movers" as AdminView, label: "Movers" }] : []),
     ...(isAdmin ? [{ value: "settings" as AdminView, label: "System settings" }] : []),
   ];
-  const active =
-    (view === "settings" && !isAdmin) || (view === "movers" && !canMovers) ? "ranking" : view;
+  const active = view === "settings" && !isAdmin ? "ranking" : view;
   return (
     <>
       <PageHeader
@@ -97,9 +86,6 @@ export function RankingAdminPage() {
         : active === "shakers" ? <RankingShakersView />
         : active === "drill" ? <RankingDrillView />
         : active === "watchlist" ? <RankingWatchlistView />
-        : active === "trends" ? <RankingTrendsView />
-        : active === "risk" ? <RankingRiskView />
-        : active === "movers" ? <RankingMoversView />
         : active === "comms" ? <RankingCommsBoardView />
         : <SettingsView />}
     </>
