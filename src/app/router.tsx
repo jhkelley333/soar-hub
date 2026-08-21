@@ -39,6 +39,7 @@ import { RankerBackfillPage } from "@/modules/admin/RankerBackfillPage";
 import { LaborSettingsPage } from "@/modules/admin/LaborSettingsPage";
 import { BulkOrgImportPage } from "@/modules/admin/BulkOrgImportPage";
 import { AcquisitionsPage } from "@/modules/acquisitions/AcquisitionsPage";
+import { OrgAlignmentPage } from "@/modules/org-alignment/OrgAlignmentPage";
 import { AcquisitionDetailPage } from "@/modules/acquisitions/AcquisitionDetailPage";
 import { BulkAttributesPage } from "@/modules/admin/BulkAttributesPage";
 import { GmRosterPage } from "@/modules/admin/GmRosterPage";
@@ -680,6 +681,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["vp", "coo", "admin"]}>
             <AcquisitionDetailPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "admin/org-alignment",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <OrgAlignmentPage />
           </ProtectedRoute>
         ),
       },
