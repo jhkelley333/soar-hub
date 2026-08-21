@@ -109,6 +109,8 @@ function bandInput(r, p, ix, fcTarget) {
     callsPer10k: COMPLAINTS_HOLD_PLACEHOLDER,                 // B6: on hold -> neutral 3 at every tier
     ecosure: null, vogScore: null, vogResponses: null,        // parsers not wired yet
     totalTrainingPct: null, msCount: null, msScore: null,
+    trVsTz: null,      // TR vs TZ Variance from the TotZone file (Comms Board)
+    eveningPct: null,  // Evening daypart net-sales YoY % from the KPI snapshot (Comms Board)
     doh: isNum(ix?.doh) ? ix.doh : null,
     dohGoal: null,
     endingDollars: isNum(ix?.ending_dollars) ? ix.ending_dollars : null,
@@ -361,6 +363,11 @@ export async function runRankingNow(supa, user, opts = {}) {
     for (const [sn, { sum, n }] of sums) ecoAvgByStore.set(sn, sum / n / 100); // fraction, engine unit
     issues.push({ level: "info", msg: `EcoSure covers ${ecoAvgByStore.size} store(s) (YTD through ${eco.file.week_ending ?? "?"}) — unaudited stores score a neutral 3 ("No Audit").` });
   }
+  // Evening daypart net-sales YoY % per store, from this week's KPI snapshot.
+  // Empty map if no snapshot matches — the metric just stays null.
+  let eveningByStore = new Map();
+  try { eveningByStore = await eveningWtdForWeek(supa, weekEnding); } catch { /* leave empty */ }
+
   const stores = [];
   const unmatched = [];
   const onTimeSuspect = [];
@@ -382,6 +389,11 @@ export async function runRankingNow(supa, user, opts = {}) {
     // never counted toward Total Points (DEVIATIONS A).
     const tzRow = tz?.stores.get(num);
     if (isNum(tzRow?.total_training_pct)) ptd.totalTrainingPct = tzRow.total_training_pct;
+    // TR vs TZ Variance from the TotZone file — info readout on both scopes.
+    if (isNum(tzRow?.tr_vs_tz)) { ptd.trVsTz = tzRow.tr_vs_tz; wtd.trVsTz = tzRow.tr_vs_tz; }
+    // Evening daypart net-sales YoY %, from that week's KPI snapshot (WTD).
+    const ev = eveningByStore.get(normStoreNum(num));
+    if (isNum(ev)) wtd.eveningPct = ev;
     // EcoSure YTD average (PTD-only, same contract).
     const ecoAvg = ecoAvgByStore.get(num);
     if (isNum(ecoAvg)) ptd.ecosure = ecoAvg;
@@ -955,7 +967,45 @@ export async function sevenUpSales(supa, params, storeNums = null) {
 // keyed Breakfast / Lunch / Afternoon / Dinner / Evening. We read them straight
 // off the latest stored snapshot (kpi_snapshots keeps the full payload).
 const DP_PTD_SECTIONS = ["periodToDateData", "periodToDate", "ptdData", "businessPeriodData", "periodData", "ptd"];
+const DP_WTD_SECTIONS = ["weekToDateData", "weekToDate", "wtdData", "businessWeekData", "weekData", "wtd"];
 const pickDpSection = (rd, cands) => { for (const k of cands) if (Array.isArray(rd?.[k])) return rd[k]; return []; };
+
+// Store (normalized) -> Evening daypart net-sales YoY %, as a fraction, from the
+// KPI snapshot whose feed business date is `weekEnding`. Reads the week-to-date
+// section (the Comms Board shows a per-week figure). Empty map if none matches.
+async function eveningWtdForWeek(supa, weekEnding) {
+  const out = new Map();
+  let snap = null;
+  for (const offset of [1, 2, 0]) {
+    const cd = isoAddDaysUTC(weekEnding, offset);
+    const { data: snaps } = await supa
+      .from("kpi_snapshots").select("central_date, central_hour, payload")
+      .eq("central_date", cd).order("central_hour", { ascending: false }).limit(4);
+    for (const s of snaps || []) {
+      const wc = { year: +cd.slice(0, 4), month: +cd.slice(5, 7), day: +cd.slice(8, 10), hour: s.central_hour };
+      if (feedBusinessDate(s.payload, wc) === weekEnding) { snap = s; break; }
+    }
+    if (snap) break;
+  }
+  if (!snap) return out;
+  const pick = pickDpSection(snap.payload?.rawData || {}, DP_WTD_SECTIONS);
+  for (const r of pick) {
+    if (!isStoreRow(r)) continue;
+    const number = storeNumberOf(r);
+    if (!number) continue;
+    const net = daypartVal(r, "netSalesDayparts", "evening");
+    const prev = daypartVal(r, "previousYearNetSalesDayparts", "evening");
+    let frac = null;
+    if (net != null && prev != null && prev !== 0) frac = (net - prev) / prev;
+    else {
+      const y = daypartVal(r, "yoyNetSalesDaypartsPercentage", "evening");
+      if (y != null) frac = Math.abs(y) <= 5 ? y : y / 100; // feed may give a fraction or a %
+    }
+    if (frac == null) continue;
+    out.set(normStoreNum(number), frac);
+  }
+  return out;
+}
 // One daypart's value off a `<metric>Dayparts` object (case-insensitive key).
 const daypartVal = (row, field, dp) => {
   const o = row?.[field];
