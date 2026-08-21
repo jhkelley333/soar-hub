@@ -557,6 +557,7 @@ function TotzoneUploadPanel() {
         crew: colOf("annual & station"),
         mgr: colOf("total manager"),
         total: colOf("total crew"),
+        trVsTz: colOf("tr vs tz"), // TR vs TZ Variance — feeds the Comms Board
       };
       if (cols.total < 0) throw new Error('Couldn\'t find the "Total Crew and Manager Completion" column.');
 
@@ -570,6 +571,7 @@ function TotzoneUploadPanel() {
           crew_pct: cols.crew >= 0 ? num(r?.[cols.crew]) : null,
           manager_pct: cols.mgr >= 0 ? num(r?.[cols.mgr]) : null,
           total_training_pct: num(r?.[cols.total]),
+          tr_vs_tz: cols.trVsTz >= 0 ? num(r?.[cols.trVsTz]) : null,
         }))
         .filter((r) => /^\d+$/.test(r.store_code) && r.total_training_pct != null);
       if (!rows.length) throw new Error("No store rows with a total completion % found.");

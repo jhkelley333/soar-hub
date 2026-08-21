@@ -241,6 +241,7 @@ async function ingestTotzone(supa, user, body) {
       crew_pct: Number.isFinite(Number(r?.crew_pct)) ? Number(r.crew_pct) : null,
       manager_pct: Number.isFinite(Number(r?.manager_pct)) ? Number(r.manager_pct) : null,
       total_training_pct: Number.isFinite(Number(r?.total_training_pct)) ? Number(r.total_training_pct) : null,
+      tr_vs_tz: Number.isFinite(Number(r?.tr_vs_tz)) ? Number(r.tr_vs_tz) : null, // TR vs TZ Variance
       as_of: asOf,
     }))
     .filter((r) => r.store_code && r.total_training_pct != null && r.total_training_pct >= 0 && r.total_training_pct <= 1.5);

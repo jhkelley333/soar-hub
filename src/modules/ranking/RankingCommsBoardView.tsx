@@ -49,9 +49,9 @@ const CARDS: Card[][] = [
 ];
 
 const FOCUS: Card[] = [
-  { title: "Night Time Biz (8PM to Close)", goal: "8%", key: "__na_night", fmt: pct1, good: () => true },
+  { title: "Night Time Biz (8PM to Close)", goal: "8%", key: "eveningPct", fmt: signed, good: (v) => v > 0 },
   { title: "VOG", goal: "70", key: "vog", fmt: pct1, good: (v) => v >= 0.7 },
-  { title: "TR vs TZ Variance", goal: "Zero Variance", key: "__na_trtz", fmt: num1, good: () => true },
+  { title: "TR vs TZ Variance", goal: "Zero Variance", key: "trVsTz", fmt: num1, good: () => true },
   { title: "Cash +/-", goal: "Zero Variance", key: "cashOverShort", fmt: num1, good: () => true },
 ];
 

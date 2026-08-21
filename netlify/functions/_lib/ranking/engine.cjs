@@ -248,6 +248,8 @@ function computeStorePtd(st, cfg, issues) {
   r.voidsPct = (isNum(r.voids) && isNum(r.sales) && r.sales !== 0) ? r.voids / r.sales : null; // BM
   r.cashOverShort = isNum(p.cashOverShort) ? p.cashOverShort : null; // info: WTD register short/over
   r.paidOut = isNum(p.paidOut) ? p.paidOut : null;                    // info: WTD paid-outs
+  r.trVsTz = isNum(p.trVsTz) ? p.trVsTz : null;                       // info: TR vs TZ Variance (Comms Board)
+  r.eveningPct = isNum(p.eveningPct) ? p.eveningPct : null;           // info: Evening net-sales YoY % (Comms Board)
   // BN = AVERAGE(AY,AV,AR,AO) — errors propagate
   r.totalBsc = (isNum(r.ecosureScore) && isNum(r.complaintsScore) && isNum(r.onTimeScore) && isNum(r.bscScore))
     ? (r.ecosureScore + r.complaintsScore + r.onTimeScore + r.bscScore) / 4 : null;
@@ -360,6 +362,8 @@ function computeStoreWtd(st, cfg, issues) {
   r.voidsPct = (isNum(r.voids) && isNum(r.sales) && r.sales !== 0) ? r.voids / r.sales : null; // BA
   r.cashOverShort = isNum(w.cashOverShort) ? w.cashOverShort : null;   // info: WTD register short/over
   r.paidOut = isNum(w.paidOut) ? w.paidOut : null;                      // info: WTD paid-outs
+  r.trVsTz = isNum(w.trVsTz) ? w.trVsTz : null;                         // info: TR vs TZ Variance (Comms Board)
+  r.eveningPct = isNum(w.eveningPct) ? w.eveningPct : null;             // info: Evening net-sales YoY % (Comms Board)
   r.doh = isNum(w.doh) ? w.doh : null;                                 // BB
   r.dohGoal = isNum(w.dohGoal) ? w.dohGoal : null;                     // BC
   r.endingDollars = isNum(w.endingDollars) ? w.endingDollars : null;   // BD

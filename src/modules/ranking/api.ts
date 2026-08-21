@@ -414,6 +414,7 @@ export interface TotzoneRowInput {
   crew_pct?: number | null;
   manager_pct?: number | null;
   total_training_pct: number | null;
+  tr_vs_tz?: number | null;
 }
 
 export function ingestTotzoneRows(input: {
