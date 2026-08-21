@@ -15,7 +15,7 @@ import { RankingShakersView } from "./RankingShakersView";
 import { RankingTopPerformersView } from "./RankingTopPerformersView";
 import { RankingEveningView } from "./RankingEveningView";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, ExternalLink, HelpCircle, PauseCircle, Plus, Save } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, ExternalLink, Eye, EyeOff, HelpCircle, KeyRound, PauseCircle, Pencil, Plus, Save, Trash2 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -26,7 +26,8 @@ import { cn } from "@/lib/cn";
 import { useAuth } from "@/auth/AuthProvider";
 import {
   addRankingConfig, backfillRankingFields, fetchRankingOverview, ingestBscRows, ingestEcosureRows, ingestIxFile, ingestOttRows, ingestPtdRankingRows, ingestShopRows, ingestTotzoneRows, ingestVogRows, setFcTargetEfficiency, setLaborPad,
-  type RankingConfigRow, type RankingStoreRow,
+  fetchRankerCredentials, upsertRankerCredential, deleteRankerCredential,
+  type RankingConfigRow, type RankingStoreRow, type RankerCredential,
 } from "./api";
 
 const inputCls =
@@ -85,6 +86,18 @@ const HOWTO: Record<string, { title: string; link?: { href: string; label: strin
       "Period to date:\n" +
       "Change Recorded Date to the period start date through last week's end date, then follow the same steps (label it Period).",
   },
+  ott: {
+    title: "OTT / Late Sends — how to pull",
+    link: { href: "https://rap.sonicdrivein.com", label: "Open RAP" },
+    body:
+      "Path: Analytics → Power BI → Guest Experience → Sonic Speed of Service Summary.\n\n" +
+      "Period to date:\n" +
+      "1. Change the calendar to the period's first day through last week's ending date. Change the ENDING date first, then the period start date.\n" +
+      "2. Hover over the OTT, Avg. SOS, and Late Sends table (near the scroll bar on the right) until three dots appear — you may need to click once. Click the three dots → Export data.\n" +
+      "3. Make sure “Data with current layout” is selected, then hit Export. Add PTD to the file name, save, and upload to the hub.\n\n" +
+      "WTD:\n" +
+      "Change the calendar to last week, then follow the same steps. Add WTD to the file name.",
+  },
 };
 
 // "How to" button + modal shown on each upload panel. Opens that source's pull
@@ -116,6 +129,145 @@ function HowTo({ entry }: { entry: (typeof HOWTO)[string] }) {
         </div>
       </Modal>
     </>
+  );
+}
+
+const prettyUrl = (u: string) => u.replace(/^https?:\/\//, "").replace(/\/$/, "");
+
+// Admin-only credential vault: shared logins + links for the ranker data
+// sources. Passwords are masked with reveal/copy (see migration 0305 for the
+// security posture).
+function CredentialsVault() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const q = useQuery({ queryKey: ["ranker-credentials"], queryFn: fetchRankerCredentials });
+  const [editing, setEditing] = useState<Partial<RankerCredential> | null>(null);
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["ranker-credentials"] });
+
+  const save = useMutation({
+    mutationFn: (d: Partial<RankerCredential> & { label: string }) => upsertRankerCredential(d),
+    onSuccess: () => { toast.push("Saved.", "success"); invalidate(); setEditing(null); },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Save failed.", "error"),
+  });
+  const del = useMutation({
+    mutationFn: (id: string) => deleteRankerCredential(id),
+    onSuccess: () => { toast.push("Deleted.", "success"); invalidate(); },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Delete failed.", "error"),
+  });
+
+  const entries = q.data?.entries ?? [];
+
+  return (
+    <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <KeyRound className="h-4 w-4 text-accent" />
+          <div>
+            <div className="text-sm font-semibold text-midnight">Credential vault</div>
+            <p className="text-xs text-zinc-500">Shared logins + links for the data sources below. Admin-only.</p>
+          </div>
+        </div>
+        <Button size="sm" variant="secondary" onClick={() => setEditing({ label: "", sort_order: 100 })}>
+          <Plus className="mr-1 h-3.5 w-3.5" /> Add
+        </Button>
+      </div>
+
+      {q.isLoading ? <Skeleton className="h-24 w-full" />
+        : q.isError ? <p className="text-sm text-red-600">{(q.error as Error)?.message ?? "Couldn't load."}</p>
+        : entries.length === 0 ? <p className="text-sm text-zinc-400">No credentials yet — add one, or run migration 0305 to seed the known sources.</p>
+        : (
+          <div className="divide-y divide-zinc-100">
+            {entries.map((c) => (
+              <CredentialRow key={c.id} c={c} onEdit={() => setEditing(c)}
+                onDelete={() => { if (window.confirm(`Delete "${c.label}"?`)) del.mutate(c.id); }} />
+            ))}
+          </div>
+        )}
+
+      <CredentialModal draft={editing} saving={save.isPending}
+        onChange={setEditing} onClose={() => setEditing(null)}
+        onSave={() => { if (editing?.label?.trim()) save.mutate({ ...editing, label: editing.label }); }} />
+    </div>
+  );
+}
+
+function CredentialRow({ c, onEdit, onDelete }: { c: RankerCredential; onEdit: () => void; onDelete: () => void }) {
+  const [show, setShow] = useState(false);
+  const toast = useToast();
+  const copy = (v: string | null, what: string) => {
+    if (!v) return;
+    navigator.clipboard?.writeText(v).then(() => toast.push(`${what} copied.`, "success")).catch(() => {});
+  };
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 py-2.5">
+      <div className="min-w-[150px] flex-1">
+        <div className="text-sm font-semibold text-midnight">{c.label}</div>
+        {c.url && (
+          <a href={c.url} target="_blank" rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-xs text-accent hover:underline">
+            <ExternalLink className="h-3 w-3" /> {prettyUrl(c.url)}
+          </a>
+        )}
+        {c.notes && <div className="text-[11px] text-zinc-400">{c.notes}</div>}
+      </div>
+      <div className="text-xs">
+        <div className="text-[10px] uppercase tracking-wide text-zinc-400">User</div>
+        <button onClick={() => copy(c.username, "Username")} title="Copy username"
+          className="inline-flex items-center gap-1 font-mono text-zinc-700 hover:text-accent">
+          {c.username || "—"} {c.username && <Copy className="h-3 w-3 text-zinc-300" />}
+        </button>
+      </div>
+      <div className="text-xs">
+        <div className="text-[10px] uppercase tracking-wide text-zinc-400">Password</div>
+        <div className="inline-flex items-center gap-1.5">
+          <span className="font-mono text-zinc-700">{c.password ? (show ? c.password : "••••••••") : "—"}</span>
+          {c.password && (
+            <button onClick={() => setShow((s) => !s)} className="text-zinc-400 hover:text-accent" title={show ? "Hide" : "Show"}>
+              {show ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+            </button>
+          )}
+          {c.password && (
+            <button onClick={() => copy(c.password, "Password")} className="text-zinc-300 hover:text-accent" title="Copy password">
+              <Copy className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-1">
+        <button onClick={onEdit} className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-accent" title="Edit"><Pencil className="h-3.5 w-3.5" /></button>
+        <button onClick={onDelete} className="rounded p-1 text-zinc-400 hover:bg-red-50 hover:text-red-600" title="Delete"><Trash2 className="h-3.5 w-3.5" /></button>
+      </div>
+    </div>
+  );
+}
+
+function CredentialModal({ draft, saving, onChange, onClose, onSave }: {
+  draft: Partial<RankerCredential> | null; saving: boolean;
+  onChange: (d: Partial<RankerCredential>) => void; onClose: () => void; onSave: () => void;
+}) {
+  const field = (label: string, key: "label" | "url" | "username" | "password" | "notes", placeholder?: string) => (
+    <div>
+      <div className="mb-1 text-[11px] font-bold uppercase tracking-wide text-zinc-500">{label}</div>
+      <input className={cn(inputCls, "w-full")} autoComplete="off" placeholder={placeholder}
+        value={(draft?.[key] as string) ?? ""} onChange={(e) => draft && onChange({ ...draft, [key]: e.target.value })} />
+    </div>
+  );
+  return (
+    <Modal open={draft != null} onClose={onClose} title={draft?.id ? "Edit credential" : "Add credential"} maxWidth="max-w-md"
+      footer={<>
+        <Button variant="secondary" onClick={onClose}>Cancel</Button>
+        <Button disabled={saving || !draft?.label?.trim()} onClick={onSave}>{saving ? "Saving…" : "Save"}</Button>
+      </>}>
+      {draft && (
+        <div className="space-y-3">
+          {field("Label *", "label", "Inventory Expressway")}
+          {field("Link (URL)", "url", "https://…")}
+          {field("Username", "username")}
+          {field("Password", "password")}
+          {field("Notes", "notes")}
+        </div>
+      )}
+    </Modal>
   );
 }
 
@@ -208,6 +360,8 @@ function SettingsView() {
 
         <FcTargetEditor current={q.data?.fc_target_efficiency ?? 0.96}
           onSaved={() => qc.invalidateQueries({ queryKey: ["ranking-admin"] })} />
+
+        <CredentialsVault />
 
         <IxUploadPanel />
 
@@ -1003,7 +1157,10 @@ function OttUploadPanel() {
     <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-semibold text-midnight">OTT — % Late Sends over 8 Min</div>
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-semibold text-midnight">OTT — % Late Sends over 8 Min</div>
+            <HowTo entry={HOWTO.ott} />
+          </div>
           <p className="text-xs text-zinc-500">
             Upload the "OTT, Avg. SOS and Late Sends" xlsx. Reads <strong>% Late Sends over 8 Min</strong> per store
             (surfaced on the ranker). Comes in WTD and PTD — upload both. Duplicates rejected by content hash.

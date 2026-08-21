@@ -3,6 +3,7 @@
 import { supabase } from "@/lib/supabase";
 
 const FN = "/.netlify/functions/ranking-admin";
+const FN_CRED = "/.netlify/functions/ranker-credentials";
 
 async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   const { data } = await supabase.auth.getSession();
@@ -15,6 +16,29 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error((body as { error?: string })?.error || `Request failed (${res.status})`);
   return body as T;
+}
+
+// ── Credential vault (admin only) ────────────────────────────────────────────
+export interface RankerCredential {
+  id: string;
+  label: string;
+  url: string | null;
+  username: string | null;
+  password: string | null;
+  notes: string | null;
+  sort_order: number;
+  updated_at: string;
+}
+export function fetchRankerCredentials(): Promise<{ ok: true; entries: RankerCredential[] }> {
+  return req(`${FN_CRED}?action=list`);
+}
+export function upsertRankerCredential(
+  input: Partial<RankerCredential> & { label: string },
+): Promise<{ ok: true; entry: RankerCredential }> {
+  return req(`${FN_CRED}?action=upsert`, { method: "POST", body: JSON.stringify(input) });
+}
+export function deleteRankerCredential(id: string): Promise<{ ok: true }> {
+  return req(`${FN_CRED}?action=delete`, { method: "POST", body: JSON.stringify({ id }) });
 }
 
 export interface RankingConfigRow {
