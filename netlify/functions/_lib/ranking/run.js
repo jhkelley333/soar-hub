@@ -990,7 +990,13 @@ async function eveningWtdForWeek(supa, weekEnding) {
     if (snap) break;
   }
   if (!snap) return out;
-  const pick = pickDpSection(snap.payload?.rawData || {}, DP_WTD_SECTIONS);
+  const rd = snap.payload?.rawData || {};
+  // Prefer the week-to-date daypart rows; fall back to period-to-date if the
+  // feed only carries dayparts there (still a usable Evening read for the week).
+  let pick = pickDpSection(rd, DP_WTD_SECTIONS);
+  if (!pick.length || !pick.some((r) => r?.netSalesDayparts || r?.yoyNetSalesDaypartsPercentage)) {
+    pick = pickDpSection(rd, DP_PTD_SECTIONS);
+  }
   for (const r of pick) {
     if (!isStoreRow(r)) continue;
     const number = storeNumberOf(r);
