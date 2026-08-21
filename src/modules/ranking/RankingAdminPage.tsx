@@ -15,7 +15,7 @@ import { RankingShakersView } from "./RankingShakersView";
 import { RankingTopPerformersView } from "./RankingTopPerformersView";
 import { RankingEveningView } from "./RankingEveningView";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, PauseCircle, Plus, Save } from "lucide-react";
+import { ChevronDown, ChevronRight, ExternalLink, HelpCircle, PauseCircle, Plus, Save } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -34,6 +34,90 @@ const inputCls =
 const fmtDate = (s: string) =>
   new Date(`${s}T12:00:00`).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 const todayIso = () => new Date().toLocaleDateString("en-CA");
+
+// Per-source pull instructions, surfaced by the "How to" button on each upload
+// panel. Editing a step is a change here — no other wiring.
+const HOWTO: Record<string, { title: string; link?: { href: string; label: string }; body: string }> = {
+  ix: {
+    title: "Inventory Expressway — how to pull",
+    link: { href: "https://www.expresswaytech.com/", label: "Open Expressway Tech" },
+    body:
+      "Path after login: Inventory → Manage Company → Export. Once inventory is complete you pull two reports — Period to Date and Cycle.\n\n" +
+      "1. Select Period to Date. Choose your cycle in the drop-down (cycle end date). Under Stores, click Select All. Under Categories, select Food (Group). Click the blue Export button.\n\n" +
+      "2. Select Cycle, then follow the same steps as Period to Date.\n\n" +
+      "The files download with the correct names for uploading.\n\n" +
+      "Note: any store that hasn't completed its cycle auto-populates a 96 efficiency.",
+  },
+  totzone: {
+    title: "TotZone — Total Training",
+    body: "This file is sent out by Adam on Monday morning. Download it to your computer, then upload it here.",
+  },
+  ecosure: {
+    title: "EcoSure — Food Safety — how to pull",
+    link: { href: "https://ecolabb2c.b2clogin.com/account.ecolab.com/b2c_1a_trueview_oidc_signin/oauth2/v2.0/authorize?client_id=0396bc43-cb59-4305-ac9a-cf0b5dbf50f4&redirect_uri=https%3A%2F%2Fapi.trueview.ecosure.com%2Fapi%2Fidentity%2Fv1_0%2Fsignin-oidc-ciam&response_type=id_token&scope=openid%20profile&response_mode=form_post&client_info=1&email=team%40soarqsr.com", label: "Click here" },
+    body:
+      "Once logged in, click Inspire Food Safety Dashboard (on the right). At the bottom you'll see tabs — click List of Assessments.\n\n" +
+      "Set the start date to 1/1/2026 and the end date to today.\n\n" +
+      "On the List of Evaluation table, hover just above “Visit” until three dots appear. Click the dots → Export Data. Make sure “Data with Current Layout” is selected, then click Export.\n\n" +
+      "Upload the file into the hub.",
+  },
+  bsc: {
+    title: "BSC — LTO Training",
+    body: "This file is sent out by Adam on Monday morning. Download it to your computer, then upload it here.",
+  },
+  shops: {
+    title: "KnowledgeForce (Mystery Shops) — how to pull",
+    link: { href: "https://knowledgeforce.com/", label: "Open KnowledgeForce" },
+    body:
+      "Path: click Reporting at the top → Export → Data Dump.\n\n" +
+      "Click Monthly and make sure any month within the period is selected, then click Apply Filter.\n\n" +
+      "Click Report Options → Download Excel, then upload it to the hub.",
+  },
+  vog: {
+    title: "Voice of the Guest (Qualtrics) — how to pull",
+    link: { href: "https://inspirebrands.qualtrics.com/", label: "Open Qualtrics" },
+    body:
+      "Sign in, then click Dashboard Viewer. In the top-left drop-down, choose Sonic CX Dashboard.\n\n" +
+      "WTD:\n" +
+      "1. In Recorded Date, select last week's dates.\n" +
+      "2. Scroll to Store Level Top Box Performance. Right-click in that table (three dots appear) → Export → CSV → Export.\n" +
+      "3. In the export name, add “WTD”. Upload it — you can let it auto-select the data type, or choose WTD from the drop-down.\n\n" +
+      "Period to date:\n" +
+      "Change Recorded Date to the period start date through last week's end date, then follow the same steps (label it Period).",
+  },
+};
+
+// "How to" button + modal shown on each upload panel. Opens that source's pull
+// instructions, with the source link where one exists.
+function HowTo({ entry }: { entry: (typeof HOWTO)[string] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="inline-flex shrink-0 items-center gap-1 rounded-full border border-zinc-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-zinc-500 transition hover:border-accent hover:text-accent"
+      >
+        <HelpCircle className="h-3.5 w-3.5" /> How to
+      </button>
+      <Modal open={open} onClose={() => setOpen(false)} title={entry.title} maxWidth="max-w-lg">
+        <div className="space-y-3 text-sm leading-relaxed text-zinc-700">
+          {entry.link && (
+            <a
+              href={entry.link.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-accent/10 px-3 py-1.5 font-semibold text-accent hover:bg-accent/15"
+            >
+              <ExternalLink className="h-4 w-4" /> {entry.link.label}
+            </a>
+          )}
+          <p className="whitespace-pre-line">{entry.body}</p>
+        </div>
+      </Modal>
+    </>
+  );
+}
 
 type AdminView = "ranking" | "top" | "sevenup" | "evening" | "shakers" | "drill" | "watchlist" | "comms" | "settings";
 
@@ -246,7 +330,10 @@ function IxUploadPanel() {
     <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-semibold text-midnight">Inventory Expressway — food cost</div>
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-semibold text-midnight">Inventory Expressway — food cost</div>
+            <HowTo entry={HOWTO.ix} />
+          </div>
           <p className="text-xs text-zinc-500">
             Upload the IX category export (CSV). Store efficiency, $ miss, DOH and the file's own
             DO/SDO/RVP/company rollups feed the next run. Duplicate files are rejected by content hash.
@@ -350,7 +437,10 @@ function TotzoneUploadPanel() {
     <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-semibold text-midnight">TotZone — Total Training</div>
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-semibold text-midnight">TotZone — Total Training</div>
+            <HowTo entry={HOWTO.totzone} />
+          </div>
           <p className="text-xs text-zinc-500">
             Upload the "TotZone Training Status — Team Members" xlsx. The Station Completion sheet feeds each
             store's Total Crew &amp; Manager completion % (scored 1–5, informational — never counts toward Total
@@ -446,7 +536,10 @@ function EcosureUploadPanel() {
     <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-semibold text-midnight">EcoSure — Food Safety</div>
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-semibold text-midnight">EcoSure — Food Safety</div>
+            <HowTo entry={HOWTO.ecosure} />
+          </div>
           <p className="text-xs text-zinc-500">
             Upload the Ecolab TrueView "List of Assessments" xlsx. Each store scores on its YTD assessment
             average; stores without an audit show "No Audit" and take a neutral 3. Duplicates rejected by
@@ -530,7 +623,10 @@ function BscUploadPanel() {
     <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-semibold text-midnight">BSC — LTO Training</div>
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-semibold text-midnight">BSC — LTO Training</div>
+            <HowTo entry={HOWTO.bsc} />
+          </div>
           <p className="text-xs text-zinc-500">
             Upload the "BSC Training" xlsx. Each store's LTO Training Module completion % (column G of the BSC
             sheet) scores 1–5 in Operations. Duplicates rejected by content hash.
@@ -740,7 +836,10 @@ function ShopsUploadPanel() {
     <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-semibold text-midnight">Mystery Shops</div>
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-semibold text-midnight">Mystery Shops</div>
+            <HowTo entry={HOWTO.shops} />
+          </div>
           <p className="text-xs text-zinc-500">
             Upload the KnowledgeForce "DataDump" CSV. Each shop keeps its visit date; the run counts and averages
             only shops that <strong>fell within its fiscal period</strong> — the rest are ignored. Informational
@@ -815,7 +914,10 @@ function VogUploadPanel() {
     <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <div className="text-sm font-semibold text-midnight">VOG — Voice of Guest</div>
+          <div className="flex items-center gap-2">
+            <div className="text-sm font-semibold text-midnight">VOG — Voice of Guest</div>
+            <HowTo entry={HOWTO.vog} />
+          </div>
           <p className="text-xs text-zinc-500">
             Upload the Qualtrics dashboard export CSV. Each store scores on L2R (likely-to-return top-box);
             Count feeds the response weighting. Comes in WTD and MTD (period) — upload both. Duplicates rejected
