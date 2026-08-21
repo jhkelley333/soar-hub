@@ -9,14 +9,16 @@ import { projectTree, type PNode } from "./projection";
 
 const GREEN: [number, number, number] = [16, 122, 87];   // new
 const BLUE: [number, number, number] = [29, 78, 216];    // moved
+const VIOLET: [number, number, number] = [124, 58, 173]; // leader move
 const INK: [number, number, number] = [20, 30, 45];
 const MUTED: [number, number, number] = [120, 120, 120];
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "alignment";
 
-export function downloadChangesPdf(a: OrgAlignment, tree: OrgTree, leaders: Map<string, string>): void {
+export function downloadChangesPdf(a: OrgAlignment, tree: OrgTree, leaders: Map<string, string>, userNames?: Map<string, string>): void {
   const nodes = a.nodes ?? [];
   const moves = a.moves ?? [];
+  const leaderMoves = a.leader_moves ?? [];
   const roots = projectTree(tree, nodes, moves);
 
   // Lookups for the change summary (id/ref → readable name).
@@ -47,13 +49,14 @@ export function downloadChangesPdf(a: OrgAlignment, tree: OrgTree, leaders: Map<
   doc.text(`Org Alignment — ${a.name}`, M, y); y += 7;
   doc.setFont("helvetica", "normal"); doc.setFontSize(9.5); setColor(MUTED);
   const eff = new Date(`${a.effective_date}T12:00:00`).toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
-  doc.text(`Effective ${eff}  ·  status: ${a.status}  ·  ${nodes.length} new · ${moves.length} move(s)  ·  generated ${today}`, M, y); y += 6;
+  doc.text(`Effective ${eff}  ·  status: ${a.status}  ·  ${nodes.length} new · ${moves.length} move(s) · ${leaderMoves.length} leader move(s)  ·  generated ${today}`, M, y); y += 6;
 
   // Legend
   doc.setFontSize(8.5);
   setColor(GREEN); doc.text("● new", M, y);
   setColor(BLUE); doc.text("● moved", M + 18, y);
-  setColor(MUTED); doc.text("○ unchanged", M + 40, y);
+  setColor(VIOLET); doc.text("● leader move", M + 40, y);
+  setColor(MUTED); doc.text("○ unchanged", M + 72, y);
   y += 7;
 
   // ── Change summary ──────────────────────────────────────────────────────
@@ -72,6 +75,14 @@ export function downloadChangesPdf(a: OrgAlignment, tree: OrgTree, leaders: Map<
     ensure(5); setColor(BLUE);
     const who = byId.get(m.node_id) ?? m.node_id;
     doc.text(`MOVE ${m.kind}  ${who}  →  ${parentLabel(m.new_parent_id, m.new_parent_ref)}`, M + 2, y);
+    y += 4.6;
+  }
+  for (const lm of leaderMoves) {
+    ensure(5); setColor(VIOLET);
+    const who = userNames?.get(lm.user_id) ?? "Leader";
+    const role = lm.scope_type === "area" ? "SDO" : "DO";
+    const from = (lm.from_scope_id && byId.get(lm.from_scope_id)) || "current";
+    doc.text(`LEADER ${role}  ${who}  ${from}  →  ${parentLabel(lm.to_scope_id, lm.to_scope_ref)}`, M + 2, y);
     y += 4.6;
   }
   y += 4;

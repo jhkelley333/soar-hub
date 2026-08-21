@@ -96,6 +96,39 @@ export function nextCode(kind: NodeKind, tree: OrgTree, nodes: AlignmentNode[]):
   return best.prefix + String(best.num + 1).padStart(best.pad, "0");
 }
 
+// Options of a given node kind (existing + staged new), labelled with code +
+// name (+ leader for existing). Used for a leader-reassignment destination.
+export function nodeChoices(kind: "region" | "area" | "district", tree: OrgTree, nodes: AlignmentNode[], leaders: Map<string, string>): { key: string; label: string; isNew: boolean }[] {
+  const existing = kind === "region" ? tree.regions : kind === "area" ? tree.areas : tree.districts;
+  return [
+    ...existing.map((n) => { const l = leaders.get(n.id); return { key: n.id, label: `${n.code} · ${n.name}${l ? ` — ${l}` : ""}`, isNew: false }; }),
+    ...nodes.filter((n) => n.kind === kind).map((n) => ({ key: n.ref, label: `${n.code} · ${n.name} (new)`, isNew: true })),
+  ];
+}
+
+// A reassignable leader: one person's PRIMARY (non-acting) area/district scope.
+// A DO over two districts shows up twice, one entry per district.
+export interface LeaderSlot {
+  userId: string; name: string; role: string;
+  scopeType: "area" | "district"; scopeId: string; scopeLabel: string;
+}
+export function buildLeaderRoster(tree: OrgTreeResponse): LeaderSlot[] {
+  const out: LeaderSlot[] = [];
+  const add = (m: OrgManager, scopeType: "area" | "district", scopeId: string, scopeLabel: string) => {
+    if (m.acting) return; // only primary (user_scopes) assignments are reassignable
+    out.push({ userId: m.id, name: m.full_name?.trim() || m.email, role: m.role, scopeType, scopeId, scopeLabel });
+  };
+  for (const r of tree.regions) {
+    for (const a of r.areas) {
+      for (const m of a.managers) if (m.role === "sdo") add(m, "area", a.id, `${a.code} · ${a.name}`);
+      for (const d of a.districts) {
+        for (const m of d.managers) if (m.role === "do") add(m, "district", d.id, `${d.code} · ${d.name}`);
+      }
+    }
+  }
+  return out.sort((x, y) => x.name.localeCompare(y.name));
+}
+
 // Current leader name at a node: primary (non-acting) holders win; joined " / ".
 export function leaderLabel(managers: OrgManager[], role: string): string {
   const scoped = managers.filter((m) => m.role === role);

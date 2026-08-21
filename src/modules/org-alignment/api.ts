@@ -27,11 +27,17 @@ export interface AlignmentMove {
   id: string; alignment_id: string; kind: MoveKind; node_id: string;
   new_parent_id: string | null; new_parent_ref: string | null; prior_parent_id: string | null;
 }
+export type LeaderScope = "area" | "district";
+export interface AlignmentLeaderMove {
+  id: string; alignment_id: string; user_id: string; scope_type: LeaderScope;
+  from_scope_id: string | null; to_scope_id: string | null; to_scope_ref: string | null;
+  prior_scope_id: string | null; applied: boolean;
+}
 export interface OrgAlignment {
   id: string; name: string; effective_date: string; status: AlignmentStatus; notes: string | null;
   created_at: string; applied_at: string | null;
-  change_count?: { nodes: number; moves: number };
-  nodes?: AlignmentNode[]; moves?: AlignmentMove[];
+  change_count?: { nodes: number; moves: number; leaders: number };
+  nodes?: AlignmentNode[]; moves?: AlignmentMove[]; leader_moves?: AlignmentLeaderMove[];
 }
 
 export interface OrgTree {
@@ -57,6 +63,10 @@ export const addMove = (b: { alignment_id: string; kind: MoveKind; node_id: stri
   req<{ ok: true; move: AlignmentMove }>(`${FN}?action=add-move`, { method: "POST", body: JSON.stringify(b) });
 export const removeNode = (id: string) => req<{ ok: true }>(`${FN}?action=remove-node`, { method: "POST", body: JSON.stringify({ id }) });
 export const removeMove = (id: string) => req<{ ok: true }>(`${FN}?action=remove-move`, { method: "POST", body: JSON.stringify({ id }) });
+
+export const addLeaderMove = (b: { alignment_id: string; user_id: string; scope_type: LeaderScope; from_scope_id?: string; to_scope_id?: string; to_scope_ref?: string }) =>
+  req<{ ok: true; leader_move: AlignmentLeaderMove }>(`${FN}?action=add-leader-move`, { method: "POST", body: JSON.stringify(b) });
+export const removeLeaderMove = (id: string) => req<{ ok: true }>(`${FN}?action=remove-leader-move`, { method: "POST", body: JSON.stringify({ id }) });
 
 export const applyAlignment = (id: string) => req<{ ok: true; created: number; moved: number }>(`${FN}?action=apply`, { method: "POST", body: JSON.stringify({ id }) });
 export const rollbackAlignment = (id: string) => req<{ ok: true }>(`${FN}?action=rollback`, { method: "POST", body: JSON.stringify({ id }) });
