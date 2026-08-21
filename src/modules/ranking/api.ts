@@ -93,7 +93,7 @@ export interface RankingRun {
   week_misaligned: boolean;
   status: string;
   issues: RankingIssue[];
-  source_status: Record<string, { status: string; stores?: number; note?: string }>;
+  source_status: Record<string, { status: string; stores?: number; note?: string; pending_upload?: boolean; latest_upload_at?: string | null; week_ending?: string; as_of?: string }>;
   started_at: string;
   completed_at: string | null;
 }
