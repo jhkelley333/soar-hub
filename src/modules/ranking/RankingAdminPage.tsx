@@ -15,7 +15,7 @@ import { RankingShakersView } from "./RankingShakersView";
 import { RankingTopPerformersView } from "./RankingTopPerformersView";
 import { RankingEveningView } from "./RankingEveningView";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, ChevronRight, Copy, ExternalLink, Eye, EyeOff, HelpCircle, KeyRound, PauseCircle, Pencil, Plus, Save, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Copy, ExternalLink, Eye, EyeOff, HelpCircle, KeyRound, PauseCircle, Pencil, Plus, Save, Trash2, Users } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -27,7 +27,8 @@ import { useAuth } from "@/auth/AuthProvider";
 import {
   addRankingConfig, backfillRankingFields, fetchRankingOverview, ingestBscRows, ingestEcosureRows, ingestIxFile, ingestOttRows, ingestPtdRankingRows, ingestShopRows, ingestTotzoneRows, ingestVogRows, setFcTargetEfficiency, setLaborPad,
   fetchRankerCredentials, upsertRankerCredential, deleteRankerCredential,
-  type RankingConfigRow, type RankingStoreRow, type RankerCredential,
+  fetchRankerAccess, fetchRankerDelegations, grantRankerDelegation, revokeRankerDelegation,
+  type RankingConfigRow, type RankingStoreRow, type RankerCredential, type RankerDelegation, type RvpOption,
 } from "./api";
 
 const inputCls =
@@ -137,7 +138,7 @@ const prettyUrl = (u: string) => u.replace(/^https?:\/\//, "").replace(/\/$/, ""
 // Admin-only credential vault: shared logins + links for the ranker data
 // sources. Passwords are masked with reveal/copy (see migration 0305 for the
 // security posture).
-function CredentialsVault() {
+function CredentialsVault({ readOnly = false }: { readOnly?: boolean }) {
   const qc = useQueryClient();
   const toast = useToast();
   const q = useQuery({ queryKey: ["ranker-credentials"], queryFn: fetchRankerCredentials });
@@ -164,12 +165,14 @@ function CredentialsVault() {
           <KeyRound className="h-4 w-4 text-accent" />
           <div>
             <div className="text-sm font-semibold text-midnight">Credential vault</div>
-            <p className="text-xs text-zinc-500">Shared logins + links for the data sources below. Admin-only.</p>
+            <p className="text-xs text-zinc-500">Shared logins + links for the data sources below.{readOnly ? " View + copy only." : " Admin-only."}</p>
           </div>
         </div>
-        <Button size="sm" variant="secondary" onClick={() => setEditing({ label: "", sort_order: 100 })}>
-          <Plus className="mr-1 h-3.5 w-3.5" /> Add
-        </Button>
+        {!readOnly && (
+          <Button size="sm" variant="secondary" onClick={() => setEditing({ label: "", sort_order: 100 })}>
+            <Plus className="mr-1 h-3.5 w-3.5" /> Add
+          </Button>
+        )}
       </div>
 
       {q.isLoading ? <Skeleton className="h-24 w-full" />
@@ -178,7 +181,7 @@ function CredentialsVault() {
         : (
           <div className="divide-y divide-zinc-100">
             {entries.map((c) => (
-              <CredentialRow key={c.id} c={c} onEdit={() => setEditing(c)}
+              <CredentialRow key={c.id} c={c} readOnly={readOnly} onEdit={() => setEditing(c)}
                 onDelete={() => { if (window.confirm(`Delete "${c.label}"?`)) del.mutate(c.id); }} />
             ))}
           </div>
@@ -191,7 +194,7 @@ function CredentialsVault() {
   );
 }
 
-function CredentialRow({ c, onEdit, onDelete }: { c: RankerCredential; onEdit: () => void; onDelete: () => void }) {
+function CredentialRow({ c, onEdit, onDelete, readOnly = false }: { c: RankerCredential; onEdit: () => void; onDelete: () => void; readOnly?: boolean }) {
   const [show, setShow] = useState(false);
   const toast = useToast();
   const copy = (v: string | null, what: string) => {
@@ -233,10 +236,12 @@ function CredentialRow({ c, onEdit, onDelete }: { c: RankerCredential; onEdit: (
           )}
         </div>
       </div>
-      <div className="flex items-center gap-1">
-        <button onClick={onEdit} className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-accent" title="Edit"><Pencil className="h-3.5 w-3.5" /></button>
-        <button onClick={onDelete} className="rounded p-1 text-zinc-400 hover:bg-red-50 hover:text-red-600" title="Delete"><Trash2 className="h-3.5 w-3.5" /></button>
-      </div>
+      {!readOnly && (
+        <div className="flex items-center gap-1">
+          <button onClick={onEdit} className="rounded p-1 text-zinc-400 hover:bg-zinc-100 hover:text-accent" title="Edit"><Pencil className="h-3.5 w-3.5" /></button>
+          <button onClick={onDelete} className="rounded p-1 text-zinc-400 hover:bg-red-50 hover:text-red-600" title="Delete"><Trash2 className="h-3.5 w-3.5" /></button>
+        </div>
+      )}
     </div>
   );
 }
@@ -271,6 +276,95 @@ function CredentialModal({ draft, saving, onChange, onClose, onSave }: {
   );
 }
 
+// Admin: delegate the weekly upload task to one or more RVPs for a date window.
+function DelegationPanel() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const q = useQuery({ queryKey: ["ranker-delegations"], queryFn: fetchRankerDelegations });
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  const [startsOn, setStartsOn] = useState(todayIso());
+  const [endsOn, setEndsOn] = useState(todayIso());
+  const invalidate = () => qc.invalidateQueries({ queryKey: ["ranker-delegations"] });
+
+  const grant = useMutation({
+    mutationFn: () => grantRankerDelegation({ user_ids: [...picked], starts_on: startsOn, ends_on: endsOn }),
+    onSuccess: (r) => { toast.push(`Granted to ${r.granted} RVP${r.granted === 1 ? "" : "s"}${r.skipped ? ` · ${r.skipped} skipped` : ""}.`, "success"); setPicked(new Set()); invalidate(); },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Grant failed.", "error"),
+  });
+  const revoke = useMutation({
+    mutationFn: (id: string) => revokeRankerDelegation(id),
+    onSuccess: () => { toast.push("Revoked.", "success"); invalidate(); },
+    onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Revoke failed.", "error"),
+  });
+
+  const rvps: RvpOption[] = q.data?.rvps ?? [];
+  const delegations: RankerDelegation[] = q.data?.delegations ?? [];
+  const toggle = (id: string) => setPicked((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+
+  return (
+    <div className="rounded-xl bg-white p-4 ring-1 ring-zinc-200">
+      <div className="mb-1 flex items-center gap-2">
+        <Users className="h-4 w-4 text-accent" />
+        <div className="text-sm font-semibold text-midnight">Temp RVP access</div>
+      </div>
+      <p className="mb-3 text-xs text-zinc-500">
+        Delegate the weekly upload task to one or more RVPs for a date range. They get the upload panels + the
+        credential vault (view/copy only); config and settings stay with you.
+      </p>
+
+      <div className="rounded-lg bg-zinc-50 p-3 ring-1 ring-zinc-100">
+        <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-zinc-500">Grant access</div>
+        {q.isLoading ? <Skeleton className="h-12 w-full" />
+          : rvps.length === 0 ? <p className="text-xs text-zinc-400">No active RVPs found.</p>
+          : (
+            <div className="flex flex-wrap gap-1.5">
+              {rvps.map((r) => {
+                const on = picked.has(r.id);
+                return (
+                  <button key={r.id} onClick={() => toggle(r.id)}
+                    className={cn("rounded-full border px-2.5 py-1 text-xs font-medium transition",
+                      on ? "border-accent bg-accent/10 text-accent" : "border-zinc-200 text-zinc-600 hover:bg-white")}>
+                    {r.name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        <div className="mt-3 flex flex-wrap items-end gap-3">
+          <label className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">Start
+            <input type="date" value={startsOn} onChange={(e) => setStartsOn(e.target.value)} className={cn(inputCls, "mt-1 block")} />
+          </label>
+          <label className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">End
+            <input type="date" value={endsOn} onChange={(e) => setEndsOn(e.target.value)} className={cn(inputCls, "mt-1 block")} />
+          </label>
+          <Button size="sm" disabled={grant.isPending || picked.size === 0} onClick={() => grant.mutate()}>
+            {grant.isPending ? "Granting…" : `Grant${picked.size ? ` (${picked.size})` : ""}`}
+          </Button>
+        </div>
+      </div>
+
+      {delegations.length > 0 && (
+        <div className="mt-3 divide-y divide-zinc-100">
+          {delegations.map((d) => (
+            <div key={d.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-2 text-xs">
+              <span className="font-semibold text-midnight">{d.rvp_name}</span>
+              <span className="tabular-nums text-zinc-500">{d.starts_on} → {d.ends_on}</span>
+              {d.revoked_at ? <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-500">revoked</span>
+                : d.active ? <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold text-emerald-700">active</span>
+                : d.scheduled ? <span className="rounded-full bg-blue-50 px-2 py-0.5 text-[10px] font-semibold text-blue-700">scheduled</span>
+                : <span className="rounded-full bg-zinc-100 px-2 py-0.5 text-[10px] font-semibold text-zinc-400">expired</span>}
+              {!d.revoked_at && (d.active || d.scheduled) && (
+                <button onClick={() => revoke.mutate(d.id)} disabled={revoke.isPending}
+                  className="ml-auto font-semibold text-zinc-400 hover:text-red-600">Revoke</button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 type AdminView = "ranking" | "top" | "sevenup" | "evening" | "shakers" | "drill" | "watchlist" | "comms" | "settings";
 
 export function RankingAdminPage() {
@@ -278,6 +372,11 @@ export function RankingAdminPage() {
   const isAdmin = profile?.role === "admin";
   const isGm = profile?.role === "gm";
   const [view, setView] = useState<AdminView>("ranking");
+  // An RVP the admin delegated the upload task to (migration 0306) can reach the
+  // System-settings surface, limited to the upload panels + credential vault.
+  const accessQ = useQuery({ queryKey: ["ranker-access"], queryFn: fetchRankerAccess, enabled: !isAdmin && !isGm });
+  const delegated = accessQ.data?.delegated ?? false;
+  const canSettings = isAdmin || delegated;
 
   // A GM owns a single store — land them straight on the legacy-style store
   // dashboard, no tier tabs or board to wade through.
@@ -303,9 +402,9 @@ export function RankingAdminPage() {
     { value: "drill", label: "Drill" },
     { value: "watchlist", label: "Watchlist" },
     { value: "comms", label: "Comms Board" },
-    ...(isAdmin ? [{ value: "settings" as AdminView, label: "System settings" }] : []),
+    ...(canSettings ? [{ value: "settings" as AdminView, label: isAdmin ? "System settings" : "Ranker uploads" }] : []),
   ];
-  const active = view === "settings" && !isAdmin ? "ranking" : view;
+  const active = view === "settings" && !canSettings ? "ranking" : view;
   return (
     <>
       <PageHeader
@@ -323,18 +422,39 @@ export function RankingAdminPage() {
         : active === "drill" ? <RankingDrillView />
         : active === "watchlist" ? <RankingWatchlistView />
         : active === "comms" ? <RankingCommsBoardView />
-        : <SettingsView />}
+        : <SettingsView delegatedOnly={delegated && !isAdmin} />}
     </>
   );
 }
 
-function SettingsView() {
+function SettingsView({ delegatedOnly = false }: { delegatedOnly?: boolean }) {
   const toast = useToast();
   const qc = useQueryClient();
-  const q = useQuery({ queryKey: ["ranking-admin"], queryFn: fetchRankingOverview });
+  const q = useQuery({ queryKey: ["ranking-admin"], queryFn: fetchRankingOverview, enabled: !delegatedOnly });
 
   const [addOpen, setAddOpen] = useState(false);
   const [padSearch, setPadSearch] = useState("");
+
+  // Delegated RVP: uploads + a read-only credential vault, nothing else.
+  if (delegatedOnly) {
+    return (
+      <div className="space-y-6">
+        <div className="rounded-xl bg-blue-50 p-4 text-xs leading-relaxed text-blue-800 ring-1 ring-blue-200">
+          You have temporary access to the Ranker uploads. Grab the source logins from the vault below,
+          upload each file, then hit <b>Run now</b> on the Ranking tab. Config and settings stay with the admin.
+        </div>
+        <CredentialsVault readOnly />
+        <IxUploadPanel />
+        <TotzoneUploadPanel />
+        <EcosureUploadPanel />
+        <BscUploadPanel />
+        <ShopsUploadPanel />
+        <VogUploadPanel />
+        <OttUploadPanel />
+        <PtdRankingUploadPanel />
+      </div>
+    );
+  }
 
   if (q.isLoading) return <Skeleton className="h-64 w-full" />;
   if (q.isError) {
@@ -360,6 +480,8 @@ function SettingsView() {
 
         <FcTargetEditor current={q.data?.fc_target_efficiency ?? 0.96}
           onSaved={() => qc.invalidateQueries({ queryKey: ["ranking-admin"] })} />
+
+        <DelegationPanel />
 
         <CredentialsVault />
 

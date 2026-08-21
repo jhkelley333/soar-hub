@@ -30,6 +30,17 @@ async function sessionUser(supa, event) {
 
 const clean = (v, max = 2000) => (v == null ? null : String(v).trim().slice(0, max) || null);
 
+// True if the RVP has an active Ranker delegation (migration 0306) — lets them
+// READ the vault to log in and pull. Editing stays admin-only.
+async function hasActiveDelegation(supa, userId) {
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+  const { data, error } = await supa.from("ranker_delegations")
+    .select("id").eq("user_id", userId).is("revoked_at", null)
+    .lte("starts_on", today).gte("ends_on", today).limit(1);
+  if (error) return false;
+  return !!(data && data.length);
+}
+
 export const handler = async (event) => {
   if (event.httpMethod === "OPTIONS") return respond(204, {});
   if (!SUPABASE_URL || !SERVICE_KEY) return respond(500, { error: "env not configured" });
@@ -38,10 +49,18 @@ export const handler = async (event) => {
   let user;
   try { user = await sessionUser(supa, event); } catch (e) { return respond(500, { error: e?.message || "auth failed" }); }
   if (!user) return respond(401, { error: "unauthorized" });
-  if (String(user.role || "").toLowerCase() !== "admin") return respond(403, { error: "Admins only." });
+  const role = String(user.role || "").toLowerCase();
+  const isAdmin = role === "admin";
 
   const params = event.queryStringParameters || {};
   const action = params.action || "list";
+
+  // Reading the vault: admin, or an RVP with an active Ranker delegation.
+  // Writing (upsert/delete) is always admin-only.
+  if (!isAdmin) {
+    const mayRead = event.httpMethod === "GET" && action === "list" && role === "rvp" && await hasActiveDelegation(supa, user.id);
+    if (!mayRead) return respond(403, { error: "Admins only." });
+  }
 
   try {
     if (event.httpMethod === "GET" && action === "list") {

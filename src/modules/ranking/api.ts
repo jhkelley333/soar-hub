@@ -18,6 +18,32 @@ async function req<T>(path: string, init: RequestInit = {}): Promise<T> {
   return body as T;
 }
 
+// ── Temp RVP delegation (admin grants; RVP is limited to uploads + vault) ─────
+export function fetchRankerAccess(): Promise<{ ok: true; is_admin: boolean; delegated: boolean; delegation_ends_on: string | null }> {
+  return req(`${FN}?action=my-access`);
+}
+export interface RankerDelegation {
+  id: string;
+  user_id: string;
+  rvp_name: string;
+  starts_on: string;
+  ends_on: string;
+  note: string | null;
+  revoked_at: string | null;
+  active: boolean;
+  scheduled: boolean;
+}
+export interface RvpOption { id: string; name: string }
+export function fetchRankerDelegations(): Promise<{ ok: true; delegations: RankerDelegation[]; rvps: RvpOption[] }> {
+  return req(`${FN}?action=delegations-list`);
+}
+export function grantRankerDelegation(input: { user_ids: string[]; starts_on: string; ends_on: string; note?: string }): Promise<{ ok: true; granted: number; skipped: number }> {
+  return req(`${FN}?action=delegation-grant`, { method: "POST", body: JSON.stringify(input) });
+}
+export function revokeRankerDelegation(id: string): Promise<{ ok: true }> {
+  return req(`${FN}?action=delegation-revoke`, { method: "POST", body: JSON.stringify({ id }) });
+}
+
 // ── Credential vault (admin only) ────────────────────────────────────────────
 export interface RankerCredential {
   id: string;

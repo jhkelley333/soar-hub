@@ -41,6 +41,92 @@ async function getSessionUser(supa, event) {
 
 const isMissingTable = (error) => !!error && /ranking_config|ranking_store_seed/.test(String(error.message)) && /does not exist|relation/i.test(String(error.message));
 
+// Upload/run actions a delegated RVP may perform (migration 0306). Config,
+// labor pad, FC target, backfill, and import stay admin-only.
+const DELEGABLE_ACTIONS = new Set([
+  "run-now", "ingest-ix", "ingest-totzone", "ingest-ecosure", "ingest-bsc",
+  "ingest-shops", "ingest-vog", "ingest-ott", "ingest-ptd-ranking",
+]);
+
+// The caller's active Ranker delegation, or null. Active = not revoked and today
+// (America/Chicago) within [starts_on, ends_on]. Missing table -> no delegation.
+async function activeDelegation(supa, userId) {
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+  const { data, error } = await supa.from("ranker_delegations")
+    .select("id, starts_on, ends_on")
+    .eq("user_id", userId).is("revoked_at", null)
+    .lte("starts_on", today).gte("ends_on", today)
+    .order("ends_on", { ascending: false }).limit(1);
+  if (error) return null;
+  return data?.[0] ?? null;
+}
+
+const isDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ""));
+
+// Admin: grant temp Ranker access to one or more RVPs for a date window.
+async function delegationGrant(supa, user, body) {
+  const ids = [...new Set((Array.isArray(body?.user_ids) ? body.user_ids : []).map((x) => String(x || "").trim()).filter(Boolean))];
+  if (!ids.length) return { error: "Pick at least one RVP.", status: 400 };
+  const startsOn = String(body?.starts_on || "").slice(0, 10);
+  const endsOn = String(body?.ends_on || "").slice(0, 10);
+  if (!isDate(startsOn) || !isDate(endsOn)) return { error: "Start and end dates are required (YYYY-MM-DD).", status: 400 };
+  if (endsOn < startsOn) return { error: "End date can't be before the start date.", status: 400 };
+  const note = body?.note ? String(body.note).trim().slice(0, 500) : null;
+
+  // Only actual RVP profiles may be delegated.
+  const { data: people } = await supa.from("profiles").select("id, role").in("id", ids);
+  const rvpIds = (people || []).filter((p) => String(p.role).toLowerCase() === "rvp").map((p) => p.id);
+  if (!rvpIds.length) return { error: "None of the selected users are RVPs.", status: 400 };
+
+  const rows = rvpIds.map((uid) => ({ user_id: uid, starts_on: startsOn, ends_on: endsOn, note, granted_by: user.id }));
+  const { error } = await supa.from("ranker_delegations").insert(rows);
+  if (error) {
+    if (/ranker_delegations/.test(error.message)) return { error: "Run migration 0306 first (ranker_delegations table is missing).", status: 500 };
+    return { error: error.message, status: 500 };
+  }
+  return { granted: rvpIds.length, skipped: ids.length - rvpIds.length };
+}
+
+// Admin: revoke a delegation immediately.
+async function delegationRevoke(supa, user, body) {
+  const id = String(body?.id || "").trim();
+  if (!id) return { error: "id is required.", status: 400 };
+  const { error } = await supa.from("ranker_delegations")
+    .update({ revoked_at: new Date().toISOString(), revoked_by: user.id })
+    .eq("id", id).is("revoked_at", null);
+  if (error) return { error: error.message, status: 500 };
+  return { ok: true };
+}
+
+// Admin: every delegation with the RVP's name + a computed active flag.
+async function delegationsList(supa) {
+  const { data, error } = await supa.from("ranker_delegations")
+    .select("id, user_id, starts_on, ends_on, note, revoked_at, created_at")
+    .order("created_at", { ascending: false }).limit(200);
+  if (error) {
+    if (/ranker_delegations/.test(error.message)) return { error: "Run migration 0306 first (ranker_delegations table is missing).", status: 500 };
+    return { error: error.message, status: 500 };
+  }
+  const ids = [...new Set((data || []).map((d) => d.user_id))];
+  const names = new Map();
+  if (ids.length) {
+    const { data: people } = await supa.from("profiles").select("id, full_name, email").in("id", ids);
+    for (const p of people || []) names.set(p.id, p.full_name || p.email || p.id);
+  }
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/Chicago" });
+  const delegations = (data || []).map((d) => ({
+    ...d,
+    rvp_name: names.get(d.user_id) || d.user_id,
+    active: !d.revoked_at && d.starts_on <= today && d.ends_on >= today,
+    scheduled: !d.revoked_at && d.starts_on > today,
+  }));
+  // The full active-RVP roster, for the grant picker.
+  const { data: allRvps } = await supa.from("profiles")
+    .select("id, full_name, email").eq("role", "rvp").eq("is_active", true).order("full_name");
+  const rvps = (allRvps || []).map((p) => ({ id: p.id, name: p.full_name || p.email || p.id }));
+  return { delegations, rvps };
+}
+
 // Current value of a versioned config key (newest effective_from <= today).
 function currentConfig(rows, key) {
   const today = new Date().toISOString().slice(0, 10);
@@ -683,8 +769,22 @@ export const handler = async (event) => {
 
   try {
     if (event.httpMethod === "POST") {
-      if (role !== "admin") return respond(403, { error: "Only admins can run the ranking or change its data." });
       const body = event.body ? JSON.parse(event.body) : {};
+      // Delegation management is admin-only.
+      if (action === "delegation-grant") {
+        if (role !== "admin") return respond(403, { error: "Admins only." });
+        return unwrap(await delegationGrant(supa, user, body));
+      }
+      if (action === "delegation-revoke") {
+        if (role !== "admin") return respond(403, { error: "Admins only." });
+        return unwrap(await delegationRevoke(supa, user, body));
+      }
+      // Uploads + run: admin, or an RVP with an active delegation. Everything
+      // else (config, pad, FC target, backfill, import) stays admin-only.
+      if (role !== "admin") {
+        const delegated = role === "rvp" && DELEGABLE_ACTIONS.has(action) ? await activeDelegation(supa, user.id) : null;
+        if (!delegated) return respond(403, { error: "Only admins (or a delegated RVP, for uploads) can change the ranking's data." });
+      }
       if (action === "config-add") return unwrap(await configAdd(supa, user, body));
       if (action === "pad-set") return unwrap(await padSet(supa, user, body));
       if (action === "fc-target-set") return unwrap(await setFcTarget(supa, user, body));
@@ -700,6 +800,18 @@ export const handler = async (event) => {
       if (action === "ingest-ptd-ranking") return unwrap(await ingestPtdRanking(supa, user, body));
       if (action === "import-legacy") return unwrap(await importLegacyWeeks(supa));
       return respond(400, { error: `Unknown action: ${action}` });
+    }
+    // Whether the caller can reach the Ranker System-settings surface, and how
+    // (full admin vs. a delegated RVP limited to uploads + the vault).
+    if (action === "my-access") {
+      const isAdmin = role === "admin";
+      const del = isAdmin ? null : (role === "rvp" ? await activeDelegation(supa, user.id) : null);
+      return unwrap({ is_admin: isAdmin, delegated: !!del, delegation_ends_on: del?.ends_on ?? null });
+    }
+    // Admin: list delegations (active + scheduled + revoked), with RVP names.
+    if (action === "delegations-list") {
+      if (role !== "admin") return respond(403, { error: "Admins only." });
+      return unwrap(await delegationsList(supa));
     }
     // System Settings payload (all stores + config) — admin only.
     if (action === "overview") {
