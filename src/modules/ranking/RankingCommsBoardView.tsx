@@ -16,6 +16,8 @@ const pct1 = (v: MVal) => (isNum(v) ? `${(v * 100).toFixed(1)}%` : typeof v === 
 const signed = (v: MVal) => (isNum(v) ? `${v > 0 ? "+" : ""}${(v * 100).toFixed(1)}%` : typeof v === "string" ? v : "—");
 const num1 = (v: MVal) => (isNum(v) ? v.toFixed(1) : typeof v === "string" ? v : "—");
 const int0 = (v: MVal) => (isNum(v) ? String(Math.round(v)) : typeof v === "string" ? v : "—");
+// Signed dollars — e.g. −$12.50 / $8.00 (register over/short).
+const usd = (v: MVal) => (isNum(v) ? `${v < 0 ? "−" : ""}$${Math.abs(v).toFixed(2)}` : typeof v === "string" ? v : "—");
 
 // good = true (green) / false (red) / null (no verdict — neutral).
 type Verdict = boolean | null;
@@ -52,7 +54,7 @@ const FOCUS: Card[] = [
   { title: "Night Time Biz (8PM to Close)", goal: "8%", key: "eveningPct", fmt: signed, good: (v) => v > 0 },
   { title: "VOG", goal: "70", key: "vog", fmt: pct1, good: (v) => v >= 0.7 },
   { title: "TR vs TZ Variance", goal: "Zero Variance", key: "trVsTz", fmt: num1, good: () => true },
-  { title: "Cash +/-", goal: "Zero Variance", key: "cashOverShort", fmt: num1, good: () => true },
+  { title: "Cash +/-", goal: "Zero Variance", key: "cashOverShort", fmt: usd, good: (v) => v >= 0 },
 ];
 
 const WEEK_NUMS = [1, 2, 3, 4, 5];
