@@ -8,7 +8,7 @@ import {
   ArrowRight, Network, Users, MapPin, KeyRound, Globe, Flag, QrCode, Link2,
   CloudSun, BarChart3, LayoutGrid, Gauge, ScrollText, Layers, Upload,
   Settings, ClipboardCheck, ListChecks, BookMarked, Clock, TrendingDown, Building2,
-  Fingerprint, Send, Info, type LucideIcon,
+  Fingerprint, Send, Info, MapPinned, type LucideIcon,
 } from "lucide-react";
 import { useAuth } from "@/auth/AuthProvider";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -35,6 +35,7 @@ const GROUPS: Group[] = [
       { title: "GM Roster", desc: "GM assignments across every store — SDO/RVP edit their own stores' names.", icon: Users, roles: ["sdo", "rvp", "vp", "coo", "admin"], to: "/admin/gm-roster" },
       { title: "Store Geofences", desc: "Each store's geofence radius for on-site checks.", icon: MapPin, roles: ["admin"], to: "/admin/store-geofences" },
       { title: "Hours of Operation", desc: "Standard + special hours, Google compare, and discrepancy reconciliation.", icon: Clock, roles: ["sdo", "rvp", "vp", "coo", "admin"], to: "/admin/hours-of-operation" },
+      { title: "Territory Map", desc: "Every store plotted on the map, pin color keyed to its DO.", icon: MapPinned, roles: ["vp", "coo", "admin"], to: "/territory-map" },
     ],
   },
   {
