@@ -7,6 +7,9 @@ const FN = "/.netlify/functions/count";
 export interface CountRow {
   store_number: string;
   store_name: string | null;
+  do_name: string | null;
+  sdo_name: string | null;
+  rvp_name: string | null;
   daily_score: number | null;
   completion_score: number | null;
   accuracy_score: number | null;
@@ -14,6 +17,26 @@ export interface CountRow {
   wow_daily: number | null;
   wow_completion: number | null;
   wow_accuracy: number | null;
+}
+
+// A rolled-up group (a DO, SDO, RVP, or the whole company): each score is the
+// average across the group's stores, with a week-over-week delta.
+export interface CountRollup {
+  label: string;
+  store_count: number;
+  daily_score: number | null;
+  completion_score: number | null;
+  accuracy_score: number | null;
+  wow_daily: number | null;
+  wow_completion: number | null;
+  wow_accuracy: number | null;
+}
+
+export interface CountRollups {
+  company: CountRollup | null;
+  rvp: CountRollup[];
+  sdo: CountRollup[];
+  do: CountRollup[];
 }
 
 export interface CountTrendPoint {
@@ -46,7 +69,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export function fetchCountOverview(date?: string): Promise<{ date: string | null; rows: CountRow[] }> {
+export function fetchCountOverview(date?: string): Promise<{ date: string | null; rows: CountRow[]; rollups?: CountRollups }> {
   return request(`${FN}?action=overview${date ? `&date=${encodeURIComponent(date)}` : ""}`);
 }
 

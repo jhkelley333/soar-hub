@@ -17,6 +17,7 @@ import { createClient } from "@supabase/supabase-js";
 import { fetchKpiFeed, kpiConfigured } from "./_lib/kpiFeed.js";
 import { feedBusinessDate, wallClockInTz } from "./_lib/kpiLabor.js";
 import { extractCountRows } from "./_lib/kpiCount.js";
+import { resolveOrg } from "./_lib/kpiOrg.js";
 
 const SUPABASE_URL = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
 const SERVICE_KEY =
@@ -107,11 +108,19 @@ async function overview(supa, user, params) {
   ]);
   const prevBy = new Map((prev ?? []).map((r) => [String(r.store_number), r]));
 
+  // Org labels per store, so each row carries its DO/SDO/RVP and we can roll the
+  // scores up those levels.
+  const org = await resolveOrg(supa, (cur ?? []).map((r) => String(r.store_number)));
+
   const rows = (cur ?? []).map((r) => {
     const p = prevBy.get(String(r.store_number));
+    const o = org.get(String(r.store_number)) || {};
     return {
       store_number: r.store_number,
       store_name: nameByNumber.get(String(r.store_number)) ?? null,
+      do_name: o.doName ?? null,
+      sdo_name: o.sdoName ?? null,
+      rvp_name: o.rvpName ?? null,
       daily_score: r.daily_score,
       completion_score: r.completion_score,
       accuracy_score: r.accuracy_score,
@@ -123,7 +132,63 @@ async function overview(supa, user, params) {
   });
   rows.sort((a, b) => (a.daily_score ?? 1) - (b.daily_score ?? 1)); // worst first
 
-  return { date, rows };
+  // Roll-ups: average each score across the stores in a group, current vs the
+  // prior week, so DO / SDO / RVP / company each get a number with a WoW delta.
+  const entries = (cur ?? []).map((r) => {
+    const p = prevBy.get(String(r.store_number));
+    const o = org.get(String(r.store_number)) || {};
+    return {
+      doName: o.doName || null, sdoName: o.sdoName || null, rvpName: o.rvpName || null,
+      daily: r.daily_score, completion: r.completion_score, accuracy: r.accuracy_score,
+      pDaily: p?.daily_score ?? null, pCompletion: p?.completion_score ?? null, pAccuracy: p?.accuracy_score ?? null,
+    };
+  });
+  const rollups = {
+    company: rollupGroups(entries, () => "Company")[0] ?? null,
+    rvp: rollupGroups(entries, (e) => e.rvpName),
+    sdo: rollupGroups(entries, (e) => e.sdoName),
+    do: rollupGroups(entries, (e) => e.doName),
+  };
+
+  return { date, rows, rollups };
+}
+
+// Average a field over the items that have a value (null when none do).
+function avgOf(items, pick) {
+  const vals = items.map(pick).filter((v) => v != null).map(Number);
+  if (!vals.length) return null;
+  return round4(vals.reduce((a, b) => a + b, 0) / vals.length);
+}
+
+// Group entries by a label and average each score (current + prior) within the
+// group, returning one summary row per group, worst daily score first.
+function rollupGroups(entries, keyFn) {
+  const groups = new Map();
+  for (const e of entries) {
+    const label = keyFn(e) || "Unassigned";
+    if (!groups.has(label)) groups.set(label, []);
+    groups.get(label).push(e);
+  }
+  const out = [...groups].map(([label, items]) => {
+    const daily = avgOf(items, (e) => e.daily);
+    const completion = avgOf(items, (e) => e.completion);
+    const accuracy = avgOf(items, (e) => e.accuracy);
+    const pDaily = avgOf(items, (e) => e.pDaily);
+    const pCompletion = avgOf(items, (e) => e.pCompletion);
+    const pAccuracy = avgOf(items, (e) => e.pAccuracy);
+    return {
+      label,
+      store_count: items.filter((e) => e.daily != null || e.completion != null || e.accuracy != null).length,
+      daily_score: daily,
+      completion_score: completion,
+      accuracy_score: accuracy,
+      wow_daily: daily != null && pDaily != null ? round4(daily - pDaily) : null,
+      wow_completion: completion != null && pCompletion != null ? round4(completion - pCompletion) : null,
+      wow_accuracy: accuracy != null && pAccuracy != null ? round4(accuracy - pAccuracy) : null,
+    };
+  });
+  out.sort((a, b) => (a.daily_score ?? 1) - (b.daily_score ?? 1)); // worst first
+  return out;
 }
 
 async function trend(supa, user, params) {
