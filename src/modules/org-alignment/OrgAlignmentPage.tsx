@@ -4,7 +4,7 @@
 // — automatically on the effective date, or via "Apply now". The tree shows the
 // PROJECTED state (after the staged changes) with pending badges. Admin-only.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowLeft, CalendarClock, Check, ChevronDown, ChevronRight, CornerDownRight, Plus, Trash2, Undo2, X } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
@@ -109,6 +109,25 @@ function parentChoices(childKind: MoveKind, tree: OrgTree, nodes: AlignmentNode[
     ...existing.map((n) => ({ key: n.id, label: n.name, isNew: false })),
     ...nodes.filter((n) => n.kind === pk).map((n) => ({ key: n.ref, label: `${n.name} (new)`, isNew: true })),
   ];
+}
+
+// Next code/number for a new region/area/district: take the highest existing
+// code of that kind (live + staged), keep its prefix + zero-pad width, and add
+// one. Falls back to a sensible default when there are none yet.
+function nextCode(kind: NodeKind, tree: OrgTree, nodes: AlignmentNode[]): string {
+  const codes: string[] = [
+    ...(kind === "region" ? tree.regions : kind === "area" ? tree.areas : tree.districts).map((n) => n.code),
+    ...nodes.filter((n) => n.kind === kind).map((n) => n.code),
+  ];
+  let best: { prefix: string; num: number; pad: number } | null = null;
+  for (const c of codes) {
+    const m = /^(.*?)(\d+)\s*$/.exec(c ?? "");
+    if (!m) continue;
+    const num = parseInt(m[2], 10);
+    if (!best || num >= best.num) best = { prefix: m[1], num, pad: m[2].length };
+  }
+  if (!best) return kind === "region" ? "R1" : kind === "area" ? "Area 01" : "D101";
+  return best.prefix + String(best.num + 1).padStart(best.pad, "0");
 }
 
 // ── Current leaders ──────────────────────────────────────────────────────────
@@ -230,13 +249,14 @@ function AlignmentDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const projected = useMemo(() => (tree && a ? projectTree(tree, a.nodes ?? [], a.moves ?? []) : []), [tree, a]);
   const leaders = useMemo(() => (leadersQ.data ? buildLeaderMap(leadersQ.data) : new Map<string, string>()), [leadersQ.data]);
   const toggle = (k: string) => setExpanded((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const expand = (k: string) => setExpanded((s) => new Set(s).add(k));
 
   if (q.isLoading || treeQ.isLoading) return <Skeleton className="h-64 w-full" />;
   if (q.isError || !a || !tree) return <EmptyState title="Couldn't load alignment" description={(q.error as Error)?.message ?? "Try again."} />;
 
   const changeCount = (a.nodes?.length ?? 0) + (a.moves?.length ?? 0);
   const nodeCtx = {
-    tree, nodes: a.nodes ?? [], locked, expanded, toggle, leaders,
+    tree, nodes: a.nodes ?? [], locked, expanded, toggle, expand, leaders,
     onMove: (kind: MoveKind, node_id: string, parent: { key: string; isNew: boolean }) => stageMove.mutate({ kind, node_id, parent }),
     onUndoMove: (mid: string) => undoMove.mutate(mid),
     onUndoNode: (nid: string) => undoNode.mutate(nid),
@@ -281,7 +301,7 @@ function AlignmentDetail({ id, onBack }: { id: string; onBack: () => void }) {
         {projected.map((r) => <TreeRow key={r.key} node={r} depth={0} ctx={nodeCtx} />)}
       </div>
 
-      <NodeFormModal open={addRegion} kind="region" onClose={() => setAddRegion(false)}
+      <NodeFormModal open={addRegion} kind="region" defaultCode={nextCode("region", tree, a.nodes ?? [])} onClose={() => setAddRegion(false)}
         onSave={(name, code) => { stageNode.mutate({ kind: "region", name, code }); setAddRegion(false); }} />
     </div>
   );
@@ -289,7 +309,7 @@ function AlignmentDetail({ id, onBack }: { id: string; onBack: () => void }) {
 
 interface Ctx {
   tree: OrgTree; nodes: AlignmentNode[]; locked: boolean;
-  expanded: Set<string>; toggle: (k: string) => void; leaders: Map<string, string>;
+  expanded: Set<string>; toggle: (k: string) => void; expand: (k: string) => void; leaders: Map<string, string>;
   onMove: (kind: MoveKind, node_id: string, parent: { key: string; isNew: boolean }) => void;
   onUndoMove: (mid: string) => void; onUndoNode: (nid: string) => void;
   onAddChild: (kind: NodeKind, name: string, code: string, parent: { key: string; isNew: boolean }) => void;
@@ -334,8 +354,8 @@ function TreeRow({ node, depth, ctx }: { node: PNode; depth: number; ctx: Ctx })
       )}
       {adding && childKind && (
         <div style={{ paddingLeft: (depth + 1) * 18 + 8 }} className="py-1">
-          <InlineNodeForm kind={childKind} onCancel={() => setAdding(false)}
-            onSave={(name, code) => { ctx.onAddChild(childKind, name, code, { key: node.key, isNew: node.isNew }); setAdding(false); }} />
+          <InlineNodeForm kind={childKind} defaultCode={nextCode(childKind, ctx.tree, ctx.nodes)} onCancel={() => setAdding(false)}
+            onSave={(name, code) => { ctx.onAddChild(childKind, name, code, { key: node.key, isNew: node.isNew }); ctx.expand(node.key); setAdding(false); }} />
         </div>
       )}
 
@@ -360,30 +380,32 @@ function MovePicker({ node, moveKind, ctx, depth, onDone }: { node: PNode; moveK
   );
 }
 
-function InlineNodeForm({ kind, onSave, onCancel }: { kind: NodeKind; onSave: (name: string, code: string) => void; onCancel: () => void }) {
+function InlineNodeForm({ kind, defaultCode, onSave, onCancel }: { kind: NodeKind; defaultCode?: string; onSave: (name: string, code: string) => void; onCancel: () => void }) {
   const [name, setName] = useState("");
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(defaultCode ?? "");
   return (
     <div className="flex items-center gap-2">
       <span className="rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-emerald-700">new {kind}</span>
       <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Name" className={cn(inputCls, "w-44")} autoFocus />
-      <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code" className={cn(inputCls, "w-28")} />
+      <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="Code" title="Auto-assigned — edit if needed" className={cn(inputCls, "w-28")} />
       <Button size="sm" disabled={!name.trim() || !code.trim()} onClick={() => onSave(name.trim(), code.trim())}>Add</Button>
       <button onClick={onCancel} className="text-zinc-400 hover:text-zinc-600"><X className="h-4 w-4" /></button>
     </div>
   );
 }
 
-function NodeFormModal({ open, kind, onClose, onSave }: { open: boolean; kind: NodeKind; onClose: () => void; onSave: (name: string, code: string) => void }) {
+function NodeFormModal({ open, kind, defaultCode, onClose, onSave }: { open: boolean; kind: NodeKind; defaultCode?: string; onClose: () => void; onSave: (name: string, code: string) => void }) {
   const [name, setName] = useState("");
-  const [code, setCode] = useState("");
+  const [code, setCode] = useState(defaultCode ?? "");
+  // Re-seed the auto-assigned code whenever the modal (re)opens.
+  useEffect(() => { if (open) { setName(""); setCode(defaultCode ?? ""); } }, [open, defaultCode]);
   return (
     <Modal open={open} onClose={onClose} title={`New ${kind}`} maxWidth="max-w-md"
       footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button>
         <Button disabled={!name.trim() || !code.trim()} onClick={() => { onSave(name.trim(), code.trim()); setName(""); setCode(""); }}>Add</Button></>}>
       <div className="space-y-3">
         <div><Label htmlFor="nf-name">Name *</Label><Input id="nf-name" value={name} onChange={(e) => setName(e.target.value)} /></div>
-        <div><Label htmlFor="nf-code">Code *</Label><Input id="nf-code" value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. R5 / AREA 09 / D203" /></div>
+        <div><Label htmlFor="nf-code">Code *</Label><Input id="nf-code" value={code} onChange={(e) => setCode(e.target.value)} placeholder="e.g. R5 / AREA 09 / D203" /><p className="mt-1 text-xs text-zinc-400">Auto-assigned to the next number — edit if needed.</p></div>
       </div>
     </Modal>
   );
