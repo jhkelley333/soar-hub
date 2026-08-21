@@ -583,27 +583,46 @@ export function RankingResultsView() {
         );
       })()}
 
-      {/* Source board (hub runs only; legacy weeks have no source status) */}
+      {/* Source board (hub runs only; legacy weeks have no source status).
+          Dot: green = current for this run · orange = a newer file was uploaded
+          but the ranker hasn't been re-run · red = stale data · grey = missing. */}
       {run?.source_status && (
-        <div className="flex flex-wrap gap-1.5">
-          {Object.entries(run.source_status).map(([key, s]) => (
-            <span key={key} className={cn(
-              "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px]",
-              s.status === "ok" ? "border-zinc-200 bg-white"
-                : s.status === "on_hold" ? "border-amber-200 bg-amber-50"
-                : "border-zinc-200 bg-zinc-50",
-            )}>
-              <span className={cn("h-1.5 w-1.5 rounded-full",
-                s.status === "ok" ? "bg-emerald-600" : s.status === "stale" ? "bg-amber-500" : s.status === "on_hold" ? "bg-amber-500" : "bg-zinc-300")} />
-              <b>{SOURCE_LABEL[key] ?? key}</b>
-              <span className="text-zinc-500">
-                {s.status === "ok" ? `${s.stores ?? ""} stores`
-                  : s.status === "stale" ? `stale — ${(s as { week_ending?: string; as_of?: string }).week_ending ?? (s as { as_of?: string }).as_of ?? "old"}`
-                  : s.status === "on_hold" ? "on hold"
-                  : s.status === "missing" ? "missing" : "not wired"}
-              </span>
-            </span>
-          ))}
+        <div className="space-y-1.5">
+          <div className="flex flex-wrap gap-1.5">
+            {Object.entries(run.source_status).map(([key, s]) => {
+              const asOf = s.week_ending ?? s.as_of ?? null;
+              const state = s.pending_upload ? "pending"
+                : s.status === "stale" ? "stale"
+                : s.status === "ok" ? "ok"
+                : s.status === "on_hold" ? "on_hold"
+                : "missing";
+              const dot = { pending: "bg-orange-500", stale: "bg-red-500", ok: "bg-emerald-600", on_hold: "bg-amber-500", missing: "bg-zinc-300" }[state];
+              const chip = state === "pending" ? "border-orange-200 bg-orange-50"
+                : state === "stale" ? "border-red-200 bg-red-50"
+                : state === "on_hold" ? "border-amber-200 bg-amber-50"
+                : "border-zinc-200 bg-white";
+              const text = state === "pending" ? "new upload — re-run"
+                : state === "ok" ? `${s.stores ?? ""} stores`
+                : state === "stale" ? `stale — ${asOf ?? "old"}`
+                : state === "on_hold" ? "on hold"
+                : s.status === "missing" ? "missing" : "not wired";
+              return (
+                <span key={key}
+                  title={state === "pending" ? `A newer ${SOURCE_LABEL[key] ?? key} file was uploaded after this run — re-run to include it.` : undefined}
+                  className={cn("inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px]", chip)}>
+                  <span className={cn("h-1.5 w-1.5 rounded-full", dot)} />
+                  <b>{SOURCE_LABEL[key] ?? key}</b>
+                  <span className="text-zinc-500">{text}</span>
+                </span>
+              );
+            })}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-zinc-400">
+            <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-emerald-600" /> current</span>
+            <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-orange-500" /> uploaded, not run</span>
+            <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-red-500" /> stale</span>
+            <span className="inline-flex items-center gap-1"><span className="h-1.5 w-1.5 rounded-full bg-zinc-300" /> missing</span>
+          </div>
         </div>
       )}
 

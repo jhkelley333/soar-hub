@@ -626,6 +626,30 @@ export async function latestRun(supa, params, storeNums = null) {
     run = runs?.[0] ?? null;
   }
   if (!run) return { run: null, scope, tier, rows: [] };
+
+  // Freshness overlay: flag any file-based source whose newest parsed upload is
+  // newer than this run — i.e. "uploaded but not run yet", so the source board
+  // can show it orange and prompt a re-run. source_status itself is the snapshot
+  // taken WHEN the run computed; this compares it against what's on disk now.
+  const FILE_SOURCES = ["ix", "ecosure", "vog", "shops", "bsc", "totzone"];
+  const runTime = run.started_at || run.created_at || null;
+  if (runTime && run.source_status) {
+    const { data: upFiles } = await supa
+      .from("ranking_source_files")
+      .select("source, uploaded_at")
+      .eq("status", "parsed").in("source", FILE_SOURCES)
+      .order("uploaded_at", { ascending: false });
+    const latestBySource = new Map();
+    for (const f of upFiles || []) if (!latestBySource.has(f.source)) latestBySource.set(f.source, f.uploaded_at);
+    for (const src of FILE_SOURCES) {
+      const up = latestBySource.get(src);
+      if (up && run.source_status[src]) {
+        run.source_status[src].latest_upload_at = up;
+        run.source_status[src].pending_upload = new Date(up).getTime() > new Date(runTime).getTime();
+      }
+    }
+  }
+
   const { data: rows, error: rowsErr } = await supa
     .from("ranking_rows")
     .select("entity_key, store_id, rank, total_points, metrics")
