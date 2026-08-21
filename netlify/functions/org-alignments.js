@@ -45,10 +45,14 @@ async function orgTree(supa) {
 async function loadAlignment(supa, id) {
   const { data: alignment } = await supa.from("org_alignments").select("*").eq("id", id).maybeSingle();
   if (!alignment) return null;
-  const [{ data: nodes }, { data: moves }] = await Promise.all([
-    supa.from("org_alignment_nodes").select("*").eq("alignment_id", id).order("created_at", { ascending: true }).order("kind"),
+  // NB: org_alignment_nodes has no created_at column — ordering by one makes
+  // PostgREST error and silently drops every staged node. Order by real columns.
+  const [{ data: nodes, error: nErr }, { data: moves, error: mErr }] = await Promise.all([
+    supa.from("org_alignment_nodes").select("*").eq("alignment_id", id).order("kind").order("code"),
     supa.from("org_alignment_moves").select("*").eq("alignment_id", id),
   ]);
+  if (nErr) throw new Error(`load nodes: ${nErr.message}`);
+  if (mErr) throw new Error(`load moves: ${mErr.message}`);
   return { ...alignment, nodes: nodes || [], moves: moves || [] };
 }
 

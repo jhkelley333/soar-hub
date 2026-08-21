@@ -241,10 +241,10 @@ function AlignmentDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const apply = useMutation(mut(() => applyAlignment(id), "Applied — the org tree is updated."));
   const rollback = useMutation(mut(() => rollbackAlignment(id), "Rolled back."));
   const stageMove = useMutation(mut((v: { kind: MoveKind; node_id: string; parent: { key: string; isNew: boolean } }) =>
-    addMove({ alignment_id: id, kind: v.kind, node_id: v.node_id, ...(v.parent.isNew ? { new_parent_ref: v.parent.key } : { new_parent_id: v.parent.key }) })));
+    addMove({ alignment_id: id, kind: v.kind, node_id: v.node_id, ...(v.parent.isNew ? { new_parent_ref: v.parent.key } : { new_parent_id: v.parent.key }) }), "Move staged."));
   const undoMove = useMutation(mut((mid: string) => removeMove(mid)));
   const stageNode = useMutation(mut((v: { kind: NodeKind; name: string; code: string; parent?: { key: string; isNew: boolean } }) =>
-    addNode({ alignment_id: id, ref: newRef(v.kind), kind: v.kind, name: v.name, code: v.code, ...(v.parent ? (v.parent.isNew ? { parent_ref: v.parent.key } : { parent_id: v.parent.key }) : {}) })));
+    addNode({ alignment_id: id, ref: newRef(v.kind), kind: v.kind, name: v.name, code: v.code, ...(v.parent ? (v.parent.isNew ? { parent_ref: v.parent.key } : { parent_id: v.parent.key }) : {}) }), "Added."));
   const undoNode = useMutation(mut((nid: string) => removeNode(nid)));
 
   const projected = useMemo(() => (tree && a ? projectTree(tree, a.nodes ?? [], a.moves ?? []) : []), [tree, a]);
