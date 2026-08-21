@@ -101,13 +101,14 @@ function projectTree(tree: OrgTree, nodes: AlignmentNode[], moves: AlignmentMove
 }
 
 // Valid new-parent options for moving a node of childKind (existing + staged new
-// of the parent kind), excluding the node's current parent.
-function parentChoices(childKind: MoveKind, tree: OrgTree, nodes: AlignmentNode[]): { key: string; label: string; isNew: boolean }[] {
+// of the parent kind), excluding the node's current parent. Labels carry the
+// code (e.g. "D111", "Area 09") and, for existing nodes, the current leader.
+function parentChoices(childKind: MoveKind, tree: OrgTree, nodes: AlignmentNode[], leaders: Map<string, string>): { key: string; label: string; isNew: boolean }[] {
   const pk: NodeKind = childKind === "store" ? "district" : childKind === "district" ? "area" : "region";
   const existing = pk === "region" ? tree.regions : pk === "area" ? tree.areas : tree.districts;
   return [
-    ...existing.map((n) => ({ key: n.id, label: n.name, isNew: false })),
-    ...nodes.filter((n) => n.kind === pk).map((n) => ({ key: n.ref, label: `${n.name} (new)`, isNew: true })),
+    ...existing.map((n) => { const l = leaders.get(n.id); return { key: n.id, label: `${n.code} · ${n.name}${l ? ` — ${l}` : ""}`, isNew: false }; }),
+    ...nodes.filter((n) => n.kind === pk).map((n) => ({ key: n.ref, label: `${n.code} · ${n.name} (new)`, isNew: true })),
   ];
 }
 
@@ -366,7 +367,7 @@ function TreeRow({ node, depth, ctx }: { node: PNode; depth: number; ctx: Ctx })
 
 function MovePicker({ node, moveKind, ctx, depth, onDone }: { node: PNode; moveKind: MoveKind; ctx: Ctx; depth: number; onDone: () => void }) {
   const [target, setTarget] = useState("");
-  const choices = parentChoices(moveKind, ctx.tree, ctx.nodes).filter((c) => c.key !== node.key);
+  const choices = parentChoices(moveKind, ctx.tree, ctx.nodes, ctx.leaders).filter((c) => c.key !== node.key);
   return (
     <div style={{ paddingLeft: (depth + 1) * 18 + 8 }} className="flex items-center gap-2 py-1">
       <CornerDownRight className="h-3.5 w-3.5 text-zinc-300" />
