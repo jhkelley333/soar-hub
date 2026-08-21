@@ -14,7 +14,7 @@ import { EmptyState } from "@/shared/ui/EmptyState";
 import { useToast } from "@/shared/ui/Toaster";
 import { useAuth } from "@/auth/AuthProvider";
 import { cn } from "@/lib/cn";
-import { fetchCountOverview, fetchCountTrend, refreshCount, type CountRow, type CountTrendPoint } from "./api";
+import { fetchCountOverview, fetchCountTrend, refreshCount, type CountRow, type CountRollup, type CountTrendPoint } from "./api";
 
 // Feed scores are fractions (0.67 = 67%).
 const scorePct = (v: number | null | undefined) => (v == null ? "—" : `${(v * 100).toFixed(1)}%`);
@@ -32,6 +32,14 @@ const TONE_TEXT = { good: "text-emerald-600", ok: "text-amber-600", bad: "text-r
 
 type SortKey = "store" | "daily" | "completion" | "accuracy";
 type SortDir = "asc" | "desc";
+type Level = "stores" | "do" | "sdo" | "rvp" | "company";
+const LEVELS: { key: Level; label: string }[] = [
+  { key: "company", label: "Company" },
+  { key: "rvp", label: "RVP" },
+  { key: "sdo", label: "SDO" },
+  { key: "do", label: "DO" },
+  { key: "stores", label: "Stores" },
+];
 
 export function CountPage() {
   const { profile } = useAuth();
@@ -40,9 +48,17 @@ export function CountPage() {
   const qc = useQueryClient();
   const [store, setStore] = useState<string | null>(null);
   const [sort, setSort] = useState<{ key: SortKey; dir: SortDir }>({ key: "daily", dir: "asc" });
+  const [level, setLevel] = useState<Level>("stores");
 
   const q = useQuery({ queryKey: ["count-overview"], queryFn: () => fetchCountOverview(), staleTime: 5 * 60_000 });
   const rows = useMemo(() => q.data?.rows ?? [], [q.data]);
+  const rollups = q.data?.rollups;
+  // Roll-up group rows for the chosen level (company is a single group).
+  const groupRows: CountRollup[] = useMemo(() => {
+    if (!rollups || level === "stores") return [];
+    if (level === "company") return rollups.company ? [rollups.company] : [];
+    return rollups[level] ?? [];
+  }, [rollups, level]);
 
   useEffect(() => {
     if (!store && rows.length === 1) setStore(rows[0].store_number);
@@ -98,6 +114,24 @@ export function CountPage() {
         }
       />
 
+      {rows.length > 1 && rollups && (
+        <div className="mb-4 inline-flex flex-wrap rounded-lg bg-zinc-100 p-0.5">
+          {LEVELS.map((l) => (
+            <button
+              key={l.key}
+              type="button"
+              onClick={() => setLevel(l.key)}
+              className={cn(
+                "rounded-md px-3 py-1.5 text-sm font-semibold transition",
+                level === l.key ? "bg-white text-midnight shadow-sm" : "text-zinc-500 hover:text-midnight",
+              )}
+            >
+              {l.label}
+            </button>
+          ))}
+        </div>
+      )}
+
       {q.isLoading ? (
         <Skeleton className="h-64 w-full" />
       ) : q.isError ? (
@@ -106,6 +140,11 @@ export function CountPage() {
         <EmptyState
           title="No count data yet"
           description={canRefresh ? "Hit Refresh to pull the latest scores from the feed, or wait for the next scheduled capture." : "Count scores appear after the next feed capture."}
+        />
+      ) : level !== "stores" ? (
+        <RollupTable
+          groups={groupRows}
+          groupLabel={LEVELS.find((l) => l.key === level)?.label ?? ""}
         />
       ) : (
         <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
@@ -139,6 +178,42 @@ export function CountPage() {
         </div>
       )}
     </>
+  );
+}
+
+// Rolled-up scores by DO / SDO / RVP / company — averages across each group's
+// stores, worst daily first (as sorted server-side).
+function RollupTable({ groups, groupLabel }: { groups: CountRollup[]; groupLabel: string }) {
+  if (groups.length === 0) {
+    return <EmptyState title="No roll-up data" description="No stores with scores in this scope yet." />;
+  }
+  return (
+    <div className="overflow-hidden rounded-xl bg-white ring-1 ring-zinc-200">
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-zinc-100 text-left text-[10px] uppercase tracking-wide text-zinc-400">
+              <th className="px-4 py-2">{groupLabel}</th>
+              <th className="px-4 py-2 text-right">Stores</th>
+              <th className="px-4 py-2 text-right">Daily</th>
+              <th className="px-4 py-2 text-right">Completion</th>
+              <th className="px-4 py-2 text-right">Accuracy</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-100">
+            {groups.map((g) => (
+              <tr key={g.label}>
+                <td className="px-4 py-2.5 font-semibold text-midnight">{g.label}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-zinc-500">{g.store_count}</td>
+                <ScoreCell value={g.daily_score} wow={g.wow_daily} />
+                <ScoreCell value={g.completion_score} wow={g.wow_completion} />
+                <ScoreCell value={g.accuracy_score} wow={g.wow_accuracy} />
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
