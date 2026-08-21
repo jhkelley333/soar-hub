@@ -22,6 +22,7 @@ import {
   addNode, addMove, removeNode, removeMove, applyAlignment, rollbackAlignment,
   type OrgTree, type AlignmentNode, type AlignmentMove, type NodeKind, type MoveKind, type AlignmentStatus,
 } from "./api";
+import { fetchOrgTree as fetchAdminOrgTree, type OrgManager, type OrgTreeResponse } from "@/modules/admin/api";
 
 const inputCls = "block w-full rounded-md border-0 bg-white px-2.5 py-1.5 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent";
 const STATUS_STYLE: Record<AlignmentStatus, string> = {
@@ -110,6 +111,31 @@ function parentChoices(childKind: MoveKind, tree: OrgTree, nodes: AlignmentNode[
   ];
 }
 
+// ── Current leaders ──────────────────────────────────────────────────────────
+// The Org Admin tree carries managers at every level; we surface the current
+// leader next to each existing region/area/district (RVP / SDO / DO). Primary
+// (non-acting) holders win; multiple are joined with " / ".
+function leaderLabel(managers: OrgManager[], role: string): string {
+  const scoped = managers.filter((m) => m.role === role);
+  const primary = scoped.filter((m) => !m.acting);
+  const chosen = primary.length ? primary : scoped;
+  return chosen.map((m) => m.full_name?.trim() || m.email).filter(Boolean).join(" / ");
+}
+// Map real node id → current leader name, for regions/areas/districts.
+function buildLeaderMap(tree: OrgTreeResponse): Map<string, string> {
+  const m = new Map<string, string>();
+  for (const r of tree.regions) {
+    const rl = leaderLabel(r.managers, "rvp"); if (rl) m.set(r.id, rl);
+    for (const a of r.areas) {
+      const al = leaderLabel(a.managers, "sdo"); if (al) m.set(a.id, al);
+      for (const d of a.districts) {
+        const dl = leaderLabel(d.managers, "do"); if (dl) m.set(d.id, dl);
+      }
+    }
+  }
+  return m;
+}
+
 // ── Page ─────────────────────────────────────────────────────────────────────
 export function OrgAlignmentPage() {
   const [openId, setOpenId] = useState<string | null>(null);
@@ -175,6 +201,7 @@ function AlignmentDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const toast = useToast();
   const q = useQuery({ queryKey: ["org-alignment", id], queryFn: () => fetchAlignment(id) });
   const treeQ = useQuery({ queryKey: ["org-alignment-tree"], queryFn: fetchOrgTree });
+  const leadersQ = useQuery({ queryKey: ["org-alignment-leaders"], queryFn: fetchAdminOrgTree });
   const invalidate = () => { qc.invalidateQueries({ queryKey: ["org-alignment", id] }); qc.invalidateQueries({ queryKey: ["org-alignments"] }); };
 
   const a = q.data?.alignment;
@@ -201,6 +228,7 @@ function AlignmentDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const undoNode = useMutation(mut((nid: string) => removeNode(nid)));
 
   const projected = useMemo(() => (tree && a ? projectTree(tree, a.nodes ?? [], a.moves ?? []) : []), [tree, a]);
+  const leaders = useMemo(() => (leadersQ.data ? buildLeaderMap(leadersQ.data) : new Map<string, string>()), [leadersQ.data]);
   const toggle = (k: string) => setExpanded((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
 
   if (q.isLoading || treeQ.isLoading) return <Skeleton className="h-64 w-full" />;
@@ -208,7 +236,7 @@ function AlignmentDetail({ id, onBack }: { id: string; onBack: () => void }) {
 
   const changeCount = (a.nodes?.length ?? 0) + (a.moves?.length ?? 0);
   const nodeCtx = {
-    tree, nodes: a.nodes ?? [], locked, expanded, toggle,
+    tree, nodes: a.nodes ?? [], locked, expanded, toggle, leaders,
     onMove: (kind: MoveKind, node_id: string, parent: { key: string; isNew: boolean }) => stageMove.mutate({ kind, node_id, parent }),
     onUndoMove: (mid: string) => undoMove.mutate(mid),
     onUndoNode: (nid: string) => undoNode.mutate(nid),
@@ -261,12 +289,13 @@ function AlignmentDetail({ id, onBack }: { id: string; onBack: () => void }) {
 
 interface Ctx {
   tree: OrgTree; nodes: AlignmentNode[]; locked: boolean;
-  expanded: Set<string>; toggle: (k: string) => void;
+  expanded: Set<string>; toggle: (k: string) => void; leaders: Map<string, string>;
   onMove: (kind: MoveKind, node_id: string, parent: { key: string; isNew: boolean }) => void;
   onUndoMove: (mid: string) => void; onUndoNode: (nid: string) => void;
   onAddChild: (kind: NodeKind, name: string, code: string, parent: { key: string; isNew: boolean }) => void;
 }
 const KIND_TAG: Record<PKind, string> = { region: "R", area: "AREA", district: "D", store: "" };
+const leaderFor = (ctx: Ctx, nodeId: string): string => ctx.leaders.get(nodeId) ?? "";
 const CHILD_KIND: Record<PKind, NodeKind | null> = { region: "area", area: "district", district: null, store: null };
 
 function TreeRow({ node, depth, ctx }: { node: PNode; depth: number; ctx: Ctx }) {
@@ -288,6 +317,9 @@ function TreeRow({ node, depth, ctx }: { node: PNode; depth: number; ctx: Ctx })
         <span className={cn("truncate text-sm", node.kind === "store" ? "text-zinc-700" : "font-semibold text-midnight")}>{node.label}</span>
         {node.isNew && <span className="shrink-0 rounded-full bg-emerald-50 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">new</span>}
         {node.moved && <span className="shrink-0 rounded-full bg-blue-50 px-1.5 py-0.5 text-[10px] font-semibold text-blue-700">moving</span>}
+        {node.kind !== "store" && node.nodeId && leaderFor(ctx, node.nodeId) && (
+          <span className="min-w-0 truncate text-xs text-zinc-400" title={leaderFor(ctx, node.nodeId)}>· {leaderFor(ctx, node.nodeId)}</span>
+        )}
 
         <div className="ml-auto flex shrink-0 items-center gap-1 opacity-0 group-hover:opacity-100">
           {canMove && !node.moved && <button onClick={() => setMoving((v) => !v)} className="rounded px-1.5 py-0.5 text-[11px] font-medium text-zinc-500 ring-1 ring-zinc-200 hover:text-accent">Move</button>}
