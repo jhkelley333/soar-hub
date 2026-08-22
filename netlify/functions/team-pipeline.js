@@ -444,6 +444,30 @@ async function storeRoster(supa, user, storeId) {
   };
 }
 
+// Every active team member in the caller's scope — powers the DO+ aggregate
+// 9-box (all stores at once). Same member shape as store-roster's roster.
+async function scopeRoster(supa, user) {
+  const scope = await storesForUser(supa, user);
+  const ids = scope.all ? null : Array.from(scope.ids);
+  const canWrite = VIEW_ROLES.has(String(user.role));
+  if (ids && ids.length === 0) return { roster: [], can_write: canWrite };
+  const all = await fetchAll(() => {
+    let q = supa.from("tp_team_members").select("*").neq("status", "terminated").order("created_at", { ascending: true });
+    if (ids) q = q.in("store_id", ids);
+    return q;
+  });
+  const annotated = (await annotateAccounts(supa, all)).filter((m) => String(m.profile_id ?? "") !== String(user.id));
+  const storeIds = [...new Set(annotated.map((m) => m.store_id))];
+  const { data: stores } = storeIds.length
+    ? await supa.from("stores").select("id, number, name").in("id", storeIds)
+    : { data: [] };
+  const byId = new Map((stores || []).map((s) => [s.id, s]));
+  return {
+    roster: annotated.map((m) => ({ ...m, store_number: byId.get(m.store_id)?.number ?? null, store_name: byId.get(m.store_id)?.name ?? null })),
+    can_write: canWrite,
+  };
+}
+
 // Every GM (role=gm) in the caller's scope — the GM bench. The client keys
 // these by store_id against its org tree to render the district bench.
 async function gms(supa, user) {
@@ -1914,6 +1938,7 @@ export const handler = async (event) => {
       if (action === "succession") return unwrap(await succession(supa, user));
       if (action === "gms") return unwrap(await gms(supa, user));
       if (action === "store-roster") return unwrap(await storeRoster(supa, user, params.store_id));
+      if (action === "scope-roster") return unwrap(await scopeRoster(supa, user));
       if (action === "notes") return unwrap(await listNotes(supa, user, params.member_id));
       if (action === "corrective-actions") return unwrap(await listCorrectiveActions(supa, user, params.member_id));
       if (action === "successors") return unwrap(await listSuccessors(supa, user, params.member_id));
