@@ -295,7 +295,7 @@ export function DashboardPage() {
             />
             <KpiCard
               icon={FileText}
-              title="Bonus PAFs"
+              title="PAF Approvals"
               sub="Awaiting your review"
               value={!isSdoReviewer ? "—" : sdoQ.isLoading ? "…" : sdoQ.isError ? "—" : String(bonusPafs.length)}
               foot={!isSdoReviewer ? "Not in your scope" : bonusPafs.length > 0 ? "Before payroll" : "Nothing pending"}
