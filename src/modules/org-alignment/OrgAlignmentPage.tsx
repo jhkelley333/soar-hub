@@ -19,8 +19,8 @@ import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import {
   fetchAlignments, fetchAlignment, fetchOrgTree, createAlignment, updateAlignment, deleteAlignment,
-  addNode, addMove, removeNode, removeMove, addLeaderMove, removeLeaderMove, applyAlignment, rollbackAlignment,
-  type OrgTree, type AlignmentNode, type NodeKind, type MoveKind, type AlignmentStatus, type LeaderScope,
+  addNode, addMove, removeNode, removeMove, addLeaderMove, removeLeaderMove, addLeaderAdd, removeLeaderAdd, applyAlignment, rollbackAlignment,
+  type OrgTree, type AlignmentNode, type NodeKind, type MoveKind, type AlignmentStatus, type LeaderScope, type LeaderRole,
 } from "./api";
 import { fetchOrgTree as fetchAdminOrgTree } from "@/modules/admin/api";
 import { projectTree, parentChoices, nextCode, buildLeaderMap, nodeChoices, buildLeaderRoster, type PKind, type PNode, type LeaderSlot } from "./projection";
@@ -130,11 +130,15 @@ function AlignmentDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const stageLeader = useMutation(mut((v: { user_id: string; scope_type: LeaderScope; from_scope_id: string; to: { key: string; isNew: boolean } }) =>
     addLeaderMove({ alignment_id: id, user_id: v.user_id, scope_type: v.scope_type, from_scope_id: v.from_scope_id, ...(v.to.isNew ? { to_scope_ref: v.to.key } : { to_scope_id: v.to.key }) }), "Leader reassignment staged."));
   const undoLeader = useMutation(mut((lid: string) => removeLeaderMove(lid)));
+  const stageNewLeader = useMutation(mut((v: { full_name?: string; email: string; role: LeaderRole; to: { key: string; isNew: boolean } }) =>
+    addLeaderAdd({ alignment_id: id, full_name: v.full_name, email: v.email, role: v.role, ...(v.to.isNew ? { to_scope_ref: v.to.key } : { to_scope_id: v.to.key }) }), "New leader staged — invited on the effective date."));
+  const undoNewLeader = useMutation(mut((lid: string) => removeLeaderAdd(lid)));
 
   const projected = useMemo(() => (tree && a ? projectTree(tree, a.nodes ?? [], a.moves ?? []) : []), [tree, a]);
   const leaders = useMemo(() => (leadersQ.data ? buildLeaderMap(leadersQ.data) : new Map<string, string>()), [leadersQ.data]);
   const roster = useMemo(() => (leadersQ.data ? buildLeaderRoster(leadersQ.data) : []), [leadersQ.data]);
   const [addLeader, setAddLeader] = useState(false);
+  const [addNewLeader, setAddNewLeader] = useState(false);
   const toggle = (k: string) => setExpanded((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
   const expand = (k: string) => setExpanded((s) => new Set(s).add(k));
 
@@ -142,7 +146,8 @@ function AlignmentDetail({ id, onBack }: { id: string; onBack: () => void }) {
   if (q.isError || !a || !tree) return <EmptyState title="Couldn't load alignment" description={(q.error as Error)?.message ?? "Try again."} />;
 
   const leaderMoves = a.leader_moves ?? [];
-  const changeCount = (a.nodes?.length ?? 0) + (a.moves?.length ?? 0) + leaderMoves.length;
+  const leaderAdds = a.leader_adds ?? [];
+  const changeCount = (a.nodes?.length ?? 0) + (a.moves?.length ?? 0) + leaderMoves.length + leaderAdds.length;
   const nodeCtx = {
     tree, nodes: a.nodes ?? [], locked, expanded, toggle, expand, leaders,
     onMove: (kind: MoveKind, node_id: string, parent: { key: string; isNew: boolean }) => stageMove.mutate({ kind, node_id, parent }),
@@ -199,14 +204,19 @@ function AlignmentDetail({ id, onBack }: { id: string; onBack: () => void }) {
         {projected.map((r) => <TreeRow key={r.key} node={r} depth={0} ctx={nodeCtx} />)}
       </div>
 
-      {(leaderMoves.length > 0 || !locked) && (
+      {(leaderMoves.length > 0 || leaderAdds.length > 0 || !locked) && (
         <div className="rounded-xl border border-zinc-200 bg-white p-3">
-          <div className="mb-2 flex items-center justify-between gap-2">
+          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <div className="text-sm font-semibold text-midnight">Leadership moves</div>
-            {!locked && <Button size="sm" variant="secondary" disabled={roster.length === 0} onClick={() => setAddLeader(true)}><Plus className="mr-1 h-3.5 w-3.5" /> Reassign a DO/SDO</Button>}
+            {!locked && (
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="secondary" disabled={roster.length === 0} onClick={() => setAddLeader(true)}><Plus className="mr-1 h-3.5 w-3.5" /> Reassign a DO/SDO</Button>
+                <Button size="sm" variant="secondary" onClick={() => setAddNewLeader(true)}><Plus className="mr-1 h-3.5 w-3.5" /> Add new leader</Button>
+              </div>
+            )}
           </div>
-          {leaderMoves.length === 0 ? (
-            <div className="text-xs text-zinc-400">No leadership changes staged. Use this to move a DO or SDO to a different district/area — it goes live with the alignment on the effective date.</div>
+          {leaderMoves.length === 0 && leaderAdds.length === 0 ? (
+            <div className="text-xs text-zinc-400">No leadership changes staged. Reassign a DO/SDO to a different district/area, or add a brand-new leader (invited to the hub) — all live on the effective date.</div>
           ) : (
             <div className="space-y-1.5">
               {leaderMoves.map((lm) => (
@@ -219,6 +229,17 @@ function AlignmentDetail({ id, onBack }: { id: string; onBack: () => void }) {
                   {!locked && <button onClick={() => undoLeader.mutate(lm.id)} className="ml-auto rounded px-1.5 py-0.5 text-[11px] font-medium text-violet-600 hover:underline">undo</button>}
                 </div>
               ))}
+              {leaderAdds.map((la) => (
+                <div key={la.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-emerald-50/50 px-2.5 py-1.5 text-sm">
+                  <span className="rounded bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-emerald-700">new {la.role}</span>
+                  <span className="font-medium text-midnight">{la.full_name?.trim() || la.email}</span>
+                  <span className="text-zinc-400">{la.email}</span>
+                  <CornerDownRight className="h-3.5 w-3.5 text-zinc-300" />
+                  <span className="text-zinc-700">{toLabel(la.to_scope_id, la.to_scope_ref)}</span>
+                  <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-700">invite on go-live</span>
+                  {!locked && <button onClick={() => undoNewLeader.mutate(la.id)} className="ml-auto rounded px-1.5 py-0.5 text-[11px] font-medium text-emerald-700 hover:underline">undo</button>}
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -228,6 +249,8 @@ function AlignmentDetail({ id, onBack }: { id: string; onBack: () => void }) {
         onSave={(name, code) => { stageNode.mutate({ kind: "region", name, code }); setAddRegion(false); }} />
       <LeaderMoveModal open={addLeader} roster={roster} tree={tree} nodes={a.nodes ?? []} leaders={leaders} onClose={() => setAddLeader(false)}
         onSave={(v) => { stageLeader.mutate(v); setAddLeader(false); }} />
+      <NewLeaderModal open={addNewLeader} tree={tree} nodes={a.nodes ?? []} leaders={leaders} onClose={() => setAddNewLeader(false)}
+        onSave={(v) => { stageNewLeader.mutate(v); setAddNewLeader(false); }} />
     </div>
   );
 }
@@ -352,6 +375,46 @@ function LeaderMoveModal({ open, roster, tree, nodes, leaders, onClose, onSave }
             {dests.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
           </select>
           {slot && <p className="mt-1 text-xs text-zinc-400">Goes live on the effective date; rollback restores {slot.name} to {slot.scopeLabel}.</p>}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function NewLeaderModal({ open, tree, nodes, leaders, onClose, onSave }: {
+  open: boolean; tree: OrgTree; nodes: AlignmentNode[]; leaders: Map<string, string>;
+  onClose: () => void; onSave: (v: { full_name?: string; email: string; role: LeaderRole; to: { key: string; isNew: boolean } }) => void;
+}) {
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState<LeaderRole>("do");
+  const [target, setTarget] = useState("");
+  useEffect(() => { if (open) { setFullName(""); setEmail(""); setRole("do"); setTarget(""); } }, [open]);
+  const scopeKind = role === "sdo" ? "area" : "district";
+  const dests = nodeChoices(scopeKind, tree, nodes, leaders);
+  const chosen = dests.find((d) => d.key === target);
+  const emailOk = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email.trim());
+  return (
+    <Modal open={open} onClose={onClose} title="Add a new leader" maxWidth="max-w-lg"
+      footer={<><Button variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button disabled={!emailOk || !chosen} onClick={() => { if (chosen) onSave({ full_name: fullName.trim() || undefined, email: email.trim(), role, to: { key: chosen.key, isNew: chosen.isNew } }); }}>Stage + invite on go-live</Button></>}>
+      <div className="space-y-3">
+        <div><Label htmlFor="nl-name">Full name</Label><Input id="nl-name" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Jane Smith" /></div>
+        <div><Label htmlFor="nl-email">Email *</Label><Input id="nl-email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="jane@example.com" /></div>
+        <div>
+          <Label>Role *</Label>
+          <div className="flex gap-2">
+            <button type="button" onClick={() => { setRole("do"); setTarget(""); }} className={cn("rounded-md px-3 py-1.5 text-sm ring-1 transition", role === "do" ? "bg-accent text-white ring-accent" : "text-zinc-600 ring-zinc-200 hover:ring-accent/50")}>DO (district)</button>
+            <button type="button" onClick={() => { setRole("sdo"); setTarget(""); }} className={cn("rounded-md px-3 py-1.5 text-sm ring-1 transition", role === "sdo" ? "bg-accent text-white ring-accent" : "text-zinc-600 ring-zinc-200 hover:ring-accent/50")}>SDO (area)</button>
+          </div>
+        </div>
+        <div>
+          <Label htmlFor="nl-to">Assign to {scopeKind} *</Label>
+          <select id="nl-to" value={target} onChange={(e) => setTarget(e.target.value)} className={inputCls}>
+            <option value="">Select {scopeKind}…</option>
+            {dests.map((d) => <option key={d.key} value={d.key}>{d.label}</option>)}
+          </select>
+          <p className="mt-1 text-xs text-zinc-400">On the effective date they're invited by email and assigned here. Rollback removes the invited account.</p>
         </div>
       </div>
     </Modal>
