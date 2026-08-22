@@ -1,11 +1,17 @@
-// RVP Period Commitments (Phase 6) — each RVP records what they're committing to
-// this fiscal period, with a target and status. Targets/text/status are editable
-// inline; every edit is recorded in an immutable history the DB writes by trigger
-// and this page shows inline per commitment. Leadership (VP/COO/admin) sees and
-// edits every RVP's commitments and can file one on an RVP's behalf.
+// RVP Period Commitments (Phase 6, metric-anchored redesign) — each RVP anchors
+// a commitment to a Ranker metric, records a 4-week baseline + target, and lists
+// the SPECIFIC actions (what / owner / cadence / expected impact) that will move
+// it. An info panel frames how to write a commitment worth reading — through the
+// lens of a Director of Finance from McKinsey/Amazon: anchor to a number, state
+// the gap and date, decompose the driver, commit to controllable inputs, make
+// each action specific, and prove the math adds up. Every edit is captured in an
+// immutable history the DB writes by trigger and this page shows per commitment.
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, History, Pencil, Plus, Target } from "lucide-react";
+import {
+  ArrowRight, ChevronLeft, ChevronRight, History, Info, Pencil, Plus, Target,
+  Trash2, TrendingDown, TrendingUp,
+} from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
 import { Button } from "@/shared/ui/Button";
@@ -19,32 +25,45 @@ import { cn } from "@/lib/cn";
 import { FISCAL, fiscalInfo } from "@/lib/fiscal";
 import {
   fetchPeriodCommitments, createPeriodCommitment, updatePeriodCommitment,
-  type PeriodCommitment, type CommitmentStatus, type CommitmentHistoryRow, type RvpOption,
+  type PeriodCommitment, type CommitmentStatus, type CommitmentHistoryRow,
+  type CommitmentAction, type RvpOption,
 } from "./api";
+import {
+  METRIC_GROUPS, METRICS_BY_KEY, impactUnit, gapInImpactUnit, fmtGap, fmtMetricValue,
+} from "./metrics";
 
 const STATUS_STYLE: Record<CommitmentStatus, { label: string; cls: string }> = {
-  active: { label: "Active", cls: "bg-blue-50 text-blue-700 ring-blue-200" },
+  active: { label: "Active", cls: "bg-accent-100 text-accent-700 ring-accent-200" },
   met: { label: "Met", cls: "bg-emerald-50 text-emerald-700 ring-emerald-200" },
   missed: { label: "Missed", cls: "bg-red-50 text-red-700 ring-red-200" },
 };
 const STATUSES: CommitmentStatus[] = ["active", "met", "missed"];
 
-const fmtTarget = (v: number | null, unit: string | null) =>
-  v == null ? null : `${v}${unit ? (unit === "%" || unit === "h" ? unit : ` ${unit}`) : ""}`;
 const fmtWhen = (iso: string) =>
   new Date(iso).toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 const FIELD_LABEL: Record<string, string> = {
-  commitment_text: "Commitment", target_value: "Target", target_unit: "Unit", status: "Status",
+  commitment_text: "Objective", metric: "Metric", baseline_value: "Baseline",
+  target_value: "Target", target_unit: "Unit", actions: "Actions", status: "Status",
 };
+
+interface ActionDraft { what: string; owner: string; cadence: string; impact: string }
 
 type Draft = {
   id?: string;
   rvp_user_id: string;
+  metric_key: string;
   commitment_text: string;
+  baseline_value: string;
   target_value: string;
-  target_unit: string;
+  actions: ActionDraft[];
   status: CommitmentStatus;
 };
+
+const emptyAction = (): ActionDraft => ({ what: "", owner: "", cadence: "", impact: "" });
+const toNum = (s: string): number | null => (s.trim() === "" ? null : Number(s));
+
+const inputCls =
+  "block w-full rounded-md border-0 bg-surface px-3 py-2 text-sm text-ink ring-1 ring-inset ring-border focus:outline-none focus:ring-2 focus:ring-accent";
 
 export function PeriodCommitmentsPage() {
   const now = useMemo(() => new Date(), []);
@@ -61,6 +80,7 @@ export function PeriodCommitmentsPage() {
   const invalidate = () => qc.invalidateQueries({ queryKey: ["period-commitments", fiscalYear, period] });
 
   const [editing, setEditing] = useState<Draft | null>(null);
+  const [guideOpen, setGuideOpen] = useState(false);
   const isNew = editing != null && !editing.id;
   const rvps = q.data?.rvps ?? [];
   const isLeader = q.data?.scope === "all";
@@ -68,16 +88,28 @@ export function PeriodCommitmentsPage() {
 
   const save = useMutation({
     mutationFn: (d: Draft) => {
-      const tv = d.target_value.trim() === "" ? null : Number(d.target_value);
-      if (d.id) {
-        return updatePeriodCommitment({
-          id: d.id, commitment_text: d.commitment_text, target_value: tv,
-          target_unit: d.target_unit.trim() || null, status: d.status,
-        });
-      }
+      const metric = METRICS_BY_KEY[d.metric_key] ?? null;
+      const actions: CommitmentAction[] = d.actions
+        .map((a) => ({
+          what: a.what.trim() || null,
+          owner: a.owner.trim() || null,
+          cadence: a.cadence.trim() || null,
+          impact: a.impact.trim() === "" ? null : Number(a.impact),
+        }))
+        .filter((a) => a.what || a.owner || a.cadence || a.impact != null);
+      const common = {
+        metric_key: d.metric_key || null,
+        metric_label: metric?.label ?? null,
+        baseline_value: toNum(d.baseline_value),
+        commitment_text: d.commitment_text,
+        target_value: toNum(d.target_value),
+        target_unit: metric?.unit || null,
+        actions,
+        status: d.status,
+      };
+      if (d.id) return updatePeriodCommitment({ id: d.id, ...common });
       return createPeriodCommitment({
-        fiscal_year: fiscalYear, period, commitment_text: d.commitment_text,
-        target_value: tv, target_unit: d.target_unit.trim() || null, status: d.status,
+        fiscal_year: fiscalYear, period, ...common,
         rvp_user_id: d.rvp_user_id || undefined,
       });
     },
@@ -85,11 +117,22 @@ export function PeriodCommitmentsPage() {
     onError: (e: unknown) => toast.push(e instanceof Error ? e.message : "Save failed.", "error"),
   });
 
-  const openNew = () => setEditing({ rvp_user_id: selfId, commitment_text: "", target_value: "", target_unit: "", status: "active" });
+  const openNew = () => setEditing({
+    rvp_user_id: selfId, metric_key: "", commitment_text: "",
+    baseline_value: "", target_value: "", actions: [emptyAction()], status: "active",
+  });
   const openEdit = (c: PeriodCommitment) => setEditing({
-    id: c.id, rvp_user_id: c.rvp_user_id, commitment_text: c.commitment_text,
+    id: c.id, rvp_user_id: c.rvp_user_id, metric_key: c.metric_key ?? "",
+    commitment_text: c.commitment_text,
+    baseline_value: c.baseline_value == null ? "" : String(c.baseline_value),
     target_value: c.target_value == null ? "" : String(c.target_value),
-    target_unit: c.target_unit ?? "", status: c.status,
+    actions: c.actions.length
+      ? c.actions.map((a) => ({
+          what: a.what ?? "", owner: a.owner ?? "", cadence: a.cadence ?? "",
+          impact: a.impact == null ? "" : String(a.impact),
+        }))
+      : [emptyAction()],
+    status: c.status,
   });
 
   const stepPeriod = (delta: number) => setPeriod((p) => Math.min(12, Math.max(1, p + delta)));
@@ -98,22 +141,29 @@ export function PeriodCommitmentsPage() {
     <div className="mx-auto max-w-4xl space-y-5 p-4 sm:p-6">
       <PageHeader
         title="Period Commitments"
-        description="What each RVP is committing to this fiscal period — with a target, a status, and a full edit history."
-        actions={<Button size="sm" onClick={openNew} disabled={q.isLoading}><Plus className="mr-1 h-3.5 w-3.5" /> New commitment</Button>}
+        description="Anchor a commitment to a Ranker metric, set a 4-week baseline and target, and list the specific actions that will move it."
+        actions={
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="ghost" onClick={() => setGuideOpen(true)} title="How to write a commitment worth reading">
+              <Info className="mr-1 h-3.5 w-3.5" /> How to write one
+            </Button>
+            <Button size="sm" onClick={openNew} disabled={q.isLoading}><Plus className="mr-1 h-3.5 w-3.5" /> New commitment</Button>
+          </div>
+        }
       />
 
       {/* Period selector */}
-      <div className="flex items-center justify-between rounded-xl bg-white px-4 py-2.5 ring-1 ring-zinc-200">
+      <div className="flex items-center justify-between rounded-xl bg-surface px-4 py-2.5 ring-1 ring-border">
         <button onClick={() => stepPeriod(-1)} disabled={period <= 1}
-          className="rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-100 disabled:opacity-30" aria-label="Previous period">
+          className="rounded-lg p-1.5 text-ink-muted hover:bg-surface-muted disabled:opacity-30" aria-label="Previous period">
           <ChevronLeft className="h-4 w-4" />
         </button>
         <div className="text-center">
-          <div className="text-sm font-semibold text-midnight">{fiscalYear} · Period {period}</div>
-          {period === currentPeriod && <div className="text-[11px] font-medium uppercase tracking-wide text-accent-600">Current period</div>}
+          <div className="text-sm font-semibold text-heading">{fiscalYear} · Period {period}</div>
+          {period === currentPeriod && <div className="text-[11px] font-medium uppercase tracking-wide text-accent">Current period</div>}
         </div>
         <button onClick={() => stepPeriod(1)} disabled={period >= 12}
-          className="rounded-lg p-1.5 text-zinc-500 hover:bg-zinc-100 disabled:opacity-30" aria-label="Next period">
+          className="rounded-lg p-1.5 text-ink-muted hover:bg-surface-muted disabled:opacity-30" aria-label="Next period">
           <ChevronRight className="h-4 w-4" />
         </button>
       </div>
@@ -139,40 +189,85 @@ export function PeriodCommitmentsPage() {
         draft={editing} isNew={isNew} isLeader={isLeader} rvps={rvps}
         saving={save.isPending}
         onChange={setEditing}
+        onOpenGuide={() => setGuideOpen(true)}
         onClose={() => setEditing(null)}
         onSave={() => editing && save.mutate(editing)}
       />
+      <GuidanceModal open={guideOpen} onClose={() => setGuideOpen(false)} />
     </div>
   );
 }
 
+// ── Card ─────────────────────────────────────────────────────────────────────
 function CommitmentCard({ c, showRvp, onEdit }: { c: PeriodCommitment; showRvp: boolean; onEdit: () => void }) {
   const [showHistory, setShowHistory] = useState(false);
   const st = STATUS_STYLE[c.status];
-  const target = fmtTarget(c.target_value, c.target_unit);
+  const metric = c.metric_key ? METRICS_BY_KEY[c.metric_key] ?? null : null;
+  const gap = gapInImpactUnit(metric, c.baseline_value, c.target_value);
+  const gapLabel = fmtGap(metric, gap);
+  const baseLabel = fmtMetricValue(metric, c.baseline_value);
+  const targetLabel = fmtMetricValue(metric, c.target_value);
+  const actions = c.actions ?? [];
+
   return (
     <Card>
       <CardBody>
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            {showRvp && <div className="mb-0.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">{c.rvp_name ?? "Unassigned RVP"}</div>}
-            <p className="text-sm leading-relaxed text-midnight">{c.commitment_text}</p>
-            <div className="mt-2 flex flex-wrap items-center gap-2">
+          <div className="min-w-0 flex-1">
+            {showRvp && <div className="mb-0.5 text-xs font-semibold uppercase tracking-wide text-ink-subtle">{c.rvp_name ?? "Unassigned RVP"}</div>}
+            <div className="mb-1.5 flex flex-wrap items-center gap-2">
               <span className={cn("inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1", st.cls)}>{st.label}</span>
-              {target && (
-                <span className="inline-flex items-center gap-1 rounded-full bg-zinc-100 px-2 py-0.5 text-[11px] font-medium text-zinc-600">
-                  <Target className="h-3 w-3" /> {target}
+              {c.metric_label && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-canvas px-2 py-0.5 text-[11px] font-semibold text-heading ring-1 ring-border">
+                  <Target className="h-3 w-3" /> {c.metric_label}
                 </span>
               )}
             </div>
+            <p className="text-sm leading-relaxed text-ink">{c.commitment_text}</p>
+
+            {(baseLabel != null || targetLabel != null) && (
+              <div className="mt-2.5 inline-flex flex-wrap items-center gap-2 rounded-lg bg-surface-muted px-3 py-1.5 text-xs ring-1 ring-border">
+                <span className="text-ink-muted">Baseline <span className="font-semibold tabular-nums text-ink">{baseLabel ?? "—"}</span></span>
+                <ArrowRight className="h-3.5 w-3.5 text-ink-subtle" />
+                <span className="text-ink-muted">Target <span className="font-semibold tabular-nums text-ink">{targetLabel ?? "—"}</span></span>
+                {gapLabel && (
+                  <span className={cn("inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-semibold tabular-nums",
+                    gap! >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700")}>
+                    {gap! >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />} {gapLabel}
+                  </span>
+                )}
+              </div>
+            )}
           </div>
           <Button size="sm" variant="ghost" onClick={onEdit} className="shrink-0"><Pencil className="h-3.5 w-3.5" /></Button>
         </div>
 
+        {actions.length > 0 && (
+          <ol className="mt-3 space-y-2 border-t border-border pt-3">
+            {actions.map((a, i) => (
+              <li key={i} className="flex gap-2.5 text-sm">
+                <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-canvas text-[11px] font-bold text-heading">{i + 1}</span>
+                <div className="min-w-0">
+                  {a.what && <div className="text-ink">{a.what}</div>}
+                  <div className="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-ink-muted">
+                    {a.owner && <span><span className="text-ink-subtle">Owner</span> {a.owner}</span>}
+                    {a.cadence && <span><span className="text-ink-subtle">Cadence</span> {a.cadence}</span>}
+                    {a.impact != null && (
+                      <span className="font-semibold tabular-nums text-heading">
+                        {a.impact > 0 ? "+" : ""}{a.impact} {impactUnit(metric)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ol>
+        )}
+
         {c.history.length > 0 && (
-          <div className="mt-3 border-t border-zinc-100 pt-2">
+          <div className="mt-3 border-t border-border pt-2">
             <button onClick={() => setShowHistory((v) => !v)}
-              className="inline-flex items-center gap-1.5 text-[11px] font-medium text-zinc-500 hover:text-accent-700">
+              className="inline-flex items-center gap-1.5 text-[11px] font-medium text-ink-muted hover:text-accent">
               <History className="h-3.5 w-3.5" />
               {showHistory ? "Hide" : "Show"} edit history · {c.history.length}
             </button>
@@ -191,27 +286,45 @@ function CommitmentCard({ c, showRvp, onEdit }: { c: PeriodCommitment; showRvp: 
 function HistoryRow({ h }: { h: CommitmentHistoryRow }) {
   const label = FIELD_LABEL[h.field] ?? h.field;
   return (
-    <li className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px] text-zinc-500">
-      <span className="tabular-nums text-zinc-400">{fmtWhen(h.changed_at)}</span>
-      <span className="font-semibold text-zinc-600">{label}</span>
-      <span className="text-zinc-400 line-through">{h.old_value ?? "—"}</span>
+    <li className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-[11px] text-ink-muted">
+      <span className="tabular-nums text-ink-subtle">{fmtWhen(h.changed_at)}</span>
+      <span className="font-semibold text-ink">{label}</span>
+      <span className="text-ink-subtle line-through">{h.old_value ?? "—"}</span>
       <span aria-hidden>→</span>
-      <span className="font-medium text-midnight">{h.new_value ?? "—"}</span>
-      {h.changed_by_name && <span className="text-zinc-400">· {h.changed_by_name}</span>}
+      <span className="font-medium text-heading">{h.new_value ?? "—"}</span>
+      {h.changed_by_name && <span className="text-ink-subtle">· {h.changed_by_name}</span>}
     </li>
   );
 }
 
+// ── Authoring modal ────────────────────────────────────────────────────────────
 function CommitmentModal({
-  draft, isNew, isLeader, rvps, saving, onChange, onClose, onSave,
+  draft, isNew, isLeader, rvps, saving, onChange, onOpenGuide, onClose, onSave,
 }: {
   draft: Draft | null; isNew: boolean; isLeader: boolean; rvps: RvpOption[];
-  saving: boolean; onChange: (d: Draft) => void; onClose: () => void; onSave: () => void;
+  saving: boolean; onChange: (d: Draft) => void; onOpenGuide: () => void;
+  onClose: () => void; onSave: () => void;
 }) {
+  const metric = draft?.metric_key ? METRICS_BY_KEY[draft.metric_key] ?? null : null;
+  const baseline = draft ? toNum(draft.baseline_value) : null;
+  const target = draft ? toNum(draft.target_value) : null;
+  const gap = gapInImpactUnit(metric, baseline, target);
+  const gapLabel = fmtGap(metric, gap);
+  const iUnit = impactUnit(metric);
+
+  const actionSum = draft
+    ? draft.actions.reduce((s, a) => s + (a.impact.trim() === "" ? 0 : Number(a.impact) || 0), 0)
+    : 0;
+  const covers = gap != null && Math.abs(actionSum) >= Math.abs(gap) - 1e-9 && Math.abs(gap) > 0;
+
+  const setActions = (fn: (a: ActionDraft[]) => ActionDraft[]) =>
+    draft && onChange({ ...draft, actions: fn(draft.actions) });
+
   return (
     <Modal
       open={draft != null}
       onClose={onClose}
+      maxWidth="max-w-2xl"
       title={isNew ? "New commitment" : "Edit commitment"}
       footer={
         <>
@@ -223,47 +336,187 @@ function CommitmentModal({
       }
     >
       {draft && (
-        <div className="space-y-3">
+        <div className="space-y-4">
+          <button type="button" onClick={onOpenGuide}
+            className="flex w-full items-center gap-2 rounded-lg bg-canvas px-3 py-2 text-left text-xs text-heading ring-1 ring-border hover:ring-accent">
+            <Info className="h-4 w-4 shrink-0 text-accent" />
+            <span><span className="font-semibold">How to write one</span> — anchor to a metric, state the gap, and list specific actions. Read the finance-director playbook.</span>
+          </button>
+
           {isNew && isLeader && (
             <div>
               <Label htmlFor="pc-rvp">RVP</Label>
               <select id="pc-rvp" value={draft.rvp_user_id}
-                onChange={(e) => onChange({ ...draft, rvp_user_id: e.target.value })}
-                className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent">
+                onChange={(e) => onChange({ ...draft, rvp_user_id: e.target.value })} className={inputCls}>
                 <option value="">Select an RVP…</option>
                 {rvps.map((r) => <option key={r.id} value={r.id}>{r.full_name ?? r.id}</option>)}
               </select>
             </div>
           )}
+
+          {/* Anchor metric */}
           <div>
-            <Label htmlFor="pc-text">Commitment *</Label>
-            <textarea id="pc-text" rows={3} value={draft.commitment_text}
+            <Label htmlFor="pc-metric">Ranker metric</Label>
+            <select id="pc-metric" value={draft.metric_key}
+              onChange={(e) => onChange({ ...draft, metric_key: e.target.value })} className={inputCls}>
+              <option value="">No metric — free-text commitment</option>
+              {METRIC_GROUPS.map((g) => (
+                <optgroup key={g.group} label={g.group}>
+                  {g.metrics.map((m) => <option key={m.key} value={m.key}>{m.label} · goal {m.goal}</option>)}
+                </optgroup>
+              ))}
+            </select>
+            {metric && <p className="mt-1 text-[11px] text-ink-muted">Goal: {metric.goal}. Enter a 4-week baseline and where you'll take it.</p>}
+          </div>
+
+          {/* Baseline → target */}
+          {metric && (
+            <div className="rounded-lg bg-surface-muted p-3 ring-1 ring-border">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor="pc-baseline">4-week baseline{metric.unit ? ` (${metric.unit})` : ""}</Label>
+                  <Input id="pc-baseline" type="number" step="any" value={draft.baseline_value}
+                    onChange={(e) => onChange({ ...draft, baseline_value: e.target.value })} placeholder="e.g. 96.1" />
+                </div>
+                <div>
+                  <Label htmlFor="pc-target">Target{metric.unit ? ` (${metric.unit})` : ""}</Label>
+                  <Input id="pc-target" type="number" step="any" value={draft.target_value}
+                    onChange={(e) => onChange({ ...draft, target_value: e.target.value })} placeholder="e.g. 97.0" />
+                </div>
+              </div>
+              {gapLabel && (
+                <div className="mt-2 flex items-center gap-1.5 text-xs text-ink-muted">
+                  <span>The gap to close:</span>
+                  <span className={cn("inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 font-semibold tabular-nums",
+                    gap! >= 0 ? "bg-emerald-50 text-emerald-700" : "bg-red-50 text-red-700")}>
+                    {gap! >= 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />} {gapLabel}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Objective */}
+          <div>
+            <Label htmlFor="pc-text">Objective *</Label>
+            <textarea id="pc-text" rows={2} value={draft.commitment_text}
               onChange={(e) => onChange({ ...draft, commitment_text: e.target.value })}
-              className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent"
-              placeholder="What are you committing to this period?" />
+              className={inputCls}
+              placeholder={metric ? `Move ${metric.label} from baseline to target by end of period.` : "What are you committing to this period?"} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <Label htmlFor="pc-target">Target value</Label>
-              <Input id="pc-target" type="number" step="any" value={draft.target_value}
-                onChange={(e) => onChange({ ...draft, target_value: e.target.value })} placeholder="e.g. 95" />
+
+          {/* Specific actions */}
+          <div>
+            <div className="mb-1.5 flex items-center justify-between">
+              <Label className="mb-0">Specific actions</Label>
+              {metric && gap != null && (
+                <span className={cn("text-[11px] font-semibold tabular-nums",
+                  covers ? "text-emerald-600" : "text-warning")}>
+                  Actions {actionSum > 0 ? "+" : ""}{actionSum} {iUnit} {covers ? "≥" : "<"} gap {fmtGap(metric, gap)}
+                </span>
+              )}
             </div>
-            <div>
-              <Label htmlFor="pc-unit">Unit</Label>
-              <Input id="pc-unit" value={draft.target_unit}
-                onChange={(e) => onChange({ ...draft, target_unit: e.target.value })} placeholder="% · h · $ · pts" />
+            <div className="space-y-2">
+              {draft.actions.map((a, i) => (
+                <div key={i} className="rounded-lg bg-surface-muted p-2.5 ring-1 ring-border">
+                  <div className="flex items-start gap-2">
+                    <span className="mt-2 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-canvas text-[11px] font-bold text-heading">{i + 1}</span>
+                    <div className="min-w-0 flex-1 space-y-2">
+                      <input value={a.what} placeholder="What specifically will be done? (e.g. Retrain 3 openers on waste-log discipline)"
+                        onChange={(e) => setActions((as) => as.map((x, j) => j === i ? { ...x, what: e.target.value } : x))}
+                        className={inputCls} />
+                      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+                        <input value={a.owner} placeholder="Owner (who)"
+                          onChange={(e) => setActions((as) => as.map((x, j) => j === i ? { ...x, owner: e.target.value } : x))}
+                          className={inputCls} />
+                        <input value={a.cadence} placeholder="Cadence (how often)"
+                          onChange={(e) => setActions((as) => as.map((x, j) => j === i ? { ...x, cadence: e.target.value } : x))}
+                          className={inputCls} />
+                        <input value={a.impact} type="number" step="any" placeholder={`Impact${iUnit ? ` (${iUnit})` : ""}`}
+                          onChange={(e) => setActions((as) => as.map((x, j) => j === i ? { ...x, impact: e.target.value } : x))}
+                          className={inputCls} />
+                      </div>
+                    </div>
+                    <button type="button" aria-label="Remove action"
+                      onClick={() => setActions((as) => as.length > 1 ? as.filter((_, j) => j !== i) : [emptyAction()])}
+                      className="mt-1.5 rounded-md p-1 text-ink-subtle hover:bg-surface-sunk hover:text-danger">
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
+            <button type="button" onClick={() => setActions((as) => [...as, emptyAction()])}
+              className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-accent hover:text-accent-hover">
+              <Plus className="h-3.5 w-3.5" /> Add action
+            </button>
           </div>
+
+          {/* Status */}
           <div>
             <Label htmlFor="pc-status">Status</Label>
             <select id="pc-status" value={draft.status}
-              onChange={(e) => onChange({ ...draft, status: e.target.value as CommitmentStatus })}
-              className="block w-full rounded-md border-0 bg-white px-3 py-2 text-sm text-zinc-900 ring-1 ring-inset ring-zinc-200 focus:outline-none focus:ring-2 focus:ring-accent">
+              onChange={(e) => onChange({ ...draft, status: e.target.value as CommitmentStatus })} className={inputCls}>
               {STATUSES.map((s) => <option key={s} value={s}>{STATUS_STYLE[s].label}</option>)}
             </select>
           </div>
         </div>
       )}
+    </Modal>
+  );
+}
+
+// ── Guidance ("how to write one") ──────────────────────────────────────────────
+const PRINCIPLES: { n: number; title: string; body: string }[] = [
+  { n: 1, title: "Anchor to a metric", body: "Start from a number on the Ranker, not a feeling. A commitment the Ranker can't score isn't a commitment — it's a wish." },
+  { n: 2, title: "State the gap and the date", body: "Baseline → target, and by when. \"96.1% → 97.0% by period close\" is a gap you can be held to; \"improve COGS\" is not." },
+  { n: 3, title: "Decompose the driver (MECE)", body: "Break the gap into the few levers that actually move it — no overlaps, no gaps. Most metrics move on 2–4 drivers, not twenty." },
+  { n: 4, title: "Commit to controllable inputs", body: "Amazon's rule: own the inputs you control, not the output you hope for. \"Waste log audited daily\" is an input; \"lower food cost\" is an output." },
+  { n: 5, title: "Make each action specific", body: "What, who, and cadence — every action names all three. \"Retrain 3 openers on portioning, GM-led, daily pre-shift\" is an action. \"Improve efficiency\" is a slogan." },
+  { n: 6, title: "Prove the math adds up", body: "The actions' expected impact should sum to at least the gap. If the gap is +90 bps and your actions total +40, the plan is short — add levers or reset the target." },
+];
+const CONTRAST: { generic: string; specific: string }[] = [
+  { generic: "Improve labor", specific: "Cut overtime to zero on Fri–Sun by GM-built schedules posted Wednesday; DO audits weekly. −60 bps." },
+  { generic: "Improve efficiency", specific: "Deploy the drive-in position on the 11a–1p peak, 7 days; SDO spot-checks twice weekly. +0.4 On-Time pts." },
+  { generic: "Lower food cost", specific: "Daily waste log signed by MOD; weekly COGS review with the 2 worst stores. +50 bps COGS efficiency." },
+];
+
+function GuidanceModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  return (
+    <Modal open={open} onClose={onClose} maxWidth="max-w-2xl" title="How to write a commitment worth reading"
+      footer={<Button onClick={onClose}>Got it</Button>}>
+      <div className="space-y-4">
+        <p className="text-sm leading-relaxed text-ink-muted">
+          Written the way a Director of Finance from McKinsey or Amazon would frame it: a commitment is a
+          number, a gap, and the specific inputs you'll control to close it. Six principles.
+        </p>
+        <ol className="space-y-2.5">
+          {PRINCIPLES.map((p) => (
+            <li key={p.n} className="flex gap-3 rounded-lg bg-surface-muted p-3 ring-1 ring-border">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-accent text-xs font-bold text-accent-fg">{p.n}</span>
+              <div>
+                <div className="text-sm font-semibold text-heading">{p.title}</div>
+                <p className="mt-0.5 text-[13px] leading-relaxed text-ink-muted">{p.body}</p>
+              </div>
+            </li>
+          ))}
+        </ol>
+        <div>
+          <div className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-ink-subtle">Generic vs. specific</div>
+          <div className="overflow-hidden rounded-lg ring-1 ring-border">
+            {CONTRAST.map((c, i) => (
+              <div key={i} className={cn("grid grid-cols-1 gap-2 p-3 sm:grid-cols-[1fr_1.6fr]", i > 0 && "border-t border-border")}>
+                <div className="flex items-start gap-1.5 text-[13px] text-red-700">
+                  <span className="mt-0.5 text-red-400">✕</span> <span className="line-through decoration-red-300">{c.generic}</span>
+                </div>
+                <div className="flex items-start gap-1.5 text-[13px] text-ink">
+                  <span className="mt-0.5 font-bold text-emerald-600">✓</span> <span>{c.specific}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
     </Modal>
   );
 }

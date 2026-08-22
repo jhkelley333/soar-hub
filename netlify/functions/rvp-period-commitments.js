@@ -44,6 +44,34 @@ const numOrNull = (v) => {
   return Number.isFinite(n) ? n : undefined; // undefined = invalid (caller rejects)
 };
 
+// Structured specific-actions. Returns a sanitized array, or undefined when the
+// payload is not an array (caller rejects). Blank rows are dropped; at most 12
+// actions are kept. Each action is {what, owner, cadence, impact}.
+const cleanActions = (raw) => {
+  if (raw == null) return [];
+  if (!Array.isArray(raw)) return undefined;
+  const out = [];
+  for (const a of raw.slice(0, 12)) {
+    if (!a || typeof a !== "object") continue;
+    const what = clean(a.what, 300);
+    const owner = clean(a.owner, 120);
+    const cadence = clean(a.cadence, 120);
+    let impact = null;
+    if (a.impact != null && a.impact !== "") {
+      const n = Number(a.impact);
+      if (!Number.isFinite(n)) return undefined;
+      impact = n;
+    }
+    if (!what && !owner && !cadence && impact == null) continue; // fully-blank row
+    out.push({ what, owner, cadence, impact });
+  }
+  return out;
+};
+
+const SELECT_COLS =
+  "id, rvp_user_id, fiscal_year, period, metric_key, metric_label, baseline_value, " +
+  "commitment_text, target_value, target_unit, actions, status, created_at, created_by, updated_at, updated_by";
+
 // Attach each commitment's edit history (newest first).
 async function withHistory(supa, commitments) {
   const ids = commitments.map((c) => c.id);
@@ -92,12 +120,13 @@ export const handler = async (event) => {
         return respond(400, { error: "fiscal_year and period (1–12) are required." });
       }
       let query = supa.from("rvp_period_commitments")
-        .select("id, rvp_user_id, fiscal_year, period, commitment_text, target_value, target_unit, status, created_at, created_by, updated_at, updated_by")
+        .select(SELECT_COLS)
         .eq("fiscal_year", fiscalYear).eq("period", period)
         .order("created_at", { ascending: true });
       if (!isLeader) query = query.eq("rvp_user_id", user.id);
       const { data: rows, error } = await query;
       if (error) {
+        if (/metric_key|metric_label|baseline_value|actions/.test(error.message)) return respond(500, { error: "Run migration 0313 first (metric/baseline/actions columns are missing)." });
         if (/rvp_period_commitments/.test(error.message)) return respond(500, { error: "Run migration 0302 first (rvp_period_commitments table is missing)." });
         return respond(500, { error: error.message });
       }
@@ -146,6 +175,10 @@ export const handler = async (event) => {
 
         const tv = numOrNull(body.target_value);
         if (tv === undefined) return respond(400, { error: "target_value must be a number." });
+        const baseline = numOrNull(body.baseline_value);
+        if (baseline === undefined) return respond(400, { error: "baseline_value must be a number." });
+        const actions = cleanActions(body.actions);
+        if (actions === undefined) return respond(400, { error: "actions must be a list of {what, owner, cadence, impact}." });
         const status = clean(body.status, 16) || "active";
         if (!STATUSES.includes(status)) return respond(400, { error: `status must be one of ${STATUSES.join(", ")}.` });
 
@@ -153,9 +186,13 @@ export const handler = async (event) => {
           rvp_user_id: rvpUserId,
           fiscal_year: fiscalYear,
           period,
+          metric_key: clean(body.metric_key, 64),
+          metric_label: clean(body.metric_label, 120),
+          baseline_value: baseline,
           commitment_text: text,
           target_value: tv,
           target_unit: clean(body.target_unit, 16),
+          actions,
           status,
           created_by: user.id,
           updated_by: user.id,
@@ -178,12 +215,24 @@ export const handler = async (event) => {
           if (!t) return respond(400, { error: "commitment_text can't be blank." });
           patch.commitment_text = t;
         }
+        if (body.metric_key !== undefined) patch.metric_key = clean(body.metric_key, 64);
+        if (body.metric_label !== undefined) patch.metric_label = clean(body.metric_label, 120);
+        if (body.baseline_value !== undefined) {
+          const bv = numOrNull(body.baseline_value);
+          if (bv === undefined) return respond(400, { error: "baseline_value must be a number." });
+          patch.baseline_value = bv;
+        }
         if (body.target_value !== undefined) {
           const tv = numOrNull(body.target_value);
           if (tv === undefined) return respond(400, { error: "target_value must be a number." });
           patch.target_value = tv;
         }
         if (body.target_unit !== undefined) patch.target_unit = clean(body.target_unit, 16);
+        if (body.actions !== undefined) {
+          const actions = cleanActions(body.actions);
+          if (actions === undefined) return respond(400, { error: "actions must be a list of {what, owner, cadence, impact}." });
+          patch.actions = actions;
+        }
         if (body.status !== undefined) {
           const status = clean(body.status, 16);
           if (!STATUSES.includes(status)) return respond(400, { error: `status must be one of ${STATUSES.join(", ")}.` });
