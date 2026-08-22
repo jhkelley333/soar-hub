@@ -33,6 +33,7 @@ import { OrgPage } from "@/modules/admin/OrgPage";
 import { BulkImportPage } from "@/modules/admin/BulkImportPage";
 import { CulturalIndexImportPage } from "@/modules/admin/CulturalIndexImportPage";
 import { CultureIndexPage } from "@/modules/culture-index/CultureIndexPage";
+import { CancunPage } from "@/modules/cancun/CancunPage";
 import { DoPlaybookPage } from "@/modules/culture-index/DoPlaybookPage";
 import { ExecOverviewPage } from "@/modules/culture-index/ExecOverviewPage";
 import { RankerBackfillPage } from "@/modules/admin/RankerBackfillPage";
@@ -625,6 +626,14 @@ export const router = createBrowserRouter([
         element: (
           <ProtectedRoute requireRoles={["admin"]}>
             <CulturalIndexImportPage />
+          </ProtectedRoute>
+        ),
+      },
+      {
+        path: "cancun",
+        element: (
+          <ProtectedRoute requireRoles={["admin"]}>
+            <CancunPage />
           </ProtectedRoute>
         ),
       },
