@@ -4,7 +4,7 @@
 // upload. Targets are editable inline (backend enforces region scope).
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, Pencil, X } from "lucide-react";
+import { Check, Pencil, RefreshCw, X } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Skeleton } from "@/shared/ui/Skeleton";
 import { EmptyState } from "@/shared/ui/EmptyState";
@@ -127,7 +127,20 @@ export function RvpCommitmentsPage() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-5 p-4 sm:p-6">
-      <PageHeader title="RVP Commitments" description="Each region's committed target vs. its live actual, tracked weekly." />
+      <PageHeader title="RVP Commitments" description="Each region's committed target vs. its live actual, tracked weekly."
+        actions={
+          <button
+            type="button"
+            onClick={() => q.refetch()}
+            disabled={q.isFetching}
+            title="Re-pull the latest ranking + labor data"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-200 bg-white px-3 py-1.5 text-sm font-medium text-zinc-600 hover:border-accent/60 hover:text-accent disabled:opacity-50"
+          >
+            <RefreshCw className={cn("h-3.5 w-3.5", q.isFetching && "animate-spin")} strokeWidth={1.75} />
+            {q.isFetching ? "Refreshing…" : "Refresh"}
+          </button>
+        }
+      />
 
       {q.isLoading && <div className="space-y-3"><Skeleton className="h-24 w-full" /><Skeleton className="h-40 w-full" /></div>}
       {q.isError && <EmptyState title="Couldn't load" description={(q.error as Error)?.message ?? "Try again."} />}
@@ -272,7 +285,15 @@ function RvpCard({ row, canEdit }: { row: RvpCommitmentRow; canEdit: boolean }) 
 function MetricRow({ row, m }: { row: RvpCommitmentRow; m: MetricDef }) {
   const toast = useToast();
   const qc = useQueryClient();
-  const actual = row.actuals[m.key];
+  // Weekly-grain metrics (e.g. COGS Efficiency) track sustained performance, so
+  // the "Actual" is the AVERAGE of the tracked weeks — how they're impacting the
+  // long run — not just the latest week. WTD labor metrics stay as the live
+  // current-week figure.
+  const weekly = row.weekly[m.key] ?? [];
+  const weekVals = weekly.map((w) => w.value).filter((v): v is number => v != null);
+  const avgActual = weekVals.length ? weekVals.reduce((a, b) => a + b, 0) / weekVals.length : null;
+  const isAvg = m.grain === "weekly" && avgActual != null;
+  const actual = isAvg ? avgActual : row.actuals[m.key];
   const target = row.targets[m.key];
   const baseline = row.baselines[m.key];
   const status = track(actual, target, m.dir);
@@ -321,7 +342,9 @@ function MetricRow({ row, m }: { row: RvpCommitmentRow; m: MetricDef }) {
 
       {/* Actual */}
       <div className="w-20 text-right">
-        <div className="text-[10px] uppercase tracking-wide text-zinc-400">Actual</div>
+        <div className="text-[10px] uppercase tracking-wide text-zinc-400" title={isAvg ? `Average of the ${weekVals.length} tracked week${weekVals.length === 1 ? "" : "s"}` : undefined}>
+          Actual{isAvg ? " · avg" : ""}
+        </div>
         <div className={cn("text-sm font-semibold tabular-nums",
           status === "on" ? "text-emerald-600" : status === "off" ? "text-red-600" : "text-zinc-500")}>
           {fmtVal(actual, m)}
