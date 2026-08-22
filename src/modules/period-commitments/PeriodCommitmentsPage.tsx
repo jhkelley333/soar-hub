@@ -6,11 +6,11 @@
 // the gap and date, decompose the driver, commit to controllable inputs, make
 // each action specific, and prove the math adds up. Every edit is captured in an
 // immutable history the DB writes by trigger and this page shows per commitment.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  ArrowRight, ChevronLeft, ChevronRight, History, Info, Pencil, Plus, Target,
-  Trash2, TrendingDown, TrendingUp,
+  Activity, ArrowRight, ChevronLeft, ChevronRight, History, Info, Pencil, Plus, Sparkles,
+  Target, Trash2, TrendingDown, TrendingUp,
 } from "lucide-react";
 import { PageHeader } from "@/shared/ui/PageHeader";
 import { Card, CardBody } from "@/shared/ui/Card";
@@ -24,12 +24,13 @@ import { useToast } from "@/shared/ui/Toaster";
 import { cn } from "@/lib/cn";
 import { FISCAL, fiscalInfo } from "@/lib/fiscal";
 import {
-  fetchPeriodCommitments, createPeriodCommitment, updatePeriodCommitment,
+  fetchPeriodCommitments, createPeriodCommitment, updatePeriodCommitment, fetchMetricSeries,
   type PeriodCommitment, type CommitmentStatus, type CommitmentHistoryRow,
-  type CommitmentAction, type RvpOption,
+  type CommitmentAction, type MetricSeries, type RvpOption,
 } from "./api";
 import {
   METRIC_GROUPS, METRICS_BY_KEY, impactUnit, gapInImpactUnit, fmtGap, fmtMetricValue,
+  type RankerMetric,
 } from "./metrics";
 
 const STATUS_STYLE: Record<CommitmentStatus, { label: string; cls: string }> = {
@@ -186,7 +187,7 @@ export function PeriodCommitmentsPage() {
       )}
 
       <CommitmentModal
-        draft={editing} isNew={isNew} isLeader={isLeader} rvps={rvps}
+        draft={editing} isNew={isNew} isLeader={isLeader} rvps={rvps} period={period}
         saving={save.isPending}
         onChange={setEditing}
         onOpenGuide={() => setGuideOpen(true)}
@@ -241,6 +242,15 @@ function CommitmentCard({ c, showRvp, onEdit }: { c: PeriodCommitment; showRvp: 
           </div>
           <Button size="sm" variant="ghost" onClick={onEdit} className="shrink-0"><Pencil className="h-3.5 w-3.5" /></Button>
         </div>
+
+        {metric && c.series && c.series.weeks.length > 0 && (
+          <MovementTracker
+            metric={metric}
+            baseline={c.series.baseline ?? c.baseline_value}
+            target={c.target_value}
+            series={c.series}
+          />
+        )}
 
         {actions.length > 0 && (
           <ol className="mt-3 space-y-2 border-t border-border pt-3">
@@ -297,15 +307,119 @@ function HistoryRow({ h }: { h: CommitmentHistoryRow }) {
   );
 }
 
+// ── 4-week movement tracker ────────────────────────────────────────────────────
+// Bars per fiscal week vs a baseline reference line and the target line, pulled
+// live from the Ranker. Green when a week moves toward the target, red when it
+// moves away. Weeks with no complete run yet render as a pending stub.
+function MovementTracker({
+  metric, baseline, target, series,
+}: { metric: RankerMetric; baseline: number | null; target: number | null; series: MetricSeries }) {
+  const weeks = series.weeks;
+  const vals = weeks.map((w) => w.value).filter((v): v is number => v != null);
+  const done = weeks.filter((w) => w.value != null);
+  const latest = done.length ? done[done.length - 1].value! : null;
+
+  const toward = (v: number | null): boolean | null => {
+    if (v == null || baseline == null || target == null) return null;
+    const need = target - baseline;
+    if (Math.abs(need) < 1e-9) return Math.abs(v - baseline) < 1e-9;
+    return Math.sign(v - baseline) === Math.sign(need);
+  };
+  const progress =
+    latest != null && baseline != null && target != null && Math.abs(target - baseline) > 1e-9
+      ? (latest - baseline) / (target - baseline)
+      : null;
+
+  // Shared vertical scale across bars + reference lines.
+  const domain = [...vals, baseline, target].filter((v): v is number => v != null);
+  const lo = domain.length ? Math.min(...domain) : 0;
+  const hi = domain.length ? Math.max(...domain) : 1;
+  const pad = (hi - lo) * 0.18 || Math.abs(hi) * 0.1 || 1;
+  const min = lo - pad, max = hi + pad, span = max - min || 1;
+  const pos = (v: number) => ((v - min) / span) * 100; // % from bottom
+
+  return (
+    <div className="mt-3 rounded-lg bg-surface-muted p-3 ring-1 ring-border">
+      <div className="mb-2 flex items-center justify-between">
+        <span className="inline-flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-ink-subtle">
+          <Activity className="h-3.5 w-3.5" /> 4-week movement
+        </span>
+        {progress != null && (
+          <span className={cn("text-[11px] font-semibold tabular-nums", progress >= 1 ? "text-emerald-600" : progress > 0 ? "text-heading" : "text-red-600")}>
+            {Math.round(progress * 100)}% to target
+          </span>
+        )}
+      </div>
+      <div className="relative flex h-20 items-end gap-2 border-b border-border pb-0">
+        {/* baseline + target reference lines */}
+        {baseline != null && (
+          <div className="pointer-events-none absolute inset-x-0 border-t border-dashed border-ink-subtle/60"
+            style={{ bottom: `${pos(baseline)}%` }} aria-hidden />
+        )}
+        {target != null && (
+          <div className="pointer-events-none absolute inset-x-0 border-t border-dashed border-accent"
+            style={{ bottom: `${pos(target)}%` }} aria-hidden />
+        )}
+        {weeks.map((w, i) => {
+          const t = toward(w.value);
+          return (
+            <div key={i} className="relative flex flex-1 flex-col items-center justify-end" style={{ height: "100%" }}>
+              {w.value != null ? (
+                <div
+                  className={cn("w-full max-w-[2.25rem] rounded-t", t === false ? "bg-red-400/80" : t ? "bg-emerald-500/80" : "bg-ink-subtle/50")}
+                  style={{ height: `${Math.max(4, pos(w.value))}%` }}
+                  title={`W${w.week_in_period ?? i + 1}: ${fmtMetricValue(metric, w.value)}`}
+                />
+              ) : (
+                <div className="w-full max-w-[2.25rem] rounded-t border border-dashed border-border" style={{ height: "8%" }} title="No data yet" />
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <div className="mt-1 flex gap-2">
+        {weeks.map((w, i) => (
+          <div key={i} className="flex-1 text-center">
+            <div className="text-[10px] font-medium text-ink-subtle">W{w.week_in_period ?? i + 1}</div>
+            <div className="text-[11px] font-semibold tabular-nums text-ink">{w.value != null ? fmtMetricValue(metric, w.value) : "—"}</div>
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-ink-muted">
+        <span className="inline-flex items-center gap-1"><span className="h-0 w-3 border-t border-dashed border-ink-subtle/60" /> Baseline {fmtMetricValue(metric, baseline)}</span>
+        <span className="inline-flex items-center gap-1"><span className="h-0 w-3 border-t border-dashed border-accent" /> Target {fmtMetricValue(metric, target) ?? "—"}</span>
+      </div>
+    </div>
+  );
+}
+
 // ── Authoring modal ────────────────────────────────────────────────────────────
 function CommitmentModal({
-  draft, isNew, isLeader, rvps, saving, onChange, onOpenGuide, onClose, onSave,
+  draft, isNew, isLeader, rvps, period, saving, onChange, onOpenGuide, onClose, onSave,
 }: {
-  draft: Draft | null; isNew: boolean; isLeader: boolean; rvps: RvpOption[];
+  draft: Draft | null; isNew: boolean; isLeader: boolean; rvps: RvpOption[]; period: number;
   saving: boolean; onChange: (d: Draft) => void; onOpenGuide: () => void;
   onClose: () => void; onSave: () => void;
 }) {
   const metric = draft?.metric_key ? METRICS_BY_KEY[draft.metric_key] ?? null : null;
+
+  // Live 4-week baseline from the Ranker for the picked metric + RVP scope.
+  const seriesQ = useQuery({
+    queryKey: ["pc-metric-series", draft?.metric_key, period, draft?.rvp_user_id],
+    queryFn: () => fetchMetricSeries(draft!.metric_key, period, draft!.rvp_user_id || undefined),
+    enabled: draft != null && !!draft.metric_key,
+    staleTime: 60_000,
+  });
+  const liveBaseline = seriesQ.data?.baseline ?? null;
+
+  // Auto-fill the baseline the first time it's blank for a freshly-picked metric;
+  // never clobber a value the RVP has typed (the metric picker clears it on change).
+  useEffect(() => {
+    if (!draft || !draft.metric_key || liveBaseline == null) return;
+    if (draft.baseline_value.trim() !== "") return;
+    onChange({ ...draft, baseline_value: String(liveBaseline) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveBaseline, draft?.metric_key]);
   const baseline = draft ? toNum(draft.baseline_value) : null;
   const target = draft ? toNum(draft.target_value) : null;
   const gap = gapInImpactUnit(metric, baseline, target);
@@ -358,7 +472,7 @@ function CommitmentModal({
           <div>
             <Label htmlFor="pc-metric">Ranker metric</Label>
             <select id="pc-metric" value={draft.metric_key}
-              onChange={(e) => onChange({ ...draft, metric_key: e.target.value })} className={inputCls}>
+              onChange={(e) => onChange({ ...draft, metric_key: e.target.value, baseline_value: "", target_value: "" })} className={inputCls}>
               <option value="">No metric — free-text commitment</option>
               {METRIC_GROUPS.map((g) => (
                 <optgroup key={g.group} label={g.group}>
@@ -366,7 +480,7 @@ function CommitmentModal({
                 </optgroup>
               ))}
             </select>
-            {metric && <p className="mt-1 text-[11px] text-ink-muted">Goal: {metric.goal}. Enter a 4-week baseline and where you'll take it.</p>}
+            {metric && <p className="mt-1 text-[11px] text-ink-muted">Goal: {metric.goal}. The 4-week baseline auto-pulls from the Ranker; set where you'll take it.</p>}
           </div>
 
           {/* Baseline → target */}
@@ -383,6 +497,22 @@ function CommitmentModal({
                   <Input id="pc-target" type="number" step="any" value={draft.target_value}
                     onChange={(e) => onChange({ ...draft, target_value: e.target.value })} placeholder="e.g. 97.0" />
                 </div>
+              </div>
+              <div className="mt-1.5 flex items-center gap-1.5 text-[11px]">
+                <Sparkles className="h-3 w-3 text-accent" />
+                {seriesQ.isFetching ? (
+                  <span className="text-ink-muted">Pulling live 4-week baseline from the Ranker…</span>
+                ) : liveBaseline != null ? (
+                  <span className="text-ink-muted">
+                    Ranker 4-week baseline <span className="font-semibold text-heading">{fmtMetricValue(metric, liveBaseline)}</span>
+                    {String(liveBaseline) !== draft.baseline_value.trim() && (
+                      <button type="button" onClick={() => onChange({ ...draft, baseline_value: String(liveBaseline) })}
+                        className="ml-1.5 font-semibold text-accent hover:text-accent-hover">Apply</button>
+                    )}
+                  </span>
+                ) : (
+                  <span className="text-ink-muted">No ranking runs for these weeks yet — enter the baseline manually.</span>
+                )}
               </div>
               {gapLabel && (
                 <div className="mt-2 flex items-center gap-1.5 text-xs text-ink-muted">

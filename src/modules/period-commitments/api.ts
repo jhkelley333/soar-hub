@@ -32,6 +32,20 @@ export interface CommitmentAction {
   impact: number | null;
 }
 
+// Live per-week value for the anchor metric within the RVP's region scope.
+// value is null for a week with no complete ranking run yet (pending).
+export interface MetricWeek {
+  week_ending: string;
+  week_in_period: number | null;
+  value: number | null;
+}
+// 4-week pre-period baseline (avg) + the per-week movement across the period,
+// pulled from the pre-aggregated rvp-tier ranking rows.
+export interface MetricSeries {
+  baseline: number | null;
+  weeks: MetricWeek[];
+}
+
 export interface CommitmentHistoryRow {
   id: string;
   commitment_id: string;
@@ -57,6 +71,7 @@ export interface PeriodCommitment {
   target_unit: string | null;
   actions: CommitmentAction[];
   status: CommitmentStatus;
+  series?: MetricSeries | null;
   created_at: string;
   created_by: string | null;
   updated_at: string;
@@ -76,6 +91,19 @@ export interface CommitmentListResponse {
 
 export function fetchPeriodCommitments(fiscalYear: string, period: number): Promise<CommitmentListResponse> {
   return req(`${FN}?action=list&fiscal_year=${encodeURIComponent(fiscalYear)}&period=${period}`);
+}
+
+export interface MetricSeriesResponse extends MetricSeries {
+  ok: true;
+  metric_key: string;
+  period: number;
+  rvp_name: string | null;
+}
+// Live 4-week baseline + per-week series for a metric within an RVP's scope,
+// for the modal's baseline auto-fill. rvpUserId defaults to the caller.
+export function fetchMetricSeries(metricKey: string, period: number, rvpUserId?: string): Promise<MetricSeriesResponse> {
+  const rvp = rvpUserId ? `&rvp_user_id=${encodeURIComponent(rvpUserId)}` : "";
+  return req(`${FN}?action=metric-series&metric_key=${encodeURIComponent(metricKey)}&period=${period}${rvp}`);
 }
 
 export interface CreateCommitmentInput {

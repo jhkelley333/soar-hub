@@ -67,3 +67,22 @@ export function fiscalForDate(iso) {
     isPeriodEnd: isoOf(p.endMs) === day,
   };
 }
+
+// Week-ending Sundays (ISO) for a fiscal period (1..12), earliest → latest.
+// Each is the Sunday that closes a Mon–Sun fiscal week in the period.
+export function periodWeekEnds(period) {
+  const p = PERIODS.find((x) => x.num === Number(period));
+  if (!p) return [];
+  return Array.from({ length: p.weeks }, (_, i) =>
+    isoOf(FY_START + (p.startWeek + i) * 7 * DAY + 6 * DAY));
+}
+
+// The n week-ending Sundays immediately BEFORE a fiscal period begins,
+// earliest → latest. Used as the pre-period baseline window (the "before"
+// state a commitment is measured against).
+export function priorWeekEnds(period, n = 4) {
+  const p = PERIODS.find((x) => x.num === Number(period));
+  if (!p) return [];
+  const lastEndMs = FY_START + p.startWeek * 7 * DAY - DAY; // Sunday before the period's first Monday
+  return Array.from({ length: n }, (_, i) => isoOf(lastEndMs - (n - 1 - i) * 7 * DAY));
+}
