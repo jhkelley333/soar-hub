@@ -131,7 +131,7 @@ export function TeamPage() {
     return (
       <>
         <PageHeader
-          title="My Team"
+          title="Users"
           description="People you manage and how to reach them."
         />
         <div className="space-y-3">
@@ -146,7 +146,7 @@ export function TeamPage() {
   if (query.isError) {
     return (
       <>
-        <PageHeader title="My Team" />
+        <PageHeader title="Users" />
         <EmptyState
           title="Couldn't load your team"
           description={
@@ -168,11 +168,11 @@ export function TeamPage() {
     return (
       <>
         <PageHeader
-          title="My Team"
+          title="Users"
           description="People you manage and how to reach them."
         />
         <EmptyState
-          title="My Team is for managers"
+          title="Users is for managers"
           description={
             isHourly
               ? "Shift Managers don't manage other users in this app. Contact your GM to make changes."
@@ -186,7 +186,7 @@ export function TeamPage() {
   return (
     <>
       <PageHeader
-        title="My Team"
+        title="Users"
         description={`${data.members.filter((m) => m.is_active).length} active ${data.members.filter((m) => m.is_active).length === 1 ? "person" : "people"} in your scope.`}
         actions={
           <div className="flex flex-wrap gap-2">

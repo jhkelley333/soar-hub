@@ -151,7 +151,7 @@ export const NAV: NavItem[] = [
   // { to: "/manuals",     label: "Manual Search", icon: BookMarked,    roles: null },
   // { to: "/admin/manuals", label: "Manuals Admin", icon: BookMarked,  roles: ["rvp"] },
   { to: "/resources",   label: "Resources",   icon: BookOpen,        roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
-  { to: "/team",        label: "My Team",     icon: Users,           roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
+  { to: "/team",        label: "Users",       icon: Users,           roles: ["gm", "do", "sdo", "rvp", "vp", "coo", "admin"] },
   // Roster — the GM roster + the DO/SDO/RVP leadership roster + birthdays.
   // DO/SDO/RVP reach it here (DOs edit detail for their stores); vp/coo/admin
   // reach it via System Settings. Lives under People (org/people tooling).
