@@ -35,8 +35,8 @@ export function CultureIndexPage() {
   return (
     <>
       <PageHeader
-        title="Culture Index"
-        description="The trait framework and all 21 patterns — the reference behind every trait on the roster and in accounts."
+        title="Intelligence Trait"
+        description="The trait framework and all 21 patterns — the reference behind every trait on the roster and in accounts. Adapted from Culture Index."
       />
 
       {/* Primer: the seven constructs */}
