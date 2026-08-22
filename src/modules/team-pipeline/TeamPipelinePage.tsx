@@ -23,7 +23,7 @@ import { AccountBadge, MemberDrawerProvider, useMemberDrawer } from "./MemberDra
 import { RosterImport } from "./RosterImport";
 import { toCSV, downloadCSV } from "@/lib/csv";
 import {
-  ASPIRATION_META, LADDER, LADDER_BY_KEY, READINESS_BAND_META, READINESS_META, REQ_STATUS_META, RISK_META, ROLE_MIX, roleBelow,
+  ASPIRATION_META, LADDER, LADDER_BY_KEY, READINESS_BAND_META, READINESS_META, REQ_STATUS_META, RISK_META, ROLE_MIX,
   SIGNAL_SEVERITY_META,
   type Aspiration, type AtRiskMember, type DevGapRow, type DevGoalRow, type DevRollupResponse, type GmSeat, type LadderKey,
   type ReadinessRow, type Requisition, type ReviewView, type RiskCounts, type RiskReviewRow,
@@ -2025,7 +2025,6 @@ function StaffingPlanner({ storeId, roster, salesTarget, weeklySales, salesPerMe
   const [promos, setPromos] = useState<Promo[]>([]);
   const [holds, setHolds] = useState<Record<string, boolean>>({});
   const [adjust, setAdjust] = useState<Record<string, boolean>>({});
-  const [picking, setPicking] = useState<LadderKey | null>(null);
 
   const active = roster.filter((m) => m.status !== "loa");
   const have = (k: LadderKey) => active.filter((m) => m.role === k).length;
@@ -2050,15 +2049,13 @@ function StaffingPlanner({ storeId, roster, salesTarget, weeklySales, salesPerMe
     mutationFn: () => commitPlan({ store_id: storeId, hires, promotions: promos.map((p) => ({ member_id: p.member.id, to_role: p.toRole })) }),
     onSuccess: (r) => {
       toast.push(`Plan committed — ${r.promoted} promoted, ${r.reqs_opened} req${r.reqs_opened === 1 ? "" : "s"} opened.`, "success");
-      setHires({}); setPromos([]); setHolds({}); setAdjust({}); setPicking(null); setTargets({});
+      setHires({}); setPromos([]); setHolds({}); setAdjust({}); setTargets({});
       qc.invalidateQueries({ queryKey: ["tp-store-roster", storeId] });
       qc.invalidateQueries({ queryKey: ["tp-rollup"] });
     },
     onError: (e: unknown) => toast.push((e as Error)?.message ?? "Couldn't commit the plan.", "error"),
   });
 
-  const setHire = (k: LadderKey, d: number) => setHires((h) => ({ ...h, [k]: Math.max(0, (h[k] || 0) + d) }));
-  const addPromo = (member: TeamMember, toRole: LadderKey) => { setPromos((p) => [...p, { member, toRole }]); setPicking(null); };
   const removePromo = (id: string) => setPromos((p) => p.filter((x) => x.member.id !== id));
 
   return (
@@ -2091,8 +2088,6 @@ function StaffingPlanner({ storeId, roster, salesTarget, weeklySales, salesPerMe
       {rolesTopDown.map((r) => {
         const k = r.key as LadderKey;
         const st = stateOf(k);
-        const below = roleBelow(k);
-        const candidates = below ? active.filter((m) => m.role === below && !promos.some((p) => p.member.id === m.id)) : [];
         const atRisk = active.filter((m) => m.role === k && m.flight_risk === "immediate").length;
         const gap = projected(k) - target(k);
         const border = { short: "border-l-red-500", ok: "border-l-emerald-500", over: "border-l-blue-500", hold: "border-l-zinc-400" }[st];
@@ -2127,31 +2122,11 @@ function StaffingPlanner({ storeId, roster, salesTarget, weeklySales, salesPerMe
                 {(hires[k] || 0) > 0 && <Chip tone="hire">{hires[k]} new req{hires[k] === 1 ? "" : "s"}<X onClick={() => setHires((h) => ({ ...h, [k]: 0 }))} /></Chip>}
                 {promos.filter((p) => p.toRole === k).map((p) => <Chip key={p.member.id} tone="promo">↑ {p.member.full_name.split(" ")[0]}<X onClick={() => removePromo(p.member.id)} /></Chip>)}
                 {promos.filter((p) => p.member.role === k).map((p) => <Chip key={p.member.id} tone="out">→ {p.member.full_name.split(" ")[0]} to {LADDER_BY_KEY[p.toRole].abbr}<X onClick={() => removePromo(p.member.id)} /></Chip>)}
-                <PlanBtn onClick={() => setHire(k, 1)}>+ Open req</PlanBtn>
-                {below && <PlanBtn disabled={candidates.length === 0} on={picking === k} onClick={() => setPicking(picking === k ? null : k)}>↑ Promote {LADDER_BY_KEY[below].abbr}</PlanBtn>}
                 <PlanBtn on={!!adjust[k]} onClick={() => setAdjust((a) => ({ ...a, [k]: !a[k] }))}>Adjust target</PlanBtn>
                 <PlanBtn on={!!holds[k]} onClick={() => setHolds((h) => ({ ...h, [k]: !h[k] }))}>Hold</PlanBtn>
               </div>
             </div>
 
-            {picking === k && below && (
-              <div className="mt-3 rounded-xl border border-border bg-surface-muted p-3">
-                <div className="mb-2 text-[11px] font-bold uppercase tracking-wide text-ink-muted">Promote from {LADDER_BY_KEY[below].label}</div>
-                {candidates.length === 0 ? <div className="text-sm text-ink-subtle">No eligible candidates in the role below.</div> : (
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                    {candidates.map((m) => (
-                      <button key={m.id} onClick={() => addPromo(m, k)} className="flex items-center gap-2.5 rounded-lg border border-border bg-surface p-2.5 text-left transition hover:border-accent/60">
-                        <Avatar name={m.full_name} risk={m.flight_risk} />
-                        <div className="min-w-0">
-                          <div className="truncate text-sm font-semibold text-heading">{m.full_name}</div>
-                          <div className="text-xs text-ink-muted">{m.perf ? `Perf ${m.perf}/5` : "Unrated"} · {ASPIRATION_META[m.aspiration].label}</div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         );
       })}
